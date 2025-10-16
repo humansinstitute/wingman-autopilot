@@ -163,6 +163,10 @@ let pullActive = false;
 let pullReady = false;
 let pullRefreshing = false;
 
+// Auto-polling for live updates
+const POLL_INTERVAL = 2000; // Poll every 2 seconds
+let pollIntervalId = null;
+
 const setPullState = (state, distance = 0) => {
   if (!pullRefreshIndicator) return;
   const clamped = Math.max(0, Math.min(distance, PULL_MAX));
@@ -194,18 +198,27 @@ const triggerPullRefresh = async () => {
   if (!pullRefreshIndicator || pullRefreshing) return;
   pullRefreshing = true;
   setPullState("refresh", PULL_THRESHOLD);
+
+  // Ensure the refresh indicator shows for at least a minimum duration
+  const startTime = Date.now();
+  const MIN_REFRESH_DURATION = 600;
+
   try {
-    await fetchSessions();
-    render();
+    await pollSessions();
   } catch (error) {
     console.error("Pull-to-refresh failed", error);
   } finally {
     pullReady = false;
     pullActive = false;
+
+    // Calculate remaining time to show the indicator
+    const elapsed = Date.now() - startTime;
+    const remaining = Math.max(0, MIN_REFRESH_DURATION - elapsed);
+
     setTimeout(() => {
       pullRefreshing = false;
       resetPullRefresh();
-    }, 500);
+    }, remaining);
   }
 };
 
@@ -528,17 +541,37 @@ const pollSessions = async () => {
     }
   } catch (error) {
     console.error("Failed to refresh sessions", error);
-  } finally {
-    setTimeout(pollSessions, 1000);
   }
 };
 
 const handleWindowFocus = async () => {
   try {
-    await fetchSessions();
-    render();
+    await pollSessions();
   } catch (error) {
     console.error("Failed to refresh on focus", error);
+  }
+};
+
+const startPolling = () => {
+  // Clear any existing interval
+  if (pollIntervalId) {
+    clearInterval(pollIntervalId);
+  }
+
+  // Start polling
+  pollIntervalId = setInterval(async () => {
+    try {
+      await pollSessions();
+    } catch (error) {
+      console.error("Polling error", error);
+    }
+  }, POLL_INTERVAL);
+};
+
+const stopPolling = () => {
+  if (pollIntervalId) {
+    clearInterval(pollIntervalId);
+    pollIntervalId = null;
   }
 };
 
@@ -759,11 +792,14 @@ const sendMessage = async (sessionId, content) => {
     updateConversationDOM(sessionId);
     await fetchLogs(sessionId);
 
-    // Only render composer area to update the textarea
+    // Clear textarea and restore focus
     const textarea = document.querySelector('.wm-composer textarea');
     if (textarea) {
       textarea.value = "";
       textarea.style.height = "auto";
+      requestAnimationFrame(() => {
+        textarea.focus();
+      });
     }
   } catch (error) {
     console.error("Failed to send agent message", error);
@@ -1098,25 +1134,29 @@ const render = () => {
   if (!pullRefreshing && !pullActive) {
     resetPullRefresh();
   }
+
+  // Start or stop polling based on route
+  if (currentRoute === "live" && state.sessions.length > 0) {
+    startPolling();
+  } else {
+    stopPolling();
+  }
 };
 
 const handleTouchStart = (event) => {
   if (!pullRefreshIndicator || pullRefreshing) return;
   if (document.body.dataset.menuOpen === "true") return;
-  if (window.scrollY > 0) {
-    resetPullRefresh();
-    return;
-  }
+
   const touch = event.touches?.[0];
   if (!touch) return;
 
   // Only allow pull-to-refresh if touch starts in header area
   const header = document.querySelector('.wm-header');
-  if (header) {
-    const headerRect = header.getBoundingClientRect();
-    if (touch.clientY < headerRect.top || touch.clientY > headerRect.bottom) {
-      return;
-    }
+  if (!header) return;
+
+  const headerRect = header.getBoundingClientRect();
+  if (touch.clientY < headerRect.top || touch.clientY > headerRect.bottom) {
+    return;
   }
 
   pullStartY = touch.clientY;
@@ -1128,10 +1168,7 @@ const handleTouchMove = (event) => {
   if (!pullActive || pullRefreshing || !pullRefreshIndicator) return;
   const touch = event.touches?.[0];
   if (!touch) return;
-  if (window.scrollY > 0) {
-    resetPullRefresh();
-    return;
-  }
+
   const delta = touch.clientY - (pullStartY ?? touch.clientY);
   if (delta <= 0) {
     pullReady = false;
@@ -1246,16 +1283,6 @@ window.addEventListener("touchstart", handleTouchStart, { passive: true });
 window.addEventListener("touchmove", handleTouchMove, { passive: false });
 window.addEventListener("touchend", finishPull, { passive: true });
 window.addEventListener("touchcancel", finishPull, { passive: true });
-window.addEventListener(
-  "scroll",
-  () => {
-    if (pullRefreshing) return;
-    if (window.scrollY > 16) {
-      resetPullRefresh();
-    }
-  },
-  { passive: true },
-);
 
 window.addEventListener("popstate", () => {
   currentRoute = getRouteFromPath(window.location.pathname);
@@ -1263,6 +1290,17 @@ window.addEventListener("popstate", () => {
 });
 
 window.addEventListener("focus", handleWindowFocus);
+
+// Handle page visibility changes (pause polling when page is hidden)
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    stopPolling();
+  } else if (currentRoute === "live" && state.sessions.length > 0) {
+    // Resume polling when page becomes visible
+    pollSessions(); // Immediate poll
+    startPolling();
+  }
+});
 
 confirmButton.addEventListener("click", (event) => {
   event.preventDefault();
@@ -1287,5 +1325,4 @@ dialog.addEventListener("cancel", (event) => {
   await fetchConfig();
   await fetchSessions();
   render();
-  pollSessions();
 })();
