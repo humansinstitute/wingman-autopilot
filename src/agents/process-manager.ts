@@ -1,0 +1,263 @@
+import { AgentDefinition, AgentType, WingmanConfig } from "../config";
+
+const MAX_LOG_LINES = 500;
+
+export type SessionStatus = "starting" | "running" | "stopped" | "error";
+
+export interface SessionSnapshot {
+  id: string;
+  agent: AgentType;
+  port: number;
+  status: SessionStatus;
+  startedAt: string;
+  pid?: number;
+  command: string[];
+  workingDirectory: string;
+  exitCode?: number;
+  logs: string[];
+}
+
+type SessionEvent =
+  | { type: "session-started"; session: SessionSnapshot }
+  | { type: "session-updated"; session: SessionSnapshot }
+  | { type: "session-stopped"; session: SessionSnapshot };
+
+interface AgentSession {
+  id: string;
+  agent: AgentType;
+  port: number;
+  status: SessionStatus;
+  startedAt: Date;
+  process: Bun.Subprocess | null;
+  definition: AgentDefinition;
+  workingDirectory: string;
+  command: string[];
+  logs: string[];
+  exitCode?: number;
+}
+
+export class ProcessManager {
+  private readonly config: WingmanConfig;
+  private readonly sessions = new Map<string, AgentSession>();
+  private readonly allocatedPorts = new Set<number>();
+  private readonly listeners = new Set<(event: SessionEvent) => void>();
+
+  constructor(config: WingmanConfig) {
+    this.config = config;
+  }
+
+  on(listener: (event: SessionEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  listSessions(): SessionSnapshot[] {
+    return Array.from(this.sessions.values()).map((session) => this.toSnapshot(session));
+  }
+
+  getSession(id: string): SessionSnapshot | undefined {
+    const session = this.sessions.get(id);
+    return session ? this.toSnapshot(session) : undefined;
+  }
+
+  getLogs(id: string): string[] | undefined {
+    return this.sessions.get(id)?.logs.slice();
+  }
+
+  async createSession(agent: AgentType, workingDirectory?: string): Promise<SessionSnapshot> {
+    const definition = this.config.agents[agent];
+    if (!definition) {
+      throw new Error(`Unknown agent: ${agent}`);
+    }
+
+    const port = this.allocatePort();
+    const id = crypto.randomUUID();
+    const command = definition.command({ port, agent, config: this.config });
+    const sessionWorkingDirectory =
+      typeof workingDirectory === "string" && workingDirectory.length > 0
+        ? workingDirectory
+        : this.config.defaultWorkingDirectory;
+
+    const session: AgentSession = {
+      id,
+      agent,
+      port,
+      status: "starting",
+      startedAt: new Date(),
+      process: null,
+      definition,
+      workingDirectory: sessionWorkingDirectory,
+      command,
+      logs: [],
+    };
+
+    this.sessions.set(id, session);
+    this.emit({ type: "session-started", session: this.toSnapshot(session) });
+
+    try {
+      session.process = this.spawnAgentProcess(session);
+      await this.monitorSession(session);
+      session.status = "running";
+      this.emit({ type: "session-updated", session: this.toSnapshot(session) });
+    } catch (error) {
+      session.status = "error";
+      this.appendLog(session, `[manager] failed to launch session: ${(error as Error).message}`);
+      this.releasePort(session.port);
+      this.emit({ type: "session-updated", session: this.toSnapshot(session) });
+      throw error;
+    }
+
+    return this.toSnapshot(session);
+  }
+
+  async stopSession(id: string): Promise<SessionSnapshot | undefined> {
+    const session = this.sessions.get(id);
+    if (!session) return undefined;
+
+    if (session.process) {
+      session.process.kill("SIGTERM");
+      await session.process.exited;
+    }
+
+    session.status = "stopped";
+    this.releasePort(session.port);
+    this.emit({ type: "session-stopped", session: this.toSnapshot(session) });
+    return this.toSnapshot(session);
+  }
+
+  private spawnAgentProcess(session: AgentSession): Bun.Subprocess {
+    const env = {
+      ...Bun.env,
+      SESSION_ID: session.id,
+      SESSION_AGENT: session.agent,
+      SESSION_PORT: session.port.toString(),
+      SESSION_DIRECTORY: session.workingDirectory,
+      ...(session.definition.env ?? {}),
+    };
+
+    const process = Bun.spawn(session.command, {
+      cwd: session.workingDirectory,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    if (process.stdout) {
+      this.captureStream(process.stdout, session, "stdout");
+    }
+
+    if (process.stderr) {
+      this.captureStream(process.stderr, session, "stderr");
+    }
+
+    process.exited.then((code) => {
+      session.exitCode = code ?? undefined;
+      if (session.status === "running") {
+        session.status = code === 0 ? "stopped" : "error";
+        this.releasePort(session.port);
+        this.emit({ type: "session-stopped", session: this.toSnapshot(session) });
+      }
+    }).catch((error) => {
+      session.exitCode = undefined;
+      session.status = "error";
+      this.appendLog(session, `[manager] spawn monitoring failed: ${(error as Error).message}`);
+      this.releasePort(session.port);
+      this.emit({ type: "session-stopped", session: this.toSnapshot(session) });
+    });
+
+    return process;
+  }
+
+  private async monitorSession(session: AgentSession): Promise<void> {
+    await new Promise<void>((resolve) => {
+      const checkInterval = setInterval(() => {
+        if (!session.process) return;
+        // Consider the process "running" as soon as we can observe a PID.
+        if (typeof session.process.pid === "number" && session.process.pid > 0) {
+          clearInterval(checkInterval);
+          resolve();
+        }
+      }, 50);
+    });
+  }
+
+  private captureStream(stream: ReadableStream<any>, session: AgentSession, label: "stdout" | "stderr") {
+    const decoder = new TextDecoder();
+    (async () => {
+      const reader = stream.getReader();
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        buffer = this.flushBuffer(buffer, session, label);
+      }
+      if (buffer.length > 0) {
+        this.appendLog(session, `[${label}] ${buffer.trimEnd()}`);
+      }
+    })().catch((error) => {
+      this.appendLog(session, `[manager] failed to read ${label}: ${(error as Error).message}`);
+    });
+  }
+
+  private flushBuffer(buffer: string, session: AgentSession, label: string): string {
+    const lines = buffer.split(/\r?\n/);
+    if (lines.length === 1) {
+      return buffer;
+    }
+
+    for (let i = 0; i < lines.length - 1; i++) {
+      const line = lines[i]?.trimEnd();
+      if (line) {
+        this.appendLog(session, `[${label}] ${line}`);
+      }
+    }
+
+    return lines[lines.length - 1] ?? "";
+  }
+
+  private appendLog(session: AgentSession, entry: string) {
+    session.logs.push(entry);
+    if (session.logs.length > MAX_LOG_LINES) {
+      session.logs.splice(0, session.logs.length - MAX_LOG_LINES);
+    }
+    this.emit({ type: "session-updated", session: this.toSnapshot(session) });
+  }
+
+  private allocatePort(): number {
+    const { agentPortStart, agentPortMax } = this.config;
+    for (let offset = 0; offset < agentPortMax; offset += 1) {
+      const candidate = agentPortStart + offset;
+      if (!this.allocatedPorts.has(candidate)) {
+        this.allocatedPorts.add(candidate);
+        return candidate;
+      }
+    }
+    throw new Error("No available agent ports. Increase AGENT_MAX or free sessions.");
+  }
+
+  private releasePort(port: number) {
+    this.allocatedPorts.delete(port);
+  }
+
+  private toSnapshot(session: AgentSession): SessionSnapshot {
+    return {
+      id: session.id,
+      agent: session.agent,
+      port: session.port,
+      status: session.status,
+      startedAt: session.startedAt.toISOString(),
+      pid: session.process?.pid,
+      command: session.command,
+      workingDirectory: session.workingDirectory,
+      exitCode: session.exitCode,
+      logs: session.logs.slice(-50),
+    };
+  }
+
+  private emit(event: SessionEvent) {
+    for (const listener of this.listeners) {
+      listener(event);
+    }
+  }
+}

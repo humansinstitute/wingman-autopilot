@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wingman V2</title>
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#0a0a0a" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/path/Wingman_Goose_Logo_Light.png" />
+    <link rel="apple-touch-icon" href="/path/Wingman_Goose_Logo.png" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="wm-header">
+      <div class="wm-brand">
+        <img
+          src="/path/Wingman_Goose_Logo_Dark.png"
+          alt="Wingman logo"
+          width="40"
+          height="40"
+          class="wm-logo dark"
+        />
+        <img
+          src="/path/Wingman_Goose_Logo_Light.png"
+          alt="Wingman logo"
+          width="40"
+          height="40"
+          class="wm-logo light"
+        />
+        <div>
+          <h1>Wingman V2</h1>
+          <p class="wm-tagline">Solvitur Ambulando</p>
+        </div>
+      </div>
+      <nav>
+        <a href="/home" data-route="home">Home</a>
+        <a href="/live" data-route="live">Live</a>
+      </nav>
+      <button id="theme-toggle" class="wm-theme-toggle" aria-label="Toggle theme" aria-pressed="false">
+        <span class="sun" aria-hidden="true">☀</span>
+        <span class="moon" aria-hidden="true">☾</span>
+      </button>
+    </header>
+    <main id="app"></main>
+    <dialog id="session-dialog">
+      <form method="dialog">
+        <h2>Launch Agent Session</h2>
+        <label for="agent-select">Agent</label>
+        <select id="agent-select"></select>
+        <label for="working-directory">Working Directory</label>
+        <div class="working-directory-field">
+          <input id="working-directory" type="text" autocomplete="off" list="directory-suggestions" placeholder="~/code" />
+          <button type="button" class="wm-button secondary" id="browse-directory">Browse...</button>
+        </div>
+        <datalist id="directory-suggestions"></datalist>
+        <menu>
+          <button value="cancel" id="cancel-session">Cancel</button>
+          <button value="confirm" id="confirm-session">Launch</button>
+        </menu>
+      </form>
+    </dialog>
+    <dialog id="directory-dialog">
+      <form method="dialog">
+        <h2>Select Working Directory</h2>
+        <div class="directory-browser">
+          <div class="directory-browser__header">
+            <button type="button" class="wm-button secondary" id="directory-up">Up</button>
+            <span id="directory-current" class="directory-browser__path"></span>
+          </div>
+          <ul id="directory-list" class="directory-browser__list"></ul>
+        </div>
+        <menu>
+          <button type="button" class="wm-button" id="directory-use">Use This Directory</button>
+          <button value="cancel">Cancel</button>
+        </menu>
+      </form>
+    </dialog>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

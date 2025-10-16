@@ -1,27 +1,19 @@
----
-description: Bun-first AI agent workspace layout
-globs: "*.ts, *.tsx, *.html, *.css, *.js, *.jsx, package.json"
-alwaysApply: false
----
+# Repository Guidelines
 
-## Project Layout Precedents
+## Project Structure & Module Organization
+Wingman V2 centers on Bun services in `src/`. `src/server.ts` exposes the HTTP API/UI, `src/agents/` directs session orchestration, and `src/ui/` serves the dashboard bundle. Persisted state lives in `data/`. Keep compiled binaries in `out/agentapi`; the Bun source should not write there at runtime. `Examples/` holds multi-session demos, with `Examples/Example Web Interface` showcasing a reference frontend. Static assets served directly go in `public/`. Review `docs/architecture.md` before reworking subsystems.
 
-- `data/` stores all persistent databases used by Wingman V2 agents.
-- `src/` contains the TypeScript source for the Bun runtime services.
-- `out/agentapi` is the compiled binary that exposes agent capabilities over HTTP.
-- `Examples/` demonstrates multi-session agent orchestration across distinct ports.
-- `Examples/Example Web Interface/` contains a reference frontend that consumes the agent APIs.
+## Build, Test, and Development Commands
+Run `bun install` after pulling dependencies. Start the orchestrator locally with `bun start` (alias `bun run src/index.ts`), which respects environment settings from `src/config.ts`. Use `bun run --watch src/index.ts` while iterating to reload on change. Execute `bun test` to run TypeScript tests; add focused runs with `bun test path/to/file.test.ts`.
 
-## Bun Usage Guidelines
+## Coding Style & Naming Conventions
+TypeScript is the default; prefer ESM imports and explicit extensions when needed (`./foo.ts`). Use two-space indentation, trailing semicolons, and single quotes only inside template literals. Name files with kebab-case, classes/types with PascalCase, and functions or variables in camelCase. Co-locate agent helpers under `src/agents/` and UI utilities under `src/ui/` to keep files under 400 lines. Follow the strict TypeScript configuration in `tsconfig.json`; address compiler warnings before committing.
 
-Default to Bun for runtime, bundling, and testing.
+## Testing Guidelines
+Place unit tests beside the code (`feature.test.ts`) or in a sibling `__tests__` folder. Mock subprocesses via lightweight stubs rather than spawning real CLIs. Keep coverage meaningful around session lifecycle code (`ProcessManager`), especially port allocation and cleanup. Add regression tests when modifying API contracts in `src/server.ts`.
 
-- Use `bun run` for executing TypeScript entry points.
-- Use `bun install` for dependency management.
-- Use `bun test` for automated testing.
-- Prefer Bun-provided APIs (`Bun.serve`, `bun:sqlite`, `Bun.redis`, etc.) over Node-specific libraries.
+## Commit & Pull Request Guidelines
+Write imperative, present-tense commit subjects ≤72 characters (e.g., `Add process log streaming guard`). Separate logical changes into individual commits. PRs should describe scope, risks, and any configuration changes (env vars, ports). Link issues when relevant and include screenshots for UI tweaks (`/home`, `/live`). Ensure local `bun test` passes before requesting review.
 
-## Helpful References
-
-- `docs/architecture.md` describes how the directories interact to deliver the agent platform.
-- `tsconfig.json` is configured for Bun’s bundler resolution and strict TypeScript options.
+## Agent & Configuration Tips
+Confirm agent binaries (`out/agentapi`, `codex`, `claude`, `goose`, `opencode`) resolve on `$PATH` or override via environment variables listed in `README.md`. Update `DIRECTORY_DEF` when demos rely on alternate working directories. Document sensitive configuration changes in `docs/` so other agent operators can reproduce them.
