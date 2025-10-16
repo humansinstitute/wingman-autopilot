@@ -27,3 +27,10 @@
 - **Process Scaling**: Adjust `AGENT_MAX`/`AGENT_PORTS` in the environment; augment `ProcessManager` to distribute across nodes if required.
 - **Observability**: Enhance log streaming (e.g., WebSockets or SSE) and persist metrics for running sessions.
 - **Frontend**: Evolve `src/ui` or integrate the `Examples/Example Web Interface/` assets for richer controls, including runtime directory selection.
+
+## Image Attachments
+
+- `/api/uploads/images` accepts pasted or uploaded images for a specific agent session and stores them in `tmp/images/<agent>/`. Files are limited to 10 MB and only image MIME types are accepted.
+- The client inserts the agent-specific placeholder returned by the upload API (e.g., Codex/Claude receive `file://` URLs) directly into the composer, so no additional UI wiring is required when the message is sent.
+- `src/server.ts` exposes the stored image via `/uploads/images/<agent>/<file>` for agents that need HTTP access, while returning a `file://` reference for local CLIs.
+- A daily cleanup task removes images older than 24 hours from `tmp/images/` so the temporary store does not grow without bound. Adjust `imageTtlMs` in `src/server.ts` if retention requirements change.

@@ -1,5 +1,7 @@
-import { readdir, realpath, stat } from "node:fs/promises";
-import { dirname, isAbsolute, join, normalize, resolve as resolvePath } from "node:path";
+import { randomUUID } from "node:crypto";
+import { mkdir, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, extname, isAbsolute, join, normalize, resolve as resolvePath } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { AgentType, loadConfig } from "./config";
 import { ProcessManager } from "./agents/process-manager";
@@ -7,6 +9,126 @@ import { messageStore, ReplaceMessageInput } from "./storage/message-store";
 
 const config = loadConfig();
 const manager = new ProcessManager(config);
+
+const tmpRoot = normalize(join(fileURLToPath(new URL(".", import.meta.url)), "../tmp"));
+const imageRoot = join(tmpRoot, "images");
+const maxImageSizeBytes = 10 * 1024 * 1024; // 10MB
+const imageTtlMs = 24 * 60 * 60 * 1000;
+const imageCleanupIntervalMs = 24 * 60 * 60 * 1000;
+
+const ensureImageDirectory = async (agent: AgentType) => {
+  await mkdir(imageRoot, { recursive: true });
+  const directory = join(imageRoot, agent);
+  await mkdir(directory, { recursive: true });
+  return directory;
+};
+
+const createImageFilename = (name: string, mime: string): string => {
+  const originalExt = extname(name) || "";
+  if (originalExt) {
+    return `${randomUUID()}${originalExt.toLowerCase()}`;
+  }
+  const inferred = (() => {
+    if (!mime) return ".bin";
+    const subtype = mime.split("/")[1];
+    if (!subtype) return ".bin";
+    if (subtype === "jpeg") return ".jpg";
+    if (/^[a-z0-9]+$/i.test(subtype)) {
+      return `.${subtype.toLowerCase()}`;
+    }
+    return ".bin";
+  })();
+  return `${randomUUID()}${inferred}`;
+};
+
+const buildAgentImagePlaceholder = (agent: AgentType, absolutePath: string, publicPath: string) => {
+  const fileUrl = pathToFileURL(absolutePath).toString();
+  switch (agent) {
+    case "codex":
+    case "claude":
+      return `![uploaded image](${fileUrl})`;
+    case "goose":
+      return `![uploaded image](${publicPath})`;
+    default:
+      return publicPath;
+  }
+};
+
+const resolveTempImage = (pathname: string) => {
+  if (!pathname.startsWith("/uploads/images/")) return undefined;
+  const relative = pathname.replace("/uploads/images/", "");
+  if (!relative) return undefined;
+  const normalized = normalize(relative);
+  const fullPath = join(imageRoot, normalized);
+  if (!fullPath.startsWith(imageRoot)) {
+    return undefined;
+  }
+  const file = Bun.file(fullPath);
+  if (file.size === 0) return undefined;
+  return new Response(file, {
+    headers: {
+      ...(file.type ? { "content-type": file.type } : {}),
+      "cache-control": "no-store",
+    },
+  });
+};
+
+const runImageCleanup = async () => {
+  let directories: Awaited<ReturnType<typeof readdir>>;
+  try {
+    directories = await readdir(imageRoot, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    console.error("[uploads] failed to list image directory", error);
+    return;
+  }
+
+  const threshold = Date.now() - imageTtlMs;
+
+  await Promise.all(
+    directories
+      .filter((entry) => entry.isDirectory())
+      .map(async (dir) => {
+        const dirPath = join(imageRoot, dir.name);
+        let files: Awaited<ReturnType<typeof readdir>>;
+        try {
+          files = await readdir(dirPath, { withFileTypes: true });
+        } catch (error) {
+          console.error(`[uploads] failed to list directory ${dir.name}`, error);
+          return;
+        }
+
+        await Promise.all(
+          files
+            .filter((entry) => entry.isFile())
+            .map(async (file) => {
+              const filePath = join(dirPath, file.name);
+              try {
+                const stats = await stat(filePath);
+                if (stats.mtimeMs < threshold) {
+                  await rm(filePath, { force: true });
+                  console.log(`[uploads] removed expired image ${filePath}`);
+                }
+              } catch (error) {
+                console.error(`[uploads] failed to cleanup ${filePath}`, error);
+              }
+            }),
+        );
+      }),
+  );
+};
+
+const scheduleImageCleanup = () => {
+  // Fire-and-forget; best-effort cleanup
+  runImageCleanup().catch((error) => console.error("[uploads] initial cleanup failed", error));
+  setInterval(() => {
+    runImageCleanup().catch((error) => console.error("[uploads] scheduled cleanup failed", error));
+  }, imageCleanupIntervalMs).unref?.();
+};
+
+scheduleImageCleanup();
 
 manager.on((event) => {
   if (event.type === "session-started") {
@@ -242,6 +364,70 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
     }
   }
 
+  if (pathname === "/api/uploads/images" && method === "POST") {
+    let form: FormData;
+    try {
+      form = await request.formData();
+    } catch {
+      return Response.json({ error: "Invalid form data" }, { status: 400 });
+    }
+
+    const agentInput = form.get("agent");
+    const agent = typeof agentInput === "string" ? agentInput.toLowerCase() : "";
+    if (!isAgentType(agent)) {
+      return Response.json({ error: "Unsupported agent target" }, { status: 400 });
+    }
+
+    const fileEntry = form.get("image");
+    if (!fileEntry || typeof (fileEntry as Blob).arrayBuffer !== "function") {
+      return Response.json({ error: "Image file is required" }, { status: 400 });
+    }
+
+    const file = fileEntry as Blob & { name?: string; size: number; type?: string };
+
+    if (file.size === 0) {
+      return Response.json({ error: "Empty files are not allowed" }, { status: 400 });
+    }
+
+    if (file.size > maxImageSizeBytes) {
+      return Response.json({ error: "Image exceeds 10MB limit" }, { status: 413 });
+    }
+
+    if (!file.type?.startsWith("image/")) {
+      return Response.json({ error: "Only image uploads are supported" }, { status: 400 });
+    }
+
+    let directory: string;
+    try {
+      directory = await ensureImageDirectory(agent);
+    } catch (error) {
+      console.error("[uploads] failed to ensure directory", error);
+      return Response.json({ error: "Failed to prepare image storage" }, { status: 500 });
+    }
+
+    const filename = createImageFilename(file.name ?? "upload", file.type ?? "");
+    const diskPath = join(directory, filename);
+    try {
+      const buffer = Buffer.from(await file.arrayBuffer());
+      await writeFile(diskPath, buffer);
+    } catch (error) {
+      console.error("[uploads] failed to persist image", error);
+      return Response.json({ error: "Failed to store image" }, { status: 500 });
+    }
+
+    const relativePath = normalize(join(agent, filename)).replace(/\\/g, "/");
+    const publicPath = `/uploads/images/${relativePath}`;
+    const placeholder = buildAgentImagePlaceholder(agent, diskPath, `${publicPath}`);
+
+    return Response.json({
+      agent,
+      name: file.name,
+      publicPath,
+      relativePath,
+      placeholder,
+    });
+  }
+
   if (pathname === "/api/sessions" && method === "GET") {
     const sessions = manager.listSessions();
     return Response.json({ sessions });
@@ -366,6 +552,11 @@ const server = Bun.serve({
 
     if (pathname.startsWith("/api/")) {
       return handleApi(request, url, method);
+    }
+
+    const tempImage = resolveTempImage(pathname);
+    if (tempImage) {
+      return tempImage;
     }
 
     const assetResponse = resolveAsset(pathname);

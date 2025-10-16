@@ -16,6 +16,94 @@ const state = {
   lastLogLength: new Map(), // sessionId -> length of logs
 };
 
+const getSessionById = (sessionId) => state.sessions.find((session) => session.id === sessionId);
+
+const insertTextAtCursor = (textarea, text, sessionId) => {
+  const start = textarea.selectionStart ?? textarea.value.length;
+  const end = textarea.selectionEnd ?? textarea.value.length;
+  const before = textarea.value.slice(0, start);
+  const after = textarea.value.slice(end);
+  const next = `${before}${text}${after}`;
+  textarea.value = next;
+  const nextCursor = start + text.length;
+  textarea.selectionStart = textarea.selectionEnd = nextCursor;
+  state.messageDrafts.set(sessionId, next);
+  return next;
+};
+
+const extractImageFiles = (items) => {
+  if (!items) return [];
+  const files = [];
+  for (const item of Array.from(items)) {
+    if (!item) continue;
+    if (item.kind === "file") {
+      const file = item.getAsFile?.() ?? item;
+      if (file && file.type?.startsWith?.("image/")) {
+        files.push(file);
+      }
+    } else if ("type" in item && item.type?.startsWith?.("image/")) {
+      files.push(item);
+    }
+  }
+  return files;
+};
+
+const handleImageUploads = async (sessionId, files, textarea, resizeTextarea, setUploadingState) => {
+  if (!files || files.length === 0) return;
+  const session = getSessionById(sessionId);
+  if (!session) {
+    window.alert("Unable to locate session for image upload.");
+    return;
+  }
+
+  for (const file of files) {
+    if (!file?.type?.startsWith?.("image/")) {
+      continue;
+    }
+    setUploadingState(true);
+    try {
+      const form = new FormData();
+      form.append("agent", session.agent);
+      form.append("image", file, file.name);
+
+      const response = await fetch("/api/uploads/images", {
+        method: "POST",
+        body: form,
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        const message = data?.error ?? response.statusText ?? "Image upload failed";
+        window.alert(message);
+        continue;
+      }
+
+      const payload = await response.json().catch(() => ({}));
+      const placeholder =
+        typeof payload?.placeholder === "string"
+          ? payload.placeholder
+          : typeof payload?.publicPath === "string"
+            ? payload.publicPath
+            : null;
+
+      if (!placeholder) {
+        window.alert("Image upload succeeded without a usable reference.");
+        continue;
+      }
+
+      const textToInsert = textarea.value.endsWith("\n") ? `${placeholder}\n` : `\n${placeholder}\n`;
+      insertTextAtCursor(textarea, textToInsert, sessionId);
+      resizeTextarea();
+      textarea.focus();
+    } catch (error) {
+      console.error("Failed to upload image", error);
+      window.alert("Image upload failed. Check console for details.");
+    } finally {
+      setUploadingState(false);
+    }
+  }
+};
+
 const dialog = document.getElementById("session-dialog");
 const agentSelect = document.getElementById("agent-select");
 const confirmButton = document.getElementById("confirm-session");
@@ -1064,6 +1152,12 @@ const renderLive = () => {
   textarea.value = state.messageDrafts.get(sessionId) ?? "";
   textarea.setAttribute("rows", "1");
 
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = "image/*";
+  fileInput.multiple = true;
+  fileInput.style.display = "none";
+
   const resizeTextarea = () => {
     textarea.style.height = "auto";
     const lineHeight = parseFloat(window.getComputedStyle(textarea).lineHeight) || 20;
@@ -1072,6 +1166,22 @@ const renderLive = () => {
     const nextHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
     textarea.style.height = `${nextHeight}px`;
     textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  };
+
+  let submit;
+  let attachButton;
+  const setUploadingState = (isUploading) => {
+    if (isUploading) {
+      composer.dataset.uploading = "true";
+    } else {
+      delete composer.dataset.uploading;
+    }
+    if (submit) {
+      submit.disabled = Boolean(isUploading);
+    }
+    if (attachButton) {
+      attachButton.disabled = Boolean(isUploading);
+    }
   };
 
   textarea.addEventListener("input", (event) => {
@@ -1083,6 +1193,40 @@ const renderLive = () => {
       event.preventDefault();
       composer.requestSubmit();
     }
+  });
+
+  textarea.addEventListener("paste", (event) => {
+    const files = extractImageFiles(event.clipboardData?.items ?? event.clipboardData?.files);
+    if (files.length > 0) {
+      event.preventDefault();
+      handleImageUploads(sessionId, files, textarea, resizeTextarea, setUploadingState);
+    }
+  });
+
+  const handleDropEvent = (event) => {
+    const transfer = event.dataTransfer;
+    if (!transfer) return;
+    const files = extractImageFiles(transfer.items ?? transfer.files);
+    if (files.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    handleImageUploads(sessionId, files, textarea, resizeTextarea, setUploadingState);
+  };
+
+  composer.addEventListener("dragover", (event) => {
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+    event.preventDefault();
+  });
+  composer.addEventListener("drop", handleDropEvent);
+
+  fileInput.addEventListener("change", () => {
+    const files = extractImageFiles(fileInput.files);
+    if (files.length > 0) {
+      handleImageUploads(sessionId, files, textarea, resizeTextarea, setUploadingState);
+    }
+    fileInput.value = "";
   });
 
   composer.addEventListener("submit", (event) => {
@@ -1103,12 +1247,20 @@ const renderLive = () => {
     }
   });
 
-  const submit = document.createElement("button");
+  attachButton = document.createElement("button");
+  attachButton.type = "button";
+  attachButton.className = "wm-button secondary";
+  attachButton.textContent = "Attach Image";
+  attachButton.addEventListener("click", () => {
+    fileInput.click();
+  });
+
+  submit = document.createElement("button");
   submit.type = "submit";
   submit.className = "wm-button";
   submit.textContent = "Send";
 
-  composer.append(textarea, submit);
+  composer.append(fileInput, textarea, attachButton, submit);
   composerShell.append(composer);
   wrapper.append(composerShell);
 

@@ -9,6 +9,7 @@ Examples/
 out
 dist
 *.tgz
+tmp/
 
 # code coverage
 coverage
