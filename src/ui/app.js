@@ -6,8 +6,14 @@ const state = {
   logs: new Map(),
   conversations: new Map(),
   messageDrafts: new Map(),
+  logPanelOpen: new Map(),
   activeSessionId: null,
   lastWorkingDirectory: null,
+  // DOM references for incremental updates
+  conversationContainers: new Map(), // sessionId -> DOM element
+  logContainers: new Map(), // sessionId -> DOM element
+  lastMessageCount: new Map(), // sessionId -> number of messages
+  lastLogLength: new Map(), // sessionId -> length of logs
 };
 
 const dialog = document.getElementById("session-dialog");
@@ -17,6 +23,11 @@ const cancelButton = document.getElementById("cancel-session");
 const appRoot = document.getElementById("app");
 const navLinks = Array.from(document.querySelectorAll("nav a[data-route]"));
 const themeToggle = document.getElementById("theme-toggle");
+const menuToggle = document.getElementById("menu-toggle");
+const menuPanel = document.querySelector(".wm-menu-panel");
+const menuTabsContainer = document.getElementById("menu-tabs");
+const pullRefreshIndicator = document.getElementById("pull-refresh");
+const pullRefreshLabel = pullRefreshIndicator?.querySelector(".label");
 const directoryInput = document.getElementById("working-directory");
 const directorySuggestions = document.getElementById("directory-suggestions");
 const browseDirectoryButton = document.getElementById("browse-directory");
@@ -65,6 +76,27 @@ const toggleTheme = () => {
   applyTheme(nextTheme);
 };
 
+const closeMenu = () => {
+  if (document.body.dataset.menuOpen === "true") {
+    delete document.body.dataset.menuOpen;
+    menuToggle?.setAttribute("aria-expanded", "false");
+    menuPanel?.setAttribute("aria-hidden", "true");
+    resetPullRefresh();
+  }
+};
+
+const toggleMenu = () => {
+  const isOpen = document.body.dataset.menuOpen === "true";
+  if (isOpen) {
+    closeMenu();
+  } else {
+    document.body.dataset.menuOpen = "true";
+    menuToggle?.setAttribute("aria-expanded", "true");
+    menuPanel?.setAttribute("aria-hidden", "false");
+    resetPullRefresh();
+  }
+};
+
 const initTheme = () => {
   const preferred = detectPreferredTheme();
   applyTheme(preferred, false);
@@ -98,6 +130,83 @@ const setActiveNav = () => {
       link.classList.remove("active");
     }
   });
+};
+
+const syncMenuTabs = () => {
+  if (!menuTabsContainer) return;
+  menuTabsContainer.innerHTML = "";
+  if (currentRoute !== "live") {
+    menuTabsContainer.dataset.state = "hidden";
+    return;
+  }
+  if (state.sessions.length === 0) {
+    menuTabsContainer.dataset.state = "empty";
+    const empty = document.createElement("p");
+    empty.className = "wm-menu-empty";
+    empty.textContent = "No live sessions yet.";
+    menuTabsContainer.append(empty);
+    return;
+  }
+  menuTabsContainer.dataset.state = "ready";
+  const heading = document.createElement("p");
+  heading.className = "wm-menu-heading";
+  heading.textContent = "Sessions";
+  menuTabsContainer.append(heading);
+  menuTabsContainer.append(renderTabs({ variant: "menu", onSelect: closeMenu }));
+};
+
+const PULL_THRESHOLD = 90;
+const PULL_MAX = 150;
+const PULL_BASE_OFFSET = -120;
+let pullStartY = null;
+let pullActive = false;
+let pullReady = false;
+let pullRefreshing = false;
+
+const setPullState = (state, distance = 0) => {
+  if (!pullRefreshIndicator) return;
+  const clamped = Math.max(0, Math.min(distance, PULL_MAX));
+  const translate = state === "hidden"
+    ? PULL_BASE_OFFSET
+    : Math.min(90, -80 + clamped * 1.1);
+  pullRefreshIndicator.dataset.state = state;
+  pullRefreshIndicator.style.transform = `translate(-50%, ${translate}px)`;
+  if (pullRefreshLabel) {
+    if (state === "release") {
+      pullRefreshLabel.textContent = "Release to refresh";
+    } else if (state === "refresh") {
+      pullRefreshLabel.textContent = "Refreshing…";
+    } else {
+      pullRefreshLabel.textContent = "Pull to refresh";
+    }
+  }
+};
+
+const resetPullRefresh = () => {
+  pullStartY = null;
+  pullActive = false;
+  pullReady = false;
+  if (pullRefreshing) return;
+  setPullState("hidden", 0);
+};
+
+const triggerPullRefresh = async () => {
+  if (!pullRefreshIndicator || pullRefreshing) return;
+  pullRefreshing = true;
+  setPullState("refresh", PULL_THRESHOLD);
+  try {
+    await fetchSessions();
+    render();
+  } catch (error) {
+    console.error("Pull-to-refresh failed", error);
+  } finally {
+    pullReady = false;
+    pullActive = false;
+    setTimeout(() => {
+      pullRefreshing = false;
+      resetPullRefresh();
+    }, 500);
+  }
 };
 
 const DIRECTORY_SUGGESTION_DELAY = 160;
@@ -318,6 +427,8 @@ const fetchSessions = async () => {
   state.sessions = data.sessions ?? [];
 
   const sessionIds = new Set(state.sessions.map((session) => session.id));
+
+  // Clean up data and DOM references for deleted sessions
   for (const key of Array.from(state.logs.keys())) {
     if (!sessionIds.has(key)) state.logs.delete(key);
   }
@@ -326,6 +437,18 @@ const fetchSessions = async () => {
   }
   for (const key of Array.from(state.messageDrafts.keys())) {
     if (!sessionIds.has(key)) state.messageDrafts.delete(key);
+  }
+  for (const key of Array.from(state.conversationContainers.keys())) {
+    if (!sessionIds.has(key)) state.conversationContainers.delete(key);
+  }
+  for (const key of Array.from(state.logContainers.keys())) {
+    if (!sessionIds.has(key)) state.logContainers.delete(key);
+  }
+  for (const key of Array.from(state.lastMessageCount.keys())) {
+    if (!sessionIds.has(key)) state.lastMessageCount.delete(key);
+  }
+  for (const key of Array.from(state.lastLogLength.keys())) {
+    if (!sessionIds.has(key)) state.lastLogLength.delete(key);
   }
 
   if (!state.activeSessionId && state.sessions.length > 0) {
@@ -345,6 +468,11 @@ const fetchLogs = async (sessionId) => {
   if (!response.ok) return;
   const data = await response.json();
   state.logs.set(sessionId, data.logs);
+
+  // Trigger incremental DOM update if on live route
+  if (currentRoute === "live" && sessionId === state.activeSessionId) {
+    updateLogsDOM(sessionId);
+  }
 };
 
 const fetchConversation = async (sessionId) => {
@@ -354,6 +482,11 @@ const fetchConversation = async (sessionId) => {
     const data = await response.json();
     const items = Array.isArray(data?.messages) ? data.messages : [];
     state.conversations.set(sessionId, items);
+
+    // Trigger incremental DOM update if on live route
+    if (currentRoute === "live" && sessionId === state.activeSessionId) {
+      updateConversationDOM(sessionId);
+    }
   } catch (error) {
     console.error("Failed to load conversation", error);
   }
@@ -361,12 +494,147 @@ const fetchConversation = async (sessionId) => {
 
 const pollSessions = async () => {
   try {
+    const previousSessionCount = state.sessions.length;
+    const previousSessionIds = state.sessions.map(s => s.id).join(',');
+
     await fetchSessions();
-    render();
+
+    const currentSessionCount = state.sessions.length;
+    const currentSessionIds = state.sessions.map(s => s.id).join(',');
+    const sessionsChanged = previousSessionCount !== currentSessionCount || previousSessionIds !== currentSessionIds;
+
+    // On home route, always render to show session updates
+    if (currentRoute !== "live") {
+      render();
+    } else if (!state.activeSessionId) {
+      // On live route with no active session, render to show empty state
+      render();
+    } else {
+      // On live route with active session:
+      // - Update menu tabs to reflect current sessions
+      syncMenuTabs();
+      // - Only replace tabs bar if sessions changed (to preserve event listeners)
+      if (sessionsChanged) {
+        const tabsBar = document.querySelector('.wm-tabs-bar');
+        if (tabsBar) {
+          const existingTabs = tabsBar.querySelector('.wm-tabs');
+          if (existingTabs) {
+            const newTabs = renderTabs();
+            existingTabs.replaceWith(newTabs);
+          }
+        }
+      }
+      // - Incremental updates for conversation/logs are handled by fetchConversation and fetchLogs
+    }
   } catch (error) {
     console.error("Failed to refresh sessions", error);
   } finally {
-    setTimeout(pollSessions, 5000);
+    setTimeout(pollSessions, 1000);
+  }
+};
+
+const handleWindowFocus = async () => {
+  try {
+    await fetchSessions();
+    render();
+  } catch (error) {
+    console.error("Failed to refresh on focus", error);
+  }
+};
+
+const updateConversationDOM = (sessionId) => {
+  let container = state.conversationContainers.get(sessionId);
+
+  // If container reference is lost, try to find it in the DOM
+  if (!container || !document.contains(container)) {
+    const conversationWrapper = document.querySelector('.wm-live-conversation .wm-conversation');
+    if (conversationWrapper) {
+      container = conversationWrapper;
+      state.conversationContainers.set(sessionId, container);
+      // Re-sync the message count based on actual DOM
+      const existingMessages = container.querySelectorAll('.wm-message');
+      state.lastMessageCount.set(sessionId, existingMessages.length);
+    } else {
+      return;
+    }
+  }
+
+  const conversation = state.conversations.get(sessionId) ?? [];
+  const lastCount = state.lastMessageCount.get(sessionId) ?? 0;
+
+  const scrollContainer = container.closest('.wm-live-conversation');
+  const isAtBottom = scrollContainer
+    ? (scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) < 100
+    : true;
+
+  // Handle new messages
+  if (conversation.length > lastCount) {
+    const newMessages = conversation.slice(lastCount);
+
+    newMessages.forEach((message) => {
+      const bubble = document.createElement("article");
+      bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
+      const body = document.createElement("pre");
+      body.textContent = message.content ?? message.message ?? "";
+      bubble.append(body);
+      container.append(bubble);
+    });
+
+    state.lastMessageCount.set(sessionId, conversation.length);
+  }
+
+  // Handle updated messages (streaming SSE - message content changes)
+  if (conversation.length === lastCount && conversation.length > 0) {
+    const domMessages = container.querySelectorAll('.wm-message');
+
+    conversation.forEach((message, idx) => {
+      const domMessage = domMessages[idx];
+      if (domMessage) {
+        const body = domMessage.querySelector('pre');
+        const currentContent = body?.textContent || '';
+        const newContent = message.content ?? message.message ?? '';
+
+        if (currentContent !== newContent) {
+          if (body) {
+            body.textContent = newContent;
+          }
+        }
+      }
+    });
+  }
+
+  // Auto-scroll if user was at bottom
+  if (isAtBottom && scrollContainer) {
+    requestAnimationFrame(() => {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    });
+  }
+};
+
+const updateLogsDOM = (sessionId) => {
+  let container = state.logContainers.get(sessionId);
+
+  // If container reference is lost, try to find it in the DOM
+  if (!container || !document.contains(container)) {
+    const logViewer = document.querySelector('.wm-log-panel .log-viewer');
+    if (logViewer) {
+      container = logViewer;
+      state.logContainers.set(sessionId, container);
+      // Re-sync the log length
+      const currentLines = container.textContent.split('\n').filter(l => l.length > 0);
+      state.lastLogLength.set(sessionId, currentLines.length);
+    } else {
+      return;
+    }
+  }
+
+  const logs = state.logs.get(sessionId) ?? [];
+  const lastLength = state.lastLogLength.get(sessionId) ?? 0;
+
+  // Only update if logs changed
+  if (logs.length !== lastLength || logs.join("\n") !== container.textContent) {
+    container.textContent = logs.join("\n");
+    state.lastLogLength.set(sessionId, logs.length);
   }
 };
 
@@ -455,6 +723,14 @@ const stopSession = async (sessionId) => {
   render();
 };
 
+const resumeSession = async (sessionId) => {
+  state.activeSessionId = sessionId;
+  currentRoute = "live";
+  window.history.pushState({ route: "live" }, "", "/live");
+  await Promise.all([fetchConversation(sessionId), fetchLogs(sessionId)]);
+  render();
+};
+
 const sendMessage = async (sessionId, content) => {
   const session = state.sessions.find((item) => item.id === sessionId);
   if (!session) return;
@@ -478,8 +754,17 @@ const sendMessage = async (sessionId, content) => {
     const messages = Array.isArray(payload?.messages) ? payload.messages : [];
     state.conversations.set(sessionId, messages);
     state.messageDrafts.set(sessionId, "");
+
+    // Trigger incremental updates instead of full render
+    updateConversationDOM(sessionId);
     await fetchLogs(sessionId);
-    render();
+
+    // Only render composer area to update the textarea
+    const textarea = document.querySelector('.wm-composer textarea');
+    if (textarea) {
+      textarea.value = "";
+      textarea.style.height = "auto";
+    }
   } catch (error) {
     console.error("Failed to send agent message", error);
     window.alert("Failed to send message to agent. Check console for details.");
@@ -543,23 +828,35 @@ const renderHome = () => {
         }
       }
       const actionsCell = row.lastElementChild;
+
+      const resumeBtn = document.createElement("button");
+      resumeBtn.className = "wm-button";
+      resumeBtn.textContent = "Resume";
+      resumeBtn.addEventListener("click", () => resumeSession(session.id));
+
       const stopBtn = document.createElement("button");
       stopBtn.className = "wm-button secondary";
       stopBtn.textContent = "Stop";
       stopBtn.addEventListener("click", () => stopSession(session.id));
-      actionsCell.append(stopBtn);
+
+      actionsCell.append(resumeBtn, stopBtn);
       tbody.append(row);
     });
   }
 
   table.append(tbody);
-  container.append(table);
+  const tableContainer = document.createElement("div");
+  tableContainer.className = "wm-table-container";
+  tableContainer.append(table);
+  container.append(tableContainer);
   return container;
 };
 
-const renderTabs = () => {
+const renderTabs = (options = {}) => {
+  const variant = options.variant === "menu" ? "menu" : "default";
+  const onSelect = typeof options.onSelect === "function" ? options.onSelect : null;
   const tabs = document.createElement("div");
-  tabs.className = "wm-tabs";
+  tabs.className = `wm-tabs${variant === "menu" ? " menu" : ""}`;
 
   state.sessions.forEach((session) => {
     const tab = document.createElement("div");
@@ -574,15 +871,43 @@ const renderTabs = () => {
     `;
 
     tab.addEventListener("click", () => {
+      if (state.activeSessionId === session.id) {
+        // Already active, no need to switch
+        onSelect?.();
+        return;
+      }
       state.activeSessionId = session.id;
       fetchLogs(session.id);
-      fetchConversation(session.id).finally(render);
+      fetchConversation(session.id);
+      // Don't call render() - it will destroy DOM references
+      // Instead, just update the tabs to show active state
+      const tabsBar = document.querySelector('.wm-tabs-bar');
+      if (tabsBar) {
+        const existingTabs = tabsBar.querySelector('.wm-tabs');
+        if (existingTabs) {
+          const newTabs = renderTabs();
+          existingTabs.replaceWith(newTabs);
+        }
+      }
+      // Render the conversation/logs for the new session
+      const scrollRegion = document.querySelector('.wm-live-scroll');
+      if (scrollRegion) {
+        scrollRegion.innerHTML = '';
+        const logSection = renderLogs(session.id);
+        scrollRegion.append(logSection);
+        const conversationContainer = document.createElement("div");
+        conversationContainer.className = "wm-live-conversation";
+        conversationContainer.append(renderConversation(session.id));
+        scrollRegion.append(conversationContainer);
+      }
+      onSelect?.();
     });
 
     const closeButton = tab.querySelector(".close");
     closeButton.addEventListener("click", (event) => {
       event.stopPropagation();
       stopSession(session.id);
+      onSelect?.();
     });
 
     tabs.append(tab);
@@ -592,7 +917,10 @@ const renderTabs = () => {
   newTab.className = "wm-tab new";
   newTab.textContent = "+";
   newTab.title = "Start new session";
-  newTab.addEventListener("click", openDialog);
+  newTab.addEventListener("click", () => {
+    openDialog();
+    onSelect?.();
+  });
   tabs.append(newTab);
 
   return tabs;
@@ -600,10 +928,25 @@ const renderTabs = () => {
 
 const renderLogs = (sessionId) => {
   const logs = state.logs.get(sessionId) ?? ["No logs yet"];
+  const panel = document.createElement("details");
+  panel.className = "wm-log-panel";
+  const summary = document.createElement("summary");
+  summary.textContent = "Raw Terminal Output";
   const container = document.createElement("div");
   container.className = "log-viewer";
   container.textContent = logs.join("\n");
-  return container;
+  const isOpen = state.logPanelOpen.get(sessionId) ?? false;
+  panel.open = Boolean(isOpen);
+  panel.addEventListener("toggle", () => {
+    state.logPanelOpen.set(sessionId, panel.open);
+  });
+  panel.append(summary, container);
+
+  // Store reference for incremental updates
+  state.logContainers.set(sessionId, container);
+  state.lastLogLength.set(sessionId, logs.length);
+
+  return panel;
 };
 
 const renderConversation = (sessionId) => {
@@ -615,60 +958,113 @@ const renderConversation = (sessionId) => {
     const empty = document.createElement("p");
     empty.textContent = "Conversation has no messages yet.";
     wrapper.append(empty);
-    return wrapper;
+  } else {
+    conversation.forEach((message) => {
+      const bubble = document.createElement("article");
+      bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
+      const body = document.createElement("pre");
+      body.textContent = message.content ?? message.message ?? "";
+      bubble.append(body);
+      wrapper.append(bubble);
+    });
   }
 
-  conversation.forEach((message) => {
-    const bubble = document.createElement("article");
-    bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
-    const header = document.createElement("header");
-    header.textContent = (message.type ?? message.role ?? "assistant").toUpperCase();
-    const body = document.createElement("pre");
-    body.textContent = message.content ?? message.message ?? "";
-    bubble.append(header, body);
-    wrapper.append(bubble);
-  });
+  // Store reference for incremental updates
+  state.conversationContainers.set(sessionId, wrapper);
+  state.lastMessageCount.set(sessionId, conversation.length);
 
   return wrapper;
 };
 
 const renderLive = () => {
-  const container = document.createElement("section");
-  container.className = "wm-card";
+  const wrapper = document.createElement("div");
+  wrapper.className = "wm-live";
 
-  container.append(renderTabs());
+  const tabsBar = document.createElement("div");
+  tabsBar.className = "wm-tabs-bar";
+  tabsBar.append(renderTabs());
+  wrapper.append(tabsBar);
 
   if (state.sessions.length === 0) {
+    const container = document.createElement("section");
+    container.className = "wm-card wm-live-main";
     const empty = document.createElement("p");
     empty.textContent = "No live sessions. Launch a new agent to begin.";
     container.append(empty);
-    return container;
+    wrapper.append(container);
+    return wrapper;
   }
 
-  if (!state.activeSessionId) {
+  if (!state.activeSessionId || !state.sessions.some((session) => session.id === state.activeSessionId)) {
     state.activeSessionId = state.sessions[0].id;
   }
 
   const sessionId = state.activeSessionId;
-  const logSection = renderLogs(sessionId);
-  logSection.style.marginTop = "1.5rem";
 
-  container.append(renderConversation(sessionId));
-  container.append(logSection);
+  const main = document.createElement("section");
+  main.className = "wm-card wm-live-main";
+
+  const scrollRegion = document.createElement("div");
+  scrollRegion.className = "wm-live-scroll";
+  const logSection = renderLogs(sessionId);
+  scrollRegion.append(logSection);
+
+  const conversationContainer = document.createElement("div");
+  conversationContainer.className = "wm-live-conversation";
+  conversationContainer.append(renderConversation(sessionId));
+  scrollRegion.append(conversationContainer);
+
+  main.append(scrollRegion);
+  wrapper.append(main);
+
+  const composerShell = document.createElement("div");
+  composerShell.className = "wm-composer-shell";
 
   const composer = document.createElement("form");
   composer.className = "wm-composer";
-  composer.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const draft = state.messageDrafts.get(sessionId) ?? "";
-    sendMessage(sessionId, draft);
-  });
 
   const textarea = document.createElement("textarea");
   textarea.placeholder = "Ask the agent something...";
   textarea.value = state.messageDrafts.get(sessionId) ?? "";
+  textarea.setAttribute("rows", "1");
+
+  const resizeTextarea = () => {
+    textarea.style.height = "auto";
+    const lineHeight = parseFloat(window.getComputedStyle(textarea).lineHeight) || 20;
+    const minHeight = lineHeight;
+    const maxHeight = lineHeight * 8;
+    const nextHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  };
+
   textarea.addEventListener("input", (event) => {
     state.messageDrafts.set(sessionId, event.target.value);
+    resizeTextarea();
+  });
+  textarea.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      composer.requestSubmit();
+    }
+  });
+
+  composer.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const draft = textarea.value;
+    state.messageDrafts.set(sessionId, draft);
+    const result = sendMessage(sessionId, draft);
+    if (result?.finally) {
+      result.finally(() => {
+        // After sending, find the new textarea and focus it
+        requestAnimationFrame(() => {
+          const newTextarea = document.querySelector('.wm-composer textarea');
+          if (newTextarea) {
+            newTextarea.focus();
+          }
+        });
+      });
+    }
   });
 
   const submit = document.createElement("button");
@@ -677,15 +1073,96 @@ const renderLive = () => {
   submit.textContent = "Send";
 
   composer.append(textarea, submit);
-  container.append(composer);
-  return container;
+  composerShell.append(composer);
+  wrapper.append(composerShell);
+
+  resizeTextarea();
+
+  requestAnimationFrame(() => {
+    if (!document.contains(textarea)) return;
+    textarea.focus();
+    resizeTextarea();
+  });
+
+  return wrapper;
 };
 
 const render = () => {
   appRoot.innerHTML = "";
   const view = currentRoute === "live" ? renderLive() : renderHome();
   appRoot.append(view);
+  appRoot.dataset.route = currentRoute;
   setActiveNav();
+  closeMenu();
+  syncMenuTabs();
+  if (!pullRefreshing && !pullActive) {
+    resetPullRefresh();
+  }
+};
+
+const handleTouchStart = (event) => {
+  if (!pullRefreshIndicator || pullRefreshing) return;
+  if (document.body.dataset.menuOpen === "true") return;
+  if (window.scrollY > 0) {
+    resetPullRefresh();
+    return;
+  }
+  const touch = event.touches?.[0];
+  if (!touch) return;
+
+  // Only allow pull-to-refresh if touch starts in header area
+  const header = document.querySelector('.wm-header');
+  if (header) {
+    const headerRect = header.getBoundingClientRect();
+    if (touch.clientY < headerRect.top || touch.clientY > headerRect.bottom) {
+      return;
+    }
+  }
+
+  pullStartY = touch.clientY;
+  pullActive = true;
+  pullReady = false;
+};
+
+const handleTouchMove = (event) => {
+  if (!pullActive || pullRefreshing || !pullRefreshIndicator) return;
+  const touch = event.touches?.[0];
+  if (!touch) return;
+  if (window.scrollY > 0) {
+    resetPullRefresh();
+    return;
+  }
+  const delta = touch.clientY - (pullStartY ?? touch.clientY);
+  if (delta <= 0) {
+    pullReady = false;
+    setPullState("pull", 0);
+    return;
+  }
+  const distance = Math.min(delta, PULL_MAX);
+  if (distance > 0) {
+    try {
+      event.preventDefault();
+    } catch {
+      // ignore
+    }
+  }
+  if (distance >= PULL_THRESHOLD) {
+    pullReady = true;
+    setPullState("release", distance);
+  } else {
+    pullReady = false;
+    setPullState("pull", distance);
+  }
+};
+
+const finishPull = () => {
+  if (!pullActive) return;
+  pullActive = false;
+  if (pullReady && !pullRefreshing) {
+    triggerPullRefresh();
+  } else {
+    resetPullRefresh();
+  }
 };
 
 navLinks.forEach((link) => {
@@ -693,11 +1170,38 @@ navLinks.forEach((link) => {
     event.preventDefault();
     const targetRoute = link.dataset.route;
     if (!targetRoute || targetRoute === currentRoute) return;
+    closeMenu();
     currentRoute = targetRoute;
     const path = targetRoute === "live" ? "/live" : "/home";
     window.history.pushState({ route: targetRoute }, "", path);
     render();
   });
+});
+
+menuToggle?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleMenu();
+});
+
+document.addEventListener("click", (event) => {
+  if (document.body.dataset.menuOpen === "true") {
+    const target = event.target;
+    if (target instanceof Node && !menuToggle?.contains(target) && !menuPanel?.contains(target)) {
+      closeMenu();
+    }
+  }
+});
+
+window.addEventListener("resize", () => {
+  if (window.innerWidth > 720) {
+    closeMenu();
+  }
+});
+
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeMenu();
+  }
 });
 
 if (directoryInput) {
@@ -738,10 +1242,27 @@ if (directoryDialog) {
   });
 }
 
+window.addEventListener("touchstart", handleTouchStart, { passive: true });
+window.addEventListener("touchmove", handleTouchMove, { passive: false });
+window.addEventListener("touchend", finishPull, { passive: true });
+window.addEventListener("touchcancel", finishPull, { passive: true });
+window.addEventListener(
+  "scroll",
+  () => {
+    if (pullRefreshing) return;
+    if (window.scrollY > 16) {
+      resetPullRefresh();
+    }
+  },
+  { passive: true },
+);
+
 window.addEventListener("popstate", () => {
   currentRoute = getRouteFromPath(window.location.pathname);
   render();
 });
+
+window.addEventListener("focus", handleWindowFocus);
 
 confirmButton.addEventListener("click", (event) => {
   event.preventDefault();
