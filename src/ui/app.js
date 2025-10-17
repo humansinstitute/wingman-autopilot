@@ -1250,7 +1250,8 @@ const renderLive = () => {
   attachButton = document.createElement("button");
   attachButton.type = "button";
   attachButton.className = "wm-button secondary";
-  attachButton.textContent = "Attach Image";
+  attachButton.innerHTML = '<span class="button-icon" aria-hidden="true">📎</span><span class="button-text">Attach Image</span>';
+  attachButton.setAttribute("aria-label", "Attach Image");
   attachButton.addEventListener("click", () => {
     fileInput.click();
   });
@@ -1258,9 +1259,14 @@ const renderLive = () => {
   submit = document.createElement("button");
   submit.type = "submit";
   submit.className = "wm-button";
-  submit.textContent = "Send";
+  submit.innerHTML = '<span class="button-icon" aria-hidden="true">✈️</span><span class="button-text">Send</span>';
+  submit.setAttribute("aria-label", "Send");
 
-  composer.append(fileInput, textarea, attachButton, submit);
+  const buttonGroup = document.createElement("div");
+  buttonGroup.className = "wm-button-group";
+  buttonGroup.append(attachButton, submit);
+
+  composer.append(fileInput, textarea, buttonGroup);
   composerShell.append(composer);
   wrapper.append(composerShell);
 
