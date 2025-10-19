@@ -792,6 +792,55 @@ body[data-menu-open="true"] .wm-menu-panel {
   flex-shrink: 0;
 }
 
+.wm-command-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.wm-command-button {
+  min-width: 3rem;
+}
+
+.wm-command-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.35rem;
+  display: none;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.6rem;
+  border-radius: 0.55rem;
+  background: var(--bg-secondary);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  box-shadow: 0 14px 30px rgba(15, 118, 110, 0.25);
+  z-index: 80;
+}
+
+.wm-command-menu.is-open {
+  display: flex;
+}
+
+.wm-command-item {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 0.95rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.4rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.wm-command-item:hover,
+.wm-command-item:focus-visible {
+  background: rgba(16, 185, 129, 0.15);
+  outline: none;
+}
+
 .wm-composer textarea::placeholder {
   color: var(--text-tertiary);
 }
@@ -1007,6 +1056,11 @@ body[data-menu-open="true"] .wm-menu-panel {
     flex-direction: column;
     gap: 0.5rem;
     flex-shrink: 0;
+  }
+
+  .wm-command-menu {
+    right: auto;
+    left: 0;
   }
 
   .wm-composer .wm-button {

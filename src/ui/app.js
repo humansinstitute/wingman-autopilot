@@ -1651,7 +1651,7 @@ const renderLive = () => {
   };
 
   let submit;
-  let attachButton;
+  let commandButton;
   const setUploadingState = (isUploading) => {
     if (isUploading) {
       composer.dataset.uploading = "true";
@@ -1661,8 +1661,8 @@ const renderLive = () => {
     if (submit) {
       submit.disabled = Boolean(isUploading);
     }
-    if (attachButton) {
-      attachButton.disabled = Boolean(isUploading);
+    if (commandButton) {
+      commandButton.disabled = Boolean(isUploading);
     }
   };
 
@@ -1729,23 +1729,60 @@ const renderLive = () => {
     }
   });
 
-  const scrollButton = document.createElement("button");
-  scrollButton.type = "button";
-  scrollButton.className = "wm-button secondary";
-  scrollButton.innerHTML = '<span class="button-icon" aria-hidden="true">⤵️</span><span class="button-text">Scroll to end</span>';
-  scrollButton.setAttribute("aria-label", "Scroll to end");
-  scrollButton.addEventListener("click", () => {
+  commandButton = document.createElement("button");
+  commandButton.type = "button";
+  commandButton.className = "wm-button secondary wm-command-button";
+  commandButton.innerHTML = '<span class="button-icon" aria-hidden="true">$></span><span class="button-text">Cmd</span>';
+  commandButton.setAttribute("aria-haspopup", "true");
+  commandButton.setAttribute("aria-expanded", "false");
+
+  const commandMenu = document.createElement("div");
+  commandMenu.className = "wm-command-menu";
+  commandMenu.setAttribute("role", "menu");
+
+  const addCommand = (label, handler) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "wm-command-item";
+    item.textContent = label;
+    item.setAttribute("role", "menuitem");
+    item.addEventListener("click", () => {
+      handler();
+      commandMenu.classList.remove("is-open");
+      commandButton.setAttribute("aria-expanded", "false");
+    });
+    commandMenu.append(item);
+  };
+
+  addCommand("Scroll to end", () => {
     scrollConversationAreaToBottom(sessionId);
     state.autoScrollEnabled.set(sessionId, true);
   });
 
-  attachButton = document.createElement("button");
-  attachButton.type = "button";
-  attachButton.className = "wm-button secondary";
-  attachButton.innerHTML = '<span class="button-icon" aria-hidden="true">📎</span><span class="button-text">Attach Image</span>';
-  attachButton.setAttribute("aria-label", "Attach Image");
-  attachButton.addEventListener("click", () => {
+  addCommand("Attach image", () => {
     fileInput.click();
+  });
+
+  const toggleCommandMenu = () => {
+    const isOpen = commandMenu.classList.toggle("is-open");
+    commandButton.setAttribute("aria-expanded", String(isOpen));
+    if (isOpen) {
+      const closeMenu = (event) => {
+        if (!commandMenu.contains(event.target) && event.target !== commandButton) {
+          commandMenu.classList.remove("is-open");
+          commandButton.setAttribute("aria-expanded", "false");
+          document.removeEventListener("mousedown", closeMenu);
+          document.removeEventListener("touchstart", closeMenu);
+        }
+      };
+      document.addEventListener("mousedown", closeMenu);
+      document.addEventListener("touchstart", closeMenu, { passive: true });
+    }
+  };
+
+  commandButton.addEventListener("click", () => {
+    if (commandButton.disabled) return;
+    toggleCommandMenu();
   });
 
   submit = document.createElement("button");
@@ -1756,7 +1793,11 @@ const renderLive = () => {
 
   const buttonGroup = document.createElement("div");
   buttonGroup.className = "wm-button-group";
-  buttonGroup.append(scrollButton, attachButton, submit);
+  const commandWrapper = document.createElement("div");
+  commandWrapper.className = "wm-command-wrapper";
+  commandWrapper.append(commandButton, commandMenu);
+
+  buttonGroup.append(commandWrapper, submit);
 
   composer.append(fileInput, textarea, buttonGroup);
   composerShell.append(composer);
