@@ -109,6 +109,7 @@ const dialog = document.getElementById("session-dialog");
 const agentSelect = document.getElementById("agent-select");
 const confirmButton = document.getElementById("confirm-session");
 const cancelButton = document.getElementById("cancel-session");
+const sessionForm = dialog?.querySelector("form");
 const appRoot = document.getElementById("app");
 const navLinks = Array.from(document.querySelectorAll("nav a[data-route]"));
 const themeToggle = document.getElementById("theme-toggle");
@@ -1591,12 +1592,21 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-confirmButton.addEventListener("click", (event) => {
-  event.preventDefault();
-  const agentId = agentSelect.value;
+const handleSessionLaunchRequest = () => {
+  const agentId = agentSelect?.value ?? "";
   const workingDirectory = directoryInput?.value ?? "";
   closeDialog();
   launchSession(agentId, workingDirectory);
+};
+
+sessionForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  handleSessionLaunchRequest();
+});
+
+confirmButton.addEventListener("click", (event) => {
+  event.preventDefault();
+  handleSessionLaunchRequest();
 });
 
 cancelButton.addEventListener("click", (event) => {
