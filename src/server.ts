@@ -263,8 +263,30 @@ const isAgentType = (value: string): value is AgentType => {
   return ["codex", "claude", "goose", "opencode"].includes(value);
 };
 
+const parseAllowedHosts = (value: string): string[] => {
+  return value
+    .split(/[,\s]+/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+};
+
+const pickAgentHost = (hosts: string[]): string => {
+  const ipv4Hosts = hosts.filter((host) => host === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(host));
+  if (ipv4Hosts.length > 0) {
+    return ipv4Hosts[0];
+  }
+
+  // Fallback to localhost if no IPv4 entry is provided.
+  return "localhost";
+};
+
+const normaliseHostForUrl = (host: string): string => host;
+
+const agentHosts = parseAllowedHosts(config.allowedHosts);
+const agentHost = normaliseHostForUrl(pickAgentHost(agentHosts));
+
 const buildAgentUrl = (port: number, path: string): URL => {
-  return new URL(path, `http://127.0.0.1:${port}/`);
+  return new URL(path, `http://${agentHost}:${port}/`);
 };
 
 const normaliseAgentMessages = (items: unknown[]): ReplaceMessageInput[] => {
@@ -475,6 +497,20 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
       return Response.json(session);
     }
 
+    if (method === "DELETE" && parts[4] === "storage") {
+      const session = manager.getSession(id);
+      if (session && (session.status === "starting" || session.status === "running")) {
+        return Response.json({ error: "Stop the session before deleting it" }, { status: 409 });
+      }
+      try {
+        manager.deleteSession(id);
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
+      messageStore.removeSession(id);
+      return Response.json({ id, deleted: true });
+    }
+
     if (method === "GET" && parts[4] === "logs") {
       const logs = manager.getLogs(id);
       if (!logs) return Response.json({ error: "Not found" }, { status: 404 });
@@ -546,7 +582,7 @@ const server = Bun.serve({
       return Response.redirect(`${url.origin}/home`, 302);
     }
 
-    if (pathname === "/home" || pathname === "/live") {
+    if (pathname === "/home" || pathname === "/live" || pathname.startsWith("/live/")) {
       return serveIndex();
     }
 
