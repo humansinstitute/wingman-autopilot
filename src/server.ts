@@ -497,6 +497,20 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
       return Response.json(session);
     }
 
+    if (method === "DELETE" && parts[4] === "storage") {
+      const session = manager.getSession(id);
+      if (session && (session.status === "starting" || session.status === "running")) {
+        return Response.json({ error: "Stop the session before deleting it" }, { status: 409 });
+      }
+      try {
+        manager.deleteSession(id);
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
+      messageStore.removeSession(id);
+      return Response.json({ id, deleted: true });
+    }
+
     if (method === "GET" && parts[4] === "logs") {
       const logs = manager.getLogs(id);
       if (!logs) return Response.json({ error: "Not found" }, { status: 404 });

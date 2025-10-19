@@ -18,6 +18,17 @@ const state = {
 };
 
 const getSessionById = (sessionId) => state.sessions.find((session) => session.id === sessionId);
+const ACTIVE_SESSION_STATUSES = new Set(["starting", "running"]);
+const isSessionActive = (session) => ACTIVE_SESSION_STATUSES.has(session?.status);
+const getActiveSessions = () => state.sessions.filter((session) => isSessionActive(session));
+const ensureActiveSession = () => {
+  if (state.activeSessionId && state.sessions.some((session) => session.id === state.activeSessionId)) {
+    return;
+  }
+  const activeSessions = getActiveSessions();
+  const fallback = activeSessions[0] ?? state.sessions[0] ?? null;
+  state.activeSessionId = fallback ? fallback.id : null;
+};
 
 const insertTextAtCursor = (textarea, text, sessionId) => {
   const start = textarea.selectionStart ?? textarea.value.length;
@@ -279,7 +290,8 @@ const syncMenuTabs = () => {
   const sessionsContainer = document.createElement("div");
   sessionsContainer.className = "wm-menu-sessions-container";
   
-  if (state.sessions.length === 0) {
+  const activeSessions = getActiveSessions();
+  if (activeSessions.length === 0) {
     const empty = document.createElement("p");
     empty.className = "wm-menu-empty";
     empty.textContent = "No live sessions yet.";
@@ -615,9 +627,7 @@ const fetchSessions = async () => {
     if (!sessionIds.has(key)) state.lastLogLength.delete(key);
   }
 
-  if (!state.activeSessionId && state.sessions.length > 0) {
-    state.activeSessionId = state.sessions[0].id;
-  }
+  ensureActiveSession();
 
   if (currentRoute === "live" && state.activeSessionId) {
     await Promise.all([
@@ -901,13 +911,31 @@ const stopSession = async (sessionId) => {
     return;
   }
   await fetchSessions();
-  if (state.activeSessionId === sessionId) {
-    state.activeSessionId = state.sessions[0]?.id ?? null;
-  }
   render();
 };
 
+const deleteSession = async (sessionId) => {
+  try {
+    const response = await fetch(`/api/sessions/${sessionId}/storage`, { method: "DELETE" });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      window.alert(`Failed to delete session: ${data.error ?? response.statusText}`);
+      return;
+    }
+    await fetchSessions();
+    render();
+  } catch (error) {
+    console.error("Failed to delete session", error);
+    window.alert("Failed to delete session. Check console for details.");
+  }
+};
+
 const resumeSession = async (sessionId) => {
+  const session = getSessionById(sessionId);
+  if (!session) {
+    window.alert("Session not available. It may have been deleted.");
+    return;
+  }
   state.activeSessionId = sessionId;
   currentRoute = "live";
   window.history.pushState({ route: "live" }, "", "/live");
@@ -1020,13 +1048,21 @@ const renderHome = () => {
       resumeBtn.className = "wm-button";
       resumeBtn.textContent = "Resume";
       resumeBtn.addEventListener("click", () => resumeSession(session.id));
+      actionsCell.append(resumeBtn);
 
-      const stopBtn = document.createElement("button");
-      stopBtn.className = "wm-button secondary";
-      stopBtn.textContent = "Stop";
-      stopBtn.addEventListener("click", () => stopSession(session.id));
-
-      actionsCell.append(resumeBtn, stopBtn);
+      if (isSessionActive(session)) {
+        const stopBtn = document.createElement("button");
+        stopBtn.className = "wm-button secondary";
+        stopBtn.textContent = "Stop";
+        stopBtn.addEventListener("click", () => stopSession(session.id));
+        actionsCell.append(stopBtn);
+      } else {
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "wm-button secondary";
+        deleteBtn.textContent = "Delete";
+        deleteBtn.addEventListener("click", () => deleteSession(session.id));
+        actionsCell.append(deleteBtn);
+      }
       tbody.append(row);
     });
   }
@@ -1044,7 +1080,8 @@ const renderSessionTabs = (options = {}) => {
   const tabs = document.createElement("div");
   tabs.className = "wm-tabs menu";
 
-  state.sessions.forEach((session) => {
+  const activeSessions = getActiveSessions();
+  activeSessions.forEach((session) => {
     const tab = document.createElement("div");
     tab.className = "wm-tab";
     if (session.id === state.activeSessionId) {
@@ -1110,7 +1147,8 @@ const renderTabs = (options = {}) => {
   const tabs = document.createElement("div");
   tabs.className = `wm-tabs${variant === "menu" ? " menu" : ""}`;
 
-  state.sessions.forEach((session) => {
+  const activeSessions = getActiveSessions();
+  activeSessions.forEach((session) => {
     const tab = document.createElement("div");
     tab.className = "wm-tab";
     if (session.id === state.activeSessionId) {
@@ -1252,7 +1290,17 @@ const renderLive = () => {
   }
 
   if (!state.activeSessionId || !state.sessions.some((session) => session.id === state.activeSessionId)) {
-    state.activeSessionId = state.sessions[0].id;
+    ensureActiveSession();
+  }
+
+  if (!state.activeSessionId) {
+    const container = document.createElement("section");
+    container.className = "wm-card wm-live-main";
+    const empty = document.createElement("p");
+    empty.textContent = "No live sessions. Launch a new agent to begin.";
+    container.append(empty);
+    wrapper.append(container);
+    return wrapper;
   }
 
   const sessionId = state.activeSessionId;
@@ -1426,7 +1474,7 @@ const render = () => {
   }
 
   // Start or stop polling based on route
-  if (currentRoute === "live" && state.sessions.length > 0) {
+  if (currentRoute === "live" && getActiveSessions().length > 0) {
     startPolling();
   } else {
     stopPolling();
@@ -1585,7 +1633,7 @@ window.addEventListener("focus", handleWindowFocus);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     stopPolling();
-  } else if (currentRoute === "live" && state.sessions.length > 0) {
+  } else if (currentRoute === "live" && getActiveSessions().length > 0) {
     // Resume polling when page becomes visible
     pollSessions(); // Immediate poll
     startPolling();

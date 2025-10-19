@@ -117,12 +117,37 @@ export class ProcessManager {
     if (session.process) {
       session.process.kill("SIGTERM");
       await session.process.exited;
+      session.process = null;
     }
 
     session.status = "stopped";
     this.releasePort(session.port);
     this.emit({ type: "session-stopped", session: this.toSnapshot(session) });
     return this.toSnapshot(session);
+  }
+
+  deleteSession(id: string): boolean {
+    const session = this.sessions.get(id);
+    if (!session) {
+      return false;
+    }
+
+    if (session.status === "starting" || session.status === "running") {
+      throw new Error("Cannot delete a running session");
+    }
+
+    if (session.process) {
+      try {
+        session.process.kill("SIGTERM");
+      } catch {
+        // best effort; process should already be exited
+      }
+      session.process = null;
+    }
+
+    this.releasePort(session.port);
+    this.sessions.delete(id);
+    return true;
   }
 
   private spawnAgentProcess(session: AgentSession): Bun.Subprocess {
