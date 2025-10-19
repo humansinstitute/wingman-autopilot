@@ -1,4 +1,5 @@
 const THEME_STORAGE_KEY = "wingman-theme";
+const TABS_VISIBILITY_STORAGE_KEY = "wingman-tabs-visible";
 
 const state = {
   config: null,
@@ -111,6 +112,7 @@ const cancelButton = document.getElementById("cancel-session");
 const appRoot = document.getElementById("app");
 const navLinks = Array.from(document.querySelectorAll("nav a[data-route]"));
 const themeToggle = document.getElementById("theme-toggle");
+const tabsToggle = document.getElementById("tabs-toggle");
 const menuToggle = document.getElementById("menu-toggle");
 const menuPanel = document.querySelector(".wm-menu-panel");
 const menuTabsContainer = document.getElementById("menu-tabs");
@@ -132,6 +134,7 @@ const getRouteFromPath = (pathname) => {
 
 let currentRoute = getRouteFromPath(window.location.pathname);
 let currentTheme = "dark";
+let tabsVisible = true;
 
 const applyTheme = (theme, persist = true) => {
   currentTheme = theme;
@@ -162,6 +165,36 @@ const detectPreferredTheme = () => {
 const toggleTheme = () => {
   const nextTheme = currentTheme === "dark" ? "light" : "dark";
   applyTheme(nextTheme);
+};
+
+const applyTabsVisibility = (visible, persist = true) => {
+  tabsVisible = visible;
+  document.body.dataset.tabsVisible = visible ? "true" : "false";
+  tabsToggle?.setAttribute("aria-pressed", visible ? "false" : "true");
+  if (persist) {
+    try {
+      localStorage.setItem(TABS_VISIBILITY_STORAGE_KEY, visible ? "true" : "false");
+    } catch (error) {
+      console.warn("Failed to persist tabs visibility preference", error);
+    }
+  }
+};
+
+const detectPreferredTabsVisibility = () => {
+  try {
+    const stored = localStorage.getItem(TABS_VISIBILITY_STORAGE_KEY);
+    if (stored === "true" || stored === "false") {
+      return stored === "true";
+    }
+  } catch {
+    // ignore storage failures
+  }
+  return true; // default to visible
+};
+
+const toggleTabsVisibility = () => {
+  const nextVisible = !tabsVisible;
+  applyTabsVisibility(nextVisible);
 };
 
 const closeMenu = () => {
@@ -209,6 +242,14 @@ const initTheme = () => {
   }
 };
 
+const initTabsVisibility = () => {
+  const preferred = detectPreferredTabsVisibility();
+  applyTabsVisibility(preferred, false);
+  if (tabsToggle) {
+    tabsToggle.addEventListener("click", toggleTabsVisibility);
+  }
+};
+
 const setActiveNav = () => {
   navLinks.forEach((link) => {
     const route = link.dataset.route;
@@ -227,20 +268,41 @@ const syncMenuTabs = () => {
     menuTabsContainer.dataset.state = "hidden";
     return;
   }
-  if (state.sessions.length === 0) {
-    menuTabsContainer.dataset.state = "empty";
-    const empty = document.createElement("p");
-    empty.className = "wm-menu-empty";
-    empty.textContent = "No live sessions yet.";
-    menuTabsContainer.append(empty);
-    return;
-  }
+  
   menuTabsContainer.dataset.state = "ready";
   const heading = document.createElement("p");
   heading.className = "wm-menu-heading";
   heading.textContent = "Sessions";
   menuTabsContainer.append(heading);
-  menuTabsContainer.append(renderTabs({ variant: "menu", onSelect: closeMenu }));
+  
+  const sessionsContainer = document.createElement("div");
+  sessionsContainer.className = "wm-menu-sessions-container";
+  
+  if (state.sessions.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "wm-menu-empty";
+    empty.textContent = "No live sessions yet.";
+    sessionsContainer.append(empty);
+  } else {
+    const sessionsList = document.createElement("div");
+    sessionsList.className = "wm-menu-sessions-list";
+    const sessionTabs = renderSessionTabs({ onSelect: closeMenu });
+    sessionsList.append(sessionTabs);
+    sessionsContainer.append(sessionsList);
+  }
+  
+  // Always show the + button
+  const addButton = document.createElement("div");
+  addButton.className = "wm-tab new wm-menu-add-session";
+  addButton.textContent = "+";
+  addButton.title = "Start new session";
+  addButton.addEventListener("click", () => {
+    openDialog();
+    closeMenu();
+  });
+  sessionsContainer.append(addButton);
+  
+  menuTabsContainer.append(sessionsContainer);
 };
 
 const PULL_THRESHOLD = 90;
@@ -615,7 +677,7 @@ const pollSessions = async () => {
       // - Update menu tabs to reflect current sessions
       syncMenuTabs();
       // - Only replace tabs bar if sessions changed (to preserve event listeners)
-      if (sessionsChanged) {
+      if (sessionsChanged && tabsVisible) {
         const tabsBar = document.querySelector('.wm-tabs-bar');
         if (tabsBar) {
           const existingTabs = tabsBar.querySelector('.wm-tabs');
@@ -976,6 +1038,71 @@ const renderHome = () => {
   return container;
 };
 
+const renderSessionTabs = (options = {}) => {
+  const onSelect = typeof options.onSelect === "function" ? options.onSelect : null;
+  const tabs = document.createElement("div");
+  tabs.className = "wm-tabs menu";
+
+  state.sessions.forEach((session) => {
+    const tab = document.createElement("div");
+    tab.className = "wm-tab";
+    if (session.id === state.activeSessionId) {
+      tab.classList.add("active");
+    }
+
+    tab.innerHTML = `
+      <span>${session.agent} :${session.port}</span>
+      <span class="close" title="Stop session">×</span>
+    `;
+
+    tab.addEventListener("click", () => {
+      if (state.activeSessionId === session.id) {
+        // Already active, no need to switch
+        onSelect?.();
+        return;
+      }
+      state.activeSessionId = session.id;
+      fetchLogs(session.id);
+      fetchConversation(session.id);
+      // Don't call render() - it will destroy DOM references
+      // Instead, just update the tabs to show active state
+      if (tabsVisible) {
+        const tabsBar = document.querySelector('.wm-tabs-bar');
+        if (tabsBar) {
+          const existingTabs = tabsBar.querySelector('.wm-tabs');
+          if (existingTabs) {
+            const newTabs = renderTabs();
+            existingTabs.replaceWith(newTabs);
+          }
+        }
+      }
+      // Render the conversation/logs for the new session
+      const scrollRegion = document.querySelector('.wm-live-scroll');
+      if (scrollRegion) {
+        scrollRegion.innerHTML = '';
+        const logSection = renderLogs(session.id);
+        scrollRegion.append(logSection);
+        const conversationContainer = document.createElement("div");
+        conversationContainer.className = "wm-live-conversation";
+        conversationContainer.append(renderConversation(session.id));
+        scrollRegion.append(conversationContainer);
+      }
+      onSelect?.();
+    });
+
+    const closeButton = tab.querySelector(".close");
+    closeButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      stopSession(session.id);
+      onSelect?.();
+    });
+
+    tabs.append(tab);
+  });
+
+  return tabs;
+};
+
 const renderTabs = (options = {}) => {
   const variant = options.variant === "menu" ? "menu" : "default";
   const onSelect = typeof options.onSelect === "function" ? options.onSelect : null;
@@ -1005,12 +1132,14 @@ const renderTabs = (options = {}) => {
       fetchConversation(session.id);
       // Don't call render() - it will destroy DOM references
       // Instead, just update the tabs to show active state
-      const tabsBar = document.querySelector('.wm-tabs-bar');
-      if (tabsBar) {
-        const existingTabs = tabsBar.querySelector('.wm-tabs');
-        if (existingTabs) {
-          const newTabs = renderTabs();
-          existingTabs.replaceWith(newTabs);
+      if (tabsVisible) {
+        const tabsBar = document.querySelector('.wm-tabs-bar');
+        if (tabsBar) {
+          const existingTabs = tabsBar.querySelector('.wm-tabs');
+          if (existingTabs) {
+            const newTabs = renderTabs();
+            existingTabs.replaceWith(newTabs);
+          }
         }
       }
       // Render the conversation/logs for the new session
@@ -1104,10 +1233,12 @@ const renderLive = () => {
   const wrapper = document.createElement("div");
   wrapper.className = "wm-live";
 
-  const tabsBar = document.createElement("div");
-  tabsBar.className = "wm-tabs-bar";
-  tabsBar.append(renderTabs());
-  wrapper.append(tabsBar);
+  if (tabsVisible) {
+    const tabsBar = document.createElement("div");
+    tabsBar.className = "wm-tabs-bar";
+    tabsBar.append(renderTabs());
+    wrapper.append(tabsBar);
+  }
 
   if (state.sessions.length === 0) {
     const container = document.createElement("section");
@@ -1480,6 +1611,7 @@ dialog.addEventListener("cancel", (event) => {
 
 (async () => {
   initTheme();
+  initTabsVisibility();
   await fetchConfig();
   await fetchSessions();
   render();

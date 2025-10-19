@@ -142,8 +142,8 @@ body[data-theme="light"] .wm-logo.light {
   position: absolute;
   top: calc(100% + 0.6rem);
   right: clamp(1rem, 4vw, 2.5rem);
-  min-width: min(280px, 92vw);
-  max-width: min(420px, 92vw);
+  min-width: min(320px, 92vw);
+  max-width: min(480px, 92vw);
   width: max-content;
   display: none;
   flex-direction: column;
@@ -213,6 +213,39 @@ body[data-theme="dark"] .wm-theme-toggle .moon {
   opacity: 0.95;
 }
 
+.wm-tabs-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border-radius: 999px;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--accent-primary);
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+  transition: background 200ms ease, color 200ms ease, transform 200ms ease;
+}
+.wm-tabs-toggle:hover {
+  transform: translateY(-1px);
+  background: rgba(16, 185, 129, 0.22);
+}
+.wm-tabs-toggle .tabs-show,
+.wm-tabs-toggle .tabs-hide {
+  font-size: 0.95rem;
+  opacity: 0.45;
+  transition: opacity 200ms ease;
+}
+body[data-tabs-visible="true"] .wm-tabs-toggle .tabs-show,
+body[data-tabs-visible="false"] .wm-tabs-toggle .tabs-hide {
+  opacity: 0.95;
+}
+
+body[data-tabs-visible="false"] .wm-tabs-bar {
+  display: none;
+}
+
 .wm-menu-tabs[data-state="hidden"] {
   display: none;
 }
@@ -223,18 +256,43 @@ body[data-theme="dark"] .wm-theme-toggle .moon {
   gap: 0.6rem;
   flex-wrap: nowrap;
   padding: 0;
-  overflow: visible;
+  overflow-y: auto;
   align-items: stretch;
+  max-height: 60vh;
+  scrollbar-width: thin;
 }
 
 .wm-tabs.menu .wm-tab {
   width: 100%;
   justify-content: space-between;
   font-size: 0.95rem;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.wm-tabs.menu .wm-tab > span:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .wm-tabs.menu .wm-tab.new {
   justify-content: center;
+}
+
+.wm-tabs.menu::-webkit-scrollbar {
+  width: 4px;
+}
+
+.wm-tabs.menu::-webkit-scrollbar-thumb {
+  background: rgba(16, 185, 129, 0.3);
+  border-radius: 999px;
+}
+
+.wm-tabs.menu::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 body[data-menu-open="true"] {
@@ -267,6 +325,51 @@ body[data-menu-open="true"]::after {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.wm-menu-sessions-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.wm-menu-sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  flex-wrap: nowrap;
+  padding: 0;
+  overflow-y: auto;
+  align-items: stretch;
+  max-height: 40vh;
+  scrollbar-width: thin;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.wm-menu-sessions-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.wm-menu-sessions-list::-webkit-scrollbar-thumb {
+  background: rgba(16, 185, 129, 0.3);
+  border-radius: 999px;
+}
+
+.wm-menu-sessions-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.wm-menu-add-session {
+  flex-shrink: 0;
+  margin-top: 0.5rem;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 body[data-menu-open="true"] .wm-menu-panel {
@@ -578,6 +681,14 @@ body[data-menu-open="true"] .wm-menu-panel {
   overflow-y: hidden;
 }
 
+.wm-composer .wm-button-group {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
 .wm-composer textarea::placeholder {
   color: var(--text-tertiary);
 }
@@ -596,11 +707,13 @@ body[data-menu-open="true"] .wm-menu-panel {
 
 .wm-composer .wm-button {
   align-self: stretch;
-  height: 44px;
+  height: calc(44px * 0.65);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0 1.5rem;
+  text-align: center;
+  gap: 0.5rem;
 }
 
 .wm-composer .wm-button .button-icon {
@@ -703,6 +816,11 @@ body[data-menu-open="true"] .wm-menu-panel {
     right: 1rem;
     left: 1rem;
     min-width: unset;
+    max-width: calc(100vw - 2rem);
+    width: auto;
+    max-height: calc(100vh - var(--nav-height) - 2rem);
+    overflow-y: auto;
+    box-sizing: border-box;
   }
 
   body[data-menu-open="true"] .wm-menu-panel {
@@ -712,6 +830,29 @@ body[data-menu-open="true"] .wm-menu-panel {
   .wm-menu-panel nav {
     flex-direction: column;
     gap: 0.5rem;
+  }
+
+  .wm-menu-sessions-list {
+    max-height: 30vh;
+  }
+
+  .wm-menu-sessions-container {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .wm-tabs.menu .wm-tab {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    flex-shrink: 1;
+  }
+
+  .wm-menu-add-session {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    flex-shrink: 1;
   }
 
   .wm-menu-toggle {

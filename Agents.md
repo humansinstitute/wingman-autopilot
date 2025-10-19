@@ -10,6 +10,7 @@ Run `bun install` after pulling dependencies. Start the orchestrator locally wit
 
 ## Coding Style & Naming Conventions
 
+COMMIT ALL CHANGES with a descriptive BUT NEVER PUSH
 TypeScript is the default; prefer ESM imports and explicit extensions when needed (`./foo.ts`). Use two-space indentation, trailing semicolons, and single quotes only inside template literals. Name files with kebab-case, classes/types with PascalCase, and functions or variables in camelCase. Co-locate agent helpers under `src/agents/` and UI utilities under `src/ui/` to keep files under 400 lines. Follow the strict TypeScript configuration in `tsconfig.json`; address compiler warnings before committing.
 
 DONT RUN TESTS. THEY DONT HELP> WE TEST MANUALLY AROUND HERE.

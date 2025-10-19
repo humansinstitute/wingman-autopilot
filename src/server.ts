@@ -263,8 +263,30 @@ const isAgentType = (value: string): value is AgentType => {
   return ["codex", "claude", "goose", "opencode"].includes(value);
 };
 
+const parseAllowedHosts = (value: string): string[] => {
+  return value
+    .split(/[,\s]+/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+};
+
+const pickAgentHost = (hosts: string[]): string => {
+  const ipv4Hosts = hosts.filter((host) => host === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(host));
+  if (ipv4Hosts.length > 0) {
+    return ipv4Hosts[0];
+  }
+
+  // Fallback to localhost if no IPv4 entry is provided.
+  return "localhost";
+};
+
+const normaliseHostForUrl = (host: string): string => host;
+
+const agentHosts = parseAllowedHosts(config.allowedHosts);
+const agentHost = normaliseHostForUrl(pickAgentHost(agentHosts));
+
 const buildAgentUrl = (port: number, path: string): URL => {
-  return new URL(path, `http://127.0.0.1:${port}/`);
+  return new URL(path, `http://${agentHost}:${port}/`);
 };
 
 const normaliseAgentMessages = (items: unknown[]): ReplaceMessageInput[] => {
