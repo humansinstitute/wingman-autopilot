@@ -566,32 +566,18 @@ const resetPullRefresh = () => {
   setPullState("hidden", 0);
 };
 
-const triggerPullRefresh = async () => {
+const triggerPullRefresh = () => {
   if (!pullRefreshIndicator || pullRefreshing) return;
   pullRefreshing = true;
   setPullState("refresh", PULL_THRESHOLD);
 
-  // Ensure the refresh indicator shows for at least a minimum duration
-  const startTime = Date.now();
-  const MIN_REFRESH_DURATION = 600;
+  const MIN_REFRESH_DURATION = 400;
+  pullReady = false;
+  pullActive = false;
 
-  try {
-    await pollSessions();
-  } catch (error) {
-    console.error("Pull-to-refresh failed", error);
-  } finally {
-    pullReady = false;
-    pullActive = false;
-
-    // Calculate remaining time to show the indicator
-    const elapsed = Date.now() - startTime;
-    const remaining = Math.max(0, MIN_REFRESH_DURATION - elapsed);
-
-    setTimeout(() => {
-      pullRefreshing = false;
-      resetPullRefresh();
-    }, remaining);
-  }
+  setTimeout(() => {
+    window.location.reload();
+  }, MIN_REFRESH_DURATION);
 };
 
 const DIRECTORY_SUGGESTION_DELAY = 160;
@@ -1233,6 +1219,28 @@ const renderHome = () => {
 
   container.append(actions);
 
+  const renderSessionActions = (target, session) => {
+    const resumeBtn = document.createElement("button");
+    resumeBtn.className = "wm-button";
+    resumeBtn.textContent = "Resume";
+    resumeBtn.addEventListener("click", () => resumeSession(session.id));
+    target.append(resumeBtn);
+
+    if (isSessionActive(session)) {
+      const stopBtn = document.createElement("button");
+      stopBtn.className = "wm-button secondary";
+      stopBtn.textContent = "Stop";
+      stopBtn.addEventListener("click", () => stopSession(session.id));
+      target.append(stopBtn);
+    } else {
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "wm-button secondary";
+      deleteBtn.textContent = "Delete";
+      deleteBtn.addEventListener("click", () => deleteSession(session.id));
+      target.append(deleteBtn);
+    }
+  };
+
   const table = document.createElement("table");
   table.className = "session-table";
 
@@ -1276,34 +1284,72 @@ const renderHome = () => {
       }
       const actionsCell = row.lastElementChild;
 
-      const resumeBtn = document.createElement("button");
-      resumeBtn.className = "wm-button";
-      resumeBtn.textContent = "Resume";
-      resumeBtn.addEventListener("click", () => resumeSession(session.id));
-      actionsCell.append(resumeBtn);
-
-      if (isSessionActive(session)) {
-        const stopBtn = document.createElement("button");
-        stopBtn.className = "wm-button secondary";
-        stopBtn.textContent = "Stop";
-        stopBtn.addEventListener("click", () => stopSession(session.id));
-        actionsCell.append(stopBtn);
-      } else {
-        const deleteBtn = document.createElement("button");
-        deleteBtn.className = "wm-button secondary";
-        deleteBtn.textContent = "Delete";
-        deleteBtn.addEventListener("click", () => deleteSession(session.id));
-        actionsCell.append(deleteBtn);
-      }
+      renderSessionActions(actionsCell, session);
       tbody.append(row);
     });
   }
 
   table.append(tbody);
+
   const tableContainer = document.createElement("div");
-  tableContainer.className = "wm-table-container";
+  tableContainer.className = "wm-table-container session-table-wrapper";
   tableContainer.append(table);
-  container.append(tableContainer);
+
+  const cardsContainer = document.createElement("div");
+  cardsContainer.className = "session-card-list";
+  if (state.sessions.length === 0) {
+    const emptyCard = document.createElement("article");
+    emptyCard.className = "session-card empty";
+    emptyCard.textContent = "No active sessions";
+    cardsContainer.append(emptyCard);
+  } else {
+    state.sessions.forEach((session) => {
+      const card = document.createElement("article");
+      card.className = "session-card";
+
+      const header = document.createElement("header");
+      header.className = "session-card-header";
+      const title = document.createElement("h3");
+      title.textContent = session.agent;
+      const status = document.createElement("span");
+      status.className = `session-status ${session.status}`;
+      status.textContent = session.status;
+      header.append(title, status);
+      card.append(header);
+
+      const details = document.createElement("div");
+      details.className = "session-card-details";
+      const addDetail = (label, value) => {
+        const item = document.createElement("div");
+        item.className = "session-card-detail";
+        const term = document.createElement("span");
+        term.className = "session-card-detail-label";
+        term.textContent = label;
+        const desc = document.createElement("span");
+        desc.className = "session-card-detail-value";
+        desc.textContent = value ?? "-";
+        item.append(term, desc);
+        details.append(item);
+      };
+
+      addDetail("Port", session.port ?? "-");
+      addDetail("PID", session.pid ?? "-");
+      addDetail("Started", new Date(session.startedAt).toLocaleTimeString());
+      const directoryValue =
+        session.workingDirectory ?? state.config?.defaultDirectory ?? "-";
+      addDetail("Directory", directoryValue);
+      card.append(details);
+
+      const actionRow = document.createElement("div");
+      actionRow.className = "session-card-actions";
+      renderSessionActions(actionRow, session);
+      card.append(actionRow);
+
+      cardsContainer.append(card);
+    });
+  }
+
+  container.append(cardsContainer, tableContainer);
   return container;
 };
 

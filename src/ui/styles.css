@@ -532,6 +532,109 @@ body[data-menu-open="true"] .wm-menu-panel {
   align-items: center;
 }
 
+.session-table-wrapper {
+  width: 100%;
+}
+
+.session-card-list {
+  display: none;
+  width: 100%;
+  gap: 0.75rem;
+  padding: 0.25rem 0.35rem 0.35rem;
+}
+
+.session-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  border-radius: 0.8rem;
+  box-sizing: border-box;
+  width: 100%;
+  background: var(--bg-tertiary);
+  box-shadow: 0 4px 14px rgba(15, 118, 110, 0.12);
+}
+
+.session-card.empty {
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  color: var(--text-secondary);
+}
+
+.session-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.session-card-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: var(--text-primary);
+}
+
+.session-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--text-primary);
+}
+
+.session-status.starting {
+  background: rgba(59, 130, 246, 0.18);
+}
+
+.session-status.running {
+  background: rgba(16, 185, 129, 0.18);
+}
+
+.session-status.stopped,
+.session-status.completed {
+  background: rgba(248, 113, 113, 0.18);
+}
+
+.session-card-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+}
+
+.session-card-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.session-card-detail-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.session-card-detail-value {
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.session-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .wm-actions {
   display: flex;
   gap: 0.75rem;
@@ -932,6 +1035,16 @@ body[data-menu-open="true"] .wm-menu-panel {
   .session-table td {
     padding: 0.6rem 0.75rem;
     font-size: 0.85rem;
+  }
+
+  .session-table-wrapper {
+    display: none;
+  }
+
+  .session-card-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
   }
 }
 
