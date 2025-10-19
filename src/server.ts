@@ -582,7 +582,7 @@ const server = Bun.serve({
       return Response.redirect(`${url.origin}/home`, 302);
     }
 
-    if (pathname === "/home" || pathname === "/live") {
+    if (pathname === "/home" || pathname === "/live" || pathname.startsWith("/live/")) {
       return serveIndex();
     }
 

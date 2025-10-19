@@ -10,6 +10,7 @@ const state = {
   logPanelOpen: new Map(),
   activeSessionId: null,
   lastWorkingDirectory: null,
+  lastActiveSessionId: null,
   // DOM references for incremental updates
   conversationContainers: new Map(), // sessionId -> DOM element
   logContainers: new Map(), // sessionId -> DOM element
@@ -21,15 +22,131 @@ const getSessionById = (sessionId) => state.sessions.find((session) => session.i
 const ACTIVE_SESSION_STATUSES = new Set(["starting", "running"]);
 const isSessionActive = (session) => ACTIVE_SESSION_STATUSES.has(session?.status);
 const getActiveSessions = () => state.sessions.filter((session) => isSessionActive(session));
+
+const LIVE_ROUTE_PREFIX = "/live";
+
+const getRouteFromPath = (pathname) => {
+  if (pathname === LIVE_ROUTE_PREFIX || pathname.startsWith(`${LIVE_ROUTE_PREFIX}/`)) {
+    return "live";
+  }
+  return "home";
+};
+
+const getSessionIdFromPath = (pathname) => {
+  if (!pathname.startsWith(LIVE_ROUTE_PREFIX)) {
+    return null;
+  }
+  if (pathname === LIVE_ROUTE_PREFIX) {
+    return null;
+  }
+  const segments = pathname.slice(LIVE_ROUTE_PREFIX.length + 1).split("/").filter(Boolean);
+  return segments[0] ?? null;
+};
+
+let currentRoute = getRouteFromPath(window.location.pathname);
+let currentTheme = "dark";
+let tabsVisible = true;
+let lastLoggedSessionId = null;
+
+const initialRouteSessionId = getSessionIdFromPath(window.location.pathname);
+if (initialRouteSessionId) {
+  state.activeSessionId = initialRouteSessionId;
+  state.lastActiveSessionId = initialRouteSessionId;
+}
+
+const setActiveSession = (sessionId, options = {}) => {
+  const { updateHistory = true, logPort = true, allowPending = false, forceLog = false } = options;
+  const previousSessionId = state.activeSessionId;
+
+  if (sessionId) {
+    const sessionExists = state.sessions.some((session) => session.id === sessionId);
+    if (!sessionExists && !allowPending) {
+      state.activeSessionId = null;
+      lastLoggedSessionId = null;
+      return false;
+    }
+
+    state.activeSessionId = sessionId;
+    state.lastActiveSessionId = sessionId;
+
+    if (updateHistory && currentRoute === "live") {
+      const targetPath = `${LIVE_ROUTE_PREFIX}/${sessionId}`;
+      if (window.location.pathname !== targetPath) {
+        window.history.pushState({ route: "live", sessionId }, "", targetPath);
+      }
+    }
+
+    if (logPort && sessionExists) {
+      const shouldLog = forceLog ? lastLoggedSessionId !== sessionId : sessionId !== previousSessionId;
+      if (shouldLog) {
+        const session = getSessionById(sessionId);
+        if (session) {
+          console.log("This session is sending to port:", session.port);
+          lastLoggedSessionId = sessionId;
+        }
+      }
+    }
+
+    return true;
+  }
+
+  state.activeSessionId = null;
+  lastLoggedSessionId = null;
+  if (updateHistory && currentRoute === "live" && window.location.pathname !== LIVE_ROUTE_PREFIX) {
+    window.history.pushState({ route: "live" }, "", LIVE_ROUTE_PREFIX);
+  }
+  return true;
+};
+
 const ensureActiveSession = () => {
   if (state.activeSessionId && state.sessions.some((session) => session.id === state.activeSessionId)) {
-    return;
+    return state.activeSessionId;
+  }
+  if (state.lastActiveSessionId && state.sessions.some((session) => session.id === state.lastActiveSessionId)) {
+    setActiveSession(state.lastActiveSessionId, { updateHistory: false, logPort: false });
+    return state.activeSessionId;
+  }
+  if (currentRoute === "live") {
+    setActiveSession(null, { updateHistory: false, logPort: false });
+    return null;
   }
   const activeSessions = getActiveSessions();
   const fallback = activeSessions[0] ?? state.sessions[0] ?? null;
-  state.activeSessionId = fallback ? fallback.id : null;
+  if (fallback) {
+    setActiveSession(fallback.id, { updateHistory: false, logPort: false });
+  } else {
+    setActiveSession(null, { updateHistory: false, logPort: false });
+  }
+  return state.activeSessionId;
 };
 
+const applyRouteSessionFromPath = (options = {}) => {
+  const { allowHistoryUpdate = false, logPort = true } = options;
+  const routeSessionId = getSessionIdFromPath(window.location.pathname);
+
+  if (routeSessionId) {
+    if (state.sessions.some((session) => session.id === routeSessionId)) {
+      if (state.activeSessionId !== routeSessionId) {
+        setActiveSession(routeSessionId, { updateHistory: false, logPort });
+      }
+      return false;
+    }
+    if (state.activeSessionId) {
+      setActiveSession(null, { updateHistory: false, logPort: false });
+    }
+    return true;
+  }
+
+  if (allowHistoryUpdate && state.lastActiveSessionId && state.sessions.some((session) => session.id === state.lastActiveSessionId)) {
+    setActiveSession(state.lastActiveSessionId, { updateHistory: true, logPort });
+    return false;
+  }
+
+  if (state.activeSessionId && !state.sessions.some((session) => session.id === state.activeSessionId)) {
+    setActiveSession(null, { updateHistory: allowHistoryUpdate, logPort: false });
+  }
+  return false;
+};
 const insertTextAtCursor = (textarea, text, sessionId) => {
   const start = textarea.selectionStart ?? textarea.value.length;
   const end = textarea.selectionEnd ?? textarea.value.length;
@@ -138,15 +255,6 @@ const directoryList = document.getElementById("directory-list");
 const directoryCurrent = document.getElementById("directory-current");
 const directoryUpButton = document.getElementById("directory-up");
 const directoryUseButton = document.getElementById("directory-use");
-
-const getRouteFromPath = (pathname) => {
-  if (pathname === "/live") return "live";
-  return "home";
-};
-
-let currentRoute = getRouteFromPath(window.location.pathname);
-let currentTheme = "dark";
-let tabsVisible = true;
 
 const applyTheme = (theme, persist = true) => {
   currentTheme = theme;
@@ -603,6 +711,9 @@ const fetchSessions = async () => {
   state.sessions = data.sessions ?? [];
 
   const sessionIds = new Set(state.sessions.map((session) => session.id));
+  if (state.lastActiveSessionId && !sessionIds.has(state.lastActiveSessionId)) {
+    state.lastActiveSessionId = null;
+  }
 
   // Clean up data and DOM references for deleted sessions
   for (const key of Array.from(state.logs.keys())) {
@@ -627,9 +738,27 @@ const fetchSessions = async () => {
     if (!sessionIds.has(key)) state.lastLogLength.delete(key);
   }
 
+  const routeSessionId = getSessionIdFromPath(window.location.pathname);
+  const allowHistoryUpdate = currentRoute === "live" && !routeSessionId;
+  const redirectHome = applyRouteSessionFromPath({ allowHistoryUpdate });
+  if (redirectHome) {
+    currentRoute = "home";
+    lastLoggedSessionId = null;
+    if (window.location.pathname !== "/home") {
+      window.history.replaceState({ route: "home" }, "", "/home");
+    }
+  }
   ensureActiveSession();
+  if (
+    !redirectHome &&
+    currentRoute === "live" &&
+    state.activeSessionId &&
+    state.sessions.some((session) => session.id === state.activeSessionId)
+  ) {
+    setActiveSession(state.activeSessionId, { updateHistory: false, forceLog: true });
+  }
 
-  if (currentRoute === "live" && state.activeSessionId) {
+  if (!redirectHome && currentRoute === "live" && state.activeSessionId) {
     await Promise.all([
       fetchLogs(state.activeSessionId),
       fetchConversation(state.activeSessionId),
@@ -890,7 +1019,7 @@ const launchSession = async (agentId, workingDirectory) => {
   }
 
   const session = await response.json();
-  state.activeSessionId = session.id;
+  setActiveSession(session.id, { allowPending: true, logPort: false, updateHistory: currentRoute === "live" });
   if (typeof session.workingDirectory === "string" && session.workingDirectory.length > 0) {
     state.lastWorkingDirectory = session.workingDirectory;
     if (directoryInput) {
@@ -936,9 +1065,8 @@ const resumeSession = async (sessionId) => {
     window.alert("Session not available. It may have been deleted.");
     return;
   }
-  state.activeSessionId = sessionId;
   currentRoute = "live";
-  window.history.pushState({ route: "live" }, "", "/live");
+  setActiveSession(sessionId, { updateHistory: true, forceLog: true });
   await Promise.all([fetchConversation(sessionId), fetchLogs(sessionId)]);
   render();
 };
@@ -1094,12 +1222,13 @@ const renderSessionTabs = (options = {}) => {
     `;
 
     tab.addEventListener("click", () => {
-      if (state.activeSessionId === session.id) {
+      if (state.activeSessionId === session.id && currentRoute === "live") {
         // Already active, no need to switch
         onSelect?.();
         return;
       }
-      state.activeSessionId = session.id;
+      currentRoute = "live";
+      setActiveSession(session.id, { updateHistory: true, forceLog: true });
       fetchLogs(session.id);
       fetchConversation(session.id);
       // Don't call render() - it will destroy DOM references
@@ -1161,12 +1290,13 @@ const renderTabs = (options = {}) => {
     `;
 
     tab.addEventListener("click", () => {
-      if (state.activeSessionId === session.id) {
+      if (state.activeSessionId === session.id && currentRoute === "live") {
         // Already active, no need to switch
         onSelect?.();
         return;
       }
-      state.activeSessionId = session.id;
+      currentRoute = "live";
+      setActiveSession(session.id, { updateHistory: true, forceLog: true });
       fetchLogs(session.id);
       fetchConversation(session.id);
       // Don't call render() - it will destroy DOM references
@@ -1297,7 +1427,7 @@ const renderLive = () => {
     const container = document.createElement("section");
     container.className = "wm-card wm-live-main";
     const empty = document.createElement("p");
-    empty.textContent = "No live sessions. Launch a new agent to begin.";
+    empty.textContent = "No live session selected. Launch a new agent or use the menu to resume one.";
     container.append(empty);
     wrapper.append(container);
     return wrapper;
@@ -1546,9 +1676,23 @@ navLinks.forEach((link) => {
     const targetRoute = link.dataset.route;
     if (!targetRoute || targetRoute === currentRoute) return;
     closeMenu();
-    currentRoute = targetRoute;
-    const path = targetRoute === "live" ? "/live" : "/home";
-    window.history.pushState({ route: targetRoute }, "", path);
+    if (targetRoute === "live") {
+      currentRoute = "live";
+      const hasActive = state.activeSessionId && state.sessions.some((session) => session.id === state.activeSessionId);
+      const hasLast = state.lastActiveSessionId && state.sessions.some((session) => session.id === state.lastActiveSessionId);
+      const targetSessionId = hasActive ? state.activeSessionId : hasLast ? state.lastActiveSessionId : null;
+      if (targetSessionId) {
+        setActiveSession(targetSessionId, { updateHistory: true, forceLog: true });
+      } else {
+        setActiveSession(null, { updateHistory: true });
+      }
+    } else {
+      currentRoute = "home";
+      lastLoggedSessionId = null;
+      if (window.location.pathname !== "/home") {
+        window.history.pushState({ route: "home" }, "", "/home");
+      }
+    }
     render();
   });
 });
@@ -1624,6 +1768,16 @@ window.addEventListener("touchcancel", finishPull, { passive: true });
 
 window.addEventListener("popstate", () => {
   currentRoute = getRouteFromPath(window.location.pathname);
+  if (currentRoute !== "live") {
+    lastLoggedSessionId = null;
+  }
+  const redirectHome = applyRouteSessionFromPath({ allowHistoryUpdate: false });
+  if (redirectHome) {
+    currentRoute = "home";
+    if (window.location.pathname !== "/home") {
+      window.history.replaceState({ route: "home" }, "", "/home");
+    }
+  }
   render();
 });
 
