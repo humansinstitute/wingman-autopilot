@@ -1788,7 +1788,7 @@ const renderLive = () => {
   submit = document.createElement("button");
   submit.type = "submit";
   submit.className = "wm-button";
-  submit.innerHTML = '<span class="button-icon" aria-hidden="true">✈️</span><span class="button-text">Send</span>';
+  submit.innerHTML = '<span class="button-icon" aria-hidden="true">-&gt;</span><span class="button-text">Send</span>';
   submit.setAttribute("aria-label", "Send");
 
   const buttonGroup = document.createElement("div");

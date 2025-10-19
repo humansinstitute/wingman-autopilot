@@ -794,18 +794,22 @@ body[data-menu-open="true"] .wm-menu-panel {
 
 .wm-command-wrapper {
   position: relative;
-  display: inline-flex;
+  display: flex;
+  width: 100%;
 }
 
 .wm-command-button {
   min-width: 3rem;
+  width: 100%;
+  justify-content: center;
 }
 
 .wm-command-menu {
   position: absolute;
-  top: 100%;
+  top: auto;
+  bottom: calc(100% + 0.35rem);
   right: 0;
-  margin-top: 0.35rem;
+  left: auto;
   display: none;
   flex-direction: column;
   gap: 0.25rem;
@@ -815,6 +819,7 @@ body[data-menu-open="true"] .wm-menu-panel {
   border: 1px solid rgba(16, 185, 129, 0.25);
   box-shadow: 0 14px 30px rgba(15, 118, 110, 0.25);
   z-index: 80;
+  transform-origin: top right;
 }
 
 .wm-command-menu.is-open {
@@ -851,7 +856,8 @@ body[data-menu-open="true"] .wm-menu-panel {
   bottom: 0;
   z-index: 6;
   padding-top: 1rem;
-  padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0));
+  padding-bottom: 0;
+  padding-bottom: env(safe-area-inset-bottom);
   background: linear-gradient(180deg, rgba(12, 10, 9, 0), var(--bg-secondary) 35%, var(--bg-secondary));
   -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
@@ -866,10 +872,14 @@ body[data-menu-open="true"] .wm-menu-panel {
   padding: 0 1.5rem;
   text-align: center;
   gap: 0.5rem;
+  box-sizing: border-box;
+  width: 100%;
 }
 
 .wm-composer .wm-button .button-icon {
   display: none;
+  font-size: 1.1rem;
+  line-height: 1;
 }
 
 .wm-composer .wm-button .button-text {
@@ -907,6 +917,8 @@ body[data-menu-open="true"] .wm-menu-panel {
     padding-top: 0.25rem;
     padding-left: 0;
     padding-right: 0;
+    padding-bottom: 0;
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   #pull-refresh {
@@ -1059,18 +1071,17 @@ body[data-menu-open="true"] .wm-menu-panel {
   }
 
   .wm-command-menu {
-    right: auto;
-    left: 0;
+    max-width: min(260px, 80vw);
+    right: 0;
+    left: auto;
+    transform: none;
   }
 
   .wm-composer .wm-button {
-    width: 40px;
+    width: 100%;
     height: 40px;
     padding: 0;
     font-size: 1.1rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
   }
 
   .wm-composer .wm-button .button-text {
@@ -1079,6 +1090,8 @@ body[data-menu-open="true"] .wm-menu-panel {
 
   .wm-composer .wm-button .button-icon {
     display: inline;
+    font-size: 1.1rem;
+    line-height: 1;
   }
 
   .wm-actions {
@@ -1111,6 +1124,8 @@ body[data-menu-open="true"] .wm-menu-panel {
     padding-top: 0.25rem;
     padding-left: 0;
     padding-right: 0;
+    padding-bottom: 0;
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   #pull-refresh {
