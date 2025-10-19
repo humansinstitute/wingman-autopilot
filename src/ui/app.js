@@ -13,7 +13,6 @@ const state = {
   lastActiveSessionId: null,
   // DOM references for incremental updates
   conversationContainers: new Map(), // sessionId -> DOM element
-  conversationScrollContainers: new Map(), // sessionId -> { element, handler }
   logContainers: new Map(), // sessionId -> DOM element
   lastMessageCount: new Map(), // sessionId -> number of messages
   lastLogLength: new Map(), // sessionId -> length of logs
@@ -29,40 +28,95 @@ const ensureAutoScrollPreference = (sessionId) => {
   return state.autoScrollEnabled.get(sessionId);
 };
 
-const isNearBottom = (element) => {
-  if (!element) return true;
-  const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
-  return distance <= AUTO_SCROLL_THRESHOLD;
+const getScrollMetrics = (element) => {
+  if (!element) return null;
+  if (element === document.body || element === document.documentElement || element === document.scrollingElement) {
+    const target = document.scrollingElement || document.documentElement || document.body;
+    const scrollTop = target.scrollTop ?? window.scrollY ?? 0;
+    const clientHeight = target.clientHeight ?? window.innerHeight ?? 0;
+    const scrollHeight = target.scrollHeight ?? 0;
+    return { scrollTop, clientHeight, scrollHeight };
+  }
+  return {
+    scrollTop: element.scrollTop ?? 0,
+    clientHeight: element.clientHeight ?? 0,
+    scrollHeight: element.scrollHeight ?? 0,
+  };
 };
+
+const isElementNearBottom = (element) => {
+  const metrics = getScrollMetrics(element);
+  if (!metrics) return true;
+  const { scrollTop, clientHeight, scrollHeight } = metrics;
+  return scrollHeight - (scrollTop + clientHeight) <= AUTO_SCROLL_THRESHOLD;
+};
+
+const getFallbackScrollElement = () =>
+  document.scrollingElement || document.documentElement || document.body;
 
 const scrollConversationToBottom = (element) => {
   if (!element) return;
   requestAnimationFrame(() => {
+    if (element === document.body || element === document.documentElement || element === document.scrollingElement) {
+      const target = document.scrollingElement || document.documentElement || document.body;
+      window.scrollTo(0, target.scrollHeight);
+      return;
+    }
     element.scrollTop = element.scrollHeight;
   });
 };
 
-const attachConversationScrollHandler = (sessionId, scrollContainer) => {
-  if (!scrollContainer) return;
-  const existing = state.conversationScrollContainers.get(sessionId);
-  if (existing?.element === scrollContainer) {
-    return;
-  }
-  if (existing?.element && existing.handler) {
-    existing.element.removeEventListener("scroll", existing.handler);
-  }
+const getConversationScrollElement = (sessionId) => {
+  const container = state.conversationContainers.get(sessionId);
+  if (!container) return null;
+  return container.closest('.wm-live-conversation');
+};
 
-  const handler = () => {
-    const nearBottom = isNearBottom(scrollContainer);
-    if (nearBottom) {
-      state.autoScrollEnabled.set(sessionId, true);
-    } else {
-      state.autoScrollEnabled.set(sessionId, false);
+const getActiveScrollElement = (sessionId) => {
+  const conversationElement = getConversationScrollElement(sessionId);
+  if (conversationElement) {
+    const metrics = getScrollMetrics(conversationElement);
+    if (metrics && metrics.scrollHeight > metrics.clientHeight + 1) {
+      return conversationElement;
     }
-  };
+  }
+  return getFallbackScrollElement();
+};
 
-  scrollContainer.addEventListener("scroll", handler);
-  state.conversationScrollContainers.set(sessionId, { element: scrollContainer, handler });
+const updateAutoScrollStateForSession = (sessionId) => {
+  const scrollElement = getActiveScrollElement(sessionId);
+  if (!scrollElement) return;
+  const nearBottom = isElementNearBottom(scrollElement);
+  state.autoScrollEnabled.set(sessionId, nearBottom);
+};
+
+const attachConversationScrollHandler = (sessionId, element) => {
+  if (!element) return;
+  if (element.dataset.scrollMonitorSessionId === sessionId) return;
+  const handler = () => updateAutoScrollStateForSession(sessionId);
+  element.addEventListener("scroll", handler, { passive: true });
+  element.dataset.scrollMonitorSessionId = sessionId;
+};
+
+const scrollConversationAreaToBottom = (sessionId) => {
+  const target = getActiveScrollElement(sessionId);
+  if (target) {
+    scrollConversationToBottom(target);
+  }
+  requestAnimationFrame(() => updateAutoScrollStateForSession(sessionId));
+};
+
+let windowScrollHandler = null;
+
+const ensureWindowScrollMonitoring = () => {
+  if (windowScrollHandler) return;
+  windowScrollHandler = () => {
+    const sessionId = state.activeSessionId;
+    if (!sessionId) return;
+    updateAutoScrollStateForSession(sessionId);
+  };
+  window.addEventListener("scroll", windowScrollHandler, { passive: true });
+  window.addEventListener("resize", windowScrollHandler);
 };
 
 const getSessionById = (sessionId) => state.sessions.find((session) => session.id === sessionId);
@@ -784,19 +838,9 @@ const fetchSessions = async () => {
   for (const key of Array.from(state.lastLogLength.keys())) {
     if (!sessionIds.has(key)) state.lastLogLength.delete(key);
   }
-  for (const key of Array.from(state.conversationScrollContainers.keys())) {
-    if (!sessionIds.has(key)) {
-      const entry = state.conversationScrollContainers.get(key);
-      if (entry?.element && entry.handler) {
-        entry.element.removeEventListener("scroll", entry.handler);
-      }
-      state.conversationScrollContainers.delete(key);
-    }
-  }
   for (const key of Array.from(state.autoScrollEnabled.keys())) {
     if (!sessionIds.has(key)) state.autoScrollEnabled.delete(key);
   }
-
   const routeSessionId = getSessionIdFromPath(window.location.pathname);
   const allowHistoryUpdate = currentRoute === "live" && !routeSessionId;
   const redirectHome = applyRouteSessionFromPath({ allowHistoryUpdate });
@@ -941,15 +985,13 @@ const updateConversationDOM = (sessionId) => {
     }
   }
 
+  attachConversationScrollHandler(sessionId, container.closest('.wm-live-conversation'));
+
   const conversation = state.conversations.get(sessionId) ?? [];
   const lastCount = state.lastMessageCount.get(sessionId) ?? 0;
 
-  const scrollContainer = container.closest('.wm-live-conversation');
-  if (scrollContainer) {
-    attachConversationScrollHandler(sessionId, scrollContainer);
-  }
   const autoScrollPreferred = ensureAutoScrollPreference(sessionId);
-  const shouldAutoScroll = autoScrollPreferred && Boolean(scrollContainer);
+  const shouldAutoScroll = Boolean(autoScrollPreferred);
 
   // Handle new messages
   if (conversation.length > lastCount) {
@@ -988,8 +1030,10 @@ const updateConversationDOM = (sessionId) => {
   }
 
   // Auto-scroll if user was at bottom
-  if (shouldAutoScroll && scrollContainer) {
-    scrollConversationToBottom(scrollContainer);
+  if (shouldAutoScroll) {
+    scrollConversationAreaToBottom(sessionId);
+  } else {
+    updateAutoScrollStateForSession(sessionId);
   }
 };
 
@@ -1153,6 +1197,7 @@ const sendMessage = async (sessionId, content) => {
     const messages = Array.isArray(payload?.messages) ? payload.messages : [];
     state.conversations.set(sessionId, messages);
     state.messageDrafts.set(sessionId, "");
+    state.autoScrollEnabled.set(sessionId, true);
 
     // Trigger incremental updates instead of full render
     updateConversationDOM(sessionId);
@@ -1312,10 +1357,12 @@ const renderSessionTabs = (options = {}) => {
         conversationContainer.className = "wm-live-conversation";
         conversationContainer.append(renderConversation(session.id));
         scrollRegion.append(conversationContainer);
-        const allowAutoScroll = ensureAutoScrollPreference(session.id);
         attachConversationScrollHandler(session.id, conversationContainer);
+        const allowAutoScroll = ensureAutoScrollPreference(session.id);
         if (allowAutoScroll) {
-          scrollConversationToBottom(conversationContainer);
+          scrollConversationAreaToBottom(session.id);
+        } else {
+          updateAutoScrollStateForSession(session.id);
         }
       }
       onSelect?.();
@@ -1385,10 +1432,12 @@ const renderTabs = (options = {}) => {
         conversationContainer.className = "wm-live-conversation";
         conversationContainer.append(renderConversation(session.id));
         scrollRegion.append(conversationContainer);
-        const allowAutoScroll = ensureAutoScrollPreference(session.id);
         attachConversationScrollHandler(session.id, conversationContainer);
+        const allowAutoScroll = ensureAutoScrollPreference(session.id);
         if (allowAutoScroll) {
-          scrollConversationToBottom(conversationContainer);
+          scrollConversationAreaToBottom(session.id);
+        } else {
+          updateAutoScrollStateForSession(session.id);
         }
       }
       onSelect?.();
@@ -1470,6 +1519,7 @@ const renderConversation = (sessionId) => {
 const renderLive = () => {
   const wrapper = document.createElement("div");
   wrapper.className = "wm-live";
+  ensureWindowScrollMonitoring();
 
   if (tabsVisible) {
     const tabsBar = document.createElement("div");
@@ -1516,10 +1566,12 @@ const renderLive = () => {
   conversationContainer.className = "wm-live-conversation";
   conversationContainer.append(renderConversation(sessionId));
   scrollRegion.append(conversationContainer);
-  const allowAutoScroll = ensureAutoScrollPreference(sessionId);
   attachConversationScrollHandler(sessionId, conversationContainer);
+  const allowAutoScroll = ensureAutoScrollPreference(sessionId);
   if (allowAutoScroll) {
-    scrollConversationToBottom(conversationContainer);
+    scrollConversationAreaToBottom(sessionId);
+  } else {
+    updateAutoScrollStateForSession(sessionId);
   }
 
   main.append(scrollRegion);
@@ -1631,6 +1683,16 @@ const renderLive = () => {
     }
   });
 
+  const scrollButton = document.createElement("button");
+  scrollButton.type = "button";
+  scrollButton.className = "wm-button secondary";
+  scrollButton.innerHTML = '<span class="button-icon" aria-hidden="true">⤵️</span><span class="button-text">Scroll to end</span>';
+  scrollButton.setAttribute("aria-label", "Scroll to end");
+  scrollButton.addEventListener("click", () => {
+    scrollConversationAreaToBottom(sessionId);
+    state.autoScrollEnabled.set(sessionId, true);
+  });
+
   attachButton = document.createElement("button");
   attachButton.type = "button";
   attachButton.className = "wm-button secondary";
@@ -1648,7 +1710,7 @@ const renderLive = () => {
 
   const buttonGroup = document.createElement("div");
   buttonGroup.className = "wm-button-group";
-  buttonGroup.append(attachButton, submit);
+  buttonGroup.append(scrollButton, attachButton, submit);
 
   composer.append(fileInput, textarea, buttonGroup);
   composerShell.append(composer);
