@@ -13,9 +13,56 @@ const state = {
   lastActiveSessionId: null,
   // DOM references for incremental updates
   conversationContainers: new Map(), // sessionId -> DOM element
+  conversationScrollContainers: new Map(), // sessionId -> { element, handler }
   logContainers: new Map(), // sessionId -> DOM element
   lastMessageCount: new Map(), // sessionId -> number of messages
   lastLogLength: new Map(), // sessionId -> length of logs
+  autoScrollEnabled: new Map(), // sessionId -> boolean
+};
+
+const AUTO_SCROLL_THRESHOLD = 80;
+
+const ensureAutoScrollPreference = (sessionId) => {
+  if (!state.autoScrollEnabled.has(sessionId)) {
+    state.autoScrollEnabled.set(sessionId, true);
+  }
+  return state.autoScrollEnabled.get(sessionId);
+};
+
+const isNearBottom = (element) => {
+  if (!element) return true;
+  const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
+  return distance <= AUTO_SCROLL_THRESHOLD;
+};
+
+const scrollConversationToBottom = (element) => {
+  if (!element) return;
+  requestAnimationFrame(() => {
+    element.scrollTop = element.scrollHeight;
+  });
+};
+
+const attachConversationScrollHandler = (sessionId, scrollContainer) => {
+  if (!scrollContainer) return;
+  const existing = state.conversationScrollContainers.get(sessionId);
+  if (existing?.element === scrollContainer) {
+    return;
+  }
+  if (existing?.element && existing.handler) {
+    existing.element.removeEventListener("scroll", existing.handler);
+  }
+
+  const handler = () => {
+    const nearBottom = isNearBottom(scrollContainer);
+    if (nearBottom) {
+      state.autoScrollEnabled.set(sessionId, true);
+    } else {
+      state.autoScrollEnabled.set(sessionId, false);
+    }
+  };
+
+  scrollContainer.addEventListener("scroll", handler);
+  state.conversationScrollContainers.set(sessionId, { element: scrollContainer, handler });
 };
 
 const getSessionById = (sessionId) => state.sessions.find((session) => session.id === sessionId);
@@ -737,6 +784,18 @@ const fetchSessions = async () => {
   for (const key of Array.from(state.lastLogLength.keys())) {
     if (!sessionIds.has(key)) state.lastLogLength.delete(key);
   }
+  for (const key of Array.from(state.conversationScrollContainers.keys())) {
+    if (!sessionIds.has(key)) {
+      const entry = state.conversationScrollContainers.get(key);
+      if (entry?.element && entry.handler) {
+        entry.element.removeEventListener("scroll", entry.handler);
+      }
+      state.conversationScrollContainers.delete(key);
+    }
+  }
+  for (const key of Array.from(state.autoScrollEnabled.keys())) {
+    if (!sessionIds.has(key)) state.autoScrollEnabled.delete(key);
+  }
 
   const routeSessionId = getSessionIdFromPath(window.location.pathname);
   const allowHistoryUpdate = currentRoute === "live" && !routeSessionId;
@@ -886,9 +945,11 @@ const updateConversationDOM = (sessionId) => {
   const lastCount = state.lastMessageCount.get(sessionId) ?? 0;
 
   const scrollContainer = container.closest('.wm-live-conversation');
-  const isAtBottom = scrollContainer
-    ? (scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight) < 100
-    : true;
+  if (scrollContainer) {
+    attachConversationScrollHandler(sessionId, scrollContainer);
+  }
+  const autoScrollPreferred = ensureAutoScrollPreference(sessionId);
+  const shouldAutoScroll = autoScrollPreferred && Boolean(scrollContainer);
 
   // Handle new messages
   if (conversation.length > lastCount) {
@@ -927,10 +988,8 @@ const updateConversationDOM = (sessionId) => {
   }
 
   // Auto-scroll if user was at bottom
-  if (isAtBottom && scrollContainer) {
-    requestAnimationFrame(() => {
-      scrollContainer.scrollTop = scrollContainer.scrollHeight;
-    });
+  if (shouldAutoScroll && scrollContainer) {
+    scrollConversationToBottom(scrollContainer);
   }
 };
 
@@ -1253,6 +1312,11 @@ const renderSessionTabs = (options = {}) => {
         conversationContainer.className = "wm-live-conversation";
         conversationContainer.append(renderConversation(session.id));
         scrollRegion.append(conversationContainer);
+        const allowAutoScroll = ensureAutoScrollPreference(session.id);
+        attachConversationScrollHandler(session.id, conversationContainer);
+        if (allowAutoScroll) {
+          scrollConversationToBottom(conversationContainer);
+        }
       }
       onSelect?.();
     });
@@ -1321,6 +1385,11 @@ const renderTabs = (options = {}) => {
         conversationContainer.className = "wm-live-conversation";
         conversationContainer.append(renderConversation(session.id));
         scrollRegion.append(conversationContainer);
+        const allowAutoScroll = ensureAutoScrollPreference(session.id);
+        attachConversationScrollHandler(session.id, conversationContainer);
+        if (allowAutoScroll) {
+          scrollConversationToBottom(conversationContainer);
+        }
       }
       onSelect?.();
     });
@@ -1447,6 +1516,11 @@ const renderLive = () => {
   conversationContainer.className = "wm-live-conversation";
   conversationContainer.append(renderConversation(sessionId));
   scrollRegion.append(conversationContainer);
+  const allowAutoScroll = ensureAutoScrollPreference(sessionId);
+  attachConversationScrollHandler(sessionId, conversationContainer);
+  if (allowAutoScroll) {
+    scrollConversationToBottom(conversationContainer);
+  }
 
   main.append(scrollRegion);
   wrapper.append(main);
