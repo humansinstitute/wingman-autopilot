@@ -95,10 +95,17 @@ const attachConversationScrollHandler = (sessionId, element) => {
   element.dataset.scrollMonitorSessionId = sessionId;
 };
 
-const scrollConversationAreaToBottom = (sessionId) => {
+const scrollConversationAreaToBottom = (sessionId, options = {}) => {
+  const { includeWindow = false } = options;
   const target = getActiveScrollElement(sessionId);
   if (target) {
     scrollConversationToBottom(target);
+  }
+  if (includeWindow) {
+    const fallback = getFallbackScrollElement();
+    if (fallback && fallback !== target) {
+      scrollConversationToBottom(fallback);
+    }
   }
   requestAnimationFrame(() => updateAutoScrollStateForSession(sessionId));
 };
@@ -1838,7 +1845,7 @@ const renderLive = () => {
   };
 
   addCommand("Scroll to end", () => {
-    scrollConversationAreaToBottom(sessionId);
+    scrollConversationAreaToBottom(sessionId, { includeWindow: true });
     state.autoScrollEnabled.set(sessionId, true);
   });
 
