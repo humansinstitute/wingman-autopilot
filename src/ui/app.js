@@ -75,10 +75,7 @@ const getConversationScrollElement = (sessionId) => {
 const getActiveScrollElement = (sessionId) => {
   const conversationElement = getConversationScrollElement(sessionId);
   if (conversationElement) {
-    const metrics = getScrollMetrics(conversationElement);
-    if (metrics && metrics.scrollHeight > metrics.clientHeight + 1) {
-      return conversationElement;
-    }
+    return conversationElement;
   }
   return getFallbackScrollElement();
 };
@@ -104,6 +101,88 @@ const scrollConversationAreaToBottom = (sessionId) => {
     scrollConversationToBottom(target);
   }
   requestAnimationFrame(() => updateAutoScrollStateForSession(sessionId));
+};
+
+const copyTextToClipboard = async (text) => {
+  if (!text) return false;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+    const fallback = document.createElement("textarea");
+    fallback.value = text;
+    fallback.setAttribute("readonly", "");
+    fallback.style.position = "absolute";
+    fallback.style.left = "-9999px";
+    document.body.append(fallback);
+    fallback.select();
+    const success = document.execCommand("copy");
+    fallback.remove();
+    return success;
+  } catch (error) {
+    console.error("Failed to copy to clipboard", error);
+    return false;
+  }
+};
+
+const attachCopyButton = (bubble) => {
+  if (!bubble || bubble.dataset.copyAttached === "true") return;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "wm-message-copy";
+  button.setAttribute("aria-label", "Copy message");
+  button.innerHTML =
+    '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M15 3H7a2 2 0 0 0-2 2v10h2V5h8V3zm4 4h-8a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zm0 12h-8V9h8v10z"/></svg>';
+  button.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const body = bubble.querySelector("pre");
+    const text = body?.textContent ?? "";
+    const copied = await copyTextToClipboard(text);
+    if (copied) {
+      bubble.dataset.copied = "true";
+      setTimeout(() => {
+        if (bubble.isConnected) {
+          delete bubble.dataset.copied;
+        }
+      }, 1600);
+    }
+  });
+  bubble.append(button);
+  bubble.dataset.copyAttached = "true";
+};
+
+const copyConversationToClipboard = async (sessionId) => {
+  const conversation = state.conversations.get(sessionId) ?? [];
+  let textBlocks = conversation;
+  if (textBlocks.length === 0) {
+    const container = state.conversationContainers.get(sessionId);
+    if (container) {
+      const domMessages = container.querySelectorAll(".wm-message pre");
+      textBlocks = Array.from(domMessages).map((node) => ({
+        role: null,
+        content: node.textContent ?? "",
+      }));
+    }
+  }
+
+  if (textBlocks.length === 0) return false;
+
+  const formatted = textBlocks
+    .map((message) => {
+      const role = typeof message.role === "string" ? message.role : message.type;
+      const labelSource = role ?? "assistant";
+      const label = `${labelSource.charAt(0).toUpperCase()}${labelSource.slice(1)}`;
+      const content = message.content ?? message.message ?? "";
+      if (!content) return label;
+      return `${label}:\n${content}`;
+    })
+    .join("\n\n")
+    .trim();
+
+  if (!formatted) return false;
+  return copyTextToClipboard(formatted);
 };
 
 let windowScrollHandler = null;
@@ -965,6 +1044,7 @@ const updateConversationDOM = (sessionId) => {
       state.conversationContainers.set(sessionId, container);
       // Re-sync the message count based on actual DOM
       const existingMessages = container.querySelectorAll('.wm-message');
+      existingMessages.forEach((node) => attachCopyButton(node));
       state.lastMessageCount.set(sessionId, existingMessages.length);
     } else {
       return;
@@ -989,6 +1069,7 @@ const updateConversationDOM = (sessionId) => {
       const body = document.createElement("pre");
       body.textContent = message.content ?? message.message ?? "";
       bubble.append(body);
+      attachCopyButton(bubble);
       container.append(bubble);
     });
 
@@ -1002,6 +1083,7 @@ const updateConversationDOM = (sessionId) => {
     conversation.forEach((message, idx) => {
       const domMessage = domMessages[idx];
       if (domMessage) {
+        attachCopyButton(domMessage);
         const body = domMessage.querySelector('pre');
         const currentContent = body?.textContent || '';
         const newContent = message.content ?? message.message ?? '';
@@ -1551,6 +1633,7 @@ const renderConversation = (sessionId) => {
       const body = document.createElement("pre");
       body.textContent = message.content ?? message.message ?? "";
       bubble.append(body);
+      attachCopyButton(bubble);
       wrapper.append(bubble);
     });
   }
@@ -1757,6 +1840,10 @@ const renderLive = () => {
   addCommand("Scroll to end", () => {
     scrollConversationAreaToBottom(sessionId);
     state.autoScrollEnabled.set(sessionId, true);
+  });
+
+  addCommand("Copy chat", () => {
+    copyConversationToClipboard(sessionId);
   });
 
   addCommand("Attach image", () => {
