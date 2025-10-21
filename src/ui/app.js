@@ -1173,6 +1173,28 @@ const closeDialog = () => {
   }
 };
 
+const handleSessionStart = async (session) => {
+  if (!session || !session.id) {
+    return;
+  }
+
+  const switchingToLive = currentRoute !== "live";
+  if (switchingToLive) {
+    currentRoute = "live";
+  }
+  setActiveSession(session.id, { allowPending: true, logPort: false, updateHistory: true });
+  if (typeof session.workingDirectory === "string" && session.workingDirectory.length > 0) {
+    state.lastWorkingDirectory = session.workingDirectory;
+    if (directoryInput) {
+      directoryInput.value = session.workingDirectory;
+      scheduleDirectorySuggestions(session.workingDirectory);
+    }
+  }
+  await fetchSessions();
+  await Promise.all([fetchConversation(session.id), fetchLogs(session.id)]);
+  render();
+};
+
 const launchSession = async (agentId, workingDirectory) => {
   if (!agentId) {
     window.alert("Select an agent before launching a session.");
@@ -1197,21 +1219,7 @@ const launchSession = async (agentId, workingDirectory) => {
   }
 
   const session = await response.json();
-  const switchingToLive = currentRoute !== "live";
-  if (switchingToLive) {
-    currentRoute = "live";
-  }
-  setActiveSession(session.id, { allowPending: true, logPort: false, updateHistory: true });
-  if (typeof session.workingDirectory === "string" && session.workingDirectory.length > 0) {
-    state.lastWorkingDirectory = session.workingDirectory;
-    if (directoryInput) {
-      directoryInput.value = session.workingDirectory;
-      scheduleDirectorySuggestions(session.workingDirectory);
-    }
-  }
-  await fetchSessions();
-  await Promise.all([fetchConversation(session.id), fetchLogs(session.id)]);
-  render();
+  await handleSessionStart(session);
 };
 
 const stopSession = async (sessionId) => {
@@ -1314,9 +1322,43 @@ const renderHome = () => {
   securityButton.type = "button";
   securityButton.className = "wm-button secondary";
   securityButton.textContent = "Security Review";
-  // Placeholder hook for future navigation
-  securityButton.addEventListener("click", () => {
-    console.info("Security review requested");
+
+  const setSecurityReviewPending = (pending) => {
+    if (pending) {
+      securityButton.disabled = true;
+      securityButton.dataset.pending = "true";
+      securityButton.textContent = "Launching...";
+    } else {
+      securityButton.disabled = false;
+      delete securityButton.dataset.pending;
+      securityButton.textContent = "Security Review";
+    }
+  };
+
+  securityButton.addEventListener("click", async () => {
+    if (securityButton.dataset.pending === "true") return;
+    setSecurityReviewPending(true);
+    try {
+      const response = await fetch("/api/security-review", { method: "POST" });
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}));
+        const message = errorPayload.error ?? response.statusText ?? "Failed to start security review";
+        window.alert(message);
+        return;
+      }
+      const data = await response.json();
+      if (!data?.session) {
+        window.alert("Security review started, but no session information was returned.");
+        return;
+      }
+      await handleSessionStart(data.session);
+    } catch (error) {
+      window.alert(`Failed to launch security review: ${(error instanceof Error ? error.message : String(error))}`);
+    } finally {
+      if (securityButton.isConnected) {
+        setSecurityReviewPending(false);
+      }
+    }
   });
 
   orchestratorHeader.append(orchestratorTitle, securityButton);

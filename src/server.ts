@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, normalize, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -93,7 +93,12 @@ const config = loadConfig();
 await ensureWingmanAgentsSessionClean();
 const manager = new ProcessManager(config);
 
-const tmpRoot = normalize(join(fileURLToPath(new URL(".", import.meta.url)), "../tmp"));
+const srcRoot = fileURLToPath(new URL(".", import.meta.url));
+const projectRoot = fileURLToPath(new URL("..", import.meta.url));
+const orchestratorTemplateDir = join(projectRoot, "orchestrator", "templates", "0001_Review_Code");
+const orchestratorActiveRoot = join(projectRoot, "orchestrator", "active");
+
+const tmpRoot = normalize(join(srcRoot, "../tmp"));
 const imageRoot = join(tmpRoot, "images");
 const maxImageSizeBytes = 10 * 1024 * 1024; // 10MB
 const imageTtlMs = 24 * 60 * 60 * 1000;
@@ -263,6 +268,62 @@ const ensureDirectory = async (input: string | null | undefined): Promise<string
   }
 
   return resolved;
+};
+
+const directoryExists = async (path: string): Promise<boolean> => {
+  try {
+    const stats = await stat(path);
+    return stats.isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+const formatDateYYMMDD = (date: Date): string => {
+  const year = date.getFullYear() % 100;
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  return `${year.toString().padStart(2, "0")}${month.toString().padStart(2, "0")}${day
+    .toString()
+    .padStart(2, "0")}`;
+};
+
+const generateSecurityReviewDirectory = async (): Promise<string> => {
+  const now = new Date();
+  const dateSegment = formatDateYYMMDD(now);
+  await mkdir(orchestratorActiveRoot, { recursive: true });
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const idSegment = Math.floor(Math.random() * 100_000_000)
+      .toString()
+      .padStart(8, "0");
+    const directoryName = `${dateSegment}_Security_Review_${idSegment}`;
+    const target = join(orchestratorActiveRoot, directoryName);
+    if (!(await directoryExists(target))) {
+      return target;
+    }
+  }
+
+  throw new Error("Unable to allocate unique security review directory");
+};
+
+const prepareSecurityReviewDirectory = async (): Promise<string> => {
+  const templateStats = await stat(orchestratorTemplateDir).catch(() => null);
+  if (!templateStats || !templateStats.isDirectory()) {
+    throw new Error(`Security review template not found: ${orchestratorTemplateDir}`);
+  }
+
+  const targetDirectory = await generateSecurityReviewDirectory();
+  await cp(orchestratorTemplateDir, targetDirectory, { recursive: true, force: false });
+  return targetDirectory;
+};
+
+const createSecurityReviewSession = async () => {
+  const directory = await prepareSecurityReviewDirectory();
+  const session = await manager.createSession("codex", directory);
+  messageStore.recordSession(session.id, session.agent, session.startedAt);
+  await syncSessionMessages(session.id, true);
+  return { directory, session };
 };
 
 const listDirectories = async (input: string | null | undefined, query?: string) => {
@@ -536,6 +597,15 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
   if (pathname === "/api/sessions" && method === "GET") {
     const sessions = manager.listSessions();
     return Response.json({ sessions });
+  }
+
+  if (pathname === "/api/security-review" && method === "POST") {
+    try {
+      const { directory, session } = await createSecurityReviewSession();
+      return Response.json({ directory, session }, { status: 201 });
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 500 });
+    }
   }
 
   if (pathname === "/api/sessions" && method === "POST") {
