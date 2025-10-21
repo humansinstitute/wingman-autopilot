@@ -110,7 +110,7 @@ const ensureImageDirectory = async (agent: AgentType) => {
 };
 
 const defaultSecurityReviewIntro =
-  "Pleaese review the 01_process.md for your instructions.\n\nThe <working_dir> is ~/code/wingmen";
+  "Pleaese review the 01_process.md for your instructions.\n\nThe working directory is <working_dir>";
 
 orchestratorPresetStore.ensurePreset({
   id: "security-review",
@@ -699,6 +699,11 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
     });
   }
 
+  if (pathname === "/api/orchestrators" && method === "GET") {
+    const presets = orchestratorPresetStore.listPresets();
+    return Response.json({ presets });
+  }
+
   if (pathname === "/api/directories" && method === "GET") {
     try {
       const data = await listDirectories(url.searchParams.get("path"), url.searchParams.get("query") ?? undefined);
@@ -777,13 +782,46 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
     return Response.json({ sessions });
   }
 
-  if (pathname === "/api/security-review" && method === "POST") {
-    try {
-      const { directory, session } = await createSecurityReviewSession();
-      return Response.json({ directory, session }, { status: 201 });
-    } catch (error) {
-      return Response.json({ error: (error as Error).message }, { status: 500 });
+  if (pathname.startsWith("/api/orchestrators/")) {
+    const parts = pathname.split("/");
+    const id = parts[3];
+    if (!id) {
+      return Response.json({ error: "Preset id required" }, { status: 400 });
     }
+
+    if (method === "GET" && parts.length === 4) {
+      const preset = orchestratorPresetStore.getPreset(id);
+      if (!preset) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+      return Response.json({
+        preset: {
+          id: preset.id,
+          label: preset.label,
+          agent: preset.agent,
+          templateDir: preset.templateDir,
+          activeRoot: preset.activeRoot,
+          directoryPrefix: preset.directoryPrefix,
+          workingDirectory: preset.workingDirectory,
+          introMessage: preset.introMessage,
+          pollTimeoutMs: preset.pollTimeoutMs,
+          pollIntervalMs: preset.pollIntervalMs,
+          retryAttempts: preset.retryAttempts,
+          retryDelayMs: preset.retryDelayMs,
+        },
+      });
+    }
+
+    if (method === "POST" && parts[4] === "launch") {
+      try {
+        const { directory, session } = await launchOrchestratorPreset(id);
+        return Response.json({ directory, session }, { status: 201 });
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 500 });
+      }
+    }
+
+    return Response.json({ error: "Not found" }, { status: 404 });
   }
 
   if (pathname === "/api/sessions" && method === "POST") {

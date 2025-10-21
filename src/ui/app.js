@@ -1305,6 +1305,45 @@ const sendMessage = async (sessionId, content) => {
   }
 };
 
+const fetchOrchestratorPresets = async () => {
+  const response = await fetch("/api/orchestrators");
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error ?? response.statusText ?? "Failed to load orchestrators");
+  }
+
+  const payload = await response.json().catch(() => ({}));
+  const candidates = Array.isArray(payload?.presets) ? payload.presets : [];
+  return candidates
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const preset = item;
+      const id = typeof preset.id === "string" ? preset.id : "";
+      if (!id) {
+        return null;
+      }
+      return {
+        id,
+        label: typeof preset.label === "string" ? preset.label : "",
+        agent: typeof preset.agent === "string" ? preset.agent : "",
+      };
+    })
+    .filter((item) => item !== null);
+};
+
+const launchOrchestratorPreset = async (presetId) => {
+  const response = await fetch(`/api/orchestrators/${encodeURIComponent(presetId)}/launch`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error ?? response.statusText ?? "Failed to launch orchestrator");
+  }
+  return response.json();
+};
+
 const renderHome = () => {
   const wrapper = document.createElement("div");
   wrapper.className = "wm-home";
@@ -1318,51 +1357,91 @@ const renderHome = () => {
   const orchestratorTitle = document.createElement("h2");
   orchestratorTitle.textContent = "Orchestrator";
 
-  const securityButton = document.createElement("button");
-  securityButton.type = "button";
-  securityButton.className = "wm-button secondary";
-  securityButton.textContent = "Security Review";
+  const orchestratorContent = document.createElement("div");
+  orchestratorContent.className = "wm-home-orchestrator-content";
+  orchestratorContent.id = "orchestrator-content";
 
-  const setSecurityReviewPending = (pending) => {
-    if (pending) {
-      securityButton.disabled = true;
-      securityButton.dataset.pending = "true";
-      securityButton.textContent = "Launching...";
+  const setOrchestratorCollapsed = (collapsed) => {
+    if (collapsed) {
+      orchestratorCard.dataset.collapsed = "true";
+      orchestratorContent.hidden = true;
     } else {
-      securityButton.disabled = false;
-      delete securityButton.dataset.pending;
-      securityButton.textContent = "Security Review";
+      delete orchestratorCard.dataset.collapsed;
+      orchestratorContent.hidden = false;
     }
   };
 
-  securityButton.addEventListener("click", async () => {
-    if (securityButton.dataset.pending === "true") return;
-    setSecurityReviewPending(true);
+  const orchestratorActions = document.createElement("div");
+  orchestratorActions.className = "wm-home-orchestrator-actions";
+  orchestratorActions.textContent = "Loading orchestrators…";
+
+  (async () => {
     try {
-      const response = await fetch("/api/security-review", { method: "POST" });
-      if (!response.ok) {
-        const errorPayload = await response.json().catch(() => ({}));
-        const message = errorPayload.error ?? response.statusText ?? "Failed to start security review";
-        window.alert(message);
+      const presets = await fetchOrchestratorPresets();
+      if (!orchestratorActions.isConnected) return;
+      orchestratorActions.textContent = "";
+      if (presets.length === 0) {
+        orchestratorActions.textContent = "No orchestrator presets configured.";
         return;
       }
-      const data = await response.json();
-      if (!data?.session) {
-        window.alert("Security review started, but no session information was returned.");
-        return;
+
+      for (const preset of presets) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "wm-button secondary";
+        const label = typeof preset.label === "string" && preset.label.length > 0 ? preset.label : preset.id;
+        button.textContent = label;
+
+        const setPending = (pending) => {
+          if (pending) {
+            button.disabled = true;
+            button.dataset.pending = "true";
+            button.textContent = "Launching...";
+          } else {
+            button.disabled = false;
+            delete button.dataset.pending;
+            button.textContent = label;
+          }
+        };
+
+        button.addEventListener("click", async () => {
+          if (button.dataset.pending === "true") return;
+          setPending(true);
+          try {
+            const result = await launchOrchestratorPreset(preset.id);
+            if (!result?.session) {
+              window.alert("Orchestrator launched, but no session information was returned.");
+              return;
+            }
+            await handleSessionStart(result.session);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            window.alert(`Failed to launch ${label}: ${message}`);
+          } finally {
+            if (button.isConnected) {
+              setPending(false);
+            }
+          }
+        });
+
+        orchestratorActions.append(button);
       }
-      await handleSessionStart(data.session);
     } catch (error) {
-      window.alert(`Failed to launch security review: ${(error instanceof Error ? error.message : String(error))}`);
-    } finally {
-      if (securityButton.isConnected) {
-        setSecurityReviewPending(false);
-      }
+      if (!orchestratorActions.isConnected) return;
+      const message = error instanceof Error ? error.message : String(error);
+      orchestratorActions.textContent = `Failed to load orchestrator presets: ${message}`;
     }
+  })();
+
+  // Make header clickable to toggle collapse
+  orchestratorHeader.addEventListener("click", () => {
+    const currentlyCollapsed = orchestratorCard.dataset.collapsed === "true";
+    setOrchestratorCollapsed(!currentlyCollapsed);
   });
 
-  orchestratorHeader.append(orchestratorTitle, securityButton);
-  orchestratorCard.append(orchestratorHeader);
+  orchestratorHeader.append(orchestratorTitle);
+  orchestratorContent.append(orchestratorActions);
+  orchestratorCard.append(orchestratorHeader, orchestratorContent);
 
   wrapper.append(orchestratorCard);
 
@@ -1375,36 +1454,27 @@ const renderHome = () => {
   const liveTitle = document.createElement("h2");
   liveTitle.textContent = "Live Agents";
 
-  const toggleButton = document.createElement("button");
-  toggleButton.type = "button";
-  toggleButton.className = "wm-button secondary wm-home-live-toggle";
-  toggleButton.setAttribute("aria-expanded", "true");
-
   const liveContent = document.createElement("div");
   liveContent.className = "wm-home-live-content";
   liveContent.id = "live-agents-content";
-  toggleButton.setAttribute("aria-controls", liveContent.id);
 
   const setCollapsed = (collapsed) => {
     if (collapsed) {
       liveCard.dataset.collapsed = "true";
       liveContent.hidden = true;
-      toggleButton.textContent = "Expand";
-      toggleButton.setAttribute("aria-expanded", "false");
     } else {
       delete liveCard.dataset.collapsed;
       liveContent.hidden = false;
-      toggleButton.textContent = "Collapse";
-      toggleButton.setAttribute("aria-expanded", "true");
     }
   };
 
-  toggleButton.addEventListener("click", () => {
+  // Make header clickable to toggle collapse
+  liveHeader.addEventListener("click", () => {
     const currentlyCollapsed = liveCard.dataset.collapsed === "true";
     setCollapsed(!currentlyCollapsed);
   });
 
-  liveHeader.append(liveTitle, toggleButton);
+  liveHeader.append(liveTitle);
   liveCard.append(liveHeader);
 
   const renderSessionActions = (target, session) => {
