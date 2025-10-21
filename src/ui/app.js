@@ -1298,19 +1298,72 @@ const sendMessage = async (sessionId, content) => {
 };
 
 const renderHome = () => {
-  const container = document.createElement("section");
-  container.className = "wm-card";
+  const wrapper = document.createElement("div");
+  wrapper.className = "wm-home";
 
-  const actions = document.createElement("div");
-  actions.className = "wm-actions";
+  const orchestratorCard = document.createElement("section");
+  orchestratorCard.className = "wm-card wm-home-orchestrator";
 
-  const launchBtn = document.createElement("button");
-  launchBtn.className = "wm-button";
-  launchBtn.textContent = "Launch Agent Session";
-  launchBtn.addEventListener("click", openDialog);
-  actions.append(launchBtn);
+  const orchestratorHeader = document.createElement("div");
+  orchestratorHeader.className = "wm-home-section-header";
 
-  container.append(actions);
+  const orchestratorTitle = document.createElement("h2");
+  orchestratorTitle.textContent = "Orchestrator";
+
+  const securityButton = document.createElement("button");
+  securityButton.type = "button";
+  securityButton.className = "wm-button secondary";
+  securityButton.textContent = "Security Review";
+  // Placeholder hook for future navigation
+  securityButton.addEventListener("click", () => {
+    console.info("Security review requested");
+  });
+
+  orchestratorHeader.append(orchestratorTitle, securityButton);
+  orchestratorCard.append(orchestratorHeader);
+
+  wrapper.append(orchestratorCard);
+
+  const liveCard = document.createElement("section");
+  liveCard.className = "wm-card wm-home-live";
+
+  const liveHeader = document.createElement("div");
+  liveHeader.className = "wm-home-section-header";
+
+  const liveTitle = document.createElement("h2");
+  liveTitle.textContent = "Live Agents";
+
+  const toggleButton = document.createElement("button");
+  toggleButton.type = "button";
+  toggleButton.className = "wm-button secondary wm-home-live-toggle";
+  toggleButton.setAttribute("aria-expanded", "true");
+
+  const liveContent = document.createElement("div");
+  liveContent.className = "wm-home-live-content";
+  liveContent.id = "live-agents-content";
+  toggleButton.setAttribute("aria-controls", liveContent.id);
+
+  const setCollapsed = (collapsed) => {
+    if (collapsed) {
+      liveCard.dataset.collapsed = "true";
+      liveContent.hidden = true;
+      toggleButton.textContent = "Expand";
+      toggleButton.setAttribute("aria-expanded", "false");
+    } else {
+      delete liveCard.dataset.collapsed;
+      liveContent.hidden = false;
+      toggleButton.textContent = "Collapse";
+      toggleButton.setAttribute("aria-expanded", "true");
+    }
+  };
+
+  toggleButton.addEventListener("click", () => {
+    const currentlyCollapsed = liveCard.dataset.collapsed === "true";
+    setCollapsed(!currentlyCollapsed);
+  });
+
+  liveHeader.append(liveTitle, toggleButton);
+  liveCard.append(liveHeader);
 
   const renderSessionActions = (target, session) => {
     const resumeBtn = document.createElement("button");
@@ -1333,6 +1386,15 @@ const renderHome = () => {
       target.append(deleteBtn);
     }
   };
+
+  const actions = document.createElement("div");
+  actions.className = "wm-actions";
+
+  const launchBtn = document.createElement("button");
+  launchBtn.className = "wm-button";
+  launchBtn.textContent = "Launch Agent Session";
+  launchBtn.addEventListener("click", openDialog);
+  actions.append(launchBtn);
 
   const table = document.createElement("table");
   table.className = "session-table";
@@ -1442,8 +1504,12 @@ const renderHome = () => {
     });
   }
 
-  container.append(cardsContainer, tableContainer);
-  return container;
+  liveContent.append(actions, cardsContainer, tableContainer);
+  liveCard.append(liveContent);
+
+  setCollapsed(false);
+  wrapper.append(liveCard);
+  return wrapper;
 };
 
 const renderSessionTabs = (options = {}) => {

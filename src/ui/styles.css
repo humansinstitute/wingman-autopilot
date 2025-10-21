@@ -389,6 +389,45 @@ body[data-menu-open="true"] .wm-menu-panel {
   padding-bottom: 0;
 }
 
+.wm-home {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.wm-home-section-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.wm-home-section-header h2 {
+  margin: 0;
+  font-size: 1.35rem;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.wm-home-orchestrator .wm-home-section-header {
+  margin-bottom: 0;
+}
+
+.wm-home-live-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.wm-home-live[data-collapsed="true"] .wm-home-live-content {
+  display: none;
+}
+
+.wm-home-live-toggle {
+  min-width: 7.5rem;
+}
+
 .wm-card {
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
@@ -396,6 +435,7 @@ body[data-menu-open="true"] .wm-menu-panel {
   padding: 1.75rem;
   box-shadow: var(--shadow-md);
   color: var(--text-secondary);
+  box-sizing: border-box;
 }
 
 .wm-table-container {
@@ -1150,6 +1190,15 @@ body[data-menu-open="true"] .wm-menu-panel {
     flex-direction: column;
     gap: 0.75rem;
   }
+
+  #app[data-route="home"] .wm-card {
+    padding: 1.2rem 1rem 1.35rem;
+  }
+
+  #app[data-route="home"] .session-card {
+    padding: 1.1rem 1.25rem;
+  }
+
 }
 
 @media (max-width: 480px) {
@@ -1188,6 +1237,14 @@ body[data-menu-open="true"] .wm-menu-panel {
 
   .wm-table-container {
     margin: 0 -0.5rem;
+  }
+
+  #app[data-route="home"] .wm-card {
+    padding: 1.4rem 1rem 1.5rem;
+  }
+
+  #app[data-route="home"] .session-card {
+    padding: 1.15rem 1.25rem;
   }
 
   .session-table {
