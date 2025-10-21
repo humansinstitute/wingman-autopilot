@@ -44,7 +44,9 @@ const expandHomeDirectory = (input: string): string => {
   return input.replace("~", home);
 };
 
-const agentApiBinary = Bun.env.AGENTAPI_BIN ?? new URL("../out/agentapi", import.meta.url).pathname;
+const agentMode = (Bun.env.AGENT_MODE ?? "").trim().toLowerCase();
+const defaultAgentApiPath = agentMode === "tmux" ? "../out/agentapi-tmux" : "../out/agentapi";
+const agentApiBinary = Bun.env.AGENTAPI_BIN ?? new URL(defaultAgentApiPath, import.meta.url).pathname;
 
 const baseCommand = (ctx: AgentCommandContext) => {
   return [

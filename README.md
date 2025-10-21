@@ -26,7 +26,8 @@ Visit `http://localhost:<PORT>/home` for the session dashboard or `/live` for th
 | `AGENT_PORTS`    | Starting port assigned to agent subprocesses                                   | `3700`                  |
 | `AGENT_MAX`      | Total number of concurrent agent ports available                               | `10`                    |
 | `DIRECTORY_DEF`  | Working directory used when launching agent subprocesses                       | `~/code`                |
-| `AGENTAPI_BIN`   | Absolute path to the AgentAPI binary used to host each agent                   | `./out/agentapi`        |
+| `AGENT_MODE`     | Switch orchestration mode; set to `tmux` to launch via `agentapi-tmux`         | `standard`              |
+| `AGENTAPI_BIN`   | Absolute path to the AgentAPI binary used to host each agent                   | `./out/agentapi` or `./out/agentapi-tmux` when `AGENT_MODE=tmux` |
 | `CLAUDE_CLI`     | Executable invoked for Claude sessions (override if not simply `claude`)       | `claude`                |
 | `GOOSE_CLI`      | Executable invoked for Goose sessions                                          | `goose`                 |
 | `CODEX_CLI`      | Executable invoked for Codex sessions (Wingman passes `--type=codex` as well)  | `codex`                 |

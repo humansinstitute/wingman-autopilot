@@ -4,7 +4,7 @@ import { dirname, extname, isAbsolute, join, normalize, resolve as resolvePath }
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { AgentType, loadConfig } from "./config";
-import { ProcessManager } from "./agents/process-manager";
+import { ProcessManager, SessionSnapshot } from "./agents/process-manager";
 import { messageStore, ReplaceMessageInput } from "./storage/message-store";
 
 const TMUX_SESSION_NAME = "wingman-agents";
@@ -110,6 +110,8 @@ const ensureImageDirectory = async (agent: AgentType) => {
   await mkdir(directory, { recursive: true });
   return directory;
 };
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const createImageFilename = (name: string, mime: string): string => {
   const originalExt = extname(name) || "";
@@ -318,11 +320,90 @@ const prepareSecurityReviewDirectory = async (): Promise<string> => {
   return targetDirectory;
 };
 
+const waitForAgentReady = async (session: SessionSnapshot, timeoutMs = 30000, pollIntervalMs = 250) => {
+  const deadline = Date.now() + timeoutMs;
+  const statusUrl = buildAgentUrl(session.port, "/status");
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(statusUrl);
+      if (response.ok) {
+        const payload = await response.json().catch(() => null);
+        const data = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : null;
+        const agentType = data && typeof data.agent_type === "string" ? data.agent_type.toLowerCase() : "";
+        const status = data && typeof data.status === "string" ? data.status : "";
+        if (agentType === session.agent && (status === "running" || status === "stable")) {
+          return;
+        }
+      }
+    } catch {
+      // Ignore transient failures while waiting for the agent to boot.
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+  throw new Error(`Timed out waiting for ${session.agent} agent to become ready`);
+};
+
+const securityReviewIntroMessage =
+  "Pleaese review the 01_process.md for your instructions.\n\nThe <working_dir> is ~/code/wingmen";
+
+const sendSecurityReviewInstructions = async (session: SessionSnapshot, maxAttempts = 10, delayMs = 1000) => {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const agentUrl = buildAgentUrl(session.port, "/message");
+      const response = await fetch(agentUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "user", content: securityReviewIntroMessage }),
+      }).catch((error: unknown) => {
+        throw new Error(`Failed to contact agent: ${(error as Error).message}`);
+      });
+
+      if (!response.ok) {
+        let message = response.statusText || "Agent request failed";
+        try {
+          const payload = await response.json();
+          const data = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : null;
+          if (data && typeof data.error === "string") {
+            message = data.error;
+          }
+        } catch {
+          // ignore json errors, keep fallback message
+        }
+        throw new Error(message);
+      }
+
+      await syncSessionMessages(session.id, true);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts) {
+        await sleep(delayMs);
+      }
+    }
+  }
+
+  if (lastError instanceof Error) {
+    throw new Error(`Failed to deliver security review instructions: ${lastError.message}`);
+  }
+  throw new Error("Failed to deliver security review instructions");
+};
+
+const initialiseSecurityReviewSession = async (session: SessionSnapshot) => {
+  try {
+    await waitForAgentReady(session);
+    await sendSecurityReviewInstructions(session);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[security-review] failed to initialise session ${session.id}: ${message}`);
+  }
+};
+
 const createSecurityReviewSession = async () => {
   const directory = await prepareSecurityReviewDirectory();
   const session = await manager.createSession("codex", directory);
   messageStore.recordSession(session.id, session.agent, session.startedAt);
-  await syncSessionMessages(session.id, true);
+  void initialiseSecurityReviewSession(session);
   return { directory, session };
 };
 
