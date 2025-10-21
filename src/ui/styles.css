@@ -998,6 +998,20 @@ body[data-menu-open="true"] .wm-menu-panel {
     padding-bottom: env(safe-area-inset-bottom);
   }
 
+  #app[data-route="home"] {
+    padding-left: 0;
+    padding-right: 0;
+    max-width: none;
+    width: 100%;
+  }
+
+  #app[data-route="home"] .wm-home {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+
   #pull-refresh {
     top: calc(env(safe-area-inset-top, 0px) + var(--nav-height) * 0.7);
   }
@@ -1212,6 +1226,20 @@ body[data-menu-open="true"] .wm-menu-panel {
     padding-right: 0;
     padding-bottom: 0;
     padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  #app[data-route="home"] {
+    padding-left: 0;
+    padding-right: 0;
+    max-width: none;
+    width: 100%;
+  }
+
+  #app[data-route="home"] .wm-home {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    max-width: 1080px;
+    margin: 0 auto;
   }
 
   #pull-refresh {

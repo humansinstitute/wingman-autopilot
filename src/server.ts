@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { AgentType, loadConfig } from "./config";
 import { ProcessManager, SessionSnapshot } from "./agents/process-manager";
 import { messageStore, ReplaceMessageInput } from "./storage/message-store";
+import { orchestratorPresetStore, OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 
 const TMUX_SESSION_NAME = "wingman-agents";
 
@@ -95,9 +96,6 @@ const manager = new ProcessManager(config);
 
 const srcRoot = fileURLToPath(new URL(".", import.meta.url));
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
-const orchestratorTemplateDir = join(projectRoot, "orchestrator", "templates", "0001_Review_Code");
-const orchestratorActiveRoot = join(projectRoot, "orchestrator", "active");
-
 const tmpRoot = normalize(join(srcRoot, "../tmp"));
 const imageRoot = join(tmpRoot, "images");
 const maxImageSizeBytes = 10 * 1024 * 1024; // 10MB
@@ -110,6 +108,23 @@ const ensureImageDirectory = async (agent: AgentType) => {
   await mkdir(directory, { recursive: true });
   return directory;
 };
+
+const defaultSecurityReviewIntro =
+  "Pleaese review the 01_process.md for your instructions.\n\nThe <working_dir> is ~/code/wingmen";
+
+orchestratorPresetStore.ensurePreset({
+  id: "security-review",
+  label: "Security Review",
+  agent: "codex",
+  templateDir: "orchestrator/templates/0001_Review_Code",
+  activeRoot: "orchestrator/active",
+  directoryPrefix: "Security_Review",
+  introMessage: defaultSecurityReviewIntro,
+  pollTimeoutMs: 30000,
+  pollIntervalMs: 250,
+  retryAttempts: 10,
+  retryDelayMs: 1000,
+});
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -290,38 +305,80 @@ const formatDateYYMMDD = (date: Date): string => {
     .padStart(2, "0")}`;
 };
 
-const generateSecurityReviewDirectory = async (): Promise<string> => {
+const resolveProjectPath = (input: string | null | undefined): string | null => {
+  const value = input?.trim();
+  if (!value) {
+    return null;
+  }
+  if (isAbsolute(value)) {
+    return normalize(value);
+  }
+  return normalize(join(projectRoot, value));
+};
+
+const sanitiseDirectoryPrefix = (value: string | null | undefined): string => {
+  const candidate = value?.trim();
+  if (!candidate) {
+    return "Preset";
+  }
+  return candidate.replace(/\s+/g, "_");
+};
+
+const generatePresetDirectory = async (preset: OrchestratorPresetRecord): Promise<string> => {
+  const templateDir = resolveProjectPath(preset.templateDir);
+  if (!templateDir) {
+    throw new Error(`Template directory not configured for preset ${preset.id}`);
+  }
+
+  const templateStats = await stat(templateDir).catch(() => null);
+  if (!templateStats || !templateStats.isDirectory()) {
+    throw new Error(`Template directory not found for preset ${preset.id}: ${templateDir}`);
+  }
+
+  const activeRoot = resolveProjectPath(preset.activeRoot);
+  if (!activeRoot) {
+    throw new Error(`Active root not configured for preset ${preset.id}`);
+  }
+
+  await mkdir(activeRoot, { recursive: true });
+
   const now = new Date();
   const dateSegment = formatDateYYMMDD(now);
-  await mkdir(orchestratorActiveRoot, { recursive: true });
+  const prefix = sanitiseDirectoryPrefix(preset.directoryPrefix);
 
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const idSegment = Math.floor(Math.random() * 100_000_000)
       .toString()
       .padStart(8, "0");
-    const directoryName = `${dateSegment}_Security_Review_${idSegment}`;
-    const target = join(orchestratorActiveRoot, directoryName);
-    if (!(await directoryExists(target))) {
-      return target;
+    const directoryName = `${dateSegment}_${prefix}_${idSegment}`;
+    const target = join(activeRoot, directoryName);
+    if (await directoryExists(target)) {
+      continue;
     }
+    await cp(templateDir, target, { recursive: true, force: false });
+    return target;
   }
 
-  throw new Error("Unable to allocate unique security review directory");
+  throw new Error(`Unable to allocate unique directory for preset ${preset.id}`);
 };
 
-const prepareSecurityReviewDirectory = async (): Promise<string> => {
-  const templateStats = await stat(orchestratorTemplateDir).catch(() => null);
-  if (!templateStats || !templateStats.isDirectory()) {
-    throw new Error(`Security review template not found: ${orchestratorTemplateDir}`);
+const preparePresetWorkingDirectory = async (preset: OrchestratorPresetRecord): Promise<string> => {
+  if (preset.templateDir) {
+    return generatePresetDirectory(preset);
   }
 
-  const targetDirectory = await generateSecurityReviewDirectory();
-  await cp(orchestratorTemplateDir, targetDirectory, { recursive: true, force: false });
-  return targetDirectory;
+  const directoryInput = preset.workingDirectory ?? null;
+  return ensureDirectory(directoryInput);
 };
 
-const waitForAgentReady = async (session: SessionSnapshot, timeoutMs = 30000, pollIntervalMs = 250) => {
-  const deadline = Date.now() + timeoutMs;
+const waitForAgentReady = async (
+  session: SessionSnapshot,
+  timeoutMs: number | null | undefined,
+  pollIntervalMs: number | null | undefined,
+) => {
+  const effectiveTimeout = typeof timeoutMs === "number" && timeoutMs > 0 ? timeoutMs : 30000;
+  const interval = typeof pollIntervalMs === "number" && pollIntervalMs > 0 ? pollIntervalMs : 250;
+  const deadline = Date.now() + effectiveTimeout;
   const statusUrl = buildAgentUrl(session.port, "/status");
   while (Date.now() < deadline) {
     try {
@@ -338,23 +395,38 @@ const waitForAgentReady = async (session: SessionSnapshot, timeoutMs = 30000, po
     } catch {
       // Ignore transient failures while waiting for the agent to boot.
     }
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    await sleep(interval);
   }
   throw new Error(`Timed out waiting for ${session.agent} agent to become ready`);
 };
 
-const securityReviewIntroMessage =
-  "Pleaese review the 01_process.md for your instructions.\n\nThe <working_dir> is ~/code/wingmen";
+const renderPresetMessage = (template: string, session: SessionSnapshot): string => {
+  return template.replace(/<working_dir>/gi, session.workingDirectory).replace(/{{\s*working_dir\s*}}/gi, session.workingDirectory);
+};
 
-const sendSecurityReviewInstructions = async (session: SessionSnapshot, maxAttempts = 10, delayMs = 1000) => {
+const sendPresetIntroMessage = async (
+  session: SessionSnapshot,
+  message: string | null | undefined,
+  retryAttempts: number | null | undefined,
+  retryDelayMs: number | null | undefined,
+) => {
+  const contentTemplate = message?.trim();
+  if (!contentTemplate) {
+    return false;
+  }
+
+  const attempts = typeof retryAttempts === "number" && retryAttempts > 0 ? retryAttempts : 10;
+  const delay = typeof retryDelayMs === "number" && retryDelayMs >= 0 ? retryDelayMs : 1000;
+
+  const content = renderPresetMessage(contentTemplate, session);
   let lastError: unknown = null;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       const agentUrl = buildAgentUrl(session.port, "/message");
       const response = await fetch(agentUrl, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "user", content: securityReviewIntroMessage }),
+        body: JSON.stringify({ type: "user", content }),
       }).catch((error: unknown) => {
         throw new Error(`Failed to contact agent: ${(error as Error).message}`);
       });
@@ -374,37 +446,62 @@ const sendSecurityReviewInstructions = async (session: SessionSnapshot, maxAttem
       }
 
       await syncSessionMessages(session.id, true);
-      return;
+      return true;
     } catch (error) {
       lastError = error;
-      if (attempt < maxAttempts) {
-        await sleep(delayMs);
+      if (attempt < attempts) {
+        await sleep(delay);
       }
     }
   }
 
   if (lastError instanceof Error) {
-    throw new Error(`Failed to deliver security review instructions: ${lastError.message}`);
+    throw new Error(`Failed to deliver introductory message: ${lastError.message}`);
   }
-  throw new Error("Failed to deliver security review instructions");
+  throw new Error("Failed to deliver introductory message");
 };
 
-const initialiseSecurityReviewSession = async (session: SessionSnapshot) => {
+const initialisePresetSession = async (preset: OrchestratorPresetRecord, session: SessionSnapshot) => {
   try {
-    await waitForAgentReady(session);
-    await sendSecurityReviewInstructions(session);
+    await waitForAgentReady(session, preset.pollTimeoutMs, preset.pollIntervalMs);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[security-review] failed to initialise session ${session.id}: ${message}`);
+    console.error(`[orchestrator] failed to wait for agent readiness for preset ${preset.id}: ${message}`);
+    return;
+  }
+
+  try {
+    const sent = await sendPresetIntroMessage(
+      session,
+      preset.introMessage,
+      preset.retryAttempts,
+      preset.retryDelayMs,
+    );
+    if (!sent) {
+      await syncSessionMessages(session.id, true);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[orchestrator] failed to deliver intro message for preset ${preset.id}: ${message}`);
+    await syncSessionMessages(session.id, true).catch(() => undefined);
   }
 };
 
-const createSecurityReviewSession = async () => {
-  const directory = await prepareSecurityReviewDirectory();
-  const session = await manager.createSession("codex", directory);
+const launchOrchestratorPreset = async (presetId: string) => {
+  const preset = orchestratorPresetStore.getPreset(presetId);
+  if (!preset) {
+    throw new Error(`Preset not found: ${presetId}`);
+  }
+
+  if (!isAgentType(preset.agent)) {
+    throw new Error(`Invalid agent configured for preset ${preset.id}: ${preset.agent}`);
+  }
+
+  const workingDirectory = await preparePresetWorkingDirectory(preset);
+  const session = await manager.createSession(preset.agent as AgentType, workingDirectory);
   messageStore.recordSession(session.id, session.agent, session.startedAt);
-  void initialiseSecurityReviewSession(session);
-  return { directory, session };
+  void initialisePresetSession(preset, session);
+  return { directory: workingDirectory, session };
 };
 
 const listDirectories = async (input: string | null | undefined, query?: string) => {

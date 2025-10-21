@@ -18,7 +18,7 @@ export interface ReplaceMessageInput {
   createdAt: string;
 }
 
-const databaseFile = new URL("../../data/wingman.db", import.meta.url).pathname;
+export const databaseFile = new URL("../../data/wingman.db", import.meta.url).pathname;
 
 export class MessageStore {
   private readonly db: Database;
