@@ -1197,7 +1197,11 @@ const launchSession = async (agentId, workingDirectory) => {
   }
 
   const session = await response.json();
-  setActiveSession(session.id, { allowPending: true, logPort: false, updateHistory: currentRoute === "live" });
+  const switchingToLive = currentRoute !== "live";
+  if (switchingToLive) {
+    currentRoute = "live";
+  }
+  setActiveSession(session.id, { allowPending: true, logPort: false, updateHistory: true });
   if (typeof session.workingDirectory === "string" && session.workingDirectory.length > 0) {
     state.lastWorkingDirectory = session.workingDirectory;
     if (directoryInput) {

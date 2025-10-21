@@ -7,7 +7,90 @@ import { AgentType, loadConfig } from "./config";
 import { ProcessManager } from "./agents/process-manager";
 import { messageStore, ReplaceMessageInput } from "./storage/message-store";
 
+const TMUX_SESSION_NAME = "wingman-agents";
+
+const readStreamToString = async (stream: ReadableStream<Uint8Array> | null | undefined) => {
+  if (!stream) return "";
+  return new Response(stream).text();
+};
+
+const runTmuxCommand = async (args: string[]) => {
+  const subprocess = Bun.spawn(["tmux", ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exited] = await Promise.all([
+    readStreamToString(subprocess.stdout),
+    readStreamToString(subprocess.stderr),
+    subprocess.exited,
+  ]);
+
+  return {
+    exitCode: exited ?? 0,
+    stdout: stdout.trim(),
+    stderr: stderr.trim(),
+  };
+};
+
+const ensureWingmanAgentsSessionClean = async () => {
+  try {
+    const hasSession = await runTmuxCommand(["has-session", "-t", TMUX_SESSION_NAME]);
+    if (hasSession.exitCode === 1) {
+      return;
+    }
+
+    if (hasSession.exitCode !== 0) {
+      if (hasSession.stderr) {
+        console.warn(`[tmux] failed to check ${TMUX_SESSION_NAME} session: ${hasSession.stderr}`);
+      }
+      return;
+    }
+
+    const listWindows = await runTmuxCommand(["list-windows", "-t", TMUX_SESSION_NAME, "-F", "#{window_id}"]);
+    if (listWindows.exitCode !== 0) {
+      if (listWindows.stderr) {
+        console.warn(`[tmux] failed to list ${TMUX_SESSION_NAME} windows: ${listWindows.stderr}`);
+      }
+      return;
+    }
+
+    const windowIds = listWindows.stdout
+      .split(/\r?\n/)
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0);
+
+    if (windowIds.length === 0) {
+      return;
+    }
+
+    let closed = 0;
+    for (const windowId of windowIds) {
+      const killWindow = await runTmuxCommand(["kill-window", "-t", windowId]);
+      if (killWindow.exitCode === 0) {
+        closed += 1;
+        continue;
+      }
+      if (killWindow.stderr) {
+        console.warn(`[tmux] failed to close window ${windowId}: ${killWindow.stderr}`);
+      } else {
+        console.warn(`[tmux] failed to close window ${windowId}`);
+      }
+    }
+
+    if (closed > 0) {
+      console.log(
+        `[tmux] closed ${closed} existing ${TMUX_SESSION_NAME} window${closed === 1 ? "" : "s"} before startup`,
+      );
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[tmux] skipping ${TMUX_SESSION_NAME} cleanup: ${message}`);
+  }
+};
+
 const config = loadConfig();
+await ensureWingmanAgentsSessionClean();
 const manager = new ProcessManager(config);
 
 const tmpRoot = normalize(join(fileURLToPath(new URL(".", import.meta.url)), "../tmp"));
