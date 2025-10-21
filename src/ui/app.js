@@ -1486,24 +1486,7 @@ const renderSessionTabs = (options = {}) => {
           }
         }
       }
-      // Render the conversation/logs for the new session
-      const scrollRegion = document.querySelector('.wm-live-scroll');
-      if (scrollRegion) {
-        scrollRegion.innerHTML = '';
-        const logSection = renderLogs(session.id);
-        scrollRegion.append(logSection);
-        const conversationContainer = document.createElement("div");
-        conversationContainer.className = "wm-live-conversation";
-        conversationContainer.append(renderConversation(session.id));
-        scrollRegion.append(conversationContainer);
-        attachConversationScrollHandler(session.id, conversationContainer);
-        const allowAutoScroll = ensureAutoScrollPreference(session.id);
-        if (allowAutoScroll) {
-          scrollConversationAreaToBottom(session.id);
-        } else {
-          updateAutoScrollStateForSession(session.id);
-        }
-      }
+      updateLivePanelsForSession(session.id);
       onSelect?.();
     });
 
@@ -1561,24 +1544,7 @@ const renderTabs = (options = {}) => {
           }
         }
       }
-      // Render the conversation/logs for the new session
-      const scrollRegion = document.querySelector('.wm-live-scroll');
-      if (scrollRegion) {
-        scrollRegion.innerHTML = '';
-        const logSection = renderLogs(session.id);
-        scrollRegion.append(logSection);
-        const conversationContainer = document.createElement("div");
-        conversationContainer.className = "wm-live-conversation";
-        conversationContainer.append(renderConversation(session.id));
-        scrollRegion.append(conversationContainer);
-        attachConversationScrollHandler(session.id, conversationContainer);
-        const allowAutoScroll = ensureAutoScrollPreference(session.id);
-        if (allowAutoScroll) {
-          scrollConversationAreaToBottom(session.id);
-        } else {
-          updateAutoScrollStateForSession(session.id);
-        }
-      }
+      updateLivePanelsForSession(session.id);
       onSelect?.();
     });
 
@@ -1656,69 +1622,10 @@ const renderConversation = (sessionId) => {
   return wrapper;
 };
 
-const renderLive = () => {
-  const wrapper = document.createElement("div");
-  wrapper.className = "wm-live";
-  ensureWindowScrollMonitoring();
-
-  if (tabsVisible) {
-    const tabsBar = document.createElement("div");
-    tabsBar.className = "wm-tabs-bar";
-    tabsBar.append(renderTabs());
-    wrapper.append(tabsBar);
-  }
-
-  if (state.sessions.length === 0) {
-    const container = document.createElement("section");
-    container.className = "wm-card wm-live-main";
-    const empty = document.createElement("p");
-    empty.textContent = "No live sessions. Launch a new agent to begin.";
-    container.append(empty);
-    wrapper.append(container);
-    return wrapper;
-  }
-
-  if (!state.activeSessionId || !state.sessions.some((session) => session.id === state.activeSessionId)) {
-    ensureActiveSession();
-  }
-
-  if (!state.activeSessionId) {
-    const container = document.createElement("section");
-    container.className = "wm-card wm-live-main";
-    const empty = document.createElement("p");
-    empty.textContent = "No live session selected. Launch a new agent or use the menu to resume one.";
-    container.append(empty);
-    wrapper.append(container);
-    return wrapper;
-  }
-
-  const sessionId = state.activeSessionId;
-
-  const main = document.createElement("section");
-  main.className = "wm-card wm-live-main";
-
-  const scrollRegion = document.createElement("div");
-  scrollRegion.className = "wm-live-scroll";
-  const logSection = renderLogs(sessionId);
-  scrollRegion.append(logSection);
-
-  const conversationContainer = document.createElement("div");
-  conversationContainer.className = "wm-live-conversation";
-  conversationContainer.append(renderConversation(sessionId));
-  scrollRegion.append(conversationContainer);
-  attachConversationScrollHandler(sessionId, conversationContainer);
-  const allowAutoScroll = ensureAutoScrollPreference(sessionId);
-  if (allowAutoScroll) {
-    scrollConversationAreaToBottom(sessionId);
-  } else {
-    updateAutoScrollStateForSession(sessionId);
-  }
-
-  main.append(scrollRegion);
-  wrapper.append(main);
-
+const renderComposer = (sessionId) => {
   const composerShell = document.createElement("div");
   composerShell.className = "wm-composer-shell";
+  composerShell.dataset.sessionId = sessionId;
 
   const composer = document.createElement("form");
   composer.className = "wm-composer";
@@ -1812,7 +1719,6 @@ const renderLive = () => {
     const result = sendMessage(sessionId, draft);
     if (result?.finally) {
       result.finally(() => {
-        // After sending, find the new textarea and focus it
         requestAnimationFrame(() => {
           const newTextarea = document.querySelector('.wm-composer textarea');
           if (newTextarea) {
@@ -1899,7 +1805,6 @@ const renderLive = () => {
 
   composer.append(fileInput, textarea, buttonGroup);
   composerShell.append(composer);
-  wrapper.append(composerShell);
 
   resizeTextarea();
 
@@ -1908,6 +1813,102 @@ const renderLive = () => {
     textarea.focus();
     resizeTextarea();
   });
+
+  return composerShell;
+};
+
+const updateLivePanelsForSession = (sessionId) => {
+  const scrollRegion = document.querySelector('.wm-live-scroll');
+  if (scrollRegion) {
+    scrollRegion.innerHTML = "";
+    const logSection = renderLogs(sessionId);
+    scrollRegion.append(logSection);
+    const conversationContainer = document.createElement("div");
+    conversationContainer.className = "wm-live-conversation";
+    conversationContainer.append(renderConversation(sessionId));
+    scrollRegion.append(conversationContainer);
+    attachConversationScrollHandler(sessionId, conversationContainer);
+    const allowAutoScroll = ensureAutoScrollPreference(sessionId);
+    if (allowAutoScroll) {
+      scrollConversationAreaToBottom(sessionId);
+    } else {
+      updateAutoScrollStateForSession(sessionId);
+    }
+  }
+
+  const currentComposer = document.querySelector('.wm-composer-shell');
+  if (currentComposer) {
+    currentComposer.replaceWith(renderComposer(sessionId));
+  } else {
+    const liveWrapper = document.querySelector('.wm-live');
+    if (liveWrapper) {
+      liveWrapper.append(renderComposer(sessionId));
+    }
+  }
+};
+
+const renderLive = () => {
+  const wrapper = document.createElement("div");
+  wrapper.className = "wm-live";
+  ensureWindowScrollMonitoring();
+
+  if (tabsVisible) {
+    const tabsBar = document.createElement("div");
+    tabsBar.className = "wm-tabs-bar";
+    tabsBar.append(renderTabs());
+    wrapper.append(tabsBar);
+  }
+
+  if (state.sessions.length === 0) {
+    const container = document.createElement("section");
+    container.className = "wm-card wm-live-main";
+    const empty = document.createElement("p");
+    empty.textContent = "No live sessions. Launch a new agent to begin.";
+    container.append(empty);
+    wrapper.append(container);
+    return wrapper;
+  }
+
+  if (!state.activeSessionId || !state.sessions.some((session) => session.id === state.activeSessionId)) {
+    ensureActiveSession();
+  }
+
+  if (!state.activeSessionId) {
+    const container = document.createElement("section");
+    container.className = "wm-card wm-live-main";
+    const empty = document.createElement("p");
+    empty.textContent = "No live session selected. Launch a new agent or use the menu to resume one.";
+    container.append(empty);
+    wrapper.append(container);
+    return wrapper;
+  }
+
+  const sessionId = state.activeSessionId;
+
+  const main = document.createElement("section");
+  main.className = "wm-card wm-live-main";
+
+  const scrollRegion = document.createElement("div");
+  scrollRegion.className = "wm-live-scroll";
+  const logSection = renderLogs(sessionId);
+  scrollRegion.append(logSection);
+
+  const conversationContainer = document.createElement("div");
+  conversationContainer.className = "wm-live-conversation";
+  conversationContainer.append(renderConversation(sessionId));
+  scrollRegion.append(conversationContainer);
+  attachConversationScrollHandler(sessionId, conversationContainer);
+  const allowAutoScroll = ensureAutoScrollPreference(sessionId);
+  if (allowAutoScroll) {
+    scrollConversationAreaToBottom(sessionId);
+  } else {
+    updateAutoScrollStateForSession(sessionId);
+  }
+
+  main.append(scrollRegion);
+  wrapper.append(main);
+
+  wrapper.append(renderComposer(sessionId));
 
   return wrapper;
 };
