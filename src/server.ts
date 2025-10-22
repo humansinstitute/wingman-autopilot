@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, extname, isAbsolute, join, normalize, resolve as resolvePath } from "node:path";
+import { cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { AgentType, loadConfig } from "./config";
-import { ProcessManager, SessionSnapshot } from "./agents/process-manager";
-import { messageStore, ReplaceMessageInput } from "./storage/message-store";
-import { orchestratorPresetStore, OrchestratorPresetRecord } from "./storage/orchestrator-presets";
+import type { AgentType } from "./config";
+import { loadConfig } from "./config";
+import { ProcessManager } from "./agents/process-manager";
+import type { SessionSnapshot } from "./agents/process-manager";
+import { messageStore } from "./storage/message-store";
+import type { ReplaceMessageInput } from "./storage/message-store";
+import { orchestratorPresetStore } from "./storage/orchestrator-presets";
+import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 
 const TMUX_SESSION_NAME = "wingman-agents";
 
@@ -98,6 +103,29 @@ const srcRoot = fileURLToPath(new URL(".", import.meta.url));
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const tmpRoot = normalize(join(srcRoot, "../tmp"));
 const imageRoot = join(tmpRoot, "images");
+const determineHomeDirectory = (): string => {
+  const fromEnv = Bun.env.HOME?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+  try {
+    return homedir();
+  } catch {
+    return projectRoot;
+  }
+};
+
+const rawHomeDirectory = determineHomeDirectory();
+const homeDirectory = normalize(await realpath(rawHomeDirectory).catch(() => rawHomeDirectory));
+const documentsDirectory = join(homeDirectory, "Documents");
+const userDataRoot = join(documentsDirectory, "Wingman");
+const docsRoot = homeDirectory;
+const docsRootBoundary = docsRoot.endsWith(sep) ? docsRoot : `${docsRoot}${sep}`;
+await mkdir(documentsDirectory, { recursive: true }).catch(() => undefined);
+await mkdir(userDataRoot, { recursive: true }).catch(() => undefined);
+const orchestratorRoot = join(projectRoot, "orchestrator");
+const orchestratorTemplatesRoot = join(orchestratorRoot, "templates");
+const orchestratorActiveRootBase = join(userDataRoot, "orchestrator", "active");
 const maxImageSizeBytes = 10 * 1024 * 1024; // 10MB
 const imageTtlMs = 24 * 60 * 60 * 1000;
 const imageCleanupIntervalMs = 24 * 60 * 60 * 1000;
@@ -110,17 +138,34 @@ const ensureImageDirectory = async (agent: AgentType) => {
 };
 
 const defaultSecurityReviewIntro =
-  "Pleaese review the 01_process.md for your instructions.\n\nThe working directory is <working_dir>";
+  "Pleaese review the 01_process.md for your instructions.\n\nYou will read the process instructions in: <active_dir>\nThe sessionID you are operating in is: <sessionID>";
+
+const defaultHighlightReportIntro =
+  "Pleaese review the 01_process.md for your instructions.\n\nYou will read the process instructions in: <active_dir>\nThe sessionID you are operating in is: <sessionID>";
 
 orchestratorPresetStore.ensurePreset({
   id: "security-review",
   label: "Security Review",
   agent: "codex",
   templateDir: "orchestrator/templates/0001_Review_Code",
-  activeRoot: "orchestrator/active",
+  activeRoot: orchestratorActiveRootBase,
   directoryPrefix: "Security_Review",
   introMessage: defaultSecurityReviewIntro,
   pollTimeoutMs: 30000,
+  pollIntervalMs: 250,
+  retryAttempts: 10,
+  retryDelayMs: 1000,
+});
+
+orchestratorPresetStore.ensurePreset({
+  id: "highlight-report",
+  label: "Highlight Report",
+  agent: "codex",
+  templateDir: "orchestrator/templates/0002_Highglight_Report",
+  activeRoot: orchestratorActiveRootBase,
+  directoryPrefix: "Highlight_Report",
+  introMessage: defaultHighlightReportIntro,
+  pollTimeoutMs: 60000,
   pollIntervalMs: 250,
   retryAttempts: 10,
   retryDelayMs: 1000,
@@ -287,6 +332,250 @@ const ensureDirectory = async (input: string | null | undefined): Promise<string
   return resolved;
 };
 
+const isWithinDocsRoot = (target: string): boolean => {
+  if (!target) return false;
+  const normalized = normalize(target);
+  return normalized === docsRoot || normalized.startsWith(docsRootBoundary);
+};
+
+const toDocsRelativePath = (target: string): string => {
+  if (!target) return "";
+  if (!isWithinDocsRoot(target)) {
+    return "";
+  }
+  const relativePath = relative(docsRoot, target);
+  return relativePath && relativePath.length > 0 ? relativePath : "";
+};
+
+const toDocsDisplayPath = (target: string): string => {
+  const relativePath = toDocsRelativePath(target);
+  return relativePath ? `~/${relativePath}` : "~";
+};
+
+const resolveDocsPath = (input: string | null | undefined): string => {
+  const value = input?.trim();
+  const candidate = value && value.length > 0 ? value : docsRoot;
+  const absolute = isAbsolute(candidate) ? candidate : join(docsRoot, candidate);
+  const normalized = normalize(absolute);
+  if (!isWithinDocsRoot(normalized)) {
+    throw new Error("Access outside the home directory is not permitted");
+  }
+  return normalized;
+};
+
+const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown"]);
+const MAX_DOCS_ENTRIES = 500;
+const MAX_DOCS_FILE_SIZE = 2 * 1024 * 1024; // 2MB
+
+interface DocsPreviewType {
+  format: "markdown" | "code";
+  language: string;
+  label: string;
+}
+
+const TEXT_PREVIEW_TYPES = new Map<string, DocsPreviewType>([
+  [".md", { format: "markdown", language: "markdown", label: "Markdown" }],
+  [".markdown", { format: "markdown", language: "markdown", label: "Markdown" }],
+  [".mdx", { format: "markdown", language: "markdown", label: "Markdown" }],
+  [".txt", { format: "code", language: "plaintext", label: "Text" }],
+  [".log", { format: "code", language: "plaintext", label: "Log" }],
+  [".json", { format: "code", language: "json", label: "JSON" }],
+  [".jsonc", { format: "code", language: "json", label: "JSON" }],
+  [".yaml", { format: "code", language: "yaml", label: "YAML" }],
+  [".yml", { format: "code", language: "yaml", label: "YAML" }],
+  [".js", { format: "code", language: "javascript", label: "JavaScript" }],
+  [".mjs", { format: "code", language: "javascript", label: "JavaScript" }],
+  [".cjs", { format: "code", language: "javascript", label: "JavaScript" }],
+  [".ts", { format: "code", language: "typescript", label: "TypeScript" }],
+  [".tsx", { format: "code", language: "typescript", label: "TypeScript" }],
+  [".jsx", { format: "code", language: "javascript", label: "JavaScript" }],
+  [".go", { format: "code", language: "go", label: "Go" }],
+  [".rs", { format: "code", language: "rust", label: "Rust" }],
+  [".py", { format: "code", language: "python", label: "Python" }],
+  [".sh", { format: "code", language: "shell", label: "Shell" }],
+  [".bash", { format: "code", language: "shell", label: "Shell" }],
+  [".zsh", { format: "code", language: "shell", label: "Shell" }],
+  [".ini", { format: "code", language: "ini", label: "Config" }],
+  [".conf", { format: "code", language: "ini", label: "Config" }],
+  [".toml", { format: "code", language: "toml", label: "TOML" }],
+  [".env", { format: "code", language: "ini", label: "Config" }],
+  [".css", { format: "code", language: "css", label: "CSS" }],
+  [".html", { format: "code", language: "html", label: "HTML" }],
+]);
+
+const listDocsDirectory = async (input: string | null | undefined) => {
+  const directory = resolveDocsPath(input);
+  let stats: Awaited<ReturnType<typeof stat>>;
+  try {
+    stats = await stat(directory);
+  } catch {
+    throw new Error("Directory not found");
+  }
+
+  if (!stats.isDirectory()) {
+    throw new Error("Requested path is not a directory");
+  }
+
+  let entries: Awaited<ReturnType<typeof readdir>>;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    throw new Error(`Failed to read directory: ${(error as Error).message ?? "unknown error"}`);
+  }
+
+  const directories: Array<{
+    name: string;
+    path: string;
+    relativePath: string;
+    displayPath: string;
+    type: "directory";
+  }> = [];
+  const files: Array<{
+    name: string;
+    path: string;
+    relativePath: string;
+    displayPath: string;
+    type: "file";
+    previewable: boolean;
+    previewFormat: DocsPreviewType["format"] | null;
+    previewLanguage: string | null;
+    previewLabel: string | null;
+  }> = [];
+
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) {
+      continue;
+    }
+
+    if (entry.name.startsWith(".")) {
+      continue;
+    }
+
+    const entryPath = normalize(join(directory, entry.name));
+    if (!isWithinDocsRoot(entryPath)) {
+      continue;
+    }
+
+    if (entry.isDirectory()) {
+      const relativePath = toDocsRelativePath(entryPath);
+      directories.push({
+        name: entry.name,
+        path: entryPath,
+        relativePath,
+        displayPath: toDocsDisplayPath(entryPath),
+        type: "directory",
+      });
+      continue;
+    }
+
+    if (entry.isFile()) {
+      const relativePath = toDocsRelativePath(entryPath);
+      const extension = extname(entry.name).toLowerCase();
+      const preview = TEXT_PREVIEW_TYPES.get(extension) ?? null;
+      files.push({
+        name: entry.name,
+        path: entryPath,
+        relativePath,
+        displayPath: toDocsDisplayPath(entryPath),
+        type: "file",
+        previewable: preview !== null,
+        previewFormat: preview?.format ?? null,
+        previewLanguage: preview?.language ?? null,
+        previewLabel: preview?.label ?? null,
+      });
+    }
+
+    if (directories.length + files.length >= MAX_DOCS_ENTRIES) {
+      break;
+    }
+  }
+
+  directories.sort((a, b) => a.name.localeCompare(b.name));
+  files.sort((a, b) => a.name.localeCompare(b.name));
+
+  const parentPath = (() => {
+    if (directory === docsRoot) {
+      return null;
+    }
+    const candidate = dirname(directory);
+    if (!isWithinDocsRoot(candidate)) {
+      return null;
+    }
+    return candidate;
+  })();
+
+  return {
+    path: directory,
+    relativePath: toDocsRelativePath(directory),
+    displayPath: toDocsDisplayPath(directory),
+    parent: parentPath
+      ? {
+          path: parentPath,
+          relativePath: toDocsRelativePath(parentPath),
+          displayPath: toDocsDisplayPath(parentPath),
+        }
+      : null,
+    entries: [...directories, ...files],
+  };
+};
+
+const resolvePreviewType = (filePath: string): DocsPreviewType => {
+  const extension = extname(filePath).toLowerCase();
+  const preview = TEXT_PREVIEW_TYPES.get(extension);
+  if (!preview) {
+    throw new Error("Preview for this file type is not supported");
+  }
+  return preview;
+};
+
+const loadDocsFile = async (input: string | null | undefined) => {
+  if (!input) {
+    throw new Error("File path is required");
+  }
+
+  const filePath = resolveDocsPath(input);
+  let stats: Awaited<ReturnType<typeof stat>>;
+  try {
+    stats = await stat(filePath);
+  } catch {
+    throw new Error("File not found");
+  }
+
+  if (!stats.isFile()) {
+    throw new Error("Requested path is not a file");
+  }
+
+  if (stats.size > MAX_DOCS_FILE_SIZE) {
+    throw new Error("File is too large to preview");
+  }
+
+  const preview = resolvePreviewType(filePath);
+
+  if (preview.format === "markdown" && !MARKDOWN_EXTENSIONS.has(extname(filePath).toLowerCase())) {
+    throw new Error("Unsupported Markdown extension");
+  }
+
+  const extension = extname(filePath).toLowerCase();
+
+  let content: string;
+  try {
+    content = await readFile(filePath, "utf-8");
+  } catch (error) {
+    throw new Error(`Failed to read file: ${(error as Error).message ?? "unknown error"}`);
+  }
+
+  return {
+    path: filePath,
+    relativePath: toDocsRelativePath(filePath),
+    displayPath: toDocsDisplayPath(filePath),
+    name: basename(filePath),
+    content,
+    format: preview.format,
+    language: preview.language,
+    label: preview.label,
+  };
+};
+
 const directoryExists = async (path: string): Promise<boolean> => {
   try {
     const stats = await stat(path);
@@ -321,7 +610,99 @@ const sanitiseDirectoryPrefix = (value: string | null | undefined): string => {
   if (!candidate) {
     return "Preset";
   }
-  return candidate.replace(/\s+/g, "_");
+  return candidate
+    .replace(/[^a-zA-Z0-9/_-]+/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/_{2,}/g, "_")
+    .replace(/^_+|_+$/g, "") || "Preset";
+};
+
+const normaliseOptionalString = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const parsePresetInteger = (value: unknown, fallback: number, minimum?: number): number => {
+  const numeric =
+    typeof value === "number"
+      ? Number.isFinite(value)
+        ? Math.trunc(value)
+        : NaN
+      : typeof value === "string" && value.trim().length > 0
+        ? Number.parseInt(value, 10)
+        : NaN;
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  if (typeof minimum === "number" && numeric < minimum) {
+    return fallback;
+  }
+  return numeric;
+};
+
+const toProjectRelativePath = (absolute: string): string => {
+  const normalized = normalize(absolute);
+  if (!normalized.startsWith(projectRoot)) {
+    return normalized;
+  }
+  if (normalized === projectRoot) {
+    return ".";
+  }
+  const offset = projectRoot.endsWith("/") ? projectRoot.length : projectRoot.length + 1;
+  return normalized.slice(offset);
+};
+
+const ensureWithinBase = (absolute: string, base: string) => {
+  const normalized = normalize(absolute);
+  const normalizedBase = normalize(base);
+  if (!normalized.startsWith(normalizedBase)) {
+    throw new Error("Invalid directory path");
+  }
+  return normalized;
+};
+
+const listOrchestratorDirectories = async (target: "templates" | "active", relativeInput: string | null) => {
+  const base = target === "templates" ? orchestratorTemplatesRoot : orchestratorActiveRootBase;
+  await mkdir(base, { recursive: true });
+
+  let resolved = base;
+  if (relativeInput) {
+    const candidate = join(projectRoot, relativeInput);
+    resolved = ensureWithinBase(candidate, base);
+  }
+
+  let stats: Awaited<ReturnType<typeof stat>>;
+  try {
+    stats = await stat(resolved);
+  } catch (error) {
+    throw new Error(`Directory not found: ${toProjectRelativePath(resolved)}`);
+  }
+
+  if (!stats.isDirectory()) {
+    throw new Error(`Path is not a directory: ${toProjectRelativePath(resolved)}`);
+  }
+
+  const entriesRaw = await readdir(resolved, { withFileTypes: true });
+  const entries = entriesRaw
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
+      const absolutePath = join(resolved, entry.name);
+      return {
+        name: entry.name,
+        path: toProjectRelativePath(absolutePath),
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const parent = resolved === base ? null : toProjectRelativePath(dirname(resolved));
+
+  return {
+    target,
+    path: toProjectRelativePath(resolved),
+    parent,
+    entries,
+  };
 };
 
 const generatePresetDirectory = async (preset: OrchestratorPresetRecord): Promise<string> => {
@@ -401,7 +782,16 @@ const waitForAgentReady = async (
 };
 
 const renderPresetMessage = (template: string, session: SessionSnapshot): string => {
-  return template.replace(/<working_dir>/gi, session.workingDirectory).replace(/{{\s*working_dir\s*}}/gi, session.workingDirectory);
+  const replacements: Array<{ regex: RegExp; value: string }> = [
+    { regex: /<working_dir>/gi, value: session.workingDirectory },
+    { regex: /{{\s*working_dir\s*}}/gi, value: session.workingDirectory },
+    { regex: /<active_dir>/gi, value: session.workingDirectory },
+    { regex: /{{\s*active_dir\s*}}/gi, value: session.workingDirectory },
+    { regex: /<session[_]?id>/gi, value: session.id },
+    { regex: /{{\s*session[_]?id\s*}}/gi, value: session.id },
+  ];
+
+  return replacements.reduce((content, { regex, value }) => content.replace(regex, value), template);
 };
 
 const sendPresetIntroMessage = async (
@@ -502,6 +892,74 @@ const launchOrchestratorPreset = async (presetId: string) => {
   messageStore.recordSession(session.id, session.agent, session.startedAt);
   void initialisePresetSession(preset, session);
   return { directory: workingDirectory, session };
+};
+
+const stopAndRemoveSession = async (sessionId: string) => {
+  const existing = manager.getSession(sessionId);
+  if (!existing) {
+    messageStore.removeSession(sessionId);
+    return false;
+  }
+
+  if (existing.status === "starting" || existing.status === "running") {
+    try {
+      await manager.stopSession(sessionId);
+    } catch (error) {
+      throw new Error(`Failed to stop session ${sessionId}: ${(error as Error).message}`);
+    }
+  }
+
+  try {
+    manager.deleteSession(sessionId);
+  } catch (error) {
+    throw new Error(`Failed to delete session ${sessionId}: ${(error as Error).message}`);
+  }
+
+  messageStore.removeSession(sessionId);
+  return true;
+};
+
+const handleWebhookRequest = async (request: Request, url: URL): Promise<Response | null> => {
+  const pathname = url.pathname;
+  if (pathname === "/v1/api/webhook/off" && request.method === "POST") {
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    const data = payload as Record<string, unknown>;
+    const sessionId =
+      normaliseOptionalString(data["session-id"]) ??
+      normaliseOptionalString(data.sessionId) ??
+      normaliseOptionalString(data.session_id);
+
+    if (!sessionId) {
+      return Response.json({ error: "session-id is required" }, { status: 400 });
+    }
+
+    const state = normaliseOptionalString(data.state);
+    if (state && state.toLowerCase() !== "off") {
+      return Response.json({ error: "Unsupported state. Only 'off' is accepted." }, { status: 400 });
+    }
+
+    try {
+      const removed = await stopAndRemoveSession(sessionId);
+      if (!removed) {
+        return Response.json({ status: "ignored", reason: "session-not-found" }, { status: 404 });
+      }
+      return Response.json({ status: "ok", sessionId }, { status: 200 });
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 500 });
+    }
+  }
+
+  return null;
 };
 
 const listDirectories = async (input: string | null | undefined, query?: string) => {
@@ -702,6 +1160,124 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
   if (pathname === "/api/orchestrators" && method === "GET") {
     const presets = orchestratorPresetStore.listPresets();
     return Response.json({ presets });
+  }
+
+  if (pathname === "/api/docs/tree" && method === "GET") {
+    try {
+      const pathParam = url.searchParams.get("path");
+      const data = await listDocsDirectory(pathParam);
+      return Response.json(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/docs/file" && method === "GET") {
+    const pathParam = url.searchParams.get("path");
+    if (!pathParam) {
+      return Response.json({ error: "File path is required" }, { status: 400 });
+    }
+    try {
+      const data = await loadDocsFile(pathParam);
+      return Response.json(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/orchestrators/directories" && method === "GET") {
+    const targetParam = url.searchParams.get("target") ?? "";
+    const target = targetParam === "templates" ? "templates" : targetParam === "active" ? "active" : null;
+    if (!target) {
+      return Response.json({ error: "Invalid target" }, { status: 400 });
+    }
+    const pathParam = url.searchParams.get("path");
+    try {
+      const data = await listOrchestratorDirectories(target, pathParam);
+      return Response.json(data);
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/orchestrators" && method === "POST") {
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    const label = normaliseOptionalString((payload as Record<string, unknown>).label);
+    if (!label) {
+      return Response.json({ error: "Preset label is required" }, { status: 400 });
+    }
+
+    const agentInput = normaliseOptionalString((payload as Record<string, unknown>).agent);
+    const agent = agentInput?.toLowerCase() ?? "";
+    if (!isAgentType(agent)) {
+      return Response.json({ error: "Invalid agent selection" }, { status: 400 });
+    }
+
+    const templateDir = normaliseOptionalString(
+      (payload as Record<string, unknown>).templateDir ?? (payload as Record<string, unknown>).template,
+    );
+    const workingDirectory = normaliseOptionalString(
+      (payload as Record<string, unknown>).workingDirectory ?? (payload as Record<string, unknown>).directory,
+    );
+
+    if (templateDir && workingDirectory) {
+      return Response.json({ error: "Specify either a template directory or a working directory, not both" }, { status: 400 });
+    }
+
+    if (!templateDir && !workingDirectory) {
+      return Response.json({ error: "Provide either a template directory or a working directory" }, { status: 400 });
+    }
+
+    const activeRoot = templateDir
+      ? normaliseOptionalString(
+          (payload as Record<string, unknown>).activeRoot ?? (payload as Record<string, unknown>).activeDirectory,
+        ) ?? "orchestrator/active"
+      : null;
+
+    const directoryPrefixInput = normaliseOptionalString(
+      (payload as Record<string, unknown>).directoryPrefix ?? (payload as Record<string, unknown>).prefix,
+    );
+    const directoryPrefix = templateDir
+      ? directoryPrefixInput ?? sanitiseDirectoryPrefix(label)
+      : directoryPrefixInput ?? null;
+
+    const introMessage = normaliseOptionalString((payload as Record<string, unknown>).introMessage);
+
+    const pollTimeoutMs = parsePresetInteger((payload as Record<string, unknown>).pollTimeoutMs, 30000, 1000);
+    const pollIntervalMs = parsePresetInteger((payload as Record<string, unknown>).pollIntervalMs, 250, 50);
+    const retryAttempts = parsePresetInteger((payload as Record<string, unknown>).retryAttempts, 10, 1);
+    const retryDelayMs = parsePresetInteger((payload as Record<string, unknown>).retryDelayMs, 1000, 0);
+
+    try {
+      const preset = orchestratorPresetStore.createPreset({
+        label,
+        agent,
+        templateDir,
+        activeRoot,
+        directoryPrefix,
+        workingDirectory: templateDir ? null : workingDirectory,
+        introMessage,
+        pollTimeoutMs,
+        pollIntervalMs,
+        retryAttempts,
+        retryDelayMs,
+      });
+      return Response.json({ preset }, { status: 201 });
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 500 });
+    }
   }
 
   if (pathname === "/api/directories" && method === "GET") {
@@ -947,11 +1523,22 @@ const server = Bun.serve({
     const pathname = url.pathname;
     const method = request.method as HttpMethod;
 
+    const webhookResponse = await handleWebhookRequest(request, url);
+    if (webhookResponse) {
+      return webhookResponse;
+    }
+
     if (pathname === "/" && method === "GET") {
       return Response.redirect(`${url.origin}/home`, 302);
     }
 
-    if (pathname === "/home" || pathname === "/live" || pathname.startsWith("/live/")) {
+    if (
+      pathname === "/home" ||
+      pathname === "/docs" ||
+      pathname.startsWith("/docs/") ||
+      pathname === "/live" ||
+      pathname.startsWith("/live/")
+    ) {
       return serveIndex();
     }
 

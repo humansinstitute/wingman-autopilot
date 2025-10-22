@@ -4,6 +4,10 @@ const TABS_VISIBILITY_STORAGE_KEY = "wingman-tabs-visible";
 const state = {
   config: null,
   sessions: [],
+  orchestratorPresets: [],
+  orchestratorPresetsLoading: false,
+  orchestratorPresetsLoaded: false,
+  orchestratorPresetsError: null,
   logs: new Map(),
   conversations: new Map(),
   messageDrafts: new Map(),
@@ -17,6 +21,26 @@ const state = {
   lastMessageCount: new Map(), // sessionId -> number of messages
   lastLogLength: new Map(), // sessionId -> length of logs
   autoScrollEnabled: new Map(), // sessionId -> boolean
+  docs: {
+    initialized: false,
+    loading: false,
+    error: null,
+    currentPath: null,
+    relativePath: null,
+    displayPath: "~",
+    parent: null,
+    entries: [],
+    previewPath: null,
+    previewRelativePath: null,
+    previewDisplayPath: "",
+    previewName: null,
+    previewContent: null,
+    previewLoading: false,
+    previewError: null,
+    previewFormat: null,
+    previewLanguage: null,
+    previewLabel: null,
+  },
 };
 
 const AUTO_SCROLL_THRESHOLD = 80;
@@ -192,7 +216,463 @@ const copyConversationToClipboard = async (sessionId) => {
   return copyTextToClipboard(formatted);
 };
 
+const escapeHtml = (value) => {
+  if (value === null || value === undefined) return "";
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+};
+
+const escapeAttribute = (value) => {
+  if (value === null || value === undefined) return "#";
+  const trimmed = String(value).trim();
+  const allowed = /^(https?:\/\/|\/|#|mailto:|tel:)/i;
+  const safe = allowed.test(trimmed) ? trimmed : "#";
+  return escapeHtml(safe).replace(/"/g, "&quot;");
+};
+
+const sanitizeLanguageClass = (value) => {
+  if (!value) return "";
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "");
+};
+
+const renderInlineMarkdown = (text) => {
+  if (!text) return "";
+  let working = String(text);
+  const placeholders = [];
+  const createPlaceholder = (html) => {
+    const token = `@@MD${placeholders.length}@@`;
+    placeholders.push(html);
+    return token;
+  };
+
+  working = working.replace(/`([^`]+)`/g, (_, code) =>
+    createPlaceholder(`<code>${escapeHtml(code)}</code>`),
+  );
+
+  working = working.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, url) => {
+    const safeUrl = escapeAttribute(url);
+    const safeLabel = escapeHtml(label);
+    return createPlaceholder(
+      `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeLabel}</a>`,
+    );
+  });
+
+  working = working.replace(/(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g, (_, __, content) =>
+    createPlaceholder(`<strong>${renderInlineMarkdown(content)}</strong>`),
+  );
+
+  working = working.replace(/(\*|_)(?=\S)(.+?)(?<=\S)\1/g, (_, __, content) =>
+    createPlaceholder(`<em>${renderInlineMarkdown(content)}</em>`),
+  );
+
+  working = working.replace(/~~(?=\S)(.+?)(?<=\S)~~/g, (_, content) =>
+    createPlaceholder(`<del>${renderInlineMarkdown(content)}</del>`),
+  );
+
+  const escaped = escapeHtml(working);
+  return escaped.replace(/@@MD(\d+)@@/g, (_, index) => placeholders[Number(index)] ?? "");
+};
+
+const renderMarkdownToHtml = (markdown) => {
+  if (!markdown) return "";
+  const lines = String(markdown).replace(/\r\n?/g, "\n").split("\n");
+  let html = "";
+  let inCodeBlock = false;
+  let codeLanguage = "";
+  let codeBuffer = [];
+  let listType = null;
+  let listItems = [];
+  let paragraph = "";
+  let inBlockquote = false;
+
+  const closeParagraph = () => {
+    if (paragraph) {
+      html += `<p>${paragraph.trim()}</p>`;
+      paragraph = "";
+    }
+  };
+
+  const closeList = () => {
+    if (listType && listItems.length > 0) {
+      html += `<${listType}>${listItems.join("")}</${listType}>`;
+    }
+    listType = null;
+    listItems = [];
+  };
+
+  const closeBlockquote = () => {
+    if (inBlockquote) {
+      html += "</blockquote>";
+      inBlockquote = false;
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\s+$/, "");
+    if (line.startsWith("```")) {
+      if (inCodeBlock) {
+        const languageClass = sanitizeLanguageClass(codeLanguage);
+        const classAttr = languageClass ? ` class="language-${languageClass}"` : "";
+        html += `<pre><code${classAttr}>${escapeHtml(codeBuffer.join("\n"))}\n</code></pre>`;
+        inCodeBlock = false;
+        codeLanguage = "";
+        codeBuffer = [];
+      } else {
+        closeParagraph();
+        closeList();
+        closeBlockquote();
+        inCodeBlock = true;
+        codeLanguage = line.slice(3).trim();
+        codeBuffer = [];
+      }
+      continue;
+    }
+
+    if (inCodeBlock) {
+      codeBuffer.push(rawLine);
+      continue;
+    }
+
+    const trimmed = line.trim();
+    if (!trimmed) {
+      closeParagraph();
+      closeList();
+      closeBlockquote();
+      continue;
+    }
+
+    if (trimmed.startsWith(">")) {
+      closeParagraph();
+      closeList();
+      if (!inBlockquote) {
+        inBlockquote = true;
+        html += "<blockquote>";
+      }
+      const quote = trimmed.replace(/^>\s?/, "");
+      html += `<p>${renderInlineMarkdown(quote)}</p>`;
+      continue;
+    }
+
+    if (inBlockquote) {
+      closeBlockquote();
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      closeParagraph();
+      closeList();
+      const level = headingMatch[1].length;
+      const text = headingMatch[2];
+      html += `<h${level}>${renderInlineMarkdown(text)}</h${level}>`;
+      continue;
+    }
+
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      closeParagraph();
+      closeList();
+      html += "<hr />";
+      continue;
+    }
+
+    const orderedMatch = trimmed.match(/^(\d+)\.\s+(.*)$/);
+    if (orderedMatch) {
+      closeParagraph();
+      const content = renderInlineMarkdown(orderedMatch[2]);
+      if (listType !== "ol") {
+        closeList();
+        listType = "ol";
+      }
+      listItems.push(`<li>${content}</li>`);
+      continue;
+    }
+
+    const unorderedMatch = trimmed.match(/^[-*+]\s+(.*)$/);
+    if (unorderedMatch) {
+      closeParagraph();
+      const content = renderInlineMarkdown(unorderedMatch[1]);
+      if (listType !== "ul") {
+        closeList();
+        listType = "ul";
+      }
+      listItems.push(`<li>${content}</li>`);
+      continue;
+    }
+
+    closeList();
+    if (paragraph) {
+      paragraph += ` ${renderInlineMarkdown(trimmed)}`;
+    } else {
+      paragraph = renderInlineMarkdown(trimmed);
+    }
+  }
+
+  if (inCodeBlock) {
+    const languageClass = sanitizeLanguageClass(codeLanguage);
+    const classAttr = languageClass ? ` class="language-${languageClass}"` : "";
+    html += `<pre><code${classAttr}>${escapeHtml(codeBuffer.join("\n"))}\n</code></pre>`;
+  }
+  closeParagraph();
+  closeList();
+  closeBlockquote();
+  return html.trim();
+};
+
+const resetDocsPreview = () => {
+  state.docs.previewPath = null;
+  state.docs.previewRelativePath = null;
+  state.docs.previewDisplayPath = "";
+  state.docs.previewName = null;
+  state.docs.previewContent = null;
+  state.docs.previewLoading = false;
+  state.docs.previewError = null;
+  state.docs.previewFormat = null;
+  state.docs.previewLanguage = null;
+  state.docs.previewLabel = null;
+};
+
+const CODE_KEYWORDS = {
+  javascript: [
+    "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete", "do",
+    "else", "export", "extends", "finally", "for", "from", "function", "if", "import", "in", "instanceof",
+    "let", "new", "return", "super", "switch", "this", "throw", "try", "typeof", "var", "void", "while", "with", "yield", "await",
+  ],
+  typescript: [
+    "abstract", "any", "as", "asserts", "async", "await", "boolean", "break", "case", "catch", "class", "const",
+    "constructor", "continue", "declare", "default", "delete", "do", "else", "enum", "export", "extends", "false",
+    "finally", "for", "from", "function", "get", "if", "implements", "import", "in", "infer", "instanceof", "interface",
+    "is", "keyof", "let", "module", "namespace", "never", "new", "null", "number", "object", "package", "private", "protected",
+    "public", "readonly", "require", "return", "set", "static", "string", "super", "switch", "symbol", "this", "throw", "true",
+    "try", "type", "typeof", "undefined", "unique", "unknown", "var", "void", "while", "with", "yield",
+  ],
+  go: [
+    "break", "case", "chan", "const", "continue", "default", "defer", "else", "fallthrough", "for", "func", "go",
+    "goto", "if", "import", "interface", "map", "package", "range", "return", "select", "struct", "switch", "type", "var",
+  ],
+  json: ["true", "false", "null"],
+  yaml: ["true", "false", "null", "yes", "no", "on", "off"],
+  toml: ["true", "false"],
+  ini: ["true", "false"],
+  rust: [
+    "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let",
+    "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait",
+    "true", "type", "unsafe", "use", "where", "while",
+  ],
+  python: [
+    "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else", "except", "False", "finally", "for",
+    "from", "global", "if", "import", "in", "is", "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return",
+    "True", "try", "while", "with", "yield",
+  ],
+  shell: [
+    "if", "then", "else", "elif", "fi", "for", "while", "in", "do", "done", "case", "esac", "function", "select",
+  ],
+  css: ["@import", "@media", "@supports", "@keyframes", "from", "to"],
+  html: ["doctype", "html", "head", "body", "div", "span", "script", "style", "link", "meta", "title"],
+  plaintext: [],
+};
+
+const buildKeywordPattern = (keywords) => {
+  if (!keywords || keywords.length === 0) return null;
+  const escaped = keywords.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(`\\b(${escaped.join("|")})\\b`, "g");
+};
+
+const CODE_KEYWORD_PATTERNS = Object.fromEntries(
+  Object.entries(CODE_KEYWORDS).map(([language, keywords]) => [language, buildKeywordPattern(keywords)]),
+);
+
+const renderCodeToHtml = (content, language = "plaintext") => {
+  const normalizedLanguage = CODE_KEYWORDS[language] ? language : "plaintext";
+  const escaped = escapeHtml(content ?? "");
+  const replacements = [];
+  const createToken = (html) => {
+    const token = `__WM_TOKEN_${replacements.length}__`;
+    replacements.push({ token, html });
+    return token;
+  };
+
+  let working = escaped;
+
+  if (normalizedLanguage === "json") {
+    working = working.replace(/(&quot;[^&]*?&quot;)(?=\s*:)/g, (match) =>
+      createToken(`<span class="token key">${match}</span>`),
+    );
+  } else if (normalizedLanguage === "yaml" || normalizedLanguage === "toml" || normalizedLanguage === "ini") {
+    working = working.replace(/^(\s*)([^\s:#][^:]*)(?=\s*:)/gm, (full, indent, key) => {
+      return `${indent}${createToken(`<span class="token key">${key}</span>`)}`;
+    });
+  }
+
+  if (
+    normalizedLanguage === "javascript" ||
+    normalizedLanguage === "typescript" ||
+    normalizedLanguage === "go" ||
+    normalizedLanguage === "rust"
+  ) {
+    working = working.replace(/(\/\/[^\n]*)/g, (match) => createToken(`<span class="token comment">${match}</span>`));
+    working = working.replace(/(\/\*[\s\S]*?\*\/)/g, (match) =>
+      createToken(`<span class="token comment">${match}</span>`),
+    );
+  }
+
+  if (
+    normalizedLanguage === "python" ||
+    normalizedLanguage === "shell" ||
+    normalizedLanguage === "yaml" ||
+    normalizedLanguage === "toml" ||
+    normalizedLanguage === "ini"
+  ) {
+    working = working.replace(/(^|\s)(#[^\n]*)/gm, (full, prefix, comment) => {
+      return `${prefix}${createToken(`<span class="token comment">${comment}</span>`)}`;
+    });
+  }
+
+  working = working.replace(/(&quot;.*?&quot;)/g, (match) => createToken(`<span class="token string">${match}</span>`));
+  working = working.replace(/(&#39;.*?&#39;)/g, (match) => createToken(`<span class="token string">${match}</span>`));
+  working = working.replace(/`[^`]*`/g, (match) => createToken(`<span class="token string">${match}</span>`));
+
+  working = working.replace(/\b(0x[a-fA-F0-9]+|\d+\.\d+|\d+)\b/g, '<span class="token number">$1</span>');
+
+  const keywordPattern = CODE_KEYWORD_PATTERNS[normalizedLanguage];
+  if (keywordPattern) {
+    working = working.replace(keywordPattern, '<span class="token keyword">$1</span>');
+  }
+
+  replacements.forEach(({ token, html }) => {
+    working = working.replaceAll(token, html);
+  });
+
+  return `<pre><code class="language-${normalizedLanguage}">${working}</code></pre>`;
+};
+
+const loadDocsTree = async (path) => {
+  const docs = state.docs;
+  const targetPath = typeof path === "string" && path.length > 0 ? path : docs.currentPath;
+  if (typeof path === "string" && path.length > 0 && path !== docs.currentPath) {
+    resetDocsPreview();
+  }
+  docs.loading = true;
+  docs.error = null;
+
+  try {
+    const url = new URL("/api/docs/tree", window.location.origin);
+    if (targetPath) {
+      url.searchParams.set("path", targetPath);
+    }
+    const response = await fetch(url.toString(), { method: "GET" });
+    if (!response.ok) {
+      let message = response.statusText || "Failed to load directory";
+      try {
+        const payload = await response.json();
+        if (payload && typeof payload.error === "string") {
+          message = payload.error;
+        }
+      } catch {
+        // ignore json parsing error
+      }
+      throw new Error(message);
+    }
+
+    const data = await response.json();
+    docs.currentPath = data?.path ?? targetPath ?? docs.currentPath;
+    docs.relativePath = data?.relativePath ?? "";
+    docs.displayPath = data?.displayPath ?? (docs.relativePath ? `~/${docs.relativePath}` : "~");
+    docs.parent = data?.parent ?? null;
+    docs.entries = Array.isArray(data?.entries) ? data.entries : [];
+    docs.loading = false;
+    docs.error = null;
+
+    if (docs.previewPath) {
+      const exists = docs.entries.some((entry) => entry.path === docs.previewPath);
+      if (!exists) {
+        resetDocsPreview();
+      }
+    }
+  } catch (error) {
+    docs.loading = false;
+    docs.error = error instanceof Error ? error.message : String(error);
+    docs.entries = [];
+    if (typeof path === "string" && path.length > 0) {
+      docs.currentPath = path;
+    }
+  } finally {
+    if (currentRoute === "docs") {
+      render();
+    }
+  }
+};
+
+const loadDocsFile = async (path) => {
+  if (!path) return;
+  const docs = state.docs;
+  docs.previewPath = path;
+  docs.previewRelativePath = "";
+  docs.previewDisplayPath = "";
+  docs.previewName = null;
+  docs.previewContent = null;
+  docs.previewError = null;
+  docs.previewLoading = true;
+  docs.previewFormat = null;
+  docs.previewLanguage = null;
+  docs.previewLabel = null;
+  if (currentRoute === "docs") {
+    render();
+  }
+
+  try {
+    const url = new URL("/api/docs/file", window.location.origin);
+    url.searchParams.set("path", path);
+    const response = await fetch(url.toString(), { method: "GET" });
+    if (!response.ok) {
+      let message = response.statusText || "Failed to load file";
+      try {
+        const payload = await response.json();
+        if (payload && typeof payload.error === "string") {
+          message = payload.error;
+        }
+      } catch {
+        // ignore json parse error
+      }
+      throw new Error(message);
+    }
+
+    const data = await response.json();
+    docs.previewPath = data?.path ?? path;
+    docs.previewRelativePath = data?.relativePath ?? "";
+    docs.previewDisplayPath = data?.displayPath ?? (docs.previewRelativePath ? `~/${docs.previewRelativePath}` : "");
+    docs.previewName = data?.name ?? null;
+    docs.previewContent = data?.content ?? "";
+    docs.previewFormat = data?.format ?? null;
+    docs.previewLanguage = data?.language ?? null;
+    docs.previewLabel = data?.label ?? null;
+    docs.previewLoading = false;
+    docs.previewError = null;
+  } catch (error) {
+    docs.previewLoading = false;
+    docs.previewError = error instanceof Error ? error.message : String(error);
+    docs.previewContent = null;
+  } finally {
+    if (currentRoute === "docs") {
+      render();
+    }
+  }
+};
+
 let windowScrollHandler = null;
+let orchestratorPrefixDirty = false;
+let orchestratorDialogSubmitting = false;
+const orchestratorDirectoryState = {
+  target: null,
+  requestId: 0,
+  currentPath: null,
+  parent: null,
+  selection: null,
+};
 
 const ensureWindowScrollMonitoring = () => {
   if (windowScrollHandler) return;
@@ -211,8 +691,12 @@ const isSessionActive = (session) => ACTIVE_SESSION_STATUSES.has(session?.status
 const getActiveSessions = () => state.sessions.filter((session) => isSessionActive(session));
 
 const LIVE_ROUTE_PREFIX = "/live";
+const DOCS_ROUTE = "/docs";
 
 const getRouteFromPath = (pathname) => {
+  if (pathname === DOCS_ROUTE || pathname.startsWith(`${DOCS_ROUTE}/`)) {
+    return "docs";
+  }
   if (pathname === LIVE_ROUTE_PREFIX || pathname.startsWith(`${LIVE_ROUTE_PREFIX}/`)) {
     return "live";
   }
@@ -442,6 +926,28 @@ const directoryList = document.getElementById("directory-list");
 const directoryCurrent = document.getElementById("directory-current");
 const directoryUpButton = document.getElementById("directory-up");
 const directoryUseButton = document.getElementById("directory-use");
+const orchestratorDialog = document.getElementById("orchestrator-dialog");
+const orchestratorForm = orchestratorDialog?.querySelector("form");
+const orchestratorLabelInput = document.getElementById("orchestrator-label");
+const orchestratorAgentSelect = document.getElementById("orchestrator-agent");
+const orchestratorTemplateInput = document.getElementById("orchestrator-template");
+const orchestratorActiveRootInput = document.getElementById("orchestrator-active-root");
+const orchestratorTemplateBrowseButton = document.getElementById("orchestrator-template-browse");
+const orchestratorActiveRootBrowseButton = document.getElementById("orchestrator-active-root-browse");
+const orchestratorDirectoryPrefixInput = document.getElementById("orchestrator-directory-prefix");
+const orchestratorWorkingDirectoryInput = document.getElementById("orchestrator-working-directory");
+const orchestratorIntroTextarea = document.getElementById("orchestrator-intro");
+const orchestratorPollTimeoutInput = document.getElementById("orchestrator-timeout");
+const orchestratorPollIntervalInput = document.getElementById("orchestrator-interval");
+const orchestratorRetryAttemptsInput = document.getElementById("orchestrator-retries");
+const orchestratorRetryDelayInput = document.getElementById("orchestrator-retry-delay");
+const orchestratorCancelButton = document.getElementById("orchestrator-cancel");
+const orchestratorSaveButton = document.getElementById("orchestrator-save");
+const orchestratorDirectoryDialog = document.getElementById("orchestrator-directory-dialog");
+const orchestratorDirectoryList = document.getElementById("orchestrator-directory-list");
+const orchestratorDirectoryCurrent = document.getElementById("orchestrator-directory-current");
+const orchestratorDirectoryUpButton = document.getElementById("orchestrator-directory-up");
+const orchestratorDirectoryUseButton = document.getElementById("orchestrator-directory-use");
 
 const applyTheme = (theme, persist = true) => {
   currentTheme = theme;
@@ -867,6 +1373,15 @@ const fetchConfig = async () => {
     option.textContent = agent.label;
     agentSelect.append(option);
   });
+  if (orchestratorAgentSelect) {
+    orchestratorAgentSelect.innerHTML = "";
+    state.config.agents.forEach((agent) => {
+      const option = document.createElement("option");
+      option.value = agent.id;
+      option.textContent = agent.label;
+      orchestratorAgentSelect.append(option);
+    });
+  }
   if (directoryInput) {
     const initial =
       state.lastWorkingDirectory ??
@@ -1063,8 +1578,10 @@ const updateConversationDOM = (sessionId) => {
   const conversation = state.conversations.get(sessionId) ?? [];
   const lastCount = state.lastMessageCount.get(sessionId) ?? 0;
 
-  const autoScrollPreferred = ensureAutoScrollPreference(sessionId);
-  const shouldAutoScroll = Boolean(autoScrollPreferred);
+  // Ensure auto-scroll preference is initialized
+  ensureAutoScrollPreference(sessionId);
+  // Check current auto-scroll state (updates based on user scroll position)
+  const shouldAutoScroll = state.autoScrollEnabled.get(sessionId) ?? true;
 
   // Handle new messages
   if (conversation.length > lastCount) {
@@ -1305,32 +1822,53 @@ const sendMessage = async (sessionId, content) => {
   }
 };
 
-const fetchOrchestratorPresets = async () => {
-  const response = await fetch("/api/orchestrators");
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error ?? response.statusText ?? "Failed to load orchestrators");
-  }
+const normaliseOrchestratorPresetSummary = (item) => {
+  if (!item || typeof item !== "object") return null;
+  const id = typeof item.id === "string" ? item.id : "";
+  if (!id) return null;
+  const label = typeof item.label === "string" ? item.label : "";
+  const agent = typeof item.agent === "string" ? item.agent : "";
+  return { id, label, agent };
+};
 
-  const payload = await response.json().catch(() => ({}));
-  const candidates = Array.isArray(payload?.presets) ? payload.presets : [];
-  return candidates
-    .map((item) => {
-      if (!item || typeof item !== "object") {
-        return null;
-      }
-      const preset = item;
-      const id = typeof preset.id === "string" ? preset.id : "";
-      if (!id) {
-        return null;
-      }
-      return {
-        id,
-        label: typeof preset.label === "string" ? preset.label : "",
-        agent: typeof preset.agent === "string" ? preset.agent : "",
-      };
-    })
-    .filter((item) => item !== null);
+const refreshOrchestratorPresets = async () => {
+  if (state.orchestratorPresetsLoading) return;
+  state.orchestratorPresetsLoading = true;
+  state.orchestratorPresetsError = null;
+  if (currentRoute === "home") render();
+
+  try {
+    const response = await fetch("/api/orchestrators");
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error ?? response.statusText ?? "Failed to load orchestrators");
+    }
+
+    const payload = await response.json().catch(() => ({}));
+    const candidates = Array.isArray(payload?.presets) ? payload.presets : [];
+    state.orchestratorPresets = candidates
+      .map((item) => normaliseOrchestratorPresetSummary(item))
+      .filter((item) => item !== null);
+    state.orchestratorPresetsError = null;
+  } catch (error) {
+    console.error("Failed to load orchestrator presets", error);
+    state.orchestratorPresets = [];
+    state.orchestratorPresetsError = error instanceof Error ? error.message : String(error);
+  } finally {
+    state.orchestratorPresetsLoading = false;
+    state.orchestratorPresetsLoaded = true;
+    if (currentRoute === "home") {
+      render();
+    }
+  }
+};
+
+const ensureOrchestratorPresetsLoaded = () => {
+  if (!state.orchestratorPresetsLoaded && !state.orchestratorPresetsLoading) {
+    refreshOrchestratorPresets().catch((error) => {
+      console.error("Failed to load orchestrators", error);
+    });
+  }
 };
 
 const launchOrchestratorPreset = async (presetId) => {
@@ -1342,6 +1880,375 @@ const launchOrchestratorPreset = async (presetId) => {
     throw new Error(payload.error ?? response.statusText ?? "Failed to launch orchestrator");
   }
   return response.json();
+};
+
+const createOrchestratorPreset = async (payload) => {
+  const response = await fetch("/api/orchestrators", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error ?? response.statusText ?? "Failed to create orchestrator");
+  }
+  return response.json();
+};
+
+const renderOrchestratorPresetButtons = (container) => {
+  if (!container) return;
+  container.textContent = "";
+
+  if (state.orchestratorPresetsLoading && !state.orchestratorPresetsLoaded) {
+    container.textContent = "Loading orchestrators...";
+    return;
+  }
+
+  if (state.orchestratorPresetsError) {
+    container.textContent = `Failed to load orchestrator presets: ${state.orchestratorPresetsError}`;
+    return;
+  }
+
+  if (state.orchestratorPresets.length === 0) {
+    container.textContent = "No orchestrator presets configured.";
+    return;
+  }
+
+  for (const preset of state.orchestratorPresets) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "wm-button secondary";
+    const label = preset.label && preset.label.length > 0 ? preset.label : preset.id;
+    button.textContent = label;
+
+    const setPending = (pending) => {
+      if (pending) {
+        button.disabled = true;
+        button.dataset.pending = "true";
+        button.textContent = "Launching...";
+      } else {
+        button.disabled = false;
+        delete button.dataset.pending;
+        button.textContent = label;
+      }
+    };
+
+    button.addEventListener("click", async () => {
+      if (button.dataset.pending === "true") return;
+      setPending(true);
+      try {
+        const result = await launchOrchestratorPreset(preset.id);
+        if (!result?.session) {
+          window.alert("Orchestrator launched, but no session information was returned.");
+          return;
+        }
+        await handleSessionStart(result.session);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        window.alert(`Failed to launch ${label}: ${message}`);
+      } finally {
+        if (button.isConnected) {
+          setPending(false);
+        }
+      }
+    });
+
+    container.append(button);
+  }
+};
+
+const formatDirectoryPrefix = (value) => {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return "";
+  return trimmed
+    .replace(/[^a-zA-Z0-9/_-]+/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/_{2,}/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64);
+};
+
+const getDefaultOrchestratorPath = (target) => {
+  return target === "templates" ? "orchestrator/templates" : "orchestrator/active";
+};
+
+const fetchOrchestratorDirectoryData = async (target, path) => {
+  const params = new URLSearchParams({ target });
+  if (path) {
+    params.set("path", path);
+  }
+  const response = await fetch(`/api/orchestrators/directories?${params.toString()}`);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error ?? response.statusText ?? "Failed to load directories");
+  }
+  return response.json();
+};
+
+const renderOrchestratorDirectoryBrowser = (data) => {
+  if (!orchestratorDirectoryCurrent || !orchestratorDirectoryList) return;
+  orchestratorDirectoryCurrent.textContent = data.path;
+  orchestratorDirectoryList.textContent = "";
+  if (orchestratorDirectoryUpButton) {
+    orchestratorDirectoryUpButton.disabled = !data.parent;
+  }
+
+  if (Array.isArray(data.entries) && data.entries.length > 0) {
+    data.entries.forEach((entry) => {
+      const item = document.createElement("li");
+      item.className = "directory-browser__item";
+      item.dataset.path = entry.path;
+
+      const folderButton = document.createElement("button");
+      folderButton.type = "button";
+      folderButton.className = "directory-browser__folder";
+      folderButton.textContent = entry.name;
+      folderButton.dataset.path = entry.path;
+
+      const chooseButton = document.createElement("button");
+      chooseButton.type = "button";
+      chooseButton.className = "wm-button secondary directory-browser__choose";
+      chooseButton.textContent = "Choose";
+      chooseButton.dataset.path = entry.path;
+
+      item.append(folderButton, chooseButton);
+      orchestratorDirectoryList.append(item);
+    });
+  } else {
+    const empty = document.createElement("li");
+    empty.className = "directory-browser__empty";
+    empty.textContent = "No subdirectories";
+    orchestratorDirectoryList.append(empty);
+  }
+
+  refreshOrchestratorDirectoryHighlights();
+};
+
+const setOrchestratorDirectorySelection = (path) => {
+  orchestratorDirectoryState.selection = path;
+  refreshOrchestratorDirectoryHighlights();
+};
+
+const refreshOrchestratorDirectoryHighlights = () => {
+  if (!orchestratorDirectoryList) return;
+  const selected = orchestratorDirectoryState.selection;
+  orchestratorDirectoryList.querySelectorAll(".directory-browser__item").forEach((item) => {
+    if (!(item instanceof HTMLElement)) return;
+    const path = item.dataset.path;
+    if (selected && path === selected) {
+      item.dataset.selected = "true";
+    } else {
+      delete item.dataset.selected;
+    }
+  });
+};
+
+const updateOrchestratorDirectoryBrowser = async (target, path) => {
+  orchestratorDirectoryState.target = target;
+  orchestratorDirectoryState.requestId += 1;
+  const requestId = orchestratorDirectoryState.requestId;
+  orchestratorDirectoryState.selection = null;
+
+  let data;
+  try {
+    data = await fetchOrchestratorDirectoryData(target, path ?? undefined);
+  } catch (error) {
+    window.alert(error instanceof Error ? error.message : String(error));
+    return false;
+  }
+
+  if (orchestratorDirectoryState.requestId !== requestId) {
+    return false;
+  }
+
+  orchestratorDirectoryState.currentPath = data.path ?? null;
+  orchestratorDirectoryState.parent = data.parent ?? null;
+  orchestratorDirectoryState.selection = data.path ?? null;
+  renderOrchestratorDirectoryBrowser(data);
+  return true;
+};
+
+const openOrchestratorDirectoryDialog = async (target, initialPath) => {
+  if (!orchestratorDirectoryDialog || typeof orchestratorDirectoryDialog.showModal !== "function") {
+    window.alert("Your browser does not support the directory picker.");
+    return;
+  }
+
+  const seed = initialPath && initialPath.trim().length > 0 ? initialPath : getDefaultOrchestratorPath(target);
+  const loaded = await updateOrchestratorDirectoryBrowser(target, seed ?? null);
+  if (!loaded) {
+    return;
+  }
+  orchestratorDirectoryDialog.showModal();
+};
+
+const setOrchestratorDialogPending = (pending) => {
+  orchestratorDialogSubmitting = pending;
+  if (orchestratorSaveButton) {
+    orchestratorSaveButton.disabled = pending;
+    orchestratorSaveButton.textContent = pending ? "Saving..." : "Save";
+  }
+};
+
+const resetOrchestratorForm = () => {
+  orchestratorPrefixDirty = false;
+  const defaultDir = state.lastWorkingDirectory ?? state.config?.defaultDirectory ?? "";
+  if (orchestratorLabelInput) {
+    orchestratorLabelInput.value = "";
+  }
+  if (orchestratorTemplateInput) {
+    orchestratorTemplateInput.value = "";
+  }
+  if (orchestratorActiveRootInput) {
+    orchestratorActiveRootInput.value = "orchestrator/active";
+    orchestratorActiveRootInput.disabled = true;
+  }
+  if (orchestratorTemplateBrowseButton) {
+    orchestratorTemplateBrowseButton.disabled = false;
+  }
+  if (orchestratorActiveRootBrowseButton) {
+    orchestratorActiveRootBrowseButton.disabled = true;
+  }
+  if (orchestratorDirectoryPrefixInput) {
+    orchestratorDirectoryPrefixInput.value = "";
+    orchestratorDirectoryPrefixInput.placeholder = "Security_Review";
+  }
+  if (orchestratorWorkingDirectoryInput) {
+    orchestratorWorkingDirectoryInput.value = defaultDir;
+  }
+  if (orchestratorIntroTextarea) {
+    orchestratorIntroTextarea.value = "";
+  }
+  if (orchestratorPollTimeoutInput) {
+    orchestratorPollTimeoutInput.value = "30000";
+  }
+  if (orchestratorPollIntervalInput) {
+    orchestratorPollIntervalInput.value = "250";
+  }
+  if (orchestratorRetryAttemptsInput) {
+    orchestratorRetryAttemptsInput.value = "10";
+  }
+  if (orchestratorRetryDelayInput) {
+    orchestratorRetryDelayInput.value = "1000";
+  }
+
+  if (state.config?.agents && orchestratorAgentSelect) {
+    orchestratorAgentSelect.value = state.config.agents[0]?.id ?? "";
+  }
+  applyOrchestratorTemplateState();
+};
+
+const applyOrchestratorTemplateState = () => {
+  const hasTemplate = Boolean(orchestratorTemplateInput?.value.trim().length);
+  if (orchestratorActiveRootInput) {
+    orchestratorActiveRootInput.disabled = !hasTemplate;
+    if (!hasTemplate) {
+      orchestratorActiveRootInput.value = getDefaultOrchestratorPath("active");
+    }
+  }
+  if (orchestratorActiveRootBrowseButton) {
+    orchestratorActiveRootBrowseButton.disabled = !hasTemplate;
+  }
+};
+
+const closeOrchestratorDialog = () => {
+  setOrchestratorDialogPending(false);
+  if (orchestratorDialog && typeof orchestratorDialog.close === "function" && orchestratorDialog.open) {
+    orchestratorDialog.close();
+  }
+};
+
+const openOrchestratorDialog = () => {
+  if (!state.config) {
+    window.alert("Configuration is still loading. Try again shortly.");
+    return;
+  }
+  if (!orchestratorDialog || typeof orchestratorDialog.showModal !== "function") {
+    window.alert("Your browser does not support the orchestrator dialog.");
+    return;
+  }
+  resetOrchestratorForm();
+  orchestratorDialog.showModal();
+  orchestratorLabelInput?.focus();
+};
+
+const readIntegerInput = (input, fallback, minimum) => {
+  if (!input) return fallback;
+  const value = Number.parseInt(input.value, 10);
+  if (Number.isFinite(value) && (!Number.isFinite(minimum) || value >= minimum)) {
+    return value;
+  }
+  return fallback;
+};
+
+const handleOrchestratorFormSubmit = async (event) => {
+  event.preventDefault();
+  if (orchestratorDialogSubmitting) return;
+
+  const label = orchestratorLabelInput?.value.trim() ?? "";
+  if (!label) {
+    window.alert("Enter a button label for the orchestrator.");
+    orchestratorLabelInput?.focus();
+    return;
+  }
+
+  const agent = orchestratorAgentSelect?.value ?? "";
+  if (!agent) {
+    window.alert("Select an agent for the orchestrator.");
+    orchestratorAgentSelect?.focus();
+    return;
+  }
+
+  const templateDirRaw = orchestratorTemplateInput?.value.trim() ?? "";
+  const workingDirectoryRaw = orchestratorWorkingDirectoryInput?.value.trim() ?? "";
+  const useTemplate = templateDirRaw.length > 0;
+  if (!useTemplate && !workingDirectoryRaw) {
+    window.alert("Provide either a template directory or a working directory.");
+    orchestratorTemplateInput?.focus();
+    return;
+  }
+
+  const directoryPrefixRaw = orchestratorDirectoryPrefixInput?.value.trim() ?? "";
+  const introMessageRaw = orchestratorIntroTextarea?.value ?? "";
+  const introMessageTrimmed = introMessageRaw.trim();
+  const pollTimeout = readIntegerInput(orchestratorPollTimeoutInput, 30000, 1000);
+  const pollInterval = readIntegerInput(orchestratorPollIntervalInput, 250, 50);
+  const retryAttempts = readIntegerInput(orchestratorRetryAttemptsInput, 10, 1);
+  const retryDelay = readIntegerInput(orchestratorRetryDelayInput, 1000, 0);
+
+  const payload = {
+    label,
+    agent,
+    templateDir: useTemplate ? templateDirRaw : undefined,
+    activeRoot: useTemplate ? (orchestratorActiveRootInput?.value.trim() || "orchestrator/active") : undefined,
+    directoryPrefix: useTemplate
+      ? directoryPrefixRaw || formatDirectoryPrefix(label)
+      : directoryPrefixRaw || undefined,
+    workingDirectory: useTemplate ? undefined : workingDirectoryRaw || undefined,
+    introMessage: introMessageTrimmed ? introMessageTrimmed : undefined,
+    pollTimeoutMs: pollTimeout,
+    pollIntervalMs: pollInterval,
+    retryAttempts,
+    retryDelayMs: retryDelay,
+  };
+
+  setOrchestratorDialogPending(true);
+  try {
+    await createOrchestratorPreset(payload);
+    closeOrchestratorDialog();
+    await refreshOrchestratorPresets();
+    if (currentRoute !== "home") {
+      currentRoute = "home";
+      render();
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    window.alert(`Failed to create orchestrator: ${message}`);
+  } finally {
+    if (orchestratorDialog?.open) {
+      setOrchestratorDialogPending(false);
+    }
+  }
 };
 
 const renderHome = () => {
@@ -1365,83 +2272,47 @@ const renderHome = () => {
     if (collapsed) {
       orchestratorCard.dataset.collapsed = "true";
       orchestratorContent.hidden = true;
+      orchestratorHeader.setAttribute("aria-expanded", "false");
     } else {
       delete orchestratorCard.dataset.collapsed;
       orchestratorContent.hidden = false;
+      orchestratorHeader.setAttribute("aria-expanded", "true");
     }
   };
 
+  const orchestratorCreateButton = document.createElement("button");
+  orchestratorCreateButton.type = "button";
+  orchestratorCreateButton.className = "wm-button secondary wm-button-icon";
+  orchestratorCreateButton.setAttribute("aria-label", "Add orchestrator preset");
+  orchestratorCreateButton.innerHTML = '<span aria-hidden="true">+</span>';
+  orchestratorCreateButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openOrchestratorDialog();
+  });
+
+  const orchestratorHeaderActions = document.createElement("div");
+  orchestratorHeaderActions.className = "wm-home-section-actions";
+  orchestratorHeaderActions.append(orchestratorCreateButton);
+
   const orchestratorActions = document.createElement("div");
   orchestratorActions.className = "wm-home-orchestrator-actions";
-  orchestratorActions.textContent = "Loading orchestrators…";
+  renderOrchestratorPresetButtons(orchestratorActions);
 
-  (async () => {
-    try {
-      const presets = await fetchOrchestratorPresets();
-      if (!orchestratorActions.isConnected) return;
-      orchestratorActions.textContent = "";
-      if (presets.length === 0) {
-        orchestratorActions.textContent = "No orchestrator presets configured.";
-        return;
-      }
-
-      for (const preset of presets) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "wm-button secondary";
-        const label = typeof preset.label === "string" && preset.label.length > 0 ? preset.label : preset.id;
-        button.textContent = label;
-
-        const setPending = (pending) => {
-          if (pending) {
-            button.disabled = true;
-            button.dataset.pending = "true";
-            button.textContent = "Launching...";
-          } else {
-            button.disabled = false;
-            delete button.dataset.pending;
-            button.textContent = label;
-          }
-        };
-
-        button.addEventListener("click", async () => {
-          if (button.dataset.pending === "true") return;
-          setPending(true);
-          try {
-            const result = await launchOrchestratorPreset(preset.id);
-            if (!result?.session) {
-              window.alert("Orchestrator launched, but no session information was returned.");
-              return;
-            }
-            await handleSessionStart(result.session);
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            window.alert(`Failed to launch ${label}: ${message}`);
-          } finally {
-            if (button.isConnected) {
-              setPending(false);
-            }
-          }
-        });
-
-        orchestratorActions.append(button);
-      }
-    } catch (error) {
-      if (!orchestratorActions.isConnected) return;
-      const message = error instanceof Error ? error.message : String(error);
-      orchestratorActions.textContent = `Failed to load orchestrator presets: ${message}`;
-    }
-  })();
+  if (!state.orchestratorPresetsLoaded && !state.orchestratorPresetsLoading) {
+    ensureOrchestratorPresetsLoaded();
+  }
 
   // Make header clickable to toggle collapse
-  orchestratorHeader.addEventListener("click", () => {
+  orchestratorHeader.addEventListener("click", (event) => {
+    if (orchestratorCreateButton.contains(event.target)) return;
     const currentlyCollapsed = orchestratorCard.dataset.collapsed === "true";
     setOrchestratorCollapsed(!currentlyCollapsed);
   });
 
-  orchestratorHeader.append(orchestratorTitle);
+  orchestratorHeader.append(orchestratorTitle, orchestratorHeaderActions);
   orchestratorContent.append(orchestratorActions);
   orchestratorCard.append(orchestratorHeader, orchestratorContent);
+  setOrchestratorCollapsed(false);
 
   wrapper.append(orchestratorCard);
 
@@ -1621,6 +2492,215 @@ const renderHome = () => {
 
   setCollapsed(false);
   wrapper.append(liveCard);
+  return wrapper;
+};
+
+const renderDocs = () => {
+  const docs = state.docs;
+  if (!docs.initialized) {
+    docs.initialized = true;
+    void loadDocsTree();
+  }
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "wm-docs";
+
+  const layout = document.createElement("div");
+  layout.className = "wm-docs-layout";
+
+  const browserCard = document.createElement("section");
+  browserCard.className = "wm-card wm-docs-browser";
+
+  const browserHeader = document.createElement("div");
+  browserHeader.className = "wm-docs-browser__header";
+
+  const headerInfo = document.createElement("div");
+  headerInfo.className = "wm-docs-browser__info";
+  const headerTitle = document.createElement("h2");
+  headerTitle.textContent = "Docs";
+  const pathLabel = document.createElement("span");
+  pathLabel.className = "wm-docs-browser__path";
+  pathLabel.textContent = docs.displayPath ?? "~";
+  headerInfo.append(headerTitle, pathLabel);
+
+  const controls = document.createElement("div");
+  controls.className = "wm-docs-browser__controls";
+
+  const upButton = document.createElement("button");
+  upButton.type = "button";
+  upButton.className = "wm-button secondary";
+  upButton.textContent = "Up";
+  upButton.disabled = docs.loading || !docs.parent?.path;
+  upButton.addEventListener("click", () => {
+    if (docs.loading) return;
+    if (docs.parent?.path) {
+      void loadDocsTree(docs.parent.path);
+    }
+  });
+
+  const refreshButton = document.createElement("button");
+  refreshButton.type = "button";
+  refreshButton.className = "wm-button secondary";
+  refreshButton.textContent = "Refresh";
+  refreshButton.disabled = docs.loading;
+  refreshButton.addEventListener("click", () => {
+    if (docs.loading) return;
+    void loadDocsTree(docs.currentPath);
+  });
+
+  controls.append(upButton, refreshButton);
+  browserHeader.append(headerInfo, controls);
+
+  const list = document.createElement("ul");
+  list.className = "wm-docs-browser__list";
+
+  if (docs.error) {
+    const item = document.createElement("li");
+    item.className = "wm-docs-browser__status";
+    item.textContent = docs.error;
+    list.append(item);
+  } else {
+    const entries = Array.isArray(docs.entries) ? docs.entries : [];
+    if (entries.length === 0 && !docs.loading) {
+      const empty = document.createElement("li");
+      empty.className = "wm-docs-browser__status";
+      empty.textContent = "Directory is empty.";
+      list.append(empty);
+    }
+
+    entries.forEach((entry) => {
+      const item = document.createElement("li");
+      item.className = "wm-docs-browser__item";
+      item.dataset.type = entry.type;
+      if (entry.type === "file" && entry.path === docs.previewPath) {
+        item.dataset.selected = "true";
+      }
+
+      const button = document.createElement("button");
+      button.type = "button";
+
+      const name = document.createElement("span");
+      name.className = "wm-docs-browser__name";
+      const icon = document.createElement("span");
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent =
+        entry.type === "directory"
+          ? "📁"
+          : entry.previewable
+            ? entry.previewFormat === "markdown"
+              ? "📝"
+              : "💻"
+            : "🚫";
+      const label = document.createElement("span");
+      label.textContent = entry.name;
+      name.append(icon, label);
+      button.append(name);
+
+      const meta = document.createElement("span");
+      meta.className = "wm-docs-browser__meta";
+      if (entry.type === "directory") {
+        meta.textContent = "Folder";
+      } else if (entry.previewable) {
+        meta.textContent = entry.previewLabel ?? (entry.previewFormat === "markdown" ? "Markdown" : "Code");
+      } else {
+        meta.textContent = "Preview unavailable";
+      }
+      button.append(meta);
+
+      if (entry.type === "directory") {
+        button.addEventListener("click", () => {
+          if (docs.loading) return;
+          void loadDocsTree(entry.path);
+        });
+      } else if (entry.previewable) {
+        button.addEventListener("click", () => {
+          if (docs.previewPath !== entry.path || docs.previewError) {
+            void loadDocsFile(entry.path);
+          } else if (!docs.previewLoading) {
+            void loadDocsFile(entry.path);
+          }
+        });
+      } else {
+        button.disabled = true;
+        button.setAttribute("aria-disabled", "true");
+      }
+
+      item.append(button);
+      list.append(item);
+    });
+
+    if (docs.loading) {
+      const loadingItem = document.createElement("li");
+      loadingItem.className = "wm-docs-browser__status";
+      loadingItem.textContent = "Loading…";
+      list.append(loadingItem);
+    }
+  }
+
+  browserCard.append(browserHeader, list);
+
+  const previewCard = document.createElement("section");
+  previewCard.className = "wm-card wm-docs-preview";
+
+  const previewHeader = document.createElement("div");
+  previewHeader.className = "wm-docs-preview__header";
+  const previewTitle = document.createElement("h2");
+  previewTitle.className = "wm-docs-preview__title";
+  previewTitle.textContent = docs.previewName ?? "Preview";
+  const previewPath = document.createElement("p");
+  previewPath.className = "wm-docs-preview__path";
+  if (docs.previewDisplayPath) {
+    previewPath.textContent = docs.previewDisplayPath;
+  } else if (docs.previewName) {
+    previewPath.textContent = docs.previewName;
+  } else {
+    previewPath.textContent = "~";
+  }
+  if (docs.previewLabel) {
+    const formatBadge = document.createElement("span");
+    formatBadge.className = "wm-docs-preview__badge";
+    formatBadge.textContent = docs.previewLabel;
+    previewPath.append(document.createTextNode(" "), formatBadge);
+  }
+  previewHeader.append(previewTitle, previewPath);
+
+  const previewBody = document.createElement("div");
+  previewBody.className = "wm-docs-preview__body";
+
+  if (docs.previewLoading) {
+    previewBody.dataset.loading = "true";
+    previewBody.textContent = "Loading preview…";
+  } else if (docs.previewError) {
+    const error = document.createElement("div");
+    error.className = "wm-docs-browser__status";
+    error.textContent = docs.previewError;
+    previewBody.append(error);
+  } else if (docs.previewContent !== null) {
+    if (docs.previewFormat === "markdown") {
+      if (docs.previewContent.trim().length > 0) {
+        const content = document.createElement("div");
+        content.className = "wm-docs-preview-content";
+        content.innerHTML = renderMarkdownToHtml(docs.previewContent);
+        previewBody.append(content);
+      } else {
+        previewBody.dataset.empty = "true";
+        previewBody.textContent = "This document is empty.";
+      }
+    } else {
+      const content = document.createElement("div");
+      content.className = "wm-docs-preview-code";
+      content.innerHTML = renderCodeToHtml(docs.previewContent, docs.previewLanguage ?? "plaintext");
+      previewBody.append(content);
+    }
+  } else {
+    previewBody.dataset.empty = "true";
+    previewBody.textContent = "Select a previewable file to view.";
+  }
+
+  previewCard.append(previewHeader, previewBody);
+
+  layout.append(browserCard, previewCard);
+  wrapper.append(layout);
   return wrapper;
 };
 
@@ -2006,7 +3086,10 @@ const updateLivePanelsForSession = (sessionId) => {
     conversationContainer.append(renderConversation(sessionId));
     scrollRegion.append(conversationContainer);
     attachConversationScrollHandler(sessionId, conversationContainer);
-    const allowAutoScroll = ensureAutoScrollPreference(sessionId);
+    // Ensure auto-scroll preference is initialized
+    ensureAutoScrollPreference(sessionId);
+    // Check current auto-scroll state
+    const allowAutoScroll = state.autoScrollEnabled.get(sessionId) ?? true;
     if (allowAutoScroll) {
       scrollConversationAreaToBottom(sessionId);
     } else {
@@ -2076,7 +3159,10 @@ const renderLive = () => {
   conversationContainer.append(renderConversation(sessionId));
   scrollRegion.append(conversationContainer);
   attachConversationScrollHandler(sessionId, conversationContainer);
-  const allowAutoScroll = ensureAutoScrollPreference(sessionId);
+  // Ensure auto-scroll preference is initialized
+  ensureAutoScrollPreference(sessionId);
+  // Check current auto-scroll state
+  const allowAutoScroll = state.autoScrollEnabled.get(sessionId) ?? true;
   if (allowAutoScroll) {
     scrollConversationAreaToBottom(sessionId);
   } else {
@@ -2093,7 +3179,14 @@ const renderLive = () => {
 
 const render = () => {
   appRoot.innerHTML = "";
-  const view = currentRoute === "live" ? renderLive() : renderHome();
+  let view;
+  if (currentRoute === "live") {
+    view = renderLive();
+  } else if (currentRoute === "docs") {
+    view = renderDocs();
+  } else {
+    view = renderHome();
+  }
   appRoot.append(view);
   appRoot.dataset.route = currentRoute;
   setActiveNav();
@@ -2185,6 +3278,16 @@ navLinks.forEach((link) => {
         setActiveSession(targetSessionId, { updateHistory: true, forceLog: true });
       } else {
         setActiveSession(null, { updateHistory: true });
+      }
+    } else if (targetRoute === "docs") {
+      currentRoute = "docs";
+      lastLoggedSessionId = null;
+      if (window.location.pathname !== DOCS_ROUTE) {
+        window.history.pushState({ route: "docs" }, "", DOCS_ROUTE);
+      }
+      if (!state.docs.initialized) {
+        state.docs.initialized = true;
+        void loadDocsTree();
       }
     } else {
       currentRoute = "home";
@@ -2278,6 +3381,14 @@ window.addEventListener("popstate", () => {
       window.history.replaceState({ route: "home" }, "", "/home");
     }
   }
+  if (currentRoute === "docs") {
+    if (!state.docs.initialized) {
+      state.docs.initialized = true;
+      void loadDocsTree();
+    } else if (!state.docs.loading && !state.docs.currentPath) {
+      void loadDocsTree();
+    }
+  }
   render();
 });
 
@@ -2300,6 +3411,127 @@ const handleSessionLaunchRequest = () => {
   closeDialog();
   launchSession(agentId, workingDirectory);
 };
+
+orchestratorForm?.addEventListener("submit", handleOrchestratorFormSubmit);
+
+if (orchestratorCancelButton) {
+  orchestratorCancelButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    closeOrchestratorDialog();
+  });
+}
+
+if (orchestratorDialog) {
+  orchestratorDialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeOrchestratorDialog();
+  });
+  orchestratorDialog.addEventListener("close", () => {
+    setOrchestratorDialogPending(false);
+  });
+}
+
+if (orchestratorDirectoryDialog) {
+  orchestratorDirectoryDialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    orchestratorDirectoryDialog.close();
+  });
+  orchestratorDirectoryDialog.addEventListener("close", () => {
+    orchestratorDirectoryState.target = null;
+    orchestratorDirectoryState.selection = null;
+    orchestratorDirectoryState.currentPath = null;
+    orchestratorDirectoryState.parent = null;
+  });
+}
+
+orchestratorDirectoryUpButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  if (orchestratorDirectoryState.parent && orchestratorDirectoryState.target) {
+    updateOrchestratorDirectoryBrowser(orchestratorDirectoryState.target, orchestratorDirectoryState.parent);
+  }
+});
+
+orchestratorDirectoryList?.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const path = target.dataset.path;
+  if (!path || !orchestratorDirectoryState.target) return;
+
+  if (target.classList.contains("directory-browser__folder")) {
+    updateOrchestratorDirectoryBrowser(orchestratorDirectoryState.target, path);
+  }
+
+  if (target.classList.contains("directory-browser__choose")) {
+    setOrchestratorDirectorySelection(path);
+  }
+});
+
+orchestratorDirectoryUseButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  const target = orchestratorDirectoryState.target;
+  if (!target) return;
+  const selected = orchestratorDirectoryState.selection ?? orchestratorDirectoryState.currentPath;
+  if (!selected) {
+    window.alert("Select a directory first.");
+    return;
+  }
+
+  if (target === "templates") {
+    if (orchestratorTemplateInput) {
+      orchestratorTemplateInput.value = selected;
+      orchestratorTemplateInput.dispatchEvent(new Event("input"));
+    }
+    if (!orchestratorPrefixDirty && orchestratorDirectoryPrefixInput) {
+      const lastSegment = selected.split("/").filter(Boolean).pop() ?? "";
+      const suggestion = formatDirectoryPrefix(lastSegment);
+      if (suggestion) {
+        orchestratorDirectoryPrefixInput.value = suggestion;
+      }
+      orchestratorDirectoryPrefixInput.placeholder = suggestion || "Security_Review";
+    }
+  } else if (target === "active") {
+    if (orchestratorActiveRootInput) {
+      orchestratorActiveRootInput.value = selected;
+    }
+  }
+
+  setOrchestratorDirectorySelection(selected);
+  applyOrchestratorTemplateState();
+  if (orchestratorDirectoryDialog.open) {
+    orchestratorDirectoryDialog.close();
+  }
+});
+
+orchestratorLabelInput?.addEventListener("input", () => {
+  const suggestion = formatDirectoryPrefix(orchestratorLabelInput.value);
+  if (!orchestratorPrefixDirty && orchestratorDirectoryPrefixInput) {
+    orchestratorDirectoryPrefixInput.value = suggestion;
+  }
+  if (orchestratorDirectoryPrefixInput) {
+    orchestratorDirectoryPrefixInput.placeholder = suggestion || "Security_Review";
+  }
+});
+
+orchestratorDirectoryPrefixInput?.addEventListener("input", () => {
+  orchestratorPrefixDirty = true;
+});
+
+orchestratorTemplateInput?.addEventListener("input", () => {
+  applyOrchestratorTemplateState();
+});
+
+orchestratorTemplateBrowseButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  const seed = orchestratorTemplateInput?.value ?? getDefaultOrchestratorPath("templates");
+  openOrchestratorDirectoryDialog("templates", seed);
+});
+
+orchestratorActiveRootBrowseButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  if (orchestratorActiveRootBrowseButton.disabled) return;
+  const seed = orchestratorActiveRootInput?.value ?? getDefaultOrchestratorPath("active");
+  openOrchestratorDirectoryDialog("active", seed);
+});
 
 sessionForm?.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -2325,6 +3557,7 @@ dialog.addEventListener("cancel", (event) => {
   initTheme();
   initTabsVisibility();
   await fetchConfig();
+  await refreshOrchestratorPresets();
   await fetchSessions();
   render();
 })();
