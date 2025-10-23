@@ -2449,15 +2449,18 @@ const pollSessions = async () => {
     const previousSessionIds = state.sessions.map(s => s.id).join(',');
 
     await fetchSessions();
+    syncMenuTabs();
+    syncDesktopSessionIndicator();
+
+    if (currentRoute !== "live") {
+      return;
+    }
 
     const currentSessionCount = state.sessions.length;
     const currentSessionIds = state.sessions.map(s => s.id).join(',');
     const sessionsChanged = previousSessionCount !== currentSessionCount || previousSessionIds !== currentSessionIds;
 
-    // On home route, always render to show session updates
-    if (currentRoute !== "live") {
-      render();
-    } else if (!state.activeSessionId) {
+    if (!state.activeSessionId) {
       // On live route with no active session, render to show empty state
       render();
     } else {
@@ -2501,9 +2504,29 @@ const startSessionPolling = () => {
     return;
   }
   sessionPollIntervalId = window.setInterval(() => {
-    void pollSessionsLoop();
+    if (currentRoute === "live") {
+      void pollSessionsLoop();
+    }
   }, SESSION_POLL_INTERVAL_MS);
-  void pollSessionsLoop();
+  if (currentRoute === "live") {
+    void pollSessionsLoop();
+  }
+};
+
+const stopSessionPolling = () => {
+  if (sessionPollIntervalId === null) {
+    return;
+  }
+  window.clearInterval(sessionPollIntervalId);
+  sessionPollIntervalId = null;
+};
+
+const syncSessionPolling = () => {
+  if (currentRoute === "live") {
+    startSessionPolling();
+  } else {
+    stopSessionPolling();
+  }
 };
 
 const updateConversationDOM = (sessionId) => {
@@ -4399,6 +4422,7 @@ const render = () => {
   closeMenu();
   syncMenuTabs();
   syncDesktopSessionIndicator();
+  syncSessionPolling();
   lastFilesMobileLayout = isMobileFilesLayout();
   if (!pullRefreshing && !pullActive) {
     resetPullRefresh();
@@ -4789,5 +4813,4 @@ dialog.addEventListener("cancel", (event) => {
   await refreshOrchestratorPresets();
   await fetchSessions();
   render();
-  startSessionPolling();
 })();
