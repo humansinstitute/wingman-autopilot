@@ -1256,6 +1256,7 @@ const setActiveSession = (sessionId, options = {}) => {
     if (!sessionExists && !allowPending) {
       state.activeSessionId = null;
       lastLoggedSessionId = null;
+      syncDesktopSessionIndicator();
       return false;
     }
 
@@ -1285,6 +1286,7 @@ const setActiveSession = (sessionId, options = {}) => {
       }
     }
 
+    syncDesktopSessionIndicator();
     return true;
   }
 
@@ -1293,6 +1295,7 @@ const setActiveSession = (sessionId, options = {}) => {
   if (updateHistory && currentRoute === "live" && window.location.pathname !== LIVE_ROUTE_PREFIX) {
     window.history.pushState({ route: "live" }, "", LIVE_ROUTE_PREFIX);
   }
+  syncDesktopSessionIndicator();
   return true;
 };
 
@@ -1445,6 +1448,12 @@ const menuPanel = document.querySelector(".wm-menu-panel");
 const menuTabsContainer = document.getElementById("menu-tabs");
 const pullRefreshIndicator = document.getElementById("pull-refresh");
 const pullRefreshLabel = pullRefreshIndicator?.querySelector(".label");
+const desktopSessionIndicator = document.getElementById("desktop-session-indicator");
+const desktopSessionIndicatorButton = document.getElementById("desktop-session-indicator-button");
+const desktopSessionIndicatorName =
+  desktopSessionIndicator?.querySelector('[data-part="name"]') ?? null;
+const desktopSessionIndicatorDirectory =
+  desktopSessionIndicator?.querySelector('[data-part="directory"]') ?? null;
 const sessionNameInput = document.getElementById("session-name");
 const directoryInput = document.getElementById("working-directory");
 const directorySuggestions = document.getElementById("directory-suggestions");
@@ -1488,6 +1497,42 @@ const applyTheme = (theme, persist = true) => {
       console.warn("Failed to persist theme preference", error);
     }
   }
+};
+
+const getActiveSessionForIndicator = () => {
+  if (!state.activeSessionId) return null;
+  return state.sessions.find((session) => session.id === state.activeSessionId) ?? null;
+};
+
+const shouldShowDesktopIndicator = () => window.innerWidth >= 900;
+
+const syncDesktopSessionIndicator = () => {
+  if (!desktopSessionIndicator) return;
+  const session = getActiveSessionForIndicator();
+  const canShow = Boolean(session) && shouldShowDesktopIndicator();
+  if (!canShow) {
+    desktopSessionIndicator.hidden = true;
+    return;
+  }
+
+  const displayName = getSessionDisplayName(session);
+  if (desktopSessionIndicatorName) {
+    desktopSessionIndicatorName.textContent = displayName;
+    desktopSessionIndicatorName.title = displayName;
+  }
+
+  const directoryValue =
+    typeof session.workingDirectory === "string" && session.workingDirectory.trim().length > 0
+      ? session.workingDirectory
+      : state.config?.defaultDirectory ?? "";
+
+  if (desktopSessionIndicatorDirectory) {
+    const text = directoryValue || "—";
+    desktopSessionIndicatorDirectory.textContent = text;
+    desktopSessionIndicatorDirectory.title = directoryValue || "";
+  }
+
+  desktopSessionIndicator.hidden = false;
 };
 
 const detectPreferredTheme = () => {
@@ -1975,6 +2020,8 @@ const fetchSessions = async () => {
   ) {
     setActiveSession(state.activeSessionId, { updateHistory: false, forceLog: true });
   }
+
+  syncDesktopSessionIndicator();
 
   if (!redirectHome && currentRoute === "live" && state.activeSessionId) {
     await Promise.all([
@@ -3853,6 +3900,7 @@ const render = () => {
   setActiveNav();
   closeMenu();
   syncMenuTabs();
+  syncDesktopSessionIndicator();
   if (!pullRefreshing && !pullActive) {
     resetPullRefresh();
   }
@@ -3972,6 +4020,22 @@ menuToggle?.addEventListener("click", (event) => {
   toggleMenu();
 });
 
+desktopSessionIndicatorButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  const session = getActiveSessionForIndicator();
+  if (!session) return;
+  closeMenu();
+  if (currentRoute !== "live") {
+    currentRoute = "live";
+  }
+  setActiveSession(session.id, { updateHistory: true, forceLog: true });
+  state.autoScrollEnabled.set(session.id, true);
+  render();
+  requestAnimationFrame(() => {
+    scrollConversationAreaToBottom(session.id, { includeWindow: true });
+  });
+});
+
 document.addEventListener("click", (event) => {
   if (document.body.dataset.menuOpen === "true") {
     const target = event.target;
@@ -3985,6 +4049,7 @@ window.addEventListener("resize", () => {
   if (window.innerWidth > 720) {
     closeMenu();
   }
+  syncDesktopSessionIndicator();
 });
 
 window.addEventListener("keydown", (event) => {

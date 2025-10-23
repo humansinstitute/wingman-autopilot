@@ -32,6 +32,19 @@
           <p class="wm-tagline">Solvitur Ambulando</p>
         </div>
       </div>
+      <div id="desktop-session-indicator" class="wm-session-indicator" role="status" aria-live="polite" hidden>
+        <button
+          type="button"
+          id="desktop-session-indicator-button"
+          class="wm-session-indicator-button"
+          aria-label="Show current session in Live view"
+        >
+          <div class="wm-session-indicator-text">
+            <span class="wm-session-indicator-name" data-part="name"></span>
+            <span class="wm-session-indicator-directory" data-part="directory"></span>
+          </div>
+        </button>
+      </div>
       <button id="menu-toggle" class="wm-menu-toggle" aria-label="Toggle menu" aria-expanded="false">
         <span class="menu-icon" aria-hidden="true">☰</span>
       </button>

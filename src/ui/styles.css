@@ -156,6 +156,73 @@ body[data-theme="light"] .wm-logo.light {
   z-index: 20;
 }
 
+.wm-session-indicator {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  margin-right: 1rem;
+  flex-shrink: 0;
+}
+
+.wm-session-indicator[hidden] {
+  display: none !important;
+}
+
+.wm-session-indicator-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.65rem 1.1rem;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--text-primary);
+  min-height: 2.75rem;
+  cursor: pointer;
+  box-shadow: none;
+  transition: background 180ms ease;
+}
+
+.wm-session-indicator-button:hover {
+  background: rgba(148, 163, 184, 0.22);
+}
+
+.wm-session-indicator-button:active {
+  background: rgba(148, 163, 184, 0.28);
+}
+
+.wm-session-indicator-button:focus-visible {
+  outline: 2px solid rgba(148, 163, 184, 0.6);
+  outline-offset: 2px;
+}
+
+.wm-session-indicator-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  color: var(--text-primary);
+}
+
+.wm-session-indicator-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  max-width: 34rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wm-session-indicator-directory {
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+  max-width: 34rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .wm-menu-nav {
   display: flex;
   flex-direction: column;
@@ -1059,6 +1126,10 @@ body[data-menu-open="true"] .wm-menu-panel {
 
   .wm-card {
     padding: 1.5rem;
+  }
+
+  .wm-session-indicator {
+    display: none !important;
   }
 }
 
