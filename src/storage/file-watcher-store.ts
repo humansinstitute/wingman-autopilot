@@ -7,7 +7,13 @@ import { databaseFile } from "./message-store";
 
 const STOP_SESSION_WATCHER_ID = "stop-session-json-trigger";
 
-type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
 
 export interface FileWatcherRecord {
   id: string;
@@ -209,6 +215,31 @@ class FileWatcherStore {
         cleanupStrategy: "delete",
       },
     });
+  }
+
+  listEnabledWatchers(): FileWatcherRecord[] {
+    return this.listWatchers().filter((watcher) => watcher.enabled);
+  }
+
+  markTriggered(id: string, triggeredAt = new Date()): void {
+    const statement = this.db.prepare(
+      `UPDATE file_watchers
+         SET last_triggered_at = ?2,
+             last_error = NULL,
+             updated_at = ?2
+       WHERE id = ?1`,
+    );
+    statement.run(id, triggeredAt.toISOString());
+  }
+
+  recordError(id: string, error: string, erroredAt = new Date()): void {
+    const statement = this.db.prepare(
+      `UPDATE file_watchers
+         SET last_error = ?2,
+             updated_at = ?3
+       WHERE id = ?1`,
+    );
+    statement.run(id, error, erroredAt.toISOString());
   }
 
   private initialise() {

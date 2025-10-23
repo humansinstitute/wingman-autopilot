@@ -13,6 +13,7 @@ import { messageStore } from "./storage/message-store";
 import { orchestratorPresetStore } from "./storage/orchestrator-presets";
 import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 import { fileWatcherStore } from "./storage/file-watcher-store";
+import { FileWatcherRunner } from "./watchers/file-watcher-runner";
 
 const TMUX_SESSION_NAME = "wingman-agents";
 
@@ -152,6 +153,21 @@ const defaultHighlightReportIntro =
   "Pleaese review the 01_process.md for your instructions.\n\nYou will read the process instructions in: <active_dir>\nThe sessionID you are operating in is: <sessionID>";
 
 fileWatcherStore.ensureStopSessionWatcher();
+
+const fileWatcherRunner = new FileWatcherRunner({
+  root: wingmenRoot,
+  manager,
+});
+try {
+  await fileWatcherRunner.start();
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.warn(`[watchers] failed to start file watcher runner: ${message}`);
+}
+
+process.on("beforeExit", () => {
+  fileWatcherRunner.stop();
+});
 
 orchestratorPresetStore.ensurePreset({
   id: "security-review",
