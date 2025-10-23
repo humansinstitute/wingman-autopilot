@@ -8,10 +8,11 @@ import type { AgentType } from "./config";
 import { loadConfig } from "./config";
 import { ProcessManager } from "./agents/process-manager";
 import type { SessionSnapshot } from "./agents/process-manager";
-import { messageStore } from "./storage/message-store";
 import type { ReplaceMessageInput } from "./storage/message-store";
+import { messageStore } from "./storage/message-store";
 import { orchestratorPresetStore } from "./storage/orchestrator-presets";
 import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
+import { fileWatcherStore } from "./storage/file-watcher-store";
 
 const TMUX_SESSION_NAME = "wingman-agents";
 
@@ -126,6 +127,10 @@ const aceBuildsRoot = normalize(join(nodeModulesRoot, "ace-builds"));
 const aceBuildsRootBoundary = aceBuildsRoot.endsWith(sep) ? aceBuildsRoot : `${aceBuildsRoot}${sep}`;
 await mkdir(documentsDirectory, { recursive: true }).catch(() => undefined);
 await mkdir(userDataRoot, { recursive: true }).catch(() => undefined);
+const wingmenRoot = join(projectRoot, ".wingmen");
+const orchestratorTriggersRoot = join(wingmenRoot, "orchestrator", "triggers");
+await mkdir(wingmenRoot, { recursive: true }).catch(() => undefined);
+await mkdir(orchestratorTriggersRoot, { recursive: true }).catch(() => undefined);
 const orchestratorRoot = join(projectRoot, "orchestrator");
 const orchestratorTemplatesRoot = join(orchestratorRoot, "templates");
 const orchestratorActiveRootBase = join(userDataRoot, "orchestrator", "active");
@@ -145,6 +150,8 @@ const defaultSecurityReviewIntro =
 
 const defaultHighlightReportIntro =
   "Pleaese review the 01_process.md for your instructions.\n\nYou will read the process instructions in: <active_dir>\nThe sessionID you are operating in is: <sessionID>";
+
+fileWatcherStore.ensureStopSessionWatcher();
 
 orchestratorPresetStore.ensurePreset({
   id: "security-review",
