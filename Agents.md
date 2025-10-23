@@ -10,10 +10,15 @@ Run `bun install` after pulling dependencies. Start the orchestrator locally wit
 
 ## Coding Style & Naming Conventions
 
-COMMIT ALL CHANGES with a descriptive message after each change BUT NEVER PUSH
+YOU SHOULD GIT COMMIT EACH CHANGE YOU MAKE WITH A DESCRIPTIVE NAME
+
+NEVER PUSH CHANGES TO GIT - I  WILL DO THAT MANUALLY AFTER CHANGING.
+
+Tell me in your wrap up message what the git commit message was. 
+
 TypeScript is the default; prefer ESM imports and explicit extensions when needed (`./foo.ts`). Use two-space indentation, trailing semicolons, and single quotes only inside template literals. Name files with kebab-case, classes/types with PascalCase, and functions or variables in camelCase. Co-locate agent helpers under `src/agents/` and UI utilities under `src/ui/` to keep files under 400 lines. Follow the strict TypeScript configuration in `tsconfig.json`; address compiler warnings before committing.
 
-DONT RUN TESTS. THEY DONT HELP> WE TEST MANUALLY AROUND HERE.
+DONT RUN TESTS. THEY DONT HELP -> WE TEST MANUALLY AROUND HERE.
 
 Keep changes tightly scoped: satisfy the request with the smallest viable diff unless the user explicitly asks for broader refactors.
 
@@ -23,7 +28,7 @@ Place unit tests beside the code (`feature.test.ts`) or in a sibling `__tests__`
 
 ## Commit & Pull Request Guidelines
 
-Write imperative, present-tense commit subjects ≤72 characters (e.g., `Add process log streaming guard`). Separate logical changes into individual commits. PRs should describe scope, risks, and any configuration changes (env vars, ports). Link issues when relevant and include screenshots for UI tweaks (`/home`, `/live`). Ensure local `bun test` passes before requesting review.
+Write imperative, present-tense commit subjects ≤72 characters (e.g., `Add process log streaming guard`). Separate logical changes into individual commits. PRs should describe scope, risks, and any configuration changes (env vars, ports). Link issues when relevant and include screenshots for UI tweaks (`/home`, `/live`).
 
 ## Agent & Configuration Tips
 

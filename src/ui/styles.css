@@ -2184,6 +2184,50 @@ dialog button[value="cancel"] {
   background: transparent;
 }
 
+body[data-theme="light"] .wm-file-editor__editor {
+  background: #f4f4f5;
+  border-color: rgba(17, 24, 39, 0.12);
+}
+
+body[data-theme="dark"] .wm-file-editor__editor {
+  background: #101214;
+  border-color: rgba(148, 163, 184, 0.24);
+}
+
+.wm-file-editor__editor .ace_content {
+  background: transparent;
+}
+
+body[data-theme="light"] .wm-file-editor__editor .ace_editor,
+body[data-theme="light"] .wm-file-editor__editor .ace_scroller,
+body[data-theme="light"] .wm-file-editor__editor .ace_content {
+  color: #111827;
+}
+
+body[data-theme="dark"] .wm-file-editor__editor .ace_editor,
+body[data-theme="dark"] .wm-file-editor__editor .ace_scroller,
+body[data-theme="dark"] .wm-file-editor__editor .ace_content {
+  color: #f5f5f4;
+}
+
+body[data-theme="light"] .wm-file-editor__editor .ace_gutter {
+  background: #e5e7eb;
+  color: #4b5563;
+}
+
+body[data-theme="dark"] .wm-file-editor__editor .ace_gutter {
+  background: rgba(10, 12, 14, 0.85);
+  color: rgba(226, 232, 240, 0.7);
+}
+
+body[data-theme="light"] .wm-file-editor__editor .ace_cursor {
+  color: #1f2937;
+}
+
+body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
+  color: #f8fafc;
+}
+
 .wm-file-editor__message {
   margin: 2rem auto;
   color: var(--text-tertiary);

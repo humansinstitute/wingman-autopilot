@@ -1,6 +1,7 @@
 import "/ace-builds/src-noconflict/ace.js";
 import "/ace-builds/src-noconflict/mode-text.js";
 import "/ace-builds/src-noconflict/theme-chrome.js";
+import "/ace-builds/src-noconflict/theme-tomorrow_night.js";
 
 const ace = globalThis.ace;
 if (!ace) {
@@ -860,7 +861,6 @@ const ensureAceEditorMounted = () => {
 
   if (!aceEditorInstance) {
     aceEditorInstance = ace.edit(container);
-    aceEditorInstance.setTheme("ace/theme/chrome");
     aceEditorInstance.session.setMode("ace/mode/text");
     aceEditorInstance.session.setUseWrapMode(false);
     aceEditorInstance.setOptions({
@@ -887,6 +887,7 @@ const ensureAceEditorMounted = () => {
     });
   }
 
+  applyAceTheme();
   const targetValue = editor.content ?? "";
   if (aceEditorInstance.getValue() !== targetValue) {
     const selection = aceEditorInstance.getSelectionRange();
@@ -1236,6 +1237,17 @@ let currentTheme = "dark";
 let tabsVisible = true;
 let lastLoggedSessionId = null;
 
+const ACE_LIGHT_THEME = "ace/theme/chrome";
+const ACE_DARK_THEME = "ace/theme/tomorrow_night";
+
+const applyAceTheme = () => {
+  if (!aceEditorInstance) return;
+  const targetTheme = currentTheme === "dark" ? ACE_DARK_THEME : ACE_LIGHT_THEME;
+  if (aceEditorInstance.getTheme() !== targetTheme) {
+    aceEditorInstance.setTheme(targetTheme);
+  }
+};
+
 if (currentRoute === "files" && window.location.pathname.startsWith("/docs")) {
   const newPath = window.location.pathname.replace("/docs", "/files");
   window.history.replaceState({ route: "files" }, "", newPath);
@@ -1490,6 +1502,7 @@ const applyTheme = (theme, persist = true) => {
   currentTheme = theme;
   document.body.dataset.theme = theme;
   themeToggle?.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
+  applyAceTheme();
   if (persist) {
     try {
       localStorage.setItem(THEME_STORAGE_KEY, theme);
