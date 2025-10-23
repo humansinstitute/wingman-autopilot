@@ -2091,10 +2091,6 @@ let pullActive = false;
 let pullReady = false;
 let pullRefreshing = false;
 
-// Auto-polling for live updates
-const POLL_INTERVAL = 2000; // Poll every 2 seconds
-let pollIntervalId = null;
-
 const setPullState = (state, distance = 0) => {
   if (!pullRefreshIndicator) return;
   const clamped = Math.max(0, Math.min(distance, PULL_MAX));
@@ -2484,43 +2480,6 @@ const pollSessions = async () => {
     }
   } catch (error) {
     console.error("Failed to refresh sessions", error);
-  }
-};
-
-const handleWindowFocus = async () => {
-  try {
-    await pollSessions();
-  } catch (error) {
-    console.error("Failed to refresh on focus", error);
-  } finally {
-    if (currentRoute === "live" && state.activeSessionId) {
-      requestAnimationFrame(() => {
-        scrollConversationAreaToBottom(state.activeSessionId, { includeWindow: true });
-      });
-    }
-  }
-};
-
-const startPolling = () => {
-  // Clear any existing interval
-  if (pollIntervalId) {
-    clearInterval(pollIntervalId);
-  }
-
-  // Start polling
-  pollIntervalId = setInterval(async () => {
-    try {
-      await pollSessions();
-    } catch (error) {
-      console.error("Polling error", error);
-    }
-  }, POLL_INTERVAL);
-};
-
-const stopPolling = () => {
-  if (pollIntervalId) {
-    clearInterval(pollIntervalId);
-    pollIntervalId = null;
   }
 };
 
@@ -4421,14 +4380,6 @@ const render = () => {
   if (!pullRefreshing && !pullActive) {
     resetPullRefresh();
   }
-
-  // Start or stop polling based on route
-  const hasActiveSessions = getActiveSessions().length > 0;
-  if (hasActiveSessions) {
-    startPolling();
-  } else {
-    stopPolling();
-  }
 };
 
 const handleTouchStart = (event) => {
@@ -4652,23 +4603,10 @@ window.addEventListener("popstate", () => {
   render();
 });
 
-window.addEventListener("focus", handleWindowFocus);
-
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && state.fileEditor.open) {
     event.preventDefault();
     requestFileEditorClose();
-  }
-});
-
-// Handle page visibility changes (pause polling when page is hidden)
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) {
-    stopPolling();
-  } else if (getActiveSessions().length > 0) {
-    // Resume polling when page becomes visible
-    pollSessions(); // Immediate poll
-    startPolling();
   }
 });
 
