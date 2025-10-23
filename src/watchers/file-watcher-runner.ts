@@ -23,7 +23,7 @@ interface PendingKey {
 
 const pointerSeparator = "/";
 
-const escapeForRegex = (input: string) => input.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+const escapeForRegex = (input: string) => input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const globToRegExp = (pattern: string): RegExp => {
   const escaped = escapeForRegex(pattern);
