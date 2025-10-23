@@ -664,6 +664,9 @@ const loadFilesTree = async (path) => {
 const loadFilesPreview = async (path) => {
   if (!path) return;
   const files = state.files;
+  if (isMobileFilesLayout()) {
+    files.mobileView = "preview";
+  }
   files.previewPath = path;
   files.previewRelativePath = "";
   files.previewDisplayPath = "";
