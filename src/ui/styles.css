@@ -2227,7 +2227,6 @@ dialog button[value="cancel"] {
   justify-content: center;
   padding: 1.5rem;
   z-index: 2000;
-  overflow-y: auto;
 }
 
 .wm-file-editor__dialog {
@@ -2241,7 +2240,6 @@ dialog button[value="cancel"] {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  overflow-y: auto;
 }
 
 .wm-file-editor__header {
@@ -2273,7 +2271,8 @@ dialog button[value="cancel"] {
   padding: 0 1.5rem;
   display: flex;
   flex-direction: column;
-  min-height: 360px;
+  min-height: 0;
+  overflow: auto;
 }
 
 .wm-file-editor__editor {
@@ -2382,11 +2381,11 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   }
 
   .wm-file-editor__body {
-    min-height: 240px;
+    min-height: 0;
   }
 
   .wm-file-editor__editor {
-    min-height: 220px;
+    min-height: 200px;
   }
 
   .wm-file-editor__footer {
