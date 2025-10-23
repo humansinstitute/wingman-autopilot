@@ -3710,10 +3710,13 @@ const renderFiles = () => {
             : "ban";
       const iconDefinition = FILE_BROWSER_ICON_DEFS[iconKey] ?? FILE_BROWSER_ICON_DEFS.file;
       const icon = createIconSvg(iconDefinition);
-      icon.classList.add("wm-files-browser__icon");
+      const iconWrapper = document.createElement("span");
+      iconWrapper.className = "wm-files-browser__icon";
+      iconWrapper.setAttribute("aria-hidden", "true");
+      iconWrapper.append(icon);
       const label = document.createElement("span");
       label.textContent = entry.name;
-      name.append(icon, label);
+      name.append(iconWrapper, label);
       button.append(name);
 
       const meta = document.createElement("span");
