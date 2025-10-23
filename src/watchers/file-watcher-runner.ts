@@ -206,6 +206,10 @@ export class FileWatcherRunner {
     }
 
     this.pending.add(key);
+    const relativePath = relative(this.root, filePath);
+    console.log(
+      `[watchers] detected ${relativePath || basename(filePath)} for watcher ${watcherId}`,
+    );
     void this.handleFile(watcherId, filePath).finally(() => {
       this.pending.delete(key);
     });
