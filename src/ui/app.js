@@ -4255,7 +4255,8 @@ const render = () => {
   }
 
   // Start or stop polling based on route
-  if (currentRoute === "live" && getActiveSessions().length > 0) {
+  const hasActiveSessions = getActiveSessions().length > 0;
+  if (hasActiveSessions) {
     startPolling();
   } else {
     stopPolling();
@@ -4496,7 +4497,7 @@ window.addEventListener("keydown", (event) => {
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     stopPolling();
-  } else if (currentRoute === "live" && getActiveSessions().length > 0) {
+  } else if (getActiveSessions().length > 0) {
     // Resume polling when page becomes visible
     pollSessions(); // Immediate poll
     startPolling();
