@@ -142,6 +142,13 @@ const getSessionDisplayName = (session) => {
   return port ? `${agent} :${port}` : agent;
 };
 
+const truncateText = (value, maxLength = 31) => {
+  if (typeof value !== "string") return "";
+  if (value.length <= maxLength) return value;
+  const safeLength = Math.max(0, maxLength - 3);
+  return `${value.slice(0, safeLength)}...`;
+};
+
 const scrollConversationToBottom = (element) => {
   if (!element) return;
   requestAnimationFrame(() => {
@@ -1482,7 +1489,7 @@ const getActiveSessionForIndicator = () => {
   return state.sessions.find((session) => session.id === state.activeSessionId) ?? null;
 };
 
-const shouldShowDesktopIndicator = () => window.innerWidth >= 900;
+const shouldShowDesktopIndicator = () => currentRoute === "live" && window.innerWidth >= 900;
 
 const syncDesktopSessionIndicator = () => {
   if (!desktopSessionIndicator) return;
@@ -1505,9 +1512,13 @@ const syncDesktopSessionIndicator = () => {
       : state.config?.defaultDirectory ?? "";
 
   if (desktopSessionIndicatorDirectory) {
-    const text = directoryValue || "—";
-    desktopSessionIndicatorDirectory.textContent = text;
-    desktopSessionIndicatorDirectory.title = directoryValue || "";
+    if (directoryValue) {
+      desktopSessionIndicatorDirectory.textContent = truncateText(directoryValue, 31);
+      desktopSessionIndicatorDirectory.title = directoryValue;
+    } else {
+      desktopSessionIndicatorDirectory.textContent = "—";
+      desktopSessionIndicatorDirectory.title = "";
+    }
   }
 
   desktopSessionIndicator.hidden = false;
