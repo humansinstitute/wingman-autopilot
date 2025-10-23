@@ -165,7 +165,23 @@ const describeGitRepository = async (directory: string): Promise<GitRepositorySu
   }
 
   const repoRoot = normalize(topLevel.stdout);
-  const isRepoRoot = normalize(directory) === repoRoot;
+  const normalizedDirectory = normalize(directory);
+
+  let realRepoRoot = repoRoot;
+  try {
+    realRepoRoot = normalize(await realpath(repoRoot));
+  } catch {
+    // ignore realpath errors and fall back to normalised path
+  }
+
+  let realDirectory = normalizedDirectory;
+  try {
+    realDirectory = normalize(await realpath(normalizedDirectory));
+  } catch {
+    // ignore realpath errors and fall back to normalised path
+  }
+
+  const isRepoRoot = normalizedDirectory === repoRoot || realDirectory === realRepoRoot;
 
   const gitDirResult = await runCommand("git", ["rev-parse", "--git-dir"], { cwd: directory });
   const gitDir =
@@ -411,7 +427,7 @@ const aceBuildsRoot = normalize(join(nodeModulesRoot, "ace-builds"));
 const aceBuildsRootBoundary = aceBuildsRoot.endsWith(sep) ? aceBuildsRoot : `${aceBuildsRoot}${sep}`;
 await mkdir(documentsDirectory, { recursive: true }).catch(() => undefined);
 await mkdir(userDataRoot, { recursive: true }).catch(() => undefined);
-const wingmenRoot = join(homeDirectory, ".wingmen");
+const wingmenRoot = join(projectRoot, ".wingmen");
 const orchestratorTriggersRoot = join(wingmenRoot, "orchestrator", "triggers");
 await mkdir(wingmenRoot, { recursive: true }).catch(() => undefined);
 await mkdir(orchestratorTriggersRoot, { recursive: true }).catch(() => undefined);
@@ -1681,6 +1697,10 @@ const syncSessionMessages = async (sessionId: string, force = false) => {
 
   const session = manager.getSession(sessionId);
   if (!session) {
+    return messageStore.listSessionMessages(sessionId);
+  }
+
+  if (session.status !== "running") {
     return messageStore.listSessionMessages(sessionId);
   }
 
