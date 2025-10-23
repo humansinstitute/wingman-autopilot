@@ -4,6 +4,8 @@ node_modules
 # Folders
 Examples
 Examples/
+.worktrees
+.worktrees/
 
 # output
 out
