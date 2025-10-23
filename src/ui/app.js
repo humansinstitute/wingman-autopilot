@@ -2045,20 +2045,16 @@ const setActiveNav = () => {
 const syncMenuTabs = () => {
   if (!menuTabsContainer) return;
   menuTabsContainer.innerHTML = "";
-  if (currentRoute !== "live") {
-    menuTabsContainer.dataset.state = "hidden";
-    return;
-  }
-  
   menuTabsContainer.dataset.state = "ready";
+
   const heading = document.createElement("p");
   heading.className = "wm-menu-heading";
   heading.textContent = "Sessions";
   menuTabsContainer.append(heading);
-  
+
   const sessionsContainer = document.createElement("div");
   sessionsContainer.className = "wm-menu-sessions-container";
-  
+
   const activeSessions = getActiveSessions();
   if (activeSessions.length === 0) {
     const empty = document.createElement("p");
@@ -2072,8 +2068,7 @@ const syncMenuTabs = () => {
     sessionsList.append(sessionTabs);
     sessionsContainer.append(sessionsList);
   }
-  
-  // Always show the + button
+
   const addButton = document.createElement("div");
   addButton.className = "wm-tab new wm-menu-add-session";
   addButton.textContent = "+";
@@ -2083,7 +2078,7 @@ const syncMenuTabs = () => {
     closeMenu();
   });
   sessionsContainer.append(addButton);
-  
+
   menuTabsContainer.append(sessionsContainer);
 };
 
