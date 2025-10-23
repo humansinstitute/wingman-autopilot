@@ -1,6 +1,7 @@
-import { watch, type FSWatcher } from "node:fs";
+import { realpathSync, watch, type FSWatcher } from "node:fs";
 import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { basename, join, normalize, relative, resolve, sep } from "node:path";
+import { homedir } from "node:os";
 
 import type { ProcessManager } from "../agents/process-manager";
 import type { FileWatcherRecord, JsonValue } from "../storage/file-watcher-store";
@@ -24,6 +25,47 @@ interface PendingKey {
 const pointerSeparator = "/";
 
 const escapeForRegex = (input: string) => input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const determineHomeDirectory = () => {
+  const fromEnv = Bun.env.HOME?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+  try {
+    return homedir();
+  } catch {
+    return "";
+  }
+};
+
+const expandUserPath = (input: string): string => {
+  if (!input.startsWith("~")) {
+    return input;
+  }
+  const home = determineHomeDirectory();
+  if (!home) {
+    return input;
+  }
+  return input.replace(/^~(?=\/|$)/, home);
+};
+
+const resolveWatcherRoot = (providedRoot: string): string => {
+  const override = Bun.env.WINGMAN_WATCHER_ROOT?.trim();
+  const base = override && override.length > 0 ? expandUserPath(override) : (() => {
+    const home = determineHomeDirectory();
+    if (home) {
+      return join(home, ".wingmen");
+    }
+    return providedRoot;
+  })();
+
+  const expanded = expandUserPath(base);
+  try {
+    return normalize(realpathSync(expanded));
+  } catch {
+    return normalize(resolve(expanded));
+  }
+};
 
 const globToRegExp = (pattern: string): RegExp => {
   const escaped = escapeForRegex(pattern);
@@ -113,7 +155,8 @@ export class FileWatcherRunner {
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: { root: string; manager: ProcessManager; refreshIntervalMs?: number }) {
-    this.root = normalize(options.root);
+    const watcherRoot = resolveWatcherRoot(options.root);
+    this.root = watcherRoot;
     this.rootBoundary = this.root.endsWith(sep) ? this.root : `${this.root}${sep}`;
     this.manager = options.manager;
     this.refreshInterval = Math.max(2000, options.refreshIntervalMs ?? 10000);
