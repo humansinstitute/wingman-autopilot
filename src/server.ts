@@ -81,6 +81,15 @@ const resolveGitDirectoryPath = (gitDir: string, cwd: string): string => {
   return normalize(isAbsolute(normalized) ? normalized : join(cwd, normalized));
 };
 
+const resolveRealPath = async (input: string): Promise<string> => {
+  const normalized = normalize(input);
+  try {
+    return normalize(await realpath(normalized));
+  } catch {
+    return normalized;
+  }
+};
+
 type GitWorktreeSummary = {
   path: string;
   branch: string | null;
@@ -165,23 +174,11 @@ const describeGitRepository = async (directory: string): Promise<GitRepositorySu
   }
 
   const repoRoot = normalize(topLevel.stdout);
-  const normalizedDirectory = normalize(directory);
-
-  let realRepoRoot = repoRoot;
-  try {
-    realRepoRoot = normalize(await realpath(repoRoot));
-  } catch {
-    // ignore realpath errors and fall back to normalised path
-  }
-
-  let realDirectory = normalizedDirectory;
-  try {
-    realDirectory = normalize(await realpath(normalizedDirectory));
-  } catch {
-    // ignore realpath errors and fall back to normalised path
-  }
-
-  const isRepoRoot = normalizedDirectory === repoRoot || realDirectory === realRepoRoot;
+  const [effectiveRepoRoot, effectiveDirectory] = await Promise.all([
+    resolveRealPath(repoRoot),
+    resolveRealPath(directory),
+  ]);
+  const isRepoRoot = effectiveDirectory === effectiveRepoRoot;
 
   const gitDirResult = await runCommand("git", ["rev-parse", "--git-dir"], { cwd: directory });
   const gitDir =
