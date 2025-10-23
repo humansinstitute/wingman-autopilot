@@ -550,6 +550,16 @@ body[data-menu-open="true"] .wm-menu-panel {
   line-height: 1;
 }
 
+.wm-icon {
+  width: 1.35rem;
+  height: 1.35rem;
+  display: block;
+}
+
+.wm-button-icon .wm-icon {
+  pointer-events: none;
+}
+
 .wm-home-orchestrator-actions {
   display: flex;
   flex-wrap: wrap;

@@ -150,6 +150,105 @@ const encodeTextToBytes = (text) => {
   return bytes;
 };
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+const createSvgShape = (tag, attributes = {}) => {
+  const element = document.createElementNS(SVG_NS, tag);
+  Object.entries(attributes).forEach(([key, value]) => {
+    element.setAttribute(key, String(value));
+  });
+  if (!attributes.fill) {
+    element.setAttribute("fill", "none");
+  }
+  if (!attributes.stroke) {
+    element.setAttribute("stroke", "currentColor");
+  }
+  if (!attributes["stroke-width"]) {
+    element.setAttribute("stroke-width", "1.8");
+  }
+  if ((tag === "path" || tag === "line" || tag === "polyline") && !attributes["stroke-linecap"]) {
+    element.setAttribute("stroke-linecap", "round");
+  }
+  if ((tag === "path" || tag === "polyline") && !attributes["stroke-linejoin"]) {
+    element.setAttribute("stroke-linejoin", "round");
+  }
+  if ((tag === "circle" || tag === "ellipse") && !attributes["stroke-linecap"]) {
+    element.setAttribute("stroke-linecap", "round");
+  }
+  if ((tag === "circle" || tag === "ellipse") && !attributes["stroke-linejoin"]) {
+    element.setAttribute("stroke-linejoin", "round");
+  }
+  return element;
+};
+
+const createIconSvg = (definition) => {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  svg.classList.add("wm-icon");
+  definition.forEach(([tag, attrs]) => {
+    svg.append(createSvgShape(tag, attrs));
+  });
+  return svg;
+};
+
+const FILE_BROWSER_ICON_DEFS = {
+  arrowUp: [
+    ["line", { x1: 12, y1: 19, x2: 12, y2: 7 }],
+    ["polyline", { points: "6 11 12 5 18 11" }],
+  ],
+  refresh: [
+    ["polyline", { points: "23 4 23 10 17 10" }],
+    ["path", { d: "M20.49 15a9 9 0 1 1-2.12-9.36" }],
+  ],
+  eye: [
+    ["ellipse", { cx: 12, cy: 12, rx: 9.5, ry: 6.5 }],
+    ["circle", { cx: 12, cy: 12, r: 2.5 }],
+  ],
+  eyeOff: [
+    ["ellipse", { cx: 12, cy: 12, rx: 9.5, ry: 6.5 }],
+    ["circle", { cx: 12, cy: 12, r: 2.5 }],
+    ["line", { x1: 4, y1: 4, x2: 20, y2: 20 }],
+  ],
+  folderPlus: [
+    ["path", { d: "M3 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" }],
+    ["path", { d: "M12 11v4" }],
+    ["path", { d: "M10 13h4" }],
+  ],
+  filePlus: [
+    ["path", { d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" }],
+    ["polyline", { points: "14 2 14 8 20 8" }],
+    ["path", { d: "M12 13v4" }],
+    ["path", { d: "M10 15h4" }],
+  ],
+  branchPlus: [
+    ["circle", { cx: 6, cy: 6, r: 2.5 }],
+    ["circle", { cx: 6, cy: 18, r: 2.5 }],
+    ["circle", { cx: 18, cy: 12, r: 2.5 }],
+    ["line", { x1: 6, y1: 8.5, x2: 6, y2: 15.5 }],
+    ["path", { d: "M8.5 8.5a5 5 0 0 1 5.5 4.5" }],
+    ["line", { x1: 18, y1: 14.5, x2: 18, y2: 20 }],
+    ["line", { x1: 16, y1: 17, x2: 20, y2: 17 }],
+  ],
+};
+
+const setIconButton = (button, iconKey, label) => {
+  const definition = FILE_BROWSER_ICON_DEFS[iconKey];
+  if (!definition) return;
+  while (button.firstChild) {
+    button.removeChild(button.firstChild);
+  }
+  button.append(createIconSvg(definition));
+  if (label) {
+    button.setAttribute("aria-label", label);
+    button.title = label;
+  } else {
+    button.removeAttribute("aria-label");
+    button.removeAttribute("title");
+  }
+};
+
 let aceEditorInstance = null;
 
 const getSessionDisplayName = (session) => {
@@ -3432,8 +3531,8 @@ const renderFiles = () => {
 
   const upButton = document.createElement("button");
   upButton.type = "button";
-  upButton.className = "wm-button secondary";
-  upButton.textContent = "Up";
+  upButton.className = "wm-button secondary wm-button-icon";
+  setIconButton(upButton, "arrowUp", "Go up one directory");
   upButton.disabled = files.loading || !files.parent?.path;
   upButton.addEventListener("click", () => {
     if (files.loading) return;
@@ -3444,8 +3543,8 @@ const renderFiles = () => {
 
   const refreshButton = document.createElement("button");
   refreshButton.type = "button";
-  refreshButton.className = "wm-button secondary";
-  refreshButton.textContent = "Refresh";
+  refreshButton.className = "wm-button secondary wm-button-icon";
+  setIconButton(refreshButton, "refresh", "Refresh directory contents");
   refreshButton.disabled = files.loading;
   refreshButton.addEventListener("click", () => {
     if (files.loading) return;
@@ -3454,13 +3553,19 @@ const renderFiles = () => {
 
   const toggleHiddenButton = document.createElement("button");
   toggleHiddenButton.type = "button";
-  toggleHiddenButton.className = "wm-button secondary";
-  toggleHiddenButton.textContent = files.showHidden ? "Hide Hidden" : "Show Hidden";
+  toggleHiddenButton.className = "wm-button secondary wm-button-icon";
   toggleHiddenButton.disabled = files.loading;
-  toggleHiddenButton.setAttribute("aria-pressed", files.showHidden ? "true" : "false");
+  const syncHiddenButtonIcon = () => {
+    const iconKey = files.showHidden ? "eyeOff" : "eye";
+    const label = files.showHidden ? "Hide hidden files" : "Show hidden files";
+    setIconButton(toggleHiddenButton, iconKey, label);
+    toggleHiddenButton.setAttribute("aria-pressed", files.showHidden ? "true" : "false");
+  };
+  syncHiddenButtonIcon();
   toggleHiddenButton.addEventListener("click", () => {
     if (files.loading) return;
     files.showHidden = !files.showHidden;
+    syncHiddenButtonIcon();
     try {
       localStorage.setItem(FILES_SHOW_HIDDEN_STORAGE_KEY, files.showHidden ? "true" : "false");
     } catch {
@@ -3474,8 +3579,8 @@ const renderFiles = () => {
 
   const newFolderButton = document.createElement("button");
   newFolderButton.type = "button";
-  newFolderButton.className = "wm-button secondary";
-  newFolderButton.textContent = "New Folder";
+  newFolderButton.className = "wm-button secondary wm-button-icon";
+  setIconButton(newFolderButton, "folderPlus", "Create new folder");
   newFolderButton.disabled = files.loading;
   newFolderButton.addEventListener("click", () => {
     if (files.loading) return;
@@ -3484,8 +3589,8 @@ const renderFiles = () => {
 
   const newFileButton = document.createElement("button");
   newFileButton.type = "button";
-  newFileButton.className = "wm-button secondary";
-  newFileButton.textContent = "New File";
+  newFileButton.className = "wm-button secondary wm-button-icon";
+  setIconButton(newFileButton, "filePlus", "Create new file");
   newFileButton.disabled = files.loading;
   newFileButton.addEventListener("click", () => {
     if (files.loading) return;
@@ -3497,8 +3602,8 @@ const renderFiles = () => {
   if (canCreateWorktree()) {
     const worktreeButton = document.createElement("button");
     worktreeButton.type = "button";
-    worktreeButton.className = "wm-button";
-    worktreeButton.textContent = "New Worktree";
+    worktreeButton.className = "wm-button wm-button-icon";
+    setIconButton(worktreeButton, "branchPlus", "Create new worktree");
     worktreeButton.disabled = files.loading || state.files.worktreeModal.submitting;
     worktreeButton.addEventListener("click", () => {
       if (files.loading) return;
