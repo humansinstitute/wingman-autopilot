@@ -1944,6 +1944,45 @@ dialog button[value="cancel"] {
   gap: 0.35rem;
 }
 
+.wm-files-preview__path-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.wm-files-copy-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  background: rgba(16, 185, 129, 0.08);
+  color: var(--accent-primary);
+  cursor: pointer;
+  transition: background 180ms ease, transform 180ms ease, border-color 180ms ease;
+}
+
+.wm-files-copy-link:hover {
+  background: rgba(16, 185, 129, 0.16);
+}
+
+.wm-files-copy-link:active {
+  transform: translateY(1px);
+}
+
+.wm-files-copy-link:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.wm-files-copy-link[data-copied="true"] {
+  background: rgba(16, 185, 129, 0.26);
+  border-color: rgba(16, 185, 129, 0.45);
+}
+
 .wm-files-preview__actions {
   display: flex;
   flex-wrap: wrap;

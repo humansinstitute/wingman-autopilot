@@ -30,7 +30,6 @@ const state = {
   logContainers: new Map(), // sessionId -> DOM element
   lastMessageCount: new Map(), // sessionId -> number of messages
   lastLogLength: new Map(), // sessionId -> length of logs
-  autoScrollEnabled: new Map(), // sessionId -> boolean
   files: {
     initialized: false,
     loading: false,
@@ -134,8 +133,6 @@ const encodeTextToBytes = (text) => {
 
 let aceEditorInstance = null;
 
-const AUTO_SCROLL_THRESHOLD = 80;
-
 const getSessionDisplayName = (session) => {
   if (!session || typeof session !== "object") return "";
   const rawName = typeof session.name === "string" ? session.name.trim() : "";
@@ -144,39 +141,6 @@ const getSessionDisplayName = (session) => {
   const port = typeof session.port === "number" ? session.port : "";
   return port ? `${agent} :${port}` : agent;
 };
-
-const ensureAutoScrollPreference = (sessionId) => {
-  if (!state.autoScrollEnabled.has(sessionId)) {
-    state.autoScrollEnabled.set(sessionId, true);
-  }
-  return state.autoScrollEnabled.get(sessionId);
-};
-
-const getScrollMetrics = (element) => {
-  if (!element) return null;
-  if (element === document.body || element === document.documentElement || element === document.scrollingElement) {
-    const target = document.scrollingElement || document.documentElement || document.body;
-    const scrollTop = target.scrollTop ?? window.scrollY ?? 0;
-    const clientHeight = target.clientHeight ?? window.innerHeight ?? 0;
-    const scrollHeight = target.scrollHeight ?? 0;
-    return { scrollTop, clientHeight, scrollHeight };
-  }
-  return {
-    scrollTop: element.scrollTop ?? 0,
-    clientHeight: element.clientHeight ?? 0,
-    scrollHeight: element.scrollHeight ?? 0,
-  };
-};
-
-const isElementNearBottom = (element) => {
-  const metrics = getScrollMetrics(element);
-  if (!metrics) return true;
-  const { scrollTop, clientHeight, scrollHeight } = metrics;
-  return scrollHeight - (scrollTop + clientHeight) <= AUTO_SCROLL_THRESHOLD;
-};
-
-const getFallbackScrollElement = () =>
-  document.scrollingElement || document.documentElement || document.body;
 
 const scrollConversationToBottom = (element) => {
   if (!element) return;
@@ -196,42 +160,20 @@ const getConversationScrollElement = (sessionId) => {
   return container.closest('.wm-live-conversation');
 };
 
-const getActiveScrollElement = (sessionId) => {
-  const conversationElement = getConversationScrollElement(sessionId);
-  if (conversationElement) {
-    return conversationElement;
-  }
-  return getFallbackScrollElement();
-};
-
-const updateAutoScrollStateForSession = (sessionId) => {
-  const scrollElement = getActiveScrollElement(sessionId);
-  if (!scrollElement) return;
-  const nearBottom = isElementNearBottom(scrollElement);
-  state.autoScrollEnabled.set(sessionId, nearBottom);
-};
-
-const attachConversationScrollHandler = (sessionId, element) => {
-  if (!element) return;
-  if (element.dataset.scrollMonitorSessionId === sessionId) return;
-  const handler = () => updateAutoScrollStateForSession(sessionId);
-  element.addEventListener("scroll", handler, { passive: true });
-  element.dataset.scrollMonitorSessionId = sessionId;
-};
-
 const scrollConversationAreaToBottom = (sessionId, options = {}) => {
   const { includeWindow = false } = options;
-  const target = getActiveScrollElement(sessionId);
+  const target =
+    getConversationScrollElement(sessionId) ??
+    document.querySelector('.wm-live-conversation');
   if (target) {
     scrollConversationToBottom(target);
   }
   if (includeWindow) {
-    const fallback = getFallbackScrollElement();
+    const fallback = document.scrollingElement || document.documentElement || document.body;
     if (fallback && fallback !== target) {
       scrollConversationToBottom(fallback);
     }
   }
-  requestAnimationFrame(() => updateAutoScrollStateForSession(sessionId));
 };
 
 const copyTextToClipboard = async (text) => {
@@ -1172,7 +1114,6 @@ const renderFileEditorOverlay = () => {
   }
 };
 
-let windowScrollHandler = null;
 let orchestratorPrefixDirty = false;
 let orchestratorDialogSubmitting = false;
 const orchestratorDirectoryState = {
@@ -1181,17 +1122,6 @@ const orchestratorDirectoryState = {
   currentPath: null,
   parent: null,
   selection: null,
-};
-
-const ensureWindowScrollMonitoring = () => {
-  if (windowScrollHandler) return;
-  windowScrollHandler = () => {
-    const sessionId = state.activeSessionId;
-    if (!sessionId) return;
-    updateAutoScrollStateForSession(sessionId);
-  };
-  window.addEventListener("scroll", windowScrollHandler, { passive: true });
-  window.addEventListener("resize", windowScrollHandler);
 };
 
 const getSessionById = (sessionId) => state.sessions.find((session) => session.id === sessionId);
@@ -1272,13 +1202,8 @@ const setActiveSession = (sessionId, options = {}) => {
       return false;
     }
 
-    const sessionChanged = previousSessionId !== sessionId;
-
     state.activeSessionId = sessionId;
     state.lastActiveSessionId = sessionId;
-    if (sessionChanged) {
-      state.autoScrollEnabled.set(sessionId, true);
-    }
 
     if (updateHistory && currentRoute === "live") {
       const targetPath = `${LIVE_ROUTE_PREFIX}/${sessionId}`;
@@ -2011,9 +1936,6 @@ const fetchSessions = async () => {
   for (const key of Array.from(state.lastLogLength.keys())) {
     if (!sessionIds.has(key)) state.lastLogLength.delete(key);
   }
-  for (const key of Array.from(state.autoScrollEnabled.keys())) {
-    if (!sessionIds.has(key)) state.autoScrollEnabled.delete(key);
-  }
   const routeSessionId = getSessionIdFromPath(window.location.pathname);
   const allowHistoryUpdate = currentRoute === "live" && !routeSessionId;
   const redirectHome = applyRouteSessionFromPath({ allowHistoryUpdate });
@@ -2117,6 +2039,12 @@ const handleWindowFocus = async () => {
     await pollSessions();
   } catch (error) {
     console.error("Failed to refresh on focus", error);
+  } finally {
+    if (currentRoute === "live" && state.activeSessionId) {
+      requestAnimationFrame(() => {
+        scrollConversationAreaToBottom(state.activeSessionId, { includeWindow: true });
+      });
+    }
   }
 };
 
@@ -2161,15 +2089,8 @@ const updateConversationDOM = (sessionId) => {
     }
   }
 
-  attachConversationScrollHandler(sessionId, container.closest('.wm-live-conversation'));
-
   const conversation = state.conversations.get(sessionId) ?? [];
   const lastCount = state.lastMessageCount.get(sessionId) ?? 0;
-
-  // Ensure auto-scroll preference is initialized
-  ensureAutoScrollPreference(sessionId);
-  // Check current auto-scroll state (updates based on user scroll position)
-  const shouldAutoScroll = state.autoScrollEnabled.get(sessionId) ?? true;
 
   // Handle new messages
   if (conversation.length > lastCount) {
@@ -2207,13 +2128,6 @@ const updateConversationDOM = (sessionId) => {
         }
       }
     });
-  }
-
-  // Auto-scroll if user was at bottom
-  if (shouldAutoScroll) {
-    scrollConversationAreaToBottom(sessionId);
-  } else {
-    updateAutoScrollStateForSession(sessionId);
   }
 };
 
@@ -2405,10 +2319,12 @@ const sendMessage = async (sessionId, content) => {
     const messages = Array.isArray(payload?.messages) ? payload.messages : [];
     state.conversations.set(sessionId, messages);
     state.messageDrafts.set(sessionId, "");
-    state.autoScrollEnabled.set(sessionId, true);
 
     // Trigger incremental updates instead of full render
     updateConversationDOM(sessionId);
+    requestAnimationFrame(() => {
+      scrollConversationAreaToBottom(sessionId, { includeWindow: true });
+    });
     await fetchLogs(sessionId);
 
     // Clear textarea and restore focus
@@ -3285,6 +3201,8 @@ const renderFiles = () => {
   const previewTitle = document.createElement("h2");
   previewTitle.className = "wm-files-preview__title";
   previewTitle.textContent = files.previewName ?? "Preview";
+  const previewPathRow = document.createElement("div");
+  previewPathRow.className = "wm-files-preview__path-row";
   const previewPath = document.createElement("p");
   previewPath.className = "wm-files-preview__path";
   if (files.previewDisplayPath) {
@@ -3300,9 +3218,41 @@ const renderFiles = () => {
     formatBadge.textContent = files.previewLabel;
     previewPath.append(document.createTextNode(" "), formatBadge);
   }
+  previewPathRow.append(previewPath);
+
+  const copyablePath = files.previewDisplayPath || files.previewPath || null;
+  if (copyablePath) {
+    const copyButton = document.createElement("button");
+    copyButton.type = "button";
+    copyButton.className = "wm-files-copy-link";
+    copyButton.setAttribute("aria-label", "Copy file path");
+    copyButton.title = "Copy file path";
+    const defaultIcon =
+      '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M16 1H8a2 2 0 0 0-2 2v2H5a2 2 0 0 0-2 2v12c0 1.1.9 2 2 2h8l1-2H5V7h1v2h10V3h2v9l2-1V3a2 2 0 0 0-2-2Zm-2 6H8V3h6v4Zm7.71 9.29-5-5a1 1 0 0 0-1.42 1.42l1.3 1.29-4.59 4.59V22h3.41l4.59-4.59 1.29 1.3a1 1 0 0 0 1.42-1.42Z"/></svg>';
+    const successIcon =
+      '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="m9 16.17-3.5-3.5L4.08 14.1 9 19l12-12-1.41-1.41Z"/></svg>';
+    copyButton.innerHTML = defaultIcon;
+    copyButton.addEventListener("click", async () => {
+      const text = copyablePath;
+      if (!text) return;
+      const success = await copyTextToClipboard(text);
+      if (success) {
+        copyButton.dataset.copied = "true";
+        copyButton.innerHTML = successIcon;
+        setTimeout(() => {
+          if (copyButton.isConnected) {
+            delete copyButton.dataset.copied;
+            copyButton.innerHTML = defaultIcon;
+          }
+        }, 1600);
+      }
+    });
+    previewPathRow.append(copyButton);
+  }
+
   const previewInfo = document.createElement("div");
   previewInfo.className = "wm-files-preview__info";
-  previewInfo.append(previewTitle, previewPath);
+  previewInfo.append(previewTitle, previewPathRow);
   previewHeader.append(previewInfo);
 
   const previewActions = document.createElement("div");
@@ -3731,7 +3681,6 @@ const renderComposer = (sessionId) => {
 
   addCommand("Scroll to end", () => {
     scrollConversationAreaToBottom(sessionId, { includeWindow: true });
-    state.autoScrollEnabled.set(sessionId, true);
   });
 
   addCommand("Copy chat", () => {
@@ -3802,17 +3751,9 @@ const updateLivePanelsForSession = (sessionId) => {
     conversationContainer.className = "wm-live-conversation";
     conversationContainer.append(renderConversation(sessionId));
     scrollRegion.append(conversationContainer);
-    attachConversationScrollHandler(sessionId, conversationContainer);
-    state.autoScrollEnabled.set(sessionId, true);
-    // Ensure auto-scroll preference is initialized
-    ensureAutoScrollPreference(sessionId);
-    // Check current auto-scroll state
-    const allowAutoScroll = state.autoScrollEnabled.get(sessionId) ?? true;
-    if (allowAutoScroll) {
+    requestAnimationFrame(() => {
       scrollConversationAreaToBottom(sessionId);
-    } else {
-      updateAutoScrollStateForSession(sessionId);
-    }
+    });
   }
 
   const currentComposer = document.querySelector('.wm-composer-shell');
@@ -3829,7 +3770,6 @@ const updateLivePanelsForSession = (sessionId) => {
 const renderLive = () => {
   const wrapper = document.createElement("div");
   wrapper.className = "wm-live";
-  ensureWindowScrollMonitoring();
 
   if (tabsVisible) {
     const tabsBar = document.createElement("div");
@@ -3876,16 +3816,9 @@ const renderLive = () => {
   conversationContainer.className = "wm-live-conversation";
   conversationContainer.append(renderConversation(sessionId));
   scrollRegion.append(conversationContainer);
-  attachConversationScrollHandler(sessionId, conversationContainer);
-  // Ensure auto-scroll preference is initialized
-  ensureAutoScrollPreference(sessionId);
-  // Check current auto-scroll state
-  const allowAutoScroll = state.autoScrollEnabled.get(sessionId) ?? true;
-  if (allowAutoScroll) {
+  requestAnimationFrame(() => {
     scrollConversationAreaToBottom(sessionId);
-  } else {
-    updateAutoScrollStateForSession(sessionId);
-  }
+  });
 
   main.append(scrollRegion);
   wrapper.append(main);
@@ -4042,7 +3975,6 @@ desktopSessionIndicatorButton?.addEventListener("click", (event) => {
     currentRoute = "live";
   }
   setActiveSession(session.id, { updateHistory: true, forceLog: true });
-  state.autoScrollEnabled.set(session.id, true);
   render();
   requestAnimationFrame(() => {
     scrollConversationAreaToBottom(session.id, { includeWindow: true });
