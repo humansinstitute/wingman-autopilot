@@ -50,7 +50,6 @@ const state = {
     previewLanguage: null,
     previewLabel: null,
     browserCollapsed: false,
-    mobileView: "browser",
   },
   fileEditor: {
     open: false,
@@ -664,9 +663,6 @@ const loadFilesTree = async (path) => {
 const loadFilesPreview = async (path) => {
   if (!path) return;
   const files = state.files;
-  if (isMobileFilesLayout()) {
-    files.mobileView = "preview";
-  }
   files.previewPath = path;
   files.previewRelativePath = "";
   files.previewDisplayPath = "";
@@ -3070,16 +3066,10 @@ const promptCreateDirectory = async () => {
   const rawName = window.prompt("Folder name", "New Folder");
   const name = rawName?.trim();
   if (!name) return;
-  if (isMobileFilesLayout()) {
-    files.mobileView = "browser";
-  }
   files.loading = true;
   if (currentRoute === "files") render();
   try {
     const result = await createFilesDirectory(parentPath, name);
-    if (isMobileFilesLayout()) {
-      files.mobileView = "browser";
-    }
     await loadFilesTree(result?.path ?? parentPath);
   } catch (error) {
     files.loading = false;
@@ -3102,9 +3092,6 @@ const promptCreateFile = async () => {
     const result = await createFilesTextFile(parentPath, name, "");
     await loadFilesTree(parentPath);
     if (result?.path) {
-      if (isMobileFilesLayout()) {
-        files.mobileView = result.previewable ? "preview" : "browser";
-      }
       if (result.previewable) {
         void loadFilesPreview(result.path);
       } else {
@@ -3128,57 +3115,8 @@ const renderFiles = () => {
     void loadFilesTree();
   }
 
-  const useMobileLayout = isMobileFilesLayout();
-  if (!files.mobileView) {
-    files.mobileView = "browser";
-  }
-  if (useMobileLayout && files.mobileView === "preview" && !files.previewPath && !files.previewLoading) {
-    files.mobileView = "browser";
-  }
-  if (!useMobileLayout && files.mobileView !== "browser") {
-    files.mobileView = "browser";
-  }
-
   const wrapper = document.createElement("div");
   wrapper.className = "wm-files";
-
-  if (useMobileLayout) {
-    const toggle = document.createElement("div");
-    toggle.className = "wm-files-mobile-toggle";
-
-    const browserTab = document.createElement("button");
-    browserTab.type = "button";
-    browserTab.className = "wm-files-mobile-tab";
-    browserTab.textContent = "Browse";
-    if (files.mobileView === "browser") {
-      browserTab.classList.add("active");
-    }
-    browserTab.addEventListener("click", () => {
-      if (files.mobileView !== "browser") {
-        files.mobileView = "browser";
-        render();
-      }
-    });
-
-    const previewTab = document.createElement("button");
-    previewTab.type = "button";
-    previewTab.className = "wm-files-mobile-tab";
-    previewTab.textContent = "Preview";
-    const previewAvailable = Boolean(files.previewPath) || files.previewLoading;
-    previewTab.disabled = !previewAvailable;
-    if (files.mobileView === "preview") {
-      previewTab.classList.add("active");
-    }
-    previewTab.addEventListener("click", () => {
-      if (!previewTab.disabled && files.mobileView !== "preview") {
-        files.mobileView = "preview";
-        render();
-      }
-    });
-
-    toggle.append(browserTab, previewTab);
-    wrapper.append(toggle);
-  }
 
   const layout = document.createElement("div");
   layout.className = "wm-files-layout";
@@ -3482,11 +3420,6 @@ const renderFiles = () => {
   }
 
   previewCard.append(previewHeader, previewBody);
-
-  if (useMobileLayout) {
-    browserCard.hidden = files.mobileView !== "browser";
-    previewCard.hidden = files.mobileView !== "preview";
-  }
 
   layout.append(browserCard, previewCard);
   wrapper.append(layout);
