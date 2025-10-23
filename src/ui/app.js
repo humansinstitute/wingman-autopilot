@@ -211,6 +211,31 @@ const FILE_BROWSER_ICON_DEFS = {
     ["circle", { cx: 12, cy: 12, r: 2.5 }],
     ["line", { x1: 4, y1: 4, x2: 20, y2: 20 }],
   ],
+  folder: [
+    ["path", { d: "M3 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" }],
+    ["path", { d: "M3 7h18" }],
+  ],
+  file: [
+    ["path", { d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" }],
+    ["polyline", { points: "14 2 14 8 20 8" }],
+  ],
+  fileText: [
+    ["path", { d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" }],
+    ["polyline", { points: "14 2 14 8 20 8" }],
+    ["line", { x1: 16, y1: 13, x2: 8, y2: 13 }],
+    ["line", { x1: 16, y1: 17, x2: 8, y2: 17 }],
+    ["path", { d: "M10 9h4" }],
+  ],
+  fileCode: [
+    ["path", { d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" }],
+    ["polyline", { points: "14 2 14 8 20 8" }],
+    ["polyline", { points: "10 13 8 15 10 17" }],
+    ["polyline", { points: "14 17 16 15 14 13" }],
+  ],
+  ban: [
+    ["circle", { cx: 12, cy: 12, r: 9 }],
+    ["line", { x1: 5, y1: 19, x2: 19, y2: 5 }],
+  ],
   folderPlus: [
     ["path", { d: "M3 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" }],
     ["path", { d: "M12 11v4" }],
@@ -3675,16 +3700,17 @@ const renderFiles = () => {
 
       const name = document.createElement("span");
       name.className = "wm-files-browser__name";
-      const icon = document.createElement("span");
-      icon.setAttribute("aria-hidden", "true");
-      icon.textContent =
+      const iconKey =
         entry.type === "directory"
-          ? "📁"
+          ? "folder"
           : entry.previewable
             ? entry.previewFormat === "markdown"
-              ? "📝"
-              : "💻"
-            : "🚫";
+              ? "fileText"
+              : "fileCode"
+            : "ban";
+      const iconDefinition = FILE_BROWSER_ICON_DEFS[iconKey] ?? FILE_BROWSER_ICON_DEFS.file;
+      const icon = createIconSvg(iconDefinition);
+      icon.classList.add("wm-files-browser__icon");
       const label = document.createElement("span");
       label.textContent = entry.name;
       name.append(icon, label);

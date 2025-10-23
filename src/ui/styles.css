@@ -2155,6 +2155,11 @@ dialog button[value="cancel"] {
   font-weight: 500;
 }
 
+.wm-files-browser__icon {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
 .wm-files-browser__meta {
   font-size: 0.75rem;
   color: var(--text-tertiary);
