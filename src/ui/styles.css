@@ -2232,7 +2232,6 @@ dialog button[value="cancel"] {
 .wm-file-editor__dialog {
   width: min(960px, 100%);
   max-height: 90vh;
-  max-height: min(90vh, 100dvh);
   background: var(--bg-primary);
   border-radius: 20px;
   box-shadow: var(--shadow-md);
@@ -2271,8 +2270,7 @@ dialog button[value="cancel"] {
   padding: 0 1.5rem;
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  overflow: auto;
+  min-height: 360px;
 }
 
 .wm-file-editor__editor {
@@ -2372,27 +2370,27 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 @media (max-width: 720px) {
   .wm-file-editor {
     padding: 1rem;
+    align-items: stretch;
+    justify-content: flex-start;
+    overflow-y: auto;
   }
 
   .wm-file-editor__dialog {
-    max-height: 100vh;
-    max-height: min(100vh, 100dvh);
     border-radius: 16px;
+    width: 100%;
+    max-height: none;
   }
 
   .wm-file-editor__body {
     min-height: 0;
+    overflow-y: auto;
   }
 
   .wm-file-editor__editor {
-    min-height: 200px;
+    min-height: 220px;
   }
 
   .wm-file-editor__footer {
-    position: sticky;
-    bottom: 0;
-    margin-top: auto;
-    background: var(--bg-primary);
     padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0));
   }
 }
