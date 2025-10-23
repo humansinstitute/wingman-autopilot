@@ -1164,6 +1164,43 @@ body[data-menu-open="true"] .wm-menu-panel {
     margin: 0 auto;
   }
 
+  #app[data-route="files"] {
+    padding: 1.5rem 1rem 2.5rem;
+  }
+
+  .wm-files-mobile-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem;
+    border-radius: 0.75rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 0.75rem;
+  }
+
+  .wm-files-mobile-tab {
+    flex: 1 1 0;
+    text-align: center;
+  }
+
+  .wm-files-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .wm-files-browser,
+  .wm-files-preview {
+    padding: 1.35rem;
+  }
+
+  .wm-files-browser__list {
+    max-height: none;
+  }
+
   #pull-refresh {
     top: calc(env(safe-area-inset-top, 0px) + var(--nav-height) * 0.7);
   }
@@ -1755,6 +1792,36 @@ dialog button[value="cancel"] {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+}
+
+.wm-files-mobile-toggle {
+  display: none;
+}
+
+.wm-files-mobile-tab {
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  font-weight: 600;
+  padding: 0.6rem 0.85rem;
+  border-radius: 0.65rem;
+  cursor: pointer;
+  transition: background 180ms ease, color 180ms ease;
+}
+
+.wm-files-mobile-tab:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.wm-files-mobile-tab.active {
+  background: rgba(16, 185, 129, 0.18);
+  color: var(--accent-primary);
+}
+
+.wm-files-mobile-tab:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .wm-files-layout {

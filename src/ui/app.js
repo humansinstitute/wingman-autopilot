@@ -50,6 +50,7 @@ const state = {
     previewLanguage: null,
     previewLabel: null,
     browserCollapsed: false,
+    mobileView: "browser",
   },
   fileEditor: {
     open: false,
@@ -174,6 +175,17 @@ const scrollConversationAreaToBottom = (sessionId, options = {}) => {
       scrollConversationToBottom(fallback);
     }
   }
+};
+
+const isMobileFilesLayout = () => {
+  if (window.matchMedia) {
+    try {
+      return window.matchMedia("(max-width: 720px)").matches;
+    } catch {
+      // fall through to manual check
+    }
+  }
+  return window.innerWidth <= 720;
 };
 
 const copyTextToClipboard = async (text) => {
@@ -705,6 +717,34 @@ const loadFilesPreview = async (path) => {
   }
 };
 
+const createFilesDirectory = async (parentPath, name) => {
+  const response = await fetch("/api/docs/directory", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ parent: parentPath, name }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const message = data?.error ?? response.statusText ?? "Failed to create directory";
+    throw new Error(message);
+  }
+  return response.json();
+};
+
+const createFilesTextFile = async (parentPath, name, content = "") => {
+  const response = await fetch("/api/docs/file", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ directory: parentPath, name, content }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const message = data?.error ?? response.statusText ?? "Failed to create file";
+    throw new Error(message);
+  }
+  return response.json();
+};
+
 const destroyAceEditor = () => {
   if (!aceEditorInstance) return;
   const container = aceEditorInstance.container;
@@ -1166,6 +1206,7 @@ let currentRoute = getRouteFromPath(window.location.pathname);
 let currentTheme = "dark";
 let tabsVisible = true;
 let lastLoggedSessionId = null;
+let lastFilesMobileLayout = isMobileFilesLayout();
 
 const ACE_LIGHT_THEME = "ace/theme/chrome";
 const ACE_DARK_THEME = "ace/theme/tomorrow_night";
@@ -3019,6 +3060,64 @@ const renderHome = () => {
   return wrapper;
 };
 
+const promptCreateDirectory = async () => {
+  const files = state.files;
+  if (files.loading) return;
+  const parentPath = files.currentPath;
+  const rawName = window.prompt("Folder name", "New Folder");
+  const name = rawName?.trim();
+  if (!name) return;
+  if (isMobileFilesLayout()) {
+    files.mobileView = "browser";
+  }
+  files.loading = true;
+  if (currentRoute === "files") render();
+  try {
+    const result = await createFilesDirectory(parentPath, name);
+    if (isMobileFilesLayout()) {
+      files.mobileView = "browser";
+    }
+    await loadFilesTree(result?.path ?? parentPath);
+  } catch (error) {
+    files.loading = false;
+    if (currentRoute === "files") render();
+    const message = error instanceof Error ? error.message : "Failed to create directory";
+    window.alert(message);
+  }
+};
+
+const promptCreateFile = async () => {
+  const files = state.files;
+  if (files.loading) return;
+  const parentPath = files.currentPath;
+  const rawName = window.prompt("File name (include extension)", "notes.txt");
+  const name = rawName?.trim();
+  if (!name) return;
+  files.loading = true;
+  if (currentRoute === "files") render();
+  try {
+    const result = await createFilesTextFile(parentPath, name, "");
+    await loadFilesTree(parentPath);
+    if (result?.path) {
+      if (isMobileFilesLayout()) {
+        files.mobileView = result.previewable ? "preview" : "browser";
+      }
+      if (result.previewable) {
+        void loadFilesPreview(result.path);
+      } else {
+        resetFilesPreview();
+        if (currentRoute === "files") render();
+      }
+      void openFileEditor(result.path, result.displayPath ?? null, result.name ?? null);
+    }
+  } catch (error) {
+    files.loading = false;
+    if (currentRoute === "files") render();
+    const message = error instanceof Error ? error.message : "Failed to create file";
+    window.alert(message);
+  }
+};
+
 const renderFiles = () => {
   const files = state.files;
   if (!files.initialized) {
@@ -3026,8 +3125,57 @@ const renderFiles = () => {
     void loadFilesTree();
   }
 
+  const useMobileLayout = isMobileFilesLayout();
+  if (!files.mobileView) {
+    files.mobileView = "browser";
+  }
+  if (useMobileLayout && files.mobileView === "preview" && !files.previewPath && !files.previewLoading) {
+    files.mobileView = "browser";
+  }
+  if (!useMobileLayout && files.mobileView !== "browser") {
+    files.mobileView = "browser";
+  }
+
   const wrapper = document.createElement("div");
   wrapper.className = "wm-files";
+
+  if (useMobileLayout) {
+    const toggle = document.createElement("div");
+    toggle.className = "wm-files-mobile-toggle";
+
+    const browserTab = document.createElement("button");
+    browserTab.type = "button";
+    browserTab.className = "wm-files-mobile-tab";
+    browserTab.textContent = "Browse";
+    if (files.mobileView === "browser") {
+      browserTab.classList.add("active");
+    }
+    browserTab.addEventListener("click", () => {
+      if (files.mobileView !== "browser") {
+        files.mobileView = "browser";
+        render();
+      }
+    });
+
+    const previewTab = document.createElement("button");
+    previewTab.type = "button";
+    previewTab.className = "wm-files-mobile-tab";
+    previewTab.textContent = "Preview";
+    const previewAvailable = Boolean(files.previewPath) || files.previewLoading;
+    previewTab.disabled = !previewAvailable;
+    if (files.mobileView === "preview") {
+      previewTab.classList.add("active");
+    }
+    previewTab.addEventListener("click", () => {
+      if (!previewTab.disabled && files.mobileView !== "preview") {
+        files.mobileView = "preview";
+        render();
+      }
+    });
+
+    toggle.append(browserTab, previewTab);
+    wrapper.append(toggle);
+  }
 
   const layout = document.createElement("div");
   layout.className = "wm-files-layout";
@@ -3074,7 +3222,27 @@ const renderFiles = () => {
     void loadFilesTree(files.currentPath);
   });
 
-  controls.append(upButton, refreshButton);
+  const newFolderButton = document.createElement("button");
+  newFolderButton.type = "button";
+  newFolderButton.className = "wm-button secondary";
+  newFolderButton.textContent = "New Folder";
+  newFolderButton.disabled = files.loading;
+  newFolderButton.addEventListener("click", () => {
+    if (files.loading) return;
+    void promptCreateDirectory();
+  });
+
+  const newFileButton = document.createElement("button");
+  newFileButton.type = "button";
+  newFileButton.className = "wm-button secondary";
+  newFileButton.textContent = "New File";
+  newFileButton.disabled = files.loading;
+  newFileButton.addEventListener("click", () => {
+    if (files.loading) return;
+    void promptCreateFile();
+  });
+
+  controls.append(upButton, refreshButton, newFolderButton, newFileButton);
   browserHeader.append(headerButton, controls);
 
   const list = document.createElement("ul");
@@ -3311,6 +3479,11 @@ const renderFiles = () => {
   }
 
   previewCard.append(previewHeader, previewBody);
+
+  if (useMobileLayout) {
+    browserCard.hidden = files.mobileView !== "browser";
+    previewCard.hidden = files.mobileView !== "preview";
+  }
 
   layout.append(browserCard, previewCard);
   wrapper.append(layout);
@@ -3847,6 +4020,7 @@ const render = () => {
   closeMenu();
   syncMenuTabs();
   syncDesktopSessionIndicator();
+  lastFilesMobileLayout = isMobileFilesLayout();
   if (!pullRefreshing && !pullActive) {
     resetPullRefresh();
   }
@@ -3995,6 +4169,13 @@ window.addEventListener("resize", () => {
     closeMenu();
   }
   syncDesktopSessionIndicator();
+  const mobileLayout = isMobileFilesLayout();
+  if (currentRoute === "files" && mobileLayout !== lastFilesMobileLayout) {
+    lastFilesMobileLayout = mobileLayout;
+    render();
+  } else {
+    lastFilesMobileLayout = mobileLayout;
+  }
 });
 
 window.addEventListener("keydown", (event) => {

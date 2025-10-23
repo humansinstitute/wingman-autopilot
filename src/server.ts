@@ -369,6 +369,7 @@ const resolveDocsPath = (input: string | null | undefined): string => {
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown"]);
 const MAX_DOCS_ENTRIES = 500;
 const MAX_DOCS_FILE_SIZE = 2 * 1024 * 1024; // 2MB
+const DOCS_NAME_MAX_LENGTH = 160;
 
 interface DocsPreviewType {
   format: "markdown" | "code";
@@ -672,6 +673,111 @@ const updateDocsFile = async (pathInput: string | null | undefined, base64Input:
     name: basename(filePath),
     size: nextStats.size,
     mtimeMs: nextStats.mtimeMs,
+  };
+};
+
+const ensureDocsDirectory = async (input: string | null | undefined): Promise<string> => {
+  const directory = resolveDocsPath(input);
+  let stats: Awaited<ReturnType<typeof stat>>;
+  try {
+    stats = await stat(directory);
+  } catch {
+    throw new Error("Parent directory not found");
+  }
+  if (!stats.isDirectory()) {
+    throw new Error("Parent path is not a directory");
+  }
+  return directory;
+};
+
+const normaliseDocsEntryName = (value: unknown): string => {
+  if (typeof value !== "string") {
+    throw new Error("Name is required");
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error("Name is required");
+  }
+  if (trimmed.length > DOCS_NAME_MAX_LENGTH) {
+    throw new Error("Name is too long");
+  }
+  if (trimmed === "." || trimmed === "..") {
+    throw new Error("Name is not allowed");
+  }
+  if (/[\\/]/.test(trimmed)) {
+    throw new Error("Name cannot contain path separators");
+  }
+  return trimmed;
+};
+
+const createDocsDirectory = async (parentInput: string | null | undefined, nameInput: unknown) => {
+  const parentDirectory = await ensureDocsDirectory(parentInput);
+  const name = normaliseDocsEntryName(nameInput);
+  const target = normalize(join(parentDirectory, name));
+  if (!isWithinDocsRoot(target)) {
+    throw new Error("Invalid directory path");
+  }
+
+  try {
+    await mkdir(target, { recursive: false });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === "EEXIST") {
+      throw new Error("A file or directory with that name already exists");
+    }
+    throw new Error(`Failed to create directory: ${(error as Error).message ?? "unknown error"}`);
+  }
+
+  return {
+    path: target,
+    relativePath: toDocsRelativePath(target),
+    displayPath: toDocsDisplayPath(target),
+    name,
+  };
+};
+
+const createDocsFile = async (parentInput: string | null | undefined, nameInput: unknown, contentInput: unknown) => {
+  const parentDirectory = await ensureDocsDirectory(parentInput);
+  const name = normaliseDocsEntryName(nameInput);
+  const target = normalize(join(parentDirectory, name));
+  if (!isWithinDocsRoot(target)) {
+    throw new Error("Invalid file path");
+  }
+
+  const content =
+    typeof contentInput === "string"
+      ? contentInput
+      : typeof contentInput === "number"
+        ? contentInput.toString()
+        : "";
+
+  const buffer = Buffer.from(content, "utf-8");
+  if (buffer.length > MAX_DOCS_FILE_SIZE) {
+    throw new Error("File is too large to create");
+  }
+
+  try {
+    await writeFile(target, buffer, { flag: "wx" });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === "EEXIST") {
+      throw new Error("A file or directory with that name already exists");
+    }
+    throw new Error(`Failed to create file: ${(error as Error).message ?? "unknown error"}`);
+  }
+
+  const extension = extname(name).toLowerCase();
+  const preview = TEXT_PREVIEW_TYPES.get(extension) ?? null;
+
+  return {
+    path: target,
+    relativePath: toDocsRelativePath(target),
+    displayPath: toDocsDisplayPath(target),
+    name,
+    previewable: preview !== null,
+    previewFormat: preview?.format ?? null,
+    previewLanguage: preview?.language ?? null,
+    previewLabel: preview?.label ?? null,
   };
 };
 
@@ -1301,11 +1407,60 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
     return Response.json({ presets });
   }
 
+  if (pathname === "/api/docs/directory" && method === "POST") {
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    const parent = normaliseOptionalString((payload as Record<string, unknown>).parent);
+    const name = (payload as Record<string, unknown>).name;
+
+    try {
+      const data = await createDocsDirectory(parent, name);
+      return Response.json(data, { status: 201 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
   if (pathname === "/api/docs/tree" && method === "GET") {
     try {
       const pathParam = url.searchParams.get("path");
       const data = await listDocsDirectory(pathParam);
       return Response.json(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/docs/file" && method === "POST") {
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    const directory = normaliseOptionalString((payload as Record<string, unknown>).directory);
+    const name = (payload as Record<string, unknown>).name;
+    const content = (payload as Record<string, unknown>).content;
+
+    try {
+      const data = await createDocsFile(directory, name, content);
+      return Response.json(data, { status: 201 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Response.json({ error: message }, { status: 400 });
