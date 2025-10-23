@@ -121,6 +121,9 @@ const documentsDirectory = join(homeDirectory, "Documents");
 const userDataRoot = join(documentsDirectory, "Wingman");
 const docsRoot = homeDirectory;
 const docsRootBoundary = docsRoot.endsWith(sep) ? docsRoot : `${docsRoot}${sep}`;
+const nodeModulesRoot = normalize(join(projectRoot, "node_modules"));
+const aceBuildsRoot = normalize(join(nodeModulesRoot, "ace-builds"));
+const aceBuildsRootBoundary = aceBuildsRoot.endsWith(sep) ? aceBuildsRoot : `${aceBuildsRoot}${sep}`;
 await mkdir(documentsDirectory, { recursive: true }).catch(() => undefined);
 await mkdir(userDataRoot, { recursive: true }).catch(() => undefined);
 const orchestratorRoot = join(projectRoot, "orchestrator");
@@ -282,7 +285,7 @@ scheduleImageCleanup();
 
 manager.on((event) => {
   if (event.type === "session-started") {
-    messageStore.recordSession(event.session.id, event.session.agent, event.session.startedAt);
+    messageStore.recordSession(event.session.id, event.session.agent, event.session.startedAt, event.session.name);
     messageStore.replaceMessages(event.session.id, []);
   }
 });
@@ -576,6 +579,102 @@ const loadDocsFile = async (input: string | null | undefined) => {
   };
 };
 
+const loadDocsFileRaw = async (input: string | null | undefined) => {
+  if (!input) {
+    throw new Error("File path is required");
+  }
+
+  const filePath = resolveDocsPath(input);
+  let stats: Awaited<ReturnType<typeof stat>>;
+  try {
+    stats = await stat(filePath);
+  } catch {
+    throw new Error("File not found");
+  }
+
+  if (!stats.isFile()) {
+    throw new Error("Requested path is not a file");
+  }
+
+  if (stats.size > MAX_DOCS_FILE_SIZE) {
+    throw new Error("File is too large to load");
+  }
+
+  let data: Uint8Array;
+  try {
+    data = await readFile(filePath);
+  } catch (error) {
+    throw new Error(`Failed to read file: ${(error as Error).message ?? "unknown error"}`);
+  }
+
+  const base64 = Buffer.from(data).toString("base64");
+
+  return {
+    path: filePath,
+    relativePath: toDocsRelativePath(filePath),
+    displayPath: toDocsDisplayPath(filePath),
+    name: basename(filePath),
+    base64,
+    size: stats.size,
+    mtimeMs: stats.mtimeMs,
+  };
+};
+
+const updateDocsFile = async (pathInput: string | null | undefined, base64Input: string | null | undefined, expectedMtime: number | null | undefined) => {
+  if (!pathInput) {
+    throw new Error("File path is required");
+  }
+
+  const filePath = resolveDocsPath(pathInput);
+
+  let stats: Awaited<ReturnType<typeof stat>>;
+  try {
+    stats = await stat(filePath);
+  } catch {
+    throw new Error("File not found");
+  }
+
+  if (!stats.isFile()) {
+    throw new Error("Requested path is not a file");
+  }
+
+  if (typeof expectedMtime === "number" && Math.abs(stats.mtimeMs - expectedMtime) > 1) {
+    throw new Error("File has changed since it was loaded");
+  }
+
+  if (base64Input === null || base64Input === undefined) {
+    throw new Error("File contents are required");
+  }
+
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(base64Input, "base64");
+  } catch {
+    throw new Error("Invalid base64 payload");
+  }
+
+  if (bytes.length > MAX_DOCS_FILE_SIZE) {
+    throw new Error("File is too large to save");
+  }
+
+  try {
+    await writeFile(filePath, bytes);
+  } catch (error) {
+    throw new Error(`Failed to write file: ${(error as Error).message ?? "unknown error"}`);
+  }
+
+  const nextStats = await stat(filePath);
+
+  return {
+    path: filePath,
+    relativePath: toDocsRelativePath(filePath),
+    displayPath: toDocsDisplayPath(filePath),
+    name: basename(filePath),
+    size: nextStats.size,
+    mtimeMs: nextStats.mtimeMs,
+  };
+};
+
 const directoryExists = async (path: string): Promise<boolean> => {
   try {
     const stats = await stat(path);
@@ -621,6 +720,16 @@ const normaliseOptionalString = (value: unknown): string | null => {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+};
+
+const SESSION_NAME_MAX_LENGTH = 120;
+
+const normaliseSessionNameInput = (value: unknown): string | null => {
+  const text = normaliseOptionalString(value);
+  if (!text) {
+    return null;
+  }
+  return text.length > SESSION_NAME_MAX_LENGTH ? text.slice(0, SESSION_NAME_MAX_LENGTH) : text;
 };
 
 const parsePresetInteger = (value: unknown, fallback: number, minimum?: number): number => {
@@ -888,8 +997,13 @@ const launchOrchestratorPreset = async (presetId: string) => {
   }
 
   const workingDirectory = await preparePresetWorkingDirectory(preset);
-  const session = await manager.createSession(preset.agent as AgentType, workingDirectory);
-  messageStore.recordSession(session.id, session.agent, session.startedAt);
+  const sessionName = normaliseSessionNameInput(preset.label);
+  const session = await manager.createSession(
+    preset.agent as AgentType,
+    workingDirectory,
+    sessionName ?? undefined,
+  );
+  messageStore.recordSession(session.id, session.agent, session.startedAt, session.name);
   void initialisePresetSession(preset, session);
   return { directory: workingDirectory, session };
 };
@@ -1025,6 +1139,31 @@ const servePublicAsset = (pathname: string) => {
     headers: {
       ...(type ? { "content-type": type } : {}),
       "cache-control": "public, max-age=3600",
+    },
+  });
+};
+
+const serveAceBuildsAsset = (pathname: string) => {
+  if (!pathname.startsWith("/ace-builds/")) return undefined;
+  const suffix = pathname.slice("/ace-builds/".length);
+  if (suffix.length === 0) return undefined;
+  const candidate = normalize(join(aceBuildsRoot, suffix));
+  if (!candidate.startsWith(aceBuildsRootBoundary)) {
+    return undefined;
+  }
+  const file = Bun.file(candidate);
+  if (!file.size) return undefined;
+  const ext = extname(candidate).toLowerCase();
+  const type =
+    ext === ".js"
+      ? "application/javascript; charset=utf-8"
+      : ext === ".css"
+        ? "text/css; charset=utf-8"
+        : file.type || undefined;
+  return new Response(file, {
+    headers: {
+      ...(type ? { "content-type": type } : {}),
+      "cache-control": "public, max-age=86400",
     },
   });
 };
@@ -1181,6 +1320,50 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
     try {
       const data = await loadDocsFile(pathParam);
       return Response.json(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/docs/file/raw" && method === "GET") {
+    const pathParam = url.searchParams.get("path");
+    if (!pathParam) {
+      return Response.json({ error: "File path is required" }, { status: 400 });
+    }
+    try {
+      const data = await loadDocsFileRaw(pathParam);
+      return Response.json(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/docs/file" && method === "PUT") {
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    const pathValue = (payload as Record<string, unknown>).path;
+    const base64Value = (payload as Record<string, unknown>).base64;
+    const expectedMtimeValue = (payload as Record<string, unknown>).expectedMtimeMs;
+
+    const pathParam = typeof pathValue === "string" ? pathValue : null;
+    const base64Param = typeof base64Value === "string" ? base64Value : null;
+    const expectedMtime =
+      typeof expectedMtimeValue === "number" && Number.isFinite(expectedMtimeValue) ? expectedMtimeValue : null;
+
+    try {
+      const data = await updateDocsFile(pathParam, base64Param, expectedMtime);
+      return Response.json(data, { status: 200 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Response.json({ error: message }, { status: 400 });
@@ -1408,14 +1591,19 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
         return Response.json({ error: "Invalid agent selection" }, { status: 400 });
       }
       const directoryInput = typeof payload?.directory === "string" ? payload.directory : undefined;
+      const rawName =
+        payload && typeof payload === "object" && payload !== null
+          ? (payload as Record<string, unknown>).name
+          : null;
+      const sessionName = normaliseSessionNameInput(rawName);
       let workingDirectory: string;
       try {
         workingDirectory = await ensureDirectory(directoryInput);
       } catch (error) {
         return Response.json({ error: (error as Error).message }, { status: 400 });
       }
-      const session = await manager.createSession(agent, workingDirectory);
-      messageStore.recordSession(session.id, session.agent, session.startedAt);
+      const session = await manager.createSession(agent, workingDirectory, sessionName ?? undefined);
+      messageStore.recordSession(session.id, session.agent, session.startedAt, session.name);
       await syncSessionMessages(session.id, true);
       return Response.json(session, { status: 201 });
     } catch (error) {
@@ -1536,6 +1724,8 @@ const server = Bun.serve({
       pathname === "/home" ||
       pathname === "/docs" ||
       pathname.startsWith("/docs/") ||
+      pathname === "/files" ||
+      pathname.startsWith("/files/") ||
       pathname === "/live" ||
       pathname.startsWith("/live/")
     ) {
@@ -1549,6 +1739,11 @@ const server = Bun.serve({
     const tempImage = resolveTempImage(pathname);
     if (tempImage) {
       return tempImage;
+    }
+
+    const aceAsset = serveAceBuildsAsset(pathname);
+    if (aceAsset) {
+      return aceAsset;
     }
 
     const assetResponse = resolveAsset(pathname);

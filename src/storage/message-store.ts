@@ -42,8 +42,8 @@ export class MessageStore {
     this.countMessages = this.prepareCountMessages();
   }
 
-  recordSession(sessionId: string, agent: string, startedAt: string) {
-    this.insertSession.run(sessionId, agent, startedAt);
+  recordSession(sessionId: string, agent: string, startedAt: string, name?: string) {
+    this.insertSession.run(sessionId, agent, startedAt, name ?? null);
   }
 
   removeSession(sessionId: string) {
@@ -81,7 +81,8 @@ export class MessageStore {
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         agent TEXT NOT NULL,
-        started_at TEXT NOT NULL
+        started_at TEXT NOT NULL,
+        name TEXT
       );
 
       CREATE TABLE IF NOT EXISTS messages (
@@ -95,13 +96,19 @@ export class MessageStore {
 
       CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at);
     `);
+
+    const sessionColumns = this.db.query("PRAGMA table_info(sessions)").all() as { name: string }[];
+    const hasNameColumn = sessionColumns.some((column) => column.name === "name");
+    if (!hasNameColumn) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN name TEXT`);
+    }
   }
 
   private prepareInsertSession() {
     return this.db.prepare(
-      `INSERT INTO sessions (id, agent, started_at)
-       VALUES (?1, ?2, ?3)
-       ON CONFLICT(id) DO UPDATE SET agent = excluded.agent, started_at = excluded.started_at`,
+      `INSERT INTO sessions (id, agent, started_at, name)
+       VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT(id) DO UPDATE SET agent = excluded.agent, started_at = excluded.started_at, name = excluded.name`,
     );
   }
 

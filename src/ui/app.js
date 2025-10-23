@@ -1,3 +1,12 @@
+import "/ace-builds/src-noconflict/ace.js";
+import "/ace-builds/src-noconflict/mode-text.js";
+import "/ace-builds/src-noconflict/theme-chrome.js";
+
+const ace = globalThis.ace;
+if (!ace) {
+  throw new Error("Ace editor failed to load");
+}
+
 const THEME_STORAGE_KEY = "wingman-theme";
 const TABS_VISIBILITY_STORAGE_KEY = "wingman-tabs-visible";
 
@@ -21,7 +30,7 @@ const state = {
   lastMessageCount: new Map(), // sessionId -> number of messages
   lastLogLength: new Map(), // sessionId -> length of logs
   autoScrollEnabled: new Map(), // sessionId -> boolean
-  docs: {
+  files: {
     initialized: false,
     loading: false,
     error: null,
@@ -40,10 +49,100 @@ const state = {
     previewFormat: null,
     previewLanguage: null,
     previewLabel: null,
+    browserCollapsed: false,
+  },
+  fileEditor: {
+    open: false,
+    loading: false,
+    saving: false,
+    error: null,
+    saveError: null,
+    path: null,
+    relativePath: null,
+    displayPath: null,
+    name: null,
+    base64: null,
+    content: "",
+    initialContent: "",
+    mtimeMs: null,
+    dirty: false,
+    requestId: 0,
   },
 };
 
+const textDecoder = typeof TextDecoder !== "undefined" ? new TextDecoder("utf-8", { fatal: false }) : null;
+const textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
+
+const decodeBase64ToUint8Array = (value) => {
+  if (!value) return new Uint8Array(0);
+  try {
+    const binary = atob(value);
+    const length = binary.length;
+    const bytes = new Uint8Array(length);
+    for (let i = 0; i < length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  } catch {
+    return new Uint8Array(0);
+  }
+};
+
+const encodeUint8ArrayToBase64 = (bytes) => {
+  if (!bytes || bytes.length === 0) return "";
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+};
+
+const decodeBytesToText = (bytes) => {
+  if (!bytes || bytes.length === 0) return "";
+  if (textDecoder) {
+    try {
+      return textDecoder.decode(bytes);
+    } catch {
+      // fall through to manual decoding
+    }
+  }
+  let result = "";
+  for (let i = 0; i < bytes.length; i += 1) {
+    result += String.fromCharCode(bytes[i]);
+  }
+  return result;
+};
+
+const encodeTextToBytes = (text) => {
+  if (!text || text.length === 0) return new Uint8Array(0);
+  if (textEncoder) {
+    try {
+      return textEncoder.encode(text);
+    } catch {
+      // fall through to manual encoding
+    }
+  }
+  const bytes = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i += 1) {
+    bytes[i] = text.charCodeAt(i) & 0xff;
+  }
+  return bytes;
+};
+
+let aceEditorInstance = null;
+
 const AUTO_SCROLL_THRESHOLD = 80;
+
+const getSessionDisplayName = (session) => {
+  if (!session || typeof session !== "object") return "";
+  const rawName = typeof session.name === "string" ? session.name.trim() : "";
+  if (rawName.length > 0) return rawName;
+  const agent = typeof session.agent === "string" ? session.agent : "agent";
+  const port = typeof session.port === "number" ? session.port : "";
+  return port ? `${agent} :${port}` : agent;
+};
 
 const ensureAutoScrollPreference = (sessionId) => {
   if (!state.autoScrollEnabled.has(sessionId)) {
@@ -423,17 +522,17 @@ const renderMarkdownToHtml = (markdown) => {
   return html.trim();
 };
 
-const resetDocsPreview = () => {
-  state.docs.previewPath = null;
-  state.docs.previewRelativePath = null;
-  state.docs.previewDisplayPath = "";
-  state.docs.previewName = null;
-  state.docs.previewContent = null;
-  state.docs.previewLoading = false;
-  state.docs.previewError = null;
-  state.docs.previewFormat = null;
-  state.docs.previewLanguage = null;
-  state.docs.previewLabel = null;
+const resetFilesPreview = () => {
+  state.files.previewPath = null;
+  state.files.previewRelativePath = null;
+  state.files.previewDisplayPath = "";
+  state.files.previewName = null;
+  state.files.previewContent = null;
+  state.files.previewLoading = false;
+  state.files.previewError = null;
+  state.files.previewFormat = null;
+  state.files.previewLanguage = null;
+  state.files.previewLabel = null;
 };
 
 const CODE_KEYWORDS = {
@@ -550,14 +649,14 @@ const renderCodeToHtml = (content, language = "plaintext") => {
   return `<pre><code class="language-${normalizedLanguage}">${working}</code></pre>`;
 };
 
-const loadDocsTree = async (path) => {
-  const docs = state.docs;
-  const targetPath = typeof path === "string" && path.length > 0 ? path : docs.currentPath;
-  if (typeof path === "string" && path.length > 0 && path !== docs.currentPath) {
-    resetDocsPreview();
+const loadFilesTree = async (path) => {
+  const files = state.files;
+  const targetPath = typeof path === "string" && path.length > 0 ? path : files.currentPath;
+  if (typeof path === "string" && path.length > 0 && path !== files.currentPath) {
+    resetFilesPreview();
   }
-  docs.loading = true;
-  docs.error = null;
+  files.loading = true;
+  files.error = null;
 
   try {
     const url = new URL("/api/docs/tree", window.location.origin);
@@ -579,48 +678,48 @@ const loadDocsTree = async (path) => {
     }
 
     const data = await response.json();
-    docs.currentPath = data?.path ?? targetPath ?? docs.currentPath;
-    docs.relativePath = data?.relativePath ?? "";
-    docs.displayPath = data?.displayPath ?? (docs.relativePath ? `~/${docs.relativePath}` : "~");
-    docs.parent = data?.parent ?? null;
-    docs.entries = Array.isArray(data?.entries) ? data.entries : [];
-    docs.loading = false;
-    docs.error = null;
+    files.currentPath = data?.path ?? targetPath ?? files.currentPath;
+    files.relativePath = data?.relativePath ?? "";
+    files.displayPath = data?.displayPath ?? (files.relativePath ? `~/${files.relativePath}` : "~");
+    files.parent = data?.parent ?? null;
+    files.entries = Array.isArray(data?.entries) ? data.entries : [];
+    files.loading = false;
+    files.error = null;
 
-    if (docs.previewPath) {
-      const exists = docs.entries.some((entry) => entry.path === docs.previewPath);
+    if (files.previewPath) {
+      const exists = files.entries.some((entry) => entry.path === files.previewPath);
       if (!exists) {
-        resetDocsPreview();
+        resetFilesPreview();
       }
     }
   } catch (error) {
-    docs.loading = false;
-    docs.error = error instanceof Error ? error.message : String(error);
-    docs.entries = [];
+    files.loading = false;
+    files.error = error instanceof Error ? error.message : String(error);
+    files.entries = [];
     if (typeof path === "string" && path.length > 0) {
-      docs.currentPath = path;
+      files.currentPath = path;
     }
   } finally {
-    if (currentRoute === "docs") {
+    if (currentRoute === "files") {
       render();
     }
   }
 };
 
-const loadDocsFile = async (path) => {
+const loadFilesPreview = async (path) => {
   if (!path) return;
-  const docs = state.docs;
-  docs.previewPath = path;
-  docs.previewRelativePath = "";
-  docs.previewDisplayPath = "";
-  docs.previewName = null;
-  docs.previewContent = null;
-  docs.previewError = null;
-  docs.previewLoading = true;
-  docs.previewFormat = null;
-  docs.previewLanguage = null;
-  docs.previewLabel = null;
-  if (currentRoute === "docs") {
+  const files = state.files;
+  files.previewPath = path;
+  files.previewRelativePath = "";
+  files.previewDisplayPath = "";
+  files.previewName = null;
+  files.previewContent = null;
+  files.previewError = null;
+  files.previewLoading = true;
+  files.previewFormat = null;
+  files.previewLanguage = null;
+  files.previewLabel = null;
+  if (currentRoute === "files") {
     render();
   }
 
@@ -642,24 +741,433 @@ const loadDocsFile = async (path) => {
     }
 
     const data = await response.json();
-    docs.previewPath = data?.path ?? path;
-    docs.previewRelativePath = data?.relativePath ?? "";
-    docs.previewDisplayPath = data?.displayPath ?? (docs.previewRelativePath ? `~/${docs.previewRelativePath}` : "");
-    docs.previewName = data?.name ?? null;
-    docs.previewContent = data?.content ?? "";
-    docs.previewFormat = data?.format ?? null;
-    docs.previewLanguage = data?.language ?? null;
-    docs.previewLabel = data?.label ?? null;
-    docs.previewLoading = false;
-    docs.previewError = null;
+    files.previewPath = data?.path ?? path;
+    files.previewRelativePath = data?.relativePath ?? "";
+    files.previewDisplayPath = data?.displayPath ?? (files.previewRelativePath ? `~/${files.previewRelativePath}` : "");
+    files.previewName = data?.name ?? null;
+    files.previewContent = data?.content ?? "";
+    files.previewFormat = data?.format ?? null;
+    files.previewLanguage = data?.language ?? null;
+    files.previewLabel = data?.label ?? null;
+    files.previewLoading = false;
+    files.previewError = null;
   } catch (error) {
-    docs.previewLoading = false;
-    docs.previewError = error instanceof Error ? error.message : String(error);
-    docs.previewContent = null;
+    files.previewLoading = false;
+    files.previewError = error instanceof Error ? error.message : String(error);
+    files.previewContent = null;
   } finally {
-    if (currentRoute === "docs") {
+    if (currentRoute === "files") {
       render();
     }
+  }
+};
+
+const destroyAceEditor = () => {
+  if (!aceEditorInstance) return;
+  const container = aceEditorInstance.container;
+  aceEditorInstance.destroy();
+  if (container) {
+    container.textContent = "";
+  }
+  aceEditorInstance = null;
+};
+
+const setFileEditorState = (updater) => {
+  const editor = state.fileEditor;
+  if (!editor) return;
+  updater(editor);
+};
+
+const resetFileEditorState = () => {
+  setFileEditorState((editor) => {
+    editor.open = false;
+    editor.loading = false;
+    editor.saving = false;
+    editor.error = null;
+    editor.saveError = null;
+    editor.path = null;
+    editor.relativePath = null;
+    editor.displayPath = null;
+    editor.name = null;
+    editor.base64 = null;
+    editor.content = "";
+    editor.initialContent = "";
+    editor.mtimeMs = null;
+    editor.dirty = false;
+    editor.requestId += 1;
+  });
+  destroyAceEditor();
+};
+
+const closeFileEditor = () => {
+  resetFileEditorState();
+  render();
+};
+
+const requestFileEditorClose = () => {
+  const editor = state.fileEditor;
+  if (editor.saving) return;
+  if (editor.dirty) {
+    const confirmClose = window.confirm("Discard unsaved changes?");
+    if (!confirmClose) {
+      return;
+    }
+  }
+  closeFileEditor();
+};
+
+const updateFileEditorControls = () => {
+  const editor = state.fileEditor;
+  const overlay = document.getElementById("wm-file-editor-overlay");
+  if (!overlay || !editor.open) {
+    return;
+  }
+  const saveButton = overlay.querySelector("#wm-file-editor-save");
+  if (saveButton instanceof HTMLButtonElement) {
+    saveButton.disabled = editor.saving || !editor.dirty;
+  }
+  const cancelButton = overlay.querySelector("#wm-file-editor-cancel");
+  if (cancelButton instanceof HTMLButtonElement) {
+    cancelButton.disabled = editor.saving;
+  }
+  const status = overlay.querySelector("#wm-file-editor-status");
+  if (status instanceof HTMLElement) {
+    if (editor.saveError) {
+      status.textContent = editor.saveError;
+      status.hidden = false;
+    } else if (editor.saving) {
+      status.textContent = "Saving…";
+      status.hidden = false;
+    } else {
+      status.textContent = "";
+      status.hidden = true;
+    }
+  }
+};
+
+const ensureAceEditorMounted = () => {
+  const editor = state.fileEditor;
+  if (!editor.open || editor.loading || editor.error) {
+    destroyAceEditor();
+    return;
+  }
+
+  const container = document.getElementById("wm-file-editor-ace");
+  if (!container) {
+    destroyAceEditor();
+    return;
+  }
+
+  if (!aceEditorInstance) {
+    aceEditorInstance = ace.edit(container);
+    aceEditorInstance.setTheme("ace/theme/chrome");
+    aceEditorInstance.session.setMode("ace/mode/text");
+    aceEditorInstance.session.setUseWrapMode(false);
+    aceEditorInstance.setOptions({
+      useWorker: false,
+      showPrintMargin: false,
+      behavioursEnabled: false,
+      highlightActiveLine: true,
+      highlightSelectedWord: false,
+      enableBasicAutocompletion: false,
+      enableLiveAutocompletion: false,
+      enableSnippets: false,
+      wrap: false,
+      fontSize: 14,
+      tabSize: 2,
+    });
+    aceEditorInstance.renderer.setScrollMargin(8, 8, 8, 8);
+    aceEditorInstance.on("change", () => {
+      if (!aceEditorInstance) return;
+      const value = aceEditorInstance.getValue();
+      const editorState = state.fileEditor;
+      editorState.content = value;
+      editorState.dirty = value !== editorState.initialContent;
+      updateFileEditorControls();
+    });
+  }
+
+  const targetValue = editor.content ?? "";
+  if (aceEditorInstance.getValue() !== targetValue) {
+    const selection = aceEditorInstance.getSelectionRange();
+    aceEditorInstance.setValue(targetValue, -1);
+    if (!editor.loading) {
+      aceEditorInstance.selection.setRange(selection, false);
+    }
+  }
+
+  aceEditorInstance.resize(true);
+  aceEditorInstance.focus();
+  updateFileEditorControls();
+};
+
+const getFileEditorDisplayTitle = () => {
+  const editor = state.fileEditor;
+  if (editor.displayPath) {
+    return editor.displayPath;
+  }
+  if (editor.name) {
+    return editor.name;
+  }
+  if (editor.path) {
+    return editor.path;
+  }
+  return "File Editor";
+};
+
+const openFileEditor = async (path, displayPath, name) => {
+  if (!path) return;
+  const editor = state.fileEditor;
+  editor.open = true;
+  editor.loading = true;
+  editor.saving = false;
+  editor.error = null;
+  editor.saveError = null;
+  editor.path = path;
+  editor.displayPath = displayPath ?? null;
+  editor.name = name ?? null;
+  editor.content = "";
+  editor.initialContent = "";
+  editor.base64 = null;
+  editor.dirty = false;
+  editor.mtimeMs = null;
+  editor.requestId += 1;
+  const requestId = editor.requestId;
+  render();
+
+  try {
+    const url = new URL("/api/docs/file/raw", window.location.origin);
+    url.searchParams.set("path", path);
+    const response = await fetch(url.toString(), { method: "GET" });
+    if (!response.ok) {
+      let message = response.statusText || "Failed to load file";
+      try {
+        const payload = await response.json();
+        if (payload && typeof payload.error === "string") {
+          message = payload.error;
+        }
+      } catch {
+        // ignore json parse error
+      }
+      throw new Error(message);
+    }
+
+    const data = await response.json();
+    if (editor.requestId !== requestId) {
+      return;
+    }
+    const base64 = typeof data?.base64 === "string" ? data.base64 : "";
+    const bytes = decodeBase64ToUint8Array(base64);
+    const content = decodeBytesToText(bytes);
+    editor.open = true;
+    editor.loading = false;
+    editor.error = null;
+    editor.saveError = null;
+    editor.path = data?.path ?? path;
+    editor.relativePath = data?.relativePath ?? null;
+    editor.displayPath = data?.displayPath ?? displayPath ?? null;
+    editor.name = data?.name ?? name ?? null;
+    editor.base64 = base64;
+    editor.content = content;
+    editor.initialContent = content;
+    editor.mtimeMs = typeof data?.mtimeMs === "number" ? data.mtimeMs : null;
+    editor.dirty = false;
+  } catch (error) {
+    if (editor.requestId !== requestId) {
+      return;
+    }
+    editor.loading = false;
+    editor.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    if (editor.requestId === requestId) {
+      render();
+    }
+  }
+};
+
+const saveFileEditor = async () => {
+  const editor = state.fileEditor;
+  if (!editor.open || editor.loading || editor.saving || !editor.path) {
+    return;
+  }
+  editor.saving = true;
+  editor.saveError = null;
+  updateFileEditorControls();
+  const content = aceEditorInstance ? aceEditorInstance.getValue() : editor.content;
+  editor.content = content;
+  editor.dirty = content !== editor.initialContent;
+  const bytes = encodeTextToBytes(content);
+  const base64 = encodeUint8ArrayToBase64(bytes);
+
+  try {
+    const response = await fetch("/api/docs/file", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        path: editor.path,
+        base64,
+        expectedMtimeMs: editor.mtimeMs ?? undefined,
+      }),
+    });
+    if (!response.ok) {
+      let message = response.statusText || "Failed to save file";
+      try {
+        const payload = await response.json();
+        if (payload && typeof payload.error === "string") {
+          message = payload.error;
+        }
+      } catch {
+        // ignore json parse error
+      }
+      throw new Error(message);
+    }
+
+    const data = await response.json();
+    editor.initialContent = content;
+    editor.content = content;
+    editor.base64 = base64;
+    editor.mtimeMs = typeof data?.mtimeMs === "number" ? data.mtimeMs : editor.mtimeMs;
+    editor.dirty = false;
+    editor.saving = false;
+    editor.saveError = null;
+    if (state.files.previewPath === editor.path) {
+      state.files.previewContent = content;
+    }
+    updateFileEditorControls();
+  } catch (error) {
+    editor.saving = false;
+    editor.saveError = error instanceof Error ? error.message : String(error);
+    editor.dirty = editor.content !== editor.initialContent;
+    updateFileEditorControls();
+  }
+};
+
+const renderFileEditorOverlay = () => {
+  const existing = document.getElementById("wm-file-editor-overlay");
+  if (existing) {
+    existing.remove();
+  }
+
+  const editor = state.fileEditor;
+  if (!editor.open) {
+    destroyAceEditor();
+    return;
+  }
+
+  const overlay = document.createElement("div");
+  overlay.id = "wm-file-editor-overlay";
+  overlay.className = "wm-file-editor";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      requestFileEditorClose();
+    }
+  });
+
+  const dialog = document.createElement("div");
+  dialog.className = "wm-file-editor__dialog";
+  overlay.append(dialog);
+
+  const header = document.createElement("div");
+  header.className = "wm-file-editor__header";
+  const heading = document.createElement("div");
+  heading.className = "wm-file-editor__heading";
+  const title = document.createElement("h2");
+  title.textContent = editor.name ?? "Edit File";
+  heading.append(title);
+
+  const subtitleText = editor.name ? getFileEditorDisplayTitle() : editor.displayPath ?? editor.path ?? "";
+  if (subtitleText) {
+    const subtitle = document.createElement("p");
+    subtitle.className = "wm-file-editor__subtitle";
+    subtitle.textContent = subtitleText;
+    heading.append(subtitle);
+  }
+
+  header.append(heading);
+  dialog.append(header);
+
+  const body = document.createElement("div");
+  body.className = "wm-file-editor__body";
+  dialog.append(body);
+
+  if (editor.loading) {
+    const message = document.createElement("p");
+    message.className = "wm-file-editor__message";
+    message.textContent = "Loading file…";
+    body.append(message);
+  } else if (editor.error) {
+    const message = document.createElement("p");
+    message.className = "wm-file-editor__message";
+    message.textContent = editor.error;
+    body.append(message);
+  } else {
+    const editorContainer = document.createElement("div");
+    editorContainer.id = "wm-file-editor-ace";
+    editorContainer.className = "wm-file-editor__editor";
+    body.append(editorContainer);
+  }
+
+  const footer = document.createElement("div");
+  footer.className = "wm-file-editor__footer";
+  const status = document.createElement("div");
+  status.id = "wm-file-editor-status";
+  status.className = "wm-file-editor__status";
+  status.hidden = true;
+  footer.append(status);
+
+  const actions = document.createElement("div");
+  actions.className = "wm-file-editor__actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.id = "wm-file-editor-cancel";
+  cancelButton.type = "button";
+  cancelButton.className = "wm-button secondary";
+  cancelButton.textContent = editor.error ? "Close" : "Cancel";
+  cancelButton.addEventListener("click", () => {
+    requestFileEditorClose();
+  });
+  actions.append(cancelButton);
+
+  if (editor.error && editor.path) {
+    const retryButton = document.createElement("button");
+    retryButton.type = "button";
+    retryButton.className = "wm-button";
+    retryButton.textContent = "Retry";
+    retryButton.addEventListener("click", () => {
+      void openFileEditor(editor.path, editor.displayPath, editor.name);
+    });
+    actions.append(retryButton);
+  } else if (!editor.loading) {
+    const saveButton = document.createElement("button");
+    saveButton.id = "wm-file-editor-save";
+    saveButton.type = "button";
+    saveButton.className = "wm-button";
+    saveButton.textContent = "Save";
+    saveButton.disabled = true;
+    saveButton.addEventListener("click", () => {
+      void saveFileEditor();
+    });
+    actions.append(saveButton);
+  }
+
+  footer.append(actions);
+  dialog.append(footer);
+
+  appRoot.append(overlay);
+
+  updateFileEditorControls();
+
+  if (!editor.loading && !editor.error) {
+    requestAnimationFrame(() => {
+      ensureAceEditorMounted();
+    });
+  } else {
+    updateFileEditorControls();
   }
 };
 
@@ -691,11 +1199,20 @@ const isSessionActive = (session) => ACTIVE_SESSION_STATUSES.has(session?.status
 const getActiveSessions = () => state.sessions.filter((session) => isSessionActive(session));
 
 const LIVE_ROUTE_PREFIX = "/live";
-const DOCS_ROUTE = "/docs";
+const FILES_ROUTE = "/files";
+const SETTINGS_ROUTE = "/settings";
 
 const getRouteFromPath = (pathname) => {
-  if (pathname === DOCS_ROUTE || pathname.startsWith(`${DOCS_ROUTE}/`)) {
-    return "docs";
+  if (
+    pathname === FILES_ROUTE ||
+    pathname.startsWith(`${FILES_ROUTE}/`) ||
+    pathname === "/docs" ||
+    pathname.startsWith("/docs/")
+  ) {
+    return "files";
+  }
+  if (pathname === SETTINGS_ROUTE) {
+    return "settings";
   }
   if (pathname === LIVE_ROUTE_PREFIX || pathname.startsWith(`${LIVE_ROUTE_PREFIX}/`)) {
     return "live";
@@ -719,6 +1236,11 @@ let currentTheme = "dark";
 let tabsVisible = true;
 let lastLoggedSessionId = null;
 
+if (currentRoute === "files" && window.location.pathname.startsWith("/docs")) {
+  const newPath = window.location.pathname.replace("/docs", "/files");
+  window.history.replaceState({ route: "files" }, "", newPath);
+}
+
 const initialRouteSessionId = getSessionIdFromPath(window.location.pathname);
 if (initialRouteSessionId) {
   state.activeSessionId = initialRouteSessionId;
@@ -737,8 +1259,13 @@ const setActiveSession = (sessionId, options = {}) => {
       return false;
     }
 
+    const sessionChanged = previousSessionId !== sessionId;
+
     state.activeSessionId = sessionId;
     state.lastActiveSessionId = sessionId;
+    if (sessionChanged) {
+      state.autoScrollEnabled.set(sessionId, true);
+    }
 
     if (updateHistory && currentRoute === "live") {
       const targetPath = `${LIVE_ROUTE_PREFIX}/${sessionId}`;
@@ -918,6 +1445,7 @@ const menuPanel = document.querySelector(".wm-menu-panel");
 const menuTabsContainer = document.getElementById("menu-tabs");
 const pullRefreshIndicator = document.getElementById("pull-refresh");
 const pullRefreshLabel = pullRefreshIndicator?.querySelector(".label");
+const sessionNameInput = document.getElementById("session-name");
 const directoryInput = document.getElementById("working-directory");
 const directorySuggestions = document.getElementById("directory-suggestions");
 const browseDirectoryButton = document.getElementById("browse-directory");
@@ -1663,14 +2191,22 @@ const openDialog = () => {
     state.lastWorkingDirectory ||
     state.config.defaultDirectory ||
     "";
+  if (sessionNameInput) {
+    sessionNameInput.value = "";
+  }
   if (directoryInput) {
     directoryInput.value = fallbackDirectory;
     scheduleDirectorySuggestions(fallbackDirectory);
   }
   if (typeof dialog.showModal === "function") {
     dialog.showModal();
-    directoryInput?.focus();
-    directoryInput?.select();
+    if (sessionNameInput) {
+      sessionNameInput.focus();
+      sessionNameInput.select();
+    } else {
+      directoryInput?.focus();
+      directoryInput?.select();
+    }
   } else {
     // Fallback: use prompt if dialog unsupported.
     const agent = window.prompt(
@@ -1679,7 +2215,8 @@ const openDialog = () => {
     );
     if (agent) {
       const directory = window.prompt("Working directory:", fallbackDirectory) ?? fallbackDirectory;
-      launchSession(agent, directory);
+      const sessionName = window.prompt("Session name (optional):", "") ?? "";
+      launchSession(agent, directory, sessionName);
     }
   }
 };
@@ -1687,6 +2224,9 @@ const openDialog = () => {
 const closeDialog = () => {
   if (dialog.open) {
     dialog.close();
+  }
+  if (sessionNameInput) {
+    sessionNameInput.value = "";
   }
 };
 
@@ -1712,13 +2252,17 @@ const handleSessionStart = async (session) => {
   render();
 };
 
-const launchSession = async (agentId, workingDirectory) => {
+const launchSession = async (agentId, workingDirectory, name) => {
   if (!agentId) {
     window.alert("Select an agent before launching a session.");
     return;
   }
 
   const payload = { agent: agentId };
+  const trimmedName = typeof name === "string" ? name.trim() : "";
+  if (trimmedName.length > 0) {
+    payload.name = trimmedName.slice(0, 120);
+  }
   if (typeof workingDirectory === "string" && workingDirectory.trim().length > 0) {
     payload.directory = workingDirectory.trim();
   }
@@ -2384,24 +2928,26 @@ const renderHome = () => {
 
   const thead = document.createElement("thead");
   thead.innerHTML =
-    "<tr><th>Agent</th><th>Status</th><th>Port</th><th>PID</th><th>Started</th><th>Directory</th><th></th></tr>";
+    "<tr><th>Name</th><th>Agent</th><th>Status</th><th>Port</th><th>PID</th><th>Started</th><th>Directory</th><th></th></tr>";
   table.append(thead);
 
   const tbody = document.createElement("tbody");
   if (state.sessions.length === 0) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 7;
+    cell.colSpan = 8;
     cell.textContent = "No active sessions";
     row.append(cell);
     tbody.append(row);
   } else {
     state.sessions.forEach((session) => {
       const row = document.createElement("tr");
+      const displayName = getSessionDisplayName(session);
       row.innerHTML = `
-        <td>${session.agent}</td>
-        <td>${session.status}</td>
-        <td>${session.port}</td>
+        <td>${escapeHtml(displayName)}</td>
+        <td>${escapeHtml(session.agent)}</td>
+        <td>${escapeHtml(session.status)}</td>
+        <td>${escapeHtml(session.port)}</td>
         <td>${session.pid ?? "-"}</td>
         <td>${new Date(session.startedAt).toLocaleTimeString()}</td>
         <td class="directory-cell"></td>
@@ -2448,7 +2994,8 @@ const renderHome = () => {
       const header = document.createElement("header");
       header.className = "session-card-header";
       const title = document.createElement("h3");
-      title.textContent = session.agent;
+      const displayName = getSessionDisplayName(session);
+      title.textContent = displayName;
       const status = document.createElement("span");
       status.className = `session-status ${session.status}`;
       status.textContent = session.status;
@@ -2470,6 +3017,7 @@ const renderHome = () => {
         details.append(item);
       };
 
+      addDetail("Agent", session.agent);
       addDetail("Port", session.port ?? "-");
       addDetail("PID", session.pid ?? "-");
       addDetail("Started", new Date(session.startedAt).toLocaleTimeString());
@@ -2495,46 +3043,48 @@ const renderHome = () => {
   return wrapper;
 };
 
-const renderDocs = () => {
-  const docs = state.docs;
-  if (!docs.initialized) {
-    docs.initialized = true;
-    void loadDocsTree();
+const renderFiles = () => {
+  const files = state.files;
+  if (!files.initialized) {
+    files.initialized = true;
+    void loadFilesTree();
   }
 
   const wrapper = document.createElement("div");
-  wrapper.className = "wm-docs";
+  wrapper.className = "wm-files";
 
   const layout = document.createElement("div");
-  layout.className = "wm-docs-layout";
+  layout.className = "wm-files-layout";
 
   const browserCard = document.createElement("section");
-  browserCard.className = "wm-card wm-docs-browser";
+  browserCard.className = "wm-card wm-files-browser";
 
   const browserHeader = document.createElement("div");
-  browserHeader.className = "wm-docs-browser__header";
+  browserHeader.className = "wm-files-browser__header";
 
-  const headerInfo = document.createElement("div");
-  headerInfo.className = "wm-docs-browser__info";
+  const headerButton = document.createElement("button");
+  headerButton.type = "button";
+  headerButton.className = "wm-files-browser__info";
+  headerButton.setAttribute("aria-expanded", "true");
   const headerTitle = document.createElement("h2");
-  headerTitle.textContent = "Docs";
+  headerTitle.textContent = "Files";
   const pathLabel = document.createElement("span");
-  pathLabel.className = "wm-docs-browser__path";
-  pathLabel.textContent = docs.displayPath ?? "~";
-  headerInfo.append(headerTitle, pathLabel);
+  pathLabel.className = "wm-files-browser__path";
+  pathLabel.textContent = files.displayPath ?? "~";
+  headerButton.append(headerTitle, pathLabel);
 
   const controls = document.createElement("div");
-  controls.className = "wm-docs-browser__controls";
+  controls.className = "wm-files-browser__controls";
 
   const upButton = document.createElement("button");
   upButton.type = "button";
   upButton.className = "wm-button secondary";
   upButton.textContent = "Up";
-  upButton.disabled = docs.loading || !docs.parent?.path;
+  upButton.disabled = files.loading || !files.parent?.path;
   upButton.addEventListener("click", () => {
-    if (docs.loading) return;
-    if (docs.parent?.path) {
-      void loadDocsTree(docs.parent.path);
+    if (files.loading) return;
+    if (files.parent?.path) {
+      void loadFilesTree(files.parent.path);
     }
   });
 
@@ -2542,37 +3092,65 @@ const renderDocs = () => {
   refreshButton.type = "button";
   refreshButton.className = "wm-button secondary";
   refreshButton.textContent = "Refresh";
-  refreshButton.disabled = docs.loading;
+  refreshButton.disabled = files.loading;
   refreshButton.addEventListener("click", () => {
-    if (docs.loading) return;
-    void loadDocsTree(docs.currentPath);
+    if (files.loading) return;
+    void loadFilesTree(files.currentPath);
   });
 
   controls.append(upButton, refreshButton);
-  browserHeader.append(headerInfo, controls);
+  browserHeader.append(headerButton, controls);
 
   const list = document.createElement("ul");
-  list.className = "wm-docs-browser__list";
+  list.className = "wm-files-browser__list";
+  list.id = "files-browser-list";
+  headerButton.setAttribute("aria-controls", list.id);
 
-  if (docs.error) {
+  const collapsed = Boolean(files.browserCollapsed);
+  const setBrowserCollapsed = (next) => {
+    files.browserCollapsed = next;
+    if (next) {
+      browserCard.dataset.collapsed = "true";
+      list.hidden = true;
+      list.setAttribute("aria-hidden", "true");
+      headerButton.setAttribute("aria-expanded", "false");
+    } else {
+      delete browserCard.dataset.collapsed;
+      list.hidden = false;
+      list.removeAttribute("aria-hidden");
+      headerButton.setAttribute("aria-expanded", "true");
+    }
+  };
+  setBrowserCollapsed(collapsed);
+  headerButton.addEventListener("click", () => {
+    setBrowserCollapsed(!files.browserCollapsed);
+  });
+  headerButton.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " " || event.key === "Space") {
+      event.preventDefault();
+      setBrowserCollapsed(!files.browserCollapsed);
+    }
+  });
+
+  if (files.error) {
     const item = document.createElement("li");
-    item.className = "wm-docs-browser__status";
-    item.textContent = docs.error;
+    item.className = "wm-files-browser__status";
+    item.textContent = files.error;
     list.append(item);
   } else {
-    const entries = Array.isArray(docs.entries) ? docs.entries : [];
-    if (entries.length === 0 && !docs.loading) {
+    const entries = Array.isArray(files.entries) ? files.entries : [];
+    if (entries.length === 0 && !files.loading) {
       const empty = document.createElement("li");
-      empty.className = "wm-docs-browser__status";
+      empty.className = "wm-files-browser__status";
       empty.textContent = "Directory is empty.";
       list.append(empty);
     }
 
     entries.forEach((entry) => {
       const item = document.createElement("li");
-      item.className = "wm-docs-browser__item";
+      item.className = "wm-files-browser__item";
       item.dataset.type = entry.type;
-      if (entry.type === "file" && entry.path === docs.previewPath) {
+      if (entry.type === "file" && entry.path === files.previewPath) {
         item.dataset.selected = "true";
       }
 
@@ -2580,7 +3158,7 @@ const renderDocs = () => {
       button.type = "button";
 
       const name = document.createElement("span");
-      name.className = "wm-docs-browser__name";
+      name.className = "wm-files-browser__name";
       const icon = document.createElement("span");
       icon.setAttribute("aria-hidden", "true");
       icon.textContent =
@@ -2597,7 +3175,7 @@ const renderDocs = () => {
       button.append(name);
 
       const meta = document.createElement("span");
-      meta.className = "wm-docs-browser__meta";
+      meta.className = "wm-files-browser__meta";
       if (entry.type === "directory") {
         meta.textContent = "Folder";
       } else if (entry.previewable) {
@@ -2609,15 +3187,15 @@ const renderDocs = () => {
 
       if (entry.type === "directory") {
         button.addEventListener("click", () => {
-          if (docs.loading) return;
-          void loadDocsTree(entry.path);
+          if (files.loading) return;
+          void loadFilesTree(entry.path);
         });
       } else if (entry.previewable) {
         button.addEventListener("click", () => {
-          if (docs.previewPath !== entry.path || docs.previewError) {
-            void loadDocsFile(entry.path);
-          } else if (!docs.previewLoading) {
-            void loadDocsFile(entry.path);
+          if (files.previewPath !== entry.path || files.previewError) {
+            void loadFilesPreview(entry.path);
+          } else if (!files.previewLoading) {
+            void loadFilesPreview(entry.path);
           }
         });
       } else {
@@ -2629,9 +3207,9 @@ const renderDocs = () => {
       list.append(item);
     });
 
-    if (docs.loading) {
+    if (files.loading) {
       const loadingItem = document.createElement("li");
-      loadingItem.className = "wm-docs-browser__status";
+      loadingItem.className = "wm-files-browser__status";
       loadingItem.textContent = "Loading…";
       list.append(loadingItem);
     }
@@ -2640,47 +3218,72 @@ const renderDocs = () => {
   browserCard.append(browserHeader, list);
 
   const previewCard = document.createElement("section");
-  previewCard.className = "wm-card wm-docs-preview";
+  previewCard.className = "wm-card wm-files-preview";
 
   const previewHeader = document.createElement("div");
-  previewHeader.className = "wm-docs-preview__header";
+  previewHeader.className = "wm-files-preview__header";
   const previewTitle = document.createElement("h2");
-  previewTitle.className = "wm-docs-preview__title";
-  previewTitle.textContent = docs.previewName ?? "Preview";
+  previewTitle.className = "wm-files-preview__title";
+  previewTitle.textContent = files.previewName ?? "Preview";
   const previewPath = document.createElement("p");
-  previewPath.className = "wm-docs-preview__path";
-  if (docs.previewDisplayPath) {
-    previewPath.textContent = docs.previewDisplayPath;
-  } else if (docs.previewName) {
-    previewPath.textContent = docs.previewName;
+  previewPath.className = "wm-files-preview__path";
+  if (files.previewDisplayPath) {
+    previewPath.textContent = files.previewDisplayPath;
+  } else if (files.previewName) {
+    previewPath.textContent = files.previewName;
   } else {
     previewPath.textContent = "~";
   }
-  if (docs.previewLabel) {
+  if (files.previewLabel) {
     const formatBadge = document.createElement("span");
-    formatBadge.className = "wm-docs-preview__badge";
-    formatBadge.textContent = docs.previewLabel;
+    formatBadge.className = "wm-files-preview__badge";
+    formatBadge.textContent = files.previewLabel;
     previewPath.append(document.createTextNode(" "), formatBadge);
   }
-  previewHeader.append(previewTitle, previewPath);
+  const previewInfo = document.createElement("div");
+  previewInfo.className = "wm-files-preview__info";
+  previewInfo.append(previewTitle, previewPath);
+  previewHeader.append(previewInfo);
+
+  const previewActions = document.createElement("div");
+  previewActions.className = "wm-files-preview__actions";
+  const canEdit =
+    Boolean(files.previewPath) &&
+    !files.previewLoading &&
+    !files.previewError &&
+    files.previewContent !== null &&
+    typeof files.previewPath === "string";
+  if (canEdit) {
+    const editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.className = "wm-button secondary";
+    editButton.textContent = "Edit File";
+    editButton.addEventListener("click", () => {
+      void openFileEditor(files.previewPath, files.previewDisplayPath ?? null, files.previewName ?? null);
+    });
+    previewActions.append(editButton);
+  }
+  if (previewActions.childElementCount > 0) {
+    previewHeader.append(previewActions);
+  }
 
   const previewBody = document.createElement("div");
-  previewBody.className = "wm-docs-preview__body";
+  previewBody.className = "wm-files-preview__body";
 
-  if (docs.previewLoading) {
+  if (files.previewLoading) {
     previewBody.dataset.loading = "true";
     previewBody.textContent = "Loading preview…";
-  } else if (docs.previewError) {
+  } else if (files.previewError) {
     const error = document.createElement("div");
-    error.className = "wm-docs-browser__status";
-    error.textContent = docs.previewError;
+    error.className = "wm-files-browser__status";
+    error.textContent = files.previewError;
     previewBody.append(error);
-  } else if (docs.previewContent !== null) {
-    if (docs.previewFormat === "markdown") {
-      if (docs.previewContent.trim().length > 0) {
+  } else if (files.previewContent !== null) {
+    if (files.previewFormat === "markdown") {
+      if (files.previewContent.trim().length > 0) {
         const content = document.createElement("div");
-        content.className = "wm-docs-preview-content";
-        content.innerHTML = renderMarkdownToHtml(docs.previewContent);
+        content.className = "wm-files-preview-content";
+        content.innerHTML = renderMarkdownToHtml(files.previewContent);
         previewBody.append(content);
       } else {
         previewBody.dataset.empty = "true";
@@ -2688,8 +3291,8 @@ const renderDocs = () => {
       }
     } else {
       const content = document.createElement("div");
-      content.className = "wm-docs-preview-code";
-      content.innerHTML = renderCodeToHtml(docs.previewContent, docs.previewLanguage ?? "plaintext");
+      content.className = "wm-files-preview-code";
+      content.innerHTML = renderCodeToHtml(files.previewContent, files.previewLanguage ?? "plaintext");
       previewBody.append(content);
     }
   } else {
@@ -2701,6 +3304,54 @@ const renderDocs = () => {
 
   layout.append(browserCard, previewCard);
   wrapper.append(layout);
+  return wrapper;
+};
+
+const renderSettings = () => {
+  const wrapper = document.createElement("div");
+  wrapper.className = "wm-settings";
+
+  const pageTitle = document.createElement("h1");
+  pageTitle.textContent = "Settings";
+  wrapper.append(pageTitle);
+
+  const sections = [
+    {
+      title: "Wingman Settings",
+      description: "Adjust global preferences for the Wingman workspace.",
+    },
+    {
+      title: "Agent Settings",
+      description: "Manage default behaviors for the connected agents.",
+    },
+    {
+      title: "Orchestrator Settings",
+      description: "Tune orchestrator automation and preset options.",
+    },
+    {
+      title: "User Settings",
+      description: "Update your personal profile and interface choices.",
+    },
+    {
+      title: "Team Settings",
+      description: "Coordinate shared settings and access for your team.",
+    },
+  ];
+
+  sections.forEach((section) => {
+    const card = document.createElement("section");
+    card.className = "wm-card";
+
+    const heading = document.createElement("h2");
+    heading.textContent = section.title;
+
+    const description = document.createElement("p");
+    description.textContent = section.description;
+
+    card.append(heading, description);
+    wrapper.append(card);
+  });
+
   return wrapper;
 };
 
@@ -2717,10 +3368,13 @@ const renderSessionTabs = (options = {}) => {
       tab.classList.add("active");
     }
 
+    const displayName = getSessionDisplayName(session);
+    const safeLabel = escapeHtml(displayName);
     tab.innerHTML = `
-      <span>${session.agent} :${session.port}</span>
+      <span>${safeLabel}</span>
       <span class="close" title="Stop session">×</span>
     `;
+    tab.title = `${displayName} - ${session.agent}:${session.port}`;
 
     tab.addEventListener("click", () => {
       if (state.activeSessionId === session.id && currentRoute === "live") {
@@ -2775,10 +3429,13 @@ const renderTabs = (options = {}) => {
       tab.classList.add("active");
     }
 
+    const displayName = getSessionDisplayName(session);
+    const safeLabel = escapeHtml(displayName);
     tab.innerHTML = `
-      <span>${session.agent} :${session.port}</span>
+      <span>${safeLabel}</span>
       <span class="close" title="Stop session">×</span>
     `;
+    tab.title = `${displayName} - ${session.agent}:${session.port}`;
 
     tab.addEventListener("click", () => {
       if (state.activeSessionId === session.id && currentRoute === "live") {
@@ -3086,6 +3743,7 @@ const updateLivePanelsForSession = (sessionId) => {
     conversationContainer.append(renderConversation(sessionId));
     scrollRegion.append(conversationContainer);
     attachConversationScrollHandler(sessionId, conversationContainer);
+    state.autoScrollEnabled.set(sessionId, true);
     // Ensure auto-scroll preference is initialized
     ensureAutoScrollPreference(sessionId);
     // Check current auto-scroll state
@@ -3182,12 +3840,15 @@ const render = () => {
   let view;
   if (currentRoute === "live") {
     view = renderLive();
-  } else if (currentRoute === "docs") {
-    view = renderDocs();
+  } else if (currentRoute === "files") {
+    view = renderFiles();
+  } else if (currentRoute === "settings") {
+    view = renderSettings();
   } else {
     view = renderHome();
   }
   appRoot.append(view);
+  renderFileEditorOverlay();
   appRoot.dataset.route = currentRoute;
   setActiveNav();
   closeMenu();
@@ -3279,15 +3940,21 @@ navLinks.forEach((link) => {
       } else {
         setActiveSession(null, { updateHistory: true });
       }
-    } else if (targetRoute === "docs") {
-      currentRoute = "docs";
+    } else if (targetRoute === "files") {
+      currentRoute = "files";
       lastLoggedSessionId = null;
-      if (window.location.pathname !== DOCS_ROUTE) {
-        window.history.pushState({ route: "docs" }, "", DOCS_ROUTE);
+      if (window.location.pathname !== FILES_ROUTE) {
+        window.history.pushState({ route: "files" }, "", FILES_ROUTE);
       }
-      if (!state.docs.initialized) {
-        state.docs.initialized = true;
-        void loadDocsTree();
+      if (!state.files.initialized) {
+        state.files.initialized = true;
+        void loadFilesTree();
+      }
+    } else if (targetRoute === "settings") {
+      currentRoute = "settings";
+      lastLoggedSessionId = null;
+      if (window.location.pathname !== SETTINGS_ROUTE) {
+        window.history.pushState({ route: "settings" }, "", SETTINGS_ROUTE);
       }
     } else {
       currentRoute = "home";
@@ -3381,18 +4048,29 @@ window.addEventListener("popstate", () => {
       window.history.replaceState({ route: "home" }, "", "/home");
     }
   }
-  if (currentRoute === "docs") {
-    if (!state.docs.initialized) {
-      state.docs.initialized = true;
-      void loadDocsTree();
-    } else if (!state.docs.loading && !state.docs.currentPath) {
-      void loadDocsTree();
+  if (currentRoute === "files") {
+    if (window.location.pathname.startsWith("/docs")) {
+      const newPath = window.location.pathname.replace("/docs", "/files");
+      window.history.replaceState({ route: "files" }, "", newPath);
+    }
+    if (!state.files.initialized) {
+      state.files.initialized = true;
+      void loadFilesTree();
+    } else if (!state.files.loading && !state.files.currentPath) {
+      void loadFilesTree();
     }
   }
   render();
 });
 
 window.addEventListener("focus", handleWindowFocus);
+
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.fileEditor.open) {
+    event.preventDefault();
+    requestFileEditorClose();
+  }
+});
 
 // Handle page visibility changes (pause polling when page is hidden)
 document.addEventListener("visibilitychange", () => {
@@ -3408,8 +4086,9 @@ document.addEventListener("visibilitychange", () => {
 const handleSessionLaunchRequest = () => {
   const agentId = agentSelect?.value ?? "";
   const workingDirectory = directoryInput?.value ?? "";
+  const sessionName = sessionNameInput?.value ?? "";
   closeDialog();
-  launchSession(agentId, workingDirectory);
+  launchSession(agentId, workingDirectory, sessionName);
 };
 
 orchestratorForm?.addEventListener("submit", handleOrchestratorFormSubmit);

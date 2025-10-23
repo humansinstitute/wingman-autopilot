@@ -1,4 +1,4 @@
-import { AgentDefinition, AgentType, WingmanConfig } from "../config";
+import type { AgentDefinition, AgentType, WingmanConfig } from "../config";
 
 const MAX_LOG_LINES = 500;
 
@@ -8,6 +8,7 @@ export interface SessionSnapshot {
   id: string;
   agent: AgentType;
   port: number;
+  name: string;
   status: SessionStatus;
   startedAt: string;
   pid?: number;
@@ -26,6 +27,7 @@ interface AgentSession {
   id: string;
   agent: AgentType;
   port: number;
+  name: string;
   status: SessionStatus;
   startedAt: Date;
   process: Bun.Subprocess | null;
@@ -64,7 +66,7 @@ export class ProcessManager {
     return this.sessions.get(id)?.logs.slice();
   }
 
-  async createSession(agent: AgentType, workingDirectory?: string): Promise<SessionSnapshot> {
+  async createSession(agent: AgentType, workingDirectory?: string, name?: string): Promise<SessionSnapshot> {
     const definition = this.config.agents[agent];
     if (!definition) {
       throw new Error(`Unknown agent: ${agent}`);
@@ -72,6 +74,7 @@ export class ProcessManager {
 
     const port = this.allocatePort();
     const id = crypto.randomUUID();
+    const sessionName = this.normaliseSessionName(name, agent, port);
     const command = definition.command({ port, agent, config: this.config });
     const sessionWorkingDirectory =
       typeof workingDirectory === "string" && workingDirectory.length > 0
@@ -82,6 +85,7 @@ export class ProcessManager {
       id,
       agent,
       port,
+      name: sessionName,
       status: "starting",
       startedAt: new Date(),
       process: null,
@@ -157,6 +161,7 @@ export class ProcessManager {
       SESSION_AGENT: session.agent,
       SESSION_PORT: session.port.toString(),
       SESSION_DIRECTORY: session.workingDirectory,
+      SESSION_NAME: session.name,
       ...(session.definition.env ?? {}),
     };
 
@@ -270,6 +275,7 @@ export class ProcessManager {
       id: session.id,
       agent: session.agent,
       port: session.port,
+      name: session.name,
       status: session.status,
       startedAt: session.startedAt.toISOString(),
       pid: session.process?.pid,
@@ -278,6 +284,14 @@ export class ProcessManager {
       exitCode: session.exitCode,
       logs: session.logs.slice(-50),
     };
+  }
+
+  private normaliseSessionName(name: string | undefined, agent: AgentType, port: number): string {
+    const trimmed = typeof name === "string" ? name.trim() : "";
+    if (trimmed.length > 0) {
+      return trimmed;
+    }
+    return `${agent} :${port}`;
   }
 
   private emit(event: SessionEvent) {
