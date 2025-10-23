@@ -11,6 +11,10 @@ if (!ace) {
 const THEME_STORAGE_KEY = "wingman-theme";
 const TABS_VISIBILITY_STORAGE_KEY = "wingman-tabs-visible";
 const FILES_SHOW_HIDDEN_STORAGE_KEY = "wingman-files-show-hidden";
+const SESSION_POLL_INTERVAL_MS = 2000;
+
+let sessionPollIntervalId = null;
+let sessionPollInFlight = false;
 
 const state = {
   config: null,
@@ -2483,6 +2487,30 @@ const pollSessions = async () => {
   }
 };
 
+const pollSessionsLoop = async () => {
+  if (sessionPollInFlight) {
+    return;
+  }
+  sessionPollInFlight = true;
+  try {
+    await pollSessions();
+  } catch (error) {
+    console.error("Session polling loop failed", error);
+  } finally {
+    sessionPollInFlight = false;
+  }
+};
+
+const startSessionPolling = () => {
+  if (sessionPollIntervalId !== null) {
+    return;
+  }
+  sessionPollIntervalId = window.setInterval(() => {
+    void pollSessionsLoop();
+  }, SESSION_POLL_INTERVAL_MS);
+  void pollSessionsLoop();
+};
+
 const updateConversationDOM = (sessionId) => {
   let container = state.conversationContainers.get(sessionId);
 
@@ -4766,4 +4794,5 @@ dialog.addEventListener("cancel", (event) => {
   await refreshOrchestratorPresets();
   await fetchSessions();
   render();
+  startSessionPolling();
 })();
