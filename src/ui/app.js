@@ -10,6 +10,7 @@ if (!ace) {
 
 const THEME_STORAGE_KEY = "wingman-theme";
 const TABS_VISIBILITY_STORAGE_KEY = "wingman-tabs-visible";
+const FILES_SHOW_HIDDEN_STORAGE_KEY = "wingman-files-show-hidden";
 
 const state = {
   config: null,
@@ -50,6 +51,7 @@ const state = {
     previewFormat: null,
     previewLanguage: null,
     previewLabel: null,
+    showHidden: false,
     browserCollapsed: false,
     worktreeModal: {
       open: false,
@@ -77,6 +79,15 @@ const state = {
     requestId: 0,
   },
 };
+
+try {
+  const storedShowHidden = localStorage.getItem(FILES_SHOW_HIDDEN_STORAGE_KEY);
+  if (storedShowHidden === "true" || storedShowHidden === "false") {
+    state.files.showHidden = storedShowHidden === "true";
+  }
+} catch {
+  // Ignore storage errors (e.g., during private browsing)
+}
 
 const textDecoder = typeof TextDecoder !== "undefined" ? new TextDecoder("utf-8", { fatal: false }) : null;
 const textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
@@ -631,6 +642,9 @@ const loadFilesTree = async (path) => {
     const url = new URL("/api/docs/tree", window.location.origin);
     if (targetPath) {
       url.searchParams.set("path", targetPath);
+    }
+    if (files.showHidden) {
+      url.searchParams.set("showHidden", "1");
     }
     const response = await fetch(url.toString(), { method: "GET" });
     if (!response.ok) {
@@ -3438,6 +3452,26 @@ const renderFiles = () => {
     void loadFilesTree(files.currentPath);
   });
 
+  const toggleHiddenButton = document.createElement("button");
+  toggleHiddenButton.type = "button";
+  toggleHiddenButton.className = "wm-button secondary";
+  toggleHiddenButton.textContent = files.showHidden ? "Hide Hidden" : "Show Hidden";
+  toggleHiddenButton.disabled = files.loading;
+  toggleHiddenButton.setAttribute("aria-pressed", files.showHidden ? "true" : "false");
+  toggleHiddenButton.addEventListener("click", () => {
+    if (files.loading) return;
+    files.showHidden = !files.showHidden;
+    try {
+      localStorage.setItem(FILES_SHOW_HIDDEN_STORAGE_KEY, files.showHidden ? "true" : "false");
+    } catch {
+      // Ignore storage failures
+    }
+    void loadFilesTree(files.currentPath);
+    if (currentRoute === "files") {
+      render();
+    }
+  });
+
   const newFolderButton = document.createElement("button");
   newFolderButton.type = "button";
   newFolderButton.className = "wm-button secondary";
@@ -3458,7 +3492,7 @@ const renderFiles = () => {
     void promptCreateFile();
   });
 
-  controls.append(upButton, refreshButton, newFolderButton, newFileButton);
+  controls.append(upButton, refreshButton, toggleHiddenButton, newFolderButton, newFileButton);
 
   if (canCreateWorktree()) {
     const worktreeButton = document.createElement("button");

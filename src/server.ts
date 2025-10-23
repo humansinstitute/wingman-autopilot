@@ -726,7 +726,14 @@ const TEXT_PREVIEW_TYPES = new Map<string, DocsPreviewType>([
   [".html", { format: "code", language: "html", label: "HTML" }],
 ]);
 
-const listDocsDirectory = async (input: string | null | undefined) => {
+type ListDocsDirectoryOptions = {
+  includeHidden?: boolean;
+};
+
+const listDocsDirectory = async (
+  input: string | null | undefined,
+  options: ListDocsDirectoryOptions = {},
+) => {
   const directory = resolveDocsPath(input);
   let stats: Awaited<ReturnType<typeof stat>>;
   try {
@@ -738,6 +745,8 @@ const listDocsDirectory = async (input: string | null | undefined) => {
   if (!stats.isDirectory()) {
     throw new Error("Requested path is not a directory");
   }
+
+  const includeHidden = Boolean(options.includeHidden);
 
   let entries: Awaited<ReturnType<typeof readdir>>;
   try {
@@ -770,7 +779,7 @@ const listDocsDirectory = async (input: string | null | undefined) => {
       continue;
     }
 
-    if (entry.name.startsWith(".")) {
+    if (!includeHidden && entry.name.startsWith(".")) {
       continue;
     }
 
@@ -1765,7 +1774,12 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
   if (pathname === "/api/docs/tree" && method === "GET") {
     try {
       const pathParam = url.searchParams.get("path");
-      const data = await listDocsDirectory(pathParam);
+      const showHiddenParam = url.searchParams.get("showHidden") ?? "";
+      const includeHidden = (() => {
+        const value = showHiddenParam.trim().toLowerCase();
+        return value === "1" || value === "true" || value === "yes" || value === "on";
+      })();
+      const data = await listDocsDirectory(pathParam, { includeHidden });
       return Response.json(data);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
