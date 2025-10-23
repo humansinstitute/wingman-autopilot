@@ -39,6 +39,7 @@ const state = {
     displayPath: "~",
     parent: null,
     entries: [],
+    git: null,
     previewPath: null,
     previewRelativePath: null,
     previewDisplayPath: "",
@@ -50,6 +51,13 @@ const state = {
     previewLanguage: null,
     previewLabel: null,
     browserCollapsed: false,
+    worktreeModal: {
+      open: false,
+      submitting: false,
+      error: null,
+      branch: "",
+      startPoint: "",
+    },
   },
   fileEditor: {
     open: false,
@@ -644,6 +652,7 @@ const loadFilesTree = async (path) => {
     files.displayPath = data?.displayPath ?? (files.relativePath ? `~/${files.relativePath}` : "~");
     files.parent = data?.parent ?? null;
     files.entries = Array.isArray(data?.entries) ? data.entries : [];
+    files.git = data?.git ?? null;
     files.loading = false;
     files.error = null;
 
@@ -657,6 +666,7 @@ const loadFilesTree = async (path) => {
     files.loading = false;
     files.error = error instanceof Error ? error.message : String(error);
     files.entries = [];
+    files.git = null;
     if (typeof path === "string" && path.length > 0) {
       files.currentPath = path;
     }
@@ -749,6 +759,95 @@ const createFilesTextFile = async (parentPath, name, content = "") => {
     throw new Error(message);
   }
   return response.json();
+};
+
+const getWorktreeGitInfo = () => {
+  const git = state.files.git;
+  if (!git || typeof git !== "object") return null;
+  return git;
+};
+
+const canCreateWorktree = () => {
+  const git = getWorktreeGitInfo();
+  if (!git) return false;
+  return Boolean(git.isRepoRoot && git.hasGitMetadata);
+};
+
+const resetWorktreeModalState = (defaults = {}) => {
+  const modal = state.files.worktreeModal;
+  modal.branch = typeof defaults.branch === "string" ? defaults.branch : "";
+  modal.startPoint = typeof defaults.startPoint === "string" ? defaults.startPoint : "";
+  modal.error = null;
+  modal.submitting = false;
+};
+
+const openWorktreeModal = () => {
+  if (!canCreateWorktree()) return;
+  const git = getWorktreeGitInfo();
+  const modal = state.files.worktreeModal;
+  resetWorktreeModalState({
+    branch: "",
+    startPoint: git?.currentBranch && git.currentBranch !== "HEAD" ? git.currentBranch : git?.headRef ?? "",
+  });
+  modal.open = true;
+  renderWorktreeModal();
+};
+
+const closeWorktreeModal = () => {
+  const modal = state.files.worktreeModal;
+  if (!modal.open) return;
+  modal.open = false;
+  resetWorktreeModalState();
+  renderWorktreeModal();
+};
+
+const requestCreateWorktree = async () => {
+  const files = state.files;
+  const git = getWorktreeGitInfo();
+  if (!git) return;
+  const modal = files.worktreeModal;
+  const branch = modal.branch.trim();
+  if (!branch) {
+    modal.error = "Branch name is required";
+    renderWorktreeModal();
+    return;
+  }
+
+  modal.submitting = true;
+  modal.error = null;
+  renderWorktreeModal();
+
+  try {
+    const response = await fetch("/api/docs/worktrees", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        directory: git.repoRoot ?? files.currentPath,
+        branch,
+        startPoint: modal.startPoint.trim() || null,
+      }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      const message = payload?.error ?? response.statusText ?? "Failed to create worktree";
+      throw new Error(message);
+    }
+    const payload = await response.json().catch(() => ({}));
+    if (payload?.repository) {
+      files.git = payload.repository;
+    } else {
+      // Refresh to pick up latest git info when response lacks repository payload
+      void loadFilesTree(files.currentPath);
+    }
+    modal.open = false;
+    resetWorktreeModalState();
+    renderWorktreeModal();
+    await loadFilesTree(files.currentPath);
+  } catch (error) {
+    modal.submitting = false;
+    modal.error = error instanceof Error ? error.message : "Failed to create worktree";
+    renderWorktreeModal();
+  }
 };
 
 const destroyAceEditor = () => {
@@ -1157,6 +1256,171 @@ const renderFileEditorOverlay = () => {
     });
   } else {
     updateFileEditorControls();
+  }
+};
+
+const renderWorktreeModal = () => {
+  const existing = document.getElementById("wm-worktree-modal");
+  if (existing) {
+    existing.remove();
+  }
+
+  const modal = state.files.worktreeModal;
+  if (!modal.open) {
+    return;
+  }
+
+  const git = getWorktreeGitInfo();
+
+  const overlay = document.createElement("div");
+  overlay.id = "wm-worktree-modal";
+  overlay.className = "wm-worktree-modal";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay && !modal.submitting) {
+      closeWorktreeModal();
+    }
+  });
+
+  const dialog = document.createElement("div");
+  dialog.className = "wm-worktree-modal__dialog";
+  overlay.append(dialog);
+
+  const header = document.createElement("div");
+  header.className = "wm-worktree-modal__header";
+  const title = document.createElement("h2");
+  title.textContent = "Create Worktree";
+  header.append(title);
+  if (git?.repoRoot) {
+    const subtitle = document.createElement("p");
+    subtitle.className = "wm-worktree-modal__subtitle";
+    subtitle.textContent = git.repoRoot;
+    header.append(subtitle);
+  }
+  dialog.append(header);
+
+  const body = document.createElement("div");
+  body.className = "wm-worktree-modal__body";
+  dialog.append(body);
+
+  const description = document.createElement("p");
+  description.className = "wm-worktree-modal__description";
+  if (git?.worktreeBase) {
+    description.textContent = `New worktrees are created under ${git.worktreeBase}/<branch>`;
+  } else {
+    description.textContent = "New worktrees are created under .worktrees/<branch> in this repository.";
+  }
+  body.append(description);
+
+  if (git?.worktreeError) {
+    const warning = document.createElement("p");
+    warning.className = "wm-worktree-modal__warning";
+    warning.textContent = git.worktreeError;
+    body.append(warning);
+  }
+
+  const form = document.createElement("form");
+  form.className = "wm-worktree-modal__form";
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (modal.submitting) return;
+    void requestCreateWorktree();
+  });
+
+  const branchGroup = document.createElement("label");
+  branchGroup.className = "wm-worktree-modal__field";
+  const branchLabel = document.createElement("span");
+  branchLabel.className = "wm-worktree-modal__label";
+  branchLabel.textContent = "Feature branch";
+  const branchInput = document.createElement("input");
+  branchInput.type = "text";
+  branchInput.required = true;
+  branchInput.placeholder = "feature/amazing-update";
+  branchInput.value = modal.branch;
+  branchInput.disabled = modal.submitting;
+  branchInput.addEventListener("input", (event) => {
+    modal.branch = event.target.value;
+  });
+  branchGroup.append(branchLabel, branchInput);
+  form.append(branchGroup);
+
+  const startGroup = document.createElement("label");
+  startGroup.className = "wm-worktree-modal__field";
+  const startLabel = document.createElement("span");
+  startLabel.className = "wm-worktree-modal__label";
+  startLabel.textContent = "Start from (optional)";
+  const startInput = document.createElement("input");
+  startInput.type = "text";
+  startInput.placeholder =
+    git?.currentBranch && git.currentBranch !== "HEAD" ? git.currentBranch : git?.headRef || "main";
+  startInput.value = modal.startPoint;
+  startInput.disabled = modal.submitting;
+  startInput.addEventListener("input", (event) => {
+    modal.startPoint = event.target.value;
+  });
+  startGroup.append(startLabel, startInput);
+  form.append(startGroup);
+
+  const existingWorktrees = Array.isArray(git?.worktrees)
+    ? git.worktrees.filter((worktree) => !worktree.primary)
+    : [];
+
+  if (existingWorktrees.length > 0) {
+    const listWrapper = document.createElement("div");
+    listWrapper.className = "wm-worktree-modal__existing";
+    const listTitle = document.createElement("h3");
+    listTitle.textContent = "Existing worktrees";
+    listWrapper.append(listTitle);
+    const list = document.createElement("ul");
+    existingWorktrees.forEach((worktree) => {
+      const item = document.createElement("li");
+      const branch = worktree.branch ? ` (${worktree.branch})` : "";
+      item.textContent = `${worktree.path}${branch}`;
+      list.append(item);
+    });
+    listWrapper.append(list);
+    form.append(listWrapper);
+  }
+
+  if (modal.error) {
+    const error = document.createElement("p");
+    error.className = "wm-worktree-modal__error";
+    error.textContent = modal.error;
+    form.append(error);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "wm-worktree-modal__actions";
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.className = "wm-button secondary";
+  cancelButton.textContent = "Cancel";
+  cancelButton.disabled = modal.submitting;
+  cancelButton.addEventListener("click", () => {
+    if (modal.submitting) return;
+    closeWorktreeModal();
+  });
+  actions.append(cancelButton);
+
+  const submitButton = document.createElement("button");
+  submitButton.type = "submit";
+  submitButton.className = "wm-button";
+  submitButton.textContent = modal.submitting ? "Creating..." : "Create Worktree";
+  submitButton.disabled = modal.submitting;
+  actions.append(submitButton);
+
+  form.append(actions);
+  body.append(form);
+
+  appRoot.append(overlay);
+
+  if (!modal.submitting) {
+    requestAnimationFrame(() => {
+      branchInput.focus();
+      branchInput.select();
+    });
   }
 };
 
@@ -3195,6 +3459,23 @@ const renderFiles = () => {
   });
 
   controls.append(upButton, refreshButton, newFolderButton, newFileButton);
+
+  if (canCreateWorktree()) {
+    const worktreeButton = document.createElement("button");
+    worktreeButton.type = "button";
+    worktreeButton.className = "wm-button";
+    worktreeButton.textContent = "New Worktree";
+    worktreeButton.disabled = files.loading || state.files.worktreeModal.submitting;
+    worktreeButton.addEventListener("click", () => {
+      if (files.loading) return;
+      openWorktreeModal();
+    });
+    if (state.files.worktreeModal.submitting) {
+      worktreeButton.dataset.loading = "true";
+    }
+    controls.append(worktreeButton);
+  }
+
   browserHeader.append(headerButton, controls);
 
   const list = document.createElement("ul");
@@ -3962,6 +4243,7 @@ const render = () => {
   }
   appRoot.append(view);
   renderFileEditorOverlay();
+  renderWorktreeModal();
   appRoot.dataset.route = currentRoute;
   setActiveNav();
   closeMenu();

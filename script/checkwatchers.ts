@@ -1,6 +1,33 @@
 #!/usr/bin/env bun
 
+import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, normalize } from "node:path";
+
 import { fileWatcherStore } from "../src/storage/file-watcher-store";
+
+const determineHomeDirectory = () => {
+  const fromEnv = Bun.env.HOME?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+  try {
+    return homedir();
+  } catch {
+    return ".";
+  }
+};
+
+const homeDirectory = (() => {
+  const candidate = determineHomeDirectory();
+  try {
+    return normalize(realpathSync(candidate));
+  } catch {
+    return normalize(candidate);
+  }
+})();
+
+const wingmenRoot = join(homeDirectory, ".wingmen");
 
 const formatJson = (value: unknown) => {
   try {
@@ -30,7 +57,7 @@ const main = () => {
   console.log(`Found ${watchers.length} file watcher${watchers.length === 1 ? "" : "s"}:\n`);
   for (const watcher of watchers) {
     console.log(`• ${watcher.name} [${watcher.id}]`);
-    console.log(`  Directory : .wingmen/${watcher.relativeDir}`);
+    console.log(`  Directory : ${normalize(join(wingmenRoot, watcher.relativeDir))}`);
     console.log(`  Pattern   : ${watcher.pattern}`);
     console.log(`  Pointer   : ${watcher.payloadPointer}`);
     console.log(`  Expected  : ${formatJson(watcher.expectedPayload)}`);

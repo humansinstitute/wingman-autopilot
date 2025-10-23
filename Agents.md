@@ -22,6 +22,8 @@ DONT RUN TESTS. THEY DONT HELP -> WE TEST MANUALLY AROUND HERE.
 
 Keep changes tightly scoped: satisfy the request with the smallest viable diff unless the user explicitly asks for broader refactors.
 
+When summarising your activity, please state what can be tested currently and if there is remaining work to complete. 
+
 ## Testing Guidelines
 
 Place unit tests beside the code (`feature.test.ts`) or in a sibling `__tests__` folder. Mock subprocesses via lightweight stubs rather than spawning real CLIs. Keep coverage meaningful around session lifecycle code (`ProcessManager`), especially port allocation and cleanup. Add regression tests when modifying API contracts in `src/server.ts`.
