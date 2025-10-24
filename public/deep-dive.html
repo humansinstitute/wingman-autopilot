@@ -22,13 +22,7 @@
           <p class="wm-tagline">Solvitur Ambulando</p>
         </div>
       </div>
-      <nav class="wm-menu-nav deep-dive-nav">
-        <a href="/home">Home</a>
-        <a href="/live">Live</a>
-        <a href="/files">Files</a>
-        <a href="/deep-dive" aria-current="page">Deep Dive</a>
-        <a href="/settings">Settings</a>
-      </nav>
+      <a class="wm-button secondary deep-dive-back" href="/home">&larr; Back to Wingmen</a>
     </header>
     <main class="deep-dive-main">
       <section class="terminal-card">
@@ -43,6 +37,7 @@
                 <button type="button" data-command="split-horizontal" role="menuitem">Ctrl+B &quot; · Horizontal Split</button>
                 <button type="button" data-command="kill-pane" role="menuitem">Ctrl+B X · Kill Pane</button>
                 <button type="button" data-command="list-sessions" role="menuitem">Ctrl+B S · List Sessions</button>
+                <button type="button" data-command="list-windows" role="menuitem">Ctrl+B W · List Windows</button>
                 <hr />
                 <button type="button" data-command="copy-visible" role="menuitem">Copy Visible Text</button>
               </div>
@@ -69,7 +64,7 @@
         <h2>Enter Deep Dive PIN</h2>
         <p>Provide the access PIN to start a Wingman terminal session.</p>
         <label class="pin-label" for="pin-input">PIN Code</label>
-        <input id="pin-input" inputmode="numeric" autocomplete="one-time-code" placeholder="1234" required />
+        <input id="pin-input" type="password" inputmode="numeric" autocomplete="one-time-code" placeholder="1234" required />
         <div class="pin-actions">
           <button type="submit" class="wm-button">Unlock</button>
         </div>

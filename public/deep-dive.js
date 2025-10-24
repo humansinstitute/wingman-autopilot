@@ -9,6 +9,7 @@ const tmuxCommands = {
   "split-horizontal": `${TMUX_PREFIX}"`,
   "kill-pane": `${TMUX_PREFIX}x`,
   "list-sessions": `${TMUX_PREFIX}s`,
+  "list-windows": `${TMUX_PREFIX}w`,
 };
 
 const quickKeyMap = {
