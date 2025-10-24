@@ -2266,7 +2266,7 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
 
 const server = Bun.serve<DeepDiveSocketContext>({
   port: config.port,
-  async fetch(request: Request) {
+  async fetch(request: Request): Promise<Response | undefined> {
     const url = new URL(request.url);
     const pathname = url.pathname;
     const method = request.method as HttpMethod;

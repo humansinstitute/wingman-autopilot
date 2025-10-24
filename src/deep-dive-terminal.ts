@@ -273,7 +273,8 @@ export const deepDiveWebSocketHandlers = {
   },
 };
 
-export const isDeepDiveSocketPath = (pathname: string) => pathname === DEEP_DIVE_SOCKET_PATH;
+export const isDeepDiveSocketPath = (pathname: string) =>
+  pathname === DEEP_DIVE_SOCKET_PATH || pathname.startsWith(`${DEEP_DIVE_SOCKET_PATH}/`);
 
 export const isDeepDivePagePath = (pathname: string) =>
   pathname === DEEP_DIVE_PAGE_PATH || pathname.startsWith(`${DEEP_DIVE_PAGE_PATH}/`);
