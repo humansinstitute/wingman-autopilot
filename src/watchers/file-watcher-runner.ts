@@ -8,6 +8,14 @@ import type { AgentType, WingmanConfig } from "../config";
 import type { FileWatcherRecord, JsonValue } from "../storage/file-watcher-store";
 import { fileWatcherStore } from "../storage/file-watcher-store";
 import { messageStore } from "../storage/message-store";
+import {
+  fetchAgentMessages,
+  normaliseHostForUrl,
+  parseAllowedHosts,
+  pickAgentHost,
+  sendAgentMessage,
+  waitForAgentReady,
+} from "../agents/agent-client";
 
 type CleanupStrategy = "delete" | "none";
 
@@ -157,20 +165,6 @@ const normaliseCleanupStrategy = (value: unknown): CleanupStrategy => {
   return "none";
 };
 
-const parseAllowedHosts = (value: string): string[] => {
-  return value
-    .split(/[,\s]+/)
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-};
-
-const pickAgentHost = (hosts: string[]): string => {
-  const ipv4Hosts = hosts.filter((host) => host === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(host));
-  return ipv4Hosts.length > 0 ? ipv4Hosts[0]! : "localhost";
-};
-
-const normaliseHostForUrl = (host: string): string => host;
-
 const isAgentType = (value: string): value is AgentType => {
   return ["codex", "claude", "goose", "opencode"].includes(value);
 };
@@ -213,53 +207,6 @@ const toStartSessionOptions = (options: JsonValue | undefined): StartSessionOpti
         : "/message",
     cleanupStrategy: normaliseCleanupStrategy(options.cleanupStrategy),
   };
-};
-
-const buildAgentUrl = (host: string, port: number, path: string): URL => {
-  return new URL(path, `http://${host}:${port}/`);
-};
-
-const normaliseAgentMessages = (items: JsonValue | undefined): { role: string; content: string; createdAt: string }[] => {
-  if (!Array.isArray(items)) {
-    return [];
-  }
-
-  const base = Date.now();
-  return items
-    .map((item, index) => {
-      if (!isRecord(item)) {
-        return undefined;
-      }
-      const roleCandidate = item.type ?? item.role;
-      const role = typeof roleCandidate === "string" && roleCandidate.trim().length > 0 ? roleCandidate : "assistant";
-      const contentCandidate = (() => {
-        if (typeof item.content === "string" && item.content.trim().length > 0) {
-          return item.content;
-        }
-        if (typeof item.message === "string" && item.message.trim().length > 0) {
-          return item.message;
-        }
-        return "";
-      })();
-      if (!contentCandidate) {
-        return undefined;
-      }
-      const createdAtCandidate =
-        typeof item.createdAt === "string"
-          ? item.createdAt
-          : typeof item.created_at === "string"
-            ? item.created_at
-            : typeof item.timestamp === "string"
-              ? item.timestamp
-              : undefined;
-      const createdAt = createdAtCandidate ?? new Date(base + index).toISOString();
-      return {
-        role,
-        content: contentCandidate,
-        createdAt,
-      };
-    })
-    .filter((entry): entry is { role: string; content: string; createdAt: string } => Boolean(entry));
 };
 
 const toPendingKey = ({ watcherId, filePath }: PendingKey) => `${watcherId}::${filePath}`;
@@ -496,17 +443,26 @@ export class FileWatcherRunner {
       typeof nameCandidate === "string" && nameCandidate.trim().length > 0 ? nameCandidate.trim() : undefined;
 
     const session = await this.manager.createSession(agent, workingDirectory, sessionName);
+    messageStore.recordSession(session.id, session.agent, session.startedAt, session.name);
+
+    try {
+      await waitForAgentReady(this.agentHost, session.port, session.agent);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[watchers] failed to confirm readiness for ${session.id}: ${message}`);
+    }
 
     const firstMessage = this.extractMessageContent(resolvePointer(payload, options.messagePointer));
     if (firstMessage) {
       try {
-        await this.sendInitialMessage(session.id, session.port, firstMessage);
+        await sendAgentMessage(this.agentHost, session.port, firstMessage);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`[watchers] failed to send initial message for ${session.id}: ${message}`);
       }
-      await this.syncSessionMessages(session.id, session.port);
     }
+
+    await this.syncSessionMessages(session.id, session.port);
 
     console.log(`[watchers] started session ${session.id} via ${record.id}`);
 
@@ -535,50 +491,9 @@ export class FileWatcherRunner {
     return null;
   }
 
-  private async sendInitialMessage(sessionId: string, port: number, content: string) {
-    const url = buildAgentUrl(this.agentHost, port, "/message");
-    const maxAttempts = 5;
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      try {
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ type: "user", content }),
-        });
-        if (!response.ok) {
-          const message = await response
-            .json()
-            .then((payload) => (isRecord(payload) && typeof payload.error === "string" ? payload.error : null))
-            .catch(() => null);
-          throw new Error(message ?? response.statusText ?? "Agent request failed");
-        }
-        return;
-      } catch (error) {
-        if (attempt === maxAttempts) {
-          throw new Error(
-            `Failed to send initial message for session ${sessionId}: ${(error as Error).message}`,
-          );
-        }
-        await this.delay(250 * attempt);
-      }
-    }
-  }
-
   private async syncSessionMessages(sessionId: string, port: number) {
     try {
-      const url = buildAgentUrl(this.agentHost, port, "/messages");
-      const response = await fetch(url);
-      if (!response.ok) {
-        return;
-      }
-
-      const payload = await response.json();
-      const items = Array.isArray(payload)
-        ? payload
-        : isRecord(payload) && Array.isArray(payload.messages)
-          ? payload.messages
-          : undefined;
-      const messages = normaliseAgentMessages(items);
+      const messages = await fetchAgentMessages(this.agentHost, port);
       messageStore.replaceMessages(
         sessionId,
         messages.map((entry) => ({

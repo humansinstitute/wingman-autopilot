@@ -8,13 +8,21 @@ import type { AgentType } from "./config";
 import { loadConfig } from "./config";
 import { ProcessManager } from "./agents/process-manager";
 import type { SessionSnapshot } from "./agents/process-manager";
-import type { ReplaceMessageInput } from "./storage/message-store";
 import { messageStore } from "./storage/message-store";
 import { orchestratorPresetStore } from "./storage/orchestrator-presets";
 import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 import { fileWatcherStore } from "./storage/file-watcher-store";
 import { FileWatcherRunner } from "./watchers/file-watcher-runner";
 import { ensureDeepDiveProcess, getDeepDivePort, isDeepDiveProcessRunning } from "./deep-dive-process";
+import {
+  buildAgentUrl,
+  fetchAgentMessages,
+  normaliseHostForUrl,
+  parseAllowedHosts,
+  pickAgentHost,
+  sendAgentMessage,
+  waitForAgentReady as waitForAgentReadyCore,
+} from "./agents/agent-client";
 
 const config = loadConfig();
 console.log(`[config] tmux session base: ${config.tmuxBase}`);
@@ -501,8 +509,6 @@ orchestratorPresetStore.ensurePreset({
   retryAttempts: 10,
   retryDelayMs: 1000,
 });
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const createImageFilename = (name: string, mime: string): string => {
   const originalExt = extname(name) || "";
@@ -1317,28 +1323,10 @@ const waitForAgentReady = async (
   timeoutMs: number | null | undefined,
   pollIntervalMs: number | null | undefined,
 ) => {
-  const effectiveTimeout = typeof timeoutMs === "number" && timeoutMs > 0 ? timeoutMs : 30000;
-  const interval = typeof pollIntervalMs === "number" && pollIntervalMs > 0 ? pollIntervalMs : 250;
-  const deadline = Date.now() + effectiveTimeout;
-  const statusUrl = buildAgentUrl(session.port, "/status");
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(statusUrl);
-      if (response.ok) {
-        const payload = await response.json().catch(() => null);
-        const data = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : null;
-        const agentType = data && typeof data.agent_type === "string" ? data.agent_type.toLowerCase() : "";
-        const status = data && typeof data.status === "string" ? data.status : "";
-        if (agentType === session.agent && (status === "running" || status === "stable")) {
-          return;
-        }
-      }
-    } catch {
-      // Ignore transient failures while waiting for the agent to boot.
-    }
-    await sleep(interval);
-  }
-  throw new Error(`Timed out waiting for ${session.agent} agent to become ready`);
+  await waitForAgentReadyCore(agentHost, session.port, session.agent, {
+    timeoutMs,
+    pollIntervalMs,
+  });
 };
 
 const renderPresetMessage = (template: string, session: SessionSnapshot): string => {
@@ -1365,50 +1353,22 @@ const sendPresetIntroMessage = async (
     return false;
   }
 
+  const content = renderPresetMessage(contentTemplate, session);
   const attempts = typeof retryAttempts === "number" && retryAttempts > 0 ? retryAttempts : 10;
   const delay = typeof retryDelayMs === "number" && retryDelayMs >= 0 ? retryDelayMs : 1000;
 
-  const content = renderPresetMessage(contentTemplate, session);
-  let lastError: unknown = null;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      const agentUrl = buildAgentUrl(session.port, "/message");
-      const response = await fetch(agentUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "user", content }),
-      }).catch((error: unknown) => {
-        throw new Error(`Failed to contact agent: ${(error as Error).message}`);
-      });
-
-      if (!response.ok) {
-        let message = response.statusText || "Agent request failed";
-        try {
-          const payload = await response.json();
-          const data = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : null;
-          if (data && typeof data.error === "string") {
-            message = data.error;
-          }
-        } catch {
-          // ignore json errors, keep fallback message
-        }
-        throw new Error(message);
-      }
-
-      await syncSessionMessages(session.id, true);
-      return true;
-    } catch (error) {
-      lastError = error;
-      if (attempt < attempts) {
-        await sleep(delay);
-      }
-    }
+  try {
+    await sendAgentMessage(agentHost, session.port, content, {
+      attempts,
+      delayMs: delay,
+      type: "user",
+    });
+    await syncSessionMessages(session.id, true);
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to deliver introductory message: ${message}`);
   }
-
-  if (lastError instanceof Error) {
-    throw new Error(`Failed to deliver introductory message: ${lastError.message}`);
-  }
-  throw new Error("Failed to deliver introductory message");
 };
 
 const initialisePresetSession = async (preset: OrchestratorPresetRecord, session: SessionSnapshot) => {
@@ -1634,77 +1594,10 @@ const isAgentType = (value: string): value is AgentType => {
   return ["codex", "claude", "goose", "opencode"].includes(value);
 };
 
-const parseAllowedHosts = (value: string): string[] => {
-  return value
-    .split(/[,\s]+/)
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-};
-
-const pickAgentHost = (hosts: string[]): string => {
-  const ipv4Hosts = hosts.filter((host) => host === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(host));
-  if (ipv4Hosts.length > 0) {
-    return ipv4Hosts[0];
-  }
-
-  // Fallback to localhost if no IPv4 entry is provided.
-  return "localhost";
-};
-
-const normaliseHostForUrl = (host: string): string => host;
-
 const agentHosts = parseAllowedHosts(config.allowedHosts);
 const agentHost = normaliseHostForUrl(pickAgentHost(agentHosts));
 
-const buildAgentUrl = (port: number, path: string): URL => {
-  return new URL(path, `http://${agentHost}:${port}/`);
-};
 
-const normaliseAgentMessages = (items: unknown[]): ReplaceMessageInput[] => {
-  const base = Date.now();
-  return items
-    .map((item, index) => {
-      if (!item || typeof item !== "object") {
-        return undefined;
-      }
-      const value = item as Record<string, unknown>;
-      const role =
-        typeof value.type === "string" && value.type.length > 0
-          ? value.type
-          : typeof value.role === "string" && value.role.length > 0
-            ? value.role
-            : "assistant";
-
-      const contentRaw =
-        typeof value.content === "string" && value.content.length > 0
-          ? value.content
-          : typeof value.message === "string" && value.message.length > 0
-            ? value.message
-            : "";
-
-      if (!contentRaw) {
-        return undefined;
-      }
-
-      const createdAtCandidate =
-        typeof value.createdAt === "string"
-          ? value.createdAt
-          : typeof value.created_at === "string"
-            ? value.created_at
-            : typeof value.timestamp === "string"
-              ? value.timestamp
-              : undefined;
-
-      const createdAt = createdAtCandidate ?? new Date(base + index).toISOString();
-
-      return {
-        role,
-        content: contentRaw,
-        createdAt,
-      };
-    })
-    .filter((item): item is ReplaceMessageInput => Boolean(item));
-};
 
 const syncSessionMessages = async (sessionId: string, force = false) => {
   if (!force && messageStore.hasMessages(sessionId)) {
@@ -1721,14 +1614,7 @@ const syncSessionMessages = async (sessionId: string, force = false) => {
   }
 
   try {
-    const agentUrl = buildAgentUrl(session.port, "/messages");
-    const response = await fetch(agentUrl);
-    if (!response.ok) {
-      return messageStore.listSessionMessages(sessionId);
-    }
-    const payload = await response.json();
-    const items = Array.isArray(payload) ? payload : Array.isArray(payload?.messages) ? payload.messages : [];
-    const messages = normaliseAgentMessages(items);
+    const messages = await fetchAgentMessages(agentHost, session.port);
     messageStore.replaceMessages(sessionId, messages);
   } catch (error) {
     console.error(`Failed to synchronise messages for session ${sessionId}:`, error);
@@ -2239,7 +2125,7 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
         }
 
         try {
-          const agentUrl = buildAgentUrl(session.port, "/message");
+          const agentUrl = buildAgentUrl(agentHost, session.port, "/message");
           const agentResponse = await fetch(agentUrl, {
             method: "POST",
             headers: { "content-type": "application/json" },
