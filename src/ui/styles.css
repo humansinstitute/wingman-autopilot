@@ -2422,8 +2422,9 @@ dialog button[value="cancel"] {
 }
 
 .wm-file-editor__dialog {
-  width: min(960px, 100%);
-  max-height: 90vh;
+  width: min(1280px, 96vw);
+  max-height: 92vh;
+  height: min(92vh, 900px);
   background: var(--bg-primary);
   border-radius: 20px;
   box-shadow: var(--shadow-md);
@@ -2571,6 +2572,7 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
     border-radius: 16px;
     width: 100%;
     max-height: none;
+    height: auto;
   }
 
   .wm-file-editor__body {

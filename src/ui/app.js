@@ -1105,7 +1105,7 @@ const ensureAceEditorMounted = () => {
   if (!aceEditorInstance) {
     aceEditorInstance = ace.edit(container);
     aceEditorInstance.session.setMode("ace/mode/text");
-    aceEditorInstance.session.setUseWrapMode(false);
+    aceEditorInstance.session.setUseWrapMode(true);
     aceEditorInstance.setOptions({
       useWorker: false,
       showPrintMargin: false,
@@ -1115,7 +1115,7 @@ const ensureAceEditorMounted = () => {
       enableBasicAutocompletion: false,
       enableLiveAutocompletion: false,
       enableSnippets: false,
-      wrap: false,
+      wrap: true,
       fontSize: 14,
       tabSize: 2,
     });
