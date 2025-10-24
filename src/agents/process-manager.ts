@@ -162,6 +162,7 @@ export class ProcessManager {
       SESSION_PORT: session.port.toString(),
       SESSION_DIRECTORY: session.workingDirectory,
       SESSION_NAME: session.name,
+      TMUX_BASE: this.config.tmuxBase,
       ...(session.definition.env ?? {}),
     };
 
