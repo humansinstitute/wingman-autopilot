@@ -15,7 +15,8 @@ import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 import { fileWatcherStore } from "./storage/file-watcher-store";
 import { FileWatcherRunner } from "./watchers/file-watcher-runner";
 
-const TMUX_SESSION_NAME = "wingman-agents";
+const config = loadConfig();
+const TMUX_SESSION_NAME = config.tmuxBase;
 
 const readStreamToString = async (stream: ReadableStream<Uint8Array> | null | undefined) => {
   if (!stream) return "";
@@ -393,7 +394,6 @@ const ensureWingmanAgentsSessionClean = async () => {
   }
 };
 
-const config = loadConfig();
 await ensureWingmanAgentsSessionClean();
 const manager = new ProcessManager(config);
 

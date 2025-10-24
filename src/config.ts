@@ -22,6 +22,7 @@ export interface WingmanConfig {
   defaultWorkingDirectory: string;
   allowedOrigins: string;
   allowedHosts: string;
+  tmuxBase: string;
   agents: Record<AgentType, AgentDefinition>;
 }
 
@@ -47,6 +48,7 @@ const expandHomeDirectory = (input: string): string => {
 const agentMode = (Bun.env.AGENT_MODE ?? "").trim().toLowerCase();
 const defaultAgentApiPath = agentMode === "tmux" ? "../out/agentapi-tmux" : "../out/agentapi";
 const agentApiBinary = Bun.env.AGENTAPI_BIN ?? new URL(defaultAgentApiPath, import.meta.url).pathname;
+const tmuxBase = (Bun.env.TMUX_BASE ?? "wingman-agents").trim() || "wingman-agents";
 
 const baseCommand = (ctx: AgentCommandContext) => {
   return [
@@ -59,6 +61,10 @@ const baseCommand = (ctx: AgentCommandContext) => {
     "--allowed-hosts",
     ctx.config.allowedHosts,
   ];
+  if (agentMode === "tmux" || Bun.env.TMUX_BASE) {
+    args.push("--tmux-base", ctx.config.tmuxBase);
+  }
+  return args;
 };
 
 const withAgentCommand = (
@@ -102,6 +108,7 @@ export const loadConfig = (): WingmanConfig => {
     defaultWorkingDirectory,
     allowedOrigins,
     allowedHosts,
+    tmuxBase,
     agents: defaultAgents,
   };
 };
