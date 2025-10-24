@@ -18,7 +18,7 @@ In use we will allow direct typing into the terminal and we have special command
 
 - **HTTP route** – `src/server.ts` serves `public/deep-dive.html` and exposes `GET /deep-dive/config.json` so the browser knows where to open the WebSocket.
 - **Browser client** – `public/deep-dive.html` hosts the UI, loads `@xterm/xterm`, and runs `public/deep-dive.js`, which handles PIN entry, socket lifecycle, TMUX shortcuts, and copy helpers.
-- **WebSocket service** – `scripts/deep-dive-terminal-server.js` runs as a separate Node process (spawned from the Bun orchestrator) and listens for connections on `/deep-dive/socket`.
+- **WebSocket service** – `scripts/deep-dive-terminal-server.cjs` runs as a separate Node process (spawned from the Bun orchestrator) and listens for connections on `/deep-dive/socket`.
 - **PTY bridge** – the Node service uses `node-pty` to spawn a login shell (defaulting to `$SHELL` on Unix) and proxies its stdio back through JSON events.
 - **Wingman bootstrap** – once the pseudo-terminal is live, the server writes `process.env.TERMINALCMD || 'node wingman-cli.js'` so the CLI starts automatically. This loads the Wingman tmux helper menu. 
 
@@ -34,7 +34,7 @@ In use we will allow direct typing into the terminal and we have special command
    - `terminal-error` – render error messages in red.
    - Disconnections – reset authentication state and prompt for PIN again.
 
-## Server Implementation Details (`scripts/deep-dive-terminal-server.js`)
+## Server Implementation Details (`scripts/deep-dive-terminal-server.cjs`)
 
 1. **Upgrade handling** – an `http` server listens for `/deep-dive/socket` upgrades and hands them to `ws`.
 2. **Auth state** – per-socket state tracks `authenticated` + timestamp. The PIN (default `'1234'`) and timeout (`PIN_TIMEOUT`, default 45 seconds) come from env vars.

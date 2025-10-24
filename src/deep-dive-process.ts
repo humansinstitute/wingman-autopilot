@@ -53,7 +53,7 @@ export const ensureDeepDiveProcess = (basePort: number) => {
   const port = desiredPort ?? pickDeepDivePort(basePort);
   desiredPort = port;
 
-  const scriptUrl = new URL("../scripts/deep-dive-terminal-server.js", import.meta.url);
+  const scriptUrl = new URL("../scripts/deep-dive-terminal-server.cjs", import.meta.url);
 
   try {
     const processEnv = {
