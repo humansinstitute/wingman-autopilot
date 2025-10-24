@@ -61,8 +61,10 @@ const parseEnvironmentString = (input: string | undefined, fallback: string): st
 
 const tmuxBase = parseEnvironmentString(Bun.env.TMUX_BASE, "wingman-agents");
 
+const isTmuxBinary = agentApiBinary.includes("agentapi-tmux");
+
 const baseCommand = (ctx: AgentCommandContext) => {
-  return [
+  const args = [
     agentApiBinary,
     "server",
     "--port",
@@ -72,7 +74,7 @@ const baseCommand = (ctx: AgentCommandContext) => {
     "--allowed-hosts",
     ctx.config.allowedHosts,
   ];
-  if (agentMode === "tmux" || Bun.env.TMUX_BASE) {
+  if (isTmuxBinary || agentMode === "tmux") {
     args.push(`--tmux-session=${ctx.config.tmuxBase}`);
   }
   return args;
