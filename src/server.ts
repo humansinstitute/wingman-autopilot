@@ -1133,6 +1133,38 @@ const createDocsFile = async (parentInput: string | null | undefined, nameInput:
   };
 };
 
+const deleteDocsFile = async (pathInput: string | null | undefined) => {
+  const candidate = pathInput?.trim();
+  if (!candidate) {
+    throw new Error("File path is required");
+  }
+  const filePath = resolveDocsPath(candidate);
+
+  let stats: Awaited<ReturnType<typeof stat>>;
+  try {
+    stats = await stat(filePath);
+  } catch {
+    throw new Error("File not found");
+  }
+
+  if (!stats.isFile()) {
+    throw new Error("Requested path is not a file");
+  }
+
+  try {
+    await rm(filePath, { force: false });
+  } catch (error) {
+    throw new Error(`Failed to delete file: ${(error as Error).message ?? "unknown error"}`);
+  }
+
+  return {
+    path: filePath,
+    relativePath: toDocsRelativePath(filePath),
+    displayPath: toDocsDisplayPath(filePath),
+    name: basename(filePath),
+  };
+};
+
 const directoryExists = async (path: string): Promise<boolean> => {
   try {
     const stats = await stat(path);
@@ -1760,6 +1792,30 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
 
     try {
       const data = await updateDocsFile(pathParam, base64Param, expectedMtime);
+      return Response.json(data, { status: 200 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/docs/file" && method === "DELETE") {
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    const pathValue = (payload as Record<string, unknown>).path;
+    const pathParam = typeof pathValue === "string" ? pathValue : null;
+
+    try {
+      const data = await deleteDocsFile(pathParam);
       return Response.json(data, { status: 200 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

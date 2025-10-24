@@ -903,6 +903,20 @@ const createFilesTextFile = async (parentPath, name, content = "") => {
   return response.json();
 };
 
+const deleteFilesEntry = async (path) => {
+  const response = await fetch("/api/docs/file", {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const message = data?.error ?? response.statusText ?? "Failed to delete file";
+    throw new Error(message);
+  }
+  return response.json();
+};
+
 const getWorktreeGitInfo = () => {
   const git = state.files.git;
   if (!git || typeof git !== "object") return null;
@@ -3846,6 +3860,37 @@ const renderFiles = () => {
       void openFileEditor(files.previewPath, files.previewDisplayPath ?? null, files.previewName ?? null);
     });
     previewActions.append(editButton);
+
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "wm-button secondary";
+    deleteButton.textContent = "Delete File";
+    deleteButton.addEventListener("click", async () => {
+      const targetPath = typeof files.previewPath === "string" ? files.previewPath : null;
+      if (!targetPath) return;
+      const displayName = files.previewName ?? files.previewDisplayPath ?? targetPath;
+      const confirmed = window.confirm(`Delete "${displayName}"? This cannot be undone.`);
+      if (!confirmed) {
+        return;
+      }
+      const originalText = deleteButton.textContent;
+      deleteButton.disabled = true;
+      deleteButton.dataset.loading = "true";
+      deleteButton.textContent = "Deleting…";
+      try {
+        await deleteFilesEntry(targetPath);
+        resetFilesPreview();
+        render();
+        await loadFilesTree(state.files.currentPath);
+      } catch (error) {
+        deleteButton.disabled = false;
+        deleteButton.textContent = originalText;
+        deleteButton.removeAttribute("data-loading");
+        const message = error instanceof Error ? error.message : "Failed to delete file";
+        window.alert(message);
+      }
+    });
+    previewActions.append(deleteButton);
   }
   if (previewActions.childElementCount > 0) {
     previewHeader.append(previewActions);
