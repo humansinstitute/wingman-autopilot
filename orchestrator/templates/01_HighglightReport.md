@@ -1,6 +1,8 @@
 ---
-name: "Highlight Report"
+Template: "Highglight Report"
+button: true
 order: 1
+input: [prompt, session_name, default_agent, working_directory]
 ---
 
 This is the body of the Markdown document.

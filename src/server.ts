@@ -533,6 +533,7 @@ const buildAgentImagePlaceholder = (agent: AgentType, absolutePath: string, publ
   switch (agent) {
     case "codex":
     case "claude":
+    case "gemini":
       return `![uploaded image](${fileUrl})`;
     case "goose":
       return `![uploaded image](${publicPath})`;
@@ -1591,7 +1592,7 @@ const serveIndex = () => {
 };
 
 const isAgentType = (value: string): value is AgentType => {
-  return ["codex", "claude", "goose", "opencode"].includes(value);
+  return ["codex", "claude", "goose", "opencode", "gemini"].includes(value);
 };
 
 const agentHosts = parseAllowedHosts(config.allowedHosts);

@@ -1,4 +1,4 @@
-export type AgentType = "codex" | "claude" | "goose" | "opencode";
+export type AgentType = "codex" | "claude" | "goose" | "opencode" | "gemini";
 
 export interface AgentCommandContext {
   port: number;
@@ -104,6 +104,7 @@ const defaultAgents: Record<AgentType, AgentDefinition> = {
   claude: withAgentCommand("Claude", Bun.env.CLAUDE_CLI ?? "claude"),
   goose: withAgentCommand("Goose", Bun.env.GOOSE_CLI ?? "goose"),
   opencode: withAgentCommand("OpenCode", Bun.env.OPENCODE_CLI ?? "opencode"),
+  gemini: withAgentCommand("Gemini", Bun.env.GEMINI_CLI ?? "gemini"),
 };
 
 export const loadConfig = (): WingmanConfig => {
