@@ -48,7 +48,18 @@ const expandHomeDirectory = (input: string): string => {
 const agentMode = (Bun.env.AGENT_MODE ?? "").trim().toLowerCase();
 const defaultAgentApiPath = agentMode === "tmux" ? "../out/agentapi-tmux" : "../out/agentapi";
 const agentApiBinary = Bun.env.AGENTAPI_BIN ?? new URL(defaultAgentApiPath, import.meta.url).pathname;
-const tmuxBase = (Bun.env.TMUX_BASE ?? "wingman-agents").trim() || "wingman-agents";
+const parseEnvironmentString = (input: string | undefined, fallback: string): string => {
+  if (!input) return fallback;
+  const trimmed = input.trim();
+  if (trimmed.length === 0) return fallback;
+  const quote = trimmed[0];
+  if ((quote === '"' || quote === "'") && trimmed.endsWith(quote) && trimmed.length > 1) {
+    return trimmed.slice(1, -1).trim() || fallback;
+  }
+  return trimmed;
+};
+
+const tmuxBase = parseEnvironmentString(Bun.env.TMUX_BASE, "wingman-agents");
 
 const baseCommand = (ctx: AgentCommandContext) => {
   return [
