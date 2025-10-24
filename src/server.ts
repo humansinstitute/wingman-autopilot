@@ -1534,8 +1534,9 @@ const listDirectories = async (input: string | null | undefined, query?: string)
     .filter((entry) => {
       if (!term) return true;
       return entry.name.toLowerCase().includes(term);
-    })
-    .slice(0, MAX_DIRECTORY_RESULTS);
+    });
+
+  const limitedDirectories = term ? directories.slice(0, MAX_DIRECTORY_RESULTS) : directories;
 
   const parent = (() => {
     const candidate = dirname(directory);
@@ -1545,7 +1546,7 @@ const listDirectories = async (input: string | null | undefined, query?: string)
   return {
     path: directory,
     parent,
-    entries: directories,
+    entries: limitedDirectories,
   };
 };
 
