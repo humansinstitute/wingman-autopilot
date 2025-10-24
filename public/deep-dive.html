@@ -29,17 +29,10 @@
         <a href="/deep-dive" aria-current="page">Deep Dive</a>
         <a href="/settings">Settings</a>
       </nav>
-      <div class="deep-dive-actions">
-        <a class="wm-button secondary" href="/home">&larr; Back to Wingmen</a>
-        <span id="connection-status" class="deep-dive-status" role="status" aria-live="polite">Connecting…</span>
-      </div>
     </header>
     <main class="deep-dive-main">
       <section class="terminal-card">
         <header class="terminal-card__header">
-          <div class="terminal-card__title">
-            <span class="terminal-card__badge" aria-hidden="true">Terminal Session</span>
-          </div>
           <div class="terminal-controls">
             <div class="terminal-dropdown" data-state="closed">
               <button id="tmux-toggle" class="wm-button" aria-haspopup="true" aria-expanded="false">TMUX ▾</button>
@@ -50,6 +43,8 @@
                 <button type="button" data-command="split-horizontal" role="menuitem">Ctrl+B &quot; · Horizontal Split</button>
                 <button type="button" data-command="kill-pane" role="menuitem">Ctrl+B X · Kill Pane</button>
                 <button type="button" data-command="list-sessions" role="menuitem">Ctrl+B S · List Sessions</button>
+                <hr />
+                <button type="button" data-command="copy-visible" role="menuitem">Copy Visible Text</button>
               </div>
             </div>
             <div class="terminal-quickkeys" role="group" aria-label="Quick controls">
@@ -62,7 +57,7 @@
               <button type="button" data-key="enter">⏎</button>
               <button type="button" data-key="ctrl-c" class="danger">Ctrl+C</button>
             </div>
-            <button type="button" id="copy-terminal" class="wm-button secondary">Copy Visible Text</button>
+            <span id="connection-status" class="deep-dive-status" role="status" aria-live="polite">Connecting…</span>
           </div>
         </header>
         <div id="terminal-container" class="terminal-container" role="region" aria-label="Wingman terminal"></div>

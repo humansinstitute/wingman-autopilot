@@ -32,7 +32,6 @@ class DeepDiveTerminal {
     this.pinError = document.getElementById("pin-error");
     this.tmuxToggle = document.getElementById("tmux-toggle");
     this.tmuxDropdown = this.tmuxToggle.closest(".terminal-dropdown");
-    this.copyButton = document.getElementById("copy-terminal");
     this.dropdownButtons = Array.from(this.tmuxDropdown.querySelectorAll(".terminal-dropdown__menu button"));
     this.quickKeyButtons = Array.from(document.querySelectorAll(".terminal-quickkeys button"));
     this.toastTemplate = document.getElementById("toast-template");
@@ -111,7 +110,7 @@ class DeepDiveTerminal {
     this.dropdownButtons.forEach((button) => {
       button.addEventListener("click", () => {
         const command = button.dataset.command;
-        this.handleTmuxCommand(command);
+        this.handleDropdownCommand(command);
         this.setDropdownOpen(false);
       });
     });
@@ -122,8 +121,6 @@ class DeepDiveTerminal {
         this.handleQuickKey(key);
       });
     });
-
-    this.copyButton.addEventListener("click", () => this.copyTerminalText());
 
     this.terminal.element?.addEventListener("paste", (event) => {
       if (!(event instanceof ClipboardEvent)) return;
@@ -322,6 +319,15 @@ class DeepDiveTerminal {
   handleTmuxCommand(command) {
     if (!command || !tmuxCommands[command]) return;
     this.send("terminal-input", { data: tmuxCommands[command] });
+  }
+
+  handleDropdownCommand(command) {
+    if (!command) return;
+    if (command === "copy-visible") {
+      this.copyTerminalText();
+      return;
+    }
+    this.handleTmuxCommand(command);
   }
 
   handleQuickKey(key) {
