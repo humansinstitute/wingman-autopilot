@@ -14,6 +14,13 @@ import { orchestratorPresetStore } from "./storage/orchestrator-presets";
 import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 import { fileWatcherStore } from "./storage/file-watcher-store";
 import { FileWatcherRunner } from "./watchers/file-watcher-runner";
+import type { DeepDiveSocketContext } from "./deep-dive-terminal";
+import {
+  deepDiveUpgrade,
+  deepDiveWebSocketHandlers,
+  isDeepDivePagePath,
+  isDeepDiveSocketPath,
+} from "./deep-dive-terminal";
 
 const config = loadConfig();
 console.log(`[config] tmux session base: ${config.tmuxBase}`);
@@ -2257,12 +2264,23 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
   return Response.json({ error: "Not found" }, { status: 404 });
 };
 
-const server = Bun.serve({
+const server = Bun.serve<DeepDiveSocketContext>({
   port: config.port,
   async fetch(request: Request) {
     const url = new URL(request.url);
     const pathname = url.pathname;
     const method = request.method as HttpMethod;
+    const isWebSocketUpgrade = request.headers.get("upgrade")?.toLowerCase() === "websocket";
+
+    if (isWebSocketUpgrade) {
+      if (isDeepDiveSocketPath(pathname)) {
+        if (deepDiveUpgrade(request, server)) {
+          return new Response(null, { status: 101 });
+        }
+        return new Response("WebSocket upgrade failed", { status: 500 });
+      }
+      return new Response("Not Found", { status: 404 });
+    }
 
     const webhookResponse = await handleWebhookRequest(request, url);
     if (webhookResponse) {
@@ -2283,6 +2301,14 @@ const server = Bun.serve({
       pathname.startsWith("/live/")
     ) {
       return serveIndex();
+    }
+
+    if (method === "GET" && isDeepDivePagePath(pathname)) {
+      const deepDivePage = servePublicAsset("/deep-dive.html");
+      if (deepDivePage) {
+        return deepDivePage;
+      }
+      return new Response("Deep Dive page missing", { status: 404 });
     }
 
     if (pathname.startsWith("/api/")) {
@@ -2311,6 +2337,7 @@ const server = Bun.serve({
 
     return new Response("Not Found", { status: 404 });
   },
+  websocket: deepDiveWebSocketHandlers,
 });
 
 console.log(
