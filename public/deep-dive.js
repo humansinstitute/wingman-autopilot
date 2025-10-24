@@ -23,7 +23,7 @@ const quickKeyMap = {
 };
 
 class DeepDiveTerminal {
-  constructor() {
+  constructor(options = {}) {
     this.terminalContainer = document.getElementById("terminal-container");
     this.connectionStatus = document.getElementById("connection-status");
     this.overlay = document.getElementById("pin-overlay");
@@ -39,6 +39,12 @@ class DeepDiveTerminal {
     this.toastContainer = document.createElement("div");
     this.toastContainer.className = "toast-container";
     document.body.append(this.toastContainer);
+
+    this.socketUrl =
+      typeof options.socketUrl === "string" && options.socketUrl.trim().length > 0
+        ? options.socketUrl.trim()
+        : null;
+    this.socketAvailable = Boolean(this.socketUrl);
 
     this.socket = null;
     this.isAuthenticated = false;
@@ -74,7 +80,13 @@ class DeepDiveTerminal {
     window.addEventListener("resize", () => this.queueResize());
 
     this.bindEvents();
-    this.connect();
+    if (this.socketAvailable) {
+      this.connect();
+    } else {
+      this.setStatus("disconnected");
+      this.showOverlay();
+      this.showToast("Deep Dive terminal is unavailable.", "error");
+    }
   }
 
   bindEvents() {
@@ -154,15 +166,37 @@ class DeepDiveTerminal {
   }
 
   connect() {
-    if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+    if (
+      this.socket &&
+      (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)
+    ) {
       return;
     }
 
     clearTimeout(this.reconnectTimer);
 
+    const targetUrl = this.socketUrl || (() => {
+      const protocol = location.protocol === "https:" ? "wss" : "ws";
+      return `${protocol}://${location.host}/deep-dive/socket`;
+    })();
+
+    if (!targetUrl) {
+      this.setStatus("disconnected");
+      this.showOverlay();
+      return;
+    }
+
     this.setStatus("connecting");
-    const protocol = location.protocol === "https:" ? "wss" : "ws";
-    const socket = new WebSocket(`${protocol}://${location.host}/deep-dive/socket`);
+    let socket;
+    try {
+      socket = new WebSocket(targetUrl);
+    } catch {
+      this.setStatus("disconnected");
+      this.showOverlay();
+      this.showToast("Unable to reach Deep Dive terminal", "error");
+      this.scheduleReconnect();
+      return;
+    }
 
     socket.addEventListener("open", () => {
       this.socket = socket;
@@ -193,6 +227,9 @@ class DeepDiveTerminal {
 
   scheduleReconnect() {
     clearTimeout(this.reconnectTimer);
+    if (!this.socketUrl) {
+      return;
+    }
     this.reconnectTimer = setTimeout(() => this.connect(), 2500);
   }
 
@@ -335,6 +372,24 @@ class DeepDiveTerminal {
   }
 }
 
-window.addEventListener("DOMContentLoaded", () => {
-  new DeepDiveTerminal();
+const loadDeepDiveConfig = async () => {
+  try {
+    const response = await fetch("/deep-dive/config.json", { cache: "no-store" });
+    if (!response.ok) {
+      return { socketUrl: null };
+    }
+    const data = await response.json();
+    if (data && typeof data.socketUrl === "string" && data.socketUrl.trim().length > 0) {
+      return { socketUrl: data.socketUrl.trim() };
+    }
+    return { socketUrl: null };
+  } catch (error) {
+    console.warn("Failed to load Deep Dive config", error);
+    return { socketUrl: null };
+  }
+};
+
+window.addEventListener("DOMContentLoaded", async () => {
+  const config = await loadDeepDiveConfig();
+  new DeepDiveTerminal(config);
 });

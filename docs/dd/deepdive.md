@@ -16,11 +16,11 @@ In use we will allow direct typing into the terminal and we have special command
 
 ## Runtime Components
 
-- **HTTP route** – `src/server/index.js` registers `GET /deep-dive` to serve `public/deep-dive.html`.
-- **Browser client** – `public/deep-dive.html` hosts the UI, loads `@xterm/xterm` and `socket.io-client`, and runs the `TerminalClient` class that orchestrates authentication, socket wiring, and enhanced controls.
-- **Socket namespace** – `GooseWebServer` constructs `io.of('/terminal')`; the client always connects to that namespace. - NOTE THIS NAMESPACE WILL BE DIFFERENT IN THIS IMPLEMENTATION. 
-- **PTY bridge** – `node-pty` spawns a login shell (defaulting to `$SHELL` on Unix) and proxies its stdio back through socket events.
-- **Wingman bootstrap** – once the pseudo-terminal is live, the server pushes `process.env.TERMINALCMD || 'node wingman-cli.js'` so the CLI starts automatically. This will load the simple menu that allows me to connect to running Tmux sessions. 
+- **HTTP route** – `src/server.ts` serves `public/deep-dive.html` and exposes `GET /deep-dive/config.json` so the browser knows where to open the WebSocket.
+- **Browser client** – `public/deep-dive.html` hosts the UI, loads `@xterm/xterm`, and runs `public/deep-dive.js`, which handles PIN entry, socket lifecycle, TMUX shortcuts, and copy helpers.
+- **WebSocket service** – `scripts/deep-dive-terminal-server.js` runs as a separate Node process (spawned from the Bun orchestrator) and listens for connections on `/deep-dive/socket`.
+- **PTY bridge** – the Node service uses `node-pty` to spawn a login shell (defaulting to `$SHELL` on Unix) and proxies its stdio back through JSON events.
+- **Wingman bootstrap** – once the pseudo-terminal is live, the server writes `process.env.TERMINALCMD || 'node wingman-cli.js'` so the CLI starts automatically. This loads the Wingman tmux helper menu. 
 
 ## Browser Implementation Details (`public/deep-dive.html`)
 
@@ -34,18 +34,18 @@ In use we will allow direct typing into the terminal and we have special command
    - `terminal-error` – render error messages in red.
    - Disconnections – reset authentication state and prompt for PIN again.
 
-## Server Implementation Details (`src/server/index.js`)
+## Server Implementation Details (`scripts/deep-dive-terminal-server.js`)
 
-1. **Namespace setup** – the constructor saves `this.io.of('/terminal')` and calls `setupTerminalHandlers()`.
-2. **Auth cache** – a module-scoped `terminalState` tracks `lastAuthTime` and a map of authenticated socket IDs. The PIN (default `'1234'`) and timeout (`PIN_TIMEOUT`, default 45 seconds) come from env vars. Returning within the timeout skips the prompt.
+1. **Upgrade handling** – an `http` server listens for `/deep-dive/socket` upgrades and hands them to `ws`.
+2. **Auth state** – per-socket state tracks `authenticated` + timestamp. The PIN (default `'1234'`) and timeout (`PIN_TIMEOUT`, default 45 seconds) come from env vars.
 3. **Session lifecycle** – on `start-terminal` the server:
    - Verifies the socket is authenticated.
-   - Kills any existing PTY for that socket.
+   - Kills any existing PTY for that client.
    - Spawns a shell via `pty.spawn(...)` with the received `cols`/`rows` and inherits `process.env`.
    - Subscribes to `onData` to forward stdout as `terminal-output` and `onExit` to notify clients with `terminal-error`.
    - Writes the bootstrap command (`TERMINALCMD` or `node wingman-cli.js`) followed by `\r`, then emits `session-fresh`.
 4. **Input + resize** – `terminal-input` writes raw bytes to the PTY. `terminal-resize` calls `ptyProcess.resize(cols, rows)` inside a try/catch.
-5. **Cleanup** – `disconnect` clears the socket from the auth map and kills the PTY.
+5. **Cleanup** – socket `close` and `error` events remove state and kill the PTY.
 
 ## Wingman CLI Bootstrap (`wingman-cli.js`)
 
@@ -63,9 +63,9 @@ The CLI is a tmux session manager and onboarding helper. Because the server writ
 
 ## Replicating in Another Project
 
-1. **Install dependencies** – server: `express`, `socket.io`, `node-pty`; client: `@xterm/xterm`, `socket.io-client`. Copy the PIN overlay and TMUX control markup or adapt it to your design system.
-2. **Expose a static page** – add an Express route (or equivalent) that serves the HTML + assets.
-3. **Create a terminal namespace** – configure `io.of('/terminal')` and implement authenticate/start/input/resize/disconnect handlers as described above.
+1. **Install dependencies** – server: `node-pty`, `ws`; client: `@xterm/xterm`. Copy the PIN overlay and TMUX control markup or adapt it to your design system.
+2. **Expose a static page** – serve the HTML + assets from your primary web server and publish a JSON config endpoint with the WebSocket URL.
+3. **Run a WebSocket bridge** – launch a Node (or similar) worker that upgrades `/deep-dive/socket` requests and implements authenticate/start/input/resize/cleanup handlers as described above.
 4. **Gate access** – reuse the PIN approach or swap in a real auth token; keep the short-lived cache logic so reconnects are quick without leaving long-lived sessions open.
 5. **Spawn PTYs** – call `pty.spawn(shell, [], { name: 'xterm-256color', cols, rows, cwd: process.cwd(), env: process.env })` and forward events; always guard `resize` and `kill` calls.
 6. **Bootstrap your program** – set `TERMINALCMD` to the CLI entrypoint you want to run automatically.
@@ -76,6 +76,8 @@ The CLI is a tmux session manager and onboarding helper. Because the server writ
 - `PIN` – four-digit (or longer) code required to unlock the terminal.
 - `PIN_TIMEOUT` – seconds a successful PIN is remembered per user; default `45`.
 - `TERMINALCMD` – command written to the PTY after spawn; default `node wingman-cli.js`.
+- `DEEP_DIVE_PORT` – optional override for the Node WebSocket bridge port (defaults to Bun port + 1).
+- `DEEP_DIVE_SOCKET_URL` – optional absolute WebSocket URL; use this when the bridge runs on another host or behind a proxy.
 
 ## Operational Notes
 
@@ -83,4 +85,3 @@ The CLI is a tmux session manager and onboarding helper. Because the server writ
 - Because PTY processes inherit the main process environment, secrets or project configuration should already be present where the server runs.
 - For load-balanced environments, keep sticky sessions or back the auth cache with shared storage; the current implementation is in-memory.
 - Consider HTTPS and secure cookies if you move beyond the PIN gate and introduce richer authentication.
-

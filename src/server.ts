@@ -14,17 +14,16 @@ import { orchestratorPresetStore } from "./storage/orchestrator-presets";
 import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 import { fileWatcherStore } from "./storage/file-watcher-store";
 import { FileWatcherRunner } from "./watchers/file-watcher-runner";
-import type { DeepDiveSocketContext } from "./deep-dive-terminal";
-import {
-  deepDiveUpgrade,
-  deepDiveWebSocketHandlers,
-  isDeepDivePagePath,
-  isDeepDiveSocketPath,
-} from "./deep-dive-terminal";
+import { ensureDeepDiveProcess, getDeepDivePort, isDeepDiveProcessRunning } from "./deep-dive-process";
 
 const config = loadConfig();
 console.log(`[config] tmux session base: ${config.tmuxBase}`);
 const TMUX_SESSION_NAME = config.tmuxBase;
+
+const isDeepDivePagePath = (pathname: string) =>
+  pathname === "/deep-dive" || pathname.startsWith("/deep-dive/");
+
+ensureDeepDiveProcess(config.port);
 
 const readStreamToString = async (stream: ReadableStream<Uint8Array> | null | undefined) => {
   if (!stream) return "";
@@ -2264,23 +2263,12 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
   return Response.json({ error: "Not found" }, { status: 404 });
 };
 
-const server = Bun.serve<DeepDiveSocketContext>({
+const server = Bun.serve({
   port: config.port,
-  async fetch(request: Request): Promise<Response | undefined> {
+  async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const pathname = url.pathname;
     const method = request.method as HttpMethod;
-    const isWebSocketUpgrade = request.headers.get("upgrade")?.toLowerCase() === "websocket";
-
-    if (isWebSocketUpgrade) {
-      if (isDeepDiveSocketPath(pathname)) {
-        if (deepDiveUpgrade(request, server)) {
-          return;
-        }
-        return new Response("WebSocket upgrade failed", { status: 500 });
-      }
-      return new Response("Not Found", { status: 404 });
-    }
 
     const webhookResponse = await handleWebhookRequest(request, url);
     if (webhookResponse) {
@@ -2289,6 +2277,31 @@ const server = Bun.serve<DeepDiveSocketContext>({
 
     if (pathname === "/" && method === "GET") {
       return Response.redirect(`${url.origin}/home`, 302);
+    }
+
+    if (method === "GET" && pathname === "/deep-dive/config.json") {
+      const port = getDeepDivePort();
+      const running = isDeepDiveProcessRunning();
+      const override = Bun.env.DEEP_DIVE_SOCKET_URL?.trim();
+      let socketUrl = override && override.length > 0 ? override : null;
+
+      if (!socketUrl && running && port) {
+        const protocol = url.protocol === "https:" ? "wss" : "ws";
+        socketUrl = `${protocol}://${url.hostname}:${port}/deep-dive/socket`;
+      }
+
+      return Response.json(
+        {
+          socketUrl,
+          running,
+          port: socketUrl && port ? port : null,
+        },
+        {
+          headers: {
+            "cache-control": "no-cache",
+          },
+        },
+      );
     }
 
     if (
@@ -2337,7 +2350,6 @@ const server = Bun.serve<DeepDiveSocketContext>({
 
     return new Response("Not Found", { status: 404 });
   },
-  websocket: deepDiveWebSocketHandlers,
 });
 
 console.log(
