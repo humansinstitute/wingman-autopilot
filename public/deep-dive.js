@@ -4,12 +4,17 @@ import { FitAddon } from "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.9.0/+e
 const TMUX_PREFIX = "\u0002";
 const tmuxCommands = {
   detach: `${TMUX_PREFIX}d`,
+  "new-window": `${TMUX_PREFIX}c`,
+  "next-window": `${TMUX_PREFIX}n`,
+  "last-window": `${TMUX_PREFIX}l`,
   zoom: `${TMUX_PREFIX}z`,
   "split-vertical": `${TMUX_PREFIX}%`,
   "split-horizontal": `${TMUX_PREFIX}"`,
   "kill-pane": `${TMUX_PREFIX}x`,
   "list-sessions": `${TMUX_PREFIX}s`,
   "list-windows": `${TMUX_PREFIX}w`,
+  paste: `${TMUX_PREFIX}]`,
+  clear: "\u000c",
 };
 
 const quickKeyMap = {

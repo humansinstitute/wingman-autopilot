@@ -2352,6 +2352,50 @@ const server = Bun.serve({
   },
 });
 
+const stopAllSessions = async () => {
+  const sessions = manager.listSessions();
+  for (const session of sessions) {
+    try {
+      await manager.stopSession(session.id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[shutdown] failed to stop session ${session.id}: ${message}`);
+    }
+  }
+};
+
+let shuttingDown = false;
+const registerShutdownHandlers = () => {
+  const handleShutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[shutdown] received ${signal}. Shutting down services...`);
+
+    try {
+      fileWatcherRunner.stop();
+    } catch (error) {
+      console.warn(`[shutdown] failed to stop file watcher runner: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    try {
+      server.stop();
+    } catch (error) {
+      console.warn(`[shutdown] failed to stop server: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    await stopAllSessions();
+    process.exit(0);
+  };
+
+  for (const signal of ["SIGINT", "SIGTERM", "SIGQUIT"] as const) {
+    process.on(signal, () => {
+      void handleShutdown(signal);
+    });
+  }
+};
+
+registerShutdownHandlers();
+
 console.log(
   `Wingman V2 orchestrator listening on http://localhost:${config.port} (agents ${config.agentPortStart} - ${config.agentPortStart + config.agentPortMax - 1})`,
 );
