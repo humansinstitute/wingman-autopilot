@@ -16,6 +16,7 @@ import { fileWatcherStore } from "./storage/file-watcher-store";
 import { FileWatcherRunner } from "./watchers/file-watcher-runner";
 
 const config = loadConfig();
+console.log(`[config] tmux session base: ${config.tmuxBase}`);
 const TMUX_SESSION_NAME = config.tmuxBase;
 
 const readStreamToString = async (stream: ReadableStream<Uint8Array> | null | undefined) => {
