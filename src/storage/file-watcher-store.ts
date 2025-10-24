@@ -6,6 +6,7 @@ import { Database } from "bun:sqlite";
 import { databaseFile } from "./message-store";
 
 const STOP_SESSION_WATCHER_ID = "stop-session-json-trigger";
+const START_SESSION_WATCHER_ID = "start-session-json-trigger";
 
 export type JsonValue =
   | null
@@ -212,6 +213,25 @@ class FileWatcherStore {
       actionKey: "stop-session",
       options: {
         sessionPointer: "/session",
+        cleanupStrategy: "delete",
+      },
+    });
+  }
+
+  ensureStartSessionWatcher() {
+    return this.ensureWatcher({
+      id: START_SESSION_WATCHER_ID,
+      name: "Start Session Trigger",
+      relativeDir: "orchestrator/triggers",
+      pattern: "*.json",
+      payloadPointer: "/",
+      expectedPayload: { action: "start" },
+      actionKey: "start-session",
+      options: {
+        agentPointer: "/agent",
+        directoryPointer: "/directory",
+        namePointer: "/name",
+        messagePointer: "/message",
         cleanupStrategy: "delete",
       },
     });

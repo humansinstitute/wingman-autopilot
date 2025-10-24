@@ -450,10 +450,12 @@ const defaultHighlightReportIntro =
   "Pleaese review the 01_process.md for your instructions.\n\nYou will read the process instructions in: <active_dir>\nThe sessionID you are operating in is: <sessionID>";
 
 fileWatcherStore.ensureStopSessionWatcher();
+fileWatcherStore.ensureStartSessionWatcher();
 
 const fileWatcherRunner = new FileWatcherRunner({
   root: wingmenRoot,
   manager,
+  config,
 });
 try {
   await fileWatcherRunner.start();

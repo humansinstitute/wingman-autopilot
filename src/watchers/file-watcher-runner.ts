@@ -1,11 +1,13 @@
 import { realpathSync, watch, type FSWatcher } from "node:fs";
-import { mkdir, readFile, rm, stat } from "node:fs/promises";
-import { basename, join, normalize, relative, resolve, sep } from "node:path";
+import { mkdir, readFile, rm, stat, realpath } from "node:fs/promises";
+import { basename, join, normalize, relative, resolve, sep, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 
 import type { ProcessManager } from "../agents/process-manager";
+import type { AgentType, WingmanConfig } from "../config";
 import type { FileWatcherRecord, JsonValue } from "../storage/file-watcher-store";
 import { fileWatcherStore } from "../storage/file-watcher-store";
+import { messageStore } from "../storage/message-store";
 
 type CleanupStrategy = "delete" | "none";
 
@@ -73,7 +75,7 @@ const globToRegExp = (pattern: string): RegExp => {
   return new RegExp(`^${converted}$`, "i");
 };
 
-const isRecord = (value: JsonValue): value is Record<string, JsonValue> => {
+const isRecord = (value: unknown): value is Record<string, JsonValue> => {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 };
 
@@ -98,7 +100,11 @@ const resolvePointer = (value: JsonValue, pointer: string): JsonValue | undefine
       if (Number.isNaN(index) || index < 0 || index >= current.length) {
         return undefined;
       }
-      current = current[index];
+      const next = current[index];
+      if (next === undefined) {
+        return undefined;
+      }
+      current = next;
       continue;
     }
 
@@ -110,13 +116,21 @@ const resolvePointer = (value: JsonValue, pointer: string): JsonValue | undefine
       return undefined;
     }
 
-    current = current[segment];
+    const next = current[segment];
+    if (next === undefined) {
+      return undefined;
+    }
+    current = next;
   }
 
   return current;
 };
 
-const matchesExpectedPayload = (candidate: JsonValue, expected: JsonValue): boolean => {
+const matchesExpectedPayload = (candidate: JsonValue | undefined, expected: JsonValue): boolean => {
+  if (candidate === undefined) {
+    return false;
+  }
+
   if (isRecord(expected)) {
     if (!isRecord(candidate)) {
       return false;
@@ -143,10 +157,117 @@ const normaliseCleanupStrategy = (value: unknown): CleanupStrategy => {
   return "none";
 };
 
+const parseAllowedHosts = (value: string): string[] => {
+  return value
+    .split(/[,\s]+/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+};
+
+const pickAgentHost = (hosts: string[]): string => {
+  const ipv4Hosts = hosts.filter((host) => host === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(host));
+  return ipv4Hosts.length > 0 ? ipv4Hosts[0]! : "localhost";
+};
+
+const normaliseHostForUrl = (host: string): string => host;
+
+const isAgentType = (value: string): value is AgentType => {
+  return ["codex", "claude", "goose", "opencode"].includes(value);
+};
+
+interface StartSessionOptions {
+  agentPointer: string;
+  directoryPointer: string;
+  namePointer: string;
+  messagePointer: string;
+  cleanupStrategy: CleanupStrategy;
+}
+
+const toStartSessionOptions = (options: JsonValue | undefined): StartSessionOptions => {
+  if (!isRecord(options)) {
+    return {
+      agentPointer: "/agent",
+      directoryPointer: "/directory",
+      namePointer: "/name",
+      messagePointer: "/message",
+      cleanupStrategy: "none",
+    };
+  }
+
+  return {
+    agentPointer:
+      typeof options.agentPointer === "string" && options.agentPointer.trim().length > 0
+        ? options.agentPointer.trim()
+        : "/agent",
+    directoryPointer:
+      typeof options.directoryPointer === "string" && options.directoryPointer.trim().length > 0
+        ? options.directoryPointer.trim()
+        : "/directory",
+    namePointer:
+      typeof options.namePointer === "string" && options.namePointer.trim().length > 0
+        ? options.namePointer.trim()
+        : "/name",
+    messagePointer:
+      typeof options.messagePointer === "string" && options.messagePointer.trim().length > 0
+        ? options.messagePointer.trim()
+        : "/message",
+    cleanupStrategy: normaliseCleanupStrategy(options.cleanupStrategy),
+  };
+};
+
+const buildAgentUrl = (host: string, port: number, path: string): URL => {
+  return new URL(path, `http://${host}:${port}/`);
+};
+
+const normaliseAgentMessages = (items: JsonValue | undefined): { role: string; content: string; createdAt: string }[] => {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  const base = Date.now();
+  return items
+    .map((item, index) => {
+      if (!isRecord(item)) {
+        return undefined;
+      }
+      const roleCandidate = item.type ?? item.role;
+      const role = typeof roleCandidate === "string" && roleCandidate.trim().length > 0 ? roleCandidate : "assistant";
+      const contentCandidate = (() => {
+        if (typeof item.content === "string" && item.content.trim().length > 0) {
+          return item.content;
+        }
+        if (typeof item.message === "string" && item.message.trim().length > 0) {
+          return item.message;
+        }
+        return "";
+      })();
+      if (!contentCandidate) {
+        return undefined;
+      }
+      const createdAtCandidate =
+        typeof item.createdAt === "string"
+          ? item.createdAt
+          : typeof item.created_at === "string"
+            ? item.created_at
+            : typeof item.timestamp === "string"
+              ? item.timestamp
+              : undefined;
+      const createdAt = createdAtCandidate ?? new Date(base + index).toISOString();
+      return {
+        role,
+        content: contentCandidate,
+        createdAt,
+      };
+    })
+    .filter((entry): entry is { role: string; content: string; createdAt: string } => Boolean(entry));
+};
+
 const toPendingKey = ({ watcherId, filePath }: PendingKey) => `${watcherId}::${filePath}`;
 
 export class FileWatcherRunner {
   private readonly manager: ProcessManager;
+  private readonly config: WingmanConfig;
+  private readonly agentHost: string;
   private readonly root: string;
   private readonly rootBoundary: string;
   private readonly refreshInterval: number;
@@ -154,11 +275,14 @@ export class FileWatcherRunner {
   private readonly pending = new Set<string>();
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(options: { root: string; manager: ProcessManager; refreshIntervalMs?: number }) {
+  constructor(options: { root: string; manager: ProcessManager; config: WingmanConfig; refreshIntervalMs?: number }) {
     const watcherRoot = resolveWatcherRoot(options.root);
     this.root = watcherRoot;
     this.rootBoundary = this.root.endsWith(sep) ? this.root : `${this.root}${sep}`;
     this.manager = options.manager;
+    this.config = options.config;
+    const allowedHosts = parseAllowedHosts(this.config.allowedHosts);
+    this.agentHost = normaliseHostForUrl(pickAgentHost(allowedHosts));
     this.refreshInterval = Math.max(2000, options.refreshIntervalMs ?? 10000);
   }
 
@@ -221,7 +345,7 @@ export class FileWatcherRunner {
         return;
       }
 
-      const candidateName = typeof filename === "string" ? filename : filename.toString();
+      const candidateName = typeof filename === "string" ? filename : String(filename);
       if (!matcher.test(candidateName)) {
         return;
       }
@@ -305,6 +429,9 @@ export class FileWatcherRunner {
       case "stop-session":
         await this.handleStopSession(record, payload, filePath);
         break;
+      case "start-session":
+        await this.handleStartSession(record, payload, filePath);
+        break;
       default:
         throw new Error(`Unsupported action ${record.actionKey}`);
     }
@@ -337,6 +464,150 @@ export class FileWatcherRunner {
         console.warn(`[watchers] failed to remove trigger ${basename(filePath)}: ${message}`);
       });
     }
+  }
+
+  private async handleStartSession(record: FileWatcherRecord, payload: JsonValue, filePath: string) {
+    if (!isRecord(payload)) {
+      throw new Error("Start session trigger payload must be an object");
+    }
+
+    const options = toStartSessionOptions(record.options);
+    const cleanupStrategy = options.cleanupStrategy;
+
+    const agentCandidate = resolvePointer(payload, options.agentPointer);
+    if (typeof agentCandidate !== "string" || agentCandidate.trim().length === 0) {
+      throw new Error(`Agent missing via pointer ${options.agentPointer}`);
+    }
+
+    const agent = agentCandidate.trim().toLowerCase();
+    if (!isAgentType(agent)) {
+      throw new Error(`Unsupported agent "${agent}"`);
+    }
+
+    const directoryCandidate = resolvePointer(payload, options.directoryPointer);
+    const directoryInput =
+      typeof directoryCandidate === "string" && directoryCandidate.trim().length > 0
+        ? directoryCandidate.trim()
+        : undefined;
+    const workingDirectory = await this.ensureDirectory(directoryInput);
+
+    const nameCandidate = resolvePointer(payload, options.namePointer);
+    const sessionName =
+      typeof nameCandidate === "string" && nameCandidate.trim().length > 0 ? nameCandidate.trim() : undefined;
+
+    const session = await this.manager.createSession(agent, workingDirectory, sessionName);
+
+    const firstMessage = this.extractMessageContent(resolvePointer(payload, options.messagePointer));
+    if (firstMessage) {
+      try {
+        await this.sendInitialMessage(session.id, session.port, firstMessage);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[watchers] failed to send initial message for ${session.id}: ${message}`);
+      }
+      await this.syncSessionMessages(session.id, session.port);
+    }
+
+    console.log(`[watchers] started session ${session.id} via ${record.id}`);
+
+    if (cleanupStrategy === "delete") {
+      await rm(filePath).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[watchers] failed to remove trigger ${basename(filePath)}: ${message}`);
+      });
+    }
+  }
+
+  private extractMessageContent(value: JsonValue | undefined): string | null {
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    }
+
+    if (isRecord(value)) {
+      const content = value.content;
+      if (typeof content === "string") {
+        const trimmed = content.trim();
+        return trimmed.length > 0 ? trimmed : null;
+      }
+    }
+
+    return null;
+  }
+
+  private async sendInitialMessage(sessionId: string, port: number, content: string) {
+    const url = buildAgentUrl(this.agentHost, port, "/message");
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "user", content }),
+      });
+      if (!response.ok) {
+        const message = await response
+          .json()
+          .then((payload) => (isRecord(payload) && typeof payload.error === "string" ? payload.error : null))
+          .catch(() => null);
+        throw new Error(message ?? response.statusText ?? "Agent request failed");
+      }
+    } catch (error) {
+      throw new Error(`Failed to send initial message for session ${sessionId}: ${(error as Error).message}`);
+    }
+  }
+
+  private async syncSessionMessages(sessionId: string, port: number) {
+    try {
+      const url = buildAgentUrl(this.agentHost, port, "/messages");
+      const response = await fetch(url);
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = await response.json();
+      const items = Array.isArray(payload)
+        ? payload
+        : isRecord(payload) && Array.isArray(payload.messages)
+          ? payload.messages
+          : undefined;
+      const messages = normaliseAgentMessages(items);
+      messageStore.replaceMessages(
+        sessionId,
+        messages.map((entry) => ({
+          role: entry.role,
+          content: entry.content,
+          createdAt: entry.createdAt,
+        })),
+      );
+    } catch (error) {
+      console.warn(`[watchers] failed to synchronise messages for ${sessionId}: ${(error as Error).message}`);
+    }
+  }
+
+  private async ensureDirectory(input: string | undefined): Promise<string> {
+    const candidate = input && input.length > 0 ? input : this.config.defaultWorkingDirectory;
+    const expanded =
+      candidate.startsWith("~") && (Bun.env.HOME ?? "").length > 0 ? candidate.replace("~", Bun.env.HOME ?? "") : candidate;
+    const absolute = isAbsolute(expanded) ? expanded : resolve(this.config.defaultWorkingDirectory, expanded);
+
+    let resolvedPath = normalize(absolute);
+    try {
+      resolvedPath = normalize(await realpath(resolvedPath));
+    } catch {
+      // Use normalised path if realpath fails (likely missing directory)
+    }
+
+    let stats: Awaited<ReturnType<typeof stat>>;
+    try {
+      stats = await stat(resolvedPath);
+    } catch {
+      throw new Error(`Directory not found: ${resolvedPath}`);
+    }
+
+    if (!stats.isDirectory()) {
+      throw new Error(`Path is not a directory: ${resolvedPath}`);
+    }
+
+    return resolvedPath;
   }
 
   private async resolveDirectory(relativeDir: string): Promise<string> {
