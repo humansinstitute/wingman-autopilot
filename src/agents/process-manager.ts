@@ -81,6 +81,7 @@ export class ProcessManager {
         ? workingDirectory
         : this.config.defaultWorkingDirectory;
 
+    console.log(`[manager] launching ${definition.label} with command: ${command.join(" ")}`);
     const session: AgentSession = {
       id,
       agent,
