@@ -537,21 +537,30 @@ export class FileWatcherRunner {
 
   private async sendInitialMessage(sessionId: string, port: number, content: string) {
     const url = buildAgentUrl(this.agentHost, port, "/message");
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "user", content }),
-      });
-      if (!response.ok) {
-        const message = await response
-          .json()
-          .then((payload) => (isRecord(payload) && typeof payload.error === "string" ? payload.error : null))
-          .catch(() => null);
-        throw new Error(message ?? response.statusText ?? "Agent request failed");
+    const maxAttempts = 5;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ type: "user", content }),
+        });
+        if (!response.ok) {
+          const message = await response
+            .json()
+            .then((payload) => (isRecord(payload) && typeof payload.error === "string" ? payload.error : null))
+            .catch(() => null);
+          throw new Error(message ?? response.statusText ?? "Agent request failed");
+        }
+        return;
+      } catch (error) {
+        if (attempt === maxAttempts) {
+          throw new Error(
+            `Failed to send initial message for session ${sessionId}: ${(error as Error).message}`,
+          );
+        }
+        await this.delay(250 * attempt);
       }
-    } catch (error) {
-      throw new Error(`Failed to send initial message for session ${sessionId}: ${(error as Error).message}`);
     }
   }
 
