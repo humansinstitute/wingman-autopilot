@@ -14,10 +14,16 @@ import { orchestratorPresetStore } from "./storage/orchestrator-presets";
 import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 import { fileWatcherStore } from "./storage/file-watcher-store";
 import { FileWatcherRunner } from "./watchers/file-watcher-runner";
+import { ensureDeepDiveProcess, getDeepDivePort, isDeepDiveProcessRunning } from "./deep-dive-process";
 
 const config = loadConfig();
 console.log(`[config] tmux session base: ${config.tmuxBase}`);
 const TMUX_SESSION_NAME = config.tmuxBase;
+
+const isDeepDivePagePath = (pathname: string) =>
+  pathname === "/deep-dive" || pathname.startsWith("/deep-dive/");
+
+ensureDeepDiveProcess(config.port);
 
 const readStreamToString = async (stream: ReadableStream<Uint8Array> | null | undefined) => {
   if (!stream) return "";
@@ -450,10 +456,12 @@ const defaultHighlightReportIntro =
   "Pleaese review the 01_process.md for your instructions.\n\nYou will read the process instructions in: <active_dir>\nThe sessionID you are operating in is: <sessionID>";
 
 fileWatcherStore.ensureStopSessionWatcher();
+fileWatcherStore.ensureStartSessionWatcher();
 
 const fileWatcherRunner = new FileWatcherRunner({
   root: wingmenRoot,
   manager,
+  config,
 });
 try {
   await fileWatcherRunner.start();
@@ -1534,8 +1542,9 @@ const listDirectories = async (input: string | null | undefined, query?: string)
     .filter((entry) => {
       if (!term) return true;
       return entry.name.toLowerCase().includes(term);
-    })
-    .slice(0, MAX_DIRECTORY_RESULTS);
+    });
+
+  const limitedDirectories = term ? directories.slice(0, MAX_DIRECTORY_RESULTS) : directories;
 
   const parent = (() => {
     const candidate = dirname(directory);
@@ -1545,7 +1554,7 @@ const listDirectories = async (input: string | null | undefined, query?: string)
   return {
     path: directory,
     parent,
-    entries: directories,
+    entries: limitedDirectories,
   };
 };
 
@@ -2256,7 +2265,7 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
 
 const server = Bun.serve({
   port: config.port,
-  async fetch(request: Request) {
+  async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const pathname = url.pathname;
     const method = request.method as HttpMethod;
@@ -2270,6 +2279,31 @@ const server = Bun.serve({
       return Response.redirect(`${url.origin}/home`, 302);
     }
 
+    if (method === "GET" && pathname === "/deep-dive/config.json") {
+      const port = getDeepDivePort();
+      const running = isDeepDiveProcessRunning();
+      const override = Bun.env.DEEP_DIVE_SOCKET_URL?.trim();
+      let socketUrl = override && override.length > 0 ? override : null;
+
+      if (!socketUrl && running && port) {
+        const protocol = url.protocol === "https:" ? "wss" : "ws";
+        socketUrl = `${protocol}://${url.hostname}:${port}/deep-dive/socket`;
+      }
+
+      return Response.json(
+        {
+          socketUrl,
+          running,
+          port: socketUrl && port ? port : null,
+        },
+        {
+          headers: {
+            "cache-control": "no-cache",
+          },
+        },
+      );
+    }
+
     if (
       pathname === "/home" ||
       pathname === "/docs" ||
@@ -2280,6 +2314,14 @@ const server = Bun.serve({
       pathname.startsWith("/live/")
     ) {
       return serveIndex();
+    }
+
+    if (method === "GET" && isDeepDivePagePath(pathname)) {
+      const deepDivePage = servePublicAsset("/deep-dive.html");
+      if (deepDivePage) {
+        return deepDivePage;
+      }
+      return new Response("Deep Dive page missing", { status: 404 });
     }
 
     if (pathname.startsWith("/api/")) {
@@ -2309,6 +2351,50 @@ const server = Bun.serve({
     return new Response("Not Found", { status: 404 });
   },
 });
+
+const stopAllSessions = async () => {
+  const sessions = manager.listSessions();
+  for (const session of sessions) {
+    try {
+      await manager.stopSession(session.id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[shutdown] failed to stop session ${session.id}: ${message}`);
+    }
+  }
+};
+
+let shuttingDown = false;
+const registerShutdownHandlers = () => {
+  const handleShutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[shutdown] received ${signal}. Shutting down services...`);
+
+    try {
+      fileWatcherRunner.stop();
+    } catch (error) {
+      console.warn(`[shutdown] failed to stop file watcher runner: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    try {
+      server.stop();
+    } catch (error) {
+      console.warn(`[shutdown] failed to stop server: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    await stopAllSessions();
+    process.exit(0);
+  };
+
+  for (const signal of ["SIGINT", "SIGTERM", "SIGQUIT"] as const) {
+    process.on(signal, () => {
+      void handleShutdown(signal);
+    });
+  }
+};
+
+registerShutdownHandlers();
 
 console.log(
   `Wingman V2 orchestrator listening on http://localhost:${config.port} (agents ${config.agentPortStart} - ${config.agentPortStart + config.agentPortMax - 1})`,

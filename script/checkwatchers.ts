@@ -46,6 +46,12 @@ const main = () => {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`Failed to ensure default stop-session watcher: ${message}`);
     }
+    try {
+      fileWatcherStore.ensureStartSessionWatcher();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`Failed to ensure default start-session watcher: ${message}`);
+    }
   }
 
   const watchers = fileWatcherStore.listWatchers();
