@@ -2275,7 +2275,7 @@ const server = Bun.serve<DeepDiveSocketContext>({
     if (isWebSocketUpgrade) {
       if (isDeepDiveSocketPath(pathname)) {
         if (deepDiveUpgrade(request, server)) {
-          return new Response(null, { status: 101 });
+          return;
         }
         return new Response("WebSocket upgrade failed", { status: 500 });
       }
