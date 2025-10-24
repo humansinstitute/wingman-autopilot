@@ -62,7 +62,7 @@ const baseCommand = (ctx: AgentCommandContext) => {
     ctx.config.allowedHosts,
   ];
   if (agentMode === "tmux" || Bun.env.TMUX_BASE) {
-    args.push("--tmux-base", ctx.config.tmuxBase);
+    args.push(`--tmux-session=${ctx.config.tmuxBase}`);
   }
   return args;
 };
