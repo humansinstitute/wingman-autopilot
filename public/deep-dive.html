@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" />
   </head>
   <body class="theme-auto deep-dive-page">
-    <header class="wm-header">
+    <header class="wm-header deep-dive-header">
       <div class="wm-brand">
         <img src="/path/Wingman_Goose_Logo_Dark.png" alt="Wingman logo" width="32" height="32" class="wm-logo dark" />
         <img src="/path/Wingman_Goose_Logo_Light.png" alt="Wingman logo" width="32" height="32" class="wm-logo light" />
@@ -22,7 +22,10 @@
           <p class="wm-tagline">Solvitur Ambulando</p>
         </div>
       </div>
-      <a class="wm-button secondary deep-dive-back" href="/home">&larr; Back to Wingmen</a>
+      <div class="deep-dive-header-actions">
+        <span id="connection-status" class="deep-dive-status" role="status" aria-live="polite">Connecting…</span>
+        <a class="wm-button secondary deep-dive-back" href="/home">&larr; Back to Wingmen</a>
+      </div>
     </header>
     <main class="deep-dive-main">
       <section class="terminal-card">
@@ -57,7 +60,6 @@
               <button type="button" data-key="enter">⏎</button>
               <button type="button" data-key="ctrl-c" class="danger">Ctrl+C</button>
             </div>
-            <span id="connection-status" class="deep-dive-status" role="status" aria-live="polite">Connecting…</span>
           </div>
         </header>
         <div id="terminal-container" class="terminal-container" role="region" aria-label="Wingman terminal"></div>
