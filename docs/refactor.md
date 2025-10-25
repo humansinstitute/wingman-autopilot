@@ -61,10 +61,13 @@
    - Unit slice by slice (e.g., start with `/api/config`, then docs, uploads, sessions, orchestrator directories, webhooks) to limit diff scope.
 
 4. **Static Asset & Webhook Separation**
-- Move static asset helpers to `static/` modules; update the main request handler to call the extracted functions.
-- Extract webhook handling into a dedicated route module to decouple pre-check logic from the main API path.
-- Ensure path safety checks remain intact (`ace-builds` boundary, image directory validation, docs root guard).
-- Harden `servePublicAsset` by normalising and bounding requests to the public directory (mirror the `/ace-builds` guard) to close the current traversal gap.
+   - Move static asset helpers to `static/` modules; update the main request handler to call the extracted functions.
+   - Extract webhook handling into a dedicated route module to decouple pre-check logic from the main API path.
+   - Ensure path safety checks remain intact (`ace-builds` boundary, image directory validation, docs root guard).
+   - Harden `servePublicAsset` by normalising and bounding requests to the public directory (mirror the `/ace-builds` guard) to close the current traversal gap. The extracted helper should:
+     - Resolve `../public` to an absolute path once and cache a boundary string (e.g., via `normalize(join(projectRoot, "public"))`).
+     - Normalise every request suffix (`normalize(join(publicRoot, suffix))`) and reject anything that does not start with the boundary prefix.
+     - Keep MIME sniffing and cache headers unchanged. Add a manual regression step (`/../README.md` must 404) to Phase 4 validation.
 
 5. **Finalize Entry Point**
    - Replace monolithic `handleApi` with router import; reduce `src/server.ts` to:
@@ -82,7 +85,7 @@
 
 ## Key Considerations & Risks
 - Maintain path safety when refactoring docs and upload helpers; keep `normalize` + boundary checks intact, especially against home-directory traversal.
-- Address the static asset traversal bug (`servePublicAsset`) early to avoid shipping the refactor with a known security regression; new static module should enforce directory boundaries the same way image and ace-build helpers do.
+- Address the static asset traversal bug (`servePublicAsset`) early to avoid shipping the refactor with a known security regression; new static module should enforce directory boundaries the same way image and ace-build helpers do, including explicit rejection logs for attempted escapes.
 - Preserve async ordering during bootstrap (config load → tmux cleanup → directory creation → watcher startup → ProcessManager init → presets/image schedule). Converting to explicit bootstrap pipeline should enforce order.
 - Ensure `manager` events still update `messageStore` when moved into services and that watcher teardown remains hooked into lifecycle events.
 - Verify orchestrator launch flow still waits for agent readiness and handles retries; extraction should not change timing constants.
