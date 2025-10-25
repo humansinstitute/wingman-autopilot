@@ -159,10 +159,10 @@ const matchesExpectedPayload = (candidate: JsonValue | undefined, expected: Json
 };
 
 const normaliseCleanupStrategy = (value: unknown): CleanupStrategy => {
-  if (value === "delete") {
-    return "delete";
+  if (value === "none") {
+    return "none";
   }
-  return "none";
+  return "delete";
 };
 
 const isAgentType = (value: string): value is AgentType => {
@@ -184,7 +184,7 @@ const toStartSessionOptions = (options: JsonValue | undefined): StartSessionOpti
       directoryPointer: "/directory",
       namePointer: "/name",
       messagePointer: "/message",
-      cleanupStrategy: "none",
+      cleanupStrategy: "delete",
     };
   }
 
