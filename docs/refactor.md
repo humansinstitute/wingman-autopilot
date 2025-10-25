@@ -61,9 +61,10 @@
    - Unit slice by slice (e.g., start with `/api/config`, then docs, uploads, sessions, orchestrator directories, webhooks) to limit diff scope.
 
 4. **Static Asset & Webhook Separation**
-   - Move static asset helpers to `static/` modules; update the main request handler to call the extracted functions.
-   - Extract webhook handling into a dedicated route module to decouple pre-check logic from the main API path.
-   - Ensure path safety checks remain intact (`ace-builds` boundary, image directory validation, docs root guard).
+- Move static asset helpers to `static/` modules; update the main request handler to call the extracted functions.
+- Extract webhook handling into a dedicated route module to decouple pre-check logic from the main API path.
+- Ensure path safety checks remain intact (`ace-builds` boundary, image directory validation, docs root guard).
+- Harden `servePublicAsset` by normalising and bounding requests to the public directory (mirror the `/ace-builds` guard) to close the current traversal gap.
 
 5. **Finalize Entry Point**
    - Replace monolithic `handleApi` with router import; reduce `src/server.ts` to:
@@ -81,6 +82,7 @@
 
 ## Key Considerations & Risks
 - Maintain path safety when refactoring docs and upload helpers; keep `normalize` + boundary checks intact, especially against home-directory traversal.
+- Address the static asset traversal bug (`servePublicAsset`) early to avoid shipping the refactor with a known security regression; new static module should enforce directory boundaries the same way image and ace-build helpers do.
 - Preserve async ordering during bootstrap (config load → tmux cleanup → directory creation → watcher startup → ProcessManager init → presets/image schedule). Converting to explicit bootstrap pipeline should enforce order.
 - Ensure `manager` events still update `messageStore` when moved into services and that watcher teardown remains hooked into lifecycle events.
 - Verify orchestrator launch flow still waits for agent readiness and handles retries; extraction should not change timing constants.
@@ -95,3 +97,18 @@
 - Evaluate adding type definitions for API responses once routes are modularised (including webhook payloads).
 - Clarify long-term plan for git worktree helpers (e.g., reuse in UI or CLI) before locking module boundaries.
 - Align future monitoring/logging enhancements with the new structure (e.g., dedicated middleware slot).
+
+## Success Metrics & Validation
+- **Phase 1**: `src/server.ts` LOC reduced by ~20%; bootstrap modules created and imported successfully; `bun start` passes smoke tests.
+- **Phase 2**: Services extracted with clear interfaces; shared state passed via parameters; no regressions in API responses.
+- **Phase 3**: Routes modularized; router handles delegation; response shapes unchanged.
+- **Phase 4**: Static assets and webhooks separated; path safety preserved.
+- **Phase 5**: `src/server.ts` < 500 LOC; entry point clean; all imports resolved.
+- **Phase 6**: Architecture docs updated; lint/format passes; optional tests added for services.
+
+## Additional Recommendations
+- **Version Control**: Create a feature branch for the refactor. Use `git commit --fixup` for iterative improvements.
+- **Code Review**: For each phase, include a summary of changes and rationale in PR descriptions.
+- **Rollback Plan**: Keep original `server.ts` as backup; test thoroughly before merging.
+- **Performance**: Monitor startup time and memory usage post-refactor to ensure no degradation.
+- **Future-Proofing**: Design services with dependency injection in mind for easier testing later.
