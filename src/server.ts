@@ -437,6 +437,8 @@ const docsRootBoundary = docsRoot.endsWith(sep) ? docsRoot : `${docsRoot}${sep}`
 const nodeModulesRoot = normalize(join(projectRoot, "node_modules"));
 const aceBuildsRoot = normalize(join(nodeModulesRoot, "ace-builds"));
 const aceBuildsRootBoundary = aceBuildsRoot.endsWith(sep) ? aceBuildsRoot : `${aceBuildsRoot}${sep}`;
+const publicRoot = normalize(join(projectRoot, "public"));
+const publicRootBoundary = publicRoot.endsWith(sep) ? publicRoot : `${publicRoot}${sep}`;
 await mkdir(documentsDirectory, { recursive: true }).catch(() => undefined);
 await mkdir(userDataRoot, { recursive: true }).catch(() => undefined);
 const wingmenRoot = join(projectRoot, ".wingmen");
@@ -1575,8 +1577,12 @@ const resolveAsset = (pathname: string) => {
 const servePublicAsset = (pathname: string) => {
   const normalized = pathname.startsWith("/") ? pathname.slice(1) : pathname;
   if (!normalized) return undefined;
-  const url = new URL(`../public/${normalized}`, import.meta.url);
-  const file = Bun.file(url);
+  const candidate = normalize(join(publicRoot, normalized));
+  if (!candidate.startsWith(publicRootBoundary)) {
+    console.warn(`[static] rejected public asset outside boundary: ${pathname}`);
+    return undefined;
+  }
+  const file = Bun.file(candidate);
   if (!file.size) return undefined;
 
   const type = file.type || undefined;
