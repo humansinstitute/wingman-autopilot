@@ -57,6 +57,7 @@ const state = {
     previewLabel: null,
     showHidden: false,
     browserCollapsed: false,
+    uploading: false,
     worktreeModal: {
       open: false,
       submitting: false,
@@ -154,6 +155,32 @@ const encodeTextToBytes = (text) => {
   return bytes;
 };
 
+const readFileAsUint8Array = (file) =>
+  new Promise((resolve, reject) => {
+    if (!(file instanceof File)) {
+      reject(new Error("Invalid file input"));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => {
+      reader.abort();
+      reject(new Error("Failed to read file"));
+    };
+    reader.onload = () => {
+      const { result } = reader;
+      if (result instanceof ArrayBuffer) {
+        resolve(new Uint8Array(result));
+        return;
+      }
+      if (ArrayBuffer.isView(result)) {
+        resolve(new Uint8Array(result.buffer));
+        return;
+      }
+      reject(new Error("Unsupported file result"));
+    };
+    reader.readAsArrayBuffer(file);
+  });
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 const createSvgShape = (tag, attributes = {}) => {
@@ -250,6 +277,11 @@ const FILE_BROWSER_ICON_DEFS = {
     ["polyline", { points: "14 2 14 8 20 8" }],
     ["path", { d: "M12 13v4" }],
     ["path", { d: "M10 15h4" }],
+  ],
+  upload: [
+    ["path", { d: "M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" }],
+    ["polyline", { points: "16 6 12 2 8 6" }],
+    ["line", { x1: 12, y1: 2, x2: 12, y2: 16 }],
   ],
   branchPlus: [
     ["circle", { cx: 6, cy: 6, r: 2.5 }],
@@ -898,6 +930,22 @@ const createFilesTextFile = async (parentPath, name, content = "") => {
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     const message = data?.error ?? response.statusText ?? "Failed to create file";
+    throw new Error(message);
+  }
+  return response.json();
+};
+
+const uploadFilesBinary = async (parentPath, file) => {
+  const bytes = await readFileAsUint8Array(file);
+  const base64 = encodeUint8ArrayToBase64(bytes);
+  const response = await fetch("/api/docs/file", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ directory: parentPath, name: file.name, base64 }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const message = data?.error ?? response.statusText ?? "Failed to upload file";
     throw new Error(message);
   }
   return response.json();
@@ -3540,6 +3588,50 @@ const promptCreateFile = async () => {
   }
 };
 
+const uploadSelectedFile = async (file) => {
+  if (!(file instanceof File)) return;
+  const files = state.files;
+  if (files.loading || files.uploading) return;
+  const parentPath = files.currentPath;
+  files.uploading = true;
+  if (currentRoute === "files") render();
+  try {
+    const result = await uploadFilesBinary(parentPath, file);
+    await loadFilesTree(parentPath);
+    if (result?.path && result.previewable) {
+      void loadFilesPreview(result.path);
+    }
+  } catch (error) {
+    files.uploading = false;
+    if (currentRoute === "files") render();
+    const message = error instanceof Error ? error.message : "Failed to upload file";
+    window.alert(message);
+    return;
+  }
+  files.uploading = false;
+  if (currentRoute === "files") render();
+};
+
+const promptUploadFile = () => {
+  const files = state.files;
+  if (files.loading || files.uploading) return;
+  const input = document.createElement("input");
+  input.type = "file";
+  input.hidden = true;
+  input.addEventListener("change", () => {
+    const [selected] = input.files ?? [];
+    if (selected) {
+      void uploadSelectedFile(selected);
+    }
+    input.remove();
+  });
+  input.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+  document.body.append(input);
+  input.click();
+};
+
 const renderFiles = () => {
   const files = state.files;
   if (!files.initialized) {
@@ -3641,7 +3733,25 @@ const renderFiles = () => {
     void promptCreateFile();
   });
 
-  controls.append(upButton, refreshButton, toggleHiddenButton, newFolderButton, newFileButton);
+  const uploadButton = document.createElement("button");
+  uploadButton.type = "button";
+  uploadButton.className = "wm-button secondary wm-button-icon";
+  const syncUploadButtonState = () => {
+    uploadButton.disabled = files.loading || files.uploading;
+    setIconButton(uploadButton, "upload", files.uploading ? "Uploading…" : "Upload file");
+    if (files.uploading) {
+      uploadButton.dataset.loading = "true";
+    } else {
+      delete uploadButton.dataset.loading;
+    }
+  };
+  syncUploadButtonState();
+  uploadButton.addEventListener("click", () => {
+    if (files.loading || files.uploading) return;
+    promptUploadFile();
+  });
+
+  controls.append(upButton, refreshButton, toggleHiddenButton, newFolderButton, newFileButton, uploadButton);
 
   if (canCreateWorktree()) {
     const worktreeButton = document.createElement("button");
@@ -3770,6 +3880,13 @@ const renderFiles = () => {
       item.append(button);
       list.append(item);
     });
+
+    if (files.uploading && !files.loading) {
+      const uploadingItem = document.createElement("li");
+      uploadingItem.className = "wm-files-browser__status";
+      uploadingItem.textContent = "Uploading file…";
+      list.append(uploadingItem);
+    }
 
     if (files.loading) {
       const loadingItem = document.createElement("li");

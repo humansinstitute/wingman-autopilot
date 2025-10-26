@@ -1090,7 +1090,16 @@ const createDocsDirectory = async (parentInput: string | null | undefined, nameI
   };
 };
 
-const createDocsFile = async (parentInput: string | null | undefined, nameInput: unknown, contentInput: unknown) => {
+interface CreateDocsFilePayload {
+  content?: unknown;
+  base64?: unknown;
+}
+
+const createDocsFile = async (
+  parentInput: string | null | undefined,
+  nameInput: unknown,
+  payloadInput: unknown,
+) => {
   const parentDirectory = await ensureDocsDirectory(parentInput);
   const name = normaliseDocsEntryName(nameInput);
   const target = normalize(join(parentDirectory, name));
@@ -1098,14 +1107,37 @@ const createDocsFile = async (parentInput: string | null | undefined, nameInput:
     throw new Error("Invalid file path");
   }
 
-  const content =
-    typeof contentInput === "string"
-      ? contentInput
-      : typeof contentInput === "number"
-        ? contentInput.toString()
-        : "";
+  const payload =
+    payloadInput && typeof payloadInput === "object" && !Array.isArray(payloadInput)
+      ? (payloadInput as CreateDocsFilePayload)
+      : null;
 
-  const buffer = Buffer.from(content, "utf-8");
+  let buffer: Buffer;
+  if (payload && Object.prototype.hasOwnProperty.call(payload, "base64")) {
+    const base64Value = payload.base64;
+    if (base64Value !== null && base64Value !== undefined) {
+      if (typeof base64Value !== "string") {
+        throw new Error("Invalid base64 payload");
+      }
+      try {
+        buffer = Buffer.from(base64Value, "base64");
+      } catch {
+        throw new Error("Invalid base64 payload");
+      }
+    } else {
+      buffer = Buffer.from("", "utf-8");
+    }
+  } else {
+    const contentValue = payload ? payload.content : payloadInput;
+    const content =
+      typeof contentValue === "string"
+        ? contentValue
+        : typeof contentValue === "number"
+          ? contentValue.toString()
+          : "";
+    buffer = Buffer.from(content, "utf-8");
+  }
+
   if (buffer.length > MAX_DOCS_FILE_SIZE) {
     throw new Error("File is too large to create");
   }
@@ -1737,9 +1769,10 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
     const directory = normaliseOptionalString((payload as Record<string, unknown>).directory);
     const name = (payload as Record<string, unknown>).name;
     const content = (payload as Record<string, unknown>).content;
+    const base64 = (payload as Record<string, unknown>).base64;
 
     try {
-      const data = await createDocsFile(directory, name, content);
+      const data = await createDocsFile(directory, name, { content, base64 });
       return Response.json(data, { status: 201 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
