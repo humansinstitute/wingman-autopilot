@@ -1830,6 +1830,26 @@ const extractImageFiles = (items) => {
   return files;
 };
 
+const extractAttachmentFiles = (items) => {
+  if (!items) return [];
+  const files = [];
+  for (const item of Array.from(items)) {
+    if (!item) continue;
+    if (item.kind === "file") {
+      const file = item.getAsFile?.() ?? item;
+      if (file && !file.type?.startsWith?.("image/")) {
+        files.push(file);
+      }
+    } else if ("type" in item) {
+      const file = item;
+      if (!file.type || !file.type.startsWith("image/")) {
+        files.push(file);
+      }
+    }
+  }
+  return files;
+};
+
 const handleImageUploads = async (sessionId, files, textarea, resizeTextarea, setUploadingState) => {
   if (!files || files.length === 0) return;
   const session = getSessionById(sessionId);
@@ -1880,6 +1900,69 @@ const handleImageUploads = async (sessionId, files, textarea, resizeTextarea, se
     } catch (error) {
       console.error("Failed to upload image", error);
       window.alert("Image upload failed. Check console for details.");
+    } finally {
+      setUploadingState(false);
+    }
+  }
+};
+
+const uploadLiveAttachment = async (agentId, file) => {
+  const form = new FormData();
+  form.append("agent", agentId);
+  form.append("file", file, file.name);
+
+  const response = await fetch("/api/uploads/files", {
+    method: "POST",
+    body: form,
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const message = data?.error ?? response.statusText ?? "File upload failed";
+    throw new Error(message);
+  }
+
+  const data = await response.json().catch(() => ({}));
+  const first = Array.isArray(data?.files) ? data.files[0] : null;
+  if (!first) {
+    throw new Error("Upload succeeded without file details");
+  }
+  return first;
+};
+
+const handleAttachmentUploads = async (sessionId, files, textarea, resizeTextarea, setUploadingState) => {
+  if (!files || files.length === 0) return;
+  const session = getSessionById(sessionId);
+  if (!session) {
+    window.alert("Unable to locate session for file upload.");
+    return;
+  }
+
+  for (const file of files) {
+    setUploadingState(true);
+    try {
+      const payload = await uploadLiveAttachment(session.agent, file);
+      const placeholder = typeof payload?.placeholder === "string" ? payload.placeholder : null;
+      const fallback =
+        typeof payload?.publicPath === "string"
+          ? payload.publicPath
+          : typeof payload?.absolutePath === "string"
+            ? payload.absolutePath
+            : "";
+      const reference = placeholder || fallback;
+      if (!reference) {
+        window.alert("File upload succeeded without a usable reference.");
+        continue;
+      }
+      const needsPrefix = textarea.value.length > 0 && !textarea.value.endsWith("\n");
+      const textToInsert = needsPrefix ? `\n${reference}\n` : `${reference}\n`;
+      insertTextAtCursor(textarea, textToInsert, sessionId);
+      resizeTextarea();
+      textarea.focus();
+    } catch (error) {
+      console.error("Failed to upload file", error);
+      const message = error instanceof Error ? error.message : "File upload failed. Check console for details.";
+      window.alert(message);
     } finally {
       setUploadingState(false);
     }
@@ -4302,6 +4385,11 @@ const renderComposer = (sessionId) => {
   fileInput.multiple = true;
   fileInput.style.display = "none";
 
+  const attachmentInput = document.createElement("input");
+  attachmentInput.type = "file";
+  attachmentInput.multiple = true;
+  attachmentInput.style.display = "none";
+
   const resizeTextarea = () => {
     textarea.style.height = "auto";
     const lineHeight = parseFloat(window.getComputedStyle(textarea).lineHeight) || 20;
@@ -4339,22 +4427,35 @@ const renderComposer = (sessionId) => {
     }
   });
 
-  textarea.addEventListener("paste", (event) => {
-    const files = extractImageFiles(event.clipboardData?.items ?? event.clipboardData?.files);
-    if (files.length > 0) {
+  textarea.addEventListener("paste", async (event) => {
+    const items = event.clipboardData?.items ?? event.clipboardData?.files;
+    const imageFiles = extractImageFiles(items);
+    const otherFiles = extractAttachmentFiles(items);
+    if (imageFiles.length > 0 || otherFiles.length > 0) {
       event.preventDefault();
-      handleImageUploads(sessionId, files, textarea, resizeTextarea, setUploadingState);
+    }
+    if (imageFiles.length > 0) {
+      await handleImageUploads(sessionId, imageFiles, textarea, resizeTextarea, setUploadingState);
+    }
+    if (otherFiles.length > 0) {
+      await handleAttachmentUploads(sessionId, otherFiles, textarea, resizeTextarea, setUploadingState);
     }
   });
 
-  const handleDropEvent = (event) => {
+  const handleDropEvent = async (event) => {
     const transfer = event.dataTransfer;
     if (!transfer) return;
-    const files = extractImageFiles(transfer.items ?? transfer.files);
-    if (files.length === 0) return;
+    const imageFiles = extractImageFiles(transfer.items ?? transfer.files);
+    const otherFiles = extractAttachmentFiles(transfer.items ?? transfer.files);
+    if (imageFiles.length === 0 && otherFiles.length === 0) return;
     event.preventDefault();
     event.stopPropagation();
-    handleImageUploads(sessionId, files, textarea, resizeTextarea, setUploadingState);
+    if (imageFiles.length > 0) {
+      await handleImageUploads(sessionId, imageFiles, textarea, resizeTextarea, setUploadingState);
+    }
+    if (otherFiles.length > 0) {
+      await handleAttachmentUploads(sessionId, otherFiles, textarea, resizeTextarea, setUploadingState);
+    }
   };
 
   composer.addEventListener("dragover", (event) => {
@@ -4365,12 +4466,20 @@ const renderComposer = (sessionId) => {
   });
   composer.addEventListener("drop", handleDropEvent);
 
-  fileInput.addEventListener("change", () => {
+  fileInput.addEventListener("change", async () => {
     const files = extractImageFiles(fileInput.files);
     if (files.length > 0) {
-      handleImageUploads(sessionId, files, textarea, resizeTextarea, setUploadingState);
+      await handleImageUploads(sessionId, files, textarea, resizeTextarea, setUploadingState);
     }
     fileInput.value = "";
+  });
+
+  attachmentInput.addEventListener("change", async () => {
+    const files = extractAttachmentFiles(attachmentInput.files);
+    if (files.length > 0) {
+      await handleAttachmentUploads(sessionId, files, textarea, resizeTextarea, setUploadingState);
+    }
+    attachmentInput.value = "";
   });
 
   composer.addEventListener("submit", (event) => {
@@ -4427,6 +4536,10 @@ const renderComposer = (sessionId) => {
     fileInput.click();
   });
 
+  addCommand("Upload file", () => {
+    attachmentInput.click();
+  });
+
   const toggleCommandMenu = () => {
     const isOpen = commandMenu.classList.toggle("is-open");
     commandButton.setAttribute("aria-expanded", String(isOpen));
@@ -4463,7 +4576,7 @@ const renderComposer = (sessionId) => {
 
   buttonGroup.append(commandWrapper, submit);
 
-  composer.append(fileInput, textarea, buttonGroup);
+  composer.append(fileInput, attachmentInput, textarea, buttonGroup);
   composerShell.append(composer);
 
   resizeTextarea();

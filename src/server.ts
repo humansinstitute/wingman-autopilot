@@ -416,6 +416,7 @@ const srcRoot = fileURLToPath(new URL(".", import.meta.url));
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const tmpRoot = normalize(join(srcRoot, "../tmp"));
 const imageRoot = join(tmpRoot, "images");
+const attachmentRoot = join(tmpRoot, "attachments");
 const determineHomeDirectory = (): string => {
   const fromEnv = Bun.env.HOME?.trim();
   if (fromEnv) {
@@ -449,12 +450,22 @@ const orchestratorRoot = join(projectRoot, "orchestrator");
 const orchestratorTemplatesRoot = join(orchestratorRoot, "templates");
 const orchestratorActiveRootBase = join(userDataRoot, "orchestrator", "active");
 const maxImageSizeBytes = 10 * 1024 * 1024; // 10MB
+const maxAttachmentSizeBytes = 25 * 1024 * 1024; // 25MB
 const imageTtlMs = 24 * 60 * 60 * 1000;
+const attachmentTtlMs = 24 * 60 * 60 * 1000;
 const imageCleanupIntervalMs = 24 * 60 * 60 * 1000;
+const attachmentCleanupIntervalMs = 24 * 60 * 60 * 1000;
 
 const ensureImageDirectory = async (agent: AgentType) => {
   await mkdir(imageRoot, { recursive: true });
   const directory = join(imageRoot, agent);
+  await mkdir(directory, { recursive: true });
+  return directory;
+};
+
+const ensureAttachmentDirectory = async (agent: AgentType) => {
+  await mkdir(attachmentRoot, { recursive: true });
+  const directory = join(attachmentRoot, agent);
   await mkdir(directory, { recursive: true });
   return directory;
 };
@@ -530,6 +541,27 @@ const createImageFilename = (name: string, mime: string): string => {
   return `${randomUUID()}${inferred}`;
 };
 
+const createAttachmentFilename = (name: string, mime: string): string => {
+  const trimmed = name?.trim() ?? "";
+  const clean = trimmed.replace(/[^\w.-]/g, "_");
+  const candidateExt = extname(clean);
+  if (candidateExt) {
+    return `${randomUUID()}${candidateExt.toLowerCase()}`;
+  }
+
+  const inferred = (() => {
+    if (!mime) return ".bin";
+    const subtype = mime.split("/")[1];
+    if (!subtype) return ".bin";
+    if (/^[a-z0-9]+$/i.test(subtype)) {
+      return `.${subtype.toLowerCase()}`;
+    }
+    return ".bin";
+  })();
+
+  return `${randomUUID()}${inferred}`;
+};
+
 const buildAgentImagePlaceholder = (agent: AgentType, absolutePath: string, publicPath: string) => {
   const fileUrl = pathToFileURL(absolutePath).toString();
   switch (agent) {
@@ -544,6 +576,26 @@ const buildAgentImagePlaceholder = (agent: AgentType, absolutePath: string, publ
   }
 };
 
+const buildAgentFilePlaceholder = (
+  agent: AgentType,
+  absolutePath: string,
+  publicPath: string,
+  originalName: string | undefined,
+) => {
+  const label = originalName && originalName.trim().length > 0 ? originalName.trim() : "uploaded file";
+  const fileUrl = pathToFileURL(absolutePath).toString();
+  switch (agent) {
+    case "codex":
+    case "claude":
+    case "gemini":
+      return `[${label}](${fileUrl})`;
+    case "goose":
+      return `[${label}](${publicPath})`;
+    default:
+      return `${label}: ${publicPath}`;
+  }
+};
+
 const resolveTempImage = (pathname: string) => {
   if (!pathname.startsWith("/uploads/images/")) return undefined;
   const relative = pathname.replace("/uploads/images/", "");
@@ -551,6 +603,25 @@ const resolveTempImage = (pathname: string) => {
   const normalized = normalize(relative);
   const fullPath = join(imageRoot, normalized);
   if (!fullPath.startsWith(imageRoot)) {
+    return undefined;
+  }
+  const file = Bun.file(fullPath);
+  if (file.size === 0) return undefined;
+  return new Response(file, {
+    headers: {
+      ...(file.type ? { "content-type": file.type } : {}),
+      "cache-control": "no-store",
+    },
+  });
+};
+
+const resolveTempAttachment = (pathname: string) => {
+  if (!pathname.startsWith("/uploads/files/")) return undefined;
+  const relative = pathname.replace("/uploads/files/", "");
+  if (!relative) return undefined;
+  const normalized = normalize(relative);
+  const fullPath = join(attachmentRoot, normalized);
+  if (!fullPath.startsWith(attachmentRoot)) {
     return undefined;
   }
   const file = Bun.file(fullPath);
@@ -619,6 +690,62 @@ const scheduleImageCleanup = () => {
 };
 
 scheduleImageCleanup();
+
+const runAttachmentCleanup = async () => {
+  let directories: Awaited<ReturnType<typeof readdir>>;
+  try {
+    directories = await readdir(attachmentRoot, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    console.error("[uploads] failed to list attachment directory", error);
+    return;
+  }
+
+  const threshold = Date.now() - attachmentTtlMs;
+
+  await Promise.all(
+    directories
+      .filter((entry) => entry.isDirectory())
+      .map(async (dir) => {
+        const dirPath = join(attachmentRoot, dir.name);
+        let files: Awaited<ReturnType<typeof readdir>>;
+        try {
+          files = await readdir(dirPath, { withFileTypes: true });
+        } catch (error) {
+          console.error(`[uploads] failed to list attachment subdirectory ${dir.name}`, error);
+          return;
+        }
+
+        await Promise.all(
+          files
+            .filter((entry) => entry.isFile())
+            .map(async (file) => {
+              const filePath = join(dirPath, file.name);
+              try {
+                const stats = await stat(filePath);
+                if (stats.mtimeMs < threshold) {
+                  await rm(filePath, { force: true });
+                  console.log(`[uploads] removed expired attachment ${filePath}`);
+                }
+              } catch (error) {
+                console.error(`[uploads] failed to cleanup attachment ${filePath}`, error);
+              }
+            }),
+        );
+      }),
+  );
+};
+
+const scheduleAttachmentCleanup = () => {
+  runAttachmentCleanup().catch((error) => console.error("[uploads] initial attachment cleanup failed", error));
+  setInterval(() => {
+    runAttachmentCleanup().catch((error) => console.error("[uploads] scheduled attachment cleanup failed", error));
+  }, attachmentCleanupIntervalMs).unref?.();
+};
+
+scheduleAttachmentCleanup();
 
 manager.on((event) => {
   if (event.type === "session-started") {
@@ -2077,6 +2204,71 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
     });
   }
 
+  if (pathname === "/api/uploads/files" && method === "POST") {
+    let form: FormData;
+    try {
+      form = await request.formData();
+    } catch {
+      return Response.json({ error: "Invalid form data" }, { status: 400 });
+    }
+
+    const agentInput = form.get("agent");
+    const agent = typeof agentInput === "string" ? agentInput.toLowerCase() : "";
+    if (!isAgentType(agent)) {
+      return Response.json({ error: "Unsupported agent target" }, { status: 400 });
+    }
+
+    const fileEntries = form.getAll("file").filter((entry) => entry && typeof (entry as Blob).arrayBuffer === "function");
+    if (fileEntries.length === 0) {
+      return Response.json({ error: "File upload payload is required" }, { status: 400 });
+    }
+
+    let directory: string;
+    try {
+      directory = await ensureAttachmentDirectory(agent);
+    } catch (error) {
+      console.error("[uploads] failed to ensure attachment directory", error);
+      return Response.json({ error: "Failed to prepare file storage" }, { status: 500 });
+    }
+
+    const results = [];
+    for (const entry of fileEntries) {
+      const file = entry as Blob & { name?: string; size: number; type?: string };
+      if (file.size === 0) {
+        return Response.json({ error: "Empty files are not allowed" }, { status: 400 });
+      }
+      if (file.size > maxAttachmentSizeBytes) {
+        return Response.json({ error: "File exceeds 25MB limit" }, { status: 413 });
+      }
+
+      const filename = createAttachmentFilename(file.name ?? "upload", file.type ?? "");
+      const diskPath = join(directory, filename);
+      try {
+        const buffer = Buffer.from(await file.arrayBuffer());
+        await writeFile(diskPath, buffer);
+      } catch (error) {
+        console.error("[uploads] failed to persist attachment", error);
+        return Response.json({ error: "Failed to store file" }, { status: 500 });
+      }
+
+      const relativePath = normalize(join(agent, filename)).replace(/\\/g, "/");
+      const publicPath = `/uploads/files/${relativePath}`;
+      const placeholder = buildAgentFilePlaceholder(agent, diskPath, publicPath, file.name);
+      results.push({
+        agent,
+        name: file.name ?? filename,
+        size: file.size,
+        mime: file.type ?? null,
+        publicPath,
+        relativePath,
+        absolutePath: diskPath,
+        placeholder,
+      });
+    }
+
+    return Response.json({ files: results }, { status: 201 });
+  }
+
   if (pathname === "/api/sessions" && method === "GET") {
     const sessions = manager.listSessions();
     return Response.json({ sessions });
@@ -2308,6 +2500,11 @@ const server = Bun.serve({
 
     if (pathname.startsWith("/api/")) {
       return handleApi(request, url, method);
+    }
+
+    const tempAttachment = resolveTempAttachment(pathname);
+    if (tempAttachment) {
+      return tempAttachment;
     }
 
     const tempImage = resolveTempImage(pathname);
