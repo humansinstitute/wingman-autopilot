@@ -52,6 +52,7 @@
         <nav class="wm-menu-nav">
           <a href="/home" data-route="home">Home</a>
           <a href="/live" data-route="live">Live</a>
+          <a href="/apps" data-route="apps">Apps</a>
           <a href="/files" data-route="files">Files</a>
           <a href="/deep-dive">Deep Dive</a>
           <a href="/settings" data-route="settings">Settings</a>
@@ -207,6 +208,69 @@
         <menu>
           <button type="button" class="wm-button" id="orchestrator-directory-use">Use This Directory</button>
           <button value="cancel">Cancel</button>
+        </menu>
+      </form>
+    </dialog>
+    <dialog id="app-dialog">
+      <form method="dialog">
+        <h2 id="app-dialog-title">Add App</h2>
+        <p class="wm-dialog-help">Register an application so Wingman can control its lifecycle from the dashboard.</p>
+        <label for="app-label">Name</label>
+        <input id="app-label" type="text" autocomplete="off" placeholder="Docs Service" />
+
+        <label for="app-root">Root Directory</label>
+        <div class="working-directory-field">
+          <input id="app-root" type="text" autocomplete="off" placeholder="/Users/me/projects/app" />
+          <button type="button" class="wm-button secondary" id="app-discover">Discover Scripts</button>
+        </div>
+
+        <label class="wm-checkbox" for="app-discover-enabled">
+          <input id="app-discover-enabled" type="checkbox" checked />
+          <span>Auto-discover commands from package.json when available</span>
+        </label>
+
+        <div class="wm-field-grid">
+          <div>
+            <label for="app-script-start">Start Command</label>
+            <input id="app-script-start" type="text" autocomplete="off" placeholder="npm run start" />
+          </div>
+          <div>
+            <label for="app-script-stop">Stop Command</label>
+            <input id="app-script-stop" type="text" autocomplete="off" placeholder="npm run stop" />
+          </div>
+          <div>
+            <label for="app-script-restart">Restart Command</label>
+            <input id="app-script-restart" type="text" autocomplete="off" placeholder="npm run restart" />
+          </div>
+          <div>
+            <label for="app-script-build">Build Command</label>
+            <input id="app-script-build" type="text" autocomplete="off" placeholder="npm run build" />
+          </div>
+        </div>
+
+        <label for="app-tmux-session">tmux Session</label>
+        <input id="app-tmux-session" type="text" readonly value="wingman-apps" />
+        <p class="wm-field-note">All apps launch inside this shared tmux session.</p>
+
+        <label for="app-tmux-window">tmux Window</label>
+        <input id="app-tmux-window" type="text" readonly placeholder="Auto-generated from the app name" />
+
+        <label for="app-notes">Notes</label>
+        <textarea id="app-notes" rows="3" placeholder="Additional context for operators"></textarea>
+
+        <menu>
+          <button value="cancel" id="app-cancel" data-role="cancel">Cancel</button>
+          <button value="confirm" id="app-save">Save</button>
+        </menu>
+      </form>
+    </dialog>
+    <dialog id="app-logs-dialog">
+      <form method="dialog">
+        <h2 id="app-logs-title">App Logs</h2>
+        <pre id="app-logs-content" class="wm-app-log"></pre>
+        <menu>
+          <button type="button" class="wm-button secondary" id="app-logs-refresh">Refresh</button>
+          <button value="close" id="app-logs-close">Close</button>
         </menu>
       </form>
     </dialog>

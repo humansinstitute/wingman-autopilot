@@ -8,6 +8,19 @@ import type { AgentType } from "./config";
 import { loadConfig } from "./config";
 import { ProcessManager } from "./agents/process-manager";
 import type { SessionSnapshot } from "./agents/process-manager";
+import {
+  appRegistry,
+  type AppLifecycleAction,
+  type AppLifecycleScripts,
+  type AppRecord,
+} from "./apps/app-registry";
+import {
+  APPS_TMUX_SESSION,
+  AppActionInProgressError,
+  AppScriptMissingError,
+  appProcessManager,
+  type AppProcessStatus,
+} from "./apps/app-process-manager";
 import { messageStore } from "./storage/message-store";
 import { orchestratorPresetStore } from "./storage/orchestrator-presets";
 import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
@@ -25,9 +38,11 @@ import {
 } from "./agents/agent-client";
 
 const config = loadConfig();
+process.env.WINGMAN_PID = process.pid.toString();
 console.log(`[config] tmux session base: ${config.tmuxBase}`);
 const TMUX_SESSION_NAME = config.tmuxBase;
 
+const projectRootPath = fileURLToPath(new URL("../", new URL("../", import.meta.url)));
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRootDirectory = normalize(join(moduleDirectory, ".."));
 const agentApiBinaryPath = normalize(join(projectRootDirectory, "out", "agentapi"));
@@ -1813,7 +1828,7 @@ const listDirectories = async (input: string | null | undefined, query?: string)
   };
 };
 
-type HttpMethod = "GET" | "POST" | "DELETE";
+type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 const assetMap: Record<string, { path: string; type: string }> = {
   "/app.js": { path: "./ui/app.js", type: "application/javascript; charset=utf-8" },
@@ -1922,8 +1937,372 @@ const syncSessionMessages = async (sessionId: string, force = false) => {
   return messageStore.listSessionMessages(sessionId);
 };
 
+const APP_ACTIONS: AppLifecycleAction[] = ["start", "stop", "restart", "build"];
+
+const parseAppScripts = (input: unknown): AppLifecycleScripts => {
+  const scripts: AppLifecycleScripts = {};
+  if (!input || typeof input !== "object") {
+    return scripts;
+  }
+  for (const action of APP_ACTIONS) {
+    const value = normaliseOptionalString((input as Record<string, unknown>)[action]);
+    if (value) {
+      scripts[action] = value;
+    }
+  }
+  return scripts;
+};
+
+const parseBooleanFlag = (value: string | null): boolean => {
+  if (!value) return false;
+  const flag = value.trim().toLowerCase();
+  return flag === "1" || flag === "true" || flag === "yes" || flag === "on";
+};
+
+const defaultAppProcessStatus = (appId: string): AppProcessStatus => {
+  const timestamp = new Date().toISOString();
+  return {
+    appId,
+    status: "idle",
+    lastAction: null,
+    lastExitCode: null,
+    message: undefined,
+    updatedAt: timestamp,
+    lastSuccessAt: undefined,
+    lastFailureAt: undefined,
+    running: false,
+    inProgressAction: null,
+  };
+};
+
+const buildAppResponse = (app: AppRecord, status: AppProcessStatus) => {
+  const availableScripts: Record<AppLifecycleAction, boolean> = {
+    start: Boolean(app.scripts.start),
+    stop: Boolean(app.scripts.stop),
+    restart: Boolean(app.scripts.restart),
+    build: Boolean(app.scripts.build),
+  };
+  return {
+    id: app.id,
+    label: app.label,
+    root: app.root,
+    scripts: app.scripts,
+    tmuxSession: APPS_TMUX_SESSION,
+    tmuxWindow: app.tmuxSession,
+    notes: app.notes ?? null,
+    createdAt: app.createdAt,
+    updatedAt: app.updatedAt,
+    status,
+    availableScripts,
+    logs: undefined as string[] | undefined,
+  };
+};
+
+const ensureWingmanCoreRegistration = async () => {
+  try {
+    const existing = await appRegistry.getApp("wingman-core");
+    const restartCommand = "bun run scripts/restart-wingman.ts";
+    const tmuxWindow = "wingman-core";
+    if (existing) {
+      const needsUpdate =
+        existing.scripts.restart !== restartCommand ||
+        existing.tmuxSession !== tmuxWindow ||
+        existing.root !== projectRootPath;
+      if (needsUpdate) {
+        await appRegistry.updateApp("wingman-core", {
+          root: projectRootPath,
+          scripts: { restart: restartCommand },
+          tmuxSession: tmuxWindow,
+          notes: existing.notes ?? "Controls the Wingman orchestrator process.",
+        });
+      }
+      return;
+    }
+    await appRegistry.registerApp({
+      id: "wingman-core",
+      label: "Wingman Server",
+      root: projectRootPath,
+      scripts: { restart: restartCommand },
+      tmuxSession: tmuxWindow,
+      notes: "Controls the Wingman orchestrator process.",
+    });
+    console.log("[apps] registered Wingman core app entry");
+  } catch (error) {
+    console.error("[apps] Failed to ensure Wingman core registration:", error);
+  }
+};
+
+void ensureWingmanCoreRegistration();
+
 const handleApi = async (request: Request, url: URL, method: HttpMethod): Promise<Response> => {
   const pathname = url.pathname;
+  if (pathname === "/api/apps" && method === "GET") {
+    const tailParam = url.searchParams.get("tail") ?? url.searchParams.get("logs");
+    const tail = tailParam ? Number.parseInt(tailParam, 10) : 0;
+    const includeLogs = Number.isFinite(tail) && tail > 0;
+    const tailCount = includeLogs ? Math.min(Math.max(tail, 1), 2000) : 0;
+    try {
+      const [apps, statuses] = await Promise.all([appRegistry.listApps(), appProcessManager.listStatuses()]);
+      const statusMap = new Map(statuses.map((status) => [status.appId, status]));
+      const data = await Promise.all(
+        apps.map(async (app) => {
+          const status = statusMap.get(app.id) ?? defaultAppProcessStatus(app.id);
+          const record = buildAppResponse(app, status);
+          if (includeLogs) {
+            try {
+              record.logs = await appProcessManager.tailLogs(app.id, tailCount);
+            } catch {
+              record.logs = [];
+            }
+          }
+          return record;
+        }),
+      );
+      return Response.json({ apps: data });
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 500 });
+    }
+  }
+
+  if (pathname === "/api/apps" && method === "POST") {
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    const record = payload as Record<string, unknown>;
+    const root = normaliseOptionalString(record.root);
+    if (!root) {
+      return Response.json({ error: "App root path is required" }, { status: 400 });
+    }
+
+    const label = normaliseOptionalString(record.label);
+    const tmuxSession = normaliseOptionalString(record.tmuxSession);
+    const notes = normaliseOptionalString(record.notes);
+    const overrides = parseAppScripts(record.scripts);
+    const discoverOverride =
+      typeof record.discover === "boolean"
+        ? (record.discover as boolean)
+        : typeof record.discoverScripts === "boolean"
+          ? (record.discoverScripts as boolean)
+          : typeof record.autoDiscover === "boolean"
+            ? (record.autoDiscover as boolean)
+            : undefined;
+    const shouldDiscover = discoverOverride ?? true;
+
+    let scripts: AppLifecycleScripts = overrides;
+    if (shouldDiscover) {
+      try {
+        const discovered = await appRegistry.discoverScripts(root);
+        scripts = { ...discovered, ...overrides };
+      } catch (error) {
+        return Response.json({ error: `Failed to discover scripts: ${(error as Error).message}` }, { status: 400 });
+      }
+    }
+
+    try {
+      const app = await appRegistry.registerApp({
+        label: label ?? "",
+        root,
+        scripts: Object.keys(scripts).length > 0 ? scripts : undefined,
+        tmuxSession: tmuxSession ?? undefined,
+        notes: notes ?? undefined,
+      });
+      const status = await appProcessManager.getStatus(app.id);
+      return Response.json({ app: buildAppResponse(app, status) }, { status: 201 });
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/apps/discover" && method === "GET") {
+    const root = normaliseOptionalString(url.searchParams.get("root"));
+    if (!root) {
+      return Response.json({ error: "Root directory is required" }, { status: 400 });
+    }
+    try {
+      const scripts = await appRegistry.discoverScripts(root);
+      return Response.json({ root, scripts });
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 400 });
+    }
+  }
+
+  if (pathname.startsWith("/api/apps/")) {
+    const parts = pathname.split("/");
+    const id = parts[3];
+    if (!id) {
+      return Response.json({ error: "App id is required" }, { status: 400 });
+    }
+
+    if (method === "GET" && parts.length === 4) {
+      const app = await appRegistry.getApp(id);
+      if (!app) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+      const status = await appProcessManager.getStatus(id);
+      return Response.json({ app: buildAppResponse(app, status) });
+    }
+
+    if (method === "PUT" && parts.length === 4) {
+      const current = await appRegistry.getApp(id);
+      if (!current) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+
+      let payload: unknown;
+      try {
+        payload = await request.json();
+      } catch {
+        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+      }
+
+      if (!payload || typeof payload !== "object") {
+        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+      }
+
+      const record = payload as Record<string, unknown>;
+      const label = normaliseOptionalString(record.label);
+      const root = normaliseOptionalString(record.root);
+      const tmuxSession = normaliseOptionalString(record.tmuxSession);
+      const notesValue = record.notes === null ? null : normaliseOptionalString(record.notes);
+      const overrides = parseAppScripts(record.scripts);
+      const shouldDiscover =
+        typeof record.discoverScripts === "boolean"
+          ? (record.discoverScripts as boolean)
+          : typeof record.discover === "boolean"
+            ? (record.discover as boolean)
+            : false;
+
+      let scripts: AppLifecycleScripts | undefined = undefined;
+      if (shouldDiscover || Object.keys(overrides).length > 0) {
+        const discoverRoot = root ?? current.root;
+        if (shouldDiscover) {
+          try {
+            const discovered = await appRegistry.discoverScripts(discoverRoot);
+            scripts = { ...discovered, ...overrides };
+          } catch (error) {
+            return Response.json(
+              { error: `Failed to discover scripts: ${(error as Error).message}` },
+              { status: 400 },
+            );
+          }
+        } else {
+          scripts = overrides;
+        }
+      }
+
+      try {
+        const updated = await appRegistry.updateApp(id, {
+          label: label ?? undefined,
+          root: root ?? undefined,
+          tmuxSession: tmuxSession ?? undefined,
+          notes: notesValue,
+          scripts,
+        });
+        appProcessManager.forget(id);
+        const status = await appProcessManager.getStatus(id);
+        return Response.json({ app: buildAppResponse(updated, status) });
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
+    }
+
+    if (method === "DELETE" && parts.length === 4) {
+      const killParam = url.searchParams.get("killSession") ?? url.searchParams.get("killTmux");
+      const killSession = parseBooleanFlag(killParam);
+      try {
+        if (killSession) {
+          await appProcessManager.kill(id);
+        }
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 500 });
+      }
+
+      const removed = await appRegistry.removeApp(id);
+      if (!removed) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+      appProcessManager.forget(id);
+      return Response.json({ id, deleted: true, killedSession: killSession });
+    }
+
+    if (method === "GET" && parts[4] === "logs") {
+      const app = await appRegistry.getApp(id);
+      if (!app) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+      const tailParam = url.searchParams.get("tail");
+      const tail = tailParam ? Number.parseInt(tailParam, 10) : 100;
+      const lines = Number.isNaN(tail) || tail <= 0 ? 100 : Math.min(tail, 2000);
+      try {
+        const logs = await appProcessManager.tailLogs(id, lines);
+        return Response.json({ id, logs });
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
+    }
+
+    if (method === "POST" && parts[4] === "actions") {
+      const app = await appRegistry.getApp(id);
+      if (!app) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+      let payload: unknown;
+      try {
+        payload = await request.json();
+      } catch {
+        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+      }
+      if (!payload || typeof payload !== "object") {
+        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+      }
+
+      const actionValue = normaliseOptionalString((payload as Record<string, unknown>).action);
+      if (!actionValue) {
+        return Response.json({ error: "Action is required" }, { status: 400 });
+      }
+      if (!APP_ACTIONS.includes(actionValue as AppLifecycleAction)) {
+        return Response.json({ error: `Unsupported action: ${actionValue}` }, { status: 400 });
+      }
+
+      try {
+        let status: AppProcessStatus;
+        switch (actionValue as AppLifecycleAction) {
+          case "start":
+            status = await appProcessManager.start(id);
+            break;
+          case "stop":
+            status = await appProcessManager.stop(id);
+            break;
+          case "restart":
+            status = await appProcessManager.restart(id);
+            break;
+          case "build":
+            status = await appProcessManager.build(id);
+            break;
+          default:
+            return Response.json({ error: `Unsupported action: ${actionValue}` }, { status: 400 });
+        }
+        return Response.json({ app: buildAppResponse(app, status) });
+      } catch (error) {
+        if (error instanceof AppActionInProgressError) {
+          return Response.json({ error: error.message }, { status: 409 });
+        }
+        if (error instanceof AppScriptMissingError) {
+          return Response.json({ error: error.message }, { status: 400 });
+        }
+        return Response.json({ error: (error as Error).message }, { status: 500 });
+      }
+    }
+  }
+
   if (pathname === "/api/config" && method === "GET") {
     return Response.json({
       port: config.port,
