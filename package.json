@@ -10,7 +10,7 @@
   "dependencies": {
     "ace-builds": "^1.43.4",
     "node-pty": "^1.0.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/bun": "latest"
