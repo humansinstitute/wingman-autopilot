@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -27,6 +27,58 @@ import {
 const config = loadConfig();
 console.log(`[config] tmux session base: ${config.tmuxBase}`);
 const TMUX_SESSION_NAME = config.tmuxBase;
+
+const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+const projectRootDirectory = normalize(join(moduleDirectory, ".."));
+const agentApiBinaryPath = normalize(join(projectRootDirectory, "out", "agentapi"));
+const agentApiConfigPath = normalize(join(projectRootDirectory, "agentapi.config"));
+
+const ensureAgentApiBinary = async () => {
+  let binaryExists = false;
+  try {
+    const binaryStats = await stat(agentApiBinaryPath);
+    binaryExists = binaryStats.isFile();
+    if (!binaryExists) {
+      console.warn(`[agentapi] Expected file at ${relative(projectRootDirectory, agentApiBinaryPath)} but found different type.`);
+    }
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException;
+    if (nodeError?.code && nodeError.code !== "ENOENT") {
+      console.warn(`[agentapi] Failed to read existing binary: ${nodeError.message}`);
+    }
+  }
+
+  if (binaryExists) {
+    return;
+  }
+
+  let configContents: string;
+  try {
+    configContents = await readFile(agentApiConfigPath, "utf8");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[agentapi] Missing binary and unable to read config ${relative(projectRootDirectory, agentApiConfigPath)}: ${message}`);
+  }
+
+  const linkMatch = configContents.match(/link\s*:\s*["']([^"']+)["']/);
+  const downloadUrl = linkMatch?.[1];
+  if (!downloadUrl) {
+    throw new Error(`[agentapi] Missing download link in ${relative(projectRootDirectory, agentApiConfigPath)}`);
+  }
+
+  const response = await fetch(downloadUrl);
+  if (!response.ok) {
+    throw new Error(`[agentapi] Download failed with status ${response.status} ${response.statusText}`);
+  }
+
+  await mkdir(dirname(agentApiBinaryPath), { recursive: true });
+  const data = await response.arrayBuffer();
+  await Bun.write(agentApiBinaryPath, data);
+  await chmod(agentApiBinaryPath, 0o755);
+  console.log(`[agentapi] Downloaded agentapi binary from ${downloadUrl}`);
+};
+
+await ensureAgentApiBinary();
 
 const isDeepDivePagePath = (pathname: string) =>
   pathname === "/deep-dive" || pathname.startsWith("/deep-dive/");
