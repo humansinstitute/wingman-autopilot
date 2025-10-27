@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmod, cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -1673,6 +1673,109 @@ const deleteDocsFile = async (pathInput: string | null | undefined) => {
   };
 };
 
+const copyDocsFile = async (pathInput: string | null | undefined, targetDirectoryInput: string | null | undefined) => {
+  const sourcePath = resolveDocsPath(pathInput);
+  let stats: Awaited<ReturnType<typeof stat>>;
+  try {
+    stats = await stat(sourcePath);
+  } catch {
+    throw new Error("File not found");
+  }
+
+  if (!stats.isFile()) {
+    throw new Error("Requested path is not a file");
+  }
+
+  const targetDirectory = await ensureDocsDirectory(targetDirectoryInput);
+  const destinationPath = normalize(join(targetDirectory, basename(sourcePath)));
+
+  if (!isWithinDocsRoot(destinationPath)) {
+    throw new Error("Invalid destination path");
+  }
+
+  if (destinationPath === sourcePath) {
+    throw new Error("Destination matches the source file");
+  }
+
+  try {
+    await cp(sourcePath, destinationPath, { errorOnExist: true, force: false });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === "EEXIST") {
+      throw new Error("A file with the same name already exists in the destination");
+    }
+    throw new Error(`Failed to copy file: ${(error as Error).message ?? "unknown error"}`);
+  }
+
+  const destinationStats = await stat(destinationPath);
+
+  return {
+    path: destinationPath,
+    relativePath: toDocsRelativePath(destinationPath),
+    displayPath: toDocsDisplayPath(destinationPath),
+    name: basename(destinationPath),
+    size: destinationStats.size,
+    mtimeMs: destinationStats.mtimeMs,
+  };
+};
+
+const moveDocsFile = async (pathInput: string | null | undefined, targetDirectoryInput: string | null | undefined) => {
+  const sourcePath = resolveDocsPath(pathInput);
+  let stats: Awaited<ReturnType<typeof stat>>;
+  try {
+    stats = await stat(sourcePath);
+  } catch {
+    throw new Error("File not found");
+  }
+
+  if (!stats.isFile()) {
+    throw new Error("Requested path is not a file");
+  }
+
+  const targetDirectory = await ensureDocsDirectory(targetDirectoryInput);
+  const destinationPath = normalize(join(targetDirectory, basename(sourcePath)));
+
+  if (!isWithinDocsRoot(destinationPath)) {
+    throw new Error("Invalid destination path");
+  }
+
+  if (destinationPath === sourcePath) {
+    throw new Error("Destination matches the source file");
+  }
+
+  try {
+    await rename(sourcePath, destinationPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === "EEXIST") {
+      throw new Error("A file with the same name already exists in the destination");
+    }
+    if (code === "EXDEV") {
+      try {
+        await cp(sourcePath, destinationPath, { errorOnExist: true, force: false });
+        await rm(sourcePath, { force: false });
+      } catch (copyError) {
+        const message = copyError instanceof Error ? copyError.message : "unknown error";
+        throw new Error(`Failed to move file: ${message}`);
+      }
+    } else {
+      const message = (error as Error).message ?? "unknown error";
+      throw new Error(`Failed to move file: ${message}`);
+    }
+  }
+
+  const destinationStats = await stat(destinationPath);
+
+  return {
+    path: destinationPath,
+    relativePath: toDocsRelativePath(destinationPath),
+    displayPath: toDocsDisplayPath(destinationPath),
+    name: basename(destinationPath),
+    size: destinationStats.size,
+    mtimeMs: destinationStats.mtimeMs,
+  };
+};
+
 const directoryExists = async (path: string): Promise<boolean> => {
   try {
     const stats = await stat(path);
@@ -2815,6 +2918,62 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
 
     try {
       const data = await deleteDocsFile(pathParam);
+      return Response.json(data, { status: 200 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/docs/file/copy" && method === "POST") {
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    const pathValue = (payload as Record<string, unknown>).path;
+    const targetValue =
+      (payload as Record<string, unknown>).targetDirectory ?? (payload as Record<string, unknown>).directory;
+
+    const sourcePath = typeof pathValue === "string" ? pathValue : null;
+    const destinationPath = typeof targetValue === "string" ? targetValue : null;
+
+    try {
+      const data = await copyDocsFile(sourcePath, destinationPath);
+      return Response.json(data, { status: 201 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/docs/file/move" && method === "POST") {
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    const pathValue = (payload as Record<string, unknown>).path;
+    const targetValue =
+      (payload as Record<string, unknown>).targetDirectory ?? (payload as Record<string, unknown>).directory;
+
+    const sourcePath = typeof pathValue === "string" ? pathValue : null;
+    const destinationPath = typeof targetValue === "string" ? targetValue : null;
+
+    try {
+      const data = await moveDocsFile(sourcePath, destinationPath);
       return Response.json(data, { status: 200 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

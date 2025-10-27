@@ -111,6 +111,24 @@
         </menu>
       </form>
     </dialog>
+    <dialog id="file-transfer-dialog">
+      <form method="dialog">
+        <h2 id="file-transfer-title">Copy File</h2>
+        <p id="file-transfer-source" class="wm-dialog-path"></p>
+        <p id="file-transfer-selected" class="wm-dialog-selected"></p>
+        <div class="directory-browser">
+          <div class="directory-browser__header">
+            <button type="button" class="wm-button secondary" id="file-transfer-up">Up</button>
+            <span id="file-transfer-current" class="directory-browser__path"></span>
+          </div>
+          <ul id="file-transfer-list" class="directory-browser__list"></ul>
+        </div>
+        <menu>
+          <button type="button" class="wm-button secondary" id="file-transfer-cancel">Cancel</button>
+          <button type="button" class="wm-button" id="file-transfer-confirm">Confirm</button>
+        </menu>
+      </form>
+    </dialog>
     <dialog id="orchestrator-dialog">
       <form method="dialog">
         <h2>Create Orchestrator Preset</h2>

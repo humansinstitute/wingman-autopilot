@@ -93,6 +93,22 @@ const state = {
       branch: "",
       startPoint: "",
     },
+    transfer: {
+      mode: null,
+      sourcePath: null,
+      sourceName: null,
+      sourceDisplayPath: null,
+      destinationPath: null,
+      destinationDisplayPath: null,
+      submitting: false,
+      error: null,
+      browser: {
+        currentPath: "",
+        parent: null,
+        requestId: 0,
+        selection: null,
+      },
+    },
   },
   fileEditor: {
     open: false,
@@ -935,6 +951,23 @@ const loadFilesPreview = async (path) => {
   }
 };
 
+const showFilesPreviewUnavailable = (entry) => {
+  const files = state.files;
+  files.previewPath = entry?.path ?? null;
+  files.previewRelativePath = entry?.relativePath ?? "";
+  files.previewDisplayPath = entry?.displayPath ?? "";
+  files.previewName = entry?.name ?? null;
+  files.previewFormat = null;
+  files.previewLanguage = null;
+  files.previewLabel = entry?.previewLabel ?? null;
+  files.previewContent = null;
+  files.previewLoading = false;
+  files.previewError = "Preview not available for this file type.";
+  if (currentRoute === "files") {
+    render();
+  }
+};
+
 const createFilesDirectory = async (parentPath, name) => {
   const response = await fetch("/api/docs/directory", {
     method: "POST",
@@ -988,6 +1021,34 @@ const deleteFilesEntry = async (path) => {
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     const message = data?.error ?? response.statusText ?? "Failed to delete file";
+    throw new Error(message);
+  }
+  return response.json();
+};
+
+const copyFilesEntry = async (path, targetDirectory) => {
+  const response = await fetch("/api/docs/file/copy", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path, targetDirectory }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const message = data?.error ?? response.statusText ?? "Failed to copy file";
+    throw new Error(message);
+  }
+  return response.json();
+};
+
+const moveFilesEntry = async (path, targetDirectory) => {
+  const response = await fetch("/api/docs/file/move", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path, targetDirectory }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const message = data?.error ?? response.statusText ?? "Failed to move file";
     throw new Error(message);
   }
   return response.json();
@@ -2031,6 +2092,15 @@ const directoryList = document.getElementById("directory-list");
 const directoryCurrent = document.getElementById("directory-current");
 const directoryUpButton = document.getElementById("directory-up");
 const directoryUseButton = document.getElementById("directory-use");
+const fileTransferDialog = document.getElementById("file-transfer-dialog");
+const fileTransferTitle = document.getElementById("file-transfer-title");
+const fileTransferSource = document.getElementById("file-transfer-source");
+const fileTransferCurrent = document.getElementById("file-transfer-current");
+const fileTransferList = document.getElementById("file-transfer-list");
+const fileTransferSelected = document.getElementById("file-transfer-selected");
+const fileTransferUpButton = document.getElementById("file-transfer-up");
+const fileTransferCancelButton = document.getElementById("file-transfer-cancel");
+const fileTransferConfirmButton = document.getElementById("file-transfer-confirm");
 const orchestratorDialog = document.getElementById("orchestrator-dialog");
 const orchestratorForm = orchestratorDialog?.querySelector("form");
 const orchestratorLabelInput = document.getElementById("orchestrator-label");
@@ -2388,6 +2458,28 @@ const requestDirectoryData = async (path, query) => {
   }
 };
 
+const fetchDocsDirectoryListing = async (path) => {
+  const params = new URLSearchParams();
+  if (path) params.set("path", path);
+  if (state.files.showHidden) {
+    params.set("showHidden", "1");
+  }
+  const response = await fetch(`/api/docs/tree?${params.toString()}`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const message = data?.error ?? response.statusText ?? "Failed to load directory";
+    throw new Error(message);
+  }
+  const payload = await response.json();
+  const entries = Array.isArray(payload?.entries) ? payload.entries : [];
+  return {
+    path: payload?.path ?? path ?? "",
+    displayPath: payload?.displayPath ?? payload?.path ?? "",
+    parent: payload?.parent ?? null,
+    directories: entries.filter((entry) => entry?.type === "directory"),
+  };
+};
+
 const populateDirectorySuggestions = (data) => {
   if (!directorySuggestions) return;
   directorySuggestions.innerHTML = "";
@@ -2523,6 +2615,260 @@ const openDirectoryBrowser = async () => {
     return;
   }
   directoryDialog.showModal();
+};
+
+const getParentDirectoryPath = (filePath) => {
+  if (typeof filePath !== "string" || filePath.length === 0) {
+    return null;
+  }
+  const normalized = filePath.replace(/\\/g, "/");
+  const index = normalized.lastIndexOf("/");
+  if (index <= 0) {
+    return null;
+  }
+  const prefix = normalized.slice(0, index);
+  if (filePath.includes("\\")) {
+    const backslashIndex = filePath.lastIndexOf("\\");
+    if (backslashIndex > index) {
+      return filePath.slice(0, backslashIndex);
+    }
+    return filePath.slice(0, index);
+  }
+  return filePath.slice(0, index);
+};
+
+const resetFileTransferState = () => {
+  const transfer = state.files.transfer;
+  transfer.mode = null;
+  transfer.sourcePath = null;
+  transfer.sourceName = null;
+  transfer.sourceDisplayPath = null;
+  transfer.destinationPath = null;
+  transfer.destinationDisplayPath = null;
+  transfer.submitting = false;
+  transfer.error = null;
+  transfer.browser.currentPath = "";
+  transfer.browser.parent = null;
+  transfer.browser.selection = null;
+  transfer.browser.requestId = 0;
+  if (fileTransferList) {
+    fileTransferList.innerHTML = "";
+  }
+  if (fileTransferSelected) {
+    fileTransferSelected.textContent = "";
+  }
+};
+
+const syncFileTransferConfirmState = () => {
+  if (!fileTransferConfirmButton) return;
+  const transfer = state.files.transfer;
+  const mode = transfer.mode;
+  if (!mode) {
+    fileTransferConfirmButton.disabled = true;
+    delete fileTransferConfirmButton.dataset.loading;
+    fileTransferConfirmButton.textContent = "Confirm";
+    return;
+  }
+  const disabled = transfer.submitting || !transfer.destinationPath;
+  fileTransferConfirmButton.disabled = disabled;
+  if (transfer.submitting) {
+    fileTransferConfirmButton.dataset.loading = "true";
+  } else {
+    delete fileTransferConfirmButton.dataset.loading;
+  }
+  if (transfer.submitting) {
+    fileTransferConfirmButton.textContent = mode === "move" ? "Moving…" : "Copying…";
+  } else {
+    fileTransferConfirmButton.textContent = mode === "move" ? "Move Here" : "Copy Here";
+  }
+};
+
+const setFileTransferSelection = (path, displayPath) => {
+  const transfer = state.files.transfer;
+  transfer.destinationPath = typeof path === "string" && path.length > 0 ? path : null;
+  transfer.browser.selection = transfer.destinationPath;
+  transfer.destinationDisplayPath =
+    transfer.destinationPath && typeof displayPath === "string" && displayPath.length > 0
+      ? displayPath
+      : transfer.destinationPath;
+  if (fileTransferSelected) {
+    if (transfer.destinationDisplayPath) {
+      fileTransferSelected.textContent = `Destination: ${transfer.destinationDisplayPath}`;
+    } else {
+      fileTransferSelected.textContent = "";
+    }
+  }
+  if (fileTransferList) {
+    fileTransferList.querySelectorAll(".directory-browser__item").forEach((item) => {
+      if (!(item instanceof HTMLElement)) return;
+      const itemPath = item.dataset.path;
+      if (itemPath && transfer.destinationPath && itemPath === transfer.destinationPath) {
+        item.dataset.selected = "true";
+      } else {
+        delete item.dataset.selected;
+      }
+    });
+  }
+  syncFileTransferConfirmState();
+};
+
+const renderFileTransferBrowser = (data) => {
+  if (!data) return;
+  const transfer = state.files.transfer;
+  transfer.browser.currentPath = data.path ?? "";
+  transfer.browser.parent = typeof data.parent?.path === "string" ? data.parent.path : null;
+
+  if (fileTransferCurrent) {
+    fileTransferCurrent.textContent = data.displayPath ?? data.path ?? "";
+  }
+  if (fileTransferUpButton) {
+    fileTransferUpButton.disabled = !transfer.browser.parent;
+  }
+  if (!fileTransferList) return;
+  fileTransferList.innerHTML = "";
+
+  const directories = Array.isArray(data.directories) ? data.directories : [];
+  if (directories.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "directory-browser__empty";
+    empty.textContent = "No subdirectories";
+    fileTransferList.append(empty);
+  } else {
+    directories.forEach((entry) => {
+      const item = document.createElement("li");
+      item.className = "directory-browser__item";
+      item.dataset.path = entry.path;
+      item.dataset.displayPath = entry.displayPath ?? entry.path ?? "";
+
+      const openButton = document.createElement("button");
+      openButton.type = "button";
+      openButton.className = "directory-browser__folder";
+      openButton.textContent = entry.name;
+      openButton.addEventListener("click", () => {
+        void updateFileTransferBrowser(entry.path);
+      });
+
+      const chooseButton = document.createElement("button");
+      chooseButton.type = "button";
+      chooseButton.className = "wm-button secondary directory-browser__choose";
+      chooseButton.textContent = "Select";
+      chooseButton.addEventListener("click", () => {
+        setFileTransferSelection(entry.path, entry.displayPath ?? entry.path ?? "");
+      });
+
+      item.append(openButton, chooseButton);
+      fileTransferList.append(item);
+    });
+  }
+
+  if (!transfer.destinationPath || transfer.destinationPath === transfer.browser.currentPath) {
+    setFileTransferSelection(data.path ?? transfer.browser.currentPath, data.displayPath ?? data.path ?? "");
+  } else {
+    setFileTransferSelection(transfer.destinationPath, transfer.destinationDisplayPath);
+  }
+};
+
+const updateFileTransferBrowser = async (path) => {
+  const transfer = state.files.transfer;
+  const requestId = ++transfer.browser.requestId;
+  try {
+    const data = await fetchDocsDirectoryListing(path);
+    if (transfer.browser.requestId !== requestId) {
+      return false;
+    }
+    renderFileTransferBrowser(data);
+    return true;
+  } catch (error) {
+    if (transfer.browser.requestId === requestId) {
+      const message = error instanceof Error ? error.message : "Failed to load directories";
+      window.alert(message);
+    }
+    return false;
+  }
+};
+
+const closeFileTransferDialog = () => {
+  if (fileTransferDialog?.open) {
+    fileTransferDialog.close();
+  }
+  resetFileTransferState();
+  syncFileTransferConfirmState();
+};
+
+const openFileTransferDialogForMode = async (mode) => {
+  if (!fileTransferDialog) return;
+  if (mode !== "copy" && mode !== "move") return;
+  const files = state.files;
+  const sourcePath = typeof files.previewPath === "string" ? files.previewPath : null;
+  if (!sourcePath || files.previewLoading) {
+    return;
+  }
+
+  const transfer = state.files.transfer;
+  transfer.mode = mode;
+  transfer.sourcePath = sourcePath;
+  transfer.sourceName =
+    files.previewName ??
+    (typeof sourcePath === "string" ? sourcePath.split(/[\\/]/).pop() ?? sourcePath : sourcePath);
+  transfer.sourceDisplayPath =
+    files.previewDisplayPath ?? files.previewName ?? transfer.sourceName ?? sourcePath;
+  transfer.submitting = false;
+  transfer.error = null;
+  transfer.destinationPath = files.currentPath ?? getParentDirectoryPath(sourcePath);
+  transfer.destinationDisplayPath = files.displayPath ?? transfer.destinationPath;
+
+  if (fileTransferTitle) {
+    fileTransferTitle.textContent = mode === "move" ? "Move File To…" : "Copy File To…";
+  }
+  if (fileTransferSource) {
+    fileTransferSource.textContent = transfer.sourceDisplayPath ?? transfer.sourcePath ?? "";
+  }
+  if (fileTransferList) {
+    fileTransferList.innerHTML = "";
+    const loading = document.createElement("li");
+    loading.className = "directory-browser__status";
+    loading.textContent = "Loading directories…";
+    fileTransferList.append(loading);
+  }
+  syncFileTransferConfirmState();
+  if (!fileTransferDialog.open) {
+    fileTransferDialog.showModal();
+  }
+  const initialPath =
+    transfer.destinationPath ??
+    files.currentPath ??
+    getParentDirectoryPath(sourcePath) ??
+    sourcePath;
+  await updateFileTransferBrowser(initialPath);
+};
+
+const submitFileTransfer = async () => {
+  const transfer = state.files.transfer;
+  if (!transfer.mode || transfer.submitting) return;
+  if (!transfer.sourcePath || !transfer.destinationPath) {
+    window.alert("Select a destination directory first.");
+    return;
+  }
+  const sourcePath = transfer.sourcePath;
+  const mode = transfer.mode;
+  transfer.submitting = true;
+  syncFileTransferConfirmState();
+  const action = transfer.mode === "move" ? moveFilesEntry : copyFilesEntry;
+  try {
+    await action(transfer.sourcePath, transfer.destinationPath);
+    const refreshPath = state.files.currentPath;
+    const moved = mode === "move";
+    closeFileTransferDialog();
+    if (moved && state.files.previewPath === sourcePath) {
+      resetFilesPreview();
+    }
+    await loadFilesTree(refreshPath);
+  } catch (error) {
+    transfer.submitting = false;
+    syncFileTransferConfirmState();
+    const message = error instanceof Error ? error.message : "File operation failed";
+    window.alert(message);
+  }
 };
 
 const fetchConfig = async () => {
@@ -5280,8 +5626,9 @@ const renderFiles = () => {
           }
         });
       } else {
-        button.disabled = true;
-        button.setAttribute("aria-disabled", "true");
+        button.addEventListener("click", () => {
+          showFilesPreviewUnavailable(entry);
+        });
       }
 
       item.append(button);
@@ -5369,12 +5716,9 @@ const renderFiles = () => {
 
   const previewActions = document.createElement("div");
   previewActions.className = "wm-files-preview__actions";
-  const canEdit =
-    Boolean(files.previewPath) &&
-    !files.previewLoading &&
-    !files.previewError &&
-    files.previewContent !== null &&
-    typeof files.previewPath === "string";
+  const hasFileSelection = typeof files.previewPath === "string" && !files.previewLoading;
+  const canEdit = hasFileSelection && !files.previewError && files.previewContent !== null;
+
   if (canEdit) {
     const editButton = document.createElement("button");
     editButton.type = "button";
@@ -5384,6 +5728,51 @@ const renderFiles = () => {
       void openFileEditor(files.previewPath, files.previewDisplayPath ?? null, files.previewName ?? null);
     });
     previewActions.append(editButton);
+  }
+
+  if (hasFileSelection) {
+    const copyUrlButton = document.createElement("button");
+    copyUrlButton.type = "button";
+    copyUrlButton.className = "wm-button secondary";
+    copyUrlButton.textContent = "Copy URL";
+    copyUrlButton.addEventListener("click", async () => {
+      const targetPath = typeof files.previewPath === "string" ? files.previewPath : null;
+      if (!targetPath) return;
+      const rawUrl = `${window.location.origin}/api/docs/file/raw?path=${encodeURIComponent(targetPath)}`;
+      const success = await copyTextToClipboard(rawUrl);
+      if (success) {
+        const originalText = "Copy URL";
+        copyUrlButton.dataset.copied = "true";
+        copyUrlButton.textContent = "Copied!";
+        setTimeout(() => {
+          if (copyUrlButton.isConnected) {
+            delete copyUrlButton.dataset.copied;
+            copyUrlButton.textContent = originalText;
+          }
+        }, 1600);
+      } else {
+        window.alert("Unable to copy the file URL. Copy it manually from the address bar instead.");
+      }
+    });
+    previewActions.append(copyUrlButton);
+
+    const copyToButton = document.createElement("button");
+    copyToButton.type = "button";
+    copyToButton.className = "wm-button";
+    copyToButton.textContent = "Copy File To…";
+    copyToButton.addEventListener("click", () => {
+      void openFileTransferDialogForMode("copy");
+    });
+    previewActions.append(copyToButton);
+
+    const moveToButton = document.createElement("button");
+    moveToButton.type = "button";
+    moveToButton.className = "wm-button";
+    moveToButton.textContent = "Move File To…";
+    moveToButton.addEventListener("click", () => {
+      void openFileTransferDialogForMode("move");
+    });
+    previewActions.append(moveToButton);
 
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
@@ -5416,6 +5805,7 @@ const renderFiles = () => {
     });
     previewActions.append(deleteButton);
   }
+
   if (previewActions.childElementCount > 0) {
     previewHeader.append(previewActions);
   }
@@ -6231,6 +6621,34 @@ if (directoryDialog) {
     directoryBrowserState.requestId += 1;
   });
 }
+
+fileTransferCancelButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  closeFileTransferDialog();
+});
+
+fileTransferDialog?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeFileTransferDialog();
+});
+
+fileTransferDialog?.addEventListener("close", () => {
+  resetFileTransferState();
+  syncFileTransferConfirmState();
+});
+
+fileTransferUpButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  const parent = state.files.transfer.browser.parent;
+  if (parent) {
+    void updateFileTransferBrowser(parent);
+  }
+});
+
+fileTransferConfirmButton?.addEventListener("click", async (event) => {
+  event.preventDefault();
+  await submitFileTransfer();
+});
 
 window.addEventListener("touchstart", handleTouchStart, { passive: true });
 window.addEventListener("touchmove", handleTouchMove, { passive: false });

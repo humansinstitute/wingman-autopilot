@@ -2163,6 +2163,12 @@ dialog textarea {
   color: var(--text-tertiary);
 }
 
+.directory-browser__status {
+  padding: 0.75rem;
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
 .directory-browser__item[data-selected="true"] {
   background: rgba(16, 185, 129, 0.08);
 }
@@ -2170,6 +2176,19 @@ dialog textarea {
 .directory-browser__item[data-selected="true"] .directory-browser__choose {
   background: var(--accent-primary);
   color: #ffffff;
+}
+
+.wm-dialog-path,
+.wm-dialog-selected {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.wm-dialog-selected {
+  color: var(--accent-primary);
+  font-weight: 600;
 }
 
 dialog menu {
