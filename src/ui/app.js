@@ -1714,7 +1714,7 @@ let tabsVisible = true;
 let lastLoggedSessionId = null;
 let lastFilesMobileLayout = isMobileFilesLayout();
 
-const ACE_LIGHT_THEME = "ace/theme/chrome";
+const ACE_LIGHT_THEME = "ace/theme/tomorrow_night";
 const ACE_DARK_THEME = "ace/theme/tomorrow_night";
 
 const applyAceTheme = () => {
@@ -4574,7 +4574,6 @@ const renderHome = () => {
   }
 
   appsCard.append(appsContent);
-  wrapper.append(appsCard);
 
   const liveCard = document.createElement("section");
   liveCard.className = "wm-card wm-home-live";
@@ -4756,6 +4755,7 @@ const renderHome = () => {
 
   setCollapsed(false);
   wrapper.append(liveCard);
+  wrapper.append(appsCard);
   return wrapper;
 };
 

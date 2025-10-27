@@ -2815,6 +2815,23 @@ dialog button[value="cancel"] {
   font-weight: 600;
 }
 
+body[data-theme="light"] .wm-files-preview-code {
+  color: #f8fafc;
+}
+
+body[data-theme="light"] .wm-files-preview-code pre {
+  background: #111418;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.45);
+}
+
+body[data-theme="light"] .wm-files-preview-code code {
+  color: #f8fafc;
+}
+
+body[data-theme="light"] .wm-files-preview-code .token.comment {
+  color: rgba(148, 163, 184, 0.75);
+}
+
 .wm-file-editor {
   position: fixed;
   inset: 0;
@@ -2891,8 +2908,8 @@ dialog button[value="cancel"] {
 }
 
 body[data-theme="light"] .wm-file-editor__editor {
-  background: #f4f4f5;
-  border-color: rgba(17, 24, 39, 0.12);
+  background: #08090b;
+  border-color: rgba(148, 163, 184, 0.24);
 }
 
 body[data-theme="dark"] .wm-file-editor__editor {
@@ -2907,7 +2924,7 @@ body[data-theme="dark"] .wm-file-editor__editor {
 body[data-theme="light"] .wm-file-editor__editor .ace_editor,
 body[data-theme="light"] .wm-file-editor__editor .ace_scroller,
 body[data-theme="light"] .wm-file-editor__editor .ace_content {
-  color: #111827;
+  color: #f5f5f4;
 }
 
 body[data-theme="dark"] .wm-file-editor__editor .ace_editor,
@@ -2917,8 +2934,8 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_content {
 }
 
 body[data-theme="light"] .wm-file-editor__editor .ace_gutter {
-  background: #e5e7eb;
-  color: #4b5563;
+  background: #0f1317;
+  color: rgba(226, 232, 240, 0.7);
 }
 
 body[data-theme="dark"] .wm-file-editor__editor .ace_gutter {
@@ -2927,7 +2944,7 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_gutter {
 }
 
 body[data-theme="light"] .wm-file-editor__editor .ace_cursor {
-  color: #1f2937;
+  color: #f8fafc;
 }
 
 body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
