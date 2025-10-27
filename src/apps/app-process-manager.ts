@@ -2,6 +2,7 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ReadableStream } from "node:stream/web";
 
+import { loadConfig } from "../config";
 import { appRegistry } from "./app-registry";
 import type { AppLifecycleAction, AppRecord, AppRegistry } from "./app-registry";
 
@@ -80,6 +81,7 @@ export class AppProcessManager {
   private readonly registry: AppRegistry;
   private readonly states = new Map<string, AppRuntimeState>();
   private readonly logDirReady: Promise<string | undefined>;
+  private readonly config = loadConfig();
 
   constructor(registry: AppRegistry = appRegistry) {
     this.registry = registry;
@@ -284,9 +286,15 @@ export class AppProcessManager {
   private async resolveState(app: AppRecord): Promise<AppRuntimeState> {
     const existing = this.states.get(app.id);
     if (existing) {
+      if (app.id === "wingman-core") {
+        const runningNow = await this.isWingmanServerRunning();
+        existing.status = runningNow ? "running" : "idle";
+        existing.updatedAt = new Date().toISOString();
+      }
       return existing;
     }
-    const running = await this.isSessionRunning(app);
+    const running =
+      app.id === "wingman-core" ? await this.isWingmanServerRunning() : await this.isSessionRunning(app);
     const status: AppRuntimeState = {
       status: running ? "running" : "idle",
       lastAction: null,
@@ -432,6 +440,22 @@ export class AppProcessManager {
 
   private getTmuxTarget(app: AppRecord): string {
     return `${APPS_TMUX_SESSION}:${this.getWindowName(app)}`;
+  }
+
+  private async isWingmanServerRunning(): Promise<boolean> {
+    const port = this.config.port;
+    try {
+      const response = await fetch(`http://localhost:${port}/api/system/restart/status`, {
+        method: "GET",
+        headers: {
+          "cache-control": "no-cache",
+        },
+        signal: AbortSignal.timeout(1500),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
   }
 }
 

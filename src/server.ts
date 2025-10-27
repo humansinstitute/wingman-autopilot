@@ -43,7 +43,7 @@ console.log(`[config] tmux session base: ${config.tmuxBase}`);
 const TMUX_SESSION_NAME = config.tmuxBase;
 const SUPPORTED_AGENT_TYPES: AgentType[] = ["codex", "claude", "goose", "opencode", "gemini"];
 
-const projectRootPath = fileURLToPath(new URL("../", new URL("../", import.meta.url)));
+const projectRootPath = fileURLToPath(new URL("..", import.meta.url));
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRootDirectory = normalize(join(moduleDirectory, ".."));
 const agentApiBinaryPath = normalize(join(projectRootDirectory, "out", "agentapi"));
@@ -2236,17 +2236,30 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus) => {
 
 const ensureWingmanCoreRegistration = async () => {
   try {
-    const existing = await appRegistry.getApp("wingman-core");
+    const apps = await appRegistry.listApps();
+    const expectedRoot = projectRootPath;
+    const legacyApps = apps.filter((app) => app.id !== "wingman-core" && app.root === expectedRoot);
+    for (const legacy of legacyApps) {
+      try {
+        await appRegistry.removeApp(legacy.id);
+        console.log(`[apps] removed legacy Wingman app entry (${legacy.id})`);
+      } catch (error) {
+        console.warn(`[apps] failed to remove legacy Wingman app ${legacy.id}: ${(error as Error).message}`);
+      }
+    }
+
+    const existing = apps.find((app) => app.id === "wingman-core")
+      ?? await appRegistry.getApp("wingman-core");
     const restartCommand = "bun run scripts/restart-wingman.ts";
     const tmuxWindow = "wingman-core";
     if (existing) {
       const needsUpdate =
         existing.scripts.restart !== restartCommand ||
         existing.tmuxSession !== tmuxWindow ||
-        existing.root !== projectRootPath;
+        existing.root !== expectedRoot;
       if (needsUpdate) {
         await appRegistry.updateApp("wingman-core", {
-          root: projectRootPath,
+          root: expectedRoot,
           scripts: { restart: restartCommand },
           tmuxSession: tmuxWindow,
           notes: existing.notes ?? "Controls the Wingman orchestrator process.",
@@ -2257,7 +2270,7 @@ const ensureWingmanCoreRegistration = async () => {
     await appRegistry.registerApp({
       id: "wingman-core",
       label: "Wingman Server",
-      root: projectRootPath,
+      root: expectedRoot,
       scripts: { restart: restartCommand },
       tmuxSession: tmuxWindow,
       notes: "Controls the Wingman orchestrator process.",
@@ -3352,6 +3365,8 @@ const server = Bun.serve({
 
     if (
       pathname === "/home" ||
+      pathname === "/apps" ||
+      pathname.startsWith("/apps/") ||
       pathname === "/docs" ||
       pathname.startsWith("/docs/") ||
       pathname === "/files" ||
