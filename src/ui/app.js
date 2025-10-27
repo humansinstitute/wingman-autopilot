@@ -5416,7 +5416,8 @@ const renderSessionTabs = (options = {}) => {
     tab.title = `${displayName} - ${session.agent}:${session.port}`;
 
     tab.addEventListener("click", () => {
-      if (state.activeSessionId === session.id && currentRoute === "live") {
+      const wasLiveRoute = currentRoute === "live";
+      if (state.activeSessionId === session.id && wasLiveRoute) {
         // Already active, no need to switch
         onSelect?.();
         return;
@@ -5425,19 +5426,23 @@ const renderSessionTabs = (options = {}) => {
       setActiveSession(session.id, { updateHistory: true, forceLog: true });
       fetchLogs(session.id);
       fetchConversation(session.id);
-      // Don't call render() - it will destroy DOM references
-      // Instead, just update the tabs to show active state
-      if (tabsVisible) {
-        const tabsBar = document.querySelector('.wm-tabs-bar');
-        if (tabsBar) {
-          const existingTabs = tabsBar.querySelector('.wm-tabs');
-          if (existingTabs) {
-            const newTabs = renderTabs();
-            existingTabs.replaceWith(newTabs);
+      if (wasLiveRoute) {
+        // Don't call render() when already on Live - it will destroy DOM references
+        // Instead, just update the tabs to show active state
+        if (tabsVisible) {
+          const tabsBar = document.querySelector('.wm-tabs-bar');
+          if (tabsBar) {
+            const existingTabs = tabsBar.querySelector('.wm-tabs');
+            if (existingTabs) {
+              const newTabs = renderTabs();
+              existingTabs.replaceWith(newTabs);
+            }
           }
         }
+        updateLivePanelsForSession(session.id);
+      } else {
+        render();
       }
-      updateLivePanelsForSession(session.id);
       onSelect?.();
     });
 
