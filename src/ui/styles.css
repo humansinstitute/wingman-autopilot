@@ -661,6 +661,7 @@ body[data-menu-open="true"] .wm-menu-panel {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
+  color: #ffffff;
 }
 
 #app-logs-content {
