@@ -763,7 +763,7 @@ await mkdir(orchestratorTriggersRoot, { recursive: true }).catch(() => undefined
 const orchestratorRoot = join(projectRoot, "orchestrator");
 const orchestratorTemplatesRoot = join(orchestratorRoot, "templates");
 const orchestratorActiveRootBase = join(userDataRoot, "orchestrator", "active");
-const warmRestartScriptPath = join(projectRoot, "scripts", "warm-restart.sh");
+const warmRestartManagerScriptPath = join(projectRoot, "scripts", "warm-restart-manager.ts");
 const maxImageSizeBytes = 10 * 1024 * 1024; // 10MB
 const maxAttachmentSizeBytes = 25 * 1024 * 1024; // 25MB
 const imageTtlMs = 24 * 60 * 60 * 1000;
@@ -2310,7 +2310,7 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
     preserveSessionsOnShutdown = true;
 
     try {
-      await stat(warmRestartScriptPath);
+      await stat(warmRestartManagerScriptPath);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       warmRestartState.inProgress = false;
@@ -2319,13 +2319,24 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
     }
 
     try {
-      Bun.spawn([warmRestartScriptPath, process.pid.toString(), projectRoot], {
-        cwd: projectRoot,
-        stdout: "ignore",
-        stderr: "ignore",
-        stdin: "ignore",
-        detached: true,
-      });
+      Bun.spawn(
+        [
+          Bun.env.WINGMAN_MANAGER_COMMAND?.trim() || "bun",
+          "run",
+          warmRestartManagerScriptPath,
+          process.pid.toString(),
+          projectRoot,
+          String(config.port),
+          restartMarkerPath,
+        ],
+        {
+          cwd: projectRoot,
+          stdout: "ignore",
+          stderr: "ignore",
+          stdin: "ignore",
+          detached: true,
+        },
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       warmRestartState.inProgress = false;
