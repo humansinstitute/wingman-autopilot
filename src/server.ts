@@ -2173,6 +2173,24 @@ const syncSessionMessages = async (sessionId: string, force = false) => {
   return messageStore.listSessionMessages(sessionId);
 };
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const waitForMessageUpdate = async (sessionId: string, initialCount: number, timeoutMs = 20000) => {
+  let messages = await syncSessionMessages(sessionId, true);
+  if (messages.length > initialCount) {
+    return messages;
+  }
+
+  const deadline = Date.now() + Math.max(timeoutMs, 1000);
+  while (Date.now() < deadline) {
+    await sleep(750);
+    messages = await syncSessionMessages(sessionId, true);
+    if (messages.length > initialCount) {
+      return messages;
+    }
+  }
+  return messages;
+};
 const APP_ACTIONS: AppLifecycleAction[] = ["start", "stop", "restart", "build"];
 
 const parseAppScripts = (input: unknown): AppLifecycleScripts => {
@@ -2332,24 +2350,23 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
     }
 
     try {
-      Bun.spawn(
-        [
-          Bun.env.WINGMAN_MANAGER_COMMAND?.trim() || "bun",
-          "run",
-          warmRestartManagerScriptPath,
-          process.pid.toString(),
-          projectRoot,
-          String(config.port),
-          restartMarkerPath,
-        ],
-        {
-          cwd: projectRoot,
-          stdout: "ignore",
-          stderr: "ignore",
-          stdin: "ignore",
-          detached: true,
-        },
-      );
+      Bun.spawn([
+        Bun.env.WINGMAN_MANAGER_COMMAND?.trim() || "bun",
+        "run",
+        warmRestartManagerScriptPath,
+        process.pid.toString(),
+        projectRoot,
+        String(config.port),
+        restartMarkerPath,
+        APPS_TMUX_SESSION,
+        "wingman-core",
+      ], {
+        cwd: projectRoot,
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+        detached: true,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       warmRestartState.inProgress = false;
@@ -3298,6 +3315,7 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
         }
 
         try {
+          const initialCount = messageStore.listSessionMessages(id).length;
           const agentUrl = buildAgentUrl(agentHost, session.port, "/message");
           const agentResponse = await fetch(agentUrl, {
             method: "POST",
@@ -3309,12 +3327,12 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
             const message = (errorPayload?.error as string) ?? agentResponse.statusText ?? "Agent request failed";
             return Response.json({ error: message }, { status: agentResponse.status });
           }
+
+          const messages = await waitForMessageUpdate(id, initialCount);
+          return Response.json({ id, messages });
         } catch (error) {
           return Response.json({ error: `Failed to contact agent: ${(error as Error).message}` }, { status: 502 });
         }
-
-        const messages = await syncSessionMessages(id, true);
-        return Response.json({ id, messages });
       }
     }
   }
