@@ -47,15 +47,18 @@ const ensureAbsolutePath = (input: string): string => {
   return resolvePath(input);
 };
 
-const defaultSessionName = (root: string): string => {
-  const slug = basename(root)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
+const normaliseWindowName = (value: string | undefined, label: string, root: string, id: string): string => {
+  const base = value?.trim() || label.trim() || basename(root);
+  const cleaned = base
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
     .replace(/^-+/, "")
     .replace(/-+$/, "")
-    .slice(0, 32);
-  const suffix = slug || randomUUID().slice(0, 8);
-  return `wingman-app-${suffix}`;
+    .slice(0, 48);
+  if (cleaned.length > 0) {
+    return cleaned;
+  }
+  return `app-${id.slice(0, 8)}`;
 };
 
 export class AppRegistry {
@@ -91,7 +94,7 @@ export class AppRegistry {
       throw new Error(`An app is already registered for root "${root}"`);
     }
     const label = input.label?.trim() || basename(root);
-    const tmuxSession = input.tmuxSession?.trim() || defaultSessionName(root);
+    const tmuxSession = normaliseWindowName(input.tmuxSession, label, root, id);
     const scripts = this.normaliseScripts(input.scripts);
     const record: AppRecord = {
       id,
@@ -114,13 +117,18 @@ export class AppRegistry {
     if (!existing) {
       throw new Error(`Unknown app: ${id}`);
     }
+    const nextLabel = input.label?.trim() || existing.label;
+    const nextRoot = input.root ? ensureAbsolutePath(input.root) : existing.root;
+    const nextScripts = input.scripts ? this.normaliseScripts(input.scripts) : existing.scripts;
+    const nextNotes = input.notes === null ? undefined : input.notes?.trim() || existing.notes;
+    const nextTmux = normaliseWindowName(input.tmuxSession ?? existing.tmuxSession, nextLabel, nextRoot, id);
     const next: AppRecord = {
       ...existing,
-      label: input.label?.trim() || existing.label,
-      root: input.root ? ensureAbsolutePath(input.root) : existing.root,
-      scripts: input.scripts ? this.normaliseScripts(input.scripts) : existing.scripts,
-      tmuxSession: input.tmuxSession?.trim() || existing.tmuxSession,
-      notes: input.notes === null ? undefined : input.notes?.trim() || existing.notes,
+      label: nextLabel,
+      root: nextRoot,
+      scripts: nextScripts,
+      tmuxSession: nextTmux,
+      notes: nextNotes,
       updatedAt: new Date().toISOString(),
     };
     if (next.root !== existing.root) {
@@ -233,7 +241,7 @@ export class AppRegistry {
     const createdAt = input.createdAt ?? now;
     const updatedAt = input.updatedAt ?? createdAt;
     const label = input.label?.trim() || basename(root);
-    const tmuxSession = input.tmuxSession?.trim() || defaultSessionName(root);
+    const tmuxSession = normaliseWindowName(input.tmuxSession, label, root, input.id);
     const scripts = this.normaliseScripts(input.scripts);
     const notes = input.notes?.trim() || undefined;
     return {

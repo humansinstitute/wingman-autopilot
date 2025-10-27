@@ -2049,6 +2049,7 @@ const appDialogTitle = document.getElementById("app-dialog-title");
 const appLabelInput = document.getElementById("app-label");
 const appRootInput = document.getElementById("app-root");
 const appTmuxInput = document.getElementById("app-tmux-session");
+const appTmuxWindowInput = document.getElementById("app-tmux-window");
 const appNotesInput = document.getElementById("app-notes");
 const appDiscoverToggle = document.getElementById("app-discover-enabled");
 const appDiscoverButton = document.getElementById("app-discover");
@@ -2065,6 +2066,7 @@ const appLogsTitle = document.getElementById("app-logs-title");
 const appLogsContent = document.getElementById("app-logs-content");
 const appLogsRefreshButton = document.getElementById("app-logs-refresh");
 const appLogsCloseButton = document.getElementById("app-logs-close");
+const SHARED_TMUX_SESSION = "wingman-apps";
 
 const applyTheme = (theme, persist = true) => {
   currentTheme = theme;
@@ -3581,6 +3583,32 @@ const appDialogState = {
   appId: null,
 };
 
+const deriveAppWindowName = (labelValue, rootValue) => {
+  const label = (labelValue ?? "").trim();
+  const root = (rootValue ?? "").trim();
+  const basename = (input) => {
+    if (!input) return "";
+    const segments = input.split(/[\\/]/).filter(Boolean);
+    return segments.length > 0 ? segments[segments.length - 1] : "";
+  };
+  const source = label || basename(root);
+  const cleaned = source
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "")
+    .slice(0, 48);
+  return cleaned.length > 0 ? cleaned : "app";
+};
+
+const updateAppWindowPreview = () => {
+  if (!appTmuxWindowInput) return;
+  if (appTmuxWindowInput.dataset.locked === "true") return;
+  const label = appLabelInput?.value ?? "";
+  const root = appRootInput?.value ?? "";
+  appTmuxWindowInput.value = deriveAppWindowName(label, root);
+};
+
 const setAppDialogSubmitting = (submitting) => {
   if (!appForm) return;
   const elements = Array.from(appForm.elements);
@@ -3604,6 +3632,24 @@ const setAppDialogSubmitting = (submitting) => {
   }
 };
 
+if (appLabelInput) {
+  appLabelInput.addEventListener("input", () => {
+    if (appDialogState.mode === "edit" && appTmuxWindowInput?.dataset.locked === "true") {
+      return;
+    }
+    updateAppWindowPreview();
+  });
+}
+
+if (appRootInput) {
+  appRootInput.addEventListener("input", () => {
+    if (appDialogState.mode === "edit" && appTmuxWindowInput?.dataset.locked === "true") {
+      return;
+    }
+    updateAppWindowPreview();
+  });
+}
+
 const resetAppDialog = () => {
   if (appForm) {
     appForm.reset();
@@ -3619,6 +3665,13 @@ const resetAppDialog = () => {
       input.value = "";
     }
   });
+  if (appTmuxInput) {
+    appTmuxInput.value = SHARED_TMUX_SESSION;
+  }
+  if (appTmuxWindowInput) {
+    delete appTmuxWindowInput.dataset.locked;
+    appTmuxWindowInput.value = deriveAppWindowName(appLabelInput?.value ?? "", appRootInput?.value ?? "");
+  }
   if (appNotesInput) {
     appNotesInput.value = "";
   }
@@ -3638,7 +3691,12 @@ const populateAppDialog = (app) => {
     appRootInput.value = app.root ?? "";
   }
   if (appTmuxInput) {
-    appTmuxInput.value = app.tmuxSession ?? "";
+    appTmuxInput.value = SHARED_TMUX_SESSION;
+  }
+  if (appTmuxWindowInput) {
+    appTmuxWindowInput.dataset.locked = "true";
+    appTmuxWindowInput.value =
+      app.tmuxWindow ?? app.tmuxSession ?? deriveAppWindowName(app.label ?? "", app.root ?? "");
   }
   if (appNotesInput) {
     appNotesInput.value = app.notes ?? "";
@@ -3652,7 +3710,6 @@ const populateAppDialog = (app) => {
 const collectAppFormValues = () => {
   const label = appLabelInput?.value?.trim() ?? "";
   const root = appRootInput?.value?.trim() ?? "";
-  const tmuxSession = appTmuxInput?.value?.trim() ?? "";
   const notesRaw = appNotesInput?.value ?? "";
   const notesTrimmed = notesRaw.trim();
   const scripts = {};
@@ -3664,7 +3721,7 @@ const collectAppFormValues = () => {
     }
   }
   const discoverScripts = appDiscoverToggle ? appDiscoverToggle.checked : true;
-  return { label, root, tmuxSession, notesRaw, notesTrimmed, scripts, discoverScripts };
+  return { label, root, notesRaw, notesTrimmed, scripts, discoverScripts };
 };
 
 const handleAppFormSubmit = async (event) => {
@@ -3690,7 +3747,6 @@ const handleAppFormSubmit = async (event) => {
     body = {
       label: values.label ? values.label : undefined,
       root: values.root,
-      tmuxSession: values.tmuxSession ? values.tmuxSession : undefined,
       scripts: scriptsPayload,
       notes:
         values.notesRaw.length === 0
@@ -3706,7 +3762,6 @@ const handleAppFormSubmit = async (event) => {
     body = {
       label: values.label,
       root: values.root,
-      tmuxSession: values.tmuxSession ? values.tmuxSession : undefined,
       scripts: scriptsPayload,
       notes: values.notesTrimmed.length > 0 ? values.notesTrimmed : undefined,
       discoverScripts: values.discoverScripts,
@@ -3908,18 +3963,28 @@ const renderAppCard = (app) => {
   rootRow.append(rootLabel, rootValue);
   meta.append(rootRow);
 
-  if (app.tmuxSession) {
-    const tmuxRow = document.createElement("div");
-    tmuxRow.className = "wm-app-meta-row";
-    const tmuxLabel = document.createElement("span");
-    tmuxLabel.className = "wm-app-meta-label";
-    tmuxLabel.textContent = "tmux";
-    const tmuxValue = document.createElement("code");
-    tmuxValue.textContent = app.tmuxSession;
-    tmuxValue.title = app.tmuxSession;
-    tmuxRow.append(tmuxLabel, tmuxValue);
-    meta.append(tmuxRow);
-  }
+  const tmuxRow = document.createElement("div");
+  tmuxRow.className = "wm-app-meta-row";
+  const tmuxLabel = document.createElement("span");
+  tmuxLabel.className = "wm-app-meta-label";
+  tmuxLabel.textContent = "tmux session";
+  const tmuxValue = document.createElement("code");
+  tmuxValue.textContent = SHARED_TMUX_SESSION;
+  tmuxValue.title = SHARED_TMUX_SESSION;
+  tmuxRow.append(tmuxLabel, tmuxValue);
+  meta.append(tmuxRow);
+
+  const windowRow = document.createElement("div");
+  windowRow.className = "wm-app-meta-row";
+  const windowLabel = document.createElement("span");
+  windowLabel.className = "wm-app-meta-label";
+  windowLabel.textContent = "tmux window";
+  const windowValue = document.createElement("code");
+  const windowName = app.tmuxWindow ?? app.tmuxSession ?? deriveAppWindowName(app.label ?? "", app.root ?? "");
+  windowValue.textContent = windowName;
+  windowValue.title = windowName;
+  windowRow.append(windowLabel, windowValue);
+  meta.append(windowRow);
 
   card.append(meta);
 

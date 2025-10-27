@@ -15,6 +15,7 @@ import {
   type AppRecord,
 } from "./apps/app-registry";
 import {
+  APPS_TMUX_SESSION,
   AppActionInProgressError,
   AppScriptMissingError,
   appProcessManager,
@@ -1886,7 +1887,8 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus) => {
     label: app.label,
     root: app.root,
     scripts: app.scripts,
-    tmuxSession: app.tmuxSession,
+    tmuxSession: APPS_TMUX_SESSION,
+    tmuxWindow: app.tmuxSession,
     notes: app.notes ?? null,
     createdAt: app.createdAt,
     updatedAt: app.updatedAt,
@@ -1900,17 +1902,17 @@ const ensureWingmanCoreRegistration = async () => {
   try {
     const existing = await appRegistry.getApp("wingman-core");
     const restartCommand = "bun run scripts/restart-wingman.ts";
-    const tmuxSession = `${config.tmuxBase}-core`;
+    const tmuxWindow = "wingman-core";
     if (existing) {
       const needsUpdate =
         existing.scripts.restart !== restartCommand ||
-        existing.tmuxSession !== tmuxSession ||
+        existing.tmuxSession !== tmuxWindow ||
         existing.root !== projectRootPath;
       if (needsUpdate) {
         await appRegistry.updateApp("wingman-core", {
           root: projectRootPath,
           scripts: { restart: restartCommand },
-          tmuxSession,
+          tmuxSession: tmuxWindow,
           notes: existing.notes ?? "Controls the Wingman orchestrator process.",
         });
       }
@@ -1921,7 +1923,7 @@ const ensureWingmanCoreRegistration = async () => {
       label: "Wingman Server",
       root: projectRootPath,
       scripts: { restart: restartCommand },
-      tmuxSession,
+      tmuxSession: tmuxWindow,
       notes: "Controls the Wingman orchestrator process.",
     });
     console.log("[apps] registered Wingman core app entry");

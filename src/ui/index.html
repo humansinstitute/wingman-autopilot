@@ -248,8 +248,12 @@
           </div>
         </div>
 
-        <label for="app-tmux-session">tmux Session (optional)</label>
-        <input id="app-tmux-session" type="text" autocomplete="off" placeholder="wingman-app-web" />
+        <label for="app-tmux-session">tmux Session</label>
+        <input id="app-tmux-session" type="text" readonly value="wingman-apps" />
+        <p class="wm-field-note">All apps launch inside this shared tmux session.</p>
+
+        <label for="app-tmux-window">tmux Window</label>
+        <input id="app-tmux-window" type="text" readonly placeholder="Auto-generated from the app name" />
 
         <label for="app-notes">Notes</label>
         <textarea id="app-notes" rows="3" placeholder="Additional context for operators"></textarea>

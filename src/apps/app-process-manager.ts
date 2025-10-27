@@ -6,6 +6,7 @@ import { appRegistry } from "./app-registry";
 import type { AppLifecycleAction, AppRecord, AppRegistry } from "./app-registry";
 
 const logDirectoryPath = new URL("../../data/app-logs", import.meta.url).pathname;
+export const APPS_TMUX_SESSION = "wingman-apps";
 
 type CommandResult = {
   exitCode: number;
@@ -227,11 +228,12 @@ export class AppProcessManager {
     if (!app) {
       throw new Error(`Unknown app: ${appId}`);
     }
-    const result = await this.runTmux(["kill-session", "-t", app.tmuxSession]);
+    const target = this.getTmuxTarget(app);
+    const result = await this.runTmux(["kill-window", "-t", target]);
     if (result.exitCode !== 0) {
       const output = result.stderr || result.stdout || "";
-      if (!/can't find session|no such session/i.test(output)) {
-        throw new Error(output || `Failed to kill tmux session ${app.tmuxSession}`);
+      if (!/can't find window|no such window|can't find session|no such session/i.test(output)) {
+        throw new Error(output || `Failed to kill tmux window ${target}`);
       }
     }
     this.states.delete(appId);
@@ -320,19 +322,55 @@ export class AppProcessManager {
   }
 
   private async ensureSession(app: AppRecord) {
-    const hasSession = await this.runTmux(["has-session", "-t", app.tmuxSession]);
-    if (hasSession.exitCode === 0) {
+    const baseSession = await this.runTmux(["has-session", "-t", APPS_TMUX_SESSION]);
+    if (baseSession.exitCode !== 0) {
+      const createSession = await this.runTmux(["new-session", "-d", "-s", APPS_TMUX_SESSION, "-c", app.root]);
+      if (createSession.exitCode !== 0) {
+        throw new Error(
+          createSession.stderr || createSession.stdout || `Failed to create tmux session ${APPS_TMUX_SESSION}`,
+        );
+      }
+      const remainSession = await this.runTmux(["set-option", "-t", APPS_TMUX_SESSION, "remain-on-exit", "on"]);
+      if (remainSession.exitCode !== 0) {
+        throw new Error(
+          remainSession.stderr || remainSession.stdout || `Failed to configure tmux session ${APPS_TMUX_SESSION}`,
+        );
+      }
+    }
+    const windowName = this.getWindowName(app);
+    const windows = await this.runTmux(["list-windows", "-t", APPS_TMUX_SESSION, "-F", "#{window_name}"]);
+    if (windows.exitCode !== 0) {
+      throw new Error(windows.stderr || windows.stdout || `Failed to list windows for ${APPS_TMUX_SESSION}`);
+    }
+    const knownWindows = windows.stdout
+      .split(/\r?\n/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    if (knownWindows.includes(windowName)) {
       return;
     }
-    const create = await this.runTmux(["new-session", "-d", "-s", app.tmuxSession, "-c", app.root]);
-    if (create.exitCode !== 0) {
-      throw new Error(create.stderr || create.stdout || `Failed to create tmux session ${app.tmuxSession}`);
+    const createWindow = await this.runTmux([
+      "new-window",
+      "-t",
+      APPS_TMUX_SESSION,
+      "-n",
+      windowName,
+      "-c",
+      app.root,
+    ]);
+    if (createWindow.exitCode !== 0) {
+      throw new Error(createWindow.stderr || createWindow.stdout || `Failed to create tmux window ${windowName}`);
     }
-    const remain = await this.runTmux(["set-option", "-t", app.tmuxSession, "remain-on-exit", "on"]);
-    if (remain.exitCode !== 0) {
-      throw new Error(remain.stderr || remain.stdout || `Failed to configure tmux session ${app.tmuxSession}`);
+    const remainWindow = await this.runTmux([
+      "set-option",
+      "-t",
+      `${APPS_TMUX_SESSION}:${windowName}`,
+      "remain-on-exit",
+      "on",
+    ]);
+    if (remainWindow.exitCode !== 0) {
+      throw new Error(remainWindow.stderr || remainWindow.stdout || `Failed to configure tmux window ${windowName}`);
     }
-    await this.attachLogPipe(app);
   }
 
   private async attachLogPipe(app: AppRecord) {
@@ -340,9 +378,9 @@ export class AppProcessManager {
     const path = this.logPath(app.id);
     await appendFile(path, "", "utf8");
     const escaped = path.replace(/"/g, '\\"');
-    const pipe = await this.runTmux(["pipe-pane", "-t", app.tmuxSession, "-o", `cat >> "${escaped}"`]);
+    const pipe = await this.runTmux(["pipe-pane", "-t", this.getTmuxTarget(app), "-o", `cat >> "${escaped}"`]);
     if (pipe.exitCode !== 0) {
-      throw new Error(pipe.stderr || pipe.stdout || `Failed to attach log pipe for ${app.tmuxSession}`);
+      throw new Error(pipe.stderr || pipe.stdout || `Failed to attach log pipe for ${this.getTmuxTarget(app)}`);
     }
   }
 
@@ -351,7 +389,7 @@ export class AppProcessManager {
     if (!prompt) {
       return { exitCode: 0, stdout: "", stderr: "" };
     }
-    return this.runTmux(["send-keys", "-t", app.tmuxSession, prompt, "Enter"]);
+    return this.runTmux(["send-keys", "-t", this.getTmuxTarget(app), prompt, "Enter"]);
   }
 
   private async runTmux(args: string[]): Promise<CommandResult> {
@@ -372,12 +410,28 @@ export class AppProcessManager {
   }
 
   private async isSessionRunning(app: AppRecord): Promise<boolean> {
-    const result = await this.runTmux(["has-session", "-t", app.tmuxSession]);
-    return result.exitCode === 0;
+    const windows = await this.runTmux(["list-windows", "-t", APPS_TMUX_SESSION, "-F", "#{window_name}"]);
+    if (windows.exitCode !== 0) {
+      return false;
+    }
+    const windowName = this.getWindowName(app);
+    return windows.stdout
+      .split(/\r?\n/)
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .includes(windowName);
   }
 
   private logPath(appId: string): string {
     return join(logDirectoryPath, `${appId}.log`);
+  }
+
+  private getWindowName(app: AppRecord): string {
+    return app.tmuxSession;
+  }
+
+  private getTmuxTarget(app: AppRecord): string {
+    return `${APPS_TMUX_SESSION}:${this.getWindowName(app)}`;
   }
 }
 
