@@ -643,6 +643,11 @@ body[data-menu-open="true"] .wm-menu-panel {
   margin: 0;
 }
 
+.wm-app-status-error {
+  color: #f87171;
+  font-weight: 600;
+}
+
 .wm-app-log {
   margin: 0;
   padding: 0.75rem;
@@ -2390,7 +2395,7 @@ dialog button[value="cancel"] {
   align-items: center;
   justify-content: flex-start;
   gap: 0.4rem;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   margin-left: auto;
   overflow-x: auto;
   padding-bottom: 0.15rem;
@@ -2410,6 +2415,9 @@ dialog button[value="cancel"] {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+  flex-basis: 100%;
+  justify-content: flex-start;
+  margin-top: 0.15rem;
 }
 
 .wm-select {
@@ -2460,7 +2468,7 @@ dialog button[value="cancel"] {
   .wm-files-browser__controls {
     width: auto;
     justify-content: flex-start;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     gap: 0.35rem;
     margin-left: 0;
   }
