@@ -2458,7 +2458,7 @@ dialog button[value="cancel"] {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  flex-basis: 100%;
+  flex-basis: auto;
   justify-content: flex-start;
   margin-top: 0.15rem;
 }
@@ -2487,7 +2487,10 @@ dialog button[value="cancel"] {
 }
 
 .wm-files-browser__git .wm-select {
-  min-width: 9.5rem;
+  min-width: 0;
+  width: auto;
+  max-width: 12rem;
+  white-space: nowrap;
 }
 
 .wm-files-browser[data-collapsed="true"] .wm-files-browser__list {
