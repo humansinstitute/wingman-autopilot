@@ -14,6 +14,8 @@ export interface SessionSnapshot {
   pid?: number;
   command: string[];
   workingDirectory: string;
+  tmuxSession?: string;
+  tmuxWindow?: string;
   exitCode?: number;
   logs: string[];
 }
@@ -22,6 +24,20 @@ type SessionEvent =
   | { type: "session-started"; session: SessionSnapshot }
   | { type: "session-updated"; session: SessionSnapshot }
   | { type: "session-stopped"; session: SessionSnapshot };
+
+export interface RehydrateSessionInput {
+  id: string;
+  agent: AgentType;
+  port: number;
+  name: string;
+  startedAt: string;
+  workingDirectory: string;
+  command?: string[];
+  tmuxSession?: string;
+  tmuxWindow?: string;
+  pid?: number;
+  logs?: string[];
+}
 
 interface AgentSession {
   id: string;
@@ -36,6 +52,9 @@ interface AgentSession {
   command: string[];
   logs: string[];
   exitCode?: number;
+  tmuxSession?: string;
+  tmuxWindow?: string;
+  detachedPid?: number;
 }
 
 export class ProcessManager {
@@ -80,6 +99,8 @@ export class ProcessManager {
       typeof workingDirectory === "string" && workingDirectory.length > 0
         ? workingDirectory
         : this.config.defaultWorkingDirectory;
+    const tmuxSession = this.config.tmuxBase?.trim().length ? this.config.tmuxBase : undefined;
+    const tmuxWindow = this.deriveTmuxWindowName(agent, id);
 
     console.log(`[manager] launching ${definition.label} with command: ${command.join(" ")}`);
     const session: AgentSession = {
@@ -94,6 +115,9 @@ export class ProcessManager {
       workingDirectory: sessionWorkingDirectory,
       command,
       logs: [],
+      tmuxSession,
+      tmuxWindow,
+      detachedPid: undefined,
     };
 
     this.sessions.set(id, session);
@@ -115,6 +139,47 @@ export class ProcessManager {
     return this.toSnapshot(session);
   }
 
+  rehydrateSession(input: RehydrateSessionInput): SessionSnapshot | null {
+    const definition = this.config.agents[input.agent];
+    if (!definition) {
+      return null;
+    }
+
+    if (this.sessions.has(input.id)) {
+      return this.toSnapshot(this.sessions.get(input.id)!);
+    }
+
+    if (this.allocatedPorts.has(input.port)) {
+      return null;
+    }
+
+    const command =
+      Array.isArray(input.command) && input.command.length > 0
+        ? input.command
+        : definition.command({ port: input.port, agent: input.agent, config: this.config });
+
+    const session: AgentSession = {
+      id: input.id,
+      agent: input.agent,
+      port: input.port,
+      name: input.name,
+      status: "running",
+      startedAt: new Date(input.startedAt),
+      process: null,
+      definition,
+      workingDirectory: input.workingDirectory,
+      command,
+      logs: input.logs ?? [],
+      tmuxSession: input.tmuxSession,
+      tmuxWindow: input.tmuxWindow,
+      detachedPid: typeof input.pid === "number" ? input.pid : undefined,
+    };
+
+    this.sessions.set(session.id, session);
+    this.allocatedPorts.add(session.port);
+    return this.toSnapshot(session);
+  }
+
   async stopSession(id: string): Promise<SessionSnapshot | undefined> {
     const session = this.sessions.get(id);
     if (!session) return undefined;
@@ -123,6 +188,13 @@ export class ProcessManager {
       session.process.kill("SIGTERM");
       await session.process.exited;
       session.process = null;
+    } else if (typeof session.detachedPid === "number" && session.detachedPid > 0) {
+      try {
+        process.kill(session.detachedPid, "SIGTERM");
+      } catch {
+        // ignore failures when the process already exited or cannot be signalled
+      }
+      session.detachedPid = undefined;
     }
 
     session.status = "stopped";
@@ -173,6 +245,9 @@ export class ProcessManager {
       stdout: "pipe",
       stderr: "pipe",
     });
+    if (typeof process.pid === "number" && process.pid > 0) {
+      session.detachedPid = process.pid;
+    }
 
     if (process.stdout) {
       this.captureStream(process.stdout, session, "stdout");
@@ -184,6 +259,7 @@ export class ProcessManager {
 
     process.exited.then((code) => {
       session.exitCode = code ?? undefined;
+      session.detachedPid = undefined;
       if (session.status === "running") {
         session.status = code === 0 ? "stopped" : "error";
         this.releasePort(session.port);
@@ -206,6 +282,7 @@ export class ProcessManager {
         if (!session.process) return;
         // Consider the process "running" as soon as we can observe a PID.
         if (typeof session.process.pid === "number" && session.process.pid > 0) {
+          session.detachedPid = session.process.pid;
           clearInterval(checkInterval);
           resolve();
         }
@@ -280,9 +357,11 @@ export class ProcessManager {
       name: session.name,
       status: session.status,
       startedAt: session.startedAt.toISOString(),
-      pid: session.process?.pid,
+      pid: session.process?.pid ?? session.detachedPid,
       command: session.command,
       workingDirectory: session.workingDirectory,
+      tmuxSession: session.tmuxSession,
+      tmuxWindow: session.tmuxWindow,
       exitCode: session.exitCode,
       logs: session.logs.slice(-50),
     };
@@ -300,5 +379,14 @@ export class ProcessManager {
     for (const listener of this.listeners) {
       listener(event);
     }
+  }
+
+  private deriveTmuxWindowName(agent: AgentType, sessionId: string): string | undefined {
+    if (!this.config.tmuxBase || this.config.tmuxBase.trim().length === 0) {
+      return undefined;
+    }
+    const sanitizedId = sessionId.replace(/[^a-z0-9]/gi, "").slice(0, 8);
+    const suffix = sanitizedId.length > 0 ? sanitizedId : sessionId.slice(0, 8);
+    return `${agent}:${suffix}`;
   }
 }

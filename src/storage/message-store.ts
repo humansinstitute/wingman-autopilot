@@ -18,6 +18,32 @@ export interface ReplaceMessageInput {
   createdAt: string;
 }
 
+export interface SessionRecordInput {
+  id: string;
+  agent: string;
+  startedAt: string;
+  name?: string;
+  port?: number;
+  pid?: number;
+  tmuxSession?: string;
+  tmuxWindow?: string;
+  workingDirectory?: string;
+  command?: string[];
+}
+
+export interface StoredSessionRecord {
+  id: string;
+  agent: string;
+  startedAt: string;
+  name: string | null;
+  port: number | null;
+  pid: number | null;
+  tmuxSession: string | null;
+  tmuxWindow: string | null;
+  workingDirectory: string | null;
+  command: string | null;
+}
+
 export const databaseFile = new URL("../../data/wingman.db", import.meta.url).pathname;
 
 export class MessageStore {
@@ -25,6 +51,7 @@ export class MessageStore {
 
   private readonly insertSession: ReturnType<MessageStore["prepareInsertSession"]>;
   private readonly deleteSession: ReturnType<MessageStore["prepareDeleteSession"]>;
+  private readonly listSessionsStmt: ReturnType<MessageStore["prepareListSessions"]>;
   private readonly clearMessages: ReturnType<MessageStore["prepareClearMessages"]>;
   private readonly insertMessage: ReturnType<MessageStore["prepareInsertMessage"]>;
   private readonly listMessages: ReturnType<MessageStore["prepareListMessages"]>;
@@ -36,14 +63,26 @@ export class MessageStore {
     this.initialise();
     this.insertSession = this.prepareInsertSession();
     this.deleteSession = this.prepareDeleteSession();
+    this.listSessionsStmt = this.prepareListSessions();
     this.clearMessages = this.prepareClearMessages();
     this.insertMessage = this.prepareInsertMessage();
     this.listMessages = this.prepareListMessages();
     this.countMessages = this.prepareCountMessages();
   }
 
-  recordSession(sessionId: string, agent: string, startedAt: string, name?: string) {
-    this.insertSession.run(sessionId, agent, startedAt, name ?? null);
+  recordSession(session: SessionRecordInput) {
+    this.insertSession.run(
+      session.id,
+      session.agent,
+      session.startedAt,
+      session.name ?? null,
+      typeof session.port === "number" ? session.port : null,
+      typeof session.pid === "number" ? session.pid : null,
+      session.tmuxSession ?? null,
+      session.tmuxWindow ?? null,
+      session.workingDirectory ?? null,
+      Array.isArray(session.command) ? JSON.stringify(session.command) : null,
+    );
   }
 
   removeSession(sessionId: string) {
@@ -76,13 +115,23 @@ export class MessageStore {
     return Boolean(row?.count && row.count > 0);
   }
 
+  listSessions(): StoredSessionRecord[] {
+    return this.listSessionsStmt.all() as StoredSessionRecord[];
+  }
+
   private initialise() {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         agent TEXT NOT NULL,
         started_at TEXT NOT NULL,
-        name TEXT
+        name TEXT,
+        port INTEGER,
+        pid INTEGER,
+        tmux_session TEXT,
+        tmux_window TEXT,
+        working_directory TEXT,
+        command TEXT
       );
 
       CREATE TABLE IF NOT EXISTS messages (
@@ -98,22 +147,58 @@ export class MessageStore {
     `);
 
     const sessionColumns = this.db.query("PRAGMA table_info(sessions)").all() as { name: string }[];
-    const hasNameColumn = sessionColumns.some((column) => column.name === "name");
-    if (!hasNameColumn) {
-      this.db.exec(`ALTER TABLE sessions ADD COLUMN name TEXT`);
-    }
+    const ensureColumn = (name: string, definition: string) => {
+      const exists = sessionColumns.some((column) => column.name === name);
+      if (!exists) {
+        this.db.exec(`ALTER TABLE sessions ADD COLUMN ${name} ${definition}`);
+      }
+    };
+
+    ensureColumn("name", "TEXT");
+    ensureColumn("port", "INTEGER");
+    ensureColumn("pid", "INTEGER");
+    ensureColumn("tmux_session", "TEXT");
+    ensureColumn("tmux_window", "TEXT");
+    ensureColumn("working_directory", "TEXT");
+    ensureColumn("command", "TEXT");
   }
 
   private prepareInsertSession() {
     return this.db.prepare(
-      `INSERT INTO sessions (id, agent, started_at, name)
-       VALUES (?1, ?2, ?3, ?4)
-       ON CONFLICT(id) DO UPDATE SET agent = excluded.agent, started_at = excluded.started_at, name = excluded.name`,
+      `INSERT INTO sessions (id, agent, started_at, name, port, pid, tmux_session, tmux_window, working_directory, command)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+       ON CONFLICT(id) DO UPDATE SET
+         agent = excluded.agent,
+         started_at = excluded.started_at,
+         name = excluded.name,
+         port = excluded.port,
+         pid = excluded.pid,
+         tmux_session = excluded.tmux_session,
+         tmux_window = excluded.tmux_window,
+         working_directory = excluded.working_directory,
+         command = excluded.command`,
     );
   }
 
   private prepareDeleteSession() {
     return this.db.prepare(`DELETE FROM sessions WHERE id = ?1`);
+  }
+
+  private prepareListSessions() {
+    return this.db.prepare(
+      `SELECT
+         id,
+         agent,
+         started_at as startedAt,
+         name,
+         port,
+         pid,
+         tmux_session as tmuxSession,
+         tmux_window as tmuxWindow,
+         working_directory as workingDirectory,
+         command
+       FROM sessions`,
+    );
   }
 
   private prepareClearMessages() {

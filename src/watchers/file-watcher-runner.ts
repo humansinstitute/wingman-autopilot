@@ -443,7 +443,18 @@ export class FileWatcherRunner {
       typeof nameCandidate === "string" && nameCandidate.trim().length > 0 ? nameCandidate.trim() : undefined;
 
     const session = await this.manager.createSession(agent, workingDirectory, sessionName);
-    messageStore.recordSession(session.id, session.agent, session.startedAt, session.name);
+    messageStore.recordSession({
+      id: session.id,
+      agent: session.agent,
+      startedAt: session.startedAt,
+      name: session.name,
+      port: session.port,
+      pid: session.pid,
+      tmuxSession: session.tmuxSession,
+      tmuxWindow: session.tmuxWindow,
+      workingDirectory: session.workingDirectory,
+      command: session.command,
+    });
 
     try {
       await waitForAgentReady(this.agentHost, session.port, session.agent);

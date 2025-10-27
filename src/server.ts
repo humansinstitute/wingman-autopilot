@@ -21,7 +21,7 @@ import {
   appProcessManager,
   type AppProcessStatus,
 } from "./apps/app-process-manager";
-import { messageStore } from "./storage/message-store";
+import { messageStore, type StoredSessionRecord } from "./storage/message-store";
 import { orchestratorPresetStore } from "./storage/orchestrator-presets";
 import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 import { fileWatcherStore } from "./storage/file-watcher-store";
@@ -41,6 +41,7 @@ const config = loadConfig();
 process.env.WINGMAN_PID = process.pid.toString();
 console.log(`[config] tmux session base: ${config.tmuxBase}`);
 const TMUX_SESSION_NAME = config.tmuxBase;
+const SUPPORTED_AGENT_TYPES: AgentType[] = ["codex", "claude", "goose", "opencode", "gemini"];
 
 const projectRootPath = fileURLToPath(new URL("../", new URL("../", import.meta.url)));
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -122,6 +123,194 @@ const runTmuxCommand = async (args: string[]) => {
     stdout: stdout.trim(),
     stderr: stderr.trim(),
   };
+};
+
+interface WarmRestartMarker {
+  createdAt: string;
+  preserveTmux: boolean;
+  sessionIds?: string[];
+  reason?: string;
+  version?: number;
+}
+
+const loadWarmRestartMarker = async (filePath: string): Promise<WarmRestartMarker | null> => {
+  try {
+    const raw = await readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw) as WarmRestartMarker;
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    return parsed;
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException;
+    if (nodeError?.code === "ENOENT") {
+      return null;
+    }
+    console.warn(`[restart] failed to read marker at ${filePath}: ${nodeError?.message ?? error}`);
+    return null;
+  }
+};
+
+const clearWarmRestartMarker = async (filePath: string) => {
+  try {
+    await rm(filePath, { force: true });
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException;
+    if (nodeError?.code && nodeError.code !== "ENOENT") {
+      console.warn(`[restart] failed to remove marker ${filePath}: ${nodeError.message}`);
+    }
+  }
+};
+
+const writeWarmRestartMarker = async (filePath: string, marker: WarmRestartMarker) => {
+  const payload = JSON.stringify(marker, null, 2);
+  await writeFile(filePath, `${payload}\n`, "utf8");
+};
+
+const warmRestartState = {
+  inProgress: false,
+  marker: null as WarmRestartMarker | null,
+};
+
+interface WarmRestartOutcome {
+  restored: number;
+  failed: string[];
+  timestamp: string;
+}
+
+const warmRestartOutcome: { current: WarmRestartOutcome | null } = { current: null };
+let preserveSessionsOnShutdown = false;
+
+const parseStoredCommand = (value: string | null): string[] | undefined => {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? (parsed.every((entry) => typeof entry === "string") ? (parsed as string[]) : undefined) : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const isProcessAlive = (pid: number | null | undefined): boolean => {
+  if (!pid || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException;
+    if (nodeError?.code === "EPERM") {
+      return true;
+    }
+    return false;
+  }
+};
+
+const rehydrateWarmSessions = async (
+  marker: WarmRestartMarker | null,
+  markerPath: string,
+  agentHost: string,
+) => {
+  if (!marker) {
+    return;
+  }
+
+  const targetIds = marker.sessionIds && marker.sessionIds.length > 0 ? new Set(marker.sessionIds) : null;
+  const storedSessions = messageStore.listSessions();
+  let restored = 0;
+  const failed: string[] = [];
+
+  for (const record of storedSessions) {
+    if (targetIds && !targetIds.has(record.id)) {
+      continue;
+    }
+
+    if (!record.id || typeof record.id !== "string") {
+      continue;
+    }
+
+    const agentName = typeof record.agent === "string" ? record.agent.toLowerCase() : "";
+    if (!SUPPORTED_AGENT_TYPES.includes(agentName as AgentType)) {
+      failed.push(record.id);
+      continue;
+    }
+
+    const port = typeof record.port === "number" && Number.isFinite(record.port) ? record.port : null;
+    if (!port) {
+      failed.push(record.id);
+      continue;
+    }
+
+    try {
+      await waitForAgentReadyCore(agentHost, port, agentName, {
+        timeoutMs: 5000,
+        pollIntervalMs: 250,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[restart] agent for session ${record.id} not reachable: ${message}`);
+      failed.push(record.id);
+      continue;
+    }
+
+    const storedPid = typeof record.pid === "number" ? record.pid : null;
+    if (storedPid && !isProcessAlive(storedPid)) {
+      console.warn(`[restart] stored pid ${storedPid} for session ${record.id} is not running; skipping rehydration`);
+      failed.push(record.id);
+      continue;
+    }
+
+    const command = parseStoredCommand(record.command);
+    const snapshot = manager.rehydrateSession({
+      id: record.id,
+      agent: agentName as AgentType,
+      port,
+      name: record.name ?? record.id,
+      startedAt: record.startedAt,
+      workingDirectory: record.workingDirectory ?? config.defaultWorkingDirectory,
+      command,
+      tmuxSession: record.tmuxSession ?? undefined,
+      tmuxWindow: record.tmuxWindow ?? undefined,
+      pid: storedPid ?? undefined,
+      logs: undefined,
+    });
+
+    if (!snapshot) {
+      failed.push(record.id);
+      continue;
+    }
+
+    messageStore.recordSession({
+      id: snapshot.id,
+      agent: snapshot.agent,
+      startedAt: snapshot.startedAt,
+      name: snapshot.name,
+      port: snapshot.port,
+      pid: snapshot.pid,
+      tmuxSession: snapshot.tmuxSession,
+      tmuxWindow: snapshot.tmuxWindow,
+      workingDirectory: snapshot.workingDirectory,
+      command: snapshot.command,
+    });
+    restored += 1;
+  }
+
+  warmRestartOutcome.current = {
+    restored,
+    failed,
+    timestamp: new Date().toISOString(),
+  };
+  warmRestartState.marker = null;
+
+  if (restored > 0) {
+    console.log(`[restart] rehydrated ${restored} session${restored === 1 ? "" : "s"} from previous run`);
+  }
+  if (failed.length > 0) {
+    console.warn(`[restart] failed to rehydrate ${failed.length} session${failed.length === 1 ? "" : "s"}: ${failed.join(", ")}`);
+  }
+
+  await clearWarmRestartMarker(markerPath);
 };
 
 type CommandResult = {
@@ -525,9 +714,6 @@ const ensureWingmanAgentsSessionClean = async () => {
   }
 };
 
-await ensureWingmanAgentsSessionClean();
-const manager = new ProcessManager(config);
-
 const srcRoot = fileURLToPath(new URL(".", import.meta.url));
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const tmpRoot = normalize(join(srcRoot, "../tmp"));
@@ -558,6 +744,18 @@ const publicRoot = normalize(join(projectRoot, "public"));
 const publicRootBoundary = publicRoot.endsWith(sep) ? publicRoot : `${publicRoot}${sep}`;
 await mkdir(documentsDirectory, { recursive: true }).catch(() => undefined);
 await mkdir(userDataRoot, { recursive: true }).catch(() => undefined);
+const warmRestartRoot = join(homeDirectory, ".wingmen");
+await mkdir(warmRestartRoot, { recursive: true }).catch(() => undefined);
+const restartMarkerPath = join(warmRestartRoot, "restart.json");
+const warmRestartMarker = await loadWarmRestartMarker(restartMarkerPath);
+warmRestartState.marker = warmRestartMarker;
+const warmRestartActive = Boolean(warmRestartMarker?.preserveTmux);
+if (!warmRestartActive) {
+  await ensureWingmanAgentsSessionClean();
+} else {
+  console.log(`[restart] warm restart marker detected; preserving ${TMUX_SESSION_NAME}`);
+}
+const manager = new ProcessManager(config);
 const wingmenRoot = join(projectRoot, ".wingmen");
 const orchestratorTriggersRoot = join(wingmenRoot, "orchestrator", "triggers");
 await mkdir(wingmenRoot, { recursive: true }).catch(() => undefined);
@@ -565,6 +763,7 @@ await mkdir(orchestratorTriggersRoot, { recursive: true }).catch(() => undefined
 const orchestratorRoot = join(projectRoot, "orchestrator");
 const orchestratorTemplatesRoot = join(orchestratorRoot, "templates");
 const orchestratorActiveRootBase = join(userDataRoot, "orchestrator", "active");
+const warmRestartScriptPath = join(projectRoot, "scripts", "warm-restart.sh");
 const maxImageSizeBytes = 10 * 1024 * 1024; // 10MB
 const maxAttachmentSizeBytes = 25 * 1024 * 1024; // 25MB
 const imageTtlMs = 24 * 60 * 60 * 1000;
@@ -865,8 +1064,34 @@ scheduleAttachmentCleanup();
 
 manager.on((event) => {
   if (event.type === "session-started") {
-    messageStore.recordSession(event.session.id, event.session.agent, event.session.startedAt, event.session.name);
+    messageStore.recordSession({
+      id: event.session.id,
+      agent: event.session.agent,
+      startedAt: event.session.startedAt,
+      name: event.session.name,
+      port: event.session.port,
+      pid: event.session.pid,
+      tmuxSession: event.session.tmuxSession,
+      tmuxWindow: event.session.tmuxWindow,
+      workingDirectory: event.session.workingDirectory,
+      command: event.session.command,
+    });
     messageStore.replaceMessages(event.session.id, []);
+    return;
+  }
+  if (event.type === "session-updated" || event.type === "session-stopped") {
+    messageStore.recordSession({
+      id: event.session.id,
+      agent: event.session.agent,
+      startedAt: event.session.startedAt,
+      name: event.session.name,
+      port: event.session.port,
+      pid: event.session.pid,
+      tmuxSession: event.session.tmuxSession,
+      tmuxWindow: event.session.tmuxWindow,
+      workingDirectory: event.session.workingDirectory,
+      command: event.session.command,
+    });
   }
 });
 
@@ -1724,7 +1949,18 @@ const launchOrchestratorPreset = async (presetId: string) => {
     workingDirectory,
     sessionName ?? undefined,
   );
-  messageStore.recordSession(session.id, session.agent, session.startedAt, session.name);
+  messageStore.recordSession({
+    id: session.id,
+    agent: session.agent,
+    startedAt: session.startedAt,
+    name: session.name,
+    port: session.port,
+    pid: session.pid,
+    tmuxSession: session.tmuxSession,
+    tmuxWindow: session.tmuxWindow,
+    workingDirectory: session.workingDirectory,
+    command: session.command,
+  });
   void initialisePresetSession(preset, session);
   return { directory: workingDirectory, session };
 };
@@ -1905,13 +2141,13 @@ const serveIndex = () => {
 };
 
 const isAgentType = (value: string): value is AgentType => {
-  return ["codex", "claude", "goose", "opencode", "gemini"].includes(value);
+  return SUPPORTED_AGENT_TYPES.includes(value as AgentType);
 };
 
 const agentHosts = parseAllowedHosts(config.allowedHosts);
 const agentHost = normaliseHostForUrl(pickAgentHost(agentHosts));
 
-
+await rehydrateWarmSessions(warmRestartMarker, restartMarkerPath, agentHost);
 
 const syncSessionMessages = async (sessionId: string, force = false) => {
   if (!force && messageStore.hasMessages(sessionId)) {
@@ -2036,6 +2272,77 @@ void ensureWingmanCoreRegistration();
 
 const handleApi = async (request: Request, url: URL, method: HttpMethod): Promise<Response> => {
   const pathname = url.pathname;
+  if (pathname === "/api/system/restart/status" && method === "GET") {
+    return Response.json({
+      inProgress: warmRestartState.inProgress,
+      marker: warmRestartState.marker,
+      outcome: warmRestartOutcome.current,
+    });
+  }
+
+  if (pathname === "/api/system/restart" && method === "POST") {
+    if (warmRestartState.inProgress) {
+      return Response.json({ error: "Restart already in progress" }, { status: 409 });
+    }
+
+    const activeSessions = manager
+      .listSessions()
+      .filter((session) => session.status === "starting" || session.status === "running");
+
+    const marker: WarmRestartMarker = {
+      createdAt: new Date().toISOString(),
+      preserveTmux: true,
+      sessionIds: activeSessions.map((session) => session.id),
+      reason: "ui-restart",
+      version: 1,
+    };
+
+    try {
+      await writeWarmRestartMarker(restartMarkerPath, marker);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: `Failed to write restart marker: ${message}` }, { status: 500 });
+    }
+
+    warmRestartState.inProgress = true;
+    warmRestartState.marker = marker;
+    warmRestartOutcome.current = null;
+    preserveSessionsOnShutdown = true;
+
+    try {
+      await stat(warmRestartScriptPath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      warmRestartState.inProgress = false;
+      preserveSessionsOnShutdown = false;
+      return Response.json({ error: `Restart script missing: ${message}` }, { status: 500 });
+    }
+
+    try {
+      Bun.spawn([warmRestartScriptPath, process.pid.toString(), projectRoot], {
+        cwd: projectRoot,
+        stdout: "ignore",
+        stderr: "ignore",
+        stdin: "ignore",
+        detached: true,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      warmRestartState.inProgress = false;
+      preserveSessionsOnShutdown = false;
+      return Response.json({ error: `Failed to launch restart script: ${message}` }, { status: 500 });
+    }
+
+    setTimeout(() => {
+      void initiateShutdown("warm-restart");
+    }, 250).unref?.();
+
+    return Response.json({
+      status: "scheduled",
+      sessions: marker.sessionIds ?? [],
+    }, { status: 202 });
+  }
+
   if (pathname === "/api/apps" && method === "GET") {
     const tailParam = url.searchParams.get("tail") ?? url.searchParams.get("logs");
     const tail = tailParam ? Number.parseInt(tailParam, 10) : 0;
@@ -2879,7 +3186,18 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
         return Response.json({ error: (error as Error).message }, { status: 400 });
       }
       const session = await manager.createSession(agent, workingDirectory, sessionName ?? undefined);
-      messageStore.recordSession(session.id, session.agent, session.startedAt, session.name);
+      messageStore.recordSession({
+        id: session.id,
+        agent: session.agent,
+        startedAt: session.startedAt,
+        name: session.name,
+        port: session.port,
+        pid: session.pid,
+        tmuxSession: session.tmuxSession,
+        tmuxWindow: session.tmuxWindow,
+        workingDirectory: session.workingDirectory,
+        command: session.command,
+      });
       await syncSessionMessages(session.id, true);
       return Response.json(session, { status: 201 });
     } catch (error) {
@@ -3075,6 +3393,11 @@ const server = Bun.serve({
 });
 
 const stopAllSessions = async () => {
+  if (preserveSessionsOnShutdown) {
+    console.log("[shutdown] preserving running agent sessions for warm restart");
+    return;
+  }
+
   const sessions = manager.listSessions();
   for (const session of sessions) {
     try {
@@ -3087,31 +3410,31 @@ const stopAllSessions = async () => {
 };
 
 let shuttingDown = false;
+const initiateShutdown = async (reason: string) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] initiated by ${reason}. Shutting down services...`);
+
+  try {
+    fileWatcherRunner.stop();
+  } catch (error) {
+    console.warn(`[shutdown] failed to stop file watcher runner: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  try {
+    server.stop();
+  } catch (error) {
+    console.warn(`[shutdown] failed to stop server: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  await stopAllSessions();
+  process.exit(0);
+};
+
 const registerShutdownHandlers = () => {
-  const handleShutdown = async (signal: string) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    console.log(`[shutdown] received ${signal}. Shutting down services...`);
-
-    try {
-      fileWatcherRunner.stop();
-    } catch (error) {
-      console.warn(`[shutdown] failed to stop file watcher runner: ${error instanceof Error ? error.message : String(error)}`);
-    }
-
-    try {
-      server.stop();
-    } catch (error) {
-      console.warn(`[shutdown] failed to stop server: ${error instanceof Error ? error.message : String(error)}`);
-    }
-
-    await stopAllSessions();
-    process.exit(0);
-  };
-
   for (const signal of ["SIGINT", "SIGTERM", "SIGQUIT"] as const) {
     process.on(signal, () => {
-      void handleShutdown(signal);
+      void initiateShutdown(signal);
     });
   }
 };

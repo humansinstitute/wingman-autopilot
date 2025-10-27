@@ -45,6 +45,16 @@ const state = {
     initialized: false,
     error: null,
   },
+  system: {
+    restart: {
+      loading: false,
+      inProgress: false,
+      marker: null,
+      outcome: null,
+      error: null,
+      submitting: false,
+    },
+  },
   appLogViewer: {
     appId: null,
     title: "",
@@ -2676,8 +2686,32 @@ const fetchApps = async ({ tail = APP_LOG_PREVIEW_LINES } = {}) => {
   }
 };
 
+const fetchRestartStatus = async () => {
+  state.system.restart.loading = true;
+  try {
+    const response = await fetch("/api/system/restart/status");
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+          ? payload.error
+          : response.statusText || "Failed to load restart status";
+      throw new Error(message);
+    }
+    state.system.restart.inProgress = Boolean(payload?.inProgress);
+    state.system.restart.marker = payload?.marker ?? null;
+    state.system.restart.outcome = payload?.outcome ?? null;
+    state.system.restart.error = null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load restart status";
+    state.system.restart.error = message;
+  } finally {
+    state.system.restart.loading = false;
+  }
+};
+
 const refreshApps = async ({ tail = APP_LOG_PREVIEW_LINES, skipRender = false } = {}) => {
-  await fetchApps({ tail });
+  await Promise.all([fetchApps({ tail }), fetchRestartStatus()]);
   if (!skipRender && currentRoute === "apps") {
     render();
   }
@@ -2697,6 +2731,7 @@ const pollApps = async () => {
   appsPollInFlight = true;
   try {
     await fetchApps({ tail: APP_LOG_PREVIEW_LINES });
+    await fetchRestartStatus();
     if (currentRoute === "apps") {
       render();
     }
@@ -3889,6 +3924,38 @@ const triggerAppAction = async (appId, action) => {
   }
 };
 
+const triggerWarmRestart = async () => {
+  if (state.system.restart.submitting || state.system.restart.inProgress) {
+    return false;
+  }
+  state.system.restart.submitting = true;
+  try {
+    const response = await fetch("/api/system/restart", { method: "POST" });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+          ? payload.error
+          : response.statusText || "Failed to initiate restart";
+      throw new Error(message);
+    }
+    state.system.restart.inProgress = true;
+    state.system.restart.error = null;
+    await fetchRestartStatus();
+    if (currentRoute === "apps") {
+      render();
+    }
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to initiate restart";
+    state.system.restart.error = message;
+    window.alert(message);
+    return false;
+  } finally {
+    state.system.restart.submitting = false;
+  }
+};
+
 const removeApp = async (appId) => {
   const app = getAppById(appId);
   if (!app) return;
@@ -3927,6 +3994,105 @@ const renderAppLogPreview = (logs) => {
     preview.textContent = "No recent logs.";
   }
   return preview;
+};
+
+const renderWingmanCard = (app) => {
+  const card = document.createElement("section");
+  card.className = "wm-card wm-app-card wm-app-card-core";
+
+  const header = document.createElement("div");
+  header.className = "wm-app-card__header";
+  const title = document.createElement("h3");
+  title.textContent = app.label ?? "Wingman Server";
+  header.append(title);
+
+  const statusBadge = document.createElement("span");
+  statusBadge.className = "wm-app-status";
+  const restartInProgress = state.system.restart.inProgress;
+  const statusValue = restartInProgress ? "restarting" : app?.status?.status ?? "running";
+  statusBadge.dataset.state = statusValue;
+  statusBadge.textContent = APP_STATUS_LABELS[statusValue] ?? statusValue;
+  header.append(statusBadge);
+  card.append(header);
+
+  const statusInfo = document.createElement("div");
+  statusInfo.className = "wm-app-status-info";
+
+  if (state.system.restart.error) {
+    const errorLine = document.createElement("p");
+    errorLine.className = "wm-app-status-error";
+    errorLine.textContent = state.system.restart.error;
+    statusInfo.append(errorLine);
+  } else if (restartInProgress) {
+    const progressLine = document.createElement("p");
+    const sessionCount = Array.isArray(state.system.restart.marker?.sessionIds)
+      ? state.system.restart.marker.sessionIds.length
+      : null;
+    progressLine.textContent =
+      sessionCount && sessionCount > 0
+        ? `Warm restart in progress… preserving ${sessionCount} active session${sessionCount === 1 ? "" : "s"}.`
+        : "Warm restart in progress… Wingman will reload without interrupting active sessions.";
+    statusInfo.append(progressLine);
+  } else if (state.system.restart.outcome) {
+    const outcome = state.system.restart.outcome;
+    const summaryLine = document.createElement("p");
+    summaryLine.textContent = `Last warm restart restored ${outcome.restored} session${
+      outcome.restored === 1 ? "" : "s"
+    } (${formatAppTimestamp(outcome.timestamp)}).`;
+    statusInfo.append(summaryLine);
+    if (outcome.failed?.length > 0) {
+      const failedLine = document.createElement("p");
+      failedLine.textContent = `Unable to rehydrate ${outcome.failed.length} session${
+        outcome.failed.length === 1 ? "" : "s"
+      }.`;
+      statusInfo.append(failedLine);
+    }
+  } else {
+    const idleLine = document.createElement("p");
+    idleLine.textContent = "Warm restart keeps agent sessions alive while Wingman reloads.";
+    statusInfo.append(idleLine);
+  }
+
+  const marker = state.system.restart.marker;
+  if (marker?.createdAt && !restartInProgress) {
+    const scheduledLine = document.createElement("p");
+    scheduledLine.textContent = `Last restart request: ${formatAppTimestamp(marker.createdAt)}`;
+    statusInfo.append(scheduledLine);
+  }
+
+  card.append(statusInfo);
+
+  card.append(renderAppLogPreview(app.logs));
+
+  const actions = document.createElement("div");
+  actions.className = "wm-app-actions";
+
+  const viewLogsButton = document.createElement("button");
+  viewLogsButton.type = "button";
+  viewLogsButton.className = "wm-button secondary";
+  viewLogsButton.textContent = "View Logs";
+  viewLogsButton.addEventListener("click", () => void openAppLogsDialog(app.id));
+  actions.append(viewLogsButton);
+
+  const restartButton = document.createElement("button");
+  restartButton.type = "button";
+  restartButton.className = "wm-button";
+  restartButton.textContent = restartInProgress ? "Restarting…" : "Restart Wingman";
+  restartButton.disabled = state.system.restart.submitting || restartInProgress;
+  restartButton.addEventListener("click", async () => {
+    if (restartButton.disabled) return;
+    restartButton.disabled = true;
+    restartButton.textContent = "Restarting…";
+    const success = await triggerWarmRestart();
+    if (!success) {
+      restartButton.disabled = false;
+      restartButton.textContent = "Restart Wingman";
+    }
+  });
+  actions.append(restartButton);
+
+  card.append(actions);
+  return card;
 };
 
 const renderAppCard = (app) => {
@@ -4151,7 +4317,7 @@ const renderApps = () => {
 
   const coreApp = apps.find((item) => item?.id === "wingman-core");
   if (coreApp) {
-    grid.append(renderAppCard(coreApp));
+    grid.append(renderWingmanCard(coreApp));
   }
   apps
     .filter((item) => item?.id !== "wingman-core")
