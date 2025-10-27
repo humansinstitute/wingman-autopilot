@@ -1867,8 +1867,83 @@ body[data-menu-open="true"] .wm-menu-panel {
   }
 
   dialog {
-    width: calc(100% - 2rem);
-    padding: 1.5rem;
+    width: calc(100vw - 1.5rem);
+    padding: 1.25rem;
+    max-width: none;
+    margin: 0.75rem;
+    border-radius: 1rem;
+    max-height: calc(100vh - 1.5rem);
+    overflow-y: auto;
+  }
+
+  dialog h2 {
+    font-size: 1.1rem;
+  }
+
+  dialog label {
+    font-size: 0.8rem;
+  }
+
+  dialog input[type="text"],
+  dialog select {
+    padding: 0.75rem 0.85rem;
+    font-size: 16px;
+    border-radius: 0.75rem;
+  }
+
+  dialog menu {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  dialog button:not(.wm-button) {
+    padding: 0.75rem 1rem;
+    font-size: 1rem;
+    border-radius: 0.75rem;
+    min-height: 44px;
+  }
+
+  .working-directory-field {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+
+  .working-directory-field .wm-button.secondary {
+    width: 100%;
+    justify-content: center;
+    min-height: 44px;
+  }
+
+  .directory-browser {
+    max-height: 240px;
+  }
+
+  .directory-browser__list {
+    max-height: 180px;
+  }
+
+  .directory-browser__item {
+    padding: 0.75rem 0.85rem;
+  }
+
+  .directory-browser__folder {
+    font-size: 1rem;
+    padding: 0.2rem 0;
+  }
+
+  #directory-dialog,
+  #orchestrator-directory-dialog {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    border-radius: 0;
+    padding: env(safe-area-inset-top, 1rem) 1rem calc(1rem + env(safe-area-inset-bottom, 0));
   }
 }
 
@@ -2101,6 +2176,34 @@ dialog button[value="cancel"] {
   .wm-card {
     padding: 1.5rem;
   }
+
+  dialog {
+    width: calc(100% - 2rem);
+    max-width: 420px;
+    margin: 1rem;
+  }
+
+  dialog input[type="text"],
+  dialog select {
+    font-size: 16px;
+    padding: 0.7rem 0.8rem;
+  }
+
+  dialog button:not(.wm-button) {
+    min-height: 44px;
+    padding: 0.7rem 1rem;
+  }
+
+  .working-directory-field {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+
+  .working-directory-field .wm-button.secondary {
+    width: 100%;
+    justify-content: center;
+  }
 }
 .spinner, .icon {
   font-size: inherit;
@@ -2301,6 +2404,39 @@ dialog button[value="cancel"] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.wm-files-browser__git {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.wm-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 0.4rem;
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.2;
+  padding: 0.35rem 1.6rem 0.35rem 0.6rem;
+  cursor: pointer;
+}
+
+.wm-select:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.wm-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.wm-files-browser__git .wm-select {
+  min-width: 9.5rem;
 }
 
 .wm-files-browser[data-collapsed="true"] .wm-files-browser__list {

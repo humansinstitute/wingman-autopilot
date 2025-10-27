@@ -75,6 +75,7 @@ const state = {
     showHidden: false,
     browserCollapsed: false,
     uploading: false,
+    gitCommandPending: false,
     worktreeModal: {
       open: false,
       submitting: false,
@@ -4571,6 +4572,129 @@ const promptUploadFile = () => {
   input.click();
 };
 
+const runGitCommand = async (action) => {
+  if (!action) return "cancelled";
+  const files = state.files;
+  if (files.gitCommandPending) return "cancelled";
+
+  const requiresRepository = action !== "init";
+  const gitInfo = files.git;
+  const inRepository = Boolean(gitInfo?.isRepository);
+
+  if (requiresRepository && !inRepository) {
+    window.alert("Initialize a git repository before running this command.");
+    return "cancelled";
+  }
+
+  const directory =
+    action === "init" && !inRepository ? files.currentPath ?? gitInfo?.repoRoot ?? null : gitInfo?.repoRoot ?? files.currentPath ?? null;
+
+  if (!directory) {
+    window.alert("Select a directory before running git commands.");
+    return "cancelled";
+  }
+
+  const payload = { action, directory };
+
+  if (action === "commit") {
+    const rawMessage = window.prompt("Commit message", "");
+    if (rawMessage === null) {
+      return "cancelled";
+    }
+    const message = rawMessage.trim();
+    if (!message) {
+      window.alert("Commit message cannot be empty.");
+      return "cancelled";
+    }
+    payload.message = message;
+  } else if (action === "push") {
+    const remotePrompt = window.prompt("Remote name (leave blank for tracked remote)", "");
+    if (remotePrompt === null) {
+      return "cancelled";
+    }
+    const remote = remotePrompt.trim();
+    const defaultBranch =
+      gitInfo?.currentBranch && gitInfo.currentBranch !== "HEAD" ? gitInfo.currentBranch : "";
+    const branchPrompt = window.prompt("Branch name (leave blank for current tracking branch)", defaultBranch);
+    if (branchPrompt === null) {
+      return "cancelled";
+    }
+    const branch = branchPrompt.trim();
+    if (remote) {
+      payload.remote = remote;
+      if (branch) {
+        payload.branch = branch;
+      }
+    }
+  } else if (action === "pushUpstream") {
+    const remotePrompt = window.prompt("Remote name", "origin");
+    if (remotePrompt === null) {
+      return "cancelled";
+    }
+    const remote = remotePrompt.trim() || "origin";
+    const defaultBranch =
+      gitInfo?.currentBranch && gitInfo.currentBranch !== "HEAD" ? gitInfo.currentBranch : "main";
+    const branchPrompt = window.prompt("Branch name", defaultBranch);
+    if (branchPrompt === null) {
+      return "cancelled";
+    }
+    const branch = branchPrompt.trim();
+    if (!branch) {
+      window.alert("Branch name is required to set upstream.");
+      return "cancelled";
+    }
+    payload.remote = remote;
+    payload.branch = branch;
+  }
+
+  files.gitCommandPending = true;
+  if (currentRoute === "files") {
+    render();
+  }
+
+  try {
+    const response = await fetch("/api/docs/git", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    let data = {};
+    try {
+      data = await response.json();
+    } catch {
+      data = {};
+    }
+
+    if (!response.ok) {
+      const exitCode = typeof data?.exitCode === "number" ? ` (exit ${data.exitCode})` : "";
+      const message = typeof data?.error === "string" && data.error.length > 0 ? data.error : "Git command failed";
+      throw new Error(`${message}${exitCode}`);
+    }
+
+    const stdout = typeof data?.stdout === "string" ? data.stdout.trim() : "";
+    const stderr = typeof data?.stderr === "string" ? data.stderr.trim() : "";
+    const output = [stdout, stderr].filter((part) => part.length > 0).join("\n");
+    window.alert(output || "Git command completed successfully.");
+
+    if (files.currentPath) {
+      await loadFilesTree(files.currentPath);
+    } else {
+      await loadFilesTree();
+    }
+    return "success";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    window.alert(message);
+    return "error";
+  } finally {
+    files.gitCommandPending = false;
+    if (currentRoute === "files") {
+      render();
+    }
+  }
+};
+
 const renderFiles = () => {
   const files = state.files;
   if (!files.initialized) {
@@ -4690,7 +4814,71 @@ const renderFiles = () => {
     promptUploadFile();
   });
 
-  controls.append(upButton, refreshButton, toggleHiddenButton, newFolderButton, newFileButton, uploadButton);
+  const gitWrapper = document.createElement("div");
+  gitWrapper.className = "wm-files-browser__git";
+  const gitSelect = document.createElement("select");
+  gitSelect.className = "wm-select";
+  gitSelect.setAttribute("aria-label", "Git commands");
+  const gitPlaceholder = document.createElement("option");
+  gitPlaceholder.value = "";
+  gitPlaceholder.textContent = "Git…";
+  gitSelect.append(gitPlaceholder);
+  const gitOptions = [
+    { value: "addAll", label: "git add .", requiresRepo: true },
+    { value: "commit", label: "git commit -m", requiresRepo: true },
+    { value: "push", label: "git push", requiresRepo: true },
+    { value: "pushUpstream", label: "git push -u origin <branch>", requiresRepo: true },
+    { value: "init", label: "git init", requiresRepo: false },
+  ];
+  const repoReady = Boolean(files.git?.isRepository);
+  gitOptions.forEach((optionDef) => {
+    const option = document.createElement("option");
+    option.value = optionDef.value;
+    option.textContent = optionDef.label;
+    if (optionDef.requiresRepo && !repoReady) {
+      option.disabled = true;
+    }
+    gitSelect.append(option);
+  });
+  const gitRunButton = document.createElement("button");
+  gitRunButton.type = "button";
+  gitRunButton.className = "wm-button secondary";
+  const updateGitControlsState = () => {
+    const disabled = files.loading || files.gitCommandPending;
+    gitSelect.disabled = disabled;
+    gitRunButton.disabled = disabled || gitSelect.value === "";
+    if (files.gitCommandPending) {
+      gitRunButton.dataset.loading = "true";
+      gitRunButton.textContent = "Running…";
+    } else {
+      delete gitRunButton.dataset.loading;
+      gitRunButton.textContent = "Run";
+    }
+  };
+  updateGitControlsState();
+  gitSelect.addEventListener("change", () => {
+    updateGitControlsState();
+  });
+  gitRunButton.addEventListener("click", async () => {
+    const action = gitSelect.value;
+    if (!action) return;
+    const outcome = await runGitCommand(action);
+    if (outcome !== "cancelled") {
+      gitSelect.value = "";
+    }
+    updateGitControlsState();
+  });
+  gitWrapper.append(gitSelect, gitRunButton);
+
+  controls.append(
+    upButton,
+    refreshButton,
+    toggleHiddenButton,
+    newFolderButton,
+    newFileButton,
+    uploadButton,
+    gitWrapper,
+  );
 
   if (canCreateWorktree()) {
     const worktreeButton = document.createElement("button");
