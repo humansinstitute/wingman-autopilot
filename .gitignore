@@ -12,9 +12,11 @@ out
 dist
 *.tgz
 tmp/
-data/
-data/*
-data
+data/**
+!data/
+!data/.gitkeep
+!data/app-logs/
+!data/app-logs/.gitkeep
 
 # code coverage
 coverage
