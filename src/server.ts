@@ -127,6 +127,55 @@ type GitRepositorySummary = {
   worktreeError: string | null;
 };
 
+type GitCommandAction = "init" | "addAll" | "commit" | "push" | "pushUpstream";
+
+const executeGitCommand = async (options: {
+  directory: string;
+  action: GitCommandAction;
+  message?: string | null;
+  remote?: string | null;
+  branch?: string | null;
+}): Promise<CommandResult> => {
+  const directory = options.directory;
+  const action = options.action;
+
+  switch (action) {
+    case "init":
+      return runCommand("git", ["init"], { cwd: directory });
+    case "addAll":
+      return runCommand("git", ["add", "."], { cwd: directory });
+    case "commit": {
+      const message = options.message?.trim();
+      if (!message) {
+        throw new Error("Commit message is required");
+      }
+      return runCommand("git", ["commit", "-m", message], { cwd: directory });
+    }
+    case "push": {
+      const remote = options.remote?.trim();
+      const branch = options.branch?.trim();
+      const args = ["push"];
+      if (remote) {
+        args.push(remote);
+        if (branch) {
+          args.push(branch);
+        }
+      }
+      return runCommand("git", args, { cwd: directory });
+    }
+    case "pushUpstream": {
+      const remote = options.remote?.trim() || "origin";
+      const branch = options.branch?.trim();
+      if (!branch) {
+        throw new Error("Branch name is required to set upstream");
+      }
+      return runCommand("git", ["push", "-u", remote, branch], { cwd: directory });
+    }
+    default:
+      throw new Error("Unsupported git command");
+  }
+};
+
 const parseGitWorktreeList = (output: string, repoRoot: string): GitWorktreeSummary[] => {
   if (!output || output.trim().length === 0) {
     return [];
@@ -1983,6 +2032,69 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
     try {
       const data = await deleteDocsFile(pathParam);
       return Response.json(data, { status: 200 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/docs/git" && method === "POST") {
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    const directoryInput =
+      normaliseOptionalString((payload as Record<string, unknown>).directory) ??
+      normaliseOptionalString((payload as Record<string, unknown>).path);
+    const actionInput = normaliseOptionalString((payload as Record<string, unknown>).action);
+    const messageInput = normaliseOptionalString((payload as Record<string, unknown>).message);
+    const remoteInput = normaliseOptionalString((payload as Record<string, unknown>).remote);
+    const branchInput = normaliseOptionalString((payload as Record<string, unknown>).branch);
+
+    if (!directoryInput) {
+      return Response.json({ error: "Directory is required" }, { status: 400 });
+    }
+
+    if (!actionInput) {
+      return Response.json({ error: "Action is required" }, { status: 400 });
+    }
+
+    if (!["init", "addAll", "commit", "push", "pushUpstream"].includes(actionInput)) {
+      return Response.json({ error: "Unsupported git action" }, { status: 400 });
+    }
+
+    let directory: string;
+    try {
+      directory = resolveDocsPath(directoryInput);
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 400 });
+    }
+
+    try {
+      const result = await executeGitCommand({
+        directory,
+        action: actionInput as GitCommandAction,
+        message: messageInput,
+        remote: remoteInput,
+        branch: branchInput,
+      });
+
+      if (result.exitCode !== 0) {
+        const message = result.stderr || result.stdout || `Git command failed with exit code ${result.exitCode}`;
+        return Response.json(
+          { error: message, exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr },
+          { status: 400 },
+        );
+      }
+
+      return Response.json({ exitCode: 0, stdout: result.stdout, stderr: result.stderr }, { status: 200 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Response.json({ error: message }, { status: 400 });
