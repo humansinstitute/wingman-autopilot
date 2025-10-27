@@ -43,7 +43,13 @@ console.log(`[config] tmux session base: ${config.tmuxBase}`);
 const TMUX_SESSION_NAME = config.tmuxBase;
 const SUPPORTED_AGENT_TYPES: AgentType[] = ["codex", "claude", "goose", "opencode", "gemini"];
 
-const projectRootPath = fileURLToPath(new URL("..", import.meta.url));
+const projectRootPath = (() => {
+  let root = normalize(fileURLToPath(new URL("..", import.meta.url)));
+  if (root.endsWith(sep)) {
+    root = root.slice(0, -1);
+  }
+  return root;
+})();
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRootDirectory = normalize(join(moduleDirectory, ".."));
 const agentApiBinaryPath = normalize(join(projectRootDirectory, "out", "agentapi"));
@@ -2256,7 +2262,7 @@ const ensureWingmanCoreRegistration = async () => {
   try {
     const apps = await appRegistry.listApps();
     const expectedRoot = projectRootPath;
-    const legacyApps = apps.filter((app) => app.id !== "wingman-core" && app.root === expectedRoot);
+    const legacyApps = apps.filter((app) => app.id !== "wingman-core" && normalize(app.root) === expectedRoot);
     for (const legacy of legacyApps) {
       try {
         await appRegistry.removeApp(legacy.id);
@@ -2266,8 +2272,7 @@ const ensureWingmanCoreRegistration = async () => {
       }
     }
 
-    const existing = apps.find((app) => app.id === "wingman-core")
-      ?? await appRegistry.getApp("wingman-core");
+    const existing = await appRegistry.getApp("wingman-core");
     const restartCommand = "bun run scripts/restart-wingman.ts";
     const tmuxWindow = "wingman-core";
     if (existing) {
