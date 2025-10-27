@@ -2322,7 +2322,7 @@ const syncMenuTabs = () => {
 
   const heading = document.createElement("p");
   heading.className = "wm-menu-heading";
-  heading.textContent = "Sessions";
+  heading.textContent = "Agents";
   menuTabsContainer.append(heading);
 
   const sessionsContainer = document.createElement("div");
