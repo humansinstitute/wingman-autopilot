@@ -1820,11 +1820,13 @@ const extractImageFiles = (items) => {
     if (!item) continue;
     if (item.kind === "file") {
       const file = item.getAsFile?.() ?? item;
-      if (file && file.type?.startsWith?.("image/")) {
+      if (file instanceof File && file.type?.startsWith?.("image/")) {
         files.push(file);
       }
-    } else if ("type" in item && item.type?.startsWith?.("image/")) {
-      files.push(item);
+    } else if (item instanceof File || item instanceof Blob) {
+      if (item.type?.startsWith?.("image/")) {
+        files.push(item);
+      }
     }
   }
   return files;
@@ -1837,13 +1839,12 @@ const extractAttachmentFiles = (items) => {
     if (!item) continue;
     if (item.kind === "file") {
       const file = item.getAsFile?.() ?? item;
-      if (file && !file.type?.startsWith?.("image/")) {
+      if (file instanceof File && !file.type?.startsWith?.("image/")) {
         files.push(file);
       }
-    } else if ("type" in item) {
-      const file = item;
-      if (!file.type || !file.type.startsWith("image/")) {
-        files.push(file);
+    } else if (item instanceof File || item instanceof Blob) {
+      if (!item.type || !item.type.startsWith("image/")) {
+        files.push(item);
       }
     }
   }
