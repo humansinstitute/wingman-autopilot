@@ -791,6 +791,48 @@ body[data-menu-open="true"] .wm-menu-panel {
   color: var(--text-secondary);
 }
 
+.wm-home-apps-content {
+  overflow-x: auto;
+}
+
+.wm-home-apps-status {
+  margin: 0;
+  color: var(--text-tertiary);
+}
+
+.wm-home-apps-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+}
+
+.wm-home-apps-table th,
+.wm-home-apps-table td {
+  padding: 0.65rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border-primary);
+  vertical-align: middle;
+}
+
+.wm-home-apps-table th {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 0.9rem;
+  letter-spacing: 0.01em;
+}
+
+.wm-home-apps-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.wm-home-apps-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
 
 .wm-home-section-header {
   cursor: pointer;

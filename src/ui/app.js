@@ -3915,7 +3915,10 @@ const triggerAppAction = async (appId, action) => {
           : response.statusText || "Failed to perform action";
       throw new Error(message);
     }
-    await refreshApps({ skipRender: false });
+    await refreshApps({ skipRender: currentRoute !== "apps" });
+    if (currentRoute !== "apps") {
+      render();
+    }
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to perform action";
@@ -4401,6 +4404,10 @@ const renderHome = () => {
   const wrapper = document.createElement("div");
   wrapper.className = "wm-home";
 
+  if (!state.apps.initialized && !state.apps.loading) {
+    void ensureAppsLoaded();
+  }
+
   const orchestratorCard = document.createElement("section");
   orchestratorCard.className = "wm-card wm-home-orchestrator";
 
@@ -4461,6 +4468,113 @@ const renderHome = () => {
   setOrchestratorCollapsed(false);
 
   wrapper.append(orchestratorCard);
+
+  const appsCard = document.createElement("section");
+  appsCard.className = "wm-card wm-home-apps";
+
+  const appsHeader = document.createElement("div");
+  appsHeader.className = "wm-home-section-header";
+
+  const appsTitle = document.createElement("h2");
+  appsTitle.textContent = "Running Apps";
+  appsHeader.append(appsTitle);
+  appsCard.append(appsHeader);
+
+  const appsContent = document.createElement("div");
+  appsContent.className = "wm-home-apps-content";
+
+  if (state.apps.error) {
+    const error = document.createElement("p");
+    error.className = "wm-home-apps-status";
+    error.textContent = state.apps.error;
+    appsContent.append(error);
+  } else {
+    const runningApps = Array.isArray(state.apps.items)
+      ? state.apps.items.filter((app) => app?.status?.status === "running")
+      : [];
+
+    if (state.apps.loading && !state.apps.initialized) {
+      const loading = document.createElement("p");
+      loading.className = "wm-home-apps-status";
+      loading.textContent = "Loading apps…";
+      appsContent.append(loading);
+    } else if (runningApps.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "wm-home-apps-status";
+      empty.textContent = "No apps are currently running.";
+      appsContent.append(empty);
+    } else {
+      const table = document.createElement("table");
+      table.className = "wm-home-apps-table";
+
+      const thead = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+      ["App", "Status", "Root", "Actions"].forEach((label) => {
+        const th = document.createElement("th");
+        th.textContent = label;
+        headerRow.append(th);
+      });
+      thead.append(headerRow);
+      table.append(thead);
+
+      const tbody = document.createElement("tbody");
+      runningApps.forEach((app) => {
+        const row = document.createElement("tr");
+
+        const nameCell = document.createElement("td");
+        nameCell.textContent = app.label ?? app.id;
+        row.append(nameCell);
+
+        const statusCell = document.createElement("td");
+        const statusValue = app?.status?.status ?? "unknown";
+        statusCell.textContent = APP_STATUS_LABELS[statusValue] ?? statusValue;
+        row.append(statusCell);
+
+        const rootCell = document.createElement("td");
+        rootCell.textContent = app.root ?? "—";
+        rootCell.title = app.root ?? "";
+        row.append(rootCell);
+
+        const actionsCell = document.createElement("td");
+        actionsCell.className = "wm-home-apps-actions";
+
+        const addActionButton = (action) => {
+          if (!app.availableScripts?.[action]) return;
+          if (app.id === "wingman-core" && action === "stop") return;
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = action === "stop" ? "wm-button secondary" : "wm-button";
+          button.textContent = APP_ACTION_LABELS[action] ?? action;
+          button.disabled = isAppActionDisabled(app, action);
+          button.addEventListener("click", async () => {
+            if (button.disabled) return;
+            button.disabled = true;
+            const success = await triggerAppAction(app.id, action);
+            if (!success && button.isConnected) {
+              button.disabled = false;
+            }
+          });
+          actionsCell.append(button);
+        };
+
+        addActionButton("stop");
+        addActionButton("restart");
+
+        if (!actionsCell.hasChildNodes()) {
+          actionsCell.textContent = "—";
+        }
+
+        row.append(actionsCell);
+        tbody.append(row);
+      });
+
+      table.append(tbody);
+      appsContent.append(table);
+    }
+  }
+
+  appsCard.append(appsContent);
+  wrapper.append(appsCard);
 
   const liveCard = document.createElement("section");
   liveCard.className = "wm-card wm-home-live";
