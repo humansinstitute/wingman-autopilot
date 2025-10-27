@@ -12,9 +12,13 @@ const THEME_STORAGE_KEY = "wingman-theme";
 const TABS_VISIBILITY_STORAGE_KEY = "wingman-tabs-visible";
 const FILES_SHOW_HIDDEN_STORAGE_KEY = "wingman-files-show-hidden";
 const SESSION_POLL_INTERVAL_MS = 2000;
+const APPS_POLL_INTERVAL_MS = 5000;
+const APP_LOG_PREVIEW_LINES = 5;
 
 let sessionPollIntervalId = null;
 let sessionPollInFlight = false;
+let appsPollIntervalId = null;
+let appsPollInFlight = false;
 
 const state = {
   config: null,
@@ -35,6 +39,19 @@ const state = {
   logContainers: new Map(), // sessionId -> DOM element
   lastMessageCount: new Map(), // sessionId -> number of messages
   lastLogLength: new Map(), // sessionId -> length of logs
+  apps: {
+    items: [],
+    loading: false,
+    initialized: false,
+    error: null,
+  },
+  appLogViewer: {
+    appId: null,
+    title: "",
+    lines: [],
+    loading: false,
+    tail: 200,
+  },
   files: {
     initialized: false,
     loading: false,
@@ -1646,6 +1663,7 @@ const getActiveSessions = () => state.sessions.filter((session) => isSessionActi
 const LIVE_ROUTE_PREFIX = "/live";
 const FILES_ROUTE = "/files";
 const SETTINGS_ROUTE = "/settings";
+const APPS_ROUTE = "/apps";
 
 const getRouteFromPath = (pathname) => {
   if (
@@ -1658,6 +1676,9 @@ const getRouteFromPath = (pathname) => {
   }
   if (pathname === SETTINGS_ROUTE) {
     return "settings";
+  }
+  if (pathname === APPS_ROUTE) {
+    return "apps";
   }
   if (pathname === LIVE_ROUTE_PREFIX || pathname.startsWith(`${LIVE_ROUTE_PREFIX}/`)) {
     return "live";
@@ -2021,6 +2042,29 @@ const orchestratorDirectoryList = document.getElementById("orchestrator-director
 const orchestratorDirectoryCurrent = document.getElementById("orchestrator-directory-current");
 const orchestratorDirectoryUpButton = document.getElementById("orchestrator-directory-up");
 const orchestratorDirectoryUseButton = document.getElementById("orchestrator-directory-use");
+
+const appDialog = document.getElementById("app-dialog");
+const appForm = appDialog?.querySelector("form") ?? null;
+const appDialogTitle = document.getElementById("app-dialog-title");
+const appLabelInput = document.getElementById("app-label");
+const appRootInput = document.getElementById("app-root");
+const appTmuxInput = document.getElementById("app-tmux-session");
+const appNotesInput = document.getElementById("app-notes");
+const appDiscoverToggle = document.getElementById("app-discover-enabled");
+const appDiscoverButton = document.getElementById("app-discover");
+const appScriptInputs = {
+  start: document.getElementById("app-script-start"),
+  stop: document.getElementById("app-script-stop"),
+  restart: document.getElementById("app-script-restart"),
+  build: document.getElementById("app-script-build"),
+};
+const appCancelButton = document.getElementById("app-cancel");
+const appSaveButton = document.getElementById("app-save");
+const appLogsDialog = document.getElementById("app-logs-dialog");
+const appLogsTitle = document.getElementById("app-logs-title");
+const appLogsContent = document.getElementById("app-logs-content");
+const appLogsRefreshButton = document.getElementById("app-logs-refresh");
+const appLogsCloseButton = document.getElementById("app-logs-close");
 
 const applyTheme = (theme, persist = true) => {
   currentTheme = theme;
@@ -2586,6 +2630,90 @@ const fetchConversation = async (sessionId) => {
     }
   } catch (error) {
     console.error("Failed to load conversation", error);
+  }
+};
+
+const fetchApps = async ({ tail = APP_LOG_PREVIEW_LINES } = {}) => {
+  state.apps.loading = true;
+  try {
+    const response = await fetch(`/api/apps?tail=${encodeURIComponent(String(tail))}`);
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const errorMessage =
+        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+          ? payload.error
+          : response.statusText || "Failed to load apps";
+      throw new Error(errorMessage);
+    }
+    const items = Array.isArray(payload?.apps) ? payload.apps : [];
+    state.apps.items = items.map((item) => {
+      const logs = Array.isArray(item?.logs) ? item.logs : [];
+      const availableScripts =
+        item && typeof item === "object" && item.availableScripts && typeof item.availableScripts === "object"
+          ? item.availableScripts
+          : {
+              start: Boolean(item?.scripts?.start),
+              stop: Boolean(item?.scripts?.stop),
+              restart: Boolean(item?.scripts?.restart),
+              build: Boolean(item?.scripts?.build),
+            };
+      return {
+        ...item,
+        logs,
+        availableScripts,
+      };
+    });
+    state.apps.error = null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load apps";
+    state.apps.error = message;
+  } finally {
+    state.apps.loading = false;
+    state.apps.initialized = true;
+  }
+};
+
+const refreshApps = async ({ tail = APP_LOG_PREVIEW_LINES, skipRender = false } = {}) => {
+  await fetchApps({ tail });
+  if (!skipRender && currentRoute === "apps") {
+    render();
+  }
+};
+
+const ensureAppsLoaded = async () => {
+  if (state.apps.loading) return;
+  if (!state.apps.initialized) {
+    await refreshApps({ skipRender: false });
+  }
+};
+
+const pollApps = async () => {
+  if (appsPollInFlight || state.apps.loading) {
+    return;
+  }
+  appsPollInFlight = true;
+  try {
+    await fetchApps({ tail: APP_LOG_PREVIEW_LINES });
+    if (currentRoute === "apps") {
+      render();
+    }
+  } catch (error) {
+    console.error("Failed to poll apps", error);
+  } finally {
+    appsPollInFlight = false;
+  }
+};
+
+const syncAppsPolling = () => {
+  if (currentRoute === "apps") {
+    if (!appsPollIntervalId) {
+      appsPollIntervalId = setInterval(() => {
+        void pollApps();
+      }, APPS_POLL_INTERVAL_MS);
+    }
+  } else if (appsPollIntervalId) {
+    clearInterval(appsPollIntervalId);
+    appsPollIntervalId = null;
   }
 };
 
@@ -3372,6 +3500,668 @@ const handleOrchestratorFormSubmit = async (event) => {
     if (orchestratorDialog?.open) {
       setOrchestratorDialogPending(false);
     }
+  }
+};
+
+const APP_STATUS_LABELS = {
+  idle: "Idle",
+  running: "Running",
+  stopping: "Stopping",
+  restarting: "Restarting",
+  building: "Building",
+  failed: "Failed",
+};
+
+const APP_ACTION_LABELS = {
+  start: "Start",
+  stop: "Stop",
+  restart: "Restart",
+  build: "Build",
+};
+
+const APP_BUSY_STATUSES = new Set(["stopping", "restarting", "building"]);
+
+const formatAppActionLabel = (action) => APP_ACTION_LABELS[action] ?? action ?? "Unknown";
+
+const formatAppTimestamp = (value) => {
+  if (!value) return "—";
+  try {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+  } catch {
+    return value;
+  }
+};
+
+const getAppById = (appId) => state.apps.items.find((item) => item?.id === appId) ?? null;
+
+const isAppBusy = (app) => {
+  const status = app?.status;
+  if (!status) return false;
+  if (status.inProgressAction) return true;
+  if (APP_BUSY_STATUSES.has(status.status)) return true;
+  return false;
+};
+
+const isAppActionDisabled = (app, action) => {
+  const status = app?.status;
+  if (!status) return true;
+  const available = Boolean(app?.availableScripts?.[action]);
+  if (!available) return true;
+  if (status.inProgressAction && status.inProgressAction !== action) {
+    return true;
+  }
+  if (status.inProgressAction === action) {
+    return true;
+  }
+  const statusValue = status.status;
+  if (APP_BUSY_STATUSES.has(statusValue)) {
+    return true;
+  }
+  if (action === "start") {
+    return statusValue === "running";
+  }
+  if (action === "stop") {
+    return statusValue !== "running";
+  }
+  if (action === "restart") {
+    return false;
+  }
+  if (action === "build") {
+    return statusValue === "running";
+  }
+  return true;
+};
+
+const appDialogState = {
+  mode: "create",
+  appId: null,
+};
+
+const setAppDialogSubmitting = (submitting) => {
+  if (!appForm) return;
+  const elements = Array.from(appForm.elements);
+  for (const element of elements) {
+    if (
+      element instanceof HTMLButtonElement ||
+      element instanceof HTMLInputElement ||
+      element instanceof HTMLSelectElement ||
+      element instanceof HTMLTextAreaElement
+    ) {
+      if (element.dataset.role === "cancel") continue;
+      element.disabled = submitting;
+    }
+  }
+  if (appDialog) {
+    if (submitting) {
+      appDialog.dataset.submitting = "true";
+    } else {
+      delete appDialog.dataset.submitting;
+    }
+  }
+};
+
+const resetAppDialog = () => {
+  if (appForm) {
+    appForm.reset();
+  }
+  if (appDialogTitle) {
+    appDialogTitle.textContent = "Add App";
+  }
+  if (appDiscoverToggle) {
+    appDiscoverToggle.checked = true;
+  }
+  Object.values(appScriptInputs).forEach((input) => {
+    if (input) {
+      input.value = "";
+    }
+  });
+  if (appNotesInput) {
+    appNotesInput.value = "";
+  }
+  appDialogState.mode = "create";
+  appDialogState.appId = null;
+};
+
+const populateAppDialog = (app) => {
+  if (!app) return;
+  if (appDialogTitle) {
+    appDialogTitle.textContent = "Edit App";
+  }
+  if (appLabelInput) {
+    appLabelInput.value = app.label ?? "";
+  }
+  if (appRootInput) {
+    appRootInput.value = app.root ?? "";
+  }
+  if (appTmuxInput) {
+    appTmuxInput.value = app.tmuxSession ?? "";
+  }
+  if (appNotesInput) {
+    appNotesInput.value = app.notes ?? "";
+  }
+  Object.entries(appScriptInputs).forEach(([action, input]) => {
+    if (!input) return;
+    input.value = app.scripts?.[action] ?? "";
+  });
+};
+
+const collectAppFormValues = () => {
+  const label = appLabelInput?.value?.trim() ?? "";
+  const root = appRootInput?.value?.trim() ?? "";
+  const tmuxSession = appTmuxInput?.value?.trim() ?? "";
+  const notesRaw = appNotesInput?.value ?? "";
+  const notesTrimmed = notesRaw.trim();
+  const scripts = {};
+  for (const [action, input] of Object.entries(appScriptInputs)) {
+    if (!input) continue;
+    const value = input.value.trim();
+    if (value.length > 0) {
+      scripts[action] = value;
+    }
+  }
+  const discoverScripts = appDiscoverToggle ? appDiscoverToggle.checked : true;
+  return { label, root, tmuxSession, notesRaw, notesTrimmed, scripts, discoverScripts };
+};
+
+const handleAppFormSubmit = async (event) => {
+  event.preventDefault();
+  const values = collectAppFormValues();
+  if (!values.root) {
+    window.alert("Provide a root directory for the app.");
+    appRootInput?.focus();
+    return;
+  }
+
+  const scriptsPayload = Object.keys(values.scripts).length > 0 ? values.scripts : undefined;
+  const mode = appDialogState.mode;
+  const appId = appDialogState.appId;
+
+  let url;
+  let method;
+  let body;
+
+  if (mode === "edit" && appId) {
+    url = `/api/apps/${encodeURIComponent(appId)}`;
+    method = "PUT";
+    body = {
+      label: values.label ? values.label : undefined,
+      root: values.root,
+      tmuxSession: values.tmuxSession ? values.tmuxSession : undefined,
+      scripts: scriptsPayload,
+      notes:
+        values.notesRaw.length === 0
+          ? null
+          : values.notesTrimmed.length > 0
+            ? values.notesTrimmed
+            : undefined,
+      discoverScripts: values.discoverScripts,
+    };
+  } else {
+    url = "/api/apps";
+    method = "POST";
+    body = {
+      label: values.label,
+      root: values.root,
+      tmuxSession: values.tmuxSession ? values.tmuxSession : undefined,
+      scripts: scriptsPayload,
+      notes: values.notesTrimmed.length > 0 ? values.notesTrimmed : undefined,
+      discoverScripts: values.discoverScripts,
+    };
+  }
+
+  setAppDialogSubmitting(true);
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+          ? payload.error
+          : response.statusText || "Failed to save app";
+      throw new Error(message);
+    }
+    closeAppDialog();
+    await refreshApps({ skipRender: false });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to save app";
+    window.alert(message);
+  } finally {
+    setAppDialogSubmitting(false);
+  }
+};
+
+const openAppDialog = (appId = null) => {
+  if (!appDialog) return;
+  resetAppDialog();
+  if (appId) {
+    const app = getAppById(appId);
+    if (!app) return;
+    appDialogState.mode = "edit";
+    appDialogState.appId = appId;
+    populateAppDialog(app);
+  }
+  if (appDialog.open) {
+    appDialog.close();
+  }
+  appDialog.showModal();
+  (appLabelInput ?? appRootInput)?.focus();
+};
+
+const closeAppDialog = () => {
+  if (!appDialog) return;
+  if (appDialog.open) {
+    appDialog.close();
+  } else {
+    resetAppDialog();
+  }
+};
+
+const handleAppDiscover = async (event) => {
+  event.preventDefault();
+  if (!appRootInput) return;
+  const root = appRootInput.value.trim();
+  if (!root) {
+    window.alert("Enter the app root directory before discovering scripts.");
+    appRootInput.focus();
+    return;
+  }
+  if (appDiscoverButton) {
+    appDiscoverButton.disabled = true;
+  }
+  try {
+    const response = await fetch(`/api/apps/discover?root=${encodeURIComponent(root)}`);
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+          ? payload.error
+          : response.statusText || "Failed to discover scripts";
+      throw new Error(message);
+    }
+    const scripts = payload && typeof payload === "object" ? (payload.scripts ?? {}) : {};
+    let applied = 0;
+    for (const [action, input] of Object.entries(appScriptInputs)) {
+      if (!input) continue;
+      const candidate = scripts?.[action];
+      if (typeof candidate === "string" && candidate.trim().length > 0) {
+        input.value = candidate;
+        applied += 1;
+      }
+    }
+    if (applied === 0) {
+      window.alert("No scripts discovered. Enter commands manually.");
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to discover scripts";
+    window.alert(message);
+  } finally {
+    if (appDiscoverButton) {
+      appDiscoverButton.disabled = false;
+    }
+  }
+};
+
+const triggerAppAction = async (appId, action) => {
+  try {
+    const response = await fetch(`/api/apps/${encodeURIComponent(appId)}/actions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+          ? payload.error
+          : response.statusText || "Failed to perform action";
+      throw new Error(message);
+    }
+    await refreshApps({ skipRender: false });
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to perform action";
+    window.alert(message);
+    return false;
+  }
+};
+
+const removeApp = async (appId) => {
+  const app = getAppById(appId);
+  if (!app) return;
+  const confirmed = window.confirm(`Remove "${app.label ?? app.id}" from Wingman?`);
+  if (!confirmed) return;
+  let url = `/api/apps/${encodeURIComponent(appId)}`;
+  if (app?.status?.running) {
+    const kill = window.confirm("The app appears to be running. Kill the tmux session as well?");
+    if (kill) {
+      url += url.includes("?") ? "&killSession=true" : "?killSession=true";
+    }
+  }
+  try {
+    const response = await fetch(url, { method: "DELETE" });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+          ? payload.error
+          : response.statusText || "Failed to remove app";
+      throw new Error(message);
+    }
+    await refreshApps({ skipRender: false });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to remove app";
+    window.alert(message);
+  }
+};
+
+const renderAppLogPreview = (logs) => {
+  const preview = document.createElement("pre");
+  preview.className = "wm-app-log";
+  if (Array.isArray(logs) && logs.length > 0) {
+    preview.textContent = logs.join("\n");
+  } else {
+    preview.textContent = "No recent logs.";
+  }
+  return preview;
+};
+
+const renderAppCard = (app) => {
+  const card = document.createElement("section");
+  card.className = "wm-card wm-app-card";
+  if (app.id === "wingman-core") {
+    card.classList.add("wm-app-card-core");
+  }
+
+  const header = document.createElement("div");
+  header.className = "wm-app-card__header";
+  const title = document.createElement("h3");
+  title.textContent = app.label ?? app.id;
+  header.append(title);
+
+  const statusBadge = document.createElement("span");
+  statusBadge.className = "wm-app-status";
+  const statusValue = app?.status?.status ?? "idle";
+  statusBadge.dataset.state = statusValue;
+  statusBadge.textContent = APP_STATUS_LABELS[statusValue] ?? statusValue;
+  header.append(statusBadge);
+  card.append(header);
+
+  const meta = document.createElement("div");
+  meta.className = "wm-app-meta";
+
+  const rootRow = document.createElement("div");
+  rootRow.className = "wm-app-meta-row";
+  const rootLabel = document.createElement("span");
+  rootLabel.className = "wm-app-meta-label";
+  rootLabel.textContent = "Root";
+  const rootValue = document.createElement("code");
+  rootValue.textContent = app.root;
+  rootValue.title = app.root;
+  rootRow.append(rootLabel, rootValue);
+  meta.append(rootRow);
+
+  if (app.tmuxSession) {
+    const tmuxRow = document.createElement("div");
+    tmuxRow.className = "wm-app-meta-row";
+    const tmuxLabel = document.createElement("span");
+    tmuxLabel.className = "wm-app-meta-label";
+    tmuxLabel.textContent = "tmux";
+    const tmuxValue = document.createElement("code");
+    tmuxValue.textContent = app.tmuxSession;
+    tmuxValue.title = app.tmuxSession;
+    tmuxRow.append(tmuxLabel, tmuxValue);
+    meta.append(tmuxRow);
+  }
+
+  card.append(meta);
+
+  if (app.notes) {
+    const notes = document.createElement("p");
+    notes.className = "wm-app-notes";
+    notes.textContent = app.notes;
+    card.append(notes);
+  }
+
+  const statusInfo = document.createElement("div");
+  statusInfo.className = "wm-app-status-info";
+
+  const lastAction = document.createElement("p");
+  lastAction.textContent = `Last Action: ${
+    app.status?.lastAction ? formatAppActionLabel(app.status.lastAction) : "—"
+  }`;
+  statusInfo.append(lastAction);
+
+  const updatedLine = document.createElement("p");
+  updatedLine.textContent = `Updated: ${formatAppTimestamp(app.status?.updatedAt ?? null)}`;
+  statusInfo.append(updatedLine);
+
+  const messageLine = document.createElement("p");
+  messageLine.textContent = `Message: ${app.status?.message ?? "—"}`;
+  statusInfo.append(messageLine);
+
+  if (typeof app.status?.lastExitCode === "number") {
+    const exitLine = document.createElement("p");
+    exitLine.textContent = `Last Exit Code: ${app.status.lastExitCode}`;
+    statusInfo.append(exitLine);
+  }
+
+  card.append(statusInfo);
+
+  card.append(renderAppLogPreview(app.logs));
+
+  const actions = document.createElement("div");
+  actions.className = "wm-app-actions";
+
+  const logsButton = document.createElement("button");
+  logsButton.type = "button";
+  logsButton.className = "wm-button secondary";
+  logsButton.textContent = "View Logs";
+  logsButton.addEventListener("click", () => {
+    void openAppLogsDialog(app.id);
+  });
+  actions.append(logsButton);
+
+  const isCoreApp = app.id === "wingman-core";
+  const actionOrder = ["start", "stop", "restart", "build"];
+  actionOrder.forEach((action) => {
+    if (!app.availableScripts?.[action]) return;
+    if (isCoreApp && (action === "start" || action === "stop")) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = action === "stop" ? "wm-button secondary" : "wm-button";
+    button.textContent = APP_ACTION_LABELS[action];
+    button.disabled = isAppActionDisabled(app, action);
+    button.addEventListener("click", async () => {
+      if (button.disabled) return;
+      button.disabled = true;
+      const success = await triggerAppAction(app.id, action);
+      if (!success) {
+        button.disabled = false;
+      }
+    });
+    actions.append(button);
+  });
+
+  const editButton = document.createElement("button");
+  editButton.type = "button";
+  editButton.className = "wm-button secondary";
+  editButton.textContent = "Edit";
+  editButton.addEventListener("click", () => openAppDialog(app.id));
+  actions.append(editButton);
+
+  const removeButton = document.createElement("button");
+  removeButton.type = "button";
+  removeButton.className = "wm-button danger";
+  removeButton.textContent = "Remove";
+  removeButton.addEventListener("click", () => removeApp(app.id));
+  actions.append(removeButton);
+
+  card.append(actions);
+
+  return card;
+};
+
+const renderApps = () => {
+  const wrapper = document.createElement("div");
+  wrapper.className = "wm-apps";
+
+  const header = document.createElement("div");
+  header.className = "wm-apps-header";
+
+  const title = document.createElement("h2");
+  title.textContent = "Apps";
+  header.append(title);
+
+  const headerActions = document.createElement("div");
+  headerActions.className = "wm-apps-header-actions";
+
+  const refreshButton = document.createElement("button");
+  refreshButton.type = "button";
+  refreshButton.className = "wm-button secondary";
+  refreshButton.textContent = state.apps.loading ? "Refreshing…" : "Refresh";
+  refreshButton.disabled = state.apps.loading;
+  refreshButton.addEventListener("click", () => {
+    refreshButton.disabled = true;
+    void refreshApps({ skipRender: false });
+  });
+
+  const addButton = document.createElement("button");
+  addButton.type = "button";
+  addButton.className = "wm-button";
+  addButton.textContent = "Add App";
+  addButton.addEventListener("click", () => openAppDialog());
+
+  headerActions.append(refreshButton, addButton);
+  header.append(headerActions);
+  wrapper.append(header);
+
+  if (!state.apps.initialized && !state.apps.loading) {
+    void refreshApps({ skipRender: false });
+  }
+
+  if (state.apps.error) {
+    const errorBox = document.createElement("div");
+    errorBox.className = "wm-apps-error";
+    const errorText = document.createElement("p");
+    errorText.textContent = state.apps.error;
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "wm-button secondary";
+    retry.textContent = "Retry";
+    retry.addEventListener("click", () => {
+      void refreshApps({ skipRender: false });
+    });
+    errorBox.append(errorText, retry);
+    wrapper.append(errorBox);
+  }
+
+  const apps = Array.isArray(state.apps.items) ? state.apps.items : [];
+  if (state.apps.loading && apps.length === 0) {
+    const loading = document.createElement("p");
+    loading.className = "wm-apps-empty";
+    loading.textContent = "Loading apps…";
+    wrapper.append(loading);
+    return wrapper;
+  }
+
+  if (apps.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "wm-apps-empty";
+    empty.textContent = "No apps registered yet. Use “Add App” to get started.";
+    wrapper.append(empty);
+    return wrapper;
+  }
+
+  const grid = document.createElement("div");
+  grid.className = "wm-apps-grid";
+
+  const coreApp = apps.find((item) => item?.id === "wingman-core");
+  if (coreApp) {
+    grid.append(renderAppCard(coreApp));
+  }
+  apps
+    .filter((item) => item?.id !== "wingman-core")
+    .forEach((app) => {
+      grid.append(renderAppCard(app));
+    });
+
+  wrapper.append(grid);
+
+  return wrapper;
+};
+
+const openAppLogsDialog = async (appId) => {
+  if (!appLogsDialog) return;
+  const app = getAppById(appId);
+  if (appLogsTitle) {
+    appLogsTitle.textContent = app?.label ?? appId;
+  }
+  state.appLogViewer.appId = appId;
+  state.appLogViewer.title = app?.label ?? appId;
+  state.appLogViewer.lines = [];
+  state.appLogViewer.loading = true;
+  if (appLogsContent) {
+    appLogsContent.textContent = "Loading logs…";
+  }
+  if (appLogsDialog.open) {
+    appLogsDialog.close();
+  }
+  appLogsDialog.showModal();
+  await refreshAppLogs(appId);
+};
+
+const refreshAppLogs = async (appId, { tail } = {}) => {
+  const targetId = appId ?? state.appLogViewer.appId;
+  if (!targetId) return;
+  const tailSize = typeof tail === "number" && tail > 0 ? tail : state.appLogViewer.tail;
+  state.appLogViewer.loading = true;
+  try {
+    const response = await fetch(
+      `/api/apps/${encodeURIComponent(targetId)}/logs?tail=${encodeURIComponent(String(tailSize))}`,
+    );
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+          ? payload.error
+          : response.statusText || "Failed to load logs";
+      throw new Error(message);
+    }
+    const lines = Array.isArray(payload?.logs) ? payload.logs : [];
+    state.appLogViewer.lines = lines;
+    if (appLogsContent) {
+      appLogsContent.textContent = lines.length > 0 ? lines.join("\n") : "No log output yet.";
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load logs";
+    if (appLogsContent) {
+      appLogsContent.textContent = `Error: ${message}`;
+    }
+  } finally {
+    state.appLogViewer.loading = false;
+  }
+};
+
+const closeAppLogsDialog = () => {
+  if (!appLogsDialog) return;
+  if (appLogsDialog.open) {
+    appLogsDialog.close();
+    return;
+  }
+  state.appLogViewer.appId = null;
+  state.appLogViewer.title = "";
+  state.appLogViewer.lines = [];
+  state.appLogViewer.loading = false;
+  if (appLogsContent) {
+    appLogsContent.textContent = "";
   }
 };
 
@@ -4683,6 +5473,8 @@ const render = () => {
   let view;
   if (currentRoute === "live") {
     view = renderLive();
+  } else if (currentRoute === "apps") {
+    view = renderApps();
   } else if (currentRoute === "files") {
     view = renderFiles();
   } else if (currentRoute === "settings") {
@@ -4699,6 +5491,7 @@ const render = () => {
   syncMenuTabs();
   syncDesktopSessionIndicator();
   syncSessionPolling();
+  syncAppsPolling();
   lastFilesMobileLayout = isMobileFilesLayout();
   if (!pullRefreshing && !pullActive) {
     resetPullRefresh();
@@ -4780,6 +5573,13 @@ navLinks.forEach((link) => {
       } else {
         setActiveSession(null, { updateHistory: true });
       }
+    } else if (targetRoute === "apps") {
+      currentRoute = "apps";
+      lastLoggedSessionId = null;
+      if (window.location.pathname !== APPS_ROUTE) {
+        window.history.pushState({ route: "apps" }, "", APPS_ROUTE);
+      }
+      void ensureAppsLoaded();
     } else if (targetRoute === "files") {
       currentRoute = "files";
       lastLoggedSessionId = null;
@@ -4922,6 +5722,8 @@ window.addEventListener("popstate", () => {
     } else if (!state.files.loading && !state.files.currentPath) {
       void loadFilesTree();
     }
+  } else if (currentRoute === "apps") {
+    void ensureAppsLoaded();
   }
   render();
 });
@@ -5031,6 +5833,43 @@ orchestratorDirectoryUseButton?.addEventListener("click", (event) => {
   }
 });
 
+appForm?.addEventListener("submit", handleAppFormSubmit);
+
+appCancelButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  closeAppDialog();
+});
+
+appDialog?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeAppDialog();
+});
+
+appDialog?.addEventListener("close", () => {
+  resetAppDialog();
+});
+
+appDiscoverButton?.addEventListener("click", handleAppDiscover);
+
+appLogsRefreshButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  void refreshAppLogs();
+});
+
+appLogsCloseButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  closeAppLogsDialog();
+});
+
+appLogsDialog?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeAppLogsDialog();
+});
+
+appLogsDialog?.addEventListener("close", () => {
+  closeAppLogsDialog();
+});
+
 orchestratorLabelInput?.addEventListener("input", () => {
   const suggestion = formatDirectoryPrefix(orchestratorLabelInput.value);
   if (!orchestratorPrefixDirty && orchestratorDirectoryPrefixInput) {
@@ -5088,5 +5927,8 @@ dialog.addEventListener("cancel", (event) => {
   await fetchConfig();
   await refreshOrchestratorPresets();
   await fetchSessions();
+  if (currentRoute === "apps") {
+    await fetchApps({ tail: APP_LOG_PREVIEW_LINES });
+  }
   render();
 })();
