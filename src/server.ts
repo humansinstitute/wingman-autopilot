@@ -1137,7 +1137,6 @@ manager.on((event) => {
 
 const MAX_DIRECTORY_RESULTS = 50;
 const DIRECTORY_BROWSER_ROOT = "__root__";
-const ALLOWED_DIRECTORIES_LABEL = "Allowed Directories";
 
 const expandHomeDirectory = (input: string): string => {
   if (!input.startsWith("~")) {
@@ -1187,41 +1186,6 @@ const formatRootDirectoryName = (absolute: string): string => {
   return name.length > 0 ? name : absolute;
 };
 
-interface AllowedDirectoryMetadata {
-  path: string;
-  name: string;
-  displayPath: string;
-}
-
-const collectAllowedDirectoryMetadata = async (): Promise<AllowedDirectoryMetadata[]> => {
-  const seen = new Set<string>();
-  const entries: AllowedDirectoryMetadata[] = [];
-
-  for (const absolute of config.allowedDirectories) {
-    if (seen.has(absolute)) {
-      continue;
-    }
-    seen.add(absolute);
-    let stats: Awaited<ReturnType<typeof stat>>;
-    try {
-      stats = await stat(absolute);
-    } catch {
-      continue;
-    }
-    if (!stats.isDirectory()) {
-      continue;
-    }
-    entries.push({
-      path: absolute,
-      name: formatRootDirectoryName(absolute),
-      displayPath: formatHomeRelativePath(absolute),
-    });
-  }
-
-  entries.sort((a, b) => a.name.localeCompare(b.name));
-  return entries;
-};
-
 const ensureDirectory = async (input: string | null | undefined): Promise<string> => {
   const source = input?.trim();
   const candidate = source && source.length > 0 ? source : config.defaultWorkingDirectory;
@@ -1253,11 +1217,34 @@ const ensureDirectory = async (input: string | null | undefined): Promise<string
 
 const listRootDirectories = async (query?: string) => {
   const term = query?.trim().toLowerCase() ?? "";
-  const metadata = await collectAllowedDirectoryMetadata();
+  const seen = new Set<string>();
+  const entries: Array<{ name: string; path: string }> = [];
+
+  for (const absolute of config.allowedDirectories) {
+    if (seen.has(absolute)) {
+      continue;
+    }
+    seen.add(absolute);
+    let stats: Awaited<ReturnType<typeof stat>>;
+    try {
+      stats = await stat(absolute);
+    } catch {
+      continue;
+    }
+    if (!stats.isDirectory()) {
+      continue;
+    }
+    entries.push({
+      name: formatRootDirectoryName(absolute),
+      path: absolute,
+    });
+  }
+
+  entries.sort((a, b) => a.name.localeCompare(b.name));
 
   const filtered = term.length === 0
-    ? metadata
-    : metadata.filter((entry) =>
+    ? entries
+    : entries.filter((entry) =>
         entry.name.toLowerCase().includes(term) || entry.path.toLowerCase().includes(term),
       );
 
@@ -1266,30 +1253,7 @@ const listRootDirectories = async (query?: string) => {
   return {
     path: "",
     parent: null as string | null,
-    entries: limited.map((entry) => ({ name: entry.name, path: entry.path })),
-  };
-};
-
-const listDocsRootDirectory = async () => {
-  const metadata = await collectAllowedDirectoryMetadata();
-
-  const limited = metadata.slice(0, MAX_DOCS_ENTRIES);
-
-  const entries = limited.map((entry) => ({
-    name: entry.name,
-    path: entry.path,
-    relativePath: "",
-    displayPath: entry.displayPath,
-    type: "directory" as const,
-  }));
-
-  return {
-    path: DIRECTORY_BROWSER_ROOT,
-    relativePath: "",
-    displayPath: ALLOWED_DIRECTORIES_LABEL,
-    parent: null,
-    entries,
-    git: null as GitRepositorySummary | null,
+    entries: limited,
   };
 };
 
@@ -1440,12 +1404,7 @@ const listDocsDirectory = async (
   input: string | null | undefined,
   options: ListDocsDirectoryOptions = {},
 ) => {
-  const trimmed = input?.trim();
-  if (!trimmed || trimmed === DIRECTORY_BROWSER_ROOT) {
-    return listDocsRootDirectory();
-  }
-
-  const directory = resolveDocsPath(trimmed);
+  const directory = resolveDocsPath(input);
   let stats: Awaited<ReturnType<typeof stat>>;
   try {
     stats = await stat(directory);
@@ -1536,29 +1495,15 @@ const listDocsDirectory = async (
   directories.sort((a, b) => a.name.localeCompare(b.name));
   files.sort((a, b) => a.name.localeCompare(b.name));
 
-  const parentDescriptor = (() => {
+  const parentPath = (() => {
     if (directory === docsRoot) {
       return null;
     }
-    const parentCandidate = resolveDirectoryParent(directory);
-    if (!parentCandidate) {
+    const candidate = dirname(directory);
+    if (!isWithinDocsRoot(candidate)) {
       return null;
     }
-    if (parentCandidate === DIRECTORY_BROWSER_ROOT) {
-      return {
-        path: DIRECTORY_BROWSER_ROOT,
-        relativePath: "",
-        displayPath: ALLOWED_DIRECTORIES_LABEL,
-      };
-    }
-    if (!isWithinDocsRoot(parentCandidate)) {
-      return null;
-    }
-    return {
-      path: parentCandidate,
-      relativePath: toDocsRelativePath(parentCandidate),
-      displayPath: toDocsDisplayPath(parentCandidate),
-    };
+    return candidate;
   })();
 
   let git: GitRepositorySummary | null = null;
@@ -1572,7 +1517,13 @@ const listDocsDirectory = async (
     path: directory,
     relativePath: toDocsRelativePath(directory),
     displayPath: toDocsDisplayPath(directory),
-    parent: parentDescriptor,
+    parent: parentPath
+      ? {
+          path: parentPath,
+          relativePath: toDocsRelativePath(parentPath),
+          displayPath: toDocsDisplayPath(parentPath),
+        }
+      : null,
     entries: [...directories, ...files],
     git,
   };
