@@ -42,6 +42,26 @@ process.env.WINGMAN_PID = process.pid.toString();
 console.log(`[config] tmux session base: ${config.tmuxBase}`);
 const TMUX_SESSION_NAME = config.tmuxBase;
 const SUPPORTED_AGENT_TYPES: AgentType[] = ["codex", "claude", "goose", "opencode", "gemini"];
+const allowedDirectoryBoundaries = config.allowedDirectories.map((entry) =>
+  entry.endsWith(sep) ? entry : `${entry}${sep}`,
+);
+
+const ensureWithinAllowedDirectories = (candidate: string) => {
+  if (config.allowedDirectories.length === 0) {
+    return;
+  }
+
+  const normalised = normalize(candidate);
+  for (let index = 0; index < config.allowedDirectories.length; index += 1) {
+    const base = config.allowedDirectories[index];
+    const boundary = allowedDirectoryBoundaries[index];
+    if (normalised === base || normalised.startsWith(boundary)) {
+      return;
+    }
+  }
+
+  throw new Error(`Directory outside permitted locations: ${normalised}`);
+};
 
 const projectRootPath = (() => {
   let root = normalize(fileURLToPath(new URL("..", import.meta.url)));
@@ -1116,7 +1136,9 @@ const toAbsoluteDirectory = (input: string): string => {
   const candidate = isAbsolute(expanded)
     ? expanded
     : resolvePath(config.defaultWorkingDirectory, expanded);
-  return normalize(candidate);
+  const normalised = normalize(candidate);
+  ensureWithinAllowedDirectories(normalised);
+  return normalised;
 };
 
 const ensureDirectory = async (input: string | null | undefined): Promise<string> => {
@@ -1130,6 +1152,8 @@ const ensureDirectory = async (input: string | null | undefined): Promise<string
   } catch {
     // realpath fails when the directory does not exist; keep the normalized path.
     resolved = absolute;
+  } finally {
+    ensureWithinAllowedDirectories(resolved);
   }
 
   let stats: Awaited<ReturnType<typeof stat>>;
