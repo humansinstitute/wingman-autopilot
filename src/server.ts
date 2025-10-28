@@ -1441,7 +1441,7 @@ const listDocsDirectory = async (
   options: ListDocsDirectoryOptions = {},
 ) => {
   const trimmed = input?.trim();
-  if (trimmed === DIRECTORY_BROWSER_ROOT) {
+  if (!trimmed || trimmed === DIRECTORY_BROWSER_ROOT) {
     return listDocsRootDirectory();
   }
 
