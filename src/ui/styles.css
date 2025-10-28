@@ -1408,8 +1408,7 @@ body[data-menu-open="true"] .wm-menu-panel {
   }
 }
 
-.wm-worktree-modal,
-.wm-git-clone-modal {
+.wm-worktree-modal {
   position: fixed;
   inset: 0;
   background: rgba(8, 10, 12, 0.68);
@@ -1420,8 +1419,9 @@ body[data-menu-open="true"] .wm-menu-panel {
   justify-content: center;
   padding: 1.5rem;
   z-index: 2100;
-.wm-worktree-modal__dialog,
-.wm-git-clone-modal__dialog {
+}
+
+.wm-worktree-modal__dialog {
   width: min(480px, 100%);
   background: var(--bg-primary);
   border-radius: 18px;
@@ -1433,21 +1433,22 @@ body[data-menu-open="true"] .wm-menu-panel {
   gap: 1rem;
   max-height: 90vh;
   overflow-y: auto;
-.wm-worktree-modal__header h2,
-.wm-git-clone-modal__header h2 {
+}
+
+.wm-worktree-modal__header h2 {
   margin: 0;
   font-size: 1.3rem;
   color: var(--text-primary);
 }
-.wm-worktree-modal__subtitle,
-.wm-git-clone-modal__subtitle {
+
+.wm-worktree-modal__subtitle {
   margin: 0.35rem 0 0;
   font-size: 0.85rem;
   color: var(--text-tertiary);
   word-break: break-all;
 }
-.wm-worktree-modal__body,
-.wm-git-clone-modal__body {
+
+.wm-worktree-modal__body {
   display: flex;
   flex-direction: column;
   gap: 1rem;
@@ -1469,27 +1470,26 @@ body[data-menu-open="true"] .wm-menu-panel {
   font-size: 0.85rem;
 }
 
-.wm-worktree-modal__form,
-.wm-git-clone-modal__form {
+.wm-worktree-modal__form {
   display: flex;
   flex-direction: column;
   gap: 1rem;
 }
-.wm-worktree-modal__field,
-.wm-git-clone-modal__field {
+
+.wm-worktree-modal__field {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
   font-size: 0.9rem;
   color: var(--text-secondary);
 }
-.wm-worktree-modal__label,
-.wm-git-clone-modal__label {
+
+.wm-worktree-modal__label {
   font-weight: 600;
   color: var(--text-primary);
 }
-.wm-worktree-modal__field input,
-.wm-git-clone-modal__field input {
+
+.wm-worktree-modal__field input {
   border-radius: 12px;
   border: 1px solid rgba(148, 163, 184, 0.28);
   background: var(--bg-secondary);
@@ -1498,14 +1498,14 @@ body[data-menu-open="true"] .wm-menu-panel {
   font-size: 0.95rem;
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
-.wm-worktree-modal__field input:focus-visible,
-.wm-git-clone-modal__field input:focus-visible {
+
+.wm-worktree-modal__field input:focus-visible {
   outline: none;
   border-color: rgba(16, 185, 129, 0.65);
   box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
 }
-.wm-worktree-modal__field input:disabled,
-.wm-git-clone-modal__field input:disabled {
+
+.wm-worktree-modal__field input:disabled {
   opacity: 0.65;
   cursor: not-allowed;
 }
@@ -1533,8 +1533,7 @@ body[data-menu-open="true"] .wm-menu-panel {
   gap: 0.35rem;
 }
 
-.wm-worktree-modal__error,
-.wm-git-clone-modal__error {
+.wm-worktree-modal__error {
   margin: 0;
   padding: 0.75rem 1rem;
   border-radius: 12px;
@@ -1543,8 +1542,8 @@ body[data-menu-open="true"] .wm-menu-panel {
   color: #fca5a5;
   font-size: 0.85rem;
 }
-.wm-worktree-modal__actions,
-.wm-git-clone-modal__actions {
+
+.wm-worktree-modal__actions {
   display: flex;
   gap: 0.75rem;
   justify-content: flex-end;
@@ -1556,14 +1555,12 @@ body[data-menu-open="true"] .wm-menu-panel {
 }
 
 @media (max-width: 720px) {
-  .wm-worktree-modal,
-  .wm-git-clone-modal {
+  .wm-worktree-modal {
     padding: 1rem;
     align-items: flex-start;
   }
 
-  .wm-worktree-modal__dialog,
-  .wm-git-clone-modal__dialog {
+  .wm-worktree-modal__dialog {
     width: 100%;
     border-radius: 16px;
   }
