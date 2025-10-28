@@ -93,6 +93,15 @@ const state = {
       branch: "",
       startPoint: "",
     },
+    gitCloneModal: {
+      open: false,
+      submitting: false,
+      error: null,
+      directory: null,
+      displayDirectory: "",
+      url: "",
+      name: "",
+    },
     transfer: {
       mode: null,
       sourcePath: null,
@@ -1080,6 +1089,111 @@ const canCreateWorktree = () => {
   return Boolean(git.isRepoRoot && git.hasGitMetadata);
 };
 
+const resetGitCloneModalState = () => {
+  const modal = state.files.gitCloneModal;
+  modal.submitting = false;
+  modal.error = null;
+  modal.directory = null;
+  modal.displayDirectory = "";
+  modal.url = "";
+  modal.name = "";
+};
+
+const openGitCloneModal = (directory) => {
+  const modal = state.files.gitCloneModal;
+  resetGitCloneModalState();
+  modal.open = true;
+  modal.submitting = false;
+  modal.error = null;
+  const targetDirectory = typeof directory === "string" ? directory : state.files.currentPath;
+  modal.directory = targetDirectory;
+  modal.displayDirectory = state.files.displayPath ?? targetDirectory ?? "";
+  modal.url = "";
+  modal.name = "";
+  renderGitCloneModal();
+};
+
+const closeGitCloneModal = () => {
+  const modal = state.files.gitCloneModal;
+  if (!modal.open) return;
+  modal.open = false;
+  resetGitCloneModalState();
+  renderGitCloneModal();
+};
+
+const requestGitClone = async () => {
+  const files = state.files;
+  const modal = files.gitCloneModal;
+  const directory = typeof modal.directory === "string" && modal.directory.length > 0 ? modal.directory : files.currentPath;
+  if (!directory) {
+    modal.error = "Select a directory to clone into.";
+    renderGitCloneModal();
+    return;
+  }
+
+  if (modal.submitting) {
+    return;
+  }
+
+  const url = modal.url.trim();
+  if (!url) {
+    modal.error = "Repository URL is required.";
+    renderGitCloneModal();
+    return;
+  }
+
+  const name = modal.name.trim();
+
+  if (name && /[\\/]/.test(name)) {
+    modal.error = "Folder name cannot contain path separators.";
+    renderGitCloneModal();
+    return;
+  }
+
+  modal.submitting = true;
+  modal.error = null;
+  renderGitCloneModal();
+
+  try {
+    const payload = { action: "clone", directory, url };
+    if (name) {
+      payload.name = name;
+    }
+
+    const response = await fetch("/api/docs/git", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    let data = {};
+    try {
+      data = await response.json();
+    } catch {
+      data = {};
+    }
+
+    if (!response.ok) {
+      const message = typeof data?.error === "string" && data.error.length > 0 ? data.error : "Git clone failed";
+      throw new Error(message);
+    }
+
+    const stdout = typeof data?.stdout === "string" ? data.stdout.trim() : "";
+    const stderr = typeof data?.stderr === "string" ? data.stderr.trim() : "";
+    const output = [stdout, stderr].filter((part) => part.length > 0).join("\n");
+    window.alert(output || "Repository cloned successfully.");
+
+    modal.open = false;
+    resetGitCloneModalState();
+    renderGitCloneModal();
+    await loadFilesTree(directory);
+  } catch (error) {
+    modal.submitting = false;
+    modal.error = error instanceof Error ? error.message : "Failed to clone repository";
+    renderGitCloneModal();
+  }
+};
+
 const resetWorktreeModalState = (defaults = {}) => {
   const modal = state.files.worktreeModal;
   modal.branch = typeof defaults.branch === "string" ? defaults.branch : "";
@@ -1563,6 +1677,150 @@ const renderFileEditorOverlay = () => {
     });
   } else {
     updateFileEditorControls();
+  }
+};
+
+const renderGitCloneModal = () => {
+  const existing = document.getElementById("wm-git-clone-modal");
+  if (existing) {
+    existing.remove();
+  }
+
+  const modal = state.files.gitCloneModal;
+  if (!modal.open) {
+    return;
+  }
+
+  const overlay = document.createElement("div");
+  overlay.id = "wm-git-clone-modal";
+  overlay.className = "wm-git-clone-modal";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay && !modal.submitting) {
+      closeGitCloneModal();
+    }
+  });
+
+  const dialog = document.createElement("div");
+  dialog.className = "wm-git-clone-modal__dialog";
+  overlay.append(dialog);
+
+  const header = document.createElement("div");
+  header.className = "wm-git-clone-modal__header";
+  const title = document.createElement("h2");
+  title.textContent = "Clone Repository";
+  header.append(title);
+  if (modal.displayDirectory) {
+    const subtitle = document.createElement("p");
+    subtitle.className = "wm-git-clone-modal__subtitle";
+    subtitle.textContent = modal.displayDirectory;
+    header.append(subtitle);
+  }
+  dialog.append(header);
+
+  const body = document.createElement("div");
+  body.className = "wm-git-clone-modal__body";
+  dialog.append(body);
+
+  const form = document.createElement("form");
+  form.className = "wm-git-clone-modal__form";
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (modal.submitting) return;
+    void requestGitClone();
+  });
+
+  const urlField = document.createElement("div");
+  urlField.className = "wm-git-clone-modal__field";
+  const urlLabel = document.createElement("label");
+  urlLabel.className = "wm-git-clone-modal__label";
+  urlLabel.setAttribute("for", "wm-git-clone-modal-url");
+  urlLabel.textContent = "Repository URL";
+  const urlInput = document.createElement("input");
+  urlInput.id = "wm-git-clone-modal-url";
+  urlInput.type = "url";
+  urlInput.placeholder = "https://github.com/user/repo.git";
+  urlInput.required = true;
+  urlInput.value = modal.url;
+  urlInput.disabled = modal.submitting;
+  urlInput.addEventListener("input", () => {
+    modal.url = urlInput.value;
+    syncSubmitState();
+  });
+  urlField.append(urlLabel, urlInput);
+  form.append(urlField);
+
+  const nameField = document.createElement("div");
+  nameField.className = "wm-git-clone-modal__field";
+  const nameLabel = document.createElement("label");
+  nameLabel.className = "wm-git-clone-modal__label";
+  nameLabel.setAttribute("for", "wm-git-clone-modal-name");
+  nameLabel.textContent = "Folder name (optional)";
+  const nameInput = document.createElement("input");
+  nameInput.id = "wm-git-clone-modal-name";
+  nameInput.type = "text";
+  nameInput.placeholder = "repo";
+  nameInput.value = modal.name;
+  nameInput.disabled = modal.submitting;
+  nameInput.addEventListener("input", () => {
+    modal.name = nameInput.value;
+  });
+  nameField.append(nameLabel, nameInput);
+  form.append(nameField);
+
+  if (modal.error) {
+    const errorMessage = document.createElement("p");
+    errorMessage.className = "wm-git-clone-modal__error";
+    errorMessage.textContent = modal.error;
+    form.append(errorMessage);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "wm-git-clone-modal__actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.className = "wm-button secondary";
+  cancelButton.textContent = "Cancel";
+  cancelButton.disabled = modal.submitting;
+  cancelButton.addEventListener("click", () => {
+    if (modal.submitting) return;
+    closeGitCloneModal();
+  });
+  actions.append(cancelButton);
+
+  const submitButton = document.createElement("button");
+  submitButton.type = "submit";
+  submitButton.className = "wm-button";
+  const setSubmitLabel = () => {
+    if (modal.submitting) {
+      submitButton.textContent = "Cloning…";
+      submitButton.dataset.loading = "true";
+    } else {
+      submitButton.textContent = "Clone";
+      delete submitButton.dataset.loading;
+    }
+  };
+  const syncSubmitState = () => {
+    const disabled = modal.submitting || modal.url.trim().length === 0;
+    submitButton.disabled = disabled;
+    setSubmitLabel();
+  };
+  syncSubmitState();
+  actions.append(submitButton);
+
+  form.append(actions);
+  body.append(form);
+
+  appRoot.append(overlay);
+
+  if (!modal.submitting) {
+    requestAnimationFrame(() => {
+      urlInput.focus();
+      urlInput.select();
+    });
   }
 };
 
@@ -5347,6 +5605,16 @@ const runGitCommand = async (action) => {
   const files = state.files;
   if (files.gitCommandPending) return "cancelled";
 
+  if (action === "clone") {
+    const directory = files.currentPath ?? files.git?.repoRoot ?? null;
+    if (!directory) {
+      window.alert("Select a directory before running git commands.");
+      return "cancelled";
+    }
+    openGitCloneModal(directory);
+    return "modal";
+  }
+
   const requiresRepository = action !== "init";
   const gitInfo = files.git;
   const inRepository = Boolean(gitInfo?.isRepository);
@@ -5594,6 +5862,7 @@ const renderFiles = () => {
   gitPlaceholder.textContent = "Git…";
   gitSelect.append(gitPlaceholder);
   const gitOptions = [
+    { value: "clone", label: "git clone", requiresRepo: false },
     { value: "addAll", label: "git add .", requiresRepo: true },
     { value: "commit", label: "git commit -m", requiresRepo: true },
     { value: "push", label: "git push", requiresRepo: true },
@@ -6556,6 +6825,7 @@ const render = () => {
   }
   appRoot.append(view);
   renderFileEditorOverlay();
+  renderGitCloneModal();
   renderWorktreeModal();
   appRoot.dataset.route = currentRoute;
   setActiveNav();
