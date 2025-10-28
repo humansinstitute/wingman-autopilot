@@ -1122,6 +1122,7 @@ manager.on((event) => {
 });
 
 const MAX_DIRECTORY_RESULTS = 50;
+const DIRECTORY_BROWSER_ROOT = "__root__";
 
 const expandHomeDirectory = (input: string): string => {
   if (!input.startsWith("~")) {
@@ -1139,6 +1140,36 @@ const toAbsoluteDirectory = (input: string): string => {
   const normalised = normalize(candidate);
   ensureWithinAllowedDirectories(normalised);
   return normalised;
+};
+
+const formatHomeRelativePath = (absolute: string): string => {
+  try {
+    const home = homedir();
+    if (!home) {
+      return absolute;
+    }
+    const normalisedHome = normalize(home);
+    if (absolute === normalisedHome) {
+      return "~";
+    }
+    const prefix = normalisedHome.endsWith(sep) ? normalisedHome : `${normalisedHome}${sep}`;
+    if (absolute.startsWith(prefix)) {
+      const suffix = absolute.slice(prefix.length);
+      return suffix.length > 0 ? `~${sep}${suffix}` : "~";
+    }
+  } catch {
+    // Ignore homedir resolution errors and fall back to the basename below.
+  }
+  return absolute;
+};
+
+const formatRootDirectoryName = (absolute: string): string => {
+  const homeRelative = formatHomeRelativePath(absolute);
+  if (homeRelative !== absolute) {
+    return homeRelative;
+  }
+  const name = basename(absolute);
+  return name.length > 0 ? name : absolute;
 };
 
 const ensureDirectory = async (input: string | null | undefined): Promise<string> => {
@@ -1168,6 +1199,68 @@ const ensureDirectory = async (input: string | null | undefined): Promise<string
   }
 
   return resolved;
+};
+
+const listRootDirectories = async (query?: string) => {
+  const term = query?.trim().toLowerCase() ?? "";
+  const seen = new Set<string>();
+  const entries: Array<{ name: string; path: string }> = [];
+
+  for (const absolute of config.allowedDirectories) {
+    if (seen.has(absolute)) {
+      continue;
+    }
+    seen.add(absolute);
+    let stats: Awaited<ReturnType<typeof stat>>;
+    try {
+      stats = await stat(absolute);
+    } catch {
+      continue;
+    }
+    if (!stats.isDirectory()) {
+      continue;
+    }
+    entries.push({
+      name: formatRootDirectoryName(absolute),
+      path: absolute,
+    });
+  }
+
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+
+  const filtered = term.length === 0
+    ? entries
+    : entries.filter((entry) =>
+        entry.name.toLowerCase().includes(term) || entry.path.toLowerCase().includes(term),
+      );
+
+  const limited = term.length === 0 ? filtered : filtered.slice(0, MAX_DIRECTORY_RESULTS);
+
+  return {
+    path: "",
+    parent: null as string | null,
+    entries: limited,
+  };
+};
+
+const resolveDirectoryParent = (directory: string): string | null => {
+  for (const allowed of config.allowedDirectories) {
+    if (directory === allowed) {
+      return DIRECTORY_BROWSER_ROOT;
+    }
+  }
+
+  const candidate = dirname(directory);
+  if (candidate === directory) {
+    return null;
+  }
+
+  try {
+    ensureWithinAllowedDirectories(candidate);
+    return candidate;
+  } catch {
+    return DIRECTORY_BROWSER_ROOT;
+  }
 };
 
 const DIRECTORY_NAME_MAX_LENGTH = 160;
@@ -2214,7 +2307,12 @@ const handleWebhookRequest = async (request: Request, url: URL): Promise<Respons
 };
 
 const listDirectories = async (input: string | null | undefined, query?: string) => {
-  const directory = await ensureDirectory(input);
+  const trimmed = input?.trim() ?? "";
+  if (trimmed.length === 0 || trimmed === DIRECTORY_BROWSER_ROOT) {
+    return listRootDirectories(query);
+  }
+
+  const directory = await ensureDirectory(trimmed);
   const entries = await readdir(directory, { withFileTypes: true });
   const term = query?.toLowerCase().trim();
 
@@ -2232,10 +2330,7 @@ const listDirectories = async (input: string | null | undefined, query?: string)
 
   const limitedDirectories = term ? directories.slice(0, MAX_DIRECTORY_RESULTS) : directories;
 
-  const parent = (() => {
-    const candidate = dirname(directory);
-    return candidate === directory ? null : candidate;
-  })();
+  const parent = resolveDirectoryParent(directory);
 
   return {
     path: directory,
@@ -2836,6 +2931,7 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
       agentPortStart: config.agentPortStart,
       agentPortMax: config.agentPortMax,
       defaultDirectory: config.defaultWorkingDirectory,
+      allowedDirectories: config.allowedDirectories,
       agents: Object.entries(config.agents).map(([key, definition]) => ({
         id: key,
         label: definition.label,

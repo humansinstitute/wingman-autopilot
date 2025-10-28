@@ -2423,6 +2423,8 @@ const triggerPullRefresh = () => {
 };
 
 const DIRECTORY_SUGGESTION_DELAY = 160;
+const DIRECTORY_BROWSER_ROOT = "__root__";
+const DIRECTORY_BROWSER_ROOT_LABEL = "Allowed Directories";
 let directorySuggestionTimer = null;
 let directorySuggestionRequestId = 0;
 
@@ -2567,8 +2569,10 @@ const chooseDirectory = (path) => {
 
 const renderDirectoryBrowser = (data) => {
   if (!data) return;
+  const isRootView = !data.path || data.path === DIRECTORY_BROWSER_ROOT;
   if (directoryCurrent) {
-    directoryCurrent.textContent = data.path;
+    const label = isRootView ? DIRECTORY_BROWSER_ROOT_LABEL : data.path;
+    directoryCurrent.textContent = label;
   }
   if (directoryUpButton) {
     directoryUpButton.disabled = !data.parent;
