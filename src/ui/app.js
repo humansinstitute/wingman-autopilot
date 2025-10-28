@@ -1101,13 +1101,18 @@ const resetGitCloneModalState = () => {
 
 const openGitCloneModal = (directory) => {
   const modal = state.files.gitCloneModal;
+  const sourceDirectory = typeof directory === "string" ? directory : state.files.currentPath;
+  const targetDirectory = isRealDirectoryPath(sourceDirectory) ? sourceDirectory : null;
+  if (!targetDirectory) {
+    window.alert("Select a directory before running git commands.");
+    return;
+  }
   resetGitCloneModalState();
   modal.open = true;
   modal.submitting = false;
   modal.error = null;
-  const targetDirectory = typeof directory === "string" ? directory : state.files.currentPath;
   modal.directory = targetDirectory;
-  modal.displayDirectory = state.files.displayPath ?? targetDirectory ?? "";
+  modal.displayDirectory = state.files.displayPath ?? targetDirectory;
   modal.url = "";
   modal.name = "";
   renderGitCloneModal();
@@ -1124,12 +1129,18 @@ const closeGitCloneModal = () => {
 const requestGitClone = async () => {
   const files = state.files;
   const modal = files.gitCloneModal;
-  const directory = typeof modal.directory === "string" && modal.directory.length > 0 ? modal.directory : files.currentPath;
-  if (!directory) {
+  const directoryCandidate = isRealDirectoryPath(modal.directory)
+    ? modal.directory
+    : isRealDirectoryPath(files.currentPath)
+      ? files.currentPath
+      : null;
+  if (!directoryCandidate) {
     modal.error = "Select a directory to clone into.";
     renderGitCloneModal();
     return;
   }
+
+  const directory = directoryCandidate;
 
   if (modal.submitting) {
     return;
@@ -2683,6 +2694,8 @@ const triggerPullRefresh = () => {
 const DIRECTORY_SUGGESTION_DELAY = 160;
 const DIRECTORY_BROWSER_ROOT = "__root__";
 const DIRECTORY_BROWSER_ROOT_LABEL = "Allowed Directories";
+
+const isRealDirectoryPath = (value) => typeof value === "string" && value.length > 0 && value !== DIRECTORY_BROWSER_ROOT;
 let directorySuggestionTimer = null;
 let directorySuggestionRequestId = 0;
 
@@ -2965,7 +2978,7 @@ const openDirectoryBrowser = async (options = {}) => {
 
 const promptCreateDirectoryAtPath = async (parentPath, { onSuccess } = {}) => {
   const basePath = typeof parentPath === "string" && parentPath.length > 0 ? parentPath : null;
-  if (!basePath) {
+  if (!basePath || !isRealDirectoryPath(basePath)) {
     window.alert("Select a parent directory first.");
     return false;
   }
@@ -5511,6 +5524,10 @@ const promptCreateDirectory = async () => {
   const files = state.files;
   if (files.loading) return;
   const parentPath = files.currentPath;
+  if (!isRealDirectoryPath(parentPath)) {
+    window.alert("Select a directory first.");
+    return;
+  }
   const rawName = window.prompt("Folder name", "New Folder");
   const name = rawName?.trim();
   if (!name) return;
@@ -5531,6 +5548,10 @@ const promptCreateFile = async () => {
   const files = state.files;
   if (files.loading) return;
   const parentPath = files.currentPath;
+  if (!isRealDirectoryPath(parentPath)) {
+    window.alert("Select a directory first.");
+    return;
+  }
   const rawName = window.prompt("File name (include extension)", "notes.txt");
   const name = rawName?.trim();
   if (!name) return;
@@ -5561,6 +5582,10 @@ const uploadSelectedFile = async (file) => {
   const files = state.files;
   if (files.loading || files.uploading) return;
   const parentPath = files.currentPath;
+  if (!isRealDirectoryPath(parentPath)) {
+    window.alert("Select a directory before uploading files.");
+    return;
+  }
   files.uploading = true;
   if (currentRoute === "files") render();
   try {
@@ -5583,6 +5608,10 @@ const uploadSelectedFile = async (file) => {
 const promptUploadFile = () => {
   const files = state.files;
   if (files.loading || files.uploading) return;
+  if (!isRealDirectoryPath(files.currentPath)) {
+    window.alert("Select a directory before uploading files.");
+    return;
+  }
   const input = document.createElement("input");
   input.type = "file";
   input.hidden = true;
@@ -5604,14 +5633,14 @@ const runGitCommand = async (action) => {
   if (!action) return "cancelled";
   const files = state.files;
   if (files.gitCommandPending) return "cancelled";
+  const currentDirectory = isRealDirectoryPath(files.currentPath) ? files.currentPath : null;
 
   if (action === "clone") {
-    const directory = files.currentPath ?? files.git?.repoRoot ?? null;
-    if (!directory) {
+    if (!currentDirectory) {
       window.alert("Select a directory before running git commands.");
       return "cancelled";
     }
-    openGitCloneModal(directory);
+    openGitCloneModal(currentDirectory);
     return "modal";
   }
 
@@ -5624,15 +5653,17 @@ const runGitCommand = async (action) => {
     return "cancelled";
   }
 
-  const directory =
-    action === "init" && !inRepository ? files.currentPath ?? gitInfo?.repoRoot ?? null : gitInfo?.repoRoot ?? files.currentPath ?? null;
+  const targetDirectory =
+    action === "init" && !inRepository
+      ? currentDirectory
+      : gitInfo?.repoRoot ?? currentDirectory ?? null;
 
-  if (!directory) {
+  if (!targetDirectory || !isRealDirectoryPath(targetDirectory)) {
     window.alert("Select a directory before running git commands.");
     return "cancelled";
   }
 
-  const payload = { action, directory };
+  const payload = { action, directory: targetDirectory };
 
   if (action === "commit") {
     const rawMessage = window.prompt("Commit message", "");
@@ -5760,7 +5791,9 @@ const renderFiles = () => {
   headerTitle.textContent = "Files";
   const pathLabel = document.createElement("span");
   pathLabel.className = "wm-files-browser__path";
-  pathLabel.textContent = files.displayPath ?? "~";
+  const hasRealDirectory = isRealDirectoryPath(files.currentPath);
+  const pathDisplay = files.displayPath ?? "~";
+  pathLabel.textContent = hasRealDirectory ? pathDisplay : DIRECTORY_BROWSER_ROOT_LABEL;
   headerButton.append(headerTitle, pathLabel);
 
   const controls = document.createElement("div");
@@ -5818,7 +5851,7 @@ const renderFiles = () => {
   newFolderButton.type = "button";
   newFolderButton.className = "wm-button secondary wm-button-icon";
   setIconButton(newFolderButton, "folderPlus", "Create new folder");
-  newFolderButton.disabled = files.loading;
+  newFolderButton.disabled = files.loading || !hasRealDirectory;
   newFolderButton.addEventListener("click", () => {
     if (files.loading) return;
     void promptCreateDirectory();
@@ -5828,7 +5861,7 @@ const renderFiles = () => {
   newFileButton.type = "button";
   newFileButton.className = "wm-button secondary wm-button-icon";
   setIconButton(newFileButton, "filePlus", "Create new file");
-  newFileButton.disabled = files.loading;
+  newFileButton.disabled = files.loading || !hasRealDirectory;
   newFileButton.addEventListener("click", () => {
     if (files.loading) return;
     void promptCreateFile();
@@ -5838,7 +5871,7 @@ const renderFiles = () => {
   uploadButton.type = "button";
   uploadButton.className = "wm-button secondary wm-button-icon";
   const syncUploadButtonState = () => {
-    uploadButton.disabled = files.loading || files.uploading;
+    uploadButton.disabled = files.loading || files.uploading || !hasRealDirectory;
     setIconButton(uploadButton, "upload", files.uploading ? "Uploading…" : "Upload file");
     if (files.uploading) {
       uploadButton.dataset.loading = "true";
@@ -5883,7 +5916,7 @@ const renderFiles = () => {
   gitRunButton.type = "button";
   gitRunButton.className = "wm-button secondary";
   const updateGitControlsState = () => {
-    const disabled = files.loading || files.gitCommandPending;
+    const disabled = files.loading || files.gitCommandPending || !hasRealDirectory;
     gitSelect.disabled = disabled;
     gitRunButton.disabled = disabled || gitSelect.value === "";
     if (files.gitCommandPending) {
