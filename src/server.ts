@@ -1146,6 +1146,53 @@ const ensureDirectory = async (input: string | null | undefined): Promise<string
   return resolved;
 };
 
+const DIRECTORY_NAME_MAX_LENGTH = 160;
+
+const normaliseDirectoryEntryName = (value: unknown): string => {
+  if (typeof value !== "string") {
+    throw new Error("Folder name is required");
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error("Folder name is required");
+  }
+  if (trimmed.length > DIRECTORY_NAME_MAX_LENGTH) {
+    throw new Error("Folder name is too long");
+  }
+  if (trimmed === "." || trimmed === "..") {
+    throw new Error("Folder name is not allowed");
+  }
+  if (/[\\/]/.test(trimmed)) {
+    throw new Error("Folder name cannot contain path separators");
+  }
+  return trimmed;
+};
+
+const createDirectoryEntry = async (parentInput: string | null | undefined, nameInput: unknown) => {
+  const parentDirectory = await ensureDirectory(parentInput);
+  const name = normaliseDirectoryEntryName(nameInput);
+  const target = normalize(join(parentDirectory, name));
+  const parentWithSep = parentDirectory.endsWith(sep) ? parentDirectory : `${parentDirectory}${sep}`;
+  if (!target.startsWith(parentWithSep)) {
+    throw new Error("Invalid directory path");
+  }
+
+  try {
+    await mkdir(target, { recursive: false });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === "EEXIST") {
+      throw new Error("A file or directory with that name already exists");
+    }
+    throw new Error(`Failed to create directory: ${(error as Error).message ?? "unknown error"}`);
+  }
+
+  return {
+    path: target,
+    name,
+  };
+};
+
 const isWithinDocsRoot = (target: string): boolean => {
   if (!target) return false;
   const normalized = normalize(target);
@@ -3190,6 +3237,32 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
     try {
       const data = await listDirectories(url.searchParams.get("path"), url.searchParams.get("query") ?? undefined);
       return Response.json(data);
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/directories" && method === "POST") {
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    const parentInput = (payload as Record<string, unknown>).parent;
+    const nameInput = (payload as Record<string, unknown>).name;
+
+    try {
+      const data = await createDirectoryEntry(
+        typeof parentInput === "string" ? parentInput : null,
+        nameInput,
+      );
+      return Response.json(data, { status: 201 });
     } catch (error) {
       return Response.json({ error: (error as Error).message }, { status: 400 });
     }

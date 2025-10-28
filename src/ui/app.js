@@ -1026,6 +1026,20 @@ const deleteFilesEntry = async (path) => {
   return response.json();
 };
 
+const createDirectoryEntry = async (parent, name) => {
+  const response = await fetch("/api/directories", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ parent, name }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const message = data?.error ?? response.statusText ?? "Failed to create folder";
+    throw new Error(message);
+  }
+  return response.json();
+};
+
 const copyFilesEntry = async (path, targetDirectory) => {
   const response = await fetch("/api/docs/file/copy", {
     method: "POST",
@@ -2088,9 +2102,11 @@ const directoryInput = document.getElementById("working-directory");
 const directorySuggestions = document.getElementById("directory-suggestions");
 const browseDirectoryButton = document.getElementById("browse-directory");
 const directoryDialog = document.getElementById("directory-dialog");
+const directoryTitle = document.getElementById("directory-title");
 const directoryList = document.getElementById("directory-list");
 const directoryCurrent = document.getElementById("directory-current");
 const directoryUpButton = document.getElementById("directory-up");
+const directoryNewFolderButton = document.getElementById("directory-new-folder");
 const directoryUseButton = document.getElementById("directory-use");
 const fileTransferDialog = document.getElementById("file-transfer-dialog");
 const fileTransferTitle = document.getElementById("file-transfer-title");
@@ -2099,6 +2115,7 @@ const fileTransferCurrent = document.getElementById("file-transfer-current");
 const fileTransferList = document.getElementById("file-transfer-list");
 const fileTransferSelected = document.getElementById("file-transfer-selected");
 const fileTransferUpButton = document.getElementById("file-transfer-up");
+const fileTransferNewFolderButton = document.getElementById("file-transfer-new-folder");
 const fileTransferCancelButton = document.getElementById("file-transfer-cancel");
 const fileTransferConfirmButton = document.getElementById("file-transfer-confirm");
 const orchestratorDialog = document.getElementById("orchestrator-dialog");
@@ -2129,6 +2146,7 @@ const appForm = appDialog?.querySelector("form") ?? null;
 const appDialogTitle = document.getElementById("app-dialog-title");
 const appLabelInput = document.getElementById("app-label");
 const appRootInput = document.getElementById("app-root");
+const appRootBrowseButton = document.getElementById("app-root-browse");
 const appTmuxInput = document.getElementById("app-tmux-session");
 const appTmuxWindowInput = document.getElementById("app-tmux-window");
 const appNotesInput = document.getElementById("app-notes");
@@ -2412,6 +2430,11 @@ const directoryBrowserState = {
   currentPath: "",
   parent: null,
   requestId: 0,
+  onSelect: null,
+  allowCreate: true,
+  confirmLabel: "Use This Directory",
+  title: "Select Directory",
+  pendingResolve: null,
 };
 
 const parseDirectoryLookup = (rawValue) => {
@@ -2521,11 +2544,22 @@ const scheduleDirectorySuggestions = (value) => {
 };
 
 const chooseDirectory = (path) => {
-  if (!directoryInput) return;
   if (typeof path !== "string" || path.length === 0) return;
-  directoryInput.value = path;
-  state.lastWorkingDirectory = path;
-  scheduleDirectorySuggestions(path);
+  const selected = path;
+  const onSelect = directoryBrowserState.onSelect;
+  if (typeof onSelect === "function") {
+    onSelect(selected);
+  } else if (directoryInput) {
+    directoryInput.value = selected;
+    state.lastWorkingDirectory = selected;
+    scheduleDirectorySuggestions(selected);
+  }
+  directoryBrowserState.onSelect = null;
+  if (directoryBrowserState.pendingResolve) {
+    const resolve = directoryBrowserState.pendingResolve;
+    directoryBrowserState.pendingResolve = null;
+    resolve(selected);
+  }
   if (directoryDialog?.open) {
     directoryDialog.close();
   }
@@ -2538,6 +2572,18 @@ const renderDirectoryBrowser = (data) => {
   }
   if (directoryUpButton) {
     directoryUpButton.disabled = !data.parent;
+  }
+  if (directoryUseButton) {
+    directoryUseButton.disabled = !(data.path && data.path.length > 0);
+  }
+  if (directoryNewFolderButton) {
+    if (directoryBrowserState.allowCreate) {
+      directoryNewFolderButton.hidden = false;
+      directoryNewFolderButton.disabled = !data.path;
+    } else {
+      directoryNewFolderButton.hidden = true;
+      directoryNewFolderButton.disabled = true;
+    }
   }
   if (!directoryList) return;
   directoryList.innerHTML = "";
@@ -2583,38 +2629,104 @@ const updateDirectoryBrowser = async (path) => {
   if (directoryBrowserState.requestId !== requestId || !data) {
     return false;
   }
-  directoryBrowserState.currentPath = data.path;
+  directoryBrowserState.currentPath = typeof data.path === "string" ? data.path : "";
   directoryBrowserState.parent = data.parent;
   renderDirectoryBrowser(data);
   return true;
 };
 
-const openDirectoryBrowser = async () => {
-  if (!state.config) return;
+const openDirectoryBrowser = async (options = {}) => {
+  if (!state.config) {
+    try {
+      await fetchConfig();
+    } catch {
+      // ignore config fetch failures; fallback prompt handles it
+    }
+  }
+
+  const {
+    initialPath,
+    onSelect,
+    allowCreate = true,
+    confirmLabel = "Use This Directory",
+    title = "Select Directory",
+  } = options;
+
+  const seedCandidate =
+    (typeof initialPath === "string" && initialPath.trim().length > 0 ? initialPath.trim() : null) ??
+    directoryInput?.value?.trim() ??
+    state.lastWorkingDirectory ??
+    state.config?.defaultDirectory ??
+    "";
+
+  directoryBrowserState.onSelect = typeof onSelect === "function" ? onSelect : null;
+  directoryBrowserState.allowCreate = allowCreate;
+  directoryBrowserState.confirmLabel = confirmLabel;
+  directoryBrowserState.title = title;
+
   if (!directoryDialog || typeof directoryDialog.showModal !== "function") {
-    const fallback = window.prompt(
-      "Enter working directory",
-      directoryInput?.value ||
-        state.lastWorkingDirectory ||
-        state.config.defaultDirectory ||
-        "",
-    );
+    const fallback = window.prompt("Enter directory", seedCandidate);
     if (fallback) {
       chooseDirectory(fallback);
     }
-    return;
+    return null;
   }
-  const seed =
-    directoryInput?.value?.trim() ||
-    state.lastWorkingDirectory ||
-    state.config.defaultDirectory ||
-    "";
-  const loaded = await updateDirectoryBrowser(seed);
+
+  if (directoryTitle) {
+    directoryTitle.textContent = title;
+  }
+  if (directoryUseButton) {
+    directoryUseButton.textContent = confirmLabel;
+  }
+  if (directoryNewFolderButton) {
+    directoryNewFolderButton.hidden = !allowCreate;
+    directoryNewFolderButton.disabled = !allowCreate;
+  }
+
+  if (directoryBrowserState.pendingResolve) {
+    directoryBrowserState.pendingResolve(null);
+    directoryBrowserState.pendingResolve = null;
+  }
+
+  const loaded = await updateDirectoryBrowser(seedCandidate);
   if (!loaded) {
     window.alert("Unable to open directory browser for the requested path.");
-    return;
+    directoryBrowserState.onSelect = null;
+    return null;
   }
+
   directoryDialog.showModal();
+  return new Promise((resolve) => {
+    directoryBrowserState.pendingResolve = resolve;
+  });
+};
+
+const promptCreateDirectoryAtPath = async (parentPath, { onSuccess } = {}) => {
+  const basePath = typeof parentPath === "string" && parentPath.length > 0 ? parentPath : null;
+  if (!basePath) {
+    window.alert("Select a parent directory first.");
+    return false;
+  }
+  const rawName = window.prompt("Folder name", "New Folder");
+  if (!rawName) {
+    return false;
+  }
+  const trimmed = rawName.trim();
+  if (trimmed.length === 0) {
+    window.alert("Folder name cannot be empty.");
+    return false;
+  }
+  try {
+    const result = await createDirectoryEntry(basePath, trimmed);
+    if (typeof onSuccess === "function") {
+      await Promise.resolve(onSuccess(result));
+    }
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to create folder";
+    window.alert(message);
+    return false;
+  }
 };
 
 const getParentDirectoryPath = (filePath) => {
@@ -2656,6 +2768,9 @@ const resetFileTransferState = () => {
   }
   if (fileTransferSelected) {
     fileTransferSelected.textContent = "";
+  }
+  if (fileTransferNewFolderButton) {
+    fileTransferNewFolderButton.disabled = true;
   }
 };
 
@@ -2723,6 +2838,9 @@ const renderFileTransferBrowser = (data) => {
   }
   if (fileTransferUpButton) {
     fileTransferUpButton.disabled = !transfer.browser.parent;
+  }
+  if (fileTransferNewFolderButton) {
+    fileTransferNewFolderButton.disabled = !(data.path && data.path.length > 0);
   }
   if (!fileTransferList) return;
   fileTransferList.innerHTML = "";
@@ -4031,6 +4149,28 @@ if (appRootInput) {
     updateAppWindowPreview();
   });
 }
+
+appRootBrowseButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  const seed =
+    appRootInput?.value?.trim() ||
+    state.lastWorkingDirectory ||
+    state.config?.defaultDirectory ||
+    "";
+  void openDirectoryBrowser({
+    initialPath: seed,
+    title: "Select App Root",
+    confirmLabel: "Use This Directory",
+    allowCreate: true,
+    onSelect: (path) => {
+      if (appRootInput) {
+        appRootInput.value = path;
+        updateAppWindowPreview();
+      }
+      state.lastWorkingDirectory = path;
+    },
+  });
+});
 
 const resetAppDialog = () => {
   if (appForm) {
@@ -6595,7 +6735,23 @@ if (directoryInput) {
 
 browseDirectoryButton?.addEventListener("click", (event) => {
   event.preventDefault();
-  openDirectoryBrowser();
+  const seed =
+    directoryInput?.value?.trim() ||
+    state.lastWorkingDirectory ||
+    state.config?.defaultDirectory ||
+    "";
+  void openDirectoryBrowser({
+    initialPath: seed,
+    title: "Select Working Directory",
+    confirmLabel: "Use This Directory",
+    allowCreate: true,
+    onSelect: (path) => {
+      if (!directoryInput) return;
+      directoryInput.value = path;
+      state.lastWorkingDirectory = path;
+      scheduleDirectorySuggestions(path);
+    },
+  });
 });
 
 directoryUpButton?.addEventListener("click", (event) => {
@@ -6603,6 +6759,21 @@ directoryUpButton?.addEventListener("click", (event) => {
   if (directoryBrowserState.parent) {
     updateDirectoryBrowser(directoryBrowserState.parent);
   }
+});
+
+directoryNewFolderButton?.addEventListener("click", async (event) => {
+  event.preventDefault();
+  if (!directoryBrowserState.allowCreate) return;
+  const parentPath = directoryBrowserState.currentPath || directoryBrowserState.parent || state.config?.defaultDirectory || "";
+  if (!parentPath) {
+    window.alert("Select a directory first.");
+    return;
+  }
+  await promptCreateDirectoryAtPath(parentPath, {
+    onSuccess: async () => {
+      await updateDirectoryBrowser(parentPath);
+    },
+  });
 });
 
 directoryUseButton?.addEventListener("click", (event) => {
@@ -6619,6 +6790,15 @@ if (directoryDialog) {
   });
   directoryDialog.addEventListener("close", () => {
     directoryBrowserState.requestId += 1;
+    if (directoryBrowserState.pendingResolve) {
+      const resolve = directoryBrowserState.pendingResolve;
+      directoryBrowserState.pendingResolve = null;
+      resolve(null);
+    }
+    directoryBrowserState.onSelect = null;
+    directoryBrowserState.allowCreate = true;
+    directoryBrowserState.confirmLabel = "Use This Directory";
+    directoryBrowserState.title = "Select Directory";
   });
 }
 
@@ -6643,6 +6823,27 @@ fileTransferUpButton?.addEventListener("click", (event) => {
   if (parent) {
     void updateFileTransferBrowser(parent);
   }
+});
+
+fileTransferNewFolderButton?.addEventListener("click", async (event) => {
+  event.preventDefault();
+  const parent =
+    state.files.transfer.browser.currentPath ||
+    state.files.transfer.browser.parent ||
+    state.files.currentPath ||
+    "";
+  if (!parent) {
+    window.alert("Select a directory first.");
+    return;
+  }
+  await promptCreateDirectoryAtPath(parent, {
+    onSuccess: async (result) => {
+      await updateFileTransferBrowser(parent);
+      if (result?.path) {
+        setFileTransferSelection(result.path, result?.displayPath ?? result.path);
+      }
+    },
+  });
 });
 
 fileTransferConfirmButton?.addEventListener("click", async (event) => {

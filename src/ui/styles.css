@@ -1957,7 +1957,14 @@ body[data-menu-open="true"] .wm-menu-panel {
     gap: 0.5rem;
   }
 
-  .working-directory-field .wm-button.secondary {
+  .working-directory-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+
+  .working-directory-actions .wm-button {
     width: 100%;
     justify-content: center;
     min-height: 44px;
@@ -2082,6 +2089,17 @@ dialog textarea {
   gap: 0.6rem;
 }
 
+.working-directory-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.working-directory-actions .wm-button {
+  white-space: nowrap;
+}
+
 .working-directory-field input {
   flex: 1;
   border-radius: 0.6rem;
@@ -2106,6 +2124,12 @@ dialog textarea {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+.directory-browser__controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .directory-browser__path {
@@ -2267,7 +2291,7 @@ dialog button[value="cancel"] {
     gap: 0.5rem;
   }
 
-  .working-directory-field .wm-button.secondary {
+  .working-directory-actions .wm-button {
     width: 100%;
     justify-content: center;
   }

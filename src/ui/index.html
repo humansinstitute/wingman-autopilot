@@ -86,7 +86,9 @@
         <label for="working-directory">Working Directory</label>
         <div class="working-directory-field">
           <input id="working-directory" type="text" autocomplete="off" list="directory-suggestions" placeholder="~/code" />
-          <button type="button" class="wm-button secondary" id="browse-directory">Browse...</button>
+          <div class="working-directory-actions">
+            <button type="button" class="wm-button secondary" id="browse-directory">Browse...</button>
+          </div>
         </div>
         <datalist id="directory-suggestions"></datalist>
         <menu>
@@ -97,10 +99,13 @@
     </dialog>
     <dialog id="directory-dialog">
       <form method="dialog">
-        <h2>Select Working Directory</h2>
+        <h2 id="directory-title">Select Working Directory</h2>
         <div class="directory-browser">
           <div class="directory-browser__header">
-            <button type="button" class="wm-button secondary" id="directory-up">Up</button>
+            <div class="directory-browser__controls">
+              <button type="button" class="wm-button secondary" id="directory-up">Up</button>
+              <button type="button" class="wm-button secondary" id="directory-new-folder">New Folder</button>
+            </div>
             <span id="directory-current" class="directory-browser__path"></span>
           </div>
           <ul id="directory-list" class="directory-browser__list"></ul>
@@ -118,7 +123,10 @@
         <p id="file-transfer-selected" class="wm-dialog-selected"></p>
         <div class="directory-browser">
           <div class="directory-browser__header">
-            <button type="button" class="wm-button secondary" id="file-transfer-up">Up</button>
+            <div class="directory-browser__controls">
+              <button type="button" class="wm-button secondary" id="file-transfer-up">Up</button>
+              <button type="button" class="wm-button secondary" id="file-transfer-new-folder">New Folder</button>
+            </div>
             <span id="file-transfer-current" class="directory-browser__path"></span>
           </div>
           <ul id="file-transfer-list" class="directory-browser__list"></ul>
@@ -150,7 +158,9 @@
             autocomplete="off"
             readonly
           />
-          <button type="button" class="wm-button secondary" id="orchestrator-template-browse">Browse...</button>
+          <div class="working-directory-actions">
+            <button type="button" class="wm-button secondary" id="orchestrator-template-browse">Browse...</button>
+          </div>
         </div>
 
         <label for="orchestrator-active-root">Active Root (for template copy)</label>
@@ -162,7 +172,9 @@
             autocomplete="off"
             readonly
           />
-          <button type="button" class="wm-button secondary" id="orchestrator-active-root-browse">Browse...</button>
+          <div class="working-directory-actions">
+            <button type="button" class="wm-button secondary" id="orchestrator-active-root-browse">Browse...</button>
+          </div>
         </div>
 
         <label for="orchestrator-directory-prefix">Generated Directory Prefix</label>
@@ -239,7 +251,10 @@
         <label for="app-root">Root Directory</label>
         <div class="working-directory-field">
           <input id="app-root" type="text" autocomplete="off" placeholder="/Users/me/projects/app" />
-          <button type="button" class="wm-button secondary" id="app-discover">Discover Scripts</button>
+          <div class="working-directory-actions">
+            <button type="button" class="wm-button secondary" id="app-root-browse">Browse…</button>
+            <button type="button" class="wm-button secondary" id="app-discover">Discover Scripts</button>
+          </div>
         </div>
 
         <label class="wm-checkbox" for="app-discover-enabled">
