@@ -36,11 +36,12 @@ import {
   sendAgentMessage,
   waitForAgentReady as waitForAgentReadyCore,
 } from "./agents/agent-client";
+import { mintSessionCookie, SessionCookieError } from "./auth/session-cookie";
 import {
-  mintSessionCookie,
-  readSessionCookie,
-  SessionCookieError,
-} from "./auth/session-cookie";
+  resolveRequestAuthContext,
+  runWithRequestContext,
+  type RequestAuthContext,
+} from "./auth/request-context";
 
 const config = loadConfig();
 process.env.WINGMAN_PID = process.pid.toString();
@@ -305,6 +306,7 @@ const rehydrateWarmSessions = async (
       tmuxWindow: record.tmuxWindow ?? undefined,
       pid: storedPid ?? undefined,
       logs: undefined,
+      npub: record.npub ?? undefined,
     });
 
     if (!snapshot) {
@@ -317,6 +319,7 @@ const rehydrateWarmSessions = async (
       agent: snapshot.agent,
       startedAt: snapshot.startedAt,
       name: snapshot.name,
+      npub: snapshot.npub,
       port: snapshot.port,
       pid: snapshot.pid,
       tmuxSession: snapshot.tmuxSession,
@@ -1100,6 +1103,7 @@ manager.on((event) => {
       agent: event.session.agent,
       startedAt: event.session.startedAt,
       name: event.session.name,
+      npub: event.session.npub,
       port: event.session.port,
       pid: event.session.pid,
       tmuxSession: event.session.tmuxSession,
@@ -1116,6 +1120,7 @@ manager.on((event) => {
       agent: event.session.agent,
       startedAt: event.session.startedAt,
       name: event.session.name,
+      npub: event.session.npub,
       port: event.session.port,
       pid: event.session.pid,
       tmuxSession: event.session.tmuxSession,
@@ -2232,6 +2237,7 @@ const launchOrchestratorPreset = async (presetId: string) => {
     agent: session.agent,
     startedAt: session.startedAt,
     name: session.name,
+    npub: session.npub,
     port: session.port,
     pid: session.pid,
     tmuxSession: session.tmuxSession,
@@ -2580,7 +2586,12 @@ const ensureWingmanCoreRegistration = async () => {
 
 void ensureWingmanCoreRegistration();
 
-const handleApi = async (request: Request, url: URL, method: HttpMethod): Promise<Response> => {
+const handleApi = async (
+  request: Request,
+  url: URL,
+  method: HttpMethod,
+  authContext: RequestAuthContext,
+): Promise<Response> => {
   const pathname = url.pathname;
   if (pathname === "/api/system/restart/status" && method === "GET") {
     return Response.json({
@@ -2686,19 +2697,15 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
     }
 
     try {
-      const existingCookie = request.headers.get("cookie");
-      if (existingCookie) {
-        try {
-          const existingSession = readSessionCookie(existingCookie);
-          if (existingSession && existingSession.npub !== trimmedNpub) {
-            // Allow overwriting with a new npub, but clear stale signed data by minting a new cookie.
-          }
-        } catch {
-          // Ignore malformed cookies; minting a fresh one replaces them.
-        }
+      const existingSession = authContext.session;
+      if (existingSession && existingSession.npub !== trimmedNpub) {
+        // Allow overwriting with a new npub, but clear stale signed data by minting a new cookie.
       }
 
-      const { cookie, expiresAt } = mintSessionCookie(trimmedNpub);
+      const { cookie, expiresAt, payload } = mintSessionCookie(trimmedNpub);
+      authContext.npub = payload.npub;
+      authContext.session = payload;
+      delete authContext.error;
       const headers = new Headers({
         "cache-control": "no-store",
       });
@@ -3644,6 +3651,7 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
         agent: session.agent,
         startedAt: session.startedAt,
         name: session.name,
+        npub: session.npub,
         port: session.port,
         pid: session.pid,
         tmuxSession: session.tmuxSession,
@@ -3756,95 +3764,103 @@ const server = Bun.serve({
   port: config.port,
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    const pathname = url.pathname;
     const method = request.method as HttpMethod;
+    const authContext = resolveRequestAuthContext(request);
 
-    const webhookResponse = await handleWebhookRequest(request, url);
-    if (webhookResponse) {
-      return webhookResponse;
-    }
-
-    if (pathname === "/" && method === "GET") {
-      return Response.redirect(`${url.origin}/home`, 302);
-    }
-
-    if (method === "GET" && pathname === "/deep-dive/config.json") {
-      const port = getDeepDivePort();
-      const running = isDeepDiveProcessRunning();
-      const override = Bun.env.DEEP_DIVE_SOCKET_URL?.trim();
-      let socketUrl = override && override.length > 0 ? override : null;
-
-      if (!socketUrl && running && port) {
-        const protocol = url.protocol === "https:" ? "wss" : "ws";
-        socketUrl = `${protocol}://${url.hostname}:${port}/deep-dive/socket`;
+    return runWithRequestContext(authContext, async () => {
+      if (authContext.error) {
+        console.warn(`[auth] ignoring invalid session cookie: ${authContext.error}`);
       }
 
-      return Response.json(
-        {
-          socketUrl,
-          running,
-          port: socketUrl && port ? port : null,
-        },
-        {
-          headers: {
-            "cache-control": "no-cache",
+      const pathname = url.pathname;
+
+      const webhookResponse = await handleWebhookRequest(request, url);
+      if (webhookResponse) {
+        return webhookResponse;
+      }
+
+      if (pathname === "/" && method === "GET") {
+        return Response.redirect(`${url.origin}/home`, 302);
+      }
+
+      if (method === "GET" && pathname === "/deep-dive/config.json") {
+        const port = getDeepDivePort();
+        const running = isDeepDiveProcessRunning();
+        const override = Bun.env.DEEP_DIVE_SOCKET_URL?.trim();
+        let socketUrl = override && override.length > 0 ? override : null;
+
+        if (!socketUrl && running && port) {
+          const protocol = url.protocol === "https:" ? "wss" : "ws";
+          socketUrl = `${protocol}://${url.hostname}:${port}/deep-dive/socket`;
+        }
+
+        return Response.json(
+          {
+            socketUrl,
+            running,
+            port: socketUrl && port ? port : null,
           },
-        },
-      );
-    }
-
-    if (
-      pathname === "/home" ||
-      pathname === "/apps" ||
-      pathname.startsWith("/apps/") ||
-      pathname === "/docs" ||
-      pathname.startsWith("/docs/") ||
-      pathname === "/files" ||
-      pathname.startsWith("/files/") ||
-      pathname === "/live" ||
-      pathname.startsWith("/live/")
-    ) {
-      return serveIndex();
-    }
-
-    if (method === "GET" && isDeepDivePagePath(pathname)) {
-      const deepDivePage = servePublicAsset("/deep-dive.html");
-      if (deepDivePage) {
-        return deepDivePage;
+          {
+            headers: {
+              "cache-control": "no-cache",
+            },
+          },
+        );
       }
-      return new Response("Deep Dive page missing", { status: 404 });
-    }
 
-    if (pathname.startsWith("/api/")) {
-      return handleApi(request, url, method);
-    }
+      if (
+        pathname === "/home" ||
+        pathname === "/apps" ||
+        pathname.startsWith("/apps/") ||
+        pathname === "/docs" ||
+        pathname.startsWith("/docs/") ||
+        pathname === "/files" ||
+        pathname.startsWith("/files/") ||
+        pathname === "/live" ||
+        pathname.startsWith("/live/")
+      ) {
+        return serveIndex();
+      }
 
-    const tempAttachment = resolveTempAttachment(pathname);
-    if (tempAttachment) {
-      return tempAttachment;
-    }
+      if (method === "GET" && isDeepDivePagePath(pathname)) {
+        const deepDivePage = servePublicAsset("/deep-dive.html");
+        if (deepDivePage) {
+          return deepDivePage;
+        }
+        return new Response("Deep Dive page missing", { status: 404 });
+      }
 
-    const tempImage = resolveTempImage(pathname);
-    if (tempImage) {
-      return tempImage;
-    }
+      if (pathname.startsWith("/api/")) {
+        return handleApi(request, url, method, authContext);
+      }
 
-    const aceAsset = serveAceBuildsAsset(pathname);
-    if (aceAsset) {
-      return aceAsset;
-    }
+      const tempAttachment = resolveTempAttachment(pathname);
+      if (tempAttachment) {
+        return tempAttachment;
+      }
 
-    const assetResponse = resolveAsset(pathname);
-    if (assetResponse) {
-      return assetResponse;
-    }
+      const tempImage = resolveTempImage(pathname);
+      if (tempImage) {
+        return tempImage;
+      }
 
-    const publicAsset = servePublicAsset(pathname);
-    if (publicAsset) {
-      return publicAsset;
-    }
+      const aceAsset = serveAceBuildsAsset(pathname);
+      if (aceAsset) {
+        return aceAsset;
+      }
 
-    return new Response("Not Found", { status: 404 });
+      const assetResponse = resolveAsset(pathname);
+      if (assetResponse) {
+        return assetResponse;
+      }
+
+      const publicAsset = servePublicAsset(pathname);
+      if (publicAsset) {
+        return publicAsset;
+      }
+
+      return new Response("Not Found", { status: 404 });
+    });
   },
 });
 
