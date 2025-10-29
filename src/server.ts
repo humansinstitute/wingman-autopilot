@@ -2446,12 +2446,10 @@ const rewriteVendorModuleSpecifiers = (source: string) => {
   let updated = source;
   for (const packageName of Object.keys(vendorPackages)) {
     if (!updated.includes(packageName)) continue;
-    const escaped = packageName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const pattern = new RegExp(`(["'\\`])${escaped}(\/[^"'\\`]*)?\\1`, "g");
-    updated = updated.replace(pattern, (match, quote: string, suffix = "") => {
-      const rewritten = `/vendor/${packageName}${suffix ?? ""}`;
-      return `${quote}${rewritten}${quote}`;
-    });
+    const vendorPrefix = `/vendor/${packageName}`;
+    updated = updated.replaceAll(`'${packageName}`, `'${vendorPrefix}`);
+    updated = updated.replaceAll(`"${packageName}`, `"${vendorPrefix}`);
+    updated = updated.replaceAll(`\`${packageName}`, `\`${vendorPrefix}`);
   }
   return updated;
 };
