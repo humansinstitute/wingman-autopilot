@@ -3,6 +3,7 @@ import { chmod, cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeF
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 
 import type { AgentType } from "./config";
 import { loadConfig } from "./config";
@@ -771,8 +772,19 @@ const documentsDirectory = join(homeDirectory, "Documents");
 const userDataRoot = join(documentsDirectory, "Wingman");
 const docsRoot = homeDirectory;
 const docsRootBoundary = docsRoot.endsWith(sep) ? docsRoot : `${docsRoot}${sep}`;
-const nodeModulesRoot = normalize(join(projectRoot, "node_modules"));
-const aceBuildsRoot = normalize(join(nodeModulesRoot, "ace-builds"));
+const require = createRequire(import.meta.url);
+const resolvePackageRoot = (specifier: string) => {
+  try {
+    const packageJsonPath = require.resolve(`${specifier}/package.json`);
+    return normalize(join(packageJsonPath, ".."));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[static] failed to resolve package root for ${specifier}: ${message}`);
+    return undefined;
+  }
+};
+const resolvedAceBuildsRoot = resolvePackageRoot("ace-builds");
+const aceBuildsRoot = resolvedAceBuildsRoot ?? normalize(join(projectRoot, "node_modules", "ace-builds"));
 const aceBuildsRootBoundary = aceBuildsRoot.endsWith(sep) ? aceBuildsRoot : `${aceBuildsRoot}${sep}`;
 const publicRoot = normalize(join(projectRoot, "public"));
 const publicRootBoundary = publicRoot.endsWith(sep) ? publicRoot : `${publicRoot}${sep}`;
