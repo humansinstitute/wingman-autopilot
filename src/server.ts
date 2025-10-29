@@ -45,6 +45,14 @@ import {
   type RequestAuthContext,
 } from "./auth/request-context";
 import { deriveNpubSegment, normaliseNpub } from "./identity/npub-utils";
+import {
+  AccessActions,
+  evaluateAccess,
+  registerAccessRule,
+  requireAuthentication,
+  type AccessAction,
+  type AccessDecision,
+} from "./auth/access-control";
 
 const config = loadConfig();
 process.env.WINGMAN_PID = process.pid.toString();
@@ -54,6 +62,13 @@ const SUPPORTED_AGENT_TYPES: AgentType[] = ["codex", "claude", "goose", "opencod
 const allowedDirectoryBoundaries = config.allowedDirectories.map((entry) =>
   entry.endsWith(sep) ? entry : `${entry}${sep}`,
 );
+
+registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
+registerAccessRule(AccessActions.FilesRead, requireAuthentication());
+registerAccessRule(AccessActions.FilesWrite, requireAuthentication());
+registerAccessRule(AccessActions.DeepDiveAccess, requireAuthentication());
+registerAccessRule(AccessActions.AppsManage, requireAuthentication());
+registerAccessRule(AccessActions.UiRestricted, requireAuthentication());
 
 const ensureWithinAllowedDirectories = (candidate: string) => {
   if (config.allowedDirectories.length === 0) {
@@ -1119,6 +1134,7 @@ const resolveScopedUpload = (pathname: string, authContext: RequestAuthContext, 
   if (!pathname.startsWith(prefix)) return undefined;
   const relative = pathname.slice(prefix.length);
   if (!relative) return undefined;
+  if (!authContext.session) return undefined;
   const parts = relative.split("/").filter((segment) => segment.length > 0);
   if (parts.length < 2) return undefined;
 
@@ -2890,6 +2906,44 @@ const ensureWingmanCoreRegistration = async () => {
 
 void ensureWingmanCoreRegistration();
 
+const accessDeniedJson = (decision: AccessDecision): Response => {
+  const headers = new Headers({
+    "cache-control": "no-store",
+    ...(decision.headers ?? {}),
+  });
+  return Response.json({ error: decision.reason ?? "forbidden" }, { status: decision.status ?? 403, headers });
+};
+
+const ensureApiAccess = async (
+  action: AccessAction,
+  request: Request,
+  url: URL,
+  authContext: RequestAuthContext,
+): Promise<Response | null> => {
+  const decision = await evaluateAccess(action, { request, url, auth: authContext });
+  if (!decision.allowed) {
+    return accessDeniedJson(decision);
+  }
+  return null;
+};
+
+const ensurePageAccess = async (
+  action: AccessAction,
+  request: Request,
+  url: URL,
+  authContext: RequestAuthContext,
+): Promise<Response | null> => {
+  const decision = await evaluateAccess(action, { request, url, auth: authContext });
+  if (!decision.allowed) {
+    const headers = new Headers({
+      "cache-control": "no-store",
+      ...(decision.headers ?? {}),
+    });
+    return new Response("Unauthorized", { status: decision.status ?? 403, headers });
+  }
+  return null;
+};
+
 const handleApi = async (
   request: Request,
   url: URL,
@@ -3040,6 +3094,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/apps" && method === "GET") {
+    const denied = await ensureApiAccess(AccessActions.AppsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     const tailParam = url.searchParams.get("tail") ?? url.searchParams.get("logs");
     const tail = tailParam ? Number.parseInt(tailParam, 10) : 0;
     const includeLogs = Number.isFinite(tail) && tail > 0;
@@ -3068,6 +3126,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/apps" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.AppsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     let payload: unknown;
     try {
       payload = await request.json();
@@ -3125,6 +3187,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/apps/discover" && method === "GET") {
+    const denied = await ensureApiAccess(AccessActions.AppsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     const root = normaliseOptionalString(url.searchParams.get("root"));
     if (!root) {
       return Response.json({ error: "Root directory is required" }, { status: 400 });
@@ -3138,6 +3204,10 @@ const handleApi = async (
   }
 
   if (pathname.startsWith("/api/apps/")) {
+    const denied = await ensureApiAccess(AccessActions.AppsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     const parts = pathname.split("/");
     const id = parts[3];
     if (!id) {
@@ -3326,6 +3396,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/docs/directory" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.FilesRead, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     let payload: unknown;
     try {
       payload = await request.json();
@@ -3350,6 +3424,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/docs/tree" && method === "GET") {
+    const denied = await ensureApiAccess(AccessActions.FilesRead, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     try {
       const pathParam = url.searchParams.get("path");
       const showHiddenParam = url.searchParams.get("showHidden") ?? "";
@@ -3366,6 +3444,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/docs/file" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     let payload: unknown;
     try {
       payload = await request.json();
@@ -3392,6 +3474,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/docs/file" && method === "GET") {
+    const denied = await ensureApiAccess(AccessActions.FilesRead, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     const pathParam = url.searchParams.get("path");
     if (!pathParam) {
       return Response.json({ error: "File path is required" }, { status: 400 });
@@ -3406,6 +3492,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/docs/file/raw" && method === "GET") {
+    const denied = await ensureApiAccess(AccessActions.FilesRead, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     const pathParam = url.searchParams.get("path");
     if (!pathParam) {
       return Response.json({ error: "File path is required" }, { status: 400 });
@@ -3420,6 +3510,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/docs/file" && method === "PUT") {
+    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     let payload: unknown;
     try {
       payload = await request.json();
@@ -3450,6 +3544,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/docs/file" && method === "DELETE") {
+    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     let payload: unknown;
     try {
       payload = await request.json();
@@ -3474,6 +3572,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/docs/file/copy" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     let payload: unknown;
     try {
       payload = await request.json();
@@ -3502,6 +3604,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/docs/file/move" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     let payload: unknown;
     try {
       payload = await request.json();
@@ -3530,6 +3636,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/docs/git" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     let payload: unknown;
     try {
       payload = await request.json();
@@ -3593,6 +3703,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/docs/worktrees" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     let payload: unknown;
     try {
       payload = await request.json();
@@ -3735,6 +3849,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/directories" && method === "GET") {
+    const denied = await ensureApiAccess(AccessActions.FilesRead, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     try {
       const data = await listDirectories(url.searchParams.get("path"), url.searchParams.get("query") ?? undefined);
       return Response.json(data);
@@ -3744,6 +3862,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/directories" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     let payload: unknown;
     try {
       payload = await request.json();
@@ -3770,6 +3892,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/uploads/images" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     let form: FormData;
     try {
       form = await request.formData();
@@ -3836,6 +3962,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/uploads/files" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     let form: FormData;
     try {
       form = await request.formData();
@@ -3903,6 +4033,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/sessions" && method === "GET") {
+    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     const allSessions = manager.listSessions();
     const filterParam = url.searchParams.get("npub");
 
@@ -3987,6 +4121,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/sessions" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     try {
       const payload = await request.json();
       const agent = typeof payload?.agent === "string" ? payload.agent.toLowerCase() : "";
@@ -4027,6 +4165,10 @@ const handleApi = async (
   }
 
   if (pathname.startsWith("/api/sessions/")) {
+    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     const parts = pathname.split("/");
     const id = parts[3];
     if (!id) {
@@ -4144,6 +4286,10 @@ const server = Bun.serve({
       }
 
       if (method === "GET" && pathname === "/deep-dive/config.json") {
+        const denied = await ensureApiAccess(AccessActions.DeepDiveAccess, request, url, authContext);
+        if (denied) {
+          return denied;
+        }
         const port = getDeepDivePort();
         const running = isDeepDiveProcessRunning();
         const override = Bun.env.DEEP_DIVE_SOCKET_URL?.trim();
@@ -4185,6 +4331,10 @@ const server = Bun.serve({
       }
 
       if (method === "GET" && isDeepDivePagePath(pathname)) {
+        const denied = await ensurePageAccess(AccessActions.DeepDiveAccess, request, url, authContext);
+        if (denied) {
+          return denied;
+        }
         const deepDivePage = servePublicAsset("/deep-dive.html");
         if (deepDivePage) {
           return deepDivePage;
