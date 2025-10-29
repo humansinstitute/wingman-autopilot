@@ -38,7 +38,7 @@ import {
   sendAgentMessage,
   waitForAgentReady as waitForAgentReadyCore,
 } from "./agents/agent-client";
-import { mintSessionCookie, SessionCookieError } from "./auth/session-cookie";
+import { mintSessionCookie, SessionCookieError, SESSION_COOKIE_NAME } from "./auth/session-cookie";
 import {
   resolveRequestAuthContext,
   runWithRequestContext,
@@ -840,6 +840,13 @@ const imageTtlMs = 24 * 60 * 60 * 1000;
 const attachmentTtlMs = 24 * 60 * 60 * 1000;
 const imageCleanupIntervalMs = 24 * 60 * 60 * 1000;
 const attachmentCleanupIntervalMs = 24 * 60 * 60 * 1000;
+
+const shouldUseSecureCookies = () => {
+  const flag = (Bun.env.IDENTITY_COOKIE_SECURE ?? Bun.env.COOKIE_SECURE ?? "").trim().toLowerCase();
+  if (flag === "false" || flag === "0") return false;
+  if (flag === "true" || flag === "1") return true;
+  return Bun.env.NODE_ENV === "production";
+};
 
 const ensureUserWorkspace = (npub: string | null) => {
   const segment = deriveNpubSegment(npub);
@@ -3008,6 +3015,21 @@ const handleApi = async (
       const message = error instanceof Error ? error.message : String(error);
       return Response.json({ error: `Failed to mint session cookie: ${message}` }, { status: 500 });
     }
+  }
+
+  if (pathname === "/api/auth/session" && method === "DELETE") {
+    const headers = new Headers({
+      "cache-control": "no-store",
+    });
+    const secureFlag = shouldUseSecureCookies() ? "; Secure" : "";
+    headers.append(
+      "set-cookie",
+      `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT${secureFlag}`,
+    );
+    authContext.npub = null;
+    authContext.session = null;
+    delete authContext.error;
+    return new Response(null, { status: 204, headers });
   }
 
   if (pathname === "/api/apps" && method === "GET") {

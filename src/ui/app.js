@@ -160,6 +160,7 @@ const identityDomRefs = {
   expiry: null,
   copyButton: null,
   copyFeedback: null,
+  logoutButton: null,
 };
 
 let identityCountdownIntervalId = null;
@@ -308,6 +309,9 @@ const syncIdentityDisplay = () => {
   if (identityDomRefs.copyButton) {
     identityDomRefs.copyButton.disabled = !npub;
   }
+  if (identityDomRefs.logoutButton) {
+    identityDomRefs.logoutButton.disabled = !authenticated;
+  }
   if (identityDomRefs.copyFeedback && !npub) {
     identityDomRefs.copyFeedback.hidden = true;
     delete identityDomRefs.copyFeedback.dataset.state;
@@ -446,6 +450,33 @@ const handleIdentityCopy = async () => {
   showIdentityCopyFeedback("Copy failed", { error: true });
 };
 
+const handleIdentityLogout = async () => {
+  if (identityDomRefs.logoutButton) {
+    identityDomRefs.logoutButton.disabled = true;
+  }
+  const sources = [globalThis.wingmanIdentity, globalThis.identity];
+  for (const source of sources) {
+    if (source && typeof source.logoutIdentity === "function") {
+      try {
+        await source.logoutIdentity();
+      } catch (error) {
+        console.error("[identity] logout failed", error);
+        const message = error instanceof Error ? error.message : "Failed to sign out";
+        window.alert(message);
+      }
+      if (identityDomRefs.logoutButton) {
+        identityDomRefs.logoutButton.disabled = !state.identity.authenticated;
+      }
+      return;
+    }
+  }
+
+  updateIdentityState({ npub: null, method: "none", expiresAt: null, isAuthenticated: false });
+  if (identityDomRefs.logoutButton) {
+    identityDomRefs.logoutButton.disabled = true;
+  }
+};
+
 const registerIdentityDom = (root) => {
   identityDomRefs.root = root;
   identityDomRefs.npub = root.querySelector('[data-role="identity-npub"]');
@@ -459,6 +490,14 @@ const registerIdentityDom = (root) => {
   identityDomRefs.copyFeedback = root.querySelector('[data-role="identity-copy-feedback"]');
   if (identityDomRefs.copyButton) {
     identityDomRefs.copyButton.addEventListener("click", handleIdentityCopy);
+  }
+  const nextLogoutButton = root.querySelector('[data-action="identity-logout"]');
+  if (identityDomRefs.logoutButton && identityDomRefs.logoutButton !== nextLogoutButton) {
+    identityDomRefs.logoutButton.removeEventListener("click", handleIdentityLogout);
+  }
+  identityDomRefs.logoutButton = nextLogoutButton ?? null;
+  if (identityDomRefs.logoutButton) {
+    identityDomRefs.logoutButton.addEventListener("click", handleIdentityLogout);
   }
   syncIdentityDisplay();
 };
@@ -5489,6 +5528,13 @@ const renderIdentitySummary = () => {
   copyButton.textContent = "Copy npub";
   copyButton.disabled = true;
   actions.append(copyButton);
+
+  const logoutButton = document.createElement("button");
+  logoutButton.type = "button";
+  logoutButton.className = "wm-button secondary";
+  logoutButton.dataset.action = "identity-logout";
+  logoutButton.textContent = "Logout";
+  actions.append(logoutButton);
 
   const feedback = document.createElement("span");
   feedback.className = "wm-identity-copy-feedback";

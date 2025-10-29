@@ -705,6 +705,68 @@ const setPanelStatus = (element, message, state = "info") => {
   element.hidden = false;
 };
 
+const fallbackCopyToClipboard = (value) => {
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "absolute";
+    textarea.style.left = "-9999px";
+    document.body.append(textarea);
+    textarea.select();
+    const success = document.execCommand("copy");
+    textarea.remove();
+    return success;
+  } catch {
+    return false;
+  }
+};
+
+const copyToClipboard = async (value) => {
+  if (typeof navigator !== "undefined" && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch (error) {
+      console.warn("[identity] navigator.clipboard.writeText failed", error instanceof Error ? error.message : error);
+    }
+  }
+  return fallbackCopyToClipboard(value);
+};
+
+const performLogout = async () => {
+  let error = null;
+  try {
+    const response = await fetch("/api/auth/session", {
+      method: "DELETE",
+      credentials: "include",
+    });
+    if (!response.ok && response.status !== 204) {
+      const payload = await response.json().catch(() => ({}));
+      const message = payload && typeof payload === "object" && typeof payload.error === "string" ? payload.error : `Failed to clear session (${response.status})`;
+      error = new Error(message);
+    }
+  } catch (cause) {
+    error = cause instanceof Error ? cause : new Error(String(cause));
+  }
+
+  try {
+    identityApi.sessionCache?.clear?.();
+  } catch (cause) {
+    console.warn("[identity] failed to clear session cache", cause instanceof Error ? cause.message : cause);
+  }
+  clearPasswordCache();
+  clearPasswordMeta();
+  applyIdentityUpdate(null, { npub: null, method: "none", expiresAt: null, isAuthenticated: false });
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("wingman:identity-logout"));
+  }
+
+  if (error) {
+    throw error;
+  }
+};
+
 const wireLocalIdentityPanel = (root, context) => {
   if (!root) return;
   const generateBtn = root.querySelector('[data-action="generate-keys"]');
@@ -714,6 +776,18 @@ const wireLocalIdentityPanel = (root, context) => {
   const importForm = root.querySelector('[data-form="import-nsec"]');
 
   let latestKeys = null;
+
+  const resetPanel = () => {
+    latestKeys = null;
+    if (npubOutput) {
+      npubOutput.textContent = "";
+    }
+    if (nsecOutput) {
+      nsecOutput.textContent = "";
+      nsecOutput.setAttribute("hidden", "");
+    }
+    root.classList.remove("is-authenticated");
+  };
 
   const handleAuthSuccess = ({ npub, nsec, encryptedNsec, expiresAt, method }) => {
     latestKeys = { npub, nsec: nsec ?? null };
@@ -769,8 +843,8 @@ const wireLocalIdentityPanel = (root, context) => {
   copyBtn?.addEventListener("click", async () => {
     if (!latestKeys?.nsec) return;
     try {
-      await navigator.clipboard.writeText(latestKeys.nsec);
-      window.alert("Private key copied to clipboard");
+      const copied = await copyToClipboard(latestKeys.nsec);
+      window.alert(copied ? "Private key copied to clipboard" : "Copy failed. Select and copy the key manually.");
     } catch (error) {
       console.warn("[identity] copy nsec failed", error);
       window.alert("Failed to copy private key. Copy it manually from the panel.");
@@ -820,6 +894,11 @@ const wireLocalIdentityPanel = (root, context) => {
       }
     }
   });
+
+  if (typeof window !== "undefined" && !root.dataset.logoutHooked) {
+    window.addEventListener("wingman:identity-logout", resetPanel);
+    root.dataset.logoutHooked = "true";
+  }
 };
 
 const wireNip07Panel = (root, context) => {
@@ -856,6 +935,13 @@ const wireNip07Panel = (root, context) => {
       loginButton.disabled = false;
     }
   });
+
+  if (typeof window !== "undefined" && !root.dataset.logoutStatusHooked) {
+    window.addEventListener("wingman:identity-logout", () => {
+      setStatus("Signed out", "info");
+    });
+    root.dataset.logoutStatusHooked = "true";
+  }
 };
 
 const wireBunkerPanel = (root) => {
@@ -873,6 +959,13 @@ const wireBunkerPanel = (root) => {
   scanButton?.addEventListener("click", () => {
     setStatus("QR scanning is not implemented yet.", "warning");
   });
+
+  if (typeof window !== "undefined" && !root.dataset.logoutBunkerHooked) {
+    window.addEventListener("wingman:identity-logout", () => {
+      setStatus("Signed out", "info");
+    });
+    root.dataset.logoutBunkerHooked = "true";
+  }
 };
 
 identityApi.uiPrompts = {
@@ -912,6 +1005,9 @@ identityApi.wireNip07Panel = wireNip07Panel;
 identityApi.wireNip07 = wireNip07Panel;
 identityApi.wireNip07Login = wireNip07Panel;
 identityApi.wireBunkerPanel = wireBunkerPanel;
+identityApi.wireBunkerLogin = wireBunkerPanel;
+identityApi.wireBunkerQRScanner = wireBunkerPanel;
+identityApi.logoutIdentity = performLogout;
 
 globalThis.wingmanIdentity = identityApi;
 
@@ -931,4 +1027,5 @@ export {
   wireLocalIdentityPanel,
   wireNip07Panel,
   wireBunkerPanel,
+  performLogout as logoutIdentity,
 };
