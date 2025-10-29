@@ -7886,6 +7886,22 @@ document.addEventListener("click", (event) => {
       closeMenu();
     }
   }
+
+  const clickTarget = event.target;
+  if (clickTarget instanceof HTMLElement) {
+    if (clickTarget.matches('[data-action="identity-logout"]')) {
+      if (!clickTarget.disabled) {
+        void handleIdentityLogout(event, identityDomEntryByNode.get(clickTarget) ?? null);
+      } else {
+        event.preventDefault();
+      }
+      return;
+    }
+    if (clickTarget.matches('[data-action="copy-active-npub"]')) {
+      void handleIdentityCopy(event, identityDomEntryByNode.get(clickTarget) ?? null);
+      return;
+    }
+  }
 });
 
 window.addEventListener("resize", () => {
