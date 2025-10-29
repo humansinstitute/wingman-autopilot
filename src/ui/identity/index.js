@@ -10,7 +10,7 @@ const ENCRYPTION_VERSION = 0x02;
 import { scryptAsync } from "/vendor/@noble/hashes/scrypt.js";
 import { xchacha20poly1305 } from "/vendor/@noble/ciphers/chacha.js";
 import { bech32 } from "/vendor/@scure/base/index.js";
-import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
+import { generateSecretKey, getPublicKey, nip19 } from "/vendor/nostr-tools/index.js";
 
 const textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
 
