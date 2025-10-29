@@ -10,7 +10,7 @@
     <link rel="apple-touch-icon" href="/path/Wingman_Goose_Logo.png" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body>
+  <body data-authenticated="false" data-admin="false">
     <header class="wm-header">
       <div class="wm-brand">
         <img
@@ -57,7 +57,7 @@
           <a href="/live" data-route="live">Agents</a>
           <a href="/apps" data-route="apps">Apps</a>
           <a href="/files" data-route="files">Files</a>
-          <a href="/deep-dive">Deep Dive</a>
+          <a href="/deep-dive" class="requires-admin">Deep Dive</a>
           <a href="/settings" data-route="settings">Settings</a>
         </nav>
         <div class="wm-menu-actions">

@@ -47,14 +47,18 @@ import {
 import { deriveNpubSegment, normaliseNpub } from "./identity/npub-utils";
 import {
   AccessActions,
+  allow,
+  deny,
   evaluateAccess,
   registerAccessRule,
   requireAuthentication,
   type AccessAction,
   type AccessDecision,
+  type AccessRule,
 } from "./auth/access-control";
 
 const config = loadConfig();
+const adminNpub = normaliseNpub(Bun.env.ADMIN_NPUB ?? null);
 process.env.WINGMAN_PID = process.pid.toString();
 console.log(`[config] tmux session base: ${config.tmuxBase}`);
 const TMUX_SESSION_NAME = config.tmuxBase;
@@ -1049,8 +1053,10 @@ type IdentitySummary = {
 const buildIdentitySummaries = (
   activeSessions: SessionSnapshot[],
   viewerNormalizedNpub: string | null,
+  options?: { includeAll?: boolean },
 ): IdentitySummary[] => {
-  if (!viewerNormalizedNpub) {
+  const includeAll = Boolean(options?.includeAll);
+  if (!includeAll && !viewerNormalizedNpub) {
     return [];
   }
 
@@ -1072,8 +1078,10 @@ const buildIdentitySummaries = (
 
   const registerSession = (npubValue: string | null, sessionId: string, startedAt: string, isActive: boolean) => {
     const normalized = normaliseNpub(npubValue);
-    if (!normalized || normalized !== viewerNormalizedNpub) {
-      return;
+    if (!includeAll) {
+      if (!normalized || normalized !== viewerNormalizedNpub) {
+        return;
+      }
     }
     const key = normalized ?? "__anonymous__";
     let accumulator = summaryMap.get(key);
@@ -1147,7 +1155,11 @@ const getViewerNormalizedNpub = (authContext: RequestAuthContext): string | null
 const sessionBelongsToViewer = (
   sessionNpub: string | null | undefined,
   viewerNormalizedNpub: string | null,
+  viewerIsAdmin: boolean,
 ): boolean => {
+  if (viewerIsAdmin) {
+    return true;
+  }
   if (!viewerNormalizedNpub) {
     return false;
   }
@@ -1168,7 +1180,7 @@ const resolveScopedUpload = (pathname: string, authContext: RequestAuthContext, 
 
   const [segment, ...rest] = parts;
   const expectedSegment = deriveNpubSegment(authContext.npub ?? null);
-  if (segment !== expectedSegment) {
+  if (!isAdminContext(authContext) && segment !== expectedSegment) {
     return undefined;
   }
 
@@ -2934,6 +2946,23 @@ const ensureWingmanCoreRegistration = async () => {
 
 void ensureWingmanCoreRegistration();
 
+const isAdminContext = (authContext: RequestAuthContext): boolean => {
+  if (!adminNpub) return false;
+  const normalized = normaliseNpub(authContext.npub ?? null);
+  return normalized === adminNpub;
+};
+
+const requireAdminAccess = (): AccessRule => {
+  return (context) => {
+    if (!adminNpub) {
+      return deny("admin-only", 403);
+    }
+    return isAdminContext(context.auth) ? allow() : deny("admin-only", 403);
+  };
+};
+
+registerAccessRule(AccessActions.DeepDiveAccess, requireAdminAccess());
+
 const accessDeniedJson = (decision: AccessDecision): Response => {
   const headers = new Headers({
     "cache-control": "no-store",
@@ -3411,6 +3440,7 @@ const handleApi = async (
       agentPortMax: config.agentPortMax,
       defaultDirectory: config.defaultWorkingDirectory,
       allowedDirectories: config.allowedDirectories,
+      adminNpub,
       agents: Object.entries(config.agents).map(([key, definition]) => ({
         id: key,
         label: definition.label,
@@ -4066,10 +4096,13 @@ const handleApi = async (
       return denied;
     }
     const viewerNormalizedNpub = getViewerNormalizedNpub(authContext);
+    const viewerIsAdmin = Boolean(adminNpub && viewerNormalizedNpub && viewerNormalizedNpub === adminNpub);
     const allSessions = manager.listSessions();
-    const ownedSessions = viewerNormalizedNpub
-      ? allSessions.filter((session) => sessionBelongsToViewer(session.npub ?? null, viewerNormalizedNpub))
-      : [];
+    const accessibleSessions = viewerIsAdmin
+      ? allSessions
+      : viewerNormalizedNpub
+        ? allSessions.filter((session) => sessionBelongsToViewer(session.npub ?? null, viewerNormalizedNpub, false))
+        : [];
     const filterParam = url.searchParams.get("npub");
 
     const normalizeFilterValue = (value: string | null): string | null | "__anonymous__" => {
@@ -4080,7 +4113,7 @@ const handleApi = async (
     };
 
     const filterValue = normalizeFilterValue(filterParam);
-    const filteredSessions = ownedSessions.filter((session) => {
+    const filteredSessions = accessibleSessions.filter((session) => {
       if (filterValue === null) {
         return true;
       }
@@ -4091,14 +4124,17 @@ const handleApi = async (
       return sessionNormalized === filterValue;
     });
 
-    let scopedIdentities = buildIdentitySummaries(ownedSessions, viewerNormalizedNpub);
-    if (scopedIdentities.length === 0 && viewerNormalizedNpub && authContext.npub) {
+    let identitySummaries = viewerIsAdmin
+      ? buildIdentitySummaries(allSessions, viewerNormalizedNpub, { includeAll: true })
+      : buildIdentitySummaries(accessibleSessions, viewerNormalizedNpub, { includeAll: false });
+
+    if (!viewerIsAdmin && identitySummaries.length === 0 && viewerNormalizedNpub && authContext.npub) {
       const segment = deriveNpubSegment(authContext.npub);
       const dataRoot = normalize(join(userIdentityRoot, segment));
       const logsRoot = normalize(join(dataRoot, "logs"));
       const attachmentsRoot = normalize(join(attachmentRoot, segment));
       const imagesRoot = normalize(join(imageRoot, segment));
-      scopedIdentities = [
+      identitySummaries = [
         {
           npub: authContext.npub,
           normalizedNpub: viewerNormalizedNpub,
@@ -4114,7 +4150,7 @@ const handleApi = async (
       ];
     }
 
-    const npubFilters = scopedIdentities.map((identity) => ({
+    const npubFilters = identitySummaries.map((identity) => ({
       value: identity.normalizedNpub ?? "__anonymous__",
       npub: identity.npub,
       label: identity.npub ?? "Anonymous",
@@ -4124,7 +4160,7 @@ const handleApi = async (
 
     return Response.json({
       sessions: filteredSessions,
-      identities: scopedIdentities,
+      identities: identitySummaries,
       filters: {
         npubs: npubFilters,
         active: filterValue,
@@ -4230,13 +4266,16 @@ const handleApi = async (
     }
 
     const viewerNormalizedNpub = getViewerNormalizedNpub(authContext);
-    if (!viewerNormalizedNpub) {
+    const viewerIsAdmin = Boolean(adminNpub && viewerNormalizedNpub && viewerNormalizedNpub === adminNpub);
+    if (!viewerIsAdmin && !viewerNormalizedNpub) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
 
     const liveSession = manager.getSession(id);
     const ownedSession =
-      liveSession && sessionBelongsToViewer(liveSession.npub ?? null, viewerNormalizedNpub) ? liveSession : null;
+      liveSession && sessionBelongsToViewer(liveSession.npub ?? null, viewerNormalizedNpub, viewerIsAdmin)
+        ? liveSession
+        : null;
 
     if (method === "GET" && parts.length === 4) {
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
@@ -4256,10 +4295,14 @@ const handleApi = async (
       }
 
       if (!ownedSession) {
-        const storedRecord = messageStore
-          .listSessions()
-          .find((record) => record.id === id && sessionBelongsToViewer(record.npub, viewerNormalizedNpub));
-        if (!storedRecord) {
+        if (!viewerIsAdmin) {
+          const storedRecord = messageStore
+            .listSessions()
+            .find((record) => record.id === id && sessionBelongsToViewer(record.npub, viewerNormalizedNpub, viewerIsAdmin));
+          if (!storedRecord) {
+            return Response.json({ error: "Not found" }, { status: 404 });
+          }
+        } else if (!messageStore.listSessions().some((record) => record.id === id)) {
           return Response.json({ error: "Not found" }, { status: 404 });
         }
       }

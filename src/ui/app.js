@@ -138,6 +138,7 @@ const state = {
     npub: null,
     expiresAt: null,
     authenticated: false,
+    isAdmin: false,
   },
 };
 
@@ -257,6 +258,17 @@ const abbreviateNpub = (npub) => {
   if (!npub || typeof npub !== "string") return "";
   if (npub.length <= 20) return npub;
   return `${npub.slice(0, 12)}…${npub.slice(-6)}`;
+};
+
+const normaliseNpubValue = (npub) => {
+  if (typeof npub !== "string") return null;
+  const trimmed = npub.trim();
+  return trimmed.length === 0 ? null : trimmed;
+};
+
+const getConfiguredAdminNpub = () => {
+  const configured = state.config?.adminNpub;
+  return typeof configured === "string" && configured.trim().length > 0 ? configured.trim() : null;
 };
 
 const formatIdentityDuration = (ms) => {
@@ -458,6 +470,7 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
     npub: current.npub,
     expiresAt: current.expiresAt,
     authenticated: current.authenticated,
+    isAdmin: current.isAdmin,
   };
 
   if ("isAuthenticated" in partial && partial.isAuthenticated === false) {
@@ -498,13 +511,18 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
     next.expiresAt = null;
   }
 
+  const configuredAdminNpub = getConfiguredAdminNpub();
+  const normalizedNextNpub = normaliseNpubValue(next.npub);
+  next.isAdmin = Boolean(configuredAdminNpub && normalizedNextNpub && normalizedNextNpub === configuredAdminNpub);
+
   next.authenticated = Boolean(next.npub);
 
   const changed =
     next.method !== current.method ||
     next.npub !== current.npub ||
     next.expiresAt !== current.expiresAt ||
-    next.authenticated !== current.authenticated;
+    next.authenticated !== current.authenticated ||
+    next.isAdmin !== current.isAdmin;
 
   if (!changed) {
     return current;
@@ -2915,10 +2933,13 @@ const menuToggle = document.getElementById("menu-toggle");
 const menuPanel = document.querySelector(".wm-menu-panel");
 const menuTabsContainer = document.getElementById("menu-tabs");
 const headerLoginButton = document.getElementById("header-login");
+const deepDiveLink = document.querySelector('a[href="/deep-dive"]');
 performAuthUiSync = () => {
   const authed = Boolean(state.identity.authenticated);
+  const isAdmin = Boolean(state.identity.isAdmin);
   if (typeof document !== "undefined" && document.body) {
     document.body.dataset.authenticated = authed ? "true" : "false";
+    document.body.dataset.admin = isAdmin ? "true" : "false";
   }
   navLinks.forEach((link) => {
     if (authed) {
@@ -2934,6 +2955,15 @@ performAuthUiSync = () => {
   }
   if (headerLoginButton) {
     headerLoginButton.disabled = authed;
+  }
+  if (deepDiveLink) {
+    if (isAdmin) {
+      deepDiveLink.removeAttribute("tabindex");
+      deepDiveLink.removeAttribute("aria-disabled");
+    } else {
+      deepDiveLink.setAttribute("tabindex", "-1");
+      deepDiveLink.setAttribute("aria-disabled", "true");
+    }
   }
 };
 
@@ -3060,6 +3090,14 @@ identityLoginDialog?.addEventListener("cancel", (event) => {
 });
 
 headerLoginButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  openIdentityLoginDialog();
+});
+
+deepDiveLink?.addEventListener("click", (event) => {
+  if (state.identity.isAdmin) {
+    return;
+  }
   event.preventDefault();
   openIdentityLoginDialog();
 });
@@ -3899,7 +3937,9 @@ const submitFileTransfer = async () => {
 
 const fetchConfig = async () => {
   const response = await fetch("/api/config");
-  state.config = await response.json();
+  const configData = await response.json();
+  const adminNpubNormalized = normaliseNpubValue(configData?.adminNpub ?? null);
+  state.config = { ...configData, adminNpub: adminNpubNormalized ?? null };
   agentSelect.innerHTML = "";
   state.config.agents.forEach((agent) => {
     const option = document.createElement("option");
@@ -3925,6 +3965,7 @@ const fetchConfig = async () => {
     directoryInput.placeholder = state.config.defaultDirectory ?? "";
     scheduleDirectorySuggestions(initial);
   }
+  updateIdentityState({ npub: state.identity.npub }, { persist: false, emit: true });
 };
 
 const fetchSessions = async () => {

@@ -67,6 +67,10 @@ body[data-authenticated="false"] .guest-only {
   display: inline-flex;
 }
 
+body[data-admin="false"] .requires-admin {
+  display: none !important;
+}
+
 .wm-header {
   display: flex;
   align-items: center;
