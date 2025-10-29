@@ -10,6 +10,7 @@ const ENCRYPTION_VERSION = 0x02;
 import { scryptAsync } from "/vendor/@noble/hashes/scrypt.js";
 import { xchacha20poly1305 } from "/vendor/@noble/ciphers/chacha.js";
 import { bech32 } from "/vendor/@scure/base/index.js";
+import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 
 const textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
 
@@ -571,6 +572,283 @@ if (typeof window !== "undefined") {
 
 const identityApi = typeof globalThis !== "undefined" && globalThis.wingmanIdentity ? globalThis.wingmanIdentity : {};
 
+const getIdentityUiApi = () => {
+  if (typeof globalThis === "undefined") return null;
+  const candidate = globalThis.wingmanIdentityUI;
+  return candidate && typeof candidate === "object" ? candidate : null;
+};
+
+const hexToBytes = (hex) => {
+  const normalized = hex.trim().toLowerCase();
+  if (normalized.length === 0 || normalized.length % 2 !== 0 || /[^0-9a-f]/.test(normalized)) {
+    throw new Error("Invalid hex value");
+  }
+  const length = normalized.length / 2;
+  const bytes = new Uint8Array(length);
+  for (let index = 0; index < length; index += 1) {
+    const offset = index * 2;
+    bytes[index] = Number.parseInt(normalized.slice(offset, offset + 2), 16);
+  }
+  return bytes;
+};
+
+const parseNsecValue = (input) => {
+  if (!input || typeof input !== "string") {
+    throw new Error("Private key value is required");
+  }
+  const value = input.trim();
+  if (!value) {
+    throw new Error("Private key value is required");
+  }
+  try {
+    const decoded = nip19.decode(value);
+    if (decoded.type !== "nsec") {
+      throw new Error("Only nsec keys are supported");
+    }
+    const data = decoded.data;
+    if (data instanceof Uint8Array) {
+      return data;
+    }
+    if (typeof data === "string") {
+      return hexToBytes(data);
+    }
+    throw new Error("Unsupported nsec payload");
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Only nsec")) {
+      throw error;
+    }
+    // Allow raw hex fallback
+    const hex = value.toLowerCase();
+    if (/^[0-9a-f]{64}$/.test(hex)) {
+      return hexToBytes(hex);
+    }
+    throw new Error("Invalid nsec format");
+  }
+};
+
+const persistServerSession = async (npub, encryptedNsec) => {
+  const body = {
+    npub,
+    encryptedNsec: typeof encryptedNsec === "string" ? encryptedNsec : null,
+  };
+  const response = await fetch("/api/auth/session", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    credentials: "include",
+    body: JSON.stringify(body),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = payload && typeof payload === "object" && typeof payload.error === "string" ? payload.error : `Failed to create session (${response.status})`;
+    throw new Error(message);
+  }
+
+  const expiresAt = typeof payload?.expiresAt === "number" && Number.isFinite(payload.expiresAt) ? payload.expiresAt : null;
+  return { expiresAt };
+};
+
+const applyIdentityUpdate = (context, partial) => {
+  if (context && typeof context.updateIdentityState === "function") {
+    context.updateIdentityState(partial);
+    return;
+  }
+  const ui = getIdentityUiApi();
+  if (ui && typeof ui.update === "function") {
+    ui.update(partial);
+  }
+};
+
+const saveCachedSession = ({ npub, encryptedNsec, expiresAt, method, logN = DEFAULT_LOG_N }) => {
+  try {
+    identityApi.sessionCache?.save({
+      npub,
+      encryptedNsec: encryptedNsec ?? null,
+      sessionExpiresAt: expiresAt ?? null,
+      method,
+      logN,
+      createdAt: Date.now(),
+    });
+  } catch (error) {
+    console.warn("[identity] Failed to cache session", error instanceof Error ? error.message : error);
+  }
+};
+
+const setPanelStatus = (element, message, state = "info") => {
+  if (!element) return;
+  element.textContent = message;
+  element.dataset.state = state;
+  element.hidden = false;
+};
+
+const wireLocalIdentityPanel = (root, context) => {
+  if (!root) return;
+  const generateBtn = root.querySelector('[data-action="generate-keys"]');
+  const copyBtn = root.querySelector('[data-action="copy-nsec"]');
+  const npubOutput = root.querySelector('[data-role="npub"]');
+  const nsecOutput = root.querySelector('[data-role="nsec"]');
+  const importForm = root.querySelector('[data-form="import-nsec"]');
+
+  let latestKeys = null;
+
+  const handleAuthSuccess = ({ npub, nsec, encryptedNsec, expiresAt, method }) => {
+    latestKeys = { npub, nsec: nsec ?? null };
+    if (npubOutput) {
+      npubOutput.textContent = npub;
+    }
+    if (nsec && nsecOutput) {
+      nsecOutput.textContent = nsec;
+      nsecOutput.removeAttribute("hidden");
+    }
+    saveCachedSession({ npub, encryptedNsec, expiresAt, method });
+    applyIdentityUpdate(context, { npub, method, expiresAt, isAuthenticated: true });
+    root.classList.add("is-authenticated");
+  };
+
+  generateBtn?.addEventListener("click", async () => {
+    if (!generateBtn) return;
+    generateBtn.disabled = true;
+    generateBtn.dataset.state = "pending";
+    let secretKey;
+    try {
+      secretKey = generateSecretKey();
+      const pubkeyHex = getPublicKey(secretKey);
+      const npub = nip19.npubEncode(pubkeyHex);
+      const nsec = nip19.nsecEncode(secretKey);
+
+      let encryptedNsec = null;
+      try {
+        encryptedNsec = await identityApi.crypto?.encryptPrivateKey(secretKey, {
+          mode: "create",
+          reason: "Create a password to protect your new key.",
+        });
+      } catch (error) {
+        console.warn("[identity] failed to encrypt private key", error instanceof Error ? error.message : error);
+      }
+
+      const { expiresAt } = await persistServerSession(npub, encryptedNsec);
+
+      handleAuthSuccess({ npub, nsec, encryptedNsec, expiresAt, method: "local_keys" });
+    } catch (error) {
+      console.error("[identity] generate keys failed", error);
+      window.alert(error instanceof Error ? error.message : "Failed to generate keys");
+    } finally {
+      if (secretKey) {
+        wipeBytes(secretKey);
+      }
+      generateBtn.disabled = false;
+      delete generateBtn.dataset.state;
+    }
+  });
+
+  copyBtn?.addEventListener("click", async () => {
+    if (!latestKeys?.nsec) return;
+    try {
+      await navigator.clipboard.writeText(latestKeys.nsec);
+      window.alert("Private key copied to clipboard");
+    } catch (error) {
+      console.warn("[identity] copy nsec failed", error);
+      window.alert("Failed to copy private key. Copy it manually from the panel.");
+    }
+  });
+
+  importForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = importForm.querySelector('button[type="submit"]');
+    const input = importForm.querySelector('input[name="nsec"]');
+    if (submitButton) submitButton.disabled = true;
+    importForm.classList.add("is-loading");
+    let secretKey;
+    try {
+      if (!input) {
+        throw new Error("Missing nsec input");
+      }
+      secretKey = parseNsecValue(input.value);
+      const pubkeyHex = getPublicKey(secretKey);
+      const npub = nip19.npubEncode(pubkeyHex);
+      const nsec = nip19.nsecEncode(secretKey);
+
+      let encryptedNsec = null;
+      try {
+        encryptedNsec = await identityApi.crypto?.encryptPrivateKey(secretKey, {
+          mode: "create",
+          reason: "Protect your imported key with a password.",
+        });
+      } catch (error) {
+        console.warn("[identity] failed to encrypt imported key", error instanceof Error ? error.message : error);
+      }
+
+      const { expiresAt } = await persistServerSession(npub, encryptedNsec);
+      handleAuthSuccess({ npub, nsec, encryptedNsec, expiresAt, method: "local_keys" });
+      window.alert("Signed in with imported key");
+    } catch (error) {
+      console.error("[identity] import nsec failed", error);
+      window.alert(error instanceof Error ? error.message : "Failed to import key");
+    } finally {
+      importForm.classList.remove("is-loading");
+      if (submitButton) submitButton.disabled = false;
+      if (secretKey) {
+        wipeBytes(secretKey);
+      }
+    }
+  });
+};
+
+const wireNip07Panel = (root, context) => {
+  if (!root) return;
+  const loginButton = root.querySelector('[data-action="nip07-login"]');
+  const statusEl = root.querySelector('[data-role="nip07-status"]');
+
+  const setStatus = (message, state = "info") => setPanelStatus(statusEl, message, state);
+
+  loginButton?.addEventListener("click", async () => {
+    if (!loginButton) return;
+    if (typeof window === "undefined" || !window.nostr || typeof window.nostr.getPublicKey !== "function") {
+      setStatus("No Nostr extension detected.", "error");
+      return;
+    }
+
+    loginButton.disabled = true;
+    setStatus("Requesting permission from extension…");
+    try {
+      const pubkeyHex = await window.nostr.getPublicKey();
+      if (!pubkeyHex || typeof pubkeyHex !== "string") {
+        throw new Error("Extension returned an empty key");
+      }
+      const npub = nip19.npubEncode(pubkeyHex);
+      const { expiresAt } = await persistServerSession(npub, null);
+      saveCachedSession({ npub, encryptedNsec: null, expiresAt, method: "nip07" });
+      applyIdentityUpdate(context, { npub, method: "nip07", expiresAt, isAuthenticated: true });
+      root.classList.add("is-authenticated");
+      setStatus("Extension connected", "success");
+    } catch (error) {
+      console.error("[identity] nip07 login failed", error);
+      setStatus(error instanceof Error ? error.message : "Failed to connect extension", "error");
+    } finally {
+      loginButton.disabled = false;
+    }
+  });
+};
+
+const wireBunkerPanel = (root) => {
+  if (!root) return;
+  const form = root.querySelector('[data-form="bunker-auth"]');
+  const scanButton = root.querySelector('[data-action="scan-qr"]');
+  const statusEl = root.querySelector('[data-role="bunker-status"]');
+  const setStatus = (message, state = "info") => setPanelStatus(statusEl, message, state);
+
+  form?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    setStatus("Remote signer support is coming soon.", "warning");
+  });
+
+  scanButton?.addEventListener("click", () => {
+    setStatus("QR scanning is not implemented yet.", "warning");
+  });
+};
+
 identityApi.uiPrompts = {
   ensurePassword,
   clearPasswordCache,
@@ -603,6 +881,12 @@ identityApi.passwordMeta = {
   clear: clearPasswordMeta,
 };
 
+identityApi.wireLocalIdentityPanel = wireLocalIdentityPanel;
+identityApi.wireNip07Panel = wireNip07Panel;
+identityApi.wireNip07 = wireNip07Panel;
+identityApi.wireNip07Login = wireNip07Panel;
+identityApi.wireBunkerPanel = wireBunkerPanel;
+
 globalThis.wingmanIdentity = identityApi;
 
 export {
@@ -618,4 +902,7 @@ export {
   loadPasswordMeta,
   clearPasswordMeta,
   exportEncryptedSession,
+  wireLocalIdentityPanel,
+  wireNip07Panel,
+  wireBunkerPanel,
 };
