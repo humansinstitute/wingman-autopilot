@@ -156,7 +156,66 @@ const IDENTITY_EVENT_NAMES = ["wingman:identity-state", "identity:state", "nostr
 const identityDomEntries = new Set();
 const identityDomEntryByNode = new WeakMap();
 const identityCopyFeedbackTimeouts = new WeakMap();
+const identityButtonTimers = new WeakMap();
 let identityCountdownIntervalId = null;
+
+const clearButtonStateTimer = (button) => {
+  if (!button) return;
+  const timerId = identityButtonTimers.get(button);
+  if (timerId) {
+    window.clearTimeout(timerId);
+    identityButtonTimers.delete(button);
+  }
+};
+
+const ensureButtonOriginalLabel = (button) => {
+  if (!button) return;
+  if (!button.dataset.originalLabel) {
+    button.dataset.originalLabel = button.textContent ?? "";
+  }
+};
+
+const resetButtonState = (button) => {
+  if (!button) return;
+  clearButtonStateTimer(button);
+  const originalLabel = button.dataset.originalLabel;
+  if (typeof originalLabel === "string") {
+    button.textContent = originalLabel;
+  }
+  delete button.dataset.state;
+  button.removeAttribute("aria-busy");
+};
+
+const setButtonState = (button, options = {}) => {
+  if (!button) return;
+  ensureButtonOriginalLabel(button);
+  const { state, label, disable, restoreAfterMs } = options;
+  if (state) {
+    button.dataset.state = state;
+    if (state === "loading") {
+      button.setAttribute("aria-busy", "true");
+    } else {
+      button.removeAttribute("aria-busy");
+    }
+  } else {
+    delete button.dataset.state;
+    button.removeAttribute("aria-busy");
+  }
+  if (typeof label === "string") {
+    button.textContent = label;
+  }
+  if (typeof disable === "boolean") {
+    button.disabled = disable;
+  }
+  if (restoreAfterMs && restoreAfterMs > 0) {
+    clearButtonStateTimer(button);
+    const timerId = window.setTimeout(() => {
+      resetButtonState(button);
+      identityButtonTimers.delete(button);
+    }, restoreAfterMs);
+    identityButtonTimers.set(button, timerId);
+  }
+};
 
 const identityMethodLabels = {
   none: "Not signed in",
@@ -222,6 +281,14 @@ const showIdentityCopyFeedback = (message, { error = false, entry } = {}) => {
       delete currentFeedback.dataset.state;
     }, 2000);
     identityCopyFeedbackTimeouts.set(target, timeoutId);
+    if (target.copyButton) {
+      setButtonState(target.copyButton, {
+        state: error ? "error" : "success",
+        label: error ? "Copy failed" : "Copied",
+        disable: false,
+        restoreAfterMs: error ? 2500 : 1500,
+      });
+    }
   });
 };
 
@@ -319,10 +386,20 @@ const syncIdentityDisplayForEntry = (entry) => {
     entry.method.textContent = authenticated ? (identityMethodLabels[method] ?? method ?? "Unknown") : "—";
   }
   if (entry.copyButton) {
-    entry.copyButton.disabled = !npub;
+    if (!npub) {
+      resetButtonState(entry.copyButton);
+      entry.copyButton.disabled = true;
+    } else {
+      entry.copyButton.disabled = false;
+    }
   }
   if (entry.logoutButton) {
-    entry.logoutButton.disabled = !authenticated;
+    if (!authenticated) {
+      resetButtonState(entry.logoutButton);
+      entry.logoutButton.disabled = true;
+    } else {
+      entry.logoutButton.disabled = false;
+    }
   }
   if (entry.copyFeedback && !npub) {
     entry.copyFeedback.hidden = true;
@@ -442,7 +519,15 @@ const handleIdentityCopy = async (event, entryOverride) => {
   }
   const entry = entryOverride ?? (event?.currentTarget ? identityDomEntryByNode.get(event.currentTarget) : null);
   const npub = state.identity.npub;
-  if (!npub) return;
+  if (!npub) {
+    if (entry?.copyButton) {
+      resetButtonState(entry.copyButton);
+    }
+    return;
+  }
+  if (entry?.copyButton) {
+    setButtonState(entry.copyButton, { state: "loading", label: "Copying…", disable: true });
+  }
   try {
     if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
       await navigator.clipboard.writeText(npub);
@@ -521,7 +606,7 @@ const handleIdentityLogout = async (event, entryOverride) => {
   }
   identityDomEntries.forEach((entry) => {
     if (entry.logoutButton) {
-      entry.logoutButton.disabled = true;
+      setButtonState(entry.logoutButton, { state: "loading", label: "Logging out…", disable: true });
     }
   });
   let logoutSuccessful = false;
@@ -553,13 +638,28 @@ const handleIdentityLogout = async (event, entryOverride) => {
 
   if (logoutSuccessful) {
     forceIdentityLogoutState();
+    identityDomEntries.forEach((entry) => {
+      if (entry.logoutButton) {
+        setButtonState(entry.logoutButton, {
+          state: "success",
+          label: "Logged out",
+          disable: true,
+          restoreAfterMs: 1500,
+        });
+      }
+    });
+  } else {
+    identityDomEntries.forEach((entry) => {
+      if (entry.logoutButton) {
+        setButtonState(entry.logoutButton, {
+          state: "error",
+          label: "Retry logout",
+          disable: false,
+          restoreAfterMs: 2500,
+        });
+      }
+    });
   }
-
-  identityDomEntries.forEach((entry) => {
-    if (entry.logoutButton) {
-      entry.logoutButton.disabled = !state.identity.authenticated;
-    }
-  });
 };
 
 const detachIdentityDomEntry = (entry) => {
@@ -567,10 +667,12 @@ const detachIdentityDomEntry = (entry) => {
   if (entry.copyButton && entry.copyHandler) {
     entry.copyButton.removeEventListener("click", entry.copyHandler);
     identityDomEntryByNode.delete(entry.copyButton);
+    resetButtonState(entry.copyButton);
   }
   if (entry.logoutButton && entry.logoutHandler) {
     entry.logoutButton.removeEventListener("click", entry.logoutHandler);
     identityDomEntryByNode.delete(entry.logoutButton);
+    resetButtonState(entry.logoutButton);
   }
   const timeoutId = identityCopyFeedbackTimeouts.get(entry);
   if (timeoutId) {
@@ -622,6 +724,7 @@ const registerIdentityDom = (root) => {
   };
 
   if (entry.copyButton) {
+    ensureButtonOriginalLabel(entry.copyButton);
     entry.copyHandler = (event) => {
       void handleIdentityCopy(event, entry);
     };
@@ -630,6 +733,7 @@ const registerIdentityDom = (root) => {
   }
 
   if (entry.logoutButton) {
+    ensureButtonOriginalLabel(entry.logoutButton);
     entry.logoutHandler = (event) => {
       void handleIdentityLogout(event, entry);
     };
