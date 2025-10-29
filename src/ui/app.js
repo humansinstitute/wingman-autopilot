@@ -5715,7 +5715,7 @@ const renderBunkerPanel = () => {
 
 const renderIdentityPanel = () => {
   const card = document.createElement("section");
-  card.className = "wm-card wm-home-identity";
+  card.className = "wm-card wm-settings-identity";
   card.id = "identity-panel";
 
   const header = document.createElement("div");
@@ -5742,8 +5742,6 @@ const renderIdentityPanel = () => {
 const renderHome = () => {
   const wrapper = document.createElement("div");
   wrapper.className = "wm-home";
-
-  wrapper.append(renderIdentityPanel());
 
   if (!state.apps.initialized && !state.apps.loading) {
     void ensureAppsLoaded();
@@ -6885,6 +6883,8 @@ const renderSettings = () => {
   const pageTitle = document.createElement("h1");
   pageTitle.textContent = "Settings";
   wrapper.append(pageTitle);
+
+  wrapper.append(renderIdentityPanel());
 
   const sections = [
     {
