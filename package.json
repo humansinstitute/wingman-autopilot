@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "start": "bun run src/index.ts",
-    "dev": "bun run src/index.ts"
+    "dev": "bun run src/index.ts",
+    "build:bunker-client": "bun build src/ui/identity/bunker-client.ts --target browser --outfile public/vendor/bunker-client.js"
   },
   "dependencies": {
     "@noble/ciphers": "^1.1.0",

@@ -214,6 +214,8 @@ Users need one of these extensions installed:
 
 ### Implementation
 
+> **Bundling note:** The dashboard does not import applesauce modules directly from `node_modules`. Instead, run `bun run build:bunker-client` to emit `public/vendor/bunker-client.js`, which re-exports `NostrConnectSigner` and `RelayPool`. The UI imports that bundle so the browser keeps the `bunker://` secret local while avoiding dozens of per-module requests.
+
 ```typescript
 // In AuthManager class
 
@@ -687,7 +689,7 @@ bunker://266815e0c9210dfa324c6cba3573b14bee49da4209a9456f9484e5106cd408a5?relay=
 ### Implementation
 
 ```typescript
-import { NostrConnectSigner } from 'applesauce-signers';
+import { NostrConnectSigner } from '/vendor/bunker-client.js';
 
 // In AuthManager class
 

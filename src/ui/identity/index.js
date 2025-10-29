@@ -12,8 +12,7 @@ import { xchacha20poly1305 } from "/vendor/@noble/ciphers/chacha.js";
 import { bech32 } from "/vendor/@scure/base/index.js";
 import { nip19 } from "/vendor/nostr-tools/index.js";
 import { schnorr, secp256k1 } from "/vendor/@noble/curves/secp256k1.js";
-import { NostrConnectSigner } from "/vendor/applesauce-signers/index.js";
-import { RelayPool } from "/vendor/applesauce-relay/index.js";
+import { NostrConnectSigner, RelayPool } from "/vendor/bunker-client.js";
 
 const textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
 

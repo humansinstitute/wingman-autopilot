@@ -27,6 +27,7 @@
 - **Process Scaling**: Adjust `AGENT_MAX`/`AGENT_PORTS` in the environment; augment `ProcessManager` to distribute across nodes if required.
 - **Observability**: Enhance log streaming (e.g., WebSockets or SSE) and persist metrics for running sessions.
 - **Frontend**: Evolve `src/ui` or integrate the `Examples/Example Web Interface/` assets for richer controls, including runtime directory selection.
+  - The bunker (NIP-46) identity flows rely on a pre-bundled browser module generated from the applesauce libraries (`bun run build:bunker-client` emits `public/vendor/bunker-client.js`). The dashboard imports only that bundle so that bunker secrets never leave the browser while we keep network requests lean.
 
 ## Image Attachments
 
