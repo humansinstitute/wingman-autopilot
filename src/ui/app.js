@@ -127,6 +127,12 @@ const state = {
     dirty: false,
     requestId: 0,
   },
+  identity: {
+    method: "none",
+    npub: null,
+    expiresAt: null,
+    authenticated: false,
+  },
 };
 
 try {
@@ -137,6 +143,506 @@ try {
 } catch {
   // Ignore storage errors (e.g., during private browsing)
 }
+
+const IDENTITY_STORAGE_KEY = "wingman-identity-state";
+const IDENTITY_EVENT_NAMES = ["wingman:identity-state", "identity:state", "nostr-auth:state"];
+
+const identityDomRefs = {
+  root: null,
+  npub: null,
+  method: null,
+  expiry: null,
+  copyButton: null,
+  copyFeedback: null,
+};
+
+let identityCountdownIntervalId = null;
+let identityCopyFeedbackTimeoutId = null;
+
+const identityMethodLabels = {
+  none: "Not signed in",
+  nip07: "Browser extension",
+  local_keys: "Local keys",
+  bunker: "Bunker remote signer",
+};
+
+const isFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
+
+const toFiniteTimestamp = (value) => {
+  if (isFiniteNumber(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return value.getTime();
+  }
+  return null;
+};
+
+const abbreviateNpub = (npub) => {
+  if (!npub || typeof npub !== "string") return "";
+  if (npub.length <= 20) return npub;
+  return `${npub.slice(0, 12)}…${npub.slice(-6)}`;
+};
+
+const formatIdentityDuration = (ms) => {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0 || days > 0) parts.push(`${hours}h`);
+  if (minutes > 0 && parts.length < 3) parts.push(`${minutes}m`);
+  if (parts.length < 3) parts.push(`${seconds}s`);
+  return parts.join(" ");
+};
+
+const showIdentityCopyFeedback = (message, { error = false } = {}) => {
+  if (!identityDomRefs.copyFeedback) return;
+  identityDomRefs.copyFeedback.textContent = message;
+  identityDomRefs.copyFeedback.hidden = false;
+  if (error) {
+    identityDomRefs.copyFeedback.dataset.state = "error";
+  } else {
+    identityDomRefs.copyFeedback.dataset.state = "success";
+  }
+  if (identityCopyFeedbackTimeoutId) {
+    window.clearTimeout(identityCopyFeedbackTimeoutId);
+  }
+  identityCopyFeedbackTimeoutId = window.setTimeout(() => {
+    if (!identityDomRefs.copyFeedback) return;
+    identityDomRefs.copyFeedback.hidden = true;
+    delete identityDomRefs.copyFeedback.dataset.state;
+  }, 2000);
+};
+
+const stopIdentityCountdown = () => {
+  if (identityCountdownIntervalId !== null) {
+    window.clearInterval(identityCountdownIntervalId);
+    identityCountdownIntervalId = null;
+  }
+};
+
+const updateIdentityCountdown = () => {
+  const expiresAt = state.identity.expiresAt;
+  if (!identityDomRefs.expiry) return;
+  if (!isFiniteNumber(expiresAt)) {
+    identityDomRefs.expiry.textContent = state.identity.authenticated ? "Session expiry unknown" : "—";
+    identityDomRefs.expiry.dataset.state = state.identity.authenticated ? "unknown" : "inactive";
+    identityDomRefs.expiry.title = "";
+    return;
+  }
+  const remaining = expiresAt - Date.now();
+  if (remaining <= 0) {
+    identityDomRefs.expiry.textContent = "Session expired";
+    identityDomRefs.expiry.dataset.state = "expired";
+    identityDomRefs.expiry.title = new Date(expiresAt).toLocaleString();
+    stopIdentityCountdown();
+    return;
+  }
+  identityDomRefs.expiry.textContent = `Expires in ${formatIdentityDuration(remaining)}`;
+  identityDomRefs.expiry.dataset.state = "active";
+  identityDomRefs.expiry.title = new Date(expiresAt).toLocaleString();
+};
+
+const startIdentityCountdown = () => {
+  stopIdentityCountdown();
+  if (!isFiniteNumber(state.identity.expiresAt)) {
+    return;
+  }
+  updateIdentityCountdown();
+  identityCountdownIntervalId = window.setInterval(() => {
+    updateIdentityCountdown();
+  }, 1000);
+};
+
+const persistIdentityState = (identity) => {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+  try {
+    if (identity.npub) {
+      const payload = {
+        npub: identity.npub,
+        method: identity.method,
+        expiresAt: identity.expiresAt ?? null,
+      };
+      window.localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify(payload));
+    } else {
+      window.localStorage.removeItem(IDENTITY_STORAGE_KEY);
+    }
+  } catch {
+    // ignore storage errors
+  }
+};
+
+const syncIdentityDisplay = () => {
+  const { npub, method, authenticated, expiresAt } = state.identity;
+  if (identityDomRefs.root) {
+    if (authenticated) {
+      identityDomRefs.root.dataset.authenticated = "true";
+    } else {
+      delete identityDomRefs.root.dataset.authenticated;
+    }
+  }
+  if (identityDomRefs.npub) {
+    identityDomRefs.npub.textContent = npub ? abbreviateNpub(npub) : "Not signed in";
+    if (npub) {
+      identityDomRefs.npub.title = npub;
+    } else {
+      identityDomRefs.npub.removeAttribute("title");
+    }
+  }
+  if (identityDomRefs.method) {
+    identityDomRefs.method.textContent = authenticated ? (identityMethodLabels[method] ?? method ?? "Unknown") : "—";
+  }
+  if (identityDomRefs.copyButton) {
+    identityDomRefs.copyButton.disabled = !npub;
+  }
+  if (identityDomRefs.copyFeedback && !npub) {
+    identityDomRefs.copyFeedback.hidden = true;
+    delete identityDomRefs.copyFeedback.dataset.state;
+  }
+  if (identityDomRefs.expiry) {
+    if (!authenticated) {
+      identityDomRefs.expiry.textContent = "—";
+      identityDomRefs.expiry.dataset.state = "inactive";
+      identityDomRefs.expiry.removeAttribute("title");
+      stopIdentityCountdown();
+    } else if (isFiniteNumber(expiresAt)) {
+      startIdentityCountdown();
+    } else {
+      identityDomRefs.expiry.textContent = "Session expiry unknown";
+      identityDomRefs.expiry.dataset.state = "unknown";
+      identityDomRefs.expiry.removeAttribute("title");
+      stopIdentityCountdown();
+    }
+  } else {
+    stopIdentityCountdown();
+  }
+};
+
+const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
+  if (!partial || typeof partial !== "object") {
+    return state.identity;
+  }
+  const current = state.identity;
+  const next = {
+    method: current.method,
+    npub: current.npub,
+    expiresAt: current.expiresAt,
+    authenticated: current.authenticated,
+  };
+
+  if ("isAuthenticated" in partial && partial.isAuthenticated === false) {
+    next.method = "none";
+    next.npub = null;
+    next.expiresAt = null;
+  }
+
+  if ("method" in partial && typeof partial.method === "string" && partial.method.length > 0) {
+    next.method = partial.method;
+  }
+
+  if ("npub" in partial) {
+    if (typeof partial.npub === "string" && partial.npub.trim().length > 0) {
+      next.npub = partial.npub.trim();
+    } else if (partial.npub === null) {
+      next.npub = null;
+    }
+  } else if (typeof partial.pubkey === "string" && partial.pubkey.trim().length > 0 && !next.npub) {
+    next.npub = partial.pubkey.trim();
+  }
+
+  const expiryCandidate =
+    "expiresAt" in partial
+      ? partial.expiresAt
+      : "sessionExpiresAt" in partial
+        ? partial.sessionExpiresAt
+        : "expiry" in partial
+          ? partial.expiry
+          : undefined;
+  if (expiryCandidate !== undefined) {
+    const timestamp = toFiniteTimestamp(expiryCandidate);
+    next.expiresAt = timestamp;
+  }
+
+  if (!next.npub) {
+    next.method = "none";
+    next.expiresAt = null;
+  }
+
+  next.authenticated = Boolean(next.npub);
+
+  const changed =
+    next.method !== current.method ||
+    next.npub !== current.npub ||
+    next.expiresAt !== current.expiresAt ||
+    next.authenticated !== current.authenticated;
+
+  if (!changed) {
+    return current;
+  }
+
+  state.identity = next;
+
+  if (persist) {
+    persistIdentityState(next);
+  }
+
+  syncIdentityDisplay();
+
+  if (emit && typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+    try {
+      window.dispatchEvent(new CustomEvent("wingman:identity-ui-state", { detail: { ...next } }));
+    } catch {
+      // ignore dispatch errors
+    }
+  }
+
+  return next;
+};
+
+const handleIdentityCopy = async () => {
+  const npub = state.identity.npub;
+  if (!npub) return;
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      await navigator.clipboard.writeText(npub);
+      showIdentityCopyFeedback("Copied");
+      return;
+    }
+  } catch (error) {
+    console.warn("[identity] clipboard write failed", error);
+  }
+
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = npub;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "absolute";
+    textarea.style.left = "-9999px";
+    document.body.append(textarea);
+    textarea.select();
+    const success = document.execCommand("copy");
+    textarea.remove();
+    if (success) {
+      showIdentityCopyFeedback("Copied");
+      return;
+    }
+  } catch (error) {
+    console.warn("[identity] fallback copy failed", error);
+  }
+
+  showIdentityCopyFeedback("Copy failed", { error: true });
+};
+
+const registerIdentityDom = (root) => {
+  identityDomRefs.root = root;
+  identityDomRefs.npub = root.querySelector('[data-role="identity-npub"]');
+  identityDomRefs.method = root.querySelector('[data-role="identity-method"]');
+  identityDomRefs.expiry = root.querySelector('[data-role="identity-expiry"]');
+  const nextCopyButton = root.querySelector('[data-action="copy-active-npub"]');
+  if (identityDomRefs.copyButton && identityDomRefs.copyButton !== nextCopyButton) {
+    identityDomRefs.copyButton.removeEventListener("click", handleIdentityCopy);
+  }
+  identityDomRefs.copyButton = nextCopyButton ?? null;
+  identityDomRefs.copyFeedback = root.querySelector('[data-role="identity-copy-feedback"]');
+  if (identityDomRefs.copyButton) {
+    identityDomRefs.copyButton.addEventListener("click", handleIdentityCopy);
+  }
+  syncIdentityDisplay();
+};
+
+const callIdentityWire = (names, element, ...extraArgs) => {
+  const nameList = Array.isArray(names) ? names : [names];
+  if (!element || typeof element !== "object") return false;
+  if (typeof globalThis === "undefined") return false;
+  const sources = [globalThis.wingmanIdentity, globalThis.identity, globalThis];
+  for (const name of nameList) {
+    for (const source of sources) {
+      if (!source || typeof source !== "object") continue;
+      const candidate = source[name];
+      if (typeof candidate === "function") {
+        try {
+          candidate(element, ...extraArgs);
+          return true;
+        } catch (error) {
+          console.error(`[identity] Failed to wire ${name}:`, error);
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+};
+
+let identityWiringContext = null;
+
+const getIdentityWiringContext = () => {
+  if (identityWiringContext) {
+    return identityWiringContext;
+  }
+  identityWiringContext = {
+    updateIdentityState,
+    getIdentityState: () => ({ ...state.identity }),
+    syncDisplay: syncIdentityDisplay,
+    requestBinding: () => {
+      if (identityDomRefs.root && identityDomRefs.root.isConnected) {
+        bindIdentityFlows(identityDomRefs.root);
+      }
+    },
+  };
+  return identityWiringContext;
+};
+
+function bindIdentityFlows(root) {
+  if (!root) return;
+  const context = getIdentityWiringContext();
+  const localPanel = root.querySelector('[data-identity-panel="local"]');
+  if (localPanel) {
+    callIdentityWire(["wireLocalIdentityPanel"], localPanel, context);
+  }
+  const nip07Panel = root.querySelector('[data-identity-panel="nip07"]');
+  if (nip07Panel) {
+    callIdentityWire(["wireNip07Login", "wireNip07Panel", "wireNip07"], nip07Panel, context);
+  }
+  const bunkerPanel = root.querySelector('[data-identity-panel="bunker"]');
+  if (bunkerPanel) {
+    callIdentityWire(["wireBunkerLogin"], bunkerPanel, context);
+    callIdentityWire(
+      ["wireBunkerQRScanner"],
+      bunkerPanel,
+      (uri) => {
+        if (!uri) return;
+        const textarea = bunkerPanel.querySelector('textarea[name="bunkerUri"]');
+        if (!textarea) return;
+        textarea.value = uri;
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      },
+      context,
+    );
+  }
+}
+
+const identityWireRequestHandler = () => {
+  if (identityDomRefs.root && identityDomRefs.root.isConnected) {
+    bindIdentityFlows(identityDomRefs.root);
+  }
+};
+
+const handleIdentityEventPayload = (payload) => {
+  if (!payload || typeof payload !== "object") {
+    return;
+  }
+  const next = {};
+  if ("npub" in payload) {
+    next.npub = typeof payload.npub === "string" ? payload.npub : payload.npub === null ? null : undefined;
+  } else if (typeof payload.pubkey === "string") {
+    next.npub = payload.pubkey;
+  }
+  if (typeof payload.method === "string") {
+    next.method = payload.method;
+  }
+  if ("expiresAt" in payload || "sessionExpiresAt" in payload || "expiry" in payload) {
+    const timestamp = toFiniteTimestamp(
+      "expiresAt" in payload
+        ? payload.expiresAt
+        : "sessionExpiresAt" in payload
+          ? payload.sessionExpiresAt
+          : payload.expiry,
+    );
+    next.expiresAt = timestamp;
+  }
+  if ("isAuthenticated" in payload) {
+    next.isAuthenticated = payload.isAuthenticated;
+  }
+  updateIdentityState(next);
+};
+
+const handleIdentityEvent = (event) => {
+  if (!event) return;
+  if ("detail" in event && event.detail) {
+    handleIdentityEventPayload(event.detail);
+    return;
+  }
+  handleIdentityEventPayload(event);
+};
+
+const setupIdentityEventBridges = () => {
+  if (typeof window === "undefined") return;
+  IDENTITY_EVENT_NAMES.forEach((name) => {
+    window.addEventListener(name, handleIdentityEvent);
+    document.addEventListener(name, handleIdentityEvent);
+  });
+  window.addEventListener("wingman:identity-refresh", () => {
+    syncIdentityDisplay();
+  });
+  window.addEventListener("wingman:identity-wire-request", identityWireRequestHandler);
+};
+
+setupIdentityEventBridges();
+
+const loadPersistedIdentityState = () => {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+  try {
+    const raw = window.localStorage.getItem(IDENTITY_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    updateIdentityState(parsed, { persist: false, emit: false });
+  } catch {
+    // ignore parse errors
+  }
+};
+
+loadPersistedIdentityState();
+
+const handleIdentityStorageEvent = (event) => {
+  if (!event) return;
+  if (event.key !== IDENTITY_STORAGE_KEY) return;
+  if (event.newValue) {
+    try {
+      const parsed = JSON.parse(event.newValue);
+      updateIdentityState(parsed, { persist: false, emit: false });
+    } catch {
+      // ignore parse errors
+    }
+  } else {
+    updateIdentityState({ npub: null, method: "none", expiresAt: null, isAuthenticated: false }, { persist: false, emit: false });
+  }
+};
+
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", handleIdentityStorageEvent);
+}
+
+const attachIdentityUiApi = () => {
+  if (typeof globalThis === "undefined") return;
+  const existing =
+    typeof globalThis.wingmanIdentityUI === "object" && globalThis.wingmanIdentityUI !== null
+      ? globalThis.wingmanIdentityUI
+      : {};
+  const api = {
+    ...existing,
+    getState: () => ({ ...state.identity }),
+    update: (partial, options) => updateIdentityState(partial, options),
+    notify: (partial, options) => updateIdentityState(partial, options),
+    bindPanels: () => {
+      if (identityDomRefs.root && identityDomRefs.root.isConnected) {
+        bindIdentityFlows(identityDomRefs.root);
+      }
+    },
+    refreshDisplay: () => syncIdentityDisplay(),
+  };
+  globalThis.wingmanIdentityUI = api;
+};
+
+attachIdentityUiApi();
 
 const textDecoder = typeof TextDecoder !== "undefined" ? new TextDecoder("utf-8", { fatal: false }) : null;
 const textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
@@ -4890,9 +5396,253 @@ const closeAppLogsDialog = () => {
   }
 };
 
+const renderIdentitySummary = () => {
+  const summary = document.createElement("div");
+  summary.className = "wm-identity-summary";
+
+  const list = document.createElement("dl");
+  list.className = "wm-identity-summary-list";
+
+  const npubLabel = document.createElement("dt");
+  npubLabel.textContent = "Active npub";
+  const npubValue = document.createElement("dd");
+  npubValue.dataset.role = "identity-npub";
+  npubValue.textContent = "Not signed in";
+
+  const methodLabel = document.createElement("dt");
+  methodLabel.textContent = "Method";
+  const methodValue = document.createElement("dd");
+  methodValue.dataset.role = "identity-method";
+  methodValue.textContent = "—";
+
+  const expiryLabel = document.createElement("dt");
+  expiryLabel.textContent = "Session";
+  const expiryValue = document.createElement("dd");
+  expiryValue.dataset.role = "identity-expiry";
+  expiryValue.textContent = "—";
+
+  list.append(npubLabel, npubValue, methodLabel, methodValue, expiryLabel, expiryValue);
+  summary.append(list);
+
+  const actions = document.createElement("div");
+  actions.className = "wm-identity-summary-actions";
+
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "wm-button secondary";
+  copyButton.dataset.action = "copy-active-npub";
+  copyButton.textContent = "Copy npub";
+  copyButton.disabled = true;
+  actions.append(copyButton);
+
+  const feedback = document.createElement("span");
+  feedback.className = "wm-identity-copy-feedback";
+  feedback.dataset.role = "identity-copy-feedback";
+  feedback.hidden = true;
+  actions.append(feedback);
+
+  summary.append(actions);
+  return summary;
+};
+
+const renderLocalIdentityPanel = () => {
+  const panel = document.createElement("section");
+  panel.className = "wm-identity-panel";
+  panel.dataset.identityPanel = "local";
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Local Keys";
+  panel.append(heading);
+
+  const description = document.createElement("p");
+  description.className = "wm-identity-panel-description";
+  description.textContent = "Generate or import a keypair stored on this device.";
+  panel.append(description);
+
+  const actions = document.createElement("div");
+  actions.className = "wm-identity-button-row";
+
+  const generateBtn = document.createElement("button");
+  generateBtn.type = "button";
+  generateBtn.className = "wm-button";
+  generateBtn.dataset.action = "generate-keys";
+  generateBtn.textContent = "Generate Keys";
+  actions.append(generateBtn);
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "wm-button secondary";
+  copyBtn.dataset.action = "copy-nsec";
+  copyBtn.textContent = "Copy nsec";
+  actions.append(copyBtn);
+
+  panel.append(actions);
+
+  const outputs = document.createElement("div");
+  outputs.className = "wm-identity-output";
+
+  const npubLine = document.createElement("div");
+  npubLine.className = "wm-identity-output-line";
+  const npubKeyLabel = document.createElement("span");
+  npubKeyLabel.className = "wm-identity-output-label";
+  npubKeyLabel.textContent = "npub";
+  const npubValue = document.createElement("span");
+  npubValue.className = "wm-identity-output-value";
+  npubValue.dataset.role = "npub";
+  npubLine.append(npubKeyLabel, npubValue);
+  outputs.append(npubLine);
+
+  const nsecOutput = document.createElement("pre");
+  nsecOutput.className = "wm-identity-secret";
+  nsecOutput.dataset.role = "nsec";
+  nsecOutput.setAttribute("hidden", "");
+  outputs.append(nsecOutput);
+
+  panel.append(outputs);
+
+  const importForm = document.createElement("form");
+  importForm.className = "wm-identity-import";
+  importForm.dataset.form = "import-nsec";
+
+  const importLabel = document.createElement("label");
+  importLabel.className = "wm-field-label";
+  importLabel.setAttribute("for", "identity-import-nsec");
+  importLabel.textContent = "Import nsec";
+
+  const importControls = document.createElement("div");
+  importControls.className = "wm-identity-import-controls";
+
+  const importInput = document.createElement("input");
+  importInput.id = "identity-import-nsec";
+  importInput.name = "nsec";
+  importInput.type = "text";
+  importInput.autocomplete = "off";
+  importInput.placeholder = "nsec1...";
+
+  const importSubmit = document.createElement("button");
+  importSubmit.type = "submit";
+  importSubmit.className = "wm-button secondary";
+  importSubmit.textContent = "Sign In";
+
+  importControls.append(importInput, importSubmit);
+  importForm.append(importLabel, importControls);
+  panel.append(importForm);
+
+  return panel;
+};
+
+const renderNip07Panel = () => {
+  const panel = document.createElement("section");
+  panel.className = "wm-identity-panel";
+  panel.dataset.identityPanel = "nip07";
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Browser Extension (NIP-07)";
+  panel.append(heading);
+
+  const description = document.createElement("p");
+  description.className = "wm-identity-panel-description";
+  description.textContent = "Connect using a Nostr extension such as Alby, nos2x, or Flamingo.";
+  panel.append(description);
+
+  const loginButton = document.createElement("button");
+  loginButton.type = "button";
+  loginButton.className = "wm-button";
+  loginButton.dataset.action = "nip07-login";
+  loginButton.textContent = "Connect Extension";
+  panel.append(loginButton);
+
+  const status = document.createElement("p");
+  status.className = "wm-identity-status-line";
+  status.dataset.role = "nip07-status";
+  status.setAttribute("aria-live", "polite");
+  panel.append(status);
+
+  return panel;
+};
+
+const renderBunkerPanel = () => {
+  const panel = document.createElement("section");
+  panel.className = "wm-identity-panel";
+  panel.dataset.identityPanel = "bunker";
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Bunker Remote Signer";
+  panel.append(heading);
+
+  const description = document.createElement("p");
+  description.className = "wm-identity-panel-description";
+  description.textContent = "Connect a remote signer with a bunker:// URI.";
+  panel.append(description);
+
+  const form = document.createElement("form");
+  form.className = "wm-identity-bunker-form";
+  form.dataset.form = "bunker-auth";
+
+  const textarea = document.createElement("textarea");
+  textarea.name = "bunkerUri";
+  textarea.rows = 3;
+  textarea.placeholder = "bunker://...";
+  form.append(textarea);
+
+  const submit = document.createElement("button");
+  submit.type = "submit";
+  submit.className = "wm-button";
+  submit.textContent = "Connect Bunker";
+  form.append(submit);
+
+  panel.append(form);
+
+  const bunkerActions = document.createElement("div");
+  bunkerActions.className = "wm-identity-button-row";
+  const scanButton = document.createElement("button");
+  scanButton.type = "button";
+  scanButton.className = "wm-button secondary";
+  scanButton.dataset.action = "scan-qr";
+  scanButton.textContent = "Scan QR";
+  bunkerActions.append(scanButton);
+  panel.append(bunkerActions);
+
+  const status = document.createElement("p");
+  status.className = "wm-identity-status-line";
+  status.dataset.role = "bunker-status";
+  status.setAttribute("aria-live", "polite");
+  panel.append(status);
+
+  return panel;
+};
+
+const renderIdentityPanel = () => {
+  const card = document.createElement("section");
+  card.className = "wm-card wm-home-identity";
+  card.id = "identity-panel";
+
+  const header = document.createElement("div");
+  header.className = "wm-home-section-header";
+  const title = document.createElement("h2");
+  title.textContent = "Identity";
+  header.append(title);
+  card.append(header);
+
+  const summary = renderIdentitySummary();
+  card.append(summary);
+
+  const panels = document.createElement("div");
+  panels.className = "wm-identity-panels";
+  panels.append(renderLocalIdentityPanel(), renderNip07Panel(), renderBunkerPanel());
+  card.append(panels);
+
+  registerIdentityDom(card);
+  bindIdentityFlows(card);
+
+  return card;
+};
+
 const renderHome = () => {
   const wrapper = document.createElement("div");
   wrapper.className = "wm-home";
+
+  wrapper.append(renderIdentityPanel());
 
   if (!state.apps.initialized && !state.apps.loading) {
     void ensureAppsLoaded();
