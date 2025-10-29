@@ -4177,7 +4177,9 @@ const server = Bun.serve({
         pathname === "/files" ||
         pathname.startsWith("/files/") ||
         pathname === "/live" ||
-        pathname.startsWith("/live/")
+        pathname.startsWith("/live/") ||
+        pathname === "/settings" ||
+        pathname.startsWith("/settings/")
       ) {
         return serveIndex();
       }

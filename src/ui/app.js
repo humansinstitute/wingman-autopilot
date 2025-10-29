@@ -474,6 +474,47 @@ const handleIdentityCopy = async (event, entryOverride) => {
   showIdentityCopyFeedback("Copy failed", { error: true, entry });
 };
 
+const clearCachedIdentity = () => {
+  try {
+    globalThis.wingmanIdentity?.sessionCache?.clear?.();
+  } catch (error) {
+    console.warn("[identity] failed to clear session cache", error);
+  }
+  try {
+    globalThis.wingmanIdentity?.passwordMeta?.clear?.();
+  } catch (error) {
+    console.warn("[identity] failed to clear password metadata", error);
+  }
+};
+
+const forceIdentityLogoutState = () => {
+  clearCachedIdentity();
+  updateIdentityState({ npub: null, method: "none", expiresAt: null, isAuthenticated: false });
+  if (typeof window !== "undefined") {
+    try {
+      window.dispatchEvent(new CustomEvent("wingman:identity-logout"));
+    } catch {
+      // ignore dispatch failures
+    }
+  }
+};
+
+const requestServerLogout = async () => {
+  const response = await fetch("/api/auth/session", {
+    method: "DELETE",
+    credentials: "include",
+    headers: { "cache-control": "no-store" },
+  });
+  if (!response.ok && response.status !== 204) {
+    const data = await response.json().catch(() => ({}));
+    const message =
+      data && typeof data === "object" && typeof data.error === "string"
+        ? data.error
+        : `Failed to clear session (${response.status})`;
+    throw new Error(message);
+  }
+};
+
 const handleIdentityLogout = async (event, entryOverride) => {
   if (event?.preventDefault) {
     event.preventDefault();
@@ -483,34 +524,40 @@ const handleIdentityLogout = async (event, entryOverride) => {
       entry.logoutButton.disabled = true;
     }
   });
+  let logoutSuccessful = false;
   const sources = [globalThis.wingmanIdentity, globalThis.identity];
   for (const source of sources) {
     if (source && typeof source.logoutIdentity === "function") {
-      let logoutError = null;
       try {
         await source.logoutIdentity();
+        logoutSuccessful = true;
+        break;
       } catch (error) {
         console.error("[identity] logout failed", error);
         const message = error instanceof Error ? error.message : "Failed to sign out";
         window.alert(message);
-        logoutError = error;
       }
-      if (!logoutError) {
-        updateIdentityState({ npub: null, method: "none", expiresAt: null, isAuthenticated: false });
-      }
-      identityDomEntries.forEach((entry) => {
-        if (entry.logoutButton) {
-          entry.logoutButton.disabled = !state.identity.authenticated;
-        }
-      });
-      return;
     }
   }
 
-  updateIdentityState({ npub: null, method: "none", expiresAt: null, isAuthenticated: false });
+  if (!logoutSuccessful) {
+    try {
+      await requestServerLogout();
+      logoutSuccessful = true;
+    } catch (error) {
+      console.error("[identity] server logout failed", error);
+      const message = error instanceof Error ? error.message : "Failed to clear session on server.";
+      window.alert(message);
+    }
+  }
+
+  if (logoutSuccessful) {
+    forceIdentityLogoutState();
+  }
+
   identityDomEntries.forEach((entry) => {
     if (entry.logoutButton) {
-      entry.logoutButton.disabled = true;
+      entry.logoutButton.disabled = !state.identity.authenticated;
     }
   });
 };
