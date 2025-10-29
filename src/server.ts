@@ -805,6 +805,7 @@ const registerVendorPackage = (name: string, relative: string, entry = "index.js
 registerVendorPackage("@noble/hashes", "esm");
 registerVendorPackage("@noble/ciphers", "esm");
 registerVendorPackage("@scure/base", join("lib", "esm"));
+registerVendorPackage("@noble/secp256k1", "esm");
 registerVendorPackage("@noble/curves", "esm");
 registerVendorPackage("nostr-tools", join("lib", "esm"));
 registerVendorPackage("applesauce-core", "dist");
