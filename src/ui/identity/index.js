@@ -10,7 +10,8 @@ const ENCRYPTION_VERSION = 0x02;
 import { scryptAsync } from "/vendor/@noble/hashes/scrypt.js";
 import { xchacha20poly1305 } from "/vendor/@noble/ciphers/chacha.js";
 import { bech32 } from "/vendor/@scure/base/index.js";
-import { generateSecretKey, getPublicKey, nip19 } from "/vendor/nostr-tools/index.js";
+import { nip19 } from "/vendor/nostr-tools/index.js";
+import { schnorr, secp256k1 } from "/vendor/@noble/curves/secp256k1.js";
 
 const textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
 
@@ -626,6 +627,27 @@ const parseNsecValue = (input) => {
   }
 };
 
+const bytesToHex = (bytes) => {
+  if (!(bytes instanceof Uint8Array)) {
+    throw new Error("Expected Uint8Array");
+  }
+  let output = "";
+  for (let index = 0; index < bytes.length; index += 1) {
+    output += bytes[index].toString(16).padStart(2, "0");
+  }
+  return output;
+};
+
+const generateLocalSecretKey = () => {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const candidate = randomBytes(32);
+    if (candidate.some((byte) => byte !== 0) && secp256k1.utils.isValidPrivateKey(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error("Failed to generate valid private key");
+};
+
 const persistServerSession = async (npub, encryptedNsec) => {
   const body = {
     npub,
@@ -713,8 +735,9 @@ const wireLocalIdentityPanel = (root, context) => {
     generateBtn.dataset.state = "pending";
     let secretKey;
     try {
-      secretKey = generateSecretKey();
-      const pubkeyHex = getPublicKey(secretKey);
+      secretKey = generateLocalSecretKey();
+      const publicKeyBytes = schnorr.getPublicKey(secretKey);
+      const pubkeyHex = bytesToHex(publicKeyBytes);
       const npub = nip19.npubEncode(pubkeyHex);
       const nsec = nip19.nsecEncode(secretKey);
 
@@ -766,7 +789,10 @@ const wireLocalIdentityPanel = (root, context) => {
         throw new Error("Missing nsec input");
       }
       secretKey = parseNsecValue(input.value);
-      const pubkeyHex = getPublicKey(secretKey);
+      if (!secp256k1.utils.isValidPrivateKey(secretKey)) {
+        throw new Error("Invalid private key provided");
+      }
+      const pubkeyHex = bytesToHex(schnorr.getPublicKey(secretKey));
       const npub = nip19.npubEncode(pubkeyHex);
       const nsec = nip19.nsecEncode(secretKey);
 
