@@ -32,7 +32,7 @@
           <p class="wm-tagline">Solvitur Ambulando</p>
         </div>
       </div>
-      <div id="desktop-session-indicator" class="wm-session-indicator" role="status" aria-live="polite" hidden>
+      <div id="desktop-session-indicator" class="wm-session-indicator requires-auth" role="status" aria-live="polite" hidden>
         <button
           type="button"
           id="desktop-session-indicator-button"
@@ -45,11 +45,14 @@
           </div>
         </button>
       </div>
-      <button id="menu-toggle" class="wm-menu-toggle" aria-label="Toggle menu" aria-expanded="false">
+      <button id="header-login" class="wm-button guest-only" type="button">
+        Log In
+      </button>
+      <button id="menu-toggle" class="wm-menu-toggle requires-auth" aria-label="Toggle menu" aria-expanded="false">
         <span class="menu-icon" aria-hidden="true">☰</span>
       </button>
-      <div class="wm-menu-panel" aria-hidden="true">
-        <nav class="wm-menu-nav">
+      <div class="wm-menu-panel requires-auth" aria-hidden="true">
+        <nav class="wm-menu-nav requires-auth">
           <a href="/home" data-route="home">Home</a>
           <a href="/live" data-route="live">Agents</a>
           <a href="/apps" data-route="apps">Apps</a>
@@ -58,16 +61,16 @@
           <a href="/settings" data-route="settings">Settings</a>
         </nav>
         <div class="wm-menu-actions">
-          <button id="theme-toggle" class="wm-theme-toggle" aria-label="Toggle theme" aria-pressed="false">
+          <button id="theme-toggle" class="wm-theme-toggle requires-auth" aria-label="Toggle theme" aria-pressed="false">
             <span class="sun" aria-hidden="true">☀</span>
             <span class="moon" aria-hidden="true">☾</span>
           </button>
-          <button id="tabs-toggle" class="wm-tabs-toggle" aria-label="Toggle session tabs" aria-pressed="false">
+          <button id="tabs-toggle" class="wm-tabs-toggle requires-auth" aria-label="Toggle session tabs" aria-pressed="false">
             <span class="tabs-show" aria-hidden="true">⊞</span>
             <span class="tabs-hide" aria-hidden="true">⊟</span>
           </button>
         </div>
-        <div id="menu-tabs" class="wm-menu-tabs"></div>
+        <div id="menu-tabs" class="wm-menu-tabs requires-auth"></div>
       </div>
     </header>
     <div id="pull-refresh" data-state="hidden" aria-live="polite">

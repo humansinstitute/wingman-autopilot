@@ -55,6 +55,18 @@ body {
   touch-action: pan-y;
 }
 
+body[data-authenticated="false"] .requires-auth {
+  display: none !important;
+}
+
+body[data-authenticated="true"] .guest-only {
+  display: none !important;
+}
+
+body[data-authenticated="false"] .guest-only {
+  display: inline-flex;
+}
+
 .wm-header {
   display: flex;
   align-items: center;
@@ -510,6 +522,43 @@ body[data-menu-open="true"] .wm-menu-panel {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+.wm-home-auth-quote {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 2rem 2.5rem;
+  text-align: center;
+}
+
+.wm-home-auth-quote blockquote {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.wm-home-auth-quote blockquote::before,
+.wm-home-auth-quote blockquote::after {
+  content: "“";
+  font-size: 2rem;
+  color: var(--accent-primary);
+  margin: 0 0.25rem;
+}
+
+.wm-home-auth-quote blockquote::after {
+  content: "”";
+}
+
+.wm-home-auth-quote p {
+  margin: 0;
+  font-size: 0.95rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-primary);
 }
 
 .wm-apps {

@@ -141,6 +141,21 @@ const state = {
   },
 };
 
+let performAuthUiSync = () => {};
+let pendingAuthUiSync = false;
+const scheduleAuthMicrotask =
+  typeof queueMicrotask === "function" ? queueMicrotask : (callback) => Promise.resolve().then(callback);
+const requestAuthUiSync = () => {
+  if (pendingAuthUiSync) return;
+  pendingAuthUiSync = true;
+  scheduleAuthMicrotask(() => {
+    pendingAuthUiSync = false;
+    performAuthUiSync();
+  });
+};
+
+requestAuthUiSync();
+
 try {
   const storedShowHidden = localStorage.getItem(FILES_SHOW_HIDDEN_STORAGE_KEY);
   if (storedShowHidden === "true" || storedShowHidden === "false") {
@@ -425,6 +440,7 @@ const syncIdentityDisplay = () => {
   identityDomEntries.forEach((entry) => {
     syncIdentityDisplayForEntry(entry);
   });
+  requestAuthUiSync();
   if (state.identity.authenticated && isFiniteNumber(state.identity.expiresAt)) {
     startIdentityCountdown();
   } else {
@@ -2587,6 +2603,12 @@ const getSessionIdFromPath = (pathname) => {
 };
 
 let currentRoute = getRouteFromPath(window.location.pathname);
+if (!state.identity.authenticated && currentRoute !== "home") {
+  currentRoute = "home";
+  if (window.location.pathname !== "/home") {
+    window.history.replaceState({ route: "home" }, "", "/home");
+  }
+}
 let currentTheme = "dark";
 let tabsVisible = true;
 let lastLoggedSessionId = null;
@@ -2892,6 +2914,30 @@ const tabsToggle = document.getElementById("tabs-toggle");
 const menuToggle = document.getElementById("menu-toggle");
 const menuPanel = document.querySelector(".wm-menu-panel");
 const menuTabsContainer = document.getElementById("menu-tabs");
+const headerLoginButton = document.getElementById("header-login");
+performAuthUiSync = () => {
+  const authed = Boolean(state.identity.authenticated);
+  if (typeof document !== "undefined" && document.body) {
+    document.body.dataset.authenticated = authed ? "true" : "false";
+  }
+  navLinks.forEach((link) => {
+    if (authed) {
+      link.removeAttribute("tabindex");
+    } else {
+      link.setAttribute("tabindex", "-1");
+    }
+  });
+  if (!authed && typeof document !== "undefined" && document.body.dataset.menuOpen === "true") {
+    delete document.body.dataset.menuOpen;
+    menuToggle?.setAttribute("aria-expanded", "false");
+    menuPanel?.setAttribute("aria-hidden", "true");
+  }
+  if (headerLoginButton) {
+    headerLoginButton.disabled = authed;
+  }
+};
+
+performAuthUiSync();
 const pullRefreshIndicator = document.getElementById("pull-refresh");
 const pullRefreshLabel = pullRefreshIndicator?.querySelector(".label");
 const desktopSessionIndicator = document.getElementById("desktop-session-indicator");
@@ -3011,6 +3057,11 @@ identityLoginDialogCloseButton?.addEventListener("click", (event) => {
 identityLoginDialog?.addEventListener("cancel", (event) => {
   event.preventDefault();
   closeIdentityLoginDialog();
+});
+
+headerLoginButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  openIdentityLoginDialog();
 });
 
 const applyTheme = (theme, persist = true) => {
@@ -3184,6 +3235,11 @@ const syncMenuTabs = () => {
   menuTabsContainer.innerHTML = "";
   menuTabsContainer.dataset.state = "ready";
 
+  if (!state.identity.authenticated) {
+    menuTabsContainer.dataset.state = "guest";
+    return;
+  }
+
   const heading = document.createElement("p");
   heading.className = "wm-menu-heading";
   heading.textContent = "Agents";
@@ -3206,15 +3262,17 @@ const syncMenuTabs = () => {
     sessionsContainer.append(sessionsList);
   }
 
-  const addButton = document.createElement("div");
-  addButton.className = "wm-tab new wm-menu-add-session";
-  addButton.textContent = "+";
-  addButton.title = "Start new session";
-  addButton.addEventListener("click", () => {
-    openDialog();
-    closeMenu();
-  });
-  sessionsContainer.append(addButton);
+  if (state.identity.authenticated) {
+    const addButton = document.createElement("div");
+    addButton.className = "wm-tab new wm-menu-add-session";
+    addButton.textContent = "+";
+    addButton.title = "Start new session";
+    addButton.addEventListener("click", () => {
+      openDialog();
+      closeMenu();
+    });
+    sessionsContainer.append(addButton);
+  }
 
   menuTabsContainer.append(sessionsContainer);
 };
@@ -3873,6 +3931,25 @@ const fetchSessions = async () => {
   const activeFilter = state.sessionFilters.npub;
   const query = activeFilter && activeFilter !== "all" ? `?npub=${encodeURIComponent(activeFilter)}` : "";
   const response = await fetch(`/api/sessions${query}`);
+  if (response.status === 401) {
+    state.sessions = [];
+    state.identitySummaries = [];
+    state.sessionFilters.options = [];
+    state.sessionFilters.npub = "all";
+    state.activeSessionId = null;
+    state.lastActiveSessionId = null;
+    if (currentRoute !== "home") {
+      currentRoute = "home";
+      if (window.location.pathname !== "/home") {
+        window.history.replaceState({ route: "home" }, "", "/home");
+      }
+    }
+    return;
+  }
+  if (!response.ok) {
+    console.error("Failed to load sessions:", response.status, response.statusText);
+    return;
+  }
   const data = await response.json();
   state.sessions = Array.isArray(data.sessions) ? data.sessions : [];
   state.identitySummaries = Array.isArray(data.identities) ? data.identities : [];
@@ -4292,6 +4369,10 @@ const updateLogsDOM = (sessionId) => {
 };
 
 const openDialog = () => {
+  if (!state.identity.authenticated) {
+    openIdentityLoginDialog();
+    return;
+  }
   if (!state.config) return;
   const fallbackDirectory =
     directoryInput?.value?.trim() ||
@@ -6124,11 +6205,27 @@ const renderHomeIdentityBanner = () => {
   return card;
 };
 
+const renderHomeGuestQuote = () => {
+  const card = document.createElement("section");
+  card.className = "wm-card wm-home-auth-quote";
+  const quote = document.createElement("blockquote");
+  quote.textContent = "Neither nostalgia nor utopia";
+  const subtitle = document.createElement("p");
+  subtitle.textContent = "Build it, Ship it, Share it";
+  card.append(quote, subtitle);
+  return card;
+};
+
 const renderHome = () => {
   const wrapper = document.createElement("div");
   wrapper.className = "wm-home";
 
   wrapper.append(renderHomeIdentityBanner());
+
+  if (!state.identity.authenticated) {
+    wrapper.append(renderHomeGuestQuote());
+    return wrapper;
+  }
 
   if (!state.apps.initialized && !state.apps.loading) {
     void ensureAppsLoaded();
@@ -7436,15 +7533,17 @@ const renderTabs = (options = {}) => {
     tabs.append(tab);
   });
 
-  const newTab = document.createElement("div");
-  newTab.className = "wm-tab new";
-  newTab.textContent = "+";
-  newTab.title = "Start new session";
-  newTab.addEventListener("click", () => {
-    openDialog();
-    onSelect?.();
-  });
-  tabs.append(newTab);
+  if (state.identity.authenticated) {
+    const newTab = document.createElement("div");
+    newTab.className = "wm-tab new";
+    newTab.textContent = "+";
+    newTab.title = "Start new session";
+    newTab.addEventListener("click", () => {
+      openDialog();
+      onSelect?.();
+    });
+    tabs.append(newTab);
+  }
 
   return tabs;
 };
@@ -7921,6 +8020,10 @@ navLinks.forEach((link) => {
     event.preventDefault();
     const targetRoute = link.dataset.route;
     if (!targetRoute || targetRoute === currentRoute) return;
+    if (!state.identity.authenticated) {
+      openIdentityLoginDialog();
+      return;
+    }
     closeMenu();
     if (targetRoute === "live") {
       currentRoute = "live";
@@ -7965,11 +8068,19 @@ navLinks.forEach((link) => {
 
 menuToggle?.addEventListener("click", (event) => {
   event.stopPropagation();
+  if (!state.identity.authenticated) {
+    openIdentityLoginDialog();
+    return;
+  }
   toggleMenu();
 });
 
 desktopSessionIndicatorButton?.addEventListener("click", (event) => {
   event.preventDefault();
+  if (!state.identity.authenticated) {
+    openIdentityLoginDialog();
+    return;
+  }
   const session = getActiveSessionForIndicator();
   if (!session) return;
   closeMenu();
