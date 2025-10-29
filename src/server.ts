@@ -2442,7 +2442,21 @@ const serveAceBuildsAsset = (pathname: string) => {
   });
 };
 
-const serveVendorModule = (pathname: string) => {
+const rewriteVendorModuleSpecifiers = (source: string) => {
+  let updated = source;
+  for (const packageName of Object.keys(vendorPackages)) {
+    if (!updated.includes(packageName)) continue;
+    const escaped = packageName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`(["'\\`])${escaped}(\/[^"'\\`]*)?\\1`, "g");
+    updated = updated.replace(pattern, (match, quote: string, suffix = "") => {
+      const rewritten = `/vendor/${packageName}${suffix ?? ""}`;
+      return `${quote}${rewritten}${quote}`;
+    });
+  }
+  return updated;
+};
+
+const serveVendorModule = async (pathname: string): Promise<Response | undefined> => {
   if (!pathname.startsWith("/vendor/")) return undefined;
   const suffix = pathname.slice("/vendor/".length);
   if (!suffix) return undefined;
@@ -2498,12 +2512,18 @@ const serveVendorModule = (pathname: string) => {
         ? "application/json; charset=utf-8"
         : file.type || undefined;
 
-  return new Response(file, {
-    headers: {
-      ...(type ? { "content-type": type } : {}),
-      "cache-control": "public, max-age=86400",
-    },
-  });
+  const headers: Record<string, string> = {
+    ...(type ? { "content-type": type } : {}),
+    "cache-control": "public, max-age=86400",
+  };
+
+  if (extension === ".js") {
+    const source = await file.text();
+    const rewritten = rewriteVendorModuleSpecifiers(source);
+    return new Response(rewritten, { headers });
+  }
+
+  return new Response(file, { headers });
 };
 
 const serveIndex = () => {
@@ -3939,7 +3959,7 @@ const server = Bun.serve({
         return aceAsset;
       }
 
-      const vendorAsset = serveVendorModule(pathname);
+      const vendorAsset = await serveVendorModule(pathname);
       if (vendorAsset) {
         return vendorAsset;
       }
