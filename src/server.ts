@@ -2466,15 +2466,31 @@ const serveVendorModule = (pathname: string) => {
   const vendor = vendorPackages[packageName];
   if (!vendor) return undefined;
   const relativePath = relativeSegments.length > 0 ? join(...relativeSegments) : "index.js";
-  const candidate = normalize(join(vendor.root, relativePath));
-  if (!candidate.startsWith(vendor.boundary)) {
-    console.warn(`[static] rejected vendor asset outside package boundary: ${pathname}`);
+  const resolveCandidate = (basePath: string) => {
+    const normalized = normalize(join(vendor.root, basePath));
+    if (!normalized.startsWith(vendor.boundary)) {
+      return undefined;
+    }
+    const attemptPaths: string[] = [normalized];
+    if (!extname(normalized)) {
+      attemptPaths.push(`${normalized}.js`, join(normalized, "index.js"));
+    }
+    for (const attempt of attemptPaths) {
+      const attemptFile = Bun.file(attempt);
+      if (attemptFile.size) {
+        return { file: attemptFile, path: attempt };
+      }
+    }
+    return undefined;
+  };
+  const resolved = resolveCandidate(relativePath);
+  if (!resolved) {
+    console.warn(`[static] failed to resolve vendor asset: ${pathname}`);
     return undefined;
   }
-  const file = Bun.file(candidate);
-  if (!file.size) return undefined;
 
-  const extension = extname(candidate).toLowerCase();
+  const { file, path: resolvedPath } = resolved;
+  const extension = extname(resolvedPath).toLowerCase();
   const type =
     extension === ".js"
       ? "application/javascript; charset=utf-8"
