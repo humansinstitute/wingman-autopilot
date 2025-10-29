@@ -23,7 +23,7 @@ import {
   appProcessManager,
   type AppProcessStatus,
 } from "./apps/app-process-manager";
-import { messageStore, type StoredSessionRecord } from "./storage/message-store";
+import { messageStore } from "./storage/message-store";
 import { orchestratorPresetStore } from "./storage/orchestrator-presets";
 import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 import { fileWatcherStore } from "./storage/file-watcher-store";
@@ -1046,7 +1046,14 @@ type IdentitySummary = {
   imagesRoot: string;
 };
 
-const buildIdentitySummaries = (activeSessions: SessionSnapshot[]): IdentitySummary[] => {
+const buildIdentitySummaries = (
+  activeSessions: SessionSnapshot[],
+  viewerNormalizedNpub: string | null,
+): IdentitySummary[] => {
+  if (!viewerNormalizedNpub) {
+    return [];
+  }
+
   const activeSessionMap = new Map(activeSessions.map((session) => [session.id, session] as const));
   type Accumulator = {
     npub: string | null;
@@ -1065,6 +1072,9 @@ const buildIdentitySummaries = (activeSessions: SessionSnapshot[]): IdentitySumm
 
   const registerSession = (npubValue: string | null, sessionId: string, startedAt: string, isActive: boolean) => {
     const normalized = normaliseNpub(npubValue);
+    if (!normalized || normalized !== viewerNormalizedNpub) {
+      return;
+    }
     const key = normalized ?? "__anonymous__";
     let accumulator = summaryMap.get(key);
     if (!accumulator) {
@@ -1128,6 +1138,24 @@ const buildIdentitySummaries = (activeSessions: SessionSnapshot[]): IdentitySumm
       const right = b.normalizedNpub ?? "";
       return left.localeCompare(right);
     });
+};
+
+const getViewerNormalizedNpub = (authContext: RequestAuthContext): string | null => {
+  return normaliseNpub(authContext.npub ?? null);
+};
+
+const sessionBelongsToViewer = (
+  sessionNpub: string | null | undefined,
+  viewerNormalizedNpub: string | null,
+): boolean => {
+  if (!viewerNormalizedNpub) {
+    return false;
+  }
+  const normalized = normaliseNpub(sessionNpub ?? null);
+  if (!normalized) {
+    return false;
+  }
+  return normalized === viewerNormalizedNpub;
 };
 
 const resolveScopedUpload = (pathname: string, authContext: RequestAuthContext, prefix: string, root: string) => {
@@ -4037,7 +4065,11 @@ const handleApi = async (
     if (denied) {
       return denied;
     }
+    const viewerNormalizedNpub = getViewerNormalizedNpub(authContext);
     const allSessions = manager.listSessions();
+    const ownedSessions = viewerNormalizedNpub
+      ? allSessions.filter((session) => sessionBelongsToViewer(session.npub ?? null, viewerNormalizedNpub))
+      : [];
     const filterParam = url.searchParams.get("npub");
 
     const normalizeFilterValue = (value: string | null): string | null | "__anonymous__" => {
@@ -4048,7 +4080,7 @@ const handleApi = async (
     };
 
     const filterValue = normalizeFilterValue(filterParam);
-    const filteredSessions = allSessions.filter((session) => {
+    const filteredSessions = ownedSessions.filter((session) => {
       if (filterValue === null) {
         return true;
       }
@@ -4059,8 +4091,30 @@ const handleApi = async (
       return sessionNormalized === filterValue;
     });
 
-    const identities = buildIdentitySummaries(allSessions);
-    const npubFilters = identities.map((identity) => ({
+    let scopedIdentities = buildIdentitySummaries(ownedSessions, viewerNormalizedNpub);
+    if (scopedIdentities.length === 0 && viewerNormalizedNpub && authContext.npub) {
+      const segment = deriveNpubSegment(authContext.npub);
+      const dataRoot = normalize(join(userIdentityRoot, segment));
+      const logsRoot = normalize(join(dataRoot, "logs"));
+      const attachmentsRoot = normalize(join(attachmentRoot, segment));
+      const imagesRoot = normalize(join(imageRoot, segment));
+      scopedIdentities = [
+        {
+          npub: authContext.npub,
+          normalizedNpub: viewerNormalizedNpub,
+          segment,
+          sessionIds: [],
+          activeSessionIds: [],
+          lastSeenAt: null,
+          dataRoot,
+          logsRoot,
+          attachmentsRoot,
+          imagesRoot,
+        },
+      ];
+    }
+
+    const npubFilters = scopedIdentities.map((identity) => ({
       value: identity.normalizedNpub ?? "__anonymous__",
       npub: identity.npub,
       label: identity.npub ?? "Anonymous",
@@ -4070,7 +4124,7 @@ const handleApi = async (
 
     return Response.json({
       sessions: filteredSessions,
-      identities,
+      identities: scopedIdentities,
       filters: {
         npubs: npubFilters,
         active: filterValue,
@@ -4175,23 +4229,41 @@ const handleApi = async (
       return Response.json({ error: "Session id required" }, { status: 400 });
     }
 
+    const viewerNormalizedNpub = getViewerNormalizedNpub(authContext);
+    if (!viewerNormalizedNpub) {
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }
+
+    const liveSession = manager.getSession(id);
+    const ownedSession =
+      liveSession && sessionBelongsToViewer(liveSession.npub ?? null, viewerNormalizedNpub) ? liveSession : null;
+
     if (method === "GET" && parts.length === 4) {
-      const session = manager.getSession(id);
-      if (!session) return Response.json({ error: "Not found" }, { status: 404 });
-      return Response.json(session);
+      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      return Response.json(ownedSession);
     }
 
     if (method === "DELETE" && parts.length === 4) {
+      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
       const session = await manager.stopSession(id);
       if (!session) return Response.json({ error: "Not found" }, { status: 404 });
       return Response.json(session);
     }
 
     if (method === "DELETE" && parts[4] === "storage") {
-      const session = manager.getSession(id);
-      if (session && (session.status === "starting" || session.status === "running")) {
+      if (ownedSession && (ownedSession.status === "starting" || ownedSession.status === "running")) {
         return Response.json({ error: "Stop the session before deleting it" }, { status: 409 });
       }
+
+      if (!ownedSession) {
+        const storedRecord = messageStore
+          .listSessions()
+          .find((record) => record.id === id && sessionBelongsToViewer(record.npub, viewerNormalizedNpub));
+        if (!storedRecord) {
+          return Response.json({ error: "Not found" }, { status: 404 });
+        }
+      }
+
       try {
         manager.deleteSession(id);
       } catch (error) {
@@ -4202,12 +4274,15 @@ const handleApi = async (
     }
 
     if (method === "GET" && parts[4] === "logs") {
+      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
       const logs = manager.getLogs(id);
       if (!logs) return Response.json({ error: "Not found" }, { status: 404 });
       return Response.json({ id, logs });
     }
 
     if (parts[4] === "messages") {
+      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+
       if (method === "GET") {
         const refresh = url.searchParams.get("refresh") === "true";
         const messages = await (refresh ? syncSessionMessages(id, true) : messageStore.listSessionMessages(id));
@@ -4215,11 +4290,6 @@ const handleApi = async (
       }
 
       if (method === "POST") {
-        const session = manager.getSession(id);
-        if (!session) {
-          return Response.json({ error: "Not found" }, { status: 404 });
-        }
-
         let payload: unknown;
         try {
           payload = await request.json();
@@ -4238,7 +4308,7 @@ const handleApi = async (
 
         try {
           const initialCount = messageStore.listSessionMessages(id).length;
-          const agentUrl = buildAgentUrl(agentHost, session.port, "/message");
+          const agentUrl = buildAgentUrl(agentHost, ownedSession.port, "/message");
           const agentResponse = await fetch(agentUrl, {
             method: "POST",
             headers: { "content-type": "application/json" },
