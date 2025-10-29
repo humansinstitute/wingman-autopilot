@@ -486,12 +486,17 @@ const handleIdentityLogout = async (event, entryOverride) => {
   const sources = [globalThis.wingmanIdentity, globalThis.identity];
   for (const source of sources) {
     if (source && typeof source.logoutIdentity === "function") {
+      let logoutError = null;
       try {
         await source.logoutIdentity();
       } catch (error) {
         console.error("[identity] logout failed", error);
         const message = error instanceof Error ? error.message : "Failed to sign out";
         window.alert(message);
+        logoutError = error;
+      }
+      if (!logoutError) {
+        updateIdentityState({ npub: null, method: "none", expiresAt: null, isAuthenticated: false });
       }
       identityDomEntries.forEach((entry) => {
         if (entry.logoutButton) {
