@@ -791,14 +791,15 @@ const resolvePackageRoot = (specifier: string) => {
 const resolvedAceBuildsRoot = resolvePackageRoot("ace-builds");
 const aceBuildsRoot = resolvedAceBuildsRoot ?? normalize(join(projectRoot, "node_modules", "ace-builds"));
 const aceBuildsRootBoundary = aceBuildsRoot.endsWith(sep) ? aceBuildsRoot : `${aceBuildsRoot}${sep}`;
-const vendorPackages: Record<string, { root: string; boundary: string }> = {};
-const registerVendorPackage = (name: string, relative: string) => {
+const vendorPackages: Record<string, { root: string; boundary: string; entry: string }> = {};
+const registerVendorPackage = (name: string, relative: string, entry = "index.js") => {
   const root = resolvePackageRoot(name);
   if (!root) return;
   const resolved = normalize(join(root, relative));
   vendorPackages[name] = {
     root: resolved,
     boundary: resolved.endsWith(sep) ? resolved : `${resolved}${sep}`,
+    entry,
   };
 };
 registerVendorPackage("@noble/hashes", "esm");
@@ -806,6 +807,11 @@ registerVendorPackage("@noble/ciphers", "esm");
 registerVendorPackage("@scure/base", join("lib", "esm"));
 registerVendorPackage("@noble/curves", "esm");
 registerVendorPackage("nostr-tools", join("lib", "esm"));
+registerVendorPackage("applesauce-core", "dist");
+registerVendorPackage("applesauce-signers", "dist");
+registerVendorPackage("applesauce-relay", "dist");
+registerVendorPackage("rxjs", join("dist", "esm"));
+registerVendorPackage("nanoid", ".", "index.browser.js");
 const publicRoot = normalize(join(projectRoot, "public"));
 const publicRootBoundary = publicRoot.endsWith(sep) ? publicRoot : `${publicRoot}${sep}`;
 await mkdir(documentsDirectory, { recursive: true }).catch(() => undefined);
@@ -2666,15 +2672,21 @@ const serveVendorModule = async (pathname: string): Promise<Response | undefined
 
   const vendor = vendorPackages[packageName];
   if (!vendor) return undefined;
-  const relativePath = relativeSegments.length > 0 ? join(...relativeSegments) : "index.js";
+  const relativePath = relativeSegments.length > 0 ? join(...relativeSegments) : vendor.entry;
   const resolveCandidate = (basePath: string) => {
     const normalized = normalize(join(vendor.root, basePath));
     if (!normalized.startsWith(vendor.boundary)) {
       return undefined;
     }
-    const attemptPaths: string[] = [normalized];
-    if (!extname(normalized)) {
+    const attemptPaths: string[] = [];
+    const extension = extname(normalized);
+    if (extension) {
+      attemptPaths.push(normalized);
+    } else {
       attemptPaths.push(`${normalized}.js`, join(normalized, "index.js"));
+      if (vendor.entry && vendor.entry !== "index.js") {
+        attemptPaths.push(join(normalized, vendor.entry));
+      }
     }
     for (const attempt of attemptPaths) {
       const attemptFile = Bun.file(attempt);

@@ -12,6 +12,8 @@ import { xchacha20poly1305 } from "/vendor/@noble/ciphers/chacha.js";
 import { bech32 } from "/vendor/@scure/base/index.js";
 import { nip19 } from "/vendor/nostr-tools/index.js";
 import { schnorr, secp256k1 } from "/vendor/@noble/curves/secp256k1.js";
+import { NostrConnectSigner } from "/vendor/applesauce-signers/index.js";
+import { RelayPool } from "/vendor/applesauce-relay/index.js";
 
 const textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
 
@@ -146,6 +148,149 @@ const sessionCache = {
     const session = sessionCache.load();
     return Boolean(session && typeof session.encryptedNsec === "string" && session.encryptedNsec.length > 0);
   },
+};
+
+const BUNKER_SESSION_STORAGE_KEY = "wingman_identity_bunker_session";
+const BUNKER_PERMISSION_KINDS = [22242];
+const BUNKER_SIGNING_PERMISSIONS = NostrConnectSigner.buildSigningPermissions(BUNKER_PERMISSION_KINDS);
+let bunkerRelayPool = null;
+let bunkerRestorePromise = null;
+let activeBunkerSigner = null;
+
+const getRelayPool = () => {
+  if (!bunkerRelayPool) {
+    bunkerRelayPool = new RelayPool();
+  }
+  return bunkerRelayPool;
+};
+
+const loadBunkerSession = () => {
+  if (typeof window === "undefined" || !window.localStorage) return null;
+  try {
+    const raw = window.localStorage.getItem(BUNKER_SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const remote = typeof parsed.remote === "string" ? parsed.remote : null;
+    const relays = Array.isArray(parsed.relays)
+      ? parsed.relays.filter((entry) => typeof entry === "string" && entry.trim().length > 0)
+      : [];
+    if (!remote || relays.length === 0) return null;
+    return {
+      remote,
+      relays,
+      pubkey: typeof parsed.pubkey === "string" ? parsed.pubkey : null,
+      hasSecret: Boolean(parsed.hasSecret),
+      lastConnectedAt: typeof parsed.lastConnectedAt === "number" ? parsed.lastConnectedAt : null,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const saveBunkerSession = (meta) => {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    const payload = {
+      remote: meta.remote,
+      relays: Array.isArray(meta.relays) ? meta.relays : [],
+      pubkey: meta.pubkey ?? null,
+      hasSecret: Boolean(meta.hasSecret),
+      lastConnectedAt: meta.lastConnectedAt ?? Date.now(),
+    };
+    window.localStorage.setItem(BUNKER_SESSION_STORAGE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    console.warn("[identity] failed to persist bunker session", error instanceof Error ? error.message : error);
+  }
+};
+
+const clearBunkerSession = () => {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    window.localStorage.removeItem(BUNKER_SESSION_STORAGE_KEY);
+  } catch (error) {
+    console.warn("[identity] failed to clear bunker session", error instanceof Error ? error.message : error);
+  }
+};
+
+const disconnectBunkerSigner = async () => {
+  const signer = activeBunkerSigner ?? identityApi?.bunkerSigner ?? null;
+  if (signer && typeof signer.close === "function") {
+    try {
+      await signer.close();
+    } catch (error) {
+      console.warn("[identity] failed to close bunker signer", error instanceof Error ? error.message : error);
+    }
+  }
+  activeBunkerSigner = null;
+  if (identityApi) {
+    identityApi.bunkerSigner = null;
+  }
+};
+
+const attemptBunkerRestore = async ({ context, setStatus, form, enableInputs, root }) => {
+  if (typeof window === "undefined") return null;
+  const stored = loadBunkerSession();
+  if (!stored) return null;
+  const cached = identityApi.sessionCache?.load?.();
+  if (!cached || cached.method !== "bunker") {
+    if (stored.hasSecret) {
+      setStatus("Stored remote signer requires a secret. Paste the bunker URI again to reconnect.", "warning");
+    }
+    return null;
+  }
+  if (stored.hasSecret) {
+    setStatus("Remote signer requires a secret. Paste the bunker URI again to reconnect.", "warning");
+    return null;
+  }
+  setStatus("Reconnecting to remote signer…");
+  form?.classList.add("is-loading");
+  enableInputs(false);
+  try {
+    await disconnectBunkerSigner();
+    const signer = new NostrConnectSigner({
+      relays: stored.relays,
+      remote: stored.remote,
+      pubkey: stored.pubkey ?? undefined,
+      pool: getRelayPool(),
+    });
+    await signer.connect(undefined, BUNKER_SIGNING_PERMISSIONS);
+    activeBunkerSigner = signer;
+    identityApi.bunkerSigner = signer;
+    const pubkeyHex = await signer.getPublicKey();
+    const npub = nip19.npubEncode(pubkeyHex);
+    let expiresAt = cached?.sessionExpiresAt ?? null;
+    try {
+      const refreshed = await persistServerSession(npub, null);
+      if (refreshed.expiresAt) {
+        expiresAt = refreshed.expiresAt;
+      }
+    } catch (error) {
+      console.warn("[identity] failed to refresh bunker session cookie", error instanceof Error ? error.message : error);
+    }
+    saveBunkerSession({
+      remote: signer.remote ?? stored.remote,
+      relays: Array.isArray(signer.relays) ? signer.relays : stored.relays,
+      pubkey: pubkeyHex,
+      hasSecret: false,
+      lastConnectedAt: Date.now(),
+    });
+    saveCachedSession({ npub, encryptedNsec: null, expiresAt, method: "bunker" });
+    applyIdentityUpdate(context, { npub, method: "bunker", expiresAt, isAuthenticated: true });
+    root.classList.add("is-authenticated");
+    setStatus("Reconnected to remote signer", "success");
+    return npub;
+  } catch (error) {
+    await disconnectBunkerSigner();
+    console.warn("[identity] bunker restore failed", error instanceof Error ? error.message : error);
+    const message = error instanceof Error ? error.message : "Failed to reconnect to remote signer";
+    setStatus(message, "error");
+    root.classList.remove("is-authenticated");
+    return null;
+  } finally {
+    form?.classList.remove("is-loading");
+    enableInputs(true);
+  }
 };
 
 let cachedPassword = null;
@@ -735,6 +880,8 @@ const copyToClipboard = async (value) => {
 };
 
 const performLogout = async () => {
+  await disconnectBunkerSigner();
+  clearBunkerSession();
   let error = null;
   try {
     const response = await fetch("/api/auth/session", {
@@ -944,28 +1091,137 @@ const wireNip07Panel = (root, context) => {
   }
 };
 
-const wireBunkerPanel = (root) => {
-  if (!root) return;
+const initBunkerPanel = (root, context) => {
+  if (!root) return null;
+  if (root.__wingmanBunkerState) {
+    return root.__wingmanBunkerState;
+  }
+
   const form = root.querySelector('[data-form="bunker-auth"]');
+  const textarea = form?.querySelector('textarea[name="bunkerUri"]');
+  const submitButton = form?.querySelector('button[type="submit"]');
   const scanButton = root.querySelector('[data-action="scan-qr"]');
   const statusEl = root.querySelector('[data-role="bunker-status"]');
   const setStatus = (message, state = "info") => setPanelStatus(statusEl, message, state);
 
+  const enableInputs = (enabled) => {
+    if (textarea) textarea.disabled = !enabled;
+    if (submitButton) submitButton.disabled = !enabled;
+  };
+
+  const connectWithUri = async (uri) => {
+    const trimmed = typeof uri === "string" ? uri.trim() : "";
+    if (!trimmed) {
+      setStatus("Enter a bunker URI to connect.", "error");
+      return;
+    }
+    if (textarea) {
+      textarea.value = trimmed;
+    }
+    setStatus("Connecting to remote signer…");
+    form?.classList.add("is-loading");
+    enableInputs(false);
+    try {
+      const parsed = NostrConnectSigner.parseBunkerURI(trimmed);
+      await disconnectBunkerSigner();
+      const signer = await NostrConnectSigner.fromBunkerURI(trimmed, {
+        pool: getRelayPool(),
+        permissions: BUNKER_SIGNING_PERMISSIONS,
+      });
+      activeBunkerSigner = signer;
+      identityApi.bunkerSigner = signer;
+      const pubkeyHex = await signer.getPublicKey();
+      const npub = nip19.npubEncode(pubkeyHex);
+      const { expiresAt } = await persistServerSession(npub, null);
+      saveBunkerSession({
+        remote: signer.remote ?? parsed.remote,
+        relays: Array.isArray(signer.relays) ? signer.relays : parsed.relays,
+        pubkey: pubkeyHex,
+        hasSecret: Boolean(parsed.secret),
+        lastConnectedAt: Date.now(),
+      });
+      saveCachedSession({ npub, encryptedNsec: null, expiresAt, method: "bunker" });
+      applyIdentityUpdate(context, { npub, method: "bunker", expiresAt, isAuthenticated: true });
+      root.classList.add("is-authenticated");
+      setStatus("Connected to remote signer", "success");
+    } catch (error) {
+      await disconnectBunkerSigner();
+      console.error("[identity] bunker connection failed", error instanceof Error ? error.message : error);
+      const message = error instanceof Error ? error.message : "Failed to connect to remote signer";
+      setStatus(message, "error");
+      root.classList.remove("is-authenticated");
+    } finally {
+      form?.classList.remove("is-loading");
+      enableInputs(true);
+    }
+  };
+
+  const state = {
+    connect: connectWithUri,
+    setScanHandler(callback) {
+      state._scanHandler = typeof callback === "function" ? callback : null;
+    },
+    _scanHandler: null,
+  };
+
   form?.addEventListener("submit", (event) => {
     event.preventDefault();
-    setStatus("Remote signer support is coming soon.", "warning");
+    if (!textarea) return;
+    void connectWithUri(textarea.value);
   });
 
-  scanButton?.addEventListener("click", () => {
-    setStatus("QR scanning is not implemented yet.", "warning");
-  });
+  if (scanButton) {
+    scanButton.addEventListener("click", async () => {
+      if (!state._scanHandler) {
+        setStatus("QR scanning is not implemented yet.", "warning");
+        return;
+      }
+      const scanned = window.prompt("Paste the bunker URI from your remote signer:");
+      if (!scanned) {
+        setStatus("QR scan cancelled", "info");
+        return;
+      }
+      state._scanHandler(scanned);
+      await connectWithUri(scanned);
+    });
+  }
 
   if (typeof window !== "undefined" && !root.dataset.logoutBunkerHooked) {
     window.addEventListener("wingman:identity-logout", () => {
       setStatus("Signed out", "info");
+      root.classList.remove("is-authenticated");
     });
     root.dataset.logoutBunkerHooked = "true";
   }
+
+  const scheduleRestore = () => {
+    if (bunkerRestorePromise) return;
+    bunkerRestorePromise = attemptBunkerRestore({ context, setStatus, form, enableInputs, root }).finally(() => {
+      bunkerRestorePromise = null;
+    });
+  };
+
+  scheduleRestore();
+
+  root.__wingmanBunkerState = state;
+  root.dataset.bunkerInitialised = "true";
+  return state;
+};
+
+const wireBunkerPanel = (root, context) => {
+  initBunkerPanel(root, context);
+};
+
+const wireBunkerLogin = wireBunkerPanel;
+
+const wireBunkerQRScanner = (root, onScan, context) => {
+  const state = initBunkerPanel(root, context);
+  if (!state) return;
+  state.setScanHandler((uri) => {
+    if (typeof onScan === "function") {
+      onScan(uri);
+    }
+  });
 };
 
 identityApi.uiPrompts = {
@@ -1005,9 +1261,10 @@ identityApi.wireNip07Panel = wireNip07Panel;
 identityApi.wireNip07 = wireNip07Panel;
 identityApi.wireNip07Login = wireNip07Panel;
 identityApi.wireBunkerPanel = wireBunkerPanel;
-identityApi.wireBunkerLogin = wireBunkerPanel;
-identityApi.wireBunkerQRScanner = wireBunkerPanel;
+identityApi.wireBunkerLogin = wireBunkerLogin;
+identityApi.wireBunkerQRScanner = wireBunkerQRScanner;
 identityApi.logoutIdentity = performLogout;
+identityApi.bunkerSigner = identityApi.bunkerSigner ?? null;
 
 globalThis.wingmanIdentity = identityApi;
 
@@ -1027,5 +1284,7 @@ export {
   wireLocalIdentityPanel,
   wireNip07Panel,
   wireBunkerPanel,
+  wireBunkerLogin,
+  wireBunkerQRScanner,
   performLogout as logoutIdentity,
 };
