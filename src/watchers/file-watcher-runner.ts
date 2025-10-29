@@ -448,6 +448,7 @@ export class FileWatcherRunner {
       agent: session.agent,
       startedAt: session.startedAt,
       name: session.name,
+      npub: session.npub,
       port: session.port,
       pid: session.pid,
       tmuxSession: session.tmuxSession,

@@ -24,6 +24,11 @@ let appsPollInFlight = false;
 const state = {
   config: null,
   sessions: [],
+  identitySummaries: [],
+  sessionFilters: {
+    npub: "all",
+    options: [],
+  },
   orchestratorPresets: [],
   orchestratorPresetsLoading: false,
   orchestratorPresetsLoaded: false,
@@ -3531,9 +3536,28 @@ const fetchConfig = async () => {
 };
 
 const fetchSessions = async () => {
-  const response = await fetch("/api/sessions");
+  const activeFilter = state.sessionFilters.npub;
+  const query = activeFilter && activeFilter !== "all" ? `?npub=${encodeURIComponent(activeFilter)}` : "";
+  const response = await fetch(`/api/sessions${query}`);
   const data = await response.json();
-  state.sessions = data.sessions ?? [];
+  state.sessions = Array.isArray(data.sessions) ? data.sessions : [];
+  state.identitySummaries = Array.isArray(data.identities) ? data.identities : [];
+  const filterPayload = data.filters && typeof data.filters === "object" ? data.filters : null;
+  const npubOptions = filterPayload && Array.isArray(filterPayload.npubs) ? filterPayload.npubs : [];
+  state.sessionFilters.options = npubOptions;
+  const optionValues = new Set([
+    "all",
+    ...npubOptions
+      .filter((option) => option && typeof option === "object" && typeof option.value === "string")
+      .map((option) => option.value),
+  ]);
+  if (filterPayload && typeof filterPayload.active === "string") {
+    state.sessionFilters.npub = filterPayload.active;
+  } else if (filterPayload && filterPayload.active === null) {
+    state.sessionFilters.npub = "all";
+  } else if (!optionValues.has(state.sessionFilters.npub)) {
+    state.sessionFilters.npub = "all";
+  }
 
   const sessionIds = new Set(state.sessions.map((session) => session.id));
   if (state.lastActiveSessionId && !sessionIds.has(state.lastActiveSessionId)) {
@@ -3590,6 +3614,31 @@ const fetchSessions = async () => {
       fetchConversation(state.activeSessionId),
     ]);
   }
+};
+
+const buildSessionFilterOptions = () => {
+  const seen = new Set();
+  const options = [];
+  const appendOption = (value, label, meta = {}) => {
+    if (seen.has(value)) return;
+    seen.add(value);
+    options.push({ value, label, ...meta });
+  };
+
+  appendOption("all", "All identities");
+
+  state.sessionFilters.options.forEach((option) => {
+    if (!option || typeof option !== "object") return;
+    const value = typeof option.value === "string" ? option.value : "__anonymous__";
+    const npub = typeof option.npub === "string" ? option.npub : null;
+    const baseLabel = typeof option.label === "string" && option.label.trim().length > 0 ? option.label.trim() : npub ?? "Anonymous";
+    const sessionCount = typeof option.sessionCount === "number" ? option.sessionCount : 0;
+    const activeCount = typeof option.activeCount === "number" ? option.activeCount : 0;
+    const detail = activeCount > 0 ? `${sessionCount} sessions (${activeCount} active)` : `${sessionCount} sessions`;
+    appendOption(value, `${baseLabel} • ${detail}`, { npub, sessionCount, activeCount });
+  });
+
+  return options;
 };
 
 const fetchLogs = async (sessionId) => {
@@ -3738,6 +3787,11 @@ const pollSessions = async () => {
     await fetchSessions();
     syncMenuTabs();
     syncDesktopSessionIndicator();
+
+    if (currentRoute === "home") {
+      render();
+      return;
+    }
 
     if (currentRoute !== "live") {
       return;
@@ -5873,6 +5927,36 @@ const renderHome = () => {
   const actions = document.createElement("div");
   actions.className = "wm-actions";
 
+  const filterContainer = document.createElement("div");
+  filterContainer.className = "wm-session-filter";
+  const filterLabel = document.createElement("label");
+  filterLabel.textContent = "Identity";
+  const filterSelect = document.createElement("select");
+  filterSelect.className = "wm-select";
+  buildSessionFilterOptions().forEach((option) => {
+    const opt = document.createElement("option");
+    opt.value = option.value;
+    opt.textContent = option.label;
+    if (option.value === state.sessionFilters.npub) {
+      opt.selected = true;
+    }
+    filterSelect.append(opt);
+  });
+  filterSelect.addEventListener("change", (event) => {
+    const target = event.target;
+    const value = target instanceof HTMLSelectElement && target.value ? target.value : "all";
+    state.sessionFilters.npub = value;
+    void fetchSessions().then(() => {
+      syncMenuTabs();
+      if (currentRoute === "home" || currentRoute === "live") {
+        render();
+      }
+    });
+  });
+  filterLabel.append(filterSelect);
+  filterContainer.append(filterLabel);
+  actions.append(filterContainer);
+
   const launchBtn = document.createElement("button");
   launchBtn.className = "wm-button";
   launchBtn.textContent = "Launch Agent Session";
@@ -5884,7 +5968,7 @@ const renderHome = () => {
 
   const thead = document.createElement("thead");
   thead.innerHTML =
-    "<tr><th>Name</th><th>Agent</th><th>Status</th><th>Port</th><th>PID</th><th>Started</th><th>Directory</th><th></th></tr>";
+    "<tr><th>Name</th><th>Agent</th><th>Identity</th><th>Status</th><th>Port</th><th>PID</th><th>Started</th><th>Directory</th><th></th></tr>";
   table.append(thead);
 
   const tbody = document.createElement("tbody");
@@ -5899,9 +5983,11 @@ const renderHome = () => {
     state.sessions.forEach((session) => {
       const row = document.createElement("tr");
       const displayName = getSessionDisplayName(session);
+      const identityLabel = session.npub && session.npub.length > 0 ? session.npub : "Anonymous";
       row.innerHTML = `
         <td>${escapeHtml(displayName)}</td>
         <td>${escapeHtml(session.agent)}</td>
+        <td class="identity-cell" title="${escapeHtml(identityLabel)}">${escapeHtml(identityLabel)}</td>
         <td>${escapeHtml(session.status)}</td>
         <td>${escapeHtml(session.port)}</td>
         <td>${session.pid ?? "-"}</td>
@@ -5974,6 +6060,7 @@ const renderHome = () => {
       };
 
       addDetail("Agent", session.agent);
+      addDetail("Identity", session.npub ?? "Anonymous");
       addDetail("Port", session.port ?? "-");
       addDetail("PID", session.pid ?? "-");
       addDetail("Started", new Date(session.startedAt).toLocaleTimeString());
