@@ -36,6 +36,11 @@ import {
   sendAgentMessage,
   waitForAgentReady as waitForAgentReadyCore,
 } from "./agents/agent-client";
+import {
+  mintSessionCookie,
+  readSessionCookie,
+  SessionCookieError,
+} from "./auth/session-cookie";
 
 const config = loadConfig();
 process.env.WINGMAN_PID = process.pid.toString();
@@ -2656,6 +2661,56 @@ const handleApi = async (request: Request, url: URL, method: HttpMethod): Promis
       status: "scheduled",
       sessions: marker.sessionIds ?? [],
     }, { status: 202 });
+  }
+
+  if (pathname === "/api/auth/session" && method === "POST") {
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    const { npub, encryptedNsec } = payload as Record<string, unknown>;
+    if (typeof npub !== "string" || npub.trim().length === 0) {
+      return Response.json({ error: "npub is required" }, { status: 400 });
+    }
+
+    const trimmedNpub = npub.trim();
+    if (typeof encryptedNsec !== "undefined" && encryptedNsec !== null && typeof encryptedNsec !== "string") {
+      return Response.json({ error: "encryptedNsec must be a string" }, { status: 400 });
+    }
+
+    try {
+      const existingCookie = request.headers.get("cookie");
+      if (existingCookie) {
+        try {
+          const existingSession = readSessionCookie(existingCookie);
+          if (existingSession && existingSession.npub !== trimmedNpub) {
+            // Allow overwriting with a new npub, but clear stale signed data by minting a new cookie.
+          }
+        } catch {
+          // Ignore malformed cookies; minting a fresh one replaces them.
+        }
+      }
+
+      const { cookie, expiresAt } = mintSessionCookie(trimmedNpub);
+      const headers = new Headers({
+        "cache-control": "no-store",
+      });
+      headers.append("set-cookie", cookie);
+      return Response.json({ expiresAt }, { headers });
+    } catch (error) {
+      if (error instanceof SessionCookieError) {
+        return Response.json({ error: error.message }, { status: 400 });
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: `Failed to mint session cookie: ${message}` }, { status: 500 });
+    }
   }
 
   if (pathname === "/api/apps" && method === "GET") {
