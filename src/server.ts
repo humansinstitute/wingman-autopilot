@@ -786,6 +786,19 @@ const resolvePackageRoot = (specifier: string) => {
 const resolvedAceBuildsRoot = resolvePackageRoot("ace-builds");
 const aceBuildsRoot = resolvedAceBuildsRoot ?? normalize(join(projectRoot, "node_modules", "ace-builds"));
 const aceBuildsRootBoundary = aceBuildsRoot.endsWith(sep) ? aceBuildsRoot : `${aceBuildsRoot}${sep}`;
+const vendorPackages: Record<string, { root: string; boundary: string }> = {};
+const registerVendorPackage = (name: string, relative: string) => {
+  const root = resolvePackageRoot(name);
+  if (!root) return;
+  const resolved = normalize(join(root, relative));
+  vendorPackages[name] = {
+    root: resolved,
+    boundary: resolved.endsWith(sep) ? resolved : `${resolved}${sep}`,
+  };
+};
+registerVendorPackage("@noble/hashes", "esm");
+registerVendorPackage("@noble/ciphers", "esm");
+registerVendorPackage("@scure/base", join("lib", "esm"));
 const publicRoot = normalize(join(projectRoot, "public"));
 const publicRootBoundary = publicRoot.endsWith(sep) ? publicRoot : `${publicRoot}${sep}`;
 await mkdir(documentsDirectory, { recursive: true }).catch(() => undefined);
@@ -2367,6 +2380,7 @@ type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 const assetMap: Record<string, { path: string; type: string }> = {
   "/app.js": { path: "./ui/app.js", type: "application/javascript; charset=utf-8" },
   "/styles.css": { path: "./ui/styles.css", type: "text/css; charset=utf-8" },
+  "/identity/index.js": { path: "./ui/identity/index.js", type: "application/javascript; charset=utf-8" },
 };
 
 const resolveAsset = (pathname: string) => {
@@ -2420,6 +2434,54 @@ const serveAceBuildsAsset = (pathname: string) => {
       : ext === ".css"
         ? "text/css; charset=utf-8"
         : file.type || undefined;
+  return new Response(file, {
+    headers: {
+      ...(type ? { "content-type": type } : {}),
+      "cache-control": "public, max-age=86400",
+    },
+  });
+};
+
+const serveVendorModule = (pathname: string) => {
+  if (!pathname.startsWith("/vendor/")) return undefined;
+  const suffix = pathname.slice("/vendor/".length);
+  if (!suffix) return undefined;
+
+  const segments = suffix.split("/").filter((segment) => segment.length > 0);
+  if (segments.length === 0) return undefined;
+  if (segments.some((segment) => segment === "." || segment === "..")) return undefined;
+
+  let packageName: string;
+  let relativeSegments: string[];
+  if (segments[0].startsWith("@")) {
+    if (segments.length < 2) return undefined;
+    packageName = `${segments[0]}/${segments[1]}`;
+    relativeSegments = segments.slice(2);
+  } else {
+    packageName = segments[0];
+    relativeSegments = segments.slice(1);
+  }
+  if (relativeSegments.some((segment) => segment === "." || segment === "..")) return undefined;
+
+  const vendor = vendorPackages[packageName];
+  if (!vendor) return undefined;
+  const relativePath = relativeSegments.length > 0 ? join(...relativeSegments) : "index.js";
+  const candidate = normalize(join(vendor.root, relativePath));
+  if (!candidate.startsWith(vendor.boundary)) {
+    console.warn(`[static] rejected vendor asset outside package boundary: ${pathname}`);
+    return undefined;
+  }
+  const file = Bun.file(candidate);
+  if (!file.size) return undefined;
+
+  const extension = extname(candidate).toLowerCase();
+  const type =
+    extension === ".js"
+      ? "application/javascript; charset=utf-8"
+      : extension === ".json" || extension === ".map"
+        ? "application/json; charset=utf-8"
+        : file.type || undefined;
+
   return new Response(file, {
     headers: {
       ...(type ? { "content-type": type } : {}),
@@ -3859,6 +3921,11 @@ const server = Bun.serve({
       const aceAsset = serveAceBuildsAsset(pathname);
       if (aceAsset) {
         return aceAsset;
+      }
+
+      const vendorAsset = serveVendorModule(pathname);
+      if (vendorAsset) {
+        return vendorAsset;
       }
 
       const assetResponse = resolveAsset(pathname);

@@ -2071,6 +2071,31 @@ dialog textarea {
   resize: vertical;
 }
 
+.wm-password-dialog-error {
+  margin: -0.25rem 0 0;
+  color: #f87171;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.wm-password-dialog-reset {
+  margin-top: -0.25rem;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-decoration: underline;
+  align-self: flex-start;
+}
+
+.wm-password-dialog-reset:hover,
+.wm-password-dialog-reset:focus {
+  color: var(--accent-primary);
+  outline: none;
+}
+
 .wm-dialog-help {
   margin: 0;
   font-size: 0.85rem;

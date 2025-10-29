@@ -8,6 +8,9 @@
     "dev": "bun run src/index.ts"
   },
   "dependencies": {
+    "@noble/ciphers": "^1.1.0",
+    "@noble/hashes": "^1.4.0",
+    "@scure/base": "^1.1.1",
     "ace-builds": "^1.43.4",
     "node-pty": "^1.0.0",
     "ws": "^8.18.3"

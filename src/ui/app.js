@@ -2,6 +2,7 @@ import "/ace-builds/src-noconflict/ace.js";
 import "/ace-builds/src-noconflict/mode-text.js";
 import "/ace-builds/src-noconflict/theme-chrome.js";
 import "/ace-builds/src-noconflict/theme-tomorrow_night.js";
+import "./identity/index.js";
 
 const ace = globalThis.ace;
 if (!ace) {
