@@ -481,6 +481,37 @@ body[data-menu-open="true"] .wm-menu-panel {
   gap: 1.5rem;
 }
 
+.wm-home-identity-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+}
+
+.wm-home-identity-info {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.wm-home-identity-label {
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.wm-home-identity-status {
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.wm-home-identity-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
 .wm-apps {
   display: flex;
   flex-direction: column;
@@ -1167,6 +1198,22 @@ body[data-menu-open="true"] .wm-menu-panel {
   color: #ffffff;
   transition: transform 200ms ease, box-shadow 200ms ease, background 200ms ease;
   box-shadow: var(--shadow-sm);
+}
+
+.wm-link-button {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-primary);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.wm-link-button:hover,
+.wm-link-button:focus-visible {
+  color: var(--accent-secondary);
+  text-decoration: underline;
 }
 
 .wm-button.secondary {
@@ -2084,6 +2131,34 @@ dialog input[type="number"] {
 dialog textarea {
   min-height: 6rem;
   resize: vertical;
+}
+
+.wm-identity-dialog {
+  padding: 0;
+  max-width: none;
+  background: transparent;
+  color: inherit;
+}
+
+.wm-identity-dialog__content {
+  width: min(90vw, 640px);
+  margin: 0 auto;
+}
+
+.wm-identity-dialog__content > .wm-card {
+  margin: 0;
+}
+
+.wm-identity-dialog__actions {
+  width: min(90vw, 640px);
+  margin: 1rem auto 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.wm-identity-dialog-card {
+  margin: 0;
 }
 
 .wm-password-dialog-error {

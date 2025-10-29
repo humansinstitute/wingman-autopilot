@@ -153,18 +153,10 @@ try {
 const IDENTITY_STORAGE_KEY = "wingman-identity-state";
 const IDENTITY_EVENT_NAMES = ["wingman:identity-state", "identity:state", "nostr-auth:state"];
 
-const identityDomRefs = {
-  root: null,
-  npub: null,
-  method: null,
-  expiry: null,
-  copyButton: null,
-  copyFeedback: null,
-  logoutButton: null,
-};
-
+const identityDomEntries = new Set();
+const identityDomEntryByNode = new WeakMap();
+const identityCopyFeedbackTimeouts = new WeakMap();
 let identityCountdownIntervalId = null;
-let identityCopyFeedbackTimeoutId = null;
 
 const identityMethodLabels = {
   none: "Not signed in",
@@ -207,23 +199,30 @@ const formatIdentityDuration = (ms) => {
   return parts.join(" ");
 };
 
-const showIdentityCopyFeedback = (message, { error = false } = {}) => {
-  if (!identityDomRefs.copyFeedback) return;
-  identityDomRefs.copyFeedback.textContent = message;
-  identityDomRefs.copyFeedback.hidden = false;
-  if (error) {
-    identityDomRefs.copyFeedback.dataset.state = "error";
-  } else {
-    identityDomRefs.copyFeedback.dataset.state = "success";
-  }
-  if (identityCopyFeedbackTimeoutId) {
-    window.clearTimeout(identityCopyFeedbackTimeoutId);
-  }
-  identityCopyFeedbackTimeoutId = window.setTimeout(() => {
-    if (!identityDomRefs.copyFeedback) return;
-    identityDomRefs.copyFeedback.hidden = true;
-    delete identityDomRefs.copyFeedback.dataset.state;
-  }, 2000);
+const showIdentityCopyFeedback = (message, { error = false, entry } = {}) => {
+  const targets = entry ? [entry] : Array.from(identityDomEntries);
+  targets.forEach((target) => {
+    const feedback = target.copyFeedback;
+    if (!feedback) return;
+    feedback.textContent = message;
+    feedback.hidden = false;
+    if (error) {
+      feedback.dataset.state = "error";
+    } else {
+      feedback.dataset.state = "success";
+    }
+    const existingTimeout = identityCopyFeedbackTimeouts.get(target);
+    if (existingTimeout) {
+      window.clearTimeout(existingTimeout);
+    }
+    const timeoutId = window.setTimeout(() => {
+      const currentFeedback = target.copyFeedback;
+      if (!currentFeedback) return;
+      currentFeedback.hidden = true;
+      delete currentFeedback.dataset.state;
+    }, 2000);
+    identityCopyFeedbackTimeouts.set(target, timeoutId);
+  });
 };
 
 const stopIdentityCountdown = () => {
@@ -234,30 +233,42 @@ const stopIdentityCountdown = () => {
 };
 
 const updateIdentityCountdown = () => {
+  pruneIdentityDomEntries();
   const expiresAt = state.identity.expiresAt;
-  if (!identityDomRefs.expiry) return;
-  if (!isFiniteNumber(expiresAt)) {
-    identityDomRefs.expiry.textContent = state.identity.authenticated ? "Session expiry unknown" : "—";
-    identityDomRefs.expiry.dataset.state = state.identity.authenticated ? "unknown" : "inactive";
-    identityDomRefs.expiry.title = "";
-    return;
-  }
-  const remaining = expiresAt - Date.now();
-  if (remaining <= 0) {
-    identityDomRefs.expiry.textContent = "Session expired";
-    identityDomRefs.expiry.dataset.state = "expired";
-    identityDomRefs.expiry.title = new Date(expiresAt).toLocaleString();
+  const authenticated = state.identity.authenticated;
+  const expirationKnown = isFiniteNumber(expiresAt);
+  identityDomEntries.forEach((entry) => {
+    const expiry = entry.expiry;
+    if (!expiry) return;
+    if (!expirationKnown) {
+      expiry.textContent = authenticated ? "Session expiry unknown" : "—";
+      expiry.dataset.state = authenticated ? "unknown" : "inactive";
+      expiry.title = "";
+      return;
+    }
+    const remaining = expiresAt - Date.now();
+    if (remaining <= 0) {
+      expiry.textContent = "Session expired";
+      expiry.dataset.state = "expired";
+      expiry.title = new Date(expiresAt).toLocaleString();
+      return;
+    }
+    expiry.textContent = `Expires in ${formatIdentityDuration(remaining)}`;
+    expiry.dataset.state = "active";
+    expiry.title = new Date(expiresAt).toLocaleString();
+  });
+  if (expirationKnown && expiresAt - Date.now() <= 0) {
     stopIdentityCountdown();
-    return;
   }
-  identityDomRefs.expiry.textContent = `Expires in ${formatIdentityDuration(remaining)}`;
-  identityDomRefs.expiry.dataset.state = "active";
-  identityDomRefs.expiry.title = new Date(expiresAt).toLocaleString();
 };
 
 const startIdentityCountdown = () => {
   stopIdentityCountdown();
-  if (!isFiniteNumber(state.identity.expiresAt)) {
+  if (!state.identity.authenticated || !isFiniteNumber(state.identity.expiresAt)) {
+    return;
+  }
+  const hasExpiryTarget = Array.from(identityDomEntries).some((entry) => Boolean(entry.expiry));
+  if (!hasExpiryTarget) {
     return;
   }
   updateIdentityCountdown();
@@ -286,50 +297,59 @@ const persistIdentityState = (identity) => {
   }
 };
 
-const syncIdentityDisplay = () => {
+const syncIdentityDisplayForEntry = (entry) => {
   const { npub, method, authenticated, expiresAt } = state.identity;
-  if (identityDomRefs.root) {
+  if (entry.root) {
     if (authenticated) {
-      identityDomRefs.root.dataset.authenticated = "true";
+      entry.root.dataset.authenticated = "true";
     } else {
-      delete identityDomRefs.root.dataset.authenticated;
+      delete entry.root.dataset.authenticated;
     }
   }
-  if (identityDomRefs.npub) {
-    identityDomRefs.npub.textContent = npub ? abbreviateNpub(npub) : "Not signed in";
+  if (entry.npub) {
     if (npub) {
-      identityDomRefs.npub.title = npub;
+      entry.npub.textContent = abbreviateNpub(npub);
+      entry.npub.title = npub;
     } else {
-      identityDomRefs.npub.removeAttribute("title");
+      entry.npub.textContent = "Not signed in";
+      entry.npub.removeAttribute("title");
     }
   }
-  if (identityDomRefs.method) {
-    identityDomRefs.method.textContent = authenticated ? (identityMethodLabels[method] ?? method ?? "Unknown") : "—";
+  if (entry.method) {
+    entry.method.textContent = authenticated ? (identityMethodLabels[method] ?? method ?? "Unknown") : "—";
   }
-  if (identityDomRefs.copyButton) {
-    identityDomRefs.copyButton.disabled = !npub;
+  if (entry.copyButton) {
+    entry.copyButton.disabled = !npub;
   }
-  if (identityDomRefs.logoutButton) {
-    identityDomRefs.logoutButton.disabled = !authenticated;
+  if (entry.logoutButton) {
+    entry.logoutButton.disabled = !authenticated;
   }
-  if (identityDomRefs.copyFeedback && !npub) {
-    identityDomRefs.copyFeedback.hidden = true;
-    delete identityDomRefs.copyFeedback.dataset.state;
+  if (entry.copyFeedback && !npub) {
+    entry.copyFeedback.hidden = true;
+    delete entry.copyFeedback.dataset.state;
   }
-  if (identityDomRefs.expiry) {
+  if (entry.expiry) {
     if (!authenticated) {
-      identityDomRefs.expiry.textContent = "—";
-      identityDomRefs.expiry.dataset.state = "inactive";
-      identityDomRefs.expiry.removeAttribute("title");
-      stopIdentityCountdown();
-    } else if (isFiniteNumber(expiresAt)) {
-      startIdentityCountdown();
+      entry.expiry.textContent = "—";
+      entry.expiry.dataset.state = "inactive";
+      entry.expiry.removeAttribute("title");
+    } else if (!isFiniteNumber(expiresAt)) {
+      entry.expiry.textContent = "Session expiry unknown";
+      entry.expiry.dataset.state = "unknown";
+      entry.expiry.removeAttribute("title");
     } else {
-      identityDomRefs.expiry.textContent = "Session expiry unknown";
-      identityDomRefs.expiry.dataset.state = "unknown";
-      identityDomRefs.expiry.removeAttribute("title");
-      stopIdentityCountdown();
+      updateIdentityCountdown();
     }
+  }
+};
+
+const syncIdentityDisplay = () => {
+  pruneIdentityDomEntries();
+  identityDomEntries.forEach((entry) => {
+    syncIdentityDisplayForEntry(entry);
+  });
+  if (state.identity.authenticated && isFiniteNumber(state.identity.expiresAt)) {
+    startIdentityCountdown();
   } else {
     stopIdentityCountdown();
   }
@@ -416,13 +436,17 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
   return next;
 };
 
-const handleIdentityCopy = async () => {
+const handleIdentityCopy = async (event, entryOverride) => {
+  if (event?.preventDefault) {
+    event.preventDefault();
+  }
+  const entry = entryOverride ?? (event?.currentTarget ? identityDomEntryByNode.get(event.currentTarget) : null);
   const npub = state.identity.npub;
   if (!npub) return;
   try {
     if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
       await navigator.clipboard.writeText(npub);
-      showIdentityCopyFeedback("Copied");
+      showIdentityCopyFeedback("Copied", { entry });
       return;
     }
   } catch (error) {
@@ -440,20 +464,25 @@ const handleIdentityCopy = async () => {
     const success = document.execCommand("copy");
     textarea.remove();
     if (success) {
-      showIdentityCopyFeedback("Copied");
+      showIdentityCopyFeedback("Copied", { entry });
       return;
     }
   } catch (error) {
     console.warn("[identity] fallback copy failed", error);
   }
 
-  showIdentityCopyFeedback("Copy failed", { error: true });
+  showIdentityCopyFeedback("Copy failed", { error: true, entry });
 };
 
-const handleIdentityLogout = async () => {
-  if (identityDomRefs.logoutButton) {
-    identityDomRefs.logoutButton.disabled = true;
+const handleIdentityLogout = async (event, entryOverride) => {
+  if (event?.preventDefault) {
+    event.preventDefault();
   }
+  identityDomEntries.forEach((entry) => {
+    if (entry.logoutButton) {
+      entry.logoutButton.disabled = true;
+    }
+  });
   const sources = [globalThis.wingmanIdentity, globalThis.identity];
   for (const source of sources) {
     if (source && typeof source.logoutIdentity === "function") {
@@ -464,42 +493,100 @@ const handleIdentityLogout = async () => {
         const message = error instanceof Error ? error.message : "Failed to sign out";
         window.alert(message);
       }
-      if (identityDomRefs.logoutButton) {
-        identityDomRefs.logoutButton.disabled = !state.identity.authenticated;
-      }
+      identityDomEntries.forEach((entry) => {
+        if (entry.logoutButton) {
+          entry.logoutButton.disabled = !state.identity.authenticated;
+        }
+      });
       return;
     }
   }
 
   updateIdentityState({ npub: null, method: "none", expiresAt: null, isAuthenticated: false });
-  if (identityDomRefs.logoutButton) {
-    identityDomRefs.logoutButton.disabled = true;
+  identityDomEntries.forEach((entry) => {
+    if (entry.logoutButton) {
+      entry.logoutButton.disabled = true;
+    }
+  });
+};
+
+const detachIdentityDomEntry = (entry) => {
+  if (!entry) return;
+  if (entry.copyButton && entry.copyHandler) {
+    entry.copyButton.removeEventListener("click", entry.copyHandler);
+    identityDomEntryByNode.delete(entry.copyButton);
+  }
+  if (entry.logoutButton && entry.logoutHandler) {
+    entry.logoutButton.removeEventListener("click", entry.logoutHandler);
+    identityDomEntryByNode.delete(entry.logoutButton);
+  }
+  const timeoutId = identityCopyFeedbackTimeouts.get(entry);
+  if (timeoutId) {
+    window.clearTimeout(timeoutId);
+    identityCopyFeedbackTimeouts.delete(entry);
+  }
+};
+
+const pruneIdentityDomEntries = () => {
+  const staleEntries = [];
+  identityDomEntries.forEach((entry) => {
+    if (!entry.root || !entry.root.isConnected) {
+      staleEntries.push(entry);
+    }
+  });
+  staleEntries.forEach((entry) => {
+    detachIdentityDomEntry(entry);
+    identityDomEntries.delete(entry);
+  });
+  if (staleEntries.length > 0 && identityDomEntries.size === 0) {
+    stopIdentityCountdown();
   }
 };
 
 const registerIdentityDom = (root) => {
-  identityDomRefs.root = root;
-  identityDomRefs.npub = root.querySelector('[data-role="identity-npub"]');
-  identityDomRefs.method = root.querySelector('[data-role="identity-method"]');
-  identityDomRefs.expiry = root.querySelector('[data-role="identity-expiry"]');
-  const nextCopyButton = root.querySelector('[data-action="copy-active-npub"]');
-  if (identityDomRefs.copyButton && identityDomRefs.copyButton !== nextCopyButton) {
-    identityDomRefs.copyButton.removeEventListener("click", handleIdentityCopy);
+  if (!root) return;
+  pruneIdentityDomEntries();
+  let existingEntry = null;
+  identityDomEntries.forEach((entry) => {
+    if (entry.root === root) {
+      existingEntry = entry;
+    }
+  });
+  if (existingEntry) {
+    detachIdentityDomEntry(existingEntry);
+    identityDomEntries.delete(existingEntry);
   }
-  identityDomRefs.copyButton = nextCopyButton ?? null;
-  identityDomRefs.copyFeedback = root.querySelector('[data-role="identity-copy-feedback"]');
-  if (identityDomRefs.copyButton) {
-    identityDomRefs.copyButton.addEventListener("click", handleIdentityCopy);
+
+  const entry = {
+    root,
+    npub: root.querySelector('[data-role="identity-npub"]'),
+    method: root.querySelector('[data-role="identity-method"]'),
+    expiry: root.querySelector('[data-role="identity-expiry"]'),
+    copyFeedback: root.querySelector('[data-role="identity-copy-feedback"]'),
+    copyButton: root.querySelector('[data-action="copy-active-npub"]'),
+    logoutButton: root.querySelector('[data-action="identity-logout"]'),
+    copyHandler: null,
+    logoutHandler: null,
+  };
+
+  if (entry.copyButton) {
+    entry.copyHandler = (event) => {
+      void handleIdentityCopy(event, entry);
+    };
+    entry.copyButton.addEventListener("click", entry.copyHandler);
+    identityDomEntryByNode.set(entry.copyButton, entry);
   }
-  const nextLogoutButton = root.querySelector('[data-action="identity-logout"]');
-  if (identityDomRefs.logoutButton && identityDomRefs.logoutButton !== nextLogoutButton) {
-    identityDomRefs.logoutButton.removeEventListener("click", handleIdentityLogout);
+
+  if (entry.logoutButton) {
+    entry.logoutHandler = (event) => {
+      void handleIdentityLogout(event, entry);
+    };
+    entry.logoutButton.addEventListener("click", entry.logoutHandler);
+    identityDomEntryByNode.set(entry.logoutButton, entry);
   }
-  identityDomRefs.logoutButton = nextLogoutButton ?? null;
-  if (identityDomRefs.logoutButton) {
-    identityDomRefs.logoutButton.addEventListener("click", handleIdentityLogout);
-  }
-  syncIdentityDisplay();
+
+  identityDomEntries.add(entry);
+  syncIdentityDisplayForEntry(entry);
 };
 
 const callIdentityWire = (names, element, ...extraArgs) => {
@@ -536,9 +623,12 @@ const getIdentityWiringContext = () => {
     getIdentityState: () => ({ ...state.identity }),
     syncDisplay: syncIdentityDisplay,
     requestBinding: () => {
-      if (identityDomRefs.root && identityDomRefs.root.isConnected) {
-        bindIdentityFlows(identityDomRefs.root);
-      }
+      pruneIdentityDomEntries();
+      identityDomEntries.forEach((entry) => {
+        if (entry.root && entry.root.isConnected) {
+          bindIdentityFlows(entry.root);
+        }
+      });
     },
   };
   return identityWiringContext;
@@ -574,9 +664,12 @@ function bindIdentityFlows(root) {
 }
 
 const identityWireRequestHandler = () => {
-  if (identityDomRefs.root && identityDomRefs.root.isConnected) {
-    bindIdentityFlows(identityDomRefs.root);
-  }
+  pruneIdentityDomEntries();
+  identityDomEntries.forEach((entry) => {
+    if (entry.root && entry.root.isConnected) {
+      bindIdentityFlows(entry.root);
+    }
+  });
 };
 
 const handleIdentityEventPayload = (payload) => {
@@ -678,9 +771,12 @@ const attachIdentityUiApi = () => {
     update: (partial, options) => updateIdentityState(partial, options),
     notify: (partial, options) => updateIdentityState(partial, options),
     bindPanels: () => {
-      if (identityDomRefs.root && identityDomRefs.root.isConnected) {
-        bindIdentityFlows(identityDomRefs.root);
-      }
+      pruneIdentityDomEntries();
+      identityDomEntries.forEach((entry) => {
+        if (entry.root && entry.root.isConnected) {
+          bindIdentityFlows(entry.root);
+        }
+      });
     },
     refreshDisplay: () => syncIdentityDisplay(),
   };
@@ -2644,6 +2740,9 @@ const pullRefreshIndicator = document.getElementById("pull-refresh");
 const pullRefreshLabel = pullRefreshIndicator?.querySelector(".label");
 const desktopSessionIndicator = document.getElementById("desktop-session-indicator");
 const desktopSessionIndicatorButton = document.getElementById("desktop-session-indicator-button");
+const identityLoginDialog = document.getElementById("identity-login-dialog");
+const identityLoginDialogContent = identityLoginDialog?.querySelector(".wm-identity-dialog__content");
+const identityLoginDialogCloseButton = identityLoginDialog?.querySelector('[data-action="identity-dialog-close"]');
 const desktopSessionIndicatorName =
   desktopSessionIndicator?.querySelector('[data-part="name"]') ?? null;
 const desktopSessionIndicatorDirectory =
@@ -2717,6 +2816,46 @@ const appLogsContent = document.getElementById("app-logs-content");
 const appLogsRefreshButton = document.getElementById("app-logs-refresh");
 const appLogsCloseButton = document.getElementById("app-logs-close");
 const SHARED_TMUX_SESSION = "wingman-apps";
+
+let identityLoginPanelRoot = null;
+
+const ensureIdentityLoginPanel = () => {
+  if (!identityLoginDialogContent) return null;
+  if (!identityLoginPanelRoot) {
+    identityLoginPanelRoot = renderIdentityPanel({ variant: "dialog" });
+    identityLoginDialogContent.append(identityLoginPanelRoot);
+  }
+  return identityLoginPanelRoot;
+};
+
+function openIdentityLoginDialog() {
+  const panel = ensureIdentityLoginPanel();
+  if (!identityLoginDialog || !panel) {
+    navigateToSettings();
+    return;
+  }
+  if (typeof identityLoginDialog.showModal === "function") {
+    identityLoginDialog.showModal();
+  } else {
+    navigateToSettings();
+  }
+}
+
+function closeIdentityLoginDialog() {
+  if (identityLoginDialog?.open) {
+    identityLoginDialog.close();
+  }
+}
+
+identityLoginDialogCloseButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  closeIdentityLoginDialog();
+});
+
+identityLoginDialog?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeIdentityLoginDialog();
+});
 
 const applyTheme = (theme, persist = true) => {
   currentTheme = theme;
@@ -5713,10 +5852,18 @@ const renderBunkerPanel = () => {
   return panel;
 };
 
-const renderIdentityPanel = () => {
+const renderIdentityPanel = (options = {}) => {
+  const variant = options.variant ?? "settings";
   const card = document.createElement("section");
-  card.className = "wm-card wm-settings-identity";
-  card.id = "identity-panel";
+  card.className = "wm-card";
+  if (variant === "settings") {
+    card.classList.add("wm-settings-identity");
+    card.id = "identity-panel";
+  } else if (variant === "dialog") {
+    card.classList.add("wm-identity-dialog-card");
+  } else {
+    card.classList.add("wm-identity-panel-card");
+  }
 
   const header = document.createElement("div");
   header.className = "wm-home-section-header";
@@ -5739,9 +5886,93 @@ const renderIdentityPanel = () => {
   return card;
 };
 
+let detachHomeIdentityBannerListener = null;
+
+const renderHomeIdentityBanner = () => {
+  detachHomeIdentityBannerListener?.();
+  const card = document.createElement("section");
+  card.className = "wm-card wm-home-identity-banner";
+
+  const info = document.createElement("div");
+  info.className = "wm-home-identity-info";
+
+  const label = document.createElement("span");
+  label.className = "wm-home-identity-label";
+  label.textContent = "Identity:";
+
+  const status = document.createElement("span");
+  status.className = "wm-home-identity-status";
+  status.hidden = true;
+
+  info.append(label, status);
+
+  const actions = document.createElement("div");
+  actions.className = "wm-home-identity-actions";
+
+  const loginButton = document.createElement("button");
+  loginButton.type = "button";
+  loginButton.className = "wm-button";
+  loginButton.textContent = "Log In";
+  loginButton.addEventListener("click", () => {
+    openIdentityLoginDialog();
+  });
+
+  const manageButton = document.createElement("button");
+  manageButton.type = "button";
+  manageButton.className = "wm-link-button wm-home-identity-manage";
+  manageButton.textContent = "Manage";
+  manageButton.hidden = true;
+  manageButton.addEventListener("click", () => {
+    closeIdentityLoginDialog();
+    navigateToSettings();
+  });
+
+  actions.append(loginButton, manageButton);
+  card.append(info, actions);
+
+  const updateBanner = () => {
+    const { npub } = state.identity;
+    if (npub) {
+      const truncated = npub.length > 12 ? `${npub.slice(0, 12)}...` : npub;
+      status.textContent = truncated;
+      status.title = npub;
+      status.hidden = false;
+      manageButton.hidden = false;
+      loginButton.hidden = true;
+    } else {
+      status.textContent = "";
+      status.removeAttribute("title");
+      status.hidden = true;
+      manageButton.hidden = true;
+      loginButton.hidden = false;
+    }
+  };
+
+  const identityEventHandler = () => {
+    updateBanner();
+  };
+  const trackedEvents = ["wingman:identity-ui-state", ...IDENTITY_EVENT_NAMES];
+  trackedEvents.forEach((eventName) => {
+    window.addEventListener(eventName, identityEventHandler);
+  });
+
+  detachHomeIdentityBannerListener = () => {
+    trackedEvents.forEach((eventName) => {
+      window.removeEventListener(eventName, identityEventHandler);
+    });
+    detachHomeIdentityBannerListener = null;
+  };
+
+  updateBanner();
+
+  return card;
+};
+
 const renderHome = () => {
   const wrapper = document.createElement("div");
   wrapper.className = "wm-home";
+
+  wrapper.append(renderHomeIdentityBanner());
 
   if (!state.apps.initialized && !state.apps.loading) {
     void ensureAppsLoaded();
@@ -7438,6 +7669,9 @@ const render = () => {
   } else {
     view = renderHome();
   }
+  if (currentRoute !== "home") {
+    detachHomeIdentityBannerListener?.();
+  }
   appRoot.append(view);
   renderFileEditorOverlay();
   renderWorktreeModal();
@@ -7513,6 +7747,19 @@ const finishPull = () => {
   }
 };
 
+function navigateToSettings({ skipMenuClose = false } = {}) {
+  if (!skipMenuClose) {
+    closeMenu();
+  }
+  closeIdentityLoginDialog();
+  currentRoute = "settings";
+  lastLoggedSessionId = null;
+  if (window.location.pathname !== SETTINGS_ROUTE) {
+    window.history.pushState({ route: "settings" }, "", SETTINGS_ROUTE);
+  }
+  render();
+}
+
 navLinks.forEach((link) => {
   link.addEventListener("click", (event) => {
     event.preventDefault();
@@ -7547,11 +7794,8 @@ navLinks.forEach((link) => {
         void loadFilesTree();
       }
     } else if (targetRoute === "settings") {
-      currentRoute = "settings";
-      lastLoggedSessionId = null;
-      if (window.location.pathname !== SETTINGS_ROUTE) {
-        window.history.pushState({ route: "settings" }, "", SETTINGS_ROUTE);
-      }
+      navigateToSettings({ skipMenuClose: true });
+      return;
     } else {
       currentRoute = "home";
       lastLoggedSessionId = null;
