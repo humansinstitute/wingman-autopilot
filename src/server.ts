@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, type Dirent } from "node:fs";
 import { chmod, cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from "node:path";
@@ -1037,10 +1037,88 @@ const buildAgentFilePlaceholder = (
   }
 };
 
+const ALIAS_ADJECTIVES = [
+  "brisk",
+  "bright",
+  "clever",
+  "daring",
+  "eager",
+  "fierce",
+  "gentle",
+  "jolly",
+  "mighty",
+  "noble",
+  "plucky",
+  "quick",
+  "savvy",
+  "spry",
+  "witty",
+  "zany",
+] as const;
+
+const ALIAS_TONES = [
+  "amber",
+  "azure",
+  "bronze",
+  "crimson",
+  "cobalt",
+  "emerald",
+  "indigo",
+  "ivory",
+  "jade",
+  "lavender",
+  "maroon",
+  "onyx",
+  "pearl",
+  "saffron",
+  "scarlet",
+  "teal",
+] as const;
+
+const ALIAS_NOUNS = [
+  "aurora",
+  "beacon",
+  "cascade",
+  "citadel",
+  "comet",
+  "ember",
+  "harbor",
+  "horizon",
+  "lantern",
+  "meadow",
+  "mirage",
+  "nebula",
+  "river",
+  "sparrow",
+  "summit",
+  "tapestry",
+] as const;
+
+const generateIdentityAlias = (npub: string | null | undefined): string => {
+  const normalized = normaliseNpub(npub);
+  if (!normalized) {
+    return "anonymous";
+  }
+
+  const hash = createHash("sha256").update(normalized).digest();
+  const pickWord = (offset: number, list: readonly string[]) => list[hash[offset] % list.length];
+
+  const adjective = pickWord(0, ALIAS_ADJECTIVES);
+  const tone = pickWord(1, ALIAS_TONES);
+  const noun = pickWord(2, ALIAS_NOUNS);
+  return `${adjective}-${tone}-${noun}`;
+};
+
+const serializeSession = (session: SessionSnapshot) => ({
+  ...session,
+  identityAlias: generateIdentityAlias(session.npub ?? null),
+});
+
 type IdentitySummary = {
   npub: string | null;
   normalizedNpub: string | null;
   segment: string;
+  alias: string;
   sessionIds: string[];
   activeSessionIds: string[];
   lastSeenAt: string | null;
@@ -1065,6 +1143,7 @@ const buildIdentitySummaries = (
     npub: string | null;
     normalized: string | null;
     segment: string;
+    alias: string;
     dataRoot: string;
     logsRoot: string;
     attachmentsRoot: string;
@@ -1095,6 +1174,7 @@ const buildIdentitySummaries = (
         npub: npubValue,
         normalized,
         segment,
+        alias: generateIdentityAlias(npubValue),
         dataRoot,
         logsRoot,
         attachmentsRoot,
@@ -1140,6 +1220,7 @@ const buildIdentitySummaries = (
       logsRoot: entry.logsRoot,
       attachmentsRoot: entry.attachmentsRoot,
       imagesRoot: entry.imagesRoot,
+      alias: entry.alias,
     }))
     .sort((a, b) => {
       const left = a.normalizedNpub ?? "";
@@ -4139,6 +4220,7 @@ const handleApi = async (
           npub: authContext.npub,
           normalizedNpub: viewerNormalizedNpub,
           segment,
+          alias: generateIdentityAlias(authContext.npub),
           sessionIds: [],
           activeSessionIds: [],
           lastSeenAt: null,
@@ -4153,13 +4235,14 @@ const handleApi = async (
     const npubFilters = identitySummaries.map((identity) => ({
       value: identity.normalizedNpub ?? "__anonymous__",
       npub: identity.npub,
-      label: identity.npub ?? "Anonymous",
+      alias: identity.alias,
+      label: identity.alias ?? identity.npub ?? "Anonymous",
       sessionCount: identity.sessionIds.length,
       activeCount: identity.activeSessionIds.length,
     }));
 
     return Response.json({
-      sessions: filteredSessions,
+      sessions: filteredSessions.map(serializeSession),
       identities: identitySummaries,
       filters: {
         npubs: npubFilters,
@@ -4248,7 +4331,7 @@ const handleApi = async (
         command: session.command,
       });
       await syncSessionMessages(session.id, true);
-      return Response.json(session, { status: 201 });
+      return Response.json(serializeSession(session), { status: 201 });
     } catch (error) {
       return Response.json({ error: (error as Error).message }, { status: 500 });
     }
@@ -4279,14 +4362,14 @@ const handleApi = async (
 
     if (method === "GET" && parts.length === 4) {
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      return Response.json(ownedSession);
+      return Response.json(serializeSession(ownedSession));
     }
 
     if (method === "DELETE" && parts.length === 4) {
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
       const session = await manager.stopSession(id);
       if (!session) return Response.json({ error: "Not found" }, { status: 404 });
-      return Response.json(session);
+      return Response.json(serializeSession(session));
     }
 
     if (method === "DELETE" && parts[4] === "storage") {

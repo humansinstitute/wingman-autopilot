@@ -138,6 +138,7 @@ const state = {
     npub: null,
     expiresAt: null,
     authenticated: false,
+    alias: null,
     isAdmin: false,
   },
 };
@@ -381,6 +382,7 @@ const persistIdentityState = (identity) => {
         npub: identity.npub,
         method: identity.method,
         expiresAt: identity.expiresAt ?? null,
+        alias: identity.alias ?? null,
       };
       window.localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify(payload));
     } else {
@@ -470,6 +472,7 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
     npub: current.npub,
     expiresAt: current.expiresAt,
     authenticated: current.authenticated,
+    alias: current.alias,
     isAdmin: current.isAdmin,
   };
 
@@ -509,11 +512,20 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
   if (!next.npub) {
     next.method = "none";
     next.expiresAt = null;
+    next.alias = null;
   }
 
   const configuredAdminNpub = getConfiguredAdminNpub();
   const normalizedNextNpub = normaliseNpubValue(next.npub);
   next.isAdmin = Boolean(configuredAdminNpub && normalizedNextNpub && normalizedNextNpub === configuredAdminNpub);
+
+  if ("alias" in partial) {
+    if (typeof partial.alias === "string" && partial.alias.trim().length > 0) {
+      next.alias = partial.alias.trim();
+    } else if (partial.alias === null) {
+      next.alias = null;
+    }
+  }
 
   next.authenticated = Boolean(next.npub);
 
@@ -522,7 +534,8 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
     next.npub !== current.npub ||
     next.expiresAt !== current.expiresAt ||
     next.authenticated !== current.authenticated ||
-    next.isAdmin !== current.isAdmin;
+    next.isAdmin !== current.isAdmin ||
+    next.alias !== current.alias;
 
   if (!changed) {
     return current;
@@ -608,7 +621,7 @@ const clearCachedIdentity = () => {
 
 const forceIdentityLogoutState = () => {
   clearCachedIdentity();
-  updateIdentityState({ npub: null, method: "none", expiresAt: null, isAuthenticated: false });
+  updateIdentityState({ npub: null, method: "none", expiresAt: null, isAuthenticated: false, alias: null });
   if (typeof window !== "undefined") {
     try {
       window.dispatchEvent(new CustomEvent("wingman:identity-logout"));
@@ -941,7 +954,7 @@ const handleIdentityStorageEvent = (event) => {
       // ignore parse errors
     }
   } else {
-    updateIdentityState({ npub: null, method: "none", expiresAt: null, isAuthenticated: false }, { persist: false, emit: false });
+    updateIdentityState({ npub: null, method: "none", expiresAt: null, isAuthenticated: false, alias: null }, { persist: false, emit: false });
   }
 };
 
@@ -3994,6 +4007,12 @@ const fetchSessions = async () => {
   const data = await response.json();
   state.sessions = Array.isArray(data.sessions) ? data.sessions : [];
   state.identitySummaries = Array.isArray(data.identities) ? data.identities : [];
+  const currentAlias = state.identity.npub
+    ? state.identitySummaries.find((summary) => summary && typeof summary === "object" && summary.npub === state.identity.npub)?.alias ??
+      state.sessions.find((session) => session && typeof session === "object" && session.npub === state.identity.npub)?.identityAlias ??
+      null
+    : null;
+  updateIdentityState({ alias: currentAlias }, { persist: true, emit: true });
   const filterPayload = data.filters && typeof data.filters === "object" ? data.filters : null;
   const npubOptions = filterPayload && Array.isArray(filterPayload.npubs) ? filterPayload.npubs : [];
   state.sessionFilters.options = npubOptions;
@@ -6209,11 +6228,12 @@ const renderHomeIdentityBanner = () => {
   card.append(info, actions);
 
   const updateBanner = () => {
-    const { npub } = state.identity;
+    const { npub, alias } = state.identity;
     if (npub) {
       const truncated = npub.length > 12 ? `${npub.slice(0, 12)}...` : npub;
-      status.textContent = truncated;
-      status.title = npub;
+      const displayName = alias ?? truncated;
+      status.textContent = displayName;
+      status.title = alias ? npub : truncated;
       status.hidden = false;
       manageButton.hidden = false;
       loginButton.hidden = true;
@@ -6552,11 +6572,13 @@ const renderHome = () => {
     state.sessions.forEach((session) => {
       const row = document.createElement("tr");
       const displayName = getSessionDisplayName(session);
-      const identityLabel = session.npub && session.npub.length > 0 ? session.npub : "Anonymous";
+      const identityAlias = typeof session.identityAlias === "string" && session.identityAlias.trim().length > 0 ? session.identityAlias.trim() : null;
+      const identityLabel = identityAlias ?? (session.npub && session.npub.length > 0 ? session.npub : "Anonymous");
+      const identityTooltip = session.npub && session.npub.length > 0 ? session.npub : identityLabel;
       row.innerHTML = `
         <td>${escapeHtml(displayName)}</td>
         <td>${escapeHtml(session.agent)}</td>
-        <td class="identity-cell" title="${escapeHtml(identityLabel)}">${escapeHtml(identityLabel)}</td>
+        <td class="identity-cell" title="${escapeHtml(identityTooltip)}">${escapeHtml(identityLabel)}</td>
         <td>${escapeHtml(session.status)}</td>
         <td>${escapeHtml(session.port)}</td>
         <td>${session.pid ?? "-"}</td>
