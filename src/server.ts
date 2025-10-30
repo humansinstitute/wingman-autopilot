@@ -73,7 +73,6 @@ registerAccessRule(AccessActions.FilesWrite, requireAuthentication());
 registerAccessRule(AccessActions.DeepDiveAccess, requireAuthentication());
 registerAccessRule(AccessActions.AppsManage, requireAuthentication());
 registerAccessRule(AccessActions.UiRestricted, requireAuthentication());
-registerAccessRule(AccessActions.SystemManage, requireAdminAccess());
 
 const projectRootPath = (() => {
   let root = normalize(fileURLToPath(new URL("..", import.meta.url)));
@@ -2996,6 +2995,7 @@ const requireAdminAccess = (): AccessRule => {
 };
 
 registerAccessRule(AccessActions.DeepDiveAccess, requireAdminAccess());
+registerAccessRule(AccessActions.SystemManage, requireAdminAccess());
 
 const accessDeniedJson = (decision: AccessDecision): Response => {
   const headers = new Headers({
