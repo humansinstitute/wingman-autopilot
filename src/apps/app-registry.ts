@@ -4,7 +4,7 @@ import { basename, dirname, join, resolve as resolvePath } from "node:path";
 
 const registryFilePath = new URL("../../data/apps.json", import.meta.url).pathname;
 
-export type AppLifecycleAction = "start" | "stop" | "restart" | "build";
+export type AppLifecycleAction = "start" | "stop" | "restart" | "setup" | "build";
 
 export type AppLifecycleScripts = Partial<Record<AppLifecycleAction, string>>;
 
@@ -159,7 +159,7 @@ export class AppRegistry {
       const parsed = JSON.parse(contents) as { scripts?: Record<string, string> };
       const scripts: AppLifecycleScripts = {};
       if (parsed.scripts) {
-        const candidates: AppLifecycleAction[] = ["start", "stop", "restart", "build"];
+        const candidates: AppLifecycleAction[] = ["start", "stop", "restart", "setup", "build"];
         for (const action of candidates) {
           const command = parsed.scripts[action];
           if (typeof command === "string" && command.trim().length > 0) {

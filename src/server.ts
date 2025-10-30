@@ -2870,7 +2870,7 @@ const waitForMessageUpdate = async (sessionId: string, initialCount: number, tim
   }
   return messages;
 };
-const APP_ACTIONS: AppLifecycleAction[] = ["start", "stop", "restart", "build"];
+const APP_ACTIONS: AppLifecycleAction[] = ["start", "stop", "restart", "setup", "build"];
 
 const parseAppScripts = (input: unknown): AppLifecycleScripts => {
   const scripts: AppLifecycleScripts = {};
@@ -2913,6 +2913,7 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus) => {
     start: Boolean(app.scripts.start),
     stop: Boolean(app.scripts.stop),
     restart: Boolean(app.scripts.restart),
+    setup: Boolean(app.scripts.setup),
     build: Boolean(app.scripts.build),
   };
   return {
@@ -2929,6 +2930,99 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus) => {
     availableScripts,
     logs: undefined as string[] | undefined,
   };
+};
+
+const deriveDirectoryNameFromUrl = (url: string): string => {
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+  const sanitized = trimmed.replace(/\\+/g, "/");
+  const parts = sanitized.split(/[/:]/).filter(Boolean);
+  if (parts.length === 0) {
+    return "";
+  }
+  const last = parts[parts.length - 1];
+  return last.replace(/\.git$/i, "");
+};
+
+const humaniseAppLabel = (value: string): string => {
+  const spaced = value.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!spaced) {
+    return value;
+  }
+  return spaced
+    .split(" ")
+    .filter((segment) => segment.length > 0)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+};
+
+const collectBunScriptDefaults = async (
+  directory: string,
+): Promise<Partial<AppLifecycleScripts>> => {
+  try {
+    const packageJsonPath = join(directory, "package.json");
+    const raw = await readFile(packageJsonPath, "utf8");
+    const parsed = JSON.parse(raw) as { scripts?: Record<string, unknown> };
+    const scripts = parsed.scripts && typeof parsed.scripts === "object" ? parsed.scripts : {};
+    const result: Partial<AppLifecycleScripts> = {};
+    const scriptNames: Array<"start" | "stop" | "restart" | "setup"> = [
+      "start",
+      "stop",
+      "restart",
+      "setup",
+    ];
+    for (const name of scriptNames) {
+      const scriptValue = scripts?.[name];
+      if (typeof scriptValue === "string" && scriptValue.trim().length > 0) {
+        result[name] = `bun run ${name}`;
+      }
+    }
+    return result;
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === "ENOENT") {
+      return {};
+    }
+    console.warn(`[apps] Failed to read package.json while collecting scripts: ${err.message}`);
+    return {};
+  }
+};
+
+const cloneRepositoryIntoWorkspace = async (
+  scope: WorkspaceScope,
+  repositoryUrl: string,
+  directoryName: string,
+): Promise<{ root: string; label: string; scripts: Partial<AppLifecycleScripts> }> => {
+  const sanitizedDirectory = normaliseDirectoryEntryName(directoryName);
+  const targetDirectory = normalize(join(scope.defaultDirectory, sanitizedDirectory));
+  ensureWithinAllowedDirectories(targetDirectory, scope);
+
+  try {
+    const stats = await stat(targetDirectory);
+    if (stats.isDirectory()) {
+      throw new Error("Target directory already exists");
+    }
+    throw new Error("A non-directory entry exists at the target location");
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== "ENOENT") {
+      throw err;
+    }
+  }
+
+  await mkdir(dirname(targetDirectory), { recursive: true });
+
+  const cloneResult = await runCommand("git", ["clone", "--depth", "1", repositoryUrl, targetDirectory]);
+  if (cloneResult.exitCode !== 0) {
+    await rm(targetDirectory, { recursive: true, force: true }).catch(() => undefined);
+    const message = cloneResult.stderr || cloneResult.stdout || "Failed to clone repository";
+    throw new Error(message);
+  }
+
+  const scripts = await collectBunScriptDefaults(targetDirectory);
+  const label = humaniseAppLabel(sanitizedDirectory) || sanitizedDirectory;
+  const resolvedRoot = await realpath(targetDirectory).catch(() => targetDirectory);
+  return { root: resolvedRoot, label, scripts };
 };
 
 const ensureWingmanCoreRegistration = async () => {
@@ -3191,6 +3285,41 @@ const handleApi = async (
     authContext.session = null;
     delete authContext.error;
     return new Response(null, { status: 204, headers });
+  }
+
+  if (pathname === "/api/apps/clone" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.AppsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    const repoUrl = normaliseOptionalString((payload as Record<string, unknown>).url);
+    if (!repoUrl) {
+      return Response.json({ error: "Repository URL is required" }, { status: 400 });
+    }
+    const directoryInput = normaliseOptionalString(
+      (payload as Record<string, unknown>).directory ?? (payload as Record<string, unknown>).name,
+    );
+    const fallbackDirectory = deriveDirectoryNameFromUrl(repoUrl);
+    const directoryName = directoryInput ?? fallbackDirectory;
+    if (!directoryName) {
+      return Response.json({ error: "Folder name is required" }, { status: 400 });
+    }
+    try {
+      const result = await cloneRepositoryIntoWorkspace(workspaceScope, repoUrl, directoryName);
+      return Response.json(result, { status: 201 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
   }
 
   if (pathname === "/api/apps" && method === "GET") {
@@ -3486,6 +3615,9 @@ const handleApi = async (
             break;
           case "restart":
             status = await appProcessManager.restart(id);
+            break;
+          case "setup":
+            status = await appProcessManager.setup(id);
             break;
           case "build":
             status = await appProcessManager.build(id);

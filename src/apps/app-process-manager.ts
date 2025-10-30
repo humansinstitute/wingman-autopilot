@@ -15,7 +15,14 @@ type CommandResult = {
   stderr: string;
 };
 
-export type AppRuntimeStatus = "idle" | "running" | "stopping" | "restarting" | "building" | "failed";
+export type AppRuntimeStatus =
+  | "idle"
+  | "running"
+  | "stopping"
+  | "restarting"
+  | "setting-up"
+  | "building"
+  | "failed";
 
 export interface AppProcessStatus {
   appId: string;
@@ -74,6 +81,7 @@ const ACTION_STATUS: Record<AppLifecycleAction, AppRuntimeStatus> = {
   start: "running",
   stop: "stopping",
   restart: "restarting",
+  setup: "setting-up",
   build: "building",
 };
 
@@ -192,6 +200,23 @@ export class AppProcessManager {
         finalStatus: "idle" as AppRuntimeStatus,
         exitCode: result.exitCode,
         message: "Build command dispatched",
+      };
+    });
+  }
+
+  async setup(appId: string): Promise<AppProcessStatus> {
+    return this.runAction(appId, "setup", async (app) => {
+      const command = this.requireScript(app, "setup");
+      await this.ensureSession(app);
+      await this.attachLogPipe(app);
+      const result = await this.sendToSession(app, command);
+      if (result.exitCode !== 0) {
+        throw new AppActionError(app.id, "setup", result.stderr || result.stdout || "Failed to send setup command");
+      }
+      return {
+        finalStatus: "idle" as AppRuntimeStatus,
+        exitCode: result.exitCode,
+        message: "Setup command dispatched",
       };
     });
   }

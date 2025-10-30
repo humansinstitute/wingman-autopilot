@@ -3043,6 +3043,7 @@ const appDialogTitle = document.getElementById("app-dialog-title");
 const appLabelInput = document.getElementById("app-label");
 const appRootInput = document.getElementById("app-root");
 const appRootBrowseButton = document.getElementById("app-root-browse");
+const appAdvancedSection = document.getElementById("app-advanced");
 const appTmuxInput = document.getElementById("app-tmux-session");
 const appTmuxWindowInput = document.getElementById("app-tmux-window");
 const appNotesInput = document.getElementById("app-notes");
@@ -3052,6 +3053,7 @@ const appScriptInputs = {
   start: document.getElementById("app-script-start"),
   stop: document.getElementById("app-script-stop"),
   restart: document.getElementById("app-script-restart"),
+  setup: document.getElementById("app-script-setup"),
   build: document.getElementById("app-script-build"),
 };
 const appCancelButton = document.getElementById("app-cancel");
@@ -3061,9 +3063,67 @@ const appLogsTitle = document.getElementById("app-logs-title");
 const appLogsContent = document.getElementById("app-logs-content");
 const appLogsRefreshButton = document.getElementById("app-logs-refresh");
 const appLogsCloseButton = document.getElementById("app-logs-close");
+const appCloneButton = document.getElementById("app-clone");
+const appCloneDialog = document.getElementById("app-clone-dialog");
+const appCloneForm = appCloneDialog?.querySelector("form") ?? null;
+const appCloneUrlInput = document.getElementById("app-clone-url");
+const appCloneNameInput = document.getElementById("app-clone-name");
+const appCloneCancelButton = document.getElementById("app-clone-cancel");
+const appCloneConfirmButton = document.getElementById("app-clone-confirm");
 const SHARED_TMUX_SESSION = "wingman-apps";
 
 let identityLoginPanelRoot = null;
+
+const deriveRepositoryFolderName = (input) => {
+  if (!input) return "";
+  const trimmed = input.trim();
+  if (!trimmed) return "";
+  const normalized = trimmed.replace(/\\+/g, "/");
+  const parts = normalized.split(/[/:]/).filter(Boolean);
+  if (parts.length === 0) return "";
+  const candidate = parts[parts.length - 1].replace(/\.git$/i, "");
+  return candidate;
+};
+
+const humaniseFolderLabel = (value) => {
+  if (!value) return "";
+  const spaced = value.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!spaced) return "";
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+};
+
+const applyClonedAppDefaults = (payload) => {
+  if (!payload || typeof payload !== "object") return;
+  const root = typeof payload.root === "string" ? payload.root : "";
+  if (root && appRootInput) {
+    appRootInput.value = root;
+    updateAppWindowPreview();
+    state.lastWorkingDirectory = root;
+  }
+  const suggestedLabel = typeof payload.label === "string" ? payload.label : "";
+  if (suggestedLabel && appLabelInput && appLabelInput.value.trim().length === 0) {
+    appLabelInput.value = suggestedLabel;
+    updateAppWindowPreview();
+  }
+  const scripts = payload.scripts;
+  if (scripts && typeof scripts === "object") {
+    let applied = 0;
+    for (const [action, command] of Object.entries(scripts)) {
+      const input = appScriptInputs[action];
+      if (!input || typeof command !== "string") continue;
+      if (input.value.trim().length === 0) {
+        input.value = command;
+        applied += 1;
+      }
+    }
+    if (applied > 0 && appAdvancedSection) {
+      appAdvancedSection.open = true;
+    }
+  }
+  if (appDiscoverToggle) {
+    appDiscoverToggle.checked = false;
+  }
+};
 
 const ensureIdentityLoginPanel = () => {
   if (!identityLoginDialogContent) return null;
@@ -5052,6 +5112,7 @@ const APP_STATUS_LABELS = {
   stopping: "Stopping",
   restarting: "Restarting",
   building: "Building",
+  "setting-up": "Setting Up",
   failed: "Failed",
 };
 
@@ -5059,10 +5120,11 @@ const APP_ACTION_LABELS = {
   start: "Start",
   stop: "Stop",
   restart: "Restart",
+  setup: "Setup",
   build: "Build",
 };
 
-const APP_BUSY_STATUSES = new Set(["stopping", "restarting", "building"]);
+const APP_BUSY_STATUSES = new Set(["stopping", "restarting", "building", "setting-up"]);
 
 const formatAppActionLabel = (action) => APP_ACTION_LABELS[action] ?? action ?? "Unknown";
 
@@ -5112,6 +5174,9 @@ const isAppActionDisabled = (app, action) => {
   }
   if (action === "restart") {
     return false;
+  }
+  if (action === "setup") {
+    return statusValue === "running";
   }
   if (action === "build") {
     return statusValue === "running";
@@ -5213,6 +5278,36 @@ appRootBrowseButton?.addEventListener("click", (event) => {
   });
 });
 
+appCloneButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  openAppCloneDialog();
+});
+
+appCloneCancelButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  closeAppCloneDialog();
+});
+
+appCloneForm?.addEventListener("submit", handleAppCloneSubmit);
+
+appCloneDialog?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeAppCloneDialog();
+});
+
+appCloneDialog?.addEventListener("close", () => {
+  appCloneForm?.reset();
+});
+
+appCloneUrlInput?.addEventListener("blur", () => {
+  if (!appCloneNameInput || !appCloneUrlInput) return;
+  if (appCloneNameInput.value.trim().length > 0) return;
+  const derived = deriveRepositoryFolderName(appCloneUrlInput.value);
+  if (derived) {
+    appCloneNameInput.value = derived;
+  }
+});
+
 const resetAppDialog = () => {
   if (appForm) {
     appForm.reset();
@@ -5222,6 +5317,9 @@ const resetAppDialog = () => {
   }
   if (appDiscoverToggle) {
     appDiscoverToggle.checked = true;
+  }
+  if (appAdvancedSection) {
+    appAdvancedSection.open = false;
   }
   Object.values(appScriptInputs).forEach((input) => {
     if (input) {
@@ -5268,6 +5366,12 @@ const populateAppDialog = (app) => {
     if (!input) return;
     input.value = app.scripts?.[action] ?? "";
   });
+  if (appAdvancedSection) {
+    const hasScript = Object.values(app.scripts ?? {}).some((value) => typeof value === "string" && value.length > 0);
+    const inferredWindow = deriveAppWindowName(app.label ?? "", app.root ?? "");
+    const hasCustomWindow = Boolean(app.tmuxWindow && app.tmuxWindow !== inferredWindow);
+    appAdvancedSection.open = hasScript || hasCustomWindow;
+  }
 };
 
 const collectAppFormValues = () => {
@@ -5407,23 +5511,100 @@ const handleAppDiscover = async (event) => {
     const scripts = payload && typeof payload === "object" ? (payload.scripts ?? {}) : {};
     let applied = 0;
     for (const [action, input] of Object.entries(appScriptInputs)) {
-      if (!input) continue;
-      const candidate = scripts?.[action];
-      if (typeof candidate === "string" && candidate.trim().length > 0) {
-        input.value = candidate;
-        applied += 1;
-      }
+    if (!input) continue;
+    const candidate = scripts?.[action];
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      input.value = candidate;
+      applied += 1;
     }
-    if (applied === 0) {
-      window.alert("No scripts discovered. Enter commands manually.");
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to discover scripts";
-    window.alert(message);
-  } finally {
+  }
+  if (applied === 0) {
+    window.alert("No scripts discovered. Enter commands manually.");
+  } else if (appAdvancedSection) {
+    appAdvancedSection.open = true;
+  }
+} catch (error) {
+  const message = error instanceof Error ? error.message : "Failed to discover scripts";
+  window.alert(message);
+} finally {
     if (appDiscoverButton) {
       appDiscoverButton.disabled = false;
     }
+  }
+};
+
+const closeAppCloneDialog = () => {
+  if (!appCloneDialog) return;
+  if (appCloneDialog.open) {
+    appCloneDialog.close();
+  }
+  appCloneForm?.reset();
+};
+
+const openAppCloneDialog = () => {
+  if (!appCloneDialog) return;
+  appCloneForm?.reset();
+  if (appCloneNameInput && appLabelInput && appLabelInput.value.trim().length > 0) {
+    appCloneNameInput.value = appLabelInput.value.trim().toLowerCase().replace(/\s+/g, "-");
+  }
+  appCloneDialog.showModal();
+  appCloneUrlInput?.focus();
+};
+
+const handleAppCloneSubmit = async (event) => {
+  event.preventDefault();
+  if (!appCloneUrlInput || !appCloneConfirmButton) return;
+  const repoUrl = appCloneUrlInput.value.trim();
+  let folderName = appCloneNameInput?.value.trim() ?? "";
+  if (!repoUrl) {
+    window.alert("Provide a repository URL to clone.");
+    appCloneUrlInput.focus();
+    return;
+  }
+  if (!folderName) {
+    folderName = deriveRepositoryFolderName(repoUrl);
+    if (appCloneNameInput) {
+      appCloneNameInput.value = folderName;
+    }
+  }
+  if (!folderName) {
+    window.alert("Provide a folder name for the cloned repository.");
+    appCloneNameInput?.focus();
+    return;
+  }
+
+  appCloneConfirmButton.disabled = true;
+  try {
+    const response = await fetch("/api/apps/clone", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: repoUrl, directory: folderName }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+          ? payload.error
+          : response.statusText || "Failed to clone repository";
+      throw new Error(message);
+    }
+    applyClonedAppDefaults(payload ?? {});
+    if (payload && typeof payload === "object" && typeof payload.root === "string" && appCloneNameInput) {
+      const labelSuggestion =
+        typeof payload.label === "string" && payload.label.trim().length > 0
+          ? payload.label.trim()
+          : humaniseFolderLabel(folderName);
+      if (labelSuggestion && appLabelInput && appLabelInput.value.trim().length === 0) {
+        appLabelInput.value = labelSuggestion;
+        updateAppWindowPreview();
+      }
+    }
+    closeAppCloneDialog();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to clone repository";
+    window.alert(message);
+  } finally {
+    appCloneConfirmButton.disabled = false;
   }
 };
 
@@ -5732,10 +5913,10 @@ const renderAppCard = (app) => {
   actions.append(logsButton);
 
   const isCoreApp = app.id === "wingman-core";
-  const actionOrder = ["start", "stop", "restart", "build"];
+  const actionOrder = ["start", "stop", "restart", "setup", "build"];
   actionOrder.forEach((action) => {
     if (!app.availableScripts?.[action]) return;
-    if (isCoreApp && (action === "start" || action === "stop")) return;
+    if (isCoreApp && (action === "start" || action === "stop" || action === "setup")) return;
     const button = document.createElement("button");
     button.type = "button";
     button.className = action === "stop" ? "wm-button secondary" : "wm-button";

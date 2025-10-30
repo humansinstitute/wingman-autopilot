@@ -290,6 +290,7 @@
       <form method="dialog">
         <h2 id="app-dialog-title">Add App</h2>
         <p class="wm-dialog-help">Register an application so Wingman can control its lifecycle from the dashboard.</p>
+        <button type="button" class="wm-button secondary" id="app-clone">Clone From GitHub</button>
         <label for="app-label">Name</label>
         <input id="app-label" type="text" autocomplete="off" placeholder="Docs Service" />
 
@@ -298,40 +299,51 @@
           <input id="app-root" type="text" autocomplete="off" placeholder="/Users/me/projects/app" />
           <div class="working-directory-actions">
             <button type="button" class="wm-button secondary" id="app-root-browse">Browse…</button>
-            <button type="button" class="wm-button secondary" id="app-discover">Discover Scripts</button>
           </div>
         </div>
 
-        <label class="wm-checkbox" for="app-discover-enabled">
-          <input id="app-discover-enabled" type="checkbox" checked />
-          <span>Auto-discover commands from package.json when available</span>
-        </label>
+        <details class="app-advanced" id="app-advanced">
+          <summary>Advanced Options</summary>
+          <div class="app-advanced__content">
+            <div class="app-advanced__actions">
+              <button type="button" class="wm-button secondary" id="app-discover">Discover Scripts</button>
+              <label class="wm-checkbox" for="app-discover-enabled">
+                <input id="app-discover-enabled" type="checkbox" checked />
+                <span>Auto-discover commands from package.json when available</span>
+              </label>
+            </div>
 
-        <div class="wm-field-grid">
-          <div>
-            <label for="app-script-start">Start Command</label>
-            <input id="app-script-start" type="text" autocomplete="off" placeholder="npm run start" />
-          </div>
-          <div>
-            <label for="app-script-stop">Stop Command</label>
-            <input id="app-script-stop" type="text" autocomplete="off" placeholder="npm run stop" />
-          </div>
-          <div>
-            <label for="app-script-restart">Restart Command</label>
-            <input id="app-script-restart" type="text" autocomplete="off" placeholder="npm run restart" />
-          </div>
-          <div>
-            <label for="app-script-build">Build Command</label>
-            <input id="app-script-build" type="text" autocomplete="off" placeholder="npm run build" />
-          </div>
-        </div>
+            <div class="wm-field-grid app-script-grid">
+              <div>
+                <label for="app-script-start">Start Command</label>
+                <input id="app-script-start" type="text" autocomplete="off" placeholder="bun run start" />
+              </div>
+              <div>
+                <label for="app-script-stop">Stop Command</label>
+                <input id="app-script-stop" type="text" autocomplete="off" placeholder="bun run stop" />
+              </div>
+              <div>
+                <label for="app-script-restart">Restart Command</label>
+                <input id="app-script-restart" type="text" autocomplete="off" placeholder="bun run restart" />
+              </div>
+              <div>
+                <label for="app-script-setup">Setup Command</label>
+                <input id="app-script-setup" type="text" autocomplete="off" placeholder="bun run setup" />
+              </div>
+              <div>
+                <label for="app-script-build">Build Command</label>
+                <input id="app-script-build" type="text" autocomplete="off" placeholder="npm run build" />
+              </div>
+            </div>
 
-        <label for="app-tmux-session">tmux Session</label>
-        <input id="app-tmux-session" type="text" readonly value="wingman-apps" />
-        <p class="wm-field-note">All apps launch inside this shared tmux session.</p>
+            <label for="app-tmux-session">tmux Session</label>
+            <input id="app-tmux-session" type="text" readonly value="wingman-apps" />
+            <p class="wm-field-note">All apps launch inside this shared tmux session.</p>
 
-        <label for="app-tmux-window">tmux Window</label>
-        <input id="app-tmux-window" type="text" readonly placeholder="Auto-generated from the app name" />
+            <label for="app-tmux-window">tmux Window</label>
+            <input id="app-tmux-window" type="text" readonly placeholder="Auto-generated from the app name" />
+          </div>
+        </details>
 
         <label for="app-notes">Notes</label>
         <textarea id="app-notes" rows="3" placeholder="Additional context for operators"></textarea>
@@ -339,6 +351,20 @@
         <menu>
           <button value="cancel" id="app-cancel" data-role="cancel">Cancel</button>
           <button value="confirm" id="app-save">Save</button>
+        </menu>
+      </form>
+    </dialog>
+    <dialog id="app-clone-dialog">
+      <form method="dialog">
+        <h2>Clone Repository</h2>
+        <p class="wm-dialog-help">Provide a Git URL and destination folder to clone the project into your workspace.</p>
+        <label for="app-clone-url">Repository URL</label>
+        <input id="app-clone-url" type="url" autocomplete="off" placeholder="https://github.com/org/repo.git" required />
+        <label for="app-clone-name">Folder Name</label>
+        <input id="app-clone-name" type="text" autocomplete="off" placeholder="repo-folder" />
+        <menu>
+          <button type="button" id="app-clone-cancel">Cancel</button>
+          <button type="submit" id="app-clone-confirm">Clone</button>
         </menu>
       </form>
     </dialog>
