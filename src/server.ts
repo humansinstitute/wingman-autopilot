@@ -28,7 +28,7 @@ import { orchestratorPresetStore } from "./storage/orchestrator-presets";
 import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 import { fileWatcherStore } from "./storage/file-watcher-store";
 import { FileWatcherRunner } from "./watchers/file-watcher-runner";
-import { identityRoleStore } from "./storage/identity-role-store";
+import { identityUserStore } from "./storage/identity-user-store";
 import { ensureDeepDiveProcess, getDeepDivePort, isDeepDiveProcessRunning } from "./deep-dive-process";
 import {
   buildAgentUrl,
@@ -1177,60 +1177,44 @@ type AdminUserRecord = {
 const buildAdminUserList = (): AdminUserRecord[] => {
   const activeSessions = manager?.listSessions?.() ?? [];
   const identitySummaries = buildIdentitySummaries(activeSessions, adminNpub, { includeAll: true });
-  let records: ReturnType<typeof identityRoleStore.listRecords> = [];
-  try {
-    records = identityRoleStore.listRecords();
-  } catch (error) {
-    console.warn("[admin] failed to load identity roles:", error);
-  }
-  const recordMap = new Map(records.map((record) => [record.normalizedNpub, record] as const));
-  const users: AdminUserRecord[] = [];
+  const storedRecords = identityUserStore.listUsers();
+  const storedMap = new Map(storedRecords.map((record) => [record.normalizedNpub, record] as const));
+  const summaryMap = new Map<string, ReturnType<typeof buildIdentitySummaries>[number]>();
 
   for (const summary of identitySummaries) {
-    const normalized = summary.normalizedNpub;
-    if (!normalized) {
+    if (!summary.normalizedNpub || !summary.npub) {
       continue;
     }
-    const record = recordMap.get(normalized) ?? null;
-    const npub = summary.npub ?? record?.npub ?? null;
-    if (!npub) {
-      continue;
+    summaryMap.set(summary.normalizedNpub, summary);
+    try {
+      const existing = storedMap.get(summary.normalizedNpub);
+      identityUserStore.touch(summary.npub, {
+        alias: existing ? null : summary.alias ?? generateIdentityAlias(summary.npub),
+        lastSeenAt: summary.lastSeenAt ?? null,
+      });
+    } catch (error) {
+      console.warn(`[admin] failed to sync identity ${summary.npub}:`, error);
     }
-    const onboarded = record?.roles.includes("onboard") ?? false;
-    const roles = record?.roles ?? [];
-    const onboardedAt = record?.onboardedAt ?? null;
-    const lastSeenAt = summary.lastSeenAt ?? record?.updatedAt ?? null;
-    users.push({
-      npub,
-      normalizedNpub: normalized,
-      alias: summary.alias ?? generateIdentityAlias(npub),
-      onboarded,
-      onboardedAt,
-      roles,
-      lastSeenAt,
-      sessionCount: summary.sessionIds.length,
-      activeSessionCount: summary.activeSessionIds.length,
-    });
-    recordMap.delete(normalized);
   }
 
-  for (const record of recordMap.values()) {
-    const npub = record.npub;
-    if (!npub) {
-      continue;
-    }
-    users.push({
-      npub,
+  const finalRecords = identityUserStore.listUsers();
+  const users: AdminUserRecord[] = finalRecords.map((record) => {
+    const summary = summaryMap.get(record.normalizedNpub ?? "");
+    const sessionCount = summary?.sessionIds.length ?? 0;
+    const activeSessionCount = summary?.activeSessionIds.length ?? 0;
+    const lastSeenAt = summary?.lastSeenAt ?? record.lastSeenAt ?? record.updatedAt ?? null;
+    return {
+      npub: record.npub,
       normalizedNpub: record.normalizedNpub,
-      alias: generateIdentityAlias(npub),
+      alias: record.alias,
       onboarded: record.roles.includes("onboard"),
-      onboardedAt: record.onboardedAt ?? null,
+      onboardedAt: record.onboardedAt,
       roles: [...record.roles],
-      lastSeenAt: record.updatedAt ?? null,
-      sessionCount: 0,
-      activeSessionCount: 0,
-    });
-  }
+      lastSeenAt,
+      sessionCount,
+      activeSessionCount,
+    };
+  });
 
   users.sort((a, b) => a.alias.localeCompare(b.alias));
   return users;
@@ -1455,6 +1439,16 @@ scheduleAttachmentCleanup();
 manager.on((event) => {
   if (event.type === "session-started") {
     ensureUserWorkspace(event.session.npub ?? null);
+    if (event.session.npub) {
+      try {
+        identityUserStore.touch(event.session.npub, {
+          alias: generateIdentityAlias(event.session.npub),
+          lastSeenAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.warn(`[admin] failed to record identity ${event.session.npub}:`, error);
+      }
+    }
     messageStore.recordSession({
       id: event.session.id,
       agent: event.session.agent,
@@ -1473,6 +1467,15 @@ manager.on((event) => {
   }
   if (event.type === "session-updated" || event.type === "session-stopped") {
     ensureUserWorkspace(event.session.npub ?? null);
+    if (event.session.npub) {
+      try {
+        identityUserStore.touch(event.session.npub, {
+          lastSeenAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.warn(`[admin] failed to update identity ${event.session.npub}:`, error);
+      }
+    }
     messageStore.recordSession({
       id: event.session.id,
       agent: event.session.agent,
@@ -3334,6 +3337,14 @@ const handleApi = async (
       authContext.npub = payload.npub;
       authContext.session = payload;
       delete authContext.error;
+      try {
+        identityUserStore.touch(trimmedNpub, {
+          alias: generateIdentityAlias(trimmedNpub),
+          lastSeenAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.warn(`[admin] failed to record identity ${trimmedNpub}:`, error);
+      }
       const headers = new Headers({
         "cache-control": "no-store",
       });
@@ -3395,7 +3406,7 @@ const handleApi = async (
       return Response.json({ error: "onboarded flag is required" }, { status: 400 });
     }
     try {
-      identityRoleStore.setRole(npubInput, "onboard", onboardedValue);
+      identityUserStore.setRole(npubInput, "onboard", onboardedValue);
       const users = buildAdminUserList();
       const normalizedNpub = normaliseNpub(npubInput);
       const user = normalizedNpub
