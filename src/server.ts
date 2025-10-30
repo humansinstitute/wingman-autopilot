@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, type Dirent } from "node:fs";
 import { chmod, cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from "node:path";
@@ -42,9 +42,12 @@ import { mintSessionCookie, SessionCookieError, SESSION_COOKIE_NAME } from "./au
 import {
   resolveRequestAuthContext,
   runWithRequestContext,
+  getRequestContext,
   type RequestAuthContext,
 } from "./auth/request-context";
 import { deriveNpubSegment, normaliseNpub } from "./identity/npub-utils";
+import { generateIdentityAlias } from "./identity/identity-alias";
+import { resolveWorkspaceScope, type WorkspaceScope } from "./workspaces/workspace-scope";
 import {
   AccessActions,
   allow,
@@ -63,9 +66,11 @@ process.env.WINGMAN_PID = process.pid.toString();
 console.log(`[config] tmux session base: ${config.tmuxBase}`);
 const TMUX_SESSION_NAME = config.tmuxBase;
 const SUPPORTED_AGENT_TYPES: AgentType[] = ["codex", "claude", "goose", "opencode", "gemini"];
-const allowedDirectoryBoundaries = config.allowedDirectories.map((entry) =>
-  entry.endsWith(sep) ? entry : `${entry}${sep}`,
-);
+
+const resolveWorkspace = (context?: RequestAuthContext): WorkspaceScope => {
+  const activeContext = context ?? getRequestContext();
+  return resolveWorkspaceScope(config, activeContext, adminNpub);
+};
 
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());
@@ -74,15 +79,15 @@ registerAccessRule(AccessActions.DeepDiveAccess, requireAuthentication());
 registerAccessRule(AccessActions.AppsManage, requireAuthentication());
 registerAccessRule(AccessActions.UiRestricted, requireAuthentication());
 
-const ensureWithinAllowedDirectories = (candidate: string) => {
-  if (config.allowedDirectories.length === 0) {
+const ensureWithinAllowedDirectories = (candidate: string, scope?: WorkspaceScope) => {
+  const activeScope = scope ?? resolveWorkspace();
+  if (activeScope.allowedDirectories.length === 0) {
     return;
   }
 
   const normalised = normalize(candidate);
-  for (let index = 0; index < config.allowedDirectories.length; index += 1) {
-    const base = config.allowedDirectories[index];
-    const boundary = allowedDirectoryBoundaries[index];
+  for (const base of activeScope.allowedDirectories) {
+    const boundary = base.endsWith(sep) ? base : `${base}${sep}`;
     if (normalised === base || normalised.startsWith(boundary)) {
       return;
     }
@@ -1036,217 +1041,6 @@ const buildAgentFilePlaceholder = (
       return `${label}: ${publicPath}`;
   }
 };
-
-const ALIAS_ADJECTIVES = [
-  "agile",
-  "bold",
-  "brave",
-  "bright",
-  "brisk",
-  "calm",
-  "cedar",
-  "clever",
-  "cosmic",
-  "crisp",
-  "daring",
-  "dawn",
-  "eager",
-  "ember",
-  "fierce",
-  "fresh",
-  "gentle",
-  "gilded",
-  "glossy",
-  "golden",
-  "grand",
-  "happy",
-  "humble",
-  "intrepid",
-  "jade",
-  "keen",
-  "lively",
-  "lucid",
-  "lunar",
-  "mellow",
-  "mighty",
-  "morning",
-  "noble",
-  "northern",
-  "playful",
-  "plucky",
-  "polished",
-  "proud",
-  "quick",
-  "radiant",
-  "ready",
-  "refined",
-  "restless",
-  "savvy",
-  "serene",
-  "silver",
-  "spirited",
-  "spry",
-  "steadfast",
-  "sturdy",
-  "sunlit",
-  "swift",
-  "tender",
-  "true",
-  "vivid",
-  "warm",
-  "whimsical",
-  "wild",
-  "witty",
-  "wonder",
-  "zealous",
-  "zesty",
-] as const;
-
-const ALIAS_TONES = [
-  "alabaster",
-  "amber",
-  "amethyst",
-  "apricot",
-  "aquamarine",
-  "ash",
-  "azure",
-  "blush",
-  "bronze",
-  "carmine",
-  "cerulean",
-  "charcoal",
-  "citrine",
-  "clay",
-  "cobalt",
-  "copper",
-  "coral",
-  "crimson",
-  "denim",
-  "ember",
-  "fuchsia",
-  "garnet",
-  "gold",
-  "graphite",
-  "harbor",
-  "indigo",
-  "ink",
-  "ivory",
-  "jade",
-  "lapis",
-  "lavender",
-  "lemon",
-  "mahogany",
-  "marigold",
-  "maroon",
-  "midnight",
-  "mint",
-  "mocha",
-  "navy",
-  "ochre",
-  "onyx",
-  "opal",
-  "pearl",
-  "peridot",
-  "rose",
-  "ruby",
-  "saffron",
-  "sage",
-  "sapphire",
-  "scarlet",
-  "sepia",
-  "shale",
-  "silver",
-  "slate",
-  "smoke",
-  "stone",
-  "teal",
-  "topaz",
-  "turquoise",
-  "ultramarine",
-  "umber",
-  "violet",
-  "wine",
-] as const;
-
-const ALIAS_NOUNS = [
-  "anchor",
-  "aurora",
-  "bastion",
-  "beacon",
-  "breeze",
-  "bridge",
-  "brook",
-  "citadel",
-  "compass",
-  "constellation",
-  "crown",
-  "drifter",
-  "ember",
-  "fable",
-  "fieldsong",
-  "finch",
-  "fjord",
-  "flame",
-  "galleon",
-  "grove",
-  "harbor",
-  "harvest",
-  "horizon",
-  "journey",
-  "keystone",
-  "lantern",
-  "lattice",
-  "lighthouse",
-  "mantra",
-  "meadow",
-  "mesa",
-  "mirage",
-  "mosaic",
-  "nebula",
-  "oasis",
-  "orchard",
-  "outpost",
-  "palisade",
-  "paragon",
-  "pathway",
-  "porter",
-  "prairie",
-  "quarry",
-  "quill",
-  "reef",
-  "refuge",
-  "ridge",
-  "river",
-  "saga",
-  "sentinel",
-  "solace",
-  "spire",
-  "spruce",
-  "summit",
-  "tapestry",
-  "tempest",
-  "thicket",
-  "torch",
-  "tower",
-  "vesper",
-  "voyage",
-] as const;
-
-const generateIdentityAlias = (npub: string | null | undefined): string => {
-  const normalized = normaliseNpub(npub);
-  if (!normalized) {
-    return "anonymous";
-  }
-
-  const hash = createHash("sha256").update(normalized).digest();
-  const pickWord = (offset: number, list: readonly string[]) => list[hash[offset] % list.length];
-
-  const adjective = pickWord(0, ALIAS_ADJECTIVES);
-  const tone = pickWord(1, ALIAS_TONES);
-  const noun = pickWord(2, ALIAS_NOUNS);
-  return `${adjective}-${tone}-${noun}`;
-};
-
 const serializeSession = (session: SessionSnapshot) => ({
   ...session,
   identityAlias: generateIdentityAlias(session.npub ?? null),
@@ -1631,13 +1425,14 @@ const expandHomeDirectory = (input: string): string => {
   return home ? input.replace("~", home) : input;
 };
 
-const toAbsoluteDirectory = (input: string): string => {
+const toAbsoluteDirectory = (input: string, scope?: WorkspaceScope): string => {
+  const activeScope = scope ?? resolveWorkspace();
   const expanded = expandHomeDirectory(input);
   const candidate = isAbsolute(expanded)
     ? expanded
-    : resolvePath(config.defaultWorkingDirectory, expanded);
+    : resolvePath(activeScope.defaultDirectory, expanded);
   const normalised = normalize(candidate);
-  ensureWithinAllowedDirectories(normalised);
+  ensureWithinAllowedDirectories(normalised, activeScope);
   return normalised;
 };
 
@@ -1671,10 +1466,14 @@ const formatRootDirectoryName = (absolute: string): string => {
   return name.length > 0 ? name : absolute;
 };
 
-const ensureDirectory = async (input: string | null | undefined): Promise<string> => {
+const ensureDirectory = async (
+  input: string | null | undefined,
+  scopeOverride?: WorkspaceScope,
+): Promise<string> => {
+  const activeScope = scopeOverride ?? resolveWorkspace();
   const source = input?.trim();
-  const candidate = source && source.length > 0 ? source : config.defaultWorkingDirectory;
-  const absolute = toAbsoluteDirectory(candidate);
+  const candidate = source && source.length > 0 ? source : activeScope.defaultDirectory;
+  const absolute = toAbsoluteDirectory(candidate, activeScope);
   let resolved = absolute;
 
   try {
@@ -1683,7 +1482,7 @@ const ensureDirectory = async (input: string | null | undefined): Promise<string
     // realpath fails when the directory does not exist; keep the normalized path.
     resolved = absolute;
   } finally {
-    ensureWithinAllowedDirectories(resolved);
+    ensureWithinAllowedDirectories(resolved, activeScope);
   }
 
   let stats: Awaited<ReturnType<typeof stat>>;
@@ -1700,12 +1499,13 @@ const ensureDirectory = async (input: string | null | undefined): Promise<string
   return resolved;
 };
 
-const listRootDirectories = async (query?: string) => {
+const listRootDirectories = async (query?: string, scopeOverride?: WorkspaceScope) => {
+  const activeScope = scopeOverride ?? resolveWorkspace();
   const term = query?.trim().toLowerCase() ?? "";
   const seen = new Set<string>();
   const entries: Array<{ name: string; path: string }> = [];
 
-  for (const absolute of config.allowedDirectories) {
+  for (const absolute of activeScope.allowedDirectories) {
     if (seen.has(absolute)) {
       continue;
     }
@@ -1742,8 +1542,9 @@ const listRootDirectories = async (query?: string) => {
   };
 };
 
-const resolveDirectoryParent = (directory: string): string | null => {
-  for (const allowed of config.allowedDirectories) {
+const resolveDirectoryParent = (directory: string, scopeOverride?: WorkspaceScope): string | null => {
+  const activeScope = scopeOverride ?? resolveWorkspace();
+  for (const allowed of activeScope.allowedDirectories) {
     if (directory === allowed) {
       return DIRECTORY_BROWSER_ROOT;
     }
@@ -1755,7 +1556,7 @@ const resolveDirectoryParent = (directory: string): string | null => {
   }
 
   try {
-    ensureWithinAllowedDirectories(candidate);
+    ensureWithinAllowedDirectories(candidate, activeScope);
     return candidate;
   } catch {
     return DIRECTORY_BROWSER_ROOT;
@@ -2807,13 +2608,18 @@ const handleWebhookRequest = async (request: Request, url: URL): Promise<Respons
   return null;
 };
 
-const listDirectories = async (input: string | null | undefined, query?: string) => {
+const listDirectories = async (
+  input: string | null | undefined,
+  query?: string,
+  scopeOverride?: WorkspaceScope,
+) => {
+  const activeScope = scopeOverride ?? resolveWorkspace();
   const trimmed = input?.trim() ?? "";
   if (trimmed.length === 0 || trimmed === DIRECTORY_BROWSER_ROOT) {
-    return listRootDirectories(query);
+    return listRootDirectories(query, activeScope);
   }
 
-  const directory = await ensureDirectory(trimmed);
+  const directory = await ensureDirectory(trimmed, activeScope);
   const entries = await readdir(directory, { withFileTypes: true });
   const term = query?.toLowerCase().trim();
 
@@ -2831,7 +2637,7 @@ const listDirectories = async (input: string | null | undefined, query?: string)
 
   const limitedDirectories = term ? directories.slice(0, MAX_DIRECTORY_RESULTS) : directories;
 
-  const parent = resolveDirectoryParent(directory);
+  const parent = resolveDirectoryParent(directory, activeScope);
 
   return {
     path: directory,
@@ -3227,6 +3033,7 @@ const handleApi = async (
   authContext: RequestAuthContext,
 ): Promise<Response> => {
   const pathname = url.pathname;
+  const workspaceScope = resolveWorkspace(authContext);
   if (pathname === "/api/system/restart/status" && method === "GET") {
     return Response.json({
       inProgress: warmRestartState.inProgress,
@@ -3657,8 +3464,8 @@ const handleApi = async (
       port: config.port,
       agentPortStart: config.agentPortStart,
       agentPortMax: config.agentPortMax,
-      defaultDirectory: config.defaultWorkingDirectory,
-      allowedDirectories: config.allowedDirectories,
+      defaultDirectory: workspaceScope.defaultDirectory,
+      allowedDirectories: workspaceScope.allowedDirectories,
       adminNpub,
       agents: Object.entries(config.agents).map(([key, definition]) => ({
         id: key,
@@ -4131,7 +3938,11 @@ const handleApi = async (
       return denied;
     }
     try {
-      const data = await listDirectories(url.searchParams.get("path"), url.searchParams.get("query") ?? undefined);
+      const data = await listDirectories(
+        url.searchParams.get("path"),
+        url.searchParams.get("query") ?? undefined,
+        workspaceScope,
+      );
       return Response.json(data);
     } catch (error) {
       return Response.json({ error: (error as Error).message }, { status: 400 });
