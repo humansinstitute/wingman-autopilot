@@ -28,6 +28,7 @@ import { orchestratorPresetStore } from "./storage/orchestrator-presets";
 import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 import { fileWatcherStore } from "./storage/file-watcher-store";
 import { FileWatcherRunner } from "./watchers/file-watcher-runner";
+import { identityRoleStore } from "./storage/identity-role-store";
 import { ensureDeepDiveProcess, getDeepDivePort, isDeepDiveProcessRunning } from "./deep-dive-process";
 import {
   buildAgentUrl,
@@ -1159,6 +1160,75 @@ const buildIdentitySummaries = (
       const right = b.normalizedNpub ?? "";
       return left.localeCompare(right);
     });
+};
+
+type AdminUserRecord = {
+  npub: string;
+  normalizedNpub: string;
+  alias: string;
+  onboarded: boolean;
+  onboardedAt: string | null;
+  roles: string[];
+  lastSeenAt: string | null;
+  sessionCount: number;
+  activeSessionCount: number;
+};
+
+const buildAdminUserList = (): AdminUserRecord[] => {
+  const activeSessions = manager.listSessions();
+  const identitySummaries = buildIdentitySummaries(activeSessions, adminNpub, { includeAll: true });
+  const records = identityRoleStore.listRecords();
+  const recordMap = new Map(records.map((record) => [record.normalizedNpub, record] as const));
+  const users: AdminUserRecord[] = [];
+
+  for (const summary of identitySummaries) {
+    const normalized = summary.normalizedNpub;
+    if (!normalized) {
+      continue;
+    }
+    const record = recordMap.get(normalized) ?? null;
+    const npub = summary.npub ?? record?.npub ?? null;
+    if (!npub) {
+      continue;
+    }
+    const onboarded = record?.roles.includes("onboard") ?? false;
+    const roles = record?.roles ?? [];
+    const onboardedAt = record?.onboardedAt ?? null;
+    const lastSeenAt = summary.lastSeenAt ?? record?.updatedAt ?? null;
+    users.push({
+      npub,
+      normalizedNpub: normalized,
+      alias: summary.alias ?? generateIdentityAlias(npub),
+      onboarded,
+      onboardedAt,
+      roles,
+      lastSeenAt,
+      sessionCount: summary.sessionIds.length,
+      activeSessionCount: summary.activeSessionIds.length,
+    });
+    recordMap.delete(normalized);
+  }
+
+  for (const record of recordMap.values()) {
+    const npub = record.npub;
+    if (!npub) {
+      continue;
+    }
+    users.push({
+      npub,
+      normalizedNpub: record.normalizedNpub,
+      alias: generateIdentityAlias(npub),
+      onboarded: record.roles.includes("onboard"),
+      onboardedAt: record.onboardedAt ?? null,
+      roles: [...record.roles],
+      lastSeenAt: record.updatedAt ?? null,
+      sessionCount: 0,
+      activeSessionCount: 0,
+    });
+  }
+
+  users.sort((a, b) => a.alias.localeCompare(b.alias));
+  return users;
 };
 
 const getViewerNormalizedNpub = (authContext: RequestAuthContext): string | null => {
@@ -3090,6 +3160,7 @@ const requireAdminAccess = (): AccessRule => {
 
 registerAccessRule(AccessActions.DeepDiveAccess, requireAdminAccess());
 registerAccessRule(AccessActions.SystemManage, requireAdminAccess());
+registerAccessRule(AccessActions.AdminUsers, requireAdminAccess());
 
 const accessDeniedJson = (decision: AccessDecision): Response => {
   const headers = new Headers({
@@ -3285,6 +3356,51 @@ const handleApi = async (
     authContext.session = null;
     delete authContext.error;
     return new Response(null, { status: 204, headers });
+  }
+
+  if (pathname === "/api/admin/users" && method === "GET") {
+    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    const users = buildAdminUserList();
+    return Response.json({ users });
+  }
+
+  if (pathname === "/api/admin/users" && method === "PATCH") {
+    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    const npubInput = normaliseOptionalString((payload as Record<string, unknown>).npub);
+    const onboardedValue = (payload as Record<string, unknown>).onboarded;
+    if (!npubInput) {
+      return Response.json({ error: "npub is required" }, { status: 400 });
+    }
+    if (typeof onboardedValue !== "boolean") {
+      return Response.json({ error: "onboarded flag is required" }, { status: 400 });
+    }
+    try {
+      identityRoleStore.setRole(npubInput, "onboard", onboardedValue);
+      const users = buildAdminUserList();
+      const normalizedNpub = normaliseNpub(npubInput);
+      const user = normalizedNpub
+        ? users.find((entry) => entry.normalizedNpub === normalizedNpub) ?? null
+        : null;
+      return Response.json({ user, users });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
   }
 
   if (pathname === "/api/apps/clone" && method === "POST") {

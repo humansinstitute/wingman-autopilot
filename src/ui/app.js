@@ -51,6 +51,7 @@ const state = {
     initialized: false,
     error: null,
   },
+  adminUsers: createAdminUsersState(),
   system: {
     restart: {
       loading: false,
@@ -260,6 +261,14 @@ const abbreviateNpub = (npub) => {
   if (npub.length <= 20) return npub;
   return `${npub.slice(0, 12)}…${npub.slice(-6)}`;
 };
+
+const createAdminUsersState = () => ({
+  items: [],
+  loading: false,
+  initialized: false,
+  error: null,
+  pending: new Set(),
+});
 
 const normaliseNpubValue = (npub) => {
   if (typeof npub !== "string") return null;
@@ -477,6 +486,7 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
     alias: current.alias,
     isAdmin: current.isAdmin,
   };
+  const wasAdmin = current.isAdmin;
 
   if ("isAuthenticated" in partial && partial.isAuthenticated === false) {
     next.method = "none";
@@ -544,6 +554,10 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
   }
 
   state.identity = next;
+
+  if (wasAdmin && !next.isAdmin) {
+    state.adminUsers = createAdminUsersState();
+  }
 
   if (persist) {
     persistIdentityState(next);
@@ -4274,6 +4288,96 @@ const fetchRestartStatus = async () => {
   }
 };
 
+const fetchAdminUsers = async () => {
+  if (!state.identity.isAdmin) {
+    return;
+  }
+  state.adminUsers.loading = true;
+  try {
+    const response = await fetch("/api/admin/users");
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+          ? payload.error
+          : response.statusText || "Failed to load users";
+      throw new Error(message);
+    }
+    const users = Array.isArray(payload?.users) ? payload.users : [];
+    state.adminUsers.items = users;
+    state.adminUsers.error = null;
+    state.adminUsers.initialized = true;
+    state.adminUsers.pending.clear();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load users";
+    state.adminUsers.error = message;
+  } finally {
+    state.adminUsers.loading = false;
+  }
+};
+
+const replaceAdminUsersList = (users) => {
+  if (!Array.isArray(users)) return;
+  state.adminUsers.items = users;
+  state.adminUsers.initialized = true;
+};
+
+const upsertAdminUser = (user) => {
+  if (!user || typeof user !== "object") return;
+  const items = Array.isArray(state.adminUsers.items) ? [...state.adminUsers.items] : [];
+  const idx = items.findIndex((entry) => entry.normalizedNpub === user.normalizedNpub);
+  if (idx >= 0) {
+    items[idx] = user;
+  } else {
+    items.push(user);
+  }
+  items.sort((a, b) => (a?.alias ?? "").localeCompare(b?.alias ?? ""));
+  state.adminUsers.items = items;
+};
+
+const toggleUserOnboarding = async (npub, onboarded) => {
+  if (!state.identity.isAdmin || typeof npub !== "string" || npub.length === 0) {
+    return;
+  }
+  const key = normaliseNpubValue(npub) ?? npub;
+  state.adminUsers.pending.add(key);
+  if (currentRoute === "settings") {
+    render();
+  }
+  try {
+    const response = await fetch("/api/admin/users", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ npub, onboarded }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+          ? payload.error
+          : response.statusText || "Failed to update user";
+      throw new Error(message);
+    }
+    const users = Array.isArray(payload?.users) ? payload.users : null;
+    const user = payload && typeof payload === "object" ? payload.user : null;
+    if (Array.isArray(users)) {
+      replaceAdminUsersList(users);
+      state.adminUsers.pending.clear();
+    } else if (user && typeof user === "object") {
+      upsertAdminUser(user);
+    }
+    state.adminUsers.error = null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to update user";
+    state.adminUsers.error = message;
+  } finally {
+    state.adminUsers.pending.delete(key);
+    if (currentRoute === "settings") {
+      render();
+    }
+  }
+};
+
 const refreshApps = async ({ tail = APP_LOG_PREVIEW_LINES, skipRender = false } = {}) => {
   if (state.identity.isAdmin) {
     await Promise.all([fetchApps({ tail }), fetchRestartStatus()]);
@@ -7639,6 +7743,121 @@ const renderFiles = () => {
   return wrapper;
 };
 
+function renderAdminUsersPanel() {
+  const card = document.createElement("section");
+  card.className = "wm-card wm-admin-users";
+
+  const heading = document.createElement("h2");
+  heading.textContent = "Users";
+  card.append(heading);
+
+  const description = document.createElement("p");
+  description.textContent = "Review registered identities and mark onboarding completion.";
+  card.append(description);
+
+  if (state.adminUsers.loading && !state.adminUsers.initialized) {
+    const loading = document.createElement("p");
+    loading.className = "wm-admin-users__empty";
+    loading.textContent = "Loading users…";
+    card.append(loading);
+    return card;
+  }
+
+  if (state.adminUsers.error) {
+    const errorBox = document.createElement("div");
+    errorBox.className = "wm-admin-users__error";
+
+    const message = document.createElement("p");
+    message.textContent = state.adminUsers.error;
+
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "wm-button secondary";
+    retry.textContent = "Retry";
+    retry.addEventListener("click", () => {
+      void fetchAdminUsers();
+    });
+
+    errorBox.append(message, retry);
+    card.append(errorBox);
+    return card;
+  }
+
+  const users = Array.isArray(state.adminUsers.items) ? state.adminUsers.items : [];
+  if (users.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "wm-admin-users__empty";
+    empty.textContent = "No registered users yet.";
+    card.append(empty);
+    return card;
+  }
+
+  const list = document.createElement("div");
+  list.className = "wm-admin-users__list";
+
+  users.forEach((user) => {
+    if (!user || typeof user !== "object") return;
+    const row = document.createElement("div");
+    row.className = "wm-admin-users__item";
+
+    const details = document.createElement("div");
+    details.className = "wm-admin-users__details";
+
+    const alias = document.createElement("h3");
+    alias.textContent = user.alias ?? "Unknown";
+
+    const meta = document.createElement("p");
+    meta.className = "wm-admin-users__meta";
+    const npubLabel = abbreviateNpub(user.npub ?? "");
+    const sessionsLabel = `Sessions ${user.sessionCount ?? 0}${
+      user.activeSessionCount ? ` • Active ${user.activeSessionCount}` : ""
+    }`;
+    meta.textContent = `${npubLabel}${npubLabel ? " • " : ""}${sessionsLabel}`;
+
+    const lastSeen = document.createElement("p");
+    lastSeen.className = "wm-admin-users__status";
+    lastSeen.textContent = user.lastSeenAt
+      ? `Last seen ${formatAppTimestamp(user.lastSeenAt)}`
+      : "No activity recorded yet.";
+
+    const onboardStatus = document.createElement("p");
+    onboardStatus.className = "wm-admin-users__status";
+    if (user.onboarded) {
+      onboardStatus.textContent = user.onboardedAt
+        ? `Onboarded ${formatAppTimestamp(user.onboardedAt)}`
+        : "Onboarded";
+    } else {
+      onboardStatus.textContent = "Not onboarded";
+    }
+
+    details.append(alias, meta, lastSeen, onboardStatus);
+
+    const controls = document.createElement("label");
+    controls.className = "wm-admin-users__toggle";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = Boolean(user.onboarded);
+    const pending = state.adminUsers.pending.has(user.normalizedNpub ?? user.npub);
+    checkbox.disabled = pending || state.adminUsers.loading;
+    checkbox.addEventListener("change", () => {
+      if (checkbox.disabled) return;
+      toggleUserOnboarding(user.npub, checkbox.checked);
+    });
+
+    const label = document.createElement("span");
+    label.textContent = "Onboarded";
+
+    controls.append(checkbox, label);
+
+    row.append(details, controls);
+    list.append(row);
+  });
+
+  card.append(list);
+  return card;
+}
+
 const renderSettings = () => {
   const wrapper = document.createElement("div");
   wrapper.className = "wm-settings";
@@ -7648,6 +7867,13 @@ const renderSettings = () => {
   wrapper.append(pageTitle);
 
   wrapper.append(renderIdentityPanel());
+
+  if (state.identity.isAdmin) {
+    if (!state.adminUsers.initialized && !state.adminUsers.loading && !state.adminUsers.error) {
+      void fetchAdminUsers();
+    }
+    wrapper.append(renderAdminUsersPanel());
+  }
 
   const sections = [
     {

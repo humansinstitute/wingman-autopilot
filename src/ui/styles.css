@@ -2620,6 +2620,69 @@ dialog textarea {
   gap: 0.75rem;
 }
 
+.wm-admin-users__list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.wm-admin-users__item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.75rem;
+  background: var(--bg-secondary);
+}
+
+.wm-admin-users__details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.wm-admin-users__meta {
+  color: var(--text-tertiary);
+  font-size: 0.85rem;
+}
+
+.wm-admin-users__status {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.wm-admin-users__toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+}
+
+.wm-admin-users__toggle input {
+  transform: scale(1.05);
+}
+
+.wm-admin-users__empty {
+  margin-top: 1rem;
+  color: var(--text-tertiary);
+}
+
+.wm-admin-users__error {
+  margin-top: 1rem;
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.wm-admin-users__error p {
+  margin: 0;
+  color: var(--text-tertiary);
+}
+
 @media (min-width: 640px) {
   .working-directory-actions .wm-button {
     flex: 0 0 auto;
@@ -2631,6 +2694,21 @@ dialog textarea {
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
+  }
+
+  .wm-admin-users__item {
+    align-items: center;
+  }
+}
+
+@media (max-width: 640px) {
+  .wm-admin-users__item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .wm-admin-users__toggle {
+    justify-content: flex-start;
   }
 }
 

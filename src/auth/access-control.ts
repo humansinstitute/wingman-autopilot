@@ -7,6 +7,7 @@ export const AccessActions = {
   DeepDiveAccess: "deep-dive:access",
   AppsManage: "apps:manage",
   UiRestricted: "ui:restricted",
+  AdminUsers: "admin:users",
   SystemManage: "system:manage",
 } as const;
 
