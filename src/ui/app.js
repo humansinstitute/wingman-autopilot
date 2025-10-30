@@ -262,13 +262,15 @@ const abbreviateNpub = (npub) => {
   return `${npub.slice(0, 12)}…${npub.slice(-6)}`;
 };
 
-const createAdminUsersState = () => ({
-  items: [],
-  loading: false,
-  initialized: false,
-  error: null,
-  pending: new Set(),
-});
+function createAdminUsersState() {
+  return {
+    items: [],
+    loading: false,
+    initialized: false,
+    error: null,
+    pending: new Set(),
+  };
+}
 
 const normaliseNpubValue = (npub) => {
   if (typeof npub !== "string") return null;

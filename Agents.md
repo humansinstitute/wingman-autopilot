@@ -5,6 +5,8 @@
 - don't add funcitons create well structured code, helpers, utils, rouets etc and reference them
 - when you update code look for ways to refactor and simplify the code base into a clearner structure
 
+> **Heads-up:** We’ve repeatedly hit runtime `ReferenceError` issues when arrow-function declarations are referenced before they’re defined. When adding new helpers, make sure their definitions appear before any usage (or use function declarations) so the bundle doesn’t fail during startup.
+
 ## Project Structure & Module Organization
 
 Wingman V2 centers on Bun services in `src/`. `src/server.ts` exposes the HTTP API/UI, `src/agents/` directs session orchestration, and `src/ui/` serves the dashboard bundle. Persisted state lives in `data/`. Keep compiled binaries in `out/agentapi`; the Bun source should not write there at runtime. `Examples/` holds multi-session demos, with `Examples/Example Web Interface` showcasing a reference frontend. Static assets served directly go in `public/`. Review `docs/architecture.md` before reworking subsystems.
