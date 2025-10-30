@@ -73,6 +73,7 @@ registerAccessRule(AccessActions.FilesWrite, requireAuthentication());
 registerAccessRule(AccessActions.DeepDiveAccess, requireAuthentication());
 registerAccessRule(AccessActions.AppsManage, requireAuthentication());
 registerAccessRule(AccessActions.UiRestricted, requireAuthentication());
+registerAccessRule(AccessActions.SystemManage, requireAdminAccess());
 
 const projectRootPath = (() => {
   let root = normalize(fileURLToPath(new URL("..", import.meta.url)));
@@ -3043,6 +3044,10 @@ const handleApi = async (
   const pathname = url.pathname;
   const workspaceScope = resolveWorkspace(authContext);
   if (pathname === "/api/system/restart/status" && method === "GET") {
+    const denied = await ensureApiAccess(AccessActions.SystemManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     return Response.json({
       inProgress: warmRestartState.inProgress,
       marker: warmRestartState.marker,
@@ -3051,6 +3056,10 @@ const handleApi = async (
   }
 
   if (pathname === "/api/system/restart" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.SystemManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
     if (warmRestartState.inProgress) {
       return Response.json({ error: "Restart already in progress" }, { status: 409 });
     }
@@ -3195,9 +3204,10 @@ const handleApi = async (
     const tailCount = includeLogs ? Math.min(Math.max(tail, 1), 2000) : 0;
     try {
       const [apps, statuses] = await Promise.all([appRegistry.listApps(), appProcessManager.listStatuses()]);
+      const visibleApps = workspaceScope.isAdmin ? apps : apps.filter((app) => app.id !== "wingman-core");
       const statusMap = new Map(statuses.map((status) => [status.appId, status]));
       const data = await Promise.all(
-        apps.map(async (app) => {
+        visibleApps.map(async (app) => {
           const status = statusMap.get(app.id) ?? defaultAppProcessStatus(app.id);
           const record = buildAppResponse(app, status);
           if (includeLogs) {
@@ -3238,6 +3248,14 @@ const handleApi = async (
       return Response.json({ error: "App root path is required" }, { status: 400 });
     }
 
+    let resolvedRoot: string;
+    try {
+      resolvedRoot = await ensureDirectory(root, workspaceScope);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+
     const label = normaliseOptionalString(record.label);
     const tmuxSession = normaliseOptionalString(record.tmuxSession);
     const notes = normaliseOptionalString(record.notes);
@@ -3255,7 +3273,7 @@ const handleApi = async (
     let scripts: AppLifecycleScripts = overrides;
     if (shouldDiscover) {
       try {
-        const discovered = await appRegistry.discoverScripts(root);
+        const discovered = await appRegistry.discoverScripts(resolvedRoot);
         scripts = { ...discovered, ...overrides };
       } catch (error) {
         return Response.json({ error: `Failed to discover scripts: ${(error as Error).message}` }, { status: 400 });
@@ -3265,7 +3283,7 @@ const handleApi = async (
     try {
       const app = await appRegistry.registerApp({
         label: label ?? "",
-        root,
+        root: resolvedRoot,
         scripts: Object.keys(scripts).length > 0 ? scripts : undefined,
         tmuxSession: tmuxSession ?? undefined,
         notes: notes ?? undefined,
@@ -3287,8 +3305,9 @@ const handleApi = async (
       return Response.json({ error: "Root directory is required" }, { status: 400 });
     }
     try {
-      const scripts = await appRegistry.discoverScripts(root);
-      return Response.json({ root, scripts });
+      const resolvedRoot = await ensureDirectory(root, workspaceScope);
+      const scripts = await appRegistry.discoverScripts(resolvedRoot);
+      return Response.json({ root: resolvedRoot, scripts });
     } catch (error) {
       return Response.json({ error: (error as Error).message }, { status: 400 });
     }
@@ -3303,6 +3322,9 @@ const handleApi = async (
     const id = parts[3];
     if (!id) {
       return Response.json({ error: "App id is required" }, { status: 400 });
+    }
+    if (!workspaceScope.isAdmin && id === "wingman-core") {
+      return Response.json({ error: "Not found" }, { status: 404 });
     }
 
     if (method === "GET" && parts.length === 4) {
@@ -3340,13 +3362,30 @@ const handleApi = async (
       const shouldDiscover =
         typeof record.discoverScripts === "boolean"
           ? (record.discoverScripts as boolean)
-          : typeof record.discover === "boolean"
-            ? (record.discover as boolean)
-            : false;
+            : typeof record.discover === "boolean"
+              ? (record.discover as boolean)
+              : false;
+
+      let resolvedRoot: string | undefined;
+      if (root) {
+        try {
+          resolvedRoot = await ensureDirectory(root, workspaceScope);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return Response.json({ error: message }, { status: 400 });
+        }
+      }
 
       let scripts: AppLifecycleScripts | undefined = undefined;
       if (shouldDiscover || Object.keys(overrides).length > 0) {
-        const discoverRoot = root ?? current.root;
+        const discoverRoot = resolvedRoot ?? current.root;
+        if (!workspaceScope.isAdmin) {
+          try {
+            ensureWithinAllowedDirectories(discoverRoot, workspaceScope);
+          } catch {
+            return Response.json({ error: "App root outside allowed directories" }, { status: 403 });
+          }
+        }
         if (shouldDiscover) {
           try {
             const discovered = await appRegistry.discoverScripts(discoverRoot);
@@ -3365,7 +3404,7 @@ const handleApi = async (
       try {
         const updated = await appRegistry.updateApp(id, {
           label: label ?? undefined,
-          root: root ?? undefined,
+          root: resolvedRoot ?? undefined,
           tmuxSession: tmuxSession ?? undefined,
           notes: notesValue,
           scripts,

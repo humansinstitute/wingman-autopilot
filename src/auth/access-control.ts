@@ -7,6 +7,7 @@ export const AccessActions = {
   DeepDiveAccess: "deep-dive:access",
   AppsManage: "apps:manage",
   UiRestricted: "ui:restricted",
+  SystemManage: "system:manage",
 } as const;
 
 export type AccessAction = (typeof AccessActions)[keyof typeof AccessActions];
