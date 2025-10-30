@@ -844,6 +844,12 @@ const saveCachedSession = ({ npub, encryptedNsec, expiresAt, method, logN = DEFA
 
 const setPanelStatus = (element, message, state = "info") => {
   if (!element) return;
+  const text = typeof message === "string" ? message.trim() : "";
+  if (!text) {
+    element.textContent = "";
+    element.hidden = true;
+    return;
+  }
   element.textContent = message;
   element.dataset.state = state;
   element.hidden = false;
@@ -916,9 +922,9 @@ const performLogout = async () => {
 const wireLocalIdentityPanel = (root, context) => {
   if (!root) return;
   const generateBtn = root.querySelector('[data-action="generate-keys"]');
-  const copyBtn = root.querySelector('[data-action="copy-nsec"]');
   const npubOutput = root.querySelector('[data-role="npub"]');
-  const nsecOutput = root.querySelector('[data-role="nsec"]');
+  const nsecField = root.querySelector('[data-role="nsec-field"]');
+  const toggleBtn = root.querySelector('[data-action="toggle-nsec-visibility"]');
   const importForm = root.querySelector('[data-form="import-nsec"]');
 
   let latestKeys = null;
@@ -928,9 +934,15 @@ const wireLocalIdentityPanel = (root, context) => {
     if (npubOutput) {
       npubOutput.textContent = "";
     }
-    if (nsecOutput) {
-      nsecOutput.textContent = "";
-      nsecOutput.setAttribute("hidden", "");
+    if (nsecField) {
+      nsecField.value = "";
+      nsecField.setAttribute("hidden", "");
+      nsecField.type = "password";
+    }
+    if (toggleBtn) {
+      toggleBtn.hidden = true;
+      toggleBtn.dataset.state = "hidden";
+      toggleBtn.textContent = "Show secret";
     }
     root.classList.remove("is-authenticated");
   };
@@ -940,12 +952,21 @@ const wireLocalIdentityPanel = (root, context) => {
     if (npubOutput) {
       npubOutput.textContent = npub;
     }
-    if (nsec && nsecOutput) {
-      nsecOutput.textContent = nsec;
-      nsecOutput.removeAttribute("hidden");
+    if (nsec && nsecField) {
+      nsecField.value = nsec;
+      nsecField.removeAttribute("hidden");
+      nsecField.type = "password";
+    }
+    if (toggleBtn) {
+      toggleBtn.hidden = !nsec;
+      toggleBtn.dataset.state = "hidden";
+      toggleBtn.textContent = "Show secret";
+    }
+    if (typeof root.open === "boolean") {
+      root.open = true;
     }
     saveCachedSession({ npub, encryptedNsec, expiresAt, method });
-    applyIdentityUpdate(context, { npub, method, expiresAt, isAuthenticated: true });
+    applyIdentityUpdate(context, { npub, method, expiresAt, isAuthenticated: true, alias: npub });
     root.classList.add("is-authenticated");
   };
 
@@ -986,21 +1007,18 @@ const wireLocalIdentityPanel = (root, context) => {
     }
   });
 
-  copyBtn?.addEventListener("click", async () => {
-    if (!latestKeys?.nsec) return;
-    try {
-      const copied = await copyToClipboard(latestKeys.nsec);
-      window.alert(copied ? "Private key copied to clipboard" : "Copy failed. Select and copy the key manually.");
-    } catch (error) {
-      console.warn("[identity] copy nsec failed", error);
-      window.alert("Failed to copy private key. Copy it manually from the panel.");
-    }
+  toggleBtn?.addEventListener("click", () => {
+    if (!nsecField) return;
+    const isVisible = toggleBtn.dataset.state === "visible";
+    nsecField.type = isVisible ? "password" : "text";
+    toggleBtn.dataset.state = isVisible ? "hidden" : "visible";
+    toggleBtn.textContent = isVisible ? "Show secret" : "Hide secret";
   });
 
   importForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const submitButton = importForm.querySelector('button[type="submit"]');
-    const input = importForm.querySelector('input[name="nsec"]');
+    const input = importForm.querySelector('textarea[name="nsec"], input[name="nsec"]');
     if (submitButton) submitButton.disabled = true;
     importForm.classList.add("is-loading");
     let secretKey;
@@ -1071,7 +1089,7 @@ const wireNip07Panel = (root, context) => {
       const npub = nip19.npubEncode(pubkeyHex);
       const { expiresAt } = await persistServerSession(npub, null);
       saveCachedSession({ npub, encryptedNsec: null, expiresAt, method: "nip07" });
-      applyIdentityUpdate(context, { npub, method: "nip07", expiresAt, isAuthenticated: true });
+      applyIdentityUpdate(context, { npub, method: "nip07", expiresAt, isAuthenticated: true, alias: npub });
       root.classList.add("is-authenticated");
       setStatus("Extension connected", "success");
     } catch (error) {
@@ -1084,7 +1102,7 @@ const wireNip07Panel = (root, context) => {
 
   if (typeof window !== "undefined" && !root.dataset.logoutStatusHooked) {
     window.addEventListener("wingman:identity-logout", () => {
-      setStatus("Signed out", "info");
+      setStatus("");
     });
     root.dataset.logoutStatusHooked = "true";
   }
@@ -1099,7 +1117,6 @@ const initBunkerPanel = (root, context) => {
   const form = root.querySelector('[data-form="bunker-auth"]');
   const textarea = form?.querySelector('textarea[name="bunkerUri"]');
   const submitButton = form?.querySelector('button[type="submit"]');
-  const scanButton = root.querySelector('[data-action="scan-qr"]');
   const statusEl = root.querySelector('[data-role="bunker-status"]');
   const setStatus = (message, state = "info") => setPanelStatus(statusEl, message, state);
 
@@ -1140,7 +1157,7 @@ const initBunkerPanel = (root, context) => {
         lastConnectedAt: Date.now(),
       });
       saveCachedSession({ npub, encryptedNsec: null, expiresAt, method: "bunker" });
-      applyIdentityUpdate(context, { npub, method: "bunker", expiresAt, isAuthenticated: true });
+      applyIdentityUpdate(context, { npub, method: "bunker", expiresAt, isAuthenticated: true, alias: npub });
       root.classList.add("is-authenticated");
       setStatus("Connected to remote signer", "success");
     } catch (error) {
@@ -1157,10 +1174,6 @@ const initBunkerPanel = (root, context) => {
 
   const state = {
     connect: connectWithUri,
-    setScanHandler(callback) {
-      state._scanHandler = typeof callback === "function" ? callback : null;
-    },
-    _scanHandler: null,
   };
 
   form?.addEventListener("submit", (event) => {
@@ -1168,22 +1181,6 @@ const initBunkerPanel = (root, context) => {
     if (!textarea) return;
     void connectWithUri(textarea.value);
   });
-
-  if (scanButton) {
-    scanButton.addEventListener("click", async () => {
-      if (!state._scanHandler) {
-        setStatus("QR scanning is not implemented yet.", "warning");
-        return;
-      }
-      const scanned = window.prompt("Paste the bunker URI from your remote signer:");
-      if (!scanned) {
-        setStatus("QR scan cancelled", "info");
-        return;
-      }
-      state._scanHandler(scanned);
-      await connectWithUri(scanned);
-    });
-  }
 
   if (typeof window !== "undefined" && !root.dataset.logoutBunkerHooked) {
     window.addEventListener("wingman:identity-logout", () => {
@@ -1212,16 +1209,6 @@ const wireBunkerPanel = (root, context) => {
 };
 
 const wireBunkerLogin = wireBunkerPanel;
-
-const wireBunkerQRScanner = (root, onScan, context) => {
-  const state = initBunkerPanel(root, context);
-  if (!state) return;
-  state.setScanHandler((uri) => {
-    if (typeof onScan === "function") {
-      onScan(uri);
-    }
-  });
-};
 
 identityApi.uiPrompts = {
   ensurePassword,
@@ -1261,7 +1248,6 @@ identityApi.wireNip07 = wireNip07Panel;
 identityApi.wireNip07Login = wireNip07Panel;
 identityApi.wireBunkerPanel = wireBunkerPanel;
 identityApi.wireBunkerLogin = wireBunkerLogin;
-identityApi.wireBunkerQRScanner = wireBunkerQRScanner;
 identityApi.logoutIdentity = performLogout;
 identityApi.bunkerSigner = identityApi.bunkerSigner ?? null;
 
@@ -1284,6 +1270,5 @@ export {
   wireNip07Panel,
   wireBunkerPanel,
   wireBunkerLogin,
-  wireBunkerQRScanner,
   performLogout as logoutIdentity,
 };

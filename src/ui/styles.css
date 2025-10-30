@@ -2305,6 +2305,203 @@ dialog textarea {
   margin: 0;
 }
 
+.wm-identity-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.wm-identity-alias {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.wm-identity-summary-list {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) 1fr;
+  gap: 0.4rem 1rem;
+  margin: 0;
+}
+
+.wm-identity-summary-list dt {
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+.wm-identity-summary-list dd {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+}
+
+.wm-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.wm-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.wm-icon-button:hover,
+.wm-icon-button:focus-visible {
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.wm-icon-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.wm-identity-copy-feedback {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
+.wm-icon-button[data-state="success"] {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.wm-icon-button[data-state="error"] {
+  border-color: #f87171;
+  color: #f87171;
+}
+
+.wm-identity-copy-feedback[data-state="success"] {
+  color: var(--accent-primary);
+}
+
+.wm-identity-copy-feedback[data-state="error"] {
+  color: #f87171;
+}
+
+.wm-identity-summary-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.5rem;
+}
+
+.wm-identity-collapsible {
+  border: 1px solid var(--border-primary);
+  border-radius: 1rem;
+  margin-top: 1rem;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.wm-identity-collapsible summary {
+  cursor: pointer;
+  padding: 0.85rem 1.1rem;
+  font-weight: 600;
+  list-style: none;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.wm-identity-collapsible summary::-webkit-details-marker {
+  display: none;
+}
+
+.wm-identity-collapsible summary::after {
+  content: "▸";
+  margin-left: auto;
+  transition: transform 160ms ease;
+  font-size: 0.9rem;
+  color: var(--text-tertiary);
+}
+
+.wm-identity-collapsible[open] summary {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.wm-identity-collapsible[open] summary::after {
+  transform: rotate(90deg);
+}
+
+.wm-identity-panel {
+  padding: 1rem 1.1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.wm-identity-secret-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.wm-identity-secret-field {
+  flex: 1;
+  min-width: 0;
+  border-radius: 0.6rem;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  padding: 0.6rem 0.75rem;
+  font-family: "JetBrains Mono", "SF Mono", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+}
+
+.wm-identity-toggle-secret {
+  white-space: nowrap;
+}
+
+.wm-identity-import-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.wm-identity-import-section h4 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.wm-identity-import {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.wm-identity-import textarea {
+  width: 100%;
+  min-height: 4.5rem;
+  resize: vertical;
+}
+
+.wm-identity-import .wm-button {
+  align-self: flex-start;
+}
+
+.wm-identity-status-line[hidden] {
+  display: none;
+}
+
 .wm-password-dialog-error {
   margin: -0.25rem 0 0;
   color: #f87171;

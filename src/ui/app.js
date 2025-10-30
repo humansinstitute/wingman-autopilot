@@ -310,12 +310,12 @@ const showIdentityCopyFeedback = (message, { error = false, entry } = {}) => {
     }, 2000);
     identityCopyFeedbackTimeouts.set(target, timeoutId);
     if (target.copyButton) {
-      setButtonState(target.copyButton, {
-        state: error ? "error" : "success",
-        label: error ? "Copy failed" : "Copied",
-        disable: false,
-        restoreAfterMs: error ? 2500 : 1500,
-      });
+      target.copyButton.dataset.state = error ? "error" : "success";
+      window.setTimeout(() => {
+        if (target.copyButton) {
+          delete target.copyButton.dataset.state;
+        }
+      }, error ? 2500 : 1500);
     }
   });
 };
@@ -394,13 +394,16 @@ const persistIdentityState = (identity) => {
 };
 
 const syncIdentityDisplayForEntry = (entry) => {
-  const { npub, method, authenticated, expiresAt } = state.identity;
+  const { npub, method, authenticated, expiresAt, alias } = state.identity;
   if (entry.root) {
     if (authenticated) {
       entry.root.dataset.authenticated = "true";
     } else {
       delete entry.root.dataset.authenticated;
     }
+  }
+  if (entry.alias) {
+    entry.alias.textContent = alias || (authenticated && npub ? npub : "Not signed in");
   }
   if (entry.npub) {
     if (npub) {
@@ -416,7 +419,6 @@ const syncIdentityDisplayForEntry = (entry) => {
   }
   if (entry.copyButton) {
     if (!npub) {
-      resetButtonState(entry.copyButton);
       entry.copyButton.disabled = true;
     } else {
       entry.copyButton.disabled = false;
@@ -770,6 +772,7 @@ const registerIdentityDom = (root) => {
 
   const entry = {
     root,
+    alias: root.querySelector('[data-role="identity-alias"]'),
     npub: root.querySelector('[data-role="identity-npub"]'),
     method: root.querySelector('[data-role="identity-method"]'),
     expiry: root.querySelector('[data-role="identity-expiry"]'),
@@ -861,18 +864,6 @@ function bindIdentityFlows(root) {
   const bunkerPanel = root.querySelector('[data-identity-panel="bunker"]');
   if (bunkerPanel) {
     callIdentityWire(["wireBunkerLogin"], bunkerPanel, context);
-    callIdentityWire(
-      ["wireBunkerQRScanner"],
-      bunkerPanel,
-      (uri) => {
-        if (!uri) return;
-        const textarea = bunkerPanel.querySelector('textarea[name="bunkerUri"]');
-        if (!textarea) return;
-        textarea.value = uri;
-        textarea.dispatchEvent(new Event("input", { bubbles: true }));
-      },
-      context,
-    );
   }
 }
 
@@ -5940,14 +5931,34 @@ const renderIdentitySummary = () => {
   const summary = document.createElement("div");
   summary.className = "wm-identity-summary";
 
+  const aliasHeading = document.createElement("h2");
+  aliasHeading.className = "wm-identity-alias";
+  aliasHeading.dataset.role = "identity-alias";
+  aliasHeading.textContent = "Not signed in";
+  summary.append(aliasHeading);
+
   const list = document.createElement("dl");
   list.className = "wm-identity-summary-list";
 
   const npubLabel = document.createElement("dt");
-  npubLabel.textContent = "Active npub";
+  npubLabel.textContent = "npub";
   const npubValue = document.createElement("dd");
-  npubValue.dataset.role = "identity-npub";
-  npubValue.textContent = "Not signed in";
+  npubValue.className = "wm-identity-summary-item";
+  const npubText = document.createElement("span");
+  npubText.dataset.role = "identity-npub";
+  npubText.textContent = "Not signed in";
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "wm-icon-button";
+  copyButton.dataset.action = "copy-active-npub";
+  copyButton.setAttribute("aria-label", "Copy npub");
+  copyButton.disabled = true;
+  copyButton.innerHTML = '<span class="wm-icon" aria-hidden="true">📋</span>';
+  const feedback = document.createElement("span");
+  feedback.className = "wm-identity-copy-feedback";
+  feedback.dataset.role = "identity-copy-feedback";
+  feedback.hidden = true;
+  npubValue.append(npubText, copyButton, feedback);
 
   const methodLabel = document.createElement("dt");
   methodLabel.textContent = "Method";
@@ -5967,14 +5978,6 @@ const renderIdentitySummary = () => {
   const actions = document.createElement("div");
   actions.className = "wm-identity-summary-actions";
 
-  const copyButton = document.createElement("button");
-  copyButton.type = "button";
-  copyButton.className = "wm-button secondary";
-  copyButton.dataset.action = "copy-active-npub";
-  copyButton.textContent = "Copy npub";
-  copyButton.disabled = true;
-  actions.append(copyButton);
-
   const logoutButton = document.createElement("button");
   logoutButton.type = "button";
   logoutButton.className = "wm-button secondary";
@@ -5982,29 +5985,27 @@ const renderIdentitySummary = () => {
   logoutButton.textContent = "Logout";
   actions.append(logoutButton);
 
-  const feedback = document.createElement("span");
-  feedback.className = "wm-identity-copy-feedback";
-  feedback.dataset.role = "identity-copy-feedback";
-  feedback.hidden = true;
-  actions.append(feedback);
-
   summary.append(actions);
   return summary;
 };
 
 const renderLocalIdentityPanel = () => {
-  const panel = document.createElement("section");
-  panel.className = "wm-identity-panel";
+  const panel = document.createElement("details");
+  panel.className = "wm-identity-collapsible";
   panel.dataset.identityPanel = "local";
+  panel.open = false;
 
-  const heading = document.createElement("h3");
-  heading.textContent = "Local Keys";
-  panel.append(heading);
+  const summary = document.createElement("summary");
+  summary.textContent = "Local Keys";
+  panel.append(summary);
+
+  const body = document.createElement("div");
+  body.className = "wm-identity-panel";
 
   const description = document.createElement("p");
   description.className = "wm-identity-panel-description";
   description.textContent = "Generate or import a keypair stored on this device.";
-  panel.append(description);
+  body.append(description);
 
   const actions = document.createElement("div");
   actions.className = "wm-identity-button-row";
@@ -6016,14 +6017,7 @@ const renderLocalIdentityPanel = () => {
   generateBtn.textContent = "Generate Keys";
   actions.append(generateBtn);
 
-  const copyBtn = document.createElement("button");
-  copyBtn.type = "button";
-  copyBtn.className = "wm-button secondary";
-  copyBtn.dataset.action = "copy-nsec";
-  copyBtn.textContent = "Copy nsec";
-  actions.append(copyBtn);
-
-  panel.append(actions);
+  body.append(actions);
 
   const outputs = document.createElement("div");
   outputs.className = "wm-identity-output";
@@ -6039,88 +6033,113 @@ const renderLocalIdentityPanel = () => {
   npubLine.append(npubKeyLabel, npubValue);
   outputs.append(npubLine);
 
-  const nsecOutput = document.createElement("pre");
-  nsecOutput.className = "wm-identity-secret";
-  nsecOutput.dataset.role = "nsec";
-  nsecOutput.setAttribute("hidden", "");
-  outputs.append(nsecOutput);
+  const nsecRow = document.createElement("div");
+  nsecRow.className = "wm-identity-secret-row";
+  const nsecLabel = document.createElement("span");
+  nsecLabel.className = "wm-identity-output-label";
+  nsecLabel.textContent = "nsec";
+  const nsecField = document.createElement("input");
+  nsecField.type = "password";
+  nsecField.readOnly = true;
+  nsecField.className = "wm-identity-secret-field";
+  nsecField.dataset.role = "nsec-field";
+  nsecField.setAttribute("hidden", "");
+  const toggleBtn = document.createElement("button");
+  toggleBtn.type = "button";
+  toggleBtn.className = "wm-button secondary wm-identity-toggle-secret";
+  toggleBtn.dataset.action = "toggle-nsec-visibility";
+  toggleBtn.textContent = "Show secret";
+  toggleBtn.hidden = true;
+  nsecRow.append(nsecLabel, nsecField, toggleBtn);
+  outputs.append(nsecRow);
 
-  panel.append(outputs);
+  body.append(outputs);
+
+  const importSection = document.createElement("div");
+  importSection.className = "wm-identity-import-section";
+  const importHeading = document.createElement("h4");
+  importHeading.textContent = "Import nsec";
+  importSection.append(importHeading);
 
   const importForm = document.createElement("form");
   importForm.className = "wm-identity-import";
   importForm.dataset.form = "import-nsec";
 
-  const importLabel = document.createElement("label");
-  importLabel.className = "wm-field-label";
-  importLabel.setAttribute("for", "identity-import-nsec");
-  importLabel.textContent = "Import nsec";
-
-  const importControls = document.createElement("div");
-  importControls.className = "wm-identity-import-controls";
-
-  const importInput = document.createElement("input");
+  const importInput = document.createElement("textarea");
   importInput.id = "identity-import-nsec";
   importInput.name = "nsec";
-  importInput.type = "text";
+  importInput.rows = 2;
   importInput.autocomplete = "off";
   importInput.placeholder = "nsec1...";
+  importInput.setAttribute("aria-label", "Import nsec private key");
 
   const importSubmit = document.createElement("button");
   importSubmit.type = "submit";
   importSubmit.className = "wm-button secondary";
   importSubmit.textContent = "Sign In";
 
-  importControls.append(importInput, importSubmit);
-  importForm.append(importLabel, importControls);
-  panel.append(importForm);
+  importForm.append(importInput, importSubmit);
+  importSection.append(importForm);
+  body.append(importSection);
+
+  panel.append(body);
 
   return panel;
 };
 
 const renderNip07Panel = () => {
-  const panel = document.createElement("section");
-  panel.className = "wm-identity-panel";
+  const panel = document.createElement("details");
+  panel.className = "wm-identity-collapsible";
   panel.dataset.identityPanel = "nip07";
+  panel.open = false;
 
-  const heading = document.createElement("h3");
+  const heading = document.createElement("summary");
   heading.textContent = "Browser Extension (NIP-07)";
   panel.append(heading);
+
+  const body = document.createElement("div");
+  body.className = "wm-identity-panel";
 
   const description = document.createElement("p");
   description.className = "wm-identity-panel-description";
   description.textContent = "Connect using a Nostr extension such as Alby, nos2x, or Flamingo.";
-  panel.append(description);
+  body.append(description);
 
   const loginButton = document.createElement("button");
   loginButton.type = "button";
   loginButton.className = "wm-button";
   loginButton.dataset.action = "nip07-login";
   loginButton.textContent = "Connect Extension";
-  panel.append(loginButton);
+  body.append(loginButton);
 
   const status = document.createElement("p");
   status.className = "wm-identity-status-line";
   status.dataset.role = "nip07-status";
   status.setAttribute("aria-live", "polite");
-  panel.append(status);
+  status.hidden = true;
+  body.append(status);
 
+  panel.append(body);
   return panel;
 };
 
 const renderBunkerPanel = () => {
-  const panel = document.createElement("section");
-  panel.className = "wm-identity-panel";
+  const panel = document.createElement("details");
+  panel.className = "wm-identity-collapsible";
   panel.dataset.identityPanel = "bunker";
+  panel.open = false;
 
-  const heading = document.createElement("h3");
+  const heading = document.createElement("summary");
   heading.textContent = "Bunker Remote Signer";
   panel.append(heading);
+
+  const body = document.createElement("div");
+  body.className = "wm-identity-panel";
 
   const description = document.createElement("p");
   description.className = "wm-identity-panel-description";
   description.textContent = "Connect a remote signer with a bunker:// URI.";
-  panel.append(description);
+  body.append(description);
 
   const form = document.createElement("form");
   form.className = "wm-identity-bunker-form";
@@ -6138,24 +6157,16 @@ const renderBunkerPanel = () => {
   submit.textContent = "Connect Bunker";
   form.append(submit);
 
-  panel.append(form);
-
-  const bunkerActions = document.createElement("div");
-  bunkerActions.className = "wm-identity-button-row";
-  const scanButton = document.createElement("button");
-  scanButton.type = "button";
-  scanButton.className = "wm-button secondary";
-  scanButton.dataset.action = "scan-qr";
-  scanButton.textContent = "Scan QR";
-  bunkerActions.append(scanButton);
-  panel.append(bunkerActions);
+  body.append(form);
 
   const status = document.createElement("p");
   status.className = "wm-identity-status-line";
   status.dataset.role = "bunker-status";
   status.setAttribute("aria-live", "polite");
-  panel.append(status);
+  status.hidden = true;
+  body.append(status);
 
+  panel.append(body);
   return panel;
 };
 
