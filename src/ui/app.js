@@ -5278,34 +5278,8 @@ appRootBrowseButton?.addEventListener("click", (event) => {
   });
 });
 
-appCloneButton?.addEventListener("click", (event) => {
-  event.preventDefault();
-  openAppCloneDialog();
-});
-
-appCloneCancelButton?.addEventListener("click", (event) => {
-  event.preventDefault();
-  closeAppCloneDialog();
-});
-
-appCloneForm?.addEventListener("submit", handleAppCloneSubmit);
-
-appCloneDialog?.addEventListener("cancel", (event) => {
-  event.preventDefault();
-  closeAppCloneDialog();
-});
-
 appCloneDialog?.addEventListener("close", () => {
   appCloneForm?.reset();
-});
-
-appCloneUrlInput?.addEventListener("blur", () => {
-  if (!appCloneNameInput || !appCloneUrlInput) return;
-  if (appCloneNameInput.value.trim().length > 0) return;
-  const derived = deriveRepositoryFolderName(appCloneUrlInput.value);
-  if (derived) {
-    appCloneNameInput.value = derived;
-  }
 });
 
 const resetAppDialog = () => {
@@ -5607,6 +5581,32 @@ const handleAppCloneSubmit = async (event) => {
     appCloneConfirmButton.disabled = false;
   }
 };
+
+appCloneButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  openAppCloneDialog();
+});
+
+appCloneCancelButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  closeAppCloneDialog();
+});
+
+appCloneForm?.addEventListener("submit", handleAppCloneSubmit);
+
+appCloneDialog?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeAppCloneDialog();
+});
+
+appCloneUrlInput?.addEventListener("blur", () => {
+  if (!appCloneNameInput || !appCloneUrlInput) return;
+  if (appCloneNameInput.value.trim().length > 0) return;
+  const derived = deriveRepositoryFolderName(appCloneUrlInput.value);
+  if (derived) {
+    appCloneNameInput.value = derived;
+  }
+});
 
 const triggerAppAction = async (appId, action) => {
   try {
