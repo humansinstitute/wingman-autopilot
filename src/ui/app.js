@@ -552,6 +552,16 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
   if (emit && typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
     try {
       window.dispatchEvent(new CustomEvent("wingman:identity-ui-state", { detail: { ...next } }));
+      if (next.authenticated) {
+        closeIdentityLoginDialog();
+        if (currentRoute !== "home") {
+          currentRoute = "home";
+          if (window.location.pathname !== "/home") {
+            window.history.pushState({ route: "home" }, "", "/home");
+          }
+          render();
+        }
+      }
     } catch {
       // ignore dispatch errors
     }
