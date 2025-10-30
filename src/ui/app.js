@@ -4310,11 +4310,20 @@ const fetchAdminUsers = async () => {
     state.adminUsers.error = null;
     state.adminUsers.initialized = true;
     state.adminUsers.pending.clear();
+    if (currentRoute === "settings") {
+      render();
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load users";
     state.adminUsers.error = message;
+    if (currentRoute === "settings") {
+      render();
+    }
   } finally {
     state.adminUsers.loading = false;
+    if (currentRoute === "settings") {
+      render();
+    }
   }
 };
 
