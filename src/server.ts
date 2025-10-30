@@ -67,34 +67,12 @@ console.log(`[config] tmux session base: ${config.tmuxBase}`);
 const TMUX_SESSION_NAME = config.tmuxBase;
 const SUPPORTED_AGENT_TYPES: AgentType[] = ["codex", "claude", "goose", "opencode", "gemini"];
 
-const resolveWorkspace = (context?: RequestAuthContext): WorkspaceScope => {
-  const activeContext = context ?? getRequestContext();
-  return resolveWorkspaceScope(config, activeContext, adminNpub);
-};
-
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());
 registerAccessRule(AccessActions.FilesWrite, requireAuthentication());
 registerAccessRule(AccessActions.DeepDiveAccess, requireAuthentication());
 registerAccessRule(AccessActions.AppsManage, requireAuthentication());
 registerAccessRule(AccessActions.UiRestricted, requireAuthentication());
-
-const ensureWithinAllowedDirectories = (candidate: string, scope?: WorkspaceScope) => {
-  const activeScope = scope ?? resolveWorkspace();
-  if (activeScope.allowedDirectories.length === 0) {
-    return;
-  }
-
-  const normalised = normalize(candidate);
-  for (const base of activeScope.allowedDirectories) {
-    const boundary = base.endsWith(sep) ? base : `${base}${sep}`;
-    if (normalised === base || normalised.startsWith(boundary)) {
-      return;
-    }
-  }
-
-  throw new Error(`Directory outside permitted locations: ${normalised}`);
-};
 
 const projectRootPath = (() => {
   let root = normalize(fileURLToPath(new URL("..", import.meta.url)));
@@ -799,8 +777,8 @@ const homeDirectory = normalize(await realpath(rawHomeDirectory).catch(() => raw
 const documentsDirectory = join(homeDirectory, "Documents");
 const userDataRoot = join(documentsDirectory, "Wingman");
 const userIdentityRoot = join(userDataRoot, "users");
-const docsRoot = homeDirectory;
-const docsRootBoundary = docsRoot.endsWith(sep) ? docsRoot : `${docsRoot}${sep}`;
+const systemDocsRoot = homeDirectory;
+const systemDocsRootBoundary = systemDocsRoot.endsWith(sep) ? systemDocsRoot : `${systemDocsRoot}${sep}`;
 const require = createRequire(import.meta.url);
 const resolvePackageRoot = (specifier: string) => {
   try {
@@ -843,6 +821,28 @@ const warmRestartRoot = join(homeDirectory, ".wingmen");
 await mkdir(warmRestartRoot, { recursive: true }).catch(() => undefined);
 const restartMarkerPath = join(warmRestartRoot, "restart.json");
 const warmRestartMarker = await loadWarmRestartMarker(restartMarkerPath);
+
+const resolveWorkspace = (context?: RequestAuthContext): WorkspaceScope => {
+  const activeContext = context ?? getRequestContext();
+  return resolveWorkspaceScope(config, activeContext, adminNpub, systemDocsRoot, systemDocsRootBoundary);
+};
+
+const ensureWithinAllowedDirectories = (candidate: string, scope?: WorkspaceScope) => {
+  const activeScope = scope ?? resolveWorkspace();
+  if (activeScope.allowedDirectories.length === 0) {
+    return;
+  }
+
+  const normalised = normalize(candidate);
+  for (const base of activeScope.allowedDirectories) {
+    const boundary = base.endsWith(sep) ? base : `${base}${sep}`;
+    if (normalised === base || normalised.startsWith(boundary)) {
+      return;
+    }
+  }
+
+  throw new Error(`Directory outside permitted locations: ${normalised}`);
+};
 warmRestartState.marker = warmRestartMarker;
 const warmRestartActive = Boolean(warmRestartMarker?.preserveTmux);
 if (!warmRestartActive) {
@@ -1610,32 +1610,38 @@ const createDirectoryEntry = async (parentInput: string | null | undefined, name
   };
 };
 
-const isWithinDocsRoot = (target: string): boolean => {
+const isWithinDocsRoot = (target: string, scopeOverride?: WorkspaceScope): boolean => {
   if (!target) return false;
+  const activeScope = scopeOverride ?? resolveWorkspace();
   const normalized = normalize(target);
-  return normalized === docsRoot || normalized.startsWith(docsRootBoundary);
+  return normalized === activeScope.docsRoot || normalized.startsWith(activeScope.docsRootBoundary);
 };
 
-const toDocsRelativePath = (target: string): string => {
+const toDocsRelativePath = (target: string, scopeOverride?: WorkspaceScope): string => {
   if (!target) return "";
-  if (!isWithinDocsRoot(target)) {
+  const activeScope = scopeOverride ?? resolveWorkspace();
+  if (!isWithinDocsRoot(target, activeScope)) {
     return "";
   }
-  const relativePath = relative(docsRoot, target);
+  const relativePath = relative(activeScope.docsRoot, target);
   return relativePath && relativePath.length > 0 ? relativePath : "";
 };
 
-const toDocsDisplayPath = (target: string): string => {
-  const relativePath = toDocsRelativePath(target);
+const toDocsDisplayPath = (target: string, scopeOverride?: WorkspaceScope): string => {
+  const relativePath = toDocsRelativePath(target, scopeOverride);
   return relativePath ? `~/${relativePath}` : "~";
 };
 
-const resolveDocsPath = (input: string | null | undefined): string => {
+const resolveDocsPath = (
+  input: string | null | undefined,
+  scopeOverride?: WorkspaceScope,
+): string => {
+  const activeScope = scopeOverride ?? resolveWorkspace();
   const value = input?.trim();
-  const candidate = value && value.length > 0 ? value : docsRoot;
-  const absolute = isAbsolute(candidate) ? candidate : join(docsRoot, candidate);
+  const candidate = value && value.length > 0 ? value : activeScope.docsRoot;
+  const absolute = isAbsolute(candidate) ? candidate : join(activeScope.docsRoot, candidate);
   const normalized = normalize(absolute);
-  if (!isWithinDocsRoot(normalized)) {
+  if (!isWithinDocsRoot(normalized, activeScope)) {
     throw new Error("Access outside the home directory is not permitted");
   }
   return normalized;
@@ -1689,8 +1695,10 @@ type ListDocsDirectoryOptions = {
 const listDocsDirectory = async (
   input: string | null | undefined,
   options: ListDocsDirectoryOptions = {},
+  scopeOverride?: WorkspaceScope,
 ) => {
-  const directory = resolveDocsPath(input);
+  const activeScope = scopeOverride ?? resolveWorkspace();
+  const directory = resolveDocsPath(input, activeScope);
   let stats: Awaited<ReturnType<typeof stat>>;
   try {
     stats = await stat(directory);
@@ -1740,31 +1748,31 @@ const listDocsDirectory = async (
     }
 
     const entryPath = normalize(join(directory, entry.name));
-    if (!isWithinDocsRoot(entryPath)) {
+    if (!isWithinDocsRoot(entryPath, activeScope)) {
       continue;
     }
 
     if (entry.isDirectory()) {
-      const relativePath = toDocsRelativePath(entryPath);
+      const relativePath = toDocsRelativePath(entryPath, activeScope);
       directories.push({
         name: entry.name,
         path: entryPath,
         relativePath,
-        displayPath: toDocsDisplayPath(entryPath),
+        displayPath: toDocsDisplayPath(entryPath, activeScope),
         type: "directory",
       });
       continue;
     }
 
     if (entry.isFile()) {
-      const relativePath = toDocsRelativePath(entryPath);
+      const relativePath = toDocsRelativePath(entryPath, activeScope);
       const extension = extname(entry.name).toLowerCase();
       const preview = TEXT_PREVIEW_TYPES.get(extension) ?? null;
       files.push({
         name: entry.name,
         path: entryPath,
         relativePath,
-        displayPath: toDocsDisplayPath(entryPath),
+        displayPath: toDocsDisplayPath(entryPath, activeScope),
         type: "file",
         previewable: preview !== null,
         previewFormat: preview?.format ?? null,
@@ -1782,11 +1790,11 @@ const listDocsDirectory = async (
   files.sort((a, b) => a.name.localeCompare(b.name));
 
   const parentPath = (() => {
-    if (directory === docsRoot) {
+    if (directory === activeScope.docsRoot) {
       return null;
     }
     const candidate = dirname(directory);
-    if (!isWithinDocsRoot(candidate)) {
+    if (!isWithinDocsRoot(candidate, activeScope)) {
       return null;
     }
     return candidate;
@@ -1801,13 +1809,13 @@ const listDocsDirectory = async (
 
   return {
     path: directory,
-    relativePath: toDocsRelativePath(directory),
-    displayPath: toDocsDisplayPath(directory),
+    relativePath: toDocsRelativePath(directory, activeScope),
+    displayPath: toDocsDisplayPath(directory, activeScope),
     parent: parentPath
       ? {
           path: parentPath,
-          relativePath: toDocsRelativePath(parentPath),
-          displayPath: toDocsDisplayPath(parentPath),
+          relativePath: toDocsRelativePath(parentPath, activeScope),
+          displayPath: toDocsDisplayPath(parentPath, activeScope),
         }
       : null,
     entries: [...directories, ...files],
@@ -3519,7 +3527,7 @@ const handleApi = async (
         const value = showHiddenParam.trim().toLowerCase();
         return value === "1" || value === "true" || value === "yes" || value === "on";
       })();
-      const data = await listDocsDirectory(pathParam, { includeHidden });
+      const data = await listDocsDirectory(pathParam, { includeHidden }, workspaceScope);
       return Response.json(data);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
