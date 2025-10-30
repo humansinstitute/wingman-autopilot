@@ -1175,9 +1175,14 @@ type AdminUserRecord = {
 };
 
 const buildAdminUserList = (): AdminUserRecord[] => {
-  const activeSessions = manager.listSessions();
+  const activeSessions = manager?.listSessions?.() ?? [];
   const identitySummaries = buildIdentitySummaries(activeSessions, adminNpub, { includeAll: true });
-  const records = identityRoleStore.listRecords();
+  let records: ReturnType<typeof identityRoleStore.listRecords> = [];
+  try {
+    records = identityRoleStore.listRecords();
+  } catch (error) {
+    console.warn("[admin] failed to load identity roles:", error);
+  }
   const recordMap = new Map(records.map((record) => [record.normalizedNpub, record] as const));
   const users: AdminUserRecord[] = [];
 
