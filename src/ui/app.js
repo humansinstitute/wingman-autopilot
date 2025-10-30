@@ -4243,6 +4243,14 @@ const fetchApps = async ({ tail = APP_LOG_PREVIEW_LINES } = {}) => {
 };
 
 const fetchRestartStatus = async () => {
+  if (!state.identity.isAdmin) {
+    state.system.restart.loading = false;
+    state.system.restart.inProgress = false;
+    state.system.restart.marker = null;
+    state.system.restart.outcome = null;
+    state.system.restart.error = null;
+    return;
+  }
   state.system.restart.loading = true;
   try {
     const response = await fetch("/api/system/restart/status");
@@ -4267,7 +4275,11 @@ const fetchRestartStatus = async () => {
 };
 
 const refreshApps = async ({ tail = APP_LOG_PREVIEW_LINES, skipRender = false } = {}) => {
-  await Promise.all([fetchApps({ tail }), fetchRestartStatus()]);
+  if (state.identity.isAdmin) {
+    await Promise.all([fetchApps({ tail }), fetchRestartStatus()]);
+  } else {
+    await fetchApps({ tail });
+  }
   if (!skipRender && currentRoute === "apps") {
     render();
   }
@@ -4287,7 +4299,9 @@ const pollApps = async () => {
   appsPollInFlight = true;
   try {
     await fetchApps({ tail: APP_LOG_PREVIEW_LINES });
-    await fetchRestartStatus();
+    if (state.identity.isAdmin) {
+      await fetchRestartStatus();
+    }
     if (currentRoute === "apps") {
       render();
     }
