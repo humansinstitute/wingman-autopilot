@@ -3002,6 +3002,7 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus) => {
     tmuxSession: APPS_TMUX_SESSION,
     tmuxWindow: app.tmuxSession,
     notes: app.notes ?? null,
+    ownerNpub: app.ownerNpub,
     createdAt: app.createdAt,
     updatedAt: app.updatedAt,
     status,
@@ -3124,13 +3125,15 @@ const ensureWingmanCoreRegistration = async () => {
       const needsUpdate =
         existing.scripts.restart !== restartCommand ||
         existing.tmuxSession !== tmuxWindow ||
-        existing.root !== expectedRoot;
+        existing.root !== expectedRoot ||
+        (!existing.ownerNpub && Boolean(adminNpub));
       if (needsUpdate) {
         await appRegistry.updateApp("wingman-core", {
           root: expectedRoot,
           scripts: { restart: restartCommand },
           tmuxSession: tmuxWindow,
           notes: existing.notes ?? "Controls the Wingman orchestrator process.",
+          ownerNpub: adminNpub ?? existing.ownerNpub ?? null,
         });
       }
       return;
@@ -3142,6 +3145,7 @@ const ensureWingmanCoreRegistration = async () => {
       scripts: { restart: restartCommand },
       tmuxSession: tmuxWindow,
       notes: "Controls the Wingman orchestrator process.",
+      ownerNpub: adminNpub,
     });
     console.log("[apps] registered Wingman core app entry");
   } catch (error) {
@@ -3216,6 +3220,16 @@ const handleApi = async (
 ): Promise<Response> => {
   const pathname = url.pathname;
   const workspaceScope = resolveWorkspace(authContext);
+  const viewerNpub = normaliseNpub(authContext.npub ?? null);
+  const canAccessApp = (app: AppRecord): boolean => {
+    if (workspaceScope.isAdmin) {
+      return true;
+    }
+    if (!viewerNpub) {
+      return false;
+    }
+    return app.ownerNpub === viewerNpub;
+  };
   if (pathname === "/api/system/restart/status" && method === "GET") {
     const denied = await ensureApiAccess(AccessActions.SystemManage, request, url, authContext);
     if (denied) {
@@ -3465,7 +3479,7 @@ const handleApi = async (
     const tailCount = includeLogs ? Math.min(Math.max(tail, 1), 2000) : 0;
     try {
       const [apps, statuses] = await Promise.all([appRegistry.listApps(), appProcessManager.listStatuses()]);
-      const visibleApps = workspaceScope.isAdmin ? apps : apps.filter((app) => app.id !== "wingman-core");
+      const visibleApps = workspaceScope.isAdmin ? apps : apps.filter((app) => canAccessApp(app));
       const statusMap = new Map(statuses.map((status) => [status.appId, status]));
       const data = await Promise.all(
         visibleApps.map(async (app) => {
@@ -3521,6 +3535,11 @@ const handleApi = async (
     const tmuxSession = normaliseOptionalString(record.tmuxSession);
     const notes = normaliseOptionalString(record.notes);
     const overrides = parseAppScripts(record.scripts);
+    const ownerNpub =
+      workspaceScope.isAdmin ? normaliseNpub(authContext.npub ?? null) ?? adminNpub : viewerNpub;
+    if (!ownerNpub) {
+      return Response.json({ error: "Unable to resolve app owner" }, { status: 403 });
+    }
     const discoverOverride =
       typeof record.discover === "boolean"
         ? (record.discover as boolean)
@@ -3548,6 +3567,7 @@ const handleApi = async (
         scripts: Object.keys(scripts).length > 0 ? scripts : undefined,
         tmuxSession: tmuxSession ?? undefined,
         notes: notes ?? undefined,
+        ownerNpub,
       });
       const status = await appProcessManager.getStatus(app.id);
       return Response.json({ app: buildAppResponse(app, status) }, { status: 201 });
@@ -3593,6 +3613,9 @@ const handleApi = async (
       if (!app) {
         return Response.json({ error: "Not found" }, { status: 404 });
       }
+      if (!canAccessApp(app)) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
       const status = await appProcessManager.getStatus(id);
       return Response.json({ app: buildAppResponse(app, status) });
     }
@@ -3600,6 +3623,9 @@ const handleApi = async (
     if (method === "PUT" && parts.length === 4) {
       const current = await appRegistry.getApp(id);
       if (!current) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+      if (!canAccessApp(current)) {
         return Response.json({ error: "Not found" }, { status: 404 });
       }
 
@@ -3681,6 +3707,13 @@ const handleApi = async (
     if (method === "DELETE" && parts.length === 4) {
       const killParam = url.searchParams.get("killSession") ?? url.searchParams.get("killTmux");
       const killSession = parseBooleanFlag(killParam);
+      const current = await appRegistry.getApp(id);
+      if (!current) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+      if (!canAccessApp(current)) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
       try {
         if (killSession) {
           await appProcessManager.kill(id);
@@ -3702,6 +3735,9 @@ const handleApi = async (
       if (!app) {
         return Response.json({ error: "Not found" }, { status: 404 });
       }
+      if (!canAccessApp(app)) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
       const tailParam = url.searchParams.get("tail");
       const tail = tailParam ? Number.parseInt(tailParam, 10) : 100;
       const lines = Number.isNaN(tail) || tail <= 0 ? 100 : Math.min(tail, 2000);
@@ -3716,6 +3752,9 @@ const handleApi = async (
     if (method === "POST" && parts[4] === "actions") {
       const app = await appRegistry.getApp(id);
       if (!app) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+      if (!canAccessApp(app)) {
         return Response.json({ error: "Not found" }, { status: 404 });
       }
       let payload: unknown;

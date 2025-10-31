@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
 
+import { normaliseNpub } from "../identity/npub-utils";
+
 const registryFilePath = new URL("../../data/apps.json", import.meta.url).pathname;
 
 export type AppLifecycleAction = "start" | "stop" | "restart" | "setup" | "build";
@@ -15,6 +17,7 @@ export interface AppRecord {
   scripts: AppLifecycleScripts;
   tmuxSession: string;
   notes?: string;
+  ownerNpub: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -26,6 +29,7 @@ export interface RegisterAppInput {
   scripts?: AppLifecycleScripts;
   tmuxSession?: string;
   notes?: string;
+  ownerNpub?: string | null;
 }
 
 export interface UpdateAppInput {
@@ -34,6 +38,7 @@ export interface UpdateAppInput {
   scripts?: AppLifecycleScripts;
   tmuxSession?: string;
   notes?: string | null;
+  ownerNpub?: string | null;
 }
 
 export interface AppRegistryState {
@@ -96,6 +101,7 @@ export class AppRegistry {
     const label = input.label?.trim() || basename(root);
     const tmuxSession = normaliseWindowName(input.tmuxSession, label, root, id);
     const scripts = this.normaliseScripts(input.scripts);
+    const ownerNpub = normaliseNpub(input.ownerNpub ?? null);
     const record: AppRecord = {
       id,
       label,
@@ -103,6 +109,7 @@ export class AppRegistry {
       scripts,
       tmuxSession,
       notes: input.notes?.trim() || undefined,
+      ownerNpub,
       createdAt: now,
       updatedAt: now,
     };
@@ -122,6 +129,8 @@ export class AppRegistry {
     const nextScripts = input.scripts ? this.normaliseScripts(input.scripts) : existing.scripts;
     const nextNotes = input.notes === null ? undefined : input.notes?.trim() || existing.notes;
     const nextTmux = normaliseWindowName(input.tmuxSession ?? existing.tmuxSession, nextLabel, nextRoot, id);
+    const nextOwnerNpub =
+      input.ownerNpub !== undefined ? normaliseNpub(input.ownerNpub ?? null) ?? null : existing.ownerNpub;
     const next: AppRecord = {
       ...existing,
       label: nextLabel,
@@ -129,6 +138,7 @@ export class AppRegistry {
       scripts: nextScripts,
       tmuxSession: nextTmux,
       notes: nextNotes,
+      ownerNpub: nextOwnerNpub,
       updatedAt: new Date().toISOString(),
     };
     if (next.root !== existing.root) {
@@ -244,6 +254,7 @@ export class AppRegistry {
     const tmuxSession = normaliseWindowName(input.tmuxSession, label, root, input.id);
     const scripts = this.normaliseScripts(input.scripts);
     const notes = input.notes?.trim() || undefined;
+    const ownerNpub = normaliseNpub(input.ownerNpub ?? null);
     return {
       id: input.id,
       label,
@@ -251,6 +262,7 @@ export class AppRegistry {
       scripts,
       tmuxSession,
       notes,
+      ownerNpub,
       createdAt,
       updatedAt,
     };

@@ -6623,66 +6623,68 @@ const renderHome = () => {
     void ensureAppsLoaded();
   }
 
-  const orchestratorCard = document.createElement("section");
-  orchestratorCard.className = "wm-card wm-home-orchestrator";
+  if (state.identity.isAdmin) {
+    const orchestratorCard = document.createElement("section");
+    orchestratorCard.className = "wm-card wm-home-orchestrator";
 
-  const orchestratorHeader = document.createElement("div");
-  orchestratorHeader.className = "wm-home-section-header";
+    const orchestratorHeader = document.createElement("div");
+    orchestratorHeader.className = "wm-home-section-header";
 
-  const orchestratorTitle = document.createElement("h2");
-  orchestratorTitle.textContent = "Orchestrator";
+    const orchestratorTitle = document.createElement("h2");
+    orchestratorTitle.textContent = "Orchestrator";
 
-  const orchestratorContent = document.createElement("div");
-  orchestratorContent.className = "wm-home-orchestrator-content";
-  orchestratorContent.id = "orchestrator-content";
+    const orchestratorContent = document.createElement("div");
+    orchestratorContent.className = "wm-home-orchestrator-content";
+    orchestratorContent.id = "orchestrator-content";
 
-  const setOrchestratorCollapsed = (collapsed) => {
-    if (collapsed) {
-      orchestratorCard.dataset.collapsed = "true";
-      orchestratorContent.hidden = true;
-      orchestratorHeader.setAttribute("aria-expanded", "false");
-    } else {
-      delete orchestratorCard.dataset.collapsed;
-      orchestratorContent.hidden = false;
-      orchestratorHeader.setAttribute("aria-expanded", "true");
+    const setOrchestratorCollapsed = (collapsed) => {
+      if (collapsed) {
+        orchestratorCard.dataset.collapsed = "true";
+        orchestratorContent.hidden = true;
+        orchestratorHeader.setAttribute("aria-expanded", "false");
+      } else {
+        delete orchestratorCard.dataset.collapsed;
+        orchestratorContent.hidden = false;
+        orchestratorHeader.setAttribute("aria-expanded", "true");
+      }
+    };
+
+    const orchestratorCreateButton = document.createElement("button");
+    orchestratorCreateButton.type = "button";
+    orchestratorCreateButton.className = "wm-button secondary wm-button-icon";
+    orchestratorCreateButton.setAttribute("aria-label", "Add orchestrator preset");
+    orchestratorCreateButton.innerHTML = '<span aria-hidden="true">+</span>';
+    orchestratorCreateButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openOrchestratorDialog();
+    });
+
+    const orchestratorHeaderActions = document.createElement("div");
+    orchestratorHeaderActions.className = "wm-home-section-actions";
+    orchestratorHeaderActions.append(orchestratorCreateButton);
+
+    const orchestratorActions = document.createElement("div");
+    orchestratorActions.className = "wm-home-orchestrator-actions";
+    renderOrchestratorPresetButtons(orchestratorActions);
+
+    if (!state.orchestratorPresetsLoaded && !state.orchestratorPresetsLoading) {
+      ensureOrchestratorPresetsLoaded();
     }
-  };
 
-  const orchestratorCreateButton = document.createElement("button");
-  orchestratorCreateButton.type = "button";
-  orchestratorCreateButton.className = "wm-button secondary wm-button-icon";
-  orchestratorCreateButton.setAttribute("aria-label", "Add orchestrator preset");
-  orchestratorCreateButton.innerHTML = '<span aria-hidden="true">+</span>';
-  orchestratorCreateButton.addEventListener("click", (event) => {
-    event.stopPropagation();
-    openOrchestratorDialog();
-  });
+    // Make header clickable to toggle collapse
+    orchestratorHeader.addEventListener("click", (event) => {
+      if (orchestratorCreateButton.contains(event.target)) return;
+      const currentlyCollapsed = orchestratorCard.dataset.collapsed === "true";
+      setOrchestratorCollapsed(!currentlyCollapsed);
+    });
 
-  const orchestratorHeaderActions = document.createElement("div");
-  orchestratorHeaderActions.className = "wm-home-section-actions";
-  orchestratorHeaderActions.append(orchestratorCreateButton);
+    orchestratorHeader.append(orchestratorTitle, orchestratorHeaderActions);
+    orchestratorContent.append(orchestratorActions);
+    orchestratorCard.append(orchestratorHeader, orchestratorContent);
+    setOrchestratorCollapsed(false);
 
-  const orchestratorActions = document.createElement("div");
-  orchestratorActions.className = "wm-home-orchestrator-actions";
-  renderOrchestratorPresetButtons(orchestratorActions);
-
-  if (!state.orchestratorPresetsLoaded && !state.orchestratorPresetsLoading) {
-    ensureOrchestratorPresetsLoaded();
+    wrapper.append(orchestratorCard);
   }
-
-  // Make header clickable to toggle collapse
-  orchestratorHeader.addEventListener("click", (event) => {
-    if (orchestratorCreateButton.contains(event.target)) return;
-    const currentlyCollapsed = orchestratorCard.dataset.collapsed === "true";
-    setOrchestratorCollapsed(!currentlyCollapsed);
-  });
-
-  orchestratorHeader.append(orchestratorTitle, orchestratorHeaderActions);
-  orchestratorContent.append(orchestratorActions);
-  orchestratorCard.append(orchestratorHeader, orchestratorContent);
-  setOrchestratorCollapsed(false);
-
-  wrapper.append(orchestratorCard);
 
   const appsCard = document.createElement("section");
   appsCard.className = "wm-card wm-home-apps";
