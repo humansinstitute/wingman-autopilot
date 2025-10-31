@@ -5825,6 +5825,143 @@ const removeApp = async (appId) => {
   }
 };
 
+const VARIABLE_URL_LOG_PREFIX = "[WINGMAN21-URL]";
+const VARIABLE_PUBKEY_LOG_PREFIX = "[WINGMAN21-PUBKEY]";
+
+const COPY_ICON_DEFAULT_SVG =
+  '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M16 1H8a2 2 0 0 0-2 2v2H5a2 2 0 0 0-2 2v12c0 1.1.9 2 2 2h8l1-2H5V7h1v2h10V3h2v9l2-1V3a2 2 0 0 0-2-2Zm-2 6H8V3h6v4Zm7.71 9.29-5-5a1 1 0 0 0-1.42 1.42l1.3 1.29-4.59 4.59V22h3.41l4.59-4.59 1.29 1.3a1 1 0 0 0 1.42-1.42Z"/></svg>';
+const COPY_ICON_SUCCESS_SVG =
+  '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="m9 16.17-3.5-3.5L4.08 14.1 9 19l12-12-1.41-1.41Z"/></svg>';
+
+const createCopyIconButton = ({ text, ariaLabel, title }) => {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "wm-icon-button";
+  if (ariaLabel) {
+    button.setAttribute("aria-label", ariaLabel);
+  }
+  if (title) {
+    button.title = title;
+  }
+  button.innerHTML = COPY_ICON_DEFAULT_SVG;
+  button.addEventListener("click", async () => {
+    const success = await copyTextToClipboard(text);
+    if (success) {
+      button.dataset.state = "success";
+      button.innerHTML = COPY_ICON_SUCCESS_SVG;
+      setTimeout(() => {
+        if (button.isConnected) {
+          delete button.dataset.state;
+          button.innerHTML = COPY_ICON_DEFAULT_SVG;
+        }
+      }, 1600);
+      return;
+    }
+    button.dataset.state = "error";
+    setTimeout(() => {
+      if (button.isConnected) {
+        delete button.dataset.state;
+      }
+    }, 1600);
+  });
+  return button;
+};
+
+const extractVariableUrlFromLogs = (logs) => {
+  if (!Array.isArray(logs)) return null;
+  for (const entry of logs) {
+    if (typeof entry !== "string") continue;
+    if (!entry.startsWith(VARIABLE_URL_LOG_PREFIX)) continue;
+    const remainder = entry.slice(VARIABLE_URL_LOG_PREFIX.length).trim();
+    if (!remainder) continue;
+    const candidate = remainder.split(/\s+/)[0];
+    try {
+      const url = new URL(candidate);
+      return url.toString();
+    } catch {
+      continue;
+    }
+  }
+  return null;
+};
+
+const extractPubkeyFromLogs = (logs) => {
+  if (!Array.isArray(logs)) return null;
+  for (const entry of logs) {
+    if (typeof entry !== "string") continue;
+    if (!entry.startsWith(VARIABLE_PUBKEY_LOG_PREFIX)) continue;
+    const remainder = entry.slice(VARIABLE_PUBKEY_LOG_PREFIX.length).trim();
+    if (!remainder) continue;
+    const candidate = remainder.split(/\s+/)[0];
+    if (!candidate) continue;
+    if (!/^[0-9a-fA-F]{64,130}$/.test(candidate)) continue;
+    return candidate;
+  }
+  return null;
+};
+
+const appendVariableUrlRow = (metaContainer, logs) => {
+  if (!metaContainer) return;
+  const variableUrl = extractVariableUrlFromLogs(logs);
+  if (!variableUrl) return;
+
+  const row = document.createElement("div");
+  row.className = "wm-app-meta-row";
+
+  const label = document.createElement("span");
+  label.className = "wm-app-meta-label";
+  label.textContent = "Variable URL";
+
+  const value = document.createElement("span");
+  value.className = "wm-app-meta-value";
+
+  const link = document.createElement("a");
+  link.href = variableUrl;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = variableUrl;
+  value.append(link);
+
+  const copyButton = createCopyIconButton({
+    text: variableUrl,
+    ariaLabel: "Copy variable URL",
+    title: "Copy variable URL",
+  });
+  value.append(copyButton);
+  row.append(label, value);
+  metaContainer.append(row);
+};
+
+const appendVariablePubkeyRow = (metaContainer, logs) => {
+  if (!metaContainer) return;
+  const pubkey = extractPubkeyFromLogs(logs);
+  if (!pubkey) return;
+
+  const row = document.createElement("div");
+  row.className = "wm-app-meta-row";
+
+  const label = document.createElement("span");
+  label.className = "wm-app-meta-label";
+  label.textContent = "Pubkey";
+
+  const value = document.createElement("span");
+  value.className = "wm-app-meta-value";
+
+  const pubkeyDisplay = document.createElement("code");
+  pubkeyDisplay.textContent = pubkey;
+  value.append(pubkeyDisplay);
+
+  const copyButton = createCopyIconButton({
+    text: pubkey,
+    ariaLabel: "Copy pubkey",
+    title: "Copy pubkey",
+  });
+
+  value.append(copyButton);
+  row.append(label, value);
+  metaContainer.append(row);
+};
+
 const renderAppLogPreview = (logs) => {
   const preview = document.createElement("pre");
   preview.className = "wm-app-log";
@@ -5992,6 +6129,9 @@ const renderAppCard = (app) => {
   windowValue.title = windowName;
   windowRow.append(windowLabel, windowValue);
   meta.append(windowRow);
+
+  appendVariableUrlRow(meta, app.logs);
+  appendVariablePubkeyRow(meta, app.logs);
 
   card.append(meta);
 

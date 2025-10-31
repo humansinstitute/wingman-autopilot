@@ -707,6 +707,30 @@ body[data-menu-open="true"] .wm-menu-panel {
   color: var(--text-tertiary);
 }
 
+.wm-app-meta-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  color: var(--text-secondary);
+}
+
+.wm-app-meta-value a {
+  color: inherit;
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+.wm-app-meta-value a:hover,
+.wm-app-meta-value a:focus-visible {
+  color: var(--text-primary);
+}
+
+.wm-app-meta-value code {
+  word-break: break-all;
+  font-size: 0.8rem;
+}
+
 .wm-app-notes {
   margin: 0;
   padding: 0.5rem 0.75rem;
