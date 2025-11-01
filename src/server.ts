@@ -1663,6 +1663,28 @@ const normaliseDirectoryEntryName = (value: unknown): string => {
   return trimmed;
 };
 
+const FILE_NAME_MAX_LENGTH = 200;
+
+const normaliseDocsFileName = (value: unknown): string => {
+  if (typeof value !== "string") {
+    throw new Error("File name is required");
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error("File name is required");
+  }
+  if (trimmed.length > FILE_NAME_MAX_LENGTH) {
+    throw new Error("File name is too long");
+  }
+  if (trimmed === "." || trimmed === "..") {
+    throw new Error("File name is not allowed");
+  }
+  if (/[\\/]/.test(trimmed)) {
+    throw new Error("File name cannot contain path separators");
+  }
+  return trimmed;
+};
+
 const createDirectoryEntry = async (parentInput: string | null | undefined, nameInput: unknown) => {
   const parentDirectory = await ensureDirectory(parentInput);
   const name = normaliseDirectoryEntryName(nameInput);
@@ -1766,6 +1788,11 @@ const TEXT_PREVIEW_TYPES = new Map<string, DocsPreviewType>([
   [".html", { format: "code", language: "html", label: "HTML" }],
 ]);
 
+const TEXT_PREVIEW_TYPES_BY_NAME = new Map<string, DocsPreviewType>([
+  [".env", { format: "code", language: "ini", label: "Config" }],
+  [".env.example", { format: "code", language: "ini", label: "Config" }],
+]);
+
 type ListDocsDirectoryOptions = {
   includeHidden?: boolean;
 };
@@ -1845,7 +1872,8 @@ const listDocsDirectory = async (
     if (entry.isFile()) {
       const relativePath = toDocsRelativePath(entryPath, activeScope);
       const extension = extname(entry.name).toLowerCase();
-      const preview = TEXT_PREVIEW_TYPES.get(extension) ?? null;
+      const lowerName = entry.name.toLowerCase();
+      const preview = TEXT_PREVIEW_TYPES_BY_NAME.get(lowerName) ?? TEXT_PREVIEW_TYPES.get(extension) ?? null;
       files.push({
         name: entry.name,
         path: entryPath,
@@ -1902,8 +1930,9 @@ const listDocsDirectory = async (
 };
 
 const resolvePreviewType = (filePath: string): DocsPreviewType => {
-  const extension = extname(filePath).toLowerCase();
-  const preview = TEXT_PREVIEW_TYPES.get(extension);
+  const name = basename(filePath).toLowerCase();
+  const extension = extname(name).toLowerCase();
+  const preview = TEXT_PREVIEW_TYPES_BY_NAME.get(name) ?? TEXT_PREVIEW_TYPES.get(extension);
   if (!preview) {
     throw new Error("Preview for this file type is not supported");
   }
@@ -2223,7 +2252,11 @@ const deleteDocsFile = async (pathInput: string | null | undefined) => {
   };
 };
 
-const copyDocsFile = async (pathInput: string | null | undefined, targetDirectoryInput: string | null | undefined) => {
+const copyDocsFile = async (
+  pathInput: string | null | undefined,
+  targetDirectoryInput: string | null | undefined,
+  newNameInput?: string | null | undefined,
+) => {
   const sourcePath = resolveDocsPath(pathInput);
   let stats: Awaited<ReturnType<typeof stat>>;
   try {
@@ -2237,7 +2270,10 @@ const copyDocsFile = async (pathInput: string | null | undefined, targetDirector
   }
 
   const targetDirectory = await ensureDocsDirectory(targetDirectoryInput);
-  const destinationPath = normalize(join(targetDirectory, basename(sourcePath)));
+  const destinationName = newNameInput && newNameInput.trim().length > 0
+    ? normaliseDocsFileName(newNameInput)
+    : basename(sourcePath);
+  const destinationPath = normalize(join(targetDirectory, destinationName));
 
   if (!isWithinDocsRoot(destinationPath)) {
     throw new Error("Invalid destination path");
@@ -2269,7 +2305,11 @@ const copyDocsFile = async (pathInput: string | null | undefined, targetDirector
   };
 };
 
-const moveDocsFile = async (pathInput: string | null | undefined, targetDirectoryInput: string | null | undefined) => {
+const moveDocsFile = async (
+  pathInput: string | null | undefined,
+  targetDirectoryInput: string | null | undefined,
+  newNameInput?: string | null | undefined,
+) => {
   const sourcePath = resolveDocsPath(pathInput);
   let stats: Awaited<ReturnType<typeof stat>>;
   try {
@@ -2283,7 +2323,10 @@ const moveDocsFile = async (pathInput: string | null | undefined, targetDirector
   }
 
   const targetDirectory = await ensureDocsDirectory(targetDirectoryInput);
-  const destinationPath = normalize(join(targetDirectory, basename(sourcePath)));
+  const destinationName = newNameInput && newNameInput.trim().length > 0
+    ? normaliseDocsFileName(newNameInput)
+    : basename(sourcePath);
+  const destinationPath = normalize(join(targetDirectory, destinationName));
 
   if (!isWithinDocsRoot(destinationPath)) {
     throw new Error("Invalid destination path");
@@ -2989,7 +3032,7 @@ const defaultAppProcessStatus = (appId: string): AppProcessStatus => {
 const buildAppResponse = (app: AppRecord, status: AppProcessStatus) => {
   const availableScripts: Record<AppLifecycleAction, boolean> = {
     start: Boolean(app.scripts.start),
-    stop: Boolean(app.scripts.stop),
+    stop: true,
     restart: Boolean(app.scripts.restart),
     setup: Boolean(app.scripts.setup),
     build: Boolean(app.scripts.build),
@@ -4024,12 +4067,14 @@ const handleApi = async (
     const pathValue = (payload as Record<string, unknown>).path;
     const targetValue =
       (payload as Record<string, unknown>).targetDirectory ?? (payload as Record<string, unknown>).directory;
+    const nameValue = (payload as Record<string, unknown>).name;
 
     const sourcePath = typeof pathValue === "string" ? pathValue : null;
     const destinationPath = typeof targetValue === "string" ? targetValue : null;
+    const destinationName = typeof nameValue === "string" ? nameValue : null;
 
     try {
-      const data = await copyDocsFile(sourcePath, destinationPath);
+      const data = await copyDocsFile(sourcePath, destinationPath, destinationName);
       return Response.json(data, { status: 201 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -4056,12 +4101,14 @@ const handleApi = async (
     const pathValue = (payload as Record<string, unknown>).path;
     const targetValue =
       (payload as Record<string, unknown>).targetDirectory ?? (payload as Record<string, unknown>).directory;
+    const nameValue = (payload as Record<string, unknown>).name;
 
     const sourcePath = typeof pathValue === "string" ? pathValue : null;
     const destinationPath = typeof targetValue === "string" ? targetValue : null;
+    const destinationName = typeof nameValue === "string" ? nameValue : null;
 
     try {
-      const data = await moveDocsFile(sourcePath, destinationPath);
+      const data = await moveDocsFile(sourcePath, destinationPath, destinationName);
       return Response.json(data, { status: 200 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

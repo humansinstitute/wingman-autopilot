@@ -8,6 +8,8 @@ import type { AppLifecycleAction, AppRecord, AppRegistry } from "./app-registry"
 
 const logDirectoryPath = new URL("../../data/app-logs", import.meta.url).pathname;
 export const APPS_TMUX_SESSION = "wingman-apps";
+const TMUX_MISSING_WINDOW_PATTERN =
+  /(can't find window|no such window|can't find session|no such session|no server running|can't find target|target not found)/i;
 
 type CommandResult = {
   exitCode: number;
@@ -124,16 +126,12 @@ export class AppProcessManager {
 
   async stop(appId: string): Promise<AppProcessStatus> {
     return this.runAction(appId, "stop", async (app) => {
-      const command = this.requireScript(app, "stop");
-      await this.ensureSession(app);
-      const result = await this.sendToSession(app, command);
-      if (result.exitCode !== 0) {
-        throw new AppActionError(app.id, "stop", result.stderr || result.stdout || "Failed to send stop command");
-      }
+      const interrupted = await this.interruptAndCloseWindow(app);
+      const message = interrupted ? "Sent Ctrl+C and closed app window" : "App window already stopped";
       return {
         finalStatus: "idle" as AppRuntimeStatus,
-        exitCode: result.exitCode,
-        message: "Stop command dispatched",
+        exitCode: 0,
+        message,
       };
     });
   }
@@ -144,8 +142,8 @@ export class AppProcessManager {
       const startScript = app.scripts.start;
       const restartScript = app.scripts.restart;
       await this.ensureSession(app);
-      await this.attachLogPipe(app);
       if (restartScript) {
+        await this.attachLogPipe(app);
         const restartResult = await this.sendToSession(app, restartScript);
         if (restartResult.exitCode !== 0) {
           throw new AppActionError(
@@ -160,17 +158,25 @@ export class AppProcessManager {
           message: "Restart command dispatched",
         };
       }
-      if (!stopScript || !startScript) {
+      if (!startScript) {
         throw new AppScriptMissingError(app.id, "restart");
       }
-      const stopResult = await this.sendToSession(app, stopScript);
-      if (stopResult.exitCode !== 0) {
-        throw new AppActionError(
-          app.id,
-          "restart",
-          stopResult.stderr || stopResult.stdout || "Failed while dispatching stop command",
-        );
+      const usedStopScript = Boolean(stopScript);
+      if (stopScript) {
+        await this.attachLogPipe(app);
+        const stopResult = await this.sendToSession(app, stopScript);
+        if (stopResult.exitCode !== 0) {
+          throw new AppActionError(
+            app.id,
+            "restart",
+            stopResult.stderr || stopResult.stdout || "Failed while dispatching stop command",
+          );
+        }
+      } else {
+        await this.interruptAndCloseWindow(app);
       }
+      await this.ensureSession(app);
+      await this.attachLogPipe(app);
       const startResult = await this.sendToSession(app, startScript);
       if (startResult.exitCode !== 0) {
         throw new AppActionError(
@@ -182,7 +188,7 @@ export class AppProcessManager {
       return {
         finalStatus: "running" as AppRuntimeStatus,
         exitCode: startResult.exitCode,
-        message: "Restart sequence (stop/start) dispatched",
+        message: usedStopScript ? "Restart sequence (stop/start) dispatched" : "Restarted after Ctrl+C stop",
       };
     });
   }
@@ -255,14 +261,7 @@ export class AppProcessManager {
     if (!app) {
       throw new Error(`Unknown app: ${appId}`);
     }
-    const target = this.getTmuxTarget(app);
-    const result = await this.runTmux(["kill-window", "-t", target]);
-    if (result.exitCode !== 0) {
-      const output = result.stderr || result.stdout || "";
-      if (!/can't find window|no such window|can't find session|no such session/i.test(output)) {
-        throw new Error(output || `Failed to kill tmux window ${target}`);
-      }
-    }
+    await this.killWindow(app);
     this.states.delete(appId);
   }
 
@@ -352,6 +351,42 @@ export class AppProcessManager {
       throw new AppScriptMissingError(app.id, action);
     }
     return script;
+  }
+
+  private isMissingWindowMessage(output: string): boolean {
+    return TMUX_MISSING_WINDOW_PATTERN.test(output);
+  }
+
+  private async killWindow(app: AppRecord): Promise<void> {
+    const target = this.getTmuxTarget(app);
+    const result = await this.runTmux(["kill-window", "-t", target]);
+    if (result.exitCode !== 0) {
+      const output = result.stderr || result.stdout || "";
+      if (!this.isMissingWindowMessage(output)) {
+        throw new Error(output || `Failed to kill tmux window ${target}`);
+      }
+    }
+  }
+
+  private async interruptAndCloseWindow(app: AppRecord): Promise<boolean> {
+    const windowExists = await this.isSessionRunning(app);
+    if (!windowExists) {
+      return false;
+    }
+    const target = this.getTmuxTarget(app);
+    const interrupt = await this.runTmux(["send-keys", "-t", target, "C-c"]);
+    if (interrupt.exitCode !== 0) {
+      const output = interrupt.stderr || interrupt.stdout || "";
+      if (this.isMissingWindowMessage(output)) {
+        return false;
+      }
+      throw new Error(output || `Failed to send Ctrl+C to ${target}`);
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 150);
+    });
+    await this.killWindow(app);
+    return true;
   }
 
   private async ensureSession(app: AppRecord) {

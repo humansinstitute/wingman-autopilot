@@ -107,6 +107,9 @@ const state = {
       sourceDisplayPath: null,
       destinationPath: null,
       destinationDisplayPath: null,
+      destinationName: null,
+      destinationNameInput: "",
+      nameError: null,
       submitting: false,
       error: null,
       browser: {
@@ -1907,11 +1910,15 @@ const createDirectoryEntry = async (parent, name) => {
   return response.json();
 };
 
-const copyFilesEntry = async (path, targetDirectory) => {
+const copyFilesEntry = async (path, targetDirectory, name) => {
+  const payload = { path, targetDirectory };
+  if (typeof name === "string" && name.trim().length > 0) {
+    payload.name = name.trim();
+  }
   const response = await fetch("/api/docs/file/copy", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ path, targetDirectory }),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
@@ -1921,11 +1928,15 @@ const copyFilesEntry = async (path, targetDirectory) => {
   return response.json();
 };
 
-const moveFilesEntry = async (path, targetDirectory) => {
+const moveFilesEntry = async (path, targetDirectory, name) => {
+  const payload = { path, targetDirectory };
+  if (typeof name === "string" && name.trim().length > 0) {
+    payload.name = name.trim();
+  }
   const response = await fetch("/api/docs/file/move", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ path, targetDirectory }),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
@@ -3026,6 +3037,8 @@ const fileTransferSource = document.getElementById("file-transfer-source");
 const fileTransferCurrent = document.getElementById("file-transfer-current");
 const fileTransferList = document.getElementById("file-transfer-list");
 const fileTransferSelected = document.getElementById("file-transfer-selected");
+const fileTransferNameInput = document.getElementById("file-transfer-name");
+const fileTransferNameFeedback = document.getElementById("file-transfer-name-feedback");
 const fileTransferUpButton = document.getElementById("file-transfer-up");
 const fileTransferNewFolderButton = document.getElementById("file-transfer-new-folder");
 const fileTransferCancelButton = document.getElementById("file-transfer-cancel");
@@ -3785,6 +3798,47 @@ const getParentDirectoryPath = (filePath) => {
   return filePath.slice(0, index);
 };
 
+const FILE_TRANSFER_NAME_MAX_LENGTH = 200;
+
+const applyFileTransferNameInput = (rawValue) => {
+  const transfer = state.files.transfer;
+  const value = typeof rawValue === "string" ? rawValue : "";
+  transfer.destinationNameInput = value;
+  const trimmed = value.trim();
+  let error = null;
+  let normalized = null;
+  if (trimmed.length > 0) {
+    if (trimmed.length > FILE_TRANSFER_NAME_MAX_LENGTH) {
+      error = "File name is too long";
+    } else if (trimmed === "." || trimmed === "..") {
+      error = "File name is not allowed";
+    } else if (/[\\/]/.test(trimmed)) {
+      error = "File name cannot contain path separators";
+    } else {
+      normalized = trimmed;
+    }
+  }
+  transfer.destinationName = normalized;
+  transfer.nameError = error;
+  if (fileTransferNameFeedback) {
+    if (error) {
+      fileTransferNameFeedback.textContent = error;
+      fileTransferNameFeedback.hidden = false;
+    } else {
+      fileTransferNameFeedback.textContent = "";
+      fileTransferNameFeedback.hidden = true;
+    }
+  }
+  if (fileTransferNameInput) {
+    if (error) {
+      fileTransferNameInput.setAttribute("aria-invalid", "true");
+    } else {
+      fileTransferNameInput.removeAttribute("aria-invalid");
+    }
+  }
+  syncFileTransferConfirmState();
+};
+
 const resetFileTransferState = () => {
   const transfer = state.files.transfer;
   transfer.mode = null;
@@ -3793,6 +3847,9 @@ const resetFileTransferState = () => {
   transfer.sourceDisplayPath = null;
   transfer.destinationPath = null;
   transfer.destinationDisplayPath = null;
+  transfer.destinationName = null;
+  transfer.destinationNameInput = "";
+  transfer.nameError = null;
   transfer.submitting = false;
   transfer.error = null;
   transfer.browser.currentPath = "";
@@ -3805,9 +3862,19 @@ const resetFileTransferState = () => {
   if (fileTransferSelected) {
     fileTransferSelected.textContent = "";
   }
+  if (fileTransferNameInput) {
+    fileTransferNameInput.value = "";
+    fileTransferNameInput.placeholder = "";
+    fileTransferNameInput.removeAttribute("aria-invalid");
+  }
+  if (fileTransferNameFeedback) {
+    fileTransferNameFeedback.textContent = "";
+    fileTransferNameFeedback.hidden = true;
+  }
   if (fileTransferNewFolderButton) {
     fileTransferNewFolderButton.disabled = true;
   }
+  syncFileTransferConfirmState();
 };
 
 const syncFileTransferConfirmState = () => {
@@ -3820,7 +3887,7 @@ const syncFileTransferConfirmState = () => {
     fileTransferConfirmButton.textContent = "Confirm";
     return;
   }
-  const disabled = transfer.submitting || !transfer.destinationPath;
+  const disabled = transfer.submitting || !transfer.destinationPath || Boolean(transfer.nameError);
   fileTransferConfirmButton.disabled = disabled;
   if (transfer.submitting) {
     fileTransferConfirmButton.dataset.loading = "true";
@@ -3971,6 +4038,30 @@ const openFileTransferDialogForMode = async (mode) => {
   transfer.destinationPath = files.currentPath ?? getParentDirectoryPath(sourcePath);
   transfer.destinationDisplayPath = files.displayPath ?? transfer.destinationPath;
 
+  const defaultName = transfer.sourceName ?? "";
+  transfer.destinationNameInput = defaultName;
+  applyFileTransferNameInput(defaultName);
+  if (fileTransferNameInput) {
+    fileTransferNameInput.value = defaultName;
+    fileTransferNameInput.placeholder = transfer.sourceName ?? "";
+    const focusInput = () => {
+      if (fileTransferNameInput?.isConnected) {
+        fileTransferNameInput.focus();
+        try {
+          const length = fileTransferNameInput.value.length;
+          fileTransferNameInput.setSelectionRange(0, length);
+        } catch {
+          // ignore selection errors on unsupported inputs
+        }
+      }
+    };
+    if (typeof queueMicrotask === "function") {
+      queueMicrotask(focusInput);
+    } else {
+      setTimeout(focusInput, 0);
+    }
+  }
+
   if (fileTransferTitle) {
     fileTransferTitle.textContent = mode === "move" ? "Move File To…" : "Copy File To…";
   }
@@ -4003,13 +4094,21 @@ const submitFileTransfer = async () => {
     window.alert("Select a destination directory first.");
     return;
   }
+  if (transfer.nameError) {
+    window.alert(transfer.nameError);
+    return;
+  }
   const sourcePath = transfer.sourcePath;
   const mode = transfer.mode;
+  const destinationName = transfer.destinationName;
   transfer.submitting = true;
   syncFileTransferConfirmState();
-  const action = transfer.mode === "move" ? moveFilesEntry : copyFilesEntry;
   try {
-    await action(transfer.sourcePath, transfer.destinationPath);
+    if (mode === "move") {
+      await moveFilesEntry(transfer.sourcePath, transfer.destinationPath, destinationName ?? null);
+    } else {
+      await copyFilesEntry(transfer.sourcePath, transfer.destinationPath, destinationName ?? null);
+    }
     const refreshPath = state.files.currentPath;
     const moved = mode === "move";
     closeFileTransferDialog();
@@ -8888,6 +8987,10 @@ fileTransferDialog?.addEventListener("cancel", (event) => {
 fileTransferDialog?.addEventListener("close", () => {
   resetFileTransferState();
   syncFileTransferConfirmState();
+});
+
+fileTransferNameInput?.addEventListener("input", (event) => {
+  applyFileTransferNameInput(event.currentTarget?.value ?? "");
 });
 
 fileTransferUpButton?.addEventListener("click", (event) => {

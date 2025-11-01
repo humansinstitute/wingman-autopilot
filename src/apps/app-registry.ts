@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
 
+import { generateIdentityAlias } from "../identity/identity-alias";
 import { normaliseNpub } from "../identity/npub-utils";
 
 const registryFilePath = new URL("../../data/apps.json", import.meta.url).pathname;
@@ -52,18 +53,52 @@ const ensureAbsolutePath = (input: string): string => {
   return resolvePath(input);
 };
 
-const normaliseWindowName = (value: string | undefined, label: string, root: string, id: string): string => {
-  const base = value?.trim() || label.trim() || basename(root);
-  const cleaned = base
+const MAX_TMUX_NAME_LENGTH = 48;
+
+const sanitiseWindowName = (input: string | undefined | null): string => {
+  if (!input) return "";
+  return input
+    .trim()
     .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-+/, "")
-    .replace(/-+$/, "")
-    .slice(0, 48);
-  if (cleaned.length > 0) {
-    return cleaned;
+    .replace(/-+$/, "");
+};
+
+const deriveOwnerAlias = (ownerNpub: string | null): string | null => {
+  if (!ownerNpub) {
+    return null;
   }
-  return `app-${id.slice(0, 8)}`;
+  return sanitiseWindowName(generateIdentityAlias(ownerNpub));
+};
+
+const normaliseWindowName = (
+  value: string | undefined,
+  label: string,
+  root: string,
+  id: string,
+  ownerAlias: string | null,
+): string => {
+  const provided = sanitiseWindowName(value);
+  if (provided) {
+    return provided.slice(0, MAX_TMUX_NAME_LENGTH);
+  }
+
+  const baseLabel = sanitiseWindowName(label) || sanitiseWindowName(basename(root));
+  const alias = ownerAlias ? ownerAlias.slice(0, MAX_TMUX_NAME_LENGTH) : "";
+  const components = [alias, baseLabel].filter((part) => part.length > 0);
+  if (components.length > 0) {
+    const combined = components.join("--");
+    const trimmed = sanitiseWindowName(combined).slice(0, MAX_TMUX_NAME_LENGTH);
+    if (trimmed.length > 0) {
+      return trimmed;
+    }
+  }
+
+  const fallbackBase = `app-${id.slice(0, 8)}`;
+  const fallback = alias ? `${alias}--${fallbackBase}` : fallbackBase;
+  const sanitisedFallback = sanitiseWindowName(fallback).slice(0, MAX_TMUX_NAME_LENGTH);
+  return sanitisedFallback.length > 0 ? sanitisedFallback : fallbackBase.slice(0, MAX_TMUX_NAME_LENGTH);
 };
 
 export class AppRegistry {
@@ -99,9 +134,10 @@ export class AppRegistry {
       throw new Error(`An app is already registered for root "${root}"`);
     }
     const label = input.label?.trim() || basename(root);
-    const tmuxSession = normaliseWindowName(input.tmuxSession, label, root, id);
-    const scripts = this.normaliseScripts(input.scripts);
     const ownerNpub = normaliseNpub(input.ownerNpub ?? null);
+    const ownerAlias = deriveOwnerAlias(ownerNpub);
+    const tmuxSession = normaliseWindowName(input.tmuxSession, label, root, id, ownerAlias);
+    const scripts = this.normaliseScripts(input.scripts);
     const record: AppRecord = {
       id,
       label,
@@ -128,9 +164,16 @@ export class AppRegistry {
     const nextRoot = input.root ? ensureAbsolutePath(input.root) : existing.root;
     const nextScripts = input.scripts ? this.normaliseScripts(input.scripts) : existing.scripts;
     const nextNotes = input.notes === null ? undefined : input.notes?.trim() || existing.notes;
-    const nextTmux = normaliseWindowName(input.tmuxSession ?? existing.tmuxSession, nextLabel, nextRoot, id);
     const nextOwnerNpub =
       input.ownerNpub !== undefined ? normaliseNpub(input.ownerNpub ?? null) ?? null : existing.ownerNpub;
+    const nextOwnerAlias = deriveOwnerAlias(nextOwnerNpub);
+    const nextTmux = normaliseWindowName(
+      input.tmuxSession ?? existing.tmuxSession,
+      nextLabel,
+      nextRoot,
+      id,
+      nextOwnerAlias,
+    );
     const next: AppRecord = {
       ...existing,
       label: nextLabel,
@@ -251,10 +294,11 @@ export class AppRegistry {
     const createdAt = input.createdAt ?? now;
     const updatedAt = input.updatedAt ?? createdAt;
     const label = input.label?.trim() || basename(root);
-    const tmuxSession = normaliseWindowName(input.tmuxSession, label, root, input.id);
+    const ownerNpub = normaliseNpub(input.ownerNpub ?? null);
+    const ownerAlias = deriveOwnerAlias(ownerNpub);
+    const tmuxSession = normaliseWindowName(input.tmuxSession, label, root, input.id, ownerAlias);
     const scripts = this.normaliseScripts(input.scripts);
     const notes = input.notes?.trim() || undefined;
-    const ownerNpub = normaliseNpub(input.ownerNpub ?? null);
     return {
       id: input.id,
       label,

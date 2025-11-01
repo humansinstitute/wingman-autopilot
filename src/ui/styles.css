@@ -2557,6 +2557,12 @@ dialog textarea {
   color: var(--text-tertiary);
 }
 
+.wm-dialog-error {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  color: #f87171;
+}
+
 .wm-field-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
