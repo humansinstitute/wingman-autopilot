@@ -42,6 +42,10 @@ const state = {
   activeSessionId: null,
   lastWorkingDirectory: null,
   lastActiveSessionId: null,
+  settingsPanels: {
+    adminBalanceCollapsed: false,
+    adminUsersCollapsed: false,
+  },
   // DOM references for incremental updates
   conversationContainers: new Map(), // sessionId -> DOM element
   logContainers: new Map(), // sessionId -> DOM element
@@ -290,6 +294,8 @@ function createAdminUsersState() {
     initialized: false,
     error: null,
     pending: new Set(),
+    filter: "",
+    filterDraft: "",
     balanceTool: {
       identifier: "",
       amount: "",
@@ -4304,7 +4310,6 @@ const fetchSessions = async () => {
   state.sessions = Array.isArray(data.sessions) ? data.sessions : [];
   state.identitySummaries = Array.isArray(data.identities) ? data.identities : [];
   const viewerNpub = typeof state.identity.npub === "string" ? state.identity.npub.trim() : null;
-  const viewerNormalized = normaliseNpubValue(state.identity.npub);
   const viewerSummary =
     viewerNpub
       ? state.identitySummaries.find(
