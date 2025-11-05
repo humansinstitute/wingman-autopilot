@@ -4,6 +4,7 @@ import "/ace-builds/src-noconflict/theme-chrome.js";
 import "/ace-builds/src-noconflict/theme-tomorrow_night.js";
 import "./identity/index.js";
 import { createTodoFeature } from "./todos/index.js";
+import "./logging/browser.js";
 
 const ace = globalThis.ace;
 if (!ace) {

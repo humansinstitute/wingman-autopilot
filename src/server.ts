@@ -6,6 +6,8 @@ import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 
+import "./logging/server-logger";
+
 import type { AgentType } from "./config";
 import { loadConfig } from "./config";
 import { ProcessManager } from "./agents/process-manager";
@@ -31,6 +33,7 @@ import { FileWatcherRunner } from "./watchers/file-watcher-runner";
 import { identityUserStore, InsufficientBalanceError } from "./storage/identity-user-store";
 import { TodoStore } from "./todos/todo-store";
 import { createTodoApiHandler } from "./todos/todo-api";
+import { createBrowserLogHandler } from "./logging/browser-log-handler";
 import { ensureDeepDiveProcess, getDeepDivePort, isDeepDiveProcessRunning } from "./deep-dive-process";
 import {
   buildAgentUrl,
@@ -72,6 +75,7 @@ const SUPPORTED_AGENT_TYPES: AgentType[] = ["codex", "claude", "goose", "opencod
 const MESSAGE_COST_SATS = 100;
 const todoStore = new TodoStore();
 const todoApiHandler = createTodoApiHandler({ store: todoStore });
+const browserLogHandler = createBrowserLogHandler();
 
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());
@@ -3584,6 +3588,10 @@ const handleApi = async (
     }
     return app.ownerNpub === viewerNpub;
   };
+  const browserLogResponse = await browserLogHandler(request, url, method, authContext);
+  if (browserLogResponse) {
+    return browserLogResponse;
+  }
   if (pathname.startsWith("/api/todos")) {
     const denied = await ensureApiAccess(AccessActions.TodosManage, request, url, authContext);
     if (denied) {
