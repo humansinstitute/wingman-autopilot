@@ -751,8 +751,8 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
         closeIdentityLoginDialog();
         if (currentRoute !== "home") {
           currentRoute = "home";
-          if (window.location.pathname !== "/home") {
-            window.history.pushState({ route: "home" }, "", "/home");
+          if (window.location.pathname !== HOME_ROUTE) {
+            window.history.pushState({ route: "home" }, "", HOME_ROUTE);
           }
           render();
         }
@@ -903,6 +903,7 @@ const handleIdentityLogout = async (event, entryOverride) => {
         });
       }
     });
+    navigateToHome({ replaceHistory: true, skipMenuClose: true });
   } else {
     identityDomEntries.forEach((entry) => {
       if (entry.logoutButton) {
@@ -2806,6 +2807,7 @@ const LIVE_ROUTE_PREFIX = "/live";
 const FILES_ROUTE = "/files";
 const SETTINGS_ROUTE = "/settings";
 const APPS_ROUTE = "/apps";
+const HOME_ROUTE = "/home";
 
 const getRouteFromPath = (pathname) => {
   if (
@@ -2842,8 +2844,8 @@ const getSessionIdFromPath = (pathname) => {
 let currentRoute = getRouteFromPath(window.location.pathname);
 if (!state.identity.authenticated && currentRoute !== "home") {
   currentRoute = "home";
-  if (window.location.pathname !== "/home") {
-    window.history.replaceState({ route: "home" }, "", "/home");
+  if (window.location.pathname !== HOME_ROUTE) {
+    window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
   }
 }
 let currentTheme = "dark";
@@ -4359,8 +4361,8 @@ const fetchSessions = async () => {
     state.lastActiveSessionId = null;
     if (currentRoute !== "home") {
       currentRoute = "home";
-      if (window.location.pathname !== "/home") {
-        window.history.replaceState({ route: "home" }, "", "/home");
+      if (window.location.pathname !== HOME_ROUTE) {
+        window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
       }
     }
     return;
@@ -4470,8 +4472,8 @@ const fetchSessions = async () => {
   if (redirectHome) {
     currentRoute = "home";
     lastLoggedSessionId = null;
-    if (window.location.pathname !== "/home") {
-      window.history.replaceState({ route: "home" }, "", "/home");
+    if (window.location.pathname !== HOME_ROUTE) {
+      window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
     }
   }
   ensureActiveSession();
@@ -9757,6 +9759,21 @@ const finishPull = () => {
   }
 };
 
+function navigateToHome({ replaceHistory = false, skipMenuClose = false } = {}) {
+  if (!skipMenuClose) {
+    closeMenu();
+  }
+  closeIdentityLoginDialog();
+  currentRoute = "home";
+  lastLoggedSessionId = null;
+  if (replaceHistory) {
+    window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
+  } else if (window.location.pathname !== HOME_ROUTE) {
+    window.history.pushState({ route: "home" }, "", HOME_ROUTE);
+  }
+  render();
+}
+
 function navigateToApps({ openNewAppDialog = false, skipMenuClose = false } = {}) {
   if (!state.identity.authenticated) {
     openIdentityLoginDialog();
@@ -9827,11 +9844,8 @@ navLinks.forEach((link) => {
       navigateToSettings({ skipMenuClose: true });
       return;
     } else {
-      currentRoute = "home";
-      lastLoggedSessionId = null;
-      if (window.location.pathname !== "/home") {
-        window.history.pushState({ route: "home" }, "", "/home");
-      }
+      navigateToHome({ skipMenuClose: true });
+      return;
     }
     render();
   });
@@ -10054,8 +10068,8 @@ window.addEventListener("popstate", () => {
   const redirectHome = applyRouteSessionFromPath({ allowHistoryUpdate: false });
   if (redirectHome) {
     currentRoute = "home";
-    if (window.location.pathname !== "/home") {
-      window.history.replaceState({ route: "home" }, "", "/home");
+    if (window.location.pathname !== HOME_ROUTE) {
+      window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
     }
   }
   if (currentRoute === "files") {
