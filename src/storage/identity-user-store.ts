@@ -371,9 +371,25 @@ class IdentityUserStore {
     const apply = this.db.transaction(() => {
       for (const user of users) {
         const target = normalizedOverrides.get(user.normalizedNpub) ?? sanitizedDefault;
-        if (user.balance !== target) {
-          update.run(user.normalizedNpub, target, now);
+        if (user.balance === target) {
+          continue;
         }
+
+        const hasOverride = normalizedOverrides.has(user.normalizedNpub);
+        const hasCustomBalance = user.balance !== sanitizedDefault;
+        const hasBeenMutated = user.updatedAt !== user.createdAt;
+
+        if (hasOverride) {
+          if (hasCustomBalance) {
+            continue;
+          }
+        } else {
+          if (hasBeenMutated) {
+            continue;
+          }
+        }
+
+        update.run(user.normalizedNpub, target, now);
       }
     });
     apply();
