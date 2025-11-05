@@ -1010,15 +1010,19 @@ const createAttachmentFilename = (name: string, mime: string): string => {
   return `${randomUUID()}${inferred}`;
 };
 
+function buildEscapedImageMarkdown(url: string): string {
+  return `\\![uploaded image]\\(${url})`;
+}
+
 const buildAgentImagePlaceholder = (agent: AgentType, absolutePath: string, publicPath: string) => {
   const fileUrl = pathToFileURL(absolutePath).toString();
   switch (agent) {
     case "codex":
     case "claude":
     case "gemini":
-      return `![uploaded image](${fileUrl})`;
+      return buildEscapedImageMarkdown(fileUrl);
     case "goose":
-      return `![uploaded image](${publicPath})`;
+      return buildEscapedImageMarkdown(publicPath);
     default:
       return publicPath;
   }
