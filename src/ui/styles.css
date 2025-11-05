@@ -2898,6 +2898,50 @@ dialog textarea {
   font-size: 0.85rem;
 }
 
+.wm-collapsible {
+  display: flex;
+  flex-direction: column;
+}
+
+.wm-collapsible__title {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.wm-collapsible__title::after {
+  content: "▾";
+  font-size: 0.95rem;
+  transition: transform 0.2s ease;
+  color: var(--text-tertiary);
+}
+
+.wm-collapsible__title[data-state="collapsed"]::after {
+  transform: rotate(-90deg);
+}
+
+.wm-collapsible__title:focus {
+  outline: none;
+}
+
+.wm-collapsible__title:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 4px;
+}
+
+.wm-collapsible__body {
+  margin-top: 1.25rem;
+}
+
 .wm-admin-users__status {
   color: var(--text-secondary);
   font-size: 0.85rem;

@@ -336,58 +336,57 @@ const matchesAdminUserFilter = (user, filter) => {
 };
 
 let collapsibleIdCounter = 0;
-const createCollapsibleCard = ({ title, description, className = "", collapsed = false, onToggle } = {}) => {
+const createCollapsibleCard = ({ title, className = "", collapsed = false, onToggle } = {}) => {
   const card = document.createElement("section");
   card.className = ["wm-card", "wm-collapsible", className].filter(Boolean).join(" ");
 
-  const headerButton = document.createElement("button");
-  headerButton.type = "button";
-  headerButton.className = "wm-collapsible__header";
-  headerButton.setAttribute("aria-expanded", collapsed ? "false" : "true");
-
-  const titleSpan = document.createElement("span");
-  titleSpan.className = "wm-collapsible__title";
-  titleSpan.textContent = title;
-  headerButton.append(titleSpan);
-
-  if (description) {
-    const summarySpan = document.createElement("span");
-    summarySpan.className = "wm-collapsible__summary";
-    summarySpan.textContent = description;
-    headerButton.append(summarySpan);
-  }
+  const heading = document.createElement("h2");
+  heading.className = "wm-collapsible__title";
+  heading.textContent = title;
+  heading.tabIndex = 0;
+  heading.setAttribute("role", "button");
 
   const body = document.createElement("div");
   body.className = "wm-collapsible__body";
   const bodyId = `wm-collapsible-${++collapsibleIdCounter}`;
   body.id = bodyId;
-  headerButton.setAttribute("aria-controls", bodyId);
+  heading.setAttribute("aria-controls", bodyId);
 
   const applyState = (nextCollapsed) => {
     if (nextCollapsed) {
       card.dataset.collapsed = "true";
       body.hidden = true;
-      headerButton.setAttribute("aria-expanded", "false");
+      heading.setAttribute("aria-expanded", "false");
+      heading.dataset.state = "collapsed";
     } else {
       delete card.dataset.collapsed;
       body.hidden = false;
-      headerButton.setAttribute("aria-expanded", "true");
+      heading.setAttribute("aria-expanded", "true");
+      heading.dataset.state = "expanded";
     }
   };
 
   applyState(collapsed);
 
-  headerButton.addEventListener("click", () => {
+  const toggle = () => {
     const currentlyCollapsed = card.dataset.collapsed === "true";
     const nextCollapsed = !currentlyCollapsed;
     applyState(nextCollapsed);
     if (typeof onToggle === "function") {
       onToggle(nextCollapsed);
     }
+  };
+
+  heading.addEventListener("click", toggle);
+  heading.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      toggle();
+    }
   });
 
-  card.append(headerButton, body);
-  return { card, body, header: headerButton };
+  card.append(heading, body);
+  return { card, body, header: heading };
 };
 
 const getConfiguredAdminNpub = () => {
@@ -8805,7 +8804,6 @@ function buildAdminBalanceCard() {
   const balanceTool = state.adminUsers.balanceTool;
   const { card, body } = createCollapsibleCard({
     title: "Set Balance",
-    description: "Adjust a user's sats balance by alias or npub.",
     className: "wm-admin-users wm-admin-users--balance",
     collapsed: state.settingsPanels.adminBalanceCollapsed,
     onToggle(collapsed) {
@@ -8897,7 +8895,6 @@ function buildAdminBalanceCard() {
 function buildAdminUserManagementCard() {
   const { card, body } = createCollapsibleCard({
     title: "User Management",
-    description: "Filter users and track onboarding status.",
     className: "wm-admin-users wm-admin-users--listing",
     collapsed: state.settingsPanels.adminUsersCollapsed,
     onToggle(collapsed) {
