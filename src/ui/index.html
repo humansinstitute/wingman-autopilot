@@ -79,25 +79,64 @@
       <span class="spinner" aria-hidden="true"></span>
     </div>
     <main id="app"></main>
-    <dialog id="session-dialog">
-      <form method="dialog">
-        <h2>Launch Agent Session</h2>
-        <label for="agent-select">Agent</label>
-        <select id="agent-select"></select>
-        <label for="session-name">Session Name (optional)</label>
-        <input id="session-name" type="text" autocomplete="off" maxlength="120" placeholder="Code review with Claude" />
-        <label for="working-directory">Working Directory</label>
-        <div class="working-directory-field">
-          <input id="working-directory" type="text" autocomplete="off" list="directory-suggestions" placeholder="~/code" />
-          <div class="working-directory-actions">
-            <button type="button" class="wm-button secondary" id="browse-directory">Browse...</button>
+    <dialog id="session-dialog" class="wm-session-dialog">
+      <form method="dialog" class="wm-session-dialog__form">
+        <header class="wm-session-dialog__header">
+          <div>
+            <h2>Launch Agent Session</h2>
+            <p class="wm-session-dialog__subtitle">
+              Pick an agent, optionally name the session, and choose where it should run.
+            </p>
           </div>
-        </div>
+        </header>
+        <section class="wm-session-dialog__body">
+          <div class="wm-session-dialog__field">
+            <label for="agent-select">Agent</label>
+            <select id="agent-select"></select>
+            <p class="wm-session-dialog__hint">
+              Agents come pre-configured. Pick one that matches the task you’re about to start.
+            </p>
+          </div>
+          <div class="wm-session-dialog__field">
+            <label for="session-name">Session Name (optional)</label>
+            <input
+              id="session-name"
+              type="text"
+              autocomplete="off"
+              maxlength="120"
+              placeholder="Code review with Claude"
+            />
+            <p class="wm-session-dialog__hint">
+              Make it easier to spot later by adding a short label.
+            </p>
+          </div>
+          <div class="wm-session-dialog__field">
+            <label for="working-directory">Working Directory</label>
+            <div class="working-directory-field">
+              <input
+                id="working-directory"
+                type="text"
+                autocomplete="off"
+                list="directory-suggestions"
+                placeholder="~/code"
+                aria-describedby="working-directory-help"
+              />
+              <div class="working-directory-actions">
+                <button type="button" class="wm-button secondary" id="browse-directory">Browse...</button>
+              </div>
+            </div>
+            <p class="wm-session-dialog__hint" id="working-directory-help">
+              Use an absolute path for clarity. We’ll remember the last directory you launched from.
+            </p>
+          </div>
+        </section>
         <datalist id="directory-suggestions"></datalist>
-        <menu>
-          <button value="cancel" id="cancel-session">Cancel</button>
-          <button value="confirm" id="confirm-session">Launch</button>
-        </menu>
+        <footer class="wm-session-dialog__footer">
+          <menu>
+            <button value="cancel" id="cancel-session">Cancel</button>
+            <button value="confirm" id="confirm-session">Launch</button>
+          </menu>
+        </footer>
       </form>
     </dialog>
     <dialog id="identity-password-dialog">
