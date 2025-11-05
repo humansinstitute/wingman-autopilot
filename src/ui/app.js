@@ -326,6 +326,70 @@ const normalisePortList = (value) => {
   return Array.from(unique).sort((a, b) => a - b);
 };
 
+const matchesAdminUserFilter = (user, filter) => {
+  if (!filter) return true;
+  const target = filter.toLowerCase();
+  const alias = typeof user?.alias === "string" ? user.alias.toLowerCase() : "";
+  const npub = typeof user?.npub === "string" ? user.npub.toLowerCase() : "";
+  const normalized = typeof user?.normalizedNpub === "string" ? user.normalizedNpub.toLowerCase() : npub;
+  return alias.startsWith(target) || npub.startsWith(target) || normalized.startsWith(target);
+};
+
+let collapsibleIdCounter = 0;
+const createCollapsibleCard = ({ title, description, className = "", collapsed = false, onToggle } = {}) => {
+  const card = document.createElement("section");
+  card.className = ["wm-card", "wm-collapsible", className].filter(Boolean).join(" ");
+
+  const headerButton = document.createElement("button");
+  headerButton.type = "button";
+  headerButton.className = "wm-collapsible__header";
+  headerButton.setAttribute("aria-expanded", collapsed ? "false" : "true");
+
+  const titleSpan = document.createElement("span");
+  titleSpan.className = "wm-collapsible__title";
+  titleSpan.textContent = title;
+  headerButton.append(titleSpan);
+
+  if (description) {
+    const summarySpan = document.createElement("span");
+    summarySpan.className = "wm-collapsible__summary";
+    summarySpan.textContent = description;
+    headerButton.append(summarySpan);
+  }
+
+  const body = document.createElement("div");
+  body.className = "wm-collapsible__body";
+  const bodyId = `wm-collapsible-${++collapsibleIdCounter}`;
+  body.id = bodyId;
+  headerButton.setAttribute("aria-controls", bodyId);
+
+  const applyState = (nextCollapsed) => {
+    if (nextCollapsed) {
+      card.dataset.collapsed = "true";
+      body.hidden = true;
+      headerButton.setAttribute("aria-expanded", "false");
+    } else {
+      delete card.dataset.collapsed;
+      body.hidden = false;
+      headerButton.setAttribute("aria-expanded", "true");
+    }
+  };
+
+  applyState(collapsed);
+
+  headerButton.addEventListener("click", () => {
+    const currentlyCollapsed = card.dataset.collapsed === "true";
+    const nextCollapsed = !currentlyCollapsed;
+    applyState(nextCollapsed);
+    if (typeof onToggle === "function") {
+      onToggle(nextCollapsed);
+    }
+  });
+
+  card.append(headerButton, body);
+  return { card, body, header: headerButton };
+};
+
 const getConfiguredAdminNpub = () => {
   const configured = state.config?.adminNpub;
   return typeof configured === "string" && configured.trim().length > 0 ? configured.trim() : null;
@@ -8724,24 +8788,38 @@ const renderFiles = () => {
 };
 
 function renderAdminUsersPanel() {
-  const card = document.createElement("section");
-  card.className = "wm-card wm-admin-users";
-
-  const heading = document.createElement("h2");
-  heading.textContent = "Users";
-  card.append(heading);
-
-  const description = document.createElement("p");
-  description.textContent = "Review registered identities and mark onboarding completion.";
-  card.append(description);
+  const container = document.createDocumentFragment();
 
   ensureAdminBalanceToolState();
+  const balanceCard = buildAdminBalanceCard();
+  container.append(balanceCard);
+
+  const userManagementCard = buildAdminUserManagementCard();
+  container.append(userManagementCard);
+
+  return container;
+}
+
+function buildAdminBalanceCard() {
+  ensureAdminBalanceToolState();
   const balanceTool = state.adminUsers.balanceTool;
+  const { card, body } = createCollapsibleCard({
+    title: "Set Balance",
+    description: "Adjust a user's sats balance by alias or npub.",
+    className: "wm-admin-users wm-admin-users--balance",
+    collapsed: state.settingsPanels.adminBalanceCollapsed,
+    onToggle(collapsed) {
+      state.settingsPanels.adminBalanceCollapsed = collapsed;
+    },
+  });
+
+  const balanceLayout = document.createElement("div");
+  balanceLayout.className = "wm-admin-users__balance";
 
   const balanceIntro = document.createElement("p");
   balanceIntro.className = "wm-admin-users__balance-help";
-  balanceIntro.textContent = "Admins can adjust a user's sats balance by alias or npub.";
-  card.append(balanceIntro);
+  balanceIntro.textContent = "Provide a user's npub or alias and the new target balance.";
+  balanceLayout.append(balanceIntro);
 
   const balanceForm = document.createElement("form");
   balanceForm.className = "wm-admin-users__balance-form";
@@ -8797,8 +8875,6 @@ function renderAdminUsersPanel() {
   submitButton.textContent = balanceTool.busy ? "Updating…" : "Set Balance";
   balanceControls.append(submitButton);
 
-  balanceForm.append(identifierField, amountField, balanceControls);
-
   if (balanceTool.error || balanceTool.success) {
     const statusMessage = document.createElement("p");
     statusMessage.className = "wm-admin-users__balance-status";
@@ -8812,13 +8888,33 @@ function renderAdminUsersPanel() {
     balanceControls.append(statusMessage);
   }
 
-  card.append(balanceForm);
+  balanceForm.append(identifierField, amountField, balanceControls);
+  balanceLayout.append(balanceForm);
+  body.append(balanceLayout);
+  return card;
+}
+
+function buildAdminUserManagementCard() {
+  const { card, body } = createCollapsibleCard({
+    title: "User Management",
+    description: "Filter users and track onboarding status.",
+    className: "wm-admin-users wm-admin-users--listing",
+    collapsed: state.settingsPanels.adminUsersCollapsed,
+    onToggle(collapsed) {
+      state.settingsPanels.adminUsersCollapsed = collapsed;
+    },
+  });
+
+  const controls = document.createElement("div");
+  controls.className = "wm-admin-users__controls";
+  controls.append(buildAdminUsersFilter());
+  body.append(controls);
 
   if (state.adminUsers.loading && !state.adminUsers.initialized) {
     const loading = document.createElement("p");
     loading.className = "wm-admin-users__empty";
     loading.textContent = "Loading users…";
-    card.append(loading);
+    body.append(loading);
     return card;
   }
 
@@ -8838,7 +8934,7 @@ function renderAdminUsersPanel() {
     });
 
     errorBox.append(message, retry);
-    card.append(errorBox);
+    body.append(errorBox);
     return card;
   }
 
@@ -8847,56 +8943,50 @@ function renderAdminUsersPanel() {
     const empty = document.createElement("p");
     empty.className = "wm-admin-users__empty";
     empty.textContent = "No registered users yet.";
-    card.append(empty);
+    body.append(empty);
+    return card;
+  }
+
+  const filter = typeof state.adminUsers.filter === "string" ? state.adminUsers.filter.trim() : "";
+  const filteredUsers = users.filter((user) => matchesAdminUserFilter(user, filter));
+
+  if (filteredUsers.length === 0) {
+    const emptyFiltered = document.createElement("p");
+    emptyFiltered.className = "wm-admin-users__empty";
+    emptyFiltered.textContent = filter.length > 0 ? "No users match your filter." : "No registered users yet.";
+    body.append(emptyFiltered);
     return card;
   }
 
   const list = document.createElement("div");
   list.className = "wm-admin-users__list";
-
-  users.forEach((user) => {
-    if (!user || typeof user !== "object") return;
+  filteredUsers.forEach((user) => {
     const row = document.createElement("div");
     row.className = "wm-admin-users__item";
 
     const details = document.createElement("div");
     details.className = "wm-admin-users__details";
 
-    const alias = document.createElement("h3");
-    alias.textContent = user.alias ?? "Unknown";
+    const name = document.createElement("strong");
+    const alias = typeof user.alias === "string" && user.alias.length > 0 ? user.alias : null;
+    name.textContent = alias ?? (user.npub ? abbreviateNpub(user.npub) : "Unknown user");
 
-    const meta = document.createElement("p");
+    const meta = document.createElement("span");
     meta.className = "wm-admin-users__meta";
-    const npubLabel = abbreviateNpub(user.npub ?? "");
-    const sessionsLabel = `Sessions ${user.sessionCount ?? 0}${
-      user.activeSessionCount ? ` • Active ${user.activeSessionCount}` : ""
-    }`;
-    meta.textContent = `${npubLabel}${npubLabel ? " • " : ""}${sessionsLabel}`;
+    const safeAlias = alias ? `alias: ${alias}` : null;
+    const normalizedNpub = typeof user.normalizedNpub === "string" && user.normalizedNpub.length > 0 ? user.normalizedNpub : null;
+    const safeNpub = normalizedNpub ?? user.npub ?? "";
+    meta.textContent = safeAlias ? `${safeAlias} • npub: ${safeNpub}` : `npub: ${safeNpub}`;
 
-    const lastSeen = document.createElement("p");
-    lastSeen.className = "wm-admin-users__status";
-    lastSeen.textContent = user.lastSeenAt
-      ? `Last seen ${formatAppTimestamp(user.lastSeenAt)}`
-      : "No activity recorded yet.";
+    const status = document.createElement("span");
+    status.className = "wm-admin-users__status";
+    const balance = typeof user.balance === "number" ? `${user.balance} sats` : "Unknown balance";
+    status.textContent = `Balance: ${balance}`;
 
-    const balanceLine = document.createElement("p");
-    balanceLine.className = "wm-admin-users__status";
-    balanceLine.textContent = `Balance ${formatSatoshis(user.balance ?? 0)} sats`;
+    details.append(name, meta, status);
 
-    const onboardStatus = document.createElement("p");
-    onboardStatus.className = "wm-admin-users__status";
-    if (user.onboarded) {
-      onboardStatus.textContent = user.onboardedAt
-        ? `Onboarded ${formatAppTimestamp(user.onboardedAt)}`
-        : "Onboarded";
-    } else {
-      onboardStatus.textContent = "Not onboarded";
-    }
-
-    details.append(alias, meta, balanceLine, lastSeen, onboardStatus);
-
-    const controls = document.createElement("label");
-    controls.className = "wm-admin-users__toggle";
+    const toggle = document.createElement("label");
+    toggle.className = "wm-admin-users__toggle";
 
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
@@ -8911,14 +9001,82 @@ function renderAdminUsersPanel() {
     const label = document.createElement("span");
     label.textContent = "Onboarded";
 
-    controls.append(checkbox, label);
+    toggle.append(checkbox, label);
 
-    row.append(details, controls);
+    row.append(details, toggle);
     list.append(row);
   });
 
-  card.append(list);
+  body.append(list);
   return card;
+}
+
+function buildAdminUsersFilter() {
+  const filterForm = document.createElement("form");
+  filterForm.className = "wm-admin-users__filter";
+  filterForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    applyAdminUsersFilter();
+  });
+
+  const filterLabel = document.createElement("label");
+  filterLabel.className = "wm-admin-users__filter-field";
+
+  const labelText = document.createElement("span");
+  labelText.textContent = "Filter";
+
+  const filterInput = document.createElement("input");
+  filterInput.type = "text";
+  filterInput.placeholder = "alias or npub prefix";
+  const currentDraft = typeof state.adminUsers.filterDraft === "string" ? state.adminUsers.filterDraft : state.adminUsers.filter;
+  filterInput.value = typeof currentDraft === "string" ? currentDraft : "";
+  filterInput.autocomplete = "off";
+  filterInput.addEventListener("input", (event) => {
+    state.adminUsers.filterDraft = event.target.value;
+  });
+
+  filterLabel.append(labelText, filterInput);
+
+  const actions = document.createElement("div");
+  actions.className = "wm-admin-users__filter-actions";
+
+  const submitButton = document.createElement("button");
+  submitButton.type = "submit";
+  submitButton.className = "wm-button secondary";
+  submitButton.textContent = "Filter";
+
+  const clearButton = document.createElement("button");
+  clearButton.type = "button";
+  clearButton.className = "wm-link-button";
+  clearButton.textContent = "Clear";
+  clearButton.addEventListener("click", () => {
+    state.adminUsers.filterDraft = "";
+    if (state.adminUsers.filter) {
+      state.adminUsers.filter = "";
+      if (currentRoute === "settings") {
+        render();
+      }
+    } else {
+      filterInput.value = "";
+    }
+  });
+
+  actions.append(submitButton, clearButton);
+  filterForm.append(filterLabel, actions);
+  return filterForm;
+}
+
+function applyAdminUsersFilter() {
+  const draft = typeof state.adminUsers.filterDraft === "string" ? state.adminUsers.filterDraft : "";
+  const nextFilter = draft.trim();
+  state.adminUsers.filterDraft = nextFilter;
+  if (state.adminUsers.filter === nextFilter) {
+    return;
+  }
+  state.adminUsers.filter = nextFilter;
+  if (currentRoute === "settings") {
+    render();
+  }
 }
 
 const renderSettings = () => {
