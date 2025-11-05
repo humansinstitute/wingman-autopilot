@@ -15,6 +15,7 @@ const FILES_SHOW_HIDDEN_STORAGE_KEY = "wingman-files-show-hidden";
 const SESSION_POLL_INTERVAL_MS = 2000;
 const APPS_POLL_INTERVAL_MS = 5000;
 const APP_LOG_PREVIEW_LINES = 5;
+const WEB_APP_BASE_URL = "https://host.otherstuff.ai";
 
 let sessionPollIntervalId = null;
 let sessionPollInFlight = false;
@@ -50,6 +51,7 @@ const state = {
     loading: false,
     initialized: false,
     error: null,
+    pendingOpenDialog: null,
   },
   adminUsers: createAdminUsersState(),
   system: {
@@ -60,6 +62,11 @@ const state = {
       outcome: null,
       error: null,
       submitting: false,
+    },
+    cleanup: {
+      running: false,
+      result: null,
+      error: null,
     },
   },
   appLogViewer: {
@@ -144,6 +151,8 @@ const state = {
     authenticated: false,
     alias: null,
     isAdmin: false,
+    ports: [],
+    balance: 0,
   },
 };
 
@@ -265,6 +274,13 @@ const abbreviateNpub = (npub) => {
   return `${npub.slice(0, 12)}…${npub.slice(-6)}`;
 };
 
+const formatSatoshis = (value) => {
+  const numeric = typeof value === "number" && Number.isFinite(value) ? value : 0;
+  const truncated = Math.trunc(numeric);
+  const positive = truncated < 0 ? 0 : truncated;
+  return positive.toLocaleString(undefined, { maximumFractionDigits: 0 });
+};
+
 function createAdminUsersState() {
   return {
     items: [],
@@ -279,6 +295,20 @@ const normaliseNpubValue = (npub) => {
   if (typeof npub !== "string") return null;
   const trimmed = npub.trim();
   return trimmed.length === 0 ? null : trimmed;
+};
+
+const normalisePortList = (value) => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const unique = new Set();
+  value.forEach((entry) => {
+    const parsed = typeof entry === "number" ? entry : Number.parseInt(String(entry), 10);
+    if (Number.isInteger(parsed) && parsed >= 0) {
+      unique.add(parsed);
+    }
+  });
+  return Array.from(unique).sort((a, b) => a - b);
 };
 
 const getConfiguredAdminNpub = () => {
@@ -397,6 +427,8 @@ const persistIdentityState = (identity) => {
         method: identity.method,
         expiresAt: identity.expiresAt ?? null,
         alias: identity.alias ?? null,
+        ports: Array.isArray(identity.ports) ? [...identity.ports] : [],
+        balance: typeof identity.balance === "number" ? identity.balance : 0,
       };
       window.localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify(payload));
     } else {
@@ -408,7 +440,7 @@ const persistIdentityState = (identity) => {
 };
 
 const syncIdentityDisplayForEntry = (entry) => {
-  const { npub, method, authenticated, expiresAt, alias } = state.identity;
+  const { npub, method, authenticated, expiresAt, alias, balance } = state.identity;
   if (entry.root) {
     if (authenticated) {
       entry.root.dataset.authenticated = "true";
@@ -430,6 +462,13 @@ const syncIdentityDisplayForEntry = (entry) => {
   }
   if (entry.method) {
     entry.method.textContent = authenticated ? (identityMethodLabels[method] ?? method ?? "Unknown") : "—";
+  }
+  if (entry.balance) {
+    if (!authenticated) {
+      entry.balance.textContent = "—";
+    } else {
+      entry.balance.textContent = `${formatSatoshis(balance)} sats`;
+    }
   }
   if (entry.copyButton) {
     if (!npub) {
@@ -490,6 +529,8 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
     authenticated: current.authenticated,
     alias: current.alias,
     isAdmin: current.isAdmin,
+    ports: Array.isArray(current.ports) ? [...current.ports] : [],
+    balance: typeof current.balance === "number" ? current.balance : 0,
   };
   const wasAdmin = current.isAdmin;
 
@@ -497,6 +538,7 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
     next.method = "none";
     next.npub = null;
     next.expiresAt = null;
+    next.ports = [];
   }
 
   if ("method" in partial && typeof partial.method === "string" && partial.method.length > 0) {
@@ -526,10 +568,20 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
     next.expiresAt = timestamp;
   }
 
+  if ("ports" in partial) {
+    if (partial.ports === null) {
+      next.ports = [];
+    } else if (Array.isArray(partial.ports)) {
+      next.ports = normalisePortList(partial.ports);
+    }
+  }
+
   if (!next.npub) {
     next.method = "none";
     next.expiresAt = null;
     next.alias = null;
+    next.ports = [];
+    next.balance = 0;
   }
 
   const configuredAdminNpub = getConfiguredAdminNpub();
@@ -544,7 +596,20 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
     }
   }
 
+  if ("balance" in partial) {
+    const candidate = partial.balance;
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      next.balance = Math.max(0, Math.trunc(candidate));
+    } else if (candidate === null) {
+      next.balance = 0;
+    }
+  }
+
   next.authenticated = Boolean(next.npub);
+
+  const currentPorts = Array.isArray(current.ports) ? current.ports : [];
+  const portsChanged =
+    next.ports.length !== currentPorts.length || next.ports.some((value, index) => value !== currentPorts[index]);
 
   const changed =
     next.method !== current.method ||
@@ -552,7 +617,9 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
     next.expiresAt !== current.expiresAt ||
     next.authenticated !== current.authenticated ||
     next.isAdmin !== current.isAdmin ||
-    next.alias !== current.alias;
+    next.alias !== current.alias ||
+    portsChanged ||
+    next.balance !== (current.balance ?? 0);
 
   if (!changed) {
     return current;
@@ -652,7 +719,10 @@ const clearCachedIdentity = () => {
 
 const forceIdentityLogoutState = () => {
   clearCachedIdentity();
-  updateIdentityState({ npub: null, method: "none", expiresAt: null, isAuthenticated: false, alias: null });
+  updateIdentityState(
+    { npub: null, method: "none", expiresAt: null, isAuthenticated: false, alias: null, balance: 0 },
+    { persist: true, emit: true },
+  );
   if (typeof window !== "undefined") {
     try {
       window.dispatchEvent(new CustomEvent("wingman:identity-logout"));
@@ -794,6 +864,7 @@ const registerIdentityDom = (root) => {
     alias: root.querySelector('[data-role="identity-alias"]'),
     npub: root.querySelector('[data-role="identity-npub"]'),
     method: root.querySelector('[data-role="identity-method"]'),
+    balance: root.querySelector('[data-role="identity-balance"]'),
     expiry: root.querySelector('[data-role="identity-expiry"]'),
     copyFeedback: root.querySelector('[data-role="identity-copy-feedback"]'),
     copyButton: root.querySelector('[data-action="copy-active-npub"]'),
@@ -3078,6 +3149,8 @@ const appTmuxWindowInput = document.getElementById("app-tmux-window");
 const appNotesInput = document.getElementById("app-notes");
 const appDiscoverToggle = document.getElementById("app-discover-enabled");
 const appDiscoverButton = document.getElementById("app-discover");
+const appWebAppToggle = document.getElementById("app-web-app");
+const appWebAppPortNote = document.getElementById("app-web-app-port");
 const appScriptInputs = {
   start: document.getElementById("app-script-start"),
   stop: document.getElementById("app-script-stop"),
@@ -4183,12 +4256,50 @@ const fetchSessions = async () => {
   const data = await response.json();
   state.sessions = Array.isArray(data.sessions) ? data.sessions : [];
   state.identitySummaries = Array.isArray(data.identities) ? data.identities : [];
-  const currentAlias = state.identity.npub
-    ? state.identitySummaries.find((summary) => summary && typeof summary === "object" && summary.npub === state.identity.npub)?.alias ??
-      state.sessions.find((session) => session && typeof session === "object" && session.npub === state.identity.npub)?.identityAlias ??
-      null
-    : null;
-  updateIdentityState({ alias: currentAlias }, { persist: true, emit: true });
+  const viewerNpub = typeof state.identity.npub === "string" ? state.identity.npub.trim() : null;
+  const viewerNormalized = normaliseNpubValue(state.identity.npub);
+  const viewerSummary =
+    viewerNpub
+      ? state.identitySummaries.find(
+          (summary) =>
+            summary &&
+            typeof summary === "object" &&
+            typeof summary.npub === "string" &&
+            summary.npub === viewerNpub,
+        ) ??
+        state.identitySummaries.find(
+          (summary) =>
+            summary &&
+            typeof summary === "object" &&
+            typeof summary.normalizedNpub === "string" &&
+            viewerNormalized &&
+            summary.normalizedNpub === viewerNormalized,
+        ) ??
+        null
+      : null;
+  const currentAlias =
+    viewerSummary?.alias ??
+    (viewerNpub
+      ? state.sessions.find(
+          (session) => session && typeof session === "object" && typeof session.npub === "string" && session.npub === viewerNpub,
+        )?.identityAlias ?? null
+      : null);
+  const identityUpdate = { alias: currentAlias };
+  if (viewerSummary && typeof viewerSummary === "object" && Object.prototype.hasOwnProperty.call(viewerSummary, "ports")) {
+    identityUpdate.ports = Array.isArray(viewerSummary.ports) ? normalisePortList(viewerSummary.ports) : [];
+  }
+  if (
+    viewerSummary &&
+    typeof viewerSummary === "object" &&
+    Object.prototype.hasOwnProperty.call(viewerSummary, "balance") &&
+    typeof viewerSummary.balance === "number" &&
+    Number.isFinite(viewerSummary.balance)
+  ) {
+    identityUpdate.balance = Math.max(0, Math.trunc(viewerSummary.balance));
+  } else {
+    identityUpdate.balance = 0;
+  }
+  updateIdentityState(identityUpdate, { persist: true, emit: true });
   const filterPayload = data.filters && typeof data.filters === "object" ? data.filters : null;
   const npubOptions = filterPayload && Array.isArray(filterPayload.npubs) ? filterPayload.npubs : [];
   state.sessionFilters.options = npubOptions;
@@ -4341,8 +4452,19 @@ const fetchApps = async ({ tail = APP_LOG_PREVIEW_LINES } = {}) => {
               restart: Boolean(item?.scripts?.restart),
               build: Boolean(item?.scripts?.build),
             };
+      const webApp = Boolean(item?.webApp);
+      const webAppPort =
+        typeof item?.webAppPort === "number" && Number.isFinite(item.webAppPort) ? Math.trunc(item.webAppPort) : null;
+      let webAppUrl =
+        typeof item?.webAppUrl === "string" && item.webAppUrl.length > 0 ? item.webAppUrl : null;
+      if (!webAppUrl && webApp && webAppPort !== null) {
+        webAppUrl = `${WEB_APP_BASE_URL}/${webAppPort}`;
+      }
       return {
         ...item,
+        webApp,
+        webAppPort,
+        webAppUrl,
         logs,
         availableScripts,
       };
@@ -4873,15 +4995,25 @@ const sendMessage = async (sessionId, content) => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ content }),
     });
+    const payload = await response.json().catch(() => null);
     if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      window.alert(`Agent request failed: ${data.error ?? response.statusText}`);
+      if (payload && typeof payload === "object" && typeof payload.balance === "number") {
+        updateIdentityState({ balance: payload.balance }, { persist: true, emit: true });
+      }
+      const message =
+        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+          ? payload.error
+          : response.statusText || "Agent request failed";
+      window.alert(`Agent request failed: ${message}`);
       return;
     }
-    const payload = await response.json();
     const messages = Array.isArray(payload?.messages) ? payload.messages : [];
     state.conversations.set(sessionId, messages);
     state.messageDrafts.set(sessionId, "");
+
+    if (payload && typeof payload === "object" && typeof payload.balance === "number") {
+      updateIdentityState({ balance: payload.balance }, { persist: true, emit: true });
+    }
 
     // Trigger incremental updates instead of full render
     updateConversationDOM(sessionId);
@@ -5415,6 +5547,8 @@ const isAppActionDisabled = (app, action) => {
 const appDialogState = {
   mode: "create",
   appId: null,
+  webAppEnabled: false,
+  webAppPort: null,
 };
 
 const deriveAppWindowName = (labelValue, rootValue) => {
@@ -5484,6 +5618,14 @@ if (appRootInput) {
   });
 }
 
+if (appWebAppToggle) {
+  appWebAppToggle.addEventListener("change", () => {
+    const enabled = appWebAppToggle.checked;
+    appDialogState.webAppEnabled = enabled;
+    syncAppWebAppPortNote({ enabled, port: enabled ? appDialogState.webAppPort : null });
+  });
+}
+
 appRootBrowseButton?.addEventListener("click", (event) => {
   event.preventDefault();
   const seed =
@@ -5509,6 +5651,45 @@ appRootBrowseButton?.addEventListener("click", (event) => {
 appCloneDialog?.addEventListener("close", () => {
   appCloneForm?.reset();
 });
+
+const syncAppWebAppPortNote = ({ enabled, port } = {}) => {
+  if (!appWebAppPortNote) return;
+  while (appWebAppPortNote.firstChild) {
+    appWebAppPortNote.firstChild.remove();
+  }
+  const hasToggle = appWebAppToggle instanceof HTMLInputElement;
+  const isEnabled = typeof enabled === "boolean" ? enabled : hasToggle ? appWebAppToggle.checked : false;
+  const assignedPort =
+    typeof port === "number"
+      ? port
+      : typeof appDialogState.webAppPort === "number"
+        ? appDialogState.webAppPort
+        : null;
+
+  if (!isEnabled) {
+    appWebAppPortNote.textContent = "Wingman will assign a dedicated port when you save.";
+    return;
+  }
+
+  if (typeof assignedPort === "number") {
+    appWebAppPortNote.textContent = "Reserved port: ";
+    const code = document.createElement("code");
+    code.textContent = String(assignedPort);
+    appWebAppPortNote.append(code);
+    const separator = document.createTextNode(" ");
+    appWebAppPortNote.append(separator);
+    const href = `${WEB_APP_BASE_URL}/${assignedPort}`;
+    const link = document.createElement("a");
+    link.href = href;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = "Open";
+    appWebAppPortNote.append(link);
+    return;
+  }
+
+  appWebAppPortNote.textContent = "A reserved port will be attached to this app after you save.";
+};
 
 const resetAppDialog = () => {
   if (appForm) {
@@ -5538,6 +5719,12 @@ const resetAppDialog = () => {
   if (appNotesInput) {
     appNotesInput.value = "";
   }
+  if (appWebAppToggle) {
+    appWebAppToggle.checked = false;
+  }
+  appDialogState.webAppEnabled = false;
+  appDialogState.webAppPort = null;
+  syncAppWebAppPortNote({ enabled: false, port: null });
   appDialogState.mode = "create";
   appDialogState.appId = null;
 };
@@ -5568,6 +5755,13 @@ const populateAppDialog = (app) => {
     if (!input) return;
     input.value = app.scripts?.[action] ?? "";
   });
+  const webAppEnabled = Boolean(app.webApp);
+  appDialogState.webAppEnabled = webAppEnabled;
+  appDialogState.webAppPort = typeof app.webAppPort === "number" ? app.webAppPort : null;
+  if (appWebAppToggle) {
+    appWebAppToggle.checked = webAppEnabled;
+  }
+  syncAppWebAppPortNote({ enabled: webAppEnabled, port: appDialogState.webAppPort });
   if (appAdvancedSection) {
     const hasScript = Object.values(app.scripts ?? {}).some((value) => typeof value === "string" && value.length > 0);
     const inferredWindow = deriveAppWindowName(app.label ?? "", app.root ?? "");
@@ -5590,7 +5784,8 @@ const collectAppFormValues = () => {
     }
   }
   const discoverScripts = appDiscoverToggle ? appDiscoverToggle.checked : true;
-  return { label, root, notesRaw, notesTrimmed, scripts, discoverScripts };
+  const webApp = appWebAppToggle ? appWebAppToggle.checked : false;
+  return { label, root, notesRaw, notesTrimmed, scripts, discoverScripts, webApp };
 };
 
 const handleAppFormSubmit = async (event) => {
@@ -5624,6 +5819,7 @@ const handleAppFormSubmit = async (event) => {
             ? values.notesTrimmed
             : undefined,
       discoverScripts: values.discoverScripts,
+      webApp: values.webApp,
     };
   } else {
     url = "/api/apps";
@@ -5634,6 +5830,7 @@ const handleAppFormSubmit = async (event) => {
       scripts: scriptsPayload,
       notes: values.notesTrimmed.length > 0 ? values.notesTrimmed : undefined,
       discoverScripts: values.discoverScripts,
+      webApp: values.webApp,
     };
   }
 
@@ -5895,6 +6092,48 @@ const triggerWarmRestart = async () => {
   }
 };
 
+const runSystemCleanup = async () => {
+  if (state.system.cleanup.running) {
+    return false;
+  }
+  state.system.cleanup.running = true;
+  state.system.cleanup.error = null;
+  if (currentRoute === "apps") {
+    render();
+  }
+  try {
+    const response = await fetch("/api/system/cleanup", { method: "POST" });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+          ? payload.error
+          : response.statusText || "Failed to stop agents and apps";
+      throw new Error(message);
+    }
+    if (!payload || typeof payload !== "object" || typeof payload.timestamp !== "string") {
+      throw new Error("Unexpected cleanup response");
+    }
+    state.system.cleanup.result = payload;
+    state.system.cleanup.error = null;
+    await Promise.all([
+      fetchSessions(),
+      refreshApps({ skipRender: true }),
+    ]);
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to stop agents and apps";
+    state.system.cleanup.error = message;
+    window.alert(message);
+    return false;
+  } finally {
+    state.system.cleanup.running = false;
+    if (currentRoute === "apps") {
+      render();
+    }
+  }
+};
+
 const removeApp = async (appId) => {
   const app = getAppById(appId);
   if (!app) return;
@@ -6085,6 +6324,8 @@ const renderWingmanCard = (app) => {
   const statusBadge = document.createElement("span");
   statusBadge.className = "wm-app-status";
   const restartInProgress = state.system.restart.inProgress;
+  const cleanupState = state.system.cleanup;
+  const cleanupRunning = cleanupState.running;
   const statusValue = restartInProgress ? "restarting" : app?.status?.status ?? "running";
   statusBadge.dataset.state = statusValue;
   statusBadge.textContent = APP_STATUS_LABELS[statusValue] ?? statusValue;
@@ -6136,6 +6377,45 @@ const renderWingmanCard = (app) => {
     statusInfo.append(scheduledLine);
   }
 
+  const cleanupResult =
+    cleanupState.result && typeof cleanupState.result === "object" ? cleanupState.result : null;
+  if (cleanupState.error) {
+    const cleanupError = document.createElement("p");
+    cleanupError.className = "wm-app-status-error";
+    cleanupError.textContent = cleanupState.error;
+    statusInfo.append(cleanupError);
+  }
+  if (cleanupResult && typeof cleanupResult.timestamp === "string") {
+    const sessionsSummary =
+      cleanupResult.sessions && typeof cleanupResult.sessions === "object"
+        ? cleanupResult.sessions
+        : {};
+    const appsSummary =
+      cleanupResult.apps && typeof cleanupResult.apps === "object"
+        ? cleanupResult.apps
+        : {};
+    const deletedSessions =
+      typeof sessionsSummary.deleted === "number" ? sessionsSummary.deleted : 0;
+    const removedApps = typeof appsSummary.removed === "number" ? appsSummary.removed : 0;
+    const summaryLine = document.createElement("p");
+    summaryLine.textContent = `Last cleanup removed ${deletedSessions} session${deletedSessions === 1 ? "" : "s"} and ${removedApps} app${removedApps === 1 ? "" : "s"} (${formatAppTimestamp(cleanupResult.timestamp)}).`;
+    statusInfo.append(summaryLine);
+    const sessionFailures =
+      typeof sessionsSummary.failed === "number" ? sessionsSummary.failed : 0;
+    const appFailures = typeof appsSummary.failed === "number" ? appsSummary.failed : 0;
+    const totalFailures = sessionFailures + appFailures;
+    if (totalFailures > 0) {
+      const failureLine = document.createElement("p");
+      failureLine.textContent = `${totalFailures} cleanup action${totalFailures === 1 ? "" : "s"} reported errors.`;
+      statusInfo.append(failureLine);
+    }
+    if (cleanupResult.preservedCoreApp) {
+      const preservedLine = document.createElement("p");
+      preservedLine.textContent = "Wingman core app preserved during cleanup.";
+      statusInfo.append(preservedLine);
+    }
+  }
+
   card.append(statusInfo);
 
   card.append(renderAppLogPreview(app.logs));
@@ -6154,7 +6434,8 @@ const renderWingmanCard = (app) => {
   restartButton.type = "button";
   restartButton.className = "wm-button";
   restartButton.textContent = restartInProgress ? "Restarting…" : "Restart Wingman";
-  restartButton.disabled = state.system.restart.submitting || restartInProgress;
+  restartButton.disabled =
+    state.system.restart.submitting || restartInProgress || cleanupRunning;
   restartButton.addEventListener("click", async () => {
     if (restartButton.disabled) return;
     restartButton.disabled = true;
@@ -6166,6 +6447,26 @@ const renderWingmanCard = (app) => {
     }
   });
   actions.append(restartButton);
+
+  if (state.identity.isAdmin) {
+    const cleanupButton = document.createElement("button");
+    cleanupButton.type = "button";
+    cleanupButton.className = "wm-button danger";
+    const cleanupDisabled = cleanupRunning || restartInProgress || state.system.restart.submitting;
+    cleanupButton.textContent = cleanupRunning ? "Stopping…" : "Stop Agents & Apps";
+    cleanupButton.disabled = cleanupDisabled;
+    cleanupButton.addEventListener("click", async () => {
+      if (cleanupButton.disabled) return;
+      cleanupButton.disabled = true;
+      cleanupButton.textContent = "Stopping…";
+      const success = await runSystemCleanup();
+      if (!success) {
+        cleanupButton.disabled = false;
+        cleanupButton.textContent = "Stop Agents & Apps";
+      }
+    });
+    actions.append(cleanupButton);
+  }
 
   card.append(actions);
   return card;
@@ -6205,6 +6506,47 @@ const renderAppCard = (app) => {
   rootValue.title = app.root;
   rootRow.append(rootLabel, rootValue);
   meta.append(rootRow);
+
+  const isWebApp = Boolean(app.webApp);
+  const webAppRow = document.createElement("div");
+  webAppRow.className = "wm-app-meta-row";
+  const webAppLabel = document.createElement("span");
+  webAppLabel.className = "wm-app-meta-label";
+  webAppLabel.textContent = "Web app";
+  const webAppValue = document.createElement("span");
+  webAppValue.className = "wm-app-meta-value";
+  webAppValue.textContent = isWebApp ? "Yes" : "No";
+  webAppRow.append(webAppLabel, webAppValue);
+  meta.append(webAppRow);
+
+  if (isWebApp) {
+    const portRow = document.createElement("div");
+    portRow.className = "wm-app-meta-row";
+    const portLabel = document.createElement("span");
+    portLabel.className = "wm-app-meta-label";
+    portLabel.textContent = "Port";
+    const portValue = document.createElement("span");
+    portValue.className = "wm-app-meta-value";
+    if (typeof app.webAppPort === "number") {
+      const code = document.createElement("code");
+      code.textContent = String(app.webAppPort);
+      portValue.append(code);
+      const href =
+        typeof app.webAppUrl === "string" && app.webAppUrl.length > 0
+          ? app.webAppUrl
+          : `${WEB_APP_BASE_URL}/${app.webAppPort}`;
+      const link = document.createElement("a");
+      link.href = href;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "Open";
+      portValue.append(link);
+    } else {
+      portValue.textContent = "Assigning…";
+    }
+    portRow.append(portLabel, portValue);
+    meta.append(portRow);
+  }
 
   const tmuxRow = document.createElement("div");
   tmuxRow.className = "wm-app-meta-row";
@@ -6268,54 +6610,148 @@ const renderAppCard = (app) => {
 
   card.append(renderAppLogPreview(app.logs));
 
-  const actions = document.createElement("div");
-  actions.className = "wm-app-actions";
-
-  const logsButton = document.createElement("button");
-  logsButton.type = "button";
-  logsButton.className = "wm-button secondary";
-  logsButton.textContent = "View Logs";
-  logsButton.addEventListener("click", () => {
-    void openAppLogsDialog(app.id);
-  });
-  actions.append(logsButton);
-
   const isCoreApp = app.id === "wingman-core";
-  const actionOrder = ["start", "stop", "restart", "setup", "build"];
-  actionOrder.forEach((action) => {
-    if (!app.availableScripts?.[action]) return;
-    if (isCoreApp && (action === "start" || action === "stop" || action === "setup")) return;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = action === "stop" ? "wm-button secondary" : "wm-button";
-    button.textContent = APP_ACTION_LABELS[action];
-    button.disabled = isAppActionDisabled(app, action);
-    button.addEventListener("click", async () => {
-      if (button.disabled) return;
-      button.disabled = true;
-      const success = await triggerAppAction(app.id, action);
-      if (!success) {
-        button.disabled = false;
+
+  const controls = document.createElement("div");
+  controls.className = "wm-app-actions";
+
+  if (!isCoreApp && app.availableScripts?.start) {
+    const startButton = document.createElement("button");
+    startButton.type = "button";
+    startButton.className = "wm-button";
+    startButton.textContent = "Start";
+    startButton.disabled = isAppActionDisabled(app, "start");
+    startButton.addEventListener("click", async () => {
+      if (startButton.disabled) return;
+      startButton.disabled = true;
+      const success = await triggerAppAction(app.id, "start");
+      if (!success && startButton.isConnected) {
+        startButton.disabled = false;
       }
     });
-    actions.append(button);
+    controls.append(startButton);
+  }
+
+  if (!isCoreApp) {
+    const stopButton = document.createElement("button");
+    stopButton.type = "button";
+    stopButton.className = "wm-button secondary";
+    stopButton.textContent = "Stop";
+    stopButton.disabled = isAppActionDisabled(app, "stop");
+    stopButton.addEventListener("click", async () => {
+      if (stopButton.disabled) return;
+      stopButton.disabled = true;
+      const success = await triggerAppAction(app.id, "stop");
+      if (!success && stopButton.isConnected) {
+        stopButton.disabled = false;
+      }
+    });
+    controls.append(stopButton);
+  }
+
+  const restartButton = document.createElement("button");
+  restartButton.type = "button";
+  restartButton.className = "wm-button";
+  restartButton.textContent = "Restart";
+  restartButton.disabled = isAppActionDisabled(app, "restart");
+  restartButton.addEventListener("click", async () => {
+    if (restartButton.disabled) return;
+    restartButton.disabled = true;
+    const success = await triggerAppAction(app.id, "restart");
+    if (!success && restartButton.isConnected) {
+      restartButton.disabled = false;
+    }
   });
+  controls.append(restartButton);
 
-  const editButton = document.createElement("button");
-  editButton.type = "button";
-  editButton.className = "wm-button secondary";
-  editButton.textContent = "Edit";
-  editButton.addEventListener("click", () => openAppDialog(app.id));
-  actions.append(editButton);
+  if (!isCoreApp && app.availableScripts?.setup) {
+    const setupButton = document.createElement("button");
+    setupButton.type = "button";
+    setupButton.className = "wm-button secondary";
+    setupButton.textContent = "Setup";
+    setupButton.disabled = isAppActionDisabled(app, "setup");
+    setupButton.addEventListener("click", async () => {
+      if (setupButton.disabled) return;
+      setupButton.disabled = true;
+      const success = await triggerAppAction(app.id, "setup");
+      if (!success && setupButton.isConnected) {
+        setupButton.disabled = false;
+      }
+    });
+    controls.append(setupButton);
+  }
 
-  const removeButton = document.createElement("button");
-  removeButton.type = "button";
-  removeButton.className = "wm-button danger";
-  removeButton.textContent = "Remove";
-  removeButton.addEventListener("click", () => removeApp(app.id));
-  actions.append(removeButton);
+  const editWithAiButton = document.createElement("button");
+  editWithAiButton.type = "button";
+  editWithAiButton.className = "wm-button secondary";
+  editWithAiButton.textContent = "Edit with AI";
+  editWithAiButton.addEventListener("click", async () => {
+    if (editWithAiButton.disabled) return;
+    if (!state.identity.authenticated) {
+      openIdentityLoginDialog();
+      return;
+    }
+    const workingDirectory = typeof app.root === "string" ? app.root : "";
+    if (!workingDirectory) {
+      window.alert("App root directory is unavailable for this app.");
+      return;
+    }
+    const agentId = "codex";
+    const configuredAgents = Array.isArray(state.config?.agents) ? state.config.agents : null;
+    if (configuredAgents && !configuredAgents.some((agent) => agent && typeof agent.id === "string" && agent.id === agentId)) {
+      window.alert("Codex agent is not available. Update your configuration and try again.");
+      return;
+    }
+    const appName =
+      typeof app.label === "string" && app.label.trim().length > 0 ? app.label.trim() : String(app.id ?? "app");
+    const sessionName = `editing ${appName}`;
+    const originalLabel = editWithAiButton.textContent;
+    editWithAiButton.disabled = true;
+    editWithAiButton.textContent = "Launching…";
+    try {
+      await launchSession(agentId, workingDirectory, sessionName);
+    } finally {
+      if (editWithAiButton.isConnected) {
+        editWithAiButton.disabled = false;
+        editWithAiButton.textContent = originalLabel ?? "Edit with AI";
+      }
+    }
+  });
+  controls.append(editWithAiButton);
 
-  card.append(actions);
+  card.append(controls);
+
+  const linkBar = document.createElement("div");
+  linkBar.className = "wm-app-links";
+
+  const viewLogsLink = document.createElement("a");
+  viewLogsLink.href = "#";
+  viewLogsLink.textContent = "View logs";
+  viewLogsLink.addEventListener("click", (event) => {
+    event.preventDefault();
+    void openAppLogsDialog(app.id);
+  });
+  linkBar.append(viewLogsLink);
+
+  const editLink = document.createElement("a");
+  editLink.href = "#";
+  editLink.textContent = "Edit";
+  editLink.addEventListener("click", (event) => {
+    event.preventDefault();
+    openAppDialog(app.id);
+  });
+  linkBar.append(editLink);
+
+  const removeLink = document.createElement("a");
+  removeLink.href = "#";
+  removeLink.textContent = "Remove";
+  removeLink.addEventListener("click", (event) => {
+    event.preventDefault();
+    removeApp(app.id);
+  });
+  linkBar.append(removeLink);
+
+  card.append(linkBar);
 
   return card;
 };
@@ -6323,6 +6759,15 @@ const renderAppCard = (app) => {
 const renderApps = () => {
   const wrapper = document.createElement("div");
   wrapper.className = "wm-apps";
+
+  const schedulePendingAppDialog = () => {
+    if (state.apps.pendingOpenDialog === "create") {
+      state.apps.pendingOpenDialog = null;
+      requestAnimationFrame(() => {
+        openAppDialog();
+      });
+    }
+  };
 
   const header = document.createElement("div");
   header.className = "wm-apps-header";
@@ -6380,6 +6825,7 @@ const renderApps = () => {
     loading.className = "wm-apps-empty";
     loading.textContent = "Loading apps…";
     wrapper.append(loading);
+    schedulePendingAppDialog();
     return wrapper;
   }
 
@@ -6388,6 +6834,7 @@ const renderApps = () => {
     empty.className = "wm-apps-empty";
     empty.textContent = "No apps registered yet. Use “Add App” to get started.";
     wrapper.append(empty);
+    schedulePendingAppDialog();
     return wrapper;
   }
 
@@ -6405,6 +6852,8 @@ const renderApps = () => {
     });
 
   wrapper.append(grid);
+
+  schedulePendingAppDialog();
 
   return wrapper;
 };
@@ -6521,7 +6970,22 @@ const renderIdentitySummary = () => {
   expiryValue.dataset.role = "identity-expiry";
   expiryValue.textContent = "—";
 
-  list.append(npubLabel, npubValue, methodLabel, methodValue, expiryLabel, expiryValue);
+  const balanceLabel = document.createElement("dt");
+  balanceLabel.textContent = "Balance";
+  const balanceValue = document.createElement("dd");
+  balanceValue.dataset.role = "identity-balance";
+  balanceValue.textContent = "—";
+
+  list.append(
+    npubLabel,
+    npubValue,
+    methodLabel,
+    methodValue,
+    expiryLabel,
+    expiryValue,
+    balanceLabel,
+    balanceValue,
+  );
   summary.append(list);
 
   const actions = document.createElement("div");
@@ -6933,7 +7397,20 @@ const renderHome = () => {
 
   const appsTitle = document.createElement("h2");
   appsTitle.textContent = "Running Apps";
-  appsHeader.append(appsTitle);
+  const appsHeaderActions = document.createElement("div");
+  appsHeaderActions.className = "wm-home-section-actions";
+
+  const newAppButton = document.createElement("button");
+  newAppButton.type = "button";
+  newAppButton.className = "wm-button secondary";
+  newAppButton.textContent = "New App";
+  newAppButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    navigateToApps({ openNewAppDialog: true });
+  });
+
+  appsHeaderActions.append(newAppButton);
+  appsHeader.append(appsTitle, appsHeaderActions);
   appsCard.append(appsHeader);
 
   const appsContent = document.createElement("div");
@@ -8072,6 +8549,10 @@ function renderAdminUsersPanel() {
       ? `Last seen ${formatAppTimestamp(user.lastSeenAt)}`
       : "No activity recorded yet.";
 
+    const balanceLine = document.createElement("p");
+    balanceLine.className = "wm-admin-users__status";
+    balanceLine.textContent = `Balance ${formatSatoshis(user.balance ?? 0)} sats`;
+
     const onboardStatus = document.createElement("p");
     onboardStatus.className = "wm-admin-users__status";
     if (user.onboarded) {
@@ -8082,7 +8563,7 @@ function renderAdminUsersPanel() {
       onboardStatus.textContent = "Not onboarded";
     }
 
-    details.append(alias, meta, lastSeen, onboardStatus);
+    details.append(alias, meta, balanceLine, lastSeen, onboardStatus);
 
     const controls = document.createElement("label");
     controls.className = "wm-admin-users__toggle";
@@ -8127,11 +8608,43 @@ const renderSettings = () => {
     wrapper.append(renderAdminUsersPanel());
   }
 
+  const wingmanCard = document.createElement("section");
+  wingmanCard.className = "wm-card";
+  const wingmanHeading = document.createElement("h2");
+  wingmanHeading.textContent = "Wingman Settings";
+  const wingmanDescription = document.createElement("p");
+  wingmanDescription.textContent = "Adjust global preferences for the Wingman workspace.";
+  wingmanCard.append(wingmanHeading, wingmanDescription);
+
+  const portsContainer = document.createElement("div");
+  portsContainer.className = "wm-settings__ports";
+  const portsHeading = document.createElement("h3");
+  portsHeading.textContent = "Assigned Web App Ports";
+  const portsList = document.createElement("ul");
+  portsList.className = "wm-settings__port-list";
+  const assignedPorts = Array.isArray(state.identity.ports) ? normalisePortList(state.identity.ports) : [];
+  if (assignedPorts.length > 0) {
+    assignedPorts.forEach((port) => {
+      const item = document.createElement("li");
+      const code = document.createElement("code");
+      code.textContent = String(port);
+      item.append(code);
+      portsList.append(item);
+    });
+  } else {
+    const item = document.createElement("li");
+    item.className = "wm-settings__port-empty";
+    item.textContent = state.identity.authenticated ? "Assigned ports will appear here once available." : "Sign in to view your assigned ports.";
+    portsList.append(item);
+  }
+  const portsNote = document.createElement("p");
+  portsNote.className = "wm-settings__port-note";
+  portsNote.textContent = "These dedicated ports are reserved for your personal Wingman web applications.";
+  portsContainer.append(portsHeading, portsList, portsNote);
+  wingmanCard.append(portsContainer);
+  wrapper.append(wingmanCard);
+
   const sections = [
-    {
-      title: "Wingman Settings",
-      description: "Adjust global preferences for the Wingman workspace.",
-    },
     {
       title: "Agent Settings",
       description: "Manage default behaviors for the connected agents.",
@@ -8759,6 +9272,26 @@ const finishPull = () => {
   }
 };
 
+function navigateToApps({ openNewAppDialog = false, skipMenuClose = false } = {}) {
+  if (!state.identity.authenticated) {
+    openIdentityLoginDialog();
+    return;
+  }
+  if (!skipMenuClose) {
+    closeMenu();
+  }
+  if (openNewAppDialog) {
+    state.apps.pendingOpenDialog = "create";
+  }
+  currentRoute = "apps";
+  lastLoggedSessionId = null;
+  if (window.location.pathname !== APPS_ROUTE) {
+    window.history.pushState({ route: "apps" }, "", APPS_ROUTE);
+  }
+  void ensureAppsLoaded();
+  render();
+}
+
 function navigateToSettings({ skipMenuClose = false } = {}) {
   if (!skipMenuClose) {
     closeMenu();
@@ -8793,12 +9326,8 @@ navLinks.forEach((link) => {
         setActiveSession(null, { updateHistory: true });
       }
     } else if (targetRoute === "apps") {
-      currentRoute = "apps";
-      lastLoggedSessionId = null;
-      if (window.location.pathname !== APPS_ROUTE) {
-        window.history.pushState({ route: "apps" }, "", APPS_ROUTE);
-      }
-      void ensureAppsLoaded();
+      navigateToApps({ skipMenuClose: true });
+      return;
     } else if (targetRoute === "files") {
       currentRoute = "files";
       lastLoggedSessionId = null;

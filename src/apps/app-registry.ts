@@ -4,6 +4,7 @@ import { basename, dirname, join, resolve as resolvePath } from "node:path";
 
 import { generateIdentityAlias } from "../identity/identity-alias";
 import { normaliseNpub } from "../identity/npub-utils";
+import { identityUserStore } from "../storage/identity-user-store";
 
 const registryFilePath = new URL("../../data/apps.json", import.meta.url).pathname;
 
@@ -21,6 +22,8 @@ export interface AppRecord {
   ownerNpub: string | null;
   createdAt: string;
   updatedAt: string;
+  webApp: boolean;
+  webAppPort: number | null;
 }
 
 export interface RegisterAppInput {
@@ -31,6 +34,8 @@ export interface RegisterAppInput {
   tmuxSession?: string;
   notes?: string;
   ownerNpub?: string | null;
+  webApp?: boolean;
+  webAppPort?: number | null;
 }
 
 export interface UpdateAppInput {
@@ -40,6 +45,8 @@ export interface UpdateAppInput {
   tmuxSession?: string;
   notes?: string | null;
   ownerNpub?: string | null;
+  webApp?: boolean;
+  webAppPort?: number | null;
 }
 
 export interface AppRegistryState {
@@ -138,6 +145,18 @@ export class AppRegistry {
     const ownerAlias = deriveOwnerAlias(ownerNpub);
     const tmuxSession = normaliseWindowName(input.tmuxSession, label, root, id, ownerAlias);
     const scripts = this.normaliseScripts(input.scripts);
+    const webAppEnabled = Boolean(input.webApp);
+    const preferredPort =
+      typeof input.webAppPort === "number" && Number.isFinite(input.webAppPort)
+        ? Math.trunc(input.webAppPort)
+        : null;
+    let webAppPort: number | null = null;
+    if (webAppEnabled) {
+      if (!ownerNpub) {
+        throw new Error("Unable to assign a web app port without a registered owner.");
+      }
+      webAppPort = this.assignWebAppPort(ownerNpub, id, preferredPort);
+    }
     const record: AppRecord = {
       id,
       label,
@@ -148,6 +167,8 @@ export class AppRegistry {
       ownerNpub,
       createdAt: now,
       updatedAt: now,
+      webApp: webAppEnabled,
+      webAppPort,
     };
     this.apps.set(record.id, record);
     await this.persist();
@@ -174,6 +195,21 @@ export class AppRegistry {
       id,
       nextOwnerAlias,
     );
+    const nextWebApp = input.webApp !== undefined ? Boolean(input.webApp) : existing.webApp;
+    const requestedPort =
+      typeof input.webAppPort === "number" && Number.isFinite(input.webAppPort)
+        ? Math.trunc(input.webAppPort)
+        : undefined;
+    let nextWebAppPort: number | null = existing.webAppPort;
+    if (!nextWebApp) {
+      nextWebAppPort = null;
+    } else {
+      if (!nextOwnerNpub) {
+        throw new Error("Unable to assign a web app port without a registered owner.");
+      }
+      const preferred = requestedPort ?? existing.webAppPort ?? undefined;
+      nextWebAppPort = this.assignWebAppPort(nextOwnerNpub, id, preferred);
+    }
     const next: AppRecord = {
       ...existing,
       label: nextLabel,
@@ -183,6 +219,8 @@ export class AppRegistry {
       notes: nextNotes,
       ownerNpub: nextOwnerNpub,
       updatedAt: new Date().toISOString(),
+      webApp: nextWebApp,
+      webAppPort: nextWebAppPort,
     };
     if (next.root !== existing.root) {
       const conflict = Array.from(this.apps.values()).find((app) => app.id !== id && app.root === next.root);
@@ -288,6 +326,46 @@ export class AppRegistry {
     return scripts;
   }
 
+  private assignWebAppPort(ownerNpub: string, appId: string | null, preferred?: number | null): number {
+    const normalizedOwner = normaliseNpub(ownerNpub ?? null);
+    if (!normalizedOwner) {
+      throw new Error("Web apps require an owner with a valid npub");
+    }
+    const ports = identityUserStore.ensurePortsFor(normalizedOwner);
+    if (!ports || ports.length === 0) {
+      throw new Error("No reserved ports are available for this owner.");
+    }
+    const inUse = new Set<number>();
+    for (const app of this.apps.values()) {
+      if (app.id === appId) continue;
+      if (app.ownerNpub === normalizedOwner && app.webApp && typeof app.webAppPort === "number") {
+        inUse.add(app.webAppPort);
+      }
+    }
+
+    const resolveCandidate = (value: number | null | undefined): number | undefined => {
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return undefined;
+      }
+      const intValue = Math.trunc(value);
+      if (!ports.includes(intValue) || inUse.has(intValue)) {
+        return undefined;
+      }
+      return intValue;
+    };
+
+    const preferredCandidate = resolveCandidate(preferred ?? null);
+    if (preferredCandidate !== undefined) {
+      return preferredCandidate;
+    }
+
+    const available = ports.find((port) => !inUse.has(port));
+    if (available === undefined) {
+      throw new Error("All reserved ports are already assigned to other web apps for this owner.");
+    }
+    return available;
+  }
+
   private hydrateRecord(input: Partial<AppRecord> & { id: string; root: string }): AppRecord {
     const now = new Date().toISOString();
     const root = ensureAbsolutePath(input.root);
@@ -299,6 +377,12 @@ export class AppRegistry {
     const tmuxSession = normaliseWindowName(input.tmuxSession, label, root, input.id, ownerAlias);
     const scripts = this.normaliseScripts(input.scripts);
     const notes = input.notes?.trim() || undefined;
+    const webApp = Boolean(input.webApp);
+    const storedPort =
+      typeof input.webAppPort === "number" && Number.isFinite(input.webAppPort)
+        ? Math.trunc(input.webAppPort)
+        : null;
+    const webAppPort = webApp ? storedPort : null;
     return {
       id: input.id,
       label,
@@ -309,6 +393,8 @@ export class AppRegistry {
       ownerNpub,
       createdAt,
       updatedAt,
+      webApp,
+      webAppPort,
     };
   }
 }

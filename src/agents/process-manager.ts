@@ -1,5 +1,10 @@
+import { mkdir } from "node:fs/promises";
+import { join, normalize } from "node:path";
+
 import type { AgentDefinition, AgentType, WingmanConfig } from "../config";
 import { getAuthenticatedNpub } from "../auth/request-context";
+import { generateIdentityAlias } from "../identity/identity-alias";
+import { normaliseNpub } from "../identity/npub-utils";
 
 const MAX_LOG_LINES = 500;
 
@@ -66,6 +71,7 @@ export class ProcessManager {
   private readonly sessions = new Map<string, AgentSession>();
   private readonly allocatedPorts = new Set<number>();
   private readonly listeners = new Set<(event: SessionEvent) => void>();
+  private readonly adminNpub = normaliseNpub(Bun.env.ADMIN_NPUB ?? null);
 
   constructor(config: WingmanConfig) {
     this.config = config;
@@ -102,7 +108,7 @@ export class ProcessManager {
     const sessionWorkingDirectory =
       typeof workingDirectory === "string" && workingDirectory.length > 0
         ? workingDirectory
-        : this.config.defaultWorkingDirectory;
+        : await this.resolveDefaultWorkingDirectory();
     const tmuxSession = this.config.tmuxBase?.trim().length ? this.config.tmuxBase : undefined;
     const tmuxWindow = this.deriveTmuxWindowName(agent, id);
 
@@ -337,6 +343,25 @@ export class ProcessManager {
       session.logs.splice(0, session.logs.length - MAX_LOG_LINES);
     }
     this.emit({ type: "session-updated", session: this.toSnapshot(session) });
+  }
+
+  private async resolveDefaultWorkingDirectory(): Promise<string> {
+    const npub = normaliseNpub(getAuthenticatedNpub());
+    if (!npub) {
+      return this.config.defaultWorkingDirectory;
+    }
+    if (this.adminNpub && npub === this.adminNpub) {
+      return this.config.defaultWorkingDirectory;
+    }
+    const alias = generateIdentityAlias(npub);
+    const aliasDirectory = normalize(join(this.config.defaultWorkingDirectory, alias));
+    try {
+      await mkdir(aliasDirectory, { recursive: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[manager] failed to ensure alias directory ${aliasDirectory}: ${message}`);
+    }
+    return aliasDirectory;
   }
 
   private allocatePort(): number {

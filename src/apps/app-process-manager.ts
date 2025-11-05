@@ -110,9 +110,10 @@ export class AppProcessManager {
   async start(appId: string): Promise<AppProcessStatus> {
     return this.runAction(appId, "start", async (app) => {
       const command = this.requireScript(app, "start");
+      const commandWithPort = this.applyPortOverride(app, "start", command);
       await this.ensureSession(app);
       await this.attachLogPipe(app);
-      const result = await this.sendToSession(app, command);
+      const result = await this.sendToSession(app, commandWithPort);
       if (result.exitCode !== 0) {
         throw new AppActionError(app.id, "start", result.stderr || result.stdout || "Failed to send start command");
       }
@@ -138,57 +139,34 @@ export class AppProcessManager {
 
   async restart(appId: string): Promise<AppProcessStatus> {
     return this.runAction(appId, "restart", async (app) => {
-      const stopScript = app.scripts.stop;
       const startScript = app.scripts.start;
-      const restartScript = app.scripts.restart;
-      await this.ensureSession(app);
-      if (restartScript) {
-        await this.attachLogPipe(app);
-        const restartResult = await this.sendToSession(app, restartScript);
-        if (restartResult.exitCode !== 0) {
-          throw new AppActionError(
-            app.id,
-            "restart",
-            restartResult.stderr || restartResult.stdout || "Failed to send restart command",
-          );
-        }
-        return {
-          finalStatus: "running" as AppRuntimeStatus,
-          exitCode: restartResult.exitCode,
-          message: "Restart command dispatched",
-        };
-      }
       if (!startScript) {
         throw new AppScriptMissingError(app.id, "restart");
       }
-      const usedStopScript = Boolean(stopScript);
-      if (stopScript) {
-        await this.attachLogPipe(app);
-        const stopResult = await this.sendToSession(app, stopScript);
-        if (stopResult.exitCode !== 0) {
-          throw new AppActionError(
-            app.id,
-            "restart",
-            stopResult.stderr || stopResult.stdout || "Failed while dispatching stop command",
-          );
-        }
-      } else {
+
+      try {
         await this.interruptAndCloseWindow(app);
+      } catch (error) {
+        throw new AppActionError(app.id, "restart", "Failed to stop existing process", error);
       }
+
       await this.ensureSession(app);
       await this.attachLogPipe(app);
-      const startResult = await this.sendToSession(app, startScript);
+
+      const startCommand = this.applyPortOverride(app, "restart", startScript);
+      const startResult = await this.sendToSession(app, startCommand);
       if (startResult.exitCode !== 0) {
         throw new AppActionError(
           app.id,
           "restart",
-          startResult.stderr || startResult.stdout || "Failed while dispatching start command",
+          startResult.stderr || startResult.stdout || "Failed to dispatch start command",
         );
       }
+
       return {
         finalStatus: "running" as AppRuntimeStatus,
         exitCode: startResult.exitCode,
-        message: usedStopScript ? "Restart sequence (stop/start) dispatched" : "Restarted after Ctrl+C stop",
+        message: "Restarted with fresh start command",
       };
     });
   }
@@ -351,6 +329,21 @@ export class AppProcessManager {
       throw new AppScriptMissingError(app.id, action);
     }
     return script;
+  }
+
+  private applyPortOverride(app: AppRecord, action: AppLifecycleAction, command: string): string {
+    if (!app.webApp) {
+      return command;
+    }
+    if (typeof app.webAppPort !== "number" || !Number.isFinite(app.webAppPort)) {
+      throw new AppActionError(app.id, action, "Web app does not have an assigned port.");
+    }
+    const port = Math.trunc(app.webAppPort);
+    const pattern = /(^|\s)PORT=\S+/;
+    if (pattern.test(command)) {
+      return command.replace(pattern, (_match, leading) => `${leading}PORT=${port}`);
+    }
+    return `PORT=${port} ${command}`.trim();
   }
 
   private isMissingWindowMessage(output: string): boolean {

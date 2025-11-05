@@ -731,6 +731,26 @@ body[data-menu-open="true"] .wm-menu-panel {
   font-size: 0.8rem;
 }
 
+.wm-app-links {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin-top: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.wm-app-links a {
+  color: var(--accent-primary);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.wm-app-links a:hover,
+.wm-app-links a:focus-visible {
+  color: var(--accent-secondary);
+  text-decoration: underline;
+}
+
 .wm-app-notes {
   margin: 0;
   padding: 0.5rem 0.75rem;
@@ -829,6 +849,59 @@ body[data-menu-open="true"] .wm-menu-panel {
 
 .wm-settings .wm-card p {
   margin: 0;
+}
+
+.wm-settings__ports {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.wm-settings__ports h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.wm-settings__port-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.wm-settings__port-list li {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem 0.65rem;
+  border-radius: 0.5rem;
+  background: var(--surface-tertiary);
+  color: var(--text-primary);
+  font-family: var(--mono-font, "Fira Mono", monospace);
+  font-size: 0.9rem;
+}
+
+.wm-settings__port-list li code {
+  background: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.wm-settings__port-empty {
+  background: none;
+  color: var(--text-secondary);
+  padding: 0;
+}
+
+.wm-settings__port-note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
 }
 
 .wm-home-section-header {
@@ -2254,6 +2327,12 @@ dialog form {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+@media (max-width: 600px) {
+  #app-dialog form {
+    padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0));
+  }
 }
 
 dialog h2 {

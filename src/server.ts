@@ -28,7 +28,7 @@ import { orchestratorPresetStore } from "./storage/orchestrator-presets";
 import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 import { fileWatcherStore } from "./storage/file-watcher-store";
 import { FileWatcherRunner } from "./watchers/file-watcher-runner";
-import { identityUserStore } from "./storage/identity-user-store";
+import { identityUserStore, InsufficientBalanceError } from "./storage/identity-user-store";
 import { ensureDeepDiveProcess, getDeepDivePort, isDeepDiveProcessRunning } from "./deep-dive-process";
 import {
   buildAgentUrl,
@@ -67,6 +67,7 @@ process.env.WINGMAN_PID = process.pid.toString();
 console.log(`[config] tmux session base: ${config.tmuxBase}`);
 const TMUX_SESSION_NAME = config.tmuxBase;
 const SUPPORTED_AGENT_TYPES: AgentType[] = ["codex", "claude", "goose", "opencode", "gemini"];
+const MESSAGE_COST_SATS = 100;
 
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());
@@ -1052,6 +1053,8 @@ type IdentitySummary = {
   normalizedNpub: string | null;
   segment: string;
   alias: string;
+  ports: number[];
+  balance: number;
   sessionIds: string[];
   activeSessionIds: string[];
   lastSeenAt: string | null;
@@ -1071,12 +1074,22 @@ const buildIdentitySummaries = (
     return [];
   }
 
+  const storedUsers = identityUserStore.listUsers();
+  const portsByNormalized = new Map<string, number[]>(
+    storedUsers.map((record) => [record.normalizedNpub, record.ports] as const),
+  );
+  const balanceByNormalized = new Map<string, number>(
+    storedUsers.map((record) => [record.normalizedNpub, record.balance] as const),
+  );
+
   const activeSessionMap = new Map(activeSessions.map((session) => [session.id, session] as const));
   type Accumulator = {
     npub: string | null;
     normalized: string | null;
     segment: string;
     alias: string;
+    ports: number[];
+    balance: number;
     dataRoot: string;
     logsRoot: string;
     attachmentsRoot: string;
@@ -1108,6 +1121,8 @@ const buildIdentitySummaries = (
         normalized,
         segment,
         alias: generateIdentityAlias(npubValue),
+        ports: [],
+        balance: normalized ? balanceByNormalized.get(normalized) ?? 0 : 0,
         dataRoot,
         logsRoot,
         attachmentsRoot,
@@ -1117,6 +1132,15 @@ const buildIdentitySummaries = (
         lastSeenMs: 0,
       };
       summaryMap.set(key, accumulator);
+    }
+    if (normalized) {
+      const storedPorts = portsByNormalized.get(normalized);
+      if (storedPorts) {
+        accumulator.ports = storedPorts;
+      }
+      if (balanceByNormalized.has(normalized)) {
+        accumulator.balance = balanceByNormalized.get(normalized) ?? accumulator.balance;
+      }
     }
 
     accumulator.sessionIds.add(sessionId);
@@ -1146,6 +1170,7 @@ const buildIdentitySummaries = (
       npub: entry.npub,
       normalizedNpub: entry.normalized,
       segment: entry.segment,
+      ports: entry.ports,
       sessionIds: Array.from(entry.sessionIds),
       activeSessionIds: Array.from(entry.activeSessionIds),
       lastSeenAt: entry.lastSeenMs > 0 ? new Date(entry.lastSeenMs).toISOString() : null,
@@ -1154,6 +1179,7 @@ const buildIdentitySummaries = (
       attachmentsRoot: entry.attachmentsRoot,
       imagesRoot: entry.imagesRoot,
       alias: entry.alias,
+      balance: entry.balance,
     }))
     .sort((a, b) => {
       const left = a.normalizedNpub ?? "";
@@ -1172,6 +1198,8 @@ type AdminUserRecord = {
   lastSeenAt: string | null;
   sessionCount: number;
   activeSessionCount: number;
+  ports: number[];
+  balance: number;
 };
 
 const buildAdminUserList = (): AdminUserRecord[] => {
@@ -1213,6 +1241,8 @@ const buildAdminUserList = (): AdminUserRecord[] => {
       lastSeenAt,
       sessionCount,
       activeSessionCount,
+      ports: record.ports,
+      balance: record.balance,
     };
   });
 
@@ -1222,6 +1252,63 @@ const buildAdminUserList = (): AdminUserRecord[] => {
 
 const getViewerNormalizedNpub = (authContext: RequestAuthContext): string | null => {
   return normaliseNpub(authContext.npub ?? null);
+};
+
+type BalanceRequirementOptions = {
+  feature: string;
+  minimum?: number;
+  message?: string;
+  signinMessage?: string;
+};
+
+const ensureViewerHasBalance = (
+  authContext: RequestAuthContext,
+  options: BalanceRequirementOptions,
+): Response | { balance: number } => {
+  const { feature, minimum = 1, message, signinMessage } = options;
+  const userNpub = authContext.npub ?? null;
+  if (!userNpub) {
+    const error = signinMessage ?? `Sign in to ${feature}.`;
+    return Response.json(
+      {
+        error,
+        balance: 0,
+        required: minimum,
+      },
+      { status: 403 },
+    );
+  }
+
+  let balance = 0;
+  try {
+    const record = identityUserStore.touch(userNpub);
+    balance = record.balance ?? 0;
+  } catch (error) {
+    console.warn("[billing] unable to resolve identity during balance check:", error);
+    const errorMessage = signinMessage ?? `Sign in to ${feature}.`;
+    return Response.json(
+      {
+        error: errorMessage,
+        balance: 0,
+        required: minimum,
+      },
+      { status: 403 },
+    );
+  }
+
+  if (balance < minimum) {
+    const errorMessage = message ?? `Add sats to your balance to ${feature}.`;
+    return Response.json(
+      {
+        error: errorMessage,
+        balance,
+        required: minimum,
+      },
+      { status: 402 },
+    );
+  }
+
+  return { balance };
 };
 
 const sessionBelongsToViewer = (
@@ -3013,6 +3100,37 @@ const parseBooleanFlag = (value: string | null): boolean => {
   return flag === "1" || flag === "true" || flag === "yes" || flag === "on";
 };
 
+const parseBooleanInput = (value: unknown): boolean | undefined => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed === "1" || trimmed === "true" || trimmed === "yes" || trimmed === "on") {
+      return true;
+    }
+    if (trimmed === "0" || trimmed === "false" || trimmed === "no" || trimmed === "off") {
+      return false;
+    }
+  }
+  return undefined;
+};
+
+const parsePortInput = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number.parseInt(trimmed, 10);
+    if (Number.isFinite(parsed)) {
+      return Math.trunc(parsed);
+    }
+  }
+  return null;
+};
+
 const defaultAppProcessStatus = (appId: string): AppProcessStatus => {
   const timestamp = new Date().toISOString();
   return {
@@ -3030,10 +3148,11 @@ const defaultAppProcessStatus = (appId: string): AppProcessStatus => {
 };
 
 const buildAppResponse = (app: AppRecord, status: AppProcessStatus) => {
+  const hasStartScript = Boolean(app.scripts.start);
   const availableScripts: Record<AppLifecycleAction, boolean> = {
-    start: Boolean(app.scripts.start),
+    start: hasStartScript,
     stop: true,
-    restart: Boolean(app.scripts.restart),
+    restart: hasStartScript,
     setup: Boolean(app.scripts.setup),
     build: Boolean(app.scripts.build),
   };
@@ -3048,6 +3167,12 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus) => {
     ownerNpub: app.ownerNpub,
     createdAt: app.createdAt,
     updatedAt: app.updatedAt,
+    webApp: app.webApp,
+    webAppPort: app.webAppPort,
+    webAppUrl:
+      app.webApp && typeof app.webAppPort === "number"
+        ? `https://host.otherstuff.ai/${app.webAppPort}`
+        : null,
     status,
     availableScripts,
     logs: undefined as string[] | undefined,
@@ -3203,6 +3328,183 @@ const isAdminContext = (authContext: RequestAuthContext): boolean => {
   const normalized = normaliseNpub(authContext.npub ?? null);
   return normalized === adminNpub;
 };
+
+type SessionCleanupDetail = {
+  id: string;
+  agent: AgentType;
+  name: string;
+  port: number;
+  npub: string | null;
+  stopped: boolean;
+  deleted: boolean;
+  stopError?: string;
+  deleteError?: string;
+};
+
+type AppCleanupDetail = {
+  id: string;
+  label: string;
+  running: boolean;
+  killed: boolean;
+  removed: boolean;
+  killError?: string;
+  removeError?: string;
+};
+
+type SystemCleanupResult = {
+  timestamp: string;
+  preservedCoreApp: boolean;
+  sessions: {
+    total: number;
+    stopped: number;
+    deleted: number;
+    failed: number;
+    details: SessionCleanupDetail[];
+  };
+  apps: {
+    total: number;
+    killed: number;
+    removed: number;
+    failed: number;
+    skipped: number;
+    details: AppCleanupDetail[];
+  };
+};
+
+async function performSystemCleanup(): Promise<SystemCleanupResult> {
+  const snapshotTimestamp = new Date().toISOString();
+  const sessionSnapshots = manager.listSessions();
+  const sessionDetails: SessionCleanupDetail[] = [];
+  let sessionsStopped = 0;
+  let sessionsDeleted = 0;
+  let sessionFailures = 0;
+
+  for (const snapshot of sessionSnapshots) {
+    const detail: SessionCleanupDetail = {
+      id: snapshot.id,
+      agent: snapshot.agent,
+      name: snapshot.name,
+      port: snapshot.port,
+      npub: snapshot.npub ?? null,
+      stopped: false,
+      deleted: false,
+    };
+
+    try {
+      await manager.stopSession(snapshot.id);
+      detail.stopped = true;
+      sessionsStopped += 1;
+    } catch (error) {
+      detail.stopError = error instanceof Error ? error.message : String(error);
+    }
+
+    const current = manager.getSession(snapshot.id);
+    const canDelete =
+      !current ||
+      current.status === "stopped" ||
+      current.status === "error";
+
+    if (canDelete) {
+      try {
+        const removed = manager.deleteSession(snapshot.id);
+        if (removed) {
+          detail.deleted = true;
+          sessionsDeleted += 1;
+          try {
+            messageStore.removeSession(snapshot.id);
+          } catch (error) {
+            detail.deleteError = error instanceof Error ? error.message : String(error);
+            detail.deleted = false;
+            sessionsDeleted -= 1;
+          }
+        }
+      } catch (error) {
+        detail.deleteError = error instanceof Error ? error.message : String(error);
+      }
+    } else if (!detail.stopError) {
+      detail.stopError = "Session still running after stop attempt";
+    }
+
+    if (detail.stopError || detail.deleteError) {
+      sessionFailures += 1;
+    }
+
+    sessionDetails.push(detail);
+  }
+
+  const appDetails: AppCleanupDetail[] = [];
+  const appStatuses = await appProcessManager.listStatuses().catch(() => []);
+  const statusMap = new Map(appStatuses.map((status) => [status.appId, status]));
+  const apps = await appRegistry.listApps();
+  let appsKilled = 0;
+  let appsRemoved = 0;
+  let appFailures = 0;
+  let appSkipped = 0;
+  let preservedCoreApp = false;
+
+  for (const app of apps) {
+    if (app.id === "wingman-core") {
+      preservedCoreApp = true;
+      appSkipped += 1;
+      continue;
+    }
+
+    const status = statusMap.get(app.id);
+    const detail: AppCleanupDetail = {
+      id: app.id,
+      label: app.label,
+      running: Boolean(status?.running),
+      killed: false,
+      removed: false,
+    };
+
+    try {
+      await appProcessManager.kill(app.id);
+      detail.killed = true;
+      appsKilled += 1;
+    } catch (error) {
+      detail.killError = error instanceof Error ? error.message : String(error);
+    }
+
+    try {
+      const removed = await appRegistry.removeApp(app.id);
+      if (removed) {
+        detail.removed = true;
+        appsRemoved += 1;
+      }
+    } catch (error) {
+      detail.removeError = error instanceof Error ? error.message : String(error);
+    } finally {
+      appProcessManager.forget(app.id);
+    }
+
+    if (detail.killError || detail.removeError) {
+      appFailures += 1;
+    }
+
+    appDetails.push(detail);
+  }
+
+  return {
+    timestamp: snapshotTimestamp,
+    preservedCoreApp,
+    sessions: {
+      total: sessionDetails.length,
+      stopped: sessionsStopped,
+      deleted: sessionsDeleted,
+      failed: sessionFailures,
+      details: sessionDetails,
+    },
+    apps: {
+      total: appDetails.length,
+      killed: appsKilled,
+      removed: appsRemoved,
+      failed: appFailures,
+      skipped: appSkipped,
+      details: appDetails,
+    },
+  };
+}
 
 const requireAdminAccess = (): AccessRule => {
   return (context) => {
@@ -3360,6 +3662,21 @@ const handleApi = async (
       status: "scheduled",
       sessions: marker.sessionIds ?? [],
     }, { status: 202 });
+  }
+
+  if (pathname === "/api/system/cleanup" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.SystemManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    try {
+      const result = await performSystemCleanup();
+      return Response.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[system] cleanup failure: ${message}`);
+      return Response.json({ error: `System cleanup failed: ${message}` }, { status: 500 });
+    }
   }
 
   if (pathname === "/api/auth/session" && method === "POST") {
@@ -3578,6 +3895,10 @@ const handleApi = async (
     const tmuxSession = normaliseOptionalString(record.tmuxSession);
     const notes = normaliseOptionalString(record.notes);
     const overrides = parseAppScripts(record.scripts);
+    const webAppInput =
+      record.webApp !== undefined ? parseBooleanInput(record.webApp) : parseBooleanInput((record as Record<string, unknown>).isWebApp);
+    const requestedWebApp = webAppInput ?? false;
+    const requestedPort = parsePortInput(record.webAppPort);
     const ownerNpub =
       workspaceScope.isAdmin ? normaliseNpub(authContext.npub ?? null) ?? adminNpub : viewerNpub;
     if (!ownerNpub) {
@@ -3611,6 +3932,8 @@ const handleApi = async (
         tmuxSession: tmuxSession ?? undefined,
         notes: notes ?? undefined,
         ownerNpub,
+        webApp: requestedWebApp,
+        webAppPort: requestedPort ?? undefined,
       });
       const status = await appProcessManager.getStatus(app.id);
       return Response.json({ app: buildAppResponse(app, status) }, { status: 201 });
@@ -3689,6 +4012,9 @@ const handleApi = async (
       const tmuxSession = normaliseOptionalString(record.tmuxSession);
       const notesValue = record.notes === null ? null : normaliseOptionalString(record.notes);
       const overrides = parseAppScripts(record.scripts);
+      const webAppRaw = record.webApp ?? (record as Record<string, unknown>).isWebApp;
+      const webAppInput = parseBooleanInput(webAppRaw);
+      const webAppPortInput = parsePortInput(record.webAppPort);
       const shouldDiscover =
         typeof record.discoverScripts === "boolean"
           ? (record.discoverScripts as boolean)
@@ -3732,13 +4058,20 @@ const handleApi = async (
       }
 
       try {
-        const updated = await appRegistry.updateApp(id, {
+        const updatePayload = {
           label: label ?? undefined,
           root: resolvedRoot ?? undefined,
           tmuxSession: tmuxSession ?? undefined,
           notes: notesValue,
           scripts,
-        });
+        };
+        if (webAppInput !== undefined) {
+          updatePayload.webApp = webAppInput;
+        }
+        if (webAppPortInput !== null) {
+          updatePayload.webAppPort = webAppPortInput;
+        }
+        const updated = await appRegistry.updateApp(id, updatePayload);
         appProcessManager.forget(id);
         const status = await appProcessManager.getStatus(id);
         return Response.json({ app: buildAppResponse(updated, status) });
@@ -3814,13 +4147,27 @@ const handleApi = async (
       if (!actionValue) {
         return Response.json({ error: "Action is required" }, { status: 400 });
       }
-      if (!APP_ACTIONS.includes(actionValue as AppLifecycleAction)) {
+      const normalizedAction = actionValue.toLowerCase();
+      if (!APP_ACTIONS.includes(normalizedAction as AppLifecycleAction)) {
         return Response.json({ error: `Unsupported action: ${actionValue}` }, { status: 400 });
+      }
+
+      if (normalizedAction === "start" || normalizedAction === "restart") {
+        const balanceCheck = ensureViewerHasBalance(authContext, {
+          feature: normalizedAction === "start" ? "start this app" : "restart this app",
+          message:
+            normalizedAction === "start"
+              ? "Add sats to your balance to start this app."
+              : "Add sats to your balance to restart this app.",
+        });
+        if (balanceCheck instanceof Response) {
+          return balanceCheck;
+        }
       }
 
       try {
         let status: AppProcessStatus;
-        switch (actionValue as AppLifecycleAction) {
+        switch (normalizedAction as AppLifecycleAction) {
           case "start":
             status = await appProcessManager.start(id);
             break;
@@ -4561,12 +4908,17 @@ const handleApi = async (
       const logsRoot = normalize(join(dataRoot, "logs"));
       const attachmentsRoot = normalize(join(attachmentRoot, segment));
       const imagesRoot = normalize(join(imageRoot, segment));
+      const viewerRecord = identityUserStore.getByNormalized(viewerNormalizedNpub);
+      const ports = viewerRecord?.ports ?? identityUserStore.ensurePortsFor(authContext.npub);
+      const balance = viewerRecord?.balance ?? 0;
       identitySummaries = [
         {
           npub: authContext.npub,
           normalizedNpub: viewerNormalizedNpub,
           segment,
           alias: generateIdentityAlias(authContext.npub),
+          ports,
+          balance,
           sessionIds: [],
           activeSessionIds: [],
           lastSeenAt: null,
@@ -4628,6 +4980,13 @@ const handleApi = async (
     }
 
     if (method === "POST" && parts[4] === "launch") {
+      const balanceCheck = ensureViewerHasBalance(authContext, {
+        feature: "launch this orchestrator preset",
+        message: "Add sats to your balance to launch this orchestrator preset.",
+      });
+      if (balanceCheck instanceof Response) {
+        return balanceCheck;
+      }
       try {
         const { directory, session } = await launchOrchestratorPreset(id);
         return Response.json({ directory, session }, { status: 201 });
@@ -4649,6 +5008,13 @@ const handleApi = async (
       const agent = typeof payload?.agent === "string" ? payload.agent.toLowerCase() : "";
       if (!isAgentType(agent)) {
         return Response.json({ error: "Invalid agent selection" }, { status: 400 });
+      }
+      const balanceCheck = ensureViewerHasBalance(authContext, {
+        feature: "start an agent session",
+        message: "Add sats to your balance to start an agent session.",
+      });
+      if (balanceCheck instanceof Response) {
+        return balanceCheck;
       }
       const directoryInput = typeof payload?.directory === "string" ? payload.directory : undefined;
       const rawName =
@@ -4778,6 +5144,28 @@ const handleApi = async (
           return Response.json({ error: "Message content is required" }, { status: 400 });
         }
 
+        const userNpub = authContext.npub ?? null;
+        if (!userNpub) {
+          return Response.json({ error: "Sign in to send messages", balance: 0 }, { status: 403 });
+        }
+
+        let currentBalance: number;
+        try {
+          currentBalance = identityUserStore.debit(userNpub, MESSAGE_COST_SATS);
+        } catch (error) {
+          if (error instanceof InsufficientBalanceError) {
+            return Response.json(
+              {
+                error: "Insufficient balance to send message",
+                balance: error.balance,
+              },
+              { status: 402 },
+            );
+          }
+          console.error("[billing] failed to debit message cost:", error);
+          return Response.json({ error: "Failed to debit balance" }, { status: 500 });
+        }
+
         try {
           const initialCount = messageStore.listSessionMessages(id).length;
           const agentUrl = buildAgentUrl(agentHost, ownedSession.port, "/message");
@@ -4789,13 +5177,26 @@ const handleApi = async (
           if (!agentResponse.ok) {
             const errorPayload = await agentResponse.json().catch(() => ({}));
             const message = (errorPayload?.error as string) ?? agentResponse.statusText ?? "Agent request failed";
-            return Response.json({ error: message }, { status: agentResponse.status });
+            try {
+              currentBalance = identityUserStore.credit(userNpub, MESSAGE_COST_SATS);
+            } catch (creditError) {
+              console.error("[billing] failed to refund after agent rejection:", creditError);
+            }
+            return Response.json({ error: message, balance: currentBalance }, { status: agentResponse.status });
           }
 
           const messages = await waitForMessageUpdate(id, initialCount);
-          return Response.json({ id, messages });
+          return Response.json({ id, messages, balance: currentBalance });
         } catch (error) {
-          return Response.json({ error: `Failed to contact agent: ${(error as Error).message}` }, { status: 502 });
+          try {
+            currentBalance = identityUserStore.credit(userNpub, MESSAGE_COST_SATS);
+          } catch (creditError) {
+            console.error("[billing] failed to refund after agent error:", creditError);
+          }
+          return Response.json(
+            { error: `Failed to contact agent: ${(error as Error).message}`, balance: currentBalance },
+            { status: 502 },
+          );
         }
       }
     }
