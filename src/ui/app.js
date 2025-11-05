@@ -7556,6 +7556,42 @@ const renderHomeGuestHero = () => {
   const card = document.createElement("section");
   card.className = "wm-card wm-home-guest-hero";
 
+  const brand = document.createElement("div");
+  brand.className = "wm-home-guest-hero-brand";
+
+  const logoWrapper = document.createElement("div");
+  logoWrapper.className = "wm-home-guest-hero-logo-set";
+
+  const logoDark = document.createElement("img");
+  logoDark.src = "/path/Wingman_Goose_Logo_Dark.png";
+  logoDark.alt = "Wingman logo";
+  logoDark.width = 40;
+  logoDark.height = 40;
+  logoDark.className = "wm-logo dark";
+
+  const logoLight = document.createElement("img");
+  logoLight.src = "/path/Wingman_Goose_Logo_Light.png";
+  logoLight.alt = "Wingman logo";
+  logoLight.width = 40;
+  logoLight.height = 40;
+  logoLight.className = "wm-logo light";
+
+  logoWrapper.append(logoDark, logoLight);
+
+  const brandCopy = document.createElement("div");
+  brandCopy.className = "wm-home-guest-hero-brand-text";
+
+  const brandName = document.createElement("span");
+  brandName.className = "wm-home-guest-hero-brand-name";
+  brandName.textContent = "Wingman";
+
+  const brandTagline = document.createElement("span");
+  brandTagline.className = "wm-home-guest-hero-brand-tagline";
+  brandTagline.textContent = "Solvitur Ambulando";
+
+  brandCopy.append(brandName, brandTagline);
+  brand.append(logoWrapper, brandCopy);
+
   const badge = document.createElement("span");
   badge.className = "wm-home-guest-hero-badge";
   badge.textContent = "Wingman keeps your agents in sync";
@@ -7588,7 +7624,7 @@ const renderHomeGuestHero = () => {
   });
 
   actions.append(loginButton, learnMore);
-  card.append(badge, heading, description, actions);
+  card.append(brand, badge, heading, description, actions);
 
   return card;
 };
@@ -7628,12 +7664,14 @@ const renderHome = () => {
   const wrapper = document.createElement("div");
   wrapper.className = "wm-home";
 
-  wrapper.append(renderHomeIdentityBanner());
+  detachHomeIdentityBannerListener?.();
 
   if (!state.identity.authenticated) {
     wrapper.append(renderHomeGuestHero(), renderHomeGuestFeatures());
     return wrapper;
   }
+
+  wrapper.append(renderHomeIdentityBanner());
 
   if (!state.apps.initialized && !state.apps.loading) {
     void ensureAppsLoaded();
