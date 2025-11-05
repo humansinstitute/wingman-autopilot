@@ -29,6 +29,7 @@ const state = {
   sessionFilters: {
     npub: "all",
     options: [],
+    initialized: false,
   },
   orchestratorPresets: [],
   orchestratorPresetsLoading: false,
@@ -655,6 +656,16 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
 
   if (wasAdmin && !next.isAdmin) {
     state.adminUsers = createAdminUsersState();
+  }
+
+  if (next.npub !== current.npub || next.isAdmin !== current.isAdmin) {
+    state.sessionFilters.initialized = false;
+    const viewerNormalized = normaliseNpubValue(next.npub);
+    if (!next.isAdmin && viewerNormalized) {
+      state.sessionFilters.npub = viewerNormalized;
+    } else if (!next.isAdmin && !viewerNormalized) {
+      state.sessionFilters.npub = "all";
+    }
   }
 
   if (persist) {
@@ -4258,6 +4269,14 @@ const fetchConfig = async () => {
 };
 
 const fetchSessions = async () => {
+  const viewerNormalized = normaliseNpubValue(state.identity.npub);
+  if (!state.identity.isAdmin) {
+    if (viewerNormalized && state.sessionFilters.npub !== viewerNormalized) {
+      state.sessionFilters.npub = viewerNormalized;
+    }
+  } else if (!state.sessionFilters.initialized && viewerNormalized) {
+    state.sessionFilters.npub = viewerNormalized;
+  }
   const activeFilter = state.sessionFilters.npub;
   const query = activeFilter && activeFilter !== "all" ? `?npub=${encodeURIComponent(activeFilter)}` : "";
   const response = await fetch(`/api/sessions${query}`);
@@ -4266,6 +4285,7 @@ const fetchSessions = async () => {
     state.identitySummaries = [];
     state.sessionFilters.options = [];
     state.sessionFilters.npub = "all";
+    state.sessionFilters.initialized = false;
     state.activeSessionId = null;
     state.lastActiveSessionId = null;
     if (currentRoute !== "home") {
@@ -4336,13 +4356,18 @@ const fetchSessions = async () => {
       .filter((option) => option && typeof option === "object" && typeof option.value === "string")
       .map((option) => option.value),
   ]);
-  if (filterPayload && typeof filterPayload.active === "string") {
-    state.sessionFilters.npub = filterPayload.active;
+  let nextFilter = state.sessionFilters.npub;
+  if (!state.identity.isAdmin) {
+    nextFilter = viewerNormalized ?? "all";
+  } else if (filterPayload && typeof filterPayload.active === "string" && optionValues.has(filterPayload.active)) {
+    nextFilter = filterPayload.active;
   } else if (filterPayload && filterPayload.active === null) {
-    state.sessionFilters.npub = "all";
-  } else if (!optionValues.has(state.sessionFilters.npub)) {
-    state.sessionFilters.npub = "all";
+    nextFilter = "all";
+  } else if (!optionValues.has(nextFilter)) {
+    nextFilter = viewerNormalized ?? "all";
   }
+  state.sessionFilters.npub = nextFilter;
+  state.sessionFilters.initialized = true;
 
   const sessionIds = new Set(state.sessions.map((session) => session.id));
   if (state.lastActiveSessionId && !sessionIds.has(state.lastActiveSessionId)) {
@@ -4409,6 +4434,11 @@ const buildSessionFilterOptions = () => {
     seen.add(value);
     options.push({ value, label, ...meta });
   };
+
+  const viewerNpub = normaliseNpubValue(state.identity.npub);
+  if (state.identity.isAdmin && viewerNpub) {
+    appendOption(viewerNpub, `My identity (${abbreviateNpub(viewerNpub)})`, { npub: viewerNpub });
+  }
 
   appendOption("all", "All identities");
 
@@ -7689,35 +7719,38 @@ const renderHome = () => {
   const actions = document.createElement("div");
   actions.className = "wm-actions";
 
-  const filterContainer = document.createElement("div");
-  filterContainer.className = "wm-session-filter";
-  const filterLabel = document.createElement("label");
-  filterLabel.textContent = "Identity";
-  const filterSelect = document.createElement("select");
-  filterSelect.className = "wm-select";
-  buildSessionFilterOptions().forEach((option) => {
-    const opt = document.createElement("option");
-    opt.value = option.value;
-    opt.textContent = option.label;
-    if (option.value === state.sessionFilters.npub) {
-      opt.selected = true;
-    }
-    filterSelect.append(opt);
-  });
-  filterSelect.addEventListener("change", (event) => {
-    const target = event.target;
-    const value = target instanceof HTMLSelectElement && target.value ? target.value : "all";
-    state.sessionFilters.npub = value;
-    void fetchSessions().then(() => {
-      syncMenuTabs();
-      if (currentRoute === "home" || currentRoute === "live") {
-        render();
+  if (state.identity.isAdmin) {
+    const filterContainer = document.createElement("div");
+    filterContainer.className = "wm-session-filter";
+    const filterLabel = document.createElement("label");
+    filterLabel.textContent = "Identities";
+    const filterSelect = document.createElement("select");
+    filterSelect.className = "wm-select";
+    buildSessionFilterOptions().forEach((option) => {
+      const opt = document.createElement("option");
+      opt.value = option.value;
+      opt.textContent = option.label;
+      if (option.value === state.sessionFilters.npub) {
+        opt.selected = true;
       }
+      filterSelect.append(opt);
     });
-  });
-  filterLabel.append(filterSelect);
-  filterContainer.append(filterLabel);
-  actions.append(filterContainer);
+    filterSelect.addEventListener("change", (event) => {
+      const target = event.target;
+      const value = target instanceof HTMLSelectElement && target.value ? target.value : "all";
+      state.sessionFilters.npub = value;
+      state.sessionFilters.initialized = true;
+      void fetchSessions().then(() => {
+        syncMenuTabs();
+        if (currentRoute === "home" || currentRoute === "live") {
+          render();
+        }
+      });
+    });
+    filterLabel.append(filterSelect);
+    filterContainer.append(filterLabel);
+    actions.append(filterContainer);
+  }
 
   const launchBtn = document.createElement("button");
   launchBtn.className = "wm-button";
