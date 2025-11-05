@@ -7459,14 +7459,103 @@ const renderHomeIdentityBanner = () => {
   return card;
 };
 
-const renderHomeGuestQuote = () => {
+const HOME_GUEST_FEATURES = [
+  {
+    title: "Interact with your agents from anywhere",
+    description:
+      "Stay connected to your automations and copilots from any device so your work keeps flowing even away from your main workstation.",
+  },
+  {
+    title: "Share Claude, Codex, and Goose setups",
+    description:
+      "Package your preferred agent configurations once and roll them out to the rest of the team with shared guardrails and credentials.",
+  },
+  {
+    title: "Orchestrate common business processes",
+    description:
+      "Coordinate hand-offs, approvals, and back-office tasks with reproducible workflows that run on schedule or on demand.",
+  },
+  {
+    title: "Build custom apps in minutes",
+    description:
+      "Compose bespoke UIs and automations around your agents without leaving Wingman, then deploy them to the people who need them.",
+  },
+  {
+    title: "Run your business on Wingman",
+    description:
+      "Centralize knowledge, tooling, and agent-powered operations in one control plane that scales as your team grows.",
+  },
+];
+
+const renderHomeGuestHero = () => {
   const card = document.createElement("section");
-  card.className = "wm-card wm-home-auth-quote";
-  const quote = document.createElement("blockquote");
-  quote.textContent = "Neither nostalgia nor utopia";
-  const subtitle = document.createElement("p");
-  subtitle.textContent = "Build it, Ship it, Share it";
-  card.append(quote, subtitle);
+  card.className = "wm-card wm-home-guest-hero";
+
+  const badge = document.createElement("span");
+  badge.className = "wm-home-guest-hero-badge";
+  badge.textContent = "Wingman keeps your agents in sync";
+
+  const heading = document.createElement("h1");
+  heading.textContent = "Give every teammate their own AI co-pilot";
+
+  const description = document.createElement("p");
+  description.className = "wm-home-guest-hero-description";
+  description.textContent =
+    "Wingman is the shared cockpit for running automations, shipping custom apps, and collaborating with advanced agents wherever you are.";
+
+  const actions = document.createElement("div");
+  actions.className = "wm-home-guest-hero-actions";
+
+  const loginButton = document.createElement("button");
+  loginButton.type = "button";
+  loginButton.className = "wm-button";
+  loginButton.textContent = "Log In to Wingman";
+  loginButton.addEventListener("click", () => {
+    openIdentityLoginDialog();
+  });
+
+  const learnMore = document.createElement("button");
+  learnMore.type = "button";
+  learnMore.className = "wm-link-button wm-home-guest-hero-secondary";
+  learnMore.textContent = "Browse capabilities";
+  learnMore.addEventListener("click", () => {
+    navigateToApps();
+  });
+
+  actions.append(loginButton, learnMore);
+  card.append(badge, heading, description, actions);
+
+  return card;
+};
+
+const renderHomeGuestFeatures = () => {
+  const card = document.createElement("section");
+  card.className = "wm-card wm-home-guest-features";
+
+  const header = document.createElement("div");
+  header.className = "wm-home-section-header";
+  const title = document.createElement("h2");
+  title.textContent = "What you can do with Wingman";
+  header.append(title);
+
+  const list = document.createElement("ul");
+  list.className = "wm-home-guest-feature-list";
+
+  HOME_GUEST_FEATURES.forEach(({ title: featureTitle, description }) => {
+    const item = document.createElement("li");
+    item.className = "wm-home-guest-feature";
+
+    const itemTitle = document.createElement("h3");
+    itemTitle.textContent = featureTitle;
+
+    const itemDescription = document.createElement("p");
+    itemDescription.textContent = description;
+
+    item.append(itemTitle, itemDescription);
+    list.append(item);
+  });
+
+  card.append(header, list);
   return card;
 };
 
@@ -7477,7 +7566,7 @@ const renderHome = () => {
   wrapper.append(renderHomeIdentityBanner());
 
   if (!state.identity.authenticated) {
-    wrapper.append(renderHomeGuestQuote());
+    wrapper.append(renderHomeGuestHero(), renderHomeGuestFeatures());
     return wrapper;
   }
 
