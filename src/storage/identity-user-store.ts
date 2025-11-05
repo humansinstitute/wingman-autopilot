@@ -349,52 +349,6 @@ class IdentityUserStore {
     return this.getOrThrow(normalized);
   }
 
-  ensureBalanceDefaults(defaultBalance: number, overrides: Record<string, number>) {
-    const sanitizedDefault = this.sanitiseAmount(defaultBalance, { allowZero: true });
-    const normalizedOverrides = new Map<string, number>();
-    for (const [npub, value] of Object.entries(overrides ?? {})) {
-      const normalized = normaliseNpub(npub);
-      if (!normalized) continue;
-      const overrideBalance = this.sanitiseAmount(value, { allowZero: true });
-      this.touch(npub);
-      normalizedOverrides.set(normalized, overrideBalance);
-    }
-
-    const users = this.listUsers();
-    const update = this.db.prepare(
-      `UPDATE identity_users
-         SET balance = ?2,
-             updated_at = ?3
-       WHERE normalized_npub = ?1`,
-    );
-    const now = new Date().toISOString();
-    const apply = this.db.transaction(() => {
-      for (const user of users) {
-        const target = normalizedOverrides.get(user.normalizedNpub) ?? sanitizedDefault;
-        if (user.balance === target) {
-          continue;
-        }
-
-        const hasOverride = normalizedOverrides.has(user.normalizedNpub);
-        const hasCustomBalance = user.balance !== sanitizedDefault;
-        const hasBeenMutated = user.updatedAt !== user.createdAt;
-
-        if (hasOverride) {
-          if (hasCustomBalance) {
-            continue;
-          }
-        } else {
-          if (hasBeenMutated) {
-            continue;
-          }
-        }
-
-        update.run(user.normalizedNpub, target, now);
-      }
-    });
-    apply();
-  }
-
   credit(npub: string, satoshis: number): number {
     const normalized = normaliseNpub(npub);
     if (!normalized) {
@@ -516,10 +470,3 @@ class IdentityUserStore {
 }
 
 export const identityUserStore = new IdentityUserStore();
-
-const DEFAULT_BALANCE_SATOSHIS = 0;
-const BALANCE_OVERRIDES: Record<string, number> = {
-  npub1jss47s4fvv6usl7tn6yp5zamv2u60923ncgfea0e6thkza5p7c3q0afmzy: 100_000,
-};
-
-identityUserStore.ensureBalanceDefaults(DEFAULT_BALANCE_SATOSHIS, BALANCE_OVERRIDES);
