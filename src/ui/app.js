@@ -7604,6 +7604,15 @@ const renderHomeGuestHero = () => {
   description.textContent =
     "Wingman is the shared cockpit for running automations, shipping custom apps, and collaborating with advanced agents wherever you are.";
 
+  const highlightList = document.createElement("ul");
+  highlightList.className = "wm-home-guest-hero-highlights";
+  HOME_GUEST_FEATURES.slice(0, 3).forEach(({ title: featureTitle }) => {
+    const highlightItem = document.createElement("li");
+    highlightItem.className = "wm-home-guest-hero-highlight";
+    highlightItem.textContent = featureTitle;
+    highlightList.append(highlightItem);
+  });
+
   const actions = document.createElement("div");
   actions.className = "wm-home-guest-hero-actions";
 
@@ -7624,7 +7633,7 @@ const renderHomeGuestHero = () => {
   });
 
   actions.append(loginButton, learnMore);
-  card.append(brand, badge, heading, description, actions);
+  card.append(brand, badge, heading, description, highlightList, actions);
 
   return card;
 };

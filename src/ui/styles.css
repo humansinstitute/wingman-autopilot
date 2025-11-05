@@ -575,6 +575,26 @@ body[data-menu-open="true"] .wm-menu-panel {
   color: var(--text-tertiary);
 }
 
+.wm-home-guest-hero-highlights {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wm-home-guest-hero-highlight {
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: rgba(79, 70, 229, 0.1);
+  border: 1px solid rgba(79, 70, 229, 0.2);
+  letter-spacing: -0.01em;
+}
+
 .wm-home-guest-hero-badge {
   display: inline-flex;
   align-items: center;
@@ -2004,6 +2024,10 @@ body[data-menu-open="true"] .wm-menu-panel {
 
   #app[data-route="home"] .wm-home-guest-hero-description {
     max-width: 32ch;
+  }
+
+  #app[data-route="home"] .wm-home-guest-hero-highlights {
+    justify-content: center;
   }
 
   #app[data-route="home"] .wm-home-guest-hero-actions {
