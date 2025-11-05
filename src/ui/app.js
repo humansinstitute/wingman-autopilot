@@ -288,6 +288,13 @@ function createAdminUsersState() {
     initialized: false,
     error: null,
     pending: new Set(),
+    balanceTool: {
+      identifier: "",
+      amount: "",
+      busy: false,
+      error: null,
+      success: null,
+    },
   };
 }
 
@@ -640,7 +647,8 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
   if (emit && typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
     try {
       window.dispatchEvent(new CustomEvent("wingman:identity-ui-state", { detail: { ...next } }));
-      if (next.authenticated) {
+      const becameAuthenticated = !current.authenticated && next.authenticated;
+      if (becameAuthenticated) {
         closeIdentityLoginDialog();
         if (currentRoute !== "home") {
           currentRoute = "home";
@@ -4610,6 +4618,103 @@ const toggleUserOnboarding = async (npub, onboarded) => {
   }
 };
 
+const ensureAdminBalanceToolState = () => {
+  if (!state.adminUsers.balanceTool) {
+    state.adminUsers.balanceTool = {
+      identifier: "",
+      amount: "",
+      busy: false,
+      error: null,
+      success: null,
+    };
+  }
+};
+
+const submitAdminBalanceUpdate = async () => {
+  if (!state.identity.isAdmin) {
+    return;
+  }
+  ensureAdminBalanceToolState();
+  const tool = state.adminUsers.balanceTool;
+  const identifier = typeof tool.identifier === "string" ? tool.identifier.trim() : "";
+  const amountInput = typeof tool.amount === "string" ? tool.amount.trim() : "";
+
+  if (!identifier) {
+    tool.error = "Enter a user alias or npub.";
+    tool.success = null;
+    if (currentRoute === "settings") {
+      render();
+    }
+    return;
+  }
+
+  const parsedAmount = Number.parseInt(amountInput, 10);
+  if (!Number.isFinite(parsedAmount) || parsedAmount < 0) {
+    tool.error = "Enter a non-negative sats amount.";
+    tool.success = null;
+    if (currentRoute === "settings") {
+      render();
+    }
+    return;
+  }
+
+  const payload = {
+    balance: parsedAmount,
+  };
+
+  if (identifier.toLowerCase().startsWith("npub")) {
+    payload.npub = identifier;
+  } else {
+    payload.alias = identifier;
+  }
+
+  tool.busy = true;
+  tool.error = null;
+  tool.success = null;
+  if (currentRoute === "settings") {
+    render();
+  }
+
+  try {
+    const response = await fetch("/api/admin/users/balance", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        data && typeof data === "object" && typeof data.error === "string" && data.error.length > 0
+          ? data.error
+          : response.statusText || "Failed to update balance";
+      throw new Error(message);
+    }
+
+    const users = Array.isArray(data?.users) ? data.users : null;
+    const user = data && typeof data === "object" ? data.user : null;
+    if (Array.isArray(users)) {
+      replaceAdminUsersList(users);
+    } else if (user && typeof user === "object") {
+      upsertAdminUser(user);
+    }
+
+    const updatedBalance =
+      user && typeof user === "object" && Number.isFinite(user.balance) ? user.balance : parsedAmount;
+    tool.success = `Balance set to ${formatSatoshis(updatedBalance)} sats.`;
+    tool.identifier = "";
+    tool.amount = "";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to update balance";
+    tool.error = message;
+    tool.success = null;
+  } finally {
+    tool.busy = false;
+    if (currentRoute === "settings") {
+      render();
+    }
+  }
+};
+
 const refreshApps = async ({ tail = APP_LOG_PREVIEW_LINES, skipRender = false } = {}) => {
   if (state.identity.isAdmin) {
     await Promise.all([fetchApps({ tail }), fetchRestartStatus()]);
@@ -8483,6 +8588,85 @@ function renderAdminUsersPanel() {
   const description = document.createElement("p");
   description.textContent = "Review registered identities and mark onboarding completion.";
   card.append(description);
+
+  ensureAdminBalanceToolState();
+  const balanceTool = state.adminUsers.balanceTool;
+
+  const balanceIntro = document.createElement("p");
+  balanceIntro.className = "wm-admin-users__balance-help";
+  balanceIntro.textContent = "Admins can adjust a user's sats balance by alias or npub.";
+  card.append(balanceIntro);
+
+  const balanceForm = document.createElement("form");
+  balanceForm.className = "wm-admin-users__balance-form";
+  balanceForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (balanceTool.busy) return;
+    void submitAdminBalanceUpdate();
+  });
+
+  const identifierField = document.createElement("label");
+  identifierField.className = "wm-admin-users__balance-field";
+  const identifierSpan = document.createElement("span");
+  identifierSpan.textContent = "User npub or alias";
+  const identifierInput = document.createElement("input");
+  identifierInput.type = "text";
+  identifierInput.placeholder = "npub1… or alias";
+  identifierInput.value = typeof balanceTool.identifier === "string" ? balanceTool.identifier : "";
+  identifierInput.autocomplete = "off";
+  identifierInput.disabled = balanceTool.busy;
+  identifierInput.addEventListener("input", (event) => {
+    ensureAdminBalanceToolState();
+    balanceTool.identifier = event.target.value;
+    balanceTool.error = null;
+    balanceTool.success = null;
+  });
+  identifierField.append(identifierSpan, identifierInput);
+
+  const amountField = document.createElement("label");
+  amountField.className = "wm-admin-users__balance-field";
+  const amountSpan = document.createElement("span");
+  amountSpan.textContent = "Balance (sats)";
+  const amountInput = document.createElement("input");
+  amountInput.type = "number";
+  amountInput.min = "0";
+  amountInput.step = "1";
+  amountInput.placeholder = "e.g. 1000";
+  amountInput.value = typeof balanceTool.amount === "string" || typeof balanceTool.amount === "number" ? balanceTool.amount : "";
+  amountInput.disabled = balanceTool.busy;
+  amountInput.addEventListener("input", (event) => {
+    ensureAdminBalanceToolState();
+    balanceTool.amount = event.target.value;
+    balanceTool.error = null;
+    balanceTool.success = null;
+  });
+  amountField.append(amountSpan, amountInput);
+
+  const balanceControls = document.createElement("div");
+  balanceControls.className = "wm-admin-users__balance-controls";
+  const submitButton = document.createElement("button");
+  submitButton.type = "submit";
+  submitButton.className = "wm-button";
+  submitButton.disabled = balanceTool.busy;
+  submitButton.textContent = balanceTool.busy ? "Updating…" : "Set Balance";
+  balanceControls.append(submitButton);
+
+  balanceForm.append(identifierField, amountField, balanceControls);
+
+  if (balanceTool.error || balanceTool.success) {
+    const statusMessage = document.createElement("p");
+    statusMessage.className = "wm-admin-users__balance-status";
+    if (balanceTool.error) {
+      statusMessage.dataset.state = "error";
+      statusMessage.textContent = balanceTool.error;
+    } else if (balanceTool.success) {
+      statusMessage.dataset.state = "success";
+      statusMessage.textContent = balanceTool.success;
+    }
+    balanceControls.append(statusMessage);
+  }
+
+  card.append(balanceForm);
 
   if (state.adminUsers.loading && !state.adminUsers.initialized) {
     const loading = document.createElement("p");

@@ -3793,6 +3793,87 @@ const handleApi = async (
     }
   }
 
+  if (pathname === "/api/admin/users/balance" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    const record = payload as Record<string, unknown>;
+    const npubInput = normaliseOptionalString(record.npub);
+    const aliasInput = normaliseOptionalString(record.alias);
+    const balanceValue = record.balance;
+
+    if (!npubInput && !aliasInput) {
+      return Response.json({ error: "Provide an npub or alias" }, { status: 400 });
+    }
+
+    const parsedBalance =
+      typeof balanceValue === "number"
+        ? balanceValue
+        : typeof balanceValue === "string" && balanceValue.trim().length > 0
+          ? Number.parseInt(balanceValue, 10)
+          : NaN;
+
+    if (!Number.isFinite(parsedBalance) || parsedBalance < 0) {
+      return Response.json({ error: "Balance must be a non-negative number" }, { status: 400 });
+    }
+    const desiredBalance = Math.max(0, Math.trunc(parsedBalance));
+
+    let targetNpub: string | null = null;
+    let targetNormalized: string | null = null;
+
+    if (npubInput) {
+      const normalized = normaliseNpub(npubInput);
+      if (!normalized) {
+        return Response.json({ error: "Invalid npub" }, { status: 400 });
+      }
+      targetNpub = npubInput;
+      targetNormalized = normalized;
+    } else if (aliasInput) {
+      const aliasLookup = aliasInput.toLowerCase();
+      const records = identityUserStore.listUsers();
+      const found = records.find(
+        (entry) => typeof entry.alias === "string" && entry.alias.toLowerCase() === aliasLookup,
+      );
+      if (!found) {
+        return Response.json({ error: `No user found for alias "${aliasInput}"` }, { status: 404 });
+      }
+      targetNpub = found.npub;
+      targetNormalized = found.normalizedNpub;
+    }
+
+    if (!targetNpub || !targetNormalized) {
+      return Response.json({ error: "Unable to resolve user" }, { status: 400 });
+    }
+
+    try {
+      const updatedRecord = identityUserStore.setBalance(targetNpub, desiredBalance);
+      const users = buildAdminUserList();
+      const user =
+        users.find((entry) => entry.normalizedNpub === updatedRecord.normalizedNpub) ?? null;
+      return Response.json(
+        {
+          user,
+          users,
+        },
+        { status: 200 },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
   if (pathname === "/api/apps/clone" && method === "POST") {
     const denied = await ensureApiAccess(AccessActions.AppsManage, request, url, authContext);
     if (denied) {
