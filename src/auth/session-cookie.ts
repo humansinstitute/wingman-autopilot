@@ -1,5 +1,7 @@
 import { createHmac, randomBytes } from "node:crypto";
 
+import { getSessionSecretBytes } from "./session-secret";
+
 export interface SessionCookiePayload {
   npub: string;
   nonce: string;
@@ -24,21 +26,6 @@ const fromBase64Url = (value: string) => {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
   const padding = normalized.length % 4 === 0 ? "" : "=".repeat(4 - (normalized.length % 4));
   return Buffer.from(`${normalized}${padding}`, "base64");
-};
-
-let cachedSecret: Uint8Array | null = null;
-
-const getSessionSecret = (): Uint8Array => {
-  if (cachedSecret) return cachedSecret;
-  const source =
-    (Bun.env.IDENTITY_SESSION_SECRET ?? "").trim() ||
-    (Bun.env.SESSION_SECRET ?? "").trim() ||
-    (Bun.env.COOKIE_SECRET ?? "").trim();
-  if (!source) {
-    throw new Error("IDENTITY_SESSION_SECRET (or SESSION_SECRET/COOKIE_SECRET) must be configured");
-  }
-  cachedSecret = new TextEncoder().encode(source);
-  return cachedSecret;
 };
 
 export class SessionCookieError extends Error {
@@ -106,7 +93,7 @@ const decodePayload = (encoded: string): SessionCookiePayload => {
 };
 
 const signPayload = (encoded: string): string => {
-  const secret = getSessionSecret();
+  const secret = getSessionSecretBytes();
   const hmac = createHmac("sha256", secret);
   hmac.update(encoded);
   return toBase64Url(hmac.digest());

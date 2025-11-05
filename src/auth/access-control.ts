@@ -9,6 +9,7 @@ export const AccessActions = {
   UiRestricted: "ui:restricted",
   AdminUsers: "admin:users",
   SystemManage: "system:manage",
+  TodosManage: "todos:manage",
 } as const;
 
 export type AccessAction = (typeof AccessActions)[keyof typeof AccessActions];

@@ -29,6 +29,8 @@ import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 import { fileWatcherStore } from "./storage/file-watcher-store";
 import { FileWatcherRunner } from "./watchers/file-watcher-runner";
 import { identityUserStore, InsufficientBalanceError } from "./storage/identity-user-store";
+import { TodoStore } from "./todos/todo-store";
+import { createTodoApiHandler } from "./todos/todo-api";
 import { ensureDeepDiveProcess, getDeepDivePort, isDeepDiveProcessRunning } from "./deep-dive-process";
 import {
   buildAgentUrl,
@@ -68,6 +70,8 @@ console.log(`[config] tmux session base: ${config.tmuxBase}`);
 const TMUX_SESSION_NAME = config.tmuxBase;
 const SUPPORTED_AGENT_TYPES: AgentType[] = ["codex", "claude", "goose", "opencode", "gemini"];
 const MESSAGE_COST_SATS = 100;
+const todoStore = new TodoStore();
+const todoApiHandler = createTodoApiHandler({ store: todoStore });
 
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());
@@ -75,6 +79,7 @@ registerAccessRule(AccessActions.FilesWrite, requireAuthentication());
 registerAccessRule(AccessActions.DeepDiveAccess, requireAuthentication());
 registerAccessRule(AccessActions.AppsManage, requireAuthentication());
 registerAccessRule(AccessActions.UiRestricted, requireAuthentication());
+registerAccessRule(AccessActions.TodosManage, requireAuthentication());
 
 const projectRootPath = (() => {
   let root = normalize(fileURLToPath(new URL("..", import.meta.url)));
@@ -3579,6 +3584,17 @@ const handleApi = async (
     }
     return app.ownerNpub === viewerNpub;
   };
+  if (pathname.startsWith("/api/todos")) {
+    const denied = await ensureApiAccess(AccessActions.TodosManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    const response = await todoApiHandler(request, url, method, authContext);
+    if (response) {
+      return response;
+    }
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
   if (pathname === "/api/system/restart/status" && method === "GET") {
     const denied = await ensureApiAccess(AccessActions.SystemManage, request, url, authContext);
     if (denied) {
@@ -5346,6 +5362,8 @@ const server = Bun.serve({
         pathname === "/home" ||
         pathname === "/apps" ||
         pathname.startsWith("/apps/") ||
+        pathname === "/todos" ||
+        pathname.startsWith("/todos/") ||
         pathname === "/docs" ||
         pathname.startsWith("/docs/") ||
         pathname === "/files" ||

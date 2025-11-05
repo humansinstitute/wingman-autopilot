@@ -678,6 +678,202 @@ body[data-menu-open="true"] .wm-menu-panel {
   gap: 1.5rem;
 }
 
+.wm-todos-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  max-width: 56rem;
+  width: 100%;
+  margin: 0 auto;
+  padding: 1rem 0 2rem;
+}
+
+.wm-todos-title {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.015em;
+  padding: 0 0.5rem;
+}
+
+.wm-todos-guest {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 12rem;
+  text-align: center;
+  font-size: 1.05rem;
+}
+
+.wm-todo-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.wm-todo-form__form {
+  display: grid;
+  gap: 1rem;
+}
+
+.wm-todo-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.wm-todo-field label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.wm-todo-field input,
+.wm-todo-field select,
+.wm-todo-field textarea {
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.wm-todo-field textarea {
+  resize: vertical;
+}
+
+.wm-todo-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.wm-todo-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.wm-todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.wm-todo-status {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-tertiary);
+}
+
+.wm-todo-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.wm-todo-item__header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.wm-todo-item__title {
+  margin: 0;
+  font-size: 1.15rem;
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.wm-todo-item__priority {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--text-tertiary);
+}
+
+.wm-todo-item__priority select {
+  padding: 0.35rem 0.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.wm-todo-star {
+  border: none;
+  background: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: var(--text-tertiary);
+  transition: color 150ms ease;
+}
+
+.wm-todo-star.is-active {
+  color: var(--accent-primary);
+}
+
+.wm-todo-star:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.wm-todo-item__meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 0.75rem;
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text-tertiary);
+}
+
+.wm-todo-item__meta dt {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.wm-todo-item__description {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.wm-todo-item__actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.wm-todo-editor {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+}
+
+.wm-alert {
+  padding: 0.85rem 1rem;
+  border-radius: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.wm-alert-error {
+  background: rgba(248, 113, 113, 0.12);
+  color: rgba(248, 113, 113, 0.95);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+}
+
 .wm-apps-header {
   display: flex;
   flex-wrap: wrap;
@@ -1119,6 +1315,45 @@ body[data-menu-open="true"] .wm-menu-panel {
   flex-wrap: wrap;
   gap: 0.45rem;
   align-items: center;
+}
+
+.wm-home-todos {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.wm-home-todo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.wm-home-todo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+}
+
+.wm-home-todo__star,
+.wm-home-todo__priority {
+  font-weight: 600;
+  color: var(--accent-primary);
+}
+
+.wm-home-todo__title {
+  flex: 1;
+}
+
+.wm-home-todo__due {
+  font-size: 0.85rem;
+  color: var(--text-tertiary);
 }
 
 

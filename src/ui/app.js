@@ -3,6 +3,7 @@ import "/ace-builds/src-noconflict/mode-text.js";
 import "/ace-builds/src-noconflict/theme-chrome.js";
 import "/ace-builds/src-noconflict/theme-tomorrow_night.js";
 import "./identity/index.js";
+import { createTodoFeature } from "./todos/index.js";
 
 const ace = globalThis.ace;
 if (!ace) {
@@ -80,6 +81,12 @@ const state = {
     lines: [],
     loading: false,
     tail: 200,
+  },
+  todos: {
+    items: [],
+    loading: false,
+    error: null,
+    initialized: false,
   },
   files: {
     initialized: false,
@@ -160,6 +167,8 @@ const state = {
     balance: 0,
   },
 };
+
+let todoFeature = null;
 
 let performAuthUiSync = () => {};
 let pendingAuthUiSync = false;
@@ -722,6 +731,12 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
   }
 
   state.identity = next;
+  if (todoFeature) {
+    todoFeature.reset();
+    if (next.authenticated) {
+      void todoFeature.ensureLoaded();
+    }
+  }
 
   if (wasAdmin && !next.isAdmin) {
     state.adminUsers = createAdminUsersState();
@@ -2807,6 +2822,7 @@ const LIVE_ROUTE_PREFIX = "/live";
 const FILES_ROUTE = "/files";
 const SETTINGS_ROUTE = "/settings";
 const APPS_ROUTE = "/apps";
+const TODOS_ROUTE = "/todos";
 const HOME_ROUTE = "/home";
 
 const getRouteFromPath = (pathname) => {
@@ -2823,6 +2839,9 @@ const getRouteFromPath = (pathname) => {
   }
   if (pathname === APPS_ROUTE) {
     return "apps";
+  }
+  if (pathname === TODOS_ROUTE || pathname.startsWith(`${TODOS_ROUTE}/`)) {
+    return "todos";
   }
   if (pathname === LIVE_ROUTE_PREFIX || pathname.startsWith(`${LIVE_ROUTE_PREFIX}/`)) {
     return "live";
@@ -7082,6 +7101,28 @@ const renderApps = () => {
   return wrapper;
 };
 
+const renderTodos = () => {
+  if (!state.identity.authenticated) {
+    const guestContainer = document.createElement("div");
+    guestContainer.className = "wm-todos-page";
+    const guestCard = document.createElement("section");
+    guestCard.className = "wm-card wm-todos-guest";
+    const guestMessage = document.createElement("p");
+    guestMessage.textContent = "Sign in to manage your todos.";
+    guestCard.append(guestMessage);
+    guestContainer.append(guestCard);
+    return guestContainer;
+  }
+  void ensureAppsLoaded();
+  if (todoFeature) {
+    void todoFeature.ensureLoaded();
+    return todoFeature.renderPage();
+  }
+  const container = document.createElement("div");
+  container.className = "wm-todos-page";
+  return container;
+};
+
 const openAppLogsDialog = async (appId) => {
   if (!appLogsDialog) return;
   const app = getAppById(appId);
@@ -7681,6 +7722,14 @@ const renderHome = () => {
   }
 
   wrapper.append(renderHomeIdentityBanner());
+
+  if (todoFeature) {
+    void todoFeature.ensureLoaded();
+    const homeTodos = todoFeature.renderHomeCard();
+    if (homeTodos) {
+      wrapper.append(homeTodos);
+    }
+  }
 
   if (!state.apps.initialized && !state.apps.loading) {
     void ensureAppsLoaded();
@@ -9721,6 +9770,8 @@ const render = () => {
     view = renderLive();
   } else if (currentRoute === "apps") {
     view = renderApps();
+  } else if (currentRoute === "todos") {
+    view = renderTodos();
   } else if (currentRoute === "files") {
     view = renderFiles();
   } else if (currentRoute === "settings") {
@@ -9746,6 +9797,16 @@ const render = () => {
     resetPullRefresh();
   }
 };
+
+todoFeature = createTodoFeature({
+  onRenderRequested: () => {
+    if (currentRoute === "todos" || currentRoute === "home") {
+      render();
+    }
+  },
+  getApps: () => (Array.isArray(state.apps.items) ? state.apps.items : []),
+});
+state.todos = todoFeature.state;
 
 const handleTouchStart = (event) => {
   if (!pullRefreshIndicator || pullRefreshing) return;
@@ -9841,6 +9902,27 @@ function navigateToApps({ openNewAppDialog = false, skipMenuClose = false } = {}
   render();
 }
 
+function navigateToTodos({ skipMenuClose = false } = {}) {
+  if (!state.identity.authenticated) {
+    openIdentityLoginDialog();
+    return;
+  }
+  if (!skipMenuClose) {
+    closeMenu();
+  }
+  closeIdentityLoginDialog();
+  currentRoute = "todos";
+  lastLoggedSessionId = null;
+  if (window.location.pathname !== TODOS_ROUTE) {
+    window.history.pushState({ route: "todos" }, "", TODOS_ROUTE);
+  }
+  void ensureAppsLoaded();
+  if (todoFeature) {
+    void todoFeature.ensureLoaded();
+  }
+  render();
+}
+
 function navigateToSettings({ skipMenuClose = false } = {}) {
   if (!skipMenuClose) {
     closeMenu();
@@ -9877,6 +9959,9 @@ navLinks.forEach((link) => {
     } else if (targetRoute === "apps") {
       navigateToApps({ skipMenuClose: true });
       return;
+    } else if (targetRoute === "todos") {
+      navigateToTodos({ skipMenuClose: true });
+      return;
     } else if (targetRoute === "files") {
       currentRoute = "files";
       lastLoggedSessionId = null;
@@ -9897,6 +9982,10 @@ navLinks.forEach((link) => {
     render();
   });
 });
+
+if (typeof window !== "undefined") {
+  window.navigateToTodos = navigateToTodos;
+}
 
 menuToggle?.addEventListener("click", (event) => {
   event.stopPropagation();
@@ -10132,6 +10221,11 @@ window.addEventListener("popstate", () => {
     }
   } else if (currentRoute === "apps") {
     void ensureAppsLoaded();
+  } else if (currentRoute === "todos") {
+    void ensureAppsLoaded();
+    if (todoFeature) {
+      void todoFeature.ensureLoaded();
+    }
   }
   render();
 });
@@ -10337,6 +10431,9 @@ dialog.addEventListener("cancel", (event) => {
   await fetchSessions();
   if (currentRoute === "apps") {
     await fetchApps({ tail: APP_LOG_PREVIEW_LINES });
+  }
+  if (state.identity.authenticated && todoFeature) {
+    await todoFeature.ensureLoaded();
   }
   render();
 })();
