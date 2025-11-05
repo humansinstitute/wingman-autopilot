@@ -270,8 +270,9 @@ const toFiniteTimestamp = (value) => {
 
 const abbreviateNpub = (npub) => {
   if (!npub || typeof npub !== "string") return "";
-  if (npub.length <= 20) return npub;
-  return `${npub.slice(0, 12)}…${npub.slice(-6)}`;
+  const trimmed = npub.trim();
+  if (trimmed.length <= 20) return trimmed;
+  return `${trimmed.slice(0, 8)}...${trimmed.slice(-6)}`;
 };
 
 const formatSatoshis = (value) => {
@@ -456,7 +457,25 @@ const syncIdentityDisplayForEntry = (entry) => {
     }
   }
   if (entry.alias) {
-    entry.alias.textContent = alias || (authenticated && npub ? npub : "Not signed in");
+    if (!authenticated) {
+      entry.alias.textContent = "Not signed in";
+      entry.alias.removeAttribute("title");
+    } else {
+      const abbreviated = npub ? abbreviateNpub(npub) : "";
+      if (alias && abbreviated) {
+        entry.alias.textContent = `${alias} (${abbreviated})`;
+        entry.alias.title = npub;
+      } else if (abbreviated) {
+        entry.alias.textContent = abbreviated;
+        entry.alias.title = npub;
+      } else if (alias) {
+        entry.alias.textContent = alias;
+        entry.alias.removeAttribute("title");
+      } else {
+        entry.alias.textContent = "Not signed in";
+        entry.alias.removeAttribute("title");
+      }
+    }
   }
   if (entry.npub) {
     if (npub) {
