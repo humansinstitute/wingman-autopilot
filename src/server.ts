@@ -5222,7 +5222,7 @@ const server = Bun.serve({
         );
       }
 
-      if (
+      const isSpaRoutePath =
         pathname === "/home" ||
         pathname === "/apps" ||
         pathname.startsWith("/apps/") ||
@@ -5235,8 +5235,9 @@ const server = Bun.serve({
         pathname === "/live" ||
         pathname.startsWith("/live/") ||
         pathname === "/settings" ||
-        pathname.startsWith("/settings/")
-      ) {
+        pathname.startsWith("/settings/");
+
+      if (isSpaRoutePath && !assetService.isUiAssetPath(pathname)) {
         return serveIndex();
       }
 

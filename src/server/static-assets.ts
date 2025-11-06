@@ -46,6 +46,7 @@ const resolveUiAsset = (pathname: string): Response | undefined => {
 
 export const createStaticAssetService = (options: StaticAssetServiceOptions) => {
   const { publicRoot, publicRootBoundary, aceRoot, aceRootBoundary, vendorPackages } = options;
+  const uiAssetPaths = new Set(Object.keys(uiAssetMap));
   const vendorPackageNames = Object.keys(vendorPackages);
 
   const rewriteVendorModuleSpecifiers = (source: string) => {
@@ -190,5 +191,6 @@ export const createStaticAssetService = (options: StaticAssetServiceOptions) => 
     servePublicAsset,
     serveAceBuildsAsset,
     serveVendorModule,
+    isUiAssetPath: (pathname: string) => uiAssetPaths.has(pathname),
   };
 };
