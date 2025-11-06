@@ -6,6 +6,9 @@ const DEFAULT_LOG_N = 18;
 const BECH32_PREFIX = "ncryptsec";
 const KEY_SECURITY_BYTE = 0x01;
 const ENCRYPTION_VERSION = 0x02;
+const SECURE_LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+const INSECURE_PASSWORD_MESSAGE =
+  "Password entry requires a secure connection. Access Wingman over HTTPS or from localhost.";
 
 import { scryptAsync } from "/vendor/@noble/hashes/scrypt.js";
 import { xchacha20poly1305 } from "/vendor/@noble/ciphers/chacha.js";
@@ -22,6 +25,75 @@ class PasswordPromptCancelledError extends Error {
     this.name = "PasswordPromptCancelledError";
   }
 }
+
+const isSecurePasswordContext = () => {
+  if (typeof window === "undefined" || typeof window.location === "undefined") {
+    return false;
+  }
+  const { protocol, hostname } = window.location;
+  if (protocol === "https:") {
+    return true;
+  }
+  return SECURE_LOCAL_HOSTS.has(hostname);
+};
+
+const applySecureInputBehaviour = (input, secure) => {
+  if (!(input instanceof HTMLInputElement)) {
+    return;
+  }
+  const secureType = input.dataset?.secureType ?? "password";
+  if (secure) {
+    if (input.type !== secureType) {
+      input.type = secureType;
+    }
+    input.disabled = false;
+    input.removeAttribute("aria-disabled");
+    input.removeAttribute("data-insecure");
+    if (input.dataset?.securePlaceholder) {
+      input.placeholder = input.dataset.securePlaceholder;
+    }
+    return;
+  }
+
+  input.value = "";
+  input.type = "text";
+  input.disabled = true;
+  input.setAttribute("aria-disabled", "true");
+  input.setAttribute("data-insecure", "true");
+  if (!input.dataset?.securePlaceholder && input.placeholder) {
+    input.dataset.securePlaceholder = input.placeholder;
+  }
+  input.placeholder = "Enable HTTPS to enter a password";
+};
+
+const applyPasswordDialogSecurity = (elements) => {
+  const secure = isSecurePasswordContext();
+  applySecureInputBehaviour(elements?.passwordInput ?? null, secure);
+  applySecureInputBehaviour(elements?.confirmInput ?? null, secure);
+  if (elements?.dialog instanceof HTMLDialogElement) {
+    elements.dialog.dataset.security = secure ? "secure" : "insecure";
+  }
+  if (elements?.errorEl instanceof HTMLElement) {
+    if (secure && elements.errorEl.dataset.securityMessage === "true") {
+      elements.errorEl.hidden = true;
+      elements.errorEl.textContent = "";
+      delete elements.errorEl.dataset.securityMessage;
+    } else if (!secure) {
+      elements.errorEl.hidden = false;
+      elements.errorEl.textContent = INSECURE_PASSWORD_MESSAGE;
+      elements.errorEl.dataset.securityMessage = "true";
+    }
+  }
+  if (elements?.clearButton instanceof HTMLButtonElement) {
+    elements.clearButton.disabled = !secure;
+    if (!secure) {
+      elements.clearButton.setAttribute("aria-disabled", "true");
+    } else {
+      elements.clearButton.removeAttribute("aria-disabled");
+    }
+  }
+  return secure;
+};
 
 const getCrypto = () => {
   if (typeof globalThis !== "undefined" && globalThis.crypto && typeof globalThis.crypto.getRandomValues === "function") {
@@ -318,7 +390,10 @@ const clearPasswordCache = () => {
 };
 
 const ensureDialogElements = () => {
-  if (passwordDialogElements) return passwordDialogElements;
+  if (passwordDialogElements) {
+    passwordDialogElements.secure = applyPasswordDialogSecurity(passwordDialogElements);
+    return passwordDialogElements;
+  }
   if (typeof document === "undefined") return null;
   const dialog = document.getElementById(PASSWORD_DIALOG_ID);
   if (!(dialog instanceof HTMLDialogElement)) return null;
@@ -342,6 +417,7 @@ const ensureDialogElements = () => {
     title,
     description,
   };
+  passwordDialogElements.secure = applyPasswordDialogSecurity(passwordDialogElements);
   return passwordDialogElements;
 };
 
@@ -360,6 +436,9 @@ const showPasswordDialog = async ({
     elements;
   if (!form || !passwordInput || !dialog) {
     throw new Error("Password dialog incomplete");
+  }
+  if (!elements.secure) {
+    throw new Error(INSECURE_PASSWORD_MESSAGE);
   }
 
   const needsConfirmation = mode === "create";

@@ -65,6 +65,7 @@ import {
   type AccessDecision,
   type AccessRule,
 } from "./auth/access-control";
+import { createStaticAssetService } from "./server/static-assets";
 
 const config = loadConfig();
 const adminNpub = normaliseNpub(Bun.env.ADMIN_NPUB ?? null);
@@ -2877,158 +2878,13 @@ const listDirectories = async (
 
 type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
-const assetMap: Record<string, { path: string; type: string }> = {
-  "/app.js": { path: "./ui/app.js", type: "application/javascript; charset=utf-8" },
-  "/styles.css": { path: "./ui/styles.css", type: "text/css; charset=utf-8" },
-  "/identity/index.js": { path: "./ui/identity/index.js", type: "application/javascript; charset=utf-8" },
-};
-
-const resolveAsset = (pathname: string) => {
-  const asset = assetMap[pathname];
-  if (!asset) return undefined;
-  const url = new URL(asset.path, import.meta.url);
-  const file = Bun.file(url);
-  if (!file.size) return undefined;
-  return new Response(file, {
-    headers: {
-      "content-type": asset.type,
-      "cache-control": "public, max-age=60",
-    },
-  });
-};
-
-const servePublicAsset = (pathname: string) => {
-  const normalized = pathname.startsWith("/") ? pathname.slice(1) : pathname;
-  if (!normalized) return undefined;
-  const candidate = normalize(join(publicRoot, normalized));
-  if (!candidate.startsWith(publicRootBoundary)) {
-    console.warn(`[static] rejected public asset outside boundary: ${pathname}`);
-    return undefined;
-  }
-  const file = Bun.file(candidate);
-  if (!file.size) return undefined;
-
-  const type = file.type || undefined;
-  return new Response(file, {
-    headers: {
-      ...(type ? { "content-type": type } : {}),
-      "cache-control": "public, max-age=3600",
-    },
-  });
-};
-
-const serveAceBuildsAsset = (pathname: string) => {
-  if (!pathname.startsWith("/ace-builds/")) return undefined;
-  const suffix = pathname.slice("/ace-builds/".length);
-  if (suffix.length === 0) return undefined;
-  const candidate = normalize(join(aceBuildsRoot, suffix));
-  if (!candidate.startsWith(aceBuildsRootBoundary)) {
-    return undefined;
-  }
-  const file = Bun.file(candidate);
-  if (!file.size) return undefined;
-  const ext = extname(candidate).toLowerCase();
-  const type =
-    ext === ".js"
-      ? "application/javascript; charset=utf-8"
-      : ext === ".css"
-        ? "text/css; charset=utf-8"
-        : file.type || undefined;
-  return new Response(file, {
-    headers: {
-      ...(type ? { "content-type": type } : {}),
-      "cache-control": "public, max-age=86400",
-    },
-  });
-};
-
-const rewriteVendorModuleSpecifiers = (source: string) => {
-  let updated = source;
-  for (const packageName of Object.keys(vendorPackages)) {
-    if (!updated.includes(packageName)) continue;
-    const vendorPrefix = `/vendor/${packageName}`;
-    updated = updated.replaceAll(`'${packageName}`, `'${vendorPrefix}`);
-    updated = updated.replaceAll(`"${packageName}`, `"${vendorPrefix}`);
-    updated = updated.replaceAll(`\`${packageName}`, `\`${vendorPrefix}`);
-  }
-  return updated;
-};
-
-const serveVendorModule = async (pathname: string): Promise<Response | undefined> => {
-  if (!pathname.startsWith("/vendor/")) return undefined;
-  const suffix = pathname.slice("/vendor/".length);
-  if (!suffix) return undefined;
-
-  const segments = suffix.split("/").filter((segment) => segment.length > 0);
-  if (segments.length === 0) return undefined;
-  if (segments.some((segment) => segment === "." || segment === "..")) return undefined;
-
-  let packageName: string;
-  let relativeSegments: string[];
-  if (segments[0].startsWith("@")) {
-    if (segments.length < 2) return undefined;
-    packageName = `${segments[0]}/${segments[1]}`;
-    relativeSegments = segments.slice(2);
-  } else {
-    packageName = segments[0];
-    relativeSegments = segments.slice(1);
-  }
-  if (relativeSegments.some((segment) => segment === "." || segment === "..")) return undefined;
-
-  const vendor = vendorPackages[packageName];
-  if (!vendor) return undefined;
-  const relativePath = relativeSegments.length > 0 ? join(...relativeSegments) : vendor.entry;
-  const resolveCandidate = (basePath: string) => {
-    const normalized = normalize(join(vendor.root, basePath));
-    if (!normalized.startsWith(vendor.boundary)) {
-      return undefined;
-    }
-    const attemptPaths: string[] = [];
-    const extension = extname(normalized);
-    if (extension) {
-      attemptPaths.push(normalized);
-    } else {
-      attemptPaths.push(`${normalized}.js`, join(normalized, "index.js"));
-      if (vendor.entry && vendor.entry !== "index.js") {
-        attemptPaths.push(join(normalized, vendor.entry));
-      }
-    }
-    for (const attempt of attemptPaths) {
-      const attemptFile = Bun.file(attempt);
-      if (attemptFile.size) {
-        return { file: attemptFile, path: attempt };
-      }
-    }
-    return undefined;
-  };
-  const resolved = resolveCandidate(relativePath);
-  if (!resolved) {
-    console.warn(`[static] failed to resolve vendor asset: ${pathname}`);
-    return undefined;
-  }
-
-  const { file, path: resolvedPath } = resolved;
-  const extension = extname(resolvedPath).toLowerCase();
-  const type =
-    extension === ".js"
-      ? "application/javascript; charset=utf-8"
-      : extension === ".json" || extension === ".map"
-        ? "application/json; charset=utf-8"
-        : file.type || undefined;
-
-  const headers: Record<string, string> = {
-    ...(type ? { "content-type": type } : {}),
-    "cache-control": "public, max-age=86400",
-  };
-
-  if (extension === ".js") {
-    const source = await file.text();
-    const rewritten = rewriteVendorModuleSpecifiers(source);
-    return new Response(rewritten, { headers });
-  }
-
-  return new Response(file, { headers });
-};
+const assetService = createStaticAssetService({
+  publicRoot,
+  publicRootBoundary,
+  aceRoot: aceBuildsRoot,
+  aceRootBoundary: aceBuildsRootBoundary,
+  vendorPackages,
+});
 
 const serveIndex = () => {
   const url = new URL("./ui/index.html", import.meta.url);
@@ -5410,22 +5266,22 @@ const server = Bun.serve({
         return tempImage;
       }
 
-      const aceAsset = serveAceBuildsAsset(pathname);
+      const aceAsset = assetService.serveAceBuildsAsset(pathname);
       if (aceAsset) {
         return aceAsset;
       }
 
-      const vendorAsset = await serveVendorModule(pathname);
+      const vendorAsset = await assetService.serveVendorModule(pathname);
       if (vendorAsset) {
         return vendorAsset;
       }
 
-      const assetResponse = resolveAsset(pathname);
+      const assetResponse = assetService.resolveUiAsset(pathname);
       if (assetResponse) {
         return assetResponse;
       }
 
-      const publicAsset = servePublicAsset(pathname);
+      const publicAsset = assetService.servePublicAsset(pathname);
       if (publicAsset) {
         return publicAsset;
       }
