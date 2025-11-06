@@ -1,4 +1,5 @@
-import { extname, join, normalize } from "node:path";
+import { extname, join, normalize, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const uiAssetMap: Record<string, { url: URL; type: string }> = {
   "/app.js": { url: new URL("../ui/app.js", import.meta.url), type: "application/javascript; charset=utf-8" },
@@ -48,6 +49,51 @@ export const createStaticAssetService = (options: StaticAssetServiceOptions) => 
   const { publicRoot, publicRootBoundary, aceRoot, aceRootBoundary, vendorPackages } = options;
   const uiAssetPaths = new Set(Object.keys(uiAssetMap));
   const vendorPackageNames = Object.keys(vendorPackages);
+  const uiRootPath = normalize(fileURLToPath(new URL("../ui", import.meta.url)));
+  const uiRootBoundary = uiRootPath.endsWith(sep) ? uiRootPath : `${uiRootPath}${sep}`;
+
+  const isWithinUiBoundary = (candidate: string) => {
+    return candidate === uiRootPath || candidate.startsWith(uiRootBoundary);
+  };
+
+  const deriveUiAssetType = (extension: string, fallback?: string) => {
+    switch (extension) {
+      case ".js":
+        return "application/javascript; charset=utf-8";
+      case ".css":
+        return "text/css; charset=utf-8";
+      case ".json":
+      case ".map":
+        return "application/json; charset=utf-8";
+      default:
+        return fallback;
+    }
+  };
+
+  const resolveDynamicUiAsset = (pathname: string): Response | undefined => {
+    const ext = extname(pathname).toLowerCase();
+    if (!ext) return undefined;
+    if (!pathname.startsWith("/")) return undefined;
+    const relativePath = pathname.slice(1);
+    if (!relativePath) return undefined;
+
+    const candidate = normalize(join(uiRootPath, relativePath));
+    if (!isWithinUiBoundary(candidate)) {
+      console.warn(`[static] rejected ui asset outside boundary: ${pathname}`);
+      return undefined;
+    }
+
+    const file = Bun.file(candidate);
+    if (!file.size) return undefined;
+
+    const type = deriveUiAssetType(ext, file.type || undefined);
+    return new Response(file, {
+      headers: {
+        ...(type ? { "content-type": type } : {}),
+        "cache-control": "public, max-age=60",
+      },
+    });
+  };
 
   const rewriteVendorModuleSpecifiers = (source: string) => {
     if (vendorPackageNames.length === 0) {
@@ -187,10 +233,21 @@ export const createStaticAssetService = (options: StaticAssetServiceOptions) => 
   };
 
   return {
-    resolveUiAsset,
+    resolveUiAsset: (pathname: string) => resolveUiAsset(pathname) ?? resolveDynamicUiAsset(pathname),
     servePublicAsset,
     serveAceBuildsAsset,
     serveVendorModule,
-    isUiAssetPath: (pathname: string) => uiAssetPaths.has(pathname),
+    isUiAssetPath: (pathname: string) => {
+      if (uiAssetPaths.has(pathname)) return true;
+      const ext = extname(pathname).toLowerCase();
+      if (!ext) return false;
+      if (!pathname.startsWith("/")) return false;
+      const relativePath = pathname.slice(1);
+      if (!relativePath) return false;
+      const candidate = normalize(join(uiRootPath, relativePath));
+      if (!isWithinUiBoundary(candidate)) return false;
+      const file = Bun.file(candidate);
+      return file.size > 0;
+    },
   };
 };
