@@ -62,10 +62,6 @@ function createTodoView({ state, actions }) {
     const composer = document.createElement("div");
     composer.className = state.composer.error ? "wm-todo-composer has-error" : "wm-todo-composer";
 
-    const icon = document.createElement("span");
-    icon.className = "wm-todo-composer__icon";
-    icon.textContent = "+";
-
     const input = document.createElement("input");
     input.className = "wm-todo-composer__input";
     input.type = "text";
@@ -82,7 +78,15 @@ function createTodoView({ state, actions }) {
       }
     });
 
-    composer.append(icon, input);
+    const inputWrapper = document.createElement("div");
+    inputWrapper.className = "wm-todo-composer__input-wrapper";
+    inputWrapper.append(input);
+
+    const icon = document.createElement("span");
+    icon.className = "wm-todo-composer__icon";
+    icon.textContent = "+";
+
+    composer.append(inputWrapper, icon);
 
     if (typeof actions.consumeComposerFocus === "function" && actions.consumeComposerFocus()) {
       requestAnimationFrame(() => {
