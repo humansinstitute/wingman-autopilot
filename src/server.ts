@@ -5246,7 +5246,7 @@ const server = Bun.serve({
         if (denied) {
           return denied;
         }
-        const deepDivePage = servePublicAsset("/deep-dive.html");
+        const deepDivePage = assetService.servePublicAsset("/deep-dive.html");
         if (deepDivePage) {
           return deepDivePage;
         }
