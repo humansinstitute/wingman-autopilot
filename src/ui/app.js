@@ -19,6 +19,18 @@ const SESSION_POLL_INTERVAL_MS = 2000;
 const APPS_POLL_INTERVAL_MS = 5000;
 const APP_LOG_PREVIEW_LINES = 5;
 const WEB_APP_BASE_URL = "https://host.otherstuff.ai";
+const TOAST_DEFAULT_DURATION_MS = 2600;
+const TERMINAL_CONTROL_ACTIONS = [
+  { id: "terminal-esc", label: "Send Esc", toastLabel: "Esc", sequence: "\u001b" },
+  { id: "terminal-1", label: "Send 1", toastLabel: "1", sequence: "1" },
+  { id: "terminal-2", label: "Send 2", toastLabel: "2", sequence: "2" },
+  { id: "terminal-up", label: "Send Arrow Up", toastLabel: "Arrow Up", sequence: "\u001b[A" },
+  { id: "terminal-down", label: "Send Arrow Down", toastLabel: "Arrow Down", sequence: "\u001b[B" },
+  { id: "terminal-return", label: "Send Return", toastLabel: "Return", sequence: "\r" },
+  { id: "terminal-ctrlc", label: "Send Ctrl+C", toastLabel: "Ctrl+C", sequence: "\u0003" },
+];
+
+let toastContainer = null;
 
 let sessionPollIntervalId = null;
 let sessionPollInFlight = false;
@@ -168,6 +180,44 @@ const state = {
     ports: [],
     balance: 0,
   },
+};
+
+const ensureToastContainer = () => {
+  if (toastContainer && document.body.contains(toastContainer)) {
+    return toastContainer;
+  }
+  toastContainer = document.createElement("div");
+  toastContainer.className = "wm-toast-container";
+  document.body.append(toastContainer);
+  return toastContainer;
+};
+
+const showToast = (message, options = {}) => {
+  if (!message) return;
+  const variant = options.variant === "error" ? "error" : "info";
+  const duration =
+    typeof options.duration === "number" && Number.isFinite(options.duration) && options.duration > 0
+      ? options.duration
+      : TOAST_DEFAULT_DURATION_MS;
+  const container = ensureToastContainer();
+  const toast = document.createElement("div");
+  toast.className = `wm-toast wm-toast--${variant}`;
+  toast.setAttribute("role", "status");
+  toast.setAttribute("aria-live", "polite");
+  toast.textContent = message;
+  container.append(toast);
+  requestAnimationFrame(() => {
+    toast.classList.add("is-visible");
+  });
+  const removeToast = () => {
+    toast.remove();
+  };
+  const scheduleRemoval = () => {
+    toast.classList.remove("is-visible");
+    toast.addEventListener("transitionend", removeToast, { once: true });
+    setTimeout(removeToast, 400);
+  };
+  setTimeout(scheduleRemoval, duration);
 };
 
 let todoFeature = null;
@@ -5226,39 +5276,60 @@ const resumeSession = async (sessionId) => {
   render();
 };
 
+const postSessionMessage = async (sessionId, content, type = "user") => {
+  const payload =
+    type === "user"
+      ? { content }
+      : {
+          content,
+          type,
+        };
+
+  const response = await fetch(`/api/sessions/${sessionId}/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  let body = null;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+
+  if (!response.ok) {
+    if (body && typeof body === "object" && typeof body.balance === "number") {
+      updateIdentityState({ balance: body.balance }, { persist: true, emit: true });
+    }
+    const message =
+      body && typeof body === "object" && typeof body.error === "string" && body.error.length > 0
+        ? body.error
+        : response.statusText || "Agent request failed";
+    throw new Error(message);
+  }
+
+  if (body && typeof body === "object" && typeof body.balance === "number") {
+    updateIdentityState({ balance: body.balance }, { persist: true, emit: true });
+  }
+
+  return body ?? {};
+};
+
 const sendMessage = async (sessionId, content) => {
   const session = state.sessions.find((item) => item.id === sessionId);
   if (!session) return;
-  if (!content?.trim()) {
+  const trimmed = typeof content === "string" ? content.trim() : "";
+  if (!trimmed) {
     window.alert("Enter a message before sending.");
     return;
   }
 
   try {
-    const response = await fetch(`/api/sessions/${sessionId}/messages`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content }),
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      if (payload && typeof payload === "object" && typeof payload.balance === "number") {
-        updateIdentityState({ balance: payload.balance }, { persist: true, emit: true });
-      }
-      const message =
-        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
-          ? payload.error
-          : response.statusText || "Agent request failed";
-      window.alert(`Agent request failed: ${message}`);
-      return;
-    }
+    const payload = await postSessionMessage(sessionId, trimmed, "user");
     const messages = Array.isArray(payload?.messages) ? payload.messages : [];
     state.conversations.set(sessionId, messages);
     state.messageDrafts.set(sessionId, "");
-
-    if (payload && typeof payload === "object" && typeof payload.balance === "number") {
-      updateIdentityState({ balance: payload.balance }, { persist: true, emit: true });
-    }
 
     // Trigger incremental updates instead of full render
     updateConversationDOM(sessionId);
@@ -5267,7 +5338,6 @@ const sendMessage = async (sessionId, content) => {
     });
     await fetchLogs(sessionId);
 
-    // Clear textarea and restore focus
     const textarea = document.querySelector('.wm-composer textarea');
     if (textarea) {
       textarea.value = "";
@@ -5277,8 +5347,24 @@ const sendMessage = async (sessionId, content) => {
       });
     }
   } catch (error) {
+    const message = error instanceof Error && error.message ? error.message : "Failed to send message to agent.";
     console.error("Failed to send agent message", error);
-    window.alert("Failed to send message to agent. Check console for details.");
+    window.alert(`Agent request failed: ${message}`);
+  }
+};
+
+const sendControlCommand = async (sessionId, action) => {
+  const session = state.sessions.find((item) => item.id === sessionId);
+  if (!session || !action || typeof action.sequence !== "string") {
+    return;
+  }
+  try {
+    await postSessionMessage(sessionId, action.sequence, "raw");
+    showToast(`Sent ${action.toastLabel}`);
+    await fetchLogs(sessionId);
+  } catch (error) {
+    console.error(`Failed to send control command (${action.toastLabel})`, error);
+    showToast(`Failed to send ${action.toastLabel}`, { variant: "error" });
   }
 };
 
@@ -9533,6 +9619,13 @@ const renderComposer = (sessionId) => {
     commandMenu.append(item);
   };
 
+  const addCommandDivider = () => {
+    const divider = document.createElement("div");
+    divider.className = "wm-command-divider";
+    divider.setAttribute("role", "presentation");
+    commandMenu.append(divider);
+  };
+
   addCommand("Scroll to end", () => {
     scrollConversationAreaToBottom(sessionId, { includeWindow: true });
   });
@@ -9547,6 +9640,13 @@ const renderComposer = (sessionId) => {
 
   addCommand("Upload file", () => {
     attachmentInput.click();
+  });
+
+  addCommandDivider();
+  TERMINAL_CONTROL_ACTIONS.forEach((action) => {
+    addCommand(action.label, () => {
+      sendControlCommand(sessionId, action);
+    });
   });
 
   const toggleCommandMenu = () => {

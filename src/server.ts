@@ -5100,10 +5100,15 @@ const handleApi = async (
           return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
         }
 
-        const content =
-          typeof (payload as Record<string, unknown>)?.content === "string"
-            ? (payload as Record<string, unknown>).content.trim()
-            : "";
+        if (!payload || typeof payload !== "object") {
+          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+        }
+
+        const record = payload as Record<string, unknown>;
+        const requestTypeRaw = typeof record.type === "string" ? record.type.trim().toLowerCase() : "user";
+        const messageType = requestTypeRaw === "raw" ? "raw" : "user";
+        const rawContent = typeof record.content === "string" ? record.content : "";
+        const content = messageType === "raw" ? rawContent : rawContent.trim();
 
         if (!content) {
           return Response.json({ error: "Message content is required" }, { status: 400 });
@@ -5112,6 +5117,28 @@ const handleApi = async (
         const userNpub = authContext.npub ?? null;
         if (!userNpub) {
           return Response.json({ error: "Sign in to send messages", balance: 0 }, { status: 403 });
+        }
+
+        if (messageType === "raw") {
+          try {
+            const agentUrl = buildAgentUrl(agentHost, ownedSession.port, "/message");
+            const agentResponse = await fetch(agentUrl, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ type: messageType, content }),
+            });
+            if (!agentResponse.ok) {
+              const errorPayload = await agentResponse.json().catch(() => ({}));
+              const message = (errorPayload?.error as string) ?? agentResponse.statusText ?? "Agent request failed";
+              return Response.json({ error: message }, { status: agentResponse.status });
+            }
+            return Response.json({ id, ok: true });
+          } catch (error) {
+            return Response.json(
+              { error: `Failed to contact agent: ${(error as Error).message ?? "unknown error"}` },
+              { status: 502 },
+            );
+          }
         }
 
         let currentBalance: number;
@@ -5137,7 +5164,7 @@ const handleApi = async (
           const agentResponse = await fetch(agentUrl, {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ type: "user", content }),
+            body: JSON.stringify({ type: messageType, content }),
           });
           if (!agentResponse.ok) {
             const errorPayload = await agentResponse.json().catch(() => ({}));

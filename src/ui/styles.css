@@ -2115,6 +2115,12 @@ body[data-menu-open="true"] .wm-menu-panel {
   outline: none;
 }
 
+.wm-command-divider {
+  height: 1px;
+  margin: 0.2rem 0.1rem 0.15rem;
+  background: rgba(148, 163, 184, 0.35);
+}
+
 .wm-composer textarea::placeholder {
   color: var(--text-tertiary);
 }
@@ -4485,6 +4491,43 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 
 .wm-file-editor__actions .wm-button {
   min-width: 120px;
+}
+
+.wm-toast-container {
+  position: fixed;
+  top: 1.25rem;
+  right: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 120;
+  pointer-events: none;
+}
+
+.wm-toast {
+  min-width: 200px;
+  max-width: 320px;
+  padding: 0.6rem 0.9rem;
+  border-radius: 0.6rem;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+  font-weight: 600;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 180ms ease, transform 180ms ease;
+  pointer-events: auto;
+}
+
+.wm-toast.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.wm-toast--error {
+  background: rgba(239, 68, 68, 0.92);
+  color: #ffffff;
+  box-shadow: 0 12px 28px rgba(239, 68, 68, 0.28);
 }
 
 @media (max-width: 720px) {
