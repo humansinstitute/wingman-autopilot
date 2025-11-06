@@ -731,160 +731,238 @@ body[data-menu-open="true"] .wm-menu-panel {
   font-size: 1.05rem;
 }
 
-.wm-todo-form {
+.wm-todo-table {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  padding: 1rem 1.25rem 1.5rem;
 }
 
-.wm-todo-form__form {
-  display: grid;
-  gap: 1rem;
-}
-
-.wm-todo-field {
+.wm-todo-composer {
   display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: 0.85rem;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.16);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
-.wm-todo-field label {
-  font-size: 0.9rem;
+.wm-todo-composer:focus-within {
+  border-color: rgba(16, 185, 129, 0.65);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.15);
+}
+
+.wm-todo-composer.has-error {
+  border-color: rgba(248, 113, 113, 0.55);
+  box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.15);
+}
+
+.wm-todo-composer__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--accent-primary);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.wm-todo-composer__input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 1rem;
+  font-family: inherit;
+  min-width: 0;
+}
+
+.wm-todo-composer__input:disabled {
+  opacity: 0.6;
+}
+
+.wm-todo-composer__input:focus {
+  outline: none;
+}
+
+.wm-todo-composer__error {
+  margin: 0;
+  font-size: 0.85rem;
+  color: rgba(248, 113, 113, 0.95);
+  padding-left: 2.5rem;
+}
+
+.wm-todo-grid {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--bg-primary);
+  border-radius: 1rem;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.wm-todo-header th {
+  text-align: left;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  padding: 0.85rem 0.9rem;
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.wm-todo-col-star {
+  width: 3.25rem;
+  text-align: center;
+}
+
+.wm-todo-col-title {
+  width: 40%;
+}
+
+.wm-todo-col-due,
+.wm-todo-col-app,
+.wm-todo-col-priority,
+.wm-todo-col-created {
+  white-space: nowrap;
+  width: 13%;
+}
+
+.wm-todo-row td {
+  padding: 0.85rem 0.9rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  vertical-align: middle;
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+}
+
+.wm-todo-row:last-of-type td {
+  border-bottom: none;
+}
+
+.wm-todo-row:not(.is-status):hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.wm-todo-row.is-expanded {
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.wm-todo-row.is-status td {
+  text-align: center;
+  font-style: italic;
+  color: var(--text-tertiary);
+}
+
+.wm-todo-title {
+  display: block;
   font-weight: 600;
   color: var(--text-primary);
 }
 
-.wm-todo-field input,
-.wm-todo-field select,
-.wm-todo-field textarea {
+.wm-todo-subtitle {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wm-todo-row-details td {
+  padding: 0;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.wm-todo-detail-form {
+  display: grid;
+  gap: 1.25rem;
+  padding: 1.25rem 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.wm-todo-detail-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.wm-todo-detail-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.wm-todo-detail-control input,
+.wm-todo-detail-control select,
+.wm-todo-detail-control textarea {
   width: 100%;
   min-height: 2.5rem;
-  padding: 0.5rem 0.75rem;
+  padding: 0.55rem 0.75rem;
   border-radius: 0.6rem;
   border: 1px solid var(--border-primary);
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   color: var(--text-primary);
   font-size: 0.95rem;
   font-family: inherit;
   box-sizing: border-box;
 }
 
-.wm-todo-field textarea {
+.wm-todo-detail-control textarea {
   resize: vertical;
+  min-height: 5rem;
 }
 
-.wm-todo-inline {
-  flex-direction: row;
-  align-items: center;
-  gap: 0.75rem;
+.wm-todo-detail-control input[type="checkbox"] {
+  width: 1.25rem;
+  height: 1.25rem;
 }
 
-.wm-todo-actions {
+.wm-todo-detail-actions {
+  grid-column: 1 / -1;
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.wm-todo-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.wm-todo-status {
-  margin: 0;
-  font-size: 0.95rem;
-  color: var(--text-tertiary);
-}
-
-.wm-todo-item {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.wm-todo-item__header {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
   flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
 }
 
-.wm-todo-item__title {
+.wm-todo-detail-error {
+  flex-basis: 100%;
   margin: 0;
-  font-size: 1.15rem;
-  color: var(--text-primary);
-  flex: 1;
-}
-
-.wm-todo-item__priority {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  font-size: 0.85rem;
-  color: var(--text-tertiary);
-}
-
-.wm-todo-item__priority select {
-  padding: 0.35rem 0.5rem;
-  border-radius: 0.5rem;
-  border: 1px solid var(--border-primary);
-  background: var(--bg-primary);
-  color: var(--text-primary);
+  font-size: 0.9rem;
+  color: rgba(248, 113, 113, 0.95);
 }
 
 .wm-todo-star {
   border: none;
   background: none;
-  font-size: 1.5rem;
+  font-size: 1.4rem;
   cursor: pointer;
-  color: var(--text-tertiary);
-  transition: color 150ms ease;
+  color: #9ca3af;
+  transition: transform 120ms ease, color 120ms ease;
+}
+
+.wm-todo-star:hover {
+  transform: scale(1.05);
 }
 
 .wm-todo-star.is-active {
-  color: var(--accent-primary);
+  color: #fbbf24;
 }
 
 .wm-todo-star:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
-}
-
-.wm-todo-item__meta {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.35rem 0.75rem;
-  margin: 0;
-  font-size: 0.9rem;
-  color: var(--text-tertiary);
-}
-
-.wm-todo-item__meta dt {
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-.wm-todo-item__description {
-  margin: 0;
-  font-size: 0.95rem;
-  line-height: 1.6;
-  color: var(--text-secondary);
-}
-
-.wm-todo-item__actions {
-  display: flex;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.wm-todo-editor {
-  display: grid;
-  gap: 1rem;
-  padding: 1rem;
-  border-radius: 0.75rem;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-primary);
 }
 
 .wm-alert {
