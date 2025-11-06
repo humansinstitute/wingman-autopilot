@@ -2,6 +2,7 @@ import { Terminal } from "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm";
 import { FitAddon } from "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.9.0/+esm";
 
 const TMUX_PREFIX = "\u0002";
+const CONFIG_REFRESH_INTERVAL = 2500;
 const tmuxCommands = {
   detach: `${TMUX_PREFIX}d`,
   "new-window": `${TMUX_PREFIX}c`,
@@ -49,13 +50,15 @@ class DeepDiveTerminal {
       typeof options.socketUrl === "string" && options.socketUrl.trim().length > 0
         ? options.socketUrl.trim()
         : null;
-    this.socketAvailable = Boolean(this.socketUrl);
 
     this.socket = null;
     this.isAuthenticated = false;
     this.terminalReady = false;
     this.reconnectTimer = null;
     this.resizeTimer = null;
+    this.configRefreshTimer = null;
+    this.configRefreshInFlight = false;
+    this.startupToastShown = false;
 
     this.fitAddon = new FitAddon();
     this.terminal = new Terminal({
@@ -85,13 +88,18 @@ class DeepDiveTerminal {
     window.addEventListener("resize", () => this.queueResize());
 
     this.bindEvents();
-    if (this.socketAvailable) {
+    if (this.socketUrl) {
       this.connect();
-    } else {
-      this.setStatus("disconnected");
-      this.showOverlay();
-      this.showToast("Deep Dive terminal is unavailable.", "error");
+      return;
     }
+
+    this.setStatus("connecting");
+    this.showOverlay();
+    if (options.running === false && !this.startupToastShown) {
+      this.showToast("Deep Dive terminal is starting…", "info");
+      this.startupToastShown = true;
+    }
+    this.scheduleConfigRefresh(options.running === false ? 500 : CONFIG_REFRESH_INTERVAL);
   }
 
   bindEvents() {
@@ -176,19 +184,16 @@ class DeepDiveTerminal {
       return;
     }
 
-    clearTimeout(this.reconnectTimer);
-
-    const targetUrl = this.socketUrl || (() => {
-      const protocol = location.protocol === "https:" ? "wss" : "ws";
-      return `${protocol}://${location.host}/deep-dive/socket`;
-    })();
-
-    if (!targetUrl) {
-      this.setStatus("disconnected");
-      this.showOverlay();
+    if (!this.socketUrl) {
+      this.scheduleConfigRefresh(CONFIG_REFRESH_INTERVAL);
       return;
     }
 
+    clearTimeout(this.reconnectTimer);
+    clearTimeout(this.configRefreshTimer);
+    this.configRefreshTimer = null;
+
+    const targetUrl = this.socketUrl;
     this.setStatus("connecting");
     let socket;
     try {
@@ -230,9 +235,6 @@ class DeepDiveTerminal {
 
   scheduleReconnect() {
     clearTimeout(this.reconnectTimer);
-    if (!this.socketUrl) {
-      return;
-    }
     this.reconnectTimer = setTimeout(() => this.connect(), 2500);
   }
 
@@ -372,6 +374,39 @@ class DeepDiveTerminal {
     this.socket.send(JSON.stringify({ event, ...payload }));
   }
 
+  async attemptConfigRefresh() {
+    if (this.configRefreshInFlight) {
+      return;
+    }
+    this.configRefreshInFlight = true;
+    try {
+      const { socketUrl, running } = await loadDeepDiveConfig();
+      if (socketUrl) {
+        this.socketUrl = socketUrl;
+        this.setStatus("connecting");
+        this.connect();
+        return;
+      }
+      if (running === false && !this.startupToastShown) {
+        this.showToast("Deep Dive terminal is starting…", "info");
+        this.startupToastShown = true;
+      }
+    } catch (error) {
+      console.warn("Failed to refresh Deep Dive config", error);
+    } finally {
+      this.configRefreshInFlight = false;
+    }
+    this.scheduleConfigRefresh(CONFIG_REFRESH_INTERVAL);
+  }
+
+  scheduleConfigRefresh(delay) {
+    clearTimeout(this.configRefreshTimer);
+    this.configRefreshTimer = setTimeout(
+      () => this.attemptConfigRefresh(),
+      typeof delay === "number" ? delay : CONFIG_REFRESH_INTERVAL,
+    );
+  }
+
   showToast(message, variant = "info") {
     if (!this.toastTemplate) return;
     const clone = this.toastTemplate.content.firstElementChild.cloneNode(true);
@@ -388,16 +423,22 @@ const loadDeepDiveConfig = async () => {
   try {
     const response = await fetch("/deep-dive/config.json", { cache: "no-store" });
     if (!response.ok) {
-      return { socketUrl: null };
+      return { socketUrl: null, running: null };
     }
     const data = await response.json();
     if (data && typeof data.socketUrl === "string" && data.socketUrl.trim().length > 0) {
-      return { socketUrl: data.socketUrl.trim() };
+      return {
+        socketUrl: data.socketUrl.trim(),
+        running: typeof data.running === "boolean" ? data.running : null,
+      };
     }
-    return { socketUrl: null };
+    return {
+      socketUrl: null,
+      running: typeof data?.running === "boolean" ? data.running : null,
+    };
   } catch (error) {
     console.warn("Failed to load Deep Dive config", error);
-    return { socketUrl: null };
+    return { socketUrl: null, running: null };
   }
 };
 
