@@ -635,6 +635,31 @@ body[data-menu-open="true"] .wm-menu-panel {
   padding-right: 0;
 }
 
+.wm-home-guest-hero-quote {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.wm-home-guest-hero-quote-text {
+  margin: 0;
+  font-size: clamp(2.25rem, 4.5vw, 3.25rem);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.05;
+  color: var(--text-primary);
+}
+
+.wm-home-guest-hero-attribution {
+  margin: 0;
+  font-style: normal;
+  font-size: 1rem;
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .wm-home-guest-features {
   display: flex;
   flex-direction: column;

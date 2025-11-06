@@ -5,6 +5,7 @@ import "/ace-builds/src-noconflict/theme-tomorrow_night.js";
 import "./identity/index.js";
 import { createTodoFeature } from "./todos/index.js";
 import "./logging/browser.js";
+import { createHomeGuestHero } from "./home/hero.js";
 
 const ace = globalThis.ace;
 if (!ace) {
@@ -7595,89 +7596,10 @@ const HOME_GUEST_FEATURES = [
 ];
 
 const renderHomeGuestHero = () => {
-  const card = document.createElement("section");
-  card.className = "wm-card wm-home-guest-hero";
-
-  const brand = document.createElement("div");
-  brand.className = "wm-home-guest-hero-brand";
-
-  const logoWrapper = document.createElement("div");
-  logoWrapper.className = "wm-home-guest-hero-logo-set";
-
-  const logoDark = document.createElement("img");
-  logoDark.src = "/path/Wingman_Goose_Logo_Dark.png";
-  logoDark.alt = "Wingman logo";
-  logoDark.width = 40;
-  logoDark.height = 40;
-  logoDark.className = "wm-logo dark";
-
-  const logoLight = document.createElement("img");
-  logoLight.src = "/path/Wingman_Goose_Logo_Light.png";
-  logoLight.alt = "Wingman logo";
-  logoLight.width = 40;
-  logoLight.height = 40;
-  logoLight.className = "wm-logo light";
-
-  logoWrapper.append(logoDark, logoLight);
-
-  const brandCopy = document.createElement("div");
-  brandCopy.className = "wm-home-guest-hero-brand-text";
-
-  const brandName = document.createElement("span");
-  brandName.className = "wm-home-guest-hero-brand-name";
-  brandName.textContent = "Wingman";
-
-  const brandTagline = document.createElement("span");
-  brandTagline.className = "wm-home-guest-hero-brand-tagline";
-  brandTagline.textContent = "Solvitur Ambulando";
-
-  brandCopy.append(brandName, brandTagline);
-  brand.append(logoWrapper, brandCopy);
-
-  const badge = document.createElement("span");
-  badge.className = "wm-home-guest-hero-badge";
-  badge.textContent = "Wingman keeps your agents in sync";
-
-  const heading = document.createElement("h1");
-  heading.textContent = "Give every teammate their own AI co-pilot";
-
-  const description = document.createElement("p");
-  description.className = "wm-home-guest-hero-description";
-  description.textContent =
-    "Wingman is the shared cockpit for running automations, shipping custom apps, and collaborating with advanced agents wherever you are.";
-
-  const highlightList = document.createElement("ul");
-  highlightList.className = "wm-home-guest-hero-highlights";
-  HOME_GUEST_FEATURES.slice(0, 3).forEach(({ title: featureTitle }) => {
-    const highlightItem = document.createElement("li");
-    highlightItem.className = "wm-home-guest-hero-highlight";
-    highlightItem.textContent = featureTitle;
-    highlightList.append(highlightItem);
+  return createHomeGuestHero({
+    onLogin: openIdentityLoginDialog,
+    onBrowse: () => navigateToApps(),
   });
-
-  const actions = document.createElement("div");
-  actions.className = "wm-home-guest-hero-actions";
-
-  const loginButton = document.createElement("button");
-  loginButton.type = "button";
-  loginButton.className = "wm-button";
-  loginButton.textContent = "Log In to Wingman";
-  loginButton.addEventListener("click", () => {
-    openIdentityLoginDialog();
-  });
-
-  const learnMore = document.createElement("button");
-  learnMore.type = "button";
-  learnMore.className = "wm-link-button wm-home-guest-hero-secondary";
-  learnMore.textContent = "Browse capabilities";
-  learnMore.addEventListener("click", () => {
-    navigateToApps();
-  });
-
-  actions.append(loginButton, learnMore);
-  card.append(brand, badge, heading, description, highlightList, actions);
-
-  return card;
 };
 
 const renderHomeGuestFeatures = () => {
