@@ -1530,6 +1530,14 @@ const scrollConversationAreaToBottom = (sessionId, options = {}) => {
     }
   }
 };
+const scheduleLiveScroll = (sessionId, options = {}) => {
+  if (!sessionId || currentRoute !== "live") return;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      scrollConversationAreaToBottom(sessionId, options);
+    });
+  });
+};
 
 const isMobileFilesLayout = () => {
   if (window.matchMedia) {
@@ -3364,6 +3372,7 @@ const projectDialog = document.getElementById("project-dialog");
 const projectDialogForm = projectDialog?.querySelector("form") ?? null;
 const projectDialogNameInput = document.getElementById("project-dialog-name");
 const projectDialogRootInput = document.getElementById("project-dialog-root");
+const projectDialogRootBrowseButton = document.getElementById("project-dialog-root-browse");
 const projectDialogError = document.getElementById("project-dialog-error");
 const projectDialogCancel = document.getElementById("project-dialog-cancel");
 const projectDialogSubmit = document.getElementById("project-dialog-submit");
@@ -3536,6 +3545,11 @@ projectDialogNameInput?.addEventListener("input", (event) => {
 
 projectDialogRootInput?.addEventListener("input", (event) => {
   projectFeature?.setCreateFormValue?.("rootPath", event.target.value);
+  scheduleDirectorySuggestions(event.target.value);
+});
+
+projectDialogRootInput?.addEventListener("focus", () => {
+  scheduleDirectorySuggestions(projectDialogRootInput.value);
 });
 
 projectDialogForm?.addEventListener("submit", async (event) => {
@@ -3549,6 +3563,26 @@ projectDialogForm?.addEventListener("submit", async (event) => {
     closeProjectDialog();
     showToast("Project created");
   }
+});
+
+projectDialogRootBrowseButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  const seed =
+    projectDialogRootInput?.value?.trim() || state.lastWorkingDirectory || state.config?.defaultDirectory || "";
+  void openDirectoryBrowser({
+    initialPath: seed,
+    title: "Select Project Root",
+    confirmLabel: "Use This Directory",
+    allowCreate: true,
+    onSelect: (path) => {
+      if (projectDialogRootInput) {
+        projectDialogRootInput.value = path;
+      }
+      state.lastWorkingDirectory = path;
+      projectFeature?.setCreateFormValue?.("rootPath", path);
+      scheduleDirectorySuggestions(path);
+    },
+  });
 });
 
 headerLoginButton?.addEventListener("click", (event) => {

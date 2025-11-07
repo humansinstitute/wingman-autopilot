@@ -434,7 +434,7 @@
     </dialog>
     <dialog id="project-dialog" class="wm-project-dialog">
       <form method="dialog" class="wm-project-dialog__form">
-        <header>
+        <header class="wm-project-dialog__header">
           <h2>New Project</h2>
           <p class="wm-dialog-help">Define a project root so related apps stay grouped.</p>
         </header>
@@ -445,7 +445,18 @@
           </label>
           <label class="wm-project-field">
             <span class="wm-project-field__label">Project folder</span>
-            <input id="project-dialog-root" type="text" placeholder="/Users/you/code/wingman-demo" autocomplete="off" />
+            <div class="working-directory-field">
+              <input
+                id="project-dialog-root"
+                type="text"
+                autocomplete="off"
+                placeholder="/Users/you/code/wingman-demo"
+                list="directory-suggestions"
+              />
+              <div class="working-directory-actions">
+                <button type="button" class="wm-button secondary" id="project-dialog-root-browse">Browse…</button>
+              </div>
+            </div>
           </label>
           <p id="project-dialog-error" class="wm-project-form__error" hidden></p>
         </section>
