@@ -1,11 +1,40 @@
 import { sortTodos, parseDateInputValue, toDateInputValue } from "./utils.js";
 
+const VALID_CATEGORIES = new Set(["rock", "pebble", "sand"]);
+
+const normaliseCategory = (value) => {
+  if (typeof value !== "string") {
+    return "sand";
+  }
+  const normalized = value.trim().toLowerCase();
+  return VALID_CATEGORIES.has(normalized) ? normalized : "sand";
+};
+
+const normaliseParentValue = (value) => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
+};
+
+const requiredParentCategory = (category) => {
+  if (category === "pebble") {
+    return "rock";
+  }
+  if (category === "sand") {
+    return "pebble";
+  }
+  return null;
+};
+
 function buildDraftValues(todo) {
   return {
     title: todo.title ?? "",
     description: todo.description ?? "",
     dueDate: toDateInputValue(todo.dueDate) || null,
-    priority: Number.isInteger(todo.priority) ? todo.priority : 0,
+    category: normaliseCategory(todo.category),
+    parentId: todo.parentId ?? "",
     appId: todo.appId ?? "",
     starred: Boolean(todo.starred),
   };
@@ -33,6 +62,8 @@ function createTodoState({ onStateChange, getApps }) {
       saving: false,
       error: null,
       shouldFocus: false,
+      category: "sand",
+      parentId: null,
     },
   };
 
@@ -155,6 +186,8 @@ function createTodoState({ onStateChange, getApps }) {
         },
         body: JSON.stringify({
           title: rawValue,
+          category: state.composer.category,
+          parentId: state.composer.category === "rock" ? null : state.composer.parentId,
         }),
       });
       if (!response.ok) {
@@ -166,6 +199,7 @@ function createTodoState({ onStateChange, getApps }) {
         setTodos([...state.items, created]);
       }
       state.composer.value = "";
+      state.composer.parentId = null;
       state.composer.shouldFocus = true;
     } catch (error) {
       state.composer.error = error instanceof Error ? error.message : String(error);
@@ -245,21 +279,36 @@ function createTodoState({ onStateChange, getApps }) {
     }
   }
 
-  async function setPriority(todo, priority) {
-    const targetId = todo?.id;
-    if (!targetId || state.savingIds.has(targetId)) {
+  function setComposerCategory(value) {
+    const next = normaliseCategory(value);
+    if (state.composer.category === next) {
       return;
     }
-    state.savingIds.add(targetId);
-    notify();
-    try {
-      await updateTodo(targetId, { priority });
-    } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
-    } finally {
-      state.savingIds.delete(targetId);
-      notify();
+    state.composer.category = next;
+    if (next === "rock") {
+      state.composer.parentId = null;
+    } else if (state.composer.parentId) {
+      const parent = state.items.find((item) => item.id === state.composer.parentId);
+      const required = requiredParentCategory(next);
+      if (!parent || (required && parent.category !== required)) {
+        state.composer.parentId = null;
+      }
     }
+    notify();
+  }
+
+  function setComposerParentId(value) {
+    if (state.composer.category === "rock") {
+      state.composer.parentId = null;
+      notify();
+      return;
+    }
+    const next = typeof value === "string" ? value : null;
+    if (state.composer.parentId === next) {
+      return;
+    }
+    state.composer.parentId = next;
+    notify();
   }
 
   function openTodo(id) {
@@ -370,8 +419,14 @@ function createTodoState({ onStateChange, getApps }) {
       diff.appId = current.appId ? current.appId : null;
       changed = true;
     }
-    if ((initial.priority ?? 0) !== (current.priority ?? 0)) {
-      diff.priority = Number.parseInt(String(current.priority), 10) || 0;
+    if ((initial.category ?? "sand") !== (current.category ?? "sand")) {
+      diff.category = normaliseCategory(current.category);
+      changed = true;
+    }
+    const initialParent = normaliseParentValue(initial.parentId);
+    const currentParent = normaliseParentValue(current.parentId);
+    if (initialParent !== currentParent) {
+      diff.parentId = currentParent;
       changed = true;
     }
     if (Boolean(initial.starred) !== Boolean(current.starred)) {
@@ -386,7 +441,24 @@ function createTodoState({ onStateChange, getApps }) {
   }
 
   function getHighlightedTodos() {
-    return state.items.filter((todo) => todo.starred || (Number.isInteger(todo.priority) && todo.priority >= 3)).slice(0, 5);
+    const ranked = [...state.items].sort((a, b) => {
+      const rank = (todo) => {
+        if (todo.category === "rock") return 0;
+        if (todo.category === "pebble") return 1;
+        if (todo.starred) return 2;
+        return 3;
+      };
+      const diff = rank(a) - rank(b);
+      if (diff !== 0) {
+        return diff;
+      }
+      const dueDiff = (new Date(a.dueDate || 0).getTime() || Number.MAX_SAFE_INTEGER) - (new Date(b.dueDate || 0).getTime() || Number.MAX_SAFE_INTEGER);
+      if (dueDiff !== 0) {
+        return dueDiff;
+      }
+      return (new Date(a.createdAt || 0).getTime() || 0) - (new Date(b.createdAt || 0).getTime() || 0);
+    });
+    return ranked.filter((todo) => todo.category === "rock" || todo.category === "pebble" || todo.starred).slice(0, 5);
   }
 
   function refresh() {
@@ -407,6 +479,8 @@ function createTodoState({ onStateChange, getApps }) {
     state.composer.saving = false;
     state.composer.error = null;
     state.composer.shouldFocus = false;
+    state.composer.category = "sand";
+    state.composer.parentId = null;
     notify();
   }
 
@@ -424,8 +498,9 @@ function createTodoState({ onStateChange, getApps }) {
     refresh,
     createTodoFromComposer,
     setComposerValue,
+    setComposerCategory,
+    setComposerParentId,
     toggleStar,
-    setPriority,
     deleteTodo,
     openTodo,
     closeTodo,

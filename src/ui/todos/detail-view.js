@@ -1,4 +1,4 @@
-import { PRIORITY_OPTIONS, toDateInputValue } from "./utils.js";
+import { TODO_CATEGORY_OPTIONS, getParentCandidates, toDateInputValue } from "./utils.js";
 
 function buildTodoFocusKey(todoId, field) {
   return `todo:${todoId}:${field}`;
@@ -68,23 +68,61 @@ function createTodoDetailView({ todo, draft, actions, state }) {
     },
   });
 
-  const priorityField = createField({
-    label: "Priority",
+  const categoryField = createField({
+    label: "Category",
     input: () => {
       const select = document.createElement("select");
-      PRIORITY_OPTIONS.forEach((option) => {
+      TODO_CATEGORY_OPTIONS.forEach((option) => {
         const entry = document.createElement("option");
-        entry.value = String(option.value);
+        entry.value = option.value;
         entry.textContent = option.label;
-        if (Number(draft.values.priority) === option.value) {
+        if (draft.values.category === option.value) {
           entry.selected = true;
         }
         select.append(entry);
       });
-      setTodoFocusKey(select, todo.id, "priority");
+      setTodoFocusKey(select, todo.id, "category");
       select.addEventListener("change", (event) => {
-        const value = Number.parseInt(event.target.value, 10) || 0;
-        actions.updateDraft(todo.id, { priority: value });
+        const nextCategory = event.target.value;
+        const candidates = getParentCandidates(state.items, nextCategory, todo.id);
+        const canKeepParent =
+          nextCategory !== "rock" && candidates.some((candidate) => candidate.id === draft.values.parentId);
+        actions.updateDraft(todo.id, {
+          category: nextCategory,
+          parentId: canKeepParent ? draft.values.parentId : null,
+        });
+      });
+      return select;
+    },
+  });
+
+  const parentField = createField({
+    label: "Parent",
+    input: () => {
+      const select = document.createElement("select");
+      const defaultOption = document.createElement("option");
+      defaultOption.value = "";
+      defaultOption.textContent = "None";
+      select.append(defaultOption);
+      const candidates = getParentCandidates(state.items, draft.values.category, todo.id);
+      candidates.forEach((candidate) => {
+        const option = document.createElement("option");
+        option.value = candidate.id;
+        option.textContent = candidate.title;
+        if (draft.values.parentId === candidate.id) {
+          option.selected = true;
+        }
+        select.append(option);
+      });
+      const disabled = draft.values.category === "rock";
+      select.disabled = disabled;
+      if (disabled) {
+        select.value = "";
+      }
+      setTodoFocusKey(select, todo.id, "parentId");
+      select.addEventListener("change", (event) => {
+        const value = event.target.value.trim();
+        actions.updateDraft(todo.id, { parentId: value || null });
       });
       return select;
     },
@@ -192,7 +230,7 @@ function createTodoDetailView({ todo, draft, actions, state }) {
     actions.saveDraft(todo.id);
   });
 
-  form.append(titleField, descriptionField, dueField, priorityField, appField, starredField, actionsBar);
+  form.append(titleField, descriptionField, dueField, categoryField, parentField, appField, starredField, actionsBar);
   return form;
 }
 

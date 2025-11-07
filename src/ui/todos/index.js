@@ -15,6 +15,8 @@ function createTodoFeature({ onRenderRequested, getApps }) {
 
   const actions = {
     setComposerValue: stateApi.setComposerValue,
+    setComposerCategory: stateApi.setComposerCategory,
+    setComposerParentId: stateApi.setComposerParentId,
     createTodoFromComposer: stateApi.createTodoFromComposer,
     toggleStar: stateApi.toggleStar,
     deleteTodo: stateApi.deleteTodo,

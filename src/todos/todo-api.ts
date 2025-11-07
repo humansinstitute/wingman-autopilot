@@ -1,7 +1,7 @@
 import type { RequestAuthContext } from "../auth/request-context";
 import { normaliseNpub } from "../identity/npub-utils";
 import { appRegistry, type AppRecord } from "../apps/app-registry";
-import type { TodoRecord, TodoStore, UpdateTodoInput } from "./todo-store";
+import type { TodoCategory, TodoRecord, TodoStore, UpdateTodoInput } from "./todo-store";
 
 export interface TodoApiDependencies {
   store: TodoStore;
@@ -37,33 +37,6 @@ const toIsoStringOrNull = (value: unknown): string | null => {
   return parsed.toISOString();
 };
 
-const parsePriority = (value: unknown): number | null => {
-  if (value === null || value === undefined) {
-    return null;
-  }
-  if (typeof value === "number") {
-    if (Number.isNaN(value)) {
-      return null;
-    }
-    return Math.max(0, Math.min(3, Math.round(value)));
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim().toLowerCase();
-    if (trimmed.length === 0) {
-      return null;
-    }
-    if (trimmed === "none") return 0;
-    if (trimmed === "low") return 1;
-    if (trimmed === "medium" || trimmed === "med") return 2;
-    if (trimmed === "high") return 3;
-    const numeric = Number.parseInt(trimmed, 10);
-    if (!Number.isNaN(numeric)) {
-      return Math.max(0, Math.min(3, Math.round(numeric)));
-    }
-  }
-  throw new Error("Invalid priority");
-};
-
 const parseBoolean = (value: unknown): boolean | null => {
   if (value === null || value === undefined) {
     return null;
@@ -84,6 +57,76 @@ const parseBoolean = (value: unknown): boolean | null => {
     }
   }
   throw new Error("Invalid boolean");
+};
+
+const CATEGORY_SET = new Set<TodoCategory>(["rock", "pebble", "sand"]);
+
+const parseCategory = (value: unknown): TodoCategory | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error("Invalid category");
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (CATEGORY_SET.has(normalized as TodoCategory)) {
+    return normalized as TodoCategory;
+  }
+  throw new Error("Invalid category");
+};
+
+const parseParentId = (value: unknown): string | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error("Invalid parent id");
+  }
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
+};
+
+const requiredParentCategory = (category: TodoCategory): TodoCategory | null => {
+  if (category === "pebble") {
+    return "rock";
+  }
+  if (category === "sand") {
+    return "pebble";
+  }
+  return null;
+};
+
+const validateParentAssignment = (
+  deps: TodoApiDependencies,
+  owner: string,
+  category: TodoCategory,
+  parentId: string | null,
+  selfId?: string,
+) => {
+  if (!parentId) {
+    if (category === "rock") {
+      return null;
+    }
+    return null;
+  }
+  if (category === "rock") {
+    throw new Error("Rocks cannot have a parent");
+  }
+  if (selfId && parentId === selfId) {
+    throw new Error("Todo cannot reference itself");
+  }
+  const parent = deps.store.get(owner, parentId);
+  if (!parent) {
+    throw new Error("Parent todo not found");
+  }
+  const expectedCategory = requiredParentCategory(category);
+  if (expectedCategory && parent.category !== expectedCategory) {
+    throw new Error(`Parent must be a ${expectedCategory}`);
+  }
+  return null;
 };
 
 const normaliseOptionalString = (value: unknown): string | null => {
@@ -120,7 +163,9 @@ const serializeTodo = (record: TodoRecord) => ({
   description: record.description,
   dueDate: record.dueDate,
   appId: record.appId,
-  priority: record.priority,
+  priority: 0,
+  category: record.category,
+  parentId: record.parentId,
   starred: record.starred,
   createdAt: record.createdAt,
   updatedAt: record.updatedAt,
@@ -149,12 +194,6 @@ const handleTodoCollection = async (
     } catch (error) {
       return Response.json({ error: (error as Error).message }, { status: 400 });
     }
-    let priority: number | null = null;
-    try {
-      priority = parsePriority(input.priority);
-    } catch (error) {
-      return Response.json({ error: (error as Error).message }, { status: 400 });
-    }
     let starred: boolean | null = null;
     try {
       starred = parseBoolean(input.starred);
@@ -167,6 +206,24 @@ const handleTodoCollection = async (
     } catch (error) {
       return Response.json({ error: (error as Error).message }, { status: 400 });
     }
+    let category: TodoCategory | null = null;
+    try {
+      category = parseCategory(input.category);
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 400 });
+    }
+    let parentId: string | null = null;
+    try {
+      parentId = parseParentId(input.parentId);
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 400 });
+    }
+    const effectiveCategory = category ?? "sand";
+    try {
+      validateParentAssignment(deps, owner, effectiveCategory, parentId ?? null);
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 400 });
+    }
     try {
       const created = deps.store.create({
         ownerNpub: owner,
@@ -174,7 +231,8 @@ const handleTodoCollection = async (
         description: typeof input.description === "string" ? input.description : null,
         dueDate,
         appId,
-        priority,
+        category: effectiveCategory,
+        parentId: parentId ?? null,
         starred,
       });
       return Response.json({ todo: serializeTodo(created) }, { status: 201 });
@@ -255,9 +313,21 @@ const handleTodoItem = async (
       }
     }
 
-    if (input.priority !== undefined) {
+    let categoryUpdate: TodoCategory | null = null;
+    if (input.category !== undefined) {
       try {
-        updates.priority = parsePriority(input.priority);
+        categoryUpdate = parseCategory(input.category);
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
+    }
+
+    let parentProvided = false;
+    let parentUpdate: string | null = null;
+    if (input.parentId !== undefined) {
+      parentProvided = true;
+      try {
+        parentUpdate = parseParentId(input.parentId);
       } catch (error) {
         return Response.json({ error: (error as Error).message }, { status: 400 });
       }
@@ -270,6 +340,20 @@ const handleTodoItem = async (
       } catch (error) {
         return Response.json({ error: (error as Error).message }, { status: 400 });
       }
+    }
+
+    const resolvedCategory = categoryUpdate ?? existing.category;
+    const resolvedParentId = parentProvided ? parentUpdate : existing.parentId;
+    try {
+      validateParentAssignment(deps, owner, resolvedCategory, resolvedParentId ?? null, todoId);
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 400 });
+    }
+    if (categoryUpdate) {
+      updates.category = resolvedCategory;
+    }
+    if (parentProvided) {
+      updates.parentId = resolvedParentId ?? null;
     }
 
     try {

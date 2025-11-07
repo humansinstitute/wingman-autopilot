@@ -1,4 +1,4 @@
-import { PRIORITY_LABELS, formatDisplayDate } from "./utils.js";
+import { CATEGORY_LABELS, TODO_CATEGORY_OPTIONS, formatDisplayDate, getParentCandidates } from "./utils.js";
 import { createTodoDetailView } from "./detail-view.js";
 
 function createTodoView({ state, actions }) {
@@ -78,11 +78,69 @@ function createTodoView({ state, actions }) {
     inputWrapper.className = "wm-todo-composer__input-wrapper";
     inputWrapper.append(input);
 
+    const controls = document.createElement("div");
+    controls.className = "wm-todo-composer__meta";
+
+    const parentSelect = document.createElement("select");
+    parentSelect.className = "wm-todo-composer__select";
+
+    const syncParentOptions = () => {
+      parentSelect.innerHTML = "";
+      const defaultOption = document.createElement("option");
+      defaultOption.value = "";
+      defaultOption.textContent = "No parent";
+      parentSelect.append(defaultOption);
+      const candidates = getParentCandidates(state.items, state.composer.category, null);
+      candidates.forEach((candidate) => {
+        const option = document.createElement("option");
+        option.value = candidate.id;
+        option.textContent = candidate.title;
+        if (state.composer.parentId === candidate.id) {
+          option.selected = true;
+        }
+        parentSelect.append(option);
+      });
+      const disabled = state.composer.category === "rock";
+      parentSelect.disabled = disabled;
+      if (disabled) {
+        parentSelect.value = "";
+      } else if (state.composer.parentId) {
+        parentSelect.value = state.composer.parentId;
+      }
+    };
+
+    const categorySelect = document.createElement("select");
+    categorySelect.className = "wm-todo-composer__select";
+    TODO_CATEGORY_OPTIONS.forEach((option) => {
+      const entry = document.createElement("option");
+      entry.value = option.value;
+      entry.textContent = option.label;
+      if (state.composer.category === option.value) {
+        entry.selected = true;
+      }
+      categorySelect.append(entry);
+    });
+
+    categorySelect.addEventListener("change", (event) => {
+      const value = event.target.value;
+      actions.setComposerCategory(value);
+      syncParentOptions();
+    });
+
+    parentSelect.addEventListener("change", (event) => {
+      const value = event.target.value.trim();
+      actions.setComposerParentId(value || null);
+    });
+
+    syncParentOptions();
+
+    controls.append(categorySelect, parentSelect);
+
     const icon = document.createElement("span");
     icon.className = "wm-todo-composer__icon";
     icon.textContent = "+";
 
-    composer.append(inputWrapper, icon);
+    composer.append(inputWrapper, controls, icon);
 
     if (typeof actions.consumeComposerFocus === "function" && actions.consumeComposerFocus()) {
       requestAnimationFrame(() => {
@@ -107,9 +165,10 @@ function createTodoView({ state, actions }) {
     const columns = [
       { label: "", className: "wm-todo-col-star" },
       { label: "Todo", className: "wm-todo-col-title" },
+      { label: "Category", className: "wm-todo-col-category" },
+      { label: "Parent", className: "wm-todo-col-parent" },
       { label: "Due", className: "wm-todo-col-due" },
       { label: "App", className: "wm-todo-col-app" },
-      { label: "Priority", className: "wm-todo-col-priority" },
       { label: "Created", className: "wm-todo-col-created" },
     ];
 
@@ -131,7 +190,7 @@ function createTodoView({ state, actions }) {
     row.className = "wm-todo-row is-status";
 
     const cell = document.createElement("td");
-    cell.colSpan = 6;
+    cell.colSpan = 7;
     cell.textContent = message;
     row.append(cell);
 
@@ -153,9 +212,10 @@ function createTodoView({ state, actions }) {
 
     row.append(renderStarCell(todo));
     row.append(renderTitleCell(todo));
+    row.append(renderCategoryCell(todo));
+    row.append(renderParentCell(todo));
     row.append(renderDueCell(todo));
     row.append(renderAppCell(todo));
-    row.append(renderPriorityCell(todo));
     row.append(renderCreatedCell(todo));
 
     return row;
@@ -216,11 +276,23 @@ function createTodoView({ state, actions }) {
     return cell;
   }
 
-  function renderPriorityCell(todo) {
+  function renderCategoryCell(todo) {
     const cell = document.createElement("td");
-    cell.className = "wm-todo-col-priority";
-    const label = PRIORITY_LABELS.get(todo.priority) ?? PRIORITY_LABELS.get(0) ?? "None";
+    cell.className = "wm-todo-col-category";
+    const label = CATEGORY_LABELS.get(todo.category) ?? "Sand";
     cell.textContent = label;
+    return cell;
+  }
+
+  function renderParentCell(todo) {
+    const cell = document.createElement("td");
+    cell.className = "wm-todo-col-parent";
+    if (!todo.parentId) {
+      cell.textContent = "—";
+      return cell;
+    }
+    const parent = state.items.find((item) => item.id === todo.parentId);
+    cell.textContent = parent?.title ?? "—";
     return cell;
   }
 
@@ -237,7 +309,7 @@ function createTodoView({ state, actions }) {
     row.className = "wm-todo-row-details";
 
     const cell = document.createElement("td");
-    cell.colSpan = 6;
+    cell.colSpan = 7;
     const draft = actions.getDraft(todo.id);
     const detail = createTodoDetailView({
       todo,
@@ -300,7 +372,8 @@ function createTodoView({ state, actions }) {
 
       const marker = document.createElement("span");
       marker.className = todo.starred ? "wm-home-todo__star" : "wm-home-todo__priority";
-      marker.textContent = todo.starred ? "★" : PRIORITY_LABELS.get(todo.priority) ?? String(todo.priority);
+      const categoryLabel = CATEGORY_LABELS.get(todo.category) ?? todo.category ?? "";
+      marker.textContent = todo.starred ? "★" : categoryLabel.slice(0, 1).toUpperCase();
 
       const text = document.createElement("span");
       text.className = "wm-home-todo__title";

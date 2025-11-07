@@ -1,11 +1,13 @@
-const PRIORITY_OPTIONS = [
-  { value: 0, label: "None" },
-  { value: 1, label: "Low" },
-  { value: 2, label: "Medium" },
-  { value: 3, label: "High" },
+const TODO_CATEGORY_OPTIONS = [
+  { value: "rock", label: "Rock" },
+  { value: "pebble", label: "Pebble" },
+  { value: "sand", label: "Sand" },
 ];
 
-const PRIORITY_LABELS = new Map(PRIORITY_OPTIONS.map((option) => [option.value, option.label]));
+const CATEGORY_LABELS = new Map(TODO_CATEGORY_OPTIONS.map((option) => [option.value, option.label]));
+const CATEGORY_ORDER = new Map(
+  TODO_CATEGORY_OPTIONS.map((option, index) => [option.value, index]),
+);
 
 function formatDisplayDate(isoString) {
   if (!isoString) {
@@ -53,17 +55,22 @@ function parseDateInputValue(value) {
 
 function sortTodos(todos) {
   return [...todos].sort((left, right) => {
-    if (left.starred === right.starred) {
-      const leftDue = getDueTime(left);
-      const rightDue = getDueTime(right);
-      if (leftDue === rightDue) {
-        const leftCreated = getCreatedTime(left);
-        const rightCreated = getCreatedTime(right);
-        return rightCreated - leftCreated;
-      }
-      return leftDue - rightDue;
+    const leftCategory = CATEGORY_ORDER.get(left.category) ?? CATEGORY_ORDER.size;
+    const rightCategory = CATEGORY_ORDER.get(right.category) ?? CATEGORY_ORDER.size;
+    if (leftCategory !== rightCategory) {
+      return leftCategory - rightCategory;
     }
-    return left.starred ? -1 : 1;
+    if (left.starred !== right.starred) {
+      return left.starred ? -1 : 1;
+    }
+    const leftDue = getDueTime(left);
+    const rightDue = getDueTime(right);
+    if (leftDue === rightDue) {
+      const leftCreated = getCreatedTime(left);
+      const rightCreated = getCreatedTime(right);
+      return rightCreated - leftCreated;
+    }
+    return leftDue - rightDue;
   });
 }
 
@@ -81,11 +88,22 @@ function getCreatedTime(todo) {
   return Number.isNaN(time) ? 0 : time;
 }
 
+function getParentCandidates(items, category, currentId) {
+  if (category === "pebble") {
+    return items.filter((item) => item.category === "rock" && item.id !== currentId);
+  }
+  if (category === "sand") {
+    return items.filter((item) => item.category === "pebble" && item.id !== currentId);
+  }
+  return [];
+}
+
 export {
-  PRIORITY_OPTIONS,
-  PRIORITY_LABELS,
+  TODO_CATEGORY_OPTIONS,
+  CATEGORY_LABELS,
   formatDisplayDate,
   toDateInputValue,
   parseDateInputValue,
   sortTodos,
+  getParentCandidates,
 };
