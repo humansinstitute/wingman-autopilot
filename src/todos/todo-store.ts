@@ -9,6 +9,10 @@ import { decryptTodoPayload, encryptTodoPayload, type TodoPayload } from "./encr
 
 const DEFAULT_DB_PATH = new URL("../../data/todos.db", import.meta.url).pathname;
 
+export type TodoCategory = "rock" | "pebble" | "sand";
+
+const TODO_CATEGORIES: TodoCategory[] = ["rock", "pebble", "sand"];
+
 export interface TodoRecord {
   id: string;
   ownerNpub: string;
@@ -16,7 +20,8 @@ export interface TodoRecord {
   description: string | null;
   dueDate: string | null;
   appId: string | null;
-  priority: number;
+  category: TodoCategory;
+  parentId: string | null;
   starred: boolean;
   createdAt: string;
   updatedAt: string;
@@ -28,7 +33,8 @@ export interface CreateTodoInput {
   description?: string | null;
   dueDate?: string | null;
   appId?: string | null;
-  priority?: number | null;
+  category?: TodoCategory | null;
+  parentId?: string | null;
   starred?: boolean | null;
 }
 
@@ -37,7 +43,8 @@ export interface UpdateTodoInput {
   description?: string | null;
   dueDate?: string | null;
   appId?: string | null;
-  priority?: number | null;
+  category?: TodoCategory | null;
+  parentId?: string | null;
   starred?: boolean | null;
 }
 
@@ -45,7 +52,8 @@ interface TodoRow {
   id: string;
   owner_npub: string;
   app_id: string | null;
-  priority: number;
+  category: string | null;
+  parent_id: string | null;
   starred: number;
   payload_iv: string;
   payload_tag: string;
@@ -53,14 +61,6 @@ interface TodoRow {
   created_at: string;
   updated_at: string;
 }
-
-const normalisePriority = (value: number | null | undefined): number => {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    return 0;
-  }
-  const clamped = Math.max(0, Math.min(3, Math.round(value)));
-  return clamped;
-};
 
 const normaliseNullableString = (value: unknown): string | null => {
   if (typeof value !== "string") {
@@ -71,6 +71,14 @@ const normaliseNullableString = (value: unknown): string | null => {
 };
 
 const toBooleanInteger = (value: boolean | null | undefined): number => (value ? 1 : 0);
+
+const normaliseCategory = (value: string | null | undefined): TodoCategory => {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (TODO_CATEGORIES.includes(normalized as TodoCategory)) {
+    return normalized as TodoCategory;
+  }
+  return "sand";
+};
 
 const mapRowToRecord = (row: TodoRow): TodoRecord => {
   const payload = decryptTodoPayload({
@@ -85,7 +93,8 @@ const mapRowToRecord = (row: TodoRow): TodoRecord => {
     description: payload.description ?? null,
     dueDate: payload.dueDate ?? null,
     appId: row.app_id,
-    priority: Number.isFinite(row.priority) ? Number(row.priority) : 0,
+    category: normaliseCategory(row.category ?? undefined),
+    parentId: row.parent_id ?? null,
     starred: row.starred === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -152,7 +161,8 @@ export class TodoStore {
     const now = new Date().toISOString();
     const id = randomUUID();
     const appId = normaliseNullableString(input.appId);
-    const priority = normalisePriority(input.priority);
+    const category = normaliseCategory(input.category ?? undefined);
+    const parentId = category === "rock" ? null : normaliseNullableString(input.parentId);
     const starred = Boolean(input.starred);
     const payload: TodoPayload = {
       title,
@@ -164,7 +174,8 @@ export class TodoStore {
       id,
       owner,
       appId,
-      priority,
+      category,
+      parentId,
       toBooleanInteger(starred),
       encrypted.iv,
       encrypted.authTag,
@@ -180,7 +191,8 @@ export class TodoStore {
       description: payload.description ?? null,
       dueDate: payload.dueDate ?? null,
       appId,
-      priority,
+      category,
+      parentId,
       starred,
       createdAt: now,
       updatedAt: now,
@@ -215,7 +227,17 @@ export class TodoStore {
       input.appId !== undefined
         ? normaliseNullableString(input.appId)
         : current.appId;
-    const priority = input.priority !== undefined ? normalisePriority(input.priority) : current.priority;
+    const category =
+      input.category !== undefined && input.category !== null
+        ? normaliseCategory(input.category)
+        : current.category;
+    let parentId =
+      input.parentId !== undefined
+        ? (category === "rock" ? null : normaliseNullableString(input.parentId))
+        : current.parentId;
+    if (category === "rock") {
+      parentId = null;
+    }
     const starred =
       input.starred !== undefined
         ? Boolean(input.starred)
@@ -229,7 +251,8 @@ export class TodoStore {
     const updatedAt = new Date().toISOString();
     const params = [
       appId,
-      priority,
+      category,
+      parentId,
       toBooleanInteger(starred),
       encrypted.iv,
       encrypted.authTag,
@@ -246,7 +269,8 @@ export class TodoStore {
       description: description ?? null,
       dueDate: dueDate ?? null,
       appId,
-      priority,
+      category,
+      parentId,
       starred,
       createdAt: current.createdAt,
       updatedAt,
@@ -259,7 +283,20 @@ export class TodoStore {
       return false;
     }
     const result = this.deleteStatement.run(npub, id);
-    return result.changes > 0;
+    if (result.changes > 0) {
+      this.db
+        .prepare(
+          `
+            UPDATE todos
+               SET parent_id = NULL
+             WHERE owner_npub = ?1
+               AND parent_id = ?2
+          `,
+        )
+        .run(npub, id);
+      return true;
+    }
+    return false;
   }
 
   private initialise() {
@@ -269,6 +306,8 @@ export class TodoStore {
         owner_npub TEXT NOT NULL,
         app_id TEXT,
         priority INTEGER NOT NULL DEFAULT 0,
+        category TEXT NOT NULL DEFAULT 'sand',
+        parent_id TEXT,
         starred INTEGER NOT NULL DEFAULT 0,
         payload_iv TEXT NOT NULL,
         payload_tag TEXT NOT NULL,
@@ -276,10 +315,53 @@ export class TodoStore {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
-
-      CREATE INDEX IF NOT EXISTS idx_todos_owner ON todos(owner_npub, updated_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_todos_owner_starred ON todos(owner_npub, starred, priority DESC, updated_at DESC);
     `);
+    // Run migrations before creating indexes so any referenced columns exist
+    this.applyMigrations();
+    this.ensureIndexes();
+  }
+
+  private ensureIndexes() {
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_todos_owner ON todos(owner_npub, updated_at DESC);
+      DROP INDEX IF EXISTS idx_todos_owner_starred;
+      CREATE INDEX IF NOT EXISTS idx_todos_owner_category ON todos(owner_npub, category, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_todos_owner_parent ON todos(owner_npub, parent_id, updated_at DESC);
+    `);
+  }
+
+  private applyMigrations() {
+    const columns = this.db.query("PRAGMA table_info(todos)").all() as Array<{ name: string }>;
+    const hasCategory = columns.some((column) => column.name === "category");
+    if (!hasCategory) {
+      this.db.exec("ALTER TABLE todos ADD COLUMN category TEXT NOT NULL DEFAULT 'sand';");
+    }
+    const hasParent = columns.some((column) => column.name === "parent_id");
+    if (!hasParent) {
+      this.db.exec("ALTER TABLE todos ADD COLUMN parent_id TEXT;");
+    }
+    this.db.exec(`
+      UPDATE todos
+         SET category = CASE
+           WHEN category IS NULL OR category NOT IN ('rock','pebble','sand') THEN
+             CASE WHEN starred = 1 THEN 'rock' ELSE 'sand' END
+           ELSE category
+         END;
+
+      UPDATE todos
+         SET parent_id = NULL
+       WHERE parent_id IS NOT NULL
+         AND parent_id NOT IN (SELECT id FROM todos);
+    `);
+    const hasPriority = columns.some((column) => column.name === "priority");
+    if (hasPriority) {
+      this.db.exec(`
+        UPDATE todos
+           SET priority = 0
+         WHERE priority IS NOT NULL
+           AND priority <> 0;
+      `);
+    }
   }
 
   private prepareInsert() {
@@ -289,14 +371,15 @@ export class TodoStore {
           id,
           owner_npub,
           app_id,
-          priority,
+          category,
+          parent_id,
           starred,
           payload_iv,
           payload_tag,
           payload_ciphertext,
           created_at,
           updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
       `,
     );
   }
@@ -306,14 +389,15 @@ export class TodoStore {
       `
         UPDATE todos
            SET app_id = ?1,
-               priority = ?2,
-               starred = ?3,
-               payload_iv = ?4,
-               payload_tag = ?5,
-               payload_ciphertext = ?6,
-               updated_at = ?7
-         WHERE owner_npub = ?8
-           AND id = ?9
+               category = ?2,
+               parent_id = ?3,
+               starred = ?4,
+               payload_iv = ?5,
+               payload_tag = ?6,
+               payload_ciphertext = ?7,
+               updated_at = ?8
+         WHERE owner_npub = ?9
+           AND id = ?10
       `,
     );
   }
@@ -335,7 +419,8 @@ export class TodoStore {
           id,
           owner_npub,
           app_id,
-          priority,
+          category,
+          parent_id,
           starred,
           payload_iv,
           payload_tag,
@@ -356,7 +441,8 @@ export class TodoStore {
           id,
           owner_npub,
           app_id,
-          priority,
+          category,
+          parent_id,
           starred,
           payload_iv,
           payload_tag,
@@ -377,7 +463,8 @@ export class TodoStore {
           id,
           owner_npub,
           app_id,
-          priority,
+          category,
+          parent_id,
           starred,
           payload_iv,
           payload_tag,
@@ -387,7 +474,7 @@ export class TodoStore {
         FROM todos
         WHERE owner_npub = ?1
           AND starred = 1
-        ORDER BY priority DESC, updated_at DESC
+        ORDER BY updated_at DESC
       `,
     );
   }
