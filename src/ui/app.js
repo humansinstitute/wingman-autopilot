@@ -5182,6 +5182,8 @@ const pollSessions = async () => {
 
     if (currentRoute === "home") {
       render();
+      // Update status indicators after render
+      updateAgentStatusIndicators();
       return;
     }
 
@@ -5213,6 +5215,8 @@ const pollSessions = async () => {
       }
       // - Incremental updates for conversation/logs are handled by fetchConversation and fetchLogs
     }
+
+    updateAgentStatusIndicators();
   } catch (error) {
     console.error("Failed to refresh sessions", error);
   }
@@ -5260,6 +5264,69 @@ const syncSessionPolling = () => {
   } else {
     stopSessionPolling();
   }
+};
+
+// Agent Status Indicator Functions
+const resolveAgentRuntimeStatus = (sessionId) => {
+  const session = state.sessions.find((entry) => entry && entry.id === sessionId);
+  if (!session) {
+    return null;
+  }
+  if (session.agentRuntimeStatus === "running" || session.agentRuntimeStatus === "stable") {
+    return session.agentRuntimeStatus;
+  }
+  if (session.status === "running") {
+    return "running";
+  }
+  return null;
+};
+
+const createAgentStatusIndicator = (sessionId) => {
+  const indicator = document.createElement("div");
+  indicator.className = "wm-agent-status-indicator";
+  indicator.setAttribute("data-session-id", sessionId);
+  indicator.setAttribute("role", "status");
+  indicator.setAttribute("aria-live", "polite");
+  applyAgentStatusIndicatorState(indicator, sessionId);
+  return indicator;
+};
+
+const applyAgentStatusIndicatorState = (indicator, sessionId) => {
+  const status = resolveAgentRuntimeStatus(sessionId);
+  const preservedClasses = indicator.className
+    .split(" ")
+    .filter((cls) => cls && (cls === "wm-agent-status-indicator" || cls === "status-small" || !cls.startsWith("status-")));
+  const baseClasses = new Set(preservedClasses.length > 0 ? preservedClasses : ["wm-agent-status-indicator"]);
+  baseClasses.add("wm-agent-status-indicator");
+  // Remove any previous status-* classes except the optional small modifier
+  for (const value of Array.from(baseClasses)) {
+    if (value.startsWith("status-") && value !== "status-small") {
+      baseClasses.delete(value);
+    }
+  }
+
+  let ariaLabel = "Agent status: unknown";
+  if (status === "running") {
+    baseClasses.add("status-running");
+    ariaLabel = "Agent status: running";
+  } else if (status === "stable") {
+    baseClasses.add("status-stable");
+    ariaLabel = "Agent status: stable";
+  } else {
+    baseClasses.add("status-unknown");
+  }
+
+  indicator.className = Array.from(baseClasses).join(" ");
+  indicator.setAttribute("aria-label", ariaLabel);
+};
+
+const updateAgentStatusIndicators = () => {
+  document.querySelectorAll(".wm-agent-status-indicator").forEach((indicator) => {
+    const sessionId = indicator.getAttribute("data-session-id");
+    if (sessionId) {
+      applyAgentStatusIndicatorState(indicator, sessionId);
+    }
+  });
 };
 
 const updateConversationDOM = (sessionId) => {
@@ -8356,7 +8423,10 @@ const renderHome = () => {
         </td>
         <td>${escapeHtml(session.agent)}</td>
         <td class="identity-cell" title="${escapeHtml(identityTooltip)}">${escapeHtml(identityLabel)}</td>
-        <td>${escapeHtml(session.status)}</td>
+        <td class="session-status-cell">
+          <div class="wm-agent-status-indicator" data-session-id="${escapeHtml(session.id)}"></div>
+          <span class="session-status-text">${escapeHtml(session.status)}</span>
+        </td>
         <td>${escapeHtml(session.port)}</td>
         <td>${session.pid ?? "-"}</td>
         <td>${new Date(session.startedAt).toLocaleTimeString()}</td>
@@ -8414,9 +8484,14 @@ const renderHome = () => {
       const title = document.createElement("h3");
       const displayName = getSessionDisplayName(session);
       title.textContent = displayName;
+      const statusContainer = document.createElement("div");
+      statusContainer.className = "session-status-container";
+      const statusIndicator = createAgentStatusIndicator(session.id);
+      statusIndicator.className += " status-small"; // Add small variant
       const status = document.createElement("span");
       status.className = `session-status ${session.status}`;
       status.textContent = session.status;
+      statusContainer.append(statusIndicator, status);
       const headerActions = document.createElement("div");
       headerActions.className = "session-card-header-actions";
       const editLink = document.createElement("button");
@@ -8427,7 +8502,7 @@ const renderHome = () => {
         event.preventDefault();
         promptRenameSession(session);
       });
-      headerActions.append(status, editLink);
+      headerActions.append(statusContainer, editLink);
       header.append(title, headerActions);
       card.append(header);
 
@@ -10012,7 +10087,10 @@ const renderComposer = (sessionId) => {
   buttonGroup.append(commandWrapper, submit);
 
   composer.append(fileInput, attachmentInput, textarea, buttonGroup);
-  composerShell.append(composer);
+  
+  // Add agent status indicator above the composer
+  const statusIndicator = createAgentStatusIndicator(sessionId);
+  composerShell.append(statusIndicator, composer);
 
   resizeTextarea();
 
@@ -10187,6 +10265,7 @@ const render = () => {
   closeMenu();
   syncMenuTabs();
   syncDesktopSessionIndicator();
+  updateAgentStatusIndicators();
   syncSessionPolling();
   syncAppsPolling();
   lastFilesMobileLayout = isMobileFilesLayout();

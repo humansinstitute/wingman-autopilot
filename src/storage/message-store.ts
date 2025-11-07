@@ -4,6 +4,8 @@ import { dirname } from "node:path";
 
 import { Database } from "bun:sqlite";
 
+import type { AgentRuntimeStatus } from "../types/agent-status";
+
 export interface StoredMessage {
   id: string;
   sessionId: string;
@@ -30,6 +32,7 @@ export interface SessionRecordInput {
   tmuxWindow?: string;
   workingDirectory?: string;
   command?: string[];
+  runtimeStatus?: AgentRuntimeStatus | null;
 }
 
 export interface StoredSessionRecord {
@@ -44,6 +47,7 @@ export interface StoredSessionRecord {
   tmuxWindow: string | null;
   workingDirectory: string | null;
   command: string | null;
+  runtimeStatus: AgentRuntimeStatus | null;
 }
 
 export const databaseFile = new URL("../../data/wingman.db", import.meta.url).pathname;
@@ -85,6 +89,7 @@ export class MessageStore {
       session.tmuxWindow ?? null,
       session.workingDirectory ?? null,
       Array.isArray(session.command) ? JSON.stringify(session.command) : null,
+      session.runtimeStatus ?? null,
     );
   }
 
@@ -134,7 +139,8 @@ export class MessageStore {
         tmux_session TEXT,
         tmux_window TEXT,
         working_directory TEXT,
-        command TEXT
+        command TEXT,
+        runtime_status TEXT
       );
 
       CREATE TABLE IF NOT EXISTS messages (
@@ -165,12 +171,13 @@ export class MessageStore {
     ensureColumn("working_directory", "TEXT");
     ensureColumn("command", "TEXT");
     ensureColumn("npub", "TEXT");
+    ensureColumn("runtime_status", "TEXT");
   }
 
   private prepareInsertSession() {
     return this.db.prepare(
-      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, tmux_session, tmux_window, working_directory, command)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, tmux_session, tmux_window, working_directory, command, runtime_status)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
        ON CONFLICT(id) DO UPDATE SET
          agent = excluded.agent,
          started_at = excluded.started_at,
@@ -181,7 +188,8 @@ export class MessageStore {
          tmux_session = excluded.tmux_session,
          tmux_window = excluded.tmux_window,
          working_directory = excluded.working_directory,
-         command = excluded.command`,
+         command = excluded.command,
+         runtime_status = excluded.runtime_status`,
     );
   }
 
@@ -202,7 +210,8 @@ export class MessageStore {
          tmux_session as tmuxSession,
          tmux_window as tmuxWindow,
          working_directory as workingDirectory,
-         command
+         command,
+         runtime_status as runtimeStatus
        FROM sessions`,
     );
   }

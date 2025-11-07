@@ -6,6 +6,7 @@ import { getAuthenticatedNpub } from "../auth/request-context";
 import { generateIdentityAlias } from "../identity/identity-alias";
 import { normaliseNpub } from "../identity/npub-utils";
 import { sanitizeLogEntry } from "../logging/log-sanitizer";
+import type { AgentRuntimeStatus } from "../types/agent-status";
 
 const MAX_LOG_LINES = 500;
 
@@ -17,6 +18,7 @@ export interface SessionSnapshot {
   port: number;
   name: string;
   status: SessionStatus;
+  agentRuntimeStatus?: AgentRuntimeStatus;
   startedAt: string;
   npub?: string;
   pid?: number;
@@ -46,6 +48,7 @@ export interface RehydrateSessionInput {
   pid?: number;
   logs?: string[];
   npub?: string;
+  agentRuntimeStatus?: AgentRuntimeStatus | null;
 }
 
 interface AgentSession {
@@ -65,6 +68,7 @@ interface AgentSession {
   tmuxWindow?: string;
   detachedPid?: number;
   npub?: string;
+  agentRuntimeStatus?: AgentRuntimeStatus;
 }
 
 export class ProcessManager {
@@ -139,6 +143,7 @@ export class ProcessManager {
       tmuxWindow,
       detachedPid: undefined,
       npub: getAuthenticatedNpub() ?? undefined,
+      agentRuntimeStatus: undefined,
     };
 
     this.sessions.set(id, session);
@@ -199,6 +204,7 @@ export class ProcessManager {
       tmuxWindow: input.tmuxWindow,
       detachedPid: typeof input.pid === "number" ? input.pid : undefined,
       npub: input.npub ?? undefined,
+      agentRuntimeStatus: input.agentRuntimeStatus ?? undefined,
     };
 
     this.sessions.set(session.id, session);
@@ -251,6 +257,21 @@ export class ProcessManager {
     this.releasePort(session.port);
     this.sessions.delete(id);
     return true;
+  }
+
+  setAgentRuntimeStatus(id: string, status: AgentRuntimeStatus | null): SessionSnapshot | null {
+    const session = this.sessions.get(id);
+    if (!session) {
+      return null;
+    }
+    const nextStatus = status ?? undefined;
+    if (session.agentRuntimeStatus === nextStatus) {
+      return this.toSnapshot(session);
+    }
+    session.agentRuntimeStatus = nextStatus;
+    const snapshot = this.toSnapshot(session);
+    this.emit({ type: "session-updated", session: snapshot });
+    return snapshot;
   }
 
   private spawnAgentProcess(session: AgentSession): Bun.Subprocess {
@@ -405,6 +426,7 @@ export class ProcessManager {
       port: session.port,
       name: session.name,
       status: session.status,
+      agentRuntimeStatus: session.agentRuntimeStatus,
       startedAt: session.startedAt.toISOString(),
       npub: session.npub,
       pid: session.process?.pid ?? session.detachedPid,
