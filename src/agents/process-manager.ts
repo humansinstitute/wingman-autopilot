@@ -5,6 +5,7 @@ import type { AgentDefinition, AgentType, WingmanConfig } from "../config";
 import { getAuthenticatedNpub } from "../auth/request-context";
 import { generateIdentityAlias } from "../identity/identity-alias";
 import { normaliseNpub } from "../identity/npub-utils";
+import { sanitizeLogEntry } from "../logging/log-sanitizer";
 
 const MAX_LOG_LINES = 500;
 
@@ -178,6 +179,10 @@ export class ProcessManager {
         ? input.command
         : definition.command({ port: input.port, agent: input.agent, config: this.config });
 
+    const sanitizedLogs = Array.isArray(input.logs)
+      ? input.logs.map((entry) => sanitizeLogEntry(entry)).filter((entry) => entry.length > 0)
+      : [];
+
     const session: AgentSession = {
       id: input.id,
       agent: input.agent,
@@ -189,7 +194,7 @@ export class ProcessManager {
       definition,
       workingDirectory: input.workingDirectory,
       command,
-      logs: input.logs ?? [],
+      logs: sanitizedLogs,
       tmuxSession: input.tmuxSession,
       tmuxWindow: input.tmuxWindow,
       detachedPid: typeof input.pid === "number" ? input.pid : undefined,
@@ -347,7 +352,11 @@ export class ProcessManager {
   }
 
   private appendLog(session: AgentSession, entry: string) {
-    session.logs.push(entry);
+    const cleanedEntry = sanitizeLogEntry(entry);
+    if (!cleanedEntry) {
+      return;
+    }
+    session.logs.push(cleanedEntry);
     if (session.logs.length > MAX_LOG_LINES) {
       session.logs.splice(0, session.logs.length - MAX_LOG_LINES);
     }
