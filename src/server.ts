@@ -77,9 +77,9 @@ console.log(`[config] tmux session base: ${config.tmuxBase}`);
 const TMUX_SESSION_NAME = config.tmuxBase;
 const SUPPORTED_AGENT_TYPES: AgentType[] = ["codex", "claude", "goose", "opencode", "gemini"];
 const MESSAGE_COST_SATS = 100;
-const todoStore = new TodoStore();
-const todoApiHandler = createTodoApiHandler({ store: todoStore });
 const projectStore = new ProjectStore();
+const todoStore = new TodoStore();
+const todoApiHandler = createTodoApiHandler({ store: todoStore, projectStore });
 const projectApiHandler = createProjectApiHandler({
   store: projectStore,
   getAppById: (id) => appRegistry.getApp(id),

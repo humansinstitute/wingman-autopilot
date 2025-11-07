@@ -1,7 +1,7 @@
 import { createTodoState } from "./state.js";
 import { createTodoView } from "./view.js";
 
-function createTodoFeature({ onRenderRequested, getApps }) {
+function createTodoFeature({ onRenderRequested, getApps, getProjects }) {
   function requestRender() {
     if (typeof onRenderRequested === "function") {
       onRenderRequested();
@@ -11,6 +11,7 @@ function createTodoFeature({ onRenderRequested, getApps }) {
   const stateApi = createTodoState({
     onStateChange: requestRender,
     getApps,
+    getProjects,
   });
 
   const actions = {
@@ -28,6 +29,8 @@ function createTodoFeature({ onRenderRequested, getApps }) {
     saveDraft: stateApi.saveDraft,
     getAppLabel: stateApi.getAppLabel,
     getAppOptions: stateApi.getAppOptions,
+    getProjectLabel: stateApi.getProjectLabel,
+    getProjectOptions: stateApi.getProjectOptions,
     consumeComposerFocus: stateApi.consumeComposerFocus,
     getHighlightedTodos: stateApi.getHighlightedTodos,
   };

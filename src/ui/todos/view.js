@@ -173,6 +173,7 @@ function createTodoView({ state, actions }) {
       { label: "Category", className: "wm-todo-col-category" },
       { label: "Parent", className: "wm-todo-col-parent" },
       { label: "Due", className: "wm-todo-col-due" },
+      { label: "Project", className: "wm-todo-col-project" },
       { label: "App", className: "wm-todo-col-app" },
       { label: "Created", className: "wm-todo-col-created" },
     ];
@@ -195,7 +196,7 @@ function createTodoView({ state, actions }) {
     row.className = "wm-todo-row is-status";
 
     const cell = document.createElement("td");
-    cell.colSpan = 7;
+    cell.colSpan = 8;
     cell.textContent = message;
     row.append(cell);
 
@@ -220,6 +221,7 @@ function createTodoView({ state, actions }) {
     row.append(renderCategoryCell(todo));
     row.append(renderParentCell(todo));
     row.append(renderDueCell(todo));
+    row.append(renderProjectCell(todo));
     row.append(renderAppCell(todo));
     row.append(renderCreatedCell(todo));
 
@@ -281,6 +283,13 @@ function createTodoView({ state, actions }) {
     return cell;
   }
 
+  function renderProjectCell(todo) {
+    const cell = document.createElement("td");
+    cell.className = "wm-todo-col-project";
+    cell.textContent = actions.getProjectLabel(todo.projectId) ?? "—";
+    return cell;
+  }
+
   function renderCategoryCell(todo) {
     const cell = document.createElement("td");
     cell.className = "wm-todo-col-category";
@@ -314,7 +323,7 @@ function createTodoView({ state, actions }) {
     row.className = "wm-todo-row-details";
 
     const cell = document.createElement("td");
-    cell.colSpan = 7;
+    cell.colSpan = 8;
     const draft = actions.getDraft(todo.id);
     const detail = createTodoDetailView({
       todo,

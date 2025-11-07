@@ -36,6 +36,7 @@ function buildDraftValues(todo) {
     category: normaliseCategory(todo.category),
     parentId: todo.parentId ?? "",
     appId: todo.appId ?? "",
+    projectId: todo.projectId ?? "",
     starred: Boolean(todo.starred),
   };
 }
@@ -46,7 +47,7 @@ async function getErrorMessage(response) {
   return message || "Request failed";
 }
 
-function createTodoState({ onStateChange, getApps }) {
+function createTodoState({ onStateChange, getApps, getProjects }) {
   const state = {
     items: [],
     loading: false,
@@ -88,6 +89,23 @@ function createTodoState({ onStateChange, getApps }) {
   function getAppOptions() {
     const apps = typeof getApps === "function" ? getApps() : [];
     return Array.isArray(apps) ? apps : [];
+  }
+
+  function getProjectLabel(projectId) {
+    if (!projectId) {
+      return null;
+    }
+    const projects = typeof getProjects === "function" ? getProjects() : [];
+    if (!Array.isArray(projects)) {
+      return null;
+    }
+    const match = projects.find((project) => project?.id === projectId);
+    return match?.name ?? projectId;
+  }
+
+  function getProjectOptions() {
+    const projects = typeof getProjects === "function" ? getProjects() : [];
+    return Array.isArray(projects) ? projects : [];
   }
 
   function setTodos(todos) {
@@ -419,6 +437,10 @@ function createTodoState({ onStateChange, getApps }) {
       diff.appId = current.appId ? current.appId : null;
       changed = true;
     }
+    if ((initial.projectId ?? "") !== (current.projectId ?? "")) {
+      diff.projectId = current.projectId ? current.projectId : null;
+      changed = true;
+    }
     if ((initial.category ?? "sand") !== (current.category ?? "sand")) {
       diff.category = normaliseCategory(current.category);
       changed = true;
@@ -510,6 +532,8 @@ function createTodoState({ onStateChange, getApps }) {
     saveDraft,
     getAppLabel,
     getAppOptions,
+    getProjectLabel,
+    getProjectOptions,
     getHighlightedTodos,
     consumeComposerFocus,
     reset,

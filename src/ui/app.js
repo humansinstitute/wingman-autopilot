@@ -10366,6 +10366,7 @@ todoFeature = createTodoFeature({
     }
   },
   getApps: () => (Array.isArray(state.apps.items) ? state.apps.items : []),
+  getProjects: () => (Array.isArray(state.projects?.items) ? state.projects.items : []),
 });
 state.todos = todoFeature.state;
 

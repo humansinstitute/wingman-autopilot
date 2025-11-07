@@ -159,6 +159,39 @@ function createTodoDetailView({ todo, draft, actions, state }) {
     },
   });
 
+  const projectField = createField({
+    label: "Associated project",
+    input: () => {
+      const select = document.createElement("select");
+      const defaultOption = document.createElement("option");
+      defaultOption.value = "";
+      defaultOption.textContent = "None";
+      select.append(defaultOption);
+
+      if (typeof actions.getProjectOptions === "function") {
+        const projects = actions.getProjectOptions();
+        projects.forEach((project) => {
+          if (!project?.id) {
+            return;
+          }
+          const option = document.createElement("option");
+          option.value = project.id;
+          option.textContent = project.name ?? project.id;
+          if (draft.values.projectId === project.id) {
+            option.selected = true;
+          }
+          select.append(option);
+        });
+      }
+
+      setTodoFocusKey(select, todo.id, "projectId");
+      select.addEventListener("change", (event) => {
+        actions.updateDraft(todo.id, { projectId: event.target.value });
+      });
+      return select;
+    },
+  });
+
   const starredField = createField({
     label: "Starred",
     input: () => {
@@ -230,7 +263,17 @@ function createTodoDetailView({ todo, draft, actions, state }) {
     actions.saveDraft(todo.id);
   });
 
-  form.append(titleField, descriptionField, dueField, categoryField, parentField, appField, starredField, actionsBar);
+  form.append(
+    titleField,
+    descriptionField,
+    dueField,
+    categoryField,
+    parentField,
+    appField,
+    projectField,
+    starredField,
+    actionsBar,
+  );
   return form;
 }
 

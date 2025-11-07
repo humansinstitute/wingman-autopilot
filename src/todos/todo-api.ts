@@ -1,10 +1,12 @@
 import type { RequestAuthContext } from "../auth/request-context";
 import { normaliseNpub } from "../identity/npub-utils";
 import { appRegistry, type AppRecord } from "../apps/app-registry";
+import type { ProjectStore } from "../projects/project-store";
 import type { TodoCategory, TodoRecord, TodoStore, UpdateTodoInput } from "./todo-store";
 
 export interface TodoApiDependencies {
   store: TodoStore;
+  projectStore?: Pick<ProjectStore, "getProject">;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -157,12 +159,27 @@ const verifyAppOwnership = async (appId: string | null, ownerNpub: string): Prom
   }
 };
 
+const verifyProjectAssociation = (deps: TodoApiDependencies, projectId: string | null): void => {
+  if (!projectId) {
+    return;
+  }
+  const store = deps.projectStore;
+  if (!store) {
+    return;
+  }
+  const project = store.getProject(projectId);
+  if (!project) {
+    throw new Error("Associated project not found");
+  }
+};
+
 const serializeTodo = (record: TodoRecord) => ({
   id: record.id,
   title: record.title,
   description: record.description,
   dueDate: record.dueDate,
   appId: record.appId,
+  projectId: record.projectId,
   priority: 0,
   category: record.category,
   parentId: record.parentId,
@@ -206,6 +223,12 @@ const handleTodoCollection = async (
     } catch (error) {
       return Response.json({ error: (error as Error).message }, { status: 400 });
     }
+    const projectId = normaliseOptionalString(input.projectId);
+    try {
+      verifyProjectAssociation(deps, projectId);
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 400 });
+    }
     let category: TodoCategory | null = null;
     try {
       category = parseCategory(input.category);
@@ -231,6 +254,7 @@ const handleTodoCollection = async (
         description: typeof input.description === "string" ? input.description : null,
         dueDate,
         appId,
+        projectId,
         category: effectiveCategory,
         parentId: parentId ?? null,
         starred,
@@ -310,6 +334,20 @@ const handleTodoItem = async (
         updates.appId = appId;
       } else {
         return Response.json({ error: "Invalid app id" }, { status: 400 });
+      }
+    }
+
+    if (input.projectId !== undefined) {
+      if (input.projectId === null || typeof input.projectId === "string") {
+        const projectId = normaliseOptionalString(input.projectId);
+        try {
+          verifyProjectAssociation(deps, projectId);
+        } catch (error) {
+          return Response.json({ error: (error as Error).message }, { status: 400 });
+        }
+        updates.projectId = projectId;
+      } else {
+        return Response.json({ error: "Invalid project id" }, { status: 400 });
       }
     }
 

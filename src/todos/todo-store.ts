@@ -20,6 +20,7 @@ export interface TodoRecord {
   description: string | null;
   dueDate: string | null;
   appId: string | null;
+  projectId: string | null;
   category: TodoCategory;
   parentId: string | null;
   starred: boolean;
@@ -33,6 +34,7 @@ export interface CreateTodoInput {
   description?: string | null;
   dueDate?: string | null;
   appId?: string | null;
+  projectId?: string | null;
   category?: TodoCategory | null;
   parentId?: string | null;
   starred?: boolean | null;
@@ -43,6 +45,7 @@ export interface UpdateTodoInput {
   description?: string | null;
   dueDate?: string | null;
   appId?: string | null;
+  projectId?: string | null;
   category?: TodoCategory | null;
   parentId?: string | null;
   starred?: boolean | null;
@@ -52,6 +55,7 @@ interface TodoRow {
   id: string;
   owner_npub: string;
   app_id: string | null;
+  project_id: string | null;
   category: string | null;
   parent_id: string | null;
   starred: number;
@@ -93,6 +97,7 @@ const mapRowToRecord = (row: TodoRow): TodoRecord => {
     description: payload.description ?? null,
     dueDate: payload.dueDate ?? null,
     appId: row.app_id,
+    projectId: row.project_id ?? null,
     category: normaliseCategory(row.category ?? undefined),
     parentId: row.parent_id ?? null,
     starred: row.starred === 1,
@@ -161,6 +166,7 @@ export class TodoStore {
     const now = new Date().toISOString();
     const id = randomUUID();
     const appId = normaliseNullableString(input.appId);
+    const projectId = normaliseNullableString(input.projectId);
     const category = normaliseCategory(input.category ?? undefined);
     const parentId = category === "rock" ? null : normaliseNullableString(input.parentId);
     const starred = Boolean(input.starred);
@@ -174,6 +180,7 @@ export class TodoStore {
       id,
       owner,
       appId,
+      projectId,
       category,
       parentId,
       toBooleanInteger(starred),
@@ -191,6 +198,7 @@ export class TodoStore {
       description: payload.description ?? null,
       dueDate: payload.dueDate ?? null,
       appId,
+      projectId,
       category,
       parentId,
       starred,
@@ -227,6 +235,10 @@ export class TodoStore {
       input.appId !== undefined
         ? normaliseNullableString(input.appId)
         : current.appId;
+    const projectId =
+      input.projectId !== undefined
+        ? normaliseNullableString(input.projectId)
+        : current.projectId;
     const category =
       input.category !== undefined && input.category !== null
         ? normaliseCategory(input.category)
@@ -251,6 +263,7 @@ export class TodoStore {
     const updatedAt = new Date().toISOString();
     const params = [
       appId,
+      projectId,
       category,
       parentId,
       toBooleanInteger(starred),
@@ -269,6 +282,7 @@ export class TodoStore {
       description: description ?? null,
       dueDate: dueDate ?? null,
       appId,
+      projectId,
       category,
       parentId,
       starred,
@@ -305,6 +319,7 @@ export class TodoStore {
         id TEXT PRIMARY KEY,
         owner_npub TEXT NOT NULL,
         app_id TEXT,
+        project_id TEXT,
         priority INTEGER NOT NULL DEFAULT 0,
         category TEXT NOT NULL DEFAULT 'sand',
         parent_id TEXT,
@@ -340,6 +355,10 @@ export class TodoStore {
     if (!hasParent) {
       this.db.exec("ALTER TABLE todos ADD COLUMN parent_id TEXT;");
     }
+    const hasProject = columns.some((column) => column.name === "project_id");
+    if (!hasProject) {
+      this.db.exec("ALTER TABLE todos ADD COLUMN project_id TEXT;");
+    }
     this.db.exec(`
       UPDATE todos
          SET category = CASE
@@ -371,6 +390,7 @@ export class TodoStore {
           id,
           owner_npub,
           app_id,
+          project_id,
           category,
           parent_id,
           starred,
@@ -379,7 +399,7 @@ export class TodoStore {
           payload_ciphertext,
           created_at,
           updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
       `,
     );
   }
@@ -389,15 +409,16 @@ export class TodoStore {
       `
         UPDATE todos
            SET app_id = ?1,
-               category = ?2,
-               parent_id = ?3,
-               starred = ?4,
-               payload_iv = ?5,
-               payload_tag = ?6,
-               payload_ciphertext = ?7,
-               updated_at = ?8
-         WHERE owner_npub = ?9
-           AND id = ?10
+               project_id = ?2,
+               category = ?3,
+               parent_id = ?4,
+               starred = ?5,
+               payload_iv = ?6,
+               payload_tag = ?7,
+               payload_ciphertext = ?8,
+               updated_at = ?9
+         WHERE owner_npub = ?10
+           AND id = ?11
       `,
     );
   }
@@ -419,6 +440,7 @@ export class TodoStore {
           id,
           owner_npub,
           app_id,
+          project_id,
           category,
           parent_id,
           starred,
@@ -441,6 +463,7 @@ export class TodoStore {
           id,
           owner_npub,
           app_id,
+          project_id,
           category,
           parent_id,
           starred,
@@ -463,6 +486,7 @@ export class TodoStore {
           id,
           owner_npub,
           app_id,
+          project_id,
           category,
           parent_id,
           starred,
