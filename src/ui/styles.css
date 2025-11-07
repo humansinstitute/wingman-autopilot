@@ -1976,14 +1976,6 @@ body[data-menu-open="true"] .wm-menu-panel {
   color: var(--text-secondary);
 }
 
-.session-table col.session-col-actions {
-  width: 10rem;
-}
-
-.session-table col.session-col-name {
-  width: 14rem;
-}
-
 .session-table th,
 .session-table td {
   padding: 0.85rem 1rem;
@@ -2022,10 +2014,9 @@ body[data-menu-open="true"] .wm-menu-panel {
 
 .session-table td.actions-cell {
   display: flex;
-  gap: 0.5rem;
-  align-items: flex-start;
   flex-direction: column;
-  width: 100%;
+  gap: 0.4rem;
+  min-width: 9rem;
 }
 
 .session-table td.actions-cell .wm-button {
@@ -2033,22 +2024,20 @@ body[data-menu-open="true"] .wm-menu-panel {
 }
 
 .session-table td.session-name-cell {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.25rem;
+  white-space: normal;
 }
 
 .session-name-text {
-  flex: 1;
-  min-width: 0;
-  font-weight: inherit;
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.2rem;
 }
 
 .session-name-edit {
+  display: inline-flex;
   font-size: 0.85rem;
-  margin-top: 0.15rem;
-  white-space: nowrap;
+  gap: 0.35rem;
+  align-items: center;
 }
 
 .session-table-wrapper {
