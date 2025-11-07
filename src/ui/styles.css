@@ -4942,3 +4942,108 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
     padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0));
   }
 }
+
+/* Agent Status Indicator */
+.wm-agent-status-indicator {
+  height: 3px;
+  width: 100%;
+  border-radius: 1.5px;
+  transition: background-color 0.3s ease;
+  margin-bottom: 8px;
+}
+
+.wm-agent-status-indicator.status-stable {
+  background-color: var(--accent-primary);
+}
+
+.wm-agent-status-indicator.status-running {
+  background-color: #ef4444; /* Red for running */
+  animation: pulse-running 1.5s ease-in-out infinite;
+}
+
+.wm-agent-status-indicator.status-unknown {
+  background-color: var(--text-tertiary);
+  opacity: 0.6;
+}
+
+.wm-agent-status-indicator.wm-agent-status-pill {
+  height: auto;
+  min-height: 36px;
+  width: 100%;
+  border-radius: 999px;
+  padding: 0 14px;
+  margin-bottom: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.wm-agent-status-pill-button {
+  cursor: default;
+  pointer-events: none;
+}
+
+.wm-agent-status-indicator.wm-agent-status-pill.status-running {
+  background-color: #fee2e2;
+  border-color: #fecaca;
+  color: #991b1b;
+  animation: pulse-running 1.5s ease-in-out infinite;
+}
+
+.wm-agent-status-indicator.wm-agent-status-pill.status-stable {
+  background-color: #dcfce7;
+  border-color: #bbf7d0;
+  color: #065f46;
+  animation: none;
+}
+
+.wm-agent-status-indicator.wm-agent-status-pill.status-unknown {
+  background-color: var(--surface-secondary);
+  border-color: var(--border-primary);
+  color: var(--text-tertiary);
+  opacity: 1;
+  animation: none;
+}
+
+@keyframes pulse-running {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* Status indicator in session table */
+.session-status-cell {
+  position: relative;
+}
+
+.session-status-cell .wm-agent-status-indicator {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin: 0 8px 0 0;
+}
+
+.session-status-cell .session-status-text {
+  margin-left: 16px;
+}
+
+/* Status indicator in session cards */
+.session-status-container {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wm-agent-status-indicator.status-small {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-bottom: 0;
+}

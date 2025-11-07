@@ -5281,21 +5281,35 @@ const resolveAgentRuntimeStatus = (sessionId) => {
   return null;
 };
 
-const createAgentStatusIndicator = (sessionId) => {
+const createAgentStatusIndicator = (sessionId, options = {}) => {
+  const variant = typeof options.variant === "string" ? options.variant : "bar";
   const indicator = document.createElement("div");
   indicator.className = "wm-agent-status-indicator";
   indicator.setAttribute("data-session-id", sessionId);
   indicator.setAttribute("role", "status");
   indicator.setAttribute("aria-live", "polite");
+  indicator.dataset.variant = variant;
+
+  if (variant === "pill") {
+    indicator.classList.add("wm-agent-status-pill");
+  }
   applyAgentStatusIndicatorState(indicator, sessionId);
   return indicator;
 };
 
 const applyAgentStatusIndicatorState = (indicator, sessionId) => {
   const status = resolveAgentRuntimeStatus(sessionId);
+  const variant = indicator.dataset.variant ?? "bar";
   const preservedClasses = indicator.className
     .split(" ")
-    .filter((cls) => cls && (cls === "wm-agent-status-indicator" || cls === "status-small" || !cls.startsWith("status-")));
+    .filter(
+      (cls) =>
+        cls &&
+        (cls === "wm-agent-status-indicator" ||
+          cls === "status-small" ||
+          cls.startsWith("wm-agent-status-") ||
+          !cls.startsWith("status-")),
+    );
   const baseClasses = new Set(preservedClasses.length > 0 ? preservedClasses : ["wm-agent-status-indicator"]);
   baseClasses.add("wm-agent-status-indicator");
   // Remove any previous status-* classes except the optional small modifier
@@ -5318,6 +5332,12 @@ const applyAgentStatusIndicatorState = (indicator, sessionId) => {
 
   indicator.className = Array.from(baseClasses).join(" ");
   indicator.setAttribute("aria-label", ariaLabel);
+  if (variant === "pill") {
+    indicator.textContent =
+      status === "running" ? "Running…" : status === "stable" ? "Stable" : "Awaiting status";
+  } else {
+    indicator.textContent = "";
+  }
 };
 
 const updateAgentStatusIndicators = () => {
@@ -10106,9 +10126,12 @@ const renderComposer = (sessionId) => {
 
   composer.append(fileInput, attachmentInput, textarea, buttonGroup);
   
-  // Add agent status indicator above the composer
-  const statusIndicator = createAgentStatusIndicator(sessionId);
-  composerShell.append(statusIndicator, composer);
+  // Add agent status indicator button inside the controls column
+  const statusIndicator = createAgentStatusIndicator(sessionId, { variant: "pill" });
+  statusIndicator.classList.add("wm-button", "ghost", "wm-agent-status-pill-button");
+  buttonGroup.prepend(statusIndicator);
+
+  composerShell.append(composer);
 
   resizeTextarea();
 
