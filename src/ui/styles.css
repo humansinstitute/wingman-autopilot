@@ -4956,6 +4956,21 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   opacity: 0.6;
 }
 
+.wm-agent-status-indicator.wm-agent-status-pill {
+  height: calc(44px * 0.65);
+  width: 100%;
+  border-radius: 999px;
+  padding: 0 1.5rem;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
 .wm-agent-status-pill-button {
   width: 100%;
   border: none;
@@ -4963,22 +4978,6 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   padding: 0;
   margin: 0;
   display: flex;
-}
-
-.wm-agent-status-indicator.wm-agent-status-pill {
-  height: 40px;
-  width: 100%;
-  border-radius: 999px;
-  padding: 0 16px;
-  margin-bottom: 12px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1rem;
-  font-weight: 600;
-  border: 1px solid transparent;
-  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-  letter-spacing: 0.08em;
 }
 
 .wm-agent-status-indicator.wm-agent-status-pill.status-running {
@@ -4989,9 +4988,9 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 }
 
 .wm-agent-status-indicator.wm-agent-status-pill.status-stable {
-  background-color: #dbeafe;
-  border-color: #93c5fd;
-  color: #1d4ed8;
+  background-color: #e5e7eb;
+  border-color: #d1d5db;
+  color: #374151;
   animation: none;
 }
 

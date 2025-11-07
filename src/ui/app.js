@@ -5333,13 +5333,14 @@ const applyAgentStatusIndicatorState = (indicator, sessionId) => {
 
   indicator.className = Array.from(baseClasses).join(" ");
   indicator.setAttribute("aria-label", ariaLabel);
-  indicator.textContent = variant === "pill"
-    ? status === "running"
-      ? "-"
-      : status === "stable"
-        ? "O"
-        : "?"
-    : "";
+  indicator.textContent =
+    variant === "pill"
+      ? status === "running"
+        ? "0"
+        : status === "stable"
+          ? "-"
+          : "?"
+      : "";
 };
 
 const updateAgentStatusIndicators = () => {
