@@ -432,6 +432,29 @@
         </menu>
       </form>
     </dialog>
+    <dialog id="project-dialog" class="wm-project-dialog">
+      <form method="dialog" class="wm-project-dialog__form">
+        <header>
+          <h2>New Project</h2>
+          <p class="wm-dialog-help">Define a project root so related apps stay grouped.</p>
+        </header>
+        <section class="wm-project-dialog__body">
+          <label class="wm-project-field">
+            <span class="wm-project-field__label">Project name</span>
+            <input id="project-dialog-name" type="text" placeholder="Wingman Demo" autocomplete="off" />
+          </label>
+          <label class="wm-project-field">
+            <span class="wm-project-field__label">Project folder</span>
+            <input id="project-dialog-root" type="text" placeholder="/Users/you/code/wingman-demo" autocomplete="off" />
+          </label>
+          <p id="project-dialog-error" class="wm-project-form__error" hidden></p>
+        </section>
+        <footer class="wm-project-dialog__footer">
+          <button type="button" class="wm-button secondary" id="project-dialog-cancel">Cancel</button>
+          <button type="submit" class="wm-button" id="project-dialog-submit">Create Project</button>
+        </footer>
+      </form>
+    </dialog>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

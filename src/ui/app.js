@@ -2926,12 +2926,6 @@ const getSessionIdFromPath = (pathname) => {
 };
 
 let currentRoute = getRouteFromPath(window.location.pathname);
-if (!state.identity.authenticated && currentRoute !== "home") {
-  currentRoute = "home";
-  if (window.location.pathname !== HOME_ROUTE) {
-    window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
-  }
-}
 let currentTheme = "dark";
 let tabsVisible = true;
 let lastLoggedSessionId = null;
@@ -3366,6 +3360,13 @@ const appCloneUrlInput = document.getElementById("app-clone-url");
 const appCloneNameInput = document.getElementById("app-clone-name");
 const appCloneCancelButton = document.getElementById("app-clone-cancel");
 const appCloneConfirmButton = document.getElementById("app-clone-confirm");
+const projectDialog = document.getElementById("project-dialog");
+const projectDialogForm = projectDialog?.querySelector("form") ?? null;
+const projectDialogNameInput = document.getElementById("project-dialog-name");
+const projectDialogRootInput = document.getElementById("project-dialog-root");
+const projectDialogError = document.getElementById("project-dialog-error");
+const projectDialogCancel = document.getElementById("project-dialog-cancel");
+const projectDialogSubmit = document.getElementById("project-dialog-submit");
 const SHARED_TMUX_SESSION = "wingman-apps";
 
 let identityLoginPanelRoot = null;
@@ -3457,6 +3458,97 @@ identityLoginDialogCloseButton?.addEventListener("click", (event) => {
 identityLoginDialog?.addEventListener("cancel", (event) => {
   event.preventDefault();
   closeIdentityLoginDialog();
+});
+
+const syncProjectDialogState = () => {
+  if (!projectDialog) return;
+  const formState = projectFeature?.state?.createForm;
+  const nameValue = formState?.name ?? "";
+  const rootValue = formState?.rootPath ?? "";
+  if (projectDialogNameInput && projectDialogNameInput.value !== nameValue) {
+    projectDialogNameInput.value = nameValue;
+  }
+  if (projectDialogRootInput && projectDialogRootInput.value !== rootValue) {
+    projectDialogRootInput.value = rootValue;
+  }
+  if (projectDialogError) {
+    if (formState?.error) {
+      projectDialogError.hidden = false;
+      projectDialogError.textContent = formState.error;
+    } else {
+      projectDialogError.hidden = true;
+      projectDialogError.textContent = "";
+    }
+  }
+  const submitting = Boolean(formState?.submitting);
+  if (projectDialogSubmit) {
+    projectDialogSubmit.textContent = submitting ? "Creating…" : "Create Project";
+    projectDialogSubmit.disabled = submitting;
+  }
+  if (projectDialogCancel) {
+    projectDialogCancel.disabled = submitting;
+  }
+  if (projectDialogNameInput) {
+    projectDialogNameInput.disabled = submitting;
+  }
+  if (projectDialogRootInput) {
+    projectDialogRootInput.disabled = submitting;
+  }
+};
+
+function openProjectDialog() {
+  if (!state.identity.authenticated) {
+    openIdentityLoginDialog();
+    return;
+  }
+  syncProjectDialogState();
+  if (typeof projectDialog?.showModal === "function") {
+    projectDialog.showModal();
+    requestAnimationFrame(() => {
+      if (projectDialogNameInput) {
+        projectDialogNameInput.focus();
+        const length = projectDialogNameInput.value.length;
+        projectDialogNameInput.setSelectionRange?.(length, length);
+      }
+    });
+  }
+}
+
+function closeProjectDialog() {
+  if (projectDialog?.open) {
+    projectDialog.close();
+  }
+}
+
+projectDialogCancel?.addEventListener("click", (event) => {
+  event.preventDefault();
+  closeProjectDialog();
+});
+
+projectDialog?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeProjectDialog();
+});
+
+projectDialogNameInput?.addEventListener("input", (event) => {
+  projectFeature?.setCreateFormValue?.("name", event.target.value);
+});
+
+projectDialogRootInput?.addEventListener("input", (event) => {
+  projectFeature?.setCreateFormValue?.("rootPath", event.target.value);
+});
+
+projectDialogForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!projectFeature) {
+    return;
+  }
+  const success = await projectFeature.submitCreateProject();
+  syncProjectDialogState();
+  if (success) {
+    closeProjectDialog();
+    showToast("Project created");
+  }
 });
 
 headerLoginButton?.addEventListener("click", (event) => {
@@ -9840,6 +9932,10 @@ projectFeature = createProjectFeature({
     if (currentRoute === "projects") {
       render();
     }
+    syncProjectDialogState();
+  },
+  onCreateRequested: () => {
+    openProjectDialog();
   },
 });
 state.projects = projectFeature.state;

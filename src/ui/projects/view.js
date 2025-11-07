@@ -9,6 +9,9 @@ function createProjectView({ state, actions }) {
     title.textContent = "Projects";
     header.append(title);
 
+    const actionsGroup = document.createElement("div");
+    actionsGroup.className = "wm-projects-header-actions";
+
     const refreshButton = document.createElement("button");
     refreshButton.type = "button";
     refreshButton.className = "wm-button secondary";
@@ -18,76 +21,24 @@ function createProjectView({ state, actions }) {
       refreshButton.disabled = true;
       void actions.refresh();
     });
-    header.append(refreshButton);
+    actionsGroup.append(refreshButton);
 
-    container.append(header);
-    container.append(renderCreateCard());
-    container.append(renderProjectList());
-    return container;
-  }
-
-  function renderCreateCard() {
-    const card = document.createElement("section");
-    card.className = "wm-card wm-project-card";
-
-    const title = document.createElement("h2");
-    title.textContent = "Create a Project";
-    card.append(title);
-
-    const description = document.createElement("p");
-    description.className = "wm-project-card__description";
-    description.textContent =
-      "Define a root folder for your project so apps can be organised beneath it.";
-    card.append(description);
-
-    const form = document.createElement("form");
-    form.className = "wm-project-form";
-    form.noValidate = true;
-
-    const fields = document.createElement("div");
-    fields.className = "wm-project-form__fields";
-
-    fields.append(
-      createInputField({
-        label: "Project name",
-        placeholder: "Wingman Demo",
-        value: state.createForm.name,
-        onInput: (value) => actions.setCreateFormValue("name", value),
-      }),
-    );
-
-    fields.append(
-      createInputField({
-        label: "Project folder",
-        placeholder: "/Users/you/code/wingman-demo",
-        value: state.createForm.rootPath,
-        onInput: (value) => actions.setCreateFormValue("rootPath", value),
-      }),
-    );
-
-    form.append(fields);
-
-    if (state.createForm.error) {
-      const error = document.createElement("p");
-      error.className = "wm-project-form__error";
-      error.textContent = state.createForm.error;
-      form.append(error);
+    if (typeof actions.openCreateDialog === "function") {
+      const addButton = document.createElement("button");
+      addButton.type = "button";
+      addButton.className = "wm-button";
+      addButton.textContent = "Add Project";
+      addButton.addEventListener("click", () => {
+        actions.openCreateDialog();
+      });
+      actionsGroup.append(addButton);
     }
 
-    const submit = document.createElement("button");
-    submit.type = "submit";
-    submit.className = "wm-button";
-    submit.textContent = state.createForm.submitting ? "Creating…" : "Create Project";
-    submit.disabled = state.createForm.submitting;
-    form.append(submit);
+    header.append(actionsGroup);
 
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      void actions.submitCreateProject();
-    });
-
-    card.append(form);
-    return card;
+    container.append(header);
+    container.append(renderProjectList());
+    return container;
   }
 
   function renderProjectList() {
@@ -118,9 +69,12 @@ function createProjectView({ state, actions }) {
       return wrapper;
     }
 
+    const grid = document.createElement("div");
+    grid.className = "wm-project-grid";
     projects.forEach((project) => {
-      wrapper.append(renderProjectCard(project));
+      grid.append(renderProjectCard(project));
     });
+    wrapper.append(grid);
 
     return wrapper;
   }

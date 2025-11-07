@@ -102,24 +102,25 @@ function createProjectState({ onStateChange }) {
     state.createForm[field] = value;
     if (state.createForm.error) {
       state.createForm.error = null;
+      notify();
     }
-    notify();
   };
 
   const submitCreateProject = async () => {
     if (state.createForm.submitting) {
-      return;
+      return false;
     }
     const name = state.createForm.name.trim();
     const rootPath = state.createForm.rootPath.trim();
     if (!name || !rootPath) {
       state.createForm.error = "Project name and folder are required";
       notify();
-      return;
+      return false;
     }
     state.createForm.submitting = true;
     state.createForm.error = null;
     notify();
+    let success = false;
     try {
       const response = await fetch("/api/projects", {
         method: "POST",
@@ -142,12 +143,14 @@ function createProjectState({ onStateChange }) {
       }
       state.createForm.name = "";
       state.createForm.rootPath = "";
+      success = true;
     } catch (error) {
       state.createForm.error = error instanceof Error ? error.message : String(error);
     } finally {
       state.createForm.submitting = false;
       notify();
     }
+    return success && !state.createForm.error;
   };
 
   const setAppFormValue = (projectId, field, value) => {
@@ -161,8 +164,8 @@ function createProjectState({ onStateChange }) {
     form[field] = value;
     if (form.error) {
       form.error = null;
+      notify();
     }
-    notify();
   };
 
   const submitProjectApp = async (projectId) => {
