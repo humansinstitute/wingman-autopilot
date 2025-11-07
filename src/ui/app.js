@@ -9850,9 +9850,7 @@ const updateLivePanelsForSession = (sessionId) => {
     conversationContainer.className = "wm-live-conversation";
     conversationContainer.append(renderConversation(sessionId));
     scrollRegion.append(conversationContainer);
-    requestAnimationFrame(() => {
-      scrollConversationAreaToBottom(sessionId, { includeWindow: true });
-    });
+    scheduleLiveScroll(sessionId, { includeWindow: true });
   }
 
   const currentComposer = document.querySelector('.wm-composer-shell');
@@ -9915,9 +9913,7 @@ const renderLive = () => {
   conversationContainer.className = "wm-live-conversation";
   conversationContainer.append(renderConversation(sessionId));
   scrollRegion.append(conversationContainer);
-  requestAnimationFrame(() => {
-    scrollConversationAreaToBottom(sessionId, { includeWindow: true });
-  });
+  scheduleLiveScroll(sessionId, { includeWindow: true });
 
   main.append(scrollRegion);
   wrapper.append(main);
