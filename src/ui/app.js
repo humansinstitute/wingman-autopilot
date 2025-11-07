@@ -8395,6 +8395,24 @@ const renderHome = () => {
   const table = document.createElement("table");
   table.className = "session-table";
 
+  const colgroup = document.createElement("colgroup");
+  [
+    "actions",
+    "name",
+    "agent",
+    "identity",
+    "status",
+    "port",
+    "pid",
+    "started",
+    "directory",
+  ].forEach((key) => {
+    const col = document.createElement("col");
+    col.className = `session-col-${key}`;
+    colgroup.append(col);
+  });
+  table.append(colgroup);
+
   const thead = document.createElement("thead");
   thead.innerHTML =
     "<tr><th>Actions</th><th>Name</th><th>Agent</th><th>Identity</th><th>Status</th><th>Port</th><th>PID</th><th>Started</th><th>Directory</th></tr>";
