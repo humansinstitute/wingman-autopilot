@@ -9817,7 +9817,7 @@ const updateLivePanelsForSession = (sessionId) => {
     conversationContainer.append(renderConversation(sessionId));
     scrollRegion.append(conversationContainer);
     requestAnimationFrame(() => {
-      scrollConversationAreaToBottom(sessionId);
+      scrollConversationAreaToBottom(sessionId, { includeWindow: true });
     });
   }
 
@@ -9882,7 +9882,7 @@ const renderLive = () => {
   conversationContainer.append(renderConversation(sessionId));
   scrollRegion.append(conversationContainer);
   requestAnimationFrame(() => {
-    scrollConversationAreaToBottom(sessionId);
+    scrollConversationAreaToBottom(sessionId, { includeWindow: true });
   });
 
   main.append(scrollRegion);
