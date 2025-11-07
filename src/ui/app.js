@@ -5398,6 +5398,7 @@ const updateConversationDOM = (sessionId) => {
   // Handle updated messages (streaming SSE - message content changes)
   if (conversation.length === lastCount && conversation.length > 0) {
     const domMessages = container.querySelectorAll('.wm-message');
+    let contentChanged = false;
 
     conversation.forEach((message, idx) => {
       const domMessage = domMessages[idx];
@@ -5408,12 +5409,19 @@ const updateConversationDOM = (sessionId) => {
         const newContent = message.content ?? message.message ?? '';
 
         if (currentContent !== newContent) {
+          contentChanged = true;
           if (body) {
             body.textContent = newContent;
           }
         }
       }
     });
+
+    if (contentChanged && currentRoute === "live" && sessionId === state.activeSessionId) {
+      requestAnimationFrame(() => {
+        scrollConversationAreaToBottom(sessionId, { includeWindow: true });
+      });
+    }
   }
 };
 
