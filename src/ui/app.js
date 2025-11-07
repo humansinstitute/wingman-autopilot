@@ -24,6 +24,7 @@ const TERMINAL_CONTROL_ACTIONS = [
   { id: "terminal-esc", label: "Send Esc", toastLabel: "Esc", sequence: "\u001b" },
   { id: "terminal-1", label: "Send 1", toastLabel: "1", sequence: "1" },
   { id: "terminal-2", label: "Send 2", toastLabel: "2", sequence: "2" },
+  { id: "terminal-3", label: "Send 3", toastLabel: "3", sequence: "3" },
   { id: "terminal-up", label: "Send Arrow Up", toastLabel: "Arrow Up", sequence: "\u001b[A" },
   { id: "terminal-down", label: "Send Arrow Down", toastLabel: "Arrow Down", sequence: "\u001b[B" },
   { id: "terminal-return", label: "Send Return", toastLabel: "Return", sequence: "\r" },
