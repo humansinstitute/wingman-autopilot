@@ -49,7 +49,12 @@ function createTodoView({ state, actions }) {
       });
     }
     table.append(body);
-    wrapper.append(table);
+
+    const tableContainer = document.createElement("div");
+    tableContainer.className = "wm-table-container";
+    tableContainer.append(table);
+
+    wrapper.append(tableContainer);
 
     return wrapper;
   }
