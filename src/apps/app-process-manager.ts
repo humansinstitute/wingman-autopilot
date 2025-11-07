@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { ReadableStream } from "node:stream/web";
 
 import { loadConfig } from "../config";
+import { sanitizeLogEntry } from "../logging/log-sanitizer";
 import { appRegistry } from "./app-registry";
 import type { AppLifecycleAction, AppRecord, AppRegistry } from "./app-registry";
 
@@ -217,7 +218,10 @@ export class AppProcessManager {
     const logPath = this.logPath(appId);
     try {
       const contents = await readFile(logPath, "utf8");
-      const allLines = contents.split(/\r?\n/).filter(Boolean);
+      const allLines = contents
+        .split(/\r?\n/)
+        .map((line) => sanitizeLogEntry(line))
+        .filter((line) => Boolean(line));
       return allLines.slice(-lines);
     } catch (error) {
       const err = error as NodeJS.ErrnoException;
