@@ -9893,7 +9893,59 @@ const renderLive = () => {
   return wrapper;
 };
 
+function captureFocusSnapshot() {
+  const active = document.activeElement;
+  if (!active || !appRoot || !appRoot.contains(active)) {
+    return null;
+  }
+  if (!(active instanceof HTMLElement)) {
+    return null;
+  }
+  const focusKey = active.dataset?.focusKey;
+  if (!focusKey) {
+    return null;
+  }
+  const snapshot = {
+    key: focusKey,
+    selectionStart: null,
+    selectionEnd: null,
+  };
+  if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
+    snapshot.selectionStart = typeof active.selectionStart === "number" ? active.selectionStart : null;
+    snapshot.selectionEnd = typeof active.selectionEnd === "number" ? active.selectionEnd : null;
+  }
+  return snapshot;
+}
+
+function restoreFocusFromSnapshot(snapshot) {
+  if (!snapshot?.key) {
+    return;
+  }
+  const candidate = document.querySelector(`[data-focus-key="${snapshot.key}"]`);
+  if (!(candidate instanceof HTMLElement)) {
+    return;
+  }
+  try {
+    candidate.focus({ preventScroll: true });
+  } catch {
+    candidate.focus();
+  }
+  if (
+    (candidate instanceof HTMLInputElement || candidate instanceof HTMLTextAreaElement) &&
+    typeof snapshot.selectionStart === "number" &&
+    typeof snapshot.selectionEnd === "number" &&
+    typeof candidate.setSelectionRange === "function"
+  ) {
+    try {
+      candidate.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
+    } catch {
+      // ignore selection errors
+    }
+  }
+}
+
 const render = () => {
+  const focusSnapshot = captureFocusSnapshot();
   appRoot.innerHTML = "";
   let view;
   if (currentRoute === "live") {
@@ -9915,6 +9967,7 @@ const render = () => {
   renderFileEditorOverlay();
   renderWorktreeModal();
   appRoot.dataset.route = currentRoute;
+  restoreFocusFromSnapshot(focusSnapshot);
   setActiveNav();
   closeMenu();
   syncMenuTabs();

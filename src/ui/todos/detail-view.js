@@ -1,5 +1,18 @@
 import { PRIORITY_OPTIONS, toDateInputValue } from "./utils.js";
 
+function buildTodoFocusKey(todoId, field) {
+  return `todo:${todoId}:${field}`;
+}
+
+function setTodoFocusKey(element, todoId, field) {
+  if (!element || !todoId || !field) {
+    return;
+  }
+  if (element.dataset) {
+    element.dataset.focusKey = buildTodoFocusKey(todoId, field);
+  }
+}
+
 function createTodoDetailView({ todo, draft, actions, state }) {
   if (!todo) {
     throw new Error("createTodoDetailView requires a todo");
@@ -19,6 +32,7 @@ function createTodoDetailView({ todo, draft, actions, state }) {
       input.type = "text";
       input.required = true;
       input.value = draft.values.title;
+      setTodoFocusKey(input, todo.id, "title");
       input.addEventListener("input", (event) => {
         actions.updateDraft(todo.id, { title: event.target.value });
       });
@@ -32,6 +46,7 @@ function createTodoDetailView({ todo, draft, actions, state }) {
       const textarea = document.createElement("textarea");
       textarea.rows = 3;
       textarea.value = draft.values.description;
+      setTodoFocusKey(textarea, todo.id, "description");
       textarea.addEventListener("input", (event) => {
         actions.updateDraft(todo.id, { description: event.target.value });
       });
@@ -45,6 +60,7 @@ function createTodoDetailView({ todo, draft, actions, state }) {
       const input = document.createElement("input");
       input.type = "date";
       input.value = toDateInputValue(draft.values.dueDate) || "";
+      setTodoFocusKey(input, todo.id, "dueDate");
       input.addEventListener("input", (event) => {
         actions.updateDraft(todo.id, { dueDate: event.target.value || null });
       });
@@ -65,6 +81,7 @@ function createTodoDetailView({ todo, draft, actions, state }) {
         }
         select.append(entry);
       });
+      setTodoFocusKey(select, todo.id, "priority");
       select.addEventListener("change", (event) => {
         const value = Number.parseInt(event.target.value, 10) || 0;
         actions.updateDraft(todo.id, { priority: value });
@@ -96,6 +113,7 @@ function createTodoDetailView({ todo, draft, actions, state }) {
         select.append(option);
       });
 
+      setTodoFocusKey(select, todo.id, "appId");
       select.addEventListener("change", (event) => {
         actions.updateDraft(todo.id, { appId: event.target.value });
       });
@@ -109,6 +127,7 @@ function createTodoDetailView({ todo, draft, actions, state }) {
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.checked = Boolean(draft.values.starred);
+      setTodoFocusKey(checkbox, todo.id, "starred");
       checkbox.addEventListener("change", (event) => {
         actions.updateDraft(todo.id, { starred: event.target.checked });
       });
