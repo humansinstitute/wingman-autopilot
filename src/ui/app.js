@@ -8028,14 +8028,14 @@ const renderHome = () => {
 
   const thead = document.createElement("thead");
   thead.innerHTML =
-    "<tr><th>Name</th><th>Agent</th><th>Identity</th><th>Status</th><th>Port</th><th>PID</th><th>Started</th><th>Directory</th><th></th></tr>";
+    "<tr><th>Actions</th><th>Name</th><th>Agent</th><th>Identity</th><th>Status</th><th>Port</th><th>PID</th><th>Started</th><th>Directory</th></tr>";
   table.append(thead);
 
   const tbody = document.createElement("tbody");
   if (state.sessions.length === 0) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 8;
+    cell.colSpan = 9;
     cell.textContent = "No active sessions";
     row.append(cell);
     tbody.append(row);
@@ -8047,6 +8047,7 @@ const renderHome = () => {
       const identityLabel = identityAlias ?? (session.npub && session.npub.length > 0 ? session.npub : "Anonymous");
       const identityTooltip = session.npub && session.npub.length > 0 ? session.npub : identityLabel;
       row.innerHTML = `
+        <td class="actions-cell"></td>
         <td>${escapeHtml(displayName)}</td>
         <td>${escapeHtml(session.agent)}</td>
         <td class="identity-cell" title="${escapeHtml(identityTooltip)}">${escapeHtml(identityLabel)}</td>
@@ -8055,7 +8056,6 @@ const renderHome = () => {
         <td>${session.pid ?? "-"}</td>
         <td>${new Date(session.startedAt).toLocaleTimeString()}</td>
         <td class="directory-cell"></td>
-        <td></td>
       `;
       const directoryCell = row.querySelector(".directory-cell");
       if (directoryCell) {
@@ -8070,9 +8070,10 @@ const renderHome = () => {
           directoryCell.removeAttribute("title");
         }
       }
-      const actionsCell = row.lastElementChild;
-
-      renderSessionActions(actionsCell, session);
+      const actionsCell = row.querySelector(".actions-cell");
+      if (actionsCell) {
+        renderSessionActions(actionsCell, session);
+      }
       tbody.append(row);
     });
   }

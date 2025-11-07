@@ -1673,7 +1673,7 @@ body[data-menu-open="true"] .wm-menu-panel {
   text-overflow: ellipsis;
 }
 
-.session-table td:last-child {
+.session-table td.actions-cell {
   display: flex;
   gap: 0.5rem;
   align-items: center;
