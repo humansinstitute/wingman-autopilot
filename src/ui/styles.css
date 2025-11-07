@@ -172,6 +172,49 @@ body[data-theme="light"] .wm-logo.light {
   z-index: 20;
 }
 
+.wm-menu-identity {
+  padding: 0 0.2rem;
+}
+
+.wm-menu-identity-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 0.75rem;
+  background: var(--bg-primary);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.wm-menu-identity-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.wm-menu-identity-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+
+.wm-menu-identity-alias {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wm-menu-identity-manage {
+  white-space: nowrap;
+}
+
 .wm-session-indicator {
   display: flex;
   align-items: center;
@@ -495,37 +538,6 @@ body[data-menu-open="true"] .wm-menu-panel {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
-}
-
-.wm-home-identity-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 1.25rem;
-}
-
-.wm-home-identity-info {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-}
-
-.wm-home-identity-label {
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.wm-home-identity-status {
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-}
-
-.wm-home-identity-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
 }
 
 .wm-home-guest-hero {
@@ -1458,11 +1470,27 @@ body[data-menu-open="true"] .wm-menu-panel {
 
 .wm-home-todo {
   display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.wm-home-todo__trigger {
+  display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
   font-size: 0.95rem;
   color: var(--text-secondary);
+  background: none;
+  border: none;
+  padding: 0;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wm-home-todo.is-expanded .wm-home-todo__trigger {
+  color: var(--text-primary);
 }
 
 .wm-home-todo__star,
@@ -1477,6 +1505,17 @@ body[data-menu-open="true"] .wm-menu-panel {
 
 .wm-home-todo__due {
   font-size: 0.85rem;
+  color: var(--text-tertiary);
+}
+
+.wm-home-todo__detail {
+  border-top: 1px solid var(--border-default);
+  padding-top: 0.75rem;
+}
+
+.wm-home-todo__placeholder {
+  margin: 0;
+  font-size: 0.9rem;
   color: var(--text-tertiary);
 }
 

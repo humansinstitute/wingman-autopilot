@@ -3225,6 +3225,7 @@ const tabsToggle = document.getElementById("tabs-toggle");
 const menuToggle = document.getElementById("menu-toggle");
 const menuPanel = document.querySelector(".wm-menu-panel");
 const menuTabsContainer = document.getElementById("menu-tabs");
+const menuIdentityContainer = document.getElementById("menu-identity");
 const headerLoginButton = document.getElementById("header-login");
 const deepDiveLink = document.querySelector('a[href="/deep-dive"]');
 performAuthUiSync = () => {
@@ -7571,87 +7572,70 @@ const renderIdentityPanel = (options = {}) => {
   return card;
 };
 
-let detachHomeIdentityBannerListener = null;
+let detachMenuIdentitySectionListener = null;
 
-const renderHomeIdentityBanner = () => {
-  detachHomeIdentityBannerListener?.();
+const renderMenuIdentitySection = () => {
+  if (!menuIdentityContainer) return;
+  detachMenuIdentitySectionListener?.();
+  menuIdentityContainer.innerHTML = "";
+
   const card = document.createElement("section");
-  card.className = "wm-card wm-home-identity-banner";
+  card.className = "wm-menu-identity-card";
 
   const info = document.createElement("div");
-  info.className = "wm-home-identity-info";
+  info.className = "wm-menu-identity-info";
 
   const label = document.createElement("span");
-  label.className = "wm-home-identity-label";
-  label.textContent = "Identity:";
+  label.className = "wm-menu-identity-label";
+  label.textContent = "Identity";
 
-  const status = document.createElement("span");
-  status.className = "wm-home-identity-status";
-  status.hidden = true;
+  const alias = document.createElement("span");
+  alias.className = "wm-menu-identity-alias";
 
-  info.append(label, status);
-
-  const actions = document.createElement("div");
-  actions.className = "wm-home-identity-actions";
-
-  const loginButton = document.createElement("button");
-  loginButton.type = "button";
-  loginButton.className = "wm-button";
-  loginButton.textContent = "Log In";
-  loginButton.addEventListener("click", () => {
-    openIdentityLoginDialog();
-  });
+  info.append(label, alias);
 
   const manageButton = document.createElement("button");
   manageButton.type = "button";
-  manageButton.className = "wm-link-button wm-home-identity-manage";
+  manageButton.className = "wm-link-button wm-menu-identity-manage";
   manageButton.textContent = "Manage";
-  manageButton.hidden = true;
   manageButton.addEventListener("click", () => {
-    closeIdentityLoginDialog();
     navigateToSettings();
   });
 
-  actions.append(loginButton, manageButton);
-  card.append(info, actions);
+  card.append(info, manageButton);
+  menuIdentityContainer.append(card);
 
-  const updateBanner = () => {
-    const { npub, alias } = state.identity;
+  const updateSection = () => {
+    const { npub, alias: identityAlias } = state.identity;
     if (npub) {
-      const truncated = npub.length > 12 ? `${npub.slice(0, 12)}...` : npub;
-      const displayName = alias ?? truncated;
-      status.textContent = displayName;
-      status.title = alias ? npub : truncated;
-      status.hidden = false;
+      const truncated = npub.length > 20 ? `${npub.slice(0, 10)}…${npub.slice(-4)}` : npub;
+      const displayName = identityAlias ?? truncated;
+      alias.textContent = displayName;
+      alias.title = identityAlias ? npub : truncated;
       manageButton.hidden = false;
-      loginButton.hidden = true;
     } else {
-      status.textContent = "";
-      status.removeAttribute("title");
-      status.hidden = true;
+      alias.textContent = "Not signed in";
+      alias.removeAttribute("title");
       manageButton.hidden = true;
-      loginButton.hidden = false;
     }
   };
 
   const identityEventHandler = () => {
-    updateBanner();
+    updateSection();
   };
   const trackedEvents = ["wingman:identity-ui-state", ...IDENTITY_EVENT_NAMES];
   trackedEvents.forEach((eventName) => {
     window.addEventListener(eventName, identityEventHandler);
   });
 
-  detachHomeIdentityBannerListener = () => {
+  detachMenuIdentitySectionListener = () => {
     trackedEvents.forEach((eventName) => {
       window.removeEventListener(eventName, identityEventHandler);
     });
-    detachHomeIdentityBannerListener = null;
+    detachMenuIdentitySectionListener = null;
   };
 
-  updateBanner();
-
-  return card;
+  updateSection();
 };
 
 const HOME_GUEST_FEATURES = [
@@ -7724,14 +7708,10 @@ const renderHome = () => {
   const wrapper = document.createElement("div");
   wrapper.className = "wm-home";
 
-  detachHomeIdentityBannerListener?.();
-
   if (!state.identity.authenticated) {
     wrapper.append(renderHomeGuestHero(), renderHomeGuestFeatures());
     return wrapper;
   }
-
-  wrapper.append(renderHomeIdentityBanner());
 
   if (todoFeature) {
     void todoFeature.ensureLoaded();
@@ -9804,9 +9784,6 @@ const render = () => {
   } else {
     view = renderHome();
   }
-  if (currentRoute !== "home") {
-    detachHomeIdentityBannerListener?.();
-  }
   appRoot.append(view);
   renderFileEditorOverlay();
   renderWorktreeModal();
@@ -9832,6 +9809,8 @@ todoFeature = createTodoFeature({
   getApps: () => (Array.isArray(state.apps.items) ? state.apps.items : []),
 });
 state.todos = todoFeature.state;
+
+renderMenuIdentitySection();
 
 const handleTouchStart = (event) => {
   if (!pullRefreshIndicator || pullRefreshing) return;
