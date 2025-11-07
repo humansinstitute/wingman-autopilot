@@ -27,6 +27,7 @@ function createTodoFeature({ onRenderRequested, getApps }) {
     getAppLabel: stateApi.getAppLabel,
     getAppOptions: stateApi.getAppOptions,
     consumeComposerFocus: stateApi.consumeComposerFocus,
+    getHighlightedTodos: stateApi.getHighlightedTodos,
   };
 
   const view = createTodoView({
