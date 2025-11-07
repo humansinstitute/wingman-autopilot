@@ -1930,6 +1930,24 @@ body[data-menu-open="true"] .wm-menu-panel {
   align-items: center;
 }
 
+.session-table td.session-name-cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.session-name-text {
+  flex: 1;
+  min-width: 0;
+  font-weight: inherit;
+}
+
+.session-name-edit {
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
 .session-table-wrapper {
   width: 100%;
 }
@@ -1966,6 +1984,17 @@ body[data-menu-open="true"] .wm-menu-panel {
   justify-content: space-between;
   align-items: center;
   gap: 0.75rem;
+}
+
+.session-card-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.session-card-edit {
+  font-size: 0.85rem;
+  white-space: nowrap;
 }
 
 .session-card-header h3 {

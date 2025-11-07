@@ -5061,6 +5061,28 @@ const handleApi = async (
       return Response.json(serializeSession(ownedSession));
     }
 
+    if (method === "PATCH" && parts.length === 4) {
+      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      let payload: unknown;
+      try {
+        payload = await request.json();
+      } catch {
+        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+      }
+      if (!payload || typeof payload !== "object") {
+        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+      }
+      const record = payload as Record<string, unknown>;
+      const desiredName = typeof record.name === "string" ? record.name : "";
+      const trimmedName = desiredName.trim();
+      if (!trimmedName) {
+        return Response.json({ error: "Session name is required" }, { status: 400 });
+      }
+      const renamed = manager.renameSession(id, trimmedName);
+      if (!renamed) return Response.json({ error: "Not found" }, { status: 404 });
+      return Response.json(serializeSession(renamed));
+    }
+
     if (method === "DELETE" && parts.length === 4) {
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
       const session = await manager.stopSession(id);

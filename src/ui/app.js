@@ -5450,6 +5450,46 @@ const deleteSession = async (sessionId) => {
   }
 };
 
+const updateSessionName = async (sessionId, name) => {
+  const response = await fetch(`/api/sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const message = typeof data?.error === "string" ? data.error : response.statusText;
+    throw new Error(message || "Failed to rename session");
+  }
+  return response.json();
+};
+
+const promptRenameSession = async (session) => {
+  const currentLabel =
+    typeof session.name === "string" && session.name.trim().length > 0
+      ? session.name.trim()
+      : getSessionDisplayName(session);
+  const nextName = window.prompt("Rename session", currentLabel);
+  if (nextName === null) return;
+  const trimmed = nextName.trim();
+  if (!trimmed) {
+    window.alert("Session name cannot be empty.");
+    return;
+  }
+  const existing = typeof session.name === "string" ? session.name.trim() : "";
+  if (existing === trimmed) {
+    return;
+  }
+  try {
+    await updateSessionName(session.id, trimmed);
+    await fetchSessions();
+    render();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to rename session";
+    window.alert(message);
+  }
+};
+
 const resumeSession = async (sessionId) => {
   const session = getSessionById(sessionId);
   if (!session) {
@@ -8254,7 +8294,10 @@ const renderHome = () => {
       const identityTooltip = session.npub && session.npub.length > 0 ? session.npub : identityLabel;
       row.innerHTML = `
         <td class="actions-cell"></td>
-        <td>${escapeHtml(displayName)}</td>
+        <td class="session-name-cell">
+          <span class="session-name-text">${escapeHtml(displayName)}</span>
+          <button type="button" class="wm-link-button session-name-edit" data-action="rename-session">Edit name</button>
+        </td>
         <td>${escapeHtml(session.agent)}</td>
         <td class="identity-cell" title="${escapeHtml(identityTooltip)}">${escapeHtml(identityLabel)}</td>
         <td>${escapeHtml(session.status)}</td>
@@ -8276,6 +8319,14 @@ const renderHome = () => {
           directoryCell.removeAttribute("title");
         }
       }
+      const renameButton = row.querySelector('[data-action="rename-session"]');
+      if (renameButton instanceof HTMLButtonElement) {
+        renameButton.addEventListener("click", (event) => {
+          event.preventDefault();
+          promptRenameSession(session);
+        });
+      }
+
       const actionsCell = row.querySelector(".actions-cell");
       if (actionsCell) {
         renderSessionActions(actionsCell, session);
@@ -8310,7 +8361,18 @@ const renderHome = () => {
       const status = document.createElement("span");
       status.className = `session-status ${session.status}`;
       status.textContent = session.status;
-      header.append(title, status);
+      const headerActions = document.createElement("div");
+      headerActions.className = "session-card-header-actions";
+      const editLink = document.createElement("button");
+      editLink.type = "button";
+      editLink.className = "wm-link-button session-card-edit";
+      editLink.textContent = "Edit name";
+      editLink.addEventListener("click", (event) => {
+        event.preventDefault();
+        promptRenameSession(session);
+      });
+      headerActions.append(status, editLink);
+      header.append(title, headerActions);
       card.append(header);
 
       const details = document.createElement("div");

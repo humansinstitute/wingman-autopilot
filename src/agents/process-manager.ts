@@ -91,6 +91,15 @@ export class ProcessManager {
     return session ? this.toSnapshot(session) : undefined;
   }
 
+  renameSession(id: string, name: string): SessionSnapshot | null {
+    const session = this.sessions.get(id);
+    if (!session) return null;
+    session.name = this.normaliseSessionName(name, session.agent, session.port);
+    const snapshot = this.toSnapshot(session);
+    this.emit({ type: "session-updated", session: snapshot });
+    return snapshot;
+  }
+
   getLogs(id: string): string[] | undefined {
     return this.sessions.get(id)?.logs.slice();
   }
