@@ -2006,10 +2006,20 @@ body[data-menu-open="true"] .wm-menu-panel {
   text-overflow: ellipsis;
 }
 
+.session-table th {
+  white-space: nowrap;
+}
+
 .session-table td.actions-cell {
   display: flex;
   gap: 0.5rem;
   align-items: center;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.session-table td.actions-cell .wm-button {
+  flex-shrink: 0;
 }
 
 .session-table td.session-name-cell {
