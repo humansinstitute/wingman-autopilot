@@ -5283,7 +5283,7 @@ const resolveAgentRuntimeStatus = (sessionId) => {
 
 const createAgentStatusIndicator = (sessionId, options = {}) => {
   const variant = typeof options.variant === "string" ? options.variant : "bar";
-  const indicator = document.createElement("div");
+  const indicator = document.createElement(variant === "pill" ? "button" : "div");
   indicator.className = "wm-agent-status-indicator";
   indicator.setAttribute("data-session-id", sessionId);
   indicator.setAttribute("role", "status");
@@ -5292,6 +5292,7 @@ const createAgentStatusIndicator = (sessionId, options = {}) => {
 
   if (variant === "pill") {
     indicator.classList.add("wm-agent-status-pill");
+    indicator.type = "button";
   }
   applyAgentStatusIndicatorState(indicator, sessionId);
   return indicator;
@@ -5332,12 +5333,13 @@ const applyAgentStatusIndicatorState = (indicator, sessionId) => {
 
   indicator.className = Array.from(baseClasses).join(" ");
   indicator.setAttribute("aria-label", ariaLabel);
-  if (variant === "pill") {
-    indicator.textContent =
-      status === "running" ? "Running…" : status === "stable" ? "Stable" : "Awaiting status";
-  } else {
-    indicator.textContent = "";
-  }
+  indicator.textContent = variant === "pill"
+    ? status === "running"
+      ? "-"
+      : status === "stable"
+        ? "O"
+        : "?"
+    : "";
 };
 
 const updateAgentStatusIndicators = () => {
@@ -10128,7 +10130,7 @@ const renderComposer = (sessionId) => {
   
   // Add agent status indicator button inside the controls column
   const statusIndicator = createAgentStatusIndicator(sessionId, { variant: "pill" });
-  statusIndicator.classList.add("wm-button", "ghost", "wm-agent-status-pill-button");
+  statusIndicator.classList.add("wm-agent-status-pill-button");
   buttonGroup.prepend(statusIndicator);
 
   composerShell.append(composer);
