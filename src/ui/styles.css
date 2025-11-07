@@ -161,6 +161,7 @@ body[data-theme="light"] .wm-logo.light {
   min-width: min(320px, 92vw);
   max-width: min(480px, 92vw);
   width: max-content;
+  max-height: min(70vh, 640px);
   display: none;
   flex-direction: column;
   gap: 0.85rem;
@@ -169,6 +170,8 @@ body[data-theme="light"] .wm-logo.light {
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
   box-shadow: var(--shadow-md);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   z-index: 20;
 }
 
