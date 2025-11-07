@@ -4,6 +4,7 @@ import "/ace-builds/src-noconflict/theme-chrome.js";
 import "/ace-builds/src-noconflict/theme-tomorrow_night.js";
 import "./identity/index.js";
 import { createTodoFeature } from "./todos/index.js";
+import { createProjectFeature } from "./projects/index.js";
 import "./logging/browser.js";
 import { createHomeGuestHero } from "./home/hero.js";
 
@@ -98,6 +99,12 @@ const state = {
     tail: 200,
   },
   todos: {
+    items: [],
+    loading: false,
+    error: null,
+    initialized: false,
+  },
+  projects: {
     items: [],
     loading: false,
     error: null,
@@ -222,6 +229,7 @@ const showToast = (message, options = {}) => {
 };
 
 let todoFeature = null;
+let projectFeature = null;
 
 let performAuthUiSync = () => {};
 let pendingAuthUiSync = false;
@@ -2875,6 +2883,7 @@ const LIVE_ROUTE_PREFIX = "/live";
 const FILES_ROUTE = "/files";
 const SETTINGS_ROUTE = "/settings";
 const APPS_ROUTE = "/apps";
+const PROJECTS_ROUTE = "/projects";
 const TODOS_ROUTE = "/todos";
 const HOME_ROUTE = "/home";
 
@@ -2892,6 +2901,9 @@ const getRouteFromPath = (pathname) => {
   }
   if (pathname === APPS_ROUTE) {
     return "apps";
+  }
+  if (pathname === PROJECTS_ROUTE) {
+    return "projects";
   }
   if (pathname === TODOS_ROUTE || pathname.startsWith(`${TODOS_ROUTE}/`)) {
     return "todos";
@@ -7213,6 +7225,27 @@ const renderTodos = () => {
   return container;
 };
 
+const renderProjects = () => {
+  if (!state.identity.authenticated) {
+    const guestContainer = document.createElement("div");
+    guestContainer.className = "wm-projects-page";
+    const guestCard = document.createElement("section");
+    guestCard.className = "wm-card wm-project-card";
+    const guestMessage = document.createElement("p");
+    guestMessage.textContent = "Sign in to manage projects.";
+    guestCard.append(guestMessage);
+    guestContainer.append(guestCard);
+    return guestContainer;
+  }
+  if (projectFeature) {
+    void projectFeature.ensureLoaded();
+    return projectFeature.renderPage();
+  }
+  const container = document.createElement("div");
+  container.className = "wm-projects-page";
+  return container;
+};
+
 const openAppLogsDialog = async (appId) => {
   if (!appLogsDialog) return;
   const app = getAppById(appId);
@@ -9775,6 +9808,8 @@ const render = () => {
     view = renderLive();
   } else if (currentRoute === "apps") {
     view = renderApps();
+  } else if (currentRoute === "projects") {
+    view = renderProjects();
   } else if (currentRoute === "todos") {
     view = renderTodos();
   } else if (currentRoute === "files") {
@@ -9799,6 +9834,15 @@ const render = () => {
     resetPullRefresh();
   }
 };
+
+projectFeature = createProjectFeature({
+  onRenderRequested: () => {
+    if (currentRoute === "projects") {
+      render();
+    }
+  },
+});
+state.projects = projectFeature.state;
 
 todoFeature = createTodoFeature({
   onRenderRequested: () => {
@@ -9906,6 +9950,26 @@ function navigateToApps({ openNewAppDialog = false, skipMenuClose = false } = {}
   render();
 }
 
+function navigateToProjects({ skipMenuClose = false } = {}) {
+  if (!state.identity.authenticated) {
+    openIdentityLoginDialog();
+    return;
+  }
+  if (!skipMenuClose) {
+    closeMenu();
+  }
+  closeIdentityLoginDialog();
+  currentRoute = "projects";
+  lastLoggedSessionId = null;
+  if (window.location.pathname !== PROJECTS_ROUTE) {
+    window.history.pushState({ route: "projects" }, "", PROJECTS_ROUTE);
+  }
+  if (projectFeature) {
+    void projectFeature.ensureLoaded();
+  }
+  render();
+}
+
 function navigateToTodos({ skipMenuClose = false } = {}) {
   if (!state.identity.authenticated) {
     openIdentityLoginDialog();
@@ -9963,6 +10027,9 @@ navLinks.forEach((link) => {
     } else if (targetRoute === "apps") {
       navigateToApps({ skipMenuClose: true });
       return;
+    } else if (targetRoute === "projects") {
+      navigateToProjects({ skipMenuClose: true });
+      return;
     } else if (targetRoute === "todos") {
       navigateToTodos({ skipMenuClose: true });
       return;
@@ -9989,6 +10056,7 @@ navLinks.forEach((link) => {
 
 if (typeof window !== "undefined") {
   window.navigateToTodos = navigateToTodos;
+  window.navigateToProjects = navigateToProjects;
 }
 
 menuToggle?.addEventListener("click", (event) => {

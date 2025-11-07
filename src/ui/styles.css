@@ -529,6 +529,10 @@ body[data-menu-open="true"] .wm-menu-panel {
   max-width: 1200px;
 }
 
+#app[data-route="projects"] {
+  max-width: 1100px;
+}
+
 #app[data-route="live"] {
   padding-top: 0.25rem;
   padding-bottom: 0;
@@ -1517,6 +1521,178 @@ body[data-menu-open="true"] .wm-menu-panel {
   margin: 0;
   font-size: 0.9rem;
   color: var(--text-tertiary);
+}
+
+.wm-projects-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.wm-projects-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.wm-project-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.wm-project-card__description {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.wm-project-card__header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  border-bottom: 1px solid var(--border-muted);
+  padding-bottom: 0.75rem;
+}
+
+.wm-project-card__path {
+  font-family: var(--font-mono, "SFMono-Regular", "SFMono", ui-monospace, monospace);
+  font-size: 0.9rem;
+  color: var(--text-tertiary);
+  word-break: break-all;
+}
+
+.wm-project-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.wm-project-form__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+@media (min-width: 720px) {
+  .wm-project-form__fields {
+    flex-direction: row;
+  }
+
+  .wm-project-field {
+    flex: 1;
+  }
+}
+
+.wm-project-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.wm-project-field__label {
+  font-size: 0.85rem;
+  color: var(--text-tertiary);
+}
+
+.wm-project-field input {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.65rem;
+  border: 1px solid var(--border-default);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.wm-project-field input:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.wm-project-form__error {
+  margin: 0;
+  color: var(--danger, #f87171);
+  font-size: 0.9rem;
+}
+
+.wm-project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.wm-project-apps__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.25rem;
+}
+
+.wm-project-apps__title {
+  margin: 0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+
+.wm-projects-empty {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.wm-project-apps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.wm-project-apps__empty {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.wm-project-app {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.wm-project-app__name {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.wm-project-app__path {
+  font-family: var(--font-mono, "SFMono-Regular", "SFMono", ui-monospace, monospace);
+  font-size: 0.9rem;
+  color: var(--text-tertiary);
+  word-break: break-all;
+}
+
+.wm-project-app-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--border-muted);
+}
+
+@media (min-width: 720px) {
+  .wm-project-app-form {
+    flex-direction: row;
+    align-items: flex-end;
+  }
+
+  .wm-project-app-form__field {
+    flex: 1;
+  }
 }
 
 

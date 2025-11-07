@@ -33,6 +33,8 @@ import { FileWatcherRunner } from "./watchers/file-watcher-runner";
 import { identityUserStore, InsufficientBalanceError } from "./storage/identity-user-store";
 import { TodoStore } from "./todos/todo-store";
 import { createTodoApiHandler } from "./todos/todo-api";
+import { ProjectStore } from "./projects/project-store";
+import { createProjectApiHandler } from "./projects/project-api";
 import { createBrowserLogHandler } from "./logging/browser-log-handler";
 import { ensureDeepDiveProcess, getDeepDivePort, isDeepDiveProcessRunning } from "./deep-dive-process";
 import {
@@ -76,6 +78,8 @@ const SUPPORTED_AGENT_TYPES: AgentType[] = ["codex", "claude", "goose", "opencod
 const MESSAGE_COST_SATS = 100;
 const todoStore = new TodoStore();
 const todoApiHandler = createTodoApiHandler({ store: todoStore });
+const projectStore = new ProjectStore();
+const projectApiHandler = createProjectApiHandler({ store: projectStore });
 const browserLogHandler = createBrowserLogHandler();
 
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
@@ -85,6 +89,7 @@ registerAccessRule(AccessActions.DeepDiveAccess, requireAuthentication());
 registerAccessRule(AccessActions.AppsManage, requireAuthentication());
 registerAccessRule(AccessActions.UiRestricted, requireAuthentication());
 registerAccessRule(AccessActions.TodosManage, requireAuthentication());
+registerAccessRule(AccessActions.ProjectsManage, requireAuthentication());
 
 const projectRootPath = (() => {
   let root = normalize(fileURLToPath(new URL("..", import.meta.url)));
@@ -3447,6 +3452,17 @@ const handleApi = async (
   const browserLogResponse = await browserLogHandler(request, url, method, authContext);
   if (browserLogResponse) {
     return browserLogResponse;
+  }
+  if (pathname.startsWith("/api/projects")) {
+    const denied = await ensureApiAccess(AccessActions.ProjectsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    const response = await projectApiHandler(request, url, method, authContext);
+    if (response) {
+      return response;
+    }
+    return Response.json({ error: "Not found" }, { status: 404 });
   }
   if (pathname.startsWith("/api/todos")) {
     const denied = await ensureApiAccess(AccessActions.TodosManage, request, url, authContext);

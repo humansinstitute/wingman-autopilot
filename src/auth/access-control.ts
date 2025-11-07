@@ -6,6 +6,7 @@ export const AccessActions = {
   FilesWrite: "files:write",
   DeepDiveAccess: "deep-dive:access",
   AppsManage: "apps:manage",
+  ProjectsManage: "projects:manage",
   UiRestricted: "ui:restricted",
   AdminUsers: "admin:users",
   SystemManage: "system:manage",
