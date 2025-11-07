@@ -2083,6 +2083,7 @@ body[data-menu-open="true"] .wm-menu-panel {
   flex-direction: column;
   gap: 0.25rem;
   padding: 0.6rem;
+  min-width: 12.5rem;
   border-radius: 0.55rem;
   background: var(--bg-secondary);
   border: 1px solid rgba(16, 185, 129, 0.25);
