@@ -1688,25 +1688,6 @@ body[data-menu-open="true"] .wm-menu-panel {
   word-break: break-all;
 }
 
-.wm-project-app-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  padding-top: 0.5rem;
-  border-top: 1px dashed var(--border-muted);
-}
-
-@media (min-width: 720px) {
-  .wm-project-app-form {
-    flex-direction: row;
-    align-items: flex-end;
-  }
-
-  .wm-project-app-form__field {
-    flex: 1;
-  }
-}
-
 .wm-project-dialog {
   border: none;
   border-radius: 1rem;

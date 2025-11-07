@@ -3585,6 +3585,52 @@ projectDialogRootBrowseButton?.addEventListener("click", (event) => {
   });
 });
 
+const readProjectApiError = async (response) => {
+  const payload = await response.json().catch(() => ({}));
+  const message = typeof payload?.error === "string" ? payload.error : response.statusText;
+  return message || "Request failed";
+};
+
+const linkAppToProject = async (context, app) => {
+  if (!context?.projectId || !app?.id) {
+    return;
+  }
+  try {
+    const response = await fetch(`/api/projects/${encodeURIComponent(context.projectId)}/apps`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ appId: app.id }),
+    });
+    if (!response.ok) {
+      throw new Error(await readProjectApiError(response));
+    }
+    await projectFeature?.refresh();
+    showToast(context.projectName ? `Added to ${context.projectName}` : "App linked to project");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to link app to project";
+    window.alert(message);
+  }
+};
+
+const openProjectAppCreation = (project) => {
+  if (!project?.id) {
+    return;
+  }
+  if (!state.identity.authenticated) {
+    openIdentityLoginDialog();
+    return;
+  }
+  const context = {
+    projectId: project.id,
+    projectName: project.name ?? "",
+    rootPath: project.rootPath ?? "",
+    defaultLabel: project.name ? `${project.name}` : "",
+  };
+  openAppDialog(null, { projectContext: context });
+};
+
 headerLoginButton?.addEventListener("click", (event) => {
   event.preventDefault();
   openIdentityLoginDialog();
@@ -6020,6 +6066,7 @@ const appDialogState = {
   appId: null,
   webAppEnabled: false,
   webAppPort: null,
+  projectContext: null,
 };
 
 const deriveAppWindowName = (labelValue, rootValue) => {
@@ -6195,6 +6242,7 @@ const resetAppDialog = () => {
   }
   appDialogState.webAppEnabled = false;
   appDialogState.webAppPort = null;
+  appDialogState.projectContext = null;
   syncAppWebAppPortNote({ enabled: false, port: null });
   appDialogState.mode = "create";
   appDialogState.appId = null;
@@ -6271,6 +6319,7 @@ const handleAppFormSubmit = async (event) => {
   const scriptsPayload = Object.keys(values.scripts).length > 0 ? values.scripts : undefined;
   const mode = appDialogState.mode;
   const appId = appDialogState.appId;
+  const projectContext = appDialogState.projectContext;
 
   let url;
   let method;
@@ -6320,8 +6369,12 @@ const handleAppFormSubmit = async (event) => {
           : response.statusText || "Failed to save app";
       throw new Error(message);
     }
+    const createdApp = mode === "create" ? payload?.app : null;
     closeAppDialog();
     await refreshApps({ skipRender: false });
+    if (createdApp && projectContext) {
+      await linkAppToProject(projectContext, createdApp);
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to save app";
     window.alert(message);
@@ -6330,9 +6383,24 @@ const handleAppFormSubmit = async (event) => {
   }
 };
 
-const openAppDialog = (appId = null) => {
+const openAppDialog = (appId = null, options = {}) => {
   if (!appDialog) return;
   resetAppDialog();
+  if (options?.projectContext) {
+    appDialogState.projectContext = options.projectContext;
+    if (appDialogTitle) {
+      const projectName = options.projectContext.projectName?.trim();
+      appDialogTitle.textContent = projectName ? `Add App · ${projectName}` : "Add App";
+    }
+    if (appRootInput && options.projectContext.rootPath) {
+      appRootInput.value = options.projectContext.rootPath;
+      updateAppWindowPreview();
+    }
+    if (appLabelInput && options.projectContext.defaultLabel && !appLabelInput.value) {
+      appLabelInput.value = options.projectContext.defaultLabel;
+      updateAppWindowPreview();
+    }
+  }
   if (appId) {
     const app = getAppById(appId);
     if (!app) return;
@@ -6351,9 +6419,8 @@ const closeAppDialog = () => {
   if (!appDialog) return;
   if (appDialog.open) {
     appDialog.close();
-  } else {
-    resetAppDialog();
   }
+  resetAppDialog();
 };
 
 const handleAppDiscover = async (event) => {
@@ -10019,6 +10086,9 @@ projectFeature = createProjectFeature({
   },
   onCreateRequested: () => {
     openProjectDialog();
+  },
+  onProjectAppRequested: (project) => {
+    openProjectAppCreation(project);
   },
 });
 state.projects = projectFeature.state;

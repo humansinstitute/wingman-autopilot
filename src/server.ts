@@ -79,7 +79,10 @@ const MESSAGE_COST_SATS = 100;
 const todoStore = new TodoStore();
 const todoApiHandler = createTodoApiHandler({ store: todoStore });
 const projectStore = new ProjectStore();
-const projectApiHandler = createProjectApiHandler({ store: projectStore });
+const projectApiHandler = createProjectApiHandler({
+  store: projectStore,
+  getAppById: (id) => appRegistry.getApp(id),
+});
 const browserLogHandler = createBrowserLogHandler();
 
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());

@@ -103,10 +103,19 @@ function createProjectView({ state, actions }) {
     appsTitle.className = "wm-project-apps__title";
     appsTitle.textContent = "Apps";
     appsHeader.append(appsTitle);
+    const addButton = document.createElement("button");
+    addButton.type = "button";
+    addButton.className = "wm-button secondary";
+    addButton.textContent = "Add App";
+    addButton.addEventListener("click", () => {
+      if (typeof actions.openAppCreator === "function") {
+        actions.openAppCreator(project);
+      }
+    });
+    appsHeader.append(addButton);
     card.append(appsHeader);
 
     card.append(renderAppList(project));
-    card.append(renderAppForm(project));
 
     return card;
   }
@@ -141,73 +150,6 @@ function createProjectView({ state, actions }) {
     });
 
     return list;
-  }
-
-  function renderAppForm(project) {
-    const form = document.createElement("form");
-    form.className = "wm-project-app-form";
-    form.noValidate = true;
-
-    const formState = actions.getAppForm(project.id);
-
-    const nameField = createInputField({
-      label: "App name",
-      placeholder: "Docs viewer",
-      value: formState?.name ?? "",
-      onInput: (value) => actions.setAppFormValue(project.id, "name", value),
-    });
-    nameField.classList.add("wm-project-app-form__field");
-
-    const folderField = createInputField({
-      label: "App folder",
-      placeholder: `${project.rootPath}/apps/docs`,
-      value: formState?.folderPath ?? "",
-      onInput: (value) => actions.setAppFormValue(project.id, "folderPath", value),
-    });
-    folderField.classList.add("wm-project-app-form__field");
-
-    form.append(nameField, folderField);
-
-    if (formState?.error) {
-      const error = document.createElement("p");
-      error.className = "wm-project-form__error";
-      error.textContent = formState.error;
-      form.append(error);
-    }
-
-    const submit = document.createElement("button");
-    submit.type = "submit";
-    submit.className = "wm-button secondary";
-    submit.textContent = formState?.submitting ? "Adding…" : "Add App";
-    submit.disabled = Boolean(formState?.submitting);
-    form.append(submit);
-
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      void actions.submitProjectApp(project.id);
-    });
-
-    return form;
-  }
-
-  function createInputField({ label, value, placeholder, onInput }) {
-    const field = document.createElement("label");
-    field.className = "wm-project-field";
-
-    const caption = document.createElement("span");
-    caption.className = "wm-project-field__label";
-    caption.textContent = label;
-
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = value;
-    input.placeholder = placeholder ?? "";
-    input.addEventListener("input", (event) => {
-      onInput(event.target.value);
-    });
-
-    field.append(caption, input);
-    return field;
   }
 
   return {

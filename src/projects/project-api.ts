@@ -4,11 +4,13 @@ import { normalize, resolve, sep } from "node:path";
 
 import type { RequestAuthContext } from "../auth/request-context";
 import type { ProjectStore, ProjectWithApps } from "./project-store";
+import type { AppRecord } from "../apps/app-registry";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export interface ProjectApiDependencies {
   store: ProjectStore;
+  getAppById: (id: string) => Promise<AppRecord | undefined>;
 }
 
 const parseRequestBody = async (request: Request): Promise<Record<string, unknown>> => {
@@ -74,6 +76,7 @@ const serializeProject = (project: ProjectWithApps) => ({
     projectId: app.projectId,
     name: app.name,
     folderPath: app.folderPath,
+    appId: app.appId,
     createdAt: app.createdAt,
     updatedAt: app.updatedAt,
   })),
@@ -141,25 +144,59 @@ export const createProjectApiHandler = (dependencies: ProjectApiDependencies) =>
       return Response.json({ error: (error as Error).message }, { status: 400 });
     }
 
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-    if (!name) {
-      return Response.json({ error: "App name is required" }, { status: 400 });
+    const nameInput = typeof body.name === "string" ? body.name.trim() : "";
+    const folderInput = body.folderPath;
+    const appIdInput = typeof body.appId === "string" ? body.appId.trim() : "";
+
+    let resolvedName = nameInput;
+    let resolvedFolderPath: string | null = null;
+    let resolvedAppId: string | null = null;
+
+    if (appIdInput) {
+      const existing = await deps.getAppById(appIdInput);
+      if (!existing) {
+        return Response.json({ error: "App not found" }, { status: 404 });
+      }
+      resolvedAppId = existing.id;
+      resolvedName = resolvedName || existing.label || "App";
+      resolvedFolderPath = existing.root;
     }
 
-    let folderPath: string;
+    if (!resolvedAppId) {
+      if (!resolvedName) {
+        return Response.json({ error: "App name is required" }, { status: 400 });
+      }
+      try {
+        resolvedFolderPath = expandUserPath(folderInput, "App folder");
+        ensureDirectoryExists(resolvedFolderPath, "App folder");
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
+    }
+
+    if (!resolvedFolderPath) {
+      return Response.json({ error: "App folder is required" }, { status: 400 });
+    }
+
     try {
-      folderPath = expandUserPath(body.folderPath, "App folder");
-      ensureDirectoryExists(folderPath, "App folder");
-      ensurePathWithinRoot(project.rootPath, folderPath);
+      ensurePathWithinRoot(project.rootPath, resolvedFolderPath);
     } catch (error) {
       return Response.json({ error: (error as Error).message }, { status: 400 });
+    }
+
+    if (resolvedAppId) {
+      const existingLinks = deps.store.listAppsForProject(projectId);
+      if (existingLinks.some((entry) => entry.appId === resolvedAppId)) {
+        return Response.json({ error: "App already linked to this project" }, { status: 409 });
+      }
     }
 
     try {
       deps.store.addProjectApp({
         projectId,
-        name,
-        folderPath,
+        name: resolvedName,
+        folderPath: resolvedFolderPath,
+        appId: resolvedAppId,
       });
       const updated = deps.store.getProjectWithApps(projectId);
       if (!updated) {

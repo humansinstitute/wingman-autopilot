@@ -19,6 +19,7 @@ export interface ProjectAppRecord {
   projectId: string;
   name: string;
   folderPath: string;
+  appId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -36,6 +37,7 @@ export interface CreateProjectAppInput {
   projectId: string;
   name: string;
   folderPath: string;
+  appId?: string | null;
 }
 
 const DEFAULT_DB_PATH = databaseFile;
@@ -83,6 +85,7 @@ class ProjectStore {
            project_id as projectId,
            name,
            folder_path as folderPath,
+           app_id as appId,
            created_at as createdAt,
            updated_at as updatedAt
          FROM project_apps
@@ -151,10 +154,10 @@ class ProjectStore {
     const now = new Date().toISOString();
     const id = randomUUID();
     const statement = this.db.prepare(
-      `INSERT INTO project_apps (id, project_id, name, folder_path, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+      `INSERT INTO project_apps (id, project_id, name, folder_path, app_id, created_at, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
     );
-    statement.run(id, input.projectId, input.name, input.folderPath, now, now);
+    statement.run(id, input.projectId, input.name, input.folderPath, input.appId ?? null, now, now);
     const created = this.getProjectApp(id);
     if (!created) {
       throw new Error("Failed to create project app");
@@ -165,12 +168,13 @@ class ProjectStore {
   listAppsForProject(projectId: string): ProjectAppRecord[] {
     const statement = this.db.prepare(
       `SELECT
-         id,
-         project_id as projectId,
-         name,
-         folder_path as folderPath,
-         created_at as createdAt,
-         updated_at as updatedAt
+        id,
+        project_id as projectId,
+        name,
+        folder_path as folderPath,
+        app_id as appId,
+        created_at as createdAt,
+        updated_at as updatedAt
        FROM project_apps
        WHERE project_id = ?1
        ORDER BY name ASC`,
@@ -213,11 +217,20 @@ class ProjectStore {
         folder_path TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
+        app_id TEXT,
         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
       );
 
       CREATE INDEX IF NOT EXISTS idx_project_apps_project ON project_apps(project_id);
     `);
+
+    const projectAppsColumns = this.db
+      .query("PRAGMA table_info(project_apps)")
+      .all() as { name: string }[];
+    const hasAppIdColumn = projectAppsColumns.some((column) => column.name === "app_id");
+    if (!hasAppIdColumn) {
+      this.db.exec("ALTER TABLE project_apps ADD COLUMN app_id TEXT");
+    }
   }
 }
 

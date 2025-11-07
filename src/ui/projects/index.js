@@ -1,7 +1,7 @@
 import { createProjectState } from "./state.js";
 import { createProjectView } from "./view.js";
 
-function createProjectFeature({ onRenderRequested, onCreateRequested }) {
+function createProjectFeature({ onRenderRequested, onCreateRequested, onProjectAppRequested }) {
   const requestRender = () => {
     if (typeof onRenderRequested === "function") {
       onRenderRequested();
@@ -16,12 +16,14 @@ function createProjectFeature({ onRenderRequested, onCreateRequested }) {
     refresh: stateApi.refresh,
     setCreateFormValue: stateApi.setCreateFormValue,
     submitCreateProject: stateApi.submitCreateProject,
-    getAppForm: stateApi.getAppForm,
-    setAppFormValue: stateApi.setAppFormValue,
-    submitProjectApp: stateApi.submitProjectApp,
     openCreateDialog: () => {
       if (typeof onCreateRequested === "function") {
         onCreateRequested();
+      }
+    },
+    openAppCreator: (project) => {
+      if (typeof onProjectAppRequested === "function" && project?.id) {
+        onProjectAppRequested(project);
       }
     },
   };
@@ -38,9 +40,6 @@ function createProjectFeature({ onRenderRequested, onCreateRequested }) {
     renderPage: view.renderPage,
     setCreateFormValue: stateApi.setCreateFormValue,
     submitCreateProject: stateApi.submitCreateProject,
-    getAppForm: stateApi.getAppForm,
-    setAppFormValue: stateApi.setAppFormValue,
-    submitProjectApp: stateApi.submitProjectApp,
   };
 }
 
