@@ -133,23 +133,128 @@ function createProjectView({ state, actions }) {
       return list;
     }
 
-    apps.forEach((app) => {
-      const item = document.createElement("li");
-      item.className = "wm-project-app";
-
-      const name = document.createElement("p");
-      name.className = "wm-project-app__name";
-      name.textContent = app.name;
-
-      const folder = document.createElement("code");
-      folder.className = "wm-project-app__path";
-      folder.textContent = app.folderPath;
-
-      item.append(name, folder);
-      list.append(item);
+    apps.forEach((entry) => {
+      list.append(renderProjectApp(entry));
     });
 
     return list;
+  }
+
+  function renderProjectApp(entry) {
+    const item = document.createElement("li");
+    item.className = "wm-project-app";
+    const resolvedApp = typeof actions.resolveApp === "function" ? actions.resolveApp(entry) : null;
+
+    const header = document.createElement("div");
+    header.className = "wm-project-app__header";
+
+    const titleButton = document.createElement("button");
+    titleButton.type = "button";
+    titleButton.className = "wm-project-app__title";
+    titleButton.textContent = entry.name || resolvedApp?.label || "App";
+    if (resolvedApp && typeof actions.openAppDetails === "function") {
+      titleButton.addEventListener("click", () => actions.openAppDetails(resolvedApp));
+    } else {
+      titleButton.disabled = true;
+    }
+    header.append(titleButton);
+
+    const status = document.createElement("span");
+    status.className = "wm-project-app__status";
+    if (resolvedApp) {
+      const stateValue = String(resolvedApp.status?.status ?? "idle");
+      status.dataset.state = stateValue;
+      status.textContent = stateValue.toUpperCase();
+    } else {
+      status.dataset.state = "missing";
+      status.textContent = "UNLINKED";
+    }
+    header.append(status);
+    item.append(header);
+
+    const folder = document.createElement("code");
+    folder.className = "wm-project-app__path";
+    folder.textContent = entry.folderPath ?? "—";
+    item.append(folder);
+
+    if (resolvedApp) {
+      const actionsRow = document.createElement("div");
+      actionsRow.className = "wm-project-app__actions";
+
+      const viewButton = document.createElement("button");
+      viewButton.type = "button";
+      viewButton.className = "wm-link-button";
+      viewButton.textContent = "Open in Apps";
+      if (typeof actions.openAppDetails === "function") {
+        viewButton.addEventListener("click", () => actions.openAppDetails(resolvedApp));
+      } else {
+        viewButton.disabled = true;
+      }
+      actionsRow.append(viewButton);
+
+      const isCoreApp = resolvedApp.id === "wingman-core";
+      const actionDefinitions = [
+        {
+          id: "start",
+          label: "Start",
+          primary: true,
+          available: () => !isCoreApp && resolvedApp.availableScripts?.start,
+        },
+        {
+          id: "stop",
+          label: "Stop",
+          primary: false,
+          available: () => !isCoreApp,
+        },
+        {
+          id: "restart",
+          label: "Restart",
+          primary: false,
+          available: () => !isCoreApp && resolvedApp.availableScripts?.restart,
+        },
+        {
+          id: "setup",
+          label: "Setup",
+          primary: false,
+          available: () => resolvedApp.availableScripts?.setup,
+        },
+      ];
+
+      actionDefinitions
+        .filter((definition) => definition.available())
+        .forEach((definition) => {
+          const actionButton = document.createElement("button");
+          actionButton.type = "button";
+          actionButton.className = definition.primary ? "wm-button" : "wm-button secondary";
+          actionButton.textContent = definition.label;
+          if (typeof actions.isActionDisabled === "function") {
+            actionButton.disabled = actions.isActionDisabled(resolvedApp, definition.id);
+          }
+          actionButton.addEventListener("click", async () => {
+            if (actionButton.disabled || typeof actions.triggerAppAction !== "function") {
+              return;
+            }
+            actionButton.disabled = true;
+            const success = await actions.triggerAppAction(resolvedApp.id, definition.id);
+            if (success !== true && actionButton.isConnected) {
+              actionButton.disabled =
+                typeof actions.isActionDisabled === "function"
+                  ? actions.isActionDisabled(resolvedApp, definition.id)
+                  : false;
+            }
+          });
+          actionsRow.append(actionButton);
+        });
+
+      item.append(actionsRow);
+    } else {
+      const empty = document.createElement("p");
+      empty.className = "wm-project-app__empty";
+      empty.textContent = "App not registered yet. Use “Add App” above.";
+      item.append(empty);
+    }
+
+    return item;
   }
 
   return {

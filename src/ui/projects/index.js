@@ -1,7 +1,15 @@
 import { createProjectState } from "./state.js";
 import { createProjectView } from "./view.js";
 
-function createProjectFeature({ onRenderRequested, onCreateRequested, onProjectAppRequested }) {
+function createProjectFeature({
+  onRenderRequested,
+  onCreateRequested,
+  onProjectAppRequested,
+  resolveApp,
+  openAppDetails,
+  triggerAppAction,
+  isActionDisabled,
+}) {
   const requestRender = () => {
     if (typeof onRenderRequested === "function") {
       onRenderRequested();
@@ -25,6 +33,29 @@ function createProjectFeature({ onRenderRequested, onCreateRequested, onProjectA
       if (typeof onProjectAppRequested === "function" && project?.id) {
         onProjectAppRequested(project);
       }
+    },
+    resolveApp: (entry) => {
+      if (typeof resolveApp === "function") {
+        return resolveApp(entry);
+      }
+      return null;
+    },
+    openAppDetails: (app) => {
+      if (typeof openAppDetails === "function" && app) {
+        openAppDetails(app);
+      }
+    },
+    triggerAppAction: (appId, action) => {
+      if (typeof triggerAppAction === "function" && appId && action) {
+        return triggerAppAction(appId, action);
+      }
+      return false;
+    },
+    isActionDisabled: (app, action) => {
+      if (typeof isActionDisabled === "function" && app && action) {
+        return isActionDisabled(app, action);
+      }
+      return false;
     },
   };
 

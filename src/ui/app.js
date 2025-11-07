@@ -74,6 +74,7 @@ const state = {
     initialized: false,
     error: null,
     pendingOpenDialog: null,
+    pendingFocusId: null,
   },
   adminUsers: createAdminUsersState(),
   system: {
@@ -3631,6 +3632,34 @@ const openProjectAppCreation = (project) => {
   openAppDialog(null, { projectContext: context });
 };
 
+const resolveProjectAppEntry = (entry) => {
+  if (!entry) {
+    return null;
+  }
+  if (entry.appId) {
+    const found = getAppById(entry.appId);
+    if (found) {
+      return found;
+    }
+  }
+  if (entry.folderPath) {
+    return state.apps.items.find((app) => app.root === entry.folderPath) ?? null;
+  }
+  return null;
+};
+
+const openProjectAppDetails = (appOrId) => {
+  const targetId = typeof appOrId === "string" ? appOrId : appOrId?.id;
+  if (!targetId) {
+    return;
+  }
+  navigateToApps({ skipMenuClose: true, focusAppId: targetId });
+};
+
+const triggerProjectAppAction = (appId, action) => triggerAppAction(appId, action);
+
+const isProjectActionDisabled = (app, action) => isAppActionDisabled(app, action);
+
 headerLoginButton?.addEventListener("click", (event) => {
   event.preventDefault();
   openIdentityLoginDialog();
@@ -7053,6 +7082,7 @@ const renderWingmanCard = (app) => {
 const renderAppCard = (app) => {
   const card = document.createElement("section");
   card.className = "wm-card wm-app-card";
+  card.dataset.appId = app.id;
   if (app.id === "wingman-core") {
     card.classList.add("wm-app-card-core");
   }
@@ -7431,6 +7461,31 @@ const renderApps = () => {
 
   wrapper.append(grid);
 
+  const focusPendingAppCard = () => {
+    if (!state.apps.pendingFocusId) {
+      return;
+    }
+    const targetId = state.apps.pendingFocusId;
+    state.apps.pendingFocusId = null;
+    requestAnimationFrame(() => {
+      const escape = typeof CSS?.escape === "function" ? CSS.escape : (value) => value.replace(/"/g, '\\"');
+      const selector = `[data-app-id=\"${escape(targetId)}\"]`;
+      const card = grid.querySelector(selector);
+      if (!card) {
+        return;
+      }
+      card.classList.add("wm-app-card--highlight");
+      card.scrollIntoView({ block: "center", behavior: "smooth" });
+      window.setTimeout(() => {
+        if (card.isConnected) {
+          card.classList.remove("wm-app-card--highlight");
+        }
+      }, 1600);
+    });
+  };
+
+  focusPendingAppCard();
+
   schedulePendingAppDialog();
 
   return wrapper;
@@ -7470,6 +7525,7 @@ const renderProjects = () => {
     guestContainer.append(guestCard);
     return guestContainer;
   }
+  void ensureAppsLoaded();
   if (projectFeature) {
     void projectFeature.ensureLoaded();
     return projectFeature.renderPage();
@@ -10152,6 +10208,13 @@ projectFeature = createProjectFeature({
   onProjectAppRequested: (project) => {
     openProjectAppCreation(project);
   },
+  resolveApp: (entry) => resolveProjectAppEntry(entry),
+  openAppDetails: (app) => {
+    if (!app) return;
+    openProjectAppDetails(app.id ?? app);
+  },
+  triggerAppAction: (appId, action) => triggerProjectAppAction(appId, action),
+  isActionDisabled: (app, action) => isProjectActionDisabled(app, action),
 });
 state.projects = projectFeature.state;
 
@@ -10241,7 +10304,7 @@ function navigateToHome({ replaceHistory = false, skipMenuClose = false } = {}) 
   render();
 }
 
-function navigateToApps({ openNewAppDialog = false, skipMenuClose = false } = {}) {
+function navigateToApps({ openNewAppDialog = false, skipMenuClose = false, focusAppId = null } = {}) {
   if (!state.identity.authenticated) {
     openIdentityLoginDialog();
     return;
@@ -10251,6 +10314,9 @@ function navigateToApps({ openNewAppDialog = false, skipMenuClose = false } = {}
   }
   if (openNewAppDialog) {
     state.apps.pendingOpenDialog = "create";
+  }
+  if (focusAppId) {
+    state.apps.pendingFocusId = focusAppId;
   }
   currentRoute = "apps";
   lastLoggedSessionId = null;

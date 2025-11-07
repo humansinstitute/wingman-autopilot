@@ -3461,7 +3461,9 @@ const handleApi = async (
     if (denied) {
       return denied;
     }
-    const response = await projectApiHandler(request, url, method, authContext);
+    const response = await projectApiHandler(request, url, method, authContext, {
+      isAdmin: workspaceScope.isAdmin,
+    });
     if (response) {
       return response;
     }
@@ -5294,6 +5296,8 @@ const server = Bun.serve({
         pathname === "/home" ||
         pathname === "/apps" ||
         pathname.startsWith("/apps/") ||
+        pathname === "/projects" ||
+        pathname.startsWith("/projects/") ||
         pathname === "/todos" ||
         pathname.startsWith("/todos/") ||
         pathname === "/docs" ||

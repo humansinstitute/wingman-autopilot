@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { normalize, resolve, sep } from "node:path";
 
 import type { RequestAuthContext } from "../auth/request-context";
+import { normaliseNpub } from "../identity/npub-utils";
 import type { ProjectStore, ProjectWithApps } from "./project-store";
 import type { AppRecord } from "../apps/app-registry";
 
@@ -11,6 +12,10 @@ type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export interface ProjectApiDependencies {
   store: ProjectStore;
   getAppById: (id: string) => Promise<AppRecord | undefined>;
+}
+
+export interface ProjectApiHandlerOptions {
+  isAdmin?: boolean;
 }
 
 const parseRequestBody = async (request: Request): Promise<Record<string, unknown>> => {
@@ -127,6 +132,8 @@ export const createProjectApiHandler = (dependencies: ProjectApiDependencies) =>
     method: HttpMethod,
     projectId: string,
     request: Request,
+    authContext: RequestAuthContext,
+    options: ProjectApiHandlerOptions,
   ): Promise<Response> => {
     if (method !== "POST") {
       return Response.json({ error: "Method not allowed" }, { status: 405 });
@@ -152,10 +159,22 @@ export const createProjectApiHandler = (dependencies: ProjectApiDependencies) =>
     let resolvedFolderPath: string | null = null;
     let resolvedAppId: string | null = null;
 
+    const viewerNpub = normaliseNpub(authContext.npub ?? null);
+    const isAdmin = Boolean(options?.isAdmin);
+
     if (appIdInput) {
       const existing = await deps.getAppById(appIdInput);
       if (!existing) {
         return Response.json({ error: "App not found" }, { status: 404 });
+      }
+      if (!isAdmin) {
+        if (!viewerNpub) {
+          return Response.json({ error: "Unable to resolve app owner" }, { status: 403 });
+        }
+        const owner = normaliseNpub(existing.ownerNpub ?? null);
+        if (!owner || owner !== viewerNpub) {
+          return Response.json({ error: "App is not accessible" }, { status: 403 });
+        }
       }
       resolvedAppId = existing.id;
       resolvedName = resolvedName || existing.label || "App";
@@ -228,7 +247,7 @@ export const createProjectApiHandler = (dependencies: ProjectApiDependencies) =>
     }
     if (segments.length === 4 && segments[2] && segments[3] === "apps") {
       const projectId = decodeURIComponent(segments[2]);
-      return handleProjectApps(method, projectId, request);
+      return handleProjectApps(method, projectId, request, authContext, options ?? {});
     }
     return Response.json({ error: "Not found" }, { status: 404 });
   };

@@ -1707,10 +1707,43 @@ body[data-menu-open="true"] .wm-menu-panel {
   gap: 0.35rem;
 }
 
-.wm-project-app__name {
+.wm-project-app__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.wm-project-app__title {
+  background: none;
+  border: none;
+  padding: 0;
   margin: 0;
+  font-size: 1rem;
   font-weight: 600;
   color: var(--text-primary);
+  cursor: pointer;
+}
+
+.wm-project-app__title:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.wm-project-app__status {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+
+.wm-project-app__status[data-state="running"] {
+  color: var(--accent-primary);
+}
+
+.wm-project-app__status[data-state="missing"] {
+  color: var(--danger, #f87171);
 }
 
 .wm-project-app__path {
@@ -1718,6 +1751,21 @@ body[data-menu-open="true"] .wm-menu-panel {
   font-size: 0.9rem;
   color: var(--text-tertiary);
   word-break: break-all;
+}
+
+.wm-project-app__actions {
+  margin-top: 0.35rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.wm-project-app__empty {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-tertiary);
+  font-style: italic;
 }
 
 .wm-project-dialog {
