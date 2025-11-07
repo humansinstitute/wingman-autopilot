@@ -5388,6 +5388,11 @@ const updateConversationDOM = (sessionId) => {
     });
 
     state.lastMessageCount.set(sessionId, conversation.length);
+    if (currentRoute === "live" && sessionId === state.activeSessionId) {
+      requestAnimationFrame(() => {
+        scrollConversationAreaToBottom(sessionId, { includeWindow: true });
+      });
+    }
   }
 
   // Handle updated messages (streaming SSE - message content changes)
@@ -5436,6 +5441,11 @@ const updateLogsDOM = (sessionId) => {
   if (logs.length !== lastLength || logs.join("\n") !== container.textContent) {
     container.textContent = logs.join("\n");
     state.lastLogLength.set(sessionId, logs.length);
+    if (currentRoute === "live" && sessionId === state.activeSessionId) {
+      requestAnimationFrame(() => {
+        scrollConversationAreaToBottom(sessionId, { includeWindow: true });
+      });
+    }
   }
 };
 
@@ -8460,7 +8470,7 @@ const renderHome = () => {
         <td class="actions-cell"></td>
         <td class="session-name-cell">
           <span class="session-name-text">${escapeHtml(displayName)}</span>
-          <button type="button" class="wm-link-button session-name-edit" data-action="rename-session">Edit name</button>
+          <button type="button" class="wm-link-button session-name-edit" data-action="rename-session">Edit</button>
         </td>
         <td>${escapeHtml(session.agent)}</td>
         <td class="identity-cell" title="${escapeHtml(identityTooltip)}">${escapeHtml(identityLabel)}</td>
