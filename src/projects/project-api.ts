@@ -232,6 +232,7 @@ export const createProjectApiHandler = (dependencies: ProjectApiDependencies) =>
     url: URL,
     method: HttpMethod,
     authContext: RequestAuthContext,
+    options: ProjectApiHandlerOptions = {},
   ): Promise<Response | null> => {
     if (!url.pathname.startsWith("/api/projects")) {
       return null;
@@ -247,7 +248,7 @@ export const createProjectApiHandler = (dependencies: ProjectApiDependencies) =>
     }
     if (segments.length === 4 && segments[2] && segments[3] === "apps") {
       const projectId = decodeURIComponent(segments[2]);
-      return handleProjectApps(method, projectId, request, authContext, options ?? {});
+      return handleProjectApps(method, projectId, request, authContext, options);
     }
     return Response.json({ error: "Not found" }, { status: 404 });
   };
