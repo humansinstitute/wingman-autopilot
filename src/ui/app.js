@@ -5388,11 +5388,6 @@ const updateConversationDOM = (sessionId) => {
     });
 
     state.lastMessageCount.set(sessionId, conversation.length);
-    if (currentRoute === "live" && sessionId === state.activeSessionId) {
-      requestAnimationFrame(() => {
-        scrollConversationAreaToBottom(sessionId, { includeWindow: true });
-      });
-    }
   }
 
   // Handle updated messages (streaming SSE - message content changes)
@@ -5417,10 +5412,8 @@ const updateConversationDOM = (sessionId) => {
       }
     });
 
-    if (contentChanged && currentRoute === "live" && sessionId === state.activeSessionId) {
-      requestAnimationFrame(() => {
-        scrollConversationAreaToBottom(sessionId, { includeWindow: true });
-      });
+    if (contentChanged) {
+      state.lastMessageCount.set(sessionId, conversation.length);
     }
   }
 };
@@ -5449,11 +5442,6 @@ const updateLogsDOM = (sessionId) => {
   if (logs.length !== lastLength || logs.join("\n") !== container.textContent) {
     container.textContent = logs.join("\n");
     state.lastLogLength.set(sessionId, logs.length);
-    if (currentRoute === "live" && sessionId === state.activeSessionId) {
-      requestAnimationFrame(() => {
-        scrollConversationAreaToBottom(sessionId, { includeWindow: true });
-      });
-    }
   }
 };
 
@@ -10786,6 +10774,23 @@ window.addEventListener("touchstart", handleTouchStart, { passive: true });
 window.addEventListener("touchmove", handleTouchMove, { passive: false });
 window.addEventListener("touchend", finishPull, { passive: true });
 window.addEventListener("touchcancel", finishPull, { passive: true });
+
+const scrollLiveViewIfVisible = () => {
+  if (currentRoute !== "live") {
+    return;
+  }
+  if (!state.activeSessionId) {
+    return;
+  }
+  scheduleLiveScroll(state.activeSessionId, { includeWindow: true });
+};
+
+window.addEventListener("focus", scrollLiveViewIfVisible);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    scrollLiveViewIfVisible();
+  }
+});
 
 window.addEventListener("popstate", () => {
   currentRoute = getRouteFromPath(window.location.pathname);
