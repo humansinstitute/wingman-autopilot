@@ -7,6 +7,7 @@ import { createTodoFeature } from "./todos/index.js";
 import { createProjectFeature } from "./projects/index.js";
 import "./logging/browser.js";
 import { createHomeGuestHero } from "./home/hero.js";
+import { createUnauthorizedGuard } from "./api/unauthorized-guard.js";
 
 const ace = globalThis.ace;
 if (!ace) {
@@ -915,6 +916,16 @@ const forceIdentityLogoutState = () => {
     }
   }
 };
+
+const handleUnauthorizedAccess = createUnauthorizedGuard({
+  onLogout: () => {
+    if (!state.identity.authenticated) {
+      return;
+    }
+    showToast("Session expired. Please log in again.");
+    forceIdentityLogoutState();
+  },
+});
 
 const requestServerLogout = async () => {
   const response = await fetch("/api/auth/session", {
@@ -4638,6 +4649,7 @@ const fetchSessions = async () => {
   const query = activeFilter && activeFilter !== "all" ? `?npub=${encodeURIComponent(activeFilter)}` : "";
   const response = await fetch(`/api/sessions${query}`);
   if (response.status === 401) {
+    handleUnauthorizedAccess();
     state.sessions = [];
     state.identitySummaries = [];
     state.sessionFilters.options = [];
@@ -10355,6 +10367,7 @@ todoFeature = createTodoFeature({
   },
   getApps: () => (Array.isArray(state.apps.items) ? state.apps.items : []),
   getProjects: () => (Array.isArray(state.projects?.items) ? state.projects.items : []),
+  onUnauthorized: handleUnauthorizedAccess,
 });
 state.todos = todoFeature.state;
 

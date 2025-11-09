@@ -47,7 +47,7 @@ async function getErrorMessage(response) {
   return message || "Request failed";
 }
 
-function createTodoState({ onStateChange, getApps, getProjects }) {
+function createTodoState({ onStateChange, getApps, getProjects, onUnauthorized }) {
   const state = {
     items: [],
     loading: false,
@@ -154,6 +154,14 @@ function createTodoState({ onStateChange, getApps, getProjects }) {
           "cache-control": "no-cache",
         },
       });
+      if (response.status === 401) {
+        state.items = [];
+        state.initialized = false;
+        if (typeof onUnauthorized === "function") {
+          onUnauthorized();
+        }
+        return;
+      }
       if (!response.ok) {
         throw new Error(await getErrorMessage(response));
       }

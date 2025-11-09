@@ -68,6 +68,7 @@ import {
   type AccessRule,
 } from "./auth/access-control";
 import { createStaticAssetService } from "./server/static-assets";
+import { maybeRefreshSessionCookie } from "./server/session-refresh";
 import { isAgentRuntimeStatus } from "./types/agent-status";
 
 const config = loadConfig();
@@ -5436,7 +5437,7 @@ const server = Bun.serve({
     const method = request.method as HttpMethod;
     const authContext = resolveRequestAuthContext(request);
 
-    return runWithRequestContext(authContext, async () => {
+    const response = await runWithRequestContext(authContext, async () => {
       if (authContext.error) {
         console.warn(`[auth] ignoring invalid session cookie: ${authContext.error}`);
       }
@@ -5550,6 +5551,8 @@ const server = Bun.serve({
 
       return new Response("Not Found", { status: 404 });
     });
+
+    return maybeRefreshSessionCookie(response, authContext);
   },
 });
 

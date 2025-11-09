@@ -1,7 +1,7 @@
 import { createTodoState } from "./state.js";
 import { createTodoView } from "./view.js";
 
-function createTodoFeature({ onRenderRequested, getApps, getProjects }) {
+function createTodoFeature({ onRenderRequested, getApps, getProjects, onUnauthorized }) {
   function requestRender() {
     if (typeof onRenderRequested === "function") {
       onRenderRequested();
@@ -12,6 +12,7 @@ function createTodoFeature({ onRenderRequested, getApps, getProjects }) {
     onStateChange: requestRender,
     getApps,
     getProjects,
+    onUnauthorized,
   });
 
   const actions = {
