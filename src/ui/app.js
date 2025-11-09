@@ -7,7 +7,7 @@ import { createTodoFeature } from "./todos/index.js";
 import { createProjectFeature } from "./projects/index.js";
 import "./logging/browser.js";
 import { createHomeGuestHero } from "./home/hero.js";
-import { createUnauthorizedGuard } from "./api/unauthorized-guard.js";
+import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
 
 const ace = globalThis.ace;
 if (!ace) {
