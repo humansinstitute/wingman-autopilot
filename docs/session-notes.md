@@ -10,3 +10,5 @@
 - Follow-up Q&A:
   - The bundled `ChatProvider` only reconnects SSE when the component remounts or the `EventSource.onerror` handler fires; there’s no visibility/focus listener, so background tabs keep the same connection until the browser suspends it.
   - AgentAPI already exposes polling-friendly endpoints for both transcripts and status (`GET /messages`, `GET /status`). We could abandon SSE for runtime status by polling `/status` on an interval; trade-off is higher latency plus extra requests per active session, but it avoids the Bun `fetch` timeout churn entirely.
+  - Refreshing the control UI obviously tears down the EventSource and starts a new one; simply focusing the tab does not currently trigger any reconnect hook.
+  - Reliability options from AgentAPI: `/status` responds with `{ status, agent_type }` (same payload as `status_change` events) and `/messages` mirrors `message_update`. Polling those on a cadence would be semantically equivalent to the SSE feed, just less efficient.
