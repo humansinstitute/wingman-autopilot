@@ -1,0 +1,9 @@
+# Session Investigation Notes
+
+## 2025-11-09
+- Confirmed the agent `GET /events` SSE endpoint is implemented inside the agent binary (`~/code/agentapi/lib/httpapi/server.go:368-520`). It emits `message_update`, `status_change`, and `screen_update` events via `EventEmitter` (`lib/httpapi/events.go`).
+- Wingmen’s backend tracker (`src/server.ts:2960-3132`) currently consumes that stream with Bun `fetch`, only using the `status_change` payloads to populate `ProcessManager.setAgentRuntimeStatus`.
+- The regular chat transcript inside Wingmen still polls `/messages` via `fetchAgentMessages` (`src/agents/agent-client.ts:83-138`); the SSE stream exists purely for real-time runtime-status, so message polling and SSE serve different data-access patterns (snapshot vs push).
+- The observed `[agent-status] SSE stream error … The operation timed out` logs originate from Bun timing out idle SSE connections. The agent stream stays silent when no status/message delta occurs (see `EventEmitter.UpdateStatusAndEmitChanges`), so Bun drops the connection after its default timeout and the tracker immediately retries.
+- Multi-session symptom: each running session now has a watcher loop that reconnects every time Bun times out. When multiple sessions are active, their synchronized reconnects spam the log and compete for agent bandwidth, which may look like earlier sessions “stopping” even though their subprocesses keep running.
+- Next steps: either add heartbeat traffic/longer timeouts to the tracker fetch, or switch to an actual `EventSource`-style client that tolerates idle periods (matching how the browser client under `~/code/agentapi/chat/src/components/chat-provider.tsx` handles it). In parallel, verify whether the reconnection churn is starving agents or if another layer (message-store/polling) causes the perceived stoppage.
