@@ -12,3 +12,10 @@
   - AgentAPI already exposes polling-friendly endpoints for both transcripts and status (`GET /messages`, `GET /status`). We could abandon SSE for runtime status by polling `/status` on an interval; trade-off is higher latency plus extra requests per active session, but it avoids the Bun `fetch` timeout churn entirely.
   - Refreshing the control UI obviously tears down the EventSource and starts a new one; simply focusing the tab does not currently trigger any reconnect hook.
   - Reliability options from AgentAPI: `/status` responds with `{ status, agent_type }` (same payload as `status_change` events) and `/messages` mirrors `message_update`. Polling those on a cadence would be semantically equivalent to the SSE feed, just less efficient.
+
+### Plan: migrate runtime status tracking to polling
+1. **Add polling helper**: create a small utility (e.g., `pollAgentStatus(sessionId, port)`) that hits `GET /status` via `buildAgentUrl` and returns `{ status, agent_type }`. Place it near other agent-client helpers so both server and future UI code can reuse it.
+2. **Replace tracker loop**: remove the SSE-driven `AgentRuntimeStatusTracker` in `src/server.ts` and instead schedule a Bun `setInterval` for each running session (e.g., every 2–5 s) that calls the helper and invokes `manager.setAgentRuntimeStatus`. Stop the interval when the session stops.
+3. **Backoff & error handling**: if polling fails (agent offline), log once per session and exponentially back off to avoid flooding. When the poll recovers, immediately update runtime status so the UI reflects the change.
+4. **Config hooks**: expose polling cadence/timeout in `config` so operators can tune for their hardware (e.g., slower cadence on constrained boxes).
+5. **Cleanup & docs**: delete the SSE-specific code path and update `docs/architecture.md` / `claude.md` to note that status now comes from `/status` polling; message hydration still relies on `/messages` snapshots.
