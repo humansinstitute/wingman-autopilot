@@ -3197,6 +3197,63 @@ const parsePortInput = (value: unknown): number | null => {
   return null;
 };
 
+const WEB_APP_HOST = "host.otherstuff.ai";
+
+type BuildAppResponseOptions = {
+  ownerAlias?: string | null;
+};
+
+const normaliseWebAppAlias = (input: string | null | undefined): string | null => {
+  if (!input) {
+    return null;
+  }
+  const slug = input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "");
+  return slug.length > 0 ? slug : null;
+};
+
+const buildHostedWebAppUrl = (alias: string | null, port: number | null): string | null => {
+  if (typeof port !== "number" || !Number.isFinite(port)) {
+    return null;
+  }
+  const normalizedPort = Math.trunc(port);
+  if (normalizedPort <= 0) {
+    return null;
+  }
+  if (!alias) {
+    return `https://${WEB_APP_HOST}/${normalizedPort}`;
+  }
+  return `https://${alias}-${normalizedPort}.${WEB_APP_HOST}/`;
+};
+
+const resolveOwnerAlias = (ownerNpub: string | null | undefined): string | null => {
+  if (!ownerNpub) {
+    return null;
+  }
+  const record = identityUserStore.getByNormalized(ownerNpub);
+  return record?.alias ?? null;
+};
+
+const resolveOwnerAliasCached = (
+  ownerNpub: string | null | undefined,
+  cache: Map<string, string | null>,
+): string | null => {
+  if (!ownerNpub) {
+    return null;
+  }
+  if (cache.has(ownerNpub)) {
+    return cache.get(ownerNpub) ?? null;
+  }
+  const alias = resolveOwnerAlias(ownerNpub);
+  cache.set(ownerNpub, alias);
+  return alias;
+};
+
 const defaultAppProcessStatus = (appId: string): AppProcessStatus => {
   const timestamp = new Date().toISOString();
   return {
@@ -3213,7 +3270,7 @@ const defaultAppProcessStatus = (appId: string): AppProcessStatus => {
   };
 };
 
-const buildAppResponse = (app: AppRecord, status: AppProcessStatus) => {
+const buildAppResponse = (app: AppRecord, status: AppProcessStatus, options: BuildAppResponseOptions = {}) => {
   const hasStartScript = Boolean(app.scripts.start);
   const availableScripts: Record<AppLifecycleAction, boolean> = {
     start: hasStartScript,
@@ -3222,6 +3279,10 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus) => {
     setup: Boolean(app.scripts.setup),
     build: Boolean(app.scripts.build),
   };
+  const webAppPort =
+    typeof app.webAppPort === "number" && Number.isFinite(app.webAppPort) ? Math.trunc(app.webAppPort) : null;
+  const webAppAlias = normaliseWebAppAlias(options.ownerAlias ?? null);
+  const webAppUrl = app.webApp && webAppPort !== null ? buildHostedWebAppUrl(webAppAlias, webAppPort) : null;
   return {
     id: app.id,
     label: app.label,
@@ -3234,11 +3295,9 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus) => {
     createdAt: app.createdAt,
     updatedAt: app.updatedAt,
     webApp: app.webApp,
-    webAppPort: app.webAppPort,
-    webAppUrl:
-      app.webApp && typeof app.webAppPort === "number"
-        ? `https://host.otherstuff.ai/${app.webAppPort}`
-        : null,
+    webAppPort,
+    webAppAlias,
+    webAppUrl,
     status,
     availableScripts,
     logs: undefined as string[] | undefined,
@@ -4012,6 +4071,7 @@ const handleApi = async (
     const tail = tailParam ? Number.parseInt(tailParam, 10) : 0;
     const includeLogs = Number.isFinite(tail) && tail > 0;
     const tailCount = includeLogs ? Math.min(Math.max(tail, 1), 2000) : 0;
+    const ownerAliasCache = new Map<string, string | null>();
     try {
       const [apps, statuses] = await Promise.all([appRegistry.listApps(), appProcessManager.listStatuses()]);
       const visibleApps = workspaceScope.isAdmin ? apps : apps.filter((app) => canAccessApp(app));
@@ -4019,7 +4079,8 @@ const handleApi = async (
       const data = await Promise.all(
         visibleApps.map(async (app) => {
           const status = statusMap.get(app.id) ?? defaultAppProcessStatus(app.id);
-          const record = buildAppResponse(app, status);
+          const ownerAlias = resolveOwnerAliasCached(app.ownerNpub, ownerAliasCache);
+          const record = buildAppResponse(app, status, { ownerAlias });
           if (includeLogs) {
             try {
               record.logs = await appProcessManager.tailLogs(app.id, tailCount);

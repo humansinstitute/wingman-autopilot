@@ -311,7 +311,9 @@ const attemptBunkerRestore = async ({ context, setStatus, form, enableInputs, ro
     return null;
   }
   if (stored.hasSecret) {
-    setStatus("Remote signer requires a secret. Paste the bunker URI again to reconnect.", "warning");
+    console.log("[identity] stored bunker session requires secret, clearing cached session");
+    setStatus("Your bunker session has expired. Please paste your bunker URI again to reconnect.", "warning");
+    clearBunkerSession();
     return null;
   }
   setStatus("Reconnecting to remote signer…");
@@ -895,6 +897,26 @@ const persistServerSession = async (npub, encryptedNsec) => {
   return { expiresAt };
 };
 
+function normalizeBunkerSecretParam(uri) {
+  if (typeof uri !== "string" || uri.length === 0) {
+    return uri;
+  }
+  return uri.replace(/([?&]secret=)([^&#]*)/i, (match, prefix, value) => {
+    if (!value) {
+      return match;
+    }
+    // Decode first in case it's already encoded, then re-encode properly
+    try {
+      const decoded = decodeURIComponent(value);
+      const encoded = encodeURIComponent(decoded);
+      return `${prefix}${encoded}`;
+    } catch (error) {
+      // If decode fails, just encode what we have
+      return `${prefix}${encodeURIComponent(value)}`;
+    }
+  });
+}
+
 const applyIdentityUpdate = (context, partial) => {
   if (context && typeof context.updateIdentityState === "function") {
     context.updateIdentityState(partial);
@@ -1210,6 +1232,7 @@ const initBunkerPanel = (root, context) => {
       setStatus("Enter a bunker URI to connect.", "error");
       return;
     }
+    const normalized = normalizeBunkerSecretParam(trimmed);
     if (textarea) {
       textarea.value = trimmed;
     }
@@ -1217,9 +1240,11 @@ const initBunkerPanel = (root, context) => {
     form?.classList.add("is-loading");
     enableInputs(false);
     try {
-      const parsed = NostrConnectSigner.parseBunkerURI(trimmed);
+      console.log("[identity] connecting with normalized URI:", normalized.replace(/secret=([^&#]*)/i, 'secret=[REDACTED]'));
+      const parsed = NostrConnectSigner.parseBunkerURI(normalized);
+      console.log("[identity] parsed bunker URI:", { remote: parsed.remote, relays: parsed.relays, hasSecret: !!parsed.secret });
       await disconnectBunkerSigner();
-      const signer = await NostrConnectSigner.fromBunkerURI(trimmed, {
+      const signer = await NostrConnectSigner.fromBunkerURI(normalized, {
         pool: getRelayPool(),
         permissions: BUNKER_SIGNING_PERMISSIONS,
       });
@@ -1242,7 +1267,17 @@ const initBunkerPanel = (root, context) => {
     } catch (error) {
       await disconnectBunkerSigner();
       console.error("[identity] bunker connection failed", error instanceof Error ? error.message : error);
-      const message = error instanceof Error ? error.message : "Failed to connect to remote signer";
+      let message = error instanceof Error ? error.message : "Failed to connect to remote signer";
+      
+      // Provide more specific error messages for common issues
+      if (message.includes("Invalid connection secret")) {
+        message = "The secret in your bunker URI is incorrect. Please check the URI and try again.";
+      } else if (message.includes("missing secret")) {
+        message = "Your bunker URI is missing a secret parameter. Please use a complete bunker URI.";
+      } else if (message.includes("Invalid bunker URI")) {
+        message = "The bunker URI format is invalid. Please check the URI starts with 'bunker://' and has all required parameters.";
+      }
+      
       setStatus(message, "error");
       root.classList.remove("is-authenticated");
     } finally {
