@@ -19,3 +19,9 @@
 3. **Backoff & error handling**: if polling fails (agent offline), log once per session and exponentially back off to avoid flooding. When the poll recovers, immediately update runtime status so the UI reflects the change.
 4. **Config hooks**: expose polling cadence/timeout in `config` so operators can tune for their hardware (e.g., slower cadence on constrained boxes).
 5. **Cleanup & docs**: delete the SSE-specific code path and update `docs/architecture.md` / `claude.md` to note that status now comes from `/status` polling; message hydration still relies on `/messages` snapshots.
+
+### Update 2025-11-10: status polling implemented
+- Added `AgentRuntimeStatusPoller` (`src/agents/agent-status-poller.ts`), which reuses `buildAgentUrl` + `/status` snapshots, tracks per-session backoff, and only logs once per failure streak.
+- `src/server.ts` now wires the poller instead of the SSE watcher, so each running session maintains its own poll loop until it stops/errors.
+- New config knobs: `agentStatusPollIntervalMs`, `agentStatusPollMaxIntervalMs`, and `agentStatusPollTimeoutMs` (`AGENT_STATUS_POLL_INTERVAL_MS`, `AGENT_STATUS_POLL_MAX_INTERVAL_MS`, `AGENT_STATUS_POLL_TIMEOUT_MS` env vars).
+- Result: runtime status no longer depends on Bun SSE timeouts, and operators can tune cadence/backoff without touching the server bundle.

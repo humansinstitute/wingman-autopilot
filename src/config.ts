@@ -27,6 +27,9 @@ export interface WingmanConfig {
   allowedHosts: string;
   tmuxBase: string;
   agents: Record<AgentType, AgentDefinition>;
+  agentStatusPollIntervalMs: number;
+  agentStatusPollMaxIntervalMs: number;
+  agentStatusPollTimeoutMs: number;
 }
 
 const DEFAULT_PORT = 3600;
@@ -35,11 +38,18 @@ const DEFAULT_AGENT_MAX = 10;
 const DEFAULT_DIRECTORY = "~/code";
 const DEFAULT_ALLOWED_ORIGINS = "*";
 const DEFAULT_ALLOWED_HOSTS = "localhost,127.0.0.1,[::1]";
+const DEFAULT_STATUS_POLL_INTERVAL_MS = 3000;
+const DEFAULT_STATUS_POLL_MAX_INTERVAL_MS = 30000;
+const DEFAULT_STATUS_POLL_TIMEOUT_MS = 5000;
 
 const sanitizeInteger = (value: string | undefined, fallback: number): number => {
   if (!value) return fallback;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const clampPositiveInteger = (value: number, minimum: number): number => {
+  return value >= minimum ? value : minimum;
 };
 
 const expandHomeDirectory = (input: string): string => {
@@ -138,6 +148,18 @@ export const loadConfig = (): WingmanConfig => {
   );
   const allowedOrigins = Bun.env.AGENTAPI_ALLOWED_ORIGINS ?? DEFAULT_ALLOWED_ORIGINS;
   const allowedHosts = Bun.env.AGENTAPI_ALLOWED_HOSTS ?? DEFAULT_ALLOWED_HOSTS;
+  const agentStatusPollIntervalMs = clampPositiveInteger(
+    sanitizeInteger(Bun.env.AGENT_STATUS_POLL_INTERVAL_MS, DEFAULT_STATUS_POLL_INTERVAL_MS),
+    250,
+  );
+  const agentStatusPollMaxIntervalMs = clampPositiveInteger(
+    sanitizeInteger(Bun.env.AGENT_STATUS_POLL_MAX_INTERVAL_MS, DEFAULT_STATUS_POLL_MAX_INTERVAL_MS),
+    agentStatusPollIntervalMs,
+  );
+  const agentStatusPollTimeoutMs = clampPositiveInteger(
+    sanitizeInteger(Bun.env.AGENT_STATUS_POLL_TIMEOUT_MS, DEFAULT_STATUS_POLL_TIMEOUT_MS),
+    1000,
+  );
 
   return {
     port,
@@ -149,6 +171,9 @@ export const loadConfig = (): WingmanConfig => {
     allowedHosts,
     tmuxBase,
     agents: defaultAgents,
+    agentStatusPollIntervalMs,
+    agentStatusPollMaxIntervalMs,
+    agentStatusPollTimeoutMs,
   };
 };
 

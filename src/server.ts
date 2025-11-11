@@ -46,6 +46,7 @@ import {
   sendAgentMessage,
   waitForAgentReady as waitForAgentReadyCore,
 } from "./agents/agent-client";
+import { AgentRuntimeStatusPoller } from "./agents/agent-status-poller";
 import { mintSessionCookie, SessionCookieError, SESSION_COOKIE_NAME } from "./auth/session-cookie";
 import {
   resolveRequestAuthContext,
@@ -2950,183 +2951,13 @@ const syncSessionMessages = async (sessionId: string, force = false) => {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-class AgentStatusStreamError extends Error {
-  constructor(message: string, readonly fatal: boolean = false) {
-    super(message);
-    this.name = "AgentStatusStreamError";
-  }
-}
-
-class AgentRuntimeStatusTracker {
-  private readonly watchers = new Map<string, AbortController>();
-  private readonly decoder = new TextDecoder();
-
-  constructor(
-    private readonly manager: ProcessManager,
-    private readonly agentHost: string,
-  ) {}
-
-  start() {
-    for (const session of this.manager.listSessions()) {
-      this.syncWatcherForSession(session);
-    }
-    this.manager.on((event) => {
-      this.syncWatcherForSession(event.session);
-      if (event.type === "session-stopped") {
-        this.stopWatcher(event.session.id);
-      }
-    });
-  }
-
-  private syncWatcherForSession(session: SessionSnapshot) {
-    if (session.status === "running") {
-      this.startWatcher(session);
-    } else if (session.status === "stopped" || session.status === "error") {
-      this.stopWatcher(session.id);
-    }
-  }
-
-  private startWatcher(session: SessionSnapshot) {
-    if (this.watchers.has(session.id)) {
-      return;
-    }
-    const controller = new AbortController();
-    this.watchers.set(session.id, controller);
-    void this.watchSession(session, controller).finally(() => {
-      const current = this.watchers.get(session.id);
-      if (current === controller) {
-        this.watchers.delete(session.id);
-      }
-    });
-  }
-
-  private stopWatcher(sessionId: string) {
-    const controller = this.watchers.get(sessionId);
-    if (controller) {
-      controller.abort();
-      this.watchers.delete(sessionId);
-    }
-  }
-
-  private async watchSession(session: SessionSnapshot, controller: AbortController) {
-    const sessionId = session.id;
-    const port = session.port;
-    while (!controller.signal.aborted) {
-      try {
-        await this.streamSessionEvents(sessionId, port, controller.signal);
-        if (!controller.signal.aborted) {
-          await sleep(500);
-        }
-      } catch (error) {
-        if (controller.signal.aborted) {
-          break;
-        }
-        if (error instanceof AgentStatusStreamError && error.fatal) {
-          console.warn(`[agent-status] disabling tracker for ${sessionId}: ${error.message}`);
-          break;
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        console.warn(`[agent-status] SSE stream error for ${sessionId}: ${message}`);
-        await sleep(2000);
-      }
-    }
-  }
-
-  private async streamSessionEvents(sessionId: string, port: number, signal: AbortSignal) {
-    const url = buildAgentUrl(this.agentHost, port, "/events");
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        signal,
-        headers: { accept: "text/event-stream" },
-      });
-    } catch (error) {
-      if ((error as Error)?.name === "AbortError") {
-        throw error;
-      }
-      throw new AgentStatusStreamError(
-        `Failed to connect to agent events for ${sessionId}: ${(error as Error).message}`,
-      );
-    }
-
-    if (response.status === 404) {
-      throw new AgentStatusStreamError("Agent events endpoint returned 404", true);
-    }
-
-    if (!response.ok) {
-      throw new AgentStatusStreamError(`Agent events endpoint returned ${response.status}`);
-    }
-
-    if (!response.body) {
-      throw new AgentStatusStreamError("Agent events response had no body");
-    }
-
-    const reader = response.body.getReader();
-    let buffer = "";
-    try {
-      while (!signal.aborted) {
-        const { value, done } = await reader.read();
-        if (done) {
-          break;
-        }
-        if (!value) {
-          continue;
-        }
-        buffer += this.decoder.decode(value, { stream: true }).replace(/\r/g, "");
-        buffer = this.processBufferedEvents(sessionId, buffer);
-      }
-    } finally {
-      try {
-        reader.releaseLock();
-      } catch {
-        // ignore
-      }
-    }
-  }
-
-  private processBufferedEvents(sessionId: string, buffer: string): string {
-    let separatorIndex: number;
-    while ((separatorIndex = buffer.indexOf("\n\n")) !== -1) {
-      const rawEvent = buffer.slice(0, separatorIndex);
-      buffer = buffer.slice(separatorIndex + 2);
-      this.processEventChunk(sessionId, rawEvent);
-    }
-    return buffer;
-  }
-
-  private processEventChunk(sessionId: string, chunk: string) {
-    const lines = chunk.split("\n");
-    let eventType = "message";
-    const dataLines: string[] = [];
-
-    for (const line of lines) {
-      if (!line) continue;
-      if (line.startsWith("event:")) {
-        eventType = line.slice(6).trim();
-      } else if (line.startsWith("data:")) {
-        dataLines.push(line.slice(5).trim());
-      }
-    }
-
-    if (eventType !== "status_change" || dataLines.length === 0) {
-      return;
-    }
-
-    const payloadText = dataLines.join("\n");
-    try {
-      const payload = JSON.parse(payloadText) as Record<string, unknown>;
-      const statusValue = payload?.status;
-      if (isAgentRuntimeStatus(statusValue)) {
-        this.manager.setAgentRuntimeStatus(sessionId, statusValue);
-      }
-    } catch (error) {
-      console.warn(`[agent-status] failed to parse status_change event for ${sessionId}:`, error);
-    }
-  }
-}
-
-const agentStatusTracker = new AgentRuntimeStatusTracker(manager, agentHost);
-agentStatusTracker.start();
+const agentStatusPoller = new AgentRuntimeStatusPoller(manager, {
+  host: agentHost,
+  intervalMs: config.agentStatusPollIntervalMs,
+  maxIntervalMs: config.agentStatusPollMaxIntervalMs,
+  timeoutMs: config.agentStatusPollTimeoutMs,
+});
+agentStatusPoller.start();
 
 const waitForMessageUpdate = async (sessionId: string, initialCount: number, timeoutMs = 20000) => {
   let messages = await syncSessionMessages(sessionId, true);
