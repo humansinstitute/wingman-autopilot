@@ -2903,9 +2903,13 @@ const getActiveSessions = () => state.sessions.filter((session) => isSessionActi
 
 const isSessionBusy = (session) => {
   if (!session) return false;
-  return session.agentRuntimeStatus === "running" || 
-         session.status === "running" || 
-         session.status === "starting";
+  // Treat sessions as busy only when the agent reports active work or the process is still starting.
+  return session.status === "starting" || session.agentRuntimeStatus === "running";
+};
+
+const isStatusRecordBusy = (statusRecord) => {
+  if (!statusRecord) return false;
+  return statusRecord.status === "starting" || statusRecord.agentRuntimeStatus === "running";
 };
 
 // Prompt Queue Management Functions
@@ -3091,9 +3095,7 @@ const processQueueOnStatusChange = async () => {
     if (!previousStatus) continue;
     
     // Check if session became available (was busy, now not busy)
-    const wasBusy = previousStatus.agentRuntimeStatus === "running" || 
-                   previousStatus.status === "running" || 
-                   previousStatus.status === "starting";
+    const wasBusy = isStatusRecordBusy(previousStatus);
     const isNowAvailable = !isSessionBusy(session);
     
     if (wasBusy && isNowAvailable) {
