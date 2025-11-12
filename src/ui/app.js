@@ -58,6 +58,7 @@ const state = {
   messageDrafts: new Map(),
   logPanelOpen: new Map(),
   promptQueues: new Map(), // sessionId -> {prompts: [], maxSize: 21}
+  previousSessionStatuses: new Map(), // sessionId -> {status, agentRuntimeStatus} for queue processing
   activeSessionId: null,
   lastWorkingDirectory: null,
   lastActiveSessionId: null,
@@ -2900,6 +2901,13 @@ const ACTIVE_SESSION_STATUSES = new Set(["starting", "running"]);
 const isSessionActive = (session) => ACTIVE_SESSION_STATUSES.has(session?.status);
 const getActiveSessions = () => state.sessions.filter((session) => isSessionActive(session));
 
+const isSessionBusy = (session) => {
+  if (!session) return false;
+  return session.agentRuntimeStatus === "running" || 
+         session.status === "running" || 
+         session.status === "starting";
+};
+
 // Prompt Queue Management Functions
 const getSessionQueue = (sessionId) => {
   if (!state.promptQueues.has(sessionId)) {
@@ -3062,6 +3070,42 @@ const sendNextQueuedPrompt = async (sessionId) => {
     console.error("Failed to send queued prompt:", error);
     showToast("Failed to send queued prompt", { type: "error" });
     return false;
+  }
+};
+
+const processQueueOnStatusChange = async () => {
+  // Check all sessions for status changes that might trigger queue processing
+  for (const session of state.sessions) {
+    const sessionId = session.id;
+    const currentStatus = {
+      status: session.status,
+      agentRuntimeStatus: session.agentRuntimeStatus,
+    };
+    
+    const previousStatus = state.previousSessionStatuses.get(sessionId);
+    
+    // Update previous status for next check
+    state.previousSessionStatuses.set(sessionId, currentStatus);
+    
+    // Skip if we don't have previous status to compare
+    if (!previousStatus) continue;
+    
+    // Check if session became available (was busy, now not busy)
+    const wasBusy = previousStatus.agentRuntimeStatus === "running" || 
+                   previousStatus.status === "running" || 
+                   previousStatus.status === "starting";
+    const isNowAvailable = !isSessionBusy(session);
+    
+    if (wasBusy && isNowAvailable) {
+      // Session became available - check if there are queued prompts
+      const queueCount = getQueueCount(sessionId);
+      if (queueCount > 0) {
+        // Send the next queued prompt
+        await sendNextQueuedPrompt(sessionId);
+        // Update status indicators to reflect new queue count
+        updateAgentStatusIndicators();
+      }
+    }
   }
 };
 
@@ -4933,6 +4977,9 @@ const fetchSessions = async () => {
   for (const key of Array.from(state.promptQueues.keys())) {
     if (!sessionIds.has(key)) state.promptQueues.delete(key);
   }
+  for (const key of Array.from(state.previousSessionStatuses.keys())) {
+    if (!sessionIds.has(key)) state.previousSessionStatuses.delete(key);
+  }
   const routeSessionId = getSessionIdFromPath(window.location.pathname);
   const allowHistoryUpdate = currentRoute === "live" && !routeSessionId;
   const redirectHome = applyRouteSessionFromPath({ allowHistoryUpdate });
@@ -5366,6 +5413,8 @@ const pollSessions = async () => {
       render();
       // Update status indicators after render
       updateAgentStatusIndicators();
+      // Check for queue processing opportunities
+      await processQueueOnStatusChange();
       return;
     }
 
@@ -5399,6 +5448,9 @@ const pollSessions = async () => {
     }
 
     updateAgentStatusIndicators();
+    
+    // Check for queue processing opportunities
+    await processQueueOnStatusChange();
   } catch (error) {
     console.error("Failed to refresh sessions", error);
   }
@@ -5858,6 +5910,27 @@ const sendMessage = async (sessionId, content) => {
     return;
   }
 
+  // Check if agent is busy - if so, queue the message
+  if (isSessionBusy(session)) {
+    const queued = await addToPromptQueue(sessionId, trimmed);
+    if (queued) {
+      state.messageDrafts.set(sessionId, "");
+      // Clear the textarea
+      const textarea = document.querySelector('.wm-composer textarea');
+      if (textarea) {
+        textarea.value = "";
+        textarea.style.height = "auto";
+        requestAnimationFrame(() => {
+          textarea.focus();
+        });
+      }
+      // Update status indicators to show queue count
+      updateAgentStatusIndicators();
+    }
+    return;
+  }
+
+  // Agent is not busy - send message immediately
   try {
     const payload = await postSessionMessage(sessionId, trimmed, "user");
     const messages = Array.isArray(payload?.messages) ? payload.messages : [];
