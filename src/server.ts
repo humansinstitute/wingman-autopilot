@@ -83,6 +83,9 @@ const MESSAGE_COST_SATS = 100;
 const projectStore = new ProjectStore();
 const todoStore = new TodoStore();
 const promptQueueStore = new PromptQueueStore("data/prompt-queue.db");
+const QUEUE_DISPATCH_RETRY_MS = 5000;
+const queueDispatchInFlight = new Set<string>();
+const queueDispatchCooldowns = new Map<string, number>();
 const todoApiHandler = createTodoApiHandler({ store: todoStore, projectStore });
 const projectApiHandler = createProjectApiHandler({
   store: projectStore,
@@ -1584,6 +1587,7 @@ manager.on((event) => {
       runtimeStatus: event.session.agentRuntimeStatus ?? null,
     });
     messageStore.replaceMessages(event.session.id, []);
+    void maybeAutoDispatchQueuedPrompt(event.session);
     return;
   }
   if (event.type === "session-updated" || event.type === "session-stopped") {
@@ -1611,6 +1615,7 @@ manager.on((event) => {
       command: event.session.command,
       runtimeStatus: event.session.agentRuntimeStatus ?? null,
     });
+    void maybeAutoDispatchQueuedPrompt(event.session);
   }
 });
 
@@ -2977,6 +2982,149 @@ const waitForMessageUpdate = async (sessionId: string, initialCount: number, tim
   }
   return messages;
 };
+
+class QueueDispatchError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public payload: Record<string, unknown> = {},
+  ) {
+    super(message);
+    this.name = "QueueDispatchError";
+  }
+}
+
+const getQueueDispatchCooldown = (sessionId: string) => queueDispatchCooldowns.get(sessionId) ?? 0;
+
+const shouldAutoDispatchSession = (session: SessionSnapshot | null): boolean => {
+  if (!session) return false;
+  if (session.status !== "running") return false;
+  return session.agentRuntimeStatus === "stable";
+};
+
+const clearQueueDispatchCooldown = (sessionId: string) => {
+  queueDispatchCooldowns.delete(sessionId);
+};
+
+const markQueueDispatchCooldown = (sessionId: string) => {
+  queueDispatchCooldowns.set(sessionId, Date.now() + QUEUE_DISPATCH_RETRY_MS);
+};
+
+async function dispatchNextQueuedPromptForSession(session: SessionSnapshot, userNpub: string | null) {
+  if (!userNpub) {
+    throw new QueueDispatchError("Sign in to send messages", 403, { balance: 0 });
+  }
+
+  const nextPrompt = promptQueueStore.getNextQueuedPrompt(session.id);
+  if (!nextPrompt) {
+    throw new QueueDispatchError("No prompts in queue", 404);
+  }
+
+  let currentBalance = 0;
+  let debitApplied = false;
+  const refundDebit = () => {
+    if (!debitApplied) return;
+    try {
+      currentBalance = identityUserStore.credit(userNpub, MESSAGE_COST_SATS);
+    } catch (creditError) {
+      console.error("[billing] failed to refund queued prompt debit:", creditError);
+    } finally {
+      debitApplied = false;
+    }
+  };
+
+  try {
+    currentBalance = identityUserStore.debit(userNpub, MESSAGE_COST_SATS);
+    debitApplied = true;
+  } catch (error) {
+    if (error instanceof InsufficientBalanceError) {
+      throw new QueueDispatchError("Insufficient balance", 402, {
+        balance: error.currentBalance,
+        required: MESSAGE_COST_SATS,
+      });
+    }
+    console.error("[billing] failed to debit message cost:", error);
+    throw new QueueDispatchError("Failed to debit balance", 500);
+  }
+
+  try {
+    const initialCount = messageStore.listSessionMessages(session.id).length;
+    const agentUrl = buildAgentUrl(agentHost, session.port, "/message");
+    const agentResponse = await fetch(agentUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "user", content: nextPrompt.content }),
+    });
+
+    if (!agentResponse.ok) {
+      const errorPayload = await agentResponse.json().catch(() => ({}));
+      const message = (errorPayload?.error as string) ?? agentResponse.statusText ?? "Agent request failed";
+      refundDebit();
+      throw new QueueDispatchError(message, agentResponse.status, {
+        balance: currentBalance,
+        failedPrompt: nextPrompt,
+      });
+    }
+
+    promptQueueStore.removeNextPrompt(session.id);
+    const messages = await waitForMessageUpdate(session.id, initialCount);
+    clearQueueDispatchCooldown(session.id);
+    return { id: session.id, messages, balance: currentBalance, sentPrompt: nextPrompt };
+  } catch (error) {
+    if (error instanceof QueueDispatchError) {
+      throw error;
+    }
+    refundDebit();
+    throw new QueueDispatchError(`Failed to contact agent: ${(error as Error).message}`, 502, {
+      balance: currentBalance,
+      failedPrompt: nextPrompt,
+    });
+  }
+}
+
+async function maybeAutoDispatchQueuedPrompt(session: SessionSnapshot | null) {
+  if (!session) return;
+  if (queueDispatchInFlight.has(session.id)) return;
+  if (!shouldAutoDispatchSession(session)) return;
+  if (promptQueueStore.getQueueCount(session.id) === 0) return;
+  const userNpub = session.npub ?? null;
+  if (!userNpub) {
+    console.warn(`[queue] cannot auto-dispatch session ${session.id} without owner npub`);
+    return;
+  }
+  const cooldownUntil = getQueueDispatchCooldown(session.id);
+  if (cooldownUntil && cooldownUntil > Date.now()) {
+    return;
+  }
+
+  queueDispatchInFlight.add(session.id);
+  try {
+    await dispatchNextQueuedPromptForSession(session, userNpub);
+  } catch (error) {
+    if (error instanceof QueueDispatchError) {
+      if (error.status === 404) {
+        clearQueueDispatchCooldown(session.id);
+      } else {
+        markQueueDispatchCooldown(session.id);
+        console.warn(`[queue] auto-dispatch failed for session ${session.id}: ${error.message}`);
+      }
+    } else {
+      markQueueDispatchCooldown(session.id);
+      console.error(`[queue] auto-dispatch failed for session ${session.id}:`, error);
+    }
+  } finally {
+    queueDispatchInFlight.delete(session.id);
+  }
+}
+
+const sweepQueuedSessionsForDispatch = () => {
+  for (const session of manager.listSessions()) {
+    void maybeAutoDispatchQueuedPrompt(session);
+  }
+};
+
+sweepQueuedSessionsForDispatch();
+setInterval(sweepQueuedSessionsForDispatch, 5000).unref?.();
 const APP_ACTIONS: AppLifecycleAction[] = ["start", "stop", "restart", "setup", "build"];
 
 const parseAppScripts = (input: unknown): AppLifecycleScripts => {
@@ -5352,6 +5500,7 @@ const handleApi = async (
           if (!prompt) {
             return Response.json({ error: "Failed to add prompt to queue" }, { status: 400 });
           }
+          void maybeAutoDispatchQueuedPrompt(ownedSession);
           return Response.json({ id, prompt });
         } catch (error) {
           return Response.json({ error: (error as Error).message }, { status: 400 });
@@ -5408,69 +5557,22 @@ const handleApi = async (
     if (method === "POST" && parts[4] === "queue" && parts[5] === "next") {
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
 
-      const nextPrompt = promptQueueStore.getNextQueuedPrompt(id);
-      if (!nextPrompt) {
-        return Response.json({ error: "No prompts in queue" }, { status: 404 });
+      if (queueDispatchInFlight.has(id)) {
+        return Response.json({ error: "Prompt dispatch already in progress" }, { status: 409 });
       }
 
-      const userNpub = authContext.npub ?? null;
-      if (!userNpub) {
-        return Response.json({ error: "Sign in to send messages", balance: 0 }, { status: 403 });
-      }
-
-      let currentBalance = 0;
+      queueDispatchInFlight.add(id);
       try {
-        currentBalance = identityUserStore.debit(userNpub, MESSAGE_COST_SATS);
+        const result = await dispatchNextQueuedPromptForSession(ownedSession, authContext.npub ?? null);
+        return Response.json(result);
       } catch (error) {
-        if (error instanceof InsufficientBalanceError) {
-          return Response.json(
-            {
-              error: "Insufficient balance",
-              balance: error.currentBalance,
-              required: MESSAGE_COST_SATS,
-            },
-            { status: 402 },
-          );
+        if (error instanceof QueueDispatchError) {
+          return Response.json({ error: error.message, ...(error.payload ?? {}) }, { status: error.status });
         }
-        console.error("[billing] failed to debit message cost:", error);
-        return Response.json({ error: "Failed to debit balance" }, { status: 500 });
-      }
-
-      try {
-        const initialCount = messageStore.listSessionMessages(id).length;
-        const agentUrl = buildAgentUrl(agentHost, ownedSession.port, "/message");
-        const agentResponse = await fetch(agentUrl, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ type: "user", content: nextPrompt.content }),
-        });
-        
-        if (!agentResponse.ok) {
-          const errorPayload = await agentResponse.json().catch(() => ({}));
-          const message = (errorPayload?.error as string) ?? agentResponse.statusText ?? "Agent request failed";
-          try {
-            currentBalance = identityUserStore.credit(userNpub, MESSAGE_COST_SATS);
-          } catch (creditError) {
-            console.error("[billing] failed to refund after agent rejection:", creditError);
-          }
-          return Response.json({ error: message, balance: currentBalance, failedPrompt: nextPrompt }, { status: agentResponse.status });
-        }
-
-        // Remove the successfully sent prompt from queue
-        promptQueueStore.removeNextPrompt(id);
-        
-        const messages = await waitForMessageUpdate(id, initialCount);
-        return Response.json({ id, messages, balance: currentBalance, sentPrompt: nextPrompt });
-      } catch (error) {
-        try {
-          currentBalance = identityUserStore.credit(userNpub, MESSAGE_COST_SATS);
-        } catch (creditError) {
-          console.error("[billing] failed to refund after agent error:", creditError);
-        }
-        return Response.json(
-          { error: `Failed to contact agent: ${(error as Error).message}`, balance: currentBalance, failedPrompt: nextPrompt },
-          { status: 502 },
-        );
+        console.error("[queue] failed to send queued prompt:", error);
+        return Response.json({ error: "Failed to send queued prompt" }, { status: 500 });
+      } finally {
+        queueDispatchInFlight.delete(id);
       }
     }
   }

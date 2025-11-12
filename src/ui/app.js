@@ -58,7 +58,6 @@ const state = {
   messageDrafts: new Map(),
   logPanelOpen: new Map(),
   promptQueues: new Map(), // sessionId -> {prompts: [], maxSize: 21}
-  previousSessionStatuses: new Map(), // sessionId -> {status, agentRuntimeStatus} for queue processing
   activeSessionId: null,
   lastWorkingDirectory: null,
   lastActiveSessionId: null,
@@ -2930,8 +2929,7 @@ const isQueueFull = (sessionId) => {
   return count >= 21;
 };
 
-const queueDispatchInFlight = new Set();
-const isQueueDispatching = (sessionId) => queueDispatchInFlight.has(sessionId);
+let manualQueueSendInFlight = false;
 
 const addToPromptQueue = async (sessionId, content) => {
   if (isQueueFull(sessionId)) {
@@ -2954,13 +2952,6 @@ const addToPromptQueue = async (sessionId, content) => {
     const result = await response.json();
     const queue = getSessionQueue(sessionId);
     queue.prompts.push(result.prompt);
-    
-    const session = getSessionById(sessionId);
-    if (session && !isSessionBusy(session)) {
-      triggerQueueDispatch(sessionId).catch((error) => {
-        console.error("Failed to dispatch queued prompt:", error);
-      });
-    }
     
     showToast("Prompt queued", { type: "success" });
     return true;
@@ -3087,64 +3078,6 @@ const sendNextQueuedPrompt = async (sessionId) => {
   }
 };
 
-const triggerQueueDispatch = async (sessionId) => {
-  if (!sessionId || isQueueDispatching(sessionId)) {
-    return;
-  }
-  const queue = getSessionQueue(sessionId);
-  if (queue.prompts.length === 0) {
-    return;
-  }
-
-  queueDispatchInFlight.add(sessionId);
-  try {
-    while (getQueueCount(sessionId) > 0) {
-      const success = await sendNextQueuedPrompt(sessionId);
-      if (!success) {
-        break;
-      }
-      updateAgentStatusIndicators();
-      if (queueModal && currentQueueSessionId === sessionId) {
-        updateQueueModalContent(sessionId, getSessionQueue(sessionId).prompts);
-      }
-    }
-  } finally {
-    queueDispatchInFlight.delete(sessionId);
-    updateAgentStatusIndicators();
-    if (queueModal && currentQueueSessionId === sessionId) {
-      updateQueueModalContent(sessionId, getSessionQueue(sessionId).prompts);
-    }
-  }
-};
-
-const processQueueOnStatusChange = async () => {
-  // Check all sessions for status changes that might trigger queue processing
-  for (const session of state.sessions) {
-    const sessionId = session.id;
-    const currentStatus = {
-      status: session.status,
-      agentRuntimeStatus: session.agentRuntimeStatus,
-    };
-    
-    const previousStatus = state.previousSessionStatuses.get(sessionId);
-    
-    // Update previous status for next check
-    state.previousSessionStatuses.set(sessionId, currentStatus);
-    
-    // Check if session became available (was busy, now not busy)
-    const wasBusy = isStatusRecordBusy(previousStatus);
-    const isNowAvailable = !isSessionBusy(session);
-    const queueCount = getQueueCount(sessionId);
-    
-    if (queueCount === 0) {
-      continue;
-    }
-    
-    if ((wasBusy && isNowAvailable) || (!previousStatus && isNowAvailable)) {
-      await triggerQueueDispatch(sessionId);
-    }
-  }
-};
 
 // Queue Modal Management
 let queueModal = null;
@@ -3436,15 +3369,36 @@ const updateQueueModalContent = (sessionId, prompts) => {
     footer.appendChild(countLabel);
     
     if (prompts.length > 0) {
-      const dispatching = isQueueDispatching(sessionId);
       const sendButton = document.createElement("button");
       sendButton.type = "button";
       sendButton.className = "wm-button secondary";
-      sendButton.textContent = dispatching ? "Sending..." : "Send next now";
-      sendButton.disabled = dispatching;
-      sendButton.addEventListener("click", () => triggerQueueDispatch(sessionId));
+      sendButton.textContent = manualQueueSendInFlight ? "Sending..." : "Send next now";
+      sendButton.disabled = manualQueueSendInFlight;
+      sendButton.addEventListener("click", () => handleManualQueueSend(sessionId));
       footer.appendChild(sendButton);
     }
+  }
+};
+
+const handleManualQueueSend = async (sessionId) => {
+  if (manualQueueSendInFlight) return;
+  const queue = getSessionQueue(sessionId);
+  if (!queue.prompts.length) {
+    showToast("No queued prompts to send", { type: "info" });
+    return;
+  }
+
+  manualQueueSendInFlight = true;
+  updateQueueModalContent(sessionId, queue.prompts);
+  try {
+    const success = await sendNextQueuedPrompt(sessionId);
+    if (success) {
+      updateAgentStatusIndicators();
+      updateQueueModalContent(sessionId, queue.prompts);
+    }
+  } finally {
+    manualQueueSendInFlight = false;
+    updateQueueModalContent(sessionId, queue.prompts);
   }
 };
 
@@ -5343,9 +5297,6 @@ const fetchSessions = async () => {
   for (const key of Array.from(state.promptQueues.keys())) {
     if (!sessionIds.has(key)) state.promptQueues.delete(key);
   }
-  for (const key of Array.from(state.previousSessionStatuses.keys())) {
-    if (!sessionIds.has(key)) state.previousSessionStatuses.delete(key);
-  }
   const routeSessionId = getSessionIdFromPath(window.location.pathname);
   const allowHistoryUpdate = currentRoute === "live" && !routeSessionId;
   const redirectHome = applyRouteSessionFromPath({ allowHistoryUpdate });
@@ -5779,8 +5730,6 @@ const pollSessions = async () => {
       render();
       // Update status indicators after render
       updateAgentStatusIndicators();
-      // Check for queue processing opportunities
-      await processQueueOnStatusChange();
       return;
     }
 
@@ -5815,8 +5764,6 @@ const pollSessions = async () => {
 
     updateAgentStatusIndicators();
     
-    // Check for queue processing opportunities
-    await processQueueOnStatusChange();
   } catch (error) {
     console.error("Failed to refresh sessions", error);
   }
