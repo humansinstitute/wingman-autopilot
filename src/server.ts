@@ -26,6 +26,7 @@ import {
   type AppProcessStatus,
 } from "./apps/app-process-manager";
 import { messageStore } from "./storage/message-store";
+import { PromptQueueStore } from "./storage/prompt-queue-store";
 import { orchestratorPresetStore } from "./storage/orchestrator-presets";
 import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 import { fileWatcherStore } from "./storage/file-watcher-store";
@@ -81,6 +82,7 @@ const SUPPORTED_AGENT_TYPES: AgentType[] = ["codex", "claude", "goose", "opencod
 const MESSAGE_COST_SATS = 100;
 const projectStore = new ProjectStore();
 const todoStore = new TodoStore();
+const promptQueueStore = new PromptQueueStore("data/prompt-queue.db");
 const todoApiHandler = createTodoApiHandler({ store: todoStore, projectStore });
 const projectApiHandler = createProjectApiHandler({
   store: projectStore,
@@ -5315,6 +5317,160 @@ const handleApi = async (
             { status: 502 },
           );
         }
+      }
+    }
+
+    if (parts[4] === "queue") {
+      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+
+      if (method === "GET") {
+        const queue = promptQueueStore.getSessionQueue(id);
+        return Response.json({ id, queue });
+      }
+
+      if (method === "POST") {
+        let payload: unknown;
+        try {
+          payload = await request.json();
+        } catch {
+          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+        }
+
+        if (!payload || typeof payload !== "object") {
+          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+        }
+
+        const record = payload as Record<string, unknown>;
+        const content = typeof record.content === "string" ? record.content.trim() : "";
+
+        if (!content) {
+          return Response.json({ error: "Prompt content is required" }, { status: 400 });
+        }
+
+        try {
+          const prompt = promptQueueStore.addPrompt(id, { content });
+          if (!prompt) {
+            return Response.json({ error: "Failed to add prompt to queue" }, { status: 400 });
+          }
+          return Response.json({ id, prompt });
+        } catch (error) {
+          return Response.json({ error: (error as Error).message }, { status: 400 });
+        }
+      }
+
+      if (method === "PUT" && parts.length === 6) {
+        const promptId = parts[5];
+        if (!promptId) {
+          return Response.json({ error: "Prompt ID required" }, { status: 400 });
+        }
+
+        let payload: unknown;
+        try {
+          payload = await request.json();
+        } catch {
+          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+        }
+
+        if (!payload || typeof payload !== "object") {
+          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+        }
+
+        const record = payload as Record<string, unknown>;
+        const content = typeof record.content === "string" ? record.content.trim() : "";
+
+        if (!content) {
+          return Response.json({ error: "Prompt content is required" }, { status: 400 });
+        }
+
+        const updated = promptQueueStore.updatePromptContent(id, promptId, content);
+        if (!updated) {
+          return Response.json({ error: "Prompt not found or failed to update" }, { status: 404 });
+        }
+
+        return Response.json({ id, promptId, updated: true });
+      }
+
+      if (method === "DELETE" && parts.length === 6) {
+        const promptId = parts[5];
+        if (!promptId) {
+          return Response.json({ error: "Prompt ID required" }, { status: 400 });
+        }
+
+        const deleted = promptQueueStore.deletePromptById(id, promptId);
+        if (!deleted) {
+          return Response.json({ error: "Prompt not found" }, { status: 404 });
+        }
+
+        return Response.json({ id, promptId, deleted: true });
+      }
+    }
+
+    if (method === "POST" && parts[4] === "queue" && parts[5] === "next") {
+      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+
+      const nextPrompt = promptQueueStore.getNextQueuedPrompt(id);
+      if (!nextPrompt) {
+        return Response.json({ error: "No prompts in queue" }, { status: 404 });
+      }
+
+      const userNpub = authContext.npub ?? null;
+      if (!userNpub) {
+        return Response.json({ error: "Sign in to send messages", balance: 0 }, { status: 403 });
+      }
+
+      let currentBalance = 0;
+      try {
+        currentBalance = identityUserStore.debit(userNpub, MESSAGE_COST_SATS);
+      } catch (error) {
+        if (error instanceof InsufficientBalanceError) {
+          return Response.json(
+            {
+              error: "Insufficient balance",
+              balance: error.currentBalance,
+              required: MESSAGE_COST_SATS,
+            },
+            { status: 402 },
+          );
+        }
+        console.error("[billing] failed to debit message cost:", error);
+        return Response.json({ error: "Failed to debit balance" }, { status: 500 });
+      }
+
+      try {
+        const initialCount = messageStore.listSessionMessages(id).length;
+        const agentUrl = buildAgentUrl(agentHost, ownedSession.port, "/message");
+        const agentResponse = await fetch(agentUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ type: "user", content: nextPrompt.content }),
+        });
+        
+        if (!agentResponse.ok) {
+          const errorPayload = await agentResponse.json().catch(() => ({}));
+          const message = (errorPayload?.error as string) ?? agentResponse.statusText ?? "Agent request failed";
+          try {
+            currentBalance = identityUserStore.credit(userNpub, MESSAGE_COST_SATS);
+          } catch (creditError) {
+            console.error("[billing] failed to refund after agent rejection:", creditError);
+          }
+          return Response.json({ error: message, balance: currentBalance, failedPrompt: nextPrompt }, { status: agentResponse.status });
+        }
+
+        // Remove the successfully sent prompt from queue
+        promptQueueStore.removeNextPrompt(id);
+        
+        const messages = await waitForMessageUpdate(id, initialCount);
+        return Response.json({ id, messages, balance: currentBalance, sentPrompt: nextPrompt });
+      } catch (error) {
+        try {
+          currentBalance = identityUserStore.credit(userNpub, MESSAGE_COST_SATS);
+        } catch (creditError) {
+          console.error("[billing] failed to refund after agent error:", creditError);
+        }
+        return Response.json(
+          { error: `Failed to contact agent: ${(error as Error).message}`, balance: currentBalance, failedPrompt: nextPrompt },
+          { status: 502 },
+        );
       }
     }
   }
