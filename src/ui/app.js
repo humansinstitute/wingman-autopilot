@@ -2912,6 +2912,14 @@ const isStatusRecordBusy = (statusRecord) => {
   return statusRecord.status === "starting" || statusRecord.agentRuntimeStatus === "running";
 };
 
+const markSessionQueueAwaitingAvailability = (sessionId) => {
+  if (!sessionId) return;
+  state.previousSessionStatuses.set(sessionId, {
+    status: "starting",
+    agentRuntimeStatus: "running",
+  });
+};
+
 // Prompt Queue Management Functions
 const getSessionQueue = (sessionId) => {
   if (!state.promptQueues.has(sessionId)) {
@@ -2929,6 +2937,8 @@ const isQueueFull = (sessionId) => {
   const count = getQueueCount(sessionId);
   return count >= 21;
 };
+
+let manualQueueSendInFlight = false;
 
 const addToPromptQueue = async (sessionId, content) => {
   if (isQueueFull(sessionId)) {
@@ -2951,6 +2961,7 @@ const addToPromptQueue = async (sessionId, content) => {
     const result = await response.json();
     const queue = getSessionQueue(sessionId);
     queue.prompts.push(result.prompt);
+    markSessionQueueAwaitingAvailability(sessionId);
     
     showToast("Prompt queued", { type: "success" });
     return true;
@@ -3068,6 +3079,10 @@ const sendNextQueuedPrompt = async (sessionId) => {
       queue.prompts = queue.prompts.filter(prompt => prompt.id !== result.sentPrompt.id);
     }
     
+    if (queue.prompts.length > 0) {
+      markSessionQueueAwaitingAvailability(sessionId);
+    }
+    
     showToast("Prompt sent to agent", { type: "success" });
     return true;
   } catch (error) {
@@ -3097,16 +3112,17 @@ const processQueueOnStatusChange = async () => {
     // Check if session became available (was busy, now not busy)
     const wasBusy = isStatusRecordBusy(previousStatus);
     const isNowAvailable = !isSessionBusy(session);
+    const queueCount = getQueueCount(sessionId);
     
-    if (wasBusy && isNowAvailable) {
-      // Session became available - check if there are queued prompts
-      const queueCount = getQueueCount(sessionId);
-      if (queueCount > 0) {
-        // Send the next queued prompt
-        await sendNextQueuedPrompt(sessionId);
-        // Update status indicators to reflect new queue count
-        updateAgentStatusIndicators();
-      }
+    if (queueCount === 0) {
+      continue;
+    }
+    
+    if ((wasBusy && isNowAvailable) || (!previousStatus && isNowAvailable)) {
+      // Send the next queued prompt
+      await sendNextQueuedPrompt(sessionId);
+      // Update status indicators to reflect new queue count
+      updateAgentStatusIndicators();
     }
   }
 };
@@ -3394,7 +3410,43 @@ const updateQueueModalContent = (sessionId, prompts) => {
   // Update footer
   const footer = queueModal.querySelector(".modal-footer");
   if (footer) {
-    footer.textContent = `${prompts.length}/21 prompts`;
+    footer.innerHTML = "";
+    
+    const countLabel = document.createElement("span");
+    countLabel.textContent = `${prompts.length}/21 prompts`;
+    footer.appendChild(countLabel);
+    
+    if (prompts.length > 0) {
+      const sendButton = document.createElement("button");
+      sendButton.type = "button";
+      sendButton.className = "wm-button secondary";
+      sendButton.textContent = manualQueueSendInFlight ? "Sending..." : "Send next now";
+      sendButton.disabled = manualQueueSendInFlight;
+      sendButton.addEventListener("click", () => handleManualQueueSend(sessionId));
+      footer.appendChild(sendButton);
+    }
+  }
+};
+
+const handleManualQueueSend = async (sessionId) => {
+  if (manualQueueSendInFlight) return;
+  const queue = getSessionQueue(sessionId);
+  if (!queue.prompts.length) {
+    showToast("No queued prompts to send", { type: "info" });
+    return;
+  }
+
+  manualQueueSendInFlight = true;
+  updateQueueModalContent(sessionId, queue.prompts);
+  try {
+    const success = await sendNextQueuedPrompt(sessionId);
+    if (success) {
+      updateQueueModalContent(sessionId, queue.prompts);
+      updateAgentStatusIndicators();
+    }
+  } finally {
+    manualQueueSendInFlight = false;
+    updateQueueModalContent(sessionId, queue.prompts);
   }
 };
 
