@@ -3109,6 +3109,320 @@ const processQueueOnStatusChange = async () => {
   }
 };
 
+// Queue Modal Management
+let queueModal = null;
+let currentQueueSessionId = null;
+
+const openPromptQueueModal = async (sessionId) => {
+  const session = getSessionById(sessionId);
+  if (!session) return;
+  
+  currentQueueSessionId = sessionId;
+  
+  // Fetch latest queue data
+  await fetchSessionQueue(sessionId);
+  const queue = getSessionQueue(sessionId);
+  
+  // Create modal if it doesn't exist
+  if (!queueModal || !document.contains(queueModal)) {
+    queueModal = createPromptQueueModal();
+    document.body.appendChild(queueModal);
+  }
+  
+  // Update modal content
+  updateQueueModalContent(sessionId, queue.prompts);
+  
+  // Show modal
+  if (typeof queueModal.showModal === "function") {
+    queueModal.showModal();
+  } else {
+    queueModal.style.display = "block";
+  }
+};
+
+const closePromptQueueModal = () => {
+  if (queueModal) {
+    if (typeof queueModal.close === "function") {
+      queueModal.close();
+    } else {
+      queueModal.style.display = "none";
+    }
+  }
+  currentQueueSessionId = null;
+};
+
+const ensureQueueModalStyles = () => {
+  if (document.querySelector("#queue-modal-styles")) return;
+  
+  const style = document.createElement("style");
+  style.id = "queue-modal-styles";
+  style.textContent = `
+    .wm-prompt-queue-modal {
+      max-width: 600px;
+      width: 90vw;
+      max-height: 80vh;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 0;
+      background: white;
+    }
+    
+    .wm-prompt-queue-modal::backdrop {
+      background: rgba(0, 0, 0, 0.5);
+    }
+    
+    .wm-prompt-queue-modal .modal-content {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+    
+    .wm-prompt-queue-modal .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem;
+      border-bottom: 1px solid #eee;
+    }
+    
+    .wm-prompt-queue-modal .modal-header h2 {
+      margin: 0;
+      font-size: 1.25rem;
+    }
+    
+    .wm-prompt-queue-modal .close-btn {
+      background: none;
+      border: none;
+      font-size: 1.5rem;
+      cursor: pointer;
+      padding: 0.25rem;
+      line-height: 1;
+    }
+    
+    .wm-prompt-queue-modal .modal-body {
+      flex: 1;
+      padding: 1rem;
+      overflow-y: auto;
+    }
+    
+    .wm-prompt-queue-modal .empty-state {
+      text-align: center;
+      color: #666;
+      font-style: italic;
+      padding: 2rem;
+    }
+    
+    .wm-prompt-queue-modal .queue-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    
+    .wm-prompt-queue-modal .queue-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding: 0.75rem;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background: #f9f9f9;
+    }
+    
+    .wm-prompt-queue-modal .prompt-preview {
+      flex: 1;
+      font-family: monospace;
+      font-size: 0.9rem;
+      line-height: 1.4;
+      margin-right: 1rem;
+      word-break: break-word;
+    }
+    
+    .wm-prompt-queue-modal .prompt-actions {
+      display: flex;
+      gap: 0.5rem;
+      flex-shrink: 0;
+    }
+    
+    .wm-prompt-queue-modal .prompt-actions button {
+      padding: 0.25rem 0.5rem;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      background: white;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    
+    .wm-prompt-queue-modal .edit-btn:hover {
+      background: #e3f2fd;
+      border-color: #2196f3;
+    }
+    
+    .wm-prompt-queue-modal .delete-btn:hover {
+      background: #ffebee;
+      border-color: #f44336;
+    }
+    
+    .wm-prompt-queue-modal .modal-footer {
+      padding: 1rem;
+      border-top: 1px solid #eee;
+      text-align: center;
+      color: #666;
+      font-size: 0.9rem;
+    }
+  `;
+  
+  document.head.appendChild(style);
+};
+
+const createPromptQueueModal = () => {
+  // Ensure modal styles exist
+  ensureQueueModalStyles();
+  
+  const modal = document.createElement("dialog");
+  modal.className = "wm-prompt-queue-modal";
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-labelledby", "queue-modal-title");
+
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) {
+      closePromptQueueModal();
+    }
+  });
+
+  modal.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closePromptQueueModal();
+    }
+  });
+
+  const content = document.createElement("div");
+  content.className = "modal-content";
+  
+  const header = document.createElement("header");
+  header.className = "modal-header";
+  
+  const title = document.createElement("h2");
+  title.id = "queue-modal-title";
+  title.textContent = "Prompt Queue";
+  
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "close-btn";
+  closeBtn.type = "button";
+  closeBtn.textContent = "×";
+  closeBtn.setAttribute("aria-label", "Close queue modal");
+  closeBtn.addEventListener("click", closePromptQueueModal);
+  
+  header.append(title, closeBtn);
+  
+  const body = document.createElement("div");
+  body.className = "modal-body";
+  
+  const footer = document.createElement("footer");
+  footer.className = "modal-footer";
+  
+  content.append(header, body, footer);
+  modal.appendChild(content);
+  
+  return modal;
+};
+
+const updateQueueModalContent = (sessionId, prompts) => {
+  if (!queueModal || !currentQueueSessionId) return;
+  
+  const session = getSessionById(sessionId);
+  const sessionName = getSessionDisplayName(session);
+  
+  // Update title
+  const title = queueModal.querySelector("#queue-modal-title");
+  if (title) {
+    title.textContent = `Prompt Queue - ${sessionName}`;
+  }
+  
+  // Update body content
+  const body = queueModal.querySelector(".modal-body");
+  if (!body) return;
+  
+  body.innerHTML = "";
+  
+  if (prompts.length === 0) {
+    const emptyState = document.createElement("div");
+    emptyState.className = "empty-state";
+    emptyState.textContent = "No prompts queued";
+    body.appendChild(emptyState);
+  } else {
+    const queueList = document.createElement("div");
+    queueList.className = "queue-list";
+    
+    prompts.forEach((prompt, index) => {
+      const item = document.createElement("div");
+      item.className = "queue-item";
+      item.dataset.promptId = prompt.id;
+      
+      const preview = document.createElement("div");
+      preview.className = "prompt-preview";
+      const previewText = prompt.content.length > 100 
+        ? prompt.content.substring(0, 100) + "..." 
+        : prompt.content;
+      preview.textContent = `${index + 1}. ${previewText}`;
+      
+      const actions = document.createElement("div");
+      actions.className = "prompt-actions";
+      
+      const editBtn = document.createElement("button");
+      editBtn.className = "edit-btn";
+      editBtn.type = "button";
+      editBtn.textContent = "Edit";
+      editBtn.addEventListener("click", () => editQueuePrompt(sessionId, prompt.id, prompt.content));
+      
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "delete-btn";
+      deleteBtn.type = "button";
+      deleteBtn.textContent = "Delete";
+      deleteBtn.addEventListener("click", () => deleteQueuePrompt(sessionId, prompt.id));
+      
+      actions.append(editBtn, deleteBtn);
+      item.append(preview, actions);
+      queueList.appendChild(item);
+    });
+    
+    body.appendChild(queueList);
+  }
+  
+  // Update footer
+  const footer = queueModal.querySelector(".modal-footer");
+  if (footer) {
+    footer.textContent = `${prompts.length}/21 prompts`;
+  }
+};
+
+const editQueuePrompt = (sessionId, promptId, currentContent) => {
+  const newContent = window.prompt("Edit prompt:", currentContent);
+  if (newContent !== null && newContent.trim() !== "") {
+    updatePromptInQueue(sessionId, promptId, newContent.trim()).then((success) => {
+      if (success) {
+        // Refresh modal content
+        const queue = getSessionQueue(sessionId);
+        updateQueueModalContent(sessionId, queue.prompts);
+        updateAgentStatusIndicators();
+      }
+    });
+  }
+};
+
+const deleteQueuePrompt = (sessionId, promptId) => {
+  if (window.confirm("Delete this prompt from the queue?")) {
+    removeFromPromptQueue(sessionId, promptId).then((success) => {
+      if (success) {
+        // Refresh modal content
+        const queue = getSessionQueue(sessionId);
+        updateQueueModalContent(sessionId, queue.prompts);
+        updateAgentStatusIndicators();
+      }
+    });
+  }
+};
+
 const LIVE_ROUTE_PREFIX = "/live";
 const FILES_ROUTE = "/files";
 const SETTINGS_ROUTE = "/settings";
@@ -5528,6 +5842,13 @@ const createAgentStatusIndicator = (sessionId, options = {}) => {
     indicator.classList.add("wm-agent-status-pill");
     indicator.type = "button";
   }
+  
+  // Make all indicators clickable to open queue modal
+  indicator.style.cursor = "pointer";
+  indicator.addEventListener("click", () => {
+    openPromptQueueModal(sessionId);
+  });
+  
   applyAgentStatusIndicatorState(indicator, sessionId);
   return indicator;
 };
@@ -5567,13 +5888,19 @@ const applyAgentStatusIndicatorState = (indicator, sessionId) => {
 
   indicator.className = Array.from(baseClasses).join(" ");
   indicator.setAttribute("aria-label", ariaLabel);
+  
+  // Get queue count for this session
+  const queueCount = getQueueCount(sessionId);
+  
   indicator.textContent =
     variant === "pill"
-      ? status === "running"
-        ? "0"
-        : status === "stable"
-          ? "-"
-          : "?"
+      ? queueCount > 0
+        ? queueCount.toString()
+        : status === "running"
+          ? "0"
+          : status === "stable"
+            ? "-"
+            : "?"
       : "";
 };
 
