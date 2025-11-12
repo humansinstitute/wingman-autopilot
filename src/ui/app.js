@@ -57,6 +57,7 @@ const state = {
   conversations: new Map(),
   messageDrafts: new Map(),
   logPanelOpen: new Map(),
+  promptQueues: new Map(), // sessionId -> {prompts: [], maxSize: 21}
   activeSessionId: null,
   lastWorkingDirectory: null,
   lastActiveSessionId: null,
@@ -2899,6 +2900,171 @@ const ACTIVE_SESSION_STATUSES = new Set(["starting", "running"]);
 const isSessionActive = (session) => ACTIVE_SESSION_STATUSES.has(session?.status);
 const getActiveSessions = () => state.sessions.filter((session) => isSessionActive(session));
 
+// Prompt Queue Management Functions
+const getSessionQueue = (sessionId) => {
+  if (!state.promptQueues.has(sessionId)) {
+    state.promptQueues.set(sessionId, { prompts: [], maxSize: 21 });
+  }
+  return state.promptQueues.get(sessionId);
+};
+
+const getQueueCount = (sessionId) => {
+  const queue = getSessionQueue(sessionId);
+  return queue.prompts.length;
+};
+
+const isQueueFull = (sessionId) => {
+  const count = getQueueCount(sessionId);
+  return count >= 21;
+};
+
+const addToPromptQueue = async (sessionId, content) => {
+  if (isQueueFull(sessionId)) {
+    showToast("Queue limit reached (21/21)", { type: "warning" });
+    return false;
+  }
+
+  try {
+    const response = await fetch(`/api/sessions/${sessionId}/queue`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to add prompt to queue");
+    }
+
+    const result = await response.json();
+    const queue = getSessionQueue(sessionId);
+    queue.prompts.push(result.prompt);
+    
+    showToast("Prompt queued", { type: "success" });
+    return true;
+  } catch (error) {
+    console.error("Failed to add prompt to queue:", error);
+    showToast(`Failed to queue prompt: ${error.message}`, { type: "error" });
+    return false;
+  }
+};
+
+const removeFromPromptQueue = async (sessionId, promptId) => {
+  try {
+    const response = await fetch(`/api/sessions/${sessionId}/queue/${promptId}`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to remove prompt from queue");
+    }
+
+    const queue = getSessionQueue(sessionId);
+    queue.prompts = queue.prompts.filter(prompt => prompt.id !== promptId);
+    return true;
+  } catch (error) {
+    console.error("Failed to remove prompt from queue:", error);
+    showToast(`Failed to remove prompt: ${error.message}`, { type: "error" });
+    return false;
+  }
+};
+
+const updatePromptInQueue = async (sessionId, promptId, newContent) => {
+  try {
+    const response = await fetch(`/api/sessions/${sessionId}/queue/${promptId}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: newContent }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to update prompt");
+    }
+
+    const queue = getSessionQueue(sessionId);
+    const promptIndex = queue.prompts.findIndex(prompt => prompt.id === promptId);
+    if (promptIndex !== -1) {
+      queue.prompts[promptIndex].content = newContent;
+    }
+    return true;
+  } catch (error) {
+    console.error("Failed to update prompt:", error);
+    showToast(`Failed to update prompt: ${error.message}`, { type: "error" });
+    return false;
+  }
+};
+
+const fetchSessionQueue = async (sessionId) => {
+  try {
+    const response = await fetch(`/api/sessions/${sessionId}/queue`);
+    if (!response.ok) {
+      throw new Error("Failed to fetch queue");
+    }
+    const data = await response.json();
+    const queue = getSessionQueue(sessionId);
+    queue.prompts = data.queue || [];
+    return queue.prompts;
+  } catch (error) {
+    console.error("Failed to fetch session queue:", error);
+    return [];
+  }
+};
+
+const sendNextQueuedPrompt = async (sessionId) => {
+  try {
+    const response = await fetch(`/api/sessions/${sessionId}/queue/next`, {
+      method: "POST",
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      
+      // If failed to send, inject the prompt into textarea for manual retry
+      if (data.failedPrompt) {
+        const textarea = document.querySelector('.wm-composer textarea');
+        if (textarea) {
+          textarea.value = data.failedPrompt.content;
+          textarea.style.height = "auto";
+          textarea.style.height = textarea.scrollHeight + "px";
+          textarea.focus();
+        }
+        showToast("Failed to send queued prompt - inserted into text area for manual retry", { type: "error", duration: 5000 });
+        
+        // Remove the failed prompt from local queue
+        const queue = getSessionQueue(sessionId);
+        queue.prompts = queue.prompts.filter(prompt => prompt.id !== data.failedPrompt.id);
+      }
+      return false;
+    }
+
+    const result = await response.json();
+    
+    // Update conversations and logs
+    if (result.messages) {
+      state.conversations.set(sessionId, result.messages);
+      updateConversationDOM(sessionId);
+      requestAnimationFrame(() => {
+        scrollConversationAreaToBottom(sessionId, { includeWindow: true });
+      });
+    }
+    
+    // Remove sent prompt from local queue
+    const queue = getSessionQueue(sessionId);
+    if (result.sentPrompt) {
+      queue.prompts = queue.prompts.filter(prompt => prompt.id !== result.sentPrompt.id);
+    }
+    
+    showToast("Prompt sent to agent", { type: "success" });
+    return true;
+  } catch (error) {
+    console.error("Failed to send queued prompt:", error);
+    showToast("Failed to send queued prompt", { type: "error" });
+    return false;
+  }
+};
+
 const LIVE_ROUTE_PREFIX = "/live";
 const FILES_ROUTE = "/files";
 const SETTINGS_ROUTE = "/settings";
@@ -4764,6 +4930,9 @@ const fetchSessions = async () => {
   for (const key of Array.from(state.lastLogLength.keys())) {
     if (!sessionIds.has(key)) state.lastLogLength.delete(key);
   }
+  for (const key of Array.from(state.promptQueues.keys())) {
+    if (!sessionIds.has(key)) state.promptQueues.delete(key);
+  }
   const routeSessionId = getSessionIdFromPath(window.location.pathname);
   const allowHistoryUpdate = currentRoute === "live" && !routeSessionId;
   const redirectHome = applyRouteSessionFromPath({ allowHistoryUpdate });
@@ -4790,6 +4959,7 @@ const fetchSessions = async () => {
     await Promise.all([
       fetchLogs(state.activeSessionId),
       fetchConversation(state.activeSessionId),
+      fetchSessionQueue(state.activeSessionId),
     ]);
   }
 };
