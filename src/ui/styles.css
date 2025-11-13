@@ -553,7 +553,7 @@ body[data-menu-open="true"] .wm-menu-panel {
   display: flex;
   flex-direction: column;
   gap: 2rem;
-  padding: 4rem 2.5rem;
+  padding: 12rem 2.5rem;
 }
 
 .wm-home-guest-hero-brand {
@@ -700,7 +700,6 @@ body[data-menu-open="true"] .wm-menu-panel {
 
 @media (min-width: 768px) {
   .wm-home-guest-feature-list {
-    flex-wrap: nowrap;
     justify-content: space-between;
   }
 }
@@ -2771,7 +2770,7 @@ body[data-menu-open="true"] .wm-menu-panel {
   }
 
   #app[data-route="home"] .wm-home-guest-hero {
-    padding: 1.5rem 1.75rem;
+    padding: 4.5rem 1.75rem;
     align-items: center;
     text-align: center;
   }

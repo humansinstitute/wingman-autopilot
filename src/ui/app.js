@@ -4268,17 +4268,20 @@ const syncDesktopSessionIndicator = () => {
   desktopSessionIndicator.hidden = false;
 };
 
-const detectPreferredTheme = () => {
+const getStoredThemePreference = () => {
   try {
-    const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    if (stored === "light" || stored === "dark") {
-      return stored;
-    }
+    return localStorage.getItem(THEME_STORAGE_KEY);
   } catch {
-    // ignore storage failures
+    return null;
   }
-  const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
-  return prefersDark ? "dark" : "light";
+};
+
+const detectPreferredTheme = () => {
+  const stored = getStoredThemePreference();
+  if (stored === "light" || stored === "dark") {
+    return stored;
+  }
+  return "light";
 };
 
 const toggleTheme = () => {
@@ -4342,22 +4345,6 @@ const initTheme = () => {
   applyTheme(preferred, false);
   if (themeToggle) {
     themeToggle.addEventListener("click", toggleTheme);
-  }
-  if (window.matchMedia) {
-    const listener = (event) => {
-      const stored = (() => {
-        try {
-          return localStorage.getItem(THEME_STORAGE_KEY);
-        } catch {
-          return null;
-        }
-      })();
-      if (stored !== "light" && stored !== "dark") {
-        applyTheme(event.matches ? "dark" : "light", false);
-      }
-    };
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    mediaQuery.addEventListener("change", listener);
   }
 };
 
