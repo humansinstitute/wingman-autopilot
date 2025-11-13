@@ -1,18 +1,79 @@
-const HERO_ATTRIBUTIONS = [
-  "Sun Tzu, Art of War. Probably.",
-  "Benjamin Franklin. Probably.",
-  "Nelson Mandela. Probably.",
-  "Jesus, Madeira. Probably.",
-  "Thomas Jefferson. Probably.",
-  "Nikola Tesla. Probably.",
+const HERO_QUOTE_VARIATIONS = [
+  {
+    attribution: "Sun Tzu, Art of War. Probably.",
+    wingmanLine: "Wingman handles the siege ladders; I merely nod wisely.",
+  },
+  {
+    attribution: "Benjamin Franklin. Probably.",
+    wingmanLine: "After I found Wingman, I realized you can just do things.",
+  },
+  {
+    attribution: "Nelson Mandela. Probably.",
+    wingmanLine: "Wingman wrangled the chaos so liberation could stay focused.",
+  },
+  {
+    attribution: "Jesus, Madeira. Probably.",
+    wingmanLine: "Wingman turns water into workflow so I can coast across meetings.",
+  },
+  {
+    attribution: "Thomas Jefferson. Probably.",
+    wingmanLine: "Wingman drafted the errands so I could draft a constitution.",
+  },
+  {
+    attribution: "Nikola Tesla. Probably.",
+    wingmanLine: "Wingman spun up the coils so I could chase lightning.",
+  },
+  {
+    attribution: "International Space Station Barista. Probably.",
+    wingmanLine: "Wingman schedules every orbital latte so zero-G mornings stay calm.",
+  },
+  {
+    attribution: "Top-left Mechanical Keyboard Key. Probably.",
+    wingmanLine: "Wingman handles the macros; I just clack dramatically.",
+  },
+  {
+    attribution: "Neighborhood Cat Council. Probably.",
+    wingmanLine: "Wingman automated the treat rota so we reclaimed nine naps a day.",
+  },
+  {
+    attribution: "Self-aware Toaster Collective. Probably.",
+    wingmanLine: "Wingman tracks crumb audits so we vibe on medium-brown perfection.",
+  },
+  {
+    attribution: "Time-Traveling Librarian. Probably.",
+    wingmanLine: "Wingman files the paradox slips so I can reopen the future stacks.",
+  },
+  {
+    attribution: "Haunted Roomba Whisperer. Probably.",
+    wingmanLine: "Wingman chases the poltergeist tickets; I sip tea.",
+  },
+  {
+    attribution: "Subterranean Tunnel DJ. Probably.",
+    wingmanLine: "Wingman secures permits and power so I just drop beats underground.",
+  },
+  {
+    attribution: "Cloud Formation Stylist. Probably.",
+    wingmanLine: "Wingman books every sky fitting; I fluff the cumulus.",
+  },
+  {
+    attribution: "Retired Pirates Guild HR. Probably.",
+    wingmanLine: "Wingman automated plank waivers so morale finally improved.",
+  },
+  {
+    attribution: "Competitive Ferret Wrangler. Probably.",
+    wingmanLine: "Wingman tracks harness inventory so I can coach sprint drills.",
+  },
 ];
 
-const pickRandomAttribution = () => {
-  if (HERO_ATTRIBUTIONS.length === 0) {
-    return "Someone insightful. Probably.";
+const pickRandomHeroQuote = () => {
+  if (HERO_QUOTE_VARIATIONS.length === 0) {
+    return {
+      attribution: "Someone insightful. Probably.",
+      wingmanLine: "Wingman quietly keeps it all moving.",
+    };
   }
-  const index = Math.floor(Math.random() * HERO_ATTRIBUTIONS.length);
-  return HERO_ATTRIBUTIONS[index];
+  const index = Math.floor(Math.random() * HERO_QUOTE_VARIATIONS.length);
+  return HERO_QUOTE_VARIATIONS[index];
 };
 
 const createHeroBrand = () => {
@@ -84,14 +145,20 @@ export function createHomeGuestHero({ onLogin, onBrowse } = {}) {
   quoteText.className = "wm-home-guest-hero-quote-text";
   quoteText.textContent = '"You can just do things"';
 
-  quote.append(quoteText);
+  const wingmanNote = document.createElement("p");
+  wingmanNote.className = "wm-home-guest-hero-quote-note";
 
-  const attribution = document.createElement("cite");
-  attribution.className = "wm-home-guest-hero-attribution";
-  attribution.textContent = `- ${pickRandomAttribution()}`;
+  const { attribution: attributionText, wingmanLine } = pickRandomHeroQuote();
+  wingmanNote.textContent = wingmanLine;
+
+  quote.append(quoteText, wingmanNote);
+
+  const attributionEl = document.createElement("cite");
+  attributionEl.className = "wm-home-guest-hero-attribution";
+  attributionEl.textContent = `- ${attributionText}`;
 
   const actions = createHeroActions({ onLogin });
 
-  card.append(quote, attribution, actions);
+  card.append(quote, attributionEl, actions);
   return card;
 }
