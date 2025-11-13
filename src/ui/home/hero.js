@@ -1,67 +1,83 @@
 const HERO_QUOTE_VARIATIONS = [
   {
-    attribution: "Sun Tzu, Art of War. Probably.",
-    wingmanLine: "Wingman handles the siege ladders; I merely nod wisely.",
+    attribution: "Sun Tzu, dawn war-room edition.",
+    quote: '"You can just do things. Wingman handles the siege ladders while I nod wisely."',
   },
   {
-    attribution: "Benjamin Franklin. Probably.",
-    wingmanLine: "After I found Wingman, I realized you can just do things.",
+    attribution: "Benjamin Franklin, kite-laboratory shift.",
+    quote: '"You can just do things. Once Wingman showed up, lightning experiments felt like errands."',
   },
   {
-    attribution: "Nelson Mandela. Probably.",
-    wingmanLine: "Wingman wrangled the chaos so liberation could stay focused.",
+    attribution: "Nelson Mandela, reconciliation desk duty.",
+    quote: '"You can just do things. Wingman wrangles the chaos so liberation stays focused."',
   },
   {
-    attribution: "Jesus, Madeira. Probably.",
-    wingmanLine: "Wingman turns water into workflow so I can coast across meetings.",
+    attribution: "Jesus of Madeira, boat-building sabbatical.",
+    quote: '"You can just do things. Wingman turns water into workflow so I can coast across meetings."',
   },
   {
-    attribution: "Thomas Jefferson. Probably.",
-    wingmanLine: "Wingman drafted the errands so I could draft a constitution.",
+    attribution: "Thomas Jefferson, midnight drafting sprint.",
+    quote: '"You can just do things. Wingman drafted the errands so I could draft a constitution."',
   },
   {
-    attribution: "Nikola Tesla. Probably.",
-    wingmanLine: "Wingman spun up the coils so I could chase lightning.",
+    attribution: "Nikola Tesla, Colorado Springs night shift.",
+    quote: '"You can just do things. Wingman spun up the coils so I could chase lightning."',
   },
   {
-    attribution: "International Space Station Barista. Probably.",
-    wingmanLine: "Wingman schedules every orbital latte so zero-G mornings stay calm.",
+    attribution: "Commander Kelly’s ISS barista, orbit 42.",
+    quote: '"You can just do things. Wingman schedules every orbital latte so zero-G mornings stay calm."',
   },
   {
-    attribution: "Top-left Mechanical Keyboard Key. Probably.",
-    wingmanLine: "Wingman handles the macros; I just clack dramatically.",
+    attribution: "Kayla, top-left mechanical keyboard key.",
+    quote: '"You can just do things. Wingman handles the macros; I just clack dramatically."',
   },
   {
-    attribution: "Neighborhood Cat Council. Probably.",
-    wingmanLine: "Wingman automated the treat rota so we reclaimed nine naps a day.",
+    attribution: "Councilor Whiskers III, alley-cat diplomat.",
+    quote: '"You can just do things. Wingman automated the treat rota so we reclaimed nine naps a day."',
   },
   {
-    attribution: "Self-aware Toaster Collective. Probably.",
-    wingmanLine: "Wingman tracks crumb audits so we vibe on medium-brown perfection.",
+    attribution: "Sir Toastwell, sentient toaster laureate.",
+    quote: '"You can just do things. Wingman tracks crumb audits so we vibe on medium-brown perfection."',
   },
   {
-    attribution: "Time-Traveling Librarian. Probably.",
-    wingmanLine: "Wingman files the paradox slips so I can reopen the future stacks.",
+    attribution: "Amani, time-traveling librarian.",
+    quote: '"You can just do things. Wingman files the paradox slips so I can reopen the future stacks."',
   },
   {
-    attribution: "Haunted Roomba Whisperer. Probably.",
-    wingmanLine: "Wingman chases the poltergeist tickets; I sip tea.",
+    attribution: "Marisol, haunted Roomba whisperer.",
+    quote: '"You can just do things. Wingman chases the poltergeist tickets; I sip tea."',
   },
   {
-    attribution: "Subterranean Tunnel DJ. Probably.",
-    wingmanLine: "Wingman secures permits and power so I just drop beats underground.",
+    attribution: "DJ Subsonic Sam, tunnel residency year two.",
+    quote: '"You can just do things. Wingman secures permits and power so I just drop beats underground."',
   },
   {
-    attribution: "Cloud Formation Stylist. Probably.",
-    wingmanLine: "Wingman books every sky fitting; I fluff the cumulus.",
+    attribution: "Cirrus, freelance cloud stylist.",
+    quote: '"You can just do things. Wingman books every sky fitting; I fluff the cumulus."',
   },
   {
-    attribution: "Retired Pirates Guild HR. Probably.",
-    wingmanLine: "Wingman automated plank waivers so morale finally improved.",
+    attribution: "Blackbeard, early career development plan.",
+    quote: '"You can just do things. Wingman automated plank waivers so morale finally improved."',
   },
   {
-    attribution: "Competitive Ferret Wrangler. Probably.",
-    wingmanLine: "Wingman tracks harness inventory so I can coach sprint drills.",
+    attribution: "Coach Lila, competitive ferret league.",
+    quote: '"You can just do things. Wingman tracks harness inventory so I can coach sprint drills."',
+  },
+  {
+    attribution: "Dr. Sato, lunar bonsai caretaker.",
+    quote: '"You can just do things. Wingman times every microgravity watering so I just prune zenfully."',
+  },
+  {
+    attribution: "Professor Mythos, dragon-cover band manager.",
+    quote: '"You can just do things. Wingman books the caves so the wyverns focus on rehearsals."',
+  },
+  {
+    attribution: "Ranger Zed, Martian dust-storm wedding planner.",
+    quote: '"You can just do things. Wingman coordinates the domes so I perfect the vows."',
+  },
+  {
+    attribution: "Helena Flux, retro arcade historian.",
+    quote: '"You can just do things. Wingman restores the cabinets; I curate the quarters."',
   },
 ];
 
@@ -69,7 +85,7 @@ const pickRandomHeroQuote = () => {
   if (HERO_QUOTE_VARIATIONS.length === 0) {
     return {
       attribution: "Someone insightful. Probably.",
-      wingmanLine: "Wingman quietly keeps it all moving.",
+      quote: '"You can just do things. Wingman quietly keeps it all moving."',
     };
   }
   const index = Math.floor(Math.random() * HERO_QUOTE_VARIATIONS.length);
@@ -143,15 +159,11 @@ export function createHomeGuestHero({ onLogin, onBrowse } = {}) {
 
   const quoteText = document.createElement("p");
   quoteText.className = "wm-home-guest-hero-quote-text";
-  quoteText.textContent = '"You can just do things"';
 
-  const wingmanNote = document.createElement("p");
-  wingmanNote.className = "wm-home-guest-hero-quote-note";
+  const { attribution: attributionText, quote: quoteLine } = pickRandomHeroQuote();
+  quoteText.textContent = quoteLine;
 
-  const { attribution: attributionText, wingmanLine } = pickRandomHeroQuote();
-  wingmanNote.textContent = wingmanLine;
-
-  quote.append(quoteText, wingmanNote);
+  quote.append(quoteText);
 
   const attributionEl = document.createElement("cite");
   attributionEl.className = "wm-home-guest-hero-attribution";

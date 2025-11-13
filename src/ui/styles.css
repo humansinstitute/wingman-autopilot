@@ -672,13 +672,6 @@ body[data-menu-open="true"] .wm-menu-panel {
   color: var(--text-primary);
 }
 
-.wm-home-guest-hero-quote-note {
-  margin: 0;
-  font-size: 1rem;
-  color: var(--text-secondary);
-  line-height: 1.5;
-}
-
 .wm-home-guest-hero-attribution {
   margin: 0;
   font-style: normal;
