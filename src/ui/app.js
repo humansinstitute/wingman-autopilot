@@ -8639,26 +8639,31 @@ const renderMenuIdentitySection = () => {
 
 const HOME_GUEST_FEATURES = [
   {
+    icon: "🌍",
     title: "Interact with your agents from anywhere",
     description:
       "Stay connected to your automations and copilots from any device so your work keeps flowing even away from your main workstation.",
   },
   {
+    icon: "🤝",
     title: "Share Claude, Codex, and Goose setups",
     description:
       "Package your preferred agent configurations once and roll them out to the rest of the team with shared guardrails and credentials.",
   },
   {
+    icon: "⚡",
     title: "Orchestrate common business processes",
     description:
       "Coordinate hand-offs, approvals, and back-office tasks with reproducible workflows that run on schedule or on demand.",
   },
   {
+    icon: "🚀",
     title: "Build custom apps in minutes",
     description:
       "Compose bespoke UIs and automations around your agents without leaving Wingman, then deploy them to the people who need them.",
   },
   {
+    icon: "🎯",
     title: "Run your business on Wingman",
     description:
       "Centralize knowledge, tooling, and agent-powered operations in one control plane that scales as your team grows.",
@@ -8685,9 +8690,13 @@ const renderHomeGuestFeatures = () => {
   const list = document.createElement("ul");
   list.className = "wm-home-guest-feature-list";
 
-  HOME_GUEST_FEATURES.forEach(({ title: featureTitle, description }) => {
+  HOME_GUEST_FEATURES.forEach(({ icon, title: featureTitle, description }) => {
     const item = document.createElement("li");
     item.className = "wm-home-guest-feature";
+
+    const itemIcon = document.createElement("div");
+    itemIcon.className = "wm-home-guest-feature-icon";
+    itemIcon.textContent = icon;
 
     const itemTitle = document.createElement("h3");
     itemTitle.textContent = featureTitle;
@@ -8695,7 +8704,7 @@ const renderHomeGuestFeatures = () => {
     const itemDescription = document.createElement("p");
     itemDescription.textContent = description;
 
-    item.append(itemTitle, itemDescription);
+    item.append(itemIcon, itemTitle, itemDescription);
     list.append(item);
   });
 

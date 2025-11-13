@@ -55,7 +55,7 @@ const createHeroBrand = () => {
   return brand;
 };
 
-const createHeroActions = ({ onLogin, onBrowse }) => {
+const createHeroActions = ({ onLogin }) => {
   const actions = document.createElement("div");
   actions.className = "wm-home-guest-hero-actions";
 
@@ -69,25 +69,13 @@ const createHeroActions = ({ onLogin, onBrowse }) => {
     });
   }
 
-  const learnMore = document.createElement("button");
-  learnMore.type = "button";
-  learnMore.className = "wm-link-button wm-home-guest-hero-secondary";
-  learnMore.textContent = "Browse capabilities";
-  if (typeof onBrowse === "function") {
-    learnMore.addEventListener("click", () => {
-      onBrowse();
-    });
-  }
-
-  actions.append(loginButton, learnMore);
+  actions.append(loginButton);
   return actions;
 };
 
 export function createHomeGuestHero({ onLogin, onBrowse } = {}) {
   const card = document.createElement("section");
   card.className = "wm-card wm-home-guest-hero";
-
-  const brand = createHeroBrand();
 
   const quote = document.createElement("blockquote");
   quote.className = "wm-home-guest-hero-quote";
@@ -102,8 +90,8 @@ export function createHomeGuestHero({ onLogin, onBrowse } = {}) {
   attribution.className = "wm-home-guest-hero-attribution";
   attribution.textContent = `- ${pickRandomAttribution()}`;
 
-  const actions = createHeroActions({ onLogin, onBrowse });
+  const actions = createHeroActions({ onLogin });
 
-  card.append(brand, quote, attribution, actions);
+  card.append(quote, attribution, actions);
   return card;
 }
