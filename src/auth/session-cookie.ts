@@ -10,7 +10,7 @@ export interface SessionCookiePayload {
 }
 
 export const SESSION_COOKIE_NAME = "wingman_identity_session";
-export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 3;
+export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 export const SESSION_TTL_MS = SESSION_MAX_AGE_SECONDS * 1000;
 
 const NPUB_REGEX = /^npub1[0-9ac-hj-np-z]{10,}$/;

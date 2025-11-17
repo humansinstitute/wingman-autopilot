@@ -1,7 +1,9 @@
 import type { RequestAuthContext } from "../auth/request-context";
-import { mintSessionCookie } from "../auth/session-cookie";
+import { mintSessionCookie, SESSION_TTL_MS } from "../auth/session-cookie";
 
-const SESSION_REFRESH_THRESHOLD_MS = 15 * 60 * 1000;
+const SESSION_REFRESH_LEEWAY_MS = 24 * 60 * 60 * 1000;
+// Refresh after the session has aged past the leeway so active users keep rolling a full TTL.
+const SESSION_REFRESH_THRESHOLD_MS = SESSION_TTL_MS - SESSION_REFRESH_LEEWAY_MS;
 
 export const maybeRefreshSessionCookie = (response: Response, authContext: RequestAuthContext): Response => {
   const session = authContext.session;
