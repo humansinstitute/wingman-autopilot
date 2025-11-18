@@ -1,6 +1,34 @@
 # Wingman V2
 
-Wingman V2 orchestrates AI agent sessions (Codex, Claude, Goose, OpenCode) from a single Bun-powered control plane.
+Wingman: Every Computer Becomes a Ten-Person Team
+
+Wingman is an open-source Agent Management system that brings AI automation to small businesses, without the technical complexity or vendor lock-in.
+
+The Problem:
+
+The cost of hiring employees has become prohibitively expensive for small businesses and individuals. Whether you need developers, administrators, marketers, or support staff, the next marginal employee often costs more than small operations can afford.
+
+AI Agents offer a compelling alternative, but today's tools are built for technically capable users locked in terminals, expecting users to be present at their machines. This doesn't fit the reality of stressed business owners managing operations from their phones or in the field.
+
+The Vision:
+
+Wingman empowers Business Owners, Staff, Entrepreneurs, and Developers to deploy AI Agents into their businesses while retaining complete control over their data and processes.
+
+Core Capabilities:
+- Web-First Interface: Escape the terminal. Manage agents through intuitive web interfaces accessible from any device. Start automation on your desktop, monitor progress from your laptop, review results from your phone.
+- Multi-Agent Orchestration: Access powerful agents (Goose, Claude, Codex, OpenCode) with full MCP tool support. No model restrictions, no vendor lock-in. Hot-swap agents as better models emerge without rewriting your business logic.
+- Templates & Community Library: Pre-built agent profiles and orchestration workflows for common business tasks: MicroSaaS software development, content production, customer support, marketing automation. Community-driven marketplace for sharing and discovering proven patterns.
+- BYO SaaS ("Build Your Own Micro SaaS"): Create and host custom micro-apps directly in Wingman. Need adjustments? Click "Edit with AI" and reshape the app to your exact needs. Own your tools, don't rent them.
+- Visual Process Orchestration: Define business processes in human-readable workflows with simple understandable file based triggers and handoffs. Integrate APIs, scheduled jobs all in natural language without writing code. Build once, automate forever.
+- Self-Hosted First: Deploy on your infrastructure (Mac Mini, Raspberry Pi, VPS, or cloud). Control your data, you can run entirely local models via Ollama for complete privacy. Full control, zero compromises.
+
+The Impact:
+
+Wingman shortens the distance between having an idea and making a living from it. Democratising access to AI automation, we enable anyone to compete in the modern economy without being chained to their desk, their budget or locked in to SaaS middlemen.
+
+Small businesses deserve the same AI capabilities as Fortune 500 companies. Wingman makes that possible, open source.
+
+Solivtur Ambulando!
 
 ## Getting Started
 
