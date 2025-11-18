@@ -4423,6 +4423,7 @@ const handleApi = async (
       agentPortMax: config.agentPortMax,
       defaultDirectory: workspaceScope.defaultDirectory,
       allowedDirectories: workspaceScope.allowedDirectories,
+      connectRelays: config.connectRelays,
       adminNpub,
       agents: Object.entries(config.agents).map(([key, definition]) => ({
         id: key,

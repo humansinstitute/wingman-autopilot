@@ -22,6 +22,7 @@ export interface WingmanConfig {
   agentPortStart: number;
   agentPortMax: number;
   defaultWorkingDirectory: string;
+  connectRelays: string[];
   allowedDirectories: string[];
   allowedOrigins: string;
   allowedHosts: string;
@@ -36,6 +37,12 @@ const DEFAULT_PORT = 3600;
 const DEFAULT_AGENT_PORTS = 3700;
 const DEFAULT_AGENT_MAX = 10;
 const DEFAULT_DIRECTORY = "~/code";
+const DEFAULT_CONNECT_RELAYS = [
+  "wss://relay.nsec.app",
+  "wss://nos.lol",
+  "wss://relay.getalby.com/v1",
+  "wss://nostr.mineracks.com",
+];
 const DEFAULT_ALLOWED_ORIGINS = "*";
 const DEFAULT_ALLOWED_HOSTS = "localhost,127.0.0.1,[::1]";
 const DEFAULT_STATUS_POLL_INTERVAL_MS = 3000;
@@ -50,6 +57,14 @@ const sanitizeInteger = (value: string | undefined, fallback: number): number =>
 
 const clampPositiveInteger = (value: number, minimum: number): number => {
   return value >= minimum ? value : minimum;
+};
+
+const parseRelayList = (input: string | undefined): string[] => {
+  if (!input) return [];
+  return input
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
 };
 
 const expandHomeDirectory = (input: string): string => {
@@ -160,12 +175,14 @@ export const loadConfig = (): WingmanConfig => {
     sanitizeInteger(Bun.env.AGENT_STATUS_POLL_TIMEOUT_MS, DEFAULT_STATUS_POLL_TIMEOUT_MS),
     1000,
   );
+  const connectRelays = parseRelayList(Bun.env.CONNECT_RELAYS);
 
   return {
     port,
     agentPortStart,
     agentPortMax,
     defaultWorkingDirectory,
+    connectRelays: connectRelays.length > 0 ? connectRelays : DEFAULT_CONNECT_RELAYS,
     allowedDirectories,
     allowedOrigins,
     allowedHosts,

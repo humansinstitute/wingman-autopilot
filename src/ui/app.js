@@ -22,6 +22,12 @@ const APPS_POLL_INTERVAL_MS = 5000;
 const APP_LOG_PREVIEW_LINES = 5;
 const WEB_APP_BASE_URL = "https://host.otherstuff.ai";
 const TOAST_DEFAULT_DURATION_MS = 2600;
+const DEFAULT_CONNECT_RELAYS = [
+  "wss://relay.nsec.app",
+  "wss://nos.lol",
+  "wss://relay.getalby.com/v1",
+  "wss://nostr.mineracks.com",
+];
 const TERMINAL_CONTROL_ACTIONS = [
   { id: "terminal-esc", label: "Send Esc", toastLabel: "Esc", sequence: "\u001b" },
   { id: "terminal-1", label: "Send 1", toastLabel: "1", sequence: "1" },
@@ -1123,6 +1129,7 @@ const getIdentityWiringContext = () => {
   }
   identityWiringContext = {
     updateIdentityState,
+    getConfig: () => state.config,
     getIdentityState: () => ({ ...state.identity }),
     syncDisplay: syncIdentityDisplay,
     requestBinding: () => {
@@ -3988,6 +3995,9 @@ function openIdentityLoginDialog() {
     navigateToSettings();
     return;
   }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("wingman:identity-login-open"));
+  }
   if (typeof identityLoginDialog.showModal === "function") {
     identityLoginDialog.showModal();
   } else {
@@ -5120,11 +5130,27 @@ const submitFileTransfer = async () => {
   }
 };
 
+function normaliseConnectRelays(candidate) {
+  if (!candidate) return [...DEFAULT_CONNECT_RELAYS];
+  const values = Array.isArray(candidate) ? candidate : String(candidate).split(",");
+  const cleaned = values
+    .map((value) => (value && typeof value === "string" ? value.trim() : ""))
+    .filter((value) => value.length > 0);
+  if (cleaned.length === 0) {
+    return [...DEFAULT_CONNECT_RELAYS];
+  }
+  return Array.from(new Set(cleaned));
+}
+
 const fetchConfig = async () => {
   const response = await fetch("/api/config");
   const configData = await response.json();
   const adminNpubNormalized = normaliseNpubValue(configData?.adminNpub ?? null);
-  state.config = { ...configData, adminNpub: adminNpubNormalized ?? null };
+  const connectRelays = normaliseConnectRelays(configData?.connectRelays);
+  state.config = { ...configData, adminNpub: adminNpubNormalized ?? null, connectRelays };
+  if (typeof globalThis !== "undefined" && globalThis.wingmanIdentity) {
+    globalThis.wingmanIdentity.connectRelays = connectRelays;
+  }
   agentSelect.innerHTML = "";
   state.config.agents.forEach((agent) => {
     const option = document.createElement("option");
@@ -8477,6 +8503,84 @@ const renderNip07Panel = () => {
   return panel;
 };
 
+function renderNostrConnectSection() {
+  const section = document.createElement("div");
+  section.className = "wm-identity-subpanel";
+  section.dataset.section = "nostrconnect";
+
+  const title = document.createElement("h4");
+  title.className = "wm-identity-subpanel__title";
+  title.textContent = "Start from Wingman (nostrconnect://)";
+  section.append(title);
+
+  const description = document.createElement("p");
+  description.className = "wm-identity-panel-description";
+  description.textContent =
+    "Generate a nostrconnect:// link for your bunker. Copy or scan to complete login from your signer.";
+  section.append(description);
+
+  const relays = document.createElement("p");
+  relays.className = "wm-identity-helper";
+  relays.dataset.role = "nostrconnect-relays";
+  section.append(relays);
+
+  const urlRow = document.createElement("div");
+  urlRow.className = "wm-identity-row";
+
+  const urlInput = document.createElement("input");
+  urlInput.type = "text";
+  urlInput.readOnly = true;
+  urlInput.placeholder = "nostrconnect://…";
+  urlInput.dataset.role = "nostrconnect-url";
+  urlRow.append(urlInput);
+
+  const actions = document.createElement("div");
+  actions.className = "wm-identity-inline-actions";
+
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "wm-button wm-button--ghost";
+  copyButton.dataset.action = "copy-nostrconnect-url";
+  copyButton.textContent = "Copy link";
+  actions.append(copyButton);
+
+  const qrButton = document.createElement("button");
+  qrButton.type = "button";
+  qrButton.className = "wm-button wm-button--ghost";
+  qrButton.dataset.action = "show-nostrconnect-qr";
+  qrButton.textContent = "Show QR";
+  actions.append(qrButton);
+
+  urlRow.append(actions);
+  section.append(urlRow);
+
+  const status = document.createElement("p");
+  status.className = "wm-identity-status-line";
+  status.dataset.role = "nostrconnect-status";
+  status.hidden = true;
+  section.append(status);
+
+  const qrContainer = document.createElement("div");
+  qrContainer.className = "wm-identity-qr";
+  qrContainer.dataset.role = "nostrconnect-qr";
+  qrContainer.hidden = true;
+
+  const qrCanvas = document.createElement("canvas");
+  qrCanvas.width = 240;
+  qrCanvas.height = 240;
+  qrCanvas.dataset.role = "nostrconnect-qr-canvas";
+  qrContainer.append(qrCanvas);
+
+  const qrLabel = document.createElement("p");
+  qrLabel.className = "wm-identity-helper";
+  qrLabel.textContent = "Scan with your bunker to approve the request.";
+  qrContainer.append(qrLabel);
+
+  section.append(qrContainer);
+
+  return section;
+}
+
 const renderBunkerPanel = () => {
   const panel = document.createElement("details");
   panel.className = "wm-identity-collapsible";
@@ -8492,8 +8596,10 @@ const renderBunkerPanel = () => {
 
   const description = document.createElement("p");
   description.className = "wm-identity-panel-description";
-  description.textContent = "Connect a remote signer with a bunker:// URI.";
+  description.textContent = "Connect a remote signer with a bunker:// URI or share a nostrconnect:// request.";
   body.append(description);
+
+  body.append(renderNostrConnectSection());
 
   const form = document.createElement("form");
   form.className = "wm-identity-bunker-form";

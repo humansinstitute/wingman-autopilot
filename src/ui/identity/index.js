@@ -9,6 +9,13 @@ const ENCRYPTION_VERSION = 0x02;
 const SECURE_LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 const INSECURE_PASSWORD_MESSAGE =
   "Password entry requires a secure connection. Access Wingman over HTTPS or from localhost.";
+const DEFAULT_CONNECT_RELAYS = [
+  "wss://relay.nsec.app",
+  "wss://nos.lol",
+  "wss://relay.getalby.com/v1",
+  "wss://nostr.mineracks.com",
+];
+const NOSTR_CONNECT_SECRET_TTL_MS = 5 * 60 * 1000;
 
 import { scryptAsync } from "/vendor/@noble/hashes/scrypt.js";
 import { xchacha20poly1305 } from "/vendor/@noble/ciphers/chacha.js";
@@ -16,6 +23,7 @@ import { bech32 } from "/vendor/@scure/base/index.js";
 import { nip19 } from "/vendor/nostr-tools/index.js";
 import { schnorr, secp256k1 } from "/vendor/@noble/curves/secp256k1.js";
 import { NostrConnectSigner, RelayPool } from "/vendor/bunker-client.js";
+import { renderQrCode } from "./nostrconnect-qr.js";
 
 const textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
 
@@ -222,11 +230,46 @@ const sessionCache = {
 };
 
 const BUNKER_SESSION_STORAGE_KEY = "wingman_identity_bunker_session";
-const BUNKER_PERMISSION_KINDS = [22242];
-const BUNKER_SIGNING_PERMISSIONS = NostrConnectSigner.buildSigningPermissions(BUNKER_PERMISSION_KINDS);
+const BUNKER_PERMISSION_KINDS = [22242, 0, 1, 3, 4, 5, 7, 10002];
+const BUNKER_PERMISSION_FEATURES = ["nip04_encrypt", "nip04_decrypt", "nip44_encrypt", "nip44_decrypt"];
+const BUNKER_SIGNING_PERMISSIONS = [
+  ...BUNKER_PERMISSION_FEATURES,
+  ...NostrConnectSigner.buildSigningPermissions(BUNKER_PERMISSION_KINDS),
+];
 let bunkerRelayPool = null;
 let bunkerRestorePromise = null;
 let activeBunkerSigner = null;
+
+const parseRelayList = (value) => {
+  if (!value) return [];
+  const entries = Array.isArray(value) ? value : String(value).split(",");
+  return Array.from(
+    new Set(
+      entries
+        .map((entry) => (entry && typeof entry === "string" ? entry.trim() : ""))
+        .filter((entry) => entry.length > 0),
+    ),
+  );
+};
+
+const deriveConnectRelays = (context) => {
+  const config = typeof context?.getConfig === "function" ? context.getConfig() : null;
+  const configRelays = parseRelayList(config?.connectRelays);
+  if (configRelays.length > 0) return configRelays;
+  const apiRelays = parseRelayList(identityApi?.connectRelays);
+  if (apiRelays.length > 0) return apiRelays;
+  return [...DEFAULT_CONNECT_RELAYS];
+};
+
+const buildNostrConnectMetadata = () => {
+  if (typeof window === "undefined" || typeof window.location === "undefined") {
+    return { name: "Wingman" };
+  }
+  return {
+    name: "Wingman",
+    url: window.location.origin,
+  };
+};
 
 const getRelayPool = () => {
   if (!bunkerRelayPool) {
@@ -364,6 +407,260 @@ const attemptBunkerRestore = async ({ context, setStatus, form, enableInputs, ro
     form?.classList.remove("is-loading");
     enableInputs(true);
   }
+};
+
+const createNostrConnectController = ({ root, context, onConnected }) => {
+  const section = root.querySelector('[data-section="nostrconnect"]');
+  if (!section) return null;
+
+  const urlInput = section.querySelector('[data-role="nostrconnect-url"]');
+  const statusEl = section.querySelector('[data-role="nostrconnect-status"]');
+  const relaysEl = section.querySelector('[data-role="nostrconnect-relays"]');
+  const qrContainer = section.querySelector('[data-role="nostrconnect-qr"]');
+  const qrCanvas = section.querySelector('[data-role="nostrconnect-qr-canvas"]');
+  const copyButton = section.querySelector('[data-action="copy-nostrconnect-url"]');
+  const qrButton = section.querySelector('[data-action="show-nostrconnect-qr"]');
+
+  let currentOffer = null;
+  let abortController = null;
+  let expiryTimer = null;
+
+  if (root.classList.contains("is-authenticated")) {
+    section.hidden = true;
+  }
+
+  const setNostrStatus = (message, state = "info") => setPanelStatus(statusEl, message, state);
+
+  const updateRelaysLabel = (relays) => {
+    if (!relaysEl) return;
+    if (!Array.isArray(relays) || relays.length === 0) {
+      relaysEl.textContent = "Relays unavailable. Set CONNECT_RELAYS or use defaults.";
+      return;
+    }
+    if (relays.length === DEFAULT_CONNECT_RELAYS.length && relays.every((value, idx) => value === DEFAULT_CONNECT_RELAYS[idx])) {
+      relaysEl.textContent = `Relays: ${relays.join(", ")}`;
+      return;
+    }
+    relaysEl.textContent = `Relays (CONNECT_RELAYS): ${relays.join(", ")}`;
+  };
+
+  const toggleControls = (disabled) => {
+    if (copyButton) copyButton.disabled = disabled;
+    if (qrButton) qrButton.disabled = disabled;
+    if (urlInput) urlInput.disabled = disabled;
+  };
+
+  const stopWaiting = async ({ keepSigner = false } = {}) => {
+    if (abortController) {
+      abortController.abort();
+      abortController = null;
+    }
+    if (expiryTimer) {
+      clearTimeout(expiryTimer);
+      expiryTimer = null;
+    }
+    if (!keepSigner && currentOffer?.signer && typeof currentOffer.signer.close === "function") {
+      try {
+        await currentOffer.signer.close();
+      } catch (error) {
+        console.warn("[identity] failed to close nostrconnect signer", error instanceof Error ? error.message : error);
+      }
+    }
+  };
+
+  const handleConnected = async (offer) => {
+    if (!offer) return null;
+    await stopWaiting({ keepSigner: true });
+    try {
+      await disconnectBunkerSigner();
+      activeBunkerSigner = offer.signer;
+      identityApi.bunkerSigner = offer.signer;
+      const pubkeyHex = await offer.signer.getPublicKey();
+      const npub = nip19.npubEncode(pubkeyHex);
+      const { expiresAt } = await persistServerSession(npub, null);
+      saveBunkerSession({
+        remote: offer.signer.remote ?? null,
+        relays: Array.isArray(offer.relays) ? offer.relays : deriveConnectRelays(context),
+        pubkey: pubkeyHex,
+        hasSecret: true,
+        lastConnectedAt: Date.now(),
+      });
+      saveCachedSession({ npub, encryptedNsec: null, expiresAt, method: "bunker" });
+      applyIdentityUpdate(context, { npub, method: "bunker", expiresAt, isAuthenticated: true, alias: npub });
+      root.classList.add("is-authenticated");
+      section.hidden = true;
+      setNostrStatus("Connected to remote signer", "success");
+      if (typeof onConnected === "function") {
+        onConnected({ npub, expiresAt });
+      }
+      currentOffer = null;
+      return npub;
+    } catch (error) {
+      console.error("[identity] nostrconnect completion failed", error);
+      setNostrStatus("Failed to finalize connection from nostrconnect", "error");
+      return null;
+    }
+  };
+
+  const awaitRemoteSigner = (offer) => {
+    if (!offer) return;
+    if (abortController) {
+      abortController.abort();
+      abortController = null;
+    }
+    if (expiryTimer) {
+      clearTimeout(expiryTimer);
+      expiryTimer = null;
+    }
+    abortController = typeof AbortController === "function" ? new AbortController() : null;
+    if (typeof window !== "undefined") {
+      expiryTimer = window.setTimeout(() => {
+        if (abortController) abortController.abort();
+      }, NOSTR_CONNECT_SECRET_TTL_MS);
+    }
+    setNostrStatus("Waiting for remote signer…");
+    offer.signer
+      .waitForSigner(abortController?.signal)
+      .then(() => handleConnected(offer))
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (abortController?.signal?.aborted) {
+          setNostrStatus("Connection request expired. Regenerate to try again.", "warning");
+        } else {
+          console.warn("[identity] nostrconnect wait failed", message);
+          setNostrStatus("Failed to receive response from bunker. Try again.", "error");
+        }
+        currentOffer = null;
+        if (abortController?.signal?.aborted) {
+          void refreshOffer();
+        }
+      })
+      .finally(() => {
+        if (expiryTimer) {
+          clearTimeout(expiryTimer);
+          expiryTimer = null;
+        }
+        abortController = null;
+      });
+  };
+
+  const refreshOffer = async () => {
+    toggleControls(true);
+    await stopWaiting({ keepSigner: false });
+    const relays = deriveConnectRelays(context);
+    updateRelaysLabel(relays);
+    if (!relays || relays.length === 0) {
+      setNostrStatus("No relays configured for nostrconnect. Set CONNECT_RELAYS and retry.", "error");
+      if (urlInput) urlInput.value = "";
+      toggleControls(false);
+      return null;
+    }
+    try {
+      const metadata = buildNostrConnectMetadata();
+      const signer = new NostrConnectSigner({
+        relays,
+        pool: getRelayPool(),
+      });
+      const url = signer.getNostrConnectURI({ ...metadata, permissions: BUNKER_SIGNING_PERMISSIONS });
+      currentOffer = {
+        signer,
+        url,
+        relays,
+        createdAt: Date.now(),
+      };
+      if (urlInput) {
+        urlInput.value = url;
+        urlInput.title = url;
+        urlInput.readOnly = true;
+      }
+      if (qrContainer) {
+        qrContainer.hidden = true;
+      }
+      setNostrStatus("Share this nostrconnect link with your bunker to finish signing in.", "info");
+      toggleControls(false);
+      awaitRemoteSigner(currentOffer);
+      return url;
+    } catch (error) {
+      console.error("[identity] failed to generate nostrconnect URL", error);
+      setNostrStatus("Failed to generate nostrconnect link. Try again.", "error");
+      toggleControls(false);
+      return null;
+    }
+  };
+
+  const ensureOffer = async () => {
+    if (currentOffer) return currentOffer;
+    await refreshOffer();
+    return currentOffer;
+  };
+
+  const handleCopy = async () => {
+    const offer = await ensureOffer();
+    if (!offer?.url) {
+      setNostrStatus("Unable to copy. Regenerate the nostrconnect link.", "error");
+      return;
+    }
+    const success = await copyToClipboard(offer.url);
+    if (success) {
+      setNostrStatus("nostrconnect link copied", "success");
+    } else {
+      setNostrStatus("Copy failed. Select and copy manually.", "error");
+    }
+  };
+
+  const toggleQr = async () => {
+    const offer = await ensureOffer();
+    if (!offer?.url || !qrContainer || !qrCanvas) return;
+    if (!qrContainer.hidden) {
+      qrContainer.hidden = true;
+      return;
+    }
+    const rendered = await renderQrCode(offer.url, qrCanvas);
+    if (!rendered) {
+      setNostrStatus("Could not render QR. Copy the link instead.", "error");
+      return;
+    }
+    qrContainer.hidden = false;
+  };
+
+  copyButton?.addEventListener("click", () => {
+    void handleCopy();
+  });
+  qrButton?.addEventListener("click", () => {
+    void toggleQr();
+  });
+
+  const reset = async ({ keepSigner = false } = {}) => {
+    await stopWaiting({ keepSigner });
+    currentOffer = null;
+    if (qrContainer) {
+      qrContainer.hidden = true;
+    }
+  };
+
+  const handleLoginOpen = () => {
+    if (root.classList.contains("is-authenticated")) {
+      return;
+    }
+    void refreshOffer();
+  };
+
+  const handleLogout = () => {
+    section.hidden = false;
+    void refreshOffer();
+  };
+
+  const handleAuthenticated = () => {
+    section.hidden = true;
+  };
+
+  return {
+    refreshOffer,
+    reset,
+    handleLoginOpen,
+    handleLogout,
+    handleAuthenticated,
+  };
 };
 
 let cachedPassword = null;
@@ -943,7 +1240,7 @@ const saveCachedSession = ({ npub, encryptedNsec, expiresAt, method, logN = DEFA
   }
 };
 
-const setPanelStatus = (element, message, state = "info") => {
+function setPanelStatus(element, message, state = "info") {
   if (!element) return;
   const text = typeof message === "string" ? message.trim() : "";
   if (!text) {
@@ -954,9 +1251,9 @@ const setPanelStatus = (element, message, state = "info") => {
   element.textContent = message;
   element.dataset.state = state;
   element.hidden = false;
-};
+}
 
-const fallbackCopyToClipboard = (value) => {
+function fallbackCopyToClipboard(value) {
   try {
     const textarea = document.createElement("textarea");
     textarea.value = value;
@@ -971,9 +1268,9 @@ const fallbackCopyToClipboard = (value) => {
   } catch {
     return false;
   }
-};
+}
 
-const copyToClipboard = async (value) => {
+async function copyToClipboard(value) {
   if (typeof navigator !== "undefined" && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
     try {
       await navigator.clipboard.writeText(value);
@@ -983,7 +1280,7 @@ const copyToClipboard = async (value) => {
     }
   }
   return fallbackCopyToClipboard(value);
-};
+}
 
 const performLogout = async () => {
   await disconnectBunkerSigner();
@@ -1220,6 +1517,13 @@ const initBunkerPanel = (root, context) => {
   const submitButton = form?.querySelector('button[type="submit"]');
   const statusEl = root.querySelector('[data-role="bunker-status"]');
   const setStatus = (message, state = "info") => setPanelStatus(statusEl, message, state);
+  const nostrConnect = createNostrConnectController({
+    root,
+    context,
+    onConnected() {
+      setStatus("Connected to remote signer", "success");
+    },
+  });
 
   const enableInputs = (enabled) => {
     if (textarea) textarea.disabled = !enabled;
@@ -1264,6 +1568,10 @@ const initBunkerPanel = (root, context) => {
       applyIdentityUpdate(context, { npub, method: "bunker", expiresAt, isAuthenticated: true, alias: npub });
       root.classList.add("is-authenticated");
       setStatus("Connected to remote signer", "success");
+      if (nostrConnect) {
+        nostrConnect.handleAuthenticated();
+        void nostrConnect.reset({ keepSigner: true });
+      }
     } catch (error) {
       await disconnectBunkerSigner();
       console.error("[identity] bunker connection failed", error instanceof Error ? error.message : error);
@@ -1300,18 +1608,39 @@ const initBunkerPanel = (root, context) => {
     window.addEventListener("wingman:identity-logout", () => {
       setStatus("Signed out", "info");
       root.classList.remove("is-authenticated");
+      if (nostrConnect) {
+        nostrConnect.handleLogout();
+      }
     });
     root.dataset.logoutBunkerHooked = "true";
   }
 
   const scheduleRestore = () => {
     if (bunkerRestorePromise) return;
-    bunkerRestorePromise = attemptBunkerRestore({ context, setStatus, form, enableInputs, root }).finally(() => {
-      bunkerRestorePromise = null;
-    });
+    bunkerRestorePromise = attemptBunkerRestore({ context, setStatus, form, enableInputs, root })
+      .then((npub) => {
+        if (npub && nostrConnect) {
+          nostrConnect.handleAuthenticated();
+          void nostrConnect.reset({ keepSigner: true });
+        }
+      })
+      .finally(() => {
+        bunkerRestorePromise = null;
+      });
   };
 
   scheduleRestore();
+  if (nostrConnect && !root.classList.contains("is-authenticated")) {
+    void nostrConnect.refreshOffer();
+  }
+
+  if (typeof window !== "undefined" && !root.dataset.nostrconnectLoginHooked) {
+    const handleLoginOpen = () => {
+      nostrConnect?.handleLoginOpen();
+    };
+    window.addEventListener("wingman:identity-login-open", handleLoginOpen);
+    root.dataset.nostrconnectLoginHooked = "true";
+  }
 
   root.__wingmanBunkerState = state;
   root.dataset.bunkerInitialised = "true";
