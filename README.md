@@ -1,5 +1,7 @@
 # Wingman V2
 
+**NOTE: CURRENTLY THIS WILL RUN AUTOMATICALLY ON MAC. FOR LINUX YOU NEED TO COMPILE AN AGENT API BINARY AND COPY TO out/agentapi THIS SHOULD BE SCRIPTED BY THIS WEEKEND FOR ALL MAC AND LINUX PLATFORMS** 
+
 Wingman: Every Computer Becomes a Ten-Person Team
 
 Wingman is an open-source Agent Management system that brings AI automation to small businesses, without the technical complexity or vendor lock-in.
