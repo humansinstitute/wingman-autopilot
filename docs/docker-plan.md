@@ -15,4 +15,4 @@ Docker packaging plan
   - Lock `AGENTAPI_ALLOWED_ORIGINS/HOSTS` for production deployments instead of `*`.
   - Avoid writing under `out/agentapi` at runtime—prebuilt binary covers that.
   - Mount host project dirs into `/workspace` in compose/k8s to give agents file access; mount `/app/data` for DB durability.
- - Cloudflared: if exposing via Cloudflare Tunnel on the target box, keep the container bound to localhost (e.g., `--publish 127.0.0.1:3600:3600`) and point `cloudflared` at that port; ensure `AGENTAPI_ALLOWED_ORIGINS/HOSTS` permit the tunnel hostname.
+ - Cloudflared: run `cloudflared` inside each container if you want per-instance tunnels; keep Wingman listening on localhost and let the in-container tunnel publish externally. Ensure `AGENTAPI_ALLOWED_ORIGINS/HOSTS` include the tunnel hostname. Multiple containers per host can each run their own tunnel this way.
