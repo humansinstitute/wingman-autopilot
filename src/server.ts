@@ -1,8 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, type Dirent } from "node:fs";
 import { chmod, cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from "node:path";
-import { homedir } from "node:os";
+import { arch, homedir, platform } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 
@@ -112,7 +112,6 @@ const projectRootPath = (() => {
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRootDirectory = normalize(join(moduleDirectory, ".."));
 const agentApiBinaryPath = normalize(join(projectRootDirectory, "out", "agentapi"));
-const agentApiConfigPath = normalize(join(projectRootDirectory, "agentapi.config"));
 
 const ensureAgentApiBinary = async () => {
   let binaryExists = false;
@@ -133,30 +132,72 @@ const ensureAgentApiBinary = async () => {
     return;
   }
 
-  let configContents: string;
+  // Detect platform and architecture
+  const currentPlatform = platform();
+  const currentArch = arch();
+
+  console.log(`[agentapi] Detected platform: ${currentPlatform}, architecture: ${currentArch}`);
+
+  // Map platform and arch to download entry description
+  let platformKey: string;
+  if (currentPlatform === "darwin") {
+    platformKey = currentArch === "arm64" ? "Apple ARM" : "Apple Intel";
+  } else if (currentPlatform === "linux") {
+    platformKey = currentArch === "arm64" ? "Liunx ARM" : "Linux Intel";
+  } else {
+    throw new Error(`[agentapi] Unsupported platform: ${currentPlatform}. Only macOS and Linux are supported.`);
+  }
+
+  console.log(`[agentapi] Selecting download for: ${platformKey}`);
+
+  // Read downloads.json
+  const downloadsJsonPath = normalize(join(projectRootDirectory, "downloads.json"));
+  let downloadsData: Array<{ decscription: string; link: string; sha256: string }>;
   try {
-    configContents = await readFile(agentApiConfigPath, "utf8");
+    const downloadsContent = await readFile(downloadsJsonPath, "utf8");
+    downloadsData = JSON.parse(downloadsContent);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`[agentapi] Missing binary and unable to read config ${relative(projectRootDirectory, agentApiConfigPath)}: ${message}`);
+    throw new Error(`[agentapi] Failed to read ${relative(projectRootDirectory, downloadsJsonPath)}: ${message}`);
   }
 
-  const linkMatch = configContents.match(/link\s*:\s*["']([^"']+)["']/);
-  const downloadUrl = linkMatch?.[1];
-  if (!downloadUrl) {
-    throw new Error(`[agentapi] Missing download link in ${relative(projectRootDirectory, agentApiConfigPath)}`);
+  // Find matching download
+  const downloadEntry = downloadsData.find((entry) => entry.decscription === platformKey);
+  if (!downloadEntry) {
+    throw new Error(`[agentapi] No download found for ${platformKey} in downloads.json`);
   }
 
-  const response = await fetch(downloadUrl);
+  console.log(`[agentapi] Downloading from: ${downloadEntry.link}`);
+
+  // Download binary
+  const response = await fetch(downloadEntry.link);
   if (!response.ok) {
     throw new Error(`[agentapi] Download failed with status ${response.status} ${response.statusText}`);
   }
 
-  await mkdir(dirname(agentApiBinaryPath), { recursive: true });
   const data = await response.arrayBuffer();
+
+  // Verify SHA256
+  const hash = createHash("sha256");
+  hash.update(new Uint8Array(data));
+  const computedHash = "sha256:" + hash.digest("hex");
+
+  if (computedHash !== downloadEntry.sha256) {
+    throw new Error(
+      `[agentapi] SHA256 verification failed. Expected: ${downloadEntry.sha256}, Got: ${computedHash}`
+    );
+  }
+
+  console.log(`[agentapi] SHA256 verification passed`);
+
+  // Write and make executable
+  await mkdir(dirname(agentApiBinaryPath), { recursive: true });
   await Bun.write(agentApiBinaryPath, data);
   await chmod(agentApiBinaryPath, 0o755);
-  console.log(`[agentapi] Downloaded agentapi binary from ${downloadUrl}`);
+
+  console.log(
+    `[agentapi] Successfully downloaded and installed agentapi binary to ${relative(projectRootDirectory, agentApiBinaryPath)}`
+  );
 };
 
 await ensureAgentApiBinary();

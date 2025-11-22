@@ -1,0 +1,22 @@
+[
+  {
+    "decscription": "Apple Intel",
+    "link": "https://github.com/coder/agentapi/releases/download/agentapi_147/agentapi-darwin-amd64",
+    "sha256": "sha256:2793cb82725919e6c778e6c907d996cce6c6fed9cdc1afc0d899817536a4e547"
+  },
+  {
+    "decscription": "Apple ARM",
+    "link": "https://github.com/coder/agentapi/releases/download/agentapi_147/agentapi-darwin-arm64",
+    "sha256": "sha256:3805eaf8f108b74665090a6e5cf546d8e8a361e1051dd2f5c4c1576e4609347d"
+  },
+  {
+    "decscription": "Linux Intel",
+    "link": "https://github.com/coder/agentapi/releases/download/agentapi_147/agentapi-linux-amd64",
+    "sha256": "sha256:03a6a7f11f5064af44c6233fd71e2cd66ab5fdd9ddb8977c13cf1f5d1473957f"
+  },
+  {
+    "decscription": "Liunx ARM",
+    "link": "https://github.com/coder/agentapi/releases/download/agentapi_147/agentapi-linux-arm64",
+    "sha256": "sha256:8b902152995f90e0b38c6b9ed433f639ac35925624075003ce2e87beebaccfc9"
+  }
+]
