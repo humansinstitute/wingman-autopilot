@@ -5,7 +5,7 @@
 - Top-level side effects now span tmux cleanup, preset seeding, directory creation across project/user data roots, file watcher startup, and image cleanup scheduling.
 - API handling is split between a `handleWebhookRequest` pre-check and a long `handleApi` switch that covers `/api/config`, `/docs/*`, `/orchestrators*`, `/sessions*`, `/uploads`, `/directories`, and git worktree provisioning.
 - Utility concerns (path sanitisation, preset working dir generation, message sync, image placeholder building, doc tree traversal, git commands, watcher orchestration, etc.) remain inline, impeding reuse and isolated testing.
-- Static asset helpers (`serveIndex`, `resolveAsset`, `servePublicAsset`, `serveAceBuildsAsset`, `resolveTempImage`) continue to live beside business logic.
+- Static asset helpers (`serveIndex`, `resolveAsset`, `servePublicAsset`, `serveAceBuildsAsset`, `resolveTempImage`) continue to live beside business logic; MIME handling for served modules needs to remain explicit.
 - Docs endpoints now operate relative to the user home (`~/Documents/Wingman`) with extra boundary checks, further increasing the surface area inside the module.
 
 ## Refactor Objectives
@@ -36,7 +36,7 @@
   - `webhook-routes.ts`: wrappers around webhook endpoints (currently `/v1/api/webhook/off`).
   - `git-worktree-routes.ts`: surface git worktree provisioning if separation from docs routes is preferred.
 - `src/server/static/`
-  - `assets.ts`: `resolveAsset`, `servePublicAsset`, `serveAceBuildsAsset`.
+  - `assets.ts`: `resolveAsset`, `servePublicAsset`, `serveAceBuildsAsset` (preserve `application/javascript` for modules).
   - `index.ts`: `serveIndex`.
   - `images.ts`: `resolveTempImage`.
 - Shared utilities (`src/server/utils/`) for helpers like `sleep`, `normaliseOptionalString`, `parsePresetInteger`, and host selection.
@@ -68,6 +68,7 @@
      - Resolve `../public` to an absolute path once and cache a boundary string (e.g., via `normalize(join(projectRoot, "public"))`).
      - Normalise every request suffix (`normalize(join(publicRoot, suffix))`) and reject anything that does not start with the boundary prefix.
      - Keep MIME sniffing and cache headers unchanged. Add a manual regression step (`/../README.md` must 404) to Phase 4 validation.
+   - Preserve module MIME types (`application/javascript` for ES modules under `src/ui` builds) so browsers don’t block imports.
 
 5. **Finalize Entry Point**
    - Replace monolithic `handleApi` with router import; reduce `src/server.ts` to:
@@ -110,8 +111,8 @@
 - **Phase 6**: Architecture docs updated; lint/format passes; optional tests added for services.
 
 ## Additional Recommendations
-- **Version Control**: Create a feature branch for the refactor. Use `git commit --fixup` for iterative improvements.
+- **Version Control**: Create a feature branch for the refactor. Keep commits small and scoped; prefer clear subjects over fixup chains.
 - **Code Review**: For each phase, include a summary of changes and rationale in PR descriptions.
-- **Rollback Plan**: Keep original `server.ts` as backup; test thoroughly before merging.
+- **Rollback Plan**: Lean on git history for rollback; no manual backups needed if commits stay small.
 - **Performance**: Monitor startup time and memory usage post-refactor to ensure no degradation.
 - **Future-Proofing**: Design services with dependency injection in mind for easier testing later.
