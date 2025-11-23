@@ -101,20 +101,7 @@
             </p>
           </div>
           <div class="wm-session-dialog__field">
-            <label for="session-name">Session Name (optional)</label>
-            <input
-              id="session-name"
-              type="text"
-              autocomplete="off"
-              maxlength="120"
-              placeholder="Code review with Claude"
-            />
-            <p class="wm-session-dialog__hint">
-              Make it easier to spot later by adding a short label.
-            </p>
-          </div>
-          <div class="wm-session-dialog__field">
-            <label for="working-directory">Working Directory</label>
+            <label for="working-directory">Root Project Folder</label>
             <div class="working-directory-field">
               <input
                 id="working-directory"
@@ -129,8 +116,53 @@
               </div>
             </div>
             <p class="wm-session-dialog__hint" id="working-directory-help">
-              Use an absolute path for clarity. We’ll remember the last directory you launched from.
+              Use an absolute path for clarity. Sessions (and worktrees) start from here by default.
             </p>
+          </div>
+          <div class="wm-session-dialog__field">
+            <label for="session-name">Session Name (optional)</label>
+            <input
+              id="session-name"
+              type="text"
+              autocomplete="off"
+              maxlength="120"
+              placeholder="Code review with Claude"
+            />
+            <p class="wm-session-dialog__hint">
+              Make it easier to spot later by adding a short label.
+            </p>
+          </div>
+          <div class="wm-session-dialog__advanced">
+            <button type="button" id="session-advanced-toggle" class="wm-session-dialog__advanced-toggle">
+              Advanced Options
+              <span aria-hidden="true" class="chevron">›</span>
+            </button>
+            <div id="session-advanced-panel" class="wm-session-dialog__advanced-panel" hidden>
+              <div class="wm-session-dialog__field">
+                <label for="session-workspace-mode">Workspace</label>
+                <select id="session-workspace-mode">
+                  <option value="">None</option>
+                  <option value="worktree">New Worktree</option>
+                </select>
+                <p class="wm-session-dialog__hint">
+                  Keep defaults or spin up a fresh Git worktree before launching.
+                </p>
+              </div>
+              <div class="wm-session-dialog__field" data-workspace="worktree" hidden>
+                <label for="session-worktree-name">Worktree Name</label>
+                <input
+                  id="session-worktree-name"
+                  type="text"
+                  autocomplete="off"
+                  maxlength="120"
+                  placeholder="feature-new-ui"
+                  aria-describedby="session-worktree-hint"
+                />
+                <p class="wm-session-dialog__hint" id="session-worktree-hint">
+                  New worktree path: /.worktrees/feature-new-ui
+                </p>
+              </div>
+            </div>
           </div>
         </section>
         <datalist id="directory-suggestions"></datalist>

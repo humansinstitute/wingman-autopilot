@@ -3312,6 +3312,55 @@ dialog textarea {
   gap: 1.25rem;
 }
 
+.wm-session-dialog__advanced {
+  border-top: 1px solid var(--border-primary);
+  padding-top: 1rem;
+}
+
+.wm-session-dialog__advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: transparent;
+  border: 1px solid var(--border-primary);
+  border-radius: 999px;
+  color: var(--text-primary);
+  padding: 0.4rem 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.wm-session-dialog__advanced-toggle .chevron {
+  display: inline-block;
+  transform: rotate(90deg);
+  transition: transform 160ms ease;
+}
+
+.wm-session-dialog__advanced-toggle[aria-expanded="true"] {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.55);
+  color: var(--text-secondary);
+}
+
+.wm-session-dialog__advanced-toggle[aria-expanded="true"] .chevron {
+  transform: rotate(270deg);
+}
+
+.wm-session-dialog__advanced-panel {
+  margin-top: 0.75rem;
+  padding: 0.9rem;
+  border-radius: 0.9rem;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+}
+
+.wm-session-dialog__advanced-panel[hidden],
+.wm-session-dialog__field[hidden] {
+  display: none;
+}
+
 .wm-session-dialog__field {
   display: flex;
   flex-direction: column;

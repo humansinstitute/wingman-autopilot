@@ -8,6 +8,7 @@ import { createProjectFeature } from "./projects/index.js";
 import "./logging/browser.js";
 import { createHomeGuestHero } from "./home/hero.js";
 import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
+import { createSessionDialogController } from "./common/session-dialog.js";
 
 const ace = globalThis.ace;
 if (!ace) {
@@ -45,6 +46,7 @@ let sessionPollIntervalId = null;
 let sessionPollInFlight = false;
 let appsPollIntervalId = null;
 let appsPollInFlight = false;
+let sessionDialogController = null;
 
 const state = {
   config: null,
@@ -3837,6 +3839,12 @@ const desktopSessionIndicatorName =
 const desktopSessionIndicatorDirectory =
   desktopSessionIndicator?.querySelector('[data-part="directory"]') ?? null;
 const sessionNameInput = document.getElementById("session-name");
+const sessionAdvancedToggle = document.getElementById("session-advanced-toggle");
+const sessionAdvancedPanel = document.getElementById("session-advanced-panel");
+const sessionWorkspaceModeSelect = document.getElementById("session-workspace-mode");
+const sessionWorktreeField = document.querySelector('[data-workspace="worktree"]');
+const sessionWorktreeNameInput = document.getElementById("session-worktree-name");
+const sessionWorktreeHint = document.getElementById("session-worktree-hint");
 const directoryInput = document.getElementById("working-directory");
 const directorySuggestions = document.getElementById("directory-suggestions");
 const browseDirectoryButton = document.getElementById("browse-directory");
@@ -4607,6 +4615,7 @@ const chooseDirectory = (path) => {
     state.lastWorkingDirectory = selected;
     scheduleDirectorySuggestions(selected);
   }
+  sessionDialogController?.syncWorktreeHint?.();
   directoryBrowserState.onSelect = null;
   if (directoryBrowserState.pendingResolve) {
     const resolve = directoryBrowserState.pendingResolve;
@@ -6018,17 +6027,26 @@ const updateLogsDOM = (sessionId) => {
   }
 };
 
+const getSessionFallbackDirectory = () => {
+  return (
+    directoryInput?.value?.trim() ||
+    state.lastWorkingDirectory ||
+    state.config?.defaultDirectory ||
+    ""
+  );
+};
+
 const openDialog = () => {
+  if (sessionDialogController) {
+    sessionDialogController.open();
+    return;
+  }
   if (!state.identity.authenticated) {
     openIdentityLoginDialog();
     return;
   }
   if (!state.config) return;
-  const fallbackDirectory =
-    directoryInput?.value?.trim() ||
-    state.lastWorkingDirectory ||
-    state.config.defaultDirectory ||
-    "";
+  const fallbackDirectory = getSessionFallbackDirectory();
   if (sessionNameInput) {
     sessionNameInput.value = "";
   }
@@ -6060,6 +6078,10 @@ const openDialog = () => {
 };
 
 const closeDialog = () => {
+  if (sessionDialogController) {
+    sessionDialogController.close();
+    return;
+  }
   if (dialog.open) {
     dialog.close();
   }
@@ -6084,13 +6106,14 @@ const handleSessionStart = async (session) => {
       directoryInput.value = session.workingDirectory;
       scheduleDirectorySuggestions(session.workingDirectory);
     }
+    sessionDialogController?.syncWorktreeHint?.();
   }
   await fetchSessions();
   await Promise.all([fetchConversation(session.id), fetchLogs(session.id)]);
   render();
 };
 
-const launchSession = async (agentId, workingDirectory, name) => {
+const launchSession = async (agentId, workingDirectory, name, workspace) => {
   if (!agentId) {
     window.alert("Select an agent before launching a session.");
     return;
@@ -6103,6 +6126,9 @@ const launchSession = async (agentId, workingDirectory, name) => {
   }
   if (typeof workingDirectory === "string" && workingDirectory.trim().length > 0) {
     payload.directory = workingDirectory.trim();
+  }
+  if (workspace && workspace.mode === "worktree" && workspace.name) {
+    payload.workspace = { mode: "worktree", name: workspace.name };
   }
 
   const response = await fetch("/api/sessions", {
@@ -6120,6 +6146,28 @@ const launchSession = async (agentId, workingDirectory, name) => {
   const session = await response.json();
   await handleSessionStart(session);
 };
+
+sessionDialogController = createSessionDialogController({
+  dialog,
+  agentSelect,
+  sessionNameInput,
+  directoryInput,
+  advancedToggle: sessionAdvancedToggle,
+  advancedPanel: sessionAdvancedPanel,
+  workspaceSelect: sessionWorkspaceModeSelect,
+  worktreeField: sessionWorktreeField,
+  worktreeNameInput: sessionWorktreeNameInput,
+  worktreeHint: sessionWorktreeHint,
+  isAuthenticated: () => Boolean(state.identity.authenticated),
+  getConfig: () => state.config,
+  getFallbackDirectory: getSessionFallbackDirectory,
+  onRequireAuth: openIdentityLoginDialog,
+  onDirectoryPrefill: scheduleDirectorySuggestions,
+  onSubmit: ({ agentId, workingDirectory, sessionName, workspace }) => {
+    launchSession(agentId, workingDirectory, sessionName, workspace);
+  },
+});
+sessionDialogController.resetFormState();
 
 const stopSession = async (sessionId) => {
   const response = await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
@@ -11518,6 +11566,10 @@ window.addEventListener("keydown", (event) => {
 });
 
 const handleSessionLaunchRequest = () => {
+  if (sessionDialogController) {
+    sessionDialogController.handleSubmit();
+    return;
+  }
   const agentId = agentSelect?.value ?? "";
   const workingDirectory = directoryInput?.value ?? "";
   const sessionName = sessionNameInput?.value ?? "";
