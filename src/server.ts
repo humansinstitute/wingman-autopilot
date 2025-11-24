@@ -3266,27 +3266,13 @@ const parsePortInput = (value: unknown): number | null => {
   return null;
 };
 
-const WEB_APP_HOST = "host.otherstuff.ai";
+const WEB_APP_PORT_PLACEHOLDER = "<port>";
 
 type BuildAppResponseOptions = {
   ownerAlias?: string | null;
 };
 
-const normaliseWebAppAlias = (input: string | null | undefined): string | null => {
-  if (!input) {
-    return null;
-  }
-  const slug = input
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-+/, "")
-    .replace(/-+$/, "");
-  return slug.length > 0 ? slug : null;
-};
-
-const buildHostedWebAppUrl = (alias: string | null, port: number | null): string | null => {
+const buildHostedWebAppUrl = (port: number | null): string | null => {
   if (typeof port !== "number" || !Number.isFinite(port)) {
     return null;
   }
@@ -3294,10 +3280,16 @@ const buildHostedWebAppUrl = (alias: string | null, port: number | null): string
   if (normalizedPort <= 0) {
     return null;
   }
-  if (!alias) {
-    return `https://${WEB_APP_HOST}/${normalizedPort}`;
+  const base = config.hostUrlBase ?? "";
+  const trimmed = base.trim();
+  if (!trimmed) {
+    return null;
   }
-  return `https://${alias}-${normalizedPort}.${WEB_APP_HOST}/`;
+  if (trimmed.includes(WEB_APP_PORT_PLACEHOLDER)) {
+    return trimmed.replaceAll(WEB_APP_PORT_PLACEHOLDER, String(normalizedPort));
+  }
+  const separator = trimmed.endsWith("/") ? "" : "/";
+  return `${trimmed}${separator}${normalizedPort}`;
 };
 
 const resolveOwnerAlias = (ownerNpub: string | null | undefined): string | null => {
@@ -3350,8 +3342,8 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus, options: Bui
   };
   const webAppPort =
     typeof app.webAppPort === "number" && Number.isFinite(app.webAppPort) ? Math.trunc(app.webAppPort) : null;
-  const webAppAlias = normaliseWebAppAlias(options.ownerAlias ?? null);
-  const webAppUrl = app.webApp && webAppPort !== null ? buildHostedWebAppUrl(webAppAlias, webAppPort) : null;
+  const webAppAlias = options.ownerAlias ?? null;
+  const webAppUrl = app.webApp && webAppPort !== null ? buildHostedWebAppUrl(webAppPort) : null;
   return {
     id: app.id,
     label: app.label,
@@ -4509,6 +4501,7 @@ const handleApi = async (
       port: config.port,
       agentPortStart: config.agentPortStart,
       agentPortMax: config.agentPortMax,
+      hostUrlBase: config.hostUrlBase,
       defaultDirectory: workspaceScope.defaultDirectory,
       allowedDirectories: workspaceScope.allowedDirectories,
       connectRelays: config.connectRelays,

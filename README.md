@@ -55,6 +55,7 @@ Visit `http://localhost:<PORT>/home` for the session dashboard or `/live` for th
 | `PORT`           | Primary Wingman UI/API port                                                    | `3600`                  |
 | `AGENT_PORTS`    | Starting port assigned to agent subprocesses                                   | `3700`                  |
 | `AGENT_MAX`      | Total number of concurrent agent ports available                               | `10`                    |
+| `HOST_URL_BASE`  | Template for web app links; `<port>` is replaced with the app's assigned port  | `https://host.otherstuff.ai/<port>` |
 | `DIRECTORY_DEF`  | Working directory used when launching agent subprocesses                       | `~/code`                |
 | `FOLDERACCESS`   | Comma-separated directories exposed to file browsers and pickers               | `DIRECTORY_DEF`         |
 | `AGENT_MODE`     | Switch orchestration mode; set to `tmux` to launch via `agentapi-tmux`         | `standard`              |

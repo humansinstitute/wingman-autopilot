@@ -742,6 +742,118 @@ body[data-menu-open="true"] .wm-menu-panel {
   max-width: 32ch;
 }
 
+.wm-home-guest-landing {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg-primary);
+  margin: 0 !important;
+  padding: 0 !important;
+  gap: 0 !important;
+  max-width: none !important;
+  overflow: hidden;
+}
+
+.wm-home-guest-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 2rem 2rem 1.5rem;
+  gap: 1.5rem;
+  overflow-y: auto;
+  min-height: 0;
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.wm-home-guest-hero-text {
+  text-align: left;
+  width: 100%;
+}
+
+.wm-home-guest-hero-line {
+  font-size: 7rem;
+  font-weight: 900;
+  line-height: 0.85;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.wm-home-guest-login-button {
+  font-size: 1rem;
+  padding: 0.75rem 1.5rem;
+  background: var(--accent-primary);
+  border: none;
+  color: #ffffff;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-weight: 600;
+}
+
+.wm-home-guest-login-button:hover {
+  background: var(--accent-secondary);
+}
+
+.wm-home-guest-footer {
+  background: var(--accent-primary);
+  padding: 0.75rem;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.wm-home-guest-footer p {
+  margin: 0;
+  color: #ffffff;
+  font-size: 0.95rem;
+}
+
+.wm-home-guest-footer a {
+  color: #ffffff;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.wm-home-guest-footer a:hover {
+  text-decoration: underline;
+}
+
+#app:has(.wm-home-guest-landing) {
+  padding: 0 !important;
+  max-width: none !important;
+  margin: 0 !important;
+}
+
+@media (max-width: 768px) {
+  .wm-home-guest-content {
+    padding: 1.5rem 1.5rem 1rem;
+    gap: 1.25rem;
+  }
+
+  .wm-home-guest-hero-line {
+    font-size: 4.5rem;
+    line-height: 0.85;
+  }
+
+  .wm-home-guest-login-button {
+    font-size: 0.95rem;
+    padding: 0.7rem 1.4rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .wm-home-guest-content {
+    padding: 1rem;
+  }
+
+  .wm-home-guest-hero-line {
+    font-size: 3rem;
+  }
+}
+
 .wm-apps {
   display: flex;
   flex-direction: column;
@@ -3457,8 +3569,7 @@ dialog textarea {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 0.25rem;
 }
 
 .wm-identity-alias {
@@ -3474,6 +3585,12 @@ dialog textarea {
   grid-template-columns: minmax(120px, auto) 1fr;
   gap: 0.4rem 1rem;
   margin: 0;
+}
+
+.wm-identity-summary-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
 .wm-identity-summary-list dt {
@@ -3547,6 +3664,78 @@ dialog textarea {
   display: flex;
   justify-content: flex-end;
   margin-top: 0.5rem;
+}
+
+.wm-identity-guest {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.wm-card:not([data-authenticated="true"]) .wm-identity-summary-details {
+  display: none;
+}
+
+.wm-card[data-authenticated="true"] .wm-identity-guest {
+  display: none;
+}
+
+.wm-identity-divider {
+  border: 0;
+  border-top: 1px solid var(--border-primary);
+  margin: 0.5rem 0 0.35rem;
+}
+
+.wm-identity-advanced-header {
+  margin: 0.25rem 0 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.wm-identity-advanced {
+  border: 1px solid var(--border-primary);
+  border-radius: 1rem;
+  background: var(--bg-secondary);
+  margin-top: 1rem;
+  overflow: hidden;
+}
+
+.wm-identity-advanced summary {
+  cursor: pointer;
+  padding: 0.85rem 1.1rem;
+  font-weight: 600;
+  list-style: none;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.wm-identity-advanced summary::-webkit-details-marker {
+  display: none;
+}
+
+.wm-identity-advanced summary::after {
+  content: "▸";
+  margin-left: auto;
+  transition: transform 160ms ease;
+  font-size: 0.9rem;
+  color: var(--text-tertiary);
+}
+
+.wm-identity-advanced[open] summary::after {
+  transform: rotate(90deg);
+}
+
+.wm-identity-advanced-body {
+  padding: 0 1.1rem 1rem;
+}
+
+.wm-identity-advanced-label {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-tertiary);
 }
 
 .wm-identity-collapsible {

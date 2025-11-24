@@ -21,7 +21,8 @@ const FILES_SHOW_HIDDEN_STORAGE_KEY = "wingman-files-show-hidden";
 const SESSION_POLL_INTERVAL_MS = 2000;
 const APPS_POLL_INTERVAL_MS = 5000;
 const APP_LOG_PREVIEW_LINES = 5;
-const WEB_APP_BASE_URL = "https://host.otherstuff.ai";
+const WEB_APP_PORT_PLACEHOLDER = "<port>";
+const DEFAULT_WEB_APP_BASE_URL = "https://host.otherstuff.ai/<port>";
 const TOAST_DEFAULT_DURATION_MS = 2600;
 const DEFAULT_CONNECT_RELAYS = [
   "wss://relay.nsec.app",
@@ -201,6 +202,29 @@ const state = {
   },
 };
 
+const resolveWebAppBase = () => {
+  const candidate = state.config?.hostUrlBase;
+  if (typeof candidate === "string") {
+    const trimmed = candidate.trim();
+    if (trimmed.length > 0) {
+      return trimmed;
+    }
+  }
+  return DEFAULT_WEB_APP_BASE_URL;
+};
+
+const formatWebAppUrl = (port) => {
+  if (typeof port !== "number" || !Number.isFinite(port)) return null;
+  const normalized = Math.trunc(port);
+  if (normalized <= 0) return null;
+  const base = resolveWebAppBase();
+  if (base.includes(WEB_APP_PORT_PLACEHOLDER)) {
+    return base.replaceAll(WEB_APP_PORT_PLACEHOLDER, String(normalized));
+  }
+  const separator = base.endsWith("/") ? "" : "/";
+  return `${base}${separator}${normalized}`;
+};
+
 const ensureToastContainer = () => {
   if (toastContainer && document.body.contains(toastContainer)) {
     return toastContainer;
@@ -336,8 +360,8 @@ const setButtonState = (button, options = {}) => {
 const identityMethodLabels = {
   none: "Not signed in",
   nip07: "Browser extension",
-  local_keys: "Local keys",
-  bunker: "Bunker remote signer",
+  local_keys: "BYO Nsec",
+  bunker: "Remote signer",
 };
 
 const isFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
@@ -607,6 +631,12 @@ const syncIdentityDisplayForEntry = (entry) => {
       delete entry.root.dataset.authenticated;
     }
   }
+  if (entry.details) {
+    entry.details.hidden = !authenticated;
+  }
+  if (entry.registerSection) {
+    entry.registerSection.hidden = authenticated;
+  }
   if (entry.alias) {
     if (!authenticated) {
       entry.alias.textContent = "Not signed in";
@@ -652,6 +682,20 @@ const syncIdentityDisplayForEntry = (entry) => {
       entry.copyButton.disabled = true;
     } else {
       entry.copyButton.disabled = false;
+    }
+  }
+  if (entry.copyNpubButton) {
+    if (!authenticated || !npub) {
+      entry.copyNpubButton.disabled = true;
+    } else {
+      entry.copyNpubButton.disabled = false;
+    }
+  }
+  if (entry.copyNsecButton) {
+    if (!authenticated || method !== "local_keys") {
+      entry.copyNsecButton.disabled = true;
+    } else {
+      entry.copyNsecButton.disabled = false;
     }
   }
   if (entry.logoutButton) {
@@ -898,6 +942,218 @@ const handleIdentityCopy = async (event, entryOverride) => {
   showIdentityCopyFeedback("Copy failed", { error: true, entry });
 };
 
+const handleCopyNostrUserId = async (event, entryOverride) => {
+  if (event?.preventDefault) {
+    event.preventDefault();
+  }
+  const entry = entryOverride ?? (event?.currentTarget ? identityDomEntryByNode.get(event.currentTarget) : null);
+  const npub = state.identity.npub;
+  if (!npub) {
+    if (entry?.copyNpubButton) {
+      resetButtonState(entry.copyNpubButton);
+    }
+    return;
+  }
+  if (entry?.copyNpubButton) {
+    setButtonState(entry.copyNpubButton, { state: "loading", label: "Copying…", disable: true });
+  }
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      await navigator.clipboard.writeText(npub);
+      if (entry?.copyNpubButton) {
+        setButtonState(entry.copyNpubButton, { state: "success", label: "Copied!", disable: false });
+        setTimeout(() => {
+          if (entry?.copyNpubButton) {
+            resetButtonState(entry.copyNpubButton);
+          }
+        }, 2000);
+      }
+      return;
+    }
+  } catch (error) {
+    console.warn("[identity] clipboard write failed", error);
+  }
+
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = npub;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "absolute";
+    textarea.style.left = "-9999px";
+    document.body.append(textarea);
+    textarea.select();
+    const success = document.execCommand("copy");
+    textarea.remove();
+    if (success) {
+      if (entry?.copyNpubButton) {
+        setButtonState(entry.copyNpubButton, { state: "success", label: "Copied!", disable: false });
+        setTimeout(() => {
+          if (entry?.copyNpubButton) {
+            resetButtonState(entry.copyNpubButton);
+          }
+        }, 2000);
+      }
+      return;
+    }
+  } catch (error) {
+    console.warn("[identity] fallback copy failed", error);
+  }
+
+  if (entry?.copyNpubButton) {
+    setButtonState(entry.copyNpubButton, { state: "error", label: "Copy failed", disable: false });
+    setTimeout(() => {
+      if (entry?.copyNpubButton) {
+        resetButtonState(entry.copyNpubButton);
+      }
+    }, 2000);
+  }
+};
+
+const handleCopyNostrPassword = async (event, entryOverride) => {
+  if (event?.preventDefault) {
+    event.preventDefault();
+  }
+  const entry = entryOverride ?? (event?.currentTarget ? identityDomEntryByNode.get(event.currentTarget) : null);
+  const method = state.identity.method;
+  if (method !== "local_keys") {
+    if (entry?.copyNsecButton) {
+      resetButtonState(entry.copyNsecButton);
+    }
+    return;
+  }
+  if (entry?.copyNsecButton) {
+    setButtonState(entry.copyNsecButton, { state: "loading", label: "Retrieving…", disable: true });
+  }
+
+  try {
+    const wingmanIdentity = globalThis.wingmanIdentity;
+    if (!wingmanIdentity) {
+      throw new Error("Identity API unavailable");
+    }
+
+    const session = wingmanIdentity.sessionCache?.load?.();
+    if (!session || !session.encryptedNsec) {
+      throw new Error("No encrypted key found");
+    }
+
+    if (entry?.copyNsecButton) {
+      setButtonState(entry.copyNsecButton, { state: "loading", label: "Decrypting…", disable: true });
+    }
+
+    const decryptPrivateKeyWithPrompt = wingmanIdentity.crypto?.decryptPrivateKeyWithPrompt;
+    if (typeof decryptPrivateKeyWithPrompt !== "function") {
+      throw new Error("Decryption unavailable");
+    }
+
+    const privateKeyBytes = await decryptPrivateKeyWithPrompt(session.encryptedNsec, {
+      reason: "Enter your password to copy your Nostr private key."
+    });
+
+    const nip19Module = await import("/vendor/nostr-tools/index.js");
+    const nsec = nip19Module.nip19.nsecEncode(privateKeyBytes);
+
+    const wipeBytes = (bytes) => {
+      if (!bytes) return;
+      for (let i = 0; i < bytes.length; i += 1) {
+        bytes[i] = 0;
+      }
+    };
+
+    if (entry?.copyNsecButton) {
+      setButtonState(entry.copyNsecButton, { state: "loading", label: "Copying…", disable: true });
+    }
+
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(nsec);
+        if (entry?.copyNsecButton) {
+          setButtonState(entry.copyNsecButton, { state: "success", label: "Copied!", disable: false });
+          setTimeout(() => {
+            if (entry?.copyNsecButton) {
+              resetButtonState(entry.copyNsecButton);
+            }
+          }, 2000);
+        }
+        wipeBytes(privateKeyBytes);
+        return;
+      }
+    } catch (error) {
+      console.warn("[identity] clipboard write failed", error);
+    }
+
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = nsec;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "absolute";
+      textarea.style.left = "-9999px";
+      document.body.append(textarea);
+      textarea.select();
+      const success = document.execCommand("copy");
+      textarea.remove();
+      if (success) {
+        if (entry?.copyNsecButton) {
+          setButtonState(entry.copyNsecButton, { state: "success", label: "Copied!", disable: false });
+          setTimeout(() => {
+            if (entry?.copyNsecButton) {
+              resetButtonState(entry.copyNsecButton);
+            }
+          }, 2000);
+        }
+        wipeBytes(privateKeyBytes);
+        return;
+      }
+    } catch (error) {
+      console.warn("[identity] fallback copy failed", error);
+    }
+
+    wipeBytes(privateKeyBytes);
+
+    if (entry?.copyNsecButton) {
+      setButtonState(entry.copyNsecButton, { state: "error", label: "Copy failed", disable: false });
+      setTimeout(() => {
+        if (entry?.copyNsecButton) {
+          resetButtonState(entry.copyNsecButton);
+        }
+      }, 2000);
+    }
+  } catch (error) {
+    console.error("[identity] failed to copy nsec", error);
+    if (entry?.copyNsecButton) {
+      const errorMessage = error?.name === "PasswordPromptCancelledError" ? "Cancelled" : "Failed";
+      setButtonState(entry.copyNsecButton, { state: "error", label: errorMessage, disable: false });
+      setTimeout(() => {
+        if (entry?.copyNsecButton) {
+          resetButtonState(entry.copyNsecButton);
+        }
+      }, 2000);
+    }
+  }
+};
+
+const handleIdentityRegister = (event, entryOverride) => {
+  if (event?.preventDefault) {
+    event.preventDefault();
+  }
+  const entry = entryOverride ?? (event?.currentTarget ? identityDomEntryByNode.get(event.currentTarget) : null);
+  const root = entry?.root ?? document;
+  const generateBtn = root.querySelector('[data-action="generate-keys"]');
+  if (!generateBtn) {
+    window.alert("Registration is unavailable right now. Try an advanced option below.");
+    return;
+  }
+  if (entry?.registerButton) {
+    setButtonState(entry.registerButton, {
+      state: "loading",
+      label: "Registering…",
+      disable: true,
+      restoreAfterMs: 4000,
+    });
+  }
+  generateBtn.focus?.();
+  generateBtn.click();
+};
+
 const clearCachedIdentity = () => {
   try {
     globalThis.wingmanIdentity?.sessionCache?.clear?.();
@@ -1022,6 +1278,11 @@ const detachIdentityDomEntry = (entry) => {
     identityDomEntryByNode.delete(entry.copyButton);
     resetButtonState(entry.copyButton);
   }
+  if (entry.registerButton && entry.registerHandler) {
+    entry.registerButton.removeEventListener("click", entry.registerHandler);
+    identityDomEntryByNode.delete(entry.registerButton);
+    resetButtonState(entry.registerButton);
+  }
   if (entry.logoutButton && entry.logoutHandler) {
     entry.logoutButton.removeEventListener("click", entry.logoutHandler);
     identityDomEntryByNode.delete(entry.logoutButton);
@@ -1068,13 +1329,21 @@ const registerIdentityDom = (root) => {
     root,
     alias: root.querySelector('[data-role="identity-alias"]'),
     npub: root.querySelector('[data-role="identity-npub"]'),
+    details: root.querySelector('[data-role="identity-details"]'),
+    registerSection: root.querySelector('[data-role="identity-register"]'),
     method: root.querySelector('[data-role="identity-method"]'),
     balance: root.querySelector('[data-role="identity-balance"]'),
     expiry: root.querySelector('[data-role="identity-expiry"]'),
     copyFeedback: root.querySelector('[data-role="identity-copy-feedback"]'),
     copyButton: root.querySelector('[data-action="copy-active-npub"]'),
+    registerButton: root.querySelector('[data-action="identity-register"]'),
+    copyNpubButton: root.querySelector('[data-action="copy-nostr-user-id"]'),
+    copyNsecButton: root.querySelector('[data-action="copy-nostr-password"]'),
     logoutButton: root.querySelector('[data-action="identity-logout"]'),
     copyHandler: null,
+    registerHandler: null,
+    copyNpubHandler: null,
+    copyNsecHandler: null,
     logoutHandler: null,
   };
 
@@ -1085,6 +1354,33 @@ const registerIdentityDom = (root) => {
     };
     entry.copyButton.addEventListener("click", entry.copyHandler);
     identityDomEntryByNode.set(entry.copyButton, entry);
+  }
+
+  if (entry.registerButton) {
+    ensureButtonOriginalLabel(entry.registerButton);
+    entry.registerHandler = (event) => {
+      handleIdentityRegister(event, entry);
+    };
+    entry.registerButton.addEventListener("click", entry.registerHandler);
+    identityDomEntryByNode.set(entry.registerButton, entry);
+  }
+
+  if (entry.copyNpubButton) {
+    ensureButtonOriginalLabel(entry.copyNpubButton);
+    entry.copyNpubHandler = (event) => {
+      void handleCopyNostrUserId(event, entry);
+    };
+    entry.copyNpubButton.addEventListener("click", entry.copyNpubHandler);
+    identityDomEntryByNode.set(entry.copyNpubButton, entry);
+  }
+
+  if (entry.copyNsecButton) {
+    ensureButtonOriginalLabel(entry.copyNsecButton);
+    entry.copyNsecHandler = (event) => {
+      void handleCopyNostrPassword(event, entry);
+    };
+    entry.copyNsecButton.addEventListener("click", entry.copyNsecHandler);
+    identityDomEntryByNode.set(entry.copyNsecButton, entry);
   }
 
   if (entry.logoutButton) {
@@ -5436,10 +5732,9 @@ const fetchApps = async ({ tail = APP_LOG_PREVIEW_LINES } = {}) => {
       const webApp = Boolean(item?.webApp);
       const webAppPort =
         typeof item?.webAppPort === "number" && Number.isFinite(item.webAppPort) ? Math.trunc(item.webAppPort) : null;
-      let webAppUrl =
-        typeof item?.webAppUrl === "string" && item.webAppUrl.length > 0 ? item.webAppUrl : null;
+      let webAppUrl = typeof item?.webAppUrl === "string" && item.webAppUrl.length > 0 ? item.webAppUrl : null;
       if (!webAppUrl && webApp && webAppPort !== null) {
-        webAppUrl = `${WEB_APP_BASE_URL}/${webAppPort}`;
+        webAppUrl = formatWebAppUrl(webAppPort);
       }
       return {
         ...item,
@@ -7003,13 +7298,15 @@ const syncAppWebAppPortNote = ({ enabled, port } = {}) => {
     appWebAppPortNote.append(code);
     const separator = document.createTextNode(" ");
     appWebAppPortNote.append(separator);
-    const href = `${WEB_APP_BASE_URL}/${assignedPort}`;
-    const link = document.createElement("a");
-    link.href = href;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = "Open";
-    appWebAppPortNote.append(link);
+    const href = formatWebAppUrl(assignedPort);
+    if (href) {
+      const link = document.createElement("a");
+      link.href = href;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "Open";
+      appWebAppPortNote.append(link);
+    }
     return;
   }
 
@@ -7880,13 +8177,15 @@ const renderAppCard = (app) => {
       const href =
         typeof app.webAppUrl === "string" && app.webAppUrl.length > 0
           ? app.webAppUrl
-          : `${WEB_APP_BASE_URL}/${app.webAppPort}`;
-      const link = document.createElement("a");
-      link.href = href;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.textContent = "Open";
-      portValue.append(link);
+          : formatWebAppUrl(app.webAppPort);
+      if (href) {
+        const link = document.createElement("a");
+        link.href = href;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "Open";
+        portValue.append(link);
+      }
     } else {
       portValue.textContent = "Assigning…";
     }
@@ -8350,6 +8649,25 @@ const renderIdentitySummary = () => {
   aliasHeading.textContent = "Not signed in";
   summary.append(aliasHeading);
 
+  const guestCta = document.createElement("div");
+  guestCta.className = "wm-identity-guest";
+  guestCta.dataset.role = "identity-register";
+  const registerButton = document.createElement("button");
+  registerButton.type = "button";
+  registerButton.className = "wm-button";
+  registerButton.dataset.action = "identity-register";
+  registerButton.textContent = "Register";
+  const registerHelp = document.createElement("p");
+  registerHelp.className = "wm-dialog-help";
+  registerHelp.dataset.role = "identity-register-help";
+  registerHelp.textContent = "We'll create you a brand new Nostr account and log you in.";
+  guestCta.append(registerButton, registerHelp);
+  summary.append(guestCta);
+
+  const details = document.createElement("div");
+  details.className = "wm-identity-summary-details";
+  details.dataset.role = "identity-details";
+
   const list = document.createElement("dl");
   list.className = "wm-identity-summary-list";
 
@@ -8401,10 +8719,24 @@ const renderIdentitySummary = () => {
     balanceLabel,
     balanceValue,
   );
-  summary.append(list);
-
   const actions = document.createElement("div");
   actions.className = "wm-identity-summary-actions";
+
+  const copyNpubButton = document.createElement("button");
+  copyNpubButton.type = "button";
+  copyNpubButton.className = "wm-button";
+  copyNpubButton.dataset.action = "copy-nostr-user-id";
+  copyNpubButton.textContent = "Copy my Nostr User ID";
+  copyNpubButton.disabled = true;
+  actions.append(copyNpubButton);
+
+  const copyNsecButton = document.createElement("button");
+  copyNsecButton.type = "button";
+  copyNsecButton.className = "wm-button";
+  copyNsecButton.dataset.action = "copy-nostr-password";
+  copyNsecButton.textContent = "Copy my Nostr Password";
+  copyNsecButton.disabled = true;
+  actions.append(copyNsecButton);
 
   const logoutButton = document.createElement("button");
   logoutButton.type = "button";
@@ -8413,7 +8745,8 @@ const renderIdentitySummary = () => {
   logoutButton.textContent = "Logout";
   actions.append(logoutButton);
 
-  summary.append(actions);
+  details.append(list, actions);
+  summary.append(details);
   return summary;
 };
 
@@ -8424,7 +8757,7 @@ const renderLocalIdentityPanel = () => {
   panel.open = false;
 
   const summary = document.createElement("summary");
-  summary.textContent = "Local Keys";
+  summary.textContent = "BYO Nsec";
   panel.append(summary);
 
   const body = document.createElement("div");
@@ -8432,7 +8765,7 @@ const renderLocalIdentityPanel = () => {
 
   const description = document.createElement("p");
   description.className = "wm-identity-panel-description";
-  description.textContent = "Generate or import a keypair stored on this device.";
+  description.textContent = "Bring your own nsec or generate a keypair stored on this device.";
   body.append(description);
 
   const actions = document.createElement("div");
@@ -8636,7 +8969,7 @@ const renderBunkerPanel = () => {
   panel.open = false;
 
   const heading = document.createElement("summary");
-  heading.textContent = "Bunker Remote Signer";
+  heading.textContent = "Remote Signer";
   panel.append(heading);
 
   const body = document.createElement("div");
@@ -8701,10 +9034,28 @@ const renderIdentityPanel = (options = {}) => {
   const summary = renderIdentitySummary();
   card.append(summary);
 
+  const advanced = document.createElement("details");
+  advanced.className = "wm-identity-advanced";
+  advanced.open = false;
+  const advancedSummary = document.createElement("summary");
+  advancedSummary.className = "wm-identity-advanced-summary";
+  advancedSummary.textContent = "Advanced options";
+  advanced.append(advancedSummary);
+
+  const advancedBody = document.createElement("div");
+  advancedBody.className = "wm-identity-advanced-body";
+  const divider = document.createElement("hr");
+  divider.className = "wm-identity-divider";
+  divider.setAttribute("aria-hidden", "true");
+  advancedBody.append(divider);
+
   const panels = document.createElement("div");
   panels.className = "wm-identity-panels";
   panels.append(renderLocalIdentityPanel(), renderNip07Panel(), renderBunkerPanel());
-  card.append(panels);
+  advancedBody.append(panels);
+
+  advanced.append(advancedBody);
+  card.append(advanced);
 
   registerIdentityDom(card);
   bindIdentityFlows(card);
@@ -8858,7 +9209,54 @@ const renderHome = () => {
   wrapper.className = "wm-home";
 
   if (!state.identity.authenticated) {
-    wrapper.append(renderHomeGuestHero(), renderHomeGuestFeatures());
+    wrapper.className = "wm-home wm-home-guest-landing";
+
+    const content = document.createElement("div");
+    content.className = "wm-home-guest-content";
+
+    const heroText = document.createElement("div");
+    heroText.className = "wm-home-guest-hero-text";
+
+    const line1 = document.createElement("div");
+    line1.className = "wm-home-guest-hero-line";
+    line1.textContent = "YOU";
+
+    const line2 = document.createElement("div");
+    line2.className = "wm-home-guest-hero-line";
+    line2.textContent = "CAN JUST";
+
+    const line3 = document.createElement("div");
+    line3.className = "wm-home-guest-hero-line";
+    line3.textContent = "DO THINGS!";
+
+    heroText.append(line1, line2, line3);
+
+    const loginButton = document.createElement("button");
+    loginButton.type = "button";
+    loginButton.className = "wm-home-guest-login-button";
+    loginButton.textContent = "LOG IN";
+    loginButton.addEventListener("click", () => {
+      openIdentityLoginDialog();
+    });
+
+    content.append(heroText, loginButton);
+
+    const footer = document.createElement("footer");
+    footer.className = "wm-home-guest-footer";
+
+    const footerText = document.createElement("p");
+    footerText.textContent = "Manage your own business - ";
+
+    const footerLink = document.createElement("a");
+    footerLink.href = "https://primal.net/pw";
+    footerLink.textContent = "pw21";
+    footerLink.target = "_blank";
+    footerLink.rel = "noopener noreferrer";
+
+    footerText.append(footerLink);
+    footer.append(footerText);
+
+    wrapper.append(content, footer);
     return wrapper;
   }
 
@@ -10414,39 +10812,6 @@ const renderSettings = () => {
   portsContainer.append(portsHeading, portsList, portsNote);
   wingmanCard.append(portsContainer);
   wrapper.append(wingmanCard);
-
-  const sections = [
-    {
-      title: "Agent Settings",
-      description: "Manage default behaviors for the connected agents.",
-    },
-    {
-      title: "Orchestrator Settings",
-      description: "Tune orchestrator automation and preset options.",
-    },
-    {
-      title: "User Settings",
-      description: "Update your personal profile and interface choices.",
-    },
-    {
-      title: "Team Settings",
-      description: "Coordinate shared settings and access for your team.",
-    },
-  ];
-
-  sections.forEach((section) => {
-    const card = document.createElement("section");
-    card.className = "wm-card";
-
-    const heading = document.createElement("h2");
-    heading.textContent = section.title;
-
-    const description = document.createElement("p");
-    description.textContent = section.description;
-
-    card.append(heading, description);
-    wrapper.append(card);
-  });
 
   return wrapper;
 };

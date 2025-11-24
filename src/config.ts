@@ -22,6 +22,7 @@ export interface WingmanConfig {
   agentPortStart: number;
   agentPortMax: number;
   defaultWorkingDirectory: string;
+  hostUrlBase: string;
   connectRelays: string[];
   allowedDirectories: string[];
   allowedOrigins: string;
@@ -37,6 +38,7 @@ const DEFAULT_PORT = 3600;
 const DEFAULT_AGENT_PORTS = 3700;
 const DEFAULT_AGENT_MAX = 10;
 const DEFAULT_DIRECTORY = "~/code";
+const DEFAULT_HOST_URL_BASE = "https://host.otherstuff.ai/<port>";
 const DEFAULT_CONNECT_RELAYS = [
   "wss://relay.nsec.app",
   "wss://nos.lol",
@@ -161,6 +163,7 @@ export const loadConfig = (): WingmanConfig => {
       defaultWorkingDirectory,
     ]),
   );
+  const hostUrlBase = parseEnvironmentString(Bun.env.HOST_URL_BASE, DEFAULT_HOST_URL_BASE);
   const allowedOrigins = Bun.env.AGENTAPI_ALLOWED_ORIGINS ?? DEFAULT_ALLOWED_ORIGINS;
   const allowedHosts = Bun.env.AGENTAPI_ALLOWED_HOSTS ?? DEFAULT_ALLOWED_HOSTS;
   const agentStatusPollIntervalMs = clampPositiveInteger(
@@ -182,6 +185,7 @@ export const loadConfig = (): WingmanConfig => {
     agentPortStart,
     agentPortMax,
     defaultWorkingDirectory,
+    hostUrlBase,
     connectRelays: connectRelays.length > 0 ? connectRelays : DEFAULT_CONNECT_RELAYS,
     allowedDirectories,
     allowedOrigins,
