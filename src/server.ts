@@ -2594,6 +2594,53 @@ const normaliseSessionNameInput = (value: unknown): string | null => {
   return text.length > SESSION_NAME_MAX_LENGTH ? text.slice(0, SESSION_NAME_MAX_LENGTH) : text;
 };
 
+type SessionWorkspaceRequest =
+  | {
+      mode: "worktree";
+      name: string;
+    }
+  | null;
+
+const parseSessionWorkspaceRequest = (input: unknown): SessionWorkspaceRequest => {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const candidate = input as Record<string, unknown>;
+  const mode = normaliseOptionalString(candidate.mode);
+  if (!mode) {
+    return null;
+  }
+  if (mode === "worktree") {
+    const name = normaliseOptionalString(candidate.name);
+    if (!name) {
+      throw new Error("Worktree name is required to create a new worktree");
+    }
+    return { mode: "worktree", name };
+  }
+  throw new Error(`Unsupported workspace mode: ${mode}`);
+};
+
+const resolveSessionWorkingDirectory = async (
+  directoryInput: string | undefined,
+  workspace: SessionWorkspaceRequest,
+): Promise<string> => {
+  const baseDirectory = await ensureDirectory(directoryInput);
+  if (!workspace) {
+    return baseDirectory;
+  }
+
+  if (workspace.mode === "worktree") {
+    const worktree = await createGitWorktree({
+      directory: baseDirectory,
+      branch: workspace.name,
+      startPoint: null,
+    });
+    return worktree.path;
+  }
+
+  return baseDirectory;
+};
+
 const parsePresetInteger = (value: unknown, fallback: number, minimum?: number): number => {
   const numeric =
     typeof value === "number"
@@ -5280,10 +5327,19 @@ const handleApi = async (
         payload && typeof payload === "object" && payload !== null
           ? (payload as Record<string, unknown>).name
           : null;
+      let workspace: SessionWorkspaceRequest = null;
+      try {
+        workspace =
+          payload && typeof payload === "object" && payload !== null
+            ? parseSessionWorkspaceRequest((payload as Record<string, unknown>).workspace)
+            : null;
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
       const sessionName = normaliseSessionNameInput(rawName);
       let workingDirectory: string;
       try {
-        workingDirectory = await ensureDirectory(directoryInput);
+        workingDirectory = await resolveSessionWorkingDirectory(directoryInput, workspace);
       } catch (error) {
         return Response.json({ error: (error as Error).message }, { status: 400 });
       }

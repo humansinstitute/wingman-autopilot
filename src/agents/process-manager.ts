@@ -403,14 +403,44 @@ export class ProcessManager {
     return aliasDirectory;
   }
 
+  private isPortAvailable(port: number): boolean {
+    let server: ReturnType<typeof Bun.listen> | null = null;
+    try {
+      server = Bun.listen({
+        hostname: "127.0.0.1",
+        port,
+        // Dummy socket handlers to satisfy Bun.listen requirements.
+        socket: {
+          data() {},
+          close() {},
+          open() {},
+        },
+      });
+      return true;
+    } catch (error) {
+      const nodeError = error as NodeJS.ErrnoException;
+      if (nodeError?.code !== "EADDRINUSE") {
+        console.warn(`[manager] failed to probe port ${port}: ${nodeError?.message ?? error}`);
+      }
+      return false;
+    } finally {
+      server?.stop(true);
+    }
+  }
+
   private allocatePort(): number {
     const { agentPortStart, agentPortMax } = this.config;
     for (let offset = 0; offset < agentPortMax; offset += 1) {
       const candidate = agentPortStart + offset;
-      if (!this.allocatedPorts.has(candidate)) {
-        this.allocatedPorts.add(candidate);
-        return candidate;
+      if (this.allocatedPorts.has(candidate)) {
+        continue;
       }
+      if (!this.isPortAvailable(candidate)) {
+        console.warn(`[manager] skipping port ${candidate} because it is already in use`);
+        continue;
+      }
+      this.allocatedPorts.add(candidate);
+      return candidate;
     }
     throw new Error("No available agent ports. Increase AGENT_MAX or free sessions.");
   }
