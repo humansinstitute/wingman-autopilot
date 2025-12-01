@@ -1,9 +1,9 @@
-import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, type Dirent } from "node:fs";
-import { chmod, cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { type Dirent } from "node:fs";
+import { cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from "node:path";
-import { arch, homedir, platform } from "node:os";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 import "./logging/server-logger";
@@ -30,6 +30,14 @@ import { PromptQueueStore } from "./storage/prompt-queue-store";
 import { orchestratorPresetStore } from "./storage/orchestrator-presets";
 import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 import { fileWatcherStore } from "./storage/file-watcher-store";
+import {
+  featureFlagStore,
+  isFeatureFlagState,
+  normaliseFeatureFlagKey,
+  resolveFeatureFlagEffectiveState,
+  type FeatureFlagRecord,
+  type FeatureFlagState,
+} from "./storage/feature-flag-store";
 import { FileWatcherRunner } from "./watchers/file-watcher-runner";
 import { identityUserStore, InsufficientBalanceError } from "./storage/identity-user-store";
 import { TodoStore } from "./todos/todo-store";
@@ -72,9 +80,46 @@ import {
 import { createStaticAssetService } from "./server/static-assets";
 import { maybeRefreshSessionCookie } from "./server/session-refresh";
 import { isAgentRuntimeStatus } from "./types/agent-status";
+import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
+import {
+  clearWarmRestartMarker,
+  loadWarmRestartMarker,
+  readStreamToString,
+  rehydrateWarmSessions,
+  runTmuxCommand,
+  warmRestartOutcome,
+  warmRestartState,
+  writeWarmRestartMarker,
+} from "./server/bootstrap/warm-restart";
+import type { WarmRestartMarker } from "./server/bootstrap/warm-restart";
+import { createUploadHelpers } from "./server/uploads/helpers";
+import { resolveAndCacheNostrProfile } from "./server/nostr-profile";
 
 const config = loadConfig();
 const adminNpub = normaliseNpub(Bun.env.ADMIN_NPUB ?? null);
+const ORCHESTRATOR_FLAG_KEY = "orchestrator_visibility";
+const PROJECTS_FLAG_KEY = "projects_visibility";
+const FEATURE_FLAG_DEFAULTS: Array<{
+  key: string;
+  label: string;
+  description: string;
+  state: FeatureFlagState;
+}> = [
+  {
+    key: ORCHESTRATOR_FLAG_KEY,
+    label: "Orchestrator visibility",
+    description: "Controls whether orchestrator presets are visible in the UI.",
+    state: "on_admin",
+  },
+  {
+    key: PROJECTS_FLAG_KEY,
+    label: "Projects visibility",
+    description: "Controls whether the Projects view is visible in the UI.",
+    state: "on_admin",
+  },
+];
+
+featureFlagStore.ensureDefaults(FEATURE_FLAG_DEFAULTS);
 process.env.WINGMAN_PID = process.pid.toString();
 console.log(`[config] tmux session base: ${config.tmuxBase}`);
 const TMUX_SESSION_NAME = config.tmuxBase;
@@ -113,319 +158,14 @@ const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRootDirectory = normalize(join(moduleDirectory, ".."));
 const agentApiBinaryPath = normalize(join(projectRootDirectory, "out", "agentapi"));
 
-const ensureAgentApiBinary = async () => {
-  let binaryExists = false;
-  try {
-    const binaryStats = await stat(agentApiBinaryPath);
-    binaryExists = binaryStats.isFile();
-    if (!binaryExists) {
-      console.warn(`[agentapi] Expected file at ${relative(projectRootDirectory, agentApiBinaryPath)} but found different type.`);
-    }
-  } catch (error) {
-    const nodeError = error as NodeJS.ErrnoException;
-    if (nodeError?.code && nodeError.code !== "ENOENT") {
-      console.warn(`[agentapi] Failed to read existing binary: ${nodeError.message}`);
-    }
-  }
-
-  if (binaryExists) {
-    return;
-  }
-
-  // Detect platform and architecture
-  const currentPlatform = platform();
-  const currentArch = arch();
-
-  console.log(`[agentapi] Detected platform: ${currentPlatform}, architecture: ${currentArch}`);
-
-  // Map platform and arch to download entry description
-  let platformKey: string;
-  if (currentPlatform === "darwin") {
-    platformKey = currentArch === "arm64" ? "Apple ARM" : "Apple Intel";
-  } else if (currentPlatform === "linux") {
-    platformKey = currentArch === "arm64" ? "Liunx ARM" : "Linux Intel";
-  } else {
-    throw new Error(`[agentapi] Unsupported platform: ${currentPlatform}. Only macOS and Linux are supported.`);
-  }
-
-  console.log(`[agentapi] Selecting download for: ${platformKey}`);
-
-  // Read downloads.json
-  const downloadsJsonPath = normalize(join(projectRootDirectory, "downloads.json"));
-  let downloadsData: Array<{ decscription: string; link: string; sha256: string }>;
-  try {
-    const downloadsContent = await readFile(downloadsJsonPath, "utf8");
-    downloadsData = JSON.parse(downloadsContent);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`[agentapi] Failed to read ${relative(projectRootDirectory, downloadsJsonPath)}: ${message}`);
-  }
-
-  // Find matching download
-  const downloadEntry = downloadsData.find((entry) => entry.decscription === platformKey);
-  if (!downloadEntry) {
-    throw new Error(`[agentapi] No download found for ${platformKey} in downloads.json`);
-  }
-
-  console.log(`[agentapi] Downloading from: ${downloadEntry.link}`);
-
-  // Download binary
-  const response = await fetch(downloadEntry.link);
-  if (!response.ok) {
-    throw new Error(`[agentapi] Download failed with status ${response.status} ${response.statusText}`);
-  }
-
-  const data = await response.arrayBuffer();
-
-  // Verify SHA256
-  const hash = createHash("sha256");
-  hash.update(new Uint8Array(data));
-  const computedHash = "sha256:" + hash.digest("hex");
-
-  if (computedHash !== downloadEntry.sha256) {
-    throw new Error(
-      `[agentapi] SHA256 verification failed. Expected: ${downloadEntry.sha256}, Got: ${computedHash}`
-    );
-  }
-
-  console.log(`[agentapi] SHA256 verification passed`);
-
-  // Write and make executable
-  await mkdir(dirname(agentApiBinaryPath), { recursive: true });
-  await Bun.write(agentApiBinaryPath, data);
-  await chmod(agentApiBinaryPath, 0o755);
-
-  console.log(
-    `[agentapi] Successfully downloaded and installed agentapi binary to ${relative(projectRootDirectory, agentApiBinaryPath)}`
-  );
-};
-
-await ensureAgentApiBinary();
+await ensureAgentApiBinary({ agentApiBinaryPath, projectRootDirectory });
 
 const isDeepDivePagePath = (pathname: string) =>
   pathname === "/deep-dive" || pathname.startsWith("/deep-dive/");
 
 ensureDeepDiveProcess(config.port);
 
-const readStreamToString = async (stream: ReadableStream<Uint8Array> | null | undefined) => {
-  if (!stream) return "";
-  return new Response(stream).text();
-};
-
-const runTmuxCommand = async (args: string[]) => {
-  const subprocess = Bun.spawn(["tmux", ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exited] = await Promise.all([
-    readStreamToString(subprocess.stdout),
-    readStreamToString(subprocess.stderr),
-    subprocess.exited,
-  ]);
-
-  return {
-    exitCode: exited ?? 0,
-    stdout: stdout.trim(),
-    stderr: stderr.trim(),
-  };
-};
-
-interface WarmRestartMarker {
-  createdAt: string;
-  preserveTmux: boolean;
-  sessionIds?: string[];
-  reason?: string;
-  version?: number;
-}
-
-const loadWarmRestartMarker = async (filePath: string): Promise<WarmRestartMarker | null> => {
-  try {
-    const raw = await readFile(filePath, "utf8");
-    const parsed = JSON.parse(raw) as WarmRestartMarker;
-    if (!parsed || typeof parsed !== "object") {
-      return null;
-    }
-    return parsed;
-  } catch (error) {
-    const nodeError = error as NodeJS.ErrnoException;
-    if (nodeError?.code === "ENOENT") {
-      return null;
-    }
-    console.warn(`[restart] failed to read marker at ${filePath}: ${nodeError?.message ?? error}`);
-    return null;
-  }
-};
-
-const clearWarmRestartMarker = async (filePath: string) => {
-  try {
-    await rm(filePath, { force: true });
-  } catch (error) {
-    const nodeError = error as NodeJS.ErrnoException;
-    if (nodeError?.code && nodeError.code !== "ENOENT") {
-      console.warn(`[restart] failed to remove marker ${filePath}: ${nodeError.message}`);
-    }
-  }
-};
-
-const writeWarmRestartMarker = async (filePath: string, marker: WarmRestartMarker) => {
-  const payload = JSON.stringify(marker, null, 2);
-  await writeFile(filePath, `${payload}\n`, "utf8");
-};
-
-const warmRestartState = {
-  inProgress: false,
-  marker: null as WarmRestartMarker | null,
-};
-
-interface WarmRestartOutcome {
-  restored: number;
-  failed: string[];
-  timestamp: string;
-}
-
-const warmRestartOutcome: { current: WarmRestartOutcome | null } = { current: null };
 let preserveSessionsOnShutdown = false;
-
-const parseStoredCommand = (value: string | null): string[] | undefined => {
-  if (!value) return undefined;
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? (parsed.every((entry) => typeof entry === "string") ? (parsed as string[]) : undefined) : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
-const isProcessAlive = (pid: number | null | undefined): boolean => {
-  if (!pid || pid <= 0) {
-    return false;
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const nodeError = error as NodeJS.ErrnoException;
-    if (nodeError?.code === "EPERM") {
-      return true;
-    }
-    return false;
-  }
-};
-
-const rehydrateWarmSessions = async (
-  marker: WarmRestartMarker | null,
-  markerPath: string,
-  agentHost: string,
-) => {
-  if (!marker) {
-    return;
-  }
-
-  const targetIds = marker.sessionIds && marker.sessionIds.length > 0 ? new Set(marker.sessionIds) : null;
-  const storedSessions = messageStore.listSessions();
-  let restored = 0;
-  const failed: string[] = [];
-
-  for (const record of storedSessions) {
-    if (targetIds && !targetIds.has(record.id)) {
-      continue;
-    }
-
-    if (!record.id || typeof record.id !== "string") {
-      continue;
-    }
-
-    const agentName = typeof record.agent === "string" ? record.agent.toLowerCase() : "";
-    if (!SUPPORTED_AGENT_TYPES.includes(agentName as AgentType)) {
-      failed.push(record.id);
-      continue;
-    }
-
-    const port = typeof record.port === "number" && Number.isFinite(record.port) ? record.port : null;
-    if (!port) {
-      failed.push(record.id);
-      continue;
-    }
-
-    try {
-      await waitForAgentReadyCore(agentHost, port, agentName, {
-        timeoutMs: 5000,
-        pollIntervalMs: 250,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(`[restart] agent for session ${record.id} not reachable: ${message}`);
-      failed.push(record.id);
-      continue;
-    }
-
-    const storedPid = typeof record.pid === "number" ? record.pid : null;
-    if (storedPid && !isProcessAlive(storedPid)) {
-      console.warn(`[restart] stored pid ${storedPid} for session ${record.id} is not running; skipping rehydration`);
-      failed.push(record.id);
-      continue;
-    }
-
-    const command = parseStoredCommand(record.command);
-    const snapshot = manager.rehydrateSession({
-      id: record.id,
-      agent: agentName as AgentType,
-      port,
-      name: record.name ?? record.id,
-      startedAt: record.startedAt,
-      workingDirectory: record.workingDirectory ?? config.defaultWorkingDirectory,
-      command,
-      tmuxSession: record.tmuxSession ?? undefined,
-      tmuxWindow: record.tmuxWindow ?? undefined,
-      pid: storedPid ?? undefined,
-      logs: undefined,
-      npub: record.npub ?? undefined,
-      agentRuntimeStatus: isAgentRuntimeStatus(record.runtimeStatus) ? record.runtimeStatus : null,
-    });
-
-    if (!snapshot) {
-      failed.push(record.id);
-      continue;
-    }
-
-    ensureUserWorkspace(snapshot.npub ?? null);
-    if (isAgentRuntimeStatus(record.runtimeStatus)) {
-      manager.setAgentRuntimeStatus(snapshot.id, record.runtimeStatus);
-    }
-    messageStore.recordSession({
-      id: snapshot.id,
-      agent: snapshot.agent,
-      startedAt: snapshot.startedAt,
-      name: snapshot.name,
-      npub: snapshot.npub,
-      port: snapshot.port,
-      pid: snapshot.pid,
-      tmuxSession: snapshot.tmuxSession,
-      tmuxWindow: snapshot.tmuxWindow,
-      workingDirectory: snapshot.workingDirectory,
-      command: snapshot.command,
-      runtimeStatus: snapshot.agentRuntimeStatus ?? null,
-    });
-    restored += 1;
-  }
-
-  warmRestartOutcome.current = {
-    restored,
-    failed,
-    timestamp: new Date().toISOString(),
-  };
-  warmRestartState.marker = null;
-
-  if (restored > 0) {
-    console.log(`[restart] rehydrated ${restored} session${restored === 1 ? "" : "s"} from previous run`);
-  }
-  if (failed.length > 0) {
-    console.warn(`[restart] failed to rehydrate ${failed.length} session${failed.length === 1 ? "" : "s"}: ${failed.join(", ")}`);
-  }
-
-  await clearWarmRestartMarker(markerPath);
-};
 
 type CommandResult = {
   exitCode: number;
@@ -940,54 +680,26 @@ const attachmentTtlMs = 24 * 60 * 60 * 1000;
 const imageCleanupIntervalMs = 24 * 60 * 60 * 1000;
 const attachmentCleanupIntervalMs = 24 * 60 * 60 * 1000;
 
+const {
+  ensureUserWorkspace,
+  ensureImageDirectory,
+  ensureAttachmentDirectory,
+  createImageFilename,
+  createAttachmentFilename,
+  buildEscapedImageMarkdown,
+  buildAgentImagePlaceholder,
+  buildAgentFilePlaceholder,
+} = createUploadHelpers({
+  userIdentityRoot,
+  attachmentRoot,
+  imageRoot,
+});
+
 const shouldUseSecureCookies = () => {
   const flag = (Bun.env.IDENTITY_COOKIE_SECURE ?? Bun.env.COOKIE_SECURE ?? "").trim().toLowerCase();
   if (flag === "false" || flag === "0") return false;
   if (flag === "true" || flag === "1") return true;
   return Bun.env.NODE_ENV === "production";
-};
-
-const ensureUserWorkspace = (npub: string | null) => {
-  const segment = deriveNpubSegment(npub);
-  try {
-    mkdirSync(join(userIdentityRoot, segment), { recursive: true });
-  } catch (error) {
-    console.warn(`[uploads] failed to ensure user base for ${segment}: ${(error as Error).message}`);
-  }
-  try {
-    mkdirSync(join(userIdentityRoot, segment, "logs"), { recursive: true });
-  } catch (error) {
-    console.warn(`[uploads] failed to ensure user log directory for ${segment}: ${(error as Error).message}`);
-  }
-  try {
-    mkdirSync(join(attachmentRoot, segment), { recursive: true });
-  } catch (error) {
-    console.warn(`[uploads] failed to ensure attachment root for ${segment}: ${(error as Error).message}`);
-  }
-  try {
-    mkdirSync(join(imageRoot, segment), { recursive: true });
-  } catch (error) {
-    console.warn(`[uploads] failed to ensure image root for ${segment}: ${(error as Error).message}`);
-  }
-  return segment;
-};
-
-const ensureUserUploadDirectory = async (root: string, segment: string, agent: AgentType) => {
-  const userRoot = join(root, segment);
-  await mkdir(userRoot, { recursive: true });
-  const directory = join(userRoot, agent);
-  await mkdir(directory, { recursive: true });
-  return directory;
-};
-
-const ensureImageDirectory = async (agent: AgentType, npub: string | null) => {
-  const segment = ensureUserWorkspace(npub);
-  return await ensureUserUploadDirectory(imageRoot, segment, agent);
-};
-
-const ensureAttachmentDirectory = async (agent: AgentType, npub: string | null) => {
-  const segment = ensureUserWorkspace(npub);
-  return await ensureUserUploadDirectory(attachmentRoot, segment, agent);
 };
 
 const defaultSecurityReviewIntro =
@@ -1043,82 +755,6 @@ orchestratorPresetStore.ensurePreset({
   retryDelayMs: 1000,
 });
 
-const createImageFilename = (name: string, mime: string): string => {
-  const originalExt = extname(name) || "";
-  if (originalExt) {
-    return `${randomUUID()}${originalExt.toLowerCase()}`;
-  }
-  const inferred = (() => {
-    if (!mime) return ".bin";
-    const subtype = mime.split("/")[1];
-    if (!subtype) return ".bin";
-    if (subtype === "jpeg") return ".jpg";
-    if (/^[a-z0-9]+$/i.test(subtype)) {
-      return `.${subtype.toLowerCase()}`;
-    }
-    return ".bin";
-  })();
-  return `${randomUUID()}${inferred}`;
-};
-
-const createAttachmentFilename = (name: string, mime: string): string => {
-  const trimmed = name?.trim() ?? "";
-  const clean = trimmed.replace(/[^\w.-]/g, "_");
-  const candidateExt = extname(clean);
-  if (candidateExt) {
-    return `${randomUUID()}${candidateExt.toLowerCase()}`;
-  }
-
-  const inferred = (() => {
-    if (!mime) return ".bin";
-    const subtype = mime.split("/")[1];
-    if (!subtype) return ".bin";
-    if (/^[a-z0-9]+$/i.test(subtype)) {
-      return `.${subtype.toLowerCase()}`;
-    }
-    return ".bin";
-  })();
-
-  return `${randomUUID()}${inferred}`;
-};
-
-function buildEscapedImageMarkdown(url: string): string {
-  return `\\![uploaded image]\\(${url})`;
-}
-
-const buildAgentImagePlaceholder = (agent: AgentType, absolutePath: string, publicPath: string) => {
-  const fileUrl = pathToFileURL(absolutePath).toString();
-  switch (agent) {
-    case "codex":
-    case "claude":
-    case "gemini":
-      return buildEscapedImageMarkdown(fileUrl);
-    case "goose":
-      return buildEscapedImageMarkdown(publicPath);
-    default:
-      return publicPath;
-  }
-};
-
-const buildAgentFilePlaceholder = (
-  agent: AgentType,
-  absolutePath: string,
-  publicPath: string,
-  originalName: string | undefined,
-) => {
-  const label = originalName && originalName.trim().length > 0 ? originalName.trim() : "uploaded file";
-  const fileUrl = pathToFileURL(absolutePath).toString();
-  switch (agent) {
-    case "codex":
-    case "claude":
-    case "gemini":
-      return `[${label}](${fileUrl})`;
-    case "goose":
-      return `[${label}](${publicPath})`;
-    default:
-      return `${label}: ${publicPath}`;
-  }
-};
 const serializeSession = (session: SessionSnapshot) => ({
   ...session,
   agentRuntimeStatus: session.agentRuntimeStatus ?? null,
@@ -1269,6 +905,8 @@ type AdminUserRecord = {
   npub: string;
   normalizedNpub: string;
   alias: string;
+  nickname: string | null;
+  pictureUrl: string | null;
   onboarded: boolean;
   onboardedAt: string | null;
   roles: string[];
@@ -1312,6 +950,8 @@ const buildAdminUserList = (): AdminUserRecord[] => {
       npub: record.npub,
       normalizedNpub: record.normalizedNpub,
       alias: record.alias,
+      nickname: record.nickname ?? null,
+      pictureUrl: record.pictureUrl ?? null,
       onboarded: record.roles.includes("onboard"),
       onboardedAt: record.onboardedAt,
       roles: [...record.roles],
@@ -1323,7 +963,14 @@ const buildAdminUserList = (): AdminUserRecord[] => {
     };
   });
 
-  users.sort((a, b) => a.alias.localeCompare(b.alias));
+  users.sort((a, b) => {
+    const left = (a.nickname || a.alias || a.npub || "").toLowerCase();
+    const right = (b.nickname || b.alias || b.npub || "").toLowerCase();
+    if (left === right) {
+      return (a.alias || "").localeCompare(b.alias || "");
+    }
+    return left.localeCompare(right);
+  });
   return users;
 };
 
@@ -3018,7 +2665,16 @@ const isAgentType = (value: string): value is AgentType => {
 const agentHosts = parseAllowedHosts(config.allowedHosts);
 const agentHost = normaliseHostForUrl(pickAgentHost(agentHosts));
 
-await rehydrateWarmSessions(warmRestartMarker, restartMarkerPath, agentHost);
+await rehydrateWarmSessions(
+  warmRestartMarker,
+  restartMarkerPath,
+  agentHost,
+  manager,
+  ensureUserWorkspace,
+  config.defaultWorkingDirectory,
+  messageStore,
+  SUPPORTED_AGENT_TYPES,
+);
 
 const syncSessionMessages = async (sessionId: string, force = false) => {
   if (!force && messageStore.hasMessages(sessionId)) {
@@ -3704,6 +3360,7 @@ const requireAdminAccess = (): AccessRule => {
 registerAccessRule(AccessActions.DeepDiveAccess, requireAdminAccess());
 registerAccessRule(AccessActions.SystemManage, requireAdminAccess());
 registerAccessRule(AccessActions.AdminUsers, requireAdminAccess());
+registerAccessRule(AccessActions.FeatureFlagsManage, requireAdminAccess());
 
 const accessDeniedJson = (decision: AccessDecision): Response => {
   const headers = new Headers({
@@ -3743,6 +3400,32 @@ const ensurePageAccess = async (
   return null;
 };
 
+const serialiseFeatureFlag = (flag: FeatureFlagRecord, viewerIsAdmin: boolean) => ({
+  key: flag.key,
+  label: flag.label,
+  description: flag.description,
+  state: flag.state,
+  effectiveState: resolveFeatureFlagEffectiveState(flag.state, viewerIsAdmin),
+  updatedAt: flag.updatedAt,
+  updatedBy: flag.updatedBy ?? null,
+});
+
+const serialiseFeatureFlagsForViewer = (viewerIsAdmin: boolean) => {
+  return featureFlagStore.listFlags().map((flag) => serialiseFeatureFlag(flag, viewerIsAdmin));
+};
+
+const resolveFeatureFlagStateForViewer = (
+  key: string,
+  viewerIsAdmin: boolean,
+  fallbackState: FeatureFlagState = "off",
+) => {
+  const normalizedKey = normaliseFeatureFlagKey(key);
+  const flag = normalizedKey ? featureFlagStore.getFlag(normalizedKey) : null;
+  const baseState = flag?.state ?? fallbackState;
+  const effectiveState = resolveFeatureFlagEffectiveState(baseState, viewerIsAdmin);
+  return { flag, state: baseState, effectiveState };
+};
+
 const handleApi = async (
   request: Request,
   url: URL,
@@ -3751,6 +3434,11 @@ const handleApi = async (
 ): Promise<Response> => {
   const pathname = url.pathname;
   const workspaceScope = resolveWorkspace(authContext);
+  const viewerIsAdmin = workspaceScope.isAdmin;
+  const orchestratorFlag = resolveFeatureFlagStateForViewer(ORCHESTRATOR_FLAG_KEY, viewerIsAdmin, "on_admin");
+  const orchestratorEnabled = orchestratorFlag.effectiveState === "on";
+  const projectsFlag = resolveFeatureFlagStateForViewer(PROJECTS_FLAG_KEY, viewerIsAdmin, "on_admin");
+  const projectsEnabled = projectsFlag.effectiveState === "on";
   const viewerNpub = normaliseNpub(authContext.npub ?? null);
   const canAccessApp = (app: AppRecord): boolean => {
     if (workspaceScope.isAdmin) {
@@ -3769,6 +3457,9 @@ const handleApi = async (
     const denied = await ensureApiAccess(AccessActions.ProjectsManage, request, url, authContext);
     if (denied) {
       return denied;
+    }
+    if (!projectsEnabled) {
+      return Response.json({ error: "projects-disabled" }, { status: 403 });
     }
     const response = await projectApiHandler(request, url, method, authContext, {
       isAdmin: workspaceScope.isAdmin,
@@ -3962,6 +3653,41 @@ const handleApi = async (
     return new Response(null, { status: 204, headers });
   }
 
+  if (pathname === "/api/identity/profile" && method === "GET") {
+    const denied = await ensureApiAccess(AccessActions.UiRestricted, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    const viewerNormalized = getViewerNormalizedNpub(authContext);
+    const viewerIsAdmin = Boolean(adminNpub && viewerNormalized && adminNpub === viewerNormalized);
+    const targetInput = normaliseOptionalString(url.searchParams.get("npub")) ?? authContext.npub;
+    const refresh = url.searchParams.get("refresh") === "1" || url.searchParams.get("force") === "1";
+    if (!targetInput) {
+      return Response.json({ error: "npub is required" }, { status: 400 });
+    }
+    const normalizedTarget = normaliseNpub(targetInput);
+    if (!normalizedTarget) {
+      return Response.json({ error: "Invalid npub" }, { status: 400 });
+    }
+    if (!viewerIsAdmin && normalizedTarget !== viewerNormalized) {
+      return Response.json({ error: "forbidden" }, { status: 403 });
+    }
+    try {
+      const profile = await resolveAndCacheNostrProfile(targetInput, {
+        force: refresh,
+        relays: config.connectRelays,
+      });
+      const record = identityUserStore.getByNormalized(normalizedTarget);
+      return Response.json({
+        npub: record?.npub ?? targetInput,
+        pictureUrl: profile.pictureUrl ?? record?.pictureUrl ?? null,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
   if (pathname === "/api/admin/users" && method === "GET") {
     const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
     if (denied) {
@@ -4001,6 +3727,115 @@ const handleApi = async (
         ? users.find((entry) => entry.normalizedNpub === normalizedNpub) ?? null
         : null;
       return Response.json({ user, users });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/admin/users" && method === "DELETE") {
+    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    const npubInput = normaliseOptionalString((payload as Record<string, unknown>).npub);
+    if (!npubInput) {
+      return Response.json({ error: "npub is required" }, { status: 400 });
+    }
+    try {
+      const deleted = identityUserStore.deleteUser(npubInput);
+      if (!deleted) {
+        return Response.json({ error: "User not found" }, { status: 404 });
+      }
+      const users = buildAdminUserList();
+      return Response.json({ users });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/admin/users/nickname" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    const record = payload as Record<string, unknown>;
+    const npubInput = normaliseOptionalString(record.npub);
+    if (!npubInput) {
+      return Response.json({ error: "npub is required" }, { status: 400 });
+    }
+    const normalized = normaliseNpub(npubInput);
+    if (!normalized) {
+      return Response.json({ error: "Invalid npub" }, { status: 400 });
+    }
+    const nicknameValue = record.nickname;
+    const nickname =
+      nicknameValue === null
+        ? null
+        : typeof nicknameValue === "string"
+          ? nicknameValue
+          : typeof nicknameValue === "undefined"
+            ? ""
+            : String(nicknameValue);
+
+    try {
+      const updatedRecord = identityUserStore.setNickname(npubInput, nickname);
+      const users = buildAdminUserList();
+      const user = users.find((entry) => entry.normalizedNpub === updatedRecord.normalizedNpub) ?? null;
+      return Response.json({ user, users }, { status: 200 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/admin/users/profile" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    const npubInput = normaliseOptionalString((payload as Record<string, unknown>).npub);
+    const force = (payload as Record<string, unknown>).refresh === true;
+    if (!npubInput) {
+      return Response.json({ error: "npub is required" }, { status: 400 });
+    }
+    const normalized = normaliseNpub(npubInput);
+    if (!normalized) {
+      return Response.json({ error: "Invalid npub" }, { status: 400 });
+    }
+    try {
+      await resolveAndCacheNostrProfile(npubInput, { force, relays: config.connectRelays });
+      const users = buildAdminUserList();
+      const user = users.find((entry) => entry.normalizedNpub === normalized) ?? null;
+      return Response.json({ user, users, pictureUrl: user?.pictureUrl ?? null }, { status: 200 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Response.json({ error: message }, { status: 400 });
@@ -4082,6 +3917,80 @@ const handleApi = async (
         },
         { status: 200 },
       );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/admin/ports" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    const adminNormalizedNpub = authContext.npub ? normaliseNpub(authContext.npub) : null;
+    if (!adminNormalizedNpub) {
+      return Response.json({ error: "Admin npub not found" }, { status: 400 });
+    }
+
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      payload = {};
+    }
+
+    const record = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+    const countInput = record.count;
+    const count = typeof countInput === "number" && countInput > 0 ? Math.trunc(countInput) : 3;
+
+    try {
+      const updatedRecord = identityUserStore.addPortsToUser(adminNormalizedNpub, count);
+      const users = buildAdminUserList();
+      const user = users.find((entry) => entry.normalizedNpub === updatedRecord.normalizedNpub) ?? null;
+      return Response.json({ user, users, newPorts: updatedRecord.ports.slice(-count) }, { status: 200 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/admin/users/ports" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    const record = payload as Record<string, unknown>;
+    const npubInput = normaliseOptionalString(record.npub);
+    const countInput = record.count;
+
+    if (!npubInput) {
+      return Response.json({ error: "npub is required" }, { status: 400 });
+    }
+
+    const normalized = normaliseNpub(npubInput);
+    if (!normalized) {
+      return Response.json({ error: "Invalid npub" }, { status: 400 });
+    }
+
+    const count = typeof countInput === "number" && countInput > 0 ? Math.trunc(countInput) : 3;
+
+    try {
+      const updatedRecord = identityUserStore.addPortsToUser(npubInput, count);
+      const users = buildAdminUserList();
+      const user = users.find((entry) => entry.normalizedNpub === updatedRecord.normalizedNpub) ?? null;
+      return Response.json({ user, users, newPorts: updatedRecord.ports.slice(-count) }, { status: 200 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Response.json({ error: message }, { status: 400 });
@@ -4510,10 +4419,141 @@ const handleApi = async (
         id: key,
         label: definition.label,
       })),
+      featureFlags: serialiseFeatureFlagsForViewer(workspaceScope.isAdmin),
     });
   }
 
+  if (pathname === "/api/feature-flags" && method === "GET") {
+    const flags = serialiseFeatureFlagsForViewer(viewerIsAdmin);
+    return Response.json({ flags });
+  }
+
+  if (pathname === "/api/feature-flags" && method === "POST") {
+    const denied = await ensureApiAccess(AccessActions.FeatureFlagsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    const record = payload as Record<string, unknown>;
+    const key = normaliseFeatureFlagKey(typeof record.key === "string" ? record.key : "");
+    const label = typeof record.label === "string" ? record.label.trim() : "";
+    const description =
+      typeof record.description === "string"
+        ? record.description.trim()
+        : record.description === null
+          ? null
+          : undefined;
+    const stateInput = typeof record.state === "string" ? record.state.trim().toLowerCase() : "";
+    const state: FeatureFlagState = isFeatureFlagState(stateInput) ? stateInput : "off";
+
+    if (!key) {
+      return Response.json({ error: "Feature flag key is required" }, { status: 400 });
+    }
+    if (!label) {
+      return Response.json({ error: "Feature flag label is required" }, { status: 400 });
+    }
+
+    try {
+      const created = featureFlagStore.createFlag({
+        key,
+        label,
+        description: description === undefined ? null : description,
+        state,
+        updatedBy: normaliseNpub(authContext.npub ?? null),
+      });
+      const flags = serialiseFeatureFlagsForViewer(viewerIsAdmin);
+      return Response.json({ flag: serialiseFeatureFlag(created, viewerIsAdmin), flags }, { status: 201 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
+  if (pathname.startsWith("/api/feature-flags/") && method === "PATCH") {
+    const denied = await ensureApiAccess(AccessActions.FeatureFlagsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+
+    const parts = pathname.split("/").filter(Boolean);
+    if (parts.length !== 3 || !parts[2]) {
+      return Response.json({ error: "Feature flag key is required" }, { status: 400 });
+    }
+    const key = normaliseFeatureFlagKey(parts[2]);
+    if (!key) {
+      return Response.json({ error: "Invalid feature flag key" }, { status: 400 });
+    }
+
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+
+    const record = payload as Record<string, unknown>;
+    const updates: Record<string, unknown> = {};
+    if (Object.prototype.hasOwnProperty.call(record, "label")) {
+      const label = typeof record.label === "string" ? record.label.trim() : "";
+      if (!label) {
+        return Response.json({ error: "Feature flag label is required" }, { status: 400 });
+      }
+      updates.label = label;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(record, "description")) {
+      const description =
+        typeof record.description === "string"
+          ? record.description.trim()
+          : record.description === null
+            ? null
+            : undefined;
+      updates.description = description;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(record, "state")) {
+      const stateInput = typeof record.state === "string" ? record.state.trim().toLowerCase() : "";
+      if (!isFeatureFlagState(stateInput)) {
+        return Response.json({ error: "Invalid feature flag state" }, { status: 400 });
+      }
+      updates.state = stateInput;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return Response.json({ error: "No updates provided" }, { status: 400 });
+    }
+
+    try {
+      const updated = featureFlagStore.updateFlag(key, {
+        label: updates.label as string | undefined,
+        description: updates.description as string | null | undefined,
+        state: updates.state as FeatureFlagState | undefined,
+        updatedBy: normaliseNpub(authContext.npub ?? null),
+      });
+      const flags = serialiseFeatureFlagsForViewer(viewerIsAdmin);
+      return Response.json({ flag: serialiseFeatureFlag(updated, viewerIsAdmin), flags });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
   if (pathname === "/api/orchestrators" && method === "GET") {
+    if (!orchestratorEnabled) {
+      return Response.json({ error: "orchestrator-disabled" }, { status: 403 });
+    }
     const presets = orchestratorPresetStore.listPresets();
     return Response.json({ presets });
   }
@@ -4883,6 +4923,9 @@ const handleApi = async (
   }
 
   if (pathname === "/api/orchestrators/directories" && method === "GET") {
+    if (!orchestratorEnabled) {
+      return Response.json({ error: "orchestrator-disabled" }, { status: 403 });
+    }
     const targetParam = url.searchParams.get("target") ?? "";
     const target = targetParam === "templates" ? "templates" : targetParam === "active" ? "active" : null;
     if (!target) {
@@ -4898,6 +4941,9 @@ const handleApi = async (
   }
 
   if (pathname === "/api/orchestrators" && method === "POST") {
+    if (!orchestratorEnabled) {
+      return Response.json({ error: "orchestrator-disabled" }, { status: 403 });
+    }
     let payload: unknown;
     try {
       payload = await request.json();
@@ -5249,6 +5295,9 @@ const handleApi = async (
   }
 
   if (pathname.startsWith("/api/orchestrators/")) {
+    if (!orchestratorEnabled) {
+      return Response.json({ error: "orchestrator-disabled" }, { status: 403 });
+    }
     const parts = pathname.split("/");
     const id = parts[3];
     if (!id) {

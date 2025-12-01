@@ -236,6 +236,7 @@ const BUNKER_SIGNING_PERMISSIONS = [
   ...BUNKER_PERMISSION_FEATURES,
   ...NostrConnectSigner.buildSigningPermissions(BUNKER_PERMISSION_KINDS),
 ];
+let bunkerPatchedForSecretless = false;
 let bunkerRelayPool = null;
 let bunkerRestorePromise = null;
 let activeBunkerSigner = null;
@@ -277,6 +278,30 @@ const getRelayPool = () => {
   }
   return bunkerRelayPool;
 };
+
+// Some bunkers deliberately omit a secret and rely on manual approval. The
+// applesauce signer always sends an empty string when the secret is missing,
+// which can be treated by some providers as an incorrect secret instead of
+// "no secret". Normalize that case to `null` so secretless bunkers are
+// recognized correctly.
+const ensureSecretlessBunkerSupport = () => {
+  if (bunkerPatchedForSecretless) return;
+  const originalMakeRequest = NostrConnectSigner.prototype.makeRequest;
+  if (typeof originalMakeRequest !== "function") return;
+  NostrConnectSigner.prototype.makeRequest = function patchedMakeRequest(method, params, kind) {
+    if (method === "connect" && Array.isArray(params) && params.length >= 2) {
+      const nextParams = [...params];
+      if (nextParams[1] === "" || typeof nextParams[1] === "undefined") {
+        nextParams[1] = null;
+      }
+      return originalMakeRequest.call(this, method, nextParams, kind);
+    }
+    return originalMakeRequest.call(this, method, params, kind);
+  };
+  bunkerPatchedForSecretless = true;
+};
+
+ensureSecretlessBunkerSupport();
 
 const loadBunkerSession = () => {
   if (typeof window === "undefined" || !window.localStorage) return null;
@@ -1537,6 +1562,7 @@ const initBunkerPanel = (root, context) => {
       return;
     }
     const normalized = normalizeBunkerSecretParam(trimmed);
+    let parsed = null;
     if (textarea) {
       textarea.value = trimmed;
     }
@@ -1545,7 +1571,7 @@ const initBunkerPanel = (root, context) => {
     enableInputs(false);
     try {
       console.log("[identity] connecting with normalized URI:", normalized.replace(/secret=([^&#]*)/i, 'secret=[REDACTED]'));
-      const parsed = NostrConnectSigner.parseBunkerURI(normalized);
+      parsed = NostrConnectSigner.parseBunkerURI(normalized);
       console.log("[identity] parsed bunker URI:", { remote: parsed.remote, relays: parsed.relays, hasSecret: !!parsed.secret });
       await disconnectBunkerSigner();
       const signer = await NostrConnectSigner.fromBunkerURI(normalized, {
@@ -1575,13 +1601,16 @@ const initBunkerPanel = (root, context) => {
     } catch (error) {
       await disconnectBunkerSigner();
       console.error("[identity] bunker connection failed", error instanceof Error ? error.message : error);
+      const hadSecret = Boolean(parsed?.secret && `${parsed.secret}`.length > 0);
       let message = error instanceof Error ? error.message : "Failed to connect to remote signer";
       
       // Provide more specific error messages for common issues
       if (message.includes("Invalid connection secret")) {
-        message = "The secret in your bunker URI is incorrect. Please check the URI and try again.";
+        message = hadSecret
+          ? "The secret in your bunker URI is incorrect. Please check the URI and try again."
+          : "This bunker expects a secret. Regenerate the URI with a secret or enable secretless connections on the signer.";
       } else if (message.includes("missing secret")) {
-        message = "Your bunker URI is missing a secret parameter. Please use a complete bunker URI.";
+        message = "This bunker URI does not include a secret. Wingman supports secretless bunkers; ensure your signer is configured for manual approval.";
       } else if (message.includes("Invalid bunker URI")) {
         message = "The bunker URI format is invalid. Please check the URI starts with 'bunker://' and has all required parameters.";
       }

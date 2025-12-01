@@ -25,6 +25,8 @@ export interface IdentityUserRecord {
   npub: string;
   normalizedNpub: string;
   alias: string;
+  nickname: string | null;
+  pictureUrl: string | null;
   roles: string[];
   onboardedAt: string | null;
   lastSeenAt: string | null;
@@ -38,6 +40,8 @@ type IdentityUserRow = {
   normalizedNpub: string;
   npub: string;
   alias: string;
+  nickname: string | null;
+  pictureUrl: string | null;
   roles: string;
   onboardedAt: string | null;
   lastSeenAt: string | null;
@@ -95,6 +99,8 @@ class IdentityUserStore {
     this.initialise();
     this.ensurePortsColumn();
     this.ensureBalanceColumn();
+    this.ensureNicknameColumn();
+    this.ensurePictureColumn();
     this.synchronisePortAssignments();
   }
 
@@ -104,6 +110,8 @@ class IdentityUserStore {
         normalized_npub TEXT PRIMARY KEY,
         npub TEXT NOT NULL,
         alias TEXT NOT NULL,
+        nickname TEXT,
+        picture_url TEXT,
         roles TEXT NOT NULL DEFAULT '[]',
         onboarded_at TEXT,
         last_seen_at TEXT,
@@ -130,6 +138,22 @@ class IdentityUserStore {
       this.db.exec(`ALTER TABLE identity_users ADD COLUMN balance INTEGER NOT NULL DEFAULT 0`);
     } else {
       this.db.exec(`UPDATE identity_users SET balance = 0 WHERE balance IS NULL`);
+    }
+  }
+
+  private ensureNicknameColumn() {
+    const columns = this.db.query<{ name: string }>("PRAGMA table_info(identity_users)").all();
+    const hasNicknameColumn = columns.some((column) => column?.name === "nickname");
+    if (!hasNicknameColumn) {
+      this.db.exec(`ALTER TABLE identity_users ADD COLUMN nickname TEXT`);
+    }
+  }
+
+  private ensurePictureColumn() {
+    const columns = this.db.query<{ name: string }>("PRAGMA table_info(identity_users)").all();
+    const hasPictureColumn = columns.some((column) => column?.name === "picture_url");
+    if (!hasPictureColumn) {
+      this.db.exec(`ALTER TABLE identity_users ADD COLUMN picture_url TEXT`);
     }
   }
 
@@ -215,12 +239,49 @@ class IdentityUserStore {
     return [start, start + 1, start + 2];
   }
 
+  private allocateExtraPorts(count: number): number[] {
+    if (!Number.isInteger(this.nextPort) || this.nextPort < PORT_START) {
+      this.nextPort = this.calculateNextPort();
+    }
+    const ports: number[] = [];
+    for (let i = 0; i < count; i++) {
+      ports.push(this.nextPort + i);
+    }
+    this.nextPort += count;
+    return ports;
+  }
+
+  addPortsToUser(npub: string, count: number = PORTS_PER_USER): IdentityUserRecord {
+    const normalized = normaliseNpub(npub);
+    if (!normalized) {
+      throw new Error("A valid npub is required");
+    }
+    const record = this.touch(npub);
+    const portCount = Math.max(1, Math.min(100, Math.trunc(Number.isFinite(count) ? count : PORTS_PER_USER)));
+
+    const currentPorts = record.ports;
+    const newPorts = this.allocateExtraPorts(portCount);
+    const allPorts = [...currentPorts, ...newPorts].sort((a, b) => a - b);
+
+    const now = new Date().toISOString();
+    const update = this.db.prepare(
+      `UPDATE identity_users
+         SET ports = ?2,
+             updated_at = ?3
+       WHERE normalized_npub = ?1`,
+    );
+    update.run(normalized, JSON.stringify(allPorts), now);
+    return this.getOrThrow(normalized);
+  }
+
   listUsers(): IdentityUserRecord[] {
     const statement = this.db.prepare<IdentityUserRow, IdentityUserRow>(
       `SELECT
          normalized_npub as normalizedNpub,
          npub,
          alias,
+         nickname,
+         picture_url as pictureUrl,
          roles,
          onboarded_at as onboardedAt,
          last_seen_at as lastSeenAt,
@@ -290,6 +351,8 @@ class IdentityUserStore {
          normalized_npub,
          npub,
          alias,
+         nickname,
+         picture_url,
          roles,
          onboarded_at,
          last_seen_at,
@@ -297,7 +360,7 @@ class IdentityUserStore {
          updated_at,
          ports,
          balance
-       ) VALUES (?1, ?2, ?3, '[]', NULL, ?4, ?5, ?5, ?6, ?7)`,
+       ) VALUES (?1, ?2, ?3, NULL, NULL, '[]', NULL, ?4, ?5, ?5, ?6, ?7)`,
     );
     insert.run(normalized, npub, alias, lastSeenIso, now, JSON.stringify(ports), 0);
     return this.getOrThrow(normalized);
@@ -346,6 +409,62 @@ class IdentityUserStore {
     );
     const now = new Date().toISOString();
     update.run(normalized, desired, now);
+    return this.getOrThrow(normalized);
+  }
+
+  setNickname(npub: string, nickname: string | null | undefined): IdentityUserRecord {
+    const normalized = normaliseNpub(npub);
+    if (!normalized) {
+      throw new Error("A valid npub is required");
+    }
+    const record = this.touch(npub);
+    const sanitized = typeof nickname === "string" ? nickname.trim() : "";
+    const nextNickname = sanitized.length > 0 ? sanitized.slice(0, 160) : null;
+    if (record.nickname === nextNickname) {
+      return record;
+    }
+
+    const update = this.db.prepare(
+      `UPDATE identity_users
+         SET nickname = ?2,
+             updated_at = ?3
+       WHERE normalized_npub = ?1`,
+    );
+    const now = new Date().toISOString();
+    update.run(normalized, nextNickname, now);
+    return this.getOrThrow(normalized);
+  }
+
+  setPictureUrl(npub: string, pictureUrl: string | null | undefined): IdentityUserRecord {
+    const normalized = normaliseNpub(npub);
+    if (!normalized) {
+      throw new Error("A valid npub is required");
+    }
+    const record = this.touch(npub);
+    const sanitized = typeof pictureUrl === "string" ? pictureUrl.trim() : "";
+    let nextUrl: string | null = null;
+    if (sanitized.length > 0) {
+      try {
+        const parsed = new URL(sanitized);
+        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+          nextUrl = parsed.toString();
+        }
+      } catch {
+        nextUrl = null;
+      }
+    }
+    if (record.pictureUrl === nextUrl) {
+      return record;
+    }
+
+    const update = this.db.prepare(
+      `UPDATE identity_users
+         SET picture_url = ?2,
+             updated_at = ?3
+       WHERE normalized_npub = ?1`,
+    );
+    const now = new Date().toISOString();
+    update.run(normalized, nextUrl, now);
     return this.getOrThrow(normalized);
   }
 
@@ -399,12 +518,32 @@ class IdentityUserStore {
     return this.getOrThrow(normalized).balance;
   }
 
+  deleteUser(npub: string): boolean {
+    const normalized = normaliseNpub(npub);
+    if (!normalized) {
+      throw new Error("A valid npub is required");
+    }
+
+    const deleteStmt = this.db.prepare(
+      `DELETE FROM identity_users WHERE normalized_npub = ?1`,
+    );
+    const result = deleteStmt.run(normalized);
+
+    if (result && result.changes > 0) {
+      this.synchronisePortAssignments();
+      return true;
+    }
+    return false;
+  }
+
   private get(normalizedNpub: string): IdentityUserRecord | null {
     const statement = this.db.prepare<IdentityUserRow, IdentityUserRow>(
       `SELECT
          normalized_npub as normalizedNpub,
          npub,
          alias,
+         nickname,
+         picture_url as pictureUrl,
          roles,
          onboarded_at as onboardedAt,
          last_seen_at as lastSeenAt,
@@ -433,6 +572,8 @@ class IdentityUserStore {
       npub: row.npub,
       normalizedNpub: row.normalizedNpub,
       alias: row.alias,
+      nickname: row.nickname && row.nickname.trim().length > 0 ? row.nickname.trim() : null,
+      pictureUrl: row.pictureUrl && row.pictureUrl.trim().length > 0 ? row.pictureUrl.trim() : null,
       roles: Array.from(new Set(parseRoles(row.roles))).sort(),
       onboardedAt: row.onboardedAt ?? null,
       lastSeenAt: row.lastSeenAt ?? null,

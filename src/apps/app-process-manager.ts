@@ -443,10 +443,23 @@ export class AppProcessManager {
     const path = this.logPath(app.id);
     await appendFile(path, "", "utf8");
     const escaped = path.replace(/"/g, '\\"');
-    const pipe = await this.runTmux(["pipe-pane", "-t", this.getTmuxTarget(app), "-o", `cat >> "${escaped}"`]);
-    if (pipe.exitCode !== 0) {
-      throw new Error(pipe.stderr || pipe.stdout || `Failed to attach log pipe for ${this.getTmuxTarget(app)}`);
+    const target = this.getTmuxTarget(app);
+    const args = ["pipe-pane", "-t", target, "-o", `cat >> "${escaped}"`];
+    const pipe = await this.runTmux(args);
+    if (pipe.exitCode === 0) {
+      return;
     }
+    const output = pipe.stderr || pipe.stdout || "";
+    if (this.isMissingWindowMessage(output)) {
+      await this.ensureSession(app);
+      const retry = await this.runTmux(args);
+      if (retry.exitCode === 0) {
+        return;
+      }
+      const retryOutput = retry.stderr || retry.stdout || "";
+      throw new Error(retryOutput || `Failed to attach log pipe for ${target}`);
+    }
+    throw new Error(output || `Failed to attach log pipe for ${target}`);
   }
 
   private async sendToSession(app: AppRecord, command: string): Promise<CommandResult> {
@@ -454,7 +467,18 @@ export class AppProcessManager {
     if (!prompt) {
       return { exitCode: 0, stdout: "", stderr: "" };
     }
-    return this.runTmux(["send-keys", "-t", this.getTmuxTarget(app), prompt, "Enter"]);
+    const target = this.getTmuxTarget(app);
+    const args = ["send-keys", "-t", target, prompt, "Enter"];
+    let result = await this.runTmux(args);
+    if (result.exitCode !== 0) {
+      const output = result.stderr || result.stdout || "";
+      if (this.isMissingWindowMessage(output)) {
+        await this.ensureSession(app);
+        await this.attachLogPipe(app);
+        result = await this.runTmux(args);
+      }
+    }
+    return result;
   }
 
   private async runTmux(args: string[]): Promise<CommandResult> {

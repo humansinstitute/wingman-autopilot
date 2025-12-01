@@ -366,6 +366,45 @@
         </menu>
       </form>
     </dialog>
+    <dialog id="feature-flags-dialog" class="wm-dialog">
+      <form method="dialog" class="wm-dialog__form">
+        <header class="wm-dialog__header">
+          <div>
+            <h2>Add Feature Flag</h2>
+            <p class="wm-dialog__subtitle">Create a new admin-managed feature toggle.</p>
+          </div>
+        </header>
+        <section class="wm-dialog__body">
+          <label class="wm-dialog__field">
+            <span>Flag key</span>
+            <input name="flag-key" type="text" autocomplete="off" placeholder="orchestrator_visibility" required />
+          </label>
+          <label class="wm-dialog__field">
+            <span>Label</span>
+            <input name="flag-label" type="text" autocomplete="off" placeholder="Orchestrator visibility" required />
+          </label>
+          <label class="wm-dialog__field">
+            <span>Description (optional)</span>
+            <input name="flag-description" type="text" autocomplete="off" placeholder="What does this gate?" />
+          </label>
+          <label class="wm-dialog__field">
+            <span>Default state</span>
+            <select name="flag-state">
+              <option value="off">Off for everyone</option>
+              <option value="on_admin">Admin only</option>
+              <option value="on">On for everyone</option>
+            </select>
+          </label>
+          <p class="wm-dialog__status" data-role="flag-status"></p>
+        </section>
+        <footer class="wm-dialog__footer">
+          <menu>
+            <button type="button" class="wm-button secondary" data-action="cancel-flag">Cancel</button>
+            <button type="submit" class="wm-button" data-action="submit-flag">Create Flag</button>
+          </menu>
+        </footer>
+      </form>
+    </dialog>
     <dialog id="app-dialog">
       <form method="dialog">
         <h2 id="app-dialog-title">Add App</h2>

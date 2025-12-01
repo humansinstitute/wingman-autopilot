@@ -3,6 +3,8 @@ import "/ace-builds/src-noconflict/mode-text.js";
 import "/ace-builds/src-noconflict/theme-chrome.js";
 import "/ace-builds/src-noconflict/theme-tomorrow_night.js";
 import "./identity/index.js";
+import { applyAvatarImage } from "./utils/avatar.js";
+import { fetchIdentityProfile, fetchAdminUserProfile } from "./identity/profile.js";
 import { createTodoFeature } from "./todos/index.js";
 import { createProjectFeature } from "./projects/index.js";
 import "./logging/browser.js";
@@ -11,6 +13,11 @@ import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
 import { createSessionDialogController } from "./common/session-dialog.js";
 import { initOrchestratorUI } from "./orchestrator/index.js";
 import { initAppDialogs } from "./apps/dialog.js";
+import {
+  createFeatureFlagsState,
+  initFeatureFlagsUI,
+  ORCHESTRATOR_FLAG_KEY,
+} from "./feature-flags/index.js";
 
 const ace = globalThis.ace;
 if (!ace) {
@@ -32,6 +39,7 @@ const DEFAULT_CONNECT_RELAYS = [
   "wss://relay.getalby.com/v1",
   "wss://nostr.mineracks.com",
 ];
+const ADMIN_PICTURE_CACHE_TTL_MS = 3 * 60 * 60 * 1000;
 const TERMINAL_CONTROL_ACTIONS = [
   { id: "terminal-esc", label: "Send Esc", toastLabel: "Esc", sequence: "\u001b" },
   { id: "terminal-1", label: "Send 1", toastLabel: "1", sequence: "1" },
@@ -60,6 +68,13 @@ let closeAppDialog = () => {};
 let openAppLogsDialog = () => {};
 let refreshAppLogs = async () => {};
 let resetAppDialog = () => {};
+let renderFeatureFlagsPanel = () => document.createDocumentFragment();
+let ensureFeatureFlagsLoaded = () => {};
+let resolveFeatureFlagForViewer = () => ({ state: "off", effectiveState: "off" });
+let isFeatureEnabledForViewer = () => false;
+let orchestratorFeatureEnabledForViewer = () => false;
+let projectsFeatureEnabledForViewer = () => true;
+let syncFeatureFlagsFromConfig = () => {};
 
 const state = {
   config: null,
@@ -86,6 +101,7 @@ const state = {
     adminBalanceCollapsed: false,
     adminPortsCollapsed: false,
     adminUsersCollapsed: false,
+    featureFlagsCollapsed: false,
   },
   // DOM references for incremental updates
   conversationContainers: new Map(), // sessionId -> DOM element
@@ -101,6 +117,7 @@ const state = {
     pendingFocusId: null,
   },
   adminUsers: createAdminUsersState(),
+  featureFlags: createFeatureFlagsState(),
   system: {
     restart: {
       loading: false,
@@ -209,6 +226,7 @@ const state = {
     expiresAt: null,
     authenticated: false,
     alias: null,
+    picture: null,
     isAdmin: false,
     ports: [],
     balance: 0,
@@ -412,8 +430,11 @@ function createAdminUsersState() {
     initialized: false,
     error: null,
     pending: new Set(),
+    pictureRequests: new Set(),
+    pictureCache: new Map(),
     filter: "",
     filterDraft: "",
+    nicknameDrafts: new Map(),
     balanceTool: {
       identifier: "",
       amount: "",
@@ -448,9 +469,15 @@ const matchesAdminUserFilter = (user, filter) => {
   if (!filter) return true;
   const target = filter.toLowerCase();
   const alias = typeof user?.alias === "string" ? user.alias.toLowerCase() : "";
+  const nickname = typeof user?.nickname === "string" ? user.nickname.toLowerCase() : "";
   const npub = typeof user?.npub === "string" ? user.npub.toLowerCase() : "";
   const normalized = typeof user?.normalizedNpub === "string" ? user.normalizedNpub.toLowerCase() : npub;
-  return alias.startsWith(target) || npub.startsWith(target) || normalized.startsWith(target);
+  return (
+    alias.startsWith(target) ||
+    nickname.startsWith(target) ||
+    npub.startsWith(target) ||
+    normalized.startsWith(target)
+  );
 };
 
 let collapsibleIdCounter = 0;
@@ -623,6 +650,7 @@ const persistIdentityState = (identity) => {
         method: identity.method,
         expiresAt: identity.expiresAt ?? null,
         alias: identity.alias ?? null,
+        picture: identity.picture ?? null,
         ports: Array.isArray(identity.ports) ? [...identity.ports] : [],
         balance: typeof identity.balance === "number" ? identity.balance : 0,
       };
@@ -762,6 +790,7 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
     expiresAt: current.expiresAt,
     authenticated: current.authenticated,
     alias: current.alias,
+    picture: current.picture ?? null,
     isAdmin: current.isAdmin,
     ports: Array.isArray(current.ports) ? [...current.ports] : [],
     balance: typeof current.balance === "number" ? current.balance : 0,
@@ -814,6 +843,7 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
     next.method = "none";
     next.expiresAt = null;
     next.alias = null;
+    next.picture = null;
     next.ports = [];
     next.balance = 0;
   }
@@ -830,6 +860,14 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
     }
   }
 
+  if ("picture" in partial) {
+    if (typeof partial.picture === "string" && partial.picture.trim().length > 0) {
+      next.picture = partial.picture.trim();
+    } else if (partial.picture === null) {
+      next.picture = null;
+    }
+  }
+
   if ("balance" in partial) {
     const candidate = partial.balance;
     if (typeof candidate === "number" && Number.isFinite(candidate)) {
@@ -840,6 +878,7 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
   }
 
   next.authenticated = Boolean(next.npub);
+  const becameAuthenticated = !current.authenticated && next.authenticated;
 
   const currentPorts = Array.isArray(current.ports) ? current.ports : [];
   const portsChanged =
@@ -852,6 +891,7 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
     next.authenticated !== current.authenticated ||
     next.isAdmin !== current.isAdmin ||
     next.alias !== current.alias ||
+    next.picture !== current.picture ||
     portsChanged ||
     next.balance !== (current.balance ?? 0);
 
@@ -869,6 +909,10 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
 
   if (wasAdmin && !next.isAdmin) {
     state.adminUsers = createAdminUsersState();
+  }
+
+  if (next.authenticated && (!next.picture || becameAuthenticated)) {
+    void refreshIdentityProfilePicture({ force: becameAuthenticated });
   }
 
   if (next.npub !== current.npub || next.isAdmin !== current.isAdmin) {
@@ -890,7 +934,6 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
   if (emit && typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
     try {
       window.dispatchEvent(new CustomEvent("wingman:identity-ui-state", { detail: { ...next } }));
-      const becameAuthenticated = !current.authenticated && next.authenticated;
       if (becameAuthenticated) {
         closeIdentityLoginDialog();
         if (currentRoute !== "home") {
@@ -1177,6 +1220,35 @@ const clearCachedIdentity = () => {
     globalThis.wingmanIdentity?.passwordMeta?.clear?.();
   } catch (error) {
     console.warn("[identity] failed to clear password metadata", error);
+  }
+};
+
+let identityProfileRequest = { npub: null, inFlight: false };
+
+const refreshIdentityProfilePicture = async (options = {}) => {
+  const npub = state.identity.npub;
+  if (!npub) return;
+  const normalized = normaliseNpubValue(npub);
+  if (!normalized) return;
+  if (identityProfileRequest.inFlight && identityProfileRequest.npub === normalized && !options.force) {
+    return;
+  }
+  identityProfileRequest = { npub: normalized, inFlight: true };
+  try {
+    const payload = await fetchIdentityProfile({ npub, force: options.force });
+    if (payload && typeof payload === "object") {
+      if (typeof payload.pictureUrl === "string") {
+        updateIdentityState({ picture: payload.pictureUrl }, { persist: true, emit: true });
+      } else if (payload.pictureUrl === null) {
+        updateIdentityState({ picture: null }, { persist: true, emit: true });
+      }
+    }
+  } catch (error) {
+    if (error?.name !== "AbortError") {
+      console.warn("[identity] failed to refresh profile picture:", error);
+    }
+  } finally {
+    identityProfileRequest = { npub: normalized, inFlight: false };
   }
 };
 
@@ -4084,6 +4156,7 @@ const cancelButton = document.getElementById("cancel-session");
 const sessionForm = dialog?.querySelector("form");
 const appRoot = document.getElementById("app");
 const navLinks = Array.from(document.querySelectorAll("nav a[data-route]"));
+const projectsNavLink = navLinks.find((link) => link.dataset.route === "projects");
 const themeToggle = document.getElementById("theme-toggle");
 const tabsToggle = document.getElementById("tabs-toggle");
 const menuToggle = document.getElementById("menu-toggle");
@@ -4123,6 +4196,7 @@ performAuthUiSync = () => {
       deepDiveLink.setAttribute("aria-disabled", "true");
     }
   }
+  syncProjectsNavigationVisibility();
 };
 
 performAuthUiSync();
@@ -4296,6 +4370,10 @@ function openProjectDialog() {
     openIdentityLoginDialog();
     return;
   }
+  if (!projectsFeatureEnabledForViewer()) {
+    showToast?.("Projects are disabled right now", { variant: "info" });
+    return;
+  }
   syncProjectDialogState();
   if (typeof projectDialog?.showModal === "function") {
     projectDialog.showModal();
@@ -4343,6 +4421,11 @@ projectDialogForm?.addEventListener("submit", async (event) => {
   if (!projectFeature) {
     return;
   }
+  if (!projectsFeatureEnabledForViewer()) {
+    showToast?.("Projects are disabled right now", { variant: "info" });
+    closeProjectDialog();
+    return;
+  }
   const success = await projectFeature.submitCreateProject();
   syncProjectDialogState();
   if (success) {
@@ -4381,6 +4464,10 @@ const linkAppToProject = async (context, app) => {
   if (!context?.projectId || !app?.id) {
     return;
   }
+  if (!projectsFeatureEnabledForViewer()) {
+    showToast?.("Projects are disabled right now", { variant: "info" });
+    return;
+  }
   try {
     const response = await fetch(`/api/projects/${encodeURIComponent(context.projectId)}/apps`, {
       method: "POST",
@@ -4406,6 +4493,10 @@ const openProjectAppCreation = (project) => {
   }
   if (!state.identity.authenticated) {
     openIdentityLoginDialog();
+    return;
+  }
+  if (!projectsFeatureEnabledForViewer()) {
+    showToast?.("Projects are disabled right now", { variant: "info" });
     return;
   }
   const context = {
@@ -4610,6 +4701,20 @@ const setActiveNav = () => {
     }
   });
 };
+
+function syncProjectsNavigationVisibility() {
+  const enabled = projectsFeatureEnabledForViewer();
+  if (projectsNavLink) {
+    projectsNavLink.hidden = !enabled;
+    projectsNavLink.setAttribute("aria-hidden", enabled ? "false" : "true");
+    if (!enabled) {
+      projectsNavLink.setAttribute("tabindex", "-1");
+    } else if (state.identity.authenticated) {
+      projectsNavLink.removeAttribute("tabindex");
+    }
+  }
+  return enabled;
+}
 
 const syncMenuTabs = () => {
   if (!menuTabsContainer) return;
@@ -5386,6 +5491,9 @@ const fetchConfig = async () => {
   if (typeof globalThis !== "undefined" && globalThis.wingmanIdentity) {
     globalThis.wingmanIdentity.connectRelays = connectRelays;
   }
+  if (Array.isArray(configData?.featureFlags)) {
+    syncFeatureFlagsFromConfig(configData.featureFlags);
+  }
   agentSelect.innerHTML = "";
   state.config.agents.forEach((agent) => {
     const option = document.createElement("option");
@@ -5725,9 +5833,8 @@ const fetchAdminUsers = async () => {
       throw new Error(message);
     }
     const users = Array.isArray(payload?.users) ? payload.users : [];
-    state.adminUsers.items = users;
+    replaceAdminUsersList(users);
     state.adminUsers.error = null;
-    state.adminUsers.initialized = true;
     state.adminUsers.pending.clear();
     if (currentRoute === "settings") {
       render();
@@ -5746,23 +5853,184 @@ const fetchAdminUsers = async () => {
   }
 };
 
+const syncAdminNicknameDrafts = (users) => {
+  if (!Array.isArray(users) || !(state.adminUsers.nicknameDrafts instanceof Map)) {
+    return;
+  }
+  const drafts = state.adminUsers.nicknameDrafts;
+  const validKeys = new Set();
+  users.forEach((user) => {
+    const key = normaliseNpubValue(user?.normalizedNpub ?? user?.npub);
+    if (!key) return;
+    validKeys.add(key);
+    const nickname =
+      typeof user?.nickname === "string" && user.nickname.trim().length > 0 ? user.nickname : "";
+    drafts.set(key, nickname);
+  });
+  Array.from(drafts.keys()).forEach((key) => {
+    if (!validKeys.has(key)) {
+      drafts.delete(key);
+    }
+  });
+};
+
 const replaceAdminUsersList = (users) => {
   if (!Array.isArray(users)) return;
-  state.adminUsers.items = users;
+  const hydrated = users.map((user) => applyCachedPictureToUser(user));
+  hydrateAdminPictureCacheFromUsers(hydrated);
+  state.adminUsers.items = hydrated;
   state.adminUsers.initialized = true;
+  syncAdminNicknameDrafts(hydrated);
+  primeAdminUserPictures(hydrated);
 };
 
 const upsertAdminUser = (user) => {
   if (!user || typeof user !== "object") return;
+  const hydratedUser = applyCachedPictureToUser(user);
   const items = Array.isArray(state.adminUsers.items) ? [...state.adminUsers.items] : [];
   const idx = items.findIndex((entry) => entry.normalizedNpub === user.normalizedNpub);
   if (idx >= 0) {
-    items[idx] = user;
+    items[idx] = hydratedUser;
   } else {
-    items.push(user);
+    items.push(hydratedUser);
   }
-  items.sort((a, b) => (a?.alias ?? "").localeCompare(b?.alias ?? ""));
+  items.sort((a, b) => {
+    const left = (a?.nickname || a?.alias || a?.npub || "").toLowerCase();
+    const right = (b?.nickname || b?.alias || b?.npub || "").toLowerCase();
+    if (left === right) {
+      return (a?.alias || "").localeCompare(b?.alias || "");
+    }
+    return left.localeCompare(right);
+  });
   state.adminUsers.items = items;
+  const key = normaliseNpubValue(user?.normalizedNpub ?? user?.npub);
+  if (key && state.adminUsers.nicknameDrafts instanceof Map) {
+    const nickname =
+      typeof user?.nickname === "string" && user.nickname.trim().length > 0 ? user.nickname : "";
+    state.adminUsers.nicknameDrafts.set(key, nickname);
+  }
+  primeAdminUserPictures(items);
+};
+
+const ensureAdminPictureRequestState = () => {
+  if (!(state.adminUsers.pictureRequests instanceof Set)) {
+    state.adminUsers.pictureRequests = new Set();
+  }
+};
+
+const ensureAdminPictureCacheState = () => {
+  if (!(state.adminUsers.pictureCache instanceof Map)) {
+    state.adminUsers.pictureCache = new Map();
+  }
+};
+
+const resolveFreshAdminPictureCache = (key) => {
+  ensureAdminPictureCacheState();
+  const entry = state.adminUsers.pictureCache.get(key);
+  if (!entry || !isFiniteNumber(entry.fetchedAt)) {
+    return null;
+  }
+  if (Date.now() - entry.fetchedAt > ADMIN_PICTURE_CACHE_TTL_MS) {
+    return null;
+  }
+  return entry;
+};
+
+const memoiseAdminPicture = (key, url) => {
+  ensureAdminPictureCacheState();
+  state.adminUsers.pictureCache.set(key, { url: url ?? null, fetchedAt: Date.now() });
+};
+
+const applyCachedPictureToUser = (user) => {
+  if (!user || typeof user !== "object") return user;
+  const key = normaliseNpubValue(user?.normalizedNpub ?? user?.npub);
+  if (!key) return user;
+  const cached = resolveFreshAdminPictureCache(key);
+  if (cached && cached.url && !user.pictureUrl) {
+    return { ...user, pictureUrl: cached.url };
+  }
+  return user;
+};
+
+const hydrateAdminPictureCacheFromUsers = (users) => {
+  if (!Array.isArray(users)) return;
+  const now = Date.now();
+  ensureAdminPictureCacheState();
+  users.forEach((user) => {
+    const key = normaliseNpubValue(user?.normalizedNpub ?? user?.npub);
+    if (!key) return;
+    if (typeof user?.pictureUrl === "string" && user.pictureUrl.length > 0) {
+      state.adminUsers.pictureCache.set(key, { url: user.pictureUrl, fetchedAt: now });
+    }
+  });
+};
+
+const fetchAdminUserPicture = async (npub) => {
+  if (!state.identity.isAdmin || typeof npub !== "string" || npub.length === 0) {
+    return;
+  }
+  ensureAdminPictureRequestState();
+  const key = normaliseNpubValue(npub) ?? npub;
+  const cached = resolveFreshAdminPictureCache(key);
+  if (cached) {
+    return;
+  }
+  if (state.adminUsers.pictureRequests.has(key)) {
+    return;
+  }
+  state.adminUsers.pictureRequests.add(key);
+  let resolvedUser = null;
+  try {
+    const payload = await fetchAdminUserProfile({ npub });
+    const users = Array.isArray(payload?.users) ? payload.users : null;
+    const user = payload && typeof payload === "object" ? payload.user : null;
+    if (Array.isArray(users)) {
+      replaceAdminUsersList(users);
+      resolvedUser = users.find(
+        (entry) => normaliseNpubValue(entry?.normalizedNpub ?? entry?.npub) === normaliseNpubValue(key),
+      );
+    } else if (user && typeof user === "object") {
+      upsertAdminUser(user);
+      resolvedUser = user;
+    }
+    state.adminUsers.error = null;
+    memoiseAdminPicture(key, resolvedUser?.pictureUrl ?? null);
+  } catch (error) {
+    console.warn("[admin] profile lookup failed:", error);
+    memoiseAdminPicture(key, null);
+  } finally {
+    state.adminUsers.pictureRequests.delete(key);
+    if (state.adminUsers.pictureRequests.size === 0 && currentRoute === "settings") {
+      render();
+    }
+  }
+};
+
+const primeAdminUserPictures = (users) => {
+  if (!state.identity.isAdmin) return;
+  ensureAdminPictureRequestState();
+  ensureAdminPictureCacheState();
+  const now = Date.now();
+  const list = Array.isArray(users) ? users : state.adminUsers.items;
+  if (!Array.isArray(list)) return;
+  list.forEach((user) => {
+    const key = normaliseNpubValue(user?.normalizedNpub ?? user?.npub);
+    if (!key || state.adminUsers.pictureRequests.has(key)) {
+      return;
+    }
+    const cached = resolveFreshAdminPictureCache(key);
+    if (cached) {
+      if (cached.url && !user.pictureUrl) {
+        user.pictureUrl = cached.url;
+      }
+      return;
+    }
+    if (typeof user?.pictureUrl === "string" && user.pictureUrl.length > 0) {
+      state.adminUsers.pictureCache.set(key, { url: user.pictureUrl, fetchedAt: now });
+      return;
+    }
+    void fetchAdminUserPicture(user.npub);
+  });
 };
 
 const toggleUserOnboarding = async (npub, onboarded) => {
@@ -5844,6 +6112,65 @@ const deleteAdminUser = async (npub, alias) => {
     state.adminUsers.error = null;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to delete user";
+    state.adminUsers.error = message;
+  } finally {
+    state.adminUsers.pending.delete(key);
+    if (currentRoute === "settings") {
+      render();
+    }
+  }
+};
+
+const updateAdminUserNickname = async (npub, nickname) => {
+  if (!state.identity.isAdmin || typeof npub !== "string" || npub.length === 0) {
+    return;
+  }
+  const key = normaliseNpubValue(npub) ?? npub;
+  state.adminUsers.pending.add(key);
+  if (currentRoute === "settings") {
+    render();
+  }
+
+  try {
+    const response = await fetch("/api/admin/users/nickname", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ npub, nickname }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+          ? payload.error
+          : response.statusText || "Failed to update nickname";
+      throw new Error(message);
+    }
+    const users = Array.isArray(payload?.users) ? payload.users : null;
+    const user = payload && typeof payload === "object" ? payload.user : null;
+    if (Array.isArray(users)) {
+      replaceAdminUsersList(users);
+      state.adminUsers.pending.clear();
+    } else if (user && typeof user === "object") {
+      upsertAdminUser(user);
+    }
+    const resolvedUser =
+      user && typeof user === "object"
+        ? user
+        : Array.isArray(users)
+          ? users.find(
+              (entry) => normaliseNpubValue(entry?.normalizedNpub ?? entry?.npub) === normaliseNpubValue(key),
+            )
+          : null;
+    if (key && state.adminUsers.nicknameDrafts instanceof Map && resolvedUser) {
+      const updatedNickname =
+        typeof resolvedUser.nickname === "string" && resolvedUser.nickname.trim().length > 0
+          ? resolvedUser.nickname
+          : "";
+      state.adminUsers.nicknameDrafts.set(key, updatedNickname);
+    }
+    state.adminUsers.error = null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to update nickname";
     state.adminUsers.error = message;
   } finally {
     state.adminUsers.pending.delete(key);
@@ -6488,16 +6815,21 @@ const closeDialog = () => {
   }
 };
 
-const handleSessionStart = async (session) => {
+const handleSessionStart = async (session, options = {}) => {
+  const { suppressRouteChange = false } = options;
   if (!session || !session.id) {
     return;
   }
 
   const switchingToLive = currentRoute !== "live";
-  if (switchingToLive) {
+  if (switchingToLive && !suppressRouteChange) {
     currentRoute = "live";
   }
-  setActiveSession(session.id, { allowPending: true, logPort: false, updateHistory: true });
+  setActiveSession(session.id, {
+    allowPending: true,
+    logPort: false,
+    updateHistory: !suppressRouteChange,
+  });
   if (typeof session.workingDirectory === "string" && session.workingDirectory.length > 0) {
     state.lastWorkingDirectory = session.workingDirectory;
     if (directoryInput) {
@@ -6511,7 +6843,8 @@ const handleSessionStart = async (session) => {
   render();
 };
 
-const launchSession = async (agentId, workingDirectory, name, workspace) => {
+const launchSession = async (agentId, workingDirectory, name, workspace, options = {}) => {
+  const { openInNewTab = false } = options;
   if (!agentId) {
     window.alert("Select an agent before launching a session.");
     return;
@@ -6542,7 +6875,13 @@ const launchSession = async (agentId, workingDirectory, name, workspace) => {
   }
 
   const session = await response.json();
-  await handleSessionStart(session);
+
+  if (openInNewTab && session?.id) {
+    const sessionUrl = `${LIVE_ROUTE_PREFIX}/${session.id}`;
+    window.open(sessionUrl, "_blank", "noopener");
+  }
+
+  await handleSessionStart(session, { suppressRouteChange: openInNewTab });
 };
 
 sessionDialogController = createSessionDialogController({
@@ -7534,7 +7873,7 @@ const renderAppCard = (app) => {
     editWithAiButton.disabled = true;
     editWithAiButton.textContent = "Launching…";
     try {
-      await launchSession(agentId, workingDirectory, sessionName);
+      await launchSession(agentId, workingDirectory, sessionName, undefined, { openInNewTab: true });
     } finally {
       if (editWithAiButton.isConnected) {
         editWithAiButton.disabled = false;
@@ -7731,6 +8070,11 @@ const renderTodos = () => {
 };
 
 const renderProjects = () => {
+  if (!projectsFeatureEnabledForViewer()) {
+    const container = document.createElement("div");
+    container.className = "wm-projects-page";
+    return container;
+  }
   if (!state.identity.authenticated) {
     const guestContainer = document.createElement("div");
     guestContainer.className = "wm-projects-page";
@@ -7853,7 +8197,7 @@ const renderIdentitySummary = () => {
 
   const logoutButton = document.createElement("button");
   logoutButton.type = "button";
-  logoutButton.className = "wm-button secondary";
+  logoutButton.className = "wm-button danger";
   logoutButton.dataset.action = "identity-logout";
   logoutButton.textContent = "Logout";
   actions.append(logoutButton);
@@ -8188,6 +8532,8 @@ const renderMenuIdentitySection = () => {
 
   const info = document.createElement("div");
   info.className = "wm-menu-identity-info";
+  const avatar = document.createElement("div");
+  avatar.className = "wm-menu-identity-avatar";
 
   const label = document.createElement("span");
   label.className = "wm-menu-identity-label";
@@ -8206,21 +8552,23 @@ const renderMenuIdentitySection = () => {
     navigateToSettings();
   });
 
-  card.append(info, manageButton);
+  card.append(avatar, info, manageButton);
   menuIdentityContainer.append(card);
 
   const updateSection = () => {
-    const { npub, alias: identityAlias } = state.identity;
+    const { npub, alias: identityAlias, picture } = state.identity;
     if (npub) {
       const truncated = npub.length > 20 ? `${npub.slice(0, 10)}…${npub.slice(-4)}` : npub;
       const displayName = identityAlias ?? truncated;
       alias.textContent = displayName;
       alias.title = identityAlias ? npub : truncated;
       manageButton.hidden = false;
+      applyAvatarImage(avatar, picture, displayName);
     } else {
       alias.textContent = "Not signed in";
       alias.removeAttribute("title");
       manageButton.hidden = true;
+      applyAvatarImage(avatar, null, "?");
     }
   };
 
@@ -8381,11 +8729,13 @@ const renderHome = () => {
     }
   }
 
+  ensureFeatureFlagsLoaded();
+
   if (!state.apps.initialized && !state.apps.loading) {
     void ensureAppsLoaded();
   }
 
-  if (state.identity.isAdmin) {
+  if (orchestratorFeatureEnabledForViewer()) {
     const orchestratorCard = document.createElement("section");
     orchestratorCard.className = "wm-card wm-home-orchestrator";
 
@@ -9856,26 +10206,74 @@ function buildAdminUserManagementCard() {
     const row = document.createElement("div");
     row.className = "wm-admin-users__item";
 
+    const avatar = document.createElement("div");
+    avatar.className = "wm-admin-users__avatar";
+
     const details = document.createElement("div");
     details.className = "wm-admin-users__details";
 
+    const key = normaliseNpubValue(user.normalizedNpub ?? user.npub) ?? user.npub ?? "";
+    const nicknameValue =
+      typeof user.nickname === "string" && user.nickname.trim().length > 0 ? user.nickname.trim() : null;
     const name = document.createElement("strong");
     const alias = typeof user.alias === "string" && user.alias.length > 0 ? user.alias : null;
-    name.textContent = alias ?? (user.npub ? abbreviateNpub(user.npub) : "Unknown user");
+    name.textContent = nicknameValue ?? alias ?? (user.npub ? abbreviateNpub(user.npub) : "Unknown user");
 
     const meta = document.createElement("span");
     meta.className = "wm-admin-users__meta";
     const safeAlias = alias ? `alias: ${alias}` : null;
+    const safeNickname = nicknameValue ? `nickname: ${nicknameValue}` : null;
     const normalizedNpub = typeof user.normalizedNpub === "string" && user.normalizedNpub.length > 0 ? user.normalizedNpub : null;
     const safeNpub = normalizedNpub ?? user.npub ?? "";
-    meta.textContent = safeAlias ? `${safeAlias} • npub: ${safeNpub}` : `npub: ${safeNpub}`;
+    const metaParts = [];
+    if (safeNickname) metaParts.push(safeNickname);
+    if (safeAlias) metaParts.push(safeAlias);
+    metaParts.push(`npub: ${safeNpub}`);
+    meta.textContent = metaParts.join(" • ");
 
     const status = document.createElement("span");
     status.className = "wm-admin-users__status";
     const balance = typeof user.balance === "number" ? `${user.balance} sats` : "Unknown balance";
     status.textContent = `Balance: ${balance}`;
 
-    details.append(name, meta, status);
+    const nicknameForm = document.createElement("form");
+    nicknameForm.className = "wm-admin-users__nickname";
+    nicknameForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (nicknameSave.disabled) return;
+      state.adminUsers.nicknameDrafts.set(key, nicknameInput.value);
+      void updateAdminUserNickname(user.npub, nicknameInput.value);
+    });
+
+    const nicknameField = document.createElement("label");
+    nicknameField.className = "wm-admin-users__nickname-field";
+    const nicknameLabel = document.createElement("span");
+    nicknameLabel.textContent = "Admin nickname";
+    const nicknameInput = document.createElement("input");
+    nicknameInput.type = "text";
+    nicknameInput.placeholder = "Add a short handle (only visible to admins)";
+    const draftNickname =
+      (state.adminUsers.nicknameDrafts instanceof Map && key ? state.adminUsers.nicknameDrafts.get(key) : undefined) ??
+      (nicknameValue ?? "");
+    nicknameInput.value = typeof draftNickname === "string" ? draftNickname : "";
+    nicknameInput.autocomplete = "off";
+    const userPending = state.adminUsers.pending.has(key || user.normalizedNpub || user.npub);
+    nicknameInput.disabled = userPending || state.adminUsers.loading;
+    nicknameInput.addEventListener("input", (event) => {
+      state.adminUsers.nicknameDrafts.set(key, event.target.value);
+    });
+    nicknameField.append(nicknameLabel, nicknameInput);
+
+    const nicknameSave = document.createElement("button");
+    nicknameSave.type = "submit";
+    nicknameSave.className = "wm-button secondary";
+    nicknameSave.textContent = userPending ? "Saving…" : "Save";
+    nicknameSave.disabled = userPending || state.adminUsers.loading;
+
+    nicknameForm.append(nicknameField, nicknameSave);
+
+    applyAvatarImage(avatar, user.pictureUrl, nicknameValue ?? alias ?? user.npub ?? "?");
+    details.append(name, meta, status, nicknameForm);
 
     const actions = document.createElement("div");
     actions.className = "wm-admin-users__actions";
@@ -9886,8 +10284,7 @@ function buildAdminUserManagementCard() {
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = Boolean(user.onboarded);
-    const pending = state.adminUsers.pending.has(user.normalizedNpub ?? user.npub);
-    checkbox.disabled = pending || state.adminUsers.loading;
+    checkbox.disabled = userPending || state.adminUsers.loading;
     checkbox.addEventListener("change", () => {
       if (checkbox.disabled) return;
       toggleUserOnboarding(user.npub, checkbox.checked);
@@ -9902,7 +10299,7 @@ function buildAdminUserManagementCard() {
     deleteBtn.type = "button";
     deleteBtn.className = "wm-admin-users__delete-btn";
     deleteBtn.textContent = "Delete";
-    deleteBtn.disabled = pending || state.adminUsers.loading;
+    deleteBtn.disabled = userPending || state.adminUsers.loading;
     deleteBtn.addEventListener("click", () => {
       if (deleteBtn.disabled) return;
       deleteAdminUser(user.npub, user.alias);
@@ -9910,7 +10307,7 @@ function buildAdminUserManagementCard() {
 
     actions.append(toggle, deleteBtn);
 
-    row.append(details, actions);
+    row.append(avatar, details, actions);
     list.append(row);
   });
 
@@ -9934,7 +10331,7 @@ function buildAdminUsersFilter() {
 
   const filterInput = document.createElement("input");
   filterInput.type = "text";
-  filterInput.placeholder = "alias or npub prefix";
+  filterInput.placeholder = "nickname, alias or npub prefix";
   const currentDraft = typeof state.adminUsers.filterDraft === "string" ? state.adminUsers.filterDraft : state.adminUsers.filter;
   filterInput.value = typeof currentDraft === "string" ? currentDraft : "";
   filterInput.autocomplete = "off";
@@ -9997,6 +10394,8 @@ const renderSettings = () => {
   wrapper.append(renderIdentityPanel());
 
   if (state.identity.isAdmin) {
+    ensureFeatureFlagsLoaded();
+    wrapper.append(renderFeatureFlagsPanel());
     if (!state.adminUsers.initialized && !state.adminUsers.loading && !state.adminUsers.error) {
       void fetchAdminUsers();
     }
@@ -10634,6 +11033,13 @@ function restoreFocusFromSnapshot(snapshot) {
 }
 
 const render = () => {
+  const projectsEnabled = syncProjectsNavigationVisibility();
+  if (!projectsEnabled && currentRoute === "projects") {
+    currentRoute = "home";
+    if (window.location.pathname === PROJECTS_ROUTE) {
+      window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
+    }
+  }
   const focusSnapshot = captureFocusSnapshot();
   appRoot.innerHTML = "";
   let view;
@@ -10741,6 +11147,20 @@ refreshOrchestratorPresets = orchestratorUI.refreshPresets;
 openOrchestratorDialog = orchestratorUI.openDialog;
 syncOrchestratorAgents = orchestratorUI.syncAgents;
 
+const featureFlagsUI = initFeatureFlagsUI({
+  state,
+  render,
+  showToast,
+  abbreviateNpub,
+});
+ensureFeatureFlagsLoaded = featureFlagsUI.ensureLoaded;
+renderFeatureFlagsPanel = featureFlagsUI.renderPanel;
+syncFeatureFlagsFromConfig = featureFlagsUI.syncFromConfig;
+resolveFeatureFlagForViewer = featureFlagsUI.resolveFlag;
+isFeatureEnabledForViewer = featureFlagsUI.isEnabled;
+orchestratorFeatureEnabledForViewer = featureFlagsUI.orchestratorEnabled;
+projectsFeatureEnabledForViewer = featureFlagsUI.projectsEnabled;
+
 renderMenuIdentitySection();
 
 const handleTouchStart = (event) => {
@@ -10843,6 +11263,10 @@ function navigateToApps({ openNewAppDialog = false, skipMenuClose = false, focus
 function navigateToProjects({ skipMenuClose = false } = {}) {
   if (!state.identity.authenticated) {
     openIdentityLoginDialog();
+    return;
+  }
+  if (!projectsFeatureEnabledForViewer()) {
+    showToast?.("Projects are disabled right now", { variant: "info" });
     return;
   }
   if (!skipMenuClose) {
@@ -11200,6 +11624,15 @@ window.addEventListener("popstate", () => {
     }
   } else if (currentRoute === "apps") {
     void ensureAppsLoaded();
+  } else if (currentRoute === "projects") {
+    if (!projectsFeatureEnabledForViewer()) {
+      currentRoute = "home";
+      if (window.location.pathname !== HOME_ROUTE) {
+        window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
+      }
+    } else if (projectFeature) {
+      void projectFeature.ensureLoaded();
+    }
   } else if (currentRoute === "todos") {
     void ensureAppsLoaded();
     if (todoFeature) {
@@ -11252,7 +11685,10 @@ dialog.addEventListener("cancel", (event) => {
   initTheme();
   initTabsVisibility();
   await fetchConfig();
-  await refreshOrchestratorPresets();
+  ensureFeatureFlagsLoaded();
+  if (orchestratorFeatureEnabledForViewer()) {
+    await refreshOrchestratorPresets();
+  }
   await fetchSessions();
   if (currentRoute === "apps") {
     await fetchApps({ tail: APP_LOG_PREVIEW_LINES });

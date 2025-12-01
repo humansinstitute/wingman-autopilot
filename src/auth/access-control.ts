@@ -9,6 +9,7 @@ export const AccessActions = {
   ProjectsManage: "projects:manage",
   UiRestricted: "ui:restricted",
   AdminUsers: "admin:users",
+  FeatureFlagsManage: "feature-flags:manage",
   SystemManage: "system:manage",
   TodosManage: "todos:manage",
 } as const;
