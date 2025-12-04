@@ -11,7 +11,7 @@ import "./logging/server-logger";
 import type { AgentType } from "./config";
 import { loadConfig } from "./config";
 import { ProcessManager } from "./agents/process-manager";
-import type { SessionSnapshot } from "./agents/process-manager";
+import type { SessionOrigin, SessionSnapshot } from "./agents/process-manager";
 import {
   appRegistry,
   type AppLifecycleAction,
@@ -759,7 +759,39 @@ const serializeSession = (session: SessionSnapshot) => ({
   ...session,
   agentRuntimeStatus: session.agentRuntimeStatus ?? null,
   identityAlias: generateIdentityAlias(session.npub ?? null),
+  origin: session.origin ?? null,
 });
+
+const parseSessionOriginInput = (value: unknown): SessionOrigin | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== "object") {
+    throw new Error("Session origin must be an object");
+  }
+  const record = value as Record<string, unknown>;
+  const type = typeof record.type === "string" ? record.type.trim() : "";
+  const idRaw = record.id;
+  const id =
+    typeof idRaw === "string"
+      ? idRaw.trim()
+      : typeof idRaw === "number"
+        ? String(idRaw)
+        : "";
+  if (!type || !id) {
+    throw new Error("Session origin requires both type and id");
+  }
+  const origin: SessionOrigin = { type, id };
+  const url = typeof record.url === "string" ? record.url.trim() : "";
+  const label = typeof record.label === "string" ? record.label.trim() : "";
+  if (url) {
+    origin.url = url;
+  }
+  if (label) {
+    origin.label = label;
+  }
+  return origin;
+};
 
 type IdentitySummary = {
   npub: string | null;
@@ -1273,6 +1305,7 @@ manager.on((event) => {
       workingDirectory: event.session.workingDirectory,
       command: event.session.command,
       runtimeStatus: event.session.agentRuntimeStatus ?? null,
+      origin: event.session.origin ?? null,
     });
     messageStore.replaceMessages(event.session.id, []);
     void maybeAutoDispatchQueuedPrompt(event.session);
@@ -1302,6 +1335,7 @@ manager.on((event) => {
       workingDirectory: event.session.workingDirectory,
       command: event.session.command,
       runtimeStatus: event.session.agentRuntimeStatus ?? null,
+      origin: event.session.origin ?? null,
     });
     void maybeAutoDispatchQueuedPrompt(event.session);
   }
@@ -2527,6 +2561,7 @@ const launchOrchestratorPreset = async (presetId: string) => {
     workingDirectory: session.workingDirectory,
     command: session.command,
     runtimeStatus: session.agentRuntimeStatus ?? null,
+    origin: session.origin ?? null,
   });
   void initialisePresetSession(preset, session);
   return { directory: workingDirectory, session };
@@ -2969,6 +3004,46 @@ const resolveOwnerAliasCached = (
   const alias = resolveOwnerAlias(ownerNpub);
   cache.set(ownerNpub, alias);
   return alias;
+};
+
+type AppOwnerFilterOption = {
+  value: string;
+  label: string;
+  npub: string | null;
+  alias: string | null;
+  appCount: number;
+};
+
+const buildAppOwnerFilters = (
+  apps: AppRecord[],
+  cache: Map<string, string | null>,
+): AppOwnerFilterOption[] => {
+  const map = new Map<
+    string,
+    { value: string; npub: string | null; alias: string | null; appCount: number }
+  >();
+  for (const app of apps) {
+    const normalizedOwner = normaliseNpub(app.ownerNpub ?? null);
+    const key = normalizedOwner ?? "__anonymous__";
+    let entry = map.get(key);
+    if (!entry) {
+      entry = {
+        value: key,
+        npub: normalizedOwner,
+        alias: resolveOwnerAliasCached(app.ownerNpub ?? null, cache),
+        appCount: 0,
+      };
+      map.set(key, entry);
+    }
+    entry.appCount += 1;
+  }
+  return Array.from(map.values()).map((entry) => ({
+    value: entry.value,
+    npub: entry.npub,
+    alias: entry.alias,
+    appCount: entry.appCount,
+    label: entry.alias ?? (entry.npub ?? "Anonymous"),
+  }));
 };
 
 const defaultAppProcessStatus = (appId: string): AppProcessStatus => {
@@ -4037,17 +4112,45 @@ const handleApi = async (
     if (denied) {
       return denied;
     }
+    const viewerNormalizedNpub = normaliseNpub(authContext.npub ?? null);
     const tailParam = url.searchParams.get("tail") ?? url.searchParams.get("logs");
     const tail = tailParam ? Number.parseInt(tailParam, 10) : 0;
     const includeLogs = Number.isFinite(tail) && tail > 0;
     const tailCount = includeLogs ? Math.min(Math.max(tail, 1), 2000) : 0;
     const ownerAliasCache = new Map<string, string | null>();
+    const normalizeOwnerFilter = (value: string | null): string | null | "__anonymous__" => {
+      if (!value || value === "all") {
+        return null;
+      }
+      if (value === "__anonymous__") {
+        return "__anonymous__";
+      }
+      const normalized = normaliseNpub(value);
+      return normalized ?? null;
+    };
     try {
       const [apps, statuses] = await Promise.all([appRegistry.listApps(), appProcessManager.listStatuses()]);
       const visibleApps = workspaceScope.isAdmin ? apps : apps.filter((app) => canAccessApp(app));
+      const ownerFilters = workspaceScope.isAdmin ? buildAppOwnerFilters(visibleApps, ownerAliasCache) : [];
+      const hasFilterParam = workspaceScope.isAdmin ? url.searchParams.has("npub") : Boolean(viewerNormalizedNpub);
+      let ownerFilter: string | null | "__anonymous__" =
+        workspaceScope.isAdmin ? normalizeOwnerFilter(url.searchParams.get("npub")) : viewerNormalizedNpub ?? null;
+      if (workspaceScope.isAdmin && !hasFilterParam && viewerNormalizedNpub) {
+        ownerFilter = viewerNormalizedNpub;
+      }
+      const filteredApps =
+        ownerFilter === null
+          ? visibleApps
+          : visibleApps.filter((app) => {
+              const normalizedOwner = normaliseNpub(app.ownerNpub ?? null);
+              if (ownerFilter === "__anonymous__") {
+                return normalizedOwner === null;
+              }
+              return normalizedOwner === ownerFilter;
+            });
       const statusMap = new Map(statuses.map((status) => [status.appId, status]));
       const data = await Promise.all(
-        visibleApps.map(async (app) => {
+        filteredApps.map(async (app) => {
           const status = statusMap.get(app.id) ?? defaultAppProcessStatus(app.id);
           const ownerAlias = resolveOwnerAliasCached(app.ownerNpub, ownerAliasCache);
           const record = buildAppResponse(app, status, { ownerAlias });
@@ -4061,7 +4164,13 @@ const handleApi = async (
           return record;
         }),
       );
-      return Response.json({ apps: data });
+      return Response.json({
+        apps: data,
+        filters: {
+          npubs: ownerFilters,
+          active: ownerFilter ?? null,
+        },
+      });
     } catch (error) {
       return Response.json({ error: (error as Error).message }, { status: 500 });
     }
@@ -5385,7 +5494,13 @@ const handleApi = async (
       } catch (error) {
         return Response.json({ error: (error as Error).message }, { status: 400 });
       }
-      const session = await manager.createSession(agent, workingDirectory, sessionName ?? undefined);
+      let origin: SessionOrigin | null = null;
+      try {
+        origin = parseSessionOriginInput(payload?.origin ?? null);
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
+      const session = await manager.createSession(agent, workingDirectory, sessionName ?? undefined, origin);
       messageStore.recordSession({
         id: session.id,
         agent: session.agent,
@@ -5399,6 +5514,7 @@ const handleApi = async (
         workingDirectory: session.workingDirectory,
         command: session.command,
         runtimeStatus: session.agentRuntimeStatus ?? null,
+        origin: session.origin ?? null,
       });
       await syncSessionMessages(session.id, true);
       return Response.json(serializeSession(session), { status: 201 });

@@ -18,6 +18,7 @@ import {
   initFeatureFlagsUI,
   ORCHESTRATOR_FLAG_KEY,
 } from "./feature-flags/index.js";
+import { buildSessionOrigin, createSessionLauncher } from "./helpers/session-launch.js";
 
 const ace = globalThis.ace;
 if (!ace) {
@@ -81,6 +82,11 @@ const state = {
   sessions: [],
   identitySummaries: [],
   sessionFilters: {
+    npub: "all",
+    options: [],
+    initialized: false,
+  },
+  appFilters: {
     npub: "all",
     options: [],
     initialized: false,
@@ -779,6 +785,23 @@ const syncIdentityDisplay = () => {
   }
 };
 
+let postAuthSessionsFetchScheduled = false;
+const requestPostAuthSessionsFetch = () => {
+  if (postAuthSessionsFetchScheduled) {
+    return;
+  }
+  postAuthSessionsFetchScheduled = true;
+  const triggerFetch = () => {
+    postAuthSessionsFetchScheduled = false;
+    void fetchSessions();
+  };
+  if (typeof queueMicrotask === "function") {
+    queueMicrotask(triggerFetch);
+  } else {
+    Promise.resolve().then(triggerFetch);
+  }
+};
+
 const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
   if (!partial || typeof partial !== "object") {
     return state.identity;
@@ -923,6 +946,13 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
     } else if (!next.isAdmin && !viewerNormalized) {
       state.sessionFilters.npub = "all";
     }
+    state.appFilters.initialized = false;
+    state.appFilters.options = [];
+    if (viewerNormalized) {
+      state.appFilters.npub = viewerNormalized;
+    } else {
+      state.appFilters.npub = "all";
+    }
   }
 
   if (persist) {
@@ -947,6 +977,10 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
     } catch {
       // ignore dispatch errors
     }
+  }
+
+  if (becameAuthenticated) {
+    requestPostAuthSessionsFetch();
   }
 
   return next;
@@ -5706,6 +5740,37 @@ const buildSessionFilterOptions = () => {
   return options;
 };
 
+const buildAppFilterOptions = () => {
+  if (!state.identity.isAdmin) {
+    return [];
+  }
+  const seen = new Set();
+  const options = [];
+  const appendOption = (value, label) => {
+    if (seen.has(value)) return;
+    seen.add(value);
+    options.push({ value, label });
+  };
+  const viewerNpub = normaliseNpubValue(state.identity.npub);
+  if (viewerNpub) {
+    appendOption(viewerNpub, `My apps (${abbreviateNpub(viewerNpub)})`);
+  }
+  appendOption("all", "All apps");
+  state.appFilters.options.forEach((option) => {
+    if (!option || typeof option !== "object") return;
+    const value = typeof option.value === "string" ? option.value : "__anonymous__";
+    if (seen.has(value)) return;
+    const alias = typeof option.alias === "string" && option.alias.trim().length > 0 ? option.alias.trim() : null;
+    const npub = typeof option.npub === "string" ? option.npub : null;
+    const appCount = typeof option.appCount === "number" ? option.appCount : 0;
+    const baseLabel = alias ?? (npub ? abbreviateNpub(npub) : value === "__anonymous__" ? "Shared" : "Unknown");
+    const detail =
+      appCount === 0 ? "No apps" : appCount === 1 ? "1 app" : `${appCount} apps`;
+    appendOption(value, `${baseLabel} • ${detail}`);
+  });
+  return options;
+};
+
 const fetchLogs = async (sessionId) => {
   const response = await fetch(`/api/sessions/${sessionId}/logs`);
   if (!response.ok) return;
@@ -5737,8 +5802,35 @@ const fetchConversation = async (sessionId) => {
 
 const fetchApps = async ({ tail = APP_LOG_PREVIEW_LINES } = {}) => {
   state.apps.loading = true;
+  const viewerNormalized = normaliseNpubValue(state.identity.npub);
+  if (state.identity.isAdmin) {
+    if (!state.appFilters.initialized && viewerNormalized) {
+      state.appFilters.npub = viewerNormalized;
+    }
+  } else if (viewerNormalized) {
+    state.appFilters.npub = viewerNormalized;
+  } else {
+    state.appFilters.npub = "all";
+  }
+  const searchParams = new URLSearchParams();
+  searchParams.set("tail", String(tail));
+  if (state.identity.isAdmin) {
+    const filterValue = state.appFilters.npub;
+    if (filterValue && filterValue !== "all") {
+      searchParams.set("npub", filterValue);
+    }
+  }
   try {
-    const response = await fetch(`/api/apps?tail=${encodeURIComponent(String(tail))}`);
+    const response = await fetch(`/api/apps?${searchParams.toString()}`);
+    if (response.status === 401) {
+      handleUnauthorizedAccess();
+      state.apps.items = [];
+      state.appFilters.options = [];
+      state.appFilters.npub = "all";
+      state.appFilters.initialized = false;
+      state.apps.error = "Unauthorized";
+      return;
+    }
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
       const errorMessage =
@@ -5775,6 +5867,25 @@ const fetchApps = async ({ tail = APP_LOG_PREVIEW_LINES } = {}) => {
         availableScripts,
       };
     });
+    if (state.identity.isAdmin) {
+      const filterPayload = payload && typeof payload === "object" ? payload.filters : null;
+      const ownerOptions =
+        filterPayload && Array.isArray(filterPayload.npubs) ? filterPayload.npubs : [];
+      state.appFilters.options = ownerOptions;
+      const activeValue =
+        filterPayload && Object.prototype.hasOwnProperty.call(filterPayload, "active")
+          ? filterPayload.active
+          : undefined;
+      if (typeof activeValue === "string" && activeValue.length > 0) {
+        state.appFilters.npub = activeValue;
+      } else if (activeValue === null) {
+        state.appFilters.npub = "all";
+      }
+      state.appFilters.initialized = true;
+    } else {
+      state.appFilters.options = [];
+      state.appFilters.initialized = true;
+    }
     state.apps.error = null;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load apps";
@@ -6843,46 +6954,10 @@ const handleSessionStart = async (session, options = {}) => {
   render();
 };
 
-const launchSession = async (agentId, workingDirectory, name, workspace, options = {}) => {
-  const { openInNewTab = false } = options;
-  if (!agentId) {
-    window.alert("Select an agent before launching a session.");
-    return;
-  }
-
-  const payload = { agent: agentId };
-  const trimmedName = typeof name === "string" ? name.trim() : "";
-  if (trimmedName.length > 0) {
-    payload.name = trimmedName.slice(0, 120);
-  }
-  if (typeof workingDirectory === "string" && workingDirectory.trim().length > 0) {
-    payload.directory = workingDirectory.trim();
-  }
-  if (workspace && workspace.mode === "worktree" && workspace.name) {
-    payload.workspace = { mode: "worktree", name: workspace.name };
-  }
-
-  const response = await fetch("/api/sessions", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    window.alert(`Failed to start session: ${data.error ?? response.statusText}`);
-    return;
-  }
-
-  const session = await response.json();
-
-  if (openInNewTab && session?.id) {
-    const sessionUrl = `${LIVE_ROUTE_PREFIX}/${session.id}`;
-    window.open(sessionUrl, "_blank", "noopener");
-  }
-
-  await handleSessionStart(session, { suppressRouteChange: openInNewTab });
-};
+const launchSession = createSessionLauncher({
+  handleSessionStart,
+  liveRoutePrefix: LIVE_ROUTE_PREFIX,
+});
 
 sessionDialogController = createSessionDialogController({
   dialog,
@@ -7712,27 +7787,13 @@ const renderAppCard = (app) => {
     meta.append(portRow);
   }
 
-  const tmuxRow = document.createElement("div");
-  tmuxRow.className = "wm-app-meta-row";
-  const tmuxLabel = document.createElement("span");
-  tmuxLabel.className = "wm-app-meta-label";
-  tmuxLabel.textContent = "tmux session";
-  const tmuxValue = document.createElement("code");
-  tmuxValue.textContent = SHARED_TMUX_SESSION;
-  tmuxValue.title = SHARED_TMUX_SESSION;
-  tmuxRow.append(tmuxLabel, tmuxValue);
-  meta.append(tmuxRow);
-
   const windowRow = document.createElement("div");
   windowRow.className = "wm-app-meta-row";
-  const windowLabel = document.createElement("span");
-  windowLabel.className = "wm-app-meta-label";
-  windowLabel.textContent = "tmux window";
   const windowValue = document.createElement("code");
   const windowName = app.tmuxWindow ?? app.tmuxSession ?? deriveAppWindowName(app.label ?? "", app.root ?? "");
   windowValue.textContent = windowName;
   windowValue.title = windowName;
-  windowRow.append(windowLabel, windowValue);
+  windowRow.append(windowValue);
   meta.append(windowRow);
 
   appendVariableUrlRow(meta, app.logs);
@@ -7869,11 +7930,17 @@ const renderAppCard = (app) => {
     const appName =
       typeof app.label === "string" && app.label.trim().length > 0 ? app.label.trim() : String(app.id ?? "app");
     const sessionName = `editing ${appName}`;
+    const origin = buildSessionOrigin({
+      type: "app",
+      id: app.id ?? "",
+      url: app.id !== undefined && app.id !== null ? `/apps/${app.id}` : undefined,
+      label: app.label,
+    });
     const originalLabel = editWithAiButton.textContent;
     editWithAiButton.disabled = true;
     editWithAiButton.textContent = "Launching…";
     try {
-      await launchSession(agentId, workingDirectory, sessionName, undefined, { openInNewTab: true });
+      await launchSession(agentId, workingDirectory, sessionName, undefined, { openInNewTab: true, origin });
     } finally {
       if (editWithAiButton.isConnected) {
         editWithAiButton.disabled = false;
@@ -7943,6 +8010,41 @@ const renderApps = () => {
   const headerActions = document.createElement("div");
   headerActions.className = "wm-apps-header-actions";
 
+  if (state.identity.isAdmin) {
+    const ownerFilterOptions = buildAppFilterOptions();
+    if (ownerFilterOptions.length > 0) {
+      const filterContainer = document.createElement("div");
+      filterContainer.className = "wm-session-filter";
+      const filterLabel = document.createElement("label");
+      filterLabel.textContent = "Owner";
+      const filterSelect = document.createElement("select");
+      filterSelect.className = "wm-select";
+      ownerFilterOptions.forEach((option) => {
+        const opt = document.createElement("option");
+        opt.value = option.value;
+        opt.textContent = option.label;
+        if (option.value === state.appFilters.npub) {
+          opt.selected = true;
+        }
+        filterSelect.append(opt);
+      });
+      filterSelect.addEventListener("change", (event) => {
+        const target = event.target;
+        const value = target instanceof HTMLSelectElement && target.value ? target.value : "all";
+        state.appFilters.npub = value;
+        state.appFilters.initialized = true;
+        void fetchApps({ tail: APP_LOG_PREVIEW_LINES }).then(() => {
+          if (currentRoute === "apps") {
+            render();
+          }
+        });
+      });
+      filterLabel.append(filterSelect);
+      filterContainer.append(filterLabel);
+      headerActions.append(filterContainer);
+    }
+  }
+
   const refreshButton = document.createElement("button");
   refreshButton.type = "button";
   refreshButton.className = "wm-button secondary";
@@ -8005,15 +8107,9 @@ const renderApps = () => {
   const grid = document.createElement("div");
   grid.className = "wm-apps-grid";
 
-  const coreApp = apps.find((item) => item?.id === "wingman-core");
-  if (coreApp) {
-    grid.append(renderWingmanCard(coreApp));
-  }
-  apps
-    .filter((item) => item?.id !== "wingman-core")
-    .forEach((app) => {
-      grid.append(renderAppCard(app));
-    });
+  apps.forEach((app) => {
+    grid.append(renderAppCard(app));
+  });
 
   wrapper.append(grid);
 
@@ -8735,8 +8831,9 @@ const renderHome = () => {
     void ensureAppsLoaded();
   }
 
+  let orchestratorCard = null;
   if (orchestratorFeatureEnabledForViewer()) {
-    const orchestratorCard = document.createElement("section");
+    orchestratorCard = document.createElement("section");
     orchestratorCard.className = "wm-card wm-home-orchestrator";
 
     const orchestratorHeader = document.createElement("div");
@@ -8794,8 +8891,6 @@ const renderHome = () => {
     orchestratorContent.append(orchestratorActions);
     orchestratorCard.append(orchestratorHeader, orchestratorContent);
     setOrchestratorCollapsed(false);
-
-    wrapper.append(orchestratorCard);
   }
 
   const appsCard = document.createElement("section");
@@ -9183,8 +9278,11 @@ const renderHome = () => {
   liveCard.append(liveContent);
 
   setCollapsed(false);
-  wrapper.append(liveCard);
   wrapper.append(appsCard);
+  wrapper.append(liveCard);
+  if (orchestratorCard) {
+    wrapper.append(orchestratorCard);
+  }
   return wrapper;
 };
 
@@ -10393,15 +10491,6 @@ const renderSettings = () => {
 
   wrapper.append(renderIdentityPanel());
 
-  if (state.identity.isAdmin) {
-    ensureFeatureFlagsLoaded();
-    wrapper.append(renderFeatureFlagsPanel());
-    if (!state.adminUsers.initialized && !state.adminUsers.loading && !state.adminUsers.error) {
-      void fetchAdminUsers();
-    }
-    wrapper.append(renderAdminUsersPanel());
-  }
-
   const wingmanCard = document.createElement("section");
   wingmanCard.className = "wm-card";
   const wingmanHeading = document.createElement("h2");
@@ -10461,6 +10550,22 @@ const renderSettings = () => {
 
   wingmanCard.append(portsContainer);
   wrapper.append(wingmanCard);
+
+  if (state.identity.isAdmin) {
+    ensureFeatureFlagsLoaded();
+    wrapper.append(renderFeatureFlagsPanel());
+    if (!state.adminUsers.initialized && !state.adminUsers.loading && !state.adminUsers.error) {
+      void fetchAdminUsers();
+    }
+    wrapper.append(renderAdminUsersPanel());
+    const coreApp = state.apps.items.find((item) => item?.id === "wingman-core");
+    if (coreApp) {
+      const coreSection = document.createElement("section");
+      coreSection.className = "wm-card wm-app-card-core";
+      coreSection.append(renderWingmanCard(coreApp));
+      wrapper.append(coreSection);
+    }
+  }
 
   return wrapper;
 };

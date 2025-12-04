@@ -1249,8 +1249,14 @@ body[data-menu-open="true"] .wm-menu-panel {
 
 .wm-apps-grid {
   display: grid;
-  gap: 1.25rem;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 900px) {
+  .wm-apps-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .wm-app-card {
@@ -1422,7 +1428,7 @@ body[data-menu-open="true"] .wm-menu-panel {
   font-family: "Roboto Mono", "Fira Code", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 0.8rem;
   line-height: 1.4;
-  max-height: 12rem;
+  max-height: 4.2rem;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;

@@ -20,6 +20,9 @@ export const initAppDialogs = ({
   const appAdvancedSection = document.getElementById("app-advanced");
   const appTmuxInput = document.getElementById("app-tmux-session");
   const appTmuxWindowInput = document.getElementById("app-tmux-window");
+  const appTmuxSessionLabel = document.getElementById("app-tmux-session-label");
+  const appTmuxSessionNote = document.getElementById("app-tmux-session-note");
+  const appTmuxWindowLabel = document.getElementById("app-tmux-window-label");
   const appNotesInput = document.getElementById("app-notes");
   const appDiscoverToggle = document.getElementById("app-discover-enabled");
   const appDiscoverButton = document.getElementById("app-discover");
@@ -52,6 +55,35 @@ export const initAppDialogs = ({
     webAppPort: null,
     projectContext: null,
   };
+
+  const shouldShowAdvancedSection = () => Boolean(state.identity.isAdmin) || appDialogState.mode === "edit";
+
+  const syncAppAdvancedVisibility = () => {
+    if (!appAdvancedSection) return;
+    const visible = shouldShowAdvancedSection();
+    appAdvancedSection.hidden = !visible;
+    if (!visible) {
+      appAdvancedSection.open = false;
+    }
+  };
+
+  const syncTmuxVisibility = () => {
+    const isAdmin = Boolean(state.identity.isAdmin);
+    const targets = [
+      appTmuxSessionLabel,
+      appTmuxInput,
+      appTmuxSessionNote,
+      appTmuxWindowLabel,
+      appTmuxWindowInput,
+    ];
+    targets.forEach((element) => {
+      if (!element) return;
+      element.hidden = !isAdmin;
+    });
+  };
+
+  syncAppAdvancedVisibility();
+  syncTmuxVisibility();
 
   const deriveRepositoryFolderName = (input) => {
     if (!input) return "";
@@ -180,6 +212,8 @@ export const initAppDialogs = ({
     syncAppWebAppPortNote({ enabled: false, port: null });
     appDialogState.mode = "create";
     appDialogState.appId = null;
+    syncAppAdvancedVisibility();
+    syncTmuxVisibility();
   };
 
   const populateAppDialog = (app) => {
@@ -215,7 +249,7 @@ export const initAppDialogs = ({
       appWebAppToggle.checked = webAppEnabled;
     }
     syncAppWebAppPortNote({ enabled: webAppEnabled, port: appDialogState.webAppPort });
-    if (appAdvancedSection) {
+    if (appAdvancedSection && !appAdvancedSection.hidden) {
       const hasScript = Object.values(app.scripts ?? {}).some(
         (value) => typeof value === "string" && value.length > 0,
       );
@@ -223,6 +257,8 @@ export const initAppDialogs = ({
       const hasCustomWindow = Boolean(app.tmuxWindow && app.tmuxWindow !== inferredWindow);
       appAdvancedSection.open = hasScript || hasCustomWindow;
     }
+    syncAppAdvancedVisibility();
+    syncTmuxVisibility();
   };
 
   const collectAppFormValues = () => {
@@ -359,20 +395,36 @@ export const initAppDialogs = ({
     resetAppDialog();
   };
 
-  const handleAppDiscover = async (event) => {
-    event.preventDefault();
-    if (!appRootInput) return;
-    const root = appRootInput.value.trim();
-    if (!root) {
-      window.alert("Enter the app root directory before discovering scripts.");
-      appRootInput.focus();
-      return;
+  const applyDiscoveredScripts = (scripts, { revealAdvanced = true } = {}) => {
+    if (!scripts || typeof scripts !== "object") {
+      return 0;
     }
-    if (appDiscoverButton) {
-      appDiscoverButton.disabled = true;
+    let applied = 0;
+    for (const [action, input] of Object.entries(appScriptInputs)) {
+      if (!input) continue;
+      const candidate = scripts?.[action];
+      if (typeof candidate === "string" && candidate.trim().length > 0) {
+        input.value = candidate;
+        applied += 1;
+      }
+    }
+    if (applied > 0 && revealAdvanced && appAdvancedSection && !appAdvancedSection.hidden) {
+      appAdvancedSection.open = true;
+    }
+    return applied;
+  };
+
+  const runScriptDiscovery = async ({ root, silent = false, revealAdvanced = true } = {}) => {
+    const targetRoot = typeof root === "string" ? root.trim() : appRootInput?.value?.trim() ?? "";
+    if (!targetRoot) {
+      if (!silent) {
+        window.alert("Enter the app root directory before discovering scripts.");
+        appRootInput?.focus();
+      }
+      return { applied: 0, success: false };
     }
     try {
-      const response = await fetch(`/api/apps/discover?root=${encodeURIComponent(root)}`);
+      const response = await fetch(`/api/apps/discover?root=${encodeURIComponent(targetRoot)}`);
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
         const message =
@@ -382,23 +434,29 @@ export const initAppDialogs = ({
         throw new Error(message);
       }
       const scripts = payload && typeof payload === "object" ? (payload.scripts ?? {}) : {};
-      let applied = 0;
-      for (const [action, input] of Object.entries(appScriptInputs)) {
-        if (!input) continue;
-        const candidate = scripts?.[action];
-        if (typeof candidate === "string" && candidate.trim().length > 0) {
-          input.value = candidate;
-          applied += 1;
-        }
-      }
-      if (applied === 0) {
+      const applied = applyDiscoveredScripts(scripts, { revealAdvanced });
+      if (!silent && applied === 0) {
         window.alert("No scripts discovered. Enter commands manually.");
-      } else if (appAdvancedSection) {
-        appAdvancedSection.open = true;
       }
+      return { applied, success: true };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to discover scripts";
-      window.alert(message);
+      if (!silent) {
+        const message = error instanceof Error ? error.message : "Failed to discover scripts";
+        window.alert(message);
+      } else {
+        console.warn("[apps] Script discovery failed", error);
+      }
+      return { applied: 0, success: false };
+    }
+  };
+
+  const handleAppDiscover = async (event) => {
+    event.preventDefault();
+    if (appDiscoverButton) {
+      appDiscoverButton.disabled = true;
+    }
+    try {
+      await runScriptDiscovery({ silent: false, revealAdvanced: true });
     } finally {
       if (appDiscoverButton) {
         appDiscoverButton.disabled = false;
@@ -407,7 +465,7 @@ export const initAppDialogs = ({
   };
 
   const applyClonedAppDefaults = (payload) => {
-    if (!payload || typeof payload !== "object") return;
+    if (!payload || typeof payload !== "object") return "";
     const root = typeof payload.root === "string" ? payload.root : "";
     if (root && appRootInput) {
       appRootInput.value = root;
@@ -430,13 +488,14 @@ export const initAppDialogs = ({
           applied += 1;
         }
       }
-      if (applied > 0 && appAdvancedSection) {
+      if (applied > 0 && appAdvancedSection && !appAdvancedSection.hidden) {
         appAdvancedSection.open = true;
       }
     }
     if (appDiscoverToggle) {
       appDiscoverToggle.checked = false;
     }
+    return root;
   };
 
   const closeAppCloneDialog = () => {
@@ -494,7 +553,7 @@ export const initAppDialogs = ({
             : response.statusText || "Failed to clone repository";
         throw new Error(message);
       }
-      applyClonedAppDefaults(payload ?? {});
+      const appliedRoot = applyClonedAppDefaults(payload ?? {}) ?? "";
       if (payload && typeof payload === "object" && typeof payload.root === "string" && appCloneNameInput) {
         const labelSuggestion =
           typeof payload.label === "string" && payload.label.trim().length > 0
@@ -504,6 +563,9 @@ export const initAppDialogs = ({
           appLabelInput.value = labelSuggestion;
           updateAppWindowPreview();
         }
+      }
+      if (appliedRoot) {
+        void runScriptDiscovery({ root: appliedRoot, silent: true, revealAdvanced: false });
       }
       closeAppCloneDialog();
     } catch (error) {
@@ -643,6 +705,13 @@ export const initAppDialogs = ({
     event.preventDefault();
     closeAppCloneDialog();
   });
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("wingman:identity-ui-state", () => {
+      syncAppAdvancedVisibility();
+      syncTmuxVisibility();
+    });
+  }
 
   appCloneUrlInput?.addEventListener("blur", () => {
     if (!appCloneNameInput || !appCloneUrlInput) return;

@@ -5,6 +5,7 @@ import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 
 import type { AgentRuntimeStatus } from "../types/agent-status";
+import type { SessionOrigin } from "../agents/process-manager";
 
 export interface StoredMessage {
   id: string;
@@ -33,6 +34,7 @@ export interface SessionRecordInput {
   workingDirectory?: string;
   command?: string[];
   runtimeStatus?: AgentRuntimeStatus | null;
+  origin?: SessionOrigin | null;
 }
 
 export interface StoredSessionRecord {
@@ -48,9 +50,44 @@ export interface StoredSessionRecord {
   workingDirectory: string | null;
   command: string | null;
   runtimeStatus: AgentRuntimeStatus | null;
+  origin: SessionOrigin | null;
 }
 
 export const databaseFile = new URL("../../data/wingman.db", import.meta.url).pathname;
+
+const parseStoredOrigin = (value: string | null): SessionOrigin | null => {
+  if (!value) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown> | null;
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    const type = typeof parsed.type === "string" ? parsed.type.trim() : "";
+    const id =
+      typeof parsed.id === "string"
+        ? parsed.id.trim()
+        : typeof parsed.id === "number"
+          ? String(parsed.id)
+          : "";
+    if (!type || !id) {
+      return null;
+    }
+    const origin: SessionOrigin = { type, id };
+    const url = typeof parsed.url === "string" ? parsed.url.trim() : "";
+    const label = typeof parsed.label === "string" ? parsed.label.trim() : "";
+    if (url) {
+      origin.url = url;
+    }
+    if (label) {
+      origin.label = label;
+    }
+    return origin;
+  } catch {
+    return null;
+  }
+};
 
 export class MessageStore {
   private readonly db: Database;
@@ -90,6 +127,7 @@ export class MessageStore {
       session.workingDirectory ?? null,
       Array.isArray(session.command) ? JSON.stringify(session.command) : null,
       session.runtimeStatus ?? null,
+      session.origin ? JSON.stringify(session.origin) : null,
     );
   }
 
@@ -124,7 +162,13 @@ export class MessageStore {
   }
 
   listSessions(): StoredSessionRecord[] {
-    return this.listSessionsStmt.all() as StoredSessionRecord[];
+    const rows = this.listSessionsStmt.all() as Array<
+      Omit<StoredSessionRecord, "origin"> & { origin: string | null }
+    >;
+    return rows.map((row) => ({
+      ...row,
+      origin: parseStoredOrigin(row.origin),
+    }));
   }
 
   private initialise() {
@@ -140,7 +184,8 @@ export class MessageStore {
         tmux_window TEXT,
         working_directory TEXT,
         command TEXT,
-        runtime_status TEXT
+        runtime_status TEXT,
+        origin TEXT
       );
 
       CREATE TABLE IF NOT EXISTS messages (
@@ -172,12 +217,13 @@ export class MessageStore {
     ensureColumn("command", "TEXT");
     ensureColumn("npub", "TEXT");
     ensureColumn("runtime_status", "TEXT");
+    ensureColumn("origin", "TEXT");
   }
 
   private prepareInsertSession() {
     return this.db.prepare(
-      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, tmux_session, tmux_window, working_directory, command, runtime_status)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, tmux_session, tmux_window, working_directory, command, runtime_status, origin)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
        ON CONFLICT(id) DO UPDATE SET
          agent = excluded.agent,
          started_at = excluded.started_at,
@@ -189,7 +235,8 @@ export class MessageStore {
          tmux_window = excluded.tmux_window,
          working_directory = excluded.working_directory,
          command = excluded.command,
-         runtime_status = excluded.runtime_status`,
+         runtime_status = excluded.runtime_status,
+         origin = excluded.origin`,
     );
   }
 
@@ -211,7 +258,8 @@ export class MessageStore {
          tmux_window as tmuxWindow,
          working_directory as workingDirectory,
          command,
-         runtime_status as runtimeStatus
+         runtime_status as runtimeStatus,
+         origin
        FROM sessions`,
     );
   }

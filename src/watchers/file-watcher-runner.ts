@@ -455,6 +455,7 @@ export class FileWatcherRunner {
       tmuxWindow: session.tmuxWindow,
       workingDirectory: session.workingDirectory,
       command: session.command,
+      origin: session.origin ?? null,
     });
 
     try {

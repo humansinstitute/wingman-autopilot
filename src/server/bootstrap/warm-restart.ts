@@ -190,6 +190,7 @@ export const rehydrateWarmSessions = async (
       logs: undefined,
       npub: record.npub ?? undefined,
       agentRuntimeStatus: isAgentRuntimeStatus(record.runtimeStatus) ? record.runtimeStatus : null,
+      origin: record.origin ?? null,
     });
 
     if (!snapshot) {
@@ -214,6 +215,7 @@ export const rehydrateWarmSessions = async (
       workingDirectory: snapshot.workingDirectory,
       command: snapshot.command,
       runtimeStatus: snapshot.agentRuntimeStatus ?? null,
+      origin: snapshot.origin ?? null,
     });
     restored += 1;
   }

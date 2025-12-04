@@ -12,6 +12,13 @@ const MAX_LOG_LINES = 500;
 
 export type SessionStatus = "starting" | "running" | "stopped" | "error";
 
+export interface SessionOrigin {
+  type: string;
+  id: string;
+  url?: string;
+  label?: string;
+}
+
 export interface SessionSnapshot {
   id: string;
   agent: AgentType;
@@ -28,6 +35,7 @@ export interface SessionSnapshot {
   tmuxWindow?: string;
   exitCode?: number;
   logs: string[];
+  origin?: SessionOrigin;
 }
 
 type SessionEvent =
@@ -49,6 +57,7 @@ export interface RehydrateSessionInput {
   logs?: string[];
   npub?: string;
   agentRuntimeStatus?: AgentRuntimeStatus | null;
+  origin?: SessionOrigin | null;
 }
 
 interface AgentSession {
@@ -69,6 +78,7 @@ interface AgentSession {
   detachedPid?: number;
   npub?: string;
   agentRuntimeStatus?: AgentRuntimeStatus;
+  origin?: SessionOrigin;
 }
 
 export class ProcessManager {
@@ -109,7 +119,12 @@ export class ProcessManager {
     return this.sessions.get(id)?.logs.slice();
   }
 
-  async createSession(agent: AgentType, workingDirectory?: string, name?: string): Promise<SessionSnapshot> {
+  async createSession(
+    agent: AgentType,
+    workingDirectory?: string,
+    name?: string,
+    origin?: SessionOrigin | null,
+  ): Promise<SessionSnapshot> {
     const definition = this.config.agents[agent];
     if (!definition) {
       throw new Error(`Unknown agent: ${agent}`);
@@ -144,6 +159,7 @@ export class ProcessManager {
       detachedPid: undefined,
       npub: getAuthenticatedNpub() ?? undefined,
       agentRuntimeStatus: undefined,
+      origin: origin ?? undefined,
     };
 
     this.sessions.set(id, session);
@@ -205,6 +221,7 @@ export class ProcessManager {
       detachedPid: typeof input.pid === "number" ? input.pid : undefined,
       npub: input.npub ?? undefined,
       agentRuntimeStatus: input.agentRuntimeStatus ?? undefined,
+      origin: input.origin ?? undefined,
     };
 
     this.sessions.set(session.id, session);
@@ -466,6 +483,7 @@ export class ProcessManager {
       tmuxWindow: session.tmuxWindow,
       exitCode: session.exitCode,
       logs: session.logs.slice(-50),
+      origin: session.origin,
     };
   }
 
