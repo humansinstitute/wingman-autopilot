@@ -332,15 +332,7 @@ class IdentityUserStore {
     const now = new Date().toISOString();
 
     if (existing) {
-      const update = this.db.prepare(
-        `UPDATE identity_users
-         SET npub = ?2,
-             alias = CASE WHEN ?3 IS NOT NULL AND length(?3) > 0 THEN ?3 ELSE alias END,
-             last_seen_at = CASE WHEN ?4 IS NOT NULL THEN ?4 ELSE last_seen_at END,
-             updated_at = ?5
-         WHERE normalized_npub = ?1`,
-      );
-      update.run(normalized, npub, aliasInput, lastSeenIso, now);
+      this.updateRecord(normalized, npub, aliasInput, lastSeenIso, now);
       return this.getOrThrow(normalized);
     }
 
@@ -364,6 +356,40 @@ class IdentityUserStore {
     );
     insert.run(normalized, npub, alias, lastSeenIso, now, JSON.stringify(ports), 0);
     return this.getOrThrow(normalized);
+  }
+
+  touchExisting(npub: string, options: TouchOptions = {}): IdentityUserRecord | null {
+    const normalized = normaliseNpub(npub);
+    if (!normalized) {
+      throw new Error("A valid npub is required");
+    }
+    const existing = this.get(normalized);
+    if (!existing) {
+      return null;
+    }
+    const aliasInput = typeof options.alias === "string" ? options.alias.trim() : null;
+    const lastSeenIso = toIsoString(options.lastSeenAt);
+    const now = new Date().toISOString();
+    this.updateRecord(normalized, npub, aliasInput, lastSeenIso, now);
+    return this.getOrThrow(normalized);
+  }
+
+  private updateRecord(
+    normalized: string,
+    npub: string,
+    aliasInput: string | null,
+    lastSeenIso: string | null,
+    updatedIso: string,
+  ) {
+    const update = this.db.prepare(
+      `UPDATE identity_users
+         SET npub = ?2,
+             alias = CASE WHEN ?3 IS NOT NULL AND length(?3) > 0 THEN ?3 ELSE alias END,
+             last_seen_at = CASE WHEN ?4 IS NOT NULL THEN ?4 ELSE last_seen_at END,
+             updated_at = ?5
+       WHERE normalized_npub = ?1`,
+    );
+    update.run(normalized, npub, aliasInput, lastSeenIso, updatedIso);
   }
 
   setRole(npub: string, role: string, enabled: boolean): IdentityUserRecord {

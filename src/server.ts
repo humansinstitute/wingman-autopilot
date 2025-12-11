@@ -961,10 +961,12 @@ const buildAdminUserList = (): AdminUserRecord[] => {
       continue;
     }
     summaryMap.set(summary.normalizedNpub, summary);
+    const existing = storedMap.get(summary.normalizedNpub);
+    if (!existing) {
+      continue;
+    }
     try {
-      const existing = storedMap.get(summary.normalizedNpub);
-      identityUserStore.touch(summary.npub, {
-        alias: existing ? null : summary.alias ?? generateIdentityAlias(summary.npub),
+      identityUserStore.touchExisting(summary.npub, {
         lastSeenAt: summary.lastSeenAt ?? null,
       });
     } catch (error) {
@@ -1315,7 +1317,7 @@ manager.on((event) => {
     ensureUserWorkspace(event.session.npub ?? null);
     if (event.session.npub) {
       try {
-        identityUserStore.touch(event.session.npub, {
+        identityUserStore.touchExisting(event.session.npub, {
           lastSeenAt: new Date().toISOString(),
         });
       } catch (error) {
@@ -2592,6 +2594,31 @@ const stopAndRemoveSession = async (sessionId: string) => {
   return true;
 };
 
+const stopSessionsForUser = async (npub: string | null | undefined) => {
+  const normalized = normaliseNpub(npub ?? null);
+  if (!normalized) {
+    return;
+  }
+  const sessionIds = new Set<string>();
+  const activeSessions = manager.listSessions();
+  for (const session of activeSessions) {
+    const sessionNpub = normaliseNpub(session.npub ?? null);
+    if (sessionNpub && sessionNpub === normalized) {
+      sessionIds.add(session.id);
+    }
+  }
+  const storedSessions = messageStore.listSessions();
+  for (const record of storedSessions) {
+    const recordNpub = normaliseNpub(record.npub ?? null);
+    if (recordNpub && recordNpub === normalized) {
+      sessionIds.add(record.id);
+    }
+  }
+  for (const id of sessionIds) {
+    await stopAndRemoveSession(id);
+  }
+};
+
 const handleWebhookRequest = async (request: Request, url: URL): Promise<Response | null> => {
   const pathname = url.pathname;
   if (pathname === "/v1/api/webhook/off" && request.method === "POST") {
@@ -3827,6 +3854,7 @@ const handleApi = async (
       return Response.json({ error: "npub is required" }, { status: 400 });
     }
     try {
+      await stopSessionsForUser(npubInput);
       const deleted = identityUserStore.deleteUser(npubInput);
       if (!deleted) {
         return Response.json({ error: "User not found" }, { status: 404 });
