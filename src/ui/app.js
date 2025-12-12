@@ -10457,6 +10457,8 @@ function buildAdminUserManagementCard() {
   filteredUsers.forEach((user) => {
     const row = document.createElement("div");
     row.className = "wm-admin-users__item";
+    const key = normaliseNpubValue(user.normalizedNpub ?? user.npub) ?? user.npub ?? "";
+    const userPending = state.adminUsers.pending.has(key || user.normalizedNpub || user.npub);
 
     const selectionControl = document.createElement("label");
     selectionControl.className = "wm-admin-users__selection";
@@ -10481,7 +10483,6 @@ function buildAdminUserManagementCard() {
     const details = document.createElement("div");
     details.className = "wm-admin-users__details";
 
-    const key = normaliseNpubValue(user.normalizedNpub ?? user.npub) ?? user.npub ?? "";
     const nicknameValue =
       typeof user.nickname === "string" && user.nickname.trim().length > 0 ? user.nickname.trim() : null;
     const name = document.createElement("strong");
@@ -10526,7 +10527,6 @@ function buildAdminUserManagementCard() {
       (nicknameValue ?? "");
     nicknameInput.value = typeof draftNickname === "string" ? draftNickname : "";
     nicknameInput.autocomplete = "off";
-    const userPending = state.adminUsers.pending.has(key || user.normalizedNpub || user.npub);
     nicknameInput.disabled = userPending || state.adminUsers.loading;
     nicknameInput.addEventListener("input", (event) => {
       state.adminUsers.nicknameDrafts.set(key, event.target.value);
