@@ -4016,6 +4016,18 @@ dialog textarea {
   background: var(--bg-secondary);
 }
 
+.wm-admin-users__selection {
+  display: flex;
+  align-items: flex-start;
+  padding-top: 0.35rem;
+}
+
+.wm-admin-users__selection input {
+  width: 1.15rem;
+  height: 1.15rem;
+  cursor: pointer;
+}
+
 .wm-admin-users__details {
   flex: 1;
   display: flex;
@@ -4250,6 +4262,28 @@ dialog textarea {
 .wm-admin-users__filter-actions .wm-link-button:hover,
 .wm-admin-users__filter-actions .wm-link-button:focus-visible {
   color: var(--accent-primary);
+}
+
+.wm-admin-users__bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.75rem;
+  background: var(--bg-tertiary);
+}
+
+.wm-admin-users__bulk-status {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  margin-right: auto;
+}
+
+.wm-admin-users__bulk-actions .wm-link-button {
+  padding: 0;
 }
 
 .wm-admin-users__nickname {
@@ -4512,6 +4546,12 @@ dialog textarea {
     align-items: stretch;
   }
 
+  .wm-admin-users__selection {
+    width: 100%;
+    justify-content: flex-start;
+    padding-top: 0;
+  }
+
   .wm-admin-users__nickname {
     flex-direction: column;
     align-items: stretch;
@@ -4533,6 +4573,21 @@ dialog textarea {
 
   .wm-admin-users__delete-btn {
     width: 100%;
+  }
+
+  .wm-admin-users__bulk-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .wm-admin-users__bulk-status {
+    margin-right: 0;
+  }
+
+  .wm-admin-users__bulk-actions .wm-button,
+  .wm-admin-users__bulk-actions .wm-link-button {
+    width: 100%;
+    text-align: center;
   }
 }
 

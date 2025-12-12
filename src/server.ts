@@ -3835,6 +3835,72 @@ const handleApi = async (
     }
   }
 
+  if (pathname === "/api/admin/users/bulk" && method === "DELETE") {
+    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    const npubsInput = (payload as Record<string, unknown>).npubs;
+    if (!Array.isArray(npubsInput) || npubsInput.length === 0) {
+      return Response.json({ error: "npubs is required" }, { status: 400 });
+    }
+    const targets = new Map<string, string>();
+    for (const entry of npubsInput) {
+      const candidate = normaliseOptionalString(entry);
+      if (!candidate) {
+        continue;
+      }
+      const normalized = normaliseNpub(candidate);
+      if (!normalized) {
+        continue;
+      }
+      targets.set(normalized, candidate);
+    }
+    if (targets.size === 0) {
+      return Response.json({ error: "At least one valid npub is required" }, { status: 400 });
+    }
+    const missing: string[] = [];
+    const skippedAdmin: string[] = [];
+    let deletedCount = 0;
+    for (const [normalized, original] of targets) {
+      if (adminNpub && normalized === adminNpub) {
+        skippedAdmin.push(original);
+        continue;
+      }
+      try {
+        await stopSessionsForUser(normalized);
+        const deleted = identityUserStore.deleteUser(normalized);
+        if (!deleted) {
+          missing.push(original);
+        } else {
+          deletedCount += 1;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return Response.json({ error: `Failed to delete ${original}: ${message}` }, { status: 400 });
+      }
+    }
+    const users = buildAdminUserList();
+    return Response.json({
+      users,
+      summary: {
+        requested: targets.size,
+        deleted: deletedCount,
+        missing,
+        skippedAdmin,
+      },
+    });
+  }
+
   if (pathname === "/api/admin/users" && method === "DELETE") {
     const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
     if (denied) {

@@ -441,6 +441,8 @@ function createAdminUsersState() {
     filter: "",
     filterDraft: "",
     nicknameDrafts: new Map(),
+    selection: new Set(),
+    bulkDeleteBusy: false,
     balanceTool: {
       identifier: "",
       amount: "",
@@ -456,6 +458,63 @@ const normaliseNpubValue = (npub) => {
   const trimmed = npub.trim();
   return trimmed.length === 0 ? null : trimmed;
 };
+
+const getAdminUserKey = (user) => {
+  if (!user || typeof user !== "object") return null;
+  return normaliseNpubValue(user.normalizedNpub ?? user.npub);
+};
+
+const ensureAdminSelectionState = () => {
+  if (!(state.adminUsers.selection instanceof Set)) {
+    state.adminUsers.selection = new Set();
+  }
+  return state.adminUsers.selection;
+};
+
+const syncAdminSelectionState = (users) => {
+  const selection = ensureAdminSelectionState();
+  if (!Array.isArray(users)) {
+    selection.clear();
+    return;
+  }
+  const validKeys = new Set();
+  users.forEach((user) => {
+    const key = getAdminUserKey(user);
+    if (key) {
+      validKeys.add(key);
+    }
+  });
+  Array.from(selection).forEach((key) => {
+    if (!validKeys.has(key)) {
+      selection.delete(key);
+    }
+  });
+};
+
+const setAdminUserSelected = (key, selected) => {
+  if (!key) return;
+  const selection = ensureAdminSelectionState();
+  if (selected) {
+    selection.add(key);
+  } else {
+    selection.delete(key);
+  }
+};
+
+const clearAdminSelection = () => {
+  ensureAdminSelectionState().clear();
+};
+
+const getAdminSelectedUsers = () => {
+  const items = Array.isArray(state.adminUsers.items) ? state.adminUsers.items : [];
+  const selection = ensureAdminSelectionState();
+  return items.filter((user) => {
+    const key = getAdminUserKey(user);
+    return key ? selection.has(key) : false;
+  });
+};
+
+const getAdminSelectionCount = () => ensureAdminSelectionState().size;
 
 const normalisePortList = (value) => {
   if (!Array.isArray(value)) {
@@ -5992,6 +6051,7 @@ const replaceAdminUsersList = (users) => {
   state.adminUsers.items = hydrated;
   state.adminUsers.initialized = true;
   syncAdminNicknameDrafts(hydrated);
+  syncAdminSelectionState(hydrated);
   primeAdminUserPictures(hydrated);
 };
 
@@ -6148,7 +6208,8 @@ const toggleUserOnboarding = async (npub, onboarded) => {
   if (!state.identity.isAdmin || typeof npub !== "string" || npub.length === 0) {
     return;
   }
-  const key = normaliseNpubValue(npub) ?? npub;
+  const normalizedKey = normaliseNpubValue(npub);
+  const key = normalizedKey ?? npub;
   state.adminUsers.pending.add(key);
   if (currentRoute === "settings") {
     render();
@@ -6221,11 +6282,99 @@ const deleteAdminUser = async (npub, alias) => {
       state.adminUsers.pending.clear();
     }
     state.adminUsers.error = null;
+    if (normalizedKey) {
+      ensureAdminSelectionState().delete(normalizedKey);
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to delete user";
     state.adminUsers.error = message;
   } finally {
     state.adminUsers.pending.delete(key);
+    if (currentRoute === "settings") {
+      render();
+    }
+  }
+};
+
+const deleteSelectedAdminUsers = async () => {
+  const selectedUsers = getAdminSelectedUsers();
+  if (selectedUsers.length === 0) {
+    return;
+  }
+  const keys = selectedUsers
+    .map((user) => getAdminUserKey(user))
+    .filter((key) => typeof key === "string" && key.length > 0);
+  if (keys.length === 0) {
+    clearAdminSelection();
+    return;
+  }
+  const identifiers = selectedUsers
+    .map((user) => {
+      if (!user || typeof user !== "object") return null;
+      const nickname = typeof user.nickname === "string" && user.nickname.trim().length > 0 ? user.nickname.trim() : null;
+      const alias = typeof user.alias === "string" && user.alias.trim().length > 0 ? user.alias.trim() : null;
+      const npub = typeof user.npub === "string" && user.npub.length > 0 ? user.npub : null;
+      return nickname ?? alias ?? npub;
+    })
+    .filter((value) => typeof value === "string" && value.length > 0);
+  const displayPreview = identifiers.slice(0, 3).join(", ");
+  const displayNames =
+    selectedUsers.length === 1 && identifiers.length > 0
+      ? `"${identifiers[0]}"`
+      : identifiers.length > 0
+        ? `${selectedUsers.length} users (${displayPreview}${identifiers.length > 3 ? ", …" : ""})`
+        : `${selectedUsers.length} users`;
+  const confirmed = confirm(
+    `Are you sure you want to delete ${displayNames}? This action cannot be undone and will remove their data.`,
+  );
+  if (!confirmed) {
+    return;
+  }
+  const pendingKeys = keys.map((key) => key ?? "");
+  pendingKeys.forEach((key) => {
+    if (!key) return;
+    state.adminUsers.pending.add(key);
+  });
+  state.adminUsers.bulkDeleteBusy = true;
+  if (currentRoute === "settings") {
+    render();
+  }
+  try {
+    const npubs = selectedUsers
+      .map((user) => (typeof user.npub === "string" && user.npub.length > 0 ? user.npub : user.normalizedNpub))
+      .filter((value) => typeof value === "string" && value.length > 0);
+    if (npubs.length === 0) {
+      throw new Error("No valid users selected");
+    }
+    const response = await fetch("/api/admin/users/bulk", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ npubs }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+          ? payload.error
+          : response.statusText || "Failed to delete users";
+      throw new Error(message);
+    }
+    const users = Array.isArray(payload?.users) ? payload.users : null;
+    if (Array.isArray(users)) {
+      replaceAdminUsersList(users);
+      state.adminUsers.pending.clear();
+      clearAdminSelection();
+    }
+    state.adminUsers.error = null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to delete users";
+    state.adminUsers.error = message;
+  } finally {
+    pendingKeys.forEach((key) => {
+      if (!key) return;
+      state.adminUsers.pending.delete(key);
+    });
+    state.adminUsers.bulkDeleteBusy = false;
     if (currentRoute === "settings") {
       render();
     }
@@ -10298,11 +10447,33 @@ function buildAdminUserManagementCard() {
     return card;
   }
 
+  const selectionControls = buildAdminUsersSelectionControls(filteredUsers);
+  if (selectionControls) {
+    body.append(selectionControls);
+  }
+
   const list = document.createElement("div");
   list.className = "wm-admin-users__list";
   filteredUsers.forEach((user) => {
     const row = document.createElement("div");
     row.className = "wm-admin-users__item";
+
+    const selectionControl = document.createElement("label");
+    selectionControl.className = "wm-admin-users__selection";
+    const selectionCheckbox = document.createElement("input");
+    selectionCheckbox.type = "checkbox";
+    const isSelected = key ? ensureAdminSelectionState().has(key) : false;
+    selectionCheckbox.checked = isSelected;
+    selectionCheckbox.disabled =
+      !key || userPending || state.adminUsers.loading || state.adminUsers.bulkDeleteBusy || !state.identity.isAdmin;
+    selectionCheckbox.addEventListener("change", () => {
+      if (!key) return;
+      setAdminUserSelected(key, selectionCheckbox.checked);
+      if (currentRoute === "settings") {
+        render();
+      }
+    });
+    selectionControl.append(selectionCheckbox);
 
     const avatar = document.createElement("div");
     avatar.className = "wm-admin-users__avatar";
@@ -10405,12 +10576,74 @@ function buildAdminUserManagementCard() {
 
     actions.append(toggle, deleteBtn);
 
-    row.append(avatar, details, actions);
+    row.append(selectionControl, avatar, details, actions);
     list.append(row);
   });
 
   body.append(list);
   return card;
+}
+
+function buildAdminUsersSelectionControls(filteredUsers) {
+  if (!Array.isArray(filteredUsers) || filteredUsers.length === 0) {
+    return null;
+  }
+  const selection = ensureAdminSelectionState();
+  const selectedCount = selection.size;
+  const container = document.createElement("div");
+  container.className = "wm-admin-users__bulk-actions";
+
+  const status = document.createElement("span");
+  status.className = "wm-admin-users__bulk-status";
+  status.textContent =
+    selectedCount === 0 ? "No users selected" : selectedCount === 1 ? "1 user selected" : `${selectedCount} users selected`;
+
+  const visibleKeys = filteredUsers
+    .map((user) => getAdminUserKey(user))
+    .filter((key) => typeof key === "string" && key.length > 0);
+  const allVisibleSelected = visibleKeys.length > 0 && visibleKeys.every((key) => selection.has(key));
+  const disableSelectionControls = state.adminUsers.loading || state.adminUsers.bulkDeleteBusy;
+
+  const selectVisible = document.createElement("button");
+  selectVisible.type = "button";
+  selectVisible.className = "wm-button secondary";
+  selectVisible.textContent = allVisibleSelected ? "Clear visible" : "Select visible";
+  selectVisible.disabled = disableSelectionControls || visibleKeys.length === 0;
+  selectVisible.addEventListener("click", () => {
+    if (selectVisible.disabled) return;
+    visibleKeys.forEach((key) => {
+      setAdminUserSelected(key, !allVisibleSelected);
+    });
+    if (currentRoute === "settings") {
+      render();
+    }
+  });
+
+  const clearAll = document.createElement("button");
+  clearAll.type = "button";
+  clearAll.className = "wm-link-button";
+  clearAll.textContent = "Clear all";
+  clearAll.disabled = disableSelectionControls || selectedCount === 0;
+  clearAll.addEventListener("click", () => {
+    if (clearAll.disabled) return;
+    clearAdminSelection();
+    if (currentRoute === "settings") {
+      render();
+    }
+  });
+
+  const deleteSelected = document.createElement("button");
+  deleteSelected.type = "button";
+  deleteSelected.className = "wm-button danger";
+  deleteSelected.textContent = state.adminUsers.bulkDeleteBusy ? "Deleting…" : "Delete selected";
+  deleteSelected.disabled = disableSelectionControls || selectedCount === 0;
+  deleteSelected.addEventListener("click", () => {
+    if (deleteSelected.disabled) return;
+    void deleteSelectedAdminUsers();
+  });
+
+  container.append(status, selectVisible, clearAll, deleteSelected);
+  return container;
 }
 
 function buildAdminUsersFilter() {
