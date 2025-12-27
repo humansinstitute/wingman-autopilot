@@ -42,6 +42,32 @@ import {
   copyConversationToClipboard,
   createCopyIconButton,
 } from "./utils/clipboard.js";
+import {
+  fetchConfigApi,
+  normaliseConnectRelays,
+  fetchRestartStatusApi,
+  triggerWarmRestartApi,
+  runSystemCleanupApi,
+} from "./api/config.js";
+import {
+  fetchSessionsApi,
+  fetchSessionLogsApi,
+  fetchSessionMessagesApi,
+  stopSessionApi,
+  deleteSessionApi,
+  updateSessionNameApi,
+  postSessionMessageApi,
+  fetchSessionQueueApi,
+  addToSessionQueueApi,
+  removeFromSessionQueueApi,
+  updateSessionQueuePromptApi,
+} from "./api/sessions.js";
+import {
+  fetchAppsApi,
+  fetchAppLogsApi,
+  triggerAppActionApi,
+  removeAppApi,
+} from "./api/apps.js";
 
 const ace = globalThis.ace;
 if (!ace) {
@@ -5222,21 +5248,8 @@ const submitFileTransfer = async () => {
   }
 };
 
-function normaliseConnectRelays(candidate) {
-  if (!candidate) return [...DEFAULT_CONNECT_RELAYS];
-  const values = Array.isArray(candidate) ? candidate : String(candidate).split(",");
-  const cleaned = values
-    .map((value) => (value && typeof value === "string" ? value.trim() : ""))
-    .filter((value) => value.length > 0);
-  if (cleaned.length === 0) {
-    return [...DEFAULT_CONNECT_RELAYS];
-  }
-  return Array.from(new Set(cleaned));
-}
-
 const fetchConfig = async () => {
-  const response = await fetch("/api/config");
-  const configData = await response.json();
+  const configData = await fetchConfigApi();
   const adminNpubNormalized = normaliseNpubValue(configData?.adminNpub ?? null);
   const connectRelays = normaliseConnectRelays(configData?.connectRelays);
   state.config = { ...configData, adminNpub: adminNpubNormalized ?? null, connectRelays };
@@ -5490,9 +5503,8 @@ const buildAppFilterOptions = () => {
 };
 
 const fetchLogs = async (sessionId) => {
-  const response = await fetch(`/api/sessions/${sessionId}/logs`);
-  if (!response.ok) return;
-  const data = await response.json();
+  const data = await fetchSessionLogsApi(sessionId);
+  if (!data) return;
   state.logs.set(sessionId, data.logs);
 
   // Trigger incremental DOM update if on live route
@@ -5503,9 +5515,8 @@ const fetchLogs = async (sessionId) => {
 
 const fetchConversation = async (sessionId) => {
   try {
-    const response = await fetch(`/api/sessions/${sessionId}/messages?refresh=true`);
-    if (!response.ok) return;
-    const data = await response.json();
+    const data = await fetchSessionMessagesApi(sessionId);
+    if (!data) return;
     const items = Array.isArray(data?.messages) ? data.messages : [];
     state.conversations.set(sessionId, items);
 
@@ -6790,10 +6801,9 @@ sessionDialogController = createSessionDialogController({
 sessionDialogController.resetFormState();
 
 const stopSession = async (sessionId) => {
-  const response = await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    window.alert(`Failed to stop session: ${data.error ?? response.statusText}`);
+  const result = await stopSessionApi(sessionId);
+  if (!result.success) {
+    window.alert(`Failed to stop session: ${result.error}`);
     return;
   }
   await fetchSessions();
@@ -6802,10 +6812,9 @@ const stopSession = async (sessionId) => {
 
 const deleteSession = async (sessionId) => {
   try {
-    const response = await fetch(`/api/sessions/${sessionId}/storage`, { method: "DELETE" });
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      window.alert(`Failed to delete session: ${data.error ?? response.statusText}`);
+    const result = await deleteSessionApi(sessionId);
+    if (!result.success) {
+      window.alert(`Failed to delete session: ${result.error}`);
       return;
     }
     await fetchSessions();
@@ -6817,17 +6826,7 @@ const deleteSession = async (sessionId) => {
 };
 
 const updateSessionName = async (sessionId, name) => {
-  const response = await fetch(`/api/sessions/${sessionId}`, {
-    method: "PATCH",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message = typeof data?.error === "string" ? data.error : response.statusText;
-    throw new Error(message || "Failed to rename session");
-  }
-  return response.json();
+  return updateSessionNameApi(sessionId, name);
 };
 
 const promptRenameSession = async (session) => {
@@ -6869,43 +6868,19 @@ const resumeSession = async (sessionId) => {
 };
 
 const postSessionMessage = async (sessionId, content, type = "user") => {
-  const payload =
-    type === "user"
-      ? { content }
-      : {
-          content,
-          type,
-        };
-
-  const response = await fetch(`/api/sessions/${sessionId}/messages`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-  let body = null;
   try {
-    body = await response.json();
-  } catch {
-    body = null;
-  }
-
-  if (!response.ok) {
-    if (body && typeof body === "object" && typeof body.balance === "number") {
-      updateIdentityState({ balance: body.balance }, { persist: true, emit: true });
+    const result = await postSessionMessageApi(sessionId, content, type);
+    if (result && typeof result === "object" && typeof result.balance === "number") {
+      updateIdentityState({ balance: result.balance }, { persist: true, emit: true });
     }
-    const message =
-      body && typeof body === "object" && typeof body.error === "string" && body.error.length > 0
-        ? body.error
-        : response.statusText || "Agent request failed";
-    throw new Error(message);
+    return result;
+  } catch (error) {
+    // Handle balance update from error response
+    if (error && typeof error.balance === "number") {
+      updateIdentityState({ balance: error.balance }, { persist: true, emit: true });
+    }
+    throw error;
   }
-
-  if (body && typeof body === "object" && typeof body.balance === "number") {
-    updateIdentityState({ balance: body.balance }, { persist: true, emit: true });
-  }
-
-  return body ?? {};
 };
 
 const sendMessage = async (sessionId, content) => {
@@ -7078,30 +7053,16 @@ const deriveAppWindowName = (labelValue, rootValue) => {
 };
 
 const triggerAppAction = async (appId, action) => {
-  try {
-    const response = await fetch(`/api/apps/${encodeURIComponent(appId)}/actions`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action }),
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      const message =
-        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
-          ? payload.error
-          : response.statusText || "Failed to perform action";
-      throw new Error(message);
-    }
-    await refreshApps({ skipRender: currentRoute !== "apps" });
-    if (currentRoute !== "apps") {
-      render();
-    }
-    return true;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to perform action";
-    window.alert(message);
+  const result = await triggerAppActionApi(appId, action);
+  if (!result.success) {
+    window.alert(result.error);
     return false;
   }
+  await refreshApps({ skipRender: currentRoute !== "apps" });
+  if (currentRoute !== "apps") {
+    render();
+  }
+  return true;
 };
 
 const triggerWarmRestart = async () => {
@@ -7110,15 +7071,7 @@ const triggerWarmRestart = async () => {
   }
   state.system.restart.submitting = true;
   try {
-    const response = await fetch("/api/system/restart", { method: "POST" });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      const message =
-        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
-          ? payload.error
-          : response.statusText || "Failed to initiate restart";
-      throw new Error(message);
-    }
+    await triggerWarmRestartApi();
     state.system.restart.inProgress = true;
     state.system.restart.error = null;
     await fetchRestartStatus();
@@ -7146,18 +7099,7 @@ const runSystemCleanup = async () => {
     render();
   }
   try {
-    const response = await fetch("/api/system/cleanup", { method: "POST" });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      const message =
-        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
-          ? payload.error
-          : response.statusText || "Failed to stop agents and apps";
-      throw new Error(message);
-    }
-    if (!payload || typeof payload !== "object" || typeof payload.timestamp !== "string") {
-      throw new Error("Unexpected cleanup response");
-    }
+    const payload = await runSystemCleanupApi();
     state.system.cleanup.result = payload;
     state.system.cleanup.error = null;
     await Promise.all([
@@ -7183,28 +7125,15 @@ const removeApp = async (appId) => {
   if (!app) return;
   const confirmed = window.confirm(`Remove "${app.label ?? app.id}" from Wingman?`);
   if (!confirmed) return;
-  let url = `/api/apps/${encodeURIComponent(appId)}`;
-  if (app?.status?.running) {
-    const kill = window.confirm("The app appears to be running. Kill the tmux session as well?");
-    if (kill) {
-      url += url.includes("?") ? "&killSession=true" : "?killSession=true";
-    }
+  const killSession = app?.status?.running
+    ? window.confirm("The app appears to be running. Kill the tmux session as well?")
+    : false;
+  const result = await removeAppApi(appId, killSession);
+  if (!result.success) {
+    window.alert(result.error);
+    return;
   }
-  try {
-    const response = await fetch(url, { method: "DELETE" });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      const message =
-        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
-          ? payload.error
-          : response.statusText || "Failed to remove app";
-      throw new Error(message);
-    }
-    await refreshApps({ skipRender: false });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to remove app";
-    window.alert(message);
-  }
+  await refreshApps({ skipRender: false });
 };
 
 const VARIABLE_URL_LOG_PREFIX = "[WINGMAN21-URL]";
