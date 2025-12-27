@@ -48,7 +48,7 @@ import {
   fetchRestartStatusApi,
   triggerWarmRestartApi,
   runSystemCleanupApi,
-} from "./api/config.js";
+} from "./services/config.js";
 import {
   fetchSessionsApi,
   fetchSessionLogsApi,
@@ -61,13 +61,13 @@ import {
   addToSessionQueueApi,
   removeFromSessionQueueApi,
   updateSessionQueuePromptApi,
-} from "./api/sessions.js";
+} from "./services/sessions.js";
 import {
   fetchAppsApi,
   fetchAppLogsApi,
   triggerAppActionApi,
   removeAppApi,
-} from "./api/apps.js";
+} from "./services/apps.js";
 
 const ace = globalThis.ace;
 if (!ace) {
