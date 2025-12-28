@@ -1,0 +1,229 @@
+/**
+ * Session API client - pure HTTP wrappers for session-related endpoints.
+ * These functions handle HTTP requests and return parsed data.
+ * State and UI updates should be handled by the caller.
+ */
+
+/**
+ * Fetches all sessions with optional filtering.
+ * @param {Object} options - Query options
+ * @param {string} [options.npub] - Filter by npub
+ * @returns {Promise<{sessions: Array, identities: Array, filters: Object} | null>}
+ */
+export async function fetchSessionsApi(options = {}) {
+  const query = options.npub && options.npub !== "all"
+    ? `?npub=${encodeURIComponent(options.npub)}`
+    : "";
+  const response = await fetch(`/api/sessions${query}`);
+
+  if (response.status === 401) {
+    return { unauthorized: true, sessions: [], identities: [], filters: null };
+  }
+
+  if (!response.ok) {
+    console.error("Failed to load sessions:", response.status, response.statusText);
+    return null;
+  }
+
+  return response.json();
+}
+
+/**
+ * Fetches logs for a specific session.
+ * @param {string} sessionId - The session ID
+ * @returns {Promise<{logs: Array} | null>}
+ */
+export async function fetchSessionLogsApi(sessionId) {
+  const response = await fetch(`/api/sessions/${sessionId}/logs`);
+  if (!response.ok) return null;
+  return response.json();
+}
+
+/**
+ * Fetches conversation messages for a specific session.
+ * @param {string} sessionId - The session ID
+ * @returns {Promise<{messages: Array} | null>}
+ */
+export async function fetchSessionMessagesApi(sessionId) {
+  const response = await fetch(`/api/sessions/${sessionId}/messages?refresh=true`);
+  if (!response.ok) return null;
+  return response.json();
+}
+
+/**
+ * Stops a running session.
+ * @param {string} sessionId - The session ID
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+export async function stopSessionApi(sessionId) {
+  const response = await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    return { success: false, error: data.error ?? response.statusText };
+  }
+  return { success: true };
+}
+
+/**
+ * Deletes a session and its storage.
+ * @param {string} sessionId - The session ID
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+export async function deleteSessionApi(sessionId) {
+  const response = await fetch(`/api/sessions/${sessionId}/storage`, { method: "DELETE" });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    return { success: false, error: data.error ?? response.statusText };
+  }
+  return { success: true };
+}
+
+/**
+ * Updates a session's name.
+ * @param {string} sessionId - The session ID
+ * @param {string} name - The new name
+ * @returns {Promise<Object>} Updated session data
+ * @throws {Error} If the request fails
+ */
+export async function updateSessionNameApi(sessionId, name) {
+  const response = await fetch(`/api/sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const message = typeof data?.error === "string" ? data.error : response.statusText;
+    throw new Error(message || "Failed to rename session");
+  }
+  return response.json();
+}
+
+/**
+ * Posts a message to a session.
+ * @param {string} sessionId - The session ID
+ * @param {string} content - Message content
+ * @param {string} [type="user"] - Message type ("user" or "raw")
+ * @returns {Promise<{messages?: Array, balance?: number}>}
+ * @throws {Error} If the request fails
+ */
+export async function postSessionMessageApi(sessionId, content, type = "user") {
+  const payload = type === "user"
+    ? { content }
+    : { content, type };
+
+  const response = await fetch(`/api/sessions/${sessionId}/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  let body = null;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+
+  if (!response.ok) {
+    const error = new Error(
+      body && typeof body === "object" && typeof body.error === "string" && body.error.length > 0
+        ? body.error
+        : response.statusText || "Agent request failed"
+    );
+    // Attach balance to error for caller to handle
+    if (body && typeof body === "object" && typeof body.balance === "number") {
+      error.balance = body.balance;
+    }
+    throw error;
+  }
+
+  return body ?? {};
+}
+
+/**
+ * Fetches the prompt queue for a session.
+ * @param {string} sessionId - The session ID
+ * @returns {Promise<{prompts: Array, maxSize: number} | null>}
+ */
+export async function fetchSessionQueueApi(sessionId) {
+  try {
+    const response = await fetch(`/api/sessions/${sessionId}/queue`);
+    if (!response.ok) return null;
+    return response.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Adds a prompt to the session queue.
+ * @param {string} sessionId - The session ID
+ * @param {string} content - Prompt content
+ * @returns {Promise<{prompts: Array, maxSize: number} | null>}
+ */
+export async function addToSessionQueueApi(sessionId, content) {
+  const response = await fetch(`/api/sessions/${sessionId}/queue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error ?? response.statusText ?? "Failed to queue prompt");
+  }
+  return response.json();
+}
+
+/**
+ * Removes a prompt from the session queue.
+ * @param {string} sessionId - The session ID
+ * @param {string} promptId - The prompt ID to remove
+ * @returns {Promise<{prompts: Array, maxSize: number} | null>}
+ */
+export async function removeFromSessionQueueApi(sessionId, promptId) {
+  const response = await fetch(`/api/sessions/${sessionId}/queue/${encodeURIComponent(promptId)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error ?? response.statusText ?? "Failed to remove queued prompt");
+  }
+  return response.json();
+}
+
+/**
+ * Updates a prompt in the session queue.
+ * @param {string} sessionId - The session ID
+ * @param {string} promptId - The prompt ID to update
+ * @param {string} content - New prompt content
+ * @returns {Promise<{prompts: Array, maxSize: number} | null>}
+ */
+export async function updateSessionQueuePromptApi(sessionId, promptId, content) {
+  const response = await fetch(`/api/sessions/${sessionId}/queue/${encodeURIComponent(promptId)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error ?? response.statusText ?? "Failed to update queued prompt");
+  }
+  return response.json();
+}
+
+/**
+ * Dispatches the next queued prompt for a session.
+ * @param {string} sessionId - The session ID
+ * @returns {Promise<{dispatched: boolean, promptId?: string, error?: string}>}
+ */
+export async function dispatchNextQueuedPromptApi(sessionId) {
+  const response = await fetch(`/api/sessions/${sessionId}/queue/dispatch`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    return { dispatched: false, error: data.error ?? response.statusText };
+  }
+  return response.json();
+}

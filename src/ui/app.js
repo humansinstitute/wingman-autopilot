@@ -14,45 +14,65 @@ import { createSessionDialogController } from "./common/session-dialog.js";
 import { initOrchestratorUI } from "./orchestrator/index.js";
 import { initAppDialogs } from "./apps/dialog.js";
 import {
-  createFeatureFlagsState,
   initFeatureFlagsUI,
   ORCHESTRATOR_FLAG_KEY,
 } from "./feature-flags/index.js";
 import { buildSessionOrigin, createSessionLauncher } from "./helpers/session-launch.js";
+import {
+  state,
+  createAdminUsersState,
+  initFilesShowHidden,
+  resolveWebAppBase,
+  formatWebAppUrl,
+  THEME_STORAGE_KEY,
+  TABS_VISIBILITY_STORAGE_KEY,
+  FILES_SHOW_HIDDEN_STORAGE_KEY,
+  SESSION_POLL_INTERVAL_MS,
+  APPS_POLL_INTERVAL_MS,
+  APP_LOG_PREVIEW_LINES,
+  TOAST_DEFAULT_DURATION_MS,
+  DEFAULT_CONNECT_RELAYS,
+  ADMIN_PICTURE_CACHE_TTL_MS,
+  TERMINAL_CONTROL_ACTIONS,
+} from "./state/index.js";
+import { showToast } from "./utils/toast.js";
+import {
+  copyTextToClipboard,
+  attachCopyButton,
+  copyConversationToClipboard,
+  createCopyIconButton,
+} from "./utils/clipboard.js";
+import {
+  fetchConfigApi,
+  normaliseConnectRelays,
+  fetchRestartStatusApi,
+  triggerWarmRestartApi,
+  runSystemCleanupApi,
+} from "./services/config.js";
+import {
+  fetchSessionsApi,
+  fetchSessionLogsApi,
+  fetchSessionMessagesApi,
+  stopSessionApi,
+  deleteSessionApi,
+  updateSessionNameApi,
+  postSessionMessageApi,
+  fetchSessionQueueApi,
+  addToSessionQueueApi,
+  removeFromSessionQueueApi,
+  updateSessionQueuePromptApi,
+} from "./services/sessions.js";
+import {
+  fetchAppsApi,
+  fetchAppLogsApi,
+  triggerAppActionApi,
+  removeAppApi,
+} from "./services/apps.js";
 
 const ace = globalThis.ace;
 if (!ace) {
   throw new Error("Ace editor failed to load");
 }
-
-const THEME_STORAGE_KEY = "wingman-theme";
-const TABS_VISIBILITY_STORAGE_KEY = "wingman-tabs-visible";
-const FILES_SHOW_HIDDEN_STORAGE_KEY = "wingman-files-show-hidden";
-const SESSION_POLL_INTERVAL_MS = 2000;
-const APPS_POLL_INTERVAL_MS = 5000;
-const APP_LOG_PREVIEW_LINES = 5;
-const WEB_APP_PORT_PLACEHOLDER = "<port>";
-const DEFAULT_WEB_APP_BASE_URL = "https://host.otherstuff.ai/<port>";
-const TOAST_DEFAULT_DURATION_MS = 2600;
-const DEFAULT_CONNECT_RELAYS = [
-  "wss://relay.nsec.app",
-  "wss://nos.lol",
-  "wss://relay.getalby.com/v1",
-  "wss://nostr.mineracks.com",
-];
-const ADMIN_PICTURE_CACHE_TTL_MS = 3 * 60 * 60 * 1000;
-const TERMINAL_CONTROL_ACTIONS = [
-  { id: "terminal-esc", label: "Send Esc", toastLabel: "Esc", sequence: "\u001b" },
-  { id: "terminal-1", label: "Send 1", toastLabel: "1", sequence: "1" },
-  { id: "terminal-2", label: "Send 2", toastLabel: "2", sequence: "2" },
-  { id: "terminal-3", label: "Send 3", toastLabel: "3", sequence: "3" },
-  { id: "terminal-up", label: "Send Arrow Up", toastLabel: "Arrow Up", sequence: "\u001b[A" },
-  { id: "terminal-down", label: "Send Arrow Down", toastLabel: "Arrow Down", sequence: "\u001b[B" },
-  { id: "terminal-return", label: "Send Return", toastLabel: "Return", sequence: "\r" },
-  { id: "terminal-ctrlc", label: "Send Ctrl+C", toastLabel: "Ctrl+C", sequence: "\u0003" },
-];
-
-let toastContainer = null;
 
 let sessionPollIntervalId = null;
 let sessionPollInFlight = false;
@@ -77,229 +97,6 @@ let orchestratorFeatureEnabledForViewer = () => false;
 let projectsFeatureEnabledForViewer = () => true;
 let syncFeatureFlagsFromConfig = () => {};
 
-const state = {
-  config: null,
-  sessions: [],
-  identitySummaries: [],
-  sessionFilters: {
-    npub: "all",
-    options: [],
-    initialized: false,
-  },
-  appFilters: {
-    npub: "all",
-    options: [],
-    initialized: false,
-  },
-  orchestratorPresets: [],
-  orchestratorPresetsLoading: false,
-  orchestratorPresetsLoaded: false,
-  orchestratorPresetsError: null,
-  logs: new Map(),
-  conversations: new Map(),
-  messageDrafts: new Map(),
-  logPanelOpen: new Map(),
-  promptQueues: new Map(), // sessionId -> {prompts: [], maxSize: 21}
-  activeSessionId: null,
-  lastWorkingDirectory: null,
-  lastActiveSessionId: null,
-  settingsPanels: {
-    adminBalanceCollapsed: false,
-    adminPortsCollapsed: false,
-    adminUsersCollapsed: false,
-    featureFlagsCollapsed: false,
-  },
-  // DOM references for incremental updates
-  conversationContainers: new Map(), // sessionId -> DOM element
-  logContainers: new Map(), // sessionId -> DOM element
-  lastMessageCount: new Map(), // sessionId -> number of messages
-  lastLogLength: new Map(), // sessionId -> length of logs
-  apps: {
-    items: [],
-    loading: false,
-    initialized: false,
-    error: null,
-    pendingOpenDialog: null,
-    pendingFocusId: null,
-  },
-  adminUsers: createAdminUsersState(),
-  featureFlags: createFeatureFlagsState(),
-  system: {
-    restart: {
-      loading: false,
-      inProgress: false,
-      marker: null,
-      outcome: null,
-      error: null,
-      submitting: false,
-    },
-    cleanup: {
-      running: false,
-      result: null,
-      error: null,
-    },
-  },
-  appLogViewer: {
-    appId: null,
-    title: "",
-    lines: [],
-    loading: false,
-    tail: 200,
-  },
-  todos: {
-    items: [],
-    loading: false,
-    error: null,
-    initialized: false,
-  },
-  projects: {
-    items: [],
-    loading: false,
-    error: null,
-    initialized: false,
-  },
-  files: {
-    initialized: false,
-    loading: false,
-    error: null,
-    currentPath: null,
-    relativePath: null,
-    displayPath: "~",
-    parent: null,
-    entries: [],
-    git: null,
-    previewPath: null,
-    previewRelativePath: null,
-    previewDisplayPath: "",
-    previewName: null,
-    previewContent: null,
-    previewLoading: false,
-    previewError: null,
-    previewFormat: null,
-    previewLanguage: null,
-    previewLabel: null,
-    showHidden: false,
-    browserCollapsed: false,
-    uploading: false,
-    gitCommandPending: false,
-    worktreeModal: {
-      open: false,
-      submitting: false,
-      error: null,
-      branch: "",
-      startPoint: "",
-    },
-    transfer: {
-      mode: null,
-      sourcePath: null,
-      sourceName: null,
-      sourceDisplayPath: null,
-      destinationPath: null,
-      destinationDisplayPath: null,
-      destinationName: null,
-      destinationNameInput: "",
-      nameError: null,
-      submitting: false,
-      error: null,
-      browser: {
-        currentPath: "",
-        parent: null,
-        requestId: 0,
-        selection: null,
-      },
-    },
-  },
-  fileEditor: {
-    open: false,
-    loading: false,
-    saving: false,
-    error: null,
-    saveError: null,
-    path: null,
-    relativePath: null,
-    displayPath: null,
-    name: null,
-    base64: null,
-    content: "",
-    initialContent: "",
-    mtimeMs: null,
-    dirty: false,
-    requestId: 0,
-  },
-  identity: {
-    method: "none",
-    npub: null,
-    expiresAt: null,
-    authenticated: false,
-    alias: null,
-    picture: null,
-    isAdmin: false,
-    ports: [],
-    balance: 0,
-  },
-};
-
-const resolveWebAppBase = () => {
-  const candidate = state.config?.hostUrlBase;
-  if (typeof candidate === "string") {
-    const trimmed = candidate.trim();
-    if (trimmed.length > 0) {
-      return trimmed;
-    }
-  }
-  return DEFAULT_WEB_APP_BASE_URL;
-};
-
-const formatWebAppUrl = (port) => {
-  if (typeof port !== "number" || !Number.isFinite(port)) return null;
-  const normalized = Math.trunc(port);
-  if (normalized <= 0) return null;
-  const base = resolveWebAppBase();
-  if (base.includes(WEB_APP_PORT_PLACEHOLDER)) {
-    return base.replaceAll(WEB_APP_PORT_PLACEHOLDER, String(normalized));
-  }
-  const separator = base.endsWith("/") ? "" : "/";
-  return `${base}${separator}${normalized}`;
-};
-
-const ensureToastContainer = () => {
-  if (toastContainer && document.body.contains(toastContainer)) {
-    return toastContainer;
-  }
-  toastContainer = document.createElement("div");
-  toastContainer.className = "wm-toast-container";
-  document.body.append(toastContainer);
-  return toastContainer;
-};
-
-const showToast = (message, options = {}) => {
-  if (!message) return;
-  const variant = options.variant === "error" ? "error" : "info";
-  const duration =
-    typeof options.duration === "number" && Number.isFinite(options.duration) && options.duration > 0
-      ? options.duration
-      : TOAST_DEFAULT_DURATION_MS;
-  const container = ensureToastContainer();
-  const toast = document.createElement("div");
-  toast.className = `wm-toast wm-toast--${variant}`;
-  toast.setAttribute("role", "status");
-  toast.setAttribute("aria-live", "polite");
-  toast.textContent = message;
-  container.append(toast);
-  requestAnimationFrame(() => {
-    toast.classList.add("is-visible");
-  });
-  const removeToast = () => {
-    toast.remove();
-  };
-  const scheduleRemoval = () => {
-    toast.classList.remove("is-visible");
-    toast.addEventListener("transitionend", removeToast, { once: true });
-    setTimeout(removeToast, 400);
-  };
-  setTimeout(scheduleRemoval, duration);
-};
-
 let todoFeature = null;
 let projectFeature = null;
 
@@ -318,14 +115,8 @@ const requestAuthUiSync = () => {
 
 requestAuthUiSync();
 
-try {
-  const storedShowHidden = localStorage.getItem(FILES_SHOW_HIDDEN_STORAGE_KEY);
-  if (storedShowHidden === "true" || storedShowHidden === "false") {
-    state.files.showHidden = storedShowHidden === "true";
-  }
-} catch {
-  // Ignore storage errors (e.g., during private browsing)
-}
+// Initialize files.showHidden from localStorage
+initFilesShowHidden();
 
 const IDENTITY_STORAGE_KEY = "wingman-identity-state";
 const IDENTITY_EVENT_NAMES = ["wingman:identity-state", "identity:state", "nostr-auth:state"];
@@ -428,30 +219,6 @@ const formatSatoshis = (value) => {
   const positive = truncated < 0 ? 0 : truncated;
   return positive.toLocaleString(undefined, { maximumFractionDigits: 0 });
 };
-
-function createAdminUsersState() {
-  return {
-    items: [],
-    loading: false,
-    initialized: false,
-    error: null,
-    pending: new Set(),
-    pictureRequests: new Set(),
-    pictureCache: new Map(),
-    filter: "",
-    filterDraft: "",
-    nicknameDrafts: new Map(),
-    selection: new Set(),
-    bulkDeleteBusy: false,
-    balanceTool: {
-      identifier: "",
-      amount: "",
-      busy: false,
-      error: null,
-      success: null,
-    },
-  };
-}
 
 const normaliseNpubValue = (npub) => {
   if (typeof npub !== "string") return null;
@@ -2044,88 +1811,6 @@ const isMobileFilesLayout = () => {
     }
   }
   return window.innerWidth <= 720;
-};
-
-const copyTextToClipboard = async (text) => {
-  if (!text) return false;
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-    const fallback = document.createElement("textarea");
-    fallback.value = text;
-    fallback.setAttribute("readonly", "");
-    fallback.style.position = "absolute";
-    fallback.style.left = "-9999px";
-    document.body.append(fallback);
-    fallback.select();
-    const success = document.execCommand("copy");
-    fallback.remove();
-    return success;
-  } catch (error) {
-    console.error("Failed to copy to clipboard", error);
-    return false;
-  }
-};
-
-const attachCopyButton = (bubble) => {
-  if (!bubble || bubble.dataset.copyAttached === "true") return;
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "wm-message-copy";
-  button.setAttribute("aria-label", "Copy message");
-  button.innerHTML =
-    '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M15 3H7a2 2 0 0 0-2 2v10h2V5h8V3zm4 4h-8a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zm0 12h-8V9h8v10z"/></svg>';
-  button.addEventListener("click", async (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const body = bubble.querySelector("pre");
-    const text = body?.textContent ?? "";
-    const copied = await copyTextToClipboard(text);
-    if (copied) {
-      bubble.dataset.copied = "true";
-      setTimeout(() => {
-        if (bubble.isConnected) {
-          delete bubble.dataset.copied;
-        }
-      }, 1600);
-    }
-  });
-  bubble.append(button);
-  bubble.dataset.copyAttached = "true";
-};
-
-const copyConversationToClipboard = async (sessionId) => {
-  const conversation = state.conversations.get(sessionId) ?? [];
-  let textBlocks = conversation;
-  if (textBlocks.length === 0) {
-    const container = state.conversationContainers.get(sessionId);
-    if (container) {
-      const domMessages = container.querySelectorAll(".wm-message pre");
-      textBlocks = Array.from(domMessages).map((node) => ({
-        role: null,
-        content: node.textContent ?? "",
-      }));
-    }
-  }
-
-  if (textBlocks.length === 0) return false;
-
-  const formatted = textBlocks
-    .map((message) => {
-      const role = typeof message.role === "string" ? message.role : message.type;
-      const labelSource = role ?? "assistant";
-      const label = `${labelSource.charAt(0).toUpperCase()}${labelSource.slice(1)}`;
-      const content = message.content ?? message.message ?? "";
-      if (!content) return label;
-      return `${label}:\n${content}`;
-    })
-    .join("\n\n")
-    .trim();
-
-  if (!formatted) return false;
-  return copyTextToClipboard(formatted);
 };
 
 const escapeHtml = (value) => {
@@ -5563,21 +5248,8 @@ const submitFileTransfer = async () => {
   }
 };
 
-function normaliseConnectRelays(candidate) {
-  if (!candidate) return [...DEFAULT_CONNECT_RELAYS];
-  const values = Array.isArray(candidate) ? candidate : String(candidate).split(",");
-  const cleaned = values
-    .map((value) => (value && typeof value === "string" ? value.trim() : ""))
-    .filter((value) => value.length > 0);
-  if (cleaned.length === 0) {
-    return [...DEFAULT_CONNECT_RELAYS];
-  }
-  return Array.from(new Set(cleaned));
-}
-
 const fetchConfig = async () => {
-  const response = await fetch("/api/config");
-  const configData = await response.json();
+  const configData = await fetchConfigApi();
   const adminNpubNormalized = normaliseNpubValue(configData?.adminNpub ?? null);
   const connectRelays = normaliseConnectRelays(configData?.connectRelays);
   state.config = { ...configData, adminNpub: adminNpubNormalized ?? null, connectRelays };
@@ -5831,9 +5503,8 @@ const buildAppFilterOptions = () => {
 };
 
 const fetchLogs = async (sessionId) => {
-  const response = await fetch(`/api/sessions/${sessionId}/logs`);
-  if (!response.ok) return;
-  const data = await response.json();
+  const data = await fetchSessionLogsApi(sessionId);
+  if (!data) return;
   state.logs.set(sessionId, data.logs);
 
   // Trigger incremental DOM update if on live route
@@ -5844,9 +5515,8 @@ const fetchLogs = async (sessionId) => {
 
 const fetchConversation = async (sessionId) => {
   try {
-    const response = await fetch(`/api/sessions/${sessionId}/messages?refresh=true`);
-    if (!response.ok) return;
-    const data = await response.json();
+    const data = await fetchSessionMessagesApi(sessionId);
+    if (!data) return;
     const items = Array.isArray(data?.messages) ? data.messages : [];
     state.conversations.set(sessionId, items);
 
@@ -7131,10 +6801,9 @@ sessionDialogController = createSessionDialogController({
 sessionDialogController.resetFormState();
 
 const stopSession = async (sessionId) => {
-  const response = await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    window.alert(`Failed to stop session: ${data.error ?? response.statusText}`);
+  const result = await stopSessionApi(sessionId);
+  if (!result.success) {
+    window.alert(`Failed to stop session: ${result.error}`);
     return;
   }
   await fetchSessions();
@@ -7143,10 +6812,9 @@ const stopSession = async (sessionId) => {
 
 const deleteSession = async (sessionId) => {
   try {
-    const response = await fetch(`/api/sessions/${sessionId}/storage`, { method: "DELETE" });
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      window.alert(`Failed to delete session: ${data.error ?? response.statusText}`);
+    const result = await deleteSessionApi(sessionId);
+    if (!result.success) {
+      window.alert(`Failed to delete session: ${result.error}`);
       return;
     }
     await fetchSessions();
@@ -7158,17 +6826,7 @@ const deleteSession = async (sessionId) => {
 };
 
 const updateSessionName = async (sessionId, name) => {
-  const response = await fetch(`/api/sessions/${sessionId}`, {
-    method: "PATCH",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message = typeof data?.error === "string" ? data.error : response.statusText;
-    throw new Error(message || "Failed to rename session");
-  }
-  return response.json();
+  return updateSessionNameApi(sessionId, name);
 };
 
 const promptRenameSession = async (session) => {
@@ -7210,43 +6868,19 @@ const resumeSession = async (sessionId) => {
 };
 
 const postSessionMessage = async (sessionId, content, type = "user") => {
-  const payload =
-    type === "user"
-      ? { content }
-      : {
-          content,
-          type,
-        };
-
-  const response = await fetch(`/api/sessions/${sessionId}/messages`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-  let body = null;
   try {
-    body = await response.json();
-  } catch {
-    body = null;
-  }
-
-  if (!response.ok) {
-    if (body && typeof body === "object" && typeof body.balance === "number") {
-      updateIdentityState({ balance: body.balance }, { persist: true, emit: true });
+    const result = await postSessionMessageApi(sessionId, content, type);
+    if (result && typeof result === "object" && typeof result.balance === "number") {
+      updateIdentityState({ balance: result.balance }, { persist: true, emit: true });
     }
-    const message =
-      body && typeof body === "object" && typeof body.error === "string" && body.error.length > 0
-        ? body.error
-        : response.statusText || "Agent request failed";
-    throw new Error(message);
+    return result;
+  } catch (error) {
+    // Handle balance update from error response
+    if (error && typeof error.balance === "number") {
+      updateIdentityState({ balance: error.balance }, { persist: true, emit: true });
+    }
+    throw error;
   }
-
-  if (body && typeof body === "object" && typeof body.balance === "number") {
-    updateIdentityState({ balance: body.balance }, { persist: true, emit: true });
-  }
-
-  return body ?? {};
 };
 
 const sendMessage = async (sessionId, content) => {
@@ -7419,30 +7053,16 @@ const deriveAppWindowName = (labelValue, rootValue) => {
 };
 
 const triggerAppAction = async (appId, action) => {
-  try {
-    const response = await fetch(`/api/apps/${encodeURIComponent(appId)}/actions`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action }),
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      const message =
-        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
-          ? payload.error
-          : response.statusText || "Failed to perform action";
-      throw new Error(message);
-    }
-    await refreshApps({ skipRender: currentRoute !== "apps" });
-    if (currentRoute !== "apps") {
-      render();
-    }
-    return true;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to perform action";
-    window.alert(message);
+  const result = await triggerAppActionApi(appId, action);
+  if (!result.success) {
+    window.alert(result.error);
     return false;
   }
+  await refreshApps({ skipRender: currentRoute !== "apps" });
+  if (currentRoute !== "apps") {
+    render();
+  }
+  return true;
 };
 
 const triggerWarmRestart = async () => {
@@ -7451,15 +7071,7 @@ const triggerWarmRestart = async () => {
   }
   state.system.restart.submitting = true;
   try {
-    const response = await fetch("/api/system/restart", { method: "POST" });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      const message =
-        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
-          ? payload.error
-          : response.statusText || "Failed to initiate restart";
-      throw new Error(message);
-    }
+    await triggerWarmRestartApi();
     state.system.restart.inProgress = true;
     state.system.restart.error = null;
     await fetchRestartStatus();
@@ -7487,18 +7099,7 @@ const runSystemCleanup = async () => {
     render();
   }
   try {
-    const response = await fetch("/api/system/cleanup", { method: "POST" });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      const message =
-        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
-          ? payload.error
-          : response.statusText || "Failed to stop agents and apps";
-      throw new Error(message);
-    }
-    if (!payload || typeof payload !== "object" || typeof payload.timestamp !== "string") {
-      throw new Error("Unexpected cleanup response");
-    }
+    const payload = await runSystemCleanupApi();
     state.system.cleanup.result = payload;
     state.system.cleanup.error = null;
     await Promise.all([
@@ -7524,71 +7125,19 @@ const removeApp = async (appId) => {
   if (!app) return;
   const confirmed = window.confirm(`Remove "${app.label ?? app.id}" from Wingman?`);
   if (!confirmed) return;
-  let url = `/api/apps/${encodeURIComponent(appId)}`;
-  if (app?.status?.running) {
-    const kill = window.confirm("The app appears to be running. Kill the tmux session as well?");
-    if (kill) {
-      url += url.includes("?") ? "&killSession=true" : "?killSession=true";
-    }
+  const killSession = app?.status?.running
+    ? window.confirm("The app appears to be running. Kill the tmux session as well?")
+    : false;
+  const result = await removeAppApi(appId, killSession);
+  if (!result.success) {
+    window.alert(result.error);
+    return;
   }
-  try {
-    const response = await fetch(url, { method: "DELETE" });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      const message =
-        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
-          ? payload.error
-          : response.statusText || "Failed to remove app";
-      throw new Error(message);
-    }
-    await refreshApps({ skipRender: false });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to remove app";
-    window.alert(message);
-  }
+  await refreshApps({ skipRender: false });
 };
 
 const VARIABLE_URL_LOG_PREFIX = "[WINGMAN21-URL]";
 const VARIABLE_PUBKEY_LOG_PREFIX = "[WINGMAN21-PUBKEY]";
-
-const COPY_ICON_DEFAULT_SVG =
-  '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M16 1H8a2 2 0 0 0-2 2v2H5a2 2 0 0 0-2 2v12c0 1.1.9 2 2 2h8l1-2H5V7h1v2h10V3h2v9l2-1V3a2 2 0 0 0-2-2Zm-2 6H8V3h6v4Zm7.71 9.29-5-5a1 1 0 0 0-1.42 1.42l1.3 1.29-4.59 4.59V22h3.41l4.59-4.59 1.29 1.3a1 1 0 0 0 1.42-1.42Z"/></svg>';
-const COPY_ICON_SUCCESS_SVG =
-  '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="m9 16.17-3.5-3.5L4.08 14.1 9 19l12-12-1.41-1.41Z"/></svg>';
-
-const createCopyIconButton = ({ text, ariaLabel, title }) => {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "wm-icon-button";
-  if (ariaLabel) {
-    button.setAttribute("aria-label", ariaLabel);
-  }
-  if (title) {
-    button.title = title;
-  }
-  button.innerHTML = COPY_ICON_DEFAULT_SVG;
-  button.addEventListener("click", async () => {
-    const success = await copyTextToClipboard(text);
-    if (success) {
-      button.dataset.state = "success";
-      button.innerHTML = COPY_ICON_SUCCESS_SVG;
-      setTimeout(() => {
-        if (button.isConnected) {
-          delete button.dataset.state;
-          button.innerHTML = COPY_ICON_DEFAULT_SVG;
-        }
-      }, 1600);
-      return;
-    }
-    button.dataset.state = "error";
-    setTimeout(() => {
-      if (button.isConnected) {
-        delete button.dataset.state;
-      }
-    }, 1600);
-  });
-  return button;
-};
 
 const extractVariableUrlFromLogs = (logs) => {
   if (!Array.isArray(logs)) return null;
