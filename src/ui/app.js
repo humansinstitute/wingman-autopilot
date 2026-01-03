@@ -1802,6 +1802,18 @@ const scheduleLiveScroll = (sessionId, options = {}) => {
   });
 };
 
+const isConversationScrolledToBottom = (sessionId) => {
+  const scrollElement = getConversationScrollElement(sessionId);
+  if (!scrollElement) {
+    // If no scroll element, check main document
+    const doc = document.scrollingElement || document.documentElement || document.body;
+    const threshold = 50;
+    return doc.scrollHeight - doc.scrollTop - doc.clientHeight < threshold;
+  }
+  const threshold = 50;
+  return scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight < threshold;
+};
+
 const isMobileFilesLayout = () => {
   if (window.matchMedia) {
     try {
@@ -10596,6 +10608,27 @@ const renderComposer = (sessionId) => {
     resizeTextarea();
   });
   textarea.addEventListener("keydown", (event) => {
+    // Check for direct terminal control shortcuts when conditions are met:
+    // 1. Input is empty, 2. Agent is stable (not running), 3. Queue is empty, 4. Scrolled to bottom
+    const directControlKeys = {
+      ArrowUp: TERMINAL_CONTROL_ACTIONS.find((a) => a.id === "terminal-up"),
+      ArrowDown: TERMINAL_CONTROL_ACTIONS.find((a) => a.id === "terminal-down"),
+      Enter: TERMINAL_CONTROL_ACTIONS.find((a) => a.id === "terminal-return"),
+    };
+    const controlAction = directControlKeys[event.key];
+    if (controlAction && textarea.value === "") {
+      const agentStatus = resolveAgentRuntimeStatus(sessionId);
+      const queue = getSessionQueue(sessionId);
+      const queueCount = queue?.prompts?.length ?? 0;
+      const isStable = agentStatus === "stable" && queueCount === 0;
+      const isScrolledToBottom = isConversationScrolledToBottom(sessionId);
+      if (isStable && isScrolledToBottom) {
+        event.preventDefault();
+        sendControlCommand(sessionId, controlAction);
+        return;
+      }
+    }
+    // Normal Enter handling for sending messages
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       composer.requestSubmit();
