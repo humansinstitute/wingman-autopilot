@@ -11269,6 +11269,9 @@ navLinks.forEach((link) => {
       navigateToTodos({ skipMenuClose: true });
       return;
     } else if (targetRoute === "files") {
+      // If navigating from live page with an active session, start in that session's directory
+      const activeSession = currentRoute === "live" ? getActiveSessionForIndicator() : null;
+      const sessionDir = activeSession?.workingDirectory;
       currentRoute = "files";
       lastLoggedSessionId = null;
       if (window.location.pathname !== FILES_ROUTE) {
@@ -11276,7 +11279,10 @@ navLinks.forEach((link) => {
       }
       if (!state.files.initialized) {
         state.files.initialized = true;
-        void loadFilesTree();
+        void loadFilesTree(sessionDir);
+      } else if (sessionDir) {
+        // Already initialized but coming from live with a session directory - navigate there
+        void loadFilesTree(sessionDir);
       }
     } else if (targetRoute === "settings") {
       navigateToSettings({ skipMenuClose: true });
