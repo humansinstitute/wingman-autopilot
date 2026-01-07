@@ -5278,6 +5278,10 @@ const fetchConfig = async () => {
     option.textContent = agent.label;
     agentSelect.append(option);
   });
+  // Default to claude if available
+  if (state.config.agents.some((a) => a.id === "claude")) {
+    agentSelect.value = "claude";
+  }
   syncOrchestratorAgents();
   if (directoryInput) {
     const initial =
