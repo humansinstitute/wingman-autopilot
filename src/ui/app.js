@@ -6908,6 +6908,26 @@ const sendMessage = async (sessionId, content) => {
     return;
   }
 
+  // Single alphanumeric character: send as raw terminal input for TUI interaction
+  if (/^[a-zA-Z0-9]$/.test(trimmed)) {
+    try {
+      await postSessionMessage(sessionId, trimmed, "raw");
+      showToast(`Sent ${trimmed}`);
+      state.messageDrafts.set(sessionId, "");
+      const textarea = document.querySelector('.wm-composer textarea');
+      if (textarea) {
+        textarea.value = "";
+        textarea.style.height = "auto";
+        requestAnimationFrame(() => textarea.focus());
+      }
+      await fetchLogs(sessionId);
+    } catch (error) {
+      console.error("Failed to send raw input", error);
+      showToast(`Failed to send ${trimmed}`, { variant: "error" });
+    }
+    return;
+  }
+
   // Check if agent is busy - if so, queue the message
   if (isSessionBusy(session)) {
     const queued = await addToPromptQueue(sessionId, trimmed);
