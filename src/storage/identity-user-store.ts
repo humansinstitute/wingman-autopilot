@@ -167,18 +167,18 @@ class IdentityUserStore {
     if (!normalized) {
       return;
     }
+    const ADMIN_MIN_BALANCE = 10_000;
+    const ADMIN_TARGET_BALANCE = 1_000_000;
     const existing = this.get(normalized);
-    if (existing && existing.balance > 0) {
+    const currentBalance = existing?.balance ?? 0;
+    if (currentBalance >= ADMIN_MIN_BALANCE) {
       return;
     }
-    const ADMIN_INITIAL_BALANCE = 1_000_000;
-    if (existing) {
-      this.setBalance(normalized, ADMIN_INITIAL_BALANCE);
-    } else {
+    if (!existing) {
       this.touch(adminNpub);
-      this.setBalance(normalized, ADMIN_INITIAL_BALANCE);
     }
-    console.log(`[identity] Credited admin ${adminNpub.slice(0, 12)}... with ${ADMIN_INITIAL_BALANCE.toLocaleString()} sats`);
+    this.setBalance(normalized, ADMIN_TARGET_BALANCE);
+    console.log(`[identity] Topped up admin ${adminNpub.slice(0, 12)}... to ${ADMIN_TARGET_BALANCE.toLocaleString()} sats`);
   }
 
   private parsePorts(value: string | null | undefined): number[] {
