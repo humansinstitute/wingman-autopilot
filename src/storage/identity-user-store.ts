@@ -102,6 +102,7 @@ class IdentityUserStore {
     this.ensureNicknameColumn();
     this.ensurePictureColumn();
     this.synchronisePortAssignments();
+    this.ensureAdminBalance();
   }
 
   private initialise() {
@@ -155,6 +156,29 @@ class IdentityUserStore {
     if (!hasPictureColumn) {
       this.db.exec(`ALTER TABLE identity_users ADD COLUMN picture_url TEXT`);
     }
+  }
+
+  private ensureAdminBalance() {
+    const adminNpub = (Bun.env.ADMIN_NPUB ?? "").trim();
+    if (!adminNpub) {
+      return;
+    }
+    const normalized = normaliseNpub(adminNpub);
+    if (!normalized) {
+      return;
+    }
+    const existing = this.get(normalized);
+    if (existing && existing.balance > 0) {
+      return;
+    }
+    const ADMIN_INITIAL_BALANCE = 1_000_000;
+    if (existing) {
+      this.setBalance(normalized, ADMIN_INITIAL_BALANCE);
+    } else {
+      this.touch(adminNpub);
+      this.setBalance(normalized, ADMIN_INITIAL_BALANCE);
+    }
+    console.log(`[identity] Credited admin ${adminNpub.slice(0, 12)}... with ${ADMIN_INITIAL_BALANCE.toLocaleString()} sats`);
   }
 
   private parsePorts(value: string | null | undefined): number[] {
