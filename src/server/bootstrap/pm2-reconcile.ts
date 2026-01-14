@@ -62,6 +62,23 @@ function getAppIdFromPM2(proc: PM2ProcessDescription): string | null {
 }
 
 /**
+ * Extract PORT from PM2 process environment.
+ * Returns the port number if set, null otherwise.
+ */
+function getPortFromPM2(proc: PM2ProcessDescription): number | null {
+  const pm2Env = proc.pm2_env as Record<string, unknown> | undefined;
+  const portValue = pm2Env?.PORT;
+  if (typeof portValue === "string") {
+    const parsed = parseInt(portValue, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  if (typeof portValue === "number" && Number.isFinite(portValue)) {
+    return portValue > 0 ? portValue : null;
+  }
+  return null;
+}
+
+/**
  * Reconcile PM2 processes with SQLite session records.
  *
  * Algorithm:
@@ -281,16 +298,24 @@ export async function reconcileAppsWithPM2(
     if (pm2Status === "online") {
       // Update app with PM2 info if it doesn't match
       const pm2Name = proc.name ?? undefined;
+      const pm2Port = getPortFromPM2(proc);
+
       if (app.pm2Name !== pm2Name) {
         try {
           await registry.updateApp(appId, { pm2Name });
-          console.log(`[pm2-reconcile] updated app ${appId} with PM2 name ${pm2Name}`);
+          const portInfo = pm2Port ? ` on port ${pm2Port}` : "";
+          console.log(`[pm2-reconcile] updated app ${appId} with PM2 name ${pm2Name}${portInfo}`);
           appsReconciled++;
         } catch (error) {
           console.warn(`[pm2-reconcile] failed to update app ${appId}: ${(error as Error).message}`);
         }
       } else {
         appsReconciled++;
+      }
+
+      // Warn if PM2 port doesn't match registry
+      if (pm2Port && app.webAppPort && pm2Port !== app.webAppPort) {
+        console.warn(`[pm2-reconcile] app ${appId} port mismatch: PM2=${pm2Port}, registry=${app.webAppPort}`);
       }
     }
   }

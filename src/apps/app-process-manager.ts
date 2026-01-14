@@ -17,6 +17,7 @@ import {
 import {
   deleteProcess,
   getProcessByName,
+  getProcessRuntimeInfo,
   restartProcess,
   startProcessFromConfig,
   stopProcess,
@@ -43,6 +44,12 @@ export interface AppProcessStatus {
   lastFailureAt?: string;
   running: boolean;
   inProgressAction: AppLifecycleAction | null;
+  /** Port the app is running on (from PM2 runtime). */
+  runtimePort?: number | null;
+  /** Process ID (from PM2 runtime). */
+  pid?: number | null;
+  /** Memory usage in bytes (from PM2 runtime). */
+  memory?: number | null;
 }
 
 interface AppRuntimeState {
@@ -359,8 +366,8 @@ export class AppProcessManager {
     return status;
   }
 
-  private toStatus(app: AppRecord, state: AppRuntimeState): AppProcessStatus {
-    return {
+  private async toStatus(app: AppRecord, state: AppRuntimeState): Promise<AppProcessStatus> {
+    const status: AppProcessStatus = {
       appId: app.id,
       status: state.status,
       lastAction: state.lastAction,
@@ -372,6 +379,22 @@ export class AppProcessManager {
       running: state.status === "running",
       inProgressAction: state.inProgress,
     };
+
+    // Fetch PM2 runtime info if app has a PM2 process
+    if (app.pm2Name && state.status === "running") {
+      try {
+        const runtimeInfo = await getProcessRuntimeInfo(app.pm2Name);
+        if (runtimeInfo) {
+          status.runtimePort = runtimeInfo.port;
+          status.pid = runtimeInfo.pid;
+          status.memory = runtimeInfo.memory;
+        }
+      } catch {
+        // Ignore errors fetching runtime info
+      }
+    }
+
+    return status;
   }
 
   private requireScript(app: AppRecord, action: AppLifecycleAction): string {

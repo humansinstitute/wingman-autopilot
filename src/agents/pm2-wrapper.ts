@@ -265,3 +265,62 @@ export async function waitForStatus(
 export function getPM2Home(): string {
   return process.env.PM2_HOME ?? `${process.env.HOME}/.pm2`;
 }
+
+export interface PM2RuntimeInfo {
+  name: string;
+  pid: number | null;
+  status: string;
+  port: number | null;
+  uptime: number | null;
+  restarts: number;
+  memory: number | null;
+  cpu: number | null;
+}
+
+/**
+ * Extract runtime info from a PM2 process description.
+ * Useful for getting the actual port an app is running on.
+ */
+export function extractRuntimeInfo(proc: PM2ProcessDescription): PM2RuntimeInfo {
+  const pm2Env = proc.pm2_env as Record<string, unknown> | undefined;
+
+  // Extract PORT from environment
+  let port: number | null = null;
+  const portValue = pm2Env?.PORT;
+  if (typeof portValue === "string") {
+    const parsed = parseInt(portValue, 10);
+    port = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  } else if (typeof portValue === "number" && Number.isFinite(portValue) && portValue > 0) {
+    port = portValue;
+  }
+
+  // Calculate uptime
+  const pmUptime = pm2Env?.pm_uptime;
+  let uptime: number | null = null;
+  if (typeof pmUptime === "number" && pmUptime > 0) {
+    uptime = Date.now() - pmUptime;
+  }
+
+  return {
+    name: proc.name ?? "unknown",
+    pid: proc.pid ?? null,
+    status: (pm2Env?.status as string) ?? "unknown",
+    port,
+    uptime,
+    restarts: (pm2Env?.restart_time as number) ?? 0,
+    memory: proc.monit?.memory ?? null,
+    cpu: proc.monit?.cpu ?? null,
+  };
+}
+
+/**
+ * Get runtime info for a process by name.
+ * Returns null if the process doesn't exist.
+ */
+export async function getProcessRuntimeInfo(name: string): Promise<PM2RuntimeInfo | null> {
+  const proc = await getProcessByName(name);
+  if (!proc) {
+    return null;
+  }
+  return extractRuntimeInfo(proc);
+}
