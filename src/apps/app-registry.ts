@@ -5,6 +5,7 @@ import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { generateIdentityAlias } from "../identity/identity-alias";
 import { normaliseNpub } from "../identity/npub-utils";
 import { identityUserStore } from "../storage/identity-user-store";
+import { isPortAvailable } from "../utils/port-utils";
 
 const registryFilePath = new URL("../../data/apps.json", import.meta.url).pathname;
 
@@ -350,33 +351,40 @@ export class AppRegistry {
     if (!ports || ports.length === 0) {
       throw new Error("No reserved ports are available for this owner.");
     }
-    const inUse = new Set<number>();
+
+    // Build set of ports assigned to other apps for this user
+    const assignedToApps = new Set<number>();
     for (const app of this.apps.values()) {
       if (app.id === appId) continue;
       if (app.ownerNpub === normalizedOwner && app.webApp && typeof app.webAppPort === "number") {
-        inUse.add(app.webAppPort);
+        assignedToApps.add(app.webAppPort);
       }
     }
 
-    const resolveCandidate = (value: number | null | undefined): number | undefined => {
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        return undefined;
+    // Check if a port is available (not assigned to another app AND not in use on system)
+    const isAvailable = (port: number): boolean => {
+      if (assignedToApps.has(port)) {
+        return false;
       }
-      const intValue = Math.trunc(value);
-      if (!ports.includes(intValue) || inUse.has(intValue)) {
-        return undefined;
+      if (!isPortAvailable(port)) {
+        console.warn(`[app-registry] port ${port} is in use on system, skipping`);
+        return false;
       }
-      return intValue;
+      return true;
     };
 
-    const preferredCandidate = resolveCandidate(preferred ?? null);
-    if (preferredCandidate !== undefined) {
-      return preferredCandidate;
+    // Try preferred port first
+    if (typeof preferred === "number" && Number.isFinite(preferred)) {
+      const intValue = Math.trunc(preferred);
+      if (ports.includes(intValue) && isAvailable(intValue)) {
+        return intValue;
+      }
     }
 
-    const available = ports.find((port) => !inUse.has(port));
+    // Find first available port from reserved range
+    const available = ports.find(isAvailable);
     if (available === undefined) {
-      throw new Error("All reserved ports are already assigned to other web apps for this owner.");
+      throw new Error("All reserved ports are either assigned to other apps or in use on the system.");
     }
     return available;
   }

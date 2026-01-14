@@ -7,6 +7,7 @@ import { generateIdentityAlias } from "../identity/identity-alias";
 import { normaliseNpub } from "../identity/npub-utils";
 import { sanitizeLogEntry } from "../logging/log-sanitizer";
 import type { AgentRuntimeStatus } from "../types/agent-status";
+import { isPortAvailable } from "../utils/port-utils";
 
 import {
   connectPM2,
@@ -478,30 +479,6 @@ export class ProcessManager {
     return generateIdentityAlias(npub);
   }
 
-  private isPortAvailable(port: number): boolean {
-    let server: ReturnType<typeof Bun.listen> | null = null;
-    try {
-      server = Bun.listen({
-        hostname: "127.0.0.1",
-        port,
-        socket: {
-          data() {},
-          close() {},
-          open() {},
-        },
-      });
-      return true;
-    } catch (error) {
-      const nodeError = error as NodeJS.ErrnoException;
-      if (nodeError?.code !== "EADDRINUSE") {
-        console.warn(`[manager] failed to probe port ${port}: ${nodeError?.message ?? error}`);
-      }
-      return false;
-    } finally {
-      server?.stop(true);
-    }
-  }
-
   private allocatePort(): number {
     const { agentPortStart, agentPortMax } = this.config;
     for (let offset = 0; offset < agentPortMax; offset += 1) {
@@ -509,7 +486,7 @@ export class ProcessManager {
       if (this.allocatedPorts.has(candidate)) {
         continue;
       }
-      if (!this.isPortAvailable(candidate)) {
+      if (!isPortAvailable(candidate)) {
         console.warn(`[manager] skipping port ${candidate} because it is already in use`);
         continue;
       }
