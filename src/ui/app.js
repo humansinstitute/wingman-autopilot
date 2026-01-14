@@ -2159,6 +2159,73 @@ const renderCodeToHtml = (content, language = "plaintext") => {
   return `<pre><code class="language-${normalizedLanguage}">${working}</code></pre>`;
 };
 
+/**
+ * Detects if content contains diff-like output (lines with +/- indicators)
+ * Matches patterns like:
+ *   "  123 +   code here" (addition)
+ *   "  123 -   code here" (removal)
+ *   "      +code" (continuation addition)
+ *   "      -code" (continuation removal)
+ */
+const containsDiffPattern = (content) => {
+  if (!content || typeof content !== "string") return false;
+  // Look for lines that start with optional whitespace, optional line number, then +/- indicator
+  // Pattern: line number followed by + or - (with optional space after)
+  const diffLinePattern = /^\s*\d*\s*[+-]\s/m;
+  // Need at least a few diff-like lines to consider it a diff
+  const lines = content.split("\n");
+  let diffLineCount = 0;
+  for (const line of lines) {
+    if (diffLinePattern.test(line)) {
+      diffLineCount++;
+      if (diffLineCount >= 2) return true;
+    }
+  }
+  return false;
+};
+
+/**
+ * Renders diff content with red/green highlighting for removed/added lines
+ */
+const renderDiffToHtml = (content) => {
+  if (!content) return "";
+  const escaped = escapeHtml(content);
+  const lines = escaped.split("\n");
+
+  const renderedLines = lines.map((line) => {
+    // Match line number + addition: "  123 +   code" or "      +code"
+    // The pattern looks for: optional leading spaces, optional digits, spaces, then + or -
+    const additionMatch = line.match(/^(\s*\d*\s*)(\+)(.*)$/);
+    const removalMatch = line.match(/^(\s*\d*\s*)(-)(.*)$/);
+
+    if (additionMatch) {
+      const [, prefix, marker, rest] = additionMatch;
+      return `<span class="diff-line diff-add">${prefix}<span class="diff-marker">${marker}</span>${rest}</span>`;
+    }
+
+    if (removalMatch) {
+      const [, prefix, marker, rest] = removalMatch;
+      return `<span class="diff-line diff-remove">${prefix}<span class="diff-marker">${marker}</span>${rest}</span>`;
+    }
+
+    // Context line (unchanged)
+    return `<span class="diff-line diff-context">${line}</span>`;
+  });
+
+  return renderedLines.join("\n");
+};
+
+/**
+ * Renders message content, applying diff highlighting if diff patterns are detected
+ */
+const renderMessageContent = (content) => {
+  if (!content) return "";
+  if (containsDiffPattern(content)) {
+    return renderDiffToHtml(content);
+  }
+  return escapeHtml(content);
+};
+
 const loadFilesTree = async (path) => {
   const files = state.files;
   const targetPath = typeof path === "string" && path.length > 0 ? path : files.currentPath;
@@ -6634,7 +6701,7 @@ const updateConversationDOM = (sessionId) => {
       const bubble = document.createElement("article");
       bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
       const body = document.createElement("pre");
-      body.textContent = message.content ?? message.message ?? "";
+      body.innerHTML = renderMessageContent(message.content ?? message.message ?? "");
       bubble.append(body);
       attachCopyButton(bubble);
       container.append(bubble);
@@ -6659,7 +6726,7 @@ const updateConversationDOM = (sessionId) => {
         if (currentContent !== newContent) {
           contentChanged = true;
           if (body) {
-            body.textContent = newContent;
+            body.innerHTML = renderMessageContent(newContent);
           }
         }
       }
@@ -10563,7 +10630,7 @@ const renderConversation = (sessionId) => {
       const bubble = document.createElement("article");
       bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
       const body = document.createElement("pre");
-      body.textContent = message.content ?? message.message ?? "";
+      body.innerHTML = renderMessageContent(message.content ?? message.message ?? "");
       bubble.append(body);
       attachCopyButton(bubble);
       wrapper.append(bubble);
