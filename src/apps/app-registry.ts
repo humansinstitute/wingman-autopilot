@@ -17,7 +17,12 @@ export interface AppRecord {
   label: string;
   root: string;
   scripts: AppLifecycleScripts;
+  /** @deprecated Use pm2Name instead. Kept for backward compatibility. */
   tmuxSession: string;
+  /** PM2 process name for this app. */
+  pm2Name?: string;
+  /** Directory where PM2 logs are stored. */
+  logsDir?: string;
   notes?: string;
   ownerNpub: string | null;
   createdAt: string;
@@ -31,7 +36,10 @@ export interface RegisterAppInput {
   label: string;
   root: string;
   scripts?: AppLifecycleScripts;
+  /** @deprecated */
   tmuxSession?: string;
+  pm2Name?: string;
+  logsDir?: string;
   notes?: string;
   ownerNpub?: string | null;
   webApp?: boolean;
@@ -42,7 +50,10 @@ export interface UpdateAppInput {
   label?: string;
   root?: string;
   scripts?: AppLifecycleScripts;
+  /** @deprecated */
   tmuxSession?: string;
+  pm2Name?: string;
+  logsDir?: string;
   notes?: string | null;
   ownerNpub?: string | null;
   webApp?: boolean;
@@ -163,6 +174,8 @@ export class AppRegistry {
       root,
       scripts,
       tmuxSession,
+      pm2Name: input.pm2Name,
+      logsDir: input.logsDir,
       notes: input.notes?.trim() || undefined,
       ownerNpub,
       createdAt: now,
@@ -216,6 +229,8 @@ export class AppRegistry {
       root: nextRoot,
       scripts: nextScripts,
       tmuxSession: nextTmux,
+      pm2Name: input.pm2Name !== undefined ? input.pm2Name : existing.pm2Name,
+      logsDir: input.logsDir !== undefined ? input.logsDir : existing.logsDir,
       notes: nextNotes,
       ownerNpub: nextOwnerNpub,
       updatedAt: new Date().toISOString(),
@@ -389,6 +404,8 @@ export class AppRegistry {
       root,
       scripts,
       tmuxSession,
+      pm2Name: input.pm2Name,
+      logsDir: input.logsDir,
       notes,
       ownerNpub,
       createdAt,

@@ -8,6 +8,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { AgentType, WingmanConfig } from "../config";
+import type { AppRecord } from "../apps/app-registry";
 
 export interface EcosystemApp {
   name: string;
@@ -275,5 +276,129 @@ export async function listAppsInEcosystem(
     return config.apps;
   } catch {
     return [];
+  }
+}
+
+// =============================================================================
+// User App (non-agent) PM2 Configuration
+// =============================================================================
+
+export interface UserAppConfig {
+  app: AppRecord;
+  userAlias: string;
+  userRootDir: string;
+  isAdmin: boolean;
+}
+
+/**
+ * Generate a PM2 process name for a user app.
+ * Format: {alias}-app-{sanitized-label}
+ * The "-app-" infix distinguishes apps from agent sessions.
+ */
+export function generateAppProcessName(userAlias: string, appLabel: string): string {
+  const sanitizedAlias = userAlias.toLowerCase().replace(/[^a-z0-9-]/g, "");
+  const sanitizedLabel = appLabel
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  const truncatedLabel = sanitizedLabel.slice(0, 32) || "app";
+  return `${sanitizedAlias}-app-${truncatedLabel}`.slice(0, 48);
+}
+
+/**
+ * Create an ecosystem app entry for a user app.
+ */
+export function createUserAppEcosystemConfig(config: UserAppConfig): EcosystemApp {
+  const { app, userAlias, userRootDir, isAdmin } = config;
+  const processName = generateAppProcessName(userAlias, app.label);
+  const logsDir = getLogsDirectory(userRootDir, isAdmin);
+
+  // Get the start script
+  const startScript = app.scripts.start;
+  if (!startScript) {
+    throw new Error(`App ${app.id} has no start script defined`);
+  }
+
+  // Build command with port override for web apps
+  let command = startScript;
+  if (app.webApp && app.webAppPort) {
+    command = `PORT=${app.webAppPort} ${startScript}`;
+  }
+
+  return {
+    name: processName,
+    script: "bash",
+    args: ["-c", command],
+    cwd: app.root,
+    env: {
+      APP_ID: app.id,
+      APP_LABEL: app.label,
+      USER_ALIAS: userAlias,
+      ...(app.webAppPort ? { PORT: String(app.webAppPort) } : {}),
+    },
+    out_file: join(logsDir, `${processName}-out.log`),
+    error_file: join(logsDir, `${processName}-error.log`),
+    log_date_format: "YYYY-MM-DD HH:mm:ss",
+    merge_logs: true,
+    autorestart: false,
+    max_restarts: 0,
+    min_uptime: "5s",
+  };
+}
+
+/**
+ * Add a user app to the ecosystem config.
+ */
+export async function addUserAppToEcosystem(
+  config: UserAppConfig,
+): Promise<{ ecosystemPath: string; processName: string; logsDir: string }> {
+  const ecosystemPath = getEcosystemPath(config.userRootDir, config.isAdmin);
+  const logsDir = getLogsDirectory(config.userRootDir, config.isAdmin);
+
+  // Ensure logs directory exists
+  await mkdir(logsDir, { recursive: true });
+
+  // Read existing config
+  const ecosystemConfig = await readEcosystemConfig(ecosystemPath);
+
+  // Create app config
+  const appConfig = createUserAppEcosystemConfig(config);
+
+  // Check if app with same name already exists
+  const existingIndex = ecosystemConfig.apps.findIndex((a) => a.name === appConfig.name);
+  if (existingIndex >= 0) {
+    // Update existing entry
+    ecosystemConfig.apps[existingIndex] = appConfig;
+  } else {
+    // Add new entry
+    ecosystemConfig.apps.push(appConfig);
+  }
+
+  // Write updated config
+  await writeEcosystemConfig(ecosystemPath, ecosystemConfig);
+
+  return {
+    ecosystemPath,
+    processName: appConfig.name,
+    logsDir,
+  };
+}
+
+/**
+ * Find a user app in the ecosystem config by APP_ID.
+ */
+export async function findUserAppInEcosystem(
+  userRootDir: string,
+  isAdmin: boolean,
+  appId: string,
+): Promise<EcosystemApp | null> {
+  const ecosystemPath = getEcosystemPath(userRootDir, isAdmin);
+
+  try {
+    const config = await readEcosystemConfig(ecosystemPath);
+    return config.apps.find((app) => app.env.APP_ID === appId) ?? null;
+  } catch {
+    return null;
   }
 }

@@ -1,22 +1,27 @@
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { ReadableStream } from "node:stream/web";
 
 import { loadConfig } from "../config";
 import { sanitizeLogEntry } from "../logging/log-sanitizer";
 import { appRegistry } from "./app-registry";
 import type { AppLifecycleAction, AppRecord, AppRegistry } from "./app-registry";
-
-const logDirectoryPath = new URL("../../data/app-logs", import.meta.url).pathname;
-export const APPS_TMUX_SESSION = "wingman-apps";
-const TMUX_MISSING_WINDOW_PATTERN =
-  /(can't find window|no such window|can't find session|no such session|no server running|can't find target|target not found)/i;
-
-type CommandResult = {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-};
+import { generateIdentityAlias } from "../identity/identity-alias";
+import { normaliseNpub } from "../identity/npub-utils";
+import {
+  addUserAppToEcosystem,
+  generateAppProcessName,
+  getEcosystemPath,
+  getLogsDirectory,
+  removeAppFromEcosystem,
+} from "../agents/ecosystem-generator";
+import {
+  deleteProcess,
+  getProcessByName,
+  restartProcess,
+  startProcessFromConfig,
+  stopProcess,
+} from "../agents/pm2-wrapper";
+import { readCombinedLogs } from "../agents/log-reader";
 
 export type AppRuntimeStatus =
   | "idle"
@@ -91,12 +96,12 @@ const ACTION_STATUS: Record<AppLifecycleAction, AppRuntimeStatus> = {
 export class AppProcessManager {
   private readonly registry: AppRegistry;
   private readonly states = new Map<string, AppRuntimeState>();
-  private readonly logDirReady: Promise<string | undefined>;
   private readonly config = loadConfig();
+  private readonly adminNpub: string | null;
 
-  constructor(registry: AppRegistry = appRegistry) {
+  constructor(registry: AppRegistry = appRegistry, adminNpub?: string | null) {
     this.registry = registry;
-    this.logDirReady = mkdir(logDirectoryPath, { recursive: true });
+    this.adminNpub = adminNpub ?? null;
   }
 
   async getStatus(appId: string): Promise<AppProcessStatus> {
@@ -110,30 +115,63 @@ export class AppProcessManager {
 
   async start(appId: string): Promise<AppProcessStatus> {
     return this.runAction(appId, "start", async (app) => {
-      const command = this.requireScript(app, "start");
-      const commandWithPort = this.applyPortOverride(app, "start", command);
-      await this.ensureSession(app);
-      await this.attachLogPipe(app);
-      const result = await this.sendToSession(app, commandWithPort);
-      if (result.exitCode !== 0) {
-        throw new AppActionError(app.id, "start", result.stderr || result.stdout || "Failed to send start command");
-      }
+      const script = this.requireScript(app, "start");
+
+      // Resolve user info
+      const { userAlias, userRootDir, isAdmin } = this.resolveUserContext(app);
+
+      // Add to ecosystem and start via PM2
+      const { ecosystemPath, processName, logsDir } = await addUserAppToEcosystem({
+        app,
+        userAlias,
+        userRootDir,
+        isAdmin,
+      });
+
+      // Update app record with PM2 info
+      await this.registry.updateApp(app.id, { pm2Name: processName, logsDir });
+
+      // Start the process
+      await startProcessFromConfig(ecosystemPath, processName);
+
       return {
         finalStatus: "running" as AppRuntimeStatus,
-        exitCode: result.exitCode,
-        message: "Start command dispatched",
+        exitCode: 0,
+        message: `Started via PM2 as ${processName}`,
       };
     });
   }
 
   async stop(appId: string): Promise<AppProcessStatus> {
     return this.runAction(appId, "stop", async (app) => {
-      const interrupted = await this.interruptAndCloseWindow(app);
-      const message = interrupted ? "Sent Ctrl+C and closed app window" : "App window already stopped";
+      const processName = app.pm2Name;
+      if (!processName) {
+        return {
+          finalStatus: "idle" as AppRuntimeStatus,
+          exitCode: 0,
+          message: "App was not running (no PM2 process)",
+        };
+      }
+
+      try {
+        await stopProcess(processName);
+        await deleteProcess(processName);
+      } catch (error) {
+        // Process might not exist, which is fine
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes("not found") && !message.includes("doesn't exist")) {
+          throw error;
+        }
+      }
+
+      // Remove from ecosystem
+      const { userRootDir, isAdmin } = this.resolveUserContext(app);
+      await removeAppFromEcosystem(userRootDir, isAdmin, processName);
+
       return {
         finalStatus: "idle" as AppRuntimeStatus,
         exitCode: 0,
-        message,
+        message: "Stopped and removed from PM2",
       };
     });
   }
@@ -145,63 +183,64 @@ export class AppProcessManager {
         throw new AppScriptMissingError(app.id, "restart");
       }
 
-      try {
-        await this.interruptAndCloseWindow(app);
-      } catch (error) {
-        throw new AppActionError(app.id, "restart", "Failed to stop existing process", error);
+      const processName = app.pm2Name;
+      if (processName) {
+        // Try PM2 restart first
+        try {
+          const proc = await getProcessByName(processName);
+          if (proc) {
+            await restartProcess(processName);
+            return {
+              finalStatus: "running" as AppRuntimeStatus,
+              exitCode: 0,
+              message: `Restarted PM2 process ${processName}`,
+            };
+          }
+        } catch {
+          // Process doesn't exist, fall through to fresh start
+        }
       }
 
-      await this.ensureSession(app);
-      await this.attachLogPipe(app);
+      // Fresh start
+      const { userAlias, userRootDir, isAdmin } = this.resolveUserContext(app);
+      const { ecosystemPath, processName: newProcessName, logsDir } = await addUserAppToEcosystem({
+        app,
+        userAlias,
+        userRootDir,
+        isAdmin,
+      });
 
-      const startCommand = this.applyPortOverride(app, "restart", startScript);
-      const startResult = await this.sendToSession(app, startCommand);
-      if (startResult.exitCode !== 0) {
-        throw new AppActionError(
-          app.id,
-          "restart",
-          startResult.stderr || startResult.stdout || "Failed to dispatch start command",
-        );
-      }
+      await this.registry.updateApp(app.id, { pm2Name: newProcessName, logsDir });
+      await startProcessFromConfig(ecosystemPath, newProcessName);
 
       return {
         finalStatus: "running" as AppRuntimeStatus,
-        exitCode: startResult.exitCode,
-        message: "Restarted with fresh start command",
+        exitCode: 0,
+        message: `Started via PM2 as ${newProcessName}`,
       };
     });
   }
 
   async build(appId: string): Promise<AppProcessStatus> {
     return this.runAction(appId, "build", async (app) => {
-      const command = this.requireScript(app, "build");
-      await this.ensureSession(app);
-      await this.attachLogPipe(app);
-      const result = await this.sendToSession(app, command);
-      if (result.exitCode !== 0) {
-        throw new AppActionError(app.id, "build", result.stderr || result.stdout || "Failed to send build command");
-      }
+      const script = this.requireScript(app, "build");
+      const result = await this.runOneShot(app, script, "build");
       return {
-        finalStatus: "idle" as AppRuntimeStatus,
+        finalStatus: result.exitCode === 0 ? ("idle" as AppRuntimeStatus) : ("failed" as AppRuntimeStatus),
         exitCode: result.exitCode,
-        message: "Build command dispatched",
+        message: result.exitCode === 0 ? "Build completed" : `Build failed with exit code ${result.exitCode}`,
       };
     });
   }
 
   async setup(appId: string): Promise<AppProcessStatus> {
     return this.runAction(appId, "setup", async (app) => {
-      const command = this.requireScript(app, "setup");
-      await this.ensureSession(app);
-      await this.attachLogPipe(app);
-      const result = await this.sendToSession(app, command);
-      if (result.exitCode !== 0) {
-        throw new AppActionError(app.id, "setup", result.stderr || result.stdout || "Failed to send setup command");
-      }
+      const script = this.requireScript(app, "setup");
+      const result = await this.runOneShot(app, script, "setup");
       return {
-        finalStatus: "idle" as AppRuntimeStatus,
+        finalStatus: result.exitCode === 0 ? ("idle" as AppRuntimeStatus) : ("failed" as AppRuntimeStatus),
         exitCode: result.exitCode,
-        message: "Setup command dispatched",
+        message: result.exitCode === 0 ? "Setup completed" : `Setup failed with exit code ${result.exitCode}`,
       };
     });
   }
@@ -214,27 +253,24 @@ export class AppProcessManager {
     if (!app) {
       throw new Error(`Unknown app: ${appId}`);
     }
-    await this.logDirReady;
-    const logPath = this.logPath(appId);
-    try {
-      const contents = await readFile(logPath, "utf8");
-      const allLines = contents
-        .split(/\r?\n/)
-        .map((line) => sanitizeLogEntry(line))
-        .filter((line) => Boolean(line));
-      return allLines.slice(-lines);
-    } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      if (err.code === "ENOENT") {
-        return [];
+
+    // If we have PM2 info, use that
+    if (app.pm2Name && app.logsDir) {
+      try {
+        return await readCombinedLogs(app.logsDir, app.pm2Name, lines);
+      } catch {
+        // Fall through to empty
       }
-      throw error;
     }
+
+    return [];
   }
 
   async listStatuses(): Promise<AppProcessStatus[]> {
     const apps = await this.registry.listApps();
-    const statuses = await Promise.all(apps.map((app) => this.resolveState(app).then((state) => this.toStatus(app, state))));
+    const statuses = await Promise.all(
+      apps.map((app) => this.resolveState(app).then((state) => this.toStatus(app, state))),
+    );
     return statuses;
   }
 
@@ -243,7 +279,16 @@ export class AppProcessManager {
     if (!app) {
       throw new Error(`Unknown app: ${appId}`);
     }
-    await this.killWindow(app);
+
+    if (app.pm2Name) {
+      try {
+        await stopProcess(app.pm2Name);
+        await deleteProcess(app.pm2Name);
+      } catch {
+        // Ignore errors - process might not exist
+      }
+    }
+
     this.states.delete(appId);
   }
 
@@ -292,15 +337,17 @@ export class AppProcessManager {
   private async resolveState(app: AppRecord): Promise<AppRuntimeState> {
     const existing = this.states.get(app.id);
     if (existing) {
-      if (app.id === "wingman-core") {
-        const runningNow = await this.isWingmanServerRunning();
-        existing.status = runningNow ? "running" : "idle";
+      // Check if PM2 process is actually running
+      if (app.pm2Name) {
+        const running = await this.isPM2ProcessRunning(app.pm2Name);
+        existing.status = running ? "running" : "idle";
         existing.updatedAt = new Date().toISOString();
       }
       return existing;
     }
-    const running =
-      app.id === "wingman-core" ? await this.isWingmanServerRunning() : await this.isSessionRunning(app);
+
+    // Check if app is running via PM2
+    const running = app.pm2Name ? await this.isPM2ProcessRunning(app.pm2Name) : false;
     const status: AppRuntimeState = {
       status: running ? "running" : "idle",
       lastAction: null,
@@ -335,226 +382,79 @@ export class AppProcessManager {
     return script;
   }
 
-  private applyPortOverride(app: AppRecord, action: AppLifecycleAction, command: string): string {
-    if (!app.webApp) {
-      return command;
-    }
-    if (typeof app.webAppPort !== "number" || !Number.isFinite(app.webAppPort)) {
-      throw new AppActionError(app.id, action, "Web app does not have an assigned port.");
-    }
-    const port = Math.trunc(app.webAppPort);
-    const pattern = /(^|\s)PORT=\S+/;
-    if (pattern.test(command)) {
-      return command.replace(pattern, (_match, leading) => `${leading}PORT=${port}`);
-    }
-    return `PORT=${port} ${command}`.trim();
+  private resolveUserContext(app: AppRecord): { userAlias: string; userRootDir: string; isAdmin: boolean } {
+    const ownerNpub = normaliseNpub(app.ownerNpub);
+    const isAdmin = Boolean(this.adminNpub && ownerNpub && ownerNpub === this.adminNpub);
+
+    // Derive alias from owner or use a fallback
+    const userAlias = ownerNpub
+      ? generateIdentityAlias(ownerNpub)
+      : "anonymous";
+
+    // For admin, use admin data dir; for users, use their root
+    const userRootDir = isAdmin
+      ? this.config.defaultWorkingDirectory
+      : app.root;
+
+    return { userAlias, userRootDir, isAdmin };
   }
 
-  private isMissingWindowMessage(output: string): boolean {
-    return TMUX_MISSING_WINDOW_PATTERN.test(output);
-  }
-
-  private async killWindow(app: AppRecord): Promise<void> {
-    const target = this.getTmuxTarget(app);
-    const result = await this.runTmux(["kill-window", "-t", target]);
-    if (result.exitCode !== 0) {
-      const output = result.stderr || result.stdout || "";
-      if (!this.isMissingWindowMessage(output)) {
-        throw new Error(output || `Failed to kill tmux window ${target}`);
-      }
-    }
-  }
-
-  private async interruptAndCloseWindow(app: AppRecord): Promise<boolean> {
-    const windowExists = await this.isSessionRunning(app);
-    if (!windowExists) {
-      return false;
-    }
-    const target = this.getTmuxTarget(app);
-    const interrupt = await this.runTmux(["send-keys", "-t", target, "C-c"]);
-    if (interrupt.exitCode !== 0) {
-      const output = interrupt.stderr || interrupt.stdout || "";
-      if (this.isMissingWindowMessage(output)) {
-        return false;
-      }
-      throw new Error(output || `Failed to send Ctrl+C to ${target}`);
-    }
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 150);
-    });
-    await this.killWindow(app);
-    return true;
-  }
-
-  private async ensureSession(app: AppRecord) {
-    const baseSession = await this.runTmux(["has-session", "-t", APPS_TMUX_SESSION]);
-    if (baseSession.exitCode !== 0) {
-      const createSession = await this.runTmux(["new-session", "-d", "-s", APPS_TMUX_SESSION, "-c", app.root]);
-      if (createSession.exitCode !== 0) {
-        throw new Error(
-          createSession.stderr || createSession.stdout || `Failed to create tmux session ${APPS_TMUX_SESSION}`,
-        );
-      }
-      const remainSession = await this.runTmux(["set-option", "-t", APPS_TMUX_SESSION, "remain-on-exit", "on"]);
-      if (remainSession.exitCode !== 0) {
-        throw new Error(
-          remainSession.stderr || remainSession.stdout || `Failed to configure tmux session ${APPS_TMUX_SESSION}`,
-        );
-      }
-    }
-    const windowName = this.getWindowName(app);
-    const windows = await this.runTmux(["list-windows", "-t", APPS_TMUX_SESSION, "-F", "#{window_name}"]);
-    if (windows.exitCode !== 0) {
-      throw new Error(windows.stderr || windows.stdout || `Failed to list windows for ${APPS_TMUX_SESSION}`);
-    }
-    const knownWindows = windows.stdout
-      .split(/\r?\n/)
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-    if (knownWindows.includes(windowName)) {
-      return;
-    }
-    const createWindow = await this.runTmux([
-      "new-window",
-      "-t",
-      APPS_TMUX_SESSION,
-      "-n",
-      windowName,
-      "-c",
-      app.root,
-    ]);
-    if (createWindow.exitCode !== 0) {
-      throw new Error(createWindow.stderr || createWindow.stdout || `Failed to create tmux window ${windowName}`);
-    }
-    const remainWindow = await this.runTmux([
-      "set-option",
-      "-t",
-      `${APPS_TMUX_SESSION}:${windowName}`,
-      "remain-on-exit",
-      "on",
-    ]);
-    if (remainWindow.exitCode !== 0) {
-      throw new Error(remainWindow.stderr || remainWindow.stdout || `Failed to configure tmux window ${windowName}`);
-    }
-  }
-
-  private async attachLogPipe(app: AppRecord) {
-    await this.logDirReady;
-    const path = this.logPath(app.id);
-    await appendFile(path, "", "utf8");
-    const escaped = path.replace(/"/g, '\\"');
-    const target = this.getTmuxTarget(app);
-    const args = ["pipe-pane", "-t", target, "-o", `cat >> "${escaped}"`];
-    const pipe = await this.runTmux(args);
-    if (pipe.exitCode === 0) {
-      return;
-    }
-    const output = pipe.stderr || pipe.stdout || "";
-    if (this.isMissingWindowMessage(output)) {
-      await this.ensureSession(app);
-      const retry = await this.runTmux(args);
-      if (retry.exitCode === 0) {
-        return;
-      }
-      const retryOutput = retry.stderr || retry.stdout || "";
-      throw new Error(retryOutput || `Failed to attach log pipe for ${target}`);
-    }
-    throw new Error(output || `Failed to attach log pipe for ${target}`);
-  }
-
-  private async sendToSession(app: AppRecord, command: string): Promise<CommandResult> {
-    const prompt = command.trim();
-    if (!prompt) {
-      return { exitCode: 0, stdout: "", stderr: "" };
-    }
-    const target = this.getTmuxTarget(app);
-    const args = ["send-keys", "-t", target, prompt, "Enter"];
-    let result = await this.runTmux(args);
-    if (result.exitCode !== 0) {
-      const output = result.stderr || result.stdout || "";
-      if (this.isMissingWindowMessage(output)) {
-        await this.ensureSession(app);
-        await this.attachLogPipe(app);
-        result = await this.runTmux(args);
-      }
-    }
-    return result;
-  }
-
-  private async runTmux(args: string[]): Promise<CommandResult> {
-    const subprocess = Bun.spawn(["tmux", ...args], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      readStream(subprocess.stdout),
-      readStream(subprocess.stderr),
-      subprocess.exited,
-    ]);
-    return {
-      exitCode: exitCode ?? 0,
-      stdout: stdout.trim(),
-      stderr: stderr.trim(),
-    };
-  }
-
-  private async isSessionRunning(app: AppRecord): Promise<boolean> {
-    const windows = await this.runTmux(["list-windows", "-t", APPS_TMUX_SESSION, "-F", "#{window_name}"]);
-    if (windows.exitCode !== 0) {
-      return false;
-    }
-    const windowName = this.getWindowName(app);
-    return windows.stdout
-      .split(/\r?\n/)
-      .map((entry) => entry.trim())
-      .filter(Boolean)
-      .includes(windowName);
-  }
-
-  private logPath(appId: string): string {
-    return join(logDirectoryPath, `${appId}.log`);
-  }
-
-  private getWindowName(app: AppRecord): string {
-    return app.tmuxSession;
-  }
-
-  private getTmuxTarget(app: AppRecord): string {
-    return `${APPS_TMUX_SESSION}:${this.getWindowName(app)}`;
-  }
-
-  private async isWingmanServerRunning(): Promise<boolean> {
-    const port = this.config.port;
+  private async isPM2ProcessRunning(processName: string): Promise<boolean> {
     try {
-      const response = await fetch(`http://localhost:${port}/api/system/restart/status`, {
-        method: "GET",
-        headers: {
-          "cache-control": "no-cache",
-        },
-        signal: AbortSignal.timeout(1500),
-      });
-      return response.ok;
+      const proc = await getProcessByName(processName);
+      return proc?.pm2_env?.status === "online";
     } catch {
       return false;
     }
   }
-}
 
-const readStream = async (stream: ReadableStream<Uint8Array> | null): Promise<string> => {
-  if (!stream) return "";
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let output = "";
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      output += decoder.decode(value, { stream: true });
+  /**
+   * Run a one-shot command (build/setup) via Bun.spawn.
+   * Logs output to the app's log directory.
+   */
+  private async runOneShot(
+    app: AppRecord,
+    script: string,
+    action: string,
+  ): Promise<{ exitCode: number; output: string }> {
+    const { userRootDir, isAdmin } = this.resolveUserContext(app);
+    const logsDir = getLogsDirectory(userRootDir, isAdmin);
+    await mkdir(logsDir, { recursive: true });
+
+    // Build command with port if web app
+    let command = script;
+    if (app.webApp && app.webAppPort) {
+      command = `PORT=${app.webAppPort} ${script}`;
     }
+
+    const subprocess = Bun.spawn(["bash", "-c", command], {
+      cwd: app.root,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        ...(app.webAppPort ? { PORT: String(app.webAppPort) } : {}),
+      },
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(subprocess.stdout).text(),
+      new Response(subprocess.stderr).text(),
+      subprocess.exited,
+    ]);
+
+    // Write to log file
+    const logFileName = app.pm2Name ? `${app.pm2Name}-${action}.log` : `${app.id}-${action}.log`;
+    const logPath = join(logsDir, logFileName);
+    const timestamp = new Date().toISOString();
+    const logContent = `\n=== ${action.toUpperCase()} at ${timestamp} ===\n${stdout}${stderr ? `\n[stderr]\n${stderr}` : ""}\n`;
+    await appendFile(logPath, logContent, "utf8");
+
+    return {
+      exitCode: exitCode ?? 1,
+      output: stdout + stderr,
+    };
   }
-  output += decoder.decode();
-  return output;
-};
+}
 
 export const appProcessManager = new AppProcessManager();

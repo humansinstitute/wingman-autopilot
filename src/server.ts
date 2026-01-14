@@ -19,12 +19,14 @@ import {
   type AppRecord,
 } from "./apps/app-registry";
 import {
-  APPS_TMUX_SESSION,
   AppActionInProgressError,
   AppScriptMissingError,
   appProcessManager,
   type AppProcessStatus,
 } from "./apps/app-process-manager";
+
+/** Tmux session for the Wingman core process (used by warm restart manager). */
+const WINGMAN_CORE_TMUX_SESSION = "wingman-apps";
 import { messageStore } from "./storage/message-store";
 import { PromptQueueStore } from "./storage/prompt-queue-store";
 import { orchestratorPresetStore } from "./storage/orchestrator-presets";
@@ -91,7 +93,7 @@ import {
   writeWarmRestartMarker,
 } from "./server/bootstrap/warm-restart";
 import type { WarmRestartMarker } from "./server/bootstrap/warm-restart";
-import { reconcileSessionsWithPM2 } from "./server/bootstrap/pm2-reconcile";
+import { reconcileSessionsWithPM2, reconcileAppsWithPM2 } from "./server/bootstrap/pm2-reconcile";
 import { connectPM2 } from "./agents/pm2-wrapper";
 import { createUploadHelpers } from "./server/uploads/helpers";
 import { resolveAndCacheNostrProfile } from "./server/nostr-profile";
@@ -625,6 +627,16 @@ try {
   }
 } catch (error) {
   console.warn(`[pm2] reconciliation failed: ${(error as Error).message}`);
+}
+
+// Reconcile PM2 processes with app registry
+try {
+  const appReconcileResult = await reconcileAppsWithPM2(appRegistry);
+  if (appReconcileResult.appsReconciled > 0 || appReconcileResult.appsCleared > 0) {
+    console.log(`[pm2] reconciled apps: ${appReconcileResult.appsReconciled} running, ${appReconcileResult.appsCleared} cleared`);
+  }
+} catch (error) {
+  console.warn(`[pm2] app reconciliation failed: ${(error as Error).message}`);
 }
 const wingmenRoot = join(projectRoot, ".wingmen");
 const orchestratorTriggersRoot = join(wingmenRoot, "orchestrator", "triggers");
@@ -3068,8 +3080,8 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus, options: Bui
     label: app.label,
     root: app.root,
     scripts: app.scripts,
-    tmuxSession: APPS_TMUX_SESSION,
-    tmuxWindow: app.tmuxSession,
+    pm2Name: app.pm2Name ?? null,
+    logsDir: app.logsDir ?? null,
     notes: app.notes ?? null,
     ownerNpub: app.ownerNpub,
     createdAt: app.createdAt,
@@ -3605,7 +3617,7 @@ const handleApi = async (
         projectRoot,
         String(config.port),
         restartMarkerPath,
-        APPS_TMUX_SESSION,
+        WINGMAN_CORE_TMUX_SESSION,
         "wingman-core",
       ], {
         cwd: projectRoot,
