@@ -258,9 +258,6 @@ export const runSetupWizard = async (): Promise<boolean> => {
     }
 
     // Set sensible defaults for other values
-    if (!values.has("TMUX_BASE")) {
-      values.set("TMUX_BASE", "wingman-agents");
-    }
     if (!values.has("AGENTAPI_ALLOWED_HOSTS")) {
       values.set("AGENTAPI_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]");
     }

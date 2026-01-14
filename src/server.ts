@@ -84,14 +84,14 @@ import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import {
   clearWarmRestartMarker,
   loadWarmRestartMarker,
-  readStreamToString,
   rehydrateWarmSessions,
-  runTmuxCommand,
   warmRestartOutcome,
   warmRestartState,
   writeWarmRestartMarker,
 } from "./server/bootstrap/warm-restart";
 import type { WarmRestartMarker } from "./server/bootstrap/warm-restart";
+import { reconcileSessionsWithPM2 } from "./server/bootstrap/pm2-reconcile";
+import { connectPM2 } from "./agents/pm2-wrapper";
 import { createUploadHelpers } from "./server/uploads/helpers";
 import { resolveAndCacheNostrProfile } from "./server/nostr-profile";
 
@@ -121,8 +121,6 @@ const FEATURE_FLAG_DEFAULTS: Array<{
 
 featureFlagStore.ensureDefaults(FEATURE_FLAG_DEFAULTS);
 process.env.WINGMAN_PID = process.pid.toString();
-console.log(`[config] tmux session base: ${config.tmuxBase}`);
-const TMUX_SESSION_NAME = config.tmuxBase;
 const SUPPORTED_AGENT_TYPES: AgentType[] = ["codex", "claude", "goose", "opencode", "gemini"];
 const MESSAGE_COST_SATS = 100;
 const projectStore = new ProjectStore();
@@ -512,62 +510,6 @@ const createGitWorktree = async ({ directory, branch, startPoint }: CreateWorktr
   };
 };
 
-const ensureWingmanAgentsSessionClean = async () => {
-  try {
-    const hasSession = await runTmuxCommand(["has-session", "-t", TMUX_SESSION_NAME]);
-    if (hasSession.exitCode === 1) {
-      return;
-    }
-
-    if (hasSession.exitCode !== 0) {
-      if (hasSession.stderr) {
-        console.warn(`[tmux] failed to check ${TMUX_SESSION_NAME} session: ${hasSession.stderr}`);
-      }
-      return;
-    }
-
-    const listWindows = await runTmuxCommand(["list-windows", "-t", TMUX_SESSION_NAME, "-F", "#{window_id}"]);
-    if (listWindows.exitCode !== 0) {
-      if (listWindows.stderr) {
-        console.warn(`[tmux] failed to list ${TMUX_SESSION_NAME} windows: ${listWindows.stderr}`);
-      }
-      return;
-    }
-
-    const windowIds = listWindows.stdout
-      .split(/\r?\n/)
-      .map((id) => id.trim())
-      .filter((id) => id.length > 0);
-
-    if (windowIds.length === 0) {
-      return;
-    }
-
-    let closed = 0;
-    for (const windowId of windowIds) {
-      const killWindow = await runTmuxCommand(["kill-window", "-t", windowId]);
-      if (killWindow.exitCode === 0) {
-        closed += 1;
-        continue;
-      }
-      if (killWindow.stderr) {
-        console.warn(`[tmux] failed to close window ${windowId}: ${killWindow.stderr}`);
-      } else {
-        console.warn(`[tmux] failed to close window ${windowId}`);
-      }
-    }
-
-    if (closed > 0) {
-      console.log(
-        `[tmux] closed ${closed} existing ${TMUX_SESSION_NAME} window${closed === 1 ? "" : "s"} before startup`,
-      );
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[tmux] skipping ${TMUX_SESSION_NAME} cleanup: ${message}`);
-  }
-};
-
 const srcRoot = fileURLToPath(new URL(".", import.meta.url));
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const tmpRoot = normalize(join(srcRoot, "../tmp"));
@@ -658,13 +600,31 @@ const ensureWithinAllowedDirectories = (candidate: string, scope?: WorkspaceScop
   throw new Error(`Directory outside permitted locations: ${normalised}`);
 };
 warmRestartState.marker = warmRestartMarker;
-const warmRestartActive = Boolean(warmRestartMarker?.preserveTmux);
-if (!warmRestartActive) {
-  await ensureWingmanAgentsSessionClean();
-} else {
-  console.log(`[restart] warm restart marker detected; preserving ${TMUX_SESSION_NAME}`);
+
+// Initialize PM2 connection
+try {
+  await connectPM2();
+  console.log("[pm2] connected to PM2 daemon");
+} catch (error) {
+  console.warn(`[pm2] failed to connect to PM2: ${(error as Error).message}`);
 }
+
 const manager = new ProcessManager(config);
+
+// Reconcile PM2 processes with stored sessions
+try {
+  const reconcileResult = await reconcileSessionsWithPM2(
+    manager,
+    messageStore,
+    SUPPORTED_AGENT_TYPES,
+    config.defaultWorkingDirectory,
+  );
+  if (reconcileResult.rehydrated > 0) {
+    console.log(`[pm2] reconciled ${reconcileResult.rehydrated} session(s) from PM2`);
+  }
+} catch (error) {
+  console.warn(`[pm2] reconciliation failed: ${(error as Error).message}`);
+}
 const wingmenRoot = join(projectRoot, ".wingmen");
 const orchestratorTriggersRoot = join(wingmenRoot, "orchestrator", "triggers");
 await mkdir(wingmenRoot, { recursive: true }).catch(() => undefined);
@@ -1302,8 +1262,8 @@ manager.on((event) => {
       npub: event.session.npub,
       port: event.session.port,
       pid: event.session.pid,
-      tmuxSession: event.session.tmuxSession,
-      tmuxWindow: event.session.tmuxWindow,
+      pm2Name: event.session.pm2Name,
+      logsDir: event.session.logsDir,
       workingDirectory: event.session.workingDirectory,
       command: event.session.command,
       runtimeStatus: event.session.agentRuntimeStatus ?? null,
@@ -1332,8 +1292,8 @@ manager.on((event) => {
       npub: event.session.npub,
       port: event.session.port,
       pid: event.session.pid,
-      tmuxSession: event.session.tmuxSession,
-      tmuxWindow: event.session.tmuxWindow,
+      pm2Name: event.session.pm2Name,
+      logsDir: event.session.logsDir,
       workingDirectory: event.session.workingDirectory,
       command: event.session.command,
       runtimeStatus: event.session.agentRuntimeStatus ?? null,
@@ -2558,8 +2518,8 @@ const launchOrchestratorPreset = async (presetId: string) => {
     npub: session.npub,
     port: session.port,
     pid: session.pid,
-    tmuxSession: session.tmuxSession,
-    tmuxWindow: session.tmuxWindow,
+    pm2Name: session.pm2Name,
+    logsDir: session.logsDir,
     workingDirectory: session.workingDirectory,
     command: session.command,
     runtimeStatus: session.agentRuntimeStatus ?? null,
@@ -5603,8 +5563,8 @@ const handleApi = async (
         npub: session.npub,
         port: session.port,
         pid: session.pid,
-        tmuxSession: session.tmuxSession,
-        tmuxWindow: session.tmuxWindow,
+        pm2Name: session.pm2Name,
+        logsDir: session.logsDir,
         workingDirectory: session.workingDirectory,
         command: session.command,
         runtimeStatus: session.agentRuntimeStatus ?? null,
