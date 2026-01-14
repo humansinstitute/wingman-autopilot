@@ -85,8 +85,11 @@ function getAppTypeIcon(appType) {
  * @returns {Object} Tree component API
  */
 export function initWorkspaceTree({ state, refreshApps, showToast }) {
+  const COLLAPSED_STORAGE_KEY = "wingman:workspace-tree-collapsed";
+
   // Initialize tree state if not present
   if (!state.workspaceTree) {
+    const storedCollapsed = localStorage.getItem(COLLAPSED_STORAGE_KEY);
     state.workspaceTree = {
       nodes: [],
       root: "",
@@ -94,6 +97,7 @@ export function initWorkspaceTree({ state, refreshApps, showToast }) {
       loading: false,
       error: null,
       initialized: false,
+      collapsed: storedCollapsed === "true",
     };
   }
 
@@ -337,20 +341,48 @@ export function initWorkspaceTree({ state, refreshApps, showToast }) {
   }
 
   /**
+   * Toggle sidebar collapsed state.
+   * @param {HTMLElement} sidebar - Sidebar element to update
+   */
+  function toggleCollapsed(sidebar) {
+    state.workspaceTree.collapsed = !state.workspaceTree.collapsed;
+    localStorage.setItem(COLLAPSED_STORAGE_KEY, String(state.workspaceTree.collapsed));
+    if (sidebar) {
+      sidebar.dataset.collapsed = String(state.workspaceTree.collapsed);
+    }
+  }
+
+  /**
    * Create the tree sidebar component.
    * @returns {HTMLElement}
    */
   function createSidebar() {
     const sidebar = document.createElement("aside");
     sidebar.className = "wm-tree-sidebar";
+    sidebar.dataset.collapsed = String(state.workspaceTree.collapsed);
 
     // Header
     const header = document.createElement("div");
     header.className = "wm-tree-header";
 
+    // Collapse toggle button
+    const collapseBtn = document.createElement("button");
+    collapseBtn.type = "button";
+    collapseBtn.className = "wm-tree-collapse";
+    collapseBtn.setAttribute("aria-label", "Toggle sidebar");
+    collapseBtn.textContent = state.workspaceTree.collapsed ? "▶" : "◀";
+    collapseBtn.addEventListener("click", () => {
+      toggleCollapsed(sidebar);
+      collapseBtn.textContent = state.workspaceTree.collapsed ? "▶" : "◀";
+    });
+    header.append(collapseBtn);
+
     const title = document.createElement("h3");
     title.textContent = "Projects";
     header.append(title);
+
+    const headerActions = document.createElement("div");
+    headerActions.className = "wm-tree-header-actions";
 
     const refreshBtn = document.createElement("button");
     refreshBtn.type = "button";
@@ -360,8 +392,9 @@ export function initWorkspaceTree({ state, refreshApps, showToast }) {
     refreshBtn.addEventListener("click", () => {
       loadTree().then(() => renderTree(sidebar));
     });
-    header.append(refreshBtn);
+    headerActions.append(refreshBtn);
 
+    header.append(headerActions);
     sidebar.append(header);
 
     // Initial load if not already loaded
