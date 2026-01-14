@@ -24,6 +24,7 @@ import {
   appProcessManager,
   type AppProcessStatus,
 } from "./apps/app-process-manager";
+import { scanDirectoryTree, type TreeNode } from "./apps/app-detector";
 
 /** Tmux session for the Wingman core process (used by warm restart manager). */
 const WINGMAN_CORE_TMUX_SESSION = "wingman-apps";
@@ -4170,6 +4171,46 @@ const handleApi = async (
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Workspace Tree - Browse directories and detect importable apps
+  // -------------------------------------------------------------------------
+
+  if (pathname === "/api/workspace/tree" && method === "GET") {
+    const denied = await ensureApiAccess(AccessActions.AppsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+
+    // Determine the root directory to scan
+    const scanRoot = workspaceScope.aliasDirectory ?? workspaceScope.defaultDirectory;
+
+    // Parse depth parameter (default 4, max 6)
+    const depthParam = url.searchParams.get("depth");
+    const depth = depthParam ? Math.min(Math.max(parseInt(depthParam, 10) || 4, 1), 6) : 4;
+
+    try {
+      // Get registered app paths to mark them in the tree
+      const registeredApps = await appRegistry.listApps();
+      const registeredPaths = new Set(
+        registeredApps
+          .filter((app) => canAccessApp(app))
+          .map((app) => app.root),
+      );
+
+      // Scan the directory tree
+      const nodes = await scanDirectoryTree(scanRoot, depth, registeredPaths);
+
+      return Response.json({
+        root: scanRoot,
+        depth,
+        nodes,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 500 });
     }
   }
 

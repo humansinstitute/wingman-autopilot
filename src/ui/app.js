@@ -13,6 +13,7 @@ import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
 import { createSessionDialogController } from "./common/session-dialog.js";
 import { initOrchestratorUI } from "./orchestrator/index.js";
 import { initAppDialogs } from "./apps/dialog.js";
+import { initWorkspaceTree } from "./apps/tree.js";
 import {
   initFeatureFlagsUI,
   ORCHESTRATOR_FLAG_KEY,
@@ -89,6 +90,7 @@ let closeAppDialog = () => {};
 let openAppLogsDialog = () => {};
 let refreshAppLogs = async () => {};
 let resetAppDialog = () => {};
+let createWorkspaceTreeSidebar = () => null;
 let renderFeatureFlagsPanel = () => document.createDocumentFragment();
 let ensureFeatureFlagsLoaded = () => {};
 let resolveFeatureFlagForViewer = () => ({ state: "off", effectiveState: "off" });
@@ -7803,6 +7805,20 @@ const renderApps = () => {
     void refreshApps({ skipRender: false });
   }
 
+  // Split layout: sidebar + main content
+  const splitContainer = document.createElement("div");
+  splitContainer.className = "wm-apps-split";
+
+  // Create sidebar with workspace tree
+  const sidebar = createWorkspaceTreeSidebar();
+  if (sidebar) {
+    splitContainer.append(sidebar);
+  }
+
+  // Main content area
+  const mainArea = document.createElement("div");
+  mainArea.className = "wm-apps-main";
+
   if (state.apps.error) {
     const errorBox = document.createElement("div");
     errorBox.className = "wm-apps-error";
@@ -7816,7 +7832,7 @@ const renderApps = () => {
       void refreshApps({ skipRender: false });
     });
     errorBox.append(errorText, retry);
-    wrapper.append(errorBox);
+    mainArea.append(errorBox);
   }
 
   const apps = Array.isArray(state.apps.items) ? state.apps.items : [];
@@ -7824,7 +7840,9 @@ const renderApps = () => {
     const loading = document.createElement("p");
     loading.className = "wm-apps-empty";
     loading.textContent = "Loading apps…";
-    wrapper.append(loading);
+    mainArea.append(loading);
+    splitContainer.append(mainArea);
+    wrapper.append(splitContainer);
     schedulePendingAppDialog();
     return wrapper;
   }
@@ -7832,8 +7850,10 @@ const renderApps = () => {
   if (apps.length === 0) {
     const empty = document.createElement("p");
     empty.className = "wm-apps-empty";
-    empty.textContent = "No apps registered yet. Use “Add App” to get started.";
-    wrapper.append(empty);
+    empty.textContent = "No apps registered yet. Import from the sidebar or use 'Add App' to get started.";
+    mainArea.append(empty);
+    splitContainer.append(mainArea);
+    wrapper.append(splitContainer);
     schedulePendingAppDialog();
     return wrapper;
   }
@@ -7845,7 +7865,9 @@ const renderApps = () => {
     grid.append(renderAppCard(app));
   });
 
-  wrapper.append(grid);
+  mainArea.append(grid);
+  splitContainer.append(mainArea);
+  wrapper.append(splitContainer);
 
   const focusPendingAppCard = () => {
     if (!state.apps.pendingFocusId) {
@@ -11075,6 +11097,14 @@ closeAppDialog = appDialogs.closeAppDialog;
 openAppLogsDialog = appDialogs.openAppLogsDialog;
 refreshAppLogs = appDialogs.refreshAppLogs;
 resetAppDialog = appDialogs.resetAppDialog;
+
+const workspaceTree = initWorkspaceTree({
+  state,
+  refreshApps,
+  showToast,
+});
+
+createWorkspaceTreeSidebar = workspaceTree.createSidebar;
 
 const orchestratorUI = initOrchestratorUI({
   state,
