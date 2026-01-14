@@ -90,6 +90,8 @@ export function initWorkspaceTree({ state, refreshApps, showToast }) {
   // Initialize tree state if not present
   if (!state.workspaceTree) {
     const storedCollapsed = localStorage.getItem(COLLAPSED_STORAGE_KEY);
+    // Default to collapsed if no preference stored
+    const isCollapsed = storedCollapsed === null ? true : storedCollapsed === "true";
     state.workspaceTree = {
       nodes: [],
       root: "",
@@ -97,7 +99,7 @@ export function initWorkspaceTree({ state, refreshApps, showToast }) {
       loading: false,
       error: null,
       initialized: false,
-      collapsed: storedCollapsed === "true",
+      collapsed: isCollapsed,
     };
   }
 
