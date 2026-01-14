@@ -121,6 +121,15 @@ const writeEnvFile = (envPath: string, values: Map<string, string>): void => {
   writeFileSync(envPath, content);
 };
 
+const loadEnvIntoRuntime = (values: Map<string, string>): void => {
+  for (const [key, value] of values) {
+    if (value) {
+      Bun.env[key] = value;
+      process.env[key] = value;
+    }
+  }
+};
+
 const promptWithDefault = async (
   rl: ReturnType<typeof createInterface>,
   question: string,
@@ -256,9 +265,10 @@ export const runSetupWizard = async (): Promise<boolean> => {
       values.set("AGENTAPI_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]");
     }
 
-    // Write .env file
+    // Write .env file and load into runtime
     console.log("\n--- Saving Configuration ---");
     writeEnvFile(envPath, values);
+    loadEnvIntoRuntime(values);
     console.log(`Configuration saved to ${envPath}`);
 
     // Mark wizard as complete
