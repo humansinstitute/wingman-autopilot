@@ -27,7 +27,6 @@ export interface WingmanConfig {
   allowedDirectories: string[];
   allowedOrigins: string;
   allowedHosts: string;
-  tmuxBase: string;
   agents: Record<AgentType, AgentDefinition>;
   agentStatusPollIntervalMs: number;
   agentStatusPollMaxIntervalMs: number;
@@ -81,26 +80,11 @@ const normaliseDirectory = (input: string, baseDirectory: string): string => {
   return normalize(absolute);
 };
 
-const agentMode = (Bun.env.AGENT_MODE ?? "").trim().toLowerCase();
-const defaultAgentApiPath = agentMode === "tmux" ? "../out/agentapi-tmux" : "../out/agentapi";
+const defaultAgentApiPath = "../out/agentapi";
 const agentApiBinary = Bun.env.AGENTAPI_BIN ?? new URL(defaultAgentApiPath, import.meta.url).pathname;
-const parseEnvironmentString = (input: string | undefined, fallback: string): string => {
-  if (!input) return fallback;
-  const trimmed = input.trim();
-  if (trimmed.length === 0) return fallback;
-  const quote = trimmed[0];
-  if ((quote === '"' || quote === "'") && trimmed.endsWith(quote) && trimmed.length > 1) {
-    return trimmed.slice(1, -1).trim() || fallback;
-  }
-  return trimmed;
-};
-
-const tmuxBase = parseEnvironmentString(Bun.env.TMUX_BASE, "wingman-agents");
-
-const isTmuxBinary = agentApiBinary.includes("agentapi-tmux");
 
 const baseCommand = (ctx: AgentCommandContext) => {
-  const args = [
+  return [
     agentApiBinary,
     "server",
     "--port",
@@ -110,10 +94,6 @@ const baseCommand = (ctx: AgentCommandContext) => {
     "--allowed-hosts",
     ctx.config.allowedHosts,
   ];
-  if (isTmuxBinary || agentMode === "tmux") {
-    args.push(`--tmux-session=${ctx.config.tmuxBase}`);
-  }
-  return args;
 };
 
 const withAgentCommand = (
@@ -190,7 +170,6 @@ export const loadConfig = (): WingmanConfig => {
     allowedDirectories,
     allowedOrigins,
     allowedHosts,
-    tmuxBase,
     agents: defaultAgents,
     agentStatusPollIntervalMs,
     agentStatusPollMaxIntervalMs,
