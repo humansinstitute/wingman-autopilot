@@ -102,7 +102,6 @@ class IdentityUserStore {
     this.ensureNicknameColumn();
     this.ensurePictureColumn();
     this.synchronisePortAssignments();
-    this.ensureAdminBalance();
   }
 
   private initialise() {
@@ -158,7 +157,7 @@ class IdentityUserStore {
     }
   }
 
-  private ensureAdminBalance() {
+  ensureAdminBalance() {
     const adminNpub = (Bun.env.ADMIN_NPUB ?? "").trim();
     if (!adminNpub) {
       return;

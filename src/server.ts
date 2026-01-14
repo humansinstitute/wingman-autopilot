@@ -6109,4 +6109,7 @@ console.log(
   `Wingman V2 orchestrator listening on http://localhost:${config.port} (agents ${config.agentPortStart} - ${config.agentPortStart + config.agentPortMax - 1})`,
 );
 
+// Ensure admin has balance after all env vars are loaded (important for first-run wizard)
+identityUserStore.ensureAdminBalance();
+
 export { server, manager, config };
