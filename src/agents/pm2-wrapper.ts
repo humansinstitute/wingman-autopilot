@@ -1,0 +1,260 @@
+/**
+ * Promise-based wrappers for PM2's callback API.
+ * Provides a clean async/await interface for process management.
+ */
+
+import pm2 from "pm2";
+
+export interface PM2ProcessDescription {
+  name?: string;
+  pid?: number;
+  pm_id?: number;
+  monit?: {
+    memory?: number;
+    cpu?: number;
+  };
+  pm2_env?: {
+    status?: "online" | "stopping" | "stopped" | "launching" | "errored" | "one-launch-status";
+    pm_cwd?: string;
+    pm_out_log_path?: string;
+    pm_err_log_path?: string;
+    pm_uptime?: number;
+    restart_time?: number;
+    unstable_restarts?: number;
+    env?: Record<string, string>;
+  };
+}
+
+export interface PM2StartOptions {
+  name: string;
+  script: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  output?: string;
+  error?: string;
+  logDateFormat?: string;
+  mergeLogs?: boolean;
+  autorestart?: boolean;
+  maxRestarts?: number;
+  minUptime?: string;
+}
+
+let connected = false;
+
+/**
+ * Connect to the PM2 daemon. Call once at server startup.
+ */
+export function connectPM2(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (connected) {
+      resolve();
+      return;
+    }
+    pm2.connect((err) => {
+      if (err) {
+        reject(err);
+      } else {
+        connected = true;
+        resolve();
+      }
+    });
+  });
+}
+
+/**
+ * Disconnect from the PM2 daemon. Call on graceful shutdown.
+ */
+export function disconnectPM2(): Promise<void> {
+  return new Promise((resolve) => {
+    if (!connected) {
+      resolve();
+      return;
+    }
+    pm2.disconnect();
+    connected = false;
+    resolve();
+  });
+}
+
+/**
+ * Check if we're connected to PM2.
+ */
+export function isConnected(): boolean {
+  return connected;
+}
+
+/**
+ * List all PM2 managed processes.
+ */
+export function listProcesses(): Promise<PM2ProcessDescription[]> {
+  return new Promise((resolve, reject) => {
+    pm2.list((err, list) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(list as PM2ProcessDescription[]);
+      }
+    });
+  });
+}
+
+/**
+ * Get a specific process by name.
+ */
+export async function getProcessByName(name: string): Promise<PM2ProcessDescription | null> {
+  const processes = await listProcesses();
+  return processes.find((p) => p.name === name) ?? null;
+}
+
+/**
+ * Start a process from an ecosystem config file.
+ * @param configPath - Path to the ecosystem.config.cjs file
+ * @param appName - Name of the app to start (must match name in config)
+ */
+export function startProcessFromConfig(configPath: string, appName: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    pm2.start(configPath, { only: appName }, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+/**
+ * Start a process with inline options (no config file).
+ */
+export function startProcess(options: PM2StartOptions): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const pm2Options: pm2.StartOptions = {
+      name: options.name,
+      script: options.script,
+      args: options.args,
+      cwd: options.cwd,
+      env: options.env,
+      output: options.output,
+      error: options.error,
+      log_date_format: options.logDateFormat,
+      merge_logs: options.mergeLogs,
+      autorestart: options.autorestart,
+      max_restarts: options.maxRestarts,
+      min_uptime: options.minUptime,
+    };
+
+    pm2.start(pm2Options, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+/**
+ * Stop a process by name. Process remains in PM2 list but is not running.
+ */
+export function stopProcess(name: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    pm2.stop(name, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+/**
+ * Restart a process by name.
+ */
+export function restartProcess(name: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    pm2.restart(name, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+/**
+ * Delete a process from PM2. Stops it if running and removes from PM2 list.
+ */
+export function deleteProcess(name: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    pm2.delete(name, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+/**
+ * Flush (clear) logs for a process.
+ */
+export function flushProcessLogs(name: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    pm2.flush(name, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+/**
+ * Send a signal to a process.
+ */
+export function sendSignal(signal: string | number, name: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    pm2.sendSignalToProcessName(signal, name, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+/**
+ * Wait for a process to reach a specific status.
+ * Polls at the specified interval until status matches or timeout is reached.
+ */
+export async function waitForStatus(
+  name: string,
+  targetStatus: "online" | "stopped" | "errored",
+  timeoutMs: number = 10000,
+  pollIntervalMs: number = 250,
+): Promise<PM2ProcessDescription | null> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeoutMs) {
+    const proc = await getProcessByName(name);
+    if (proc?.pm2_env?.status === targetStatus) {
+      return proc;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  return null;
+}
+
+/**
+ * Get the PM2 home directory (where logs are stored by default).
+ */
+export function getPM2Home(): string {
+  return process.env.PM2_HOME ?? `${process.env.HOME}/.pm2`;
+}
