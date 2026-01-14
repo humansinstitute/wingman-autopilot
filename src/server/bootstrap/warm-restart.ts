@@ -5,15 +5,8 @@ import { isAgentRuntimeStatus } from "../../types/agent-status";
 import type { AgentType } from "../../config";
 import { waitForAgentReady as waitForAgentReadyCore } from "../../agents/agent-client";
 
-type RunCommandResult = {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-};
-
 export type WarmRestartMarker = {
   createdAt: string;
-  preserveTmux: boolean;
   sessionIds?: string[];
   reason?: string;
   version?: number;
@@ -31,30 +24,6 @@ export const warmRestartState = {
 };
 
 export const warmRestartOutcome: { current: WarmRestartOutcome | null } = { current: null };
-
-export const readStreamToString = async (stream: ReadableStream<Uint8Array> | null | undefined) => {
-  if (!stream) return "";
-  return new Response(stream).text();
-};
-
-export const runTmuxCommand = async (args: string[]): Promise<RunCommandResult> => {
-  const subprocess = Bun.spawn(["tmux", ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exited] = await Promise.all([
-    readStreamToString(subprocess.stdout),
-    readStreamToString(subprocess.stderr),
-    subprocess.exited,
-  ]);
-
-  return {
-    exitCode: exited ?? 0,
-    stdout: stdout.trim(),
-    stderr: stderr.trim(),
-  };
-};
 
 export const loadWarmRestartMarker = async (filePath: string): Promise<WarmRestartMarker | null> => {
   try {
@@ -184,8 +153,8 @@ export const rehydrateWarmSessions = async (
       startedAt: record.startedAt,
       workingDirectory: record.workingDirectory ?? defaultWorkingDirectory,
       command,
-      tmuxSession: record.tmuxSession ?? undefined,
-      tmuxWindow: record.tmuxWindow ?? undefined,
+      pm2Name: record.pm2Name ?? undefined,
+      logsDir: record.logsDir ?? undefined,
       pid: storedPid ?? undefined,
       logs: undefined,
       npub: record.npub ?? undefined,
@@ -210,8 +179,8 @@ export const rehydrateWarmSessions = async (
       npub: snapshot.npub,
       port: snapshot.port,
       pid: snapshot.pid,
-      tmuxSession: snapshot.tmuxSession,
-      tmuxWindow: snapshot.tmuxWindow,
+      pm2Name: snapshot.pm2Name,
+      logsDir: snapshot.logsDir,
       workingDirectory: snapshot.workingDirectory,
       command: snapshot.command,
       runtimeStatus: snapshot.agentRuntimeStatus ?? null,
