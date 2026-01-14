@@ -41,7 +41,10 @@ function parseStoredCommand(value: string | null): string[] | undefined {
  * Extract session ID from PM2 process environment.
  */
 function getSessionIdFromPM2(proc: PM2ProcessDescription): string | null {
-  return proc.pm2_env?.env?.SESSION_ID ?? null;
+  // PM2 stores custom env vars directly on pm2_env (typed as Pm2Env)
+  const pm2Env = proc.pm2_env as Record<string, unknown> | undefined;
+  const sessionId = pm2Env?.SESSION_ID;
+  return typeof sessionId === "string" ? sessionId : null;
 }
 
 /**

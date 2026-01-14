@@ -84,6 +84,7 @@ import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import {
   clearWarmRestartMarker,
   loadWarmRestartMarker,
+  readStreamToString,
   rehydrateWarmSessions,
   warmRestartOutcome,
   warmRestartState,
@@ -3569,7 +3570,6 @@ const handleApi = async (
 
     const marker: WarmRestartMarker = {
       createdAt: new Date().toISOString(),
-      preserveTmux: true,
       sessionIds: activeSessions.map((session) => session.id),
       reason: "ui-restart",
       version: 1,

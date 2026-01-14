@@ -25,6 +25,13 @@ export const warmRestartState = {
 
 export const warmRestartOutcome: { current: WarmRestartOutcome | null } = { current: null };
 
+export const readStreamToString = async (
+  stream: ReadableStream<Uint8Array> | number | null | undefined,
+): Promise<string> => {
+  if (!stream || typeof stream === "number") return "";
+  return new Response(stream).text();
+};
+
 export const loadWarmRestartMarker = async (filePath: string): Promise<WarmRestartMarker | null> => {
   try {
     const raw = await readFile(filePath, "utf8");

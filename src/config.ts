@@ -80,6 +80,17 @@ const normaliseDirectory = (input: string, baseDirectory: string): string => {
   return normalize(absolute);
 };
 
+const parseEnvironmentString = (input: string | undefined, fallback: string): string => {
+  if (!input) return fallback;
+  const trimmed = input.trim();
+  if (trimmed.length === 0) return fallback;
+  const quote = trimmed[0];
+  if ((quote === '"' || quote === "'") && trimmed.endsWith(quote) && trimmed.length > 1) {
+    return trimmed.slice(1, -1).trim() || fallback;
+  }
+  return trimmed;
+};
+
 const defaultAgentApiPath = "../out/agentapi";
 const agentApiBinary = Bun.env.AGENTAPI_BIN ?? new URL(defaultAgentApiPath, import.meta.url).pathname;
 

@@ -131,9 +131,13 @@ function buildAgentCommand(sessionConfig: SessionConfig): { script: string; args
   const definition = config.agents[agent];
   const commandParts = definition.command({ port, agent, config });
 
+  if (commandParts.length === 0) {
+    throw new Error(`Agent ${agent} command returned empty array`);
+  }
+
   // First element is the script (agentapi binary), rest are args
   const [script, ...args] = commandParts;
-  return { script, args };
+  return { script: script!, args };
 }
 
 /**
