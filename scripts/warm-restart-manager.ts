@@ -7,7 +7,6 @@ import { setTimeout as delay } from "node:timers/promises";
 
 type WarmRestartMarker = {
   createdAt: string;
-  preserveTmux: boolean;
   sessionIds?: string[];
   reason?: string;
   version?: number;
@@ -24,10 +23,10 @@ if (args.length < 6) {
 }
 
 const [pidArg, projectRootInput, portArg, markerPathInput, tmuxSessionInput, tmuxWindowInput] = args;
-const targetPid = Number.parseInt(pidArg, 10);
-const serverPort = Number.parseInt(portArg, 10);
-const projectRoot = resolve(projectRootInput);
-const markerPath = resolve(markerPathInput);
+const targetPid = Number.parseInt(pidArg ?? "", 10);
+const serverPort = Number.parseInt(portArg ?? "", 10);
+const projectRoot = resolve(projectRootInput ?? ".");
+const markerPath = resolve(markerPathInput ?? "./restart-marker.json");
 const tmuxSession = tmuxSessionInput && tmuxSessionInput.trim().length > 0 ? tmuxSessionInput.trim() : "wingman-apps";
 const tmuxWindow = tmuxWindowInput && tmuxWindowInput.trim().length > 0 ? tmuxWindowInput.trim() : "wingman-core";
 const tmuxTarget = `${tmuxSession}:${tmuxWindow}`;

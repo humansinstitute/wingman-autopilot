@@ -5,6 +5,7 @@ import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { generateIdentityAlias } from "../identity/identity-alias";
 import { normaliseNpub } from "../identity/npub-utils";
 import { identityUserStore } from "../storage/identity-user-store";
+import { isPortAvailable } from "../utils/port-utils";
 
 const registryFilePath = new URL("../../data/apps.json", import.meta.url).pathname;
 
@@ -17,7 +18,12 @@ export interface AppRecord {
   label: string;
   root: string;
   scripts: AppLifecycleScripts;
+  /** @deprecated Use pm2Name instead. Kept for backward compatibility. */
   tmuxSession: string;
+  /** PM2 process name for this app. */
+  pm2Name?: string;
+  /** Directory where PM2 logs are stored. */
+  logsDir?: string;
   notes?: string;
   ownerNpub: string | null;
   createdAt: string;
@@ -31,7 +37,10 @@ export interface RegisterAppInput {
   label: string;
   root: string;
   scripts?: AppLifecycleScripts;
+  /** @deprecated */
   tmuxSession?: string;
+  pm2Name?: string;
+  logsDir?: string;
   notes?: string;
   ownerNpub?: string | null;
   webApp?: boolean;
@@ -42,7 +51,10 @@ export interface UpdateAppInput {
   label?: string;
   root?: string;
   scripts?: AppLifecycleScripts;
+  /** @deprecated */
   tmuxSession?: string;
+  pm2Name?: string;
+  logsDir?: string;
   notes?: string | null;
   ownerNpub?: string | null;
   webApp?: boolean;
@@ -163,6 +175,8 @@ export class AppRegistry {
       root,
       scripts,
       tmuxSession,
+      pm2Name: input.pm2Name,
+      logsDir: input.logsDir,
       notes: input.notes?.trim() || undefined,
       ownerNpub,
       createdAt: now,
@@ -216,6 +230,8 @@ export class AppRegistry {
       root: nextRoot,
       scripts: nextScripts,
       tmuxSession: nextTmux,
+      pm2Name: input.pm2Name !== undefined ? input.pm2Name : existing.pm2Name,
+      logsDir: input.logsDir !== undefined ? input.logsDir : existing.logsDir,
       notes: nextNotes,
       ownerNpub: nextOwnerNpub,
       updatedAt: new Date().toISOString(),
@@ -335,33 +351,40 @@ export class AppRegistry {
     if (!ports || ports.length === 0) {
       throw new Error("No reserved ports are available for this owner.");
     }
-    const inUse = new Set<number>();
+
+    // Build set of ports assigned to other apps for this user
+    const assignedToApps = new Set<number>();
     for (const app of this.apps.values()) {
       if (app.id === appId) continue;
       if (app.ownerNpub === normalizedOwner && app.webApp && typeof app.webAppPort === "number") {
-        inUse.add(app.webAppPort);
+        assignedToApps.add(app.webAppPort);
       }
     }
 
-    const resolveCandidate = (value: number | null | undefined): number | undefined => {
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        return undefined;
+    // Check if a port is available (not assigned to another app AND not in use on system)
+    const isAvailable = (port: number): boolean => {
+      if (assignedToApps.has(port)) {
+        return false;
       }
-      const intValue = Math.trunc(value);
-      if (!ports.includes(intValue) || inUse.has(intValue)) {
-        return undefined;
+      if (!isPortAvailable(port)) {
+        console.warn(`[app-registry] port ${port} is in use on system, skipping`);
+        return false;
       }
-      return intValue;
+      return true;
     };
 
-    const preferredCandidate = resolveCandidate(preferred ?? null);
-    if (preferredCandidate !== undefined) {
-      return preferredCandidate;
+    // Try preferred port first
+    if (typeof preferred === "number" && Number.isFinite(preferred)) {
+      const intValue = Math.trunc(preferred);
+      if (ports.includes(intValue) && isAvailable(intValue)) {
+        return intValue;
+      }
     }
 
-    const available = ports.find((port) => !inUse.has(port));
+    // Find first available port from reserved range
+    const available = ports.find(isAvailable);
     if (available === undefined) {
-      throw new Error("All reserved ports are already assigned to other web apps for this owner.");
+      throw new Error("All reserved ports are either assigned to other apps or in use on the system.");
     }
     return available;
   }
@@ -389,6 +412,8 @@ export class AppRegistry {
       root,
       scripts,
       tmuxSession,
+      pm2Name: input.pm2Name,
+      logsDir: input.logsDir,
       notes,
       ownerNpub,
       createdAt,

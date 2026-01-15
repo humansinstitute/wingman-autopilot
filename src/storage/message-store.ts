@@ -29,8 +29,8 @@ export interface SessionRecordInput {
   npub?: string;
   port?: number;
   pid?: number;
-  tmuxSession?: string;
-  tmuxWindow?: string;
+  pm2Name?: string;
+  logsDir?: string;
   workingDirectory?: string;
   command?: string[];
   runtimeStatus?: AgentRuntimeStatus | null;
@@ -45,8 +45,8 @@ export interface StoredSessionRecord {
   npub: string | null;
   port: number | null;
   pid: number | null;
-  tmuxSession: string | null;
-  tmuxWindow: string | null;
+  pm2Name: string | null;
+  logsDir: string | null;
   workingDirectory: string | null;
   command: string | null;
   runtimeStatus: AgentRuntimeStatus | null;
@@ -122,8 +122,8 @@ export class MessageStore {
       session.npub ?? null,
       typeof session.port === "number" ? session.port : null,
       typeof session.pid === "number" ? session.pid : null,
-      session.tmuxSession ?? null,
-      session.tmuxWindow ?? null,
+      session.pm2Name ?? null,
+      session.logsDir ?? null,
       session.workingDirectory ?? null,
       Array.isArray(session.command) ? JSON.stringify(session.command) : null,
       session.runtimeStatus ?? null,
@@ -180,8 +180,8 @@ export class MessageStore {
         name TEXT,
         port INTEGER,
         pid INTEGER,
-        tmux_session TEXT,
-        tmux_window TEXT,
+        pm2_name TEXT,
+        logs_dir TEXT,
         working_directory TEXT,
         command TEXT,
         runtime_status TEXT,
@@ -211,8 +211,8 @@ export class MessageStore {
     ensureColumn("name", "TEXT");
     ensureColumn("port", "INTEGER");
     ensureColumn("pid", "INTEGER");
-    ensureColumn("tmux_session", "TEXT");
-    ensureColumn("tmux_window", "TEXT");
+    ensureColumn("pm2_name", "TEXT");
+    ensureColumn("logs_dir", "TEXT");
     ensureColumn("working_directory", "TEXT");
     ensureColumn("command", "TEXT");
     ensureColumn("npub", "TEXT");
@@ -222,7 +222,7 @@ export class MessageStore {
 
   private prepareInsertSession() {
     return this.db.prepare(
-      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, tmux_session, tmux_window, working_directory, command, runtime_status, origin)
+      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, pm2_name, logs_dir, working_directory, command, runtime_status, origin)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
        ON CONFLICT(id) DO UPDATE SET
          agent = excluded.agent,
@@ -231,8 +231,8 @@ export class MessageStore {
          npub = excluded.npub,
          port = excluded.port,
          pid = excluded.pid,
-         tmux_session = excluded.tmux_session,
-         tmux_window = excluded.tmux_window,
+         pm2_name = excluded.pm2_name,
+         logs_dir = excluded.logs_dir,
          working_directory = excluded.working_directory,
          command = excluded.command,
          runtime_status = excluded.runtime_status,
@@ -254,8 +254,8 @@ export class MessageStore {
          npub,
          port,
          pid,
-         tmux_session as tmuxSession,
-         tmux_window as tmuxWindow,
+         pm2_name as pm2Name,
+         logs_dir as logsDir,
          working_directory as workingDirectory,
          command,
          runtime_status as runtimeStatus,
