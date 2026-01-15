@@ -7,25 +7,6 @@ import { generateIdentityAlias } from "../identity/identity-alias";
 import { normaliseNpub } from "../identity/npub-utils";
 import { sanitizeLogEntry } from "../logging/log-sanitizer";
 import type { AgentRuntimeStatus } from "../types/agent-status";
-import { isPortAvailable } from "../utils/port-utils";
-
-import {
-  connectPM2,
-  deleteProcess,
-  getProcessByName,
-  listProcesses,
-  startProcessFromConfig,
-  stopProcess,
-  waitForStatus,
-} from "./pm2-wrapper";
-import {
-  addAppToEcosystem,
-  generateProcessName,
-  getLogsDirectory,
-  removeAppFromEcosystem,
-  type SessionConfig,
-} from "./ecosystem-generator";
-import { readCombinedLogs } from "./log-reader";
 
 const MAX_LOG_LINES = 500;
 
@@ -50,11 +31,11 @@ export interface SessionSnapshot {
   pid?: number;
   command: string[];
   workingDirectory: string;
-  pm2Name?: string;
-  logsDir?: string;
   exitCode?: number;
   logs: string[];
   origin?: SessionOrigin;
+  userAlias?: string;
+  isAdmin?: boolean;
 }
 
 type SessionEvent =
@@ -70,8 +51,6 @@ export interface RehydrateSessionInput {
   startedAt: string;
   workingDirectory: string;
   command?: string[];
-  pm2Name?: string;
-  logsDir?: string;
   pid?: number;
   logs?: string[];
   npub?: string;
@@ -86,14 +65,13 @@ interface AgentSession {
   name: string;
   status: SessionStatus;
   startedAt: Date;
+  process: Bun.Subprocess | null;
   definition: AgentDefinition;
   workingDirectory: string;
   command: string[];
   logs: string[];
   exitCode?: number;
-  pm2Name?: string;
-  logsDir?: string;
-  pm2Pid?: number;
+  detachedPid?: number;
   npub?: string;
   agentRuntimeStatus?: AgentRuntimeStatus;
   origin?: SessionOrigin;
@@ -107,22 +85,9 @@ export class ProcessManager {
   private readonly allocatedPorts = new Set<number>();
   private readonly listeners = new Set<(event: SessionEvent) => void>();
   private readonly adminNpub = normaliseNpub(Bun.env.ADMIN_NPUB ?? null);
-  private pm2Connected = false;
 
   constructor(config: WingmanConfig) {
     this.config = config;
-  }
-
-  /**
-   * Initialize PM2 connection. Call once at server startup.
-   */
-  async initialize(): Promise<void> {
-    if (this.pm2Connected) {
-      return;
-    }
-    await connectPM2();
-    this.pm2Connected = true;
-    console.log("[manager] PM2 connection established");
   }
 
   on(listener: (event: SessionEvent) => void): () => void {
@@ -153,19 +118,6 @@ export class ProcessManager {
     if (!session) {
       return undefined;
     }
-
-    // If we have a PM2 process, read from log files
-    if (session.pm2Name && session.logsDir) {
-      try {
-        const logs = await readCombinedLogs(session.logsDir, session.pm2Name, MAX_LOG_LINES);
-        session.logs = logs;
-        return logs;
-      } catch (error) {
-        console.warn(`[manager] failed to read logs for ${session.pm2Name}: ${(error as Error).message}`);
-      }
-    }
-
-    // Fallback to in-memory logs
     return session.logs.slice();
   }
 
@@ -180,27 +132,21 @@ export class ProcessManager {
       throw new Error(`Unknown agent: ${agent}`);
     }
 
-    // Ensure PM2 is connected
-    await this.initialize();
-
     const port = this.allocatePort();
     const id = crypto.randomUUID();
     const sessionName = this.normaliseSessionName(name, agent, port);
     const command = definition.command({ port, agent, config: this.config });
+    const sessionWorkingDirectory =
+      typeof workingDirectory === "string" && workingDirectory.length > 0
+        ? workingDirectory
+        : await this.resolveDefaultWorkingDirectory();
 
     // Resolve user info
     const npub = getAuthenticatedNpub() ?? undefined;
     const isAdmin = this.isAdminUser(npub);
     const userAlias = this.resolveUserAlias(npub);
 
-    // Resolve working directory
-    const sessionWorkingDirectory =
-      typeof workingDirectory === "string" && workingDirectory.length > 0
-        ? workingDirectory
-        : await this.resolveDefaultWorkingDirectory();
-
-    console.log(`[manager] creating session for ${definition.label} with command: ${command.join(" ")}`);
-
+    console.log(`[manager] launching ${definition.label} with command: ${command.join(" ")}`);
     const session: AgentSession = {
       id,
       agent,
@@ -208,13 +154,12 @@ export class ProcessManager {
       name: sessionName,
       status: "starting",
       startedAt: new Date(),
+      process: null,
       definition,
       workingDirectory: sessionWorkingDirectory,
       command,
       logs: [],
-      pm2Name: undefined,
-      logsDir: undefined,
-      pm2Pid: undefined,
+      detachedPid: undefined,
       npub,
       agentRuntimeStatus: undefined,
       origin: origin ?? undefined,
@@ -226,12 +171,13 @@ export class ProcessManager {
     this.emit({ type: "session-started", session: this.toSnapshot(session) });
 
     try {
-      await this.startPM2Process(session);
+      session.process = this.spawnAgentProcess(session);
+      await this.monitorSession(session);
       session.status = "running";
       this.emit({ type: "session-updated", session: this.toSnapshot(session) });
     } catch (error) {
       session.status = "error";
-      session.logs.push(`[manager] failed to launch session: ${(error as Error).message}`);
+      this.appendLog(session, `[manager] failed to launch session: ${(error as Error).message}`);
       this.releasePort(session.port);
       this.emit({ type: "session-updated", session: this.toSnapshot(session) });
       throw error;
@@ -263,7 +209,7 @@ export class ProcessManager {
       ? input.logs.map((entry) => sanitizeLogEntry(entry)).filter((entry) => entry.length > 0)
       : [];
 
-    // Derive user alias from npub if not provided via pm2Name
+    // Derive user alias from npub
     const npub = input.npub ?? undefined;
     const isAdmin = this.isAdminUser(npub);
     const userAlias = this.resolveUserAlias(npub);
@@ -275,13 +221,12 @@ export class ProcessManager {
       name: input.name,
       status: "running",
       startedAt: new Date(input.startedAt),
+      process: null,
       definition,
       workingDirectory: input.workingDirectory,
       command,
       logs: sanitizedLogs,
-      pm2Name: input.pm2Name,
-      logsDir: input.logsDir,
-      pm2Pid: typeof input.pid === "number" ? input.pid : undefined,
+      detachedPid: typeof input.pid === "number" ? input.pid : undefined,
       npub,
       agentRuntimeStatus: input.agentRuntimeStatus ?? undefined,
       origin: input.origin ?? undefined,
@@ -298,32 +243,20 @@ export class ProcessManager {
     const session = this.sessions.get(id);
     if (!session) return undefined;
 
-    // Stop and remove from PM2
-    if (session.pm2Name) {
+    if (session.process) {
+      session.process.kill("SIGTERM");
+      await session.process.exited;
+      session.process = null;
+    } else if (typeof session.detachedPid === "number" && session.detachedPid > 0) {
       try {
-        await stopProcess(session.pm2Name);
-        // Wait briefly for stop to complete
-        await waitForStatus(session.pm2Name, "stopped", 5000);
-        // Delete from PM2 list
-        await deleteProcess(session.pm2Name);
-      } catch (error) {
-        console.warn(`[manager] PM2 stop/delete failed for ${session.pm2Name}: ${(error as Error).message}`);
+        process.kill(session.detachedPid, "SIGTERM");
+      } catch {
+        // ignore failures when the process already exited or cannot be signalled
       }
-
-      // Remove from ecosystem config
-      try {
-        await removeAppFromEcosystem(
-          session.workingDirectory,
-          session.isAdmin ?? false,
-          session.pm2Name,
-        );
-      } catch (error) {
-        console.warn(`[manager] failed to remove from ecosystem: ${(error as Error).message}`);
-      }
+      session.detachedPid = undefined;
     }
 
     session.status = "stopped";
-    session.pm2Pid = undefined;
     this.releasePort(session.port);
     this.emit({ type: "session-stopped", session: this.toSnapshot(session) });
     return this.toSnapshot(session);
@@ -337,6 +270,15 @@ export class ProcessManager {
 
     if (session.status === "starting" || session.status === "running") {
       throw new Error("Cannot delete a running session");
+    }
+
+    if (session.process) {
+      try {
+        session.process.kill("SIGTERM");
+      } catch {
+        // best effort; process should already be exited
+      }
+      session.process = null;
     }
 
     this.releasePort(session.port);
@@ -359,88 +301,113 @@ export class ProcessManager {
     return snapshot;
   }
 
-  /**
-   * Sync session status with PM2 reality.
-   * Call periodically or after operations to ensure consistency.
-   */
-  async syncWithPM2(): Promise<void> {
-    if (!this.pm2Connected) {
-      return;
+  private spawnAgentProcess(session: AgentSession): Bun.Subprocess {
+    const env = {
+      ...Bun.env,
+      SESSION_ID: session.id,
+      SESSION_AGENT: session.agent,
+      SESSION_PORT: session.port.toString(),
+      SESSION_DIRECTORY: session.workingDirectory,
+      SESSION_NAME: session.name,
+      ...(session.definition.env ?? {}),
+    };
+
+    const proc = Bun.spawn(session.command, {
+      cwd: session.workingDirectory,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (typeof proc.pid === "number" && proc.pid > 0) {
+      session.detachedPid = proc.pid;
     }
 
-    const pm2Processes = await listProcesses();
-    const pm2ByName = new Map(pm2Processes.map((p) => [p.name, p]));
+    if (proc.stdout) {
+      this.captureStream(proc.stdout, session, "stdout");
+    }
 
-    for (const session of this.sessions.values()) {
-      if (!session.pm2Name) {
-        continue;
-      }
+    if (proc.stderr) {
+      this.captureStream(proc.stderr, session, "stderr");
+    }
 
-      const pm2Process = pm2ByName.get(session.pm2Name);
-      if (!pm2Process) {
-        // Process no longer exists in PM2
-        if (session.status === "running" || session.status === "starting") {
-          session.status = "stopped";
-          session.pm2Pid = undefined;
-          this.releasePort(session.port);
-          this.emit({ type: "session-stopped", session: this.toSnapshot(session) });
-        }
-        continue;
-      }
-
-      // Update PID from PM2
-      if (pm2Process.pid) {
-        session.pm2Pid = pm2Process.pid;
-      }
-
-      // Sync status
-      const pm2Status = pm2Process.pm2_env?.status;
-      if (pm2Status === "online" && session.status !== "running") {
-        session.status = "running";
-        this.emit({ type: "session-updated", session: this.toSnapshot(session) });
-      } else if ((pm2Status === "stopped" || pm2Status === "errored") && session.status === "running") {
-        session.status = pm2Status === "errored" ? "error" : "stopped";
+    proc.exited.then((code) => {
+      session.exitCode = code ?? undefined;
+      session.detachedPid = undefined;
+      if (session.status === "running") {
+        session.status = code === 0 ? "stopped" : "error";
         this.releasePort(session.port);
         this.emit({ type: "session-stopped", session: this.toSnapshot(session) });
       }
-    }
+    }).catch((error) => {
+      session.exitCode = undefined;
+      session.status = "error";
+      this.appendLog(session, `[manager] spawn monitoring failed: ${(error as Error).message}`);
+      this.releasePort(session.port);
+      this.emit({ type: "session-stopped", session: this.toSnapshot(session) });
+    });
+
+    return proc;
   }
 
-  private async startPM2Process(session: AgentSession): Promise<void> {
-    const userAlias = session.userAlias ?? "anonymous";
-    const isAdmin = session.isAdmin ?? false;
+  private async monitorSession(session: AgentSession): Promise<void> {
+    await new Promise<void>((resolve) => {
+      const checkInterval = setInterval(() => {
+        if (!session.process) return;
+        // Consider the process "running" as soon as we can observe a PID.
+        if (typeof session.process.pid === "number" && session.process.pid > 0) {
+          session.detachedPid = session.process.pid;
+          clearInterval(checkInterval);
+          resolve();
+        }
+      }, 50);
+    });
+  }
 
-    // Build session config for ecosystem
-    const sessionConfig: SessionConfig = {
-      sessionId: session.id,
-      sessionName: session.name,
-      agent: session.agent,
-      port: session.port,
-      workingDirectory: session.workingDirectory,
-      userAlias,
-      isAdmin,
-      config: this.config,
-    };
+  private captureStream(stream: ReadableStream<any>, session: AgentSession, label: "stdout" | "stderr") {
+    const decoder = new TextDecoder();
+    (async () => {
+      const reader = stream.getReader();
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        buffer = this.flushBuffer(buffer, session, label);
+      }
+      if (buffer.length > 0) {
+        this.appendLog(session, `[${label}] ${buffer.trimEnd()}`);
+      }
+    })().catch((error) => {
+      this.appendLog(session, `[manager] failed to read ${label}: ${(error as Error).message}`);
+    });
+  }
 
-    // Add to ecosystem config and get paths
-    const { ecosystemPath, processName, logsDir } = await addAppToEcosystem(sessionConfig);
-
-    session.pm2Name = processName;
-    session.logsDir = logsDir;
-
-    console.log(`[manager] starting PM2 process ${processName} from ${ecosystemPath}`);
-
-    // Start via PM2
-    await startProcessFromConfig(ecosystemPath, processName);
-
-    // Wait for process to come online
-    const proc = await waitForStatus(processName, "online", 10000);
-    if (!proc) {
-      throw new Error(`PM2 process ${processName} failed to start within timeout`);
+  private flushBuffer(buffer: string, session: AgentSession, label: string): string {
+    const lines = buffer.split(/\r?\n/);
+    if (lines.length === 1) {
+      return buffer;
     }
 
-    session.pm2Pid = proc.pid;
-    console.log(`[manager] PM2 process ${processName} started with PID ${proc.pid}`);
+    for (let i = 0; i < lines.length - 1; i++) {
+      const line = lines[i]?.trimEnd();
+      if (line) {
+        this.appendLog(session, `[${label}] ${line}`);
+      }
+    }
+
+    return lines[lines.length - 1] ?? "";
+  }
+
+  private appendLog(session: AgentSession, entry: string) {
+    const cleanedEntry = sanitizeLogEntry(entry);
+    if (!cleanedEntry) {
+      return;
+    }
+    session.logs.push(cleanedEntry);
+    if (session.logs.length > MAX_LOG_LINES) {
+      session.logs.splice(0, session.logs.length - MAX_LOG_LINES);
+    }
+    this.emit({ type: "session-updated", session: this.toSnapshot(session) });
   }
 
   private async resolveDefaultWorkingDirectory(): Promise<string> {
@@ -479,6 +446,31 @@ export class ProcessManager {
     return generateIdentityAlias(npub);
   }
 
+  private isPortAvailable(port: number): boolean {
+    let server: ReturnType<typeof Bun.listen> | null = null;
+    try {
+      server = Bun.listen({
+        hostname: "127.0.0.1",
+        port,
+        // Dummy socket handlers to satisfy Bun.listen requirements.
+        socket: {
+          data() {},
+          close() {},
+          open() {},
+        },
+      });
+      return true;
+    } catch (error) {
+      const nodeError = error as NodeJS.ErrnoException;
+      if (nodeError?.code !== "EADDRINUSE") {
+        console.warn(`[manager] failed to probe port ${port}: ${nodeError?.message ?? error}`);
+      }
+      return false;
+    } finally {
+      server?.stop(true);
+    }
+  }
+
   private allocatePort(): number {
     const { agentPortStart, agentPortMax } = this.config;
     for (let offset = 0; offset < agentPortMax; offset += 1) {
@@ -486,7 +478,7 @@ export class ProcessManager {
       if (this.allocatedPorts.has(candidate)) {
         continue;
       }
-      if (!isPortAvailable(candidate)) {
+      if (!this.isPortAvailable(candidate)) {
         console.warn(`[manager] skipping port ${candidate} because it is already in use`);
         continue;
       }
@@ -510,14 +502,14 @@ export class ProcessManager {
       agentRuntimeStatus: session.agentRuntimeStatus,
       startedAt: session.startedAt.toISOString(),
       npub: session.npub,
-      pid: session.pm2Pid,
+      pid: session.process?.pid ?? session.detachedPid,
       command: session.command,
       workingDirectory: session.workingDirectory,
-      pm2Name: session.pm2Name,
-      logsDir: session.logsDir,
       exitCode: session.exitCode,
       logs: session.logs.slice(-50),
       origin: session.origin,
+      userAlias: session.userAlias,
+      isAdmin: session.isAdmin,
     };
   }
 

@@ -451,8 +451,6 @@ export class FileWatcherRunner {
       npub: session.npub,
       port: session.port,
       pid: session.pid,
-      pm2Name: session.pm2Name,
-      logsDir: session.logsDir,
       workingDirectory: session.workingDirectory,
       command: session.command,
       origin: session.origin ?? null,

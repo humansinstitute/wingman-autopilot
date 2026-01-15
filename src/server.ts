@@ -96,7 +96,7 @@ import {
   writeWarmRestartMarker,
 } from "./server/bootstrap/warm-restart";
 import type { WarmRestartMarker } from "./server/bootstrap/warm-restart";
-import { reconcileSessionsWithPM2, reconcileAppsWithPM2 } from "./server/bootstrap/pm2-reconcile";
+import { reconcileAppsWithPM2 } from "./server/bootstrap/pm2-reconcile";
 import { connectPM2 } from "./agents/pm2-wrapper";
 import { createUploadHelpers } from "./server/uploads/helpers";
 import { resolveAndCacheNostrProfile } from "./server/nostr-profile";
@@ -616,21 +616,6 @@ try {
 }
 
 const manager = new ProcessManager(config);
-
-// Reconcile PM2 processes with stored sessions
-try {
-  const reconcileResult = await reconcileSessionsWithPM2(
-    manager,
-    messageStore,
-    SUPPORTED_AGENT_TYPES,
-    config.defaultWorkingDirectory,
-  );
-  if (reconcileResult.rehydrated > 0) {
-    console.log(`[pm2] reconciled ${reconcileResult.rehydrated} session(s) from PM2`);
-  }
-} catch (error) {
-  console.warn(`[pm2] reconciliation failed: ${(error as Error).message}`);
-}
 
 // Reconcile PM2 processes with app registry
 try {
@@ -1278,8 +1263,6 @@ manager.on((event) => {
       npub: event.session.npub,
       port: event.session.port,
       pid: event.session.pid,
-      pm2Name: event.session.pm2Name,
-      logsDir: event.session.logsDir,
       workingDirectory: event.session.workingDirectory,
       command: event.session.command,
       runtimeStatus: event.session.agentRuntimeStatus ?? null,
@@ -1308,8 +1291,6 @@ manager.on((event) => {
       npub: event.session.npub,
       port: event.session.port,
       pid: event.session.pid,
-      pm2Name: event.session.pm2Name,
-      logsDir: event.session.logsDir,
       workingDirectory: event.session.workingDirectory,
       command: event.session.command,
       runtimeStatus: event.session.agentRuntimeStatus ?? null,
@@ -2534,8 +2515,6 @@ const launchOrchestratorPreset = async (presetId: string) => {
     npub: session.npub,
     port: session.port,
     pid: session.pid,
-    pm2Name: session.pm2Name,
-    logsDir: session.logsDir,
     workingDirectory: session.workingDirectory,
     command: session.command,
     runtimeStatus: session.agentRuntimeStatus ?? null,
@@ -5678,8 +5657,6 @@ const handleApi = async (
         npub: session.npub,
         port: session.port,
         pid: session.pid,
-        pm2Name: session.pm2Name,
-        logsDir: session.logsDir,
         workingDirectory: session.workingDirectory,
         command: session.command,
         runtimeStatus: session.agentRuntimeStatus ?? null,
