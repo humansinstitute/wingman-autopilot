@@ -5934,3 +5934,271 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   display: flex;
   flex-direction: column;
 }
+
+/* Archive Component Styles */
+.wm-home-archive {
+  margin-top: 1rem;
+}
+
+.wm-home-archive .wm-home-section-header {
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 0;
+  padding: 0.5rem 0;
+}
+
+.wm-home-archive .wm-home-section-header:hover {
+  opacity: 0.9;
+}
+
+.wm-home-archive-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.wm-home-archive-badge {
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  padding: 0.15rem 0.5rem;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.wm-home-archive-collapse-icon {
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  transition: transform 0.2s ease;
+}
+
+.wm-home-archive[data-collapsed="true"] .wm-home-archive-content {
+  display: none;
+}
+
+.wm-home-archive-content {
+  padding-top: 1rem;
+}
+
+.wm-home-archive-filter {
+  margin-bottom: 1rem;
+}
+
+.wm-home-archive-filter .wm-input {
+  width: 100%;
+  max-width: 400px;
+}
+
+.wm-home-archive-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.wm-home-archive-status {
+  color: var(--text-tertiary);
+  font-size: 0.9rem;
+  padding: 1rem 0;
+}
+
+.wm-home-archive-error {
+  color: #ef4444;
+}
+
+.wm-home-archive-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.75rem 1rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.wm-home-archive-item:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--accent-primary);
+}
+
+.wm-home-archive-item:focus {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.wm-home-archive-item-main {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.wm-home-archive-item-name {
+  font-weight: 500;
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wm-home-archive-item-agent {
+  background: var(--accent-tertiary);
+  color: var(--text-secondary);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  text-transform: capitalize;
+}
+
+.wm-home-archive-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+}
+
+.wm-home-archive-item-dir {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wm-home-archive-item-messages {
+  white-space: nowrap;
+}
+
+.wm-home-archive-load-more {
+  padding-top: 1rem;
+  text-align: center;
+}
+
+/* Archive View Dialog */
+.wm-archive-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 2rem;
+}
+
+.wm-archive-dialog-overlay[hidden] {
+  display: none;
+}
+
+.wm-archive-dialog {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 800px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-md);
+}
+
+.wm-archive-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.wm-archive-dialog-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  color: var(--text-primary);
+}
+
+.wm-archive-dialog-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  padding: 1rem 1.5rem;
+  background: var(--bg-secondary);
+  font-size: 0.85rem;
+}
+
+.wm-archive-dialog-meta-item {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.wm-archive-dialog-meta-item .label {
+  color: var(--text-tertiary);
+}
+
+.wm-archive-dialog-meta-item .value {
+  color: var(--text-primary);
+}
+
+.wm-archive-dialog-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+.wm-archive-dialog-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.wm-archive-dialog-message {
+  padding: 1rem;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+.wm-archive-dialog-message-user {
+  background: var(--accent-tertiary);
+  margin-left: 2rem;
+}
+
+.wm-archive-dialog-message-assistant {
+  margin-right: 2rem;
+}
+
+.wm-archive-dialog-message-role {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+}
+
+.wm-archive-dialog-message-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+.wm-archive-dialog-message-time {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  margin-top: 0.5rem;
+  text-align: right;
+}
+
+.wm-archive-dialog-loading,
+.wm-archive-dialog-empty,
+.wm-archive-dialog-error {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-tertiary);
+}
+
+.wm-archive-dialog-error {
+  color: #ef4444;
+}

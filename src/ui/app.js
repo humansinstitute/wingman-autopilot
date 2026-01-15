@@ -9,6 +9,7 @@ import { createTodoFeature } from "./todos/index.js";
 import { createProjectFeature } from "./projects/index.js";
 import "./logging/browser.js";
 import { createHomeGuestHero } from "./home/hero.js";
+import { createArchiveComponent, createArchiveViewDialog } from "./home/archive.js";
 import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
 import { createSessionDialogController } from "./common/session-dialog.js";
 import { initOrchestratorUI } from "./orchestrator/index.js";
@@ -101,6 +102,8 @@ let syncFeatureFlagsFromConfig = () => {};
 
 let todoFeature = null;
 let projectFeature = null;
+let archiveComponent = null;
+let archiveViewDialog = null;
 
 let performAuthUiSync = () => {};
 let pendingAuthUiSync = false;
@@ -9039,6 +9042,17 @@ const renderHome = () => {
   if (orchestratorCard) {
     wrapper.append(orchestratorCard);
   }
+
+  // Add archive component
+  archiveComponent = createArchiveComponent({
+    onViewSession: (session) => {
+      if (archiveViewDialog) {
+        archiveViewDialog.open(session);
+      }
+    },
+  });
+  wrapper.append(archiveComponent.element);
+
   return wrapper;
 };
 
@@ -10809,6 +10823,18 @@ const renderComposer = (sessionId) => {
     });
   });
 
+  addCommandDivider();
+  addCommand("Stop Session", () => {
+    const session = state.sessions.find((s) => s.id === sessionId);
+    const displayName = session ? getSessionDisplayName(session) : "this session";
+    const confirmed = window.confirm(
+      `Are you sure you want to stop "${displayName}"?\n\nThe session will be archived after 5 seconds.`
+    );
+    if (confirmed) {
+      stopSession(sessionId);
+    }
+  });
+
   const toggleCommandMenu = () => {
     const isOpen = commandMenu.classList.toggle("is-open");
     commandButton.setAttribute("aria-expanded", String(isOpen));
@@ -11077,6 +11103,10 @@ todoFeature = createTodoFeature({
   onUnauthorized: handleUnauthorizedAccess,
 });
 state.todos = todoFeature.state;
+
+// Initialize archive view dialog
+archiveViewDialog = createArchiveViewDialog();
+document.body.append(archiveViewDialog.element);
 
 const appDialogs = initAppDialogs({
   state,

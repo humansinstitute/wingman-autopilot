@@ -29,6 +29,8 @@ import { scanDirectoryTree, type TreeNode } from "./apps/app-detector";
 /** Tmux session for the Wingman core process (used by warm restart manager). */
 const WINGMAN_CORE_TMUX_SESSION = "wingman-apps";
 import { messageStore } from "./storage/message-store";
+import { scheduleSessionArchive, cancelPendingArchive } from "./storage/session-archiver";
+import { sessionArchiveStore } from "./storage/session-archive-store";
 import { PromptQueueStore } from "./storage/prompt-queue-store";
 import { orchestratorPresetStore } from "./storage/orchestrator-presets";
 import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
@@ -5425,6 +5427,66 @@ const handleApi = async (
     return Response.json({ files: results }, { status: 201 });
   }
 
+  // Archive API endpoints
+  if (pathname === "/api/archive" && method === "GET") {
+    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    const limitParam = url.searchParams.get("limit");
+    const offsetParam = url.searchParams.get("offset");
+    const filter = url.searchParams.get("filter") ?? undefined;
+    const limit = limitParam ? Math.max(1, Math.min(200, Number.parseInt(limitParam, 10) || 50)) : 50;
+    const offset = offsetParam ? Math.max(0, Number.parseInt(offsetParam, 10) || 0) : 0;
+
+    const sessions = sessionArchiveStore.listArchivedSessions({ limit, offset, filter });
+    const total = sessionArchiveStore.getArchiveCount();
+    return Response.json({ sessions, total, limit, offset });
+  }
+
+  if (pathname.startsWith("/api/archive/") && method === "GET") {
+    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    const archiveParts = pathname.split("/").filter(Boolean);
+    const sessionId = archiveParts[2];
+    if (!sessionId) {
+      return Response.json({ error: "Session ID required" }, { status: 400 });
+    }
+
+    // GET /api/archive/:id/messages
+    if (archiveParts[3] === "messages") {
+      const messages = sessionArchiveStore.getArchivedMessages(sessionId);
+      return Response.json({ sessionId, messages });
+    }
+
+    // GET /api/archive/:id
+    const session = sessionArchiveStore.getArchivedSession(sessionId);
+    if (!session) {
+      return Response.json({ error: "Archived session not found" }, { status: 404 });
+    }
+    const messages = sessionArchiveStore.getArchivedMessages(sessionId);
+    return Response.json({ session, messages });
+  }
+
+  if (pathname.startsWith("/api/archive/") && method === "DELETE") {
+    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    const archiveParts = pathname.split("/").filter(Boolean);
+    const sessionId = archiveParts[2];
+    if (!sessionId) {
+      return Response.json({ error: "Session ID required" }, { status: 400 });
+    }
+    const deleted = sessionArchiveStore.deleteArchivedSession(sessionId);
+    if (!deleted) {
+      return Response.json({ error: "Archived session not found" }, { status: 404 });
+    }
+    return Response.json({ id: sessionId, deleted: true });
+  }
+
   if (pathname === "/api/sessions" && method === "GET") {
     const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
     if (denied) {
@@ -5684,6 +5746,8 @@ const handleApi = async (
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
       const session = await manager.stopSession(id);
       if (!session) return Response.json({ error: "Not found" }, { status: 404 });
+      // Schedule archive after 5 seconds
+      scheduleSessionArchive(id, manager);
       return Response.json(serializeSession(session));
     }
 
@@ -5704,6 +5768,9 @@ const handleApi = async (
           return Response.json({ error: "Not found" }, { status: 404 });
         }
       }
+
+      // Cancel any pending archive since user wants immediate deletion
+      cancelPendingArchive(id);
 
       try {
         manager.deleteSession(id);
