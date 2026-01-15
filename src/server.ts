@@ -632,10 +632,12 @@ const validatePathSegment = (segment: string): boolean => {
 };
 
 const sanitizePath = (path: string): string => {
-  return path
+  const wasAbsolute = isAbsolute(path);
+  const sanitized = path
     .split(sep)
     .filter(segment => segment.length > 0 && validatePathSegment(segment))
     .join(sep);
+  return wasAbsolute ? sep + sanitized : sanitized;
 };
 
 const ensureWithinAllowedDirectories = (candidate: string, scope?: WorkspaceScope) => {
