@@ -9,6 +9,7 @@ import { createTodoFeature } from "./todos/index.js";
 import { createProjectFeature } from "./projects/index.js";
 import "./logging/browser.js";
 import { createHomeGuestHero } from "./home/hero.js";
+import { createArchiveComponent, createArchiveViewDialog } from "./home/archive.js";
 import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
 import { createSessionDialogController } from "./common/session-dialog.js";
 import { initOrchestratorUI } from "./orchestrator/index.js";
@@ -99,6 +100,8 @@ let syncFeatureFlagsFromConfig = () => {};
 
 let todoFeature = null;
 let projectFeature = null;
+let archiveComponent = null;
+let archiveViewDialog = null;
 
 let performAuthUiSync = () => {};
 let pendingAuthUiSync = false;
@@ -9084,6 +9087,17 @@ const renderHome = () => {
   if (orchestratorCard) {
     wrapper.append(orchestratorCard);
   }
+
+  // Add archive component
+  archiveComponent = createArchiveComponent({
+    onViewSession: (session) => {
+      if (archiveViewDialog) {
+        archiveViewDialog.open(session);
+      }
+    },
+  });
+  wrapper.append(archiveComponent.element);
+
   return wrapper;
 };
 
@@ -11122,6 +11136,10 @@ todoFeature = createTodoFeature({
   onUnauthorized: handleUnauthorizedAccess,
 });
 state.todos = todoFeature.state;
+
+// Initialize archive view dialog
+archiveViewDialog = createArchiveViewDialog();
+document.body.append(archiveViewDialog.element);
 
 const appDialogs = initAppDialogs({
   state,
