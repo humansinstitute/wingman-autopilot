@@ -5783,7 +5783,7 @@ const handleApi = async (
 
     if (method === "GET" && parts[4] === "logs") {
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      const logs = manager.getLogs(id);
+      const logs = await manager.getLogs(id);
       if (!logs) return Response.json({ error: "Not found" }, { status: 404 });
       return Response.json({ id, logs });
     }
