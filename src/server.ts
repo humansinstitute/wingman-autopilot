@@ -9,6 +9,18 @@ import { createRequire } from "node:module";
 import "./logging/server-logger";
 
 import type { AgentType } from "./config";
+import { z } from "zod";
+import { 
+  validateInput, 
+  NpubSchema, 
+  SessionIdSchema, 
+  PathSchema, 
+  LimitSchema, 
+  OffsetSchema, 
+  FilterSchema,
+  ArchiveListOptionsSchema,
+  JsonRequestSchema
+} from "./utils/validation";
 import { loadConfig } from "./config";
 import { ProcessManager } from "./agents/process-manager";
 import type { SessionOrigin, SessionSnapshot } from "./agents/process-manager";
@@ -589,21 +601,64 @@ const resolveWorkspace = (context?: RequestAuthContext): WorkspaceScope => {
   return resolveWorkspaceScope(config, activeContext, adminNpub, systemDocsRoot, systemDocsRootBoundary);
 };
 
+const secureResolvePath = (base: string, target: string): string => {
+  if (!isAbsolute(base)) {
+    throw new Error("Base path must be absolute");
+  }
+  
+  const normalizedBase = normalize(base);
+  const resolvedTarget = resolvePath(normalizedBase, target);
+  const normalizedTarget = normalize(resolvedTarget);
+  
+  if (!normalizedTarget.startsWith(normalizedBase + sep) && normalizedTarget !== normalizedBase) {
+    throw new Error(`Path traversal detected: ${target} escapes allowed directory`);
+  }
+  
+  return normalizedTarget;
+};
+
+const validatePathSegment = (segment: string): boolean => {
+  const dangerousPatterns = [
+    /\.\./,
+    /[<>:"|?*]/,
+    /^[.]/,
+    /[.]+$/,
+    /\x00/,
+  ];
+  
+  return !dangerousPatterns.some(pattern => pattern.test(segment));
+};
+
+const sanitizePath = (path: string): string => {
+  return path
+    .split(sep)
+    .filter(segment => segment.length > 0 && validatePathSegment(segment))
+    .join(sep);
+};
+
 const ensureWithinAllowedDirectories = (candidate: string, scope?: WorkspaceScope) => {
   const activeScope = scope ?? resolveWorkspace();
   if (activeScope.allowedDirectories.length === 0) {
-    return;
+    throw new Error("No allowed directories configured");
   }
 
-  const normalised = normalize(candidate);
+  const sanitizedCandidate = sanitizePath(candidate);
+  
+  if (!isAbsolute(sanitizedCandidate)) {
+    throw new Error("Path must be absolute");
+  }
+
+  const normalizedCandidate = normalize(sanitizedCandidate);
+  
   for (const base of activeScope.allowedDirectories) {
-    const boundary = base.endsWith(sep) ? base : `${base}${sep}`;
-    if (normalised === base || normalised.startsWith(boundary)) {
-      return;
+    const normalizedBase = normalize(base);
+    if (normalizedCandidate === normalizedBase || 
+        normalizedCandidate.startsWith(normalizedBase + sep)) {
+      return normalizedCandidate;
     }
   }
 
-  throw new Error(`Directory outside permitted locations: ${normalised}`);
+  throw new Error(`Directory outside permitted locations: ${normalizedCandidate}`);
 };
 warmRestartState.marker = warmRestartMarker;
 
@@ -1053,26 +1108,41 @@ const resolveScopedUpload = (pathname: string, authContext: RequestAuthContext, 
   const relative = pathname.slice(prefix.length);
   if (!relative) return undefined;
   if (!authContext.session) return undefined;
+  
   const parts = relative.split("/").filter((segment) => segment.length > 0);
   if (parts.length < 2) return undefined;
 
   const [segment, ...rest] = parts;
+  
+  if (!validatePathSegment(segment)) {
+    return undefined;
+  }
+  
+  for (const part of rest) {
+    if (!validatePathSegment(part)) {
+      return undefined;
+    }
+  }
+
   const expectedSegment = deriveNpubSegment(authContext.npub ?? null);
   if (!isAdminContext(authContext) && segment !== expectedSegment) {
     return undefined;
   }
 
-  const userRoot = join(root, segment);
-  const normalized = normalize(join(...rest));
-  const fullPath = join(userRoot, normalized);
-  if (!fullPath.startsWith(userRoot)) {
+  try {
+    const userRoot = secureResolvePath(root, segment);
+    const relativePath = rest.join(sep);
+    const sanitizedRelative = sanitizePath(relativePath);
+    const fullPath = secureResolvePath(userRoot, sanitizedRelative);
+
+    const file = Bun.file(fullPath);
+    if (file.size === 0) return undefined;
+
+    return { file, fullPath };
+  } catch (error) {
+    console.warn("[security] Path traversal attempt in upload:", error);
     return undefined;
   }
-
-  const file = Bun.file(fullPath);
-  if (file.size === 0) return undefined;
-
-  return { file, fullPath };
 };
 
 const resolveTempImage = (pathname: string, authContext: RequestAuthContext) => {
@@ -4815,17 +4885,18 @@ const handleApi = async (
       return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
     }
 
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    const directory = normaliseOptionalString((payload as Record<string, unknown>).directory);
-    const name = (payload as Record<string, unknown>).name;
-    const content = (payload as Record<string, unknown>).content;
-    const base64 = (payload as Record<string, unknown>).base64;
-
     try {
-      const data = await createDocsFile(directory, name, { content, base64 });
+      const validatedPayload = validateInput(JsonRequestSchema.extend({
+        name: z.string().min(1).max(255).refine(name => !/[<>:"|?*\x00]/.test(name)),
+        content: z.string().optional(),
+        base64: z.boolean().optional(),
+        directory: PathSchema.optional()
+      }), payload);
+
+      const data = await createDocsFile(validatedPayload.directory, validatedPayload.name, { 
+        content: validatedPayload.content, 
+        base64: validatedPayload.base64 
+      });
       return Response.json(data, { status: 201 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -5412,15 +5483,20 @@ const handleApi = async (
     if (denied) {
       return denied;
     }
-    const limitParam = url.searchParams.get("limit");
-    const offsetParam = url.searchParams.get("offset");
-    const filter = url.searchParams.get("filter") ?? undefined;
-    const limit = limitParam ? Math.max(1, Math.min(200, Number.parseInt(limitParam, 10) || 50)) : 50;
-    const offset = offsetParam ? Math.max(0, Number.parseInt(offsetParam, 10) || 0) : 0;
+    
+    try {
+      const validatedOptions = validateInput(ArchiveListOptionsSchema, {
+        limit: url.searchParams.get("limit"),
+        offset: url.searchParams.get("offset"),
+        filter: url.searchParams.get("filter")
+      });
 
-    const sessions = sessionArchiveStore.listArchivedSessions({ limit, offset, filter });
-    const total = sessionArchiveStore.getArchiveCount();
-    return Response.json({ sessions, total, limit, offset });
+      const sessions = sessionArchiveStore.listArchivedSessions(validatedOptions);
+      const total = sessionArchiveStore.getArchiveCount();
+      return Response.json({ sessions, total, limit: validatedOptions.limit, offset: validatedOptions.offset });
+    } catch (error) {
+      return Response.json({ error: "Invalid request parameters" }, { status: 400 });
+    }
   }
 
   if (pathname.startsWith("/api/archive/") && method === "GET") {

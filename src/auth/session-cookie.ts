@@ -9,7 +9,7 @@ export interface SessionCookiePayload {
   expiresAt: number;
 }
 
-export const SESSION_COOKIE_NAME = "wingman_identity_session";
+export const SESSION_COOKIE_NAME = "__Host-wingman_identity_session";
 export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 export const SESSION_TTL_MS = SESSION_MAX_AGE_SECONDS * 1000;
 
@@ -117,8 +117,7 @@ export const mintSessionCookie = (npub: string): { cookie: string; expiresAt: nu
   const signature = signPayload(encodedPayload);
   const value = `${encodedPayload}.${signature}`;
   const expiryDate = new Date(expiresAt).toUTCString();
-  const secureFlag = urlShouldBeSecure() ? "; Secure" : "";
-  const cookie = `${SESSION_COOKIE_NAME}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SECONDS}; Expires=${expiryDate}${secureFlag}`;
+  const cookie = `${SESSION_COOKIE_NAME}=${value}; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=${SESSION_MAX_AGE_SECONDS}; Expires=${expiryDate}`;
 
   return { cookie, expiresAt, payload };
 };
@@ -145,9 +144,4 @@ export const readSessionCookie = (cookieHeader: string | null | undefined): Sess
   return payload;
 };
 
-const urlShouldBeSecure = () => {
-  const flag = (Bun.env.IDENTITY_COOKIE_SECURE ?? Bun.env.COOKIE_SECURE ?? "").trim().toLowerCase();
-  if (flag === "false" || flag === "0") return false;
-  if (flag === "true" || flag === "1") return true;
-  return Bun.env.NODE_ENV === "production";
-};
+

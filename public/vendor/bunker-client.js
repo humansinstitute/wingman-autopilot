@@ -10379,6 +10379,41 @@ var init_filter = __esm(() => {
   init_OperatorSubscriber();
 });
 
+// node_modules/rxjs/dist/esm5/internal/observable/race.js
+function race() {
+  var sources = [];
+  for (var _i = 0;_i < arguments.length; _i++) {
+    sources[_i] = arguments[_i];
+  }
+  sources = argsOrArgArray(sources);
+  return sources.length === 1 ? innerFrom(sources[0]) : new Observable(raceInit(sources));
+}
+function raceInit(sources) {
+  return function(subscriber) {
+    var subscriptions = [];
+    var _loop_1 = function(i3) {
+      subscriptions.push(innerFrom(sources[i3]).subscribe(createOperatorSubscriber(subscriber, function(value) {
+        if (subscriptions) {
+          for (var s = 0;s < subscriptions.length; s++) {
+            s !== i3 && subscriptions[s].unsubscribe();
+          }
+          subscriptions = null;
+        }
+        subscriber.next(value);
+      })));
+    };
+    for (var i2 = 0;subscriptions && !subscriber.closed && i2 < sources.length; i2++) {
+      _loop_1(i2);
+    }
+  };
+}
+var init_race = __esm(() => {
+  init_Observable();
+  init_innerFrom();
+  init_argsOrArgArray();
+  init_OperatorSubscriber();
+});
+
 // node_modules/rxjs/dist/esm5/internal/types.js
 var init_types = () => {};
 
@@ -10431,6 +10466,29 @@ var init_scanInternals = __esm(() => {
   init_OperatorSubscriber();
 });
 
+// node_modules/rxjs/dist/esm5/internal/operators/reduce.js
+function reduce(accumulator, seed) {
+  return operate(scanInternals(accumulator, seed, arguments.length >= 2, false, true));
+}
+var init_reduce = __esm(() => {
+  init_scanInternals();
+  init_lift();
+});
+
+// node_modules/rxjs/dist/esm5/internal/operators/toArray.js
+function toArray() {
+  return operate(function(source, subscriber) {
+    reduce(arrReducer, [])(source).subscribe(subscriber);
+  });
+}
+var arrReducer = function(arr, value) {
+  return arr.push(value), arr;
+};
+var init_toArray = __esm(() => {
+  init_reduce();
+  init_lift();
+});
+
 // node_modules/rxjs/dist/esm5/internal/operators/combineLatest.js
 function combineLatest2() {
   var args = [];
@@ -10463,6 +10521,26 @@ function combineLatestWith() {
 var init_combineLatestWith = __esm(() => {
   init_tslib_es6();
   init_combineLatest2();
+});
+
+// node_modules/rxjs/dist/esm5/internal/operators/defaultIfEmpty.js
+function defaultIfEmpty(defaultValue) {
+  return operate(function(source, subscriber) {
+    var hasValue = false;
+    source.subscribe(createOperatorSubscriber(subscriber, function(value) {
+      hasValue = true;
+      subscriber.next(value);
+    }, function() {
+      if (!hasValue) {
+        subscriber.next(defaultValue);
+      }
+      subscriber.complete();
+    }));
+  });
+}
+var init_defaultIfEmpty = __esm(() => {
+  init_lift();
+  init_OperatorSubscriber();
 });
 
 // node_modules/rxjs/dist/esm5/internal/operators/take.js
@@ -10977,12 +11055,14 @@ var init_esm5 = __esm(() => {
   init_from();
   init_merge();
   init_of();
+  init_race();
   init_throwError();
   init_timer();
   init_empty();
   init_never();
   init_catchError();
   init_combineLatestWith();
+  init_defaultIfEmpty();
   init_distinct();
   init_distinctUntilChanged();
   init_endWith();
@@ -11003,6 +11083,7 @@ var init_esm5 = __esm(() => {
   init_takeWhile();
   init_tap();
   init_timeout();
+  init_toArray();
   init_types();
 });
 
@@ -12046,6 +12127,9 @@ function matchFilters2(filters, event) {
   }
   return false;
 }
+function isFilterEqual(a, b) {
+  return import_fast_deep_equal.default(a, b);
+}
 var import_fast_deep_equal;
 var init_filter2 = __esm(() => {
   init_event_tags();
@@ -12677,6 +12761,13 @@ function removeBlacklistedRelays(users, blacklist) {
       return { ...user, relays: user.relays.filter((relay) => !blacklist.includes(relay)) };
   });
 }
+function createFilterMap(outboxMap, filter2) {
+  return Object.fromEntries(Array.from(Object.entries(outboxMap)).map(([relay, users]) => [
+    relay,
+    { authors: users.map((user) => user.pubkey), ...filter2 }
+  ]));
+}
+var init_relay_selection = () => {};
 
 // node_modules/applesauce-core/dist/helpers/reports.js
 var ParsedReportSymbol, ReportReason;
@@ -12858,6 +12949,7 @@ var init_helpers = __esm(() => {
   init_poll();
   init_profile();
   init_reactions();
+  init_relay_selection();
   init_relays();
   init_reports();
   init_share2();
@@ -13193,10 +13285,11 @@ function includeMailboxes(store, type = "outbox") {
 function ignoreBlacklistedRelays(blacklist) {
   return pipe(combineLatestWith(isObservable(blacklist) ? blacklist : of(blacklist)), map(([users, blacklist2]) => removeBlacklistedRelays(users, blacklist2)));
 }
-var init_relay_selection = __esm(() => {
+var init_relay_selection2 = __esm(() => {
   init_esm5();
   init_mailboxes();
   init_pointers();
+  init_relay_selection();
 });
 
 // node_modules/applesauce-core/dist/observable/index.js
@@ -13208,7 +13301,7 @@ var init_observable2 = __esm(() => {
   init_simple_timeout();
   init_watch_event_updates();
   init_with_immediate_value();
-  init_relay_selection();
+  init_relay_selection2();
 });
 
 // node_modules/applesauce-core/dist/models/contacts.js
@@ -13431,6 +13524,7 @@ var import_hash_sum;
 var init_outbox = __esm(() => {
   init_esm5();
   init_relay_selection();
+  init_relay_selection2();
   import_hash_sum = __toESM(require_hash_sum(), 1);
   OutboxModel.getKey = (user, opts) => {
     const p = typeof user === "string" ? user : user.pubkey;
@@ -19987,7 +20081,7 @@ var require_stream = __commonJS((exports, module) => {
         this.message = "Reduce of an empty stream requires an initial value";
       }
     }
-    async function reduce(reducer, initialValue, options) {
+    async function reduce2(reducer, initialValue, options) {
       var _options$signal2;
       if (typeof reducer !== "function")
         throw new ERR_INVALID_ARG_TYPE3("reducer", ["Function", "AsyncFunction"], reducer);
@@ -20023,7 +20117,7 @@ var require_stream = __commonJS((exports, module) => {
       }
       return initialValue;
     }
-    async function toArray(options) {
+    async function toArray2(options) {
       if (options != null)
         validateObject2(options, "options");
       if ((options === null || options === undefined ? undefined : options.signal) != null)
@@ -20090,7 +20184,7 @@ var require_stream = __commonJS((exports, module) => {
       }.call(this);
     }
     module2.exports.streamReturningOperators = { asIndexedPairs: deprecate2(asIndexedPairs, "readable.asIndexedPairs will be removed in a future version."), drop, filter: filter3, flatMap, map: map2, take: take2, compose };
-    module2.exports.promiseReturningOperators = { every, forEach, reduce, toArray, some, find };
+    module2.exports.promiseReturningOperators = { every, forEach, reduce: reduce2, toArray: toArray2, some, find };
   });
   var require_promises = __commonJS2((exports2, module2) => {
     var { ArrayPrototypePop, Promise: Promise2 } = require_primordials(), { isIterable: isIterable2, isNodeStream, isWebStream } = require_utils(), { pipelineImpl: pl } = require_pipeline(), { finished } = require_end_of_stream();
@@ -21889,7 +21983,7 @@ var init_crypto4 = __esm(() => {
   });
   require_utils = __commonJS2((exports) => {
     var utils = exports;
-    function toArray(msg, enc) {
+    function toArray2(msg, enc) {
       if (Array.isArray(msg))
         return msg.slice();
       if (!msg)
@@ -21915,7 +22009,7 @@ var init_crypto4 = __esm(() => {
         }
       return res;
     }
-    utils.toArray = toArray;
+    utils.toArray = toArray2;
     function zero2(word) {
       if (word.length === 1)
         return "0" + word;
@@ -22999,7 +23093,7 @@ var init_crypto4 = __esm(() => {
         return false;
       return (msg.charCodeAt(i3 + 1) & 64512) === 56320;
     }
-    function toArray(msg, enc) {
+    function toArray2(msg, enc) {
       if (Array.isArray(msg))
         return msg.slice();
       if (!msg)
@@ -23030,7 +23124,7 @@ var init_crypto4 = __esm(() => {
           res[i3] = msg[i3] | 0;
       return res;
     }
-    exports.toArray = toArray;
+    exports.toArray = toArray2;
     function toHex(msg) {
       var res = "";
       for (var i3 = 0;i3 < msg.length; i3++)
@@ -32362,15 +32456,43 @@ async function negentropySync(storage, socket, filter3, reconcile, opts) {
       throw new Error(msg2[2]);
     return msg2[2];
   }), share());
-  const sub = incoming.subscribe((m) => log4(m));
+  if (opts?.signal?.aborted)
+    return false;
+  const abortSignal$ = new Observable((observer) => {
+    if (opts?.signal?.aborted) {
+      observer.next("abort");
+      observer.complete();
+      return;
+    }
+    const onAbort = () => {
+      observer.next("abort");
+      observer.complete();
+    };
+    opts?.signal?.addEventListener("abort", onAbort);
+    return () => opts?.signal?.removeEventListener("abort", onAbort);
+  });
+  const sub = incoming.subscribe({
+    next: (m) => log4(m),
+    error: () => {}
+  });
   try {
     while (msg && opts?.signal?.aborted !== true) {
-      const received = await firstValueFrom(incoming);
-      if (opts?.signal?.aborted)
-        return false;
-      const [newMsg, have, need] = await ne.reconcile(received);
-      await reconcile(have, need);
-      msg = newMsg;
+      try {
+        const received = await firstValueFrom(race(incoming.pipe(map((m) => ({ type: "message", data: m }))), abortSignal$.pipe(map(() => ({ type: "abort" })))));
+        if (received.type === "abort" || opts?.signal?.aborted) {
+          sub.unsubscribe();
+          return false;
+        }
+        const [newMsg, have, need] = await ne.reconcile(received.data);
+        await reconcile(have, need);
+        msg = newMsg;
+      } catch (err) {
+        if (opts?.signal?.aborted) {
+          sub.unsubscribe();
+          return false;
+        }
+        throw err;
+      }
     }
   } catch (err) {
     sub.unsubscribe();
@@ -32542,6 +32664,8 @@ class AmberClipboardSigner {
     return `intent:${encodeURIComponent(ciphertext)}#Intent;scheme=nostrsigner;S.pubKey=${pubkey};S.compressionType=none;S.returnType=signature;S.type=nip44_decrypt;end`;
   }
 }
+// node_modules/applesauce-signers/dist/signers/extension-signer.js
+init_helpers();
 // node_modules/applesauce-signers/dist/signers/nostr-connect-provider.js
 init_dist();
 init_helpers();
@@ -33164,7 +33288,10 @@ class NostrConnectSigner {
     if (this.pubkey)
       return this.pubkey;
     await this.requireConnection();
-    return this.makeRequest(NostrConnectMethod.GetPublicKey, []);
+    const key = await this.makeRequest(NostrConnectMethod.GetPublicKey, []);
+    if (!isHexKey(key))
+      throw new Error("Remote signer returned an invalid public key");
+    return key;
   }
   async signEvent(template) {
     await this.requireConnection();
@@ -34317,23 +34444,112 @@ function onlyEvents() {
   return (source) => source.pipe(filter((r) => r !== "EOSE"));
 }
 
+// node_modules/applesauce-relay/dist/operators/reverse-switch-map.js
+init_esm5();
+init_OperatorSubscriber();
+init_lift();
+function reverseSwitchMap(project) {
+  return operate((source, subscriber) => {
+    let innerSubscriber = null;
+    let index = 0;
+    let isComplete = false;
+    const checkComplete = () => {
+      if (isComplete && !innerSubscriber)
+        subscriber.complete();
+    };
+    source.subscribe(createOperatorSubscriber(subscriber, (value) => {
+      const outerIndex = index++;
+      const oldSubscriber = innerSubscriber;
+      const self2 = innerSubscriber = createOperatorSubscriber(subscriber, (innerValue) => subscriber.next(innerValue), () => {
+        if (innerSubscriber === self2 || innerSubscriber === null) {
+          innerSubscriber = null;
+          checkComplete();
+        }
+      });
+      from(project(value, outerIndex)).subscribe(innerSubscriber);
+      oldSubscriber?.unsubscribe();
+    }, () => {
+      isComplete = true;
+      checkComplete();
+    }));
+  });
+}
+
 // node_modules/applesauce-relay/dist/group.js
+function errorToPublishResponse(relay) {
+  return catchError((err) => of({ ok: false, from: relay.url, message: err?.message || "Unknown error" }));
+}
+
 class RelayGroup {
-  relays;
-  constructor(relays3) {
-    this.relays = relays3;
+  relays$ = new BehaviorSubject([]);
+  get relays() {
+    if (this.relays$ instanceof BehaviorSubject)
+      return this.relays$.value;
+    throw new Error("This group was created with an observable, relays are not available");
   }
-  mergeEOSE(requests, eventStore = new EventMemory) {
-    const events = merge(...requests).pipe(onlyEvents(), eventStore ? filterDuplicateEvents(eventStore) : identity);
-    const eose = merge(...requests.map((observable3) => observable3.pipe(completeOnEose(), ignoreElements()))).pipe(endWith("EOSE"));
-    return merge(events, eose);
+  constructor(relays3) {
+    this.relays$ = Array.isArray(relays3) ? new BehaviorSubject(relays3) : relays3;
+  }
+  get controlled() {
+    return this.relays$ instanceof BehaviorSubject === false;
+  }
+  has(relay) {
+    if (this.controlled)
+      throw new Error("This group was created with an observable, relays are not available");
+    if (typeof relay === "string")
+      return this.relays.some((r) => r.url === relay);
+    return this.relays.includes(relay);
+  }
+  add(relay) {
+    if (this.has(relay))
+      return;
+    this.relays$.next([...this.relays, relay]);
+  }
+  remove(relay) {
+    if (!this.has(relay))
+      return;
+    this.relays$.next(this.relays.filter((r) => r !== relay));
+  }
+  internalSubscription(project, eventOperator = identity) {
+    const upstream = new WeakMap;
+    const main = this.relays$.pipe(reverseSwitchMap((relays3) => {
+      const observables = [];
+      for (const relay of relays3) {
+        if (upstream.has(relay)) {
+          observables.push(upstream.get(relay));
+          continue;
+        }
+        const observable3 = project(relay).pipe(catchError(() => of("EOSE")), map((value) => [relay, value]));
+        observables.push(observable3);
+        upstream.set(relay, observable3);
+      }
+      return merge(...observables);
+    }), share());
+    const events = main.pipe(map(([_, value]) => value), onlyEvents(), eventOperator);
+    const eose = this.relays$.pipe(switchMap((relays3) => main.pipe(filter(([_, value]) => value === "EOSE"), scan((received, [relay]) => [...received, relay], []), takeWhile((received) => relays3.some((r) => !received.includes(r))), ignoreElements(), endWith("EOSE"))));
+    return merge(events, eose).pipe(share());
+  }
+  internalPublish(project) {
+    const upstream = new WeakMap;
+    return this.relays$.pipe(take(1), switchMap((relays3) => {
+      const observables = [];
+      for (const relay of relays3) {
+        if (upstream.has(relay)) {
+          observables.push(upstream.get(relay));
+          continue;
+        }
+        const observable3 = project(relay).pipe(errorToPublishResponse(relay));
+        observables.push(observable3);
+        upstream.set(relay, observable3);
+      }
+      return merge(...observables);
+    }), share());
   }
   req(filters, id = nanoid(), opts) {
-    const requests = this.relays.map((relay) => relay.req(filters, id).pipe(catchError(() => of("EOSE"))));
-    return this.mergeEOSE(requests, opts?.eventStore);
+    return this.internalSubscription((relay) => relay.req(filters, id), opts?.eventStore ? filterDuplicateEvents(opts?.eventStore) : identity);
   }
   event(event2) {
-    return merge(...this.relays.map((relay) => relay.event(event2).pipe(catchError((err) => of({ ok: false, from: relay.url, message: err?.message || "Unknown error" })))));
+    return this.internalPublish((relay) => relay.event(event2));
   }
   async negentropy(store, filter3, reconcile, opts) {
     const supported = await Promise.all(this.relays.map(async (relay) => [relay, await relay.getSupported()]));
@@ -34346,16 +34562,16 @@ class RelayGroup {
     return true;
   }
   publish(event2, opts) {
-    return Promise.all(this.relays.map((relay) => relay.publish(event2, opts).catch((err) => ({ ok: false, from: relay.url, message: err?.message || "Unknown error" }))));
+    return lastValueFrom(this.internalPublish((relay) => from(relay.publish(event2, opts))).pipe(toArray(), defaultIfEmpty([])));
   }
   request(filters, opts) {
-    return merge(...this.relays.map((relay) => relay.request(filters, opts).pipe(catchError(() => EMPTY)))).pipe(opts?.eventStore == null ? identity : filterDuplicateEvents(opts?.eventStore ?? new EventMemory));
+    return this.internalSubscription((relay) => relay.request(filters, opts).pipe(endWith("EOSE")), opts?.eventStore == null ? identity : filterDuplicateEvents(opts?.eventStore ?? new EventMemory)).pipe(completeOnEose());
   }
   subscription(filters, opts) {
-    return this.mergeEOSE(this.relays.map((relay) => relay.subscription(filters, opts).pipe(catchError(() => EMPTY))), opts?.eventStore);
+    return this.internalSubscription((relay) => relay.subscription(filters, opts), opts?.eventStore == null ? identity : filterDuplicateEvents(opts?.eventStore ?? new EventMemory));
   }
   count(filters, id = nanoid()) {
-    return combineLatest(Object.fromEntries(this.relays.map((relay) => [relay.url, relay.count(filters, id)])));
+    return this.relays$.pipe(switchMap((relays3) => combineLatest(Object.fromEntries(relays3.map((relay) => [relay.url, relay.count(filters, id)])))), share());
   }
   sync(store, filter3, direction) {
     return defer(async () => {
@@ -35021,10 +35237,16 @@ class Relay {
     this.socket.next(message);
   }
   req(filters, id = nanoid()) {
-    const input = isObservable(filters) ? filters : merge(of(filters), NEVER);
+    let input;
+    if (typeof filters === "function") {
+      const result = filters(this);
+      input = (isObservable(result) ? result : merge(of(result), NEVER)).pipe(map((f) => Array.isArray(f) ? f : [f]));
+    } else {
+      input = (isObservable(filters) ? filters : merge(of(filters), NEVER)).pipe(map((f) => Array.isArray(f) ? f : [f]));
+    }
     const filtersComplete = input.pipe(ignoreElements(), endWith(null));
     const messages2 = this.socket.pipe(filter((m) => Array.isArray(m) && (m[0] === "EVENT" || m[0] === "CLOSED" || m[0] === "EOSE") && m[1] === id), share());
-    const control = input.pipe(tap((filters2) => this.socket.next(Array.isArray(filters2) ? ["REQ", id, ...filters2] : ["REQ", id, filters2])), finalize(() => this.socket.next(["CLOSE", id])), switchMap(() => messages2));
+    const control = input.pipe(tap((filters2) => this.socket.next(["REQ", id, ...filters2])), finalize(() => this.socket.next(["CLOSE", id])), switchMap(() => messages2));
     const observable3 = merge(this.watchTower, control).pipe(takeUntil(messages2.pipe(ignoreElements(), endWith(true))), takeUntil(filtersComplete), map((message) => {
       if (message[0] === "EOSE")
         return "EOSE";
@@ -35149,6 +35371,13 @@ class Relay {
     };
     return new Observable((observer) => {
       const controller = new AbortController;
+      let cleanupCalled = false;
+      const cleanup = () => {
+        if (!cleanupCalled) {
+          cleanupCalled = true;
+          controller.abort();
+        }
+      };
       this.negentropy(store, filter3, async (have, need) => {
         if (direction & SyncDirection.SEND && have.length > 0) {
           const events = await getEvents(have);
@@ -35157,8 +35386,14 @@ class Relay {
         if (direction & SyncDirection.RECEIVE && need.length > 0) {
           await lastValueFrom(this.req({ ids: need }).pipe(completeOnEose(), tap((event2) => observer.next(event2))));
         }
-      }, { signal: controller.signal }).then(() => observer.complete()).catch((err) => observer.error(err));
-      return () => controller.abort();
+      }, { signal: controller.signal }).then(() => {
+        if (!cleanupCalled)
+          observer.complete();
+      }).catch((err) => {
+        if (!cleanupCalled)
+          observer.error(err);
+      });
+      return cleanup;
     }).pipe(share());
   }
   close() {
@@ -35187,27 +35422,17 @@ class Relay {
 // node_modules/applesauce-relay/dist/pool.js
 class RelayPool {
   options;
-  groups$ = new BehaviorSubject(new Map);
-  get groups() {
-    return this.groups$.value;
-  }
   relays$ = new BehaviorSubject(new Map);
   get relays() {
     return this.relays$.value;
   }
   add$ = new Subject;
   remove$ = new Subject;
-  blacklist = new Set;
   constructor(options) {
     this.options = options;
   }
-  filterBlacklist(urls) {
-    return urls.filter((url2) => !this.blacklist.has(url2));
-  }
   relay(url2) {
     url2 = normalizeURL2(url2);
-    if (this.blacklist.has(url2))
-      throw new Error("Relay is on blacklist");
     let relay = this.relays.get(url2);
     if (relay)
       return relay;
@@ -35218,15 +35443,7 @@ class RelayPool {
     return relay;
   }
   group(relays3) {
-    relays3 = relays3.map((url2) => normalizeURL2(url2));
-    relays3 = this.filterBlacklist(relays3);
-    const key = relays3.sort().join(",");
-    let group = this.groups.get(key);
-    if (group)
-      return group;
-    group = new RelayGroup(relays3.map((url2) => this.relay(url2)));
-    this.groups$.next(this.groups.set(key, group));
-    return group;
+    return new RelayGroup(Array.isArray(relays3) ? relays3.map((url2) => this.relay(url2)) : relays3.pipe(map((urls) => urls.map((url2) => this.relay(url2)))));
   }
   remove(relay, close = true) {
     let instance;
@@ -35261,6 +35478,16 @@ class RelayPool {
   }
   subscription(relays3, filters, options) {
     return this.group(relays3).subscription(filters, options);
+  }
+  subscriptionMap(relays3, options) {
+    const relays$ = isObservable(relays3) ? relays3 : of(relays3);
+    return this.group(relays$.pipe(map((dir) => Object.keys(dir)))).subscription((relay) => {
+      return relays$.pipe(map((dir) => dir[relay.url]), distinctUntilChanged(isFilterEqual));
+    }, options);
+  }
+  outboxSubscription(outboxes, filter3, options) {
+    const filterMap = isObservable(outboxes) ? outboxes.pipe(map((outboxes2) => createFilterMap(outboxes2, filter3))) : createFilterMap(outboxes, filter3);
+    return this.subscriptionMap(filterMap, options);
   }
   count(relays3, filters, id) {
     return this.group(relays3).count(filters, id);

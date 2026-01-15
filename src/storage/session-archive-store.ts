@@ -174,7 +174,7 @@ class SessionArchiveStore {
     const offset = Math.max(0, options.offset ?? 0);
     const filter = options.filter?.trim() ?? "";
 
-    let query = `
+    const baseQuery = `
       SELECT
         s.id,
         s.agent,
@@ -188,18 +188,34 @@ class SessionArchiveStore {
       FROM archived_sessions s
     `;
 
-    const params: (string | number)[] = [];
-
     if (filter) {
       const likePattern = wildcardToSqlLike(filter);
-      query += ` WHERE (s.name LIKE ?1 ESCAPE '\\' OR s.working_directory LIKE ?1 ESCAPE '\\')`;
-      params.push(`%${likePattern}%`);
+      const safeLikePattern = `%${likePattern}%`;
+      
+      const filteredQuery = this.db.prepare(`
+        ${baseQuery}
+        WHERE (s.name LIKE ?1 ESCAPE '\\' OR s.working_directory LIKE ?1 ESCAPE '\\')
+        ORDER BY s.archived_at DESC
+        LIMIT ?2 OFFSET ?3
+      `);
+      
+      const rows = filteredQuery.all(safeLikePattern, limit, offset) as Array<
+        Omit<ArchivedSession, "origin"> & { origin: string | null }
+      >;
+
+      return rows.map((row) => ({
+        ...row,
+        origin: parseStoredOrigin(row.origin),
+      }));
     }
 
-    query += ` ORDER BY s.archived_at DESC LIMIT ?${params.length + 1} OFFSET ?${params.length + 2}`;
-    params.push(limit, offset);
-
-    const rows = this.db.query(query).all(...params) as Array<
+    const unfilteredQuery = this.db.prepare(`
+      ${baseQuery}
+      ORDER BY s.archived_at DESC
+      LIMIT ?1 OFFSET ?2
+    `);
+    
+    const rows = unfilteredQuery.all(limit, offset) as Array<
       Omit<ArchivedSession, "origin"> & { origin: string | null }
     >;
 
