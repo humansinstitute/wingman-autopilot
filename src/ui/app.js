@@ -10868,6 +10868,18 @@ const renderComposer = (sessionId) => {
     });
   });
 
+  addCommandDivider();
+  addCommand("Stop Session", () => {
+    const session = state.sessions.find((s) => s.id === sessionId);
+    const displayName = session ? getSessionDisplayName(session) : "this session";
+    const confirmed = window.confirm(
+      `Are you sure you want to stop "${displayName}"?\n\nThe session will be archived after 5 seconds.`
+    );
+    if (confirmed) {
+      stopSession(sessionId);
+    }
+  });
+
   const toggleCommandMenu = () => {
     const isOpen = commandMenu.classList.toggle("is-open");
     commandButton.setAttribute("aria-expanded", String(isOpen));
