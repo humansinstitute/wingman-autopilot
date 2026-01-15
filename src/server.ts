@@ -61,6 +61,7 @@ import { TodoStore } from "./todos/todo-store";
 import { createTodoApiHandler } from "./todos/todo-api";
 import { ProjectStore } from "./projects/project-store";
 import { createProjectApiHandler } from "./projects/project-api";
+import { createNpubProjectApiHandler } from "./projects/npub-project-api";
 import { createBrowserLogHandler } from "./logging/browser-log-handler";
 import { ensureDeepDiveProcess, getDeepDivePort, isDeepDiveProcessRunning } from "./deep-dive-process";
 import {
@@ -152,6 +153,7 @@ const projectApiHandler = createProjectApiHandler({
   store: projectStore,
   getAppById: (id) => appRegistry.getApp(id),
 });
+const npubProjectApiHandler = createNpubProjectApiHandler();
 const browserLogHandler = createBrowserLogHandler();
 
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
@@ -3579,6 +3581,22 @@ const handleApi = async (
   const browserLogResponse = await browserLogHandler(request, url, method, authContext);
   if (browserLogResponse) {
     return browserLogResponse;
+  }
+  if (pathname.startsWith("/api/npub-projects")) {
+    if (!authContext.session) {
+      return Response.json({ error: "Authentication required" }, { status: 401 });
+    }
+    const response = await npubProjectApiHandler(
+      request,
+      url,
+      method,
+      authContext,
+      workspaceScope.isAdmin,
+    );
+    if (response) {
+      return response;
+    }
+    return Response.json({ error: "Not found" }, { status: 404 });
   }
   if (pathname.startsWith("/api/projects")) {
     const denied = await ensureApiAccess(AccessActions.ProjectsManage, request, url, authContext);

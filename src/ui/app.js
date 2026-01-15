@@ -7,6 +7,7 @@ import { applyAvatarImage } from "./utils/avatar.js";
 import { fetchIdentityProfile, fetchAdminUserProfile } from "./identity/profile.js";
 import { createTodoFeature } from "./todos/index.js";
 import { createProjectFeature } from "./projects/index.js";
+import { npubProjectsState, fetchNpubProjects, renderNpubProjectsPanel } from "./npub-projects/index.js";
 import "./logging/browser.js";
 import { createHomeGuestHero } from "./home/hero.js";
 import { createArchiveComponent, createArchiveViewDialog } from "./home/archive.js";
@@ -10404,6 +10405,24 @@ const renderSettings = () => {
 
   wingmanCard.append(portsContainer);
   wrapper.append(wingmanCard);
+
+  // Npub Projects section (for authenticated users)
+  if (state.identity.authenticated) {
+    if (!npubProjectsState.loading && npubProjectsState.items.length === 0 && !npubProjectsState.error) {
+      fetchNpubProjects().then(() => {
+        if (currentRoute === "settings") {
+          render();
+        }
+      });
+    }
+    wrapper.append(renderNpubProjectsPanel(() => {
+      fetchNpubProjects().then(() => {
+        if (currentRoute === "settings") {
+          render();
+        }
+      });
+    }));
+  }
 
   if (state.identity.isAdmin) {
     ensureFeatureFlagsLoaded();

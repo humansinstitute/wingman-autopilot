@@ -6,6 +6,7 @@ import { getAuthenticatedNpub } from "../auth/request-context";
 import { generateIdentityAlias } from "../identity/identity-alias";
 import { normaliseNpub } from "../identity/npub-utils";
 import { sanitizeLogEntry } from "../logging/log-sanitizer";
+import { trackProjectForSession } from "../projects/npub-project-tracker";
 import type { AgentRuntimeStatus } from "../types/agent-status";
 
 const MAX_LOG_LINES = 500;
@@ -182,6 +183,9 @@ export class ProcessManager {
       this.emit({ type: "session-updated", session: this.toSnapshot(session) });
       throw error;
     }
+
+    // Track project for authenticated users (fire and forget)
+    trackProjectForSession(npub, sessionWorkingDirectory).catch(() => {});
 
     return this.toSnapshot(session);
   }
