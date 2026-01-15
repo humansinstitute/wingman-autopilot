@@ -41,6 +41,7 @@ A Nightwatchman is a supervisor session that:
 - Reviews the transcript of a stopped work session
 - Decides: CONTINUE (with instruction) or COMPLETE (with summary)
 - Has a single, focused job - making reliable decisions
+- Runs in the **same working directory** as the work session (can read code, check git, verify changes)
 
 ### Work Session
 
@@ -286,8 +287,9 @@ interface DeliveryStore {
 |-------|----------|---------|
 | Nightwatch reports CONTINUE | `continue` | The nextStep instruction |
 | Nightwatch reports COMPLETE | `complete` | Work summary from agent |
-| Review count exceeds max | `max_reviews` | Last nightwatch summary |
-| Session error | `error` | Error description |
+| Review count exceeds max | `max_reviews` | "{summary}. Unfinished: {nextStep}" |
+| Work session error | `error` | Error description |
+| Work session unresumable | `error` | "Could not resume work session" |
 | Delivery cancelled | `cancelled` | "Delivery cancelled by user" |
 | Nightwatch timeout (no report) | `error` | "Nightwatch session ended without reporting decision" |
 | MCP validation failure | `error` | Validation error message |
@@ -481,6 +483,7 @@ Nightwatchman Session
 | reviewing | review count > max | delivered | callback with max_reviews |
 | reviewing | nightwatch session errors | failed | callback with error |
 | continuing | instruction sent | working | - |
+| continuing | work session unresumable | failed | callback with error |
 | continuing | send fails | failed | callback with error |
 
 ---
