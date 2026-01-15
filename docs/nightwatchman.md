@@ -2,14 +2,14 @@
 
 ## Overview
 
-Nightwatchman is a delivery orchestration system that enables wingmen to reliably execute tasks from external systems (initially Marginalgains) with guaranteed completion reporting. It introduces two key concepts:
+Nightwatchman is a delivery orchestration system that enables Wingman to reliably execute tasks from external systems (initially Marginalgains) with guaranteed completion reporting. It introduces two key concepts:
 
 1. **Delivery** - A first-class orchestration unit that owns an entire task workflow
-2. **Nightwatchman** - A supervisor session that reviews work and decides whether to continue or complete
+2. **Nightwatch** - A supervisor session that reviews work and decides whether to continue or complete
 
 ## Problem Statement
 
-When an external system (Marginalgains) sends a task to wingmen:
+When an external system (Marginalgains) sends a task to Wingman:
 - The working agent may forget to report completion
 - The agent may stop prematurely without finishing
 - There's no visibility into progress or decision-making
@@ -19,8 +19,8 @@ When an external system (Marginalgains) sends a task to wingmen:
 
 The Delivery abstraction guarantees completion reporting by:
 1. Tracking all sessions associated with a task
-2. Automatically triggering Nightwatchman review when work sessions stop
-3. Parsing Nightwatchman decisions and acting on them
+2. Automatically triggering nightwatch review when work sessions stop
+3. Receiving structured decisions via MCP tool calls
 4. Always calling back to the source system with status updates
 
 ---
@@ -30,22 +30,23 @@ The Delivery abstraction guarantees completion reporting by:
 ### Delivery
 
 A Delivery is the orchestration unit for an external task. It:
-- Owns the work session and all nightwatchman review sessions
+- Owns the work session and all nightwatch review sessions
 - Tracks state, review count, and enforces limits
 - Guarantees callback to the source system
 - Handles errors and edge cases
 
-### Nightwatchman
+### Nightwatch
 
-A Nightwatchman is a supervisor session that:
+A nightwatch is a supervisor session that:
 - Reviews the transcript of a stopped work session
 - Decides: CONTINUE (with instruction) or COMPLETE (with summary)
 - Has a single, focused job - making reliable decisions
 - Runs in the **same working directory** as the work session (can read code, check git, verify changes)
+- Reports decisions via MCP tool call to Wingman
 
 ### Work Session
 
-The session that performs the actual task work. May stop and resume multiple times based on Nightwatchman decisions.
+The session that performs the actual task work. May stop and resume multiple times based on nightwatch decisions.
 
 ---
 
@@ -70,7 +71,7 @@ The session that performs the actual task work. May stop and resume multiple tim
          POST /api/wingman/callback (updates)
                           │
 ┌─────────────────────────▼──────────────────────────────────────┐
-│                         WINGMEN                                 │
+│                         WINGMAN                                 │
 │                                                                 │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │                      DELIVERY                            │   │
@@ -145,7 +146,7 @@ interface Delivery {
 
 type DeliveryStatus =
   | "working"      // work session is running
-  | "reviewing"    // nightwatchman is reviewing
+  | "reviewing"    // nightwatch is reviewing
   | "continuing"   // sending continue instruction to work session
   | "delivered"    // callback sent, workflow complete
   | "failed";      // unrecoverable error
@@ -204,9 +205,10 @@ interface DeliveryStore {
 ```
 
 **Behavior:**
-1. Creates Delivery record
-2. Starts work session with task prompt
-3. Returns immediately (async workflow)
+1. Validates `workingDirectory` is within allowed paths (FOLDERACCESS)
+2. Creates Delivery record
+3. Starts work session with task prompt
+4. Returns immediately (async workflow)
 
 ### Get Delivery
 
@@ -296,9 +298,9 @@ interface DeliveryStore {
 
 ---
 
-## Nightwatchman MCP Tool
+## Nightwatch MCP Tool
 
-Rather than parsing free-form text output, Nightwatchman reports decisions via an MCP tool exposed by Wingman. This provides:
+Rather than parsing free-form text output, nightwatch reports decisions via an MCP tool exposed by Wingman. This provides:
 
 - **Schema-enforced structure** - Agent must provide required fields or the call fails
 - **Local call** - No network complexity for the agent, just a tool call
@@ -309,7 +311,7 @@ Rather than parsing free-form text output, Nightwatchman reports decisions via a
 
 **Endpoint:** `POST /api/nightwatch/report`
 
-This endpoint is exposed to Nightwatchman sessions as an MCP tool.
+This endpoint is exposed to nightwatch sessions as an MCP tool.
 
 ### Tool Schema
 
@@ -382,10 +384,10 @@ interface NightwatchReport {
 }
 ```
 
-### Nightwatchman Prompt
+### Nightwatch Prompt
 
 ```markdown
-You are a Nightwatchman reviewing a work session.
+You are a nightwatch reviewer examining a work session.
 
 ## Task
 **{taskLabel}**
@@ -420,7 +422,7 @@ Call the tool now with your decision.
 ### Decision Flow
 
 ```
-Nightwatchman Session
+Nightwatch Session
         │
         │ reviews transcript
         │
@@ -570,14 +572,14 @@ Nightwatchman Session
 
 2. **"Send to Wingman" action**
    - UI button or API endpoint
-   - Calls wingmen POST /api/deliveries
+   - Calls Wingman POST /api/deliveries
    - Updates task: adds note, moves to in_progress, assigns to wingman
 
 3. **Callback endpoint**
    - POST /api/wingman/callback
    - Validates secret
    - Appends note to task with decision details
-   - If CONTINUE: just record (wingmen handles continuation)
+   - If CONTINUE: just record (Wingman handles continuation)
    - If COMPLETE/MAX_REVIEWS: move task to review
 
 4. **Task notes structure**
@@ -590,7 +592,7 @@ Nightwatchman Session
 1. User clicks "Send to Wingman" on task "Fix login bug"
 
 2. Marginalgains:
-   - POST wingmen/api/deliveries
+   - POST Wingman /api/deliveries
    - Receives: { deliveryId, workSessionId, workSessionLink }
    - Updates task:
      - State: in_progress
@@ -599,21 +601,21 @@ Nightwatchman Session
 
 3. Work session runs, stops
 
-4. Wingmen starts Nightwatch, reviews, decides CONTINUE
+4. Wingman starts Nightwatch, reviews, decides CONTINUE
 
-5. Wingmen callbacks Marginalgains:
+5. Wingman callbacks Marginalgains:
    - { decision: "continue", summary: "Need to run tests", ... }
 
 6. Marginalgains:
    - Appends note: "Review 1: CONTINUE - Need to run tests [decision link]"
 
-7. Wingmen sends continue instruction to work session
+7. Wingman sends continue instruction to work session
 
 8. Work session resumes, runs, stops
 
-9. Wingmen starts Nightwatch, reviews, decides COMPLETE
+9. Wingman starts Nightwatch, reviews, decides COMPLETE
 
-10. Wingmen callbacks Marginalgains:
+10. Wingman callbacks Marginalgains:
     - { decision: "complete", summary: "Fixed auth bug, tests passing", ... }
 
 11. Marginalgains:
@@ -641,7 +643,7 @@ CALLBACK_RETRY_DELAY_MS=5000         # Delay between retries
 ### Shared Secret
 
 The callback secret should be configured in both systems:
-- Wingmen: passed in delivery creation
+- Wingman: passed in delivery creation
 - Marginalgains: stored in env, validated on callback
 
 ---
@@ -649,37 +651,46 @@ The callback secret should be configured in both systems:
 ## Security Considerations
 
 1. **Callback authentication**
-   - Shared secret in callback payload
-   - Consider HMAC signature for additional security
+   - V1: Shared secret in callback payload (sufficient for localhost)
+   - Future: HMAC signature for remote deployments (see Future Enhancements)
 
 2. **Localhost assumption**
-   - Initial design assumes same-host deployment
-   - For remote deployment, add HTTPS requirement
+   - V1 assumes same-host deployment (Wingman and Marginalgains on same machine)
+   - For remote deployment: require HTTPS, implement HMAC signatures
 
-3. **Session access**
+3. **Path validation**
+   - `workingDirectory` must be validated against FOLDERACCESS
+   - Prevents path traversal attacks
+
+4. **Session access**
    - Delivery sessions inherit user permissions
-   - Nightwatch sessions should be internal/system-owned
+   - Nightwatch sessions are internal/system-owned
 
 ---
 
 ## Future Enhancements
 
-1. **Multiple source systems**
+1. **HMAC callback signatures (for remote deployment)**
+   - Replace plaintext secret with HMAC-SHA256 signature
+   - Add timestamp to prevent replay attacks
+   - Required when Wingman and Marginalgains are on different hosts
+
+2. **Multiple source systems**
    - Generalize beyond Marginalgains
    - Plugin architecture for different callback protocols
 
-2. **Custom nightwatch prompts**
+3. **Custom nightwatch prompts**
    - Allow source system to provide custom review criteria
    - Task-specific completion definitions
 
-3. **Progress callbacks**
+4. **Progress callbacks**
    - Periodic updates during long-running work sessions
    - Not just on session stop
 
-4. **Parallel work sessions**
+5. **Parallel work sessions**
    - Multiple workers on same delivery
    - Nightwatch coordinates/merges results
 
-5. **Learning from reviews**
+6. **Learning from reviews**
    - Track which agents need more continues
    - Optimize agent selection based on task type
