@@ -1,3 +1,7 @@
+import { existsSync, statSync } from "node:fs";
+import { resolve, normalize } from "node:path";
+import { homedir } from "node:os";
+
 import type { RequestAuthContext } from "../auth/request-context";
 import { normaliseNpub } from "../identity/npub-utils";
 import { npubProjectStore, type NpubProjectRecord } from "./npub-project-store";
@@ -30,33 +34,93 @@ const parseRequestBody = async (request: Request): Promise<Record<string, unknow
   return payload as Record<string, unknown>;
 };
 
+const expandPath = (pathStr: string): string => {
+  if (pathStr.startsWith("~/")) {
+    return resolve(homedir(), pathStr.slice(2));
+  }
+  return resolve(normalize(pathStr));
+};
+
+const validateDirectory = (pathStr: string): { valid: boolean; error?: string; resolvedPath?: string } => {
+  const resolved = expandPath(pathStr);
+  if (!existsSync(resolved)) {
+    return { valid: false, error: "Directory does not exist" };
+  }
+  try {
+    const stats = statSync(resolved);
+    if (!stats.isDirectory()) {
+      return { valid: false, error: "Path is not a directory" };
+    }
+  } catch {
+    return { valid: false, error: "Cannot access directory" };
+  }
+  return { valid: true, resolvedPath: resolved };
+};
+
 export const createNpubProjectApiHandler = () => {
   const handleCollection = async (
     method: HttpMethod,
     url: URL,
+    request: Request,
     authContext: RequestAuthContext,
     isAdmin: boolean,
   ): Promise<Response> => {
-    if (method !== "GET") {
-      return Response.json({ error: "Method not allowed" }, { status: 405 });
+    if (method === "GET") {
+      // Allow admin to query any npub, otherwise use the authenticated user's npub
+      const queryNpub = url.searchParams.get("npub");
+      let targetNpub: string | null = null;
+
+      if (isAdmin && queryNpub) {
+        targetNpub = normaliseNpub(queryNpub);
+      } else if (authContext.npub) {
+        targetNpub = normaliseNpub(authContext.npub);
+      }
+
+      if (!targetNpub) {
+        return Response.json({ error: "No valid npub specified" }, { status: 400 });
+      }
+
+      const projects = npubProjectStore.listByNpub(targetNpub).map(serializeProject);
+      return Response.json({ projects });
     }
 
-    // Allow admin to query any npub, otherwise use the authenticated user's npub
-    const queryNpub = url.searchParams.get("npub");
-    let targetNpub: string | null = null;
+    if (method === "POST") {
+      const userNpub = normaliseNpub(authContext.npub ?? null);
+      if (!userNpub) {
+        return Response.json({ error: "Authentication required" }, { status: 401 });
+      }
 
-    if (isAdmin && queryNpub) {
-      targetNpub = normaliseNpub(queryNpub);
-    } else if (authContext.npub) {
-      targetNpub = normaliseNpub(authContext.npub);
+      let body: Record<string, unknown>;
+      try {
+        body = await parseRequestBody(request);
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
+
+      const directoryPath = typeof body.directoryPath === "string" ? body.directoryPath.trim() : "";
+      if (!directoryPath) {
+        return Response.json({ error: "directoryPath is required" }, { status: 400 });
+      }
+
+      const validation = validateDirectory(directoryPath);
+      if (!validation.valid) {
+        return Response.json({ error: validation.error }, { status: 400 });
+      }
+
+      const customName = typeof body.name === "string" ? body.name.trim() : undefined;
+
+      try {
+        const project = npubProjectStore.createProject(userNpub, validation.resolvedPath!, customName);
+        if (!project) {
+          return Response.json({ error: "Project already exists for this directory" }, { status: 409 });
+        }
+        return Response.json({ project: serializeProject(project) }, { status: 201 });
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 500 });
+      }
     }
 
-    if (!targetNpub) {
-      return Response.json({ error: "No valid npub specified" }, { status: 400 });
-    }
-
-    const projects = npubProjectStore.listByNpub(targetNpub).map(serializeProject);
-    return Response.json({ projects });
+    return Response.json({ error: "Method not allowed" }, { status: 405 });
   };
 
   const handleSingleProject = async (
@@ -144,7 +208,7 @@ export const createNpubProjectApiHandler = () => {
 
     // /api/npub-projects
     if (segments.length === 2) {
-      return handleCollection(method, url, authContext, isAdmin);
+      return handleCollection(method, url, request, authContext, isAdmin);
     }
 
     // /api/npub-projects/:id

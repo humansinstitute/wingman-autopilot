@@ -95,6 +95,31 @@ const deleteProject = async (projectId) => {
   }
 };
 
+const createProject = async (directoryPath, name) => {
+  try {
+    const body = { directoryPath };
+    if (name && name.trim()) {
+      body.name = name.trim();
+    }
+    const response = await fetch("/api/npub-projects", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+    if (data.project) {
+      npubProjectsState.items.unshift(data.project);
+    }
+    return { success: true, project: data.project };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+};
+
 const formatRelativeTime = (isoString) => {
   const date = new Date(isoString);
   const now = new Date();
@@ -272,6 +297,111 @@ const renderProjectRow = (project, onUpdate) => {
 };
 
 /**
+ * Renders the add project form
+ * @param {() => void} onUpdate - callback when project is created
+ */
+const renderAddProjectForm = (onUpdate) => {
+  const form = document.createElement("div");
+  form.className = "wm-npub-project-add-form";
+
+  const pathField = document.createElement("div");
+  pathField.className = "wm-npub-project-add-field";
+
+  const pathLabel = document.createElement("label");
+  pathLabel.textContent = "Directory";
+  pathLabel.className = "wm-npub-project-add-label";
+
+  const pathInput = document.createElement("input");
+  pathInput.type = "text";
+  pathInput.className = "wm-npub-project-add-input";
+  pathInput.placeholder = "~/code/my-project";
+
+  pathField.append(pathLabel, pathInput);
+
+  const nameField = document.createElement("div");
+  nameField.className = "wm-npub-project-add-field";
+
+  const nameLabel = document.createElement("label");
+  nameLabel.textContent = "Name (optional)";
+  nameLabel.className = "wm-npub-project-add-label";
+
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.className = "wm-npub-project-add-input";
+  nameInput.placeholder = "My Project";
+
+  nameField.append(nameLabel, nameInput);
+
+  const errorMsg = document.createElement("p");
+  errorMsg.className = "wm-npub-project-add-error";
+  errorMsg.style.display = "none";
+
+  const actions = document.createElement("div");
+  actions.className = "wm-npub-project-add-actions";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "wm-button small secondary";
+  cancelBtn.textContent = "Cancel";
+
+  const submitBtn = document.createElement("button");
+  submitBtn.type = "button";
+  submitBtn.className = "wm-button small primary";
+  submitBtn.textContent = "Add Project";
+
+  actions.append(cancelBtn, submitBtn);
+  form.append(pathField, nameField, errorMsg, actions);
+
+  const hideForm = () => {
+    form.remove();
+  };
+
+  cancelBtn.addEventListener("click", hideForm);
+
+  submitBtn.addEventListener("click", async () => {
+    const directoryPath = pathInput.value.trim();
+    if (!directoryPath) {
+      errorMsg.textContent = "Directory path is required";
+      errorMsg.style.display = "block";
+      return;
+    }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Adding...";
+    errorMsg.style.display = "none";
+
+    const result = await createProject(directoryPath, nameInput.value);
+    if (result.success) {
+      hideForm();
+      onUpdate();
+    } else {
+      errorMsg.textContent = result.error || "Failed to add project";
+      errorMsg.style.display = "block";
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Add Project";
+    }
+  });
+
+  pathInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      submitBtn.click();
+    } else if (e.key === "Escape") {
+      hideForm();
+    }
+  });
+
+  nameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      submitBtn.click();
+    } else if (e.key === "Escape") {
+      hideForm();
+    }
+  });
+
+  return form;
+};
+
+/**
  * Renders the npub projects panel for settings
  * @param {() => void} onUpdate - callback when any project is updated
  */
@@ -279,13 +409,36 @@ const renderNpubProjectsPanel = (onUpdate) => {
   const card = document.createElement("section");
   card.className = "wm-card wm-npub-projects-card";
 
+  const header = document.createElement("div");
+  header.className = "wm-npub-projects-header";
+
   const heading = document.createElement("h2");
   heading.textContent = "My Projects";
 
-  const description = document.createElement("p");
-  description.textContent = "Directories you've worked in are automatically tracked. Rename them for easier identification.";
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "wm-button small secondary";
+  addBtn.textContent = "Add Project";
 
-  card.append(heading, description);
+  header.append(heading, addBtn);
+
+  const description = document.createElement("p");
+  description.textContent = "Directories you've worked in are automatically tracked. You can also add projects manually.";
+
+  card.append(header, description);
+
+  // Container for the add form (inserted dynamically)
+  const formContainer = document.createElement("div");
+  formContainer.className = "wm-npub-project-form-container";
+  card.append(formContainer);
+
+  addBtn.addEventListener("click", () => {
+    // Remove existing form if any
+    formContainer.innerHTML = "";
+    const form = renderAddProjectForm(onUpdate);
+    formContainer.append(form);
+    form.querySelector("input")?.focus();
+  });
 
   if (npubProjectsState.loading) {
     const loading = document.createElement("p");
@@ -306,7 +459,7 @@ const renderNpubProjectsPanel = (onUpdate) => {
   if (npubProjectsState.items.length === 0) {
     const empty = document.createElement("p");
     empty.className = "wm-npub-projects-empty";
-    empty.textContent = "No projects tracked yet. Start a session in any directory to begin tracking.";
+    empty.textContent = "No projects tracked yet. Add a project or start a session in any directory to begin tracking.";
     card.append(empty);
     return card;
   }

@@ -210,6 +210,37 @@ class NpubProjectStore {
     return result.changes > 0;
   }
 
+  /**
+   * Manually create a project entry (not through auto-tracking).
+   * Returns null if project already exists for this npub+path.
+   */
+  createProject(npub: string, directoryPath: string, customName?: string): NpubProjectRecord | null {
+    const normalized = normaliseNpub(npub);
+    if (!normalized) {
+      throw new Error("A valid npub is required");
+    }
+
+    const normalizedPath = normalize(directoryPath);
+    const existing = this.getByPath(normalized, normalizedPath);
+    if (existing) {
+      return null; // Already exists
+    }
+
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const name = customName?.trim() || this.generateAutoName(normalizedPath, null);
+    const isCustomName = customName?.trim() ? 1 : 0;
+
+    const insert = this.db.prepare(`
+      INSERT INTO npub_projects (
+        id, npub, directory_path, name, is_custom_name, worktree_name,
+        last_used_at, session_count, created_at, updated_at
+      ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, 0, ?6, ?6)
+    `);
+    insert.run(id, normalized, normalizedPath, name, isCustomName, now);
+    return this.getById(id)!;
+  }
+
   private generateAutoName(directoryPath: string, worktreeName?: string | null): string {
     const folderName = basename(directoryPath);
     if (worktreeName && worktreeName.trim().length > 0) {
