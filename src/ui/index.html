@@ -32,6 +32,22 @@
           <p class="wm-tagline">Solvitur Ambulando</p>
         </div>
       </a>
+      <div id="quick-launcher" class="wm-quick-launcher requires-auth">
+        <button
+          type="button"
+          id="quick-launcher-button"
+          class="wm-quick-launcher-button"
+          aria-label="Quick launch session"
+          aria-haspopup="true"
+          aria-expanded="false"
+        >
+          <span class="wm-quick-launcher-icon"></span>
+        </button>
+        <div id="quick-launcher-menu" class="wm-quick-launcher-menu" role="menu" hidden>
+          <div class="wm-quick-launcher-header">Quick Launch</div>
+          <div id="quick-launcher-list" class="wm-quick-launcher-list"></div>
+        </div>
+      </div>
       <div id="desktop-session-indicator" class="wm-session-indicator requires-auth" role="status" aria-live="polite" hidden>
         <button
           type="button"
