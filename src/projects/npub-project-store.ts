@@ -13,6 +13,7 @@ export interface NpubProjectRecord {
   name: string;
   isCustomName: boolean;
   worktreeName: string | null;
+  appId: string | null;
   lastUsedAt: string;
   sessionCount: number;
   createdAt: string;
@@ -26,6 +27,7 @@ type NpubProjectRow = {
   name: string;
   isCustomName: number;
   worktreeName: string | null;
+  appId: string | null;
   lastUsedAt: string;
   sessionCount: number;
   createdAt: string;
@@ -69,6 +71,14 @@ class NpubProjectStore {
       CREATE INDEX IF NOT EXISTS idx_npub_projects_npub ON npub_projects(npub);
       CREATE INDEX IF NOT EXISTS idx_npub_projects_last_used ON npub_projects(last_used_at DESC);
     `);
+
+    // Migration: add app_id column if it doesn't exist
+    const columns = this.db.query("PRAGMA table_info(npub_projects)").all() as { name: string }[];
+    const hasAppId = columns.some((col) => col.name === "app_id");
+    if (!hasAppId) {
+      this.db.exec("ALTER TABLE npub_projects ADD COLUMN app_id TEXT");
+      this.db.exec("CREATE INDEX IF NOT EXISTS idx_npub_projects_app_id ON npub_projects(app_id)");
+    }
   }
 
   trackProject(input: TrackProjectInput): NpubProjectRecord {
@@ -119,7 +129,7 @@ class NpubProjectStore {
       SELECT
         id, npub, directory_path as directoryPath, name,
         is_custom_name as isCustomName, worktree_name as worktreeName,
-        last_used_at as lastUsedAt, session_count as sessionCount,
+        app_id as appId, last_used_at as lastUsedAt, session_count as sessionCount,
         created_at as createdAt, updated_at as updatedAt
       FROM npub_projects
       WHERE npub = ?1
@@ -134,7 +144,7 @@ class NpubProjectStore {
       SELECT
         id, npub, directory_path as directoryPath, name,
         is_custom_name as isCustomName, worktree_name as worktreeName,
-        last_used_at as lastUsedAt, session_count as sessionCount,
+        app_id as appId, last_used_at as lastUsedAt, session_count as sessionCount,
         created_at as createdAt, updated_at as updatedAt
       FROM npub_projects
       WHERE id = ?1
@@ -154,7 +164,7 @@ class NpubProjectStore {
       SELECT
         id, npub, directory_path as directoryPath, name,
         is_custom_name as isCustomName, worktree_name as worktreeName,
-        last_used_at as lastUsedAt, session_count as sessionCount,
+        app_id as appId, last_used_at as lastUsedAt, session_count as sessionCount,
         created_at as createdAt, updated_at as updatedAt
       FROM npub_projects
       WHERE npub = ?1 AND directory_path = ?2
@@ -249,6 +259,84 @@ class NpubProjectStore {
     return folderName;
   }
 
+  /**
+   * Link an app to a project.
+   */
+  setAppId(id: string, appId: string): NpubProjectRecord | null {
+    const existing = this.getById(id);
+    if (!existing) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    const update = this.db.prepare(`
+      UPDATE npub_projects
+      SET app_id = ?2,
+          updated_at = ?3
+      WHERE id = ?1
+    `);
+    update.run(id, appId, now);
+    return this.getById(id);
+  }
+
+  /**
+   * Remove app link from a project.
+   */
+  clearAppId(id: string): NpubProjectRecord | null {
+    const existing = this.getById(id);
+    if (!existing) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    const update = this.db.prepare(`
+      UPDATE npub_projects
+      SET app_id = NULL,
+          updated_at = ?2
+      WHERE id = ?1
+    `);
+    update.run(id, now);
+    return this.getById(id);
+  }
+
+  /**
+   * Clear app link from all projects that reference a specific app.
+   * Useful when an app is deleted.
+   */
+  clearAppIdByAppId(appId: string): number {
+    const now = new Date().toISOString();
+    const update = this.db.prepare(`
+      UPDATE npub_projects
+      SET app_id = NULL,
+          updated_at = ?2
+      WHERE app_id = ?1
+    `);
+    const result = update.run(appId, now);
+    return result.changes;
+  }
+
+  /**
+   * Find project by app ID for a specific user.
+   */
+  getByAppId(npub: string, appId: string): NpubProjectRecord | null {
+    const normalized = normaliseNpub(npub);
+    if (!normalized) {
+      return null;
+    }
+
+    const statement = this.db.prepare<NpubProjectRow, [string, string]>(`
+      SELECT
+        id, npub, directory_path as directoryPath, name,
+        is_custom_name as isCustomName, worktree_name as worktreeName,
+        app_id as appId, last_used_at as lastUsedAt, session_count as sessionCount,
+        created_at as createdAt, updated_at as updatedAt
+      FROM npub_projects
+      WHERE npub = ?1 AND app_id = ?2
+    `);
+    const row = statement.get(normalized, appId);
+    return row ? this.hydrate(row) : null;
+  }
+
   private hydrate(row: NpubProjectRow): NpubProjectRecord {
     return {
       id: row.id,
@@ -257,6 +345,7 @@ class NpubProjectStore {
       name: row.name,
       isCustomName: row.isCustomName === 1,
       worktreeName: row.worktreeName,
+      appId: row.appId,
       lastUsedAt: row.lastUsedAt,
       sessionCount: row.sessionCount,
       createdAt: row.createdAt,

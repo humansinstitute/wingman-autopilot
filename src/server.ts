@@ -62,6 +62,7 @@ import { createTodoApiHandler } from "./todos/todo-api";
 import { ProjectStore } from "./projects/project-store";
 import { createProjectApiHandler } from "./projects/project-api";
 import { createNpubProjectApiHandler } from "./projects/npub-project-api";
+import { npubProjectStore } from "./projects/npub-project-store";
 import { createBrowserLogHandler } from "./logging/browser-log-handler";
 import { ensureDeepDiveProcess, getDeepDivePort, isDeepDiveProcessRunning } from "./deep-dive-process";
 import {
@@ -4452,6 +4453,23 @@ const handleApi = async (
         webApp: requestedWebApp,
         webAppPort: requestedPort ?? undefined,
       });
+
+      // Link app to npub-project (create project if it doesn't exist)
+      try {
+        let project = npubProjectStore.getByPath(ownerNpub, resolvedRoot);
+        if (project) {
+          npubProjectStore.setAppId(project.id, app.id);
+        } else {
+          project = npubProjectStore.createProject(ownerNpub, resolvedRoot, app.label || undefined);
+          if (project) {
+            npubProjectStore.setAppId(project.id, app.id);
+          }
+        }
+      } catch (linkError) {
+        // Log but don't fail app creation if project linking fails
+        console.warn(`[apps] failed to link app ${app.id} to npub-project: ${(linkError as Error).message}`);
+      }
+
       const status = await appProcessManager.getStatus(app.id);
       return Response.json({ app: buildAppResponse(app, status) }, { status: 201 });
     } catch (error) {
@@ -4613,6 +4631,13 @@ const handleApi = async (
         }
       } catch (error) {
         return Response.json({ error: (error as Error).message }, { status: 500 });
+      }
+
+      // Clear app link from any npub-projects before removing the app
+      try {
+        npubProjectStore.clearAppIdByAppId(id);
+      } catch (clearError) {
+        console.warn(`[apps] failed to clear app ${id} from npub-projects: ${(clearError as Error).message}`);
       }
 
       const removed = await appRegistry.removeApp(id);

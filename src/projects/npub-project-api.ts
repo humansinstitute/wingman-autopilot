@@ -15,6 +15,7 @@ const serializeProject = (project: NpubProjectRecord) => ({
   name: project.name,
   isCustomName: project.isCustomName,
   worktreeName: project.worktreeName,
+  appId: project.appId,
   lastUsedAt: project.lastUsedAt,
   sessionCount: project.sessionCount,
   createdAt: project.createdAt,

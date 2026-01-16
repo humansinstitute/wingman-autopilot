@@ -11069,9 +11069,16 @@ const renderComposer = (sessionId) => {
   // Apps submenu - show if there's an app matching the session's working directory
   const currentSession = state.sessions.find((s) => s.id === sessionId);
   const sessionDirectory = currentSession?.workingDirectory;
-  const matchingApp = sessionDirectory
+  // First try exact directory match, then fall back to appId from npub-project
+  let matchingApp = sessionDirectory
     ? state.apps.items.find((app) => app.root === sessionDirectory)
     : null;
+  if (!matchingApp && sessionDirectory) {
+    const project = npubProjectsState.items.find((p) => p.directoryPath === sessionDirectory);
+    if (project?.appId) {
+      matchingApp = state.apps.items.find((app) => app.id === project.appId);
+    }
+  }
 
   if (matchingApp) {
     const appItems = [];

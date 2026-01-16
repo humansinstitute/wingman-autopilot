@@ -3,7 +3,7 @@
  * Renders the list of auto-tracked projects for the current user
  */
 
-/** @typedef {{ id: string, npub: string, directoryPath: string, name: string, isCustomName: boolean, worktreeName: string | null, lastUsedAt: string, sessionCount: number }} NpubProject */
+/** @typedef {{ id: string, npub: string, directoryPath: string, name: string, isCustomName: boolean, worktreeName: string | null, appId: string | null, lastUsedAt: string, sessionCount: number }} NpubProject */
 
 /** @type {{ items: NpubProject[], loading: boolean, error: string | null }} */
 const npubProjectsState = {
