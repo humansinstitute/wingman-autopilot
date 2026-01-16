@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 
 import type { AgentType, WingmanConfig } from "../config";
 import type { AppRecord } from "../apps/app-registry";
+import { readEnvFile } from "../utils/env-file";
 
 export interface EcosystemApp {
   name: string;
@@ -308,8 +309,9 @@ export function generateAppProcessName(userAlias: string, appLabel: string): str
 
 /**
  * Create an ecosystem app entry for a user app.
+ * Reads .env file from app root to include environment variables.
  */
-export function createUserAppEcosystemConfig(config: UserAppConfig): EcosystemApp {
+export async function createUserAppEcosystemConfig(config: UserAppConfig): Promise<EcosystemApp> {
   const { app, userAlias, userRootDir, isAdmin } = config;
   const processName = generateAppProcessName(userAlias, app.label);
   const logsDir = getLogsDirectory(userRootDir, isAdmin);
@@ -320,23 +322,31 @@ export function createUserAppEcosystemConfig(config: UserAppConfig): EcosystemAp
     throw new Error(`App ${app.id} has no start script defined`);
   }
 
+  // Read .env file from app root directory
+  const envFromFile = await readEnvFile(app.root);
+
   // Build command with port override for web apps
   let command = startScript;
   if (app.webApp && app.webAppPort) {
     command = `PORT=${app.webAppPort} ${startScript}`;
   }
 
+  // Merge environment variables: .env file first, then explicit overrides
+  // This allows webAppPort to override PORT from .env if set
+  const env: Record<string, string> = {
+    ...envFromFile,
+    APP_ID: app.id,
+    APP_LABEL: app.label,
+    USER_ALIAS: userAlias,
+    ...(app.webAppPort ? { PORT: String(app.webAppPort) } : {}),
+  };
+
   return {
     name: processName,
     script: "bash",
     args: ["-c", command],
     cwd: app.root,
-    env: {
-      APP_ID: app.id,
-      APP_LABEL: app.label,
-      USER_ALIAS: userAlias,
-      ...(app.webAppPort ? { PORT: String(app.webAppPort) } : {}),
-    },
+    env,
     out_file: join(logsDir, `${processName}-out.log`),
     error_file: join(logsDir, `${processName}-error.log`),
     log_date_format: "YYYY-MM-DD HH:mm:ss",
@@ -362,8 +372,8 @@ export async function addUserAppToEcosystem(
   // Read existing config
   const ecosystemConfig = await readEcosystemConfig(ecosystemPath);
 
-  // Create app config
-  const appConfig = createUserAppEcosystemConfig(config);
+  // Create app config (async to read .env file)
+  const appConfig = await createUserAppEcosystemConfig(config);
 
   // Check if app with same name already exists
   const existingIndex = ecosystemConfig.apps.findIndex((a) => a.name === appConfig.name);
