@@ -255,7 +255,7 @@ type GitRepositorySummary = {
   worktreeError: string | null;
 };
 
-type GitCommandAction = "init" | "addAll" | "commit" | "push" | "pushUpstream";
+type GitCommandAction = "init" | "addAll" | "commit" | "push" | "pushUpstream" | "pull";
 
 const executeGitCommand = async (options: {
   directory: string;
@@ -298,6 +298,18 @@ const executeGitCommand = async (options: {
         throw new Error("Branch name is required to set upstream");
       }
       return runCommand("git", ["push", "-u", remote, branch], { cwd: directory });
+    }
+    case "pull": {
+      const remote = options.remote?.trim();
+      const branch = options.branch?.trim();
+      const args = ["pull"];
+      if (remote) {
+        args.push(remote);
+        if (branch) {
+          args.push(branch);
+        }
+      }
+      return runCommand("git", args, { cwd: directory });
     }
     default:
       throw new Error("Unsupported git command");
@@ -5122,7 +5134,7 @@ const handleApi = async (
       return Response.json({ error: "Action is required" }, { status: 400 });
     }
 
-    if (!["init", "addAll", "commit", "push", "pushUpstream"].includes(actionInput)) {
+    if (!["init", "addAll", "commit", "push", "pushUpstream", "pull"].includes(actionInput)) {
       return Response.json({ error: "Unsupported git action" }, { status: 400 });
     }
 

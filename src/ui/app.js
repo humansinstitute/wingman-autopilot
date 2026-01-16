@@ -10834,6 +10834,84 @@ const renderComposer = (sessionId) => {
     commandMenu.append(divider);
   };
 
+  const addSubmenu = (label, items) => {
+    const submenu = document.createElement("div");
+    submenu.className = "wm-command-submenu";
+
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "wm-command-item";
+    trigger.textContent = label;
+    trigger.setAttribute("role", "menuitem");
+    trigger.setAttribute("aria-haspopup", "true");
+
+    const panel = document.createElement("div");
+    panel.className = "wm-command-submenu-panel";
+    panel.setAttribute("role", "menu");
+
+    items.forEach(({ label: itemLabel, handler }) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "wm-command-item";
+      item.textContent = itemLabel;
+      item.setAttribute("role", "menuitem");
+      item.addEventListener("click", () => {
+        handler();
+        commandMenu.classList.remove("is-open");
+        commandButton.setAttribute("aria-expanded", "false");
+      });
+      panel.append(item);
+    });
+
+    submenu.append(trigger, panel);
+    commandMenu.append(submenu);
+  };
+
+  const executeGitAction = async (action, options = {}) => {
+    const session = state.sessions.find((s) => s.id === sessionId);
+    const directory = session?.workingDirectory;
+    if (!directory) {
+      showToast("No working directory set for this session", { type: "error" });
+      return;
+    }
+    try {
+      const response = await fetch("/api/docs/git", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ directory, action, ...options }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        showToast(`Git ${action} failed: ${data.error || "Unknown error"}`, { type: "error", duration: 5000 });
+        return;
+      }
+      showToast(`Git ${action} successful`, { type: "success" });
+      if (data.stdout) {
+        console.log(`Git ${action} output:`, data.stdout);
+      }
+    } catch (error) {
+      showToast(`Git ${action} failed: ${error.message}`, { type: "error" });
+    }
+  };
+
+  addSubmenu("Git", [
+    { label: "Pull", handler: () => executeGitAction("pull") },
+    { label: "Push", handler: () => executeGitAction("push") },
+    {
+      label: "Commit...",
+      handler: () => {
+        const message = window.prompt("Enter commit message:");
+        if (message?.trim()) {
+          executeGitAction("addAll").then(() => {
+            executeGitAction("commit", { message: message.trim() });
+          });
+        }
+      }
+    },
+  ]);
+
+  addCommandDivider();
+
   addCommand("Scroll to end", () => {
     scrollConversationAreaToBottom(sessionId, { includeWindow: true });
   });

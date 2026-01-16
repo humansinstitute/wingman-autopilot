@@ -2664,6 +2664,45 @@ body[data-menu-open="true"] .wm-menu-panel {
   background: rgba(148, 163, 184, 0.35);
 }
 
+/* Nested submenu support */
+.wm-command-submenu {
+  position: relative;
+}
+
+.wm-command-submenu > .wm-command-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.wm-command-submenu > .wm-command-item::after {
+  content: "›";
+  font-size: 1.1rem;
+  opacity: 0.6;
+}
+
+.wm-command-submenu-panel {
+  position: absolute;
+  bottom: 0;
+  right: calc(100% + 0.35rem);
+  display: none;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.6rem;
+  min-width: 10rem;
+  border-radius: 0.55rem;
+  background: var(--bg-secondary);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  box-shadow: 0 14px 30px rgba(15, 118, 110, 0.25);
+  z-index: 81;
+}
+
+.wm-command-submenu:hover > .wm-command-submenu-panel,
+.wm-command-submenu:focus-within > .wm-command-submenu-panel {
+  display: flex;
+}
+
 .wm-composer textarea::placeholder {
   color: var(--text-tertiary);
 }
