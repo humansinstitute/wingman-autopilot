@@ -7696,6 +7696,25 @@ const renderAppCard = (app) => {
     }
     portRow.append(portLabel, portValue);
     meta.append(portRow);
+
+    // Subdomain URL row (alias-based routing)
+    if (app.subdomainUrl) {
+      const subdomainRow = document.createElement("div");
+      subdomainRow.className = "wm-app-meta-row";
+      const subdomainLabel = document.createElement("span");
+      subdomainLabel.className = "wm-app-meta-label";
+      subdomainLabel.textContent = "Open App";
+      const subdomainValue = document.createElement("span");
+      subdomainValue.className = "wm-app-meta-value";
+      const subdomainLink = document.createElement("a");
+      subdomainLink.href = app.subdomainUrl;
+      subdomainLink.target = "_blank";
+      subdomainLink.rel = "noopener noreferrer";
+      subdomainLink.textContent = app.subdomainUrl;
+      subdomainValue.append(subdomainLink);
+      subdomainRow.append(subdomainLabel, subdomainValue);
+      meta.append(subdomainRow);
+    }
   }
 
   const windowRow = document.createElement("div");
@@ -11082,6 +11101,16 @@ const renderComposer = (sessionId) => {
 
   if (matchingApp) {
     const appItems = [];
+
+    // Go to site - open subdomain URL in new tab
+    if (matchingApp.subdomainUrl) {
+      appItems.push({
+        label: "Go to site",
+        handler: () => {
+          window.open(matchingApp.subdomainUrl, "_blank", "noopener,noreferrer");
+        },
+      });
+    }
 
     if (matchingApp.availableScripts?.restart) {
       appItems.push({

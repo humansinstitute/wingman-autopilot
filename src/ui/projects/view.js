@@ -192,6 +192,17 @@ function createProjectView({ state, actions }) {
       }
       actionsRow.append(viewButton);
 
+      // Open App link (subdomain URL)
+      if (resolvedApp.subdomainUrl) {
+        const openAppLink = document.createElement("a");
+        openAppLink.href = resolvedApp.subdomainUrl;
+        openAppLink.target = "_blank";
+        openAppLink.rel = "noopener noreferrer";
+        openAppLink.className = "wm-link-button";
+        openAppLink.textContent = "Open App";
+        actionsRow.append(openAppLink);
+      }
+
       const isCoreApp = resolvedApp.id === "wingman-core";
       const actionDefinitions = [
         {
