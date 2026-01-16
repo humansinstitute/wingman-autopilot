@@ -2684,12 +2684,13 @@ body[data-menu-open="true"] .wm-menu-panel {
   top: 0;
   left: 0;
   right: 0;
-  height: 3px;
+  height: 5px;
   border-radius: 0.75rem 0.75rem 0 0;
   overflow: hidden;
   pointer-events: none;
   opacity: 0;
   transition: opacity 200ms ease;
+  background: rgba(16, 185, 129, 0.15);
 }
 
 .wm-knight-rider.active {
@@ -2701,23 +2702,26 @@ body[data-menu-open="true"] .wm-menu-panel {
   position: absolute;
   top: 0;
   left: 0;
-  width: 30%;
+  width: 35%;
   height: 100%;
   background: linear-gradient(
     90deg,
     transparent,
-    rgba(16, 185, 129, 0.4),
-    rgba(16, 185, 129, 0.9),
-    rgba(16, 185, 129, 0.4),
+    rgba(16, 185, 129, 0.8),
+    #10b981,
+    rgba(16, 185, 129, 0.8),
     transparent
   );
-  box-shadow: 0 0 12px rgba(16, 185, 129, 0.8), 0 0 24px rgba(16, 185, 129, 0.5);
+  box-shadow:
+    0 0 20px rgba(16, 185, 129, 1),
+    0 0 40px rgba(16, 185, 129, 0.8),
+    0 0 60px rgba(16, 185, 129, 0.4);
   animation: knightRider 1.5s ease-in-out infinite;
 }
 
 @keyframes knightRider {
   0% {
-    left: -30%;
+    left: -35%;
   }
   100% {
     left: 100%;
