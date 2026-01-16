@@ -210,3 +210,136 @@ export const rehydrateWarmSessions = async (
 
   await clearWarmRestartMarker(markerPath);
 };
+
+export interface OrphanedSessionsOutcome {
+  restored: number;
+  checked: number;
+  timestamp: string;
+}
+
+export const orphanedSessionsOutcome: { current: OrphanedSessionsOutcome | null } = { current: null };
+
+/**
+ * Attempts to reconnect to orphaned agent sessions that are still running.
+ * This runs on every startup and looks for sessions in the database that:
+ * - Have port and pid stored
+ * - Are not already loaded in memory
+ * - Have a process still alive at the stored PID
+ * - Have an agent still responding at the stored port
+ */
+export const rehydrateOrphanedSessions = async (
+  agentHost: string,
+  manager: ProcessManager,
+  ensureUserWorkspace: (npub: string | null) => string,
+  defaultWorkingDirectory: string,
+  store: MessageStore,
+  allowedAgents: AgentType[],
+  maxAgeHours: number = 24,
+): Promise<OrphanedSessionsOutcome> => {
+  const candidates = store.listRehydrationCandidates(maxAgeHours);
+  const existingSessions = new Set(manager.listSessions().map((s) => s.id));
+
+  let restored = 0;
+  let checked = 0;
+
+  for (const record of candidates) {
+    // Skip sessions already in memory (from warm restart or already running)
+    if (existingSessions.has(record.id)) {
+      continue;
+    }
+
+    if (!record.id || typeof record.id !== "string") {
+      continue;
+    }
+
+    const agentName = typeof record.agent === "string" ? record.agent.toLowerCase() : "";
+    if (!allowedAgents.includes(agentName as AgentType)) {
+      continue;
+    }
+
+    const port = typeof record.port === "number" && Number.isFinite(record.port) ? record.port : null;
+    if (!port) {
+      continue;
+    }
+
+    const storedPid = typeof record.pid === "number" ? record.pid : null;
+    if (!storedPid) {
+      continue;
+    }
+
+    checked += 1;
+
+    // First check: is the process still alive?
+    if (!isProcessAlive(storedPid)) {
+      continue;
+    }
+
+    // Second check: is the agent responding?
+    try {
+      await waitForAgentReadyCore(agentHost, port, agentName as AgentType, {
+        timeoutMs: 3000,
+        pollIntervalMs: 200,
+      });
+    } catch {
+      // Agent not responding, skip this session
+      continue;
+    }
+
+    // Both checks passed - rehydrate the session
+    const command = parseStoredCommand(record.command);
+    const snapshot = manager.rehydrateSession({
+      id: record.id,
+      agent: agentName as AgentType,
+      port,
+      name: record.name ?? record.id,
+      startedAt: record.startedAt,
+      workingDirectory: record.workingDirectory ?? defaultWorkingDirectory,
+      command,
+      pid: storedPid,
+      logs: undefined,
+      npub: record.npub ?? undefined,
+      agentRuntimeStatus: isAgentRuntimeStatus(record.runtimeStatus) ? record.runtimeStatus : null,
+      origin: record.origin ?? null,
+    });
+
+    if (!snapshot) {
+      continue;
+    }
+
+    ensureUserWorkspace(snapshot.npub ?? null);
+    if (isAgentRuntimeStatus(record.runtimeStatus)) {
+      manager.setAgentRuntimeStatus(snapshot.id, record.runtimeStatus);
+    }
+    store.recordSession({
+      id: snapshot.id,
+      agent: snapshot.agent,
+      startedAt: snapshot.startedAt,
+      name: snapshot.name,
+      npub: snapshot.npub,
+      port: snapshot.port,
+      pid: snapshot.pid,
+      workingDirectory: snapshot.workingDirectory,
+      command: snapshot.command,
+      runtimeStatus: snapshot.agentRuntimeStatus ?? null,
+      origin: snapshot.origin ?? null,
+    });
+
+    console.log(`[orphan] reconnected to session ${record.id} (${agentName} on port ${port})`);
+    restored += 1;
+  }
+
+  const outcome: OrphanedSessionsOutcome = {
+    restored,
+    checked,
+    timestamp: new Date().toISOString(),
+  };
+  orphanedSessionsOutcome.current = outcome;
+
+  if (restored > 0) {
+    console.log(`[orphan] reconnected to ${restored} orphaned session${restored === 1 ? "" : "s"}`);
+  } else if (checked > 0) {
+    console.log(`[orphan] checked ${checked} candidate session${checked === 1 ? "" : "s"}, none still running`);
+  }
+
+  return outcome;
+};

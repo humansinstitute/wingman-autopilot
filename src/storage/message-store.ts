@@ -171,6 +171,42 @@ export class MessageStore {
     }));
   }
 
+  /**
+   * Returns sessions that have port and pid stored, started within the given hours.
+   * These are candidates for auto-rehydration after a restart.
+   */
+  listRehydrationCandidates(maxAgeHours: number = 24): StoredSessionRecord[] {
+    const cutoff = new Date(Date.now() - maxAgeHours * 60 * 60 * 1000).toISOString();
+    const stmt = this.db.prepare(`
+      SELECT
+        id,
+        agent,
+        started_at as startedAt,
+        name,
+        npub,
+        port,
+        pid,
+        pm2_name as pm2Name,
+        logs_dir as logsDir,
+        working_directory as workingDirectory,
+        command,
+        runtime_status as runtimeStatus,
+        origin
+      FROM sessions
+      WHERE port IS NOT NULL
+        AND pid IS NOT NULL
+        AND started_at >= ?1
+      ORDER BY started_at DESC
+    `);
+    const rows = stmt.all(cutoff) as Array<
+      Omit<StoredSessionRecord, "origin"> & { origin: string | null }
+    >;
+    return rows.map((row) => ({
+      ...row,
+      origin: parseStoredOrigin(row.origin),
+    }));
+  }
+
   private initialise() {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (

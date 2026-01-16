@@ -104,6 +104,7 @@ import {
   loadWarmRestartMarker,
   readStreamToString,
   rehydrateWarmSessions,
+  rehydrateOrphanedSessions,
   warmRestartOutcome,
   warmRestartState,
   writeWarmRestartMarker,
@@ -2777,6 +2778,17 @@ await rehydrateWarmSessions(
   config.defaultWorkingDirectory,
   messageStore,
   SUPPORTED_AGENT_TYPES,
+);
+
+// Auto-rehydrate orphaned sessions that survived a restart
+await rehydrateOrphanedSessions(
+  agentHost,
+  manager,
+  ensureUserWorkspace,
+  config.defaultWorkingDirectory,
+  messageStore,
+  SUPPORTED_AGENT_TYPES,
+  24, // Look for sessions started in the last 24 hours
 );
 
 const syncSessionMessages = async (sessionId: string, force = false) => {
