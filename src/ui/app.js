@@ -12039,7 +12039,12 @@ dialog.addEventListener("cancel", (event) => {
     await refreshOrchestratorPresets();
   }
   await fetchSessions();
-  if (currentRoute === "apps") {
+  // Always fetch apps for authenticated users (needed for CMD menu app actions)
+  if (state.identity.authenticated) {
+    await fetchApps({ tail: APP_LOG_PREVIEW_LINES });
+    // Also fetch npub projects for app fallback matching
+    fetchNpubProjects().catch(() => {});
+  } else if (currentRoute === "apps") {
     await fetchApps({ tail: APP_LOG_PREVIEW_LINES });
   }
   if (state.identity.authenticated && todoFeature) {
