@@ -2668,6 +2668,62 @@ body[data-menu-open="true"] .wm-menu-panel {
   color: var(--text-tertiary);
 }
 
+/* Knight Rider effect wrapper and animation */
+.wm-textarea-wrapper {
+  position: relative;
+  flex: 1;
+  display: flex;
+}
+
+.wm-textarea-wrapper textarea {
+  flex: 1;
+}
+
+.wm-knight-rider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-radius: 0.75rem 0.75rem 0 0;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+.wm-knight-rider.active {
+  opacity: 1;
+}
+
+.wm-knight-rider::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 30%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(16, 185, 129, 0.4),
+    rgba(16, 185, 129, 0.9),
+    rgba(16, 185, 129, 0.4),
+    transparent
+  );
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.8), 0 0 24px rgba(16, 185, 129, 0.5);
+  animation: knightRider 1.5s ease-in-out infinite;
+}
+
+@keyframes knightRider {
+  0% {
+    left: -30%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
 .wm-composer-shell {
   position: -webkit-sticky;
   position: sticky;

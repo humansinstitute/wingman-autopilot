@@ -6609,6 +6609,17 @@ const updateAgentStatusIndicators = () => {
       applyAgentStatusIndicatorState(indicator, sessionId);
     }
   });
+  updateKnightRiderState();
+};
+
+const updateKnightRiderState = (targetSessionId) => {
+  document.querySelectorAll(".wm-knight-rider").forEach((element) => {
+    const sessionId = element.dataset.sessionId;
+    if (targetSessionId && sessionId !== targetSessionId) return;
+    const session = state.sessions.find((s) => s.id === sessionId);
+    const isBusy = isSessionBusy(session);
+    element.classList.toggle("active", isBusy);
+  });
 };
 
 const updateConversationDOM = (sessionId) => {
@@ -6960,6 +6971,10 @@ const sendMessage = async (sessionId, content) => {
     const messages = Array.isArray(payload?.messages) ? payload.messages : [];
     state.conversations.set(sessionId, messages);
     state.messageDrafts.set(sessionId, "");
+
+    // Activate knight rider effect immediately after sending
+    const knightRider = document.querySelector(`.wm-knight-rider[data-session-id="${sessionId}"]`);
+    if (knightRider) knightRider.classList.add("active");
 
     // Trigger incremental updates instead of full render
     updateConversationDOM(sessionId);
@@ -10890,7 +10905,15 @@ const renderComposer = (sessionId) => {
 
   buttonGroup.append(commandWrapper, submit);
 
-  composer.append(fileInput, attachmentInput, textarea, buttonGroup);
+  // Wrap textarea with knight rider effect element
+  const textareaWrapper = document.createElement("div");
+  textareaWrapper.className = "wm-textarea-wrapper";
+  const knightRider = document.createElement("div");
+  knightRider.className = "wm-knight-rider";
+  knightRider.dataset.sessionId = sessionId;
+  textareaWrapper.append(knightRider, textarea);
+
+  composer.append(fileInput, attachmentInput, textareaWrapper, buttonGroup);
   
   // Add agent status indicator button inside the controls column
   const statusIndicator = createAgentStatusIndicator(sessionId, { variant: "pill" });
