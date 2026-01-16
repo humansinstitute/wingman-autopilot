@@ -2947,10 +2947,6 @@ body[data-menu-open="true"] .wm-menu-panel {
   .wm-session-indicator {
     display: none !important;
   }
-
-  .wm-quick-launcher {
-    display: none !important;
-  }
 }
 
 .wm-worktree-modal {
