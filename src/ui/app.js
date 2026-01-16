@@ -11066,6 +11066,49 @@ const renderComposer = (sessionId) => {
     },
   ]);
 
+  // Apps submenu - show if there's an app matching the session's working directory
+  const currentSession = state.sessions.find((s) => s.id === sessionId);
+  const sessionDirectory = currentSession?.workingDirectory;
+  const matchingApp = sessionDirectory
+    ? state.apps.items.find((app) => app.root === sessionDirectory)
+    : null;
+
+  if (matchingApp) {
+    const appItems = [];
+
+    if (matchingApp.availableScripts?.restart) {
+      appItems.push({
+        label: "Restart",
+        handler: async () => {
+          const result = await triggerAppActionApi(matchingApp.id, "restart");
+          if (result.success) {
+            showToast(`Restarting ${matchingApp.label}...`, { type: "success" });
+          } else {
+            showToast(result.error || "Failed to restart app", { type: "error" });
+          }
+        },
+      });
+    }
+
+    if (matchingApp.availableScripts?.stop) {
+      appItems.push({
+        label: "Stop",
+        handler: async () => {
+          const result = await triggerAppActionApi(matchingApp.id, "stop");
+          if (result.success) {
+            showToast(`Stopped ${matchingApp.label}`, { type: "success" });
+          } else {
+            showToast(result.error || "Failed to stop app", { type: "error" });
+          }
+        },
+      });
+    }
+
+    if (appItems.length > 0) {
+      addSubmenu(`App: ${matchingApp.label}`, appItems);
+    }
+  }
+
   addCommandDivider();
 
   addCommand("Scroll to end", () => {
