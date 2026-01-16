@@ -11115,6 +11115,18 @@ const renderComposer = (sessionId) => {
     scrollConversationAreaToBottom(sessionId, { includeWindow: true });
   });
 
+  addCommand("Last question", () => {
+    const container = document.querySelector(`.wm-live-conversation[data-session-id="${sessionId}"]`);
+    if (!container) return;
+    const userMessages = container.querySelectorAll('.wm-message[data-role="user"]');
+    if (userMessages.length === 0) {
+      showToast("No user messages found", { type: "info" });
+      return;
+    }
+    const lastUserMessage = userMessages[userMessages.length - 1];
+    lastUserMessage.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
   addCommand("Copy chat", () => {
     copyConversationToClipboard(sessionId);
   });
