@@ -241,6 +241,20 @@ Would require either:
 
 ---
 
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SUBDOMAIN_BASE_DOMAIN` | Base domain for app subdomains (e.g., `apps.example.com`) | `null` (disabled) |
+| `SUBDOMAIN_PROXY_ENABLED` | Set to `false` to disable subdomain routing even if base domain is set | `true` (if base domain set) |
+
+Example `.env`:
+```bash
+SUBDOMAIN_BASE_DOMAIN=apps.yourdomain.com
+```
+
+---
+
 ## Decision Log
 
 | Date | Decision | Rationale |

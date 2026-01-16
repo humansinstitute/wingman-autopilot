@@ -31,6 +31,10 @@ export interface WingmanConfig {
   agentStatusPollIntervalMs: number;
   agentStatusPollMaxIntervalMs: number;
   agentStatusPollTimeoutMs: number;
+  /** Base domain for app subdomain routing (e.g., "apps.example.com") */
+  subdomainBaseDomain: string | null;
+  /** Whether subdomain-based app routing is enabled */
+  subdomainProxyEnabled: boolean;
 }
 
 const DEFAULT_PORT = 3600;
@@ -171,6 +175,14 @@ export const loadConfig = (): WingmanConfig => {
   );
   const connectRelays = parseRelayList(Bun.env.CONNECT_RELAYS);
 
+  // Subdomain proxy configuration
+  const subdomainBaseDomainInput = Bun.env.SUBDOMAIN_BASE_DOMAIN?.trim();
+  const subdomainBaseDomain = subdomainBaseDomainInput && subdomainBaseDomainInput.length > 0
+    ? subdomainBaseDomainInput
+    : null;
+  const subdomainProxyEnabled = subdomainBaseDomain !== null &&
+    Bun.env.SUBDOMAIN_PROXY_ENABLED !== "false";
+
   return {
     port,
     agentPortStart,
@@ -185,6 +197,8 @@ export const loadConfig = (): WingmanConfig => {
     agentStatusPollIntervalMs,
     agentStatusPollMaxIntervalMs,
     agentStatusPollTimeoutMs,
+    subdomainBaseDomain,
+    subdomainProxyEnabled,
   };
 };
 

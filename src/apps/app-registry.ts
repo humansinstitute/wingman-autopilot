@@ -6,6 +6,7 @@ import { generateIdentityAlias } from "../identity/identity-alias";
 import { normaliseNpub } from "../identity/npub-utils";
 import { identityUserStore } from "../storage/identity-user-store";
 import { isPortAvailable } from "../utils/port-utils";
+import { appAliasRegistry } from "./app-alias-registry";
 
 const registryFilePath = new URL("../../data/apps.json", import.meta.url).pathname;
 
@@ -186,6 +187,12 @@ export class AppRegistry {
     };
     this.apps.set(record.id, record);
     await this.persist();
+
+    // Register subdomain alias for routing
+    if (ownerNpub) {
+      await appAliasRegistry.registerAlias(record.id, ownerNpub, root);
+    }
+
     return record;
   }
 
@@ -246,6 +253,15 @@ export class AppRegistry {
     }
     this.apps.set(id, next);
     await this.persist();
+
+    // Update subdomain alias if owner or root changed
+    if (next.ownerNpub) {
+      await appAliasRegistry.registerAlias(id, next.ownerNpub, next.root);
+    } else {
+      // No owner, remove alias
+      await appAliasRegistry.removeAlias(id);
+    }
+
     return next;
   }
 
@@ -254,8 +270,17 @@ export class AppRegistry {
     const existed = this.apps.delete(id);
     if (existed) {
       await this.persist();
+      await appAliasRegistry.removeAlias(id);
     }
     return existed;
+  }
+
+  /**
+   * Get the subdomain alias for an app.
+   */
+  async getAppAlias(id: string): Promise<string | null> {
+    const record = await appAliasRegistry.getByAppId(id);
+    return record?.alias ?? null;
   }
 
   async discoverScripts(root: string): Promise<AppLifecycleScripts> {

@@ -30,6 +30,7 @@ import {
   type AppLifecycleScripts,
   type AppRecord,
 } from "./apps/app-registry";
+import { appAliasRegistry } from "./apps/app-alias-registry";
 import {
   AppActionInProgressError,
   AppScriptMissingError,
@@ -98,6 +99,7 @@ import {
 } from "./auth/access-control";
 import { createStaticAssetService } from "./server/static-assets";
 import { maybeRefreshSessionCookie } from "./server/session-refresh";
+import { handleSubdomainRequest, type SubdomainProxyConfig } from "./server/subdomain-proxy";
 import { isAgentRuntimeStatus } from "./types/agent-status";
 import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import {
@@ -118,6 +120,16 @@ import { resolveAndCacheNostrProfile } from "./server/nostr-profile";
 
 const config = loadConfig();
 const adminNpub = normaliseNpub(Bun.env.ADMIN_NPUB ?? null);
+
+// Subdomain proxy configuration
+const subdomainProxyConfig: SubdomainProxyConfig = {
+  baseDomain: config.subdomainBaseDomain,
+  enabled: config.subdomainProxyEnabled,
+};
+
+if (subdomainProxyConfig.enabled) {
+  console.log(`[subdomain-proxy] Enabled for base domain: ${subdomainProxyConfig.baseDomain}`);
+}
 const ORCHESTRATOR_FLAG_KEY = "orchestrator_visibility";
 const PROJECTS_FLAG_KEY = "projects_visibility";
 const FEATURE_FLAG_DEFAULTS: Array<{
@@ -3042,6 +3054,7 @@ const WEB_APP_PORT_PLACEHOLDER = "<port>";
 
 type BuildAppResponseOptions = {
   ownerAlias?: string | null;
+  subdomainAlias?: string | null;
 };
 
 const buildHostedWebAppUrl = (port: number | null): string | null => {
@@ -3143,6 +3156,14 @@ const defaultAppProcessStatus = (appId: string): AppProcessStatus => {
   };
 };
 
+const buildSubdomainUrl = (alias: string | null): string | null => {
+  if (!alias || !config.subdomainBaseDomain) {
+    return null;
+  }
+  // Build URL like https://bold-gem-boat.apps.example.com
+  return `https://${alias}.${config.subdomainBaseDomain}`;
+};
+
 const buildAppResponse = (app: AppRecord, status: AppProcessStatus, options: BuildAppResponseOptions = {}) => {
   const hasStartScript = Boolean(app.scripts.start);
   const availableScripts: Record<AppLifecycleAction, boolean> = {
@@ -3156,6 +3177,8 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus, options: Bui
     typeof app.webAppPort === "number" && Number.isFinite(app.webAppPort) ? Math.trunc(app.webAppPort) : null;
   const webAppAlias = options.ownerAlias ?? null;
   const webAppUrl = app.webApp && webAppPort !== null ? buildHostedWebAppUrl(webAppPort) : null;
+  const subdomainAlias = options.subdomainAlias ?? null;
+  const subdomainUrl = app.webApp ? buildSubdomainUrl(subdomainAlias) : null;
   return {
     id: app.id,
     label: app.label,
@@ -3171,6 +3194,8 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus, options: Bui
     webAppPort,
     webAppAlias,
     webAppUrl,
+    subdomainAlias,
+    subdomainUrl,
     status,
     availableScripts,
     logs: undefined as string[] | undefined,
@@ -4356,7 +4381,9 @@ const handleApi = async (
         filteredApps.map(async (app) => {
           const status = statusMap.get(app.id) ?? defaultAppProcessStatus(app.id);
           const ownerAlias = resolveOwnerAliasCached(app.ownerNpub, ownerAliasCache);
-          const record = buildAppResponse(app, status, { ownerAlias });
+          const aliasRecord = await appAliasRegistry.getByAppId(app.id);
+          const subdomainAlias = aliasRecord?.alias ?? null;
+          const record = buildAppResponse(app, status, { ownerAlias, subdomainAlias });
           if (includeLogs) {
             try {
               record.logs = await appProcessManager.tailLogs(app.id, tailCount);
@@ -4471,7 +4498,9 @@ const handleApi = async (
       }
 
       const status = await appProcessManager.getStatus(app.id);
-      return Response.json({ app: buildAppResponse(app, status) }, { status: 201 });
+      const aliasRecord = await appAliasRegistry.getByAppId(app.id);
+      const subdomainAlias = aliasRecord?.alias ?? null;
+      return Response.json({ app: buildAppResponse(app, status, { subdomainAlias }) }, { status: 201 });
     } catch (error) {
       return Response.json({ error: (error as Error).message }, { status: 400 });
     }
@@ -4518,7 +4547,9 @@ const handleApi = async (
         return Response.json({ error: "Not found" }, { status: 404 });
       }
       const status = await appProcessManager.getStatus(id);
-      return Response.json({ app: buildAppResponse(app, status) });
+      const aliasRecord = await appAliasRegistry.getByAppId(id);
+      const subdomainAlias = aliasRecord?.alias ?? null;
+      return Response.json({ app: buildAppResponse(app, status, { subdomainAlias }) });
     }
 
     if (method === "PUT" && parts.length === 4) {
@@ -4609,7 +4640,9 @@ const handleApi = async (
         const updated = await appRegistry.updateApp(id, updatePayload);
         appProcessManager.forget(id);
         const status = await appProcessManager.getStatus(id);
-        return Response.json({ app: buildAppResponse(updated, status) });
+        const aliasRecord = await appAliasRegistry.getByAppId(id);
+        const subdomainAlias = aliasRecord?.alias ?? null;
+        return Response.json({ app: buildAppResponse(updated, status, { subdomainAlias }) });
       } catch (error) {
         return Response.json({ error: (error as Error).message }, { status: 400 });
       }
@@ -4728,7 +4761,9 @@ const handleApi = async (
           default:
             return Response.json({ error: `Unsupported action: ${actionValue}` }, { status: 400 });
         }
-        return Response.json({ app: buildAppResponse(app, status) });
+        const aliasRecord = await appAliasRegistry.getByAppId(id);
+        const subdomainAlias = aliasRecord?.alias ?? null;
+        return Response.json({ app: buildAppResponse(app, status, { subdomainAlias }) });
       } catch (error) {
         if (error instanceof AppActionInProgressError) {
           return Response.json({ error: error.message }, { status: 409 });
@@ -6149,6 +6184,12 @@ const server = Bun.serve({
       const webhookResponse = await handleWebhookRequest(request, url);
       if (webhookResponse) {
         return webhookResponse;
+      }
+
+      // Handle subdomain-based app routing (e.g., bold-gem-boat.apps.example.com)
+      const subdomainResponse = await handleSubdomainRequest(request, subdomainProxyConfig);
+      if (subdomainResponse) {
+        return subdomainResponse;
       }
 
       if (pathname === "/" && method === "GET") {
