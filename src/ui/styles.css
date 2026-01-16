@@ -2699,7 +2699,7 @@ body[data-menu-open="true"] .wm-menu-panel {
 
 .wm-composer textarea {
   flex: 1;
-  min-height: calc(1.5rem + 2px);
+  min-height: calc(1.5em * 3);
   max-height: calc(1.5rem * 8);
   border-radius: 0.75rem;
   border: 1px solid rgba(16, 185, 129, 0.35);
