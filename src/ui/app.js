@@ -3714,6 +3714,7 @@ const setActiveSession = (sessionId, options = {}) => {
     }
 
     syncDesktopSessionIndicator();
+    updateDocumentTitle();
     return true;
   }
 
@@ -3723,6 +3724,7 @@ const setActiveSession = (sessionId, options = {}) => {
     window.history.pushState({ route: "live" }, "", LIVE_ROUTE_PREFIX);
   }
   syncDesktopSessionIndicator();
+  updateDocumentTitle();
   return true;
 };
 
@@ -4622,6 +4624,34 @@ const setActiveNav = () => {
       link.classList.remove("active");
     }
   });
+};
+
+const updateDocumentTitle = () => {
+  let title = "Wingman";
+  if (currentRoute === "live") {
+    const session = state.activeSessionId
+      ? state.sessions.find((s) => s.id === state.activeSessionId)
+      : null;
+    if (session) {
+      const sessionName = getSessionDisplayName(session);
+      title = `${sessionName} - Wingman`;
+    } else {
+      title = "Agents - Wingman";
+    }
+  } else if (currentRoute === "apps") {
+    title = "Apps - Wingman";
+  } else if (currentRoute === "files") {
+    title = "Files - Wingman";
+  } else if (currentRoute === "settings") {
+    title = "Settings - Wingman";
+  } else if (currentRoute === "projects") {
+    title = "Projects - Wingman";
+  } else if (currentRoute === "todos") {
+    title = "Todos - Wingman";
+  } else if (currentRoute === "home") {
+    title = "Home - Wingman";
+  }
+  document.title = title;
 };
 
 function syncProjectsNavigationVisibility() {
@@ -11306,6 +11336,7 @@ const render = () => {
   syncMenuTabs();
   syncDesktopSessionIndicator();
   updateAgentStatusIndicators();
+  updateDocumentTitle();
   syncSessionPolling();
   syncAppsPolling();
   lastFilesMobileLayout = isMobileFilesLayout();
