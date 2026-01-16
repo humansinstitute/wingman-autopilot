@@ -8536,7 +8536,7 @@ const renderMenuIdentitySection = () => {
   const manageButton = document.createElement("button");
   manageButton.type = "button";
   manageButton.className = "wm-link-button wm-menu-identity-manage";
-  manageButton.textContent = "Manage";
+  manageButton.textContent = "Settings";
   manageButton.addEventListener("click", () => {
     navigateToSettings();
   });
