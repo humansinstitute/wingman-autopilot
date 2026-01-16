@@ -11303,7 +11303,6 @@ const render = () => {
   appRoot.dataset.route = currentRoute;
   restoreFocusFromSnapshot(focusSnapshot);
   setActiveNav();
-  closeMenu();
   syncMenuTabs();
   syncDesktopSessionIndicator();
   updateAgentStatusIndicators();
