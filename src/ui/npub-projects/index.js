@@ -162,6 +162,15 @@ const renderProjectRow = (project, onUpdate) => {
 
   nameContainer.append(nameSpan, nameInput);
 
+  // Show app badge if project has a linked app
+  if (project.appId) {
+    const appBadge = document.createElement("span");
+    appBadge.className = "wm-npub-project-app-badge";
+    appBadge.textContent = "App";
+    appBadge.title = "This project has a linked app";
+    nameContainer.append(appBadge);
+  }
+
   const pathSpan = document.createElement("span");
   pathSpan.className = "wm-npub-project-path";
   pathSpan.textContent = project.directoryPath;

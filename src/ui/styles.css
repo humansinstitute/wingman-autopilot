@@ -6463,6 +6463,20 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   gap: 0.5rem;
 }
 
+.wm-npub-project-app-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.4rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  color: var(--accent-primary, #3b82f6);
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 0.25rem;
+}
+
 .wm-npub-project-name {
   font-weight: 600;
   color: var(--text-primary);
