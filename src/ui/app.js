@@ -11138,6 +11138,13 @@ const renderComposer = (sessionId) => {
     copyConversationToClipboard(sessionId);
   });
 
+  addCommand("Rename session", () => {
+    const session = state.sessions.find((s) => s.id === sessionId);
+    if (session) {
+      promptRenameSession(session);
+    }
+  });
+
   addCommand("Attach image", () => {
     fileInput.click();
   });
