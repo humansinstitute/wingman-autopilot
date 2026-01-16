@@ -24,8 +24,16 @@ coverage
 
 # logs
 logs
-_.log
-report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+*.log
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# backups and temp files
+*.bak
+*.backup
+*.tmp
+*.swp
+*.swo
+*.orig
 
 # dotenv environment variable files
 .env
