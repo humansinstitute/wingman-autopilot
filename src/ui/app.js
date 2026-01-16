@@ -4568,7 +4568,14 @@ const toggleTabsVisibility = () => {
   applyTabsVisibility(nextVisible);
 };
 
-const closeMenu = () => {
+let menuOpenedAt = 0;
+
+const closeMenu = (options = {}) => {
+  const { force = false } = options;
+  // Prevent immediate close after open (iOS touch event double-fire issue)
+  if (!force && Date.now() - menuOpenedAt < 150) {
+    return;
+  }
   if (document.body.dataset.menuOpen === "true") {
     delete document.body.dataset.menuOpen;
     menuToggle?.setAttribute("aria-expanded", "false");
@@ -4580,8 +4587,9 @@ const closeMenu = () => {
 const toggleMenu = () => {
   const isOpen = document.body.dataset.menuOpen === "true";
   if (isOpen) {
-    closeMenu();
+    closeMenu({ force: true });
   } else {
+    menuOpenedAt = Date.now();
     document.body.dataset.menuOpen = "true";
     menuToggle?.setAttribute("aria-expanded", "true");
     menuPanel?.setAttribute("aria-hidden", "false");
