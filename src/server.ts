@@ -5441,36 +5441,16 @@ const handleApi = async (
   }
 
   if (pathname === "/api/uploads/images" && method === "POST") {
-    console.log("[uploads] image upload request received", {
-      host: request.headers.get("host"),
-      contentType: request.headers.get("content-type"),
-      contentLength: request.headers.get("content-length"),
-    });
     const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
     if (denied) {
-      console.log("[uploads] access denied for image upload");
       return denied;
     }
-    console.log("[uploads] access granted, parsing form data", {
-      bodyUsed: request.bodyUsed,
-      hasBody: request.body !== null,
-    });
     let form: FormData;
     try {
-      // Clone request to test if body is readable at all
-      const clonedRequest = request.clone();
-      console.log("[uploads] testing body stream...");
-      const testBuffer = await clonedRequest.arrayBuffer();
-      console.log("[uploads] body stream readable, size:", testBuffer.byteLength);
-
-      // Now parse the original request's form data
-      console.log("[uploads] parsing formData...");
       form = await request.formData();
-    } catch (formError) {
-      console.error("[uploads] form data parsing failed", formError);
-      return Response.json({ error: `Invalid form data: ${formError instanceof Error ? formError.message : "unknown"}` }, { status: 400 });
+    } catch {
+      return Response.json({ error: "Invalid form data" }, { status: 400 });
     }
-    console.log("[uploads] form data parsed successfully");
 
     const agentInput = form.get("agent");
     const agent = typeof agentInput === "string" ? agentInput.toLowerCase() : "";
