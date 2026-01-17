@@ -23,6 +23,8 @@ import {
   stopProcess,
 } from "../agents/pm2-wrapper";
 import { readCombinedLogs } from "../agents/log-reader";
+import { runtimePortRegistry } from "./runtime-port-registry";
+import { waitForListeningPort } from "../utils/port-utils";
 
 export type AppRuntimeStatus =
   | "idle"
@@ -141,6 +143,9 @@ export class AppProcessManager {
       // Start the process
       await startProcessFromConfig(ecosystemPath, processName);
 
+      // Detect and register runtime port
+      await this.detectAndRegisterPort(app.id, processName);
+
       return {
         finalStatus: "running" as AppRuntimeStatus,
         exitCode: 0,
@@ -151,6 +156,9 @@ export class AppProcessManager {
 
   async stop(appId: string): Promise<AppProcessStatus> {
     return this.runAction(appId, "stop", async (app) => {
+      // Clear runtime port first
+      runtimePortRegistry.clear(app.id);
+
       const processName = app.pm2Name;
       if (!processName) {
         return {
@@ -190,6 +198,9 @@ export class AppProcessManager {
         throw new AppScriptMissingError(app.id, "restart");
       }
 
+      // Clear runtime port before restart
+      runtimePortRegistry.clear(app.id);
+
       const processName = app.pm2Name;
       if (processName) {
         // Try PM2 restart first
@@ -197,6 +208,10 @@ export class AppProcessManager {
           const proc = await getProcessByName(processName);
           if (proc) {
             await restartProcess(processName);
+
+            // Detect and register new runtime port
+            await this.detectAndRegisterPort(app.id, processName);
+
             return {
               finalStatus: "running" as AppRuntimeStatus,
               exitCode: 0,
@@ -219,6 +234,9 @@ export class AppProcessManager {
 
       await this.registry.updateApp(app.id, { pm2Name: newProcessName, logsDir });
       await startProcessFromConfig(ecosystemPath, newProcessName);
+
+      // Detect and register runtime port
+      await this.detectAndRegisterPort(app.id, newProcessName);
 
       return {
         finalStatus: "running" as AppRuntimeStatus,
@@ -428,6 +446,29 @@ export class AppProcessManager {
       return proc?.pm2_env?.status === "online";
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Detect the runtime port from a PM2 process and register it.
+   * Polls for the port since the app may take time to bind after starting.
+   */
+  private async detectAndRegisterPort(appId: string, processName: string): Promise<void> {
+    try {
+      const runtimeInfo = await getProcessRuntimeInfo(processName);
+      if (!runtimeInfo?.pid) {
+        console.warn(`[app-process-manager] No PID found for ${processName}, cannot detect port`);
+        return;
+      }
+
+      const port = await waitForListeningPort(runtimeInfo.pid, { maxAttempts: 5, delayMs: 500 });
+      if (port !== null) {
+        runtimePortRegistry.set(appId, port, runtimeInfo.pid);
+      } else {
+        console.warn(`[app-process-manager] Could not detect listening port for ${processName} (pid ${runtimeInfo.pid})`);
+      }
+    } catch (error) {
+      console.warn(`[app-process-manager] Error detecting port for ${processName}:`, error);
     }
   }
 

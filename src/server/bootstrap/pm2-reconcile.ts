@@ -6,8 +6,25 @@
  * Registry is the source of truth for app metadata.
  */
 
+import { appendFileSync } from "node:fs";
 import { listProcesses, type PM2ProcessDescription } from "../../agents/pm2-wrapper";
 import type { AppRegistry } from "../../apps/app-registry";
+import { runtimePortRegistry } from "../../apps/runtime-port-registry";
+import { getListeningPortForPid } from "../../utils/port-utils";
+
+const ROUTING_LOG_PATH = "./tmp/logs-routing.log";
+
+function logRouting(message: string, data?: unknown): void {
+  const timestamp = new Date().toISOString();
+  const logLine = data
+    ? `[${timestamp}] [pm2-reconcile] ${message} ${JSON.stringify(data)}\n`
+    : `[${timestamp}] [pm2-reconcile] ${message}\n`;
+  try {
+    appendFileSync(ROUTING_LOG_PATH, logLine);
+  } catch {
+    // Ignore write errors
+  }
+}
 
 /**
  * Extract app ID from PM2 process environment.
@@ -51,6 +68,7 @@ function getPortFromPM2(proc: PM2ProcessDescription): number | null {
 export async function reconcileAppsWithPM2(
   registry: AppRegistry,
 ): Promise<{ appsReconciled: number; appsCleared: number }> {
+  logRouting(`=== PM2 RECONCILIATION STARTED ===`);
   let appsReconciled = 0;
   let appsCleared = 0;
 
@@ -58,6 +76,7 @@ export async function reconcileAppsWithPM2(
   let pm2Processes: PM2ProcessDescription[] = [];
   try {
     pm2Processes = await listProcesses();
+    logRouting(`found PM2 processes`, { count: pm2Processes.length });
   } catch (error) {
     console.warn(`[pm2-reconcile] failed to list PM2 processes for apps: ${(error as Error).message}`);
     return { appsReconciled: 0, appsCleared: 0 };
@@ -90,6 +109,7 @@ export async function reconcileAppsWithPM2(
       // Update app with PM2 info if it doesn't match
       const pm2Name = proc.name ?? undefined;
       const pm2Port = getPortFromPM2(proc);
+      const pid = proc.pid ?? null;
 
       if (app.pm2Name !== pm2Name) {
         try {
@@ -104,9 +124,23 @@ export async function reconcileAppsWithPM2(
         appsReconciled++;
       }
 
-      // Warn if PM2 port doesn't match registry
-      if (pm2Port && app.webAppPort && pm2Port !== app.webAppPort) {
-        console.warn(`[pm2-reconcile] app ${appId} port mismatch: PM2=${pm2Port}, registry=${app.webAppPort}`);
+      // Detect runtime port from PID and register it
+      if (pid) {
+        logRouting(`detecting port for app`, { appId, pid, pm2Port });
+        const detectedPort = await getListeningPortForPid(pid);
+        logRouting(`port detection result`, { appId, pid, detectedPort, pm2Port });
+        if (detectedPort) {
+          runtimePortRegistry.set(appId, detectedPort, pid);
+          logRouting(`registered detected port`, { appId, port: detectedPort, pid });
+        } else if (pm2Port) {
+          // Fallback to PM2 env PORT if detection failed
+          runtimePortRegistry.set(appId, pm2Port, pid);
+          logRouting(`registered fallback PM2 port`, { appId, port: pm2Port, pid });
+        } else {
+          logRouting(`WARN: no port detected or in PM2 env`, { appId, pid });
+        }
+      } else {
+        logRouting(`WARN: no PID for running app`, { appId });
       }
     }
   }
