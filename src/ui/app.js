@@ -3853,7 +3853,9 @@ const handleImageUploads = async (sessionId, files, textarea, resizeTextarea, se
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        const message = data?.error ?? response.statusText ?? "Image upload failed";
+        const errorText = data?.error || response.statusText || "Unknown error";
+        const message = `Image upload failed (${response.status}): ${errorText}`;
+        console.error("[image-upload]", message, { status: response.status, data });
         window.alert(message);
         continue;
       }
