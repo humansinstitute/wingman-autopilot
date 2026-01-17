@@ -11185,11 +11185,10 @@ const renderComposer = (sessionId) => {
   });
 
   addCommandDivider();
-  TERMINAL_CONTROL_ACTIONS.forEach((action) => {
-    addCommand(action.label, () => {
-      sendControlCommand(sessionId, action);
-    });
-  });
+  addSubmenu("Terminal", TERMINAL_CONTROL_ACTIONS.map((action) => ({
+    label: action.label,
+    handler: () => sendControlCommand(sessionId, action),
+  })));
 
   addCommandDivider();
   addCommand("Stop Session", () => {
