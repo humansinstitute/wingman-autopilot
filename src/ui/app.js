@@ -11291,6 +11291,14 @@ const updateLivePanelsForSession = (sessionId) => {
       liveWrapper.append(renderComposer(sessionId));
     }
   }
+
+  // Focus the textarea after composer is in the DOM
+  requestAnimationFrame(() => {
+    const textarea = document.querySelector('.wm-composer textarea');
+    if (textarea) {
+      textarea.focus();
+    }
+  });
 };
 
 const renderLive = () => {
@@ -11434,6 +11442,13 @@ const render = () => {
   renderWorktreeModal();
   appRoot.dataset.route = currentRoute;
   restoreFocusFromSnapshot(focusSnapshot);
+  // If on live route and no element was focused, focus the composer textarea
+  if (currentRoute === "live" && (!document.activeElement || document.activeElement === document.body)) {
+    const textarea = document.querySelector('.wm-composer textarea');
+    if (textarea) {
+      textarea.focus();
+    }
+  }
   setActiveNav();
   syncMenuTabs();
   syncDesktopSessionIndicator();
