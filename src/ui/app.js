@@ -3831,6 +3831,9 @@ const addImagePreview = (sessionId, file, thumbnailUrl) => {
   const previewContainer = composerShell.querySelector('.wm-image-preview-container');
   if (!previewContainer) return;
   
+  // Generate unique marker ID for this upload
+  const markerId = `img_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
   const previewItem = document.createElement('div');
   previewItem.className = 'wm-image-preview-item';
   previewItem.style.cssText = `
@@ -3874,36 +3877,110 @@ const addImagePreview = (sessionId, file, thumbnailUrl) => {
   removeBtn.title = 'Remove image';
   
   removeBtn.addEventListener('click', () => {
-    previewItem.remove();
-    URL.revokeObjectURL(thumbnailUrl);
-    // Hide container if no more previews
-    if (previewContainer.children.length === 0) {
-      previewContainer.style.display = 'none';
+    // Remove the corresponding text from textarea
+    const textarea = composerShell.querySelector('textarea');
+    if (textarea) {
+      const currentText = textarea.value;
+      const markerIndex = imagePreviewTracker.findMarkerInText(currentText, markerId);
+      if (markerIndex !== -1) {
+        const newText = imagePreviewTracker.removeMarkerFromText(currentText, markerId);
+        textarea.value = newText;
+        state.messageDrafts.set(sessionId, newText);
+        resizeTextarea();
+      }
     }
+    
+    // Remove the preview using tracker
+    imagePreviewTracker.remove(sessionId, markerId);
   });
   
   previewItem.append(img, removeBtn);
   previewContainer.append(previewItem);
   previewContainer.style.display = 'flex';
+  
+  // Add to tracker
+  imagePreviewTracker.add(sessionId, markerId, previewItem, thumbnailUrl);
+  
+  return markerId;
+};
+
+// Track relationship between image previews and their text markers
+const imagePreviewTracker = {
+  // sessionId -> Map<markerId, {previewElement, thumbnailUrl}>
+  previews: new Map(),
+  
+  add: (sessionId, markerId, previewElement, thumbnailUrl) => {
+    if (!imagePreviewTracker.previews.has(sessionId)) {
+      imagePreviewTracker.previews.set(sessionId, new Map());
+    }
+    imagePreviewTracker.previews.get(sessionId).set(markerId, {
+      previewElement,
+      thumbnailUrl
+    });
+  },
+  
+  remove: (sessionId, markerId) => {
+    const sessionPreviews = imagePreviewTracker.previews.get(sessionId);
+    if (sessionPreviews) {
+      const previewData = sessionPreviews.get(markerId);
+      if (previewData) {
+        previewData.previewElement.remove();
+        URL.revokeObjectURL(previewData.thumbnailUrl);
+        sessionPreviews.delete(markerId);
+      }
+      
+      // Hide container if no more previews
+      const composerShell = document.querySelector(`.wm-composer-shell[data-session-id="${sessionId}"]`);
+      const previewContainer = composerShell?.querySelector('.wm-image-preview-container');
+      if (previewContainer && sessionPreviews.size === 0) {
+        previewContainer.style.display = 'none';
+      }
+    }
+  },
+  
+  clear: (sessionId) => {
+    const composerShell = document.querySelector(`.wm-composer-shell[data-session-id="${sessionId}"]`);
+    const sessionPreviews = imagePreviewTracker.previews.get(sessionId);
+    
+    if (sessionPreviews) {
+      // Clear markers from textarea first
+      const textarea = composerShell?.querySelector('textarea');
+      if (textarea) {
+        let cleanText = textarea.value;
+        sessionPreviews.forEach((_, markerId) => {
+          cleanText = imagePreviewTracker.removeMarkerFromText(cleanText, markerId);
+        });
+        textarea.value = cleanText;
+        state.messageDrafts.set(sessionId, cleanText);
+      }
+      
+      // Then remove preview elements
+      sessionPreviews.forEach((previewData, markerId) => {
+        previewData.previewElement.remove();
+        URL.revokeObjectURL(previewData.thumbnailUrl);
+      });
+      sessionPreviews.clear();
+      
+      const previewContainer = composerShell?.querySelector('.wm-image-preview-container');
+      if (previewContainer) {
+        previewContainer.style.display = 'none';
+      }
+    }
+  },
+  
+  findMarkerInText: (text, markerId) => {
+    const marker = `<!--IMG:${markerId}-->`;
+    return text.indexOf(marker);
+  },
+  
+  removeMarkerFromText: (text, markerId) => {
+    const marker = `<!--IMG:${markerId}-->`;
+    return text.replace(marker, '');
+  }
 };
 
 const clearImagePreviews = (sessionId) => {
-  const composerShell = document.querySelector(`.wm-composer-shell[data-session-id="${sessionId}"]`);
-  if (!composerShell) return;
-  
-  const previewContainer = composerShell.querySelector('.wm-image-preview-container');
-  if (!previewContainer) return;
-  
-  // Revoke all object URLs to free memory
-  const images = previewContainer.querySelectorAll('img');
-  images.forEach(img => {
-    if (img.src.startsWith('blob:')) {
-      URL.revokeObjectURL(img.src);
-    }
-  });
-  
-  previewContainer.innerHTML = '';
-  previewContainer.style.display = 'none';
+  imagePreviewTracker.clear(sessionId);
 };
 
 const extractImageFiles = (items) => {
@@ -3959,12 +4036,14 @@ const handleImageUploads = async (sessionId, files, textarea, resizeTextarea, se
     
     // Generate and show thumbnail preview immediately
     const thumbnailUrl = await createThumbnail(file);
+    let markerId = null;
     if (thumbnailUrl) {
-      addImagePreview(sessionId, file, thumbnailUrl);
+      markerId = addImagePreview(sessionId, file, thumbnailUrl);
     }
     
-    // Insert uploading placeholder at cursor position
-    const uploadingPlaceholder = "[Uploading...]";
+    // Insert uploading placeholder with unique marker at cursor position
+    const marker = markerId ? `<!--IMG:${markerId}-->` : '';
+    const uploadingPlaceholder = markerId ? `${marker}[Uploading...]` : "[Uploading...]";
     const uploadText = textarea.value.endsWith("\n") ? `${uploadingPlaceholder}\n` : `\n${uploadingPlaceholder}\n`;
     insertTextAtCursor(textarea, uploadText, sessionId);
     resizeTextarea();
@@ -3988,26 +4067,17 @@ const handleImageUploads = async (sessionId, files, textarea, resizeTextarea, se
         window.alert(message);
         // Remove uploading placeholder on error
         const currentValue = textarea.value;
-        const placeholderIndex = currentValue.lastIndexOf(uploadingPlaceholder);
-        if (placeholderIndex !== -1) {
-          const beforePlaceholder = currentValue.substring(0, placeholderIndex);
-          const afterPlaceholder = currentValue.substring(placeholderIndex + uploadingPlaceholder.length);
-          textarea.value = beforePlaceholder + afterPlaceholder;
+        const markerIndex = markerId ? imagePreviewTracker.findMarkerInText(currentValue, markerId) : currentValue.lastIndexOf(uploadingPlaceholder);
+        if (markerIndex !== -1) {
+          const newText = markerId ? imagePreviewTracker.removeMarkerFromText(currentValue, markerId) : currentValue.replace(uploadingPlaceholder, '');
+          textarea.value = newText;
           state.messageDrafts.set(sessionId, textarea.value);
         }
         
         // Remove preview on error
-        if (thumbnailUrl) {
-          const composerShell = document.querySelector(`.wm-composer-shell[data-session-id="${sessionId}"]`);
-          const previewContainer = composerShell?.querySelector('.wm-image-preview-container');
-          const previewItems = previewContainer?.querySelectorAll('.wm-image-preview-item');
-          // Remove the last added preview item
-          if (previewItems && previewItems.length > 0) {
-            previewItems[previewItems.length - 1].remove();
-            if (previewContainer.children.length === 0) {
-              previewContainer.style.display = 'none';
-            }
-          }
+        if (thumbnailUrl && markerId) {
+          imagePreviewTracker.remove(sessionId, markerId);
+        } else if (thumbnailUrl) {
           URL.revokeObjectURL(thumbnailUrl);
         }
         continue;
@@ -4025,26 +4095,17 @@ const handleImageUploads = async (sessionId, files, textarea, resizeTextarea, se
         window.alert("Image upload succeeded without a usable reference.");
         // Remove uploading placeholder on success but no reference
         const currentValue = textarea.value;
-        const placeholderIndex = currentValue.lastIndexOf(uploadingPlaceholder);
-        if (placeholderIndex !== -1) {
-          const beforePlaceholder = currentValue.substring(0, placeholderIndex);
-          const afterPlaceholder = currentValue.substring(placeholderIndex + uploadingPlaceholder.length);
-          textarea.value = beforePlaceholder + afterPlaceholder;
+        const markerIndex = markerId ? imagePreviewTracker.findMarkerInText(currentValue, markerId) : currentValue.lastIndexOf(uploadingPlaceholder);
+        if (markerIndex !== -1) {
+          const newText = markerId ? imagePreviewTracker.removeMarkerFromText(currentValue, markerId) : currentValue.replace(uploadingPlaceholder, '');
+          textarea.value = newText;
           state.messageDrafts.set(sessionId, textarea.value);
         }
         
         // Remove preview on success but no reference
-        if (thumbnailUrl) {
-          const composerShell = document.querySelector(`.wm-composer-shell[data-session-id="${sessionId}"]`);
-          const previewContainer = composerShell?.querySelector('.wm-image-preview-container');
-          const previewItems = previewContainer?.querySelectorAll('.wm-image-preview-item');
-          // Remove the last added preview item
-          if (previewItems && previewItems.length > 0) {
-            previewItems[previewItems.length - 1].remove();
-            if (previewContainer.children.length === 0) {
-              previewContainer.style.display = 'none';
-            }
-          }
+        if (thumbnailUrl && markerId) {
+          imagePreviewTracker.remove(sessionId, markerId);
+        } else if (thumbnailUrl) {
           URL.revokeObjectURL(thumbnailUrl);
         }
         continue;
@@ -4052,16 +4113,30 @@ const handleImageUploads = async (sessionId, files, textarea, resizeTextarea, se
 
       // Replace uploading placeholder with actual image placeholder
       const currentValue = textarea.value;
-      const placeholderIndex = currentValue.lastIndexOf(uploadingPlaceholder);
-      if (placeholderIndex !== -1) {
-        const beforePlaceholder = currentValue.substring(0, placeholderIndex);
-        const afterPlaceholder = currentValue.substring(placeholderIndex + uploadingPlaceholder.length);
+      const markerIndex = markerId ? imagePreviewTracker.findMarkerInText(currentValue, markerId) : currentValue.lastIndexOf(uploadingPlaceholder);
+      if (markerIndex !== -1) {
+        const marker = markerId ? `<!--IMG:${markerId}-->[Uploading...]` : uploadingPlaceholder;
+        const beforePlaceholder = currentValue.substring(0, markerIndex);
+        const afterPlaceholder = currentValue.substring(markerIndex + marker.length);
         textarea.value = beforePlaceholder + placeholder + afterPlaceholder;
         state.messageDrafts.set(sessionId, textarea.value);
       }
       
-      // Clean up thumbnail URL on successful upload
-      if (thumbnailUrl) {
+      // Clean up thumbnail URL on successful upload (preview will be removed when message is sent)
+      if (thumbnailUrl && markerId) {
+        // Replace thumbnail with the actual uploaded image URL for preview consistency
+        const sessionPreviews = imagePreviewTracker.previews.get(sessionId);
+        if (sessionPreviews && sessionPreviews.has(markerId)) {
+          const previewData = sessionPreviews.get(markerId);
+          URL.revokeObjectURL(previewData.thumbnailUrl);
+          // Keep the preview element but update the image source to the uploaded image
+          const img = previewData.previewElement.querySelector('img');
+          if (img) {
+            img.src = payload.publicPath || '';
+          }
+          sessionPreviews.set(markerId, { ...previewData, thumbnailUrl: null });
+        }
+      } else if (thumbnailUrl) {
         URL.revokeObjectURL(thumbnailUrl);
       }
       
@@ -11077,8 +11152,24 @@ const renderComposer = (sessionId) => {
   };
 
   textarea.addEventListener("input", (event) => {
-    state.messageDrafts.set(sessionId, event.target.value);
+    const newText = event.target.value;
+    state.messageDrafts.set(sessionId, newText);
     resizeTextarea();
+    
+    // Check if any image markers were removed from text and remove corresponding thumbnails
+    const sessionPreviews = imagePreviewTracker.previews.get(sessionId);
+    if (sessionPreviews) {
+      const markersToRemove = [];
+      sessionPreviews.forEach((previewData, markerId) => {
+        if (imagePreviewTracker.findMarkerInText(newText, markerId) === -1) {
+          markersToRemove.push(markerId);
+        }
+      });
+      
+      markersToRemove.forEach(markerId => {
+        imagePreviewTracker.remove(sessionId, markerId);
+      });
+    }
   });
   textarea.addEventListener("keydown", (event) => {
     // Check for direct terminal control shortcuts when conditions are met:
