@@ -5457,12 +5457,15 @@ const handleApi = async (
     });
     let form: FormData;
     try {
-      // Add timeout to detect hangs - formData() should complete quickly
-      const formDataPromise = request.formData();
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error("formData() timed out after 30s")), 30000);
-      });
-      form = await Promise.race([formDataPromise, timeoutPromise]);
+      // Clone request to test if body is readable at all
+      const clonedRequest = request.clone();
+      console.log("[uploads] testing body stream...");
+      const testBuffer = await clonedRequest.arrayBuffer();
+      console.log("[uploads] body stream readable, size:", testBuffer.byteLength);
+
+      // Now parse the original request's form data
+      console.log("[uploads] parsing formData...");
+      form = await request.formData();
     } catch (formError) {
       console.error("[uploads] form data parsing failed", formError);
       return Response.json({ error: `Invalid form data: ${formError instanceof Error ? formError.message : "unknown"}` }, { status: 400 });
