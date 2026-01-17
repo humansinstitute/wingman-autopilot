@@ -6848,9 +6848,16 @@ const pollSessions = async () => {
     syncMenuTabs();
     syncDesktopSessionIndicator();
 
+    const currentSessionCount = state.sessions.length;
+    const currentSessionIds = state.sessions.map(s => s.id).join(',');
+    const sessionsChanged = previousSessionCount !== currentSessionCount || previousSessionIds !== currentSessionIds;
+
     if (currentRoute === "home") {
-      render();
-      // Update status indicators after render
+      // Only render on home route if sessions actually changed
+      if (sessionsChanged) {
+        render();
+      }
+      // Update status indicators after render or independently
       updateAgentStatusIndicators();
       return;
     }
@@ -6858,10 +6865,6 @@ const pollSessions = async () => {
     if (currentRoute !== "live") {
       return;
     }
-
-    const currentSessionCount = state.sessions.length;
-    const currentSessionIds = state.sessions.map(s => s.id).join(',');
-    const sessionsChanged = previousSessionCount !== currentSessionCount || previousSessionIds !== currentSessionIds;
 
     if (!state.activeSessionId) {
       // On live route with no active session, render to show empty state
@@ -7026,13 +7029,21 @@ const applyAgentStatusIndicatorState = (indicator, sessionId) => {
 };
 
 const updateAgentStatusIndicators = () => {
-  document.querySelectorAll(".wm-agent-status-indicator").forEach((indicator) => {
-    const sessionId = indicator.getAttribute("data-session-id");
-    if (sessionId) {
-      applyAgentStatusIndicatorState(indicator, sessionId);
-    }
-  });
-  updateKnightRiderState();
+  // Debounce status indicator updates to prevent performance issues
+  if (updateAgentStatusIndicatorsDebounceTimer) {
+    clearTimeout(updateAgentStatusIndicatorsDebounceTimer);
+  }
+  
+  updateAgentStatusIndicatorsDebounceTimer = setTimeout(() => {
+    document.querySelectorAll(".wm-agent-status-indicator").forEach((indicator) => {
+      const sessionId = indicator.getAttribute("data-session-id");
+      if (sessionId) {
+        applyAgentStatusIndicatorState(indicator, sessionId);
+      }
+    });
+    updateKnightRiderState();
+    updateAgentStatusIndicatorsDebounceTimer = null;
+  }, 100); // 100ms debounce for status updates
 };
 
 const updateKnightRiderState = (targetSessionId) => {
@@ -11705,55 +11716,60 @@ function restoreFocusFromSnapshot(snapshot) {
   }
 }
 
+let renderDebounceTimer = null;
+let updateAgentStatusIndicatorsDebounceTimer = null;
+
 const render = () => {
-  const projectsEnabled = syncProjectsNavigationVisibility();
-  if (!projectsEnabled && currentRoute === "projects") {
-    currentRoute = "home";
-    if (window.location.pathname === PROJECTS_ROUTE) {
-      window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
+  // Clear any pending render and set a new one
+  if (renderDebounceTimer) {
+    clearTimeout(renderDebounceTimer);
+  }
+  
+  renderDebounceTimer = setTimeout(() => {
+    const projectsEnabled = syncProjectsNavigationVisibility();
+    if (!projectsEnabled && currentRoute === "projects") {
+      currentRoute = "home";
+      if (window.location.pathname === PROJECTS_ROUTE) {
+        window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
+      }
     }
-  }
-  const focusSnapshot = captureFocusSnapshot();
-  appRoot.innerHTML = "";
-  let view;
-  if (currentRoute === "live") {
-    view = renderLive();
-  } else if (currentRoute === "apps") {
-    view = renderApps();
-  } else if (currentRoute === "projects") {
-    view = renderProjects();
-  } else if (currentRoute === "todos") {
-    view = renderTodos();
-  } else if (currentRoute === "files") {
-    view = renderFiles();
-  } else if (currentRoute === "settings") {
-    view = renderSettings();
-  } else {
-    view = renderHome();
-  }
-  appRoot.append(view);
-  renderFileEditorOverlay();
-  renderWorktreeModal();
-  appRoot.dataset.route = currentRoute;
-  restoreFocusFromSnapshot(focusSnapshot);
-  // If on live route and no element was focused, focus the composer textarea
-  if (currentRoute === "live" && (!document.activeElement || document.activeElement === document.body)) {
-    const textarea = document.querySelector('.wm-composer textarea');
-    if (textarea) {
-      textarea.focus();
+    const focusSnapshot = captureFocusSnapshot();
+    appRoot.innerHTML = "";
+    let view;
+    if (currentRoute === "live") {
+      view = renderLive();
+    } else if (currentRoute === "apps") {
+      view = renderApps();
+    } else if (currentRoute === "projects") {
+      view = renderProjects();
+    } else if (currentRoute === "todos") {
+      view = renderTodos();
+    } else if (currentRoute === "files") {
+      view = renderFiles();
+    } else if (currentRoute === "settings") {
+      view = renderSettings();
+    } else {
+      view = renderHome();
     }
-  }
-  setActiveNav();
-  syncMenuTabs();
-  syncDesktopSessionIndicator();
-  updateAgentStatusIndicators();
-  updateDocumentTitle();
-  syncSessionPolling();
-  syncAppsPolling();
-  lastFilesMobileLayout = isMobileFilesLayout();
-  if (!pullRefreshing && !pullActive) {
-    resetPullRefresh();
-  }
+    appRoot.append(view);
+    renderFileEditorOverlay();
+    renderWorktreeModal();
+    appRoot.dataset.route = currentRoute;
+    restoreFocusFromSnapshot(focusSnapshot);
+    // If on live route and no element was focused, focus the composer textarea
+    if (currentRoute === "live" && (!document.activeElement || document.activeElement === document.body)) {
+      const textarea = document.querySelector('.wm-composer textarea');
+      if (textarea) {
+        textarea.focus();
+      }
+    }
+    setActiveNav();
+    syncMenuTabs();
+    syncDesktopSessionIndicator();
+    updateAgentStatusIndicators();
+    updateDocumentTitle();
+    renderDebounceTimer = null;
+  }, 50); // 50ms debounce to prevent rapid re-renders
 };
 
 projectFeature = createProjectFeature({
