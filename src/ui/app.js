@@ -10860,11 +10860,14 @@ const renderComposer = (sessionId) => {
 
   let submit;
   let commandButton;
+  const defaultPlaceholder = "Ask the agent something...";
   const setUploadingState = (isUploading) => {
     if (isUploading) {
       composer.dataset.uploading = "true";
+      textarea.placeholder = "Uploading…";
     } else {
       delete composer.dataset.uploading;
+      textarea.placeholder = defaultPlaceholder;
     }
     if (submit) {
       submit.disabled = Boolean(isUploading);
