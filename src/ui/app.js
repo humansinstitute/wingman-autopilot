@@ -3840,6 +3840,12 @@ const handleImageUploads = async (sessionId, files, textarea, resizeTextarea, se
     if (!file?.type?.startsWith?.("image/")) {
       continue;
     }
+    // Insert uploading placeholder at cursor position
+    const uploadingPlaceholder = "[Uploading...]";
+    const uploadText = textarea.value.endsWith("\n") ? `${uploadingPlaceholder}\n` : `\n${uploadingPlaceholder}\n`;
+    insertTextAtCursor(textarea, uploadText, sessionId);
+    resizeTextarea();
+    
     setUploadingState(true);
     try {
       const form = new FormData();
@@ -3857,6 +3863,15 @@ const handleImageUploads = async (sessionId, files, textarea, resizeTextarea, se
         const message = `Image upload failed (${response.status}): ${errorText}`;
         console.error("[image-upload]", message, { status: response.status, data });
         window.alert(message);
+        // Remove uploading placeholder on error
+        const currentValue = textarea.value;
+        const placeholderIndex = currentValue.lastIndexOf(uploadingPlaceholder);
+        if (placeholderIndex !== -1) {
+          const beforePlaceholder = currentValue.substring(0, placeholderIndex);
+          const afterPlaceholder = currentValue.substring(placeholderIndex + uploadingPlaceholder.length);
+          textarea.value = beforePlaceholder + afterPlaceholder;
+          state.messageDrafts.set(sessionId, textarea.value);
+        }
         continue;
       }
 
@@ -3870,11 +3885,27 @@ const handleImageUploads = async (sessionId, files, textarea, resizeTextarea, se
 
       if (!placeholder) {
         window.alert("Image upload succeeded without a usable reference.");
+        // Remove uploading placeholder on success but no reference
+        const currentValue = textarea.value;
+        const placeholderIndex = currentValue.lastIndexOf(uploadingPlaceholder);
+        if (placeholderIndex !== -1) {
+          const beforePlaceholder = currentValue.substring(0, placeholderIndex);
+          const afterPlaceholder = currentValue.substring(placeholderIndex + uploadingPlaceholder.length);
+          textarea.value = beforePlaceholder + afterPlaceholder;
+          state.messageDrafts.set(sessionId, textarea.value);
+        }
         continue;
       }
 
-      const textToInsert = textarea.value.endsWith("\n") ? `${placeholder}\n` : `\n${placeholder}\n`;
-      insertTextAtCursor(textarea, textToInsert, sessionId);
+      // Replace uploading placeholder with actual image placeholder
+      const currentValue = textarea.value;
+      const placeholderIndex = currentValue.lastIndexOf(uploadingPlaceholder);
+      if (placeholderIndex !== -1) {
+        const beforePlaceholder = currentValue.substring(0, placeholderIndex);
+        const afterPlaceholder = currentValue.substring(placeholderIndex + uploadingPlaceholder.length);
+        textarea.value = beforePlaceholder + placeholder + afterPlaceholder;
+        state.messageDrafts.set(sessionId, textarea.value);
+      }
       resizeTextarea();
       textarea.focus();
     } catch (error) {
