@@ -6187,9 +6187,25 @@ const server = Bun.serve({
       }
 
       // Handle subdomain-based app routing (e.g., bold-gem-boat.apps.example.com)
-      const subdomainResponse = await handleSubdomainRequest(request, subdomainProxyConfig);
-      if (subdomainResponse) {
-        return subdomainResponse;
+      // Skip subdomain routing for Wingman's own API and UI paths
+      const isWingmanPath = pathname.startsWith("/api/") ||
+        pathname.startsWith("/home") ||
+        pathname.startsWith("/live") ||
+        pathname.startsWith("/settings") ||
+        pathname.startsWith("/uploads/") ||
+        pathname.startsWith("/projects") ||
+        pathname.startsWith("/apps") ||
+        pathname.startsWith("/deep-dive") ||
+        pathname.startsWith("/orchestrator") ||
+        pathname.startsWith("/auth") ||
+        pathname === "/" ||
+        pathname === "/favicon.ico";
+
+      if (!isWingmanPath) {
+        const subdomainResponse = await handleSubdomainRequest(request, subdomainProxyConfig);
+        if (subdomainResponse) {
+          return subdomainResponse;
+        }
       }
 
       if (pathname === "/" && method === "GET") {
