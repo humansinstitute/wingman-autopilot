@@ -5447,7 +5447,15 @@ const handleApi = async (
     }
     let form: FormData;
     try {
-      form = await request.formData();
+      // Read body as blob first to work around cloudflared streaming issues
+      const contentType = request.headers.get("content-type") ?? "";
+      const bodyBlob = await request.blob();
+      const bufferedRequest = new Request(request.url, {
+        method: request.method,
+        headers: { "content-type": contentType },
+        body: bodyBlob,
+      });
+      form = await bufferedRequest.formData();
     } catch {
       return Response.json({ error: "Invalid form data" }, { status: 400 });
     }
