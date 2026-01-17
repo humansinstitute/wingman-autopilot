@@ -5441,16 +5441,25 @@ const handleApi = async (
   }
 
   if (pathname === "/api/uploads/images" && method === "POST") {
+    console.log("[uploads] image upload request received", {
+      host: request.headers.get("host"),
+      contentType: request.headers.get("content-type"),
+      contentLength: request.headers.get("content-length"),
+    });
     const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
     if (denied) {
+      console.log("[uploads] access denied for image upload");
       return denied;
     }
+    console.log("[uploads] access granted, parsing form data");
     let form: FormData;
     try {
       form = await request.formData();
-    } catch {
+    } catch (formError) {
+      console.error("[uploads] form data parsing failed", formError);
       return Response.json({ error: "Invalid form data" }, { status: 400 });
     }
+    console.log("[uploads] form data parsed successfully");
 
     const agentInput = form.get("agent");
     const agent = typeof agentInput === "string" ? agentInput.toLowerCase() : "";
