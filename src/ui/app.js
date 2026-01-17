@@ -3782,12 +3782,128 @@ const insertTextAtCursor = (textarea, text, sessionId) => {
   const end = textarea.selectionEnd ?? textarea.value.length;
   const before = textarea.value.slice(0, start);
   const after = textarea.value.slice(end);
-  const next = `${before}${text}${after}`;
-  textarea.value = next;
+  const next = before + text + after;
   const nextCursor = start + text.length;
+  textarea.value = next;
   textarea.selectionStart = textarea.selectionEnd = nextCursor;
   state.messageDrafts.set(sessionId, next);
-  return next;
+};
+
+const createThumbnail = (file, maxSize = 80) => {
+  return new Promise((resolve) => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    
+    img.onload = () => {
+      // Calculate thumbnail dimensions maintaining aspect ratio
+      let { width, height } = img;
+      if (width > height) {
+        if (width > maxSize) {
+          height = (height * maxSize) / width;
+          width = maxSize;
+        }
+      } else {
+        if (height > maxSize) {
+          width = (width * maxSize) / height;
+          height = maxSize;
+        }
+      }
+      
+      canvas.width = width;
+      canvas.height = height;
+      ctx.drawImage(img, 0, 0, width, height);
+      
+      canvas.toBlob((blob) => {
+        resolve(URL.createObjectURL(blob));
+      }, 'image/jpeg', 0.8);
+    };
+    
+    img.onerror = () => resolve(null);
+    img.src = URL.createObjectURL(file);
+  });
+};
+
+const addImagePreview = (sessionId, file, thumbnailUrl) => {
+  const composerShell = document.querySelector(`.wm-composer-shell[data-session-id="${sessionId}"]`);
+  if (!composerShell) return;
+  
+  const previewContainer = composerShell.querySelector('.wm-image-preview-container');
+  if (!previewContainer) return;
+  
+  const previewItem = document.createElement('div');
+  previewItem.className = 'wm-image-preview-item';
+  previewItem.style.cssText = `
+    position: relative;
+    display: inline-block;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid #e1e5e9;
+    background: #f8f9fa;
+  `;
+  
+  const img = document.createElement('img');
+  img.src = thumbnailUrl;
+  img.style.cssText = `
+    width: 80px;
+    height: 80px;
+    object-fit: cover;
+    display: block;
+  `;
+  
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.innerHTML = '×';
+  removeBtn.style.cssText = `
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  `;
+  removeBtn.title = 'Remove image';
+  
+  removeBtn.addEventListener('click', () => {
+    previewItem.remove();
+    URL.revokeObjectURL(thumbnailUrl);
+    // Hide container if no more previews
+    if (previewContainer.children.length === 0) {
+      previewContainer.style.display = 'none';
+    }
+  });
+  
+  previewItem.append(img, removeBtn);
+  previewContainer.append(previewItem);
+  previewContainer.style.display = 'flex';
+};
+
+const clearImagePreviews = (sessionId) => {
+  const composerShell = document.querySelector(`.wm-composer-shell[data-session-id="${sessionId}"]`);
+  if (!composerShell) return;
+  
+  const previewContainer = composerShell.querySelector('.wm-image-preview-container');
+  if (!previewContainer) return;
+  
+  // Revoke all object URLs to free memory
+  const images = previewContainer.querySelectorAll('img');
+  images.forEach(img => {
+    if (img.src.startsWith('blob:')) {
+      URL.revokeObjectURL(img.src);
+    }
+  });
+  
+  previewContainer.innerHTML = '';
+  previewContainer.style.display = 'none';
 };
 
 const extractImageFiles = (items) => {
@@ -3840,6 +3956,13 @@ const handleImageUploads = async (sessionId, files, textarea, resizeTextarea, se
     if (!file?.type?.startsWith?.("image/")) {
       continue;
     }
+    
+    // Generate and show thumbnail preview immediately
+    const thumbnailUrl = await createThumbnail(file);
+    if (thumbnailUrl) {
+      addImagePreview(sessionId, file, thumbnailUrl);
+    }
+    
     // Insert uploading placeholder at cursor position
     const uploadingPlaceholder = "[Uploading...]";
     const uploadText = textarea.value.endsWith("\n") ? `${uploadingPlaceholder}\n` : `\n${uploadingPlaceholder}\n`;
@@ -3872,6 +3995,21 @@ const handleImageUploads = async (sessionId, files, textarea, resizeTextarea, se
           textarea.value = beforePlaceholder + afterPlaceholder;
           state.messageDrafts.set(sessionId, textarea.value);
         }
+        
+        // Remove preview on error
+        if (thumbnailUrl) {
+          const composerShell = document.querySelector(`.wm-composer-shell[data-session-id="${sessionId}"]`);
+          const previewContainer = composerShell?.querySelector('.wm-image-preview-container');
+          const previewItems = previewContainer?.querySelectorAll('.wm-image-preview-item');
+          // Remove the last added preview item
+          if (previewItems && previewItems.length > 0) {
+            previewItems[previewItems.length - 1].remove();
+            if (previewContainer.children.length === 0) {
+              previewContainer.style.display = 'none';
+            }
+          }
+          URL.revokeObjectURL(thumbnailUrl);
+        }
         continue;
       }
 
@@ -3894,6 +4032,21 @@ const handleImageUploads = async (sessionId, files, textarea, resizeTextarea, se
           textarea.value = beforePlaceholder + afterPlaceholder;
           state.messageDrafts.set(sessionId, textarea.value);
         }
+        
+        // Remove preview on success but no reference
+        if (thumbnailUrl) {
+          const composerShell = document.querySelector(`.wm-composer-shell[data-session-id="${sessionId}"]`);
+          const previewContainer = composerShell?.querySelector('.wm-image-preview-container');
+          const previewItems = previewContainer?.querySelectorAll('.wm-image-preview-item');
+          // Remove the last added preview item
+          if (previewItems && previewItems.length > 0) {
+            previewItems[previewItems.length - 1].remove();
+            if (previewContainer.children.length === 0) {
+              previewContainer.style.display = 'none';
+            }
+          }
+          URL.revokeObjectURL(thumbnailUrl);
+        }
         continue;
       }
 
@@ -3906,6 +4059,12 @@ const handleImageUploads = async (sessionId, files, textarea, resizeTextarea, se
         textarea.value = beforePlaceholder + placeholder + afterPlaceholder;
         state.messageDrafts.set(sessionId, textarea.value);
       }
+      
+      // Clean up thumbnail URL on successful upload
+      if (thumbnailUrl) {
+        URL.revokeObjectURL(thumbnailUrl);
+      }
+      
       resizeTextarea();
       textarea.focus();
     } catch (error) {
@@ -10860,6 +11019,15 @@ const renderComposer = (sessionId) => {
   composerShell.className = "wm-composer-shell";
   composerShell.dataset.sessionId = sessionId;
 
+  // Image preview container
+  const imagePreviewContainer = document.createElement("div");
+  imagePreviewContainer.className = "wm-image-preview-container";
+  imagePreviewContainer.style.display = "none";
+  imagePreviewContainer.style.marginBottom = "8px";
+  imagePreviewContainer.style.display = "flex";
+  imagePreviewContainer.style.flexWrap = "wrap";
+  imagePreviewContainer.style.gap = "8px";
+
   const composer = document.createElement("form");
   composer.className = "wm-composer";
 
@@ -11000,6 +11168,10 @@ const renderComposer = (sessionId) => {
     event.preventDefault();
     const draft = textarea.value;
     state.messageDrafts.set(sessionId, draft);
+    
+    // Clear image previews when sending message
+    clearImagePreviews(sessionId);
+    
     const result = sendMessage(sessionId, draft);
     if (result?.finally) {
       result.finally(() => {
@@ -11287,7 +11459,7 @@ const renderComposer = (sessionId) => {
   statusIndicator.classList.add("wm-agent-status-pill-button");
   buttonGroup.prepend(statusIndicator);
 
-  composerShell.append(composer);
+  composerShell.append(imagePreviewContainer, composer);
 
   resizeTextarea();
 
