@@ -5451,13 +5451,21 @@ const handleApi = async (
       console.log("[uploads] access denied for image upload");
       return denied;
     }
-    console.log("[uploads] access granted, parsing form data");
+    console.log("[uploads] access granted, parsing form data", {
+      bodyUsed: request.bodyUsed,
+      hasBody: request.body !== null,
+    });
     let form: FormData;
     try {
-      form = await request.formData();
+      // Add timeout to detect hangs - formData() should complete quickly
+      const formDataPromise = request.formData();
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("formData() timed out after 30s")), 30000);
+      });
+      form = await Promise.race([formDataPromise, timeoutPromise]);
     } catch (formError) {
       console.error("[uploads] form data parsing failed", formError);
-      return Response.json({ error: "Invalid form data" }, { status: 400 });
+      return Response.json({ error: `Invalid form data: ${formError instanceof Error ? formError.message : "unknown"}` }, { status: 400 });
     }
     console.log("[uploads] form data parsed successfully");
 
