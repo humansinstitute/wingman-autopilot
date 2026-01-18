@@ -6962,10 +6962,11 @@ const startConversationPolling = (sessionId) => {
 
     conversationPollInFlight = true;
     try {
-      // Fetch conversation and session status in parallel
-      const [, sessionData] = await Promise.all([
+      // Fetch conversation, session status, and queue in parallel
+      const [, sessionData, queueData] = await Promise.all([
         fetchConversation(sessionId),
         fetchSessionApi(sessionId),
+        fetchSessionQueueApi(sessionId),
       ]);
 
       // Update session status if we got data
@@ -6978,6 +6979,18 @@ const startConversationPolling = (sessionId) => {
           if (oldStatus !== session.agentRuntimeStatus) {
             updateAgentStatusIndicators();
           }
+        }
+      }
+
+      // Sync queue from server
+      if (queueData) {
+        const queue = getSessionQueue(sessionId);
+        const oldCount = queue.prompts.length;
+        queue.prompts = queueData.prompts ?? [];
+        queue.maxSize = queueData.maxSize ?? 21;
+        // Update UI if queue count changed
+        if (oldCount !== queue.prompts.length) {
+          updateAgentStatusIndicators();
         }
       }
     } catch (err) {
