@@ -755,21 +755,12 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
   }
 
   state.identity = next;
-  if (todoFeature) {
-    // DISABLED - No todo functionality
-    const emptyContainer = document.createElement("div");
-    return emptyContainer;
-  }
-  }
-
   if (wasAdmin && !next.isAdmin) {
     state.adminUsers = createAdminUsersState();
   }
 
   if (next.authenticated && (!next.picture || becameAuthenticated)) {
     void refreshIdentityProfilePicture({ force: becameAuthenticated });
-  }
-  }
   }
 
   if (next.npub !== current.npub || next.isAdmin !== current.isAdmin) {
