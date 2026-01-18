@@ -6908,13 +6908,8 @@ const pollSessionsLoop = async () => {
 };
 
 const startSessionPolling = () => {
-  if (sessionPollIntervalId !== null) {
-    return;
-  }
-  // No polling - fetch sessions once initially
-  if (currentRoute === "live" || currentRoute === "home") {
-    void pollSessionsLoop();
-  }
+  // NEVER START POLLING - COMPLETELY DISABLED
+  return;
 };
 
 const stopSessionPolling = () => {
@@ -11638,7 +11633,7 @@ const renderLive = () => {
     refreshBtn.textContent = "Refresh";
     refreshBtn.title = "Check for sessions";
     refreshBtn.addEventListener("click", () => {
-      void pollSessionsLoop();
+      // void pollSessionsLoop(); // DISABLED
     });
     
     emptyContainer.append(empty, refreshBtn);
