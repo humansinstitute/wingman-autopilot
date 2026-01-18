@@ -97,6 +97,7 @@ import {
   type AccessDecision,
   type AccessRule,
 } from "./auth/access-control";
+import { handleKeyTeleport } from "./auth/keyteleport";
 import { createStaticAssetService } from "./server/static-assets";
 import { maybeRefreshSessionCookie } from "./server/session-refresh";
 import { handleSubdomainRequest, type SubdomainProxyConfig } from "./server/subdomain-proxy";
@@ -3855,6 +3856,11 @@ const handleApi = async (
     return new Response(null, { status: 204, headers });
   }
 
+  // Key Teleport: receive encrypted key blob from Welcome
+  if (pathname === "/api/auth/keyteleport" && method === "POST") {
+    return handleKeyTeleport(request);
+  }
+
   if (pathname === "/api/identity/profile" && method === "GET") {
     const denied = await ensureApiAccess(AccessActions.UiRestricted, request, url, authContext);
     if (denied) {
@@ -5869,11 +5875,8 @@ const handleApi = async (
 
     // SSE endpoint - check auth and handle specially
     if (method === "GET" && parts[4] === "events" && id) {
-      // Debug logging for SSE auth
-      console.log(`[sse-debug] SSE request for session ${id}, hasSession: ${!!authContext.session}, npub: ${authContext.npub || "none"}`);
       const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
       if (denied) {
-        console.log(`[sse-debug] SSE auth denied for ${id}`);
         return denied;
       }
       const liveSession = manager.getSession(id);
@@ -5883,7 +5886,6 @@ const handleApi = async (
       if (!ownedSession) {
         return Response.json({ error: "Not found" }, { status: 404 });
       }
-      console.log(`[sse-debug] SSE auth passed for ${id}, handling...`);
       return handleSessionEvents(id, request);
     }
 
@@ -6248,7 +6250,7 @@ const server = Bun.serve({
       }
 
       if (pathname === "/" && method === "GET") {
-        return Response.redirect(`${url.origin}/home`, 302);
+        return Response.redirect(`${url.origin}/home${url.search}`, 302);
       }
 
       if (method === "GET" && pathname === "/deep-dive/config.json") {

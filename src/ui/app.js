@@ -12521,6 +12521,19 @@ dialog.addEventListener("cancel", (event) => {
   });
 
   await fetchConfig();
+
+  // Check for Key Teleport login parameter
+  if (typeof wingmanIdentity?.checkKeyTeleportParam === "function") {
+    try {
+      const teleportResult = await wingmanIdentity.checkKeyTeleportParam(getIdentityWiringContext());
+      if (teleportResult) {
+        console.log("[app] Key Teleport login completed");
+      }
+    } catch (err) {
+      console.warn("[app] Key Teleport check failed:", err);
+    }
+  }
+
   ensureFeatureFlagsLoaded();
   if (orchestratorFeatureEnabledForViewer()) {
     await refreshOrchestratorPresets();

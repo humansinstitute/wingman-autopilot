@@ -8,7 +8,7 @@ const KEY_SECURITY_BYTE = 0x01;
 const ENCRYPTION_VERSION = 0x02;
 const SECURE_LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 const INSECURE_PASSWORD_MESSAGE =
-  "Password entry requires a secure connection. Access Wingman over HTTPS or from localhost.";
+  "PIN entry requires a secure connection. Access Wingman over HTTPS or from localhost.";
 const DEFAULT_CONNECT_RELAYS = [
   "wss://relay.nsec.app",
   "wss://nos.lol",
@@ -16,6 +16,7 @@ const DEFAULT_CONNECT_RELAYS = [
   "wss://nostr.mineracks.com",
 ];
 const NOSTR_CONNECT_SECRET_TTL_MS = 5 * 60 * 1000;
+const KEYTELEPORT_PARAM = "keyteleport";
 
 import { scryptAsync } from "/vendor/@noble/hashes/scrypt.js";
 import { xchacha20poly1305 } from "/vendor/@noble/ciphers/chacha.js";
@@ -29,7 +30,7 @@ const textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : nul
 
 class PasswordPromptCancelledError extends Error {
   constructor() {
-    super("Password entry cancelled");
+    super("PIN entry cancelled");
     this.name = "PasswordPromptCancelledError";
   }
 }
@@ -71,7 +72,7 @@ const applySecureInputBehaviour = (input, secure) => {
   if (!input.dataset?.securePlaceholder && input.placeholder) {
     input.dataset.securePlaceholder = input.placeholder;
   }
-  input.placeholder = "Enable HTTPS to enter a password";
+  input.placeholder = "Enable HTTPS to enter a PIN";
 };
 
 const applyPasswordDialogSecurity = (elements) => {
@@ -774,8 +775,8 @@ const showPasswordDialog = async ({
     description.textContent =
       message ??
       (needsConfirmation
-        ? "Create a password to encrypt your Nostr private key on this device."
-        : "Enter the password you previously set to unlock cached sessions.");
+        ? "Create a 6-digit PIN to encrypt your Nostr private key on this device."
+        : "Enter the PIN you previously set to unlock cached sessions.");
   }
 
   if (confirmField) {
@@ -812,7 +813,7 @@ const showPasswordDialog = async ({
       const password = passwordInput.value.trim();
       if (!password) {
         if (errorEl) {
-          errorEl.textContent = "Password is required";
+          errorEl.textContent = "PIN is required";
           errorEl.hidden = false;
         }
         passwordInput.focus();
@@ -822,7 +823,7 @@ const showPasswordDialog = async ({
         const confirmation = confirmInput.value.trim();
         if (password !== confirmation) {
           if (errorEl) {
-            errorEl.textContent = "Passwords do not match";
+            errorEl.textContent = "PINs do not match";
             errorEl.hidden = false;
           }
           confirmInput.focus();
@@ -916,7 +917,7 @@ const runPasswordPrompt = async ({ mode, reason, errorMessage, validate } = {}) 
 
     const password = result.password;
     if (!password) {
-      validationError = "Password is required";
+      validationError = "PIN is required";
       continue;
     }
 
@@ -924,13 +925,13 @@ const runPasswordPrompt = async ({ mode, reason, errorMessage, validate } = {}) 
       try {
         const validationResult = await validate(password);
         if (!validationResult) {
-          validationError = "Incorrect password";
+          validationError = "Incorrect PIN";
           clearPasswordCache();
           continue;
         }
       } catch (error) {
-        console.warn("[identity] password validation failed", error);
-        validationError = "Unable to validate password";
+        console.warn("[identity] PIN validation failed", error);
+        validationError = "Unable to validate PIN";
         clearPasswordCache();
         continue;
       }
@@ -1087,7 +1088,7 @@ const decryptPrivateKeyWithPrompt = async (encrypted, { reason } = {}) => {
     } catch (error) {
       console.warn("[identity] failed to decrypt cached key:", error instanceof Error ? error.message : error);
       clearPasswordCache();
-      errorMessage = "Incorrect password";
+      errorMessage = "Incorrect PIN";
     }
   }
 };
@@ -1723,6 +1724,134 @@ identityApi.wireBunkerLogin = wireBunkerLogin;
 identityApi.logoutIdentity = performLogout;
 identityApi.bunkerSigner = identityApi.bunkerSigner ?? null;
 
+// =============================================================================
+// Key Teleport Support
+// =============================================================================
+
+/**
+ * Handle Key Teleport login by decrypting the blob and using the ncryptsec
+ * @param {Object} options
+ * @param {string} options.blob - The base64-encoded Key Teleport blob
+ * @param {Object} options.context - The identity context for UI updates
+ * @returns {Promise<string|null>} The npub if successful, null otherwise
+ */
+const handleKeyTeleport = async ({ blob, context }) => {
+  if (!blob || typeof blob !== "string") {
+    console.error("[KeyTeleport] Missing or invalid blob");
+    return null;
+  }
+
+  console.log("[KeyTeleport] Processing teleport blob...");
+
+  try {
+    // Send blob to backend to decrypt and fetch ncryptsec
+    const response = await fetch("/api/auth/keyteleport", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ blob }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const errorMsg = data?.error ?? `Key teleport failed (${response.status})`;
+      console.error("[KeyTeleport]", errorMsg);
+      window.alert(`Key Teleport failed: ${errorMsg}`);
+      return null;
+    }
+
+    const ncryptsec = data?.ncryptsec;
+    if (!ncryptsec || typeof ncryptsec !== "string" || !ncryptsec.startsWith("ncryptsec1")) {
+      console.error("[KeyTeleport] Invalid ncryptsec received");
+      window.alert("Key Teleport failed: Invalid key format received");
+      return null;
+    }
+
+    console.log("[KeyTeleport] Received ncryptsec, prompting for password...");
+
+    // Prompt for password to decrypt the ncryptsec
+    let secretKey;
+    try {
+      secretKey = await decryptPrivateKeyWithPrompt(ncryptsec, {
+        reason: "Enter the PIN you used when sending the key from Welcome.",
+      });
+    } catch (error) {
+      if (error instanceof PasswordPromptCancelledError) {
+        console.log("[KeyTeleport] User cancelled password prompt");
+        return null;
+      }
+      throw error;
+    }
+
+    // Derive public key and npub from secret key
+    const publicKeyBytes = schnorr.getPublicKey(secretKey);
+    const pubkeyHex = bytesToHex(publicKeyBytes);
+    const npub = nip19.npubEncode(pubkeyHex);
+    const nsec = nip19.nsecEncode(secretKey);
+
+    console.log("[KeyTeleport] Key decrypted, creating session...");
+
+    // Encrypt the key with user's local password for storage
+    let encryptedNsec = null;
+    try {
+      encryptedNsec = await identityApi.crypto?.encryptPrivateKey(secretKey, {
+        mode: "create",
+        reason: "Create a password to protect your key on this device.",
+      });
+    } catch (error) {
+      console.warn("[KeyTeleport] Failed to encrypt key for local storage:", error instanceof Error ? error.message : error);
+    }
+
+    // Create server session
+    const { expiresAt } = await persistServerSession(npub, encryptedNsec);
+
+    // Save to local cache
+    saveCachedSession({ npub, encryptedNsec, expiresAt, method: "keyteleport" });
+
+    // Update UI
+    applyIdentityUpdate(context, { npub, method: "keyteleport", expiresAt, isAuthenticated: true, alias: npub });
+
+    // Wipe secret key from memory
+    wipeBytes(secretKey);
+
+    console.log("[KeyTeleport] Login successful:", npub.slice(0, 20) + "...");
+
+    // Clean up URL
+    if (typeof window !== "undefined" && window.history?.replaceState) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete(KEYTELEPORT_PARAM);
+      window.history.replaceState({}, "", url.toString());
+    }
+
+    return npub;
+  } catch (error) {
+    console.error("[KeyTeleport] Error:", error instanceof Error ? error.message : error);
+    window.alert(`Key Teleport failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+    return null;
+  }
+};
+
+/**
+ * Check URL for keyteleport parameter and process if found
+ * @param {Object} context - The identity context for UI updates
+ */
+const checkKeyTeleportParam = async (context) => {
+  if (typeof window === "undefined") return null;
+
+  const url = new URL(window.location.href);
+  const blob = url.searchParams.get(KEYTELEPORT_PARAM);
+
+  if (!blob) return null;
+
+  console.log("[KeyTeleport] Found keyteleport parameter in URL");
+  return handleKeyTeleport({ blob, context });
+};
+
+identityApi.handleKeyTeleport = handleKeyTeleport;
+identityApi.checkKeyTeleportParam = checkKeyTeleportParam;
+
 globalThis.wingmanIdentity = identityApi;
 
 export {
@@ -1743,4 +1872,6 @@ export {
   wireBunkerPanel,
   wireBunkerLogin,
   performLogout as logoutIdentity,
+  handleKeyTeleport,
+  checkKeyTeleportParam,
 };

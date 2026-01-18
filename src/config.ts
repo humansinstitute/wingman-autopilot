@@ -203,3 +203,100 @@ export const loadConfig = (): WingmanConfig => {
 };
 
 export type WingmanConfigSnapshot = ReturnType<typeof loadConfig>;
+
+// =============================================================================
+// Key Teleport Configuration
+// =============================================================================
+
+import { getPublicKey, nip19 } from "nostr-tools";
+
+// Key Teleport environment variables
+export const KEYTELEPORT_PRIVKEY = Bun.env.KEYTELEPORT_PRIVKEY ?? "";
+export const KEYTELEPORT_WELCOME_PUBKEY = Bun.env.KEYTELEPORT_WELCOME_PUBKEY ?? "";
+
+// Helper to convert hex string to Uint8Array
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+  }
+  return bytes;
+}
+
+/**
+ * Get the Key Teleport identity (Wingmen's keypair for decrypting teleport blobs)
+ */
+export function getKeyTeleportIdentity(): {
+  npub: string;
+  pubkey: string;
+  secretKey: Uint8Array;
+} | null {
+  if (!KEYTELEPORT_PRIVKEY) {
+    return null;
+  }
+
+  try {
+    let secretKey: Uint8Array;
+
+    if (KEYTELEPORT_PRIVKEY.startsWith("nsec")) {
+      const decoded = nip19.decode(KEYTELEPORT_PRIVKEY);
+      if (decoded.type !== "nsec") {
+        console.error("[KeyTeleport] KEYTELEPORT_PRIVKEY is not a valid nsec");
+        return null;
+      }
+      secretKey = decoded.data as Uint8Array;
+    } else if (/^[0-9a-fA-F]{64}$/.test(KEYTELEPORT_PRIVKEY)) {
+      secretKey = hexToBytes(KEYTELEPORT_PRIVKEY);
+    } else {
+      console.error("[KeyTeleport] KEYTELEPORT_PRIVKEY must be nsec or 64-char hex");
+      return null;
+    }
+
+    const pubkey = getPublicKey(secretKey);
+    const npub = nip19.npubEncode(pubkey);
+
+    return { npub, pubkey, secretKey };
+  } catch (err) {
+    console.error("[KeyTeleport] Failed to decode KEYTELEPORT_PRIVKEY:", err);
+    return null;
+  }
+}
+
+/**
+ * Get the Welcome pubkey (trusted key manager) as hex
+ */
+export function getKeyTeleportWelcomePubkey(): string | null {
+  if (!KEYTELEPORT_WELCOME_PUBKEY) {
+    return null;
+  }
+
+  try {
+    if (KEYTELEPORT_WELCOME_PUBKEY.startsWith("npub")) {
+      const decoded = nip19.decode(KEYTELEPORT_WELCOME_PUBKEY);
+      if (decoded.type !== "npub") {
+        console.error("[KeyTeleport] KEYTELEPORT_WELCOME_PUBKEY is not a valid npub");
+        return null;
+      }
+      return decoded.data as string;
+    } else if (/^[0-9a-fA-F]{64}$/.test(KEYTELEPORT_WELCOME_PUBKEY)) {
+      return KEYTELEPORT_WELCOME_PUBKEY;
+    } else {
+      console.error("[KeyTeleport] KEYTELEPORT_WELCOME_PUBKEY must be npub or 64-char hex");
+      return null;
+    }
+  } catch (err) {
+    console.error("[KeyTeleport] Failed to decode KEYTELEPORT_WELCOME_PUBKEY:", err);
+    return null;
+  }
+}
+
+// Startup logging for Key Teleport config
+if (KEYTELEPORT_PRIVKEY && KEYTELEPORT_WELCOME_PUBKEY) {
+  console.log("[KeyTeleport] Key Teleport configured");
+  const identity = getKeyTeleportIdentity();
+  if (identity) {
+    console.log(`[KeyTeleport] Identity: ${identity.npub.slice(0, 20)}...`);
+  }
+} else if (KEYTELEPORT_PRIVKEY || KEYTELEPORT_WELCOME_PUBKEY) {
+  console.warn("[KeyTeleport] Partially configured - both KEYTELEPORT_PRIVKEY and KEYTELEPORT_WELCOME_PUBKEY required");
+}

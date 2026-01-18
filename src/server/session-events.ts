@@ -28,14 +28,12 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
     }
 
     const agentEventsUrl = buildAgentUrl(agentHost, session.port, "/events");
-    console.log(`[session-events] Proxying SSE for ${sessionId} to ${agentEventsUrl}`);
 
     // Abort controller for cleanup
     const abortController = new AbortController();
 
     // Handle client disconnect
     request.signal.addEventListener("abort", () => {
-      console.log(`[session-events] Client disconnected from ${sessionId}`);
       abortController.abort();
     });
 
@@ -59,8 +57,6 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
         return Response.json({ error: "No stream from agent" }, { status: 502 });
       }
 
-      console.log(`[session-events] Connected to AgentAPI for ${sessionId}`);
-
       // Create a streaming response
       // IMPORTANT: start() must return immediately - async reading happens in background
       const reader = agentResponse.body.getReader();
@@ -77,16 +73,13 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
           while (true) {
             const { done, value } = await reader.read();
             if (done) {
-              console.log(`[session-events] AgentAPI stream ended for ${sessionId}`);
               try { streamController.close(); } catch {}
               break;
             }
-            console.log(`[session-events] Sending ${value.byteLength} bytes to client for ${sessionId}`);
             try {
               streamController.enqueue(value);
             } catch (err) {
               // Controller was closed (client disconnected)
-              console.log(`[session-events] Client gone for ${sessionId}, stopping pump`);
               break;
             }
           }
@@ -108,7 +101,6 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
             pumpData();
           },
           cancel() {
-            console.log(`[session-events] Client cancelled stream for ${sessionId}`);
             streamController = null;
             try { reader.cancel(); } catch {}
             abortController.abort();
