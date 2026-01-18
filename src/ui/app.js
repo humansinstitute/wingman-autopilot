@@ -88,6 +88,8 @@ let sessionPollIntervalId = null;
 let sessionPollInFlight = false;
 let appsPollIntervalId = null;
 let appsPollInFlight = false;
+let conversationPollIntervalId = null;
+let conversationPollInFlight = false;
 let sessionDialogController = null;
 let renderOrchestratorPresetButtons = () => {};
 let ensureOrchestratorPresetsLoaded = () => {};
@@ -3711,7 +3713,7 @@ const setActiveSession = (sessionId, options = {}) => {
     syncDesktopSessionIndicator();
     updateDocumentTitle();
 
-    // Manage SSE connections for live view
+    // Manage SSE connections and polling for live view
     if (currentRoute === "live" && sessionExists) {
       // Disconnect previous session if different
       if (previousSessionId && previousSessionId !== sessionId) {
@@ -3719,6 +3721,9 @@ const setActiveSession = (sessionId, options = {}) => {
       }
       // Connect to new session
       sseManager.connect(sessionId);
+
+      // Start conversation polling (1 second interval)
+      startConversationPolling(sessionId);
 
       // Dispatch session-change event for Alpine.js chat component
       if (isAlpineChatEnabled() && previousSessionId !== sessionId) {
@@ -3731,8 +3736,10 @@ const setActiveSession = (sessionId, options = {}) => {
     return true;
   }
 
+  // No session selected - stop polling
   state.activeSessionId = null;
   lastLoggedSessionId = null;
+  stopConversationPolling();
   if (updateHistory && currentRoute === "live" && window.location.pathname !== LIVE_ROUTE_PREFIX) {
     window.history.pushState({ route: "live" }, "", LIVE_ROUTE_PREFIX);
   }
@@ -6934,6 +6941,42 @@ const stopSessionPolling = () => {
 const syncSessionPolling = () => {
   // Disable polling entirely - use manual refresh instead
   stopSessionPolling();
+};
+
+// Conversation polling for live view - polls every second
+const CONVERSATION_POLL_INTERVAL = 1000;
+
+const startConversationPolling = (sessionId) => {
+  stopConversationPolling();
+  if (!sessionId) return;
+
+  console.log(`[poll] Starting conversation polling for ${sessionId}`);
+
+  conversationPollIntervalId = window.setInterval(async () => {
+    if (conversationPollInFlight) return;
+    if (currentRoute !== "live" || state.activeSessionId !== sessionId) {
+      stopConversationPolling();
+      return;
+    }
+
+    conversationPollInFlight = true;
+    try {
+      await fetchConversation(sessionId);
+    } catch (err) {
+      console.warn("[poll] Conversation poll failed:", err);
+    } finally {
+      conversationPollInFlight = false;
+    }
+  }, CONVERSATION_POLL_INTERVAL);
+};
+
+const stopConversationPolling = () => {
+  if (conversationPollIntervalId !== null) {
+    console.log("[poll] Stopping conversation polling");
+    window.clearInterval(conversationPollIntervalId);
+    conversationPollIntervalId = null;
+  }
+  conversationPollInFlight = false;
 };
 
 // Agent Status Indicator Functions
@@ -11955,6 +11998,7 @@ function navigateToHome({ replaceHistory = false, skipMenuClose = false } = {}) 
     closeMenu();
   }
   closeIdentityLoginDialog();
+  stopConversationPolling();
   currentRoute = "home";
   lastLoggedSessionId = null;
   if (replaceHistory) {
@@ -11973,6 +12017,7 @@ function navigateToApps({ openNewAppDialog = false, skipMenuClose = false, focus
   if (!skipMenuClose) {
     closeMenu();
   }
+  stopConversationPolling();
   if (openNewAppDialog) {
     state.apps.pendingOpenDialog = "create";
   }
@@ -12001,6 +12046,7 @@ function navigateToProjects({ skipMenuClose = false } = {}) {
     closeMenu();
   }
   closeIdentityLoginDialog();
+  stopConversationPolling();
   currentRoute = "projects";
   lastLoggedSessionId = null;
   if (window.location.pathname !== PROJECTS_ROUTE) {
@@ -12017,6 +12063,7 @@ function navigateToSettings({ skipMenuClose = false } = {}) {
     closeMenu();
   }
   closeIdentityLoginDialog();
+  stopConversationPolling();
   currentRoute = "settings";
   lastLoggedSessionId = null;
   if (window.location.pathname !== SETTINGS_ROUTE) {
@@ -12055,6 +12102,7 @@ navLinks.forEach((link) => {
       // If navigating from live page with an active session, start in that session's directory
       const activeSession = currentRoute === "live" ? getActiveSessionForIndicator() : null;
       const sessionDir = activeSession?.workingDirectory;
+      stopConversationPolling();
       currentRoute = "files";
       lastLoggedSessionId = null;
       if (window.location.pathname !== FILES_ROUTE) {
