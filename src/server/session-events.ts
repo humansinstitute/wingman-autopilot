@@ -61,10 +61,14 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
 
       console.log(`[session-events] Connected to AgentAPI for ${sessionId}`);
 
-      // Try using an async generator for Bun streaming
+      // Stream events with initial connection message
+      const encoder = new TextEncoder();
       async function* streamEvents() {
+        // Send initial comment to establish connection
+        yield encoder.encode(": ok\n\n");
+        console.log(`[session-events] Sent initial comment for ${sessionId}`);
+
         const reader = agentResponse.body!.getReader();
-        const decoder = new TextDecoder();
         try {
           while (true) {
             const { done, value } = await reader.read();
@@ -72,7 +76,6 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
               console.log(`[session-events] Stream ended for ${sessionId}`);
               break;
             }
-            const text = decoder.decode(value, { stream: true });
             console.log(`[session-events] Forwarding ${value.byteLength} bytes for ${sessionId}`);
             yield value;
           }
