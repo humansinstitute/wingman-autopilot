@@ -61,9 +61,35 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
 
       console.log(`[session-events] Connected to AgentAPI for ${sessionId}`);
 
-      // Simply forward the AgentAPI response body directly
-      // This is the simplest approach - just pipe the stream through
-      return new Response(agentResponse.body, {
+      // Use a passthrough stream to forward data and log it
+      const reader = agentResponse.body.getReader();
+
+      const stream = new ReadableStream({
+        async pull(controller) {
+          try {
+            const { done, value } = await reader.read();
+            if (done) {
+              console.log(`[session-events] Stream ended for ${sessionId}`);
+              controller.close();
+              return;
+            }
+            // Log the data being forwarded
+            const text = new TextDecoder().decode(value);
+            console.log(`[session-events] Forwarding ${value.byteLength} bytes for ${sessionId}: ${text.slice(0, 100)}...`);
+            controller.enqueue(value);
+          } catch (err) {
+            console.error(`[session-events] Read error for ${sessionId}:`, err);
+            controller.error(err);
+          }
+        },
+        cancel() {
+          console.log(`[session-events] Stream cancelled for ${sessionId}`);
+          reader.cancel();
+          abortController.abort();
+        }
+      });
+
+      return new Response(stream, {
         headers: {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache, no-store, must-revalidate",
