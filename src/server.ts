@@ -101,6 +101,7 @@ import { createStaticAssetService } from "./server/static-assets";
 import { maybeRefreshSessionCookie } from "./server/session-refresh";
 import { handleSubdomainRequest, type SubdomainProxyConfig } from "./server/subdomain-proxy";
 import { isAgentRuntimeStatus } from "./types/agent-status";
+import { createSessionEventsHandler } from "./server/session-events";
 import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import {
   clearWarmRestartMarker,
@@ -2803,6 +2804,9 @@ await rehydrateOrphanedSessions(
   SUPPORTED_AGENT_TYPES,
   24, // Look for sessions started in the last 24 hours
 );
+
+// SSE handler for session events
+const handleSessionEvents = createSessionEventsHandler({ manager, agentHost });
 
 const syncSessionMessages = async (sessionId: string, force = false) => {
   if (!force && messageStore.hasMessages(sessionId)) {
@@ -5951,6 +5955,12 @@ const handleApi = async (
       const logs = await manager.getLogs(id);
       if (!logs) return Response.json({ error: "Not found" }, { status: 404 });
       return Response.json({ id, logs });
+    }
+
+    // SSE endpoint for real-time session events
+    if (method === "GET" && parts[4] === "events") {
+      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      return handleSessionEvents(id, request);
     }
 
     if (parts[4] === "messages") {
