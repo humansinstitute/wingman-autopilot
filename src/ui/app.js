@@ -5,7 +5,6 @@ import "/ace-builds/src-noconflict/theme-tomorrow_night.js";
 import "./identity/index.js";
 import { applyAvatarImage } from "./utils/avatar.js";
 import { fetchIdentityProfile, fetchAdminUserProfile } from "./identity/profile.js";
-// import { createTodoFeature } from "./todos/index.js"; // DISABLED
 import { createProjectFeature } from "./projects/index.js";
 import { npubProjectsState, fetchNpubProjects, renderNpubProjectsPanel } from "./npub-projects/index.js";
 import "./logging/browser.js";
@@ -101,7 +100,6 @@ let orchestratorFeatureEnabledForViewer = () => false;
 let projectsFeatureEnabledForViewer = () => true;
 let syncFeatureFlagsFromConfig = () => {};
 
-let todoFeature = null; // DISABLED - No todos feature
 let projectFeature = null;
 let archiveComponent = null;
 let archiveViewDialog = null;
@@ -3603,7 +3601,6 @@ const FILES_ROUTE = "/files";
 const SETTINGS_ROUTE = "/settings";
 const APPS_ROUTE = "/apps";
 const PROJECTS_ROUTE = "/projects";
-const TODOS_ROUTE = "/todos";
 const HOME_ROUTE = "/home";
 
 const getRouteFromPath = (pathname) => {
@@ -3623,9 +3620,6 @@ const getRouteFromPath = (pathname) => {
   }
   if (pathname === PROJECTS_ROUTE) {
     return "projects";
-  }
-  if (pathname === TODOS_ROUTE || pathname.startsWith(`${TODOS_ROUTE}/`)) {
-    return "todos";
   }
   if (pathname === LIVE_ROUTE_PREFIX || pathname.startsWith(`${LIVE_ROUTE_PREFIX}/`)) {
     return "live";
@@ -4906,8 +4900,6 @@ const updateDocumentTitle = () => {
     title = "Settings - Wingman";
   } else if (currentRoute === "projects") {
     title = "Projects - Wingman";
-  } else if (currentRoute === "todos") {
-    title = "Todos - Wingman";
   } else if (currentRoute === "home") {
     title = "Home - Wingman";
   }
@@ -8356,28 +8348,6 @@ const renderApps = () => {
   return wrapper;
 };
 
-const renderTodos = () => {
-  if (!state.identity.authenticated) {
-    const guestContainer = document.createElement("div");
-    guestContainer.className = "wm-todos-page";
-    const guestCard = document.createElement("section");
-    guestCard.className = "wm-card wm-todos-guest";
-    const guestMessage = document.createElement("p");
-    guestMessage.textContent = "Sign in to manage your todos.";
-    guestCard.append(guestMessage);
-    guestContainer.append(guestCard);
-    return guestContainer;
-  }
-  // void ensureAppsLoaded(); // DISABLED
-  if (todoFeature) {
-    // void todoFeature.ensureLoaded(); // DISABLED
-    return todoFeature.renderPage();
-  }
-  const container = document.createElement("div");
-  container.className = "wm-todos-page";
-  return container;
-};
-
 const renderProjects = () => {
   if (!projectsFeatureEnabledForViewer()) {
     const container = document.createElement("div");
@@ -9030,21 +9000,12 @@ const renderHome = () => {
     return wrapper;
   }
 
-  if (todoFeature) {
-    // void todoFeature.ensureLoaded(); // DISABLED
-    const homeTodos = todoFeature.renderHomeCard();
-    if (homeTodos) {
-      wrapper.append(homeTodos);
-    }
-  }
-
   ensureFeatureFlagsLoaded();
 
   if (!state.apps.initialized && !state.apps.loading) {
     // void ensureAppsLoaded(); // DISABLED
   }
 
-  // Remove todo component entirely
   let orchestratorCard = null;
   if (orchestratorFeatureEnabledForViewer()) {
     orchestratorCard = document.createElement("section");
@@ -11758,8 +11719,6 @@ const render = () => {
         view = renderApps();
       } else if (currentRoute === "projects") {
         view = renderProjects();
-      } else if (currentRoute === "todos") {
-        view = renderTodos();
       } else if (currentRoute === "files") {
         view = renderFiles();
       } else if (currentRoute === "settings") {
@@ -11813,18 +11772,6 @@ projectFeature = createProjectFeature({
   isActionDisabled: (app, action) => isProjectActionDisabled(app, action),
 });
 state.projects = projectFeature.state;
-
-todoFeature = createTodoFeature({
-  onRenderRequested: () => {
-    if (currentRoute === "todos" || currentRoute === "home") {
-      render();
-    }
-  },
-  getApps: () => (Array.isArray(state.apps.items) ? state.apps.items : []),
-  getProjects: () => (Array.isArray(state.projects?.items) ? state.projects.items : []),
-  onUnauthorized: handleUnauthorizedAccess,
-});
-state.todos = todoFeature.state;
 
 // Initialize archive view dialog
 archiveViewDialog = createArchiveViewDialog();
@@ -12011,27 +11958,6 @@ function navigateToProjects({ skipMenuClose = false } = {}) {
   render();
 }
 
-function navigateToTodos({ skipMenuClose = false } = {}) {
-  if (!state.identity.authenticated) {
-    openIdentityLoginDialog();
-    return;
-  }
-  if (!skipMenuClose) {
-    closeMenu();
-  }
-  closeIdentityLoginDialog();
-  currentRoute = "todos";
-  lastLoggedSessionId = null;
-  if (window.location.pathname !== TODOS_ROUTE) {
-    window.history.pushState({ route: "todos" }, "", TODOS_ROUTE);
-  }
-  // void ensureAppsLoaded(); // DISABLED
-  if (todoFeature) {
-    // void todoFeature.ensureLoaded(); // DISABLED
-  }
-  render();
-}
-
 function navigateToSettings({ skipMenuClose = false } = {}) {
   if (!skipMenuClose) {
     closeMenu();
@@ -12071,9 +11997,6 @@ navLinks.forEach((link) => {
     } else if (targetRoute === "projects") {
       navigateToProjects({ skipMenuClose: true });
       return;
-    } else if (targetRoute === "todos") {
-      navigateToTodos({ skipMenuClose: true });
-      return;
     } else if (targetRoute === "files") {
       // If navigating from live page with an active session, start in that session's directory
       const activeSession = currentRoute === "live" ? getActiveSessionForIndicator() : null;
@@ -12102,7 +12025,6 @@ navLinks.forEach((link) => {
 });
 
 if (typeof window !== "undefined") {
-  window.navigateToTodos = navigateToTodos;
   window.navigateToProjects = navigateToProjects;
 }
 
@@ -12366,11 +12288,6 @@ window.addEventListener("popstate", () => {
     } else if (projectFeature) {
       void projectFeature.ensureLoaded();
     }
-  } else if (currentRoute === "todos") {
-  // void ensureAppsLoaded(); // DISABLED
-  if (todoFeature) {
-    // void todoFeature.ensureLoaded(); // DISABLED
-    }
   }
   render();
 });
@@ -12430,9 +12347,6 @@ dialog.addEventListener("cancel", (event) => {
     fetchNpubProjects().catch(() => {});
   } else if (currentRoute === "apps") {
     await fetchApps({ tail: APP_LOG_PREVIEW_LINES });
-  }
-  if (state.identity.authenticated && todoFeature) {
-    await todoFeature.ensureLoaded();
   }
   render();
 })();
