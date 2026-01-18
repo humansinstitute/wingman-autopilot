@@ -178,10 +178,8 @@ function createTodoState({ onStateChange, getApps, getProjects, onUnauthorized }
   }
 
   async function ensureLoaded() {
-    if (state.initialized || state.loading) {
-      return;
-    }
-    await fetchTodos();
+    // DISABLED - Never auto-load todos
+    return;
   }
 
   function setComposerValue(value) {

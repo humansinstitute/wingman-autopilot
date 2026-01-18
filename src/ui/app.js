@@ -758,7 +758,7 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
   if (todoFeature) {
     todoFeature.reset();
     if (next.authenticated) {
-      void todoFeature.ensureLoaded();
+      // void todoFeature.ensureLoaded(); // DISABLED
     }
   }
 
@@ -8375,9 +8375,9 @@ const renderTodos = () => {
     guestContainer.append(guestCard);
     return guestContainer;
   }
-  void ensureAppsLoaded();
+  // void ensureAppsLoaded(); // DISABLED
   if (todoFeature) {
-    void todoFeature.ensureLoaded();
+    // void todoFeature.ensureLoaded(); // DISABLED
     return todoFeature.renderPage();
   }
   const container = document.createElement("div");
@@ -8402,7 +8402,7 @@ const renderProjects = () => {
     guestContainer.append(guestCard);
     return guestContainer;
   }
-  void ensureAppsLoaded();
+  // void ensureAppsLoaded(); // DISABLED
   if (projectFeature) {
     void projectFeature.ensureLoaded();
     return projectFeature.renderPage();
@@ -9038,7 +9038,7 @@ const renderHome = () => {
   }
 
   if (todoFeature) {
-    void todoFeature.ensureLoaded();
+    // void todoFeature.ensureLoaded(); // DISABLED
     const homeTodos = todoFeature.renderHomeCard();
     if (homeTodos) {
       wrapper.append(homeTodos);
@@ -9048,7 +9048,7 @@ const renderHome = () => {
   ensureFeatureFlagsLoaded();
 
   if (!state.apps.initialized && !state.apps.loading) {
-    void ensureAppsLoaded();
+    // void ensureAppsLoaded(); // DISABLED
   }
 
   let orchestratorCard = null;
@@ -11989,7 +11989,7 @@ function navigateToApps({ openNewAppDialog = false, skipMenuClose = false, focus
   if (window.location.pathname !== APPS_ROUTE) {
     window.history.pushState({ route: "apps" }, "", APPS_ROUTE);
   }
-  void ensureAppsLoaded();
+  // void ensureAppsLoaded(); // DISABLED
   render();
 }
 
@@ -12031,9 +12031,9 @@ function navigateToTodos({ skipMenuClose = false } = {}) {
   if (window.location.pathname !== TODOS_ROUTE) {
     window.history.pushState({ route: "todos" }, "", TODOS_ROUTE);
   }
-  void ensureAppsLoaded();
+  // void ensureAppsLoaded(); // DISABLED
   if (todoFeature) {
-    void todoFeature.ensureLoaded();
+    // void todoFeature.ensureLoaded(); // DISABLED
   }
   render();
 }
@@ -12362,7 +12362,7 @@ window.addEventListener("popstate", () => {
       void loadFilesTree();
     }
   } else if (currentRoute === "apps") {
-    void ensureAppsLoaded();
+    // void ensureAppsLoaded(); // DISABLED
   } else if (currentRoute === "projects") {
     if (!projectsFeatureEnabledForViewer()) {
       currentRoute = "home";
@@ -12373,9 +12373,9 @@ window.addEventListener("popstate", () => {
       void projectFeature.ensureLoaded();
     }
   } else if (currentRoute === "todos") {
-    void ensureAppsLoaded();
-    if (todoFeature) {
-      void todoFeature.ensureLoaded();
+  // void ensureAppsLoaded(); // DISABLED
+  if (todoFeature) {
+    // void todoFeature.ensureLoaded(); // DISABLED
     }
   }
   render();
