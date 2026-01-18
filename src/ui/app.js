@@ -769,6 +769,8 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
   if (next.authenticated && (!next.picture || becameAuthenticated)) {
     void refreshIdentityProfilePicture({ force: becameAuthenticated });
   }
+  }
+  }
 
   if (next.npub !== current.npub || next.isAdmin !== current.isAdmin) {
     state.sessionFilters.initialized = false;
