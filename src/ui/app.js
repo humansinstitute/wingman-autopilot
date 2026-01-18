@@ -788,7 +788,7 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
 
   if (emit && typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
     try {
-      window.dispatchEvent(new CustomEvent("wingman:identity-ui-state", { detail: { ...next   }));
+      window.dispatchEvent(new CustomEvent("wingman:identity-ui-state", { detail: { ...next } }));
       if (becameAuthenticated) {
         closeIdentityLoginDialog();
         if (currentRoute !== "home") {
