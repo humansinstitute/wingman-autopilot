@@ -6982,12 +6982,12 @@ const startConversationPolling = (sessionId) => {
         }
       }
 
-      // Sync queue from server
-      if (queueData) {
+      // Sync queue from server (response is { id, queue: { prompts, maxSize } })
+      if (queueData?.queue) {
         const queue = getSessionQueue(sessionId);
         const oldCount = queue.prompts.length;
-        queue.prompts = queueData.prompts ?? [];
-        queue.maxSize = queueData.maxSize ?? 21;
+        queue.prompts = queueData.queue.prompts ?? [];
+        queue.maxSize = queueData.queue.maxSize ?? 21;
         // Update UI if queue count changed
         if (oldCount !== queue.prompts.length) {
           updateAgentStatusIndicators();
