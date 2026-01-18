@@ -12363,6 +12363,44 @@ dialog.addEventListener("cancel", (event) => {
   initTabsVisibility();
   // Initialize live module (Dexie database for SSE updates)
   initLiveModule().catch((err) => console.warn("[app] Live module init failed:", err));
+
+  // Wire SSE status events to knight rider and status indicators
+  sseManager.onStatusChange((sessionId, status) => {
+    const session = state.sessions.find((s) => s.id === sessionId);
+    if (session) {
+      session.agentRuntimeStatus = status;
+      updateAgentStatusIndicators();
+    }
+  });
+
+  // Wire SSE message events to update conversation state
+  sseManager.onMessage((sessionId, message) => {
+    const existing = state.conversations.get(sessionId) || [];
+    // Check if this is a new message or an update to the last message
+    const lastMessage = existing[existing.length - 1];
+    const isStreamingUpdate = lastMessage &&
+      lastMessage.role === (message.role || message.type) &&
+      message.content?.startsWith(lastMessage.content?.slice(0, 50));
+
+    if (isStreamingUpdate) {
+      // Update last message content (streaming)
+      lastMessage.content = message.content || message.message || "";
+    } else {
+      // Add new message
+      existing.push({
+        role: message.role || message.type || "assistant",
+        content: message.content || message.message || "",
+        createdAt: message.createdAt || new Date().toISOString(),
+      });
+    }
+    state.conversations.set(sessionId, existing);
+
+    // Update DOM if on live view with this session active
+    if (currentRoute === "live" && sessionId === state.activeSessionId) {
+      updateConversationDOM(sessionId);
+    }
+  });
+
   await fetchConfig();
   ensureFeatureFlagsLoaded();
   if (orchestratorFeatureEnabledForViewer()) {
