@@ -5,7 +5,7 @@ import "/ace-builds/src-noconflict/theme-tomorrow_night.js";
 import "./identity/index.js";
 import { applyAvatarImage } from "./utils/avatar.js";
 import { fetchIdentityProfile, fetchAdminUserProfile } from "./identity/profile.js";
-import { createTodoFeature } from "./todos/index.js";
+// import { createTodoFeature } from "./todos/index.js"; // DISABLED
 import { createProjectFeature } from "./projects/index.js";
 import { npubProjectsState, fetchNpubProjects, renderNpubProjectsPanel } from "./npub-projects/index.js";
 import "./logging/browser.js";
@@ -101,7 +101,7 @@ let orchestratorFeatureEnabledForViewer = () => false;
 let projectsFeatureEnabledForViewer = () => true;
 let syncFeatureFlagsFromConfig = () => {};
 
-let todoFeature = null;
+let todoFeature = null; // DISABLED - No todos feature
 let projectFeature = null;
 let archiveComponent = null;
 let archiveViewDialog = null;
@@ -756,10 +756,10 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
 
   state.identity = next;
   if (todoFeature) {
-    todoFeature.reset();
-    if (next.authenticated) {
-      // void todoFeature.ensureLoaded(); // DISABLED
-    }
+    // DISABLED - No todo functionality
+    const emptyContainer = document.createElement("div");
+    return emptyContainer;
+  }
   }
 
   if (wasAdmin && !next.isAdmin) {
@@ -9051,6 +9051,7 @@ const renderHome = () => {
     // void ensureAppsLoaded(); // DISABLED
   }
 
+  // Remove todo component entirely
   let orchestratorCard = null;
   if (orchestratorFeatureEnabledForViewer()) {
     orchestratorCard = document.createElement("section");
