@@ -29,6 +29,17 @@ export async function fetchSessionsApi(options = {}) {
 }
 
 /**
+ * Fetches a single session by ID.
+ * @param {string} sessionId - The session ID
+ * @returns {Promise<Object | null>} Session data or null
+ */
+export async function fetchSessionApi(sessionId) {
+  const response = await fetch(`/api/sessions/${sessionId}`);
+  if (!response.ok) return null;
+  return response.json();
+}
+
+/**
  * Fetches logs for a specific session.
  * @param {string} sessionId - The session ID
  * @returns {Promise<{logs: Array} | null>}

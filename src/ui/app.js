@@ -61,6 +61,7 @@ import {
 } from "./services/config.js";
 import {
   fetchSessionsApi,
+  fetchSessionApi,
   fetchSessionLogsApi,
   fetchSessionMessagesApi,
   stopSessionApi,
@@ -6961,7 +6962,24 @@ const startConversationPolling = (sessionId) => {
 
     conversationPollInFlight = true;
     try {
-      await fetchConversation(sessionId);
+      // Fetch conversation and session status in parallel
+      const [, sessionData] = await Promise.all([
+        fetchConversation(sessionId),
+        fetchSessionApi(sessionId),
+      ]);
+
+      // Update session status if we got data
+      if (sessionData) {
+        const session = state.sessions.find((s) => s.id === sessionId);
+        if (session) {
+          const oldStatus = session.agentRuntimeStatus;
+          session.agentRuntimeStatus = sessionData.agentRuntimeStatus ?? null;
+          // Update UI if status changed
+          if (oldStatus !== session.agentRuntimeStatus) {
+            updateAgentStatusIndicators();
+          }
+        }
+      }
     } catch (err) {
       console.warn("[poll] Conversation poll failed:", err);
     } finally {
