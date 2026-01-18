@@ -61,37 +61,9 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
 
       console.log(`[session-events] Connected to AgentAPI for ${sessionId}`);
 
-      // Stream events with initial connection message
-      const encoder = new TextEncoder();
-      async function* streamEvents() {
-        // Send initial comment to establish connection
-        yield encoder.encode(": ok\n\n");
-        console.log(`[session-events] Sent initial comment for ${sessionId}`);
-
-        const reader = agentResponse.body!.getReader();
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              console.log(`[session-events] Stream ended for ${sessionId}`);
-              break;
-            }
-            console.log(`[session-events] Forwarding ${value.byteLength} bytes for ${sessionId}`);
-            yield value;
-          }
-        } catch (err) {
-          if ((err as Error).name !== "AbortError") {
-            console.error(`[session-events] Read error for ${sessionId}:`, err);
-          }
-        } finally {
-          reader.releaseLock();
-        }
-      }
-
-      // Convert async generator to ReadableStream
-      const stream = ReadableStream.from(streamEvents());
-
-      return new Response(stream, {
+      // Just pipe through the agent response body directly
+      // This is the simplest approach - let Bun handle the streaming
+      return new Response(agentResponse.body, {
         headers: {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
