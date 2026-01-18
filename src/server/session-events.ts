@@ -61,15 +61,68 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
 
       console.log(`[session-events] Connected to AgentAPI for ${sessionId}`);
 
-      // Just pipe through the agent response body directly
-      // This is the simplest approach - let Bun handle the streaming
-      return new Response(agentResponse.body, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          "Connection": "keep-alive",
-        },
-      });
+      // Create a streaming response
+      // IMPORTANT: start() must return immediately - async reading happens in background
+      const reader = agentResponse.body.getReader();
+      const encoder = new TextEncoder();
+
+      // Store controller reference for background pump
+      let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+
+      // Background pump function - reads from agent and pushes to client
+      async function pumpData() {
+        if (!streamController) return;
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              console.log(`[session-events] AgentAPI stream ended for ${sessionId}`);
+              try { streamController.close(); } catch {}
+              break;
+            }
+            console.log(`[session-events] Sending ${value.byteLength} bytes to client for ${sessionId}`);
+            try {
+              streamController.enqueue(value);
+            } catch (err) {
+              // Controller was closed (client disconnected)
+              console.log(`[session-events] Client gone for ${sessionId}, stopping pump`);
+              break;
+            }
+          }
+        } catch (error) {
+          console.error(`[session-events] Stream error for ${sessionId}:`, error);
+          try { streamController?.close(); } catch {}
+        } finally {
+          try { reader.releaseLock(); } catch {}
+        }
+      }
+
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            streamController = controller;
+            // Send initial keepalive comment (SSE format)
+            controller.enqueue(encoder.encode(": connected\n\n"));
+            // Start background pump - DO NOT await, must return immediately
+            pumpData();
+          },
+          cancel() {
+            console.log(`[session-events] Client cancelled stream for ${sessionId}`);
+            streamController = null;
+            try { reader.cancel(); } catch {}
+            abortController.abort();
+          }
+        }),
+        {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no", // Disable proxy buffering
+          },
+        }
+      );
     } catch (error) {
       if ((error as Error).name === "AbortError") {
         return new Response(null, { status: 499 }); // Client closed request
