@@ -61,46 +61,9 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
 
       console.log(`[session-events] Connected to AgentAPI for ${sessionId}`);
 
-      // Create a ReadableStream that directly pipes the agent response
-      const stream = new ReadableStream({
-        async start(controller) {
-          const reader = agentResponse.body!.getReader();
-          const encoder = new TextEncoder();
-
-          // Send initial comment to keep connection alive
-          controller.enqueue(encoder.encode(": connected\n\n"));
-
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) {
-                console.log(`[session-events] Agent stream ended for ${sessionId}`);
-                controller.close();
-                break;
-              }
-              controller.enqueue(value);
-            }
-          } catch (error) {
-            if ((error as Error).name !== "AbortError") {
-              console.warn(`[session-events] Stream error for ${sessionId}:`, error);
-              try {
-                controller.enqueue(
-                  encoder.encode(`event: error\ndata: {"error": "Stream interrupted"}\n\n`)
-                );
-              } catch {
-                // Controller may be closed
-              }
-            }
-            controller.close();
-          }
-        },
-        cancel() {
-          console.log(`[session-events] Stream cancelled for ${sessionId}`);
-          abortController.abort();
-        },
-      });
-
-      return new Response(stream, {
+      // Simply forward the AgentAPI response body directly
+      // This is the simplest approach - just pipe the stream through
+      return new Response(agentResponse.body, {
         headers: {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache, no-store, must-revalidate",
