@@ -28,78 +28,95 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
     }
 
     const agentEventsUrl = buildAgentUrl(agentHost, session.port, "/events");
-
-    // Create a TransformStream to proxy SSE
-    const { readable, writable } = new TransformStream();
-    const writer = writable.getWriter();
-    const encoder = new TextEncoder();
+    console.log(`[session-events] Proxying SSE for ${sessionId} to ${agentEventsUrl}`);
 
     // Abort controller for cleanup
     const abortController = new AbortController();
 
     // Handle client disconnect
     request.signal.addEventListener("abort", () => {
+      console.log(`[session-events] Client disconnected from ${sessionId}`);
       abortController.abort();
     });
 
-    // Connect to AgentAPI SSE in the background
-    (async () => {
-      try {
-        const response = await fetch(agentEventsUrl.toString(), {
-          signal: abortController.signal,
-          headers: { Accept: "text/event-stream" },
-        });
+    try {
+      // Connect to AgentAPI SSE
+      const agentResponse = await fetch(agentEventsUrl.toString(), {
+        signal: abortController.signal,
+        headers: { Accept: "text/event-stream" },
+      });
 
-        if (!response.ok || !response.body) {
-          // Send error event and close
-          await writer.write(
-            encoder.encode(`event: error\ndata: {"error": "Failed to connect to agent"}\n\n`)
-          );
-          await writer.close();
-          return;
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          try {
-            await writer.write(encoder.encode(decoder.decode(value, { stream: true })));
-          } catch {
-            // Writer closed (client disconnected)
-            break;
-          }
-        }
-      } catch (error) {
-        if ((error as Error).name !== "AbortError") {
-          console.warn(`[session-events] SSE proxy error for ${sessionId}:`, error);
-          try {
-            await writer.write(
-              encoder.encode(`event: error\ndata: {"error": "Connection lost"}\n\n`)
-            );
-          } catch {
-            // Ignore write errors on close
-          }
-        }
-      } finally {
-        try {
-          await writer.close();
-        } catch {
-          // Already closed
-        }
+      if (!agentResponse.ok) {
+        console.warn(`[session-events] Agent returned ${agentResponse.status} for ${sessionId}`);
+        return Response.json(
+          { error: "Failed to connect to agent", status: agentResponse.status },
+          { status: 502 }
+        );
       }
-    })();
 
-    return new Response(readable, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        Connection: "keep-alive",
-        "X-Accel-Buffering": "no", // Disable nginx buffering
-      },
-    });
+      if (!agentResponse.body) {
+        console.warn(`[session-events] Agent returned no body for ${sessionId}`);
+        return Response.json({ error: "No stream from agent" }, { status: 502 });
+      }
+
+      console.log(`[session-events] Connected to AgentAPI for ${sessionId}`);
+
+      // Create a ReadableStream that directly pipes the agent response
+      const stream = new ReadableStream({
+        async start(controller) {
+          const reader = agentResponse.body!.getReader();
+          const encoder = new TextEncoder();
+
+          // Send initial comment to keep connection alive
+          controller.enqueue(encoder.encode(": connected\n\n"));
+
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) {
+                console.log(`[session-events] Agent stream ended for ${sessionId}`);
+                controller.close();
+                break;
+              }
+              controller.enqueue(value);
+            }
+          } catch (error) {
+            if ((error as Error).name !== "AbortError") {
+              console.warn(`[session-events] Stream error for ${sessionId}:`, error);
+              try {
+                controller.enqueue(
+                  encoder.encode(`event: error\ndata: {"error": "Stream interrupted"}\n\n`)
+                );
+              } catch {
+                // Controller may be closed
+              }
+            }
+            controller.close();
+          }
+        },
+        cancel() {
+          console.log(`[session-events] Stream cancelled for ${sessionId}`);
+          abortController.abort();
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+        },
+      });
+    } catch (error) {
+      if ((error as Error).name === "AbortError") {
+        return new Response(null, { status: 499 }); // Client closed request
+      }
+      console.error(`[session-events] Failed to connect to agent for ${sessionId}:`, error);
+      return Response.json(
+        { error: "Failed to connect to agent", details: String(error) },
+        { status: 502 }
+      );
+    }
   };
 }
