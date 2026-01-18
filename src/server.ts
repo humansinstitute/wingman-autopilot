@@ -6096,8 +6096,8 @@ const handleApi = async (
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
 
       if (method === "GET") {
-        const queue = promptQueueStore.getSessionQueue(id);
-        return Response.json({ id, queue });
+        const prompts = promptQueueStore.getSessionQueue(id);
+        return Response.json({ id, queue: { prompts, maxSize: 21 } });
       }
 
       if (method === "POST") {
