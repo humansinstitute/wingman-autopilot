@@ -11,7 +11,7 @@ export const TABS_VISIBILITY_STORAGE_KEY = "wingman-tabs-visible";
 export const FILES_SHOW_HIDDEN_STORAGE_KEY = "wingman-files-show-hidden";
 
 // Polling intervals
-export const SESSION_POLL_INTERVAL_MS = 2000;
+export const SESSION_POLL_INTERVAL_MS = 5000;
 export const APPS_POLL_INTERVAL_MS = 5000;
 export const APP_LOG_PREVIEW_LINES = 5;
 

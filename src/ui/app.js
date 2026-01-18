@@ -6930,6 +6930,7 @@ const stopSessionPolling = () => {
 };
 
 const syncSessionPolling = () => {
+  // Only poll on live route - home route should read from database directly
   if (currentRoute === "live") {
     startSessionPolling();
   } else {

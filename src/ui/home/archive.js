@@ -43,7 +43,7 @@ const fetchArchive = async (options = {}) => {
   const params = new URLSearchParams();
   if (options.limit) params.set("limit", String(options.limit));
   if (options.offset) params.set("offset", String(options.offset));
-  if (options.filter) params.set("filter", options.filter);
+  if (options.filter && options.filter.trim()) params.set("filter", options.filter.trim());
 
   const url = `/api/archive${params.toString() ? `?${params}` : ""}`;
   const response = await fetch(url, { credentials: "include" });
@@ -168,8 +168,8 @@ export function createArchiveComponent({ onViewSession } = {}) {
       content.hidden = false;
       collapseIcon.textContent = "▼";
       header.setAttribute("aria-expanded", "true");
-      // Load archive when expanded
-      if (archiveState.sessions.length === 0 && !archiveState.loading) {
+      // Load archive when expanded (but not automatically on every render)
+      if (archiveState.sessions.length === 0 && !archiveState.loading && !isCollapsed) {
         void loadArchive();
       }
     }
@@ -281,6 +281,11 @@ export function createArchiveComponent({ onViewSession } = {}) {
   };
 
   const loadArchive = async (append = false) => {
+    // Prevent multiple concurrent loads
+    if (archiveState.loading) {
+      return;
+    }
+    
     archiveState.loading = true;
     archiveState.error = null;
     renderList();
