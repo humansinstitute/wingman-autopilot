@@ -6944,8 +6944,8 @@ const syncSessionPolling = () => {
   stopSessionPolling();
 };
 
-// Conversation polling for live view - polls every 500ms for responsiveness
-const CONVERSATION_POLL_INTERVAL = 500;
+// Conversation polling for live view - polls every 100ms for responsiveness
+const CONVERSATION_POLL_INTERVAL = 100;
 
 const startConversationPolling = (sessionId) => {
   stopConversationPolling();
