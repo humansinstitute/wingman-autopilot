@@ -3130,7 +3130,10 @@ const addToPromptQueue = async (sessionId, content) => {
     const result = await response.json();
     const queue = getSessionQueue(sessionId);
     queue.prompts.push(result.prompt);
-    
+
+    // Update UI to show new queue count
+    updateAgentStatusIndicators();
+
     showToast("Prompt queued", { type: "success" });
     return true;
   } catch (error) {
@@ -3153,6 +3156,10 @@ const removeFromPromptQueue = async (sessionId, promptId) => {
 
     const queue = getSessionQueue(sessionId);
     queue.prompts = queue.prompts.filter(prompt => prompt.id !== promptId);
+
+    // Update UI to show new queue count
+    updateAgentStatusIndicators();
+
     return true;
   } catch (error) {
     console.error("Failed to remove prompt from queue:", error);
