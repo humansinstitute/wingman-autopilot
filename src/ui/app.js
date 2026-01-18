@@ -6857,8 +6857,7 @@ const pollSessions = async () => {
       if (sessionsChanged) {
         render();
       }
-      // Update status indicators after render or independently
-      updateAgentStatusIndicators();
+      // Don't update status indicators on home route - they're not visible there
       return;
     }
 
@@ -7029,6 +7028,11 @@ const applyAgentStatusIndicatorState = (indicator, sessionId) => {
 };
 
 const updateAgentStatusIndicators = () => {
+  // Skip status updates on home route - no indicators visible
+  if (currentRoute === "home") {
+    return;
+  }
+  
   // Debounce status indicator updates to prevent performance issues
   if (updateAgentStatusIndicatorsDebounceTimer) {
     clearTimeout(updateAgentStatusIndicatorsDebounceTimer);
@@ -11718,57 +11722,68 @@ function restoreFocusFromSnapshot(snapshot) {
 
 let renderDebounceTimer = null;
 let updateAgentStatusIndicatorsDebounceTimer = null;
+let isRendering = false;
 
 const render = () => {
+  // Prevent concurrent renders
+  if (isRendering) {
+    return;
+  }
+  
   // Clear any pending render and set a new one
   if (renderDebounceTimer) {
     clearTimeout(renderDebounceTimer);
   }
   
   renderDebounceTimer = setTimeout(() => {
-    const projectsEnabled = syncProjectsNavigationVisibility();
-    if (!projectsEnabled && currentRoute === "projects") {
-      currentRoute = "home";
-      if (window.location.pathname === PROJECTS_ROUTE) {
-        window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
+    isRendering = true;
+    try {
+      const projectsEnabled = syncProjectsNavigationVisibility();
+      if (!projectsEnabled && currentRoute === "projects") {
+        currentRoute = "home";
+        if (window.location.pathname === PROJECTS_ROUTE) {
+          window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
+        }
       }
-    }
-    const focusSnapshot = captureFocusSnapshot();
-    appRoot.innerHTML = "";
-    let view;
-    if (currentRoute === "live") {
-      view = renderLive();
-    } else if (currentRoute === "apps") {
-      view = renderApps();
-    } else if (currentRoute === "projects") {
-      view = renderProjects();
-    } else if (currentRoute === "todos") {
-      view = renderTodos();
-    } else if (currentRoute === "files") {
-      view = renderFiles();
-    } else if (currentRoute === "settings") {
-      view = renderSettings();
+      const focusSnapshot = captureFocusSnapshot();
+      appRoot.innerHTML = "";
+      let view;
+      if (currentRoute === "live") {
+        view = renderLive();
+      } else if (currentRoute === "apps") {
+        view = renderApps();
+      } else if (currentRoute === "projects") {
+        view = renderProjects();
+      } else if (currentRoute === "todos") {
+        view = renderTodos();
+      } else if (currentRoute === "files") {
+        view = renderFiles();
+      } else if (currentRoute === "settings") {
+        view = renderSettings();
     } else {
       view = renderHome();
     }
-    appRoot.append(view);
-    renderFileEditorOverlay();
-    renderWorktreeModal();
-    appRoot.dataset.route = currentRoute;
-    restoreFocusFromSnapshot(focusSnapshot);
-    // If on live route and no element was focused, focus the composer textarea
-    if (currentRoute === "live" && (!document.activeElement || document.activeElement === document.body)) {
-      const textarea = document.querySelector('.wm-composer textarea');
-      if (textarea) {
-        textarea.focus();
+      appRoot.append(view);
+      renderFileEditorOverlay();
+      renderWorktreeModal();
+      appRoot.dataset.route = currentRoute;
+      restoreFocusFromSnapshot(focusSnapshot);
+      // If on live route and no element was focused, focus the composer textarea
+      if (currentRoute === "live" && (!document.activeElement || document.activeElement === document.body)) {
+        const textarea = document.querySelector('.wm-composer textarea');
+        if (textarea) {
+          textarea.focus();
+        }
       }
+      setActiveNav();
+      syncMenuTabs();
+      syncDesktopSessionIndicator();
+      updateAgentStatusIndicators();
+      updateDocumentTitle();
+    } finally {
+      isRendering = false;
+      renderDebounceTimer = null;
     }
-    setActiveNav();
-    syncMenuTabs();
-    syncDesktopSessionIndicator();
-    updateAgentStatusIndicators();
-    updateDocumentTitle();
-    renderDebounceTimer = null;
   }, 50); // 50ms debounce to prevent rapid re-renders
 };
 

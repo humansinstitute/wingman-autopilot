@@ -45,7 +45,8 @@ export const initOrchestratorUI = ({ state, getCurrentRoute, setCurrentRoute, re
     if (state.orchestratorPresetsLoading) return;
     state.orchestratorPresetsLoading = true;
     state.orchestratorPresetsError = null;
-    if (getCurrentRoute() === "home") render();
+    // Don't render on home route to prevent performance issues
+    // The home component will update itself when needed
 
     try {
       const response = await fetch("/api/orchestrators");
@@ -67,9 +68,7 @@ export const initOrchestratorUI = ({ state, getCurrentRoute, setCurrentRoute, re
     } finally {
       state.orchestratorPresetsLoading = false;
       state.orchestratorPresetsLoaded = true;
-      if (getCurrentRoute() === "home") {
-        render();
-      }
+      // Don't render on home route - let the home component handle its own updates
     }
   };
 
