@@ -5,6 +5,15 @@
 
 export { db, MessageStore, SessionStore, DbUtils, Dexie } from "./db.js";
 export { sseManager } from "./sse-manager.js";
+export {
+  isAlpineChatEnabled,
+  enableAlpineChat,
+  disableAlpineChat,
+  initAlpineChat,
+  getChatTemplate,
+  registerChatComponent,
+  Alpine,
+} from "./chat-component.js";
 
 // Module initialization state
 let initialized = false;

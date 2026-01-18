@@ -8,7 +8,14 @@ import { fetchIdentityProfile, fetchAdminUserProfile } from "./identity/profile.
 import { createProjectFeature } from "./projects/index.js";
 import { npubProjectsState, fetchNpubProjects, renderNpubProjectsPanel } from "./npub-projects/index.js";
 import "./logging/browser.js";
-import { sseManager, initLiveModule, MessageStore } from "./live/index.js";
+import {
+  sseManager,
+  initLiveModule,
+  MessageStore,
+  isAlpineChatEnabled,
+  initAlpineChat,
+  getChatTemplate,
+} from "./live/index.js";
 import { createHomeGuestHero } from "./home/hero.js";
 import { createArchiveComponent, createArchiveViewDialog } from "./home/archive.js";
 import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
@@ -3712,6 +3719,13 @@ const setActiveSession = (sessionId, options = {}) => {
       }
       // Connect to new session
       sseManager.connect(sessionId);
+
+      // Dispatch session-change event for Alpine.js chat component
+      if (isAlpineChatEnabled() && previousSessionId !== sessionId) {
+        window.wingman = window.wingman || {};
+        window.wingman.activeSessionId = sessionId;
+        window.dispatchEvent(new CustomEvent("session-change", { detail: { sessionId } }));
+      }
     }
 
     return true;
@@ -11634,7 +11648,20 @@ const renderLive = () => {
 
   const conversationContainer = document.createElement("div");
   conversationContainer.className = "wm-live-conversation";
-  conversationContainer.append(renderConversation(sessionId));
+
+  // Use Alpine.js chat component if enabled, otherwise use standard rendering
+  if (isAlpineChatEnabled()) {
+    conversationContainer.innerHTML = getChatTemplate().replace(
+      "'${window.wingman?.activeSessionId || \"\"}'",
+      `'${sessionId}'`
+    );
+    // Make sessionId available globally for Alpine
+    window.wingman = window.wingman || {};
+    window.wingman.activeSessionId = sessionId;
+  } else {
+    conversationContainer.append(renderConversation(sessionId));
+  }
+
   scrollRegion.append(conversationContainer);
   scheduleLiveScroll(sessionId, { includeWindow: true });
 
@@ -12363,6 +12390,12 @@ dialog.addEventListener("cancel", (event) => {
   initTabsVisibility();
   // Initialize live module (Dexie database for SSE updates)
   initLiveModule().catch((err) => console.warn("[app] Live module init failed:", err));
+
+  // Initialize Alpine.js chat component if enabled
+  if (isAlpineChatEnabled()) {
+    initAlpineChat();
+    console.log("[app] Alpine.js chat component enabled");
+  }
 
   // Wire SSE status events to knight rider and status indicators
   sseManager.onStatusChange((sessionId, status) => {
