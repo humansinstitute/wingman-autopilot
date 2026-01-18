@@ -6206,6 +6206,8 @@ const handleApi = async (
 
 const server = Bun.serve({
   port: config.port,
+  // Disable idle timeout for SSE connections (default is 10 seconds)
+  idleTimeout: 255, // Max value in seconds (about 4 minutes)
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const method = request.method as HttpMethod;
