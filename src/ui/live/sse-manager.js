@@ -62,6 +62,7 @@ class SSEManager {
       // Handle generic message events (default event type)
       source.onmessage = async (event) => {
         try {
+          console.log(`[sse] Received event for ${sessionId}:`, event.data?.slice(0, 100));
           const data = JSON.parse(event.data);
           await this.handleEventData(sessionId, data);
         } catch (err) {
@@ -72,6 +73,7 @@ class SSEManager {
       // Handle typed events from AgentAPI
       source.addEventListener("message", async (event) => {
         try {
+          console.log(`[sse] message event for ${sessionId}:`, event.data?.slice(0, 100));
           const data = JSON.parse(event.data);
           if (data.type === "message" || data.role) {
             await MessageStore.upsertMessage(sessionId, data);
