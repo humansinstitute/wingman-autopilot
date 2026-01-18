@@ -96,13 +96,23 @@ export function createArchiveComponent({ onViewSession } = {}) {
   const headerLeft = document.createElement("div");
   headerLeft.className = "wm-home-archive-header-left";
   headerLeft.append(title, badge);
+  
+  // Add refresh button
+  const refreshBtn = document.createElement("button");
+  refreshBtn.className = "wm-button secondary wm-home-archive-refresh";
+  refreshBtn.textContent = "Refresh";
+  refreshBtn.title = "Refresh archive";
+  refreshBtn.addEventListener("click", () => {
+    archiveState.offset = 0;
+    void loadArchive();
+  });
 
   const collapseIcon = document.createElement("span");
   collapseIcon.className = "wm-home-archive-collapse-icon";
   collapseIcon.setAttribute("aria-hidden", "true");
   collapseIcon.textContent = "▼";
 
-  header.append(headerLeft, collapseIcon);
+  header.append(headerLeft, collapseIcon, refreshBtn);
 
   const content = document.createElement("div");
   content.className = "wm-home-archive-content";

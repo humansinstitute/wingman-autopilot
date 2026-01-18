@@ -6911,12 +6911,8 @@ const startSessionPolling = () => {
   if (sessionPollIntervalId !== null) {
     return;
   }
-  sessionPollIntervalId = window.setInterval(() => {
-    if (currentRoute === "live") {
-      void pollSessionsLoop();
-    }
-  }, SESSION_POLL_INTERVAL_MS);
-  if (currentRoute === "live") {
+  // No polling - fetch sessions once initially
+  if (currentRoute === "live" || currentRoute === "home") {
     void pollSessionsLoop();
   }
 };
@@ -6930,12 +6926,8 @@ const stopSessionPolling = () => {
 };
 
 const syncSessionPolling = () => {
-  // Only poll on live route - home route should read from database directly
-  if (currentRoute === "live") {
-    startSessionPolling();
-  } else {
-    stopSessionPolling();
-  }
+  // Disable polling entirely - use manual refresh instead
+  stopSessionPolling();
 };
 
 // Agent Status Indicator Functions
@@ -9341,6 +9333,15 @@ const renderHome = () => {
   launchBtn.addEventListener("click", openDialog);
   actions.append(launchBtn);
 
+  const refreshBtn = document.createElement("button");
+  refreshBtn.className = "wm-button secondary";
+  refreshBtn.textContent = "Refresh";
+  refreshBtn.title = "Refresh sessions";
+  refreshBtn.addEventListener("click", () => {
+    void pollSessionsLoop();
+  });
+  actions.append(refreshBtn);
+
   const table = document.createElement("table");
   table.className = "session-table";
 
@@ -11625,11 +11626,24 @@ const renderLive = () => {
   if (state.sessions.length === 0) {
     const container = document.createElement("section");
     container.className = "wm-card wm-live-main";
+    
+    const emptyContainer = document.createElement("div");
+    emptyContainer.className = "wm-live-empty";
+    
     const empty = document.createElement("p");
     empty.textContent = "No live sessions. Launch a new agent to begin.";
-    container.append(empty);
-    wrapper.append(container);
-    return wrapper;
+    
+    const refreshBtn = document.createElement("button");
+    refreshBtn.className = "wm-button secondary";
+    refreshBtn.textContent = "Refresh";
+    refreshBtn.title = "Check for sessions";
+    refreshBtn.addEventListener("click", () => {
+      void pollSessionsLoop();
+    });
+    
+    emptyContainer.append(empty, refreshBtn);
+    container.append(emptyContainer);
+    main.append(container);
   }
 
   if (!state.activeSessionId || !state.sessions.some((session) => session.id === state.activeSessionId)) {
