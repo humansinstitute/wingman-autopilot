@@ -612,6 +612,7 @@ registerVendorPackage("@noble/ciphers", "esm");
 registerVendorPackage("@scure/base", join("lib", "esm"));
 registerVendorPackage("@noble/curves", "esm");
 registerVendorPackage("nostr-tools", join("lib", "esm"));
+registerVendorPackage("dexie", "dist", "dexie.mjs");
 const publicRoot = normalize(join(projectRoot, "public"));
 const publicRootBoundary = publicRoot.endsWith(sep) ? publicRoot : `${publicRoot}${sep}`;
 await mkdir(documentsDirectory, { recursive: true }).catch(() => undefined);
