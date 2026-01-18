@@ -8,6 +8,7 @@ import { fetchIdentityProfile, fetchAdminUserProfile } from "./identity/profile.
 import { createProjectFeature } from "./projects/index.js";
 import { npubProjectsState, fetchNpubProjects, renderNpubProjectsPanel } from "./npub-projects/index.js";
 import "./logging/browser.js";
+import { sseManager, initLiveModule, MessageStore } from "./live/index.js";
 import { createHomeGuestHero } from "./home/hero.js";
 import { createArchiveComponent, createArchiveViewDialog } from "./home/archive.js";
 import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
@@ -3702,6 +3703,17 @@ const setActiveSession = (sessionId, options = {}) => {
 
     syncDesktopSessionIndicator();
     updateDocumentTitle();
+
+    // Manage SSE connections for live view
+    if (currentRoute === "live" && sessionExists) {
+      // Disconnect previous session if different
+      if (previousSessionId && previousSessionId !== sessionId) {
+        sseManager.disconnect(previousSessionId);
+      }
+      // Connect to new session
+      sseManager.connect(sessionId);
+    }
+
     return true;
   }
 
@@ -11688,6 +11700,7 @@ function restoreFocusFromSnapshot(snapshot) {
 let renderDebounceTimer = null;
 let updateAgentStatusIndicatorsDebounceTimer = null;
 let isRendering = false;
+let previousRenderRoute = null;
 
 const render = () => {
   // Prevent concurrent renders
@@ -11703,6 +11716,20 @@ const render = () => {
   renderDebounceTimer = setTimeout(() => {
     isRendering = true;
     try {
+      // Manage SSE connections based on route changes
+      const routeChanged = previousRenderRoute !== currentRoute;
+      if (routeChanged) {
+        // Leaving live view - disconnect all SSE
+        if (previousRenderRoute === "live" && currentRoute !== "live") {
+          sseManager.disconnectAll();
+        }
+        // Entering live view - connect to active session
+        if (currentRoute === "live" && state.activeSessionId) {
+          sseManager.connect(state.activeSessionId);
+        }
+        previousRenderRoute = currentRoute;
+      }
+
       const projectsEnabled = syncProjectsNavigationVisibility();
       if (!projectsEnabled && currentRoute === "projects") {
         currentRoute = "home";
@@ -12334,6 +12361,8 @@ dialog.addEventListener("cancel", (event) => {
 (async () => {
   initTheme();
   initTabsVisibility();
+  // Initialize live module (Dexie database for SSE updates)
+  initLiveModule().catch((err) => console.warn("[app] Live module init failed:", err));
   await fetchConfig();
   ensureFeatureFlagsLoaded();
   if (orchestratorFeatureEnabledForViewer()) {
