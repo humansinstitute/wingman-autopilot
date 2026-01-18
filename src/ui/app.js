@@ -794,8 +794,8 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
           if (window.location.pathname !== HOME_ROUTE) {
             window.history.pushState({ route: "home" }, "", HOME_ROUTE);
           }
-          render();
         }
+        render();
       }
     } catch {
       // ignore dispatch errors
