@@ -40,6 +40,7 @@ export const initAppDialogs = ({
   const appLogsContent = document.getElementById("app-logs-content");
   const appLogsRefreshButton = document.getElementById("app-logs-refresh");
   const appLogsCloseButton = document.getElementById("app-logs-close");
+  const appCancelButton = document.getElementById("app-cancel");
   const appCloneButton = document.getElementById("app-clone");
   const appCloneDialog = document.getElementById("app-clone-dialog");
   const appCloneForm = appCloneDialog?.querySelector("form") ?? null;
@@ -725,6 +726,11 @@ export const initAppDialogs = ({
   appForm?.addEventListener("submit", handleAppFormSubmit);
 
   appDiscoverButton?.addEventListener("click", handleAppDiscover);
+
+  appCancelButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    closeAppDialog();
+  });
 
   appDialog?.addEventListener("cancel", (event) => {
     event.preventDefault();
