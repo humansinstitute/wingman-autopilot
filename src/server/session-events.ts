@@ -61,40 +61,38 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
 
       console.log(`[session-events] Connected to AgentAPI for ${sessionId}`);
 
-      // Use a passthrough stream to forward data and log it
-      const reader = agentResponse.body.getReader();
-
-      const stream = new ReadableStream({
-        async pull(controller) {
-          try {
+      // Try using an async generator for Bun streaming
+      async function* streamEvents() {
+        const reader = agentResponse.body!.getReader();
+        const decoder = new TextDecoder();
+        try {
+          while (true) {
             const { done, value } = await reader.read();
             if (done) {
               console.log(`[session-events] Stream ended for ${sessionId}`);
-              controller.close();
-              return;
+              break;
             }
-            // Log the data being forwarded
-            const text = new TextDecoder().decode(value);
-            console.log(`[session-events] Forwarding ${value.byteLength} bytes for ${sessionId}: ${text.slice(0, 100)}...`);
-            controller.enqueue(value);
-          } catch (err) {
-            console.error(`[session-events] Read error for ${sessionId}:`, err);
-            controller.error(err);
+            const text = decoder.decode(value, { stream: true });
+            console.log(`[session-events] Forwarding ${value.byteLength} bytes for ${sessionId}`);
+            yield value;
           }
-        },
-        cancel() {
-          console.log(`[session-events] Stream cancelled for ${sessionId}`);
-          reader.cancel();
-          abortController.abort();
+        } catch (err) {
+          if ((err as Error).name !== "AbortError") {
+            console.error(`[session-events] Read error for ${sessionId}:`, err);
+          }
+        } finally {
+          reader.releaseLock();
         }
-      });
+      }
+
+      // Convert async generator to ReadableStream
+      const stream = ReadableStream.from(streamEvents());
 
       return new Response(stream, {
         headers: {
           "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache, no-store, must-revalidate",
-          Connection: "keep-alive",
-          "X-Accel-Buffering": "no",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
         },
       });
     } catch (error) {
