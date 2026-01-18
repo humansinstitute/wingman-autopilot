@@ -5864,12 +5864,33 @@ const handleApi = async (
   }
 
   if (pathname.startsWith("/api/sessions/")) {
+    const parts = pathname.split("/");
+    const id = parts[3];
+
+    // SSE endpoint - check auth and handle specially
+    if (method === "GET" && parts[4] === "events" && id) {
+      // Debug logging for SSE auth
+      console.log(`[sse-debug] SSE request for session ${id}, hasSession: ${!!authContext.session}, npub: ${authContext.npub || "none"}`);
+      const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
+      if (denied) {
+        console.log(`[sse-debug] SSE auth denied for ${id}`);
+        return denied;
+      }
+      const liveSession = manager.getSession(id);
+      const viewerNormalizedNpub = getViewerNormalizedNpub(authContext);
+      const viewerIsAdmin = Boolean(adminNpub && viewerNormalizedNpub && viewerNormalizedNpub === adminNpub);
+      const ownedSession = liveSession && (viewerIsAdmin || liveSession.ownerNpub === viewerNormalizedNpub) ? liveSession : null;
+      if (!ownedSession) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+      console.log(`[sse-debug] SSE auth passed for ${id}, handling...`);
+      return handleSessionEvents(id, request);
+    }
+
     const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
     if (denied) {
       return denied;
     }
-    const parts = pathname.split("/");
-    const id = parts[3];
     if (!id) {
       return Response.json({ error: "Session id required" }, { status: 400 });
     }
@@ -5959,11 +5980,7 @@ const handleApi = async (
       return Response.json({ id, logs });
     }
 
-    // SSE endpoint for real-time session events
-    if (method === "GET" && parts[4] === "events") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      return handleSessionEvents(id, request);
-    }
+    // Note: SSE endpoint (/events) is handled earlier in the route chain
 
     if (parts[4] === "messages") {
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });

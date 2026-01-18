@@ -46,7 +46,7 @@ class SSEManager {
     const url = `/api/sessions/${sessionId}/events`;
 
     try {
-      const source = new EventSource(url);
+      const source = new EventSource(url, { withCredentials: true });
 
       source.onopen = () => {
         console.log(`[sse] Connected to session ${sessionId}`);
