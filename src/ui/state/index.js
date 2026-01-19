@@ -41,6 +41,7 @@ export const TERMINAL_CONTROL_ACTIONS = [
   { id: "terminal-3", label: "Send 3", toastLabel: "3", sequence: "3" },
   { id: "terminal-up", label: "Send Arrow Up", toastLabel: "Arrow Up", sequence: "\u001b[A" },
   { id: "terminal-down", label: "Send Arrow Down", toastLabel: "Arrow Down", sequence: "\u001b[B" },
+  { id: "terminal-shift-tab", label: "Send Shift+Tab", toastLabel: "Shift+Tab", sequence: "\u001b[Z" },
   { id: "terminal-return", label: "Send Return", toastLabel: "Return", sequence: "\r" },
   { id: "terminal-ctrlc", label: "Send Ctrl+C", toastLabel: "Ctrl+C", sequence: "\u0003" },
 ];

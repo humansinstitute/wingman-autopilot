@@ -11246,10 +11246,27 @@ const renderComposer = (sessionId) => {
     }
   });
   textarea.addEventListener("keydown", (event) => {
+    // Direct pass-through shortcuts: send immediately when textarea is empty
+    // These bypass agent status/queue checks to allow interrupting or navigating
+    if (textarea.value === "") {
+      // Esc: send escape sequence directly
+      if (event.key === "Escape") {
+        event.preventDefault();
+        const escAction = TERMINAL_CONTROL_ACTIONS.find((a) => a.id === "terminal-esc");
+        sendControlCommand(sessionId, escAction);
+        return;
+      }
+      // Shift+Tab: send reverse tab sequence directly
+      if (event.key === "Tab" && event.shiftKey) {
+        event.preventDefault();
+        const shiftTabAction = TERMINAL_CONTROL_ACTIONS.find((a) => a.id === "terminal-shift-tab");
+        sendControlCommand(sessionId, shiftTabAction);
+        return;
+      }
+    }
     // Check for direct terminal control shortcuts when conditions are met:
     // 1. Input is empty, 2. Agent is stable (not running), 3. Queue is empty, 4. Scrolled to bottom
     const directControlKeys = {
-      Escape: TERMINAL_CONTROL_ACTIONS.find((a) => a.id === "terminal-esc"),
       ArrowUp: TERMINAL_CONTROL_ACTIONS.find((a) => a.id === "terminal-up"),
       ArrowDown: TERMINAL_CONTROL_ACTIONS.find((a) => a.id === "terminal-down"),
       Enter: TERMINAL_CONTROL_ACTIONS.find((a) => a.id === "terminal-return"),
