@@ -4773,7 +4773,7 @@ const quickLaunchSession = async (project) => {
   const directory = project.directoryPath;
 
   try {
-    await launchSession(agentId, directory, sessionName);
+    await launchSession(agentId, directory, sessionName, null, { openInNewTab: true });
   } catch (error) {
     console.error("Failed to quick launch session:", error);
     showToast("Failed to launch session", { type: "error" });
