@@ -730,6 +730,9 @@ const ensureDialogElements = () => {
   const clearButton = form?.querySelector('[data-action="identity-password-clear"]') ?? null;
   const title = form?.querySelector('[data-role="title"]') ?? null;
   const description = form?.querySelector('[data-role="description"]') ?? null;
+  const keypad = form?.querySelector('[data-role="keypad"]') ?? null;
+  const pinDots = form?.querySelectorAll('[data-pin-dot]') ?? [];
+  const pinConfirmDots = form?.querySelectorAll('[data-pin-confirm-dot]') ?? [];
 
   passwordDialogElements = {
     dialog,
@@ -741,10 +744,15 @@ const ensureDialogElements = () => {
     clearButton,
     title,
     description,
+    keypad,
+    pinDots: Array.from(pinDots),
+    pinConfirmDots: Array.from(pinConfirmDots),
   };
   passwordDialogElements.secure = applyPasswordDialogSecurity(passwordDialogElements);
   return passwordDialogElements;
 };
+
+const PIN_LENGTH = 6;
 
 const showPasswordDialog = async ({
   mode,
@@ -757,7 +765,7 @@ const showPasswordDialog = async ({
     throw new Error("Password dialog unavailable");
   }
 
-  const { dialog, form, passwordInput, confirmField, confirmInput, errorEl, clearButton, title, description } =
+  const { dialog, form, passwordInput, confirmField, confirmInput, errorEl, clearButton, title, description, keypad, pinDots, pinConfirmDots } =
     elements;
   if (!form || !passwordInput || !dialog) {
     throw new Error("Password dialog incomplete");
@@ -780,16 +788,14 @@ const showPasswordDialog = async ({
   }
 
   if (confirmField) {
-    confirmField.hidden = !needsConfirmation;
+    confirmField.hidden = true;
   }
   if (confirmInput) {
     confirmInput.required = needsConfirmation;
     confirmInput.value = "";
-    confirmInput.autocomplete = needsConfirmation ? "new-password" : "current-password";
   }
 
   passwordInput.value = "";
-  passwordInput.autocomplete = needsConfirmation ? "new-password" : "current-password";
 
   if (errorEl) {
     if (errorMessage) {
@@ -805,29 +811,136 @@ const showPasswordDialog = async ({
     clearButton.hidden = !allowReset;
   }
 
+  // Keypad state
+  let currentPin = "";
+  let confirmPin = "";
+  let isConfirmPhase = false;
+
+  const updatePinDisplay = () => {
+    pinDots.forEach((dot, index) => {
+      if (index < currentPin.length) {
+        dot.classList.add("filled");
+      } else {
+        dot.classList.remove("filled");
+      }
+    });
+    pinConfirmDots.forEach((dot, index) => {
+      if (index < confirmPin.length) {
+        dot.classList.add("filled");
+      } else {
+        dot.classList.remove("filled");
+      }
+    });
+  };
+
+  const resetPinEntry = () => {
+    if (isConfirmPhase) {
+      confirmPin = "";
+      confirmInput.value = "";
+    } else {
+      currentPin = "";
+      passwordInput.value = "";
+    }
+    updatePinDisplay();
+  };
+
+  const resetAllPins = () => {
+    currentPin = "";
+    confirmPin = "";
+    isConfirmPhase = false;
+    passwordInput.value = "";
+    confirmInput.value = "";
+    if (confirmField) {
+      confirmField.hidden = true;
+    }
+    updatePinDisplay();
+  };
+
+  const showError = (msg) => {
+    if (errorEl) {
+      errorEl.textContent = msg;
+      errorEl.hidden = false;
+    }
+  };
+
+  const hideError = () => {
+    if (errorEl) {
+      errorEl.hidden = true;
+      errorEl.textContent = "";
+    }
+  };
+
+  const handlePinKeyPress = (key) => {
+    hideError();
+
+    if (key === "clear") {
+      resetPinEntry();
+      return;
+    }
+
+    if (key === "back") {
+      if (isConfirmPhase) {
+        confirmPin = confirmPin.slice(0, -1);
+        confirmInput.value = confirmPin;
+      } else {
+        currentPin = currentPin.slice(0, -1);
+        passwordInput.value = currentPin;
+      }
+      updatePinDisplay();
+      return;
+    }
+
+    // Number key
+    if (isConfirmPhase) {
+      if (confirmPin.length >= PIN_LENGTH) return;
+      confirmPin += key;
+      confirmInput.value = confirmPin;
+      updatePinDisplay();
+      if (confirmPin.length === PIN_LENGTH) {
+        // Auto-submit when confirm PIN is complete
+        form.requestSubmit();
+      }
+    } else {
+      if (currentPin.length >= PIN_LENGTH) return;
+      currentPin += key;
+      passwordInput.value = currentPin;
+      updatePinDisplay();
+      if (currentPin.length === PIN_LENGTH && needsConfirmation) {
+        // Switch to confirm phase
+        isConfirmPhase = true;
+        if (confirmField) {
+          confirmField.hidden = false;
+        }
+      } else if (currentPin.length === PIN_LENGTH && !needsConfirmation) {
+        // Auto-submit for unlock mode
+        form.requestSubmit();
+      }
+    }
+  };
+
+  // Reset pin dots display
+  resetAllPins();
+  updatePinDisplay();
+
   let submittedData = null;
 
   return new Promise((resolve) => {
     const handleSubmit = (event) => {
       event.preventDefault();
       const password = passwordInput.value.trim();
-      if (!password) {
-        if (errorEl) {
-          errorEl.textContent = "PIN is required";
-          errorEl.hidden = false;
-        }
-        passwordInput.focus();
+      if (!password || password.length < PIN_LENGTH) {
+        showError("Please enter a 6-digit PIN");
         return;
       }
-      if (needsConfirmation && confirmInput) {
+      if (needsConfirmation) {
         const confirmation = confirmInput.value.trim();
+        if (!confirmation || confirmation.length < PIN_LENGTH) {
+          showError("Please confirm your PIN");
+          return;
+        }
         if (password !== confirmation) {
-          if (errorEl) {
-            errorEl.textContent = "PINs do not match";
-            errorEl.hidden = false;
-          }
-          confirmInput.focus();
-          confirmInput.select();
+          showError("PINs do not match");
+          resetAllPins();
           return;
         }
       }
@@ -846,10 +959,42 @@ const showPasswordDialog = async ({
       }
     };
 
+    const handleKeypadClick = (event) => {
+      const target = event.target;
+      if (!target.hasAttribute("data-pin-key")) return;
+      const key = target.getAttribute("data-pin-key");
+      handlePinKeyPress(key);
+    };
+
+    const handleKeyDown = (event) => {
+      // Handle number keys (0-9)
+      if (/^[0-9]$/.test(event.key)) {
+        event.preventDefault();
+        handlePinKeyPress(event.key);
+        return;
+      }
+      // Handle backspace
+      if (event.key === "Backspace") {
+        event.preventDefault();
+        handlePinKeyPress("back");
+        return;
+      }
+      // Handle delete/clear
+      if (event.key === "Delete") {
+        event.preventDefault();
+        handlePinKeyPress("clear");
+        return;
+      }
+    };
+
     const handleClose = () => {
       form.removeEventListener("submit", handleSubmit);
       dialog.removeEventListener("cancel", handleCancel);
       dialog.removeEventListener("close", handleClose);
+      dialog.removeEventListener("keydown", handleKeyDown);
+      if (keypad) {
+        keypad.removeEventListener("click", handleKeypadClick);
+      }
       if (clearButton) {
         clearButton.removeEventListener("click", handleClear);
       }
@@ -867,16 +1012,16 @@ const showPasswordDialog = async ({
     form.addEventListener("submit", handleSubmit);
     dialog.addEventListener("cancel", handleCancel, { once: true });
     dialog.addEventListener("close", handleClose, { once: true });
+    dialog.addEventListener("keydown", handleKeyDown);
+    if (keypad) {
+      keypad.addEventListener("click", handleKeypadClick);
+    }
     if (clearButton && !clearButton.hidden) {
       clearButton.addEventListener("click", handleClear);
     }
 
     dialog.returnValue = "";
     dialog.showModal();
-    requestAnimationFrame(() => {
-      passwordInput.focus();
-      passwordInput.select();
-    });
   });
 };
 
