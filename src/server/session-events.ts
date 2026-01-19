@@ -9,10 +9,14 @@ import type { ProcessManager } from "../agents/process-manager";
 export interface SessionEventsOptions {
   manager: ProcessManager;
   agentHost: string;
+  /** Interval in ms for sending SSE keepalive comments (default: 30000) */
+  sseKeepaliveIntervalMs?: number;
 }
 
+const DEFAULT_KEEPALIVE_INTERVAL_MS = 30000;
+
 export function createSessionEventsHandler(options: SessionEventsOptions) {
-  const { manager, agentHost } = options;
+  const { manager, agentHost, sseKeepaliveIntervalMs = DEFAULT_KEEPALIVE_INTERVAL_MS } = options;
 
   return async function handleSessionEvents(
     sessionId: string,
@@ -91,16 +95,40 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
         }
       }
 
+      // Track keepalive timer for cleanup
+      let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+
       return new Response(
         new ReadableStream({
           start(controller) {
             streamController = controller;
             // Send initial keepalive comment (SSE format)
             controller.enqueue(encoder.encode(": connected\n\n"));
+
+            // Set up periodic keepalive to prevent idle timeout
+            keepaliveTimer = setInterval(() => {
+              try {
+                if (streamController) {
+                  streamController.enqueue(encoder.encode(": keepalive\n\n"));
+                }
+              } catch {
+                // Controller closed, clear the timer
+                if (keepaliveTimer) {
+                  clearInterval(keepaliveTimer);
+                  keepaliveTimer = null;
+                }
+              }
+            }, sseKeepaliveIntervalMs);
+
             // Start background pump - DO NOT await, must return immediately
             pumpData();
           },
           cancel() {
+            // Clear keepalive timer
+            if (keepaliveTimer) {
+              clearInterval(keepaliveTimer);
+              keepaliveTimer = null;
+            }
             streamController = null;
             try { reader.cancel(); } catch {}
             abortController.abort();

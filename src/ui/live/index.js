@@ -5,6 +5,7 @@
 
 export { db, MessageStore, SessionStore, DbUtils, Dexie } from "./db.js";
 export { sseManager } from "./sse-manager.js";
+export { visibilityManager } from "./visibility-manager.js";
 export {
   isAlpineChatEnabled,
   enableAlpineChat,

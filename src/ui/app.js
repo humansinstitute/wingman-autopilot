@@ -10,6 +10,7 @@ import { npubProjectsState, fetchNpubProjects, renderNpubProjectsPanel } from ".
 import "./logging/browser.js";
 import {
   sseManager,
+  visibilityManager,
   initLiveModule,
   MessageStore,
   isAlpineChatEnabled,
@@ -12405,8 +12406,17 @@ const scrollLiveViewIfVisible = () => {
 };
 
 window.addEventListener("focus", scrollLiveViewIfVisible);
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") {
+
+// Initialize visibility manager for SSE reconnection on tab return
+visibilityManager.init({
+  getSessionId: () => state.activeSessionId,
+  checkHealth: (sessionId) => sseManager.isConnectionHealthy(sessionId),
+  reconnect: (sessionId) => sseManager.reconnect(sessionId),
+});
+
+// Subscribe to visibility changes for scroll behavior
+visibilityManager.onVisibilityChange((isVisible) => {
+  if (isVisible) {
     scrollLiveViewIfVisible();
   }
 });

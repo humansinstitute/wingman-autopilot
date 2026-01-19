@@ -2809,7 +2809,11 @@ await rehydrateOrphanedSessions(
 );
 
 // SSE handler for session events
-const handleSessionEvents = createSessionEventsHandler({ manager, agentHost });
+const handleSessionEvents = createSessionEventsHandler({
+  manager,
+  agentHost,
+  sseKeepaliveIntervalMs: config.sseKeepaliveIntervalMs,
+});
 
 const syncSessionMessages = async (sessionId: string, force = false) => {
   if (!force && messageStore.hasMessages(sessionId)) {

@@ -7,6 +7,8 @@ import { MessageStore, SessionStore } from "./db.js";
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
+/** No-event threshold for considering connection unhealthy (90s) */
+const HEALTH_CHECK_STALE_MS = 90000;
 
 /**
  * Manages SSE connections to session event streams.
@@ -19,6 +21,8 @@ class SSEManager {
     this.reconnectTimers = new Map();
     /** @type {Map<string, number>} Reconnect attempt counts by sessionId */
     this.reconnectAttempts = new Map();
+    /** @type {Map<string, number>} Last event timestamp by sessionId */
+    this.lastEventTime = new Map();
     /** @type {Set<Function>} Status change listeners */
     this.statusListeners = new Set();
     /** @type {Set<Function>} Message listeners */
@@ -51,6 +55,7 @@ class SSEManager {
       source.onopen = () => {
         console.log(`[sse] Connected to session ${sessionId}`);
         this.reconnectAttempts.set(sessionId, 0);
+        this.lastEventTime.set(sessionId, Date.now());
         this.notifyConnectionListeners(sessionId, "connected");
       };
 
@@ -62,6 +67,7 @@ class SSEManager {
       // Handle generic message events (default event type)
       source.onmessage = async (event) => {
         try {
+          this.lastEventTime.set(sessionId, Date.now());
           console.log(`[sse] Received event for ${sessionId}:`, event.data?.slice(0, 100));
           const data = JSON.parse(event.data);
           await this.handleEventData(sessionId, data);
@@ -73,6 +79,7 @@ class SSEManager {
       // Handle typed events from AgentAPI
       source.addEventListener("message", async (event) => {
         try {
+          this.lastEventTime.set(sessionId, Date.now());
           console.log(`[sse] message event for ${sessionId}:`, event.data?.slice(0, 100));
           const data = JSON.parse(event.data);
           if (data.type === "message" || data.role) {
@@ -86,6 +93,7 @@ class SSEManager {
 
       source.addEventListener("status", async (event) => {
         try {
+          this.lastEventTime.set(sessionId, Date.now());
           const data = JSON.parse(event.data);
           const status = data.status || data.agent_status || "stable";
           await SessionStore.updateStatus(sessionId, status, status);
@@ -144,6 +152,7 @@ class SSEManager {
     }
     this.clearReconnectTimer(sessionId);
     this.reconnectAttempts.delete(sessionId);
+    this.lastEventTime.delete(sessionId);
   }
 
   /**
@@ -226,6 +235,38 @@ class SSEManager {
       default:
         return "disconnected";
     }
+  }
+
+  /**
+   * Check if a connection is healthy (received events recently).
+   * @param {string} sessionId
+   * @returns {boolean} True if healthy, false if stale or disconnected
+   */
+  isConnectionHealthy(sessionId) {
+    const state = this.getConnectionState(sessionId);
+    if (state !== "connected") {
+      return false;
+    }
+
+    const lastEvent = this.lastEventTime.get(sessionId);
+    if (!lastEvent) {
+      // No events recorded yet - consider unhealthy
+      return false;
+    }
+
+    const elapsed = Date.now() - lastEvent;
+    return elapsed < HEALTH_CHECK_STALE_MS;
+  }
+
+  /**
+   * Force reconnect to a session's event stream.
+   * Disconnects if connected, then reconnects.
+   * @param {string} sessionId
+   */
+  reconnect(sessionId) {
+    console.log(`[sse] Force reconnecting session ${sessionId}`);
+    this.disconnect(sessionId);
+    this.connect(sessionId);
   }
 
   /**

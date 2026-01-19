@@ -35,6 +35,8 @@ export interface WingmanConfig {
   subdomainBaseDomain: string | null;
   /** Whether subdomain-based app routing is enabled */
   subdomainProxyEnabled: boolean;
+  /** Interval for SSE keepalive messages (prevents idle timeout) */
+  sseKeepaliveIntervalMs: number;
 }
 
 const DEFAULT_PORT = 3600;
@@ -53,6 +55,7 @@ const DEFAULT_ALLOWED_HOSTS = "localhost,127.0.0.1,[::1]";
 const DEFAULT_STATUS_POLL_INTERVAL_MS = 100;
 const DEFAULT_STATUS_POLL_MAX_INTERVAL_MS = 30000;
 const DEFAULT_STATUS_POLL_TIMEOUT_MS = 5000;
+const DEFAULT_SSE_KEEPALIVE_INTERVAL_MS = 30000;
 
 const sanitizeInteger = (value: string | undefined, fallback: number): number => {
   if (!value) return fallback;
@@ -183,6 +186,11 @@ export const loadConfig = (): WingmanConfig => {
   const subdomainProxyEnabled = subdomainBaseDomain !== null &&
     Bun.env.SUBDOMAIN_PROXY_ENABLED !== "false";
 
+  const sseKeepaliveIntervalMs = clampPositiveInteger(
+    sanitizeInteger(Bun.env.SSE_KEEPALIVE_INTERVAL_MS, DEFAULT_SSE_KEEPALIVE_INTERVAL_MS),
+    5000,
+  );
+
   return {
     port,
     agentPortStart,
@@ -199,6 +207,7 @@ export const loadConfig = (): WingmanConfig => {
     agentStatusPollTimeoutMs,
     subdomainBaseDomain,
     subdomainProxyEnabled,
+    sseKeepaliveIntervalMs,
   };
 };
 
