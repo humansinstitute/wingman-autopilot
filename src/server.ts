@@ -4806,6 +4806,7 @@ const handleApi = async (
         id: key,
         label: definition.label,
       })),
+      defaultAgent: config.defaultAgent,
       featureFlags: serialiseFeatureFlagsForViewer(workspaceScope.isAdmin),
     });
   }
@@ -6232,7 +6233,25 @@ const server = Bun.serve({
       }
 
       // Handle subdomain-based app routing (e.g., bold-gem-boat.apps.example.com)
-      // Skip subdomain routing for Wingman's own API and UI paths
+      // Check if this is a subdomain request FIRST - app subdomains should proxy all paths
+      const host = request.headers.get("host");
+      const hostWithoutPort = host?.split(":")[0]?.toLowerCase() ?? "";
+      const baseDomain = subdomainProxyConfig.baseDomain?.toLowerCase() ?? "";
+      const isAppSubdomain = subdomainProxyConfig.enabled &&
+        baseDomain &&
+        hostWithoutPort.endsWith(`.${baseDomain}`) &&
+        // Exclude numeric port subdomains (e.g., 30500.wmhost.app)
+        !hostWithoutPort.match(/^\d+\./);
+
+      if (isAppSubdomain) {
+        // For app subdomains, proxy ALL requests regardless of path
+        const subdomainResponse = await handleSubdomainRequest(request, subdomainProxyConfig);
+        if (subdomainResponse) {
+          return subdomainResponse;
+        }
+      }
+
+      // For non-subdomain requests, skip routing for Wingman's own API and UI paths
       const isWingmanPath = pathname.startsWith("/api/") ||
         pathname.startsWith("/home") ||
         pathname.startsWith("/live") ||
@@ -6247,6 +6266,7 @@ const server = Bun.serve({
         pathname === "/favicon.ico";
 
       if (!isWingmanPath) {
+        // Handle any other subdomain patterns (numeric ports, etc.)
         const subdomainResponse = await handleSubdomainRequest(request, subdomainProxyConfig);
         if (subdomainResponse) {
           return subdomainResponse;

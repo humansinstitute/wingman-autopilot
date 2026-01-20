@@ -28,6 +28,8 @@ export interface WingmanConfig {
   allowedOrigins: string;
   allowedHosts: string;
   agents: Record<AgentType, AgentDefinition>;
+  /** Default agent for AI features (e.g., "Fix with AI", "Edit with AI") */
+  defaultAgent: AgentType;
   agentStatusPollIntervalMs: number;
   agentStatusPollMaxIntervalMs: number;
   agentStatusPollTimeoutMs: number;
@@ -191,6 +193,14 @@ export const loadConfig = (): WingmanConfig => {
     5000,
   );
 
+  // Default agent for AI features
+  const validAgentTypes: AgentType[] = ["codex", "claude", "goose", "opencode", "gemini"];
+  const defaultAgentInput = Bun.env.DEFAULT_AGENT?.trim().toLowerCase();
+  const defaultAgent: AgentType = defaultAgentInput && validAgentTypes.includes(defaultAgentInput as AgentType)
+    ? (defaultAgentInput as AgentType)
+    : "claude";
+  console.log(`[Config] Default agent: ${defaultAgent}${defaultAgentInput && defaultAgentInput !== defaultAgent ? ` (DEFAULT_AGENT="${defaultAgentInput}" was invalid)` : ""}`);
+
   return {
     port,
     agentPortStart,
@@ -202,6 +212,7 @@ export const loadConfig = (): WingmanConfig => {
     allowedOrigins,
     allowedHosts,
     agents: defaultAgents,
+    defaultAgent,
     agentStatusPollIntervalMs,
     agentStatusPollMaxIntervalMs,
     agentStatusPollTimeoutMs,

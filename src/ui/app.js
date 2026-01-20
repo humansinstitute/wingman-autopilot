@@ -644,6 +644,23 @@ const requestPostAuthSessionsFetch = () => {
   }
 };
 
+let postAuthConfigRefreshScheduled = false;
+const requestPostAuthConfigRefresh = () => {
+  if (postAuthConfigRefreshScheduled) {
+    return;
+  }
+  postAuthConfigRefreshScheduled = true;
+  const triggerRefresh = () => {
+    postAuthConfigRefreshScheduled = false;
+    void fetchConfig();
+  };
+  if (typeof queueMicrotask === "function") {
+    queueMicrotask(triggerRefresh);
+  } else {
+    Promise.resolve().then(triggerRefresh);
+  }
+};
+
 const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
   if (!partial || typeof partial !== "object") {
     return state.identity;
@@ -744,6 +761,7 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
 
   next.authenticated = Boolean(next.npub);
   const becameAuthenticated = !current.authenticated && next.authenticated;
+  const becameUnauthenticated = current.authenticated && !next.authenticated;
 
   const currentPorts = Array.isArray(current.ports) ? current.ports : [];
   const portsChanged =
@@ -814,6 +832,9 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
     }
   }
 
+  if (becameAuthenticated || becameUnauthenticated) {
+    requestPostAuthConfigRefresh();
+  }
   if (becameAuthenticated) {
     requestPostAuthSessionsFetch();
   }
@@ -4770,7 +4791,7 @@ const quickLaunchSession = async (project) => {
   closeQuickLauncherMenu();
   const sessionId = getNextSessionId(project.id);
   const sessionName = `${project.name}-${sessionId}`;
-  const agentId = "claude"; // Default agent
+  const agentId = state.config?.defaultAgent ?? "claude";
   const directory = project.directoryPath;
 
   try {
@@ -5734,9 +5755,10 @@ const fetchConfig = async () => {
     option.textContent = agent.label;
     agentSelect.append(option);
   });
-  // Default to claude if available
-  if (state.config.agents.some((a) => a.id === "claude")) {
-    agentSelect.value = "claude";
+  // Default to configured default agent if available
+  const defaultAgentId = state.config.defaultAgent ?? "claude";
+  if (state.config.agents.some((a) => a.id === defaultAgentId)) {
+    agentSelect.value = defaultAgentId;
   }
   syncOrchestratorAgents();
   if (directoryInput) {
@@ -8214,10 +8236,10 @@ const renderAppCard = (app) => {
       window.alert("App root directory is unavailable for this app.");
       return;
     }
-    const agentId = "codex";
+    const agentId = state.config?.defaultAgent ?? "claude";
     const configuredAgents = Array.isArray(state.config?.agents) ? state.config.agents : null;
     if (configuredAgents && !configuredAgents.some((agent) => agent && typeof agent.id === "string" && agent.id === agentId)) {
-      window.alert("Codex agent is not available. Update your configuration and try again.");
+      window.alert(`${agentId} agent is not available. Update your configuration and try again.`);
       return;
     }
     const appName =
@@ -8242,6 +8264,87 @@ const renderAppCard = (app) => {
     }
   });
   controls.append(editWithAiButton);
+
+  // Fix with AI button - fetches logs and launches Claude with them pre-filled
+  const fixWithAiButton = document.createElement("button");
+  fixWithAiButton.type = "button";
+  fixWithAiButton.className = "wm-button secondary";
+  fixWithAiButton.textContent = "Fix with AI";
+  fixWithAiButton.addEventListener("click", async () => {
+    if (fixWithAiButton.disabled) return;
+    if (!state.identity.authenticated) {
+      openIdentityLoginDialog();
+      return;
+    }
+    const workingDirectory = typeof app.root === "string" ? app.root : "";
+    if (!workingDirectory) {
+      window.alert("App root directory is unavailable for this app.");
+      return;
+    }
+    const agentId = state.config?.defaultAgent ?? "claude";
+    const configuredAgents = Array.isArray(state.config?.agents) ? state.config.agents : null;
+    if (configuredAgents && !configuredAgents.some((agent) => agent && typeof agent.id === "string" && agent.id === agentId)) {
+      window.alert(`${agentId} agent is not available. Update your configuration and try again.`);
+      return;
+    }
+
+    const originalLabel = fixWithAiButton.textContent;
+    fixWithAiButton.disabled = true;
+    fixWithAiButton.textContent = "Loading logs…";
+
+    try {
+      // Fetch the app's recent logs
+      const logsResponse = await fetchAppLogsApi(app.id, 100);
+      const logs = logsResponse?.logs ?? [];
+
+      // Build log file paths
+      const logFilePaths = [];
+      if (app.logsDir && app.pm2Name) {
+        logFilePaths.push(`${app.logsDir}/${app.pm2Name}-out.log`);
+        logFilePaths.push(`${app.logsDir}/${app.pm2Name}-error.log`);
+      }
+
+      // Build the initial prompt
+      const appName =
+        typeof app.label === "string" && app.label.trim().length > 0 ? app.label.trim() : String(app.id ?? "app");
+      const sessionName = `fixing ${appName}`;
+
+      let initialPrompt = `Please review these logs and the full log file if needed. I would like assistance debugging this issue and approaches to fix. Please ask questions if you need more context.\n\n`;
+
+      if (logs.length > 0) {
+        initialPrompt += `## Recent Logs (tail)\n\`\`\`\n${logs.join("\n")}\n\`\`\`\n\n`;
+      } else {
+        initialPrompt += `## Recent Logs\nNo recent logs available.\n\n`;
+      }
+
+      if (logFilePaths.length > 0) {
+        initialPrompt += `## Full Log Files\n${logFilePaths.map((p) => `- ${p}`).join("\n")}\n`;
+      }
+
+      const origin = buildSessionOrigin({
+        type: "app",
+        id: app.id ?? "",
+        url: app.id !== undefined && app.id !== null ? `/apps/${app.id}` : undefined,
+        label: app.label,
+      });
+
+      fixWithAiButton.textContent = "Launching…";
+      await launchSession(agentId, workingDirectory, sessionName, undefined, {
+        openInNewTab: true,
+        origin,
+        initialPrompt,
+      });
+    } catch (error) {
+      console.error("Fix with AI failed:", error);
+      window.alert("Failed to launch Fix with AI. Check console for details.");
+    } finally {
+      if (fixWithAiButton.isConnected) {
+        fixWithAiButton.disabled = false;
+        fixWithAiButton.textContent = originalLabel ?? "Fix with AI";
+      }
+    }
+  });
+  controls.append(fixWithAiButton);
 
   card.append(controls);
 
@@ -11181,9 +11284,24 @@ const renderComposer = (sessionId) => {
   const composer = document.createElement("form");
   composer.className = "wm-composer";
 
+  // Check localStorage for an initial draft (e.g., from "Fix with AI")
+  let initialDraft = state.messageDrafts.get(sessionId) ?? "";
+  if (!initialDraft) {
+    try {
+      const storedDraft = localStorage.getItem(`session-draft-${sessionId}`);
+      if (storedDraft) {
+        initialDraft = storedDraft;
+        state.messageDrafts.set(sessionId, storedDraft);
+        localStorage.removeItem(`session-draft-${sessionId}`);
+      }
+    } catch {
+      // Ignore localStorage errors
+    }
+  }
+
   const textarea = document.createElement("textarea");
   textarea.placeholder = "Ask the agent something...";
-  textarea.value = state.messageDrafts.get(sessionId) ?? "";
+  textarea.value = initialDraft;
   textarea.setAttribute("rows", "1");
 
   const fileInput = document.createElement("input");

@@ -44,7 +44,7 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = 
       return;
     }
 
-    const { openInNewTab = false, origin = null } = options ?? {};
+    const { openInNewTab = false, origin = null, initialPrompt = null } = options ?? {};
     const payload = { agent: normalizedAgent };
     const trimmedName = typeof name === "string" ? name.trim() : "";
     if (trimmedName.length > 0) {
@@ -58,6 +58,9 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = 
     }
     if (origin && typeof origin === "object") {
       payload.origin = origin;
+    }
+    if (typeof initialPrompt === "string" && initialPrompt.trim().length > 0) {
+      payload.initialPrompt = initialPrompt.trim();
     }
 
     const response = await fetch("/api/sessions", {
@@ -74,6 +77,14 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = 
 
     const session = await response.json();
     if (openInNewTab && session?.id) {
+      // Store initial prompt in localStorage for the new tab to pick up
+      if (typeof initialPrompt === "string" && initialPrompt.trim().length > 0) {
+        try {
+          localStorage.setItem(`session-draft-${session.id}`, initialPrompt.trim());
+        } catch {
+          // Ignore localStorage errors
+        }
+      }
       const sessionUrl = `${routePrefix}/${session.id}`;
       window.open(sessionUrl, "_blank", "noopener");
     }
