@@ -238,3 +238,29 @@ export async function dispatchNextQueuedPromptApi(sessionId) {
   }
   return response.json();
 }
+
+/**
+ * Forks a session to a new git worktree.
+ * Creates a new worktree branch, starts a new session in it, and returns
+ * context messages for injection.
+ * @param {string} sessionId - The source session ID
+ * @param {string} branch - The branch name for the worktree
+ * @param {number} [messageCount=5] - Number of recent messages to include as context
+ * @returns {Promise<{session: Object, contextMessages: Array, worktreePath: string, initialPrompt: string}>}
+ * @throws {Error} If the request fails
+ */
+export async function forkSessionToWorktreeApi(sessionId, branch, messageCount = 5) {
+  const response = await fetch(`/api/sessions/${sessionId}/fork-to-worktree`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ branch, messageCount }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.error ?? response.statusText ?? "Failed to fork to worktree");
+  }
+
+  return data;
+}

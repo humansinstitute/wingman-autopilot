@@ -119,6 +119,11 @@ import { reconcileAppsWithPM2 } from "./server/bootstrap/pm2-reconcile";
 import { connectPM2 } from "./agents/pm2-wrapper";
 import { createUploadHelpers } from "./server/uploads/helpers";
 import { resolveAndCacheNostrProfile } from "./server/nostr-profile";
+import {
+  validateForkInput,
+  getRecentMessages,
+  formatMessagesAsContext,
+} from "./sessions/fork-to-worktree";
 
 const config = loadConfig();
 const adminNpub = normaliseNpub(Bun.env.ADMIN_NPUB ?? null);
@@ -6205,6 +6210,93 @@ const handleApi = async (
       } finally {
         queueDispatchInFlight.delete(id);
       }
+    }
+
+    // Fork session to a new git worktree
+    if (method === "POST" && parts[4] === "fork-to-worktree") {
+      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+
+      const sourceDirectory = ownedSession.workingDirectory;
+      if (!sourceDirectory) {
+        return Response.json({ error: "Source session has no working directory" }, { status: 400 });
+      }
+
+      let payload: unknown;
+      try {
+        payload = await request.json();
+      } catch {
+        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+      }
+
+      let forkInput: ReturnType<typeof validateForkInput>;
+      try {
+        forkInput = validateForkInput(payload);
+        forkInput.sourceSessionId = id;
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
+
+      // Get recent messages from source session
+      const contextMessages = getRecentMessages(messageStore, id, forkInput.messageCount ?? 5);
+
+      // Create worktree
+      let worktreeResult: Awaited<ReturnType<typeof createGitWorktree>>;
+      try {
+        worktreeResult = await createGitWorktree({
+          directory: sourceDirectory,
+          branch: forkInput.branch,
+          startPoint: null,
+        });
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
+
+      // Create new session in the worktree with the same agent
+      const balanceCheck = ensureViewerHasBalance(authContext, {
+        feature: "start an agent session",
+        message: "Add sats to your balance to fork to a worktree.",
+      });
+      if (balanceCheck instanceof Response) {
+        return balanceCheck;
+      }
+
+      const sessionName = `${ownedSession.name || "session"} (${forkInput.branch})`;
+      let newSession: SessionSnapshot;
+      try {
+        newSession = await manager.createSession(
+          ownedSession.agent,
+          worktreeResult.path,
+          sessionName,
+          { type: "fork", id: id, label: `Forked from ${ownedSession.name || id}` }
+        );
+        messageStore.recordSession({
+          id: newSession.id,
+          agent: newSession.agent,
+          startedAt: newSession.startedAt,
+          name: newSession.name,
+          npub: newSession.npub,
+          port: newSession.port,
+          pid: newSession.pid,
+          workingDirectory: newSession.workingDirectory,
+          command: newSession.command,
+          runtimeStatus: newSession.agentRuntimeStatus ?? null,
+          origin: newSession.origin ?? null,
+        });
+        await syncSessionMessages(newSession.id, true);
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 500 });
+      }
+
+      // Format context for injection
+      const initialPrompt = formatMessagesAsContext(contextMessages);
+
+      return Response.json({
+        session: serializeSession(newSession),
+        contextMessages,
+        worktreePath: worktreeResult.path,
+        sourceSessionId: id,
+        initialPrompt,
+      }, { status: 201 });
     }
   }
 

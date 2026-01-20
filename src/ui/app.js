@@ -73,6 +73,7 @@ import {
   addToSessionQueueApi,
   removeFromSessionQueueApi,
   updateSessionQueuePromptApi,
+  forkSessionToWorktreeApi,
 } from "./services/sessions.js";
 import {
   fetchAppsApi,
@@ -11284,8 +11285,9 @@ const renderComposer = (sessionId) => {
   const composer = document.createElement("form");
   composer.className = "wm-composer";
 
-  // Check localStorage for an initial draft (e.g., from "Fix with AI")
+  // Check localStorage for an initial draft (e.g., from "Fix with AI" or "Fork to Worktree")
   let initialDraft = state.messageDrafts.get(sessionId) ?? "";
+  let shouldAutoSubmit = false;
   if (!initialDraft) {
     try {
       const storedDraft = localStorage.getItem(`session-draft-${sessionId}`);
@@ -11293,6 +11295,12 @@ const renderComposer = (sessionId) => {
         initialDraft = storedDraft;
         state.messageDrafts.set(sessionId, storedDraft);
         localStorage.removeItem(`session-draft-${sessionId}`);
+        // Check if auto-submit was requested (e.g., from Fork to Worktree)
+        const autoSubmitFlag = localStorage.getItem(`session-autosubmit-${sessionId}`);
+        if (autoSubmitFlag === "true") {
+          shouldAutoSubmit = true;
+          localStorage.removeItem(`session-autosubmit-${sessionId}`);
+        }
       }
     } catch {
       // Ignore localStorage errors
@@ -11592,6 +11600,58 @@ const renderComposer = (sessionId) => {
         }
       }
     },
+    {
+      label: "Fork to Worktree...",
+      handler: async () => {
+        const session = state.sessions.find((s) => s.id === sessionId);
+        if (!session?.workingDirectory) {
+          showToast("No working directory set for this session", { type: "error" });
+          return;
+        }
+
+        const branch = window.prompt(
+          "Enter branch name for the worktree:\n\n" +
+          "This will create a new worktree and session with the last 5 messages as context.",
+          ""
+        );
+        if (!branch?.trim()) {
+          return;
+        }
+
+        const trimmedBranch = branch.trim();
+        // Basic validation
+        if (!/^[a-zA-Z0-9._/-]+$/.test(trimmedBranch)) {
+          showToast("Invalid branch name. Use alphanumeric characters, dots, underscores, and hyphens.", { type: "error" });
+          return;
+        }
+
+        showToast(`Creating worktree "${trimmedBranch}"...`, { type: "info" });
+
+        try {
+          const result = await forkSessionToWorktreeApi(sessionId, trimmedBranch, 5);
+
+          if (result.session?.id) {
+            // Store initial prompt for auto-submit
+            if (result.initialPrompt) {
+              try {
+                localStorage.setItem(`session-draft-${result.session.id}`, result.initialPrompt);
+                localStorage.setItem(`session-autosubmit-${result.session.id}`, "true");
+              } catch {
+                // Ignore localStorage errors
+              }
+            }
+
+            // Open new session in new tab
+            const sessionUrl = `/live/${result.session.id}`;
+            window.open(sessionUrl, "_blank", "noopener");
+
+            showToast(`Forked to worktree: ${result.worktreePath}`, { type: "success", duration: 5000 });
+          }
+        } catch (error) {
+          showToast(`Fork failed: ${error.message}`, { type: "error", duration: 5000 });
+        }
+      }
+    },
   ]);
 
   // Apps submenu - show if there's an app matching the session's working directory
@@ -11768,6 +11828,16 @@ const renderComposer = (sessionId) => {
     if (!document.contains(textarea)) return;
     textarea.focus();
     resizeTextarea();
+
+    // Auto-submit if flag was set (e.g., from Fork to Worktree)
+    if (shouldAutoSubmit && textarea.value.trim()) {
+      // Small delay to ensure the session is ready
+      setTimeout(() => {
+        if (document.contains(composer)) {
+          composer.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+        }
+      }, 500);
+    }
   });
 
   return composerShell;
