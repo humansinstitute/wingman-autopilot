@@ -1,4 +1,5 @@
 const PASSWORD_DIALOG_ID = "identity-password-dialog";
+const UNLOCK_CODE_DIALOG_ID = "identity-unlock-code-dialog";
 const PASSWORD_META_STORAGE_KEY = "wingman_identity_password_meta";
 const SESSION_STORAGE_KEY = "nostr_session";
 const PASSWORD_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -21,7 +22,7 @@ const KEYTELEPORT_PARAM = "keyteleport";
 import { scryptAsync } from "/vendor/@noble/hashes/scrypt.js";
 import { xchacha20poly1305 } from "/vendor/@noble/ciphers/chacha.js";
 import { bech32 } from "/vendor/@scure/base/index.js";
-import { nip19 } from "/vendor/nostr-tools/index.js";
+import { nip19, nip44 } from "/vendor/nostr-tools/index.js";
 import { schnorr, secp256k1 } from "/vendor/@noble/curves/secp256k1.js";
 import { NostrConnectSigner, RelayPool } from "/vendor/bunker-client.js";
 import { renderQrCode } from "./nostrconnect-qr.js";
@@ -750,6 +751,104 @@ const ensureDialogElements = () => {
   };
   passwordDialogElements.secure = applyPasswordDialogSecurity(passwordDialogElements);
   return passwordDialogElements;
+};
+
+let unlockCodeDialogElements = null;
+
+const ensureUnlockCodeDialogElements = () => {
+  if (unlockCodeDialogElements) {
+    return unlockCodeDialogElements;
+  }
+  if (typeof document === "undefined") return null;
+  const dialog = document.getElementById(UNLOCK_CODE_DIALOG_ID);
+  if (!(dialog instanceof HTMLDialogElement)) return null;
+  const form = dialog.querySelector('form[data-role="form"]');
+  const unlockInput = form?.querySelector('[data-role="unlock-input"]') ?? null;
+  const errorEl = form?.querySelector('[data-role="error"]') ?? null;
+  const title = form?.querySelector('[data-role="title"]') ?? null;
+  const description = form?.querySelector('[data-role="description"]') ?? null;
+
+  unlockCodeDialogElements = {
+    dialog,
+    form,
+    unlockInput,
+    errorEl,
+    title,
+    description,
+  };
+  return unlockCodeDialogElements;
+};
+
+/**
+ * Prompt user to paste an unlock code for Key Teleport v2
+ * @param {Object} options
+ * @param {string} [options.title] - Dialog title
+ * @param {string} [options.message] - Dialog description message
+ * @returns {Promise<string>} The unlock code entered by the user
+ */
+const promptForUnlockCode = async ({ title, message } = {}) => {
+  const elements = ensureUnlockCodeDialogElements();
+  if (!elements) {
+    throw new Error("Unlock code dialog unavailable");
+  }
+
+  const { dialog, form, unlockInput, errorEl, title: titleEl, description: descriptionEl } = elements;
+  if (!form || !unlockInput || !dialog) {
+    throw new Error("Unlock code dialog incomplete");
+  }
+
+  if (titleEl && title) {
+    titleEl.textContent = title;
+  }
+  if (descriptionEl && message) {
+    descriptionEl.textContent = message;
+  }
+
+  unlockInput.value = "";
+  if (errorEl) {
+    errorEl.hidden = true;
+    errorEl.textContent = "";
+  }
+
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      dialog.removeEventListener("close", handleClose);
+      form.removeEventListener("submit", handleSubmit);
+    };
+
+    const handleClose = () => {
+      cleanup();
+      const returnValue = dialog.returnValue;
+      if (returnValue === "cancel" || !returnValue) {
+        reject(new PasswordPromptCancelledError());
+        return;
+      }
+      const code = unlockInput.value.trim();
+      if (!code) {
+        reject(new Error("No unlock code provided"));
+        return;
+      }
+      resolve(code);
+    };
+
+    const handleSubmit = (e) => {
+      e.preventDefault();
+      const code = unlockInput.value.trim();
+      if (!code) {
+        if (errorEl) {
+          errorEl.textContent = "Please paste your unlock code";
+          errorEl.hidden = false;
+        }
+        return;
+      }
+      dialog.close("confirm");
+    };
+
+    dialog.addEventListener("close", handleClose, { once: true });
+    form.addEventListener("submit", handleSubmit);
+    dialog.showModal();
+    unlockInput.focus();
+  });
 };
 
 const PIN_LENGTH = 6;
@@ -1874,7 +1973,8 @@ identityApi.bunkerSigner = identityApi.bunkerSigner ?? null;
 // =============================================================================
 
 /**
- * Handle Key Teleport login by decrypting the blob and using the ncryptsec
+ * Handle Key Teleport v2 login
+ * Uses throwaway keypair encryption instead of PIN-based NIP-49
  * @param {Object} options
  * @param {string} options.blob - The base64-encoded Key Teleport blob
  * @param {Object} options.context - The identity context for UI updates
@@ -1889,7 +1989,7 @@ const handleKeyTeleport = async ({ blob, context }) => {
   console.log("[KeyTeleport] Processing teleport blob...");
 
   try {
-    // Send blob to backend to decrypt and fetch ncryptsec
+    // Send blob to backend to decrypt and fetch encryptedNsec + npub
     const response = await fetch("/api/auth/keyteleport", {
       method: "POST",
       headers: {
@@ -1907,41 +2007,107 @@ const handleKeyTeleport = async ({ blob, context }) => {
       return null;
     }
 
-    const ncryptsec = data?.ncryptsec;
-    if (!ncryptsec || typeof ncryptsec !== "string" || !ncryptsec.startsWith("ncryptsec1")) {
-      console.error("[KeyTeleport] Invalid ncryptsec received");
+    // v2 protocol returns encryptedNsec and npub
+    const { encryptedNsec, npub: userNpub } = data;
+    if (!encryptedNsec || typeof encryptedNsec !== "string") {
+      console.error("[KeyTeleport] Invalid encryptedNsec received");
       window.alert("Key Teleport failed: Invalid key format received");
       return null;
     }
+    if (!userNpub || typeof userNpub !== "string" || !userNpub.startsWith("npub1")) {
+      console.error("[KeyTeleport] Invalid npub received");
+      window.alert("Key Teleport failed: Invalid public key received");
+      return null;
+    }
 
-    console.log("[KeyTeleport] Received ncryptsec, prompting for password...");
+    console.log("[KeyTeleport] Received encrypted key, prompting for unlock code...");
 
-    // Prompt for password to decrypt the ncryptsec
-    let secretKey;
+    // Prompt user to paste the throwaway nsec (unlock code)
+    let unlockCode;
     try {
-      secretKey = await decryptPrivateKeyWithPrompt(ncryptsec, {
-        reason: "Enter the PIN you used when sending the key from Welcome.",
+      unlockCode = await promptForUnlockCode({
+        title: "Paste Unlock Code",
+        message: "Paste the unlock code from your clipboard to complete login",
       });
     } catch (error) {
       if (error instanceof PasswordPromptCancelledError) {
-        console.log("[KeyTeleport] User cancelled password prompt");
+        console.log("[KeyTeleport] User cancelled unlock code prompt");
         return null;
       }
       throw error;
     }
 
-    // Derive public key and npub from secret key
+    // Validate and decode the unlock code (throwaway nsec)
+    let throwawaySecretKey;
+    try {
+      const decoded = nip19.decode(unlockCode);
+      if (decoded.type !== "nsec") {
+        throw new Error("Invalid unlock code format");
+      }
+      throwawaySecretKey = decoded.data;
+    } catch (err) {
+      console.error("[KeyTeleport] Failed to decode unlock code:", err);
+      window.alert("Key Teleport failed: Invalid unlock code");
+      return null;
+    }
+
+    // Decode user's public key for conversation key derivation
+    let userPubkeyHex;
+    try {
+      const decodedNpub = nip19.decode(userNpub);
+      if (decodedNpub.type !== "npub") {
+        throw new Error("Invalid npub format");
+      }
+      userPubkeyHex = decodedNpub.data;
+    } catch (err) {
+      console.error("[KeyTeleport] Failed to decode npub:", err);
+      window.alert("Key Teleport failed: Invalid public key");
+      return null;
+    }
+
+    // Decrypt using NIP-44 with throwaway privkey + user pubkey
+    let decryptedNsec;
+    try {
+      const throwawaySecretKeyHex = bytesToHex(throwawaySecretKey);
+      const conversationKey = nip44.v2.utils.getConversationKey(throwawaySecretKeyHex, userPubkeyHex);
+      decryptedNsec = nip44.v2.decrypt(encryptedNsec, conversationKey);
+    } catch (err) {
+      console.error("[KeyTeleport] Failed to decrypt:", err);
+      window.alert("Key Teleport failed: Decryption failed. Wrong unlock code?");
+      return null;
+    }
+
+    // Validate and decode the decrypted nsec
+    let secretKey;
+    try {
+      const decoded = nip19.decode(decryptedNsec);
+      if (decoded.type !== "nsec") {
+        throw new Error("Invalid decrypted key format");
+      }
+      secretKey = decoded.data;
+    } catch (err) {
+      console.error("[KeyTeleport] Failed to decode decrypted nsec:", err);
+      window.alert("Key Teleport failed: Invalid decrypted key");
+      return null;
+    }
+
+    // Derive public key and verify it matches
     const publicKeyBytes = schnorr.getPublicKey(secretKey);
     const pubkeyHex = bytesToHex(publicKeyBytes);
     const npub = nip19.npubEncode(pubkeyHex);
-    const nsec = nip19.nsecEncode(secretKey);
+
+    if (npub !== userNpub) {
+      console.error("[KeyTeleport] Key mismatch: derived npub doesn't match provided npub");
+      window.alert("Key Teleport failed: Key verification failed");
+      return null;
+    }
 
     console.log("[KeyTeleport] Key decrypted, creating session...");
 
     // Encrypt the key with user's local password for storage
-    let encryptedNsec = null;
+    let localEncryptedNsec = null;
     try {
-      encryptedNsec = await identityApi.crypto?.encryptPrivateKey(secretKey, {
+      localEncryptedNsec = await identityApi.crypto?.encryptPrivateKey(secretKey, {
         mode: "create",
         reason: "Create a password to protect your key on this device.",
       });
@@ -1950,16 +2116,17 @@ const handleKeyTeleport = async ({ blob, context }) => {
     }
 
     // Create server session
-    const { expiresAt } = await persistServerSession(npub, encryptedNsec);
+    const { expiresAt } = await persistServerSession(npub, localEncryptedNsec);
 
     // Save to local cache
-    saveCachedSession({ npub, encryptedNsec, expiresAt, method: "keyteleport" });
+    saveCachedSession({ npub, encryptedNsec: localEncryptedNsec, expiresAt, method: "keyteleport" });
 
     // Update UI
     applyIdentityUpdate(context, { npub, method: "keyteleport", expiresAt, isAuthenticated: true, alias: npub });
 
-    // Wipe secret key from memory
+    // Wipe secret keys from memory
     wipeBytes(secretKey);
+    wipeBytes(throwawaySecretKey);
 
     console.log("[KeyTeleport] Login successful:", npub.slice(0, 20) + "...");
 
