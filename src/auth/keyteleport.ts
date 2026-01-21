@@ -1,6 +1,10 @@
 /**
  * Key Teleport route handler
  * Handles secure key import from Welcome (trusted key manager) via NIP-44 encrypted payloads
+ *
+ * Protocol v2: Uses throwaway keypair encryption instead of PIN-based NIP-49
+ * - Key manager returns encryptedNsec (NIP-44 encrypted) + npub
+ * - User pastes throwaway nsec to decrypt on client side
  */
 
 import { nip44, verifyEvent } from "nostr-tools";
@@ -20,12 +24,14 @@ interface KeyTeleportRequest {
 interface KeyTeleportPayload {
   apiRoute: string;
   hash_id: string;
+  npub: string;      // User's public key for NIP-44 decryption
   timestamp: number;
 }
 
 interface KeyManagerResponse {
   success?: boolean;
-  ncryptsec?: string;
+  encryptedNsec?: string;  // NIP-44 encrypted nsec
+  npub?: string;           // User's public key
   error?: string;
 }
 
@@ -33,8 +39,8 @@ interface KeyManagerResponse {
  * Handle POST /api/auth/keyteleport
  * 1. Decrypt the NIP-44 encrypted blob
  * 2. Verify the signature is from the Welcome pubkey
- * 3. Fetch the ncryptsec from the key manager
- * 4. Return ncryptsec to client
+ * 3. Fetch the encryptedNsec from the key manager
+ * 4. Return encryptedNsec and npub to client for client-side decryption
  */
 export async function handleKeyTeleport(request: Request): Promise<Response> {
   // Check if Key Teleport is configured
@@ -125,7 +131,7 @@ export async function handleKeyTeleport(request: Request): Promise<Response> {
       return Response.json({ error: "Key teleport link has expired" }, { status: 410 });
     }
 
-    // Fetch the ncryptsec from the key manager (Welcome)
+    // Fetch the encryptedNsec from the key manager (Welcome)
     const keyManagerUrl = `${payload.apiRoute}?id=${encodeURIComponent(payload.hash_id)}`;
 
     console.log(`[KeyTeleport] Fetching key from: ${keyManagerUrl}`);
@@ -155,19 +161,23 @@ export async function handleKeyTeleport(request: Request): Promise<Response> {
       return Response.json({ error: "Invalid response from key manager" }, { status: 502 });
     }
 
-    if (!keyData.ncryptsec) {
+    // Validate required fields (v2 protocol)
+    if (!keyData.encryptedNsec || !keyData.npub) {
       return Response.json({ error: "Key not found" }, { status: 404 });
     }
 
-    // Validate ncryptsec format
-    if (!keyData.ncryptsec.startsWith("ncryptsec1")) {
+    // Validate npub format
+    if (!keyData.npub.startsWith("npub1")) {
       return Response.json({ error: "Invalid key format from key manager" }, { status: 502 });
     }
 
-    console.log("[KeyTeleport] Successfully retrieved ncryptsec");
+    console.log("[KeyTeleport] Successfully retrieved encrypted key");
 
-    // Return the ncryptsec to the client
-    return Response.json({ ncryptsec: keyData.ncryptsec });
+    // Return encryptedNsec and npub to client for client-side decryption
+    return Response.json({
+      encryptedNsec: keyData.encryptedNsec,
+      npub: keyData.npub
+    });
   } catch (err) {
     console.error("[KeyTeleport] Unexpected error:", err);
     return Response.json({ error: "Internal error" }, { status: 500 });
