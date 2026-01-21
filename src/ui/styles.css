@@ -4468,6 +4468,8 @@ dialog textarea {
 /* Unlock Code Dialog (Key Teleport v2) */
 .wm-unlock-dialog {
   max-width: 380px;
+  border: 1px solid var(--border-primary);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
 }
 
 .wm-unlock-dialog form {
