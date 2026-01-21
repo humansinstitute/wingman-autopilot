@@ -103,6 +103,15 @@ export const state = {
   activeSessionId: null,
   lastWorkingDirectory: null,
   lastActiveSessionId: null,
+  // Archived session data for viewing historical sessions
+  archivedSession: {
+    sessionId: null,
+    status: null, // "abandoned" | "archived"
+    session: null,
+    messages: [],
+    loading: false,
+    error: null,
+  },
   settingsPanels: {
     adminBalanceCollapsed: false,
     adminPortsCollapsed: false,

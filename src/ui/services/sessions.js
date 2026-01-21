@@ -62,6 +62,17 @@ export async function fetchSessionMessagesApi(sessionId) {
 }
 
 /**
+ * Fetches session history from any source (live, abandoned, or archived).
+ * @param {string} sessionId - The session ID
+ * @returns {Promise<{id: string, status: "live"|"abandoned"|"archived", session: Object, messages: Array} | null>}
+ */
+export async function fetchSessionHistoryApi(sessionId) {
+  const response = await fetch(`/api/sessions/${sessionId}/history`);
+  if (!response.ok) return null;
+  return response.json();
+}
+
+/**
  * Stops a running session.
  * @param {string} sessionId - The session ID
  * @returns {Promise<{success: boolean, error?: string}>}

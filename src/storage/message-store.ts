@@ -161,6 +161,34 @@ export class MessageStore {
     return Boolean(row?.count && row.count > 0);
   }
 
+  getSession(sessionId: string): StoredSessionRecord | null {
+    const row = this.db.query(`
+      SELECT
+        id,
+        agent,
+        started_at as startedAt,
+        name,
+        npub,
+        port,
+        pid,
+        pm2_name as pm2Name,
+        logs_dir as logsDir,
+        working_directory as workingDirectory,
+        command,
+        runtime_status as runtimeStatus,
+        origin
+      FROM sessions
+      WHERE id = ?1
+    `).get(sessionId) as (Omit<StoredSessionRecord, "origin"> & { origin: string | null }) | null;
+
+    if (!row) return null;
+
+    return {
+      ...row,
+      origin: parseStoredOrigin(row.origin),
+    };
+  }
+
   listSessions(): StoredSessionRecord[] {
     const rows = this.listSessionsStmt.all() as Array<
       Omit<StoredSessionRecord, "origin"> & { origin: string | null }

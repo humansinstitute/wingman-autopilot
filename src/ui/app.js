@@ -65,6 +65,7 @@ import {
   fetchSessionApi,
   fetchSessionLogsApi,
   fetchSessionMessagesApi,
+  fetchSessionHistoryApi,
   stopSessionApi,
   deleteSessionApi,
   updateSessionNameApi,
@@ -11240,6 +11241,113 @@ const renderLogs = (sessionId) => {
   return panel;
 };
 
+/**
+ * Loads archived session data for a session ID that's not currently running.
+ * Updates state.archivedSession with the result.
+ */
+const loadArchivedSession = async (sessionId) => {
+  if (state.archivedSession.loading) return;
+
+  state.archivedSession = {
+    sessionId,
+    status: null,
+    session: null,
+    messages: [],
+    loading: true,
+    error: null,
+  };
+  render();
+
+  try {
+    const data = await fetchSessionHistoryApi(sessionId);
+    if (!data) {
+      state.archivedSession = {
+        sessionId,
+        status: null,
+        session: null,
+        messages: [],
+        loading: false,
+        error: "Session not found",
+      };
+    } else if (data.status === "live") {
+      // Session became live while we were loading - clear archived state
+      state.archivedSession = {
+        sessionId: null,
+        status: null,
+        session: null,
+        messages: [],
+        loading: false,
+        error: null,
+      };
+    } else {
+      state.archivedSession = {
+        sessionId,
+        status: data.status,
+        session: data.session,
+        messages: data.messages || [],
+        loading: false,
+        error: null,
+      };
+    }
+  } catch (error) {
+    state.archivedSession = {
+      sessionId,
+      status: null,
+      session: null,
+      messages: [],
+      loading: false,
+      error: error.message || "Failed to load session",
+    };
+  }
+  render();
+};
+
+/**
+ * Renders the archived conversation messages (read-only view).
+ */
+const renderArchivedConversation = (messages) => {
+  const wrapper = document.createElement("div");
+  wrapper.className = "wm-conversation wm-conversation-archived";
+
+  if (!messages || messages.length === 0) {
+    const empty = document.createElement("p");
+    empty.textContent = "This session has no messages.";
+    wrapper.append(empty);
+  } else {
+    messages.forEach((message) => {
+      const bubble = document.createElement("article");
+      bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
+      const body = document.createElement("pre");
+      body.textContent = message.content ?? message.message ?? "";
+      bubble.append(body);
+      attachCopyButton(bubble);
+      wrapper.append(bubble);
+    });
+  }
+
+  return wrapper;
+};
+
+/**
+ * Renders a disabled composer for archived sessions.
+ */
+const renderArchivedComposer = () => {
+  const composerShell = document.createElement("div");
+  composerShell.className = "wm-composer-shell wm-composer-shell-archived";
+
+  const composer = document.createElement("div");
+  composer.className = "wm-composer wm-composer-archived";
+
+  const textarea = document.createElement("div");
+  textarea.className = "wm-composer-archived-placeholder";
+  textarea.textContent = "ARCHIVED";
+
+  composer.append(textarea);
+  composerShell.append(composer);
+
+  return composerShell;
+};
+
 const renderConversation = (sessionId) => {
   const conversation = state.conversations.get(sessionId) ?? [];
   const wrapper = document.createElement("div");
@@ -11886,16 +11994,118 @@ const renderLive = () => {
     wrapper.append(tabsBar);
   }
 
+  // Extract sessionId from URL to check for archived sessions
+  const routeSessionId = getSessionIdFromPath(window.location.pathname);
+  const isLiveSession = routeSessionId && state.sessions.some((s) => s.id === routeSessionId);
+
+  // Check if we should show an archived session
+  if (routeSessionId && !isLiveSession) {
+    // Check if we need to load archived session data
+    if (state.archivedSession.sessionId !== routeSessionId && !state.archivedSession.loading) {
+      // Trigger async load of archived session
+      void loadArchivedSession(routeSessionId);
+    }
+
+    // Render archived session view
+    const main = document.createElement("section");
+    main.className = "wm-card wm-live-main wm-live-main-archived";
+
+    if (state.archivedSession.loading) {
+      const loadingContainer = document.createElement("div");
+      loadingContainer.className = "wm-live-loading";
+      const loadingText = document.createElement("p");
+      loadingText.textContent = "Loading session history...";
+      loadingContainer.append(loadingText);
+      main.append(loadingContainer);
+      wrapper.append(main);
+      return wrapper;
+    }
+
+    if (state.archivedSession.error) {
+      const errorContainer = document.createElement("div");
+      errorContainer.className = "wm-live-error";
+      const errorText = document.createElement("p");
+      errorText.textContent = state.archivedSession.error;
+      errorContainer.append(errorText);
+      main.append(errorContainer);
+      wrapper.append(main);
+      return wrapper;
+    }
+
+    if (state.archivedSession.sessionId === routeSessionId && state.archivedSession.session) {
+      // Show archived session header with metadata
+      const header = document.createElement("div");
+      header.className = "wm-archived-header";
+
+      const statusBadge = document.createElement("span");
+      statusBadge.className = "wm-archived-badge";
+      statusBadge.textContent = state.archivedSession.status === "abandoned" ? "ABANDONED" : "ARCHIVED";
+
+      const sessionInfo = document.createElement("div");
+      sessionInfo.className = "wm-archived-info";
+      const sessionName = state.archivedSession.session.name || `Session ${routeSessionId.slice(0, 8)}`;
+      const agentType = state.archivedSession.session.agent || "unknown";
+      sessionInfo.innerHTML = `<strong>${sessionName}</strong> <span class="wm-archived-agent">(${agentType})</span>`;
+
+      header.append(statusBadge, sessionInfo);
+      main.append(header);
+
+      const scrollRegion = document.createElement("div");
+      scrollRegion.className = "wm-live-scroll";
+
+      const conversationContainer = document.createElement("div");
+      conversationContainer.className = "wm-live-conversation";
+      conversationContainer.append(renderArchivedConversation(state.archivedSession.messages));
+
+      scrollRegion.append(conversationContainer);
+      main.append(scrollRegion);
+      wrapper.append(main);
+      wrapper.append(renderArchivedComposer());
+
+      // Scroll to bottom after render
+      requestAnimationFrame(() => {
+        const scrollEl = wrapper.querySelector(".wm-live-scroll");
+        if (scrollEl) {
+          scrollEl.scrollTop = scrollEl.scrollHeight;
+        }
+      });
+
+      return wrapper;
+    }
+
+    // Fallback - session not found
+    const notFoundContainer = document.createElement("div");
+    notFoundContainer.className = "wm-live-empty";
+    const notFoundText = document.createElement("p");
+    notFoundText.textContent = "Session not found.";
+    notFoundContainer.append(notFoundText);
+    main.append(notFoundContainer);
+    wrapper.append(main);
+    return wrapper;
+  }
+
+  // Clear archived session state if we're viewing a live session
+  if (state.archivedSession.sessionId) {
+    state.archivedSession = {
+      sessionId: null,
+      status: null,
+      session: null,
+      messages: [],
+      loading: false,
+      error: null,
+    };
+  }
+
   if (state.sessions.length === 0) {
     const container = document.createElement("section");
     container.className = "wm-card wm-live-main";
-    
+
     const emptyContainer = document.createElement("div");
     emptyContainer.className = "wm-live-empty";
-    
+
     const empty = document.createElement("p");
     empty.textContent = "No live sessions. Launch a new agent to begin.";
-    
+
     const refreshBtn = document.createElement("button");
     refreshBtn.className = "wm-button secondary";
     refreshBtn.textContent = "Refresh";
@@ -11903,10 +12113,11 @@ const renderLive = () => {
     refreshBtn.addEventListener("click", () => {
       // void pollSessionsLoop(); // DISABLED
     });
-    
+
     emptyContainer.append(empty, refreshBtn);
     container.append(emptyContainer);
-    main.append(container);
+    wrapper.append(container);
+    return wrapper;
   }
 
   if (!state.activeSessionId || !state.sessions.some((session) => session.id === state.activeSessionId)) {

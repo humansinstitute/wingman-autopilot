@@ -3056,6 +3056,100 @@ body[data-menu-open="true"] .wm-menu-panel {
   backface-visibility: hidden;
 }
 
+/* Archived session view styles */
+.wm-live-main-archived {
+  border: 1px solid rgba(100, 100, 100, 0.3);
+}
+
+.wm-archived-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid rgba(100, 100, 100, 0.2);
+  background: rgba(100, 100, 100, 0.08);
+}
+
+.wm-archived-badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #888;
+  background: rgba(100, 100, 100, 0.2);
+  border: 1px solid rgba(100, 100, 100, 0.3);
+  border-radius: 4px;
+}
+
+.wm-archived-info {
+  flex: 1;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.wm-archived-info strong {
+  color: var(--text-primary);
+}
+
+.wm-archived-agent {
+  color: var(--text-tertiary);
+  font-size: 0.85rem;
+}
+
+.wm-composer-shell-archived {
+  position: -webkit-sticky;
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  padding-top: 1rem;
+  padding-bottom: 0;
+  padding-bottom: env(safe-area-inset-bottom);
+  background: linear-gradient(180deg, rgba(12, 10, 9, 0), var(--bg-secondary) 35%, var(--bg-secondary));
+}
+
+.wm-composer-archived {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem 1.25rem;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(100, 100, 100, 0.3);
+  background: rgba(80, 80, 80, 0.15);
+}
+
+.wm-composer-archived-placeholder {
+  flex: 1;
+  min-height: calc(1.5em * 2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: #666;
+  text-transform: uppercase;
+  user-select: none;
+}
+
+.wm-conversation-archived {
+  opacity: 0.95;
+}
+
+.wm-live-loading,
+.wm-live-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem;
+  color: var(--text-secondary);
+}
+
+.wm-live-error {
+  color: var(--text-error, #ef4444);
+}
+
 .wm-composer .wm-button {
   align-self: stretch;
   height: calc(44px * 0.65);

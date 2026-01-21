@@ -6104,6 +6104,69 @@ const handleApi = async (
       }
     }
 
+    // GET /api/sessions/:id/history - returns session + messages from any source (live, abandoned, or archived)
+    if (method === "GET" && parts[4] === "history") {
+      // Check if session is running first
+      if (ownedSession) {
+        const messages = await syncSessionMessages(id, true);
+        return Response.json({
+          id,
+          status: "live",
+          session: serializeSession(ownedSession),
+          messages,
+        });
+      }
+
+      // Check wingman.db for abandoned session (server restart, etc.)
+      const storedSession = messageStore.getSession(id);
+      if (storedSession) {
+        const isOwned = sessionBelongsToViewer(storedSession.npub, viewerNormalizedNpub, viewerIsAdmin);
+        if (isOwned) {
+          const messages = messageStore.listSessionMessages(id);
+          return Response.json({
+            id,
+            status: "abandoned",
+            session: {
+              id: storedSession.id,
+              agent: storedSession.agent,
+              name: storedSession.name,
+              npub: storedSession.npub,
+              workingDirectory: storedSession.workingDirectory,
+              startedAt: storedSession.startedAt,
+              origin: storedSession.origin,
+            },
+            messages,
+          });
+        }
+      }
+
+      // Check archive store
+      const archivedSession = sessionArchiveStore.getArchivedSession(id);
+      if (archivedSession) {
+        const isOwned = sessionBelongsToViewer(archivedSession.npub, viewerNormalizedNpub, viewerIsAdmin);
+        if (isOwned) {
+          const messages = sessionArchiveStore.getArchivedMessages(id);
+          return Response.json({
+            id,
+            status: "archived",
+            session: {
+              id: archivedSession.id,
+              agent: archivedSession.agent,
+              name: archivedSession.name,
+              npub: archivedSession.npub,
+              workingDirectory: archivedSession.workingDirectory,
+              startedAt: archivedSession.startedAt,
+              archivedAt: archivedSession.archivedAt,
+              origin: archivedSession.origin,
+            },
+            messages,
+          });
+        }
+      }
+
+      return Response.json({ error: "Session not found" }, { status: 404 });
+    }
+
     if (parts[4] === "queue") {
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
 
