@@ -256,6 +256,29 @@
         </menu>
       </form>
     </dialog>
+    <dialog id="identity-unlock-code-dialog" class="wm-unlock-dialog">
+      <form method="dialog" data-role="form">
+        <h2 data-role="title">Paste Unlock Code</h2>
+        <p class="wm-dialog-help" data-role="description">
+          Paste the unlock code from your clipboard to complete login
+        </p>
+        <input
+          id="identity-unlock-code-input"
+          name="unlockCode"
+          type="password"
+          class="wm-unlock-input"
+          placeholder="paste code"
+          autocomplete="off"
+          spellcheck="false"
+          data-role="unlock-input"
+        />
+        <p class="wm-unlock-dialog-error" data-role="error" hidden></p>
+        <menu>
+          <button value="cancel">Cancel</button>
+          <button value="confirm">Unlock</button>
+        </menu>
+      </form>
+    </dialog>
     <dialog id="identity-login-dialog" class="wm-identity-dialog">
       <div class="wm-identity-dialog__content"></div>
       <div class="wm-identity-dialog__actions">

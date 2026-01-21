@@ -4371,6 +4371,57 @@ dialog textarea {
   color: #f87171;
 }
 
+/* Unlock Code Dialog (Key Teleport v2) */
+.wm-unlock-dialog {
+  max-width: 380px;
+}
+
+.wm-unlock-dialog form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  align-items: center;
+  text-align: center;
+}
+
+.wm-unlock-dialog h2 {
+  margin: 0;
+}
+
+.wm-unlock-input {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  font-size: 1rem;
+  font-family: monospace;
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-sizing: border-box;
+}
+
+.wm-unlock-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.wm-unlock-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.wm-unlock-dialog-error {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #f87171;
+}
+
+.wm-unlock-dialog menu {
+  width: 100%;
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
 .wm-field-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
