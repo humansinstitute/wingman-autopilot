@@ -18,7 +18,7 @@ import {
   getChatTemplate,
 } from "./live/index.js";
 import { createHomeGuestHero } from "./home/hero.js";
-import { createArchiveComponent, createArchiveViewDialog } from "./home/archive.js";
+import { createArchiveComponent } from "./home/archive.js";
 import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
 import { createSessionDialogController } from "./common/session-dialog.js";
 import { initOrchestratorUI } from "./orchestrator/index.js";
@@ -116,7 +116,6 @@ let syncFeatureFlagsFromConfig = () => {};
 
 let projectFeature = null;
 let archiveComponent = null;
-let archiveViewDialog = null;
 
 let performAuthUiSync = () => {};
 let pendingAuthUiSync = false;
@@ -9684,9 +9683,11 @@ const renderHome = () => {
   // Add archive component
   archiveComponent = createArchiveComponent({
     onViewSession: (session) => {
-      if (archiveViewDialog) {
-        archiveViewDialog.open(session);
-      }
+      // Navigate to live view to show the archived session
+      const targetPath = `${LIVE_ROUTE_PREFIX}/${session.id}`;
+      window.history.pushState({ route: "live", sessionId: session.id }, "", targetPath);
+      currentRoute = "live";
+      render();
     },
   });
   wrapper.append(archiveComponent.element);
@@ -12324,10 +12325,6 @@ projectFeature = createProjectFeature({
   isActionDisabled: (app, action) => isProjectActionDisabled(app, action),
 });
 state.projects = projectFeature.state;
-
-// Initialize archive view dialog
-archiveViewDialog = createArchiveViewDialog();
-document.body.append(archiveViewDialog.element);
 
 const appDialogs = initAppDialogs({
   state,

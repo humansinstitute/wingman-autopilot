@@ -75,7 +75,7 @@ export function createArchiveComponent({ onViewSession } = {}) {
     error: null,
     filter: "",
     offset: 0,
-    limit: 20,
+    limit: 10,
   };
 
   const card = document.createElement("section");

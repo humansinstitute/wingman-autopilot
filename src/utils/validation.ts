@@ -25,8 +25,14 @@ export const PathSchema = z.string().min(0).max(4096).refine((path) => {
   message: "Invalid path characters detected"
 });
 
-export const LimitSchema = z.coerce.number().int().min(1).max(200).default(50);
-export const OffsetSchema = z.coerce.number().int().min(0).default(0);
+export const LimitSchema = z.preprocess(
+  (val) => (val === null || val === '' ? undefined : val),
+  z.coerce.number().int().min(1).max(200).default(10)
+);
+export const OffsetSchema = z.preprocess(
+  (val) => (val === null || val === '' ? undefined : val),
+  z.coerce.number().int().min(0).default(0)
+);
 
 export const FilterSchema = z.string().max(100).refine((filter) => {
   const dangerousPatterns = [
