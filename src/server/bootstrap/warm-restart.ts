@@ -165,6 +165,7 @@ export const rehydrateWarmSessions = async (
       npub: record.npub ?? undefined,
       agentRuntimeStatus: isAgentRuntimeStatus(record.runtimeStatus) ? record.runtimeStatus : null,
       origin: record.origin ?? null,
+      pm2Name: record.pm2Name ?? undefined,
     });
 
     if (!snapshot) {
@@ -188,6 +189,7 @@ export const rehydrateWarmSessions = async (
       command: snapshot.command,
       runtimeStatus: snapshot.agentRuntimeStatus ?? null,
       origin: snapshot.origin ?? null,
+      pm2Name: record.pm2Name ?? undefined,
     });
     restored += 1;
   }
@@ -300,6 +302,7 @@ export const rehydrateOrphanedSessions = async (
       npub: record.npub ?? undefined,
       agentRuntimeStatus: isAgentRuntimeStatus(record.runtimeStatus) ? record.runtimeStatus : null,
       origin: record.origin ?? null,
+      pm2Name: record.pm2Name ?? undefined,
     });
 
     if (!snapshot) {

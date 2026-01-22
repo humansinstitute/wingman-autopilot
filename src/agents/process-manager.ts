@@ -8,6 +8,18 @@ import { normaliseNpub } from "../identity/npub-utils";
 import { sanitizeLogEntry } from "../logging/log-sanitizer";
 import { trackProjectForSession } from "../projects/npub-project-tracker";
 import type { AgentRuntimeStatus } from "../types/agent-status";
+import {
+  addAppToEcosystem,
+  removeAppFromEcosystem,
+  type SessionConfig,
+} from "./ecosystem-generator";
+import {
+  startProcessFromConfig,
+  stopProcess,
+  deleteProcess,
+  getProcessByName,
+  waitForStatus,
+} from "./pm2-wrapper";
 
 const MAX_LOG_LINES = 500;
 
@@ -37,6 +49,8 @@ export interface SessionSnapshot {
   origin?: SessionOrigin;
   userAlias?: string;
   isAdmin?: boolean;
+  /** PM2 process name if spawned via PM2 */
+  pm2Name?: string;
 }
 
 type SessionEvent =
@@ -57,6 +71,8 @@ export interface RehydrateSessionInput {
   npub?: string;
   agentRuntimeStatus?: AgentRuntimeStatus | null;
   origin?: SessionOrigin | null;
+  /** PM2 process name if this was a PM2-managed session */
+  pm2Name?: string;
 }
 
 interface AgentSession {
@@ -78,6 +94,8 @@ interface AgentSession {
   origin?: SessionOrigin;
   userAlias?: string;
   isAdmin?: boolean;
+  /** PM2 process name when spawned via PM2 */
+  pm2Name?: string;
 }
 
 export class ProcessManager {
@@ -172,8 +190,12 @@ export class ProcessManager {
     this.emit({ type: "session-started", session: this.toSnapshot(session) });
 
     try {
-      session.process = this.spawnAgentProcess(session);
-      await this.monitorSession(session);
+      if (this.config.agentSpawnMode === "pm2") {
+        await this.spawnAgentProcessViaPM2(session);
+      } else {
+        session.process = this.spawnAgentProcess(session);
+        await this.monitorSession(session);
+      }
       session.status = "running";
       this.emit({ type: "session-updated", session: this.toSnapshot(session) });
     } catch (error) {
@@ -236,6 +258,7 @@ export class ProcessManager {
       origin: input.origin ?? undefined,
       userAlias,
       isAdmin,
+      pm2Name: input.pm2Name,
     };
 
     this.sessions.set(session.id, session);
@@ -247,7 +270,23 @@ export class ProcessManager {
     const session = this.sessions.get(id);
     if (!session) return undefined;
 
-    if (session.process) {
+    // Stop via PM2 if this is a PM2-managed session
+    if (session.pm2Name) {
+      try {
+        await stopProcess(session.pm2Name);
+        await deleteProcess(session.pm2Name);
+        // Clean up ecosystem config
+        await removeAppFromEcosystem(
+          session.workingDirectory,
+          session.isAdmin ?? false,
+          session.pm2Name,
+        );
+      } catch (error) {
+        this.appendLog(session, `[manager] PM2 stop error: ${(error as Error).message}`);
+      }
+      session.pm2Name = undefined;
+      session.detachedPid = undefined;
+    } else if (session.process) {
       session.process.kill("SIGTERM");
       await session.process.exited;
       session.process = null;
@@ -351,6 +390,41 @@ export class ProcessManager {
     });
 
     return proc;
+  }
+
+  private async spawnAgentProcessViaPM2(session: AgentSession): Promise<void> {
+    const sessionConfig: SessionConfig = {
+      sessionId: session.id,
+      sessionName: session.name,
+      agent: session.agent,
+      port: session.port,
+      workingDirectory: session.workingDirectory,
+      userAlias: session.userAlias ?? "anonymous",
+      isAdmin: session.isAdmin ?? false,
+      config: this.config,
+    };
+
+    // Add to ecosystem config and get process name
+    const { ecosystemPath, processName } = await addAppToEcosystem(sessionConfig);
+    session.pm2Name = processName;
+
+    this.appendLog(session, `[manager] starting via PM2 as ${processName}`);
+
+    // Start the process via PM2
+    await startProcessFromConfig(ecosystemPath, processName);
+
+    // Wait for process to come online
+    const proc = await waitForStatus(processName, "online", 15000);
+    if (!proc) {
+      throw new Error(`PM2 process ${processName} failed to start within timeout`);
+    }
+
+    // Store the PID for rehydration
+    if (typeof proc.pid === "number" && proc.pid > 0) {
+      session.detachedPid = proc.pid;
+    }
+
+    this.appendLog(session, `[manager] PM2 process ${processName} online (pid: ${proc.pid})`);
   }
 
   private async monitorSession(session: AgentSession): Promise<void> {
@@ -514,6 +588,7 @@ export class ProcessManager {
       origin: session.origin,
       userAlias: session.userAlias,
       isAdmin: session.isAdmin,
+      pm2Name: session.pm2Name,
     };
   }
 

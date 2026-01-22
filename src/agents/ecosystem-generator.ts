@@ -13,6 +13,7 @@ import { readEnvFile } from "../utils/env-file";
 
 export interface EcosystemApp {
   name: string;
+  namespace?: string;
   script: string;
   args: string[];
   cwd: string;
@@ -25,6 +26,12 @@ export interface EcosystemApp {
   max_restarts: number;
   min_uptime: string;
 }
+
+/** PM2 namespace for agent sessions */
+export const PM2_NAMESPACE_AGENTS = "wingman-agents";
+
+/** PM2 namespace for user apps */
+export const PM2_NAMESPACE_APPS = "wingman-apps";
 
 export interface EcosystemConfig {
   apps: EcosystemApp[];
@@ -153,6 +160,7 @@ export function createAppConfig(sessionConfig: SessionConfig): EcosystemApp {
 
   return {
     name: processName,
+    namespace: PM2_NAMESPACE_AGENTS,
     script,
     args,
     cwd: workingDirectory,
@@ -343,6 +351,7 @@ export async function createUserAppEcosystemConfig(config: UserAppConfig): Promi
 
   return {
     name: processName,
+    namespace: PM2_NAMESPACE_APPS,
     script: "bash",
     args: ["-c", command],
     cwd: app.root,

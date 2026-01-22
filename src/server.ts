@@ -1376,6 +1376,7 @@ manager.on((event) => {
       command: event.session.command,
       runtimeStatus: event.session.agentRuntimeStatus ?? null,
       origin: event.session.origin ?? null,
+      pm2Name: event.session.pm2Name,
     });
     messageStore.replaceMessages(event.session.id, []);
     void maybeAutoDispatchQueuedPrompt(event.session);
@@ -1404,6 +1405,7 @@ manager.on((event) => {
       command: event.session.command,
       runtimeStatus: event.session.agentRuntimeStatus ?? null,
       origin: event.session.origin ?? null,
+      pm2Name: event.session.pm2Name,
     });
     void maybeAutoDispatchQueuedPrompt(event.session);
   }
@@ -2628,6 +2630,7 @@ const launchOrchestratorPreset = async (presetId: string) => {
     command: session.command,
     runtimeStatus: session.agentRuntimeStatus ?? null,
     origin: session.origin ?? null,
+    pm2Name: session.pm2Name,
   });
   void initialisePresetSession(preset, session);
   return { directory: workingDirectory, session };
@@ -5871,6 +5874,7 @@ const handleApi = async (
         command: session.command,
         runtimeStatus: session.agentRuntimeStatus ?? null,
         origin: session.origin ?? null,
+        pm2Name: session.pm2Name,
       });
       await syncSessionMessages(session.id, true);
       return Response.json(serializeSession(session), { status: 201 });
@@ -6344,6 +6348,7 @@ const handleApi = async (
           command: newSession.command,
           runtimeStatus: newSession.agentRuntimeStatus ?? null,
           origin: newSession.origin ?? null,
+          pm2Name: newSession.pm2Name,
         });
         await syncSessionMessages(newSession.id, true);
       } catch (error) {

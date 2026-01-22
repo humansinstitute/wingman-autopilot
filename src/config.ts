@@ -2,6 +2,9 @@ import { isAbsolute, normalize, resolve } from "node:path";
 
 export type AgentType = "codex" | "claude" | "goose" | "opencode" | "gemini";
 
+/** How agent processes are spawned - "bun" for direct child process, "pm2" for PM2 managed */
+export type AgentSpawnMode = "bun" | "pm2";
+
 export interface AgentCommandContext {
   port: number;
   agent: AgentType;
@@ -39,6 +42,8 @@ export interface WingmanConfig {
   subdomainProxyEnabled: boolean;
   /** Interval for SSE keepalive messages (prevents idle timeout) */
   sseKeepaliveIntervalMs: number;
+  /** How agent processes are spawned - "bun" for direct child process, "pm2" for PM2 managed */
+  agentSpawnMode: AgentSpawnMode;
 }
 
 const DEFAULT_PORT = 3600;
@@ -201,6 +206,16 @@ export const loadConfig = (): WingmanConfig => {
     : "claude";
   console.log(`[Config] Default agent: ${defaultAgent}${defaultAgentInput && defaultAgentInput !== defaultAgent ? ` (DEFAULT_AGENT="${defaultAgentInput}" was invalid)` : ""}`);
 
+  // Agent spawn mode - "bun" (default) or "pm2" for persistence across restarts
+  const validSpawnModes: AgentSpawnMode[] = ["bun", "pm2"];
+  const spawnModeInput = Bun.env.AGENT_SPAWN_MODE?.trim().toLowerCase();
+  const agentSpawnMode: AgentSpawnMode = spawnModeInput && validSpawnModes.includes(spawnModeInput as AgentSpawnMode)
+    ? (spawnModeInput as AgentSpawnMode)
+    : "bun";
+  if (agentSpawnMode === "pm2") {
+    console.log("[Config] Agent spawn mode: pm2 (sessions persist across restarts)");
+  }
+
   return {
     port,
     agentPortStart,
@@ -219,6 +234,7 @@ export const loadConfig = (): WingmanConfig => {
     subdomainBaseDomain,
     subdomainProxyEnabled,
     sseKeepaliveIntervalMs,
+    agentSpawnMode,
   };
 };
 

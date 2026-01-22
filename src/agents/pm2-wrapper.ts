@@ -10,6 +10,7 @@ export type PM2ProcessDescription = ProcessDescription;
 
 export interface PM2StartOptions {
   name: string;
+  namespace?: string;
   script: string;
   args?: string[];
   cwd?: string;
@@ -138,6 +139,7 @@ export function startProcess(options: PM2StartOptions): Promise<void> {
   return new Promise((resolve, reject) => {
     const pm2Options: StartOptions = {
       name: options.name,
+      namespace: options.namespace,
       script: options.script,
       args: options.args,
       cwd: options.cwd,
