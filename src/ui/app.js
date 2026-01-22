@@ -12945,8 +12945,20 @@ dialog.addEventListener("cancel", (event) => {
 
   await fetchConfig();
 
-  // Check for Key Teleport login parameter
-  if (typeof wingmanIdentity?.checkKeyTeleportParam === "function") {
+  // Try to restore session from device keystore first
+  if (typeof wingmanIdentity?.restoreFromDeviceKeystore === "function") {
+    try {
+      const restored = await wingmanIdentity.restoreFromDeviceKeystore(getIdentityWiringContext());
+      if (restored) {
+        console.log("[app] Session restored from device keystore");
+      }
+    } catch (err) {
+      console.warn("[app] Device keystore restore failed:", err);
+    }
+  }
+
+  // Check for Key Teleport login parameter (if not already authenticated)
+  if (!state.identity.authenticated && typeof wingmanIdentity?.checkKeyTeleportParam === "function") {
     try {
       const teleportResult = await wingmanIdentity.checkKeyTeleportParam(getIdentityWiringContext());
       if (teleportResult) {

@@ -59,11 +59,57 @@ When summarising your activity, please state what can be tested currently and if
 
 - **Runtime**: Bun (TypeScript ESM)
 - **Backend**: Custom HTTP server with WebSocket support
-- **Frontend**: Vanilla JavaScript ES6 modules
+- **Frontend**: Vanilla JavaScript ES6 modules (migrating to Dexie + Alpine)
 - **Process Management**: Node PTY for terminal sessions
 - **Identity**: Nostr protocol with applesauce libraries
 - **Persistence**: File-based stores (JSON/encrypted)
 - **Cryptography**: Noble cryptography libraries (@noble/hashes, @noble/ciphers)
+
+## Frontend Architecture (Migration Target)
+
+We are migrating the frontend to a **Dexie + Alpine** architecture. When making frontend changes, follow these patterns:
+
+### Core Stack
+- **Dexie.js** — All client state lives in IndexedDB via Dexie
+- **Alpine.js** — Reactive UI binds directly to Dexie queries
+- **Backend DB** — PostgreSQL or SQLite as source of truth
+
+### State Management Rules
+- Browser state is Dexie-first; never store app state in memory-only variables
+- UI reactivity comes from Alpine watching Dexie liveQueries
+- All user-facing data reads come from Dexie, not direct API responses
+- No raw `fetch` results displayed directly — always write to Dexie first
+
+### Secrets & Keys
+- Store keys/passwords/tokens **encrypted** in IndexedDB
+- Encrypt with a key derived from user passphrase (e.g., PBKDF2 + AES-GCM)
+- Never store plaintext secrets; decrypt only when needed in memory
+
+### Sync Strategy
+- **Real-time**: WebSocket/SSE for server→client pushes; upsert into Dexie on receive
+- **Page Load**: `GET /sync?since={timestamp}` for incremental sync
+- **Offline**: Queue mutations with `pending: true` flag, flush on reconnect
+- Sync timestamps on every record for incremental sync
+
+### Dexie Schema Conventions
+```javascript
+db.version(1).stores({
+  items: '++id, visitorId, [syncedAt+id], *tags',
+  secrets: 'id',           // encrypted blobs
+  syncMeta: 'key'          // lastSyncTimestamp, etc.
+});
+```
+
+### Alpine Integration Pattern
+```javascript
+Alpine.store('items', {
+  list: [],
+  async init() {
+    liveQuery(() => db.items.toArray())
+      .subscribe(items => this.list = items);
+  }
+});
+```
 
 ## Key Features
 

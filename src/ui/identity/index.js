@@ -26,6 +26,7 @@ import { nip19, nip44 } from "/vendor/nostr-tools/index.js";
 import { schnorr, secp256k1 } from "/vendor/@noble/curves/secp256k1.js";
 import { NostrConnectSigner, RelayPool } from "/vendor/bunker-client.js";
 import { renderQrCode } from "./nostrconnect-qr.js";
+import * as deviceKeystore from "./device-keystore.js";
 
 const textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
 
@@ -1575,6 +1576,16 @@ const performLogout = async () => {
   } catch (cause) {
     console.warn("[identity] failed to clear session cache", cause instanceof Error ? cause.message : cause);
   }
+
+  // Clear device keystore
+  if (deviceKeystore.isAvailable()) {
+    try {
+      await deviceKeystore.clearNsec();
+    } catch (cause) {
+      console.warn("[identity] failed to clear device keystore", cause instanceof Error ? cause.message : cause);
+    }
+  }
+
   clearPasswordCache();
   clearPasswordMeta();
   applyIdentityUpdate(null, { npub: null, method: "none", expiresAt: null, isAuthenticated: false });
@@ -1650,19 +1661,18 @@ const wireLocalIdentityPanel = (root, context) => {
       const npub = nip19.npubEncode(pubkeyHex);
       const nsec = nip19.nsecEncode(secretKey);
 
-      let encryptedNsec = null;
-      try {
-        encryptedNsec = await identityApi.crypto?.encryptPrivateKey(secretKey, {
-          mode: "create",
-          reason: "Create a password to protect your new key.",
-        });
-      } catch (error) {
-        console.warn("[identity] failed to encrypt private key", error instanceof Error ? error.message : error);
+      // Store in device keystore (Web Crypto + IndexedDB)
+      if (deviceKeystore.isAvailable()) {
+        try {
+          await deviceKeystore.storeNsec(secretKey, { npub, method: "local_keys" });
+        } catch (error) {
+          console.warn("[identity] failed to store key in device keystore", error instanceof Error ? error.message : error);
+        }
       }
 
-      const { expiresAt } = await persistServerSession(npub, encryptedNsec);
+      const { expiresAt } = await persistServerSession(npub, null);
 
-      handleAuthSuccess({ npub, nsec, encryptedNsec, expiresAt, method: "local_keys" });
+      handleAuthSuccess({ npub, nsec, encryptedNsec: null, expiresAt, method: "local_keys" });
     } catch (error) {
       console.error("[identity] generate keys failed", error);
       window.alert(error instanceof Error ? error.message : "Failed to generate keys");
@@ -1702,18 +1712,17 @@ const wireLocalIdentityPanel = (root, context) => {
       const npub = nip19.npubEncode(pubkeyHex);
       const nsec = nip19.nsecEncode(secretKey);
 
-      let encryptedNsec = null;
-      try {
-        encryptedNsec = await identityApi.crypto?.encryptPrivateKey(secretKey, {
-          mode: "create",
-          reason: "Protect your imported key with a password.",
-        });
-      } catch (error) {
-        console.warn("[identity] failed to encrypt imported key", error instanceof Error ? error.message : error);
+      // Store in device keystore (Web Crypto + IndexedDB)
+      if (deviceKeystore.isAvailable()) {
+        try {
+          await deviceKeystore.storeNsec(secretKey, { npub, method: "local_keys" });
+        } catch (error) {
+          console.warn("[identity] failed to store imported key in device keystore", error instanceof Error ? error.message : error);
+        }
       }
 
-      const { expiresAt } = await persistServerSession(npub, encryptedNsec);
-      handleAuthSuccess({ npub, nsec, encryptedNsec, expiresAt, method: "local_keys" });
+      const { expiresAt } = await persistServerSession(npub, null);
+      handleAuthSuccess({ npub, nsec, encryptedNsec: null, expiresAt, method: "local_keys" });
       window.alert("Signed in with imported key");
     } catch (error) {
       console.error("[identity] import nsec failed", error);
@@ -2104,22 +2113,21 @@ const handleKeyTeleport = async ({ blob, context }) => {
 
     console.log("[KeyTeleport] Key decrypted, creating session...");
 
-    // Encrypt the key with user's local password for storage
-    let localEncryptedNsec = null;
-    try {
-      localEncryptedNsec = await identityApi.crypto?.encryptPrivateKey(secretKey, {
-        mode: "create",
-        reason: "Create a password to protect your key on this device.",
-      });
-    } catch (error) {
-      console.warn("[KeyTeleport] Failed to encrypt key for local storage:", error instanceof Error ? error.message : error);
+    // Store the key in device keystore (Web Crypto + IndexedDB)
+    if (deviceKeystore.isAvailable()) {
+      try {
+        await deviceKeystore.storeNsec(secretKey, { npub, method: "keyteleport" });
+        console.log("[KeyTeleport] Key stored in device keystore");
+      } catch (error) {
+        console.warn("[KeyTeleport] Failed to store key in device keystore:", error instanceof Error ? error.message : error);
+      }
     }
 
     // Create server session
-    const { expiresAt } = await persistServerSession(npub, localEncryptedNsec);
+    const { expiresAt } = await persistServerSession(npub, null);
 
-    // Save to local cache
-    saveCachedSession({ npub, encryptedNsec: localEncryptedNsec, expiresAt, method: "keyteleport" });
+    // Save session metadata to local cache (no encrypted nsec - that's in device keystore now)
+    saveCachedSession({ npub, encryptedNsec: null, expiresAt, method: "keyteleport" });
 
     // Update UI
     applyIdentityUpdate(context, { npub, method: "keyteleport", expiresAt, isAuthenticated: true, alias: npub });
@@ -2164,6 +2172,75 @@ const checkKeyTeleportParam = async (context) => {
 identityApi.handleKeyTeleport = handleKeyTeleport;
 identityApi.checkKeyTeleportParam = checkKeyTeleportParam;
 
+// =============================================================================
+// Device Keystore Auto-Restore
+// =============================================================================
+
+/**
+ * Attempt to restore session from device keystore
+ * Call this on page load to auto-login if nsec is stored
+ * @param {Object} context - The identity context for UI updates
+ * @returns {Promise<string|null>} The npub if restored, null otherwise
+ */
+const restoreFromDeviceKeystore = async (context) => {
+  if (!deviceKeystore.isAvailable()) {
+    return null;
+  }
+
+  try {
+    const stored = await deviceKeystore.retrieveNsec();
+    if (!stored) {
+      return null;
+    }
+
+    const { nsec, metadata } = stored;
+    if (!(nsec instanceof Uint8Array) || nsec.length !== 32) {
+      console.warn("[identity] Invalid nsec in device keystore");
+      return null;
+    }
+
+    // Derive public key and npub
+    const publicKeyBytes = schnorr.getPublicKey(nsec);
+    const pubkeyHex = bytesToHex(publicKeyBytes);
+    const npub = nip19.npubEncode(pubkeyHex);
+
+    // Verify npub matches stored metadata if available
+    if (metadata.npub && metadata.npub !== npub) {
+      console.warn("[identity] npub mismatch in device keystore, clearing");
+      await deviceKeystore.clearNsec();
+      return null;
+    }
+
+    console.log("[identity] Restoring session from device keystore");
+
+    // Refresh server session
+    let expiresAt = null;
+    try {
+      const result = await persistServerSession(npub, null);
+      expiresAt = result.expiresAt;
+    } catch (error) {
+      console.warn("[identity] Failed to refresh server session:", error instanceof Error ? error.message : error);
+      // Continue anyway - the key is still valid locally
+    }
+
+    const method = metadata.method ?? "device_keystore";
+
+    // Update session cache
+    saveCachedSession({ npub, encryptedNsec: null, expiresAt, method });
+
+    // Update UI
+    applyIdentityUpdate(context, { npub, method, expiresAt, isAuthenticated: true, alias: npub });
+
+    return npub;
+  } catch (error) {
+    console.error("[identity] Failed to restore from device keystore:", error instanceof Error ? error.message : error);
+    return null;
+  }
+};
+
+identityApi.restoreFromDeviceKeystore = restoreFromDeviceKeystore;
+identityApi.deviceKeystore = deviceKeystore;
+
 globalThis.wingmanIdentity = identityApi;
 
 export {
@@ -2186,4 +2263,6 @@ export {
   performLogout as logoutIdentity,
   handleKeyTeleport,
   checkKeyTeleportParam,
+  restoreFromDeviceKeystore,
+  deviceKeystore,
 };
