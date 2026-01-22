@@ -1,15 +1,5 @@
-const PASSWORD_DIALOG_ID = "identity-password-dialog";
 const UNLOCK_CODE_DIALOG_ID = "identity-unlock-code-dialog";
-const PASSWORD_META_STORAGE_KEY = "wingman_identity_password_meta";
 const SESSION_STORAGE_KEY = "nostr_session";
-const PASSWORD_CACHE_TTL_MS = 10 * 60 * 1000;
-const DEFAULT_LOG_N = 18;
-const BECH32_PREFIX = "ncryptsec";
-const KEY_SECURITY_BYTE = 0x01;
-const ENCRYPTION_VERSION = 0x02;
-const SECURE_LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
-const INSECURE_PASSWORD_MESSAGE =
-  "PIN entry requires a secure connection. Access Wingman over HTTPS or from localhost.";
 const DEFAULT_CONNECT_RELAYS = [
   "wss://relay.nsec.app",
   "wss://nos.lol",
@@ -19,92 +9,18 @@ const DEFAULT_CONNECT_RELAYS = [
 const NOSTR_CONNECT_SECRET_TTL_MS = 5 * 60 * 1000;
 const KEYTELEPORT_PARAM = "keyteleport";
 
-import { scryptAsync } from "/vendor/@noble/hashes/scrypt.js";
-import { xchacha20poly1305 } from "/vendor/@noble/ciphers/chacha.js";
-import { bech32 } from "/vendor/@scure/base/index.js";
 import { nip19, nip44 } from "/vendor/nostr-tools/index.js";
 import { schnorr, secp256k1 } from "/vendor/@noble/curves/secp256k1.js";
 import { NostrConnectSigner, RelayPool } from "/vendor/bunker-client.js";
 import { renderQrCode } from "./nostrconnect-qr.js";
 import * as deviceKeystore from "./device-keystore.js";
 
-const textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
-
 class PasswordPromptCancelledError extends Error {
   constructor() {
-    super("PIN entry cancelled");
+    super("Prompt cancelled");
     this.name = "PasswordPromptCancelledError";
   }
 }
-
-const isSecurePasswordContext = () => {
-  if (typeof window === "undefined" || typeof window.location === "undefined") {
-    return false;
-  }
-  const { protocol, hostname } = window.location;
-  if (protocol === "https:") {
-    return true;
-  }
-  return SECURE_LOCAL_HOSTS.has(hostname);
-};
-
-const applySecureInputBehaviour = (input, secure) => {
-  if (!(input instanceof HTMLInputElement)) {
-    return;
-  }
-  const secureType = input.dataset?.secureType ?? "password";
-  if (secure) {
-    if (input.type !== secureType) {
-      input.type = secureType;
-    }
-    input.disabled = false;
-    input.removeAttribute("aria-disabled");
-    input.removeAttribute("data-insecure");
-    if (input.dataset?.securePlaceholder) {
-      input.placeholder = input.dataset.securePlaceholder;
-    }
-    return;
-  }
-
-  input.value = "";
-  input.type = "text";
-  input.disabled = true;
-  input.setAttribute("aria-disabled", "true");
-  input.setAttribute("data-insecure", "true");
-  if (!input.dataset?.securePlaceholder && input.placeholder) {
-    input.dataset.securePlaceholder = input.placeholder;
-  }
-  input.placeholder = "Enable HTTPS to enter a PIN";
-};
-
-const applyPasswordDialogSecurity = (elements) => {
-  const secure = isSecurePasswordContext();
-  applySecureInputBehaviour(elements?.passwordInput ?? null, secure);
-  applySecureInputBehaviour(elements?.confirmInput ?? null, secure);
-  if (elements?.dialog instanceof HTMLDialogElement) {
-    elements.dialog.dataset.security = secure ? "secure" : "insecure";
-  }
-  if (elements?.errorEl instanceof HTMLElement) {
-    if (secure && elements.errorEl.dataset.securityMessage === "true") {
-      elements.errorEl.hidden = true;
-      elements.errorEl.textContent = "";
-      delete elements.errorEl.dataset.securityMessage;
-    } else if (!secure) {
-      elements.errorEl.hidden = false;
-      elements.errorEl.textContent = INSECURE_PASSWORD_MESSAGE;
-      elements.errorEl.dataset.securityMessage = "true";
-    }
-  }
-  if (elements?.clearButton instanceof HTMLButtonElement) {
-    elements.clearButton.disabled = !secure;
-    if (!secure) {
-      elements.clearButton.setAttribute("aria-disabled", "true");
-    } else {
-      elements.clearButton.removeAttribute("aria-disabled");
-    }
-  }
-  return secure;
-};
 
 const getCrypto = () => {
   if (typeof globalThis !== "undefined" && globalThis.crypto && typeof globalThis.crypto.getRandomValues === "function") {
@@ -120,62 +36,10 @@ const randomBytes = (length) => {
   return bytes;
 };
 
-const concatBytes = (...arrays) => {
-  const totalLength = arrays.reduce((sum, arr) => sum + arr.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  arrays.forEach((arr) => {
-    result.set(arr, offset);
-    offset += arr.length;
-  });
-  return result;
-};
-
 const wipeBytes = (bytes) => {
   if (!bytes) return;
   for (let i = 0; i < bytes.length; i += 1) {
     bytes[i] = 0;
-  }
-};
-
-const loadPasswordMeta = () => {
-  if (typeof window === "undefined" || !window.localStorage) return null;
-  try {
-    const raw = window.localStorage.getItem(PASSWORD_META_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return null;
-    if (typeof parsed.logN !== "number" || !Number.isFinite(parsed.logN)) return null;
-    return {
-      logN: parsed.logN,
-      version: typeof parsed.version === "number" ? parsed.version : 1,
-      createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : null,
-    };
-  } catch {
-    return null;
-  }
-};
-
-const writePasswordMeta = (meta) => {
-  if (typeof window === "undefined" || !window.localStorage) return;
-  try {
-    const payload = {
-      version: 1,
-      logN: meta.logN ?? DEFAULT_LOG_N,
-      createdAt: meta.createdAt ?? Date.now(),
-    };
-    window.localStorage.setItem(PASSWORD_META_STORAGE_KEY, JSON.stringify(payload));
-  } catch {
-    // ignore storage failures
-  }
-};
-
-const clearPasswordMeta = () => {
-  if (typeof window === "undefined" || !window.localStorage) return;
-  try {
-    window.localStorage.removeItem(PASSWORD_META_STORAGE_KEY);
-  } catch {
-    // ignore
   }
 };
 
@@ -185,17 +49,12 @@ const sessionCache = {
     const payload = {
       schema: 1,
       npub: session.npub ?? null,
-      encryptedNsec: session.encryptedNsec ?? null,
       sessionExpiresAt: session.sessionExpiresAt ?? null,
       method: session.method ?? "local_keys",
-      logN: session.logN ?? DEFAULT_LOG_N,
       createdAt: Date.now(),
     };
     try {
       window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
-      if (typeof payload.encryptedNsec === "string" && payload.encryptedNsec.length > 0) {
-        writePasswordMeta({ logN: payload.logN, createdAt: payload.createdAt });
-      }
     } catch {
       // ignore storage failures
     }
@@ -225,10 +84,6 @@ const sessionCache = {
     } catch {
       // ignore
     }
-  },
-  hasEncryptedNsec() {
-    const session = sessionCache.load();
-    return Boolean(session && typeof session.encryptedNsec === "string" && session.encryptedNsec.length > 0);
   },
 };
 
@@ -419,7 +274,7 @@ const attemptBunkerRestore = async ({ context, setStatus, form, enableInputs, ro
       hasSecret: false,
       lastConnectedAt: Date.now(),
     });
-    saveCachedSession({ npub, encryptedNsec: null, expiresAt, method: "bunker" });
+    saveCachedSession({ npub, expiresAt, method: "bunker" });
     applyIdentityUpdate(context, { npub, method: "bunker", expiresAt, isAuthenticated: true });
     root.classList.add("is-authenticated");
     setStatus("Reconnected to remote signer", "success");
@@ -513,7 +368,7 @@ const createNostrConnectController = ({ root, context, onConnected }) => {
         hasSecret: true,
         lastConnectedAt: Date.now(),
       });
-      saveCachedSession({ npub, encryptedNsec: null, expiresAt, method: "bunker" });
+      saveCachedSession({ npub, expiresAt, method: "bunker" });
       applyIdentityUpdate(context, { npub, method: "bunker", expiresAt, isAuthenticated: true, alias: npub });
       root.classList.add("is-authenticated");
       section.hidden = true;
@@ -691,69 +546,6 @@ const createNostrConnectController = ({ root, context, onConnected }) => {
   };
 };
 
-let cachedPassword = null;
-let cacheExpiresAt = 0;
-let activePromptPromise = null;
-let passwordDialogElements = null;
-
-const getCachedPassword = () => {
-  if (!cachedPassword) return null;
-  if (Date.now() > cacheExpiresAt) {
-    cachedPassword = null;
-    cacheExpiresAt = 0;
-    return null;
-  }
-  return cachedPassword;
-};
-
-const setCachedPassword = (password) => {
-  cachedPassword = password;
-  cacheExpiresAt = Date.now() + PASSWORD_CACHE_TTL_MS;
-};
-
-const clearPasswordCache = () => {
-  cachedPassword = null;
-  cacheExpiresAt = 0;
-};
-
-const ensureDialogElements = () => {
-  if (passwordDialogElements) {
-    passwordDialogElements.secure = applyPasswordDialogSecurity(passwordDialogElements);
-    return passwordDialogElements;
-  }
-  if (typeof document === "undefined") return null;
-  const dialog = document.getElementById(PASSWORD_DIALOG_ID);
-  if (!(dialog instanceof HTMLDialogElement)) return null;
-  const form = dialog.querySelector('form[data-role="form"]');
-  const passwordInput = form?.querySelector('input[name="password"]') ?? null;
-  const confirmField = form?.querySelector('[data-role="confirm-field"]') ?? null;
-  const confirmInput = confirmField?.querySelector('input[name="passwordConfirm"]') ?? null;
-  const errorEl = form?.querySelector('[data-role="error"]') ?? null;
-  const clearButton = form?.querySelector('[data-action="identity-password-clear"]') ?? null;
-  const title = form?.querySelector('[data-role="title"]') ?? null;
-  const description = form?.querySelector('[data-role="description"]') ?? null;
-  const keypad = form?.querySelector('[data-role="keypad"]') ?? null;
-  const pinDots = form?.querySelectorAll('[data-pin-dot]') ?? [];
-  const pinConfirmDots = form?.querySelectorAll('[data-pin-confirm-dot]') ?? [];
-
-  passwordDialogElements = {
-    dialog,
-    form,
-    passwordInput,
-    confirmField,
-    confirmInput,
-    errorEl,
-    clearButton,
-    title,
-    description,
-    keypad,
-    pinDots: Array.from(pinDots),
-    pinConfirmDots: Array.from(pinConfirmDots),
-  };
-  passwordDialogElements.secure = applyPasswordDialogSecurity(passwordDialogElements);
-  return passwordDialogElements;
-};
-
 let unlockCodeDialogElements = null;
 
 const ensureUnlockCodeDialogElements = () => {
@@ -851,518 +643,6 @@ const promptForUnlockCode = async ({ title, message } = {}) => {
     unlockInput.focus();
   });
 };
-
-const PIN_LENGTH = 6;
-
-const showPasswordDialog = async ({
-  mode,
-  message,
-  errorMessage,
-  allowReset,
-}) => {
-  const elements = ensureDialogElements();
-  if (!elements) {
-    throw new Error("Password dialog unavailable");
-  }
-
-  const { dialog, form, passwordInput, confirmField, confirmInput, errorEl, clearButton, title, description, keypad, pinDots, pinConfirmDots } =
-    elements;
-  if (!form || !passwordInput || !dialog) {
-    throw new Error("Password dialog incomplete");
-  }
-  if (!elements.secure) {
-    throw new Error(INSECURE_PASSWORD_MESSAGE);
-  }
-
-  const needsConfirmation = mode === "create";
-
-  if (title) {
-    title.textContent = needsConfirmation ? "Protect Your Key" : "Unlock Saved Key";
-  }
-  if (description) {
-    description.textContent =
-      message ??
-      (needsConfirmation
-        ? "Create a 6-digit PIN to encrypt your Nostr private key on this device."
-        : "Enter the PIN you previously set to unlock cached sessions.");
-  }
-
-  if (confirmField) {
-    confirmField.hidden = true;
-  }
-  if (confirmInput) {
-    confirmInput.required = needsConfirmation;
-    confirmInput.value = "";
-  }
-
-  passwordInput.value = "";
-
-  if (errorEl) {
-    if (errorMessage) {
-      errorEl.textContent = errorMessage;
-      errorEl.hidden = false;
-    } else {
-      errorEl.hidden = true;
-      errorEl.textContent = "";
-    }
-  }
-
-  if (clearButton) {
-    clearButton.hidden = !allowReset;
-  }
-
-  // Keypad state
-  let currentPin = "";
-  let confirmPin = "";
-  let isConfirmPhase = false;
-
-  const updatePinDisplay = () => {
-    pinDots.forEach((dot, index) => {
-      if (index < currentPin.length) {
-        dot.classList.add("filled");
-      } else {
-        dot.classList.remove("filled");
-      }
-    });
-    pinConfirmDots.forEach((dot, index) => {
-      if (index < confirmPin.length) {
-        dot.classList.add("filled");
-      } else {
-        dot.classList.remove("filled");
-      }
-    });
-  };
-
-  const resetPinEntry = () => {
-    if (isConfirmPhase) {
-      confirmPin = "";
-      confirmInput.value = "";
-    } else {
-      currentPin = "";
-      passwordInput.value = "";
-    }
-    updatePinDisplay();
-  };
-
-  const resetAllPins = () => {
-    currentPin = "";
-    confirmPin = "";
-    isConfirmPhase = false;
-    passwordInput.value = "";
-    confirmInput.value = "";
-    if (confirmField) {
-      confirmField.hidden = true;
-    }
-    updatePinDisplay();
-  };
-
-  const showError = (msg) => {
-    if (errorEl) {
-      errorEl.textContent = msg;
-      errorEl.hidden = false;
-    }
-  };
-
-  const hideError = () => {
-    if (errorEl) {
-      errorEl.hidden = true;
-      errorEl.textContent = "";
-    }
-  };
-
-  const handlePinKeyPress = (key) => {
-    hideError();
-
-    if (key === "clear") {
-      resetPinEntry();
-      return;
-    }
-
-    if (key === "back") {
-      if (isConfirmPhase) {
-        confirmPin = confirmPin.slice(0, -1);
-        confirmInput.value = confirmPin;
-      } else {
-        currentPin = currentPin.slice(0, -1);
-        passwordInput.value = currentPin;
-      }
-      updatePinDisplay();
-      return;
-    }
-
-    // Number key
-    if (isConfirmPhase) {
-      if (confirmPin.length >= PIN_LENGTH) return;
-      confirmPin += key;
-      confirmInput.value = confirmPin;
-      updatePinDisplay();
-      if (confirmPin.length === PIN_LENGTH) {
-        // Auto-submit when confirm PIN is complete
-        form.requestSubmit();
-      }
-    } else {
-      if (currentPin.length >= PIN_LENGTH) return;
-      currentPin += key;
-      passwordInput.value = currentPin;
-      updatePinDisplay();
-      if (currentPin.length === PIN_LENGTH && needsConfirmation) {
-        // Switch to confirm phase
-        isConfirmPhase = true;
-        if (confirmField) {
-          confirmField.hidden = false;
-        }
-      } else if (currentPin.length === PIN_LENGTH && !needsConfirmation) {
-        // Auto-submit for unlock mode
-        form.requestSubmit();
-      }
-    }
-  };
-
-  // Reset pin dots display
-  resetAllPins();
-  updatePinDisplay();
-
-  let submittedData = null;
-
-  return new Promise((resolve) => {
-    const handleSubmit = (event) => {
-      event.preventDefault();
-      const password = passwordInput.value.trim();
-      if (!password || password.length < PIN_LENGTH) {
-        showError("Please enter a 6-digit PIN");
-        return;
-      }
-      if (needsConfirmation) {
-        const confirmation = confirmInput.value.trim();
-        if (!confirmation || confirmation.length < PIN_LENGTH) {
-          showError("Please confirm your PIN");
-          return;
-        }
-        if (password !== confirmation) {
-          showError("PINs do not match");
-          resetAllPins();
-          return;
-        }
-      }
-      submittedData = { password };
-      dialog.close("confirm");
-    };
-
-    const handleClear = () => {
-      submittedData = { cleared: true };
-      dialog.close("clear");
-    };
-
-    const handleCancel = () => {
-      if (!submittedData) {
-        submittedData = { cancelled: true };
-      }
-    };
-
-    const handleKeypadClick = (event) => {
-      const target = event.target;
-      if (!target.hasAttribute("data-pin-key")) return;
-      const key = target.getAttribute("data-pin-key");
-      handlePinKeyPress(key);
-    };
-
-    const handleKeyDown = (event) => {
-      // Handle number keys (0-9)
-      if (/^[0-9]$/.test(event.key)) {
-        event.preventDefault();
-        handlePinKeyPress(event.key);
-        return;
-      }
-      // Handle backspace
-      if (event.key === "Backspace") {
-        event.preventDefault();
-        handlePinKeyPress("back");
-        return;
-      }
-      // Handle delete/clear
-      if (event.key === "Delete") {
-        event.preventDefault();
-        handlePinKeyPress("clear");
-        return;
-      }
-    };
-
-    const handleClose = () => {
-      form.removeEventListener("submit", handleSubmit);
-      dialog.removeEventListener("cancel", handleCancel);
-      dialog.removeEventListener("close", handleClose);
-      dialog.removeEventListener("keydown", handleKeyDown);
-      if (keypad) {
-        keypad.removeEventListener("click", handleKeypadClick);
-      }
-      if (clearButton) {
-        clearButton.removeEventListener("click", handleClear);
-      }
-      if (submittedData?.cleared) {
-        resolve({ cleared: true });
-        return;
-      }
-      if (dialog.returnValue === "confirm" && submittedData?.password) {
-        resolve({ password: submittedData.password });
-        return;
-      }
-      resolve(null);
-    };
-
-    form.addEventListener("submit", handleSubmit);
-    dialog.addEventListener("cancel", handleCancel, { once: true });
-    dialog.addEventListener("close", handleClose, { once: true });
-    dialog.addEventListener("keydown", handleKeyDown);
-    if (keypad) {
-      keypad.addEventListener("click", handleKeypadClick);
-    }
-    if (clearButton && !clearButton.hidden) {
-      clearButton.addEventListener("click", handleClear);
-    }
-
-    dialog.returnValue = "";
-    dialog.showModal();
-  });
-};
-
-const runPasswordPrompt = async ({ mode, reason, errorMessage, validate } = {}) => {
-  const hasEncrypted = sessionCache.hasEncryptedNsec();
-  let passwordMeta = loadPasswordMeta();
-  let effectiveMode = mode;
-  if (!effectiveMode || (effectiveMode !== "create" && effectiveMode !== "unlock")) {
-    effectiveMode = passwordMeta ? "unlock" : "create";
-  }
-  let validationError = errorMessage ?? null;
-
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const result = await showPasswordDialog({
-      mode: effectiveMode,
-      message: reason,
-      errorMessage: validationError,
-      allowReset: hasEncrypted || Boolean(passwordMeta),
-    });
-
-    if (!result) {
-      throw new PasswordPromptCancelledError();
-    }
-
-    if (result.cleared) {
-      sessionCache.clear();
-      clearPasswordMeta();
-      clearPasswordCache();
-      passwordMeta = null;
-      effectiveMode = "create";
-      validationError = null;
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("wingman:identity-encrypted-cleared"));
-      }
-      continue;
-    }
-
-    const password = result.password;
-    if (!password) {
-      validationError = "PIN is required";
-      continue;
-    }
-
-    if (typeof validate === "function") {
-      try {
-        const validationResult = await validate(password);
-        if (!validationResult) {
-          validationError = "Incorrect PIN";
-          clearPasswordCache();
-          continue;
-        }
-      } catch (error) {
-        console.warn("[identity] PIN validation failed", error);
-        validationError = "Unable to validate PIN";
-        clearPasswordCache();
-        continue;
-      }
-    }
-
-    if (effectiveMode === "create") {
-      writePasswordMeta({ logN: DEFAULT_LOG_N, createdAt: Date.now() });
-    }
-
-    setCachedPassword(password);
-    return password;
-  }
-};
-
-const ensurePassword = async (options = {}) => {
-  const cached = getCachedPassword();
-  if (cached) return cached;
-
-  if (!activePromptPromise) {
-    activePromptPromise = runPasswordPrompt(options).finally(() => {
-      activePromptPromise = null;
-    });
-  }
-
-  return activePromptPromise;
-};
-
-const deriveSymmetricKey = async (password, salt, logN = DEFAULT_LOG_N) => {
-  if (!textEncoder) throw new Error("TextEncoder not supported");
-  const normalizedPassword = password.normalize("NFKC");
-  const passwordBytes = textEncoder.encode(normalizedPassword);
-  try {
-    const N = 1 << logN;
-    return await scryptAsync(passwordBytes, salt, {
-      N,
-      r: 8,
-      p: 1,
-      dkLen: 32,
-    });
-  } finally {
-    wipeBytes(passwordBytes);
-  }
-};
-
-const encryptPrivateKeyWithPassword = async (rawKey, password, logN = DEFAULT_LOG_N) => {
-  if (!(rawKey instanceof Uint8Array)) {
-    throw new TypeError("rawKey must be a Uint8Array");
-  }
-  if (rawKey.length !== 32) {
-    throw new Error("rawKey must be 32 bytes");
-  }
-
-  const salt = randomBytes(16);
-  const nonce = randomBytes(24);
-  const associatedData = new Uint8Array([KEY_SECURITY_BYTE]);
-  const symmetricKey = await deriveSymmetricKey(password, salt, logN);
-
-  try {
-    const cipher = xchacha20poly1305(symmetricKey, nonce, associatedData);
-    const ciphertext = cipher.encrypt(rawKey);
-    const payload = concatBytes(
-      new Uint8Array([ENCRYPTION_VERSION]),
-      new Uint8Array([logN]),
-      salt,
-      nonce,
-      associatedData,
-      ciphertext,
-    );
-    const words = bech32.toWords(payload);
-    return bech32.encode(BECH32_PREFIX, words, 5000);
-  } finally {
-    wipeBytes(symmetricKey);
-    wipeBytes(salt);
-    wipeBytes(nonce);
-    wipeBytes(associatedData);
-  }
-};
-
-const encryptPrivateKey = async (rawKey, options = {}) => {
-  const logN = options.logN ?? DEFAULT_LOG_N;
-  const password = await ensurePassword({ mode: options.mode, reason: options.reason });
-  return encryptPrivateKeyWithPassword(rawKey, password, logN);
-};
-
-const decodeEncryptedPayload = (encrypted) => {
-  const decoded = bech32.decode(encrypted, 5000);
-  if (decoded.prefix !== BECH32_PREFIX) {
-    throw new Error("Unsupported encrypted key format");
-  }
-  const payload = new Uint8Array(bech32.fromWords(decoded.words));
-  if (payload.length < 1 + 1 + 16 + 24 + 1 + 16) {
-    throw new Error("Encrypted payload is too short");
-  }
-
-  const version = payload[0];
-  if (version !== ENCRYPTION_VERSION) {
-    throw new Error(`Unsupported encrypted key version: ${version}`);
-  }
-
-  const logN = payload[1];
-  const salt = payload.slice(2, 18);
-  const nonce = payload.slice(18, 42);
-  const associatedDataByte = payload[42];
-  const ciphertext = payload.slice(43);
-
-  if (ciphertext.length < 16) {
-    throw new Error("Encrypted payload is truncated");
-  }
-
-  return {
-    logN,
-    salt,
-    nonce,
-    associatedData: new Uint8Array([associatedDataByte]),
-    ciphertext,
-  };
-};
-
-const decryptPrivateKeyWithPassword = async (encrypted, password) => {
-  const { logN, salt, nonce, associatedData, ciphertext } = decodeEncryptedPayload(encrypted);
-  const symmetricKey = await deriveSymmetricKey(password, salt, logN);
-  try {
-    const cipher = xchacha20poly1305(symmetricKey, nonce, associatedData);
-    const plaintext = cipher.decrypt(ciphertext);
-    if (plaintext.length !== 32) {
-      throw new Error("Decrypted key must be 32 bytes");
-    }
-    return plaintext;
-  } finally {
-    wipeBytes(symmetricKey);
-    wipeBytes(salt);
-    wipeBytes(nonce);
-    wipeBytes(associatedData);
-  }
-};
-
-const decryptPrivateKey = async (encrypted) => {
-  const password = await ensurePassword({ mode: "unlock" });
-  return decryptPrivateKeyWithPassword(encrypted, password);
-};
-
-const decryptPrivateKeyWithPrompt = async (encrypted, { reason } = {}) => {
-  let errorMessage = null;
-  while (true) {
-    let password;
-    try {
-      password = await ensurePassword({ mode: "unlock", reason, errorMessage });
-    } catch (error) {
-      throw error;
-    }
-    try {
-      const plaintext = await decryptPrivateKeyWithPassword(encrypted, password);
-      return plaintext;
-    } catch (error) {
-      console.warn("[identity] failed to decrypt cached key:", error instanceof Error ? error.message : error);
-      clearPasswordCache();
-      errorMessage = "Incorrect PIN";
-    }
-  }
-};
-
-const exportEncryptedSession = () => {
-  const session = sessionCache.load();
-  if (!session) return null;
-  return {
-    npub: session.npub ?? null,
-    encryptedNsec: session.encryptedNsec ?? null,
-    sessionExpiresAt: session.sessionExpiresAt ?? null,
-    method: session.method ?? "local_keys",
-    logN: session.logN ?? DEFAULT_LOG_N,
-  };
-};
-
-if (typeof window !== "undefined") {
-  let lastIdentityAuthenticated = false;
-  window.addEventListener("wingman:identity-ui-state", (event) => {
-    const detail = event?.detail;
-    if (!detail || typeof detail !== "object") return;
-    const isAuthenticated = Boolean(detail.authenticated);
-    if (lastIdentityAuthenticated && !isAuthenticated) {
-      clearPasswordCache();
-      sessionCache.clear();
-    }
-    lastIdentityAuthenticated = isAuthenticated;
-  });
-}
 
 const identityApi = typeof globalThis !== "undefined" && globalThis.wingmanIdentity ? globalThis.wingmanIdentity : {};
 
@@ -1496,14 +776,12 @@ const applyIdentityUpdate = (context, partial) => {
   }
 };
 
-const saveCachedSession = ({ npub, encryptedNsec, expiresAt, method, logN = DEFAULT_LOG_N }) => {
+const saveCachedSession = ({ npub, expiresAt, method }) => {
   try {
     identityApi.sessionCache?.save({
       npub,
-      encryptedNsec: encryptedNsec ?? null,
       sessionExpiresAt: expiresAt ?? null,
       method,
-      logN,
       createdAt: Date.now(),
     });
   } catch (error) {
@@ -1586,8 +864,6 @@ const performLogout = async () => {
     }
   }
 
-  clearPasswordCache();
-  clearPasswordMeta();
   applyIdentityUpdate(null, { npub: null, method: "none", expiresAt: null, isAuthenticated: false });
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("wingman:identity-logout"));
@@ -1626,7 +902,7 @@ const wireLocalIdentityPanel = (root, context) => {
     root.classList.remove("is-authenticated");
   };
 
-  const handleAuthSuccess = ({ npub, nsec, encryptedNsec, expiresAt, method }) => {
+  const handleAuthSuccess = ({ npub, nsec, expiresAt, method }) => {
     latestKeys = { npub, nsec: nsec ?? null };
     if (npubOutput) {
       npubOutput.textContent = npub;
@@ -1644,7 +920,7 @@ const wireLocalIdentityPanel = (root, context) => {
     if (typeof root.open === "boolean") {
       root.open = true;
     }
-    saveCachedSession({ npub, encryptedNsec, expiresAt, method });
+    saveCachedSession({ npub, expiresAt, method });
     applyIdentityUpdate(context, { npub, method, expiresAt, isAuthenticated: true, alias: npub });
     root.classList.add("is-authenticated");
   };
@@ -1672,7 +948,7 @@ const wireLocalIdentityPanel = (root, context) => {
 
       const { expiresAt } = await persistServerSession(npub, null);
 
-      handleAuthSuccess({ npub, nsec, encryptedNsec: null, expiresAt, method: "local_keys" });
+      handleAuthSuccess({ npub, nsec, expiresAt, method: "local_keys" });
     } catch (error) {
       console.error("[identity] generate keys failed", error);
       window.alert(error instanceof Error ? error.message : "Failed to generate keys");
@@ -1722,7 +998,7 @@ const wireLocalIdentityPanel = (root, context) => {
       }
 
       const { expiresAt } = await persistServerSession(npub, null);
-      handleAuthSuccess({ npub, nsec, encryptedNsec: null, expiresAt, method: "local_keys" });
+      handleAuthSuccess({ npub, nsec, expiresAt, method: "local_keys" });
       window.alert("Signed in with imported key");
     } catch (error) {
       console.error("[identity] import nsec failed", error);
@@ -1765,7 +1041,7 @@ const wireNip07Panel = (root, context) => {
       }
       const npub = nip19.npubEncode(pubkeyHex);
       const { expiresAt } = await persistServerSession(npub, null);
-      saveCachedSession({ npub, encryptedNsec: null, expiresAt, method: "nip07" });
+      saveCachedSession({ npub, expiresAt, method: "nip07" });
       applyIdentityUpdate(context, { npub, method: "nip07", expiresAt, isAuthenticated: true, alias: npub });
       root.classList.add("is-authenticated");
       setStatus("Extension connected", "success");
@@ -1844,7 +1120,7 @@ const initBunkerPanel = (root, context) => {
         hasSecret: Boolean(parsed.secret),
         lastConnectedAt: Date.now(),
       });
-      saveCachedSession({ npub, encryptedNsec: null, expiresAt, method: "bunker" });
+      saveCachedSession({ npub, expiresAt, method: "bunker" });
       applyIdentityUpdate(context, { npub, method: "bunker", expiresAt, isAuthenticated: true, alias: npub });
       root.classList.add("is-authenticated");
       setStatus("Connected to remote signer", "success");
@@ -1857,7 +1133,7 @@ const initBunkerPanel = (root, context) => {
       console.error("[identity] bunker connection failed", error instanceof Error ? error.message : error);
       const hadSecret = Boolean(parsed?.secret && `${parsed.secret}`.length > 0);
       let message = error instanceof Error ? error.message : "Failed to connect to remote signer";
-      
+
       // Provide more specific error messages for common issues
       if (message.includes("Invalid connection secret")) {
         message = hadSecret
@@ -1868,7 +1144,7 @@ const initBunkerPanel = (root, context) => {
       } else if (message.includes("Invalid bunker URI")) {
         message = "The bunker URI format is invalid. Please check the URI starts with 'bunker://' and has all required parameters.";
       }
-      
+
       setStatus(message, "error");
       root.classList.remove("is-authenticated");
     } finally {
@@ -1936,37 +1212,7 @@ const wireBunkerPanel = (root, context) => {
 
 const wireBunkerLogin = wireBunkerPanel;
 
-identityApi.uiPrompts = {
-  ensurePassword,
-  clearPasswordCache,
-  PasswordPromptCancelledError,
-};
-
-identityApi.crypto = {
-  encryptPrivateKey,
-  encryptPrivateKeyWithPassword,
-  decryptPrivateKey,
-  decryptPrivateKeyWithPassword,
-  decryptPrivateKeyWithPrompt,
-  decodeEncryptedPayload,
-  constants: {
-    defaultLogN: DEFAULT_LOG_N,
-    version: ENCRYPTION_VERSION,
-  },
-};
-
-identityApi.sessionCache = {
-  save: sessionCache.save,
-  load: sessionCache.load,
-  clear: sessionCache.clear,
-  hasEncryptedNsec: sessionCache.hasEncryptedNsec,
-  export: exportEncryptedSession,
-};
-
-identityApi.passwordMeta = {
-  load: loadPasswordMeta,
-  clear: clearPasswordMeta,
-};
+identityApi.sessionCache = sessionCache;
 
 identityApi.wireLocalIdentityPanel = wireLocalIdentityPanel;
 identityApi.wireNip07Panel = wireNip07Panel;
@@ -2127,7 +1373,7 @@ const handleKeyTeleport = async ({ blob, context }) => {
     const { expiresAt } = await persistServerSession(npub, null);
 
     // Save session metadata to local cache (no encrypted nsec - that's in device keystore now)
-    saveCachedSession({ npub, encryptedNsec: null, expiresAt, method: "keyteleport" });
+    saveCachedSession({ npub, expiresAt, method: "keyteleport" });
 
     // Update UI
     applyIdentityUpdate(context, { npub, method: "keyteleport", expiresAt, isAuthenticated: true, alias: npub });
@@ -2226,7 +1472,7 @@ const restoreFromDeviceKeystore = async (context) => {
     const method = metadata.method ?? "device_keystore";
 
     // Update session cache
-    saveCachedSession({ npub, encryptedNsec: null, expiresAt, method });
+    saveCachedSession({ npub, expiresAt, method });
 
     // Update UI
     applyIdentityUpdate(context, { npub, method, expiresAt, isAuthenticated: true, alias: npub });
@@ -2245,17 +1491,7 @@ globalThis.wingmanIdentity = identityApi;
 
 export {
   PasswordPromptCancelledError,
-  ensurePassword,
-  clearPasswordCache,
-  encryptPrivateKey,
-  encryptPrivateKeyWithPassword,
-  decryptPrivateKey,
-  decryptPrivateKeyWithPassword,
-  decryptPrivateKeyWithPrompt,
   sessionCache,
-  loadPasswordMeta,
-  clearPasswordMeta,
-  exportEncryptedSession,
   wireLocalIdentityPanel,
   wireNip07Panel,
   wireBunkerPanel,
