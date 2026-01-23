@@ -3225,7 +3225,7 @@ const fetchSessionQueue = async (sessionId) => {
     }
     const data = await response.json();
     const queue = getSessionQueue(sessionId);
-    queue.prompts = data.queue || [];
+    queue.prompts = data.queue?.prompts ?? [];
     return queue.prompts;
   } catch (error) {
     console.error("Failed to fetch session queue:", error);
