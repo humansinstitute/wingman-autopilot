@@ -4250,17 +4250,96 @@ dialog textarea {
   margin-bottom: 0.25rem;
 }
 
-.wm-identity-keyteleport__copy-status {
+/* Key Teleport Setup Modal */
+.wm-keyteleport-setup-dialog {
+  border: none;
+  border-radius: 0.75rem;
+  padding: 0;
+  max-width: 400px;
+  width: 90%;
+  background: var(--bg-primary);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.wm-keyteleport-setup-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.wm-keyteleport-setup-dialog__content {
+  padding: 1.5rem;
+  position: relative;
+}
+
+.wm-keyteleport-setup-dialog__close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  border: none;
+  background: none;
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0.25rem;
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.25rem;
+}
+
+.wm-keyteleport-setup-dialog__close:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.wm-keyteleport-setup-dialog__title {
+  margin: 0 0 0.5rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: center;
+}
+
+.wm-keyteleport-setup-dialog__subtitle {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.wm-keyteleport-setup-dialog__instructions {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.wm-keyteleport-setup-dialog__identity {
+  background: var(--bg-tertiary);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.wm-keyteleport-setup-dialog__identity-label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+  margin-bottom: 0.25rem;
+}
+
+.wm-keyteleport-setup-dialog__identity-value {
+  display: block;
+  font-family: monospace;
   font-size: 0.85rem;
-  margin-left: 0.5rem;
+  color: var(--text-primary);
+  word-break: break-all;
 }
 
-.wm-identity-keyteleport__copy-status.success {
-  color: var(--color-success);
-}
-
-.wm-identity-keyteleport__copy-status.error {
-  color: var(--color-error);
+.wm-keyteleport-setup-dialog .wm-button {
+  width: 100%;
 }
 
 .wm-identity-divider {

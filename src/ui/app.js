@@ -8960,6 +8960,81 @@ const renderBunkerPanel = () => {
 };
 
 /**
+ * Show Key Teleport Setup modal after copying registration code
+ */
+function showKeyTeleportSetupModal(appNpub) {
+  // Create modal dialog
+  const dialog = document.createElement("dialog");
+  dialog.className = "wm-keyteleport-setup-dialog";
+
+  const content = document.createElement("div");
+  content.className = "wm-keyteleport-setup-dialog__content";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "wm-keyteleport-setup-dialog__close";
+  closeBtn.innerHTML = "×";
+  closeBtn.setAttribute("aria-label", "Close");
+  closeBtn.addEventListener("click", () => {
+    dialog.close();
+    dialog.remove();
+  });
+  content.append(closeBtn);
+
+  const title = document.createElement("h2");
+  title.className = "wm-keyteleport-setup-dialog__title";
+  title.textContent = "Key Teleport Setup";
+  content.append(title);
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "wm-keyteleport-setup-dialog__subtitle";
+  subtitle.textContent = "Registration blob copied to clipboard!";
+  content.append(subtitle);
+
+  const instructions = document.createElement("p");
+  instructions.className = "wm-keyteleport-setup-dialog__instructions";
+  instructions.textContent = "Paste this into your key manager (e.g., Welcome) to register this app.";
+  content.append(instructions);
+
+  const identityBox = document.createElement("div");
+  identityBox.className = "wm-keyteleport-setup-dialog__identity";
+
+  const identityLabel = document.createElement("span");
+  identityLabel.className = "wm-keyteleport-setup-dialog__identity-label";
+  identityLabel.textContent = "This app's identity:";
+  identityBox.append(identityLabel);
+
+  const identityValue = document.createElement("span");
+  identityValue.className = "wm-keyteleport-setup-dialog__identity-value";
+  identityValue.textContent = appNpub;
+  identityBox.append(identityValue);
+
+  content.append(identityBox);
+
+  const doneBtn = document.createElement("button");
+  doneBtn.type = "button";
+  doneBtn.className = "wm-button";
+  doneBtn.textContent = "Done";
+  doneBtn.addEventListener("click", () => {
+    dialog.close();
+    dialog.remove();
+  });
+  content.append(doneBtn);
+
+  dialog.append(content);
+  document.body.append(dialog);
+  dialog.showModal();
+
+  // Close on backdrop click
+  dialog.addEventListener("click", (e) => {
+    if (e.target === dialog) {
+      dialog.close();
+      dialog.remove();
+    }
+  });
+}
+
+/**
  * Render Key Teleport login section
  * This is a primary login option (not under Advanced)
  */
@@ -8970,32 +9045,13 @@ const renderKeyTeleportPanel = () => {
 
   const title = document.createElement("h3");
   title.className = "wm-identity-keyteleport__title";
-  title.textContent = "Login with Welcome";
+  title.textContent = "Key Teleport";
   section.append(title);
 
   const description = document.createElement("p");
   description.className = "wm-identity-panel-description";
-  description.textContent = "Use your Welcome key manager to securely transfer your Nostr identity.";
+  description.textContent = "Use your key manager (e.g., Welcome) to securely transfer your Nostr identity.";
   section.append(description);
-
-  const actions = document.createElement("div");
-  actions.className = "wm-identity-button-row";
-
-  const loginButton = document.createElement("button");
-  loginButton.type = "button";
-  loginButton.className = "wm-button";
-  loginButton.dataset.action = "keyteleport-login";
-  loginButton.textContent = "Open Welcome";
-  actions.append(loginButton);
-
-  section.append(actions);
-
-  const status = document.createElement("p");
-  status.className = "wm-identity-status-line";
-  status.dataset.role = "keyteleport-status";
-  status.setAttribute("aria-live", "polite");
-  status.hidden = true;
-  section.append(status);
 
   // Setup section (for first-time registration with Welcome)
   const setupDetails = document.createElement("details");
@@ -9012,7 +9068,7 @@ const renderKeyTeleportPanel = () => {
   setupInstructions.className = "wm-identity-keyteleport__instructions";
   setupInstructions.innerHTML = `
     <li>Copy the registration code below</li>
-    <li>Open Welcome and go to Settings → Key Teleport</li>
+    <li>Open your key manager and go to Key Teleport settings</li>
     <li>Paste the code to register Wingman</li>
     <li>Once registered, you can teleport your identity anytime</li>
   `;
@@ -9023,15 +9079,10 @@ const renderKeyTeleportPanel = () => {
 
   const copyButton = document.createElement("button");
   copyButton.type = "button";
-  copyButton.className = "wm-button secondary";
+  copyButton.className = "wm-button";
   copyButton.dataset.action = "keyteleport-copy-registration";
   copyButton.textContent = "Copy Registration Code";
   copyRow.append(copyButton);
-
-  const copyStatus = document.createElement("span");
-  copyStatus.className = "wm-identity-keyteleport__copy-status";
-  copyStatus.hidden = true;
-  copyRow.append(copyStatus);
 
   setupBody.append(copyRow);
   setupDetails.append(setupBody);
@@ -9040,7 +9091,7 @@ const renderKeyTeleportPanel = () => {
   const helper = document.createElement("p");
   helper.className = "wm-identity-helper";
   helper.dataset.role = "keyteleport-helper";
-  helper.innerHTML = 'Don\'t have Welcome? <a href="https://welcome.nostr.com" target="_blank" rel="noopener">Learn more</a>';
+  helper.innerHTML = 'Don\'t have a key manager? <a href="https://welcome.nostr.com" target="_blank" rel="noopener">Try Welcome</a>';
   section.append(helper);
 
   // Check if Key Teleport is configured and update UI
@@ -9051,18 +9102,12 @@ const renderKeyTeleportPanel = () => {
         section.hidden = true;
         return;
       }
-      loginButton.addEventListener("click", () => {
-        if (config.welcomeUrl) {
-          window.open(config.welcomeUrl, "_blank", "noopener");
-        }
-      });
 
       // Handle copy registration button
       copyButton.addEventListener("click", async () => {
         try {
           copyButton.disabled = true;
-          copyStatus.textContent = "Generating...";
-          copyStatus.hidden = false;
+          copyButton.textContent = "Generating...";
 
           const regRes = await fetch("/api/auth/keyteleport/registration");
           const regData = await regRes.json();
@@ -9072,20 +9117,14 @@ const renderKeyTeleportPanel = () => {
           }
 
           await navigator.clipboard.writeText(regData.blob);
-          copyStatus.textContent = "Copied!";
-          copyStatus.classList.add("success");
 
-          setTimeout(() => {
-            copyStatus.hidden = true;
-            copyStatus.classList.remove("success");
-          }, 2000);
+          // Show the setup modal with app's npub
+          showKeyTeleportSetupModal(regData.appNpub);
+
+          copyButton.textContent = "Copy Registration Code";
         } catch (err) {
-          copyStatus.textContent = err.message ?? "Copy failed";
-          copyStatus.classList.add("error");
-          setTimeout(() => {
-            copyStatus.hidden = true;
-            copyStatus.classList.remove("error");
-          }, 3000);
+          alert(err.message ?? "Failed to copy registration code");
+          copyButton.textContent = "Copy Registration Code";
         } finally {
           copyButton.disabled = false;
         }
