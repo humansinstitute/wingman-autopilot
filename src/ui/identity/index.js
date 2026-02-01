@@ -1229,9 +1229,15 @@ identityApi.bunkerSigner = identityApi.bunkerSigner ?? null;
 
 /**
  * Handle Key Teleport v2 login
- * Uses throwaway keypair encryption instead of PIN-based NIP-49
+ *
+ * v2 Protocol:
+ * - Blob arrives via URL fragment (#keyteleport=) - server never sees it
+ * - Blob is self-contained (no callback to Welcome)
+ * - Outer layer: encrypted to Wingmen's app key (decrypted server-side)
+ * - Inner layer: encrypted with throwaway key (decrypted here with unlock code)
+ *
  * @param {Object} options
- * @param {string} options.blob - The base64-encoded Key Teleport blob
+ * @param {string} options.blob - The base64-encoded Key Teleport blob from URL fragment
  * @param {Object} options.context - The identity context for UI updates
  * @returns {Promise<string|null>} The npub if successful, null otherwise
  */
@@ -1384,12 +1390,7 @@ const handleKeyTeleport = async ({ blob, context }) => {
 
     console.log("[KeyTeleport] Login successful:", npub.slice(0, 20) + "...");
 
-    // Clean up URL
-    if (typeof window !== "undefined" && window.history?.replaceState) {
-      const url = new URL(window.location.href);
-      url.searchParams.delete(KEYTELEPORT_PARAM);
-      window.history.replaceState({}, "", url.toString());
-    }
+    // URL fragment already cleaned at the start of checkKeyTeleportParam
 
     return npub;
   } catch (error) {
@@ -1400,19 +1401,30 @@ const handleKeyTeleport = async ({ blob, context }) => {
 };
 
 /**
- * Check URL for keyteleport parameter and process if found
+ * Check URL for keyteleport fragment and process if found
+ * v2: Uses URL fragment (#keyteleport=) instead of query param
+ * Fragment is never sent to server, so blob doesn't appear in logs
  * @param {Object} context - The identity context for UI updates
  */
 const checkKeyTeleportParam = async (context) => {
   if (typeof window === "undefined") return null;
 
-  const url = new URL(window.location.href);
-  const blob = url.searchParams.get(KEYTELEPORT_PARAM);
+  const hash = window.location.hash;
+  if (!hash || !hash.includes("keyteleport=")) return null;
+
+  // Parse the fragment as URL parameters (remove leading #)
+  const params = new URLSearchParams(hash.slice(1));
+  const blob = params.get(KEYTELEPORT_PARAM);
 
   if (!blob) return null;
 
-  console.log("[KeyTeleport] Found keyteleport parameter in URL");
-  return handleKeyTeleport({ blob, context });
+  // Clear URL fragment immediately (don't leave blob in browser history)
+  if (window.history?.replaceState) {
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
+
+  console.log("[KeyTeleport] Found keyteleport fragment in URL");
+  return handleKeyTeleport({ blob: decodeURIComponent(blob), context });
 };
 
 identityApi.handleKeyTeleport = handleKeyTeleport;

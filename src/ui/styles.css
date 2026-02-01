@@ -4184,6 +4184,164 @@ dialog textarea {
   display: none;
 }
 
+/* Key Teleport login section */
+.wm-identity-keyteleport {
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.75rem;
+  background: var(--bg-secondary);
+}
+
+.wm-identity-keyteleport__title {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.wm-card[data-authenticated="true"] .wm-identity-keyteleport {
+  display: none;
+}
+
+.wm-identity-helper {
+  margin: 0.75rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-tertiary);
+}
+
+.wm-identity-helper a {
+  color: var(--text-link);
+  text-decoration: underline;
+}
+
+/* Key Teleport setup section */
+.wm-identity-keyteleport__setup {
+  margin-top: 1rem;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.5rem;
+  background: var(--bg-tertiary);
+}
+
+.wm-identity-keyteleport__setup summary {
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.wm-identity-keyteleport__setup summary:hover {
+  color: var(--text-primary);
+}
+
+.wm-identity-keyteleport__setup-body {
+  padding: 0 0.75rem 0.75rem;
+}
+
+.wm-identity-keyteleport__instructions {
+  margin: 0 0 0.75rem;
+  padding-left: 1.25rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.wm-identity-keyteleport__instructions li {
+  margin-bottom: 0.25rem;
+}
+
+/* Key Teleport Setup Modal */
+.wm-keyteleport-setup-dialog {
+  border: none;
+  border-radius: 0.75rem;
+  padding: 0;
+  max-width: 400px;
+  width: 90%;
+  background: var(--bg-primary);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.wm-keyteleport-setup-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.wm-keyteleport-setup-dialog__content {
+  padding: 1.5rem;
+  position: relative;
+}
+
+.wm-keyteleport-setup-dialog__close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  border: none;
+  background: none;
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0.25rem;
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.25rem;
+}
+
+.wm-keyteleport-setup-dialog__close:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.wm-keyteleport-setup-dialog__title {
+  margin: 0 0 0.5rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: center;
+}
+
+.wm-keyteleport-setup-dialog__subtitle {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.wm-keyteleport-setup-dialog__instructions {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.wm-keyteleport-setup-dialog__identity {
+  background: var(--bg-tertiary);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.wm-keyteleport-setup-dialog__identity-label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+  margin-bottom: 0.25rem;
+}
+
+.wm-keyteleport-setup-dialog__identity-value {
+  display: block;
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.wm-keyteleport-setup-dialog .wm-button {
+  width: 100%;
+}
+
 .wm-identity-divider {
   border: 0;
   border-top: 1px solid var(--border-primary);

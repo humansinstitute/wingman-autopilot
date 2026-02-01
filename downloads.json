@@ -1,6 +1,28 @@
 {
   "releases": [
     {
+      "version": "0.11.8",
+      "date": "2026-02-01",
+      "platforms": {
+        "Apple ARM": {
+          "link": "https://github.com/coder/agentapi/releases/download/v0.11.8/agentapi-darwin-arm64",
+          "sha256": "sha256:5469c3c7144e00d0a5f662a76aa5b404449e9f63d1990d977855e0ab19cee73e"
+        },
+        "Apple Intel": {
+          "link": "https://github.com/coder/agentapi/releases/download/v0.11.8/agentapi-darwin-amd64",
+          "sha256": "sha256:df275170d73d0ed393318810d4f74803cc9455b9d540f051c3acadf3e67d0dc6"
+        },
+        "Linux ARM": {
+          "link": "https://github.com/coder/agentapi/releases/download/v0.11.8/agentapi-linux-arm64",
+          "sha256": "sha256:d3272a152ecc75b791e0a93bae3760bb701161089d2f4ce8d5e1a53d8f605bfb"
+        },
+        "Linux Intel": {
+          "link": "https://github.com/coder/agentapi/releases/download/v0.11.8/agentapi-linux-amd64",
+          "sha256": "sha256:222aa0668ba004833c73a9e4c15429b32448d9bc78c17e778c61e9b071a1b81b"
+        }
+      }
+    },
+    {
       "version": "0.11.6",
       "date": "2025-12-27",
       "platforms": {
