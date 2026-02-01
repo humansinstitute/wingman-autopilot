@@ -1,8 +1,6 @@
-# Wingman V2
+# Wingman
 
-==**NOTE: I HAVE RECENTLY UPDATED TO A NEW DOWNLOAD SCRIPT FOR AGENT API BINARIES TO SUPPORT MAC AND LINUX ON ALL ARCHITECTURES. IT WORKS ON LINUX-X64 AND MAC-ARM BUT I HAVENT BEEN ABLE TO TEST OTHER CONFIGS AS I DONT HAVE THE PLATFORMS. I'VE ALSO REMOVED HTE TMUX SPLITTING PER AGENT SESSION AS AGENTAPI HAS A NATIVE ATTACH APRPOACH NOW. RAISE ISSUES IF YOU HAVE PROBLEMS**==
-
-Wingman: Every Computer Becomes a Ten-Person Team
+## Wingman: Every Computer Becomes a Ten-Person Team
 
 Wingman is an open-source Agent Management system that brings AI automation to small businesses, without the technical complexity or vendor lock-in.
 

@@ -165,8 +165,6 @@ export const proxyRequestToApp = async (
       duplex: "half",
     });
 
-    logRouting(`proxy fetch success`, { targetPort, status: proxyResponse.status });
-
     // Clone response headers, removing hop-by-hop
     const responseHeaders = new Headers();
     for (const [key, value] of proxyResponse.headers) {
@@ -175,7 +173,17 @@ export const proxyRequestToApp = async (
       }
     }
 
-    return new Response(proxyResponse.body, {
+    // Buffer the response body to ensure it's fully read before returning
+    // This fixes issues where streaming bodies may not be properly forwarded
+    const bodyBuffer = await proxyResponse.arrayBuffer();
+    logRouting(`proxy fetch success`, {
+      targetPort,
+      status: proxyResponse.status,
+      contentLength: proxyResponse.headers.get("content-length"),
+      bodySize: bodyBuffer.byteLength
+    });
+
+    return new Response(bodyBuffer, {
       status: proxyResponse.status,
       statusText: proxyResponse.statusText,
       headers: responseHeaders,

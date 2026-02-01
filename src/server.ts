@@ -65,7 +65,6 @@ import { createProjectApiHandler } from "./projects/project-api";
 import { createNpubProjectApiHandler } from "./projects/npub-project-api";
 import { npubProjectStore } from "./projects/npub-project-store";
 import { createBrowserLogHandler } from "./logging/browser-log-handler";
-import { ensureDeepDiveProcess, getDeepDivePort, isDeepDiveProcessRunning } from "./deep-dive-process";
 import {
   buildAgentUrl,
   fetchAgentMessages,
@@ -100,7 +99,7 @@ import {
 import { handleKeyTeleport, handleKeyTeleportRegistration } from "./auth/keyteleport";
 import { createStaticAssetService } from "./server/static-assets";
 import { maybeRefreshSessionCookie } from "./server/session-refresh";
-import { handleSubdomainRequest, type SubdomainProxyConfig } from "./server/subdomain-proxy";
+import { handleSubdomainRequest, resolveAliasToPort, proxyRequestToApp, type SubdomainProxyConfig } from "./server/subdomain-proxy";
 import { isAgentRuntimeStatus } from "./types/agent-status";
 import { createSessionEventsHandler } from "./server/session-events";
 import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
@@ -137,6 +136,89 @@ const subdomainProxyConfig: SubdomainProxyConfig = {
 if (subdomainProxyConfig.enabled) {
   console.log(`[subdomain-proxy] Enabled for base domain: ${subdomainProxyConfig.baseDomain}`);
 }
+
+/**
+ * Handle path-based app routing (/host/<alias> and /host/<alias>/*).
+ * Extracts alias from path and proxies to the app's local port.
+ */
+const handlePathBasedAppRequest = async (
+  request: Request,
+  pathname: string,
+): Promise<Response | null> => {
+  // Extract alias from path: /host/<alias> or /host/<alias>/...
+  const pathParts = pathname.split("/").filter(Boolean);
+  if (pathParts.length < 2 || pathParts[0] !== "host") {
+    return null;
+  }
+
+  const alias = pathParts[1];
+  if (!alias) {
+    return null;
+  }
+
+  // Redirect /host/<alias> to /host/<alias>/ to ensure correct relative path resolution
+  // Without trailing slash, browser resolves ./logo.png to /host/logo.png instead of /host/<alias>/logo.png
+  if (pathParts.length === 2 && !pathname.endsWith("/") && request.method === "GET") {
+    const url = new URL(request.url);
+    return Response.redirect(`${url.origin}${pathname}/${url.search}`, 302);
+  }
+
+  // Resolve alias to port
+  const resolved = await resolveAliasToPort(alias);
+  if (!resolved.success) {
+    const errorMessages: Record<string, string> = {
+      alias_not_found: `No app registered for alias "${alias}".`,
+      app_not_found: `App ID ${resolved.appId} not found in registry.`,
+      app_not_running: `App is not running (status: ${resolved.status}).`,
+      port_not_registered: `App is running but port not detected. Try restarting the app.`,
+    };
+    console.warn(`[path-proxy] ${alias}: ${resolved.reason}`, resolved);
+    return new Response(
+      JSON.stringify({
+        error: "App not available",
+        reason: resolved.reason,
+        message: errorMessages[resolved.reason],
+        alias,
+        appId: resolved.appId,
+      }),
+      {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }
+
+  // Check for WebSocket upgrade
+  const upgradeHeader = request.headers.get("upgrade");
+  if (upgradeHeader?.toLowerCase() === "websocket") {
+    return new Response(
+      JSON.stringify({
+        error: "WebSocket not supported",
+        message: "WebSocket connections through path routing are not yet fully supported.",
+      }),
+      {
+        status: 501,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }
+
+  // Rewrite the path to remove /host/<alias> prefix
+  const remainingPath = "/" + pathParts.slice(2).join("/");
+  const url = new URL(request.url);
+  const rewrittenUrl = new URL(remainingPath + url.search, request.url);
+
+  // Create a new request with the rewritten path
+  const rewrittenRequest = new Request(rewrittenUrl.toString(), {
+    method: request.method,
+    headers: request.headers,
+    body: request.body,
+    // @ts-expect-error - Bun supports duplex but types may not reflect it
+    duplex: "half",
+  });
+
+  return proxyRequestToApp(rewrittenRequest, resolved.port);
+};
 const ORCHESTRATOR_FLAG_KEY = "orchestrator_visibility";
 const PROJECTS_FLAG_KEY = "projects_visibility";
 const FEATURE_FLAG_DEFAULTS: Array<{
@@ -180,7 +262,6 @@ const browserLogHandler = createBrowserLogHandler();
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());
 registerAccessRule(AccessActions.FilesWrite, requireAuthentication());
-registerAccessRule(AccessActions.DeepDiveAccess, requireAuthentication());
 registerAccessRule(AccessActions.AppsManage, requireAuthentication());
 registerAccessRule(AccessActions.UiRestricted, requireAuthentication());
 registerAccessRule(AccessActions.TodosManage, requireAuthentication());
@@ -198,11 +279,6 @@ const projectRootDirectory = normalize(join(moduleDirectory, ".."));
 const agentApiBinaryPath = normalize(join(projectRootDirectory, "out", "agentapi"));
 
 await ensureAgentApiBinary({ agentApiBinaryPath, projectRootDirectory });
-
-const isDeepDivePagePath = (pathname: string) =>
-  pathname === "/deep-dive" || pathname.startsWith("/deep-dive/");
-
-ensureDeepDiveProcess(config.port);
 
 let preserveSessionsOnShutdown = false;
 
@@ -3183,6 +3259,28 @@ const buildSubdomainUrl = (alias: string | null): string | null => {
   return `https://${alias}.${config.subdomainBaseDomain}`;
 };
 
+/**
+ * Build the app host URL based on routing mode.
+ * - PATH mode: /host/<alias> (relative, will be resolved against current origin)
+ * - SUBDOMAIN mode: https://<alias>.<baseDomain>
+ */
+const buildAppHostUrl = (alias: string | null): string | null => {
+  if (!alias) {
+    return null;
+  }
+
+  if (config.appRoutingMode === "path") {
+    // Path-based routing: /host/<alias>
+    return `/host/${alias}`;
+  }
+
+  // Subdomain mode - requires baseDomain to be configured
+  if (!config.subdomainBaseDomain) {
+    return null;
+  }
+  return `https://${alias}.${config.subdomainBaseDomain}`;
+};
+
 const buildAppResponse = (app: AppRecord, status: AppProcessStatus, options: BuildAppResponseOptions = {}) => {
   const hasStartScript = Boolean(app.scripts.start);
   const availableScripts: Record<AppLifecycleAction, boolean> = {
@@ -3197,7 +3295,8 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus, options: Bui
   const webAppAlias = options.ownerAlias ?? null;
   const webAppUrl = app.webApp && webAppPort !== null ? buildHostedWebAppUrl(webAppPort) : null;
   const subdomainAlias = options.subdomainAlias ?? null;
-  const subdomainUrl = app.webApp ? buildSubdomainUrl(subdomainAlias) : null;
+  // Use routing-mode-aware URL builder (path or subdomain based on APP_ROUTING)
+  const subdomainUrl = app.webApp ? buildAppHostUrl(subdomainAlias) : null;
   return {
     id: app.id,
     label: app.label,
@@ -3557,7 +3656,6 @@ const requireAdminAccess = (): AccessRule => {
   };
 };
 
-registerAccessRule(AccessActions.DeepDiveAccess, requireAdminAccess());
 registerAccessRule(AccessActions.SystemManage, requireAdminAccess());
 registerAccessRule(AccessActions.AdminUsers, requireAdminAccess());
 registerAccessRule(AccessActions.FeatureFlagsManage, requireAdminAccess());
@@ -6436,7 +6534,6 @@ const server = Bun.serve({
         pathname.startsWith("/uploads/") ||
         pathname.startsWith("/projects") ||
         pathname.startsWith("/apps") ||
-        pathname.startsWith("/deep-dive") ||
         pathname.startsWith("/orchestrator") ||
         pathname.startsWith("/auth") ||
         pathname === "/" ||
@@ -6450,37 +6547,16 @@ const server = Bun.serve({
         }
       }
 
-      if (pathname === "/" && method === "GET") {
-        return Response.redirect(`${url.origin}/home${url.search}`, 302);
+      // Handle path-based app routing (/host/<alias> and /host/<alias>/*)
+      if (pathname.startsWith("/host/")) {
+        const pathHostResponse = await handlePathBasedAppRequest(request, pathname);
+        if (pathHostResponse) {
+          return pathHostResponse;
+        }
       }
 
-      if (method === "GET" && pathname === "/deep-dive/config.json") {
-        const denied = await ensureApiAccess(AccessActions.DeepDiveAccess, request, url, authContext);
-        if (denied) {
-          return denied;
-        }
-        const port = getDeepDivePort();
-        const running = isDeepDiveProcessRunning();
-        const override = Bun.env.DEEP_DIVE_SOCKET_URL?.trim();
-        let socketUrl = override && override.length > 0 ? override : null;
-
-        if (!socketUrl && running && port) {
-          const protocol = url.protocol === "https:" ? "wss" : "ws";
-          socketUrl = `${protocol}://${url.hostname}:${port}/deep-dive/socket`;
-        }
-
-        return Response.json(
-          {
-            socketUrl,
-            running,
-            port: socketUrl && port ? port : null,
-          },
-          {
-            headers: {
-              "cache-control": "no-cache",
-            },
-          },
-        );
+      if (pathname === "/" && method === "GET") {
+        return Response.redirect(`${url.origin}/home${url.search}`, 302);
       }
 
       const isSpaRoutePath =
@@ -6502,18 +6578,6 @@ const server = Bun.serve({
 
       if (isSpaRoutePath && !assetService.isUiAssetPath(pathname)) {
         return serveIndex();
-      }
-
-      if (method === "GET" && isDeepDivePagePath(pathname)) {
-        const denied = await ensurePageAccess(AccessActions.DeepDiveAccess, request, url, authContext);
-        if (denied) {
-          return denied;
-        }
-        const deepDivePage = assetService.servePublicAsset("/deep-dive.html");
-        if (deepDivePage) {
-          return deepDivePage;
-        }
-        return new Response("Deep Dive page missing", { status: 404 });
       }
 
       if (pathname.startsWith("/api/")) {

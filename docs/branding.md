@@ -1,6 +1,6 @@
 # Wingman UI Brand Spec
 
-This document codifies the current Wingman visual and interaction language so new surfaces feel cohesive with the existing web console, and Deep Dive terminal. Treat it as the source of truth when designing or implementing UI changes.
+This document codifies the current Wingman visual and interaction language so new surfaces feel cohesive with the existing web console. Treat it as the source of truth when designing or implementing UI changes.
 
 ## Brand Overview
 
@@ -82,7 +82,6 @@ Wingman uses paired light and dark themes driven by CSS variables in `public/ind
 - **Header**: Fixed-height bar with logo on the left and control cluster on the right. Maintain 16 px vertical padding and 24 px horizontal gutter.
 - **Panels/Cards**: Use 8 px corner radius, `--shadow-sm` on hover, and `--bg-secondary` for differentiation. Primary CTAs align right within card footers.
 - **Chat Threads**: Alternate row shading with `--bg-secondary` and `--bg-tertiary`; inline code inherits `--inline-code-bg` (`#f5f5f4` / `#292524`) and accent text color.
-- **Deep Dive Terminal**: Full-bleed on dark surfaces; rely on monospace stack and respect min 16 px padding to the viewport edges.
 - **Tables & Lists**: Zebra striping uses `rgba(5, 150, 105, 0.05)` overlays on light backgrounds or `rgba(16, 185, 129, 0.1)` on dark.
 - **Buttons**: Rounded 6 px corners. Primary uses `--accent-primary` with white text; hover darkens to `--accent-secondary`. Destructive buttons adopt danger red with white text.
 
