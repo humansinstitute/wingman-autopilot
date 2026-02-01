@@ -12,6 +12,9 @@ out
 dist
 *.tgz
 tmp/
+
+# Binary downloads
+goose-*.tar.bz2
 data/**
 !data/
 !data/.gitkeep
