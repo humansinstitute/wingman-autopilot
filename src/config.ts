@@ -249,6 +249,7 @@ import { getPublicKey, nip19 } from "nostr-tools";
 // Key Teleport environment variables
 export const KEYTELEPORT_PRIVKEY = Bun.env.KEYTELEPORT_PRIVKEY ?? "";
 export const KEYTELEPORT_WELCOME_PUBKEY = Bun.env.KEYTELEPORT_WELCOME_PUBKEY ?? "";
+export const KEYTELEPORT_WELCOME_URL = Bun.env.KEYTELEPORT_WELCOME_URL ?? "https://welcome.nostr.com";
 
 // Helper to convert hex string to Uint8Array
 function hexToBytes(hex: string): Uint8Array {

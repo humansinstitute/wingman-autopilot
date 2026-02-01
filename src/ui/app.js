@@ -8959,6 +8959,145 @@ const renderBunkerPanel = () => {
   return panel;
 };
 
+/**
+ * Render Key Teleport login section
+ * This is a primary login option (not under Advanced)
+ */
+const renderKeyTeleportPanel = () => {
+  const section = document.createElement("div");
+  section.className = "wm-identity-keyteleport";
+  section.dataset.section = "keyteleport";
+
+  const title = document.createElement("h3");
+  title.className = "wm-identity-keyteleport__title";
+  title.textContent = "Login with Welcome";
+  section.append(title);
+
+  const description = document.createElement("p");
+  description.className = "wm-identity-panel-description";
+  description.textContent = "Use your Welcome key manager to securely transfer your Nostr identity.";
+  section.append(description);
+
+  const actions = document.createElement("div");
+  actions.className = "wm-identity-button-row";
+
+  const loginButton = document.createElement("button");
+  loginButton.type = "button";
+  loginButton.className = "wm-button";
+  loginButton.dataset.action = "keyteleport-login";
+  loginButton.textContent = "Open Welcome";
+  actions.append(loginButton);
+
+  section.append(actions);
+
+  const status = document.createElement("p");
+  status.className = "wm-identity-status-line";
+  status.dataset.role = "keyteleport-status";
+  status.setAttribute("aria-live", "polite");
+  status.hidden = true;
+  section.append(status);
+
+  // Setup section (for first-time registration with Welcome)
+  const setupDetails = document.createElement("details");
+  setupDetails.className = "wm-identity-keyteleport__setup";
+
+  const setupSummary = document.createElement("summary");
+  setupSummary.textContent = "First time? Set up Key Teleport";
+  setupDetails.append(setupSummary);
+
+  const setupBody = document.createElement("div");
+  setupBody.className = "wm-identity-keyteleport__setup-body";
+
+  const setupInstructions = document.createElement("ol");
+  setupInstructions.className = "wm-identity-keyteleport__instructions";
+  setupInstructions.innerHTML = `
+    <li>Copy the registration code below</li>
+    <li>Open Welcome and go to Settings → Key Teleport</li>
+    <li>Paste the code to register Wingman</li>
+    <li>Once registered, you can teleport your identity anytime</li>
+  `;
+  setupBody.append(setupInstructions);
+
+  const copyRow = document.createElement("div");
+  copyRow.className = "wm-identity-button-row";
+
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "wm-button secondary";
+  copyButton.dataset.action = "keyteleport-copy-registration";
+  copyButton.textContent = "Copy Registration Code";
+  copyRow.append(copyButton);
+
+  const copyStatus = document.createElement("span");
+  copyStatus.className = "wm-identity-keyteleport__copy-status";
+  copyStatus.hidden = true;
+  copyRow.append(copyStatus);
+
+  setupBody.append(copyRow);
+  setupDetails.append(setupBody);
+  section.append(setupDetails);
+
+  const helper = document.createElement("p");
+  helper.className = "wm-identity-helper";
+  helper.dataset.role = "keyteleport-helper";
+  helper.innerHTML = 'Don\'t have Welcome? <a href="https://welcome.nostr.com" target="_blank" rel="noopener">Learn more</a>';
+  section.append(helper);
+
+  // Check if Key Teleport is configured and update UI
+  fetch("/api/auth/keyteleport/config")
+    .then((res) => res.json())
+    .then((config) => {
+      if (!config.enabled) {
+        section.hidden = true;
+        return;
+      }
+      loginButton.addEventListener("click", () => {
+        if (config.welcomeUrl) {
+          window.open(config.welcomeUrl, "_blank", "noopener");
+        }
+      });
+
+      // Handle copy registration button
+      copyButton.addEventListener("click", async () => {
+        try {
+          copyButton.disabled = true;
+          copyStatus.textContent = "Generating...";
+          copyStatus.hidden = false;
+
+          const regRes = await fetch("/api/auth/keyteleport/registration");
+          const regData = await regRes.json();
+
+          if (!regRes.ok || !regData.blob) {
+            throw new Error(regData.error ?? "Failed to generate registration code");
+          }
+
+          await navigator.clipboard.writeText(regData.blob);
+          copyStatus.textContent = "Copied!";
+          copyStatus.classList.add("success");
+
+          setTimeout(() => {
+            copyStatus.hidden = true;
+            copyStatus.classList.remove("success");
+          }, 2000);
+        } catch (err) {
+          copyStatus.textContent = err.message ?? "Copy failed";
+          copyStatus.classList.add("error");
+          setTimeout(() => {
+            copyStatus.hidden = true;
+            copyStatus.classList.remove("error");
+          }, 3000);
+        } finally {
+          copyButton.disabled = false;
+        }
+      });
+    })
+    .catch(() => {
+      section.hidden = true;
+    });
+
+  return section;
+};
+
 const renderIdentityPanel = (options = {}) => {
   const variant = options.variant ?? "settings";
   const card = document.createElement("section");
@@ -8981,6 +9120,10 @@ const renderIdentityPanel = (options = {}) => {
 
   const summary = renderIdentitySummary();
   card.append(summary);
+
+  // Key Teleport: primary login option (before Advanced)
+  const keyTeleportPanel = renderKeyTeleportPanel();
+  card.append(keyTeleportPanel);
 
   const advanced = document.createElement("details");
   advanced.className = "wm-identity-advanced";

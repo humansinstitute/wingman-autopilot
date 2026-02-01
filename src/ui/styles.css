@@ -4184,6 +4184,85 @@ dialog textarea {
   display: none;
 }
 
+/* Key Teleport login section */
+.wm-identity-keyteleport {
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.75rem;
+  background: var(--bg-secondary);
+}
+
+.wm-identity-keyteleport__title {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.wm-card[data-authenticated="true"] .wm-identity-keyteleport {
+  display: none;
+}
+
+.wm-identity-helper {
+  margin: 0.75rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-tertiary);
+}
+
+.wm-identity-helper a {
+  color: var(--text-link);
+  text-decoration: underline;
+}
+
+/* Key Teleport setup section */
+.wm-identity-keyteleport__setup {
+  margin-top: 1rem;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.5rem;
+  background: var(--bg-tertiary);
+}
+
+.wm-identity-keyteleport__setup summary {
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.wm-identity-keyteleport__setup summary:hover {
+  color: var(--text-primary);
+}
+
+.wm-identity-keyteleport__setup-body {
+  padding: 0 0.75rem 0.75rem;
+}
+
+.wm-identity-keyteleport__instructions {
+  margin: 0 0 0.75rem;
+  padding-left: 1.25rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.wm-identity-keyteleport__instructions li {
+  margin-bottom: 0.25rem;
+}
+
+.wm-identity-keyteleport__copy-status {
+  font-size: 0.85rem;
+  margin-left: 0.5rem;
+}
+
+.wm-identity-keyteleport__copy-status.success {
+  color: var(--color-success);
+}
+
+.wm-identity-keyteleport__copy-status.error {
+  color: var(--color-error);
+}
+
 .wm-identity-divider {
   border: 0;
   border-top: 1px solid var(--border-primary);

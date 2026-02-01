@@ -97,7 +97,7 @@ import {
   type AccessDecision,
   type AccessRule,
 } from "./auth/access-control";
-import { handleKeyTeleport } from "./auth/keyteleport";
+import { handleKeyTeleport, handleKeyTeleportRegistration } from "./auth/keyteleport";
 import { createStaticAssetService } from "./server/static-assets";
 import { maybeRefreshSessionCookie } from "./server/session-refresh";
 import { handleSubdomainRequest, type SubdomainProxyConfig } from "./server/subdomain-proxy";
@@ -3871,6 +3871,23 @@ const handleApi = async (
   // Key Teleport: receive encrypted key blob from Welcome
   if (pathname === "/api/auth/keyteleport" && method === "POST") {
     return handleKeyTeleport(request);
+  }
+
+  // Key Teleport: get configuration for frontend
+  if (pathname === "/api/auth/keyteleport/config" && method === "GET") {
+    const { getKeyTeleportIdentity, KEYTELEPORT_WELCOME_URL } = await import("./config");
+    const identity = getKeyTeleportIdentity();
+    const isConfigured = Boolean(identity);
+    return Response.json({
+      enabled: isConfigured,
+      welcomeUrl: isConfigured ? KEYTELEPORT_WELCOME_URL : null,
+      appNpub: identity?.npub ?? null,
+    });
+  }
+
+  // Key Teleport: get registration blob for Welcome setup
+  if (pathname === "/api/auth/keyteleport/registration" && method === "GET") {
+    return handleKeyTeleportRegistration(request);
   }
 
   if (pathname === "/api/identity/profile" && method === "GET") {
