@@ -4280,7 +4280,6 @@ const menuPanel = document.querySelector(".wm-menu-panel");
 const menuTabsContainer = document.getElementById("menu-tabs");
 const menuIdentityContainer = document.getElementById("menu-identity");
 const headerLoginButton = document.getElementById("header-login");
-const deepDiveLink = document.querySelector('a[href="/deep-dive"]');
 performAuthUiSync = () => {
   const authed = Boolean(state.identity.authenticated);
   const isAdmin = Boolean(state.identity.isAdmin);
@@ -4302,15 +4301,6 @@ performAuthUiSync = () => {
   }
   if (headerLoginButton) {
     headerLoginButton.disabled = authed;
-  }
-  if (deepDiveLink) {
-    if (isAdmin) {
-      deepDiveLink.removeAttribute("tabindex");
-      deepDiveLink.removeAttribute("aria-disabled");
-    } else {
-      deepDiveLink.setAttribute("tabindex", "-1");
-      deepDiveLink.setAttribute("aria-disabled", "true");
-    }
   }
   syncProjectsNavigationVisibility();
 };
@@ -4656,14 +4646,6 @@ const triggerProjectAppAction = (appId, action) => triggerAppAction(appId, actio
 const isProjectActionDisabled = (app, action) => isAppActionDisabled(app, action);
 
 headerLoginButton?.addEventListener("click", (event) => {
-  event.preventDefault();
-  openIdentityLoginDialog();
-});
-
-deepDiveLink?.addEventListener("click", (event) => {
-  if (state.identity.isAdmin) {
-    return;
-  }
   event.preventDefault();
   openIdentityLoginDialog();
 });
@@ -8096,7 +8078,11 @@ const renderAppCard = (app) => {
       subdomainLink.href = app.subdomainUrl;
       subdomainLink.target = "_blank";
       subdomainLink.rel = "noopener noreferrer";
-      subdomainLink.textContent = app.subdomainUrl;
+      // For path-based URLs, show just the alias; for full URLs, show the URL
+      const displayText = app.subdomainUrl.startsWith("/host/")
+        ? app.subdomainAlias ?? app.subdomainUrl
+        : app.subdomainUrl;
+      subdomainLink.textContent = displayText;
       subdomainValue.append(subdomainLink);
       subdomainRow.append(subdomainLabel, subdomainValue);
       meta.append(subdomainRow);

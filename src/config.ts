@@ -5,6 +5,9 @@ export type AgentType = "codex" | "claude" | "goose" | "opencode" | "gemini";
 /** How agent processes are spawned - "bun" for direct child process, "pm2" for PM2 managed */
 export type AgentSpawnMode = "bun" | "pm2";
 
+/** How apps are routed - "path" for /host/<alias>, "subdomain" for <alias>.domain.com */
+export type AppRoutingMode = "path" | "subdomain";
+
 export interface AgentCommandContext {
   port: number;
   agent: AgentType;
@@ -44,6 +47,8 @@ export interface WingmanConfig {
   sseKeepaliveIntervalMs: number;
   /** How agent processes are spawned - "bun" for direct child process, "pm2" for PM2 managed */
   agentSpawnMode: AgentSpawnMode;
+  /** How apps are routed - "path" for /host/<alias>, "subdomain" for <alias>.domain.com */
+  appRoutingMode: AppRoutingMode;
 }
 
 const DEFAULT_PORT = 3600;
@@ -216,6 +221,18 @@ export const loadConfig = (): WingmanConfig => {
     console.log("[Config] Agent spawn mode: pm2 (sessions persist across restarts)");
   }
 
+  // App routing mode - "path" for /host/<alias>, "subdomain" for <alias>.domain.com
+  const validRoutingModes: AppRoutingMode[] = ["path", "subdomain"];
+  const routingModeInput = Bun.env.APP_ROUTING?.trim().toLowerCase();
+  const appRoutingMode: AppRoutingMode = routingModeInput && validRoutingModes.includes(routingModeInput as AppRoutingMode)
+    ? (routingModeInput as AppRoutingMode)
+    : "subdomain";
+  if (appRoutingMode === "path") {
+    console.log("[Config] App routing mode: path (/host/<alias>)");
+  } else if (subdomainBaseDomain) {
+    console.log(`[Config] App routing mode: subdomain (<alias>.${subdomainBaseDomain})`);
+  }
+
   return {
     port,
     agentPortStart,
@@ -235,6 +252,7 @@ export const loadConfig = (): WingmanConfig => {
     subdomainProxyEnabled,
     sseKeepaliveIntervalMs,
     agentSpawnMode,
+    appRoutingMode,
   };
 };
 
