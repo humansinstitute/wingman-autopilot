@@ -5017,6 +5017,24 @@ const handleApi = async (
         return Response.json({ error: "captain-definition.json must have schemaVersion: 2" }, { status: 400 });
       }
 
+      // Must have imageName, dockerfileLines, or templateId
+      if (!defRecord.imageName && !defRecord.dockerfileLines && !defRecord.templateId) {
+        // Check if Dockerfile exists (CapRover will look for it if no other method specified)
+        const dockerfilePath = join(app.root, "Dockerfile");
+        try {
+          await stat(dockerfilePath);
+        } catch {
+          return Response.json(
+            {
+              error:
+                "captain-definition.json requires imageName, dockerfileLines, or a Dockerfile in the app root. " +
+                "See https://caprover.com/docs/captain-definition-file.html",
+            },
+            { status: 400 },
+          );
+        }
+      }
+
       // Get CapRover client
       const caproverClient = createCaproverClientFromEnv();
       if (!caproverClient) {

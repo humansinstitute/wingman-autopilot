@@ -908,7 +908,13 @@ export const initAppDialogs = ({
         body: JSON.stringify({ caproverName }),
       });
 
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch {
+        // Response wasn't valid JSON
+        throw new Error(response.ok ? "Invalid server response" : `Deployment failed: ${response.statusText || response.status}`);
+      }
 
       if (!response.ok) {
         throw new Error(data.error || response.statusText || "Deployment failed");
