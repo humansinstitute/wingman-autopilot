@@ -7079,9 +7079,13 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   display: flex;
   flex-direction: column;
   height: 100%;
-  max-height: calc(100vh - 80px);
-  padding: 1rem;
+  max-height: calc(100vh - var(--nav-height) - 2rem);
+  padding: 1.5rem clamp(1.25rem, 4vw, 2.5rem);
   gap: 1rem;
+  max-width: 1400px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .wm-chat-header {
@@ -7112,8 +7116,8 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   font-size: 0.75rem;
   padding: 0.25rem 0.5rem;
   border-radius: 4px;
-  background: var(--surface-secondary, #374151);
-  color: var(--text-secondary, #9ca3af);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
 }
 
 .wm-chat-list {
@@ -7124,7 +7128,7 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 .wm-chat-status {
   padding: 2rem;
   text-align: center;
-  color: var(--text-secondary, #9ca3af);
+  color: var(--text-secondary);
 }
 
 .wm-chat-error {
@@ -7145,13 +7149,15 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   align-items: center;
   gap: 0.75rem;
   padding: 0.75rem 1rem;
-  background: var(--surface-secondary, #1f2937);
+  background: var(--bg-tertiary);
   border-radius: 6px;
   transition: background 0.15s ease;
+  border: 1px solid var(--border-primary);
 }
 
 .wm-chat-item:hover {
-  background: var(--surface-tertiary, #374151);
+  background: var(--bg-secondary);
+  border-color: rgba(16, 185, 129, 0.25);
 }
 
 .wm-chat-item-link {
@@ -7165,12 +7171,12 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 
 .wm-chat-item-name {
   font-weight: 500;
-  color: var(--text-primary, #f9fafb);
+  color: var(--text-primary);
 }
 
 .wm-chat-item-model {
   font-size: 0.75rem;
-  color: var(--text-secondary, #9ca3af);
+  color: var(--text-secondary);
 }
 
 .wm-chat-item-delete {
@@ -7188,12 +7194,16 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+  background: var(--bg-primary);
+  border-radius: 1rem;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: var(--shadow-md);
 }
 
 .wm-chat-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 1rem;
+  padding: 1.5rem;
 }
 
 .wm-chat-conversation {
@@ -7204,7 +7214,7 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 
 .wm-chat-empty {
   text-align: center;
-  color: var(--text-secondary, #9ca3af);
+  color: var(--text-secondary);
   padding: 2rem;
 }
 
@@ -7213,19 +7223,22 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   flex-direction: column;
   gap: 0.25rem;
   padding: 0.75rem 1rem;
-  border-radius: 8px;
-  max-width: 80%;
+  border-radius: 0.75rem;
+  max-width: 85%;
+  border: 1px solid rgba(16, 185, 129, 0.18);
+  box-shadow: 0 6px 16px rgba(15, 118, 110, 0.1);
 }
 
 .wm-chat-message-user {
   align-self: flex-end;
-  background: var(--accent-primary, #3b82f6);
+  background: var(--accent-primary);
   color: white;
 }
 
 .wm-chat-message-assistant {
   align-self: flex-start;
-  background: var(--surface-secondary, #1f2937);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
 }
 
 .wm-chat-message-streaming {
@@ -7257,35 +7270,39 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 }
 
 .wm-chat-composer {
-  padding: 1rem;
-  background: var(--surface-primary, #111827);
-  border-top: 1px solid var(--border-primary, #374151);
+  padding: 1rem 1.25rem;
+  background: var(--bg-secondary);
+  border-radius: 0.75rem;
+  border: 1px solid var(--border-primary);
+  box-shadow: var(--shadow-md);
 }
 
 .wm-chat-composer .wm-composer-form {
   display: flex;
-  gap: 0.75rem;
+  gap: 1rem;
   align-items: flex-end;
 }
 
 .wm-chat-composer .wm-composer-input {
   flex: 1;
   resize: none;
-  min-height: 2.5rem;
-  max-height: 8rem;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border-primary, #374151);
-  border-radius: 6px;
-  background: var(--surface-secondary, #1f2937);
-  color: var(--text-primary, #f9fafb);
+  min-height: calc(1.5em * 2.5);
+  max-height: calc(1.5rem * 8);
+  padding: 0.65rem 0.85rem;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: 0.75rem;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   font-family: inherit;
   font-size: 0.95rem;
   line-height: 1.4;
+  box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.2);
 }
 
 .wm-chat-composer .wm-composer-input:focus {
   outline: none;
-  border-color: var(--accent-primary, #3b82f6);
+  border-color: var(--accent-primary);
+  box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.4);
 }
 
 .wm-chat-composer .wm-composer-send {
@@ -7305,24 +7322,24 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   display: block;
   margin-bottom: 0.25rem;
   font-size: 0.9rem;
-  color: var(--text-secondary, #9ca3af);
+  color: var(--text-secondary);
 }
 
 .wm-chat-dialog .wm-input,
 .wm-chat-dialog .wm-select {
   width: 100%;
   padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border-primary, #374151);
-  border-radius: 4px;
-  background: var(--surface-secondary, #1f2937);
-  color: var(--text-primary, #f9fafb);
+  border: 1px solid var(--border-primary);
+  border-radius: 0.5rem;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   font-size: 0.95rem;
 }
 
 .wm-chat-dialog .wm-input:focus,
 .wm-chat-dialog .wm-select:focus {
   outline: none;
-  border-color: var(--accent-primary, #3b82f6);
+  border-color: var(--accent-primary);
 }
 
 @media (max-width: 600px) {
