@@ -49,6 +49,12 @@ export interface WingmanConfig {
   agentSpawnMode: AgentSpawnMode;
   /** How apps are routed - "path" for /host/<alias>, "subdomain" for <alias>.domain.com */
   appRoutingMode: AppRoutingMode;
+  /** Maple Proxy base URL for private chat AI completion */
+  mapleProxyUrl: string;
+  /** Default model for new private chats */
+  mapleDefaultModel: string;
+  /** API key for Maple Proxy authentication (null if not required) */
+  mapleApiKey: string | null;
 }
 
 const DEFAULT_PORT = 3600;
@@ -233,6 +239,12 @@ export const loadConfig = (): WingmanConfig => {
     console.log(`[Config] App routing mode: subdomain (<alias>.${subdomainBaseDomain})`);
   }
 
+  // Maple Proxy configuration for private chat
+  const mapleProxyUrl = parseEnvironmentString(Bun.env.MAPLE_PROXY_URL, "http://localhost:8091");
+  const mapleDefaultModel = parseEnvironmentString(Bun.env.MAPLE_DEFAULT_MODEL, "llama-3.3-70b");
+  const mapleApiKeyInput = Bun.env.MAPLE_API?.trim();
+  const mapleApiKey = mapleApiKeyInput && mapleApiKeyInput.length > 0 ? mapleApiKeyInput : null;
+
   return {
     port,
     agentPortStart,
@@ -253,6 +265,9 @@ export const loadConfig = (): WingmanConfig => {
     sseKeepaliveIntervalMs,
     agentSpawnMode,
     appRoutingMode,
+    mapleProxyUrl,
+    mapleDefaultModel,
+    mapleApiKey,
   };
 };
 

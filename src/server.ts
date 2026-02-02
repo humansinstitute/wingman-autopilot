@@ -102,6 +102,7 @@ import { maybeRefreshSessionCookie } from "./server/session-refresh";
 import { handleSubdomainRequest, resolveAliasToPort, proxyRequestToApp, type SubdomainProxyConfig } from "./server/subdomain-proxy";
 import { isAgentRuntimeStatus } from "./types/agent-status";
 import { createSessionEventsHandler } from "./server/session-events";
+import { handleChatApi, type ChatApiContext } from "./server/chat-routes";
 import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import {
   clearWarmRestartMarker,
@@ -3794,6 +3795,22 @@ const handleApi = async (
     }
     return Response.json({ error: "Not found" }, { status: 404 });
   }
+  // Private chat API routes
+  if (pathname.startsWith("/api/chats") || pathname === "/api/maple/models") {
+    if (!authContext.session) {
+      return Response.json({ error: "Authentication required" }, { status: 401 });
+    }
+    const chatContext: ChatApiContext = {
+      config,
+      npub: viewerNpub,
+      isAdmin: viewerIsAdmin,
+    };
+    const response = await handleChatApi(request, url, method, chatContext);
+    if (response) {
+      return response;
+    }
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
   if (pathname === "/api/system/restart/status" && method === "GET") {
     const denied = await ensureApiAccess(AccessActions.SystemManage, request, url, authContext);
     if (denied) {
@@ -6573,6 +6590,8 @@ const server = Bun.serve({
         pathname.startsWith("/files/") ||
         pathname === "/live" ||
         pathname.startsWith("/live/") ||
+        pathname === "/chat" ||
+        pathname.startsWith("/chat/") ||
         pathname === "/settings" ||
         pathname.startsWith("/settings/");
 

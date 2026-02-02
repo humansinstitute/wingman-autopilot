@@ -246,6 +246,17 @@ export const state = {
     ports: [],
     balance: 0,
   },
+  // Private chat state
+  chats: {
+    items: [],
+    loading: false,
+    initialized: false,
+    error: null,
+  },
+  activeChatId: null,
+  chatConversations: new Map(), // chatId -> messages[]
+  chatMessageDrafts: new Map(), // chatId -> draft string
+  chatStreaming: new Map(), // chatId -> {active: boolean, content: string}
 };
 
 /**
