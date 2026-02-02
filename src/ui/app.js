@@ -9682,9 +9682,9 @@ const renderHome = () => {
 
   const privateChatBtn = document.createElement("button");
   privateChatBtn.className = "wm-button secondary";
-  privateChatBtn.textContent = "Private Chat";
-  privateChatBtn.title = "Start a private AI chat";
-  privateChatBtn.addEventListener("click", openPrivateChatDialog);
+  privateChatBtn.textContent = "Private Chats";
+  privateChatBtn.title = "View private AI chats";
+  privateChatBtn.addEventListener("click", () => navigateToChat(null));
   actions.append(privateChatBtn);
 
   const refreshBtn = document.createElement("button");
@@ -12434,7 +12434,12 @@ const loadChats = async () => {
       state.chats.error = "Authentication required";
       state.chats.items = [];
     } else if (result?.chats) {
-      state.chats.items = result.chats;
+      // Sort by startedAt descending (newest first)
+      state.chats.items = result.chats.sort((a, b) => {
+        const dateA = a.startedAt ? new Date(a.startedAt).getTime() : 0;
+        const dateB = b.startedAt ? new Date(b.startedAt).getTime() : 0;
+        return dateB - dateA;
+      });
       state.chats.error = null;
     }
     state.chats.initialized = true;
@@ -12443,6 +12448,10 @@ const loadChats = async () => {
     state.chats.error = err.message || "Failed to load chats";
   } finally {
     state.chats.loading = false;
+    // Re-render to show loaded chats if still on chat route
+    if (currentRoute === "chat") {
+      render();
+    }
   }
 };
 
