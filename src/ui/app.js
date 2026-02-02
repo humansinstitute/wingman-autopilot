@@ -12615,16 +12615,13 @@ const renderChatConversation = (chatId) => {
 };
 
 const renderChatComposer = (chatId) => {
-  const composer = document.createElement("div");
-  composer.className = "wm-composer wm-chat-composer";
-
-  const form = document.createElement("form");
-  form.className = "wm-composer-form";
+  // Use the same structure as the live view composer
+  const composer = document.createElement("form");
+  composer.className = "wm-composer";
 
   const textarea = document.createElement("textarea");
-  textarea.className = "wm-composer-input";
   textarea.placeholder = "Type your message...";
-  textarea.rows = 2;
+  textarea.setAttribute("rows", "1");
   textarea.dataset.focusKey = `chat-composer-${chatId}`;
   textarea.value = state.chatMessageDrafts.get(chatId) || "";
 
@@ -12632,8 +12629,20 @@ const renderChatComposer = (chatId) => {
   const isStreaming = streaming?.active ?? false;
   textarea.disabled = isStreaming;
 
+  // Auto-resize textarea
+  const resizeTextarea = () => {
+    textarea.style.height = "auto";
+    const lineHeight = parseFloat(window.getComputedStyle(textarea).lineHeight) || 20;
+    const minHeight = lineHeight * 2.5;
+    const maxHeight = lineHeight * 8;
+    const nextHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  };
+
   textarea.addEventListener("input", () => {
     state.chatMessageDrafts.set(chatId, textarea.value);
+    resizeTextarea();
   });
 
   textarea.addEventListener("keydown", (e) => {
@@ -12645,21 +12654,30 @@ const renderChatComposer = (chatId) => {
     }
   });
 
+  // Button group container (matches live view)
+  const buttonGroup = document.createElement("div");
+  buttonGroup.className = "wm-button-group";
+
   const sendBtn = document.createElement("button");
   sendBtn.type = "submit";
-  sendBtn.className = "wm-button wm-composer-send";
-  sendBtn.textContent = isStreaming ? "Sending..." : "Send";
+  sendBtn.className = "wm-button";
+  sendBtn.innerHTML = `<span class="button-text">${isStreaming ? "Sending..." : "Send"}</span>`;
   sendBtn.disabled = isStreaming;
 
-  form.addEventListener("submit", (e) => {
+  buttonGroup.append(sendBtn);
+
+  composer.addEventListener("submit", (e) => {
     e.preventDefault();
     if (textarea.value.trim() && !isStreaming) {
       sendChatMessageToApi(chatId, textarea.value);
     }
   });
 
-  form.append(textarea, sendBtn);
-  composer.append(form);
+  composer.append(textarea, buttonGroup);
+
+  // Initialize textarea height after it's in the DOM
+  requestAnimationFrame(resizeTextarea);
+
   return composer;
 };
 
