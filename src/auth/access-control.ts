@@ -11,6 +11,7 @@ export const AccessActions = {
   FeatureFlagsManage: "feature-flags:manage",
   SystemManage: "system:manage",
   TodosManage: "todos:manage",
+  DeploymentsManage: "deployments:manage",
 } as const;
 
 export type AccessAction = (typeof AccessActions)[keyof typeof AccessActions];

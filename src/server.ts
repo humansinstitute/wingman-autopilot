@@ -64,6 +64,7 @@ import { ProjectStore } from "./projects/project-store";
 import { createProjectApiHandler } from "./projects/project-api";
 import { createNpubProjectApiHandler } from "./projects/npub-project-api";
 import { npubProjectStore } from "./projects/npub-project-store";
+import { CaproverStore, createCaproverApiHandler, createCaproverClientFromEnv } from "./caprover";
 import { createBrowserLogHandler } from "./logging/browser-log-handler";
 import {
   buildAgentUrl,
@@ -259,6 +260,11 @@ const projectApiHandler = createProjectApiHandler({
 });
 const npubProjectApiHandler = createNpubProjectApiHandler();
 const browserLogHandler = createBrowserLogHandler();
+const caproverStore = new CaproverStore();
+const caproverApiHandler = createCaproverApiHandler({
+  store: caproverStore,
+  getClient: createCaproverClientFromEnv,
+});
 
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());
@@ -267,6 +273,7 @@ registerAccessRule(AccessActions.AppsManage, requireAuthentication());
 registerAccessRule(AccessActions.UiRestricted, requireAuthentication());
 registerAccessRule(AccessActions.TodosManage, requireAuthentication());
 registerAccessRule(AccessActions.ProjectsManage, requireAuthentication());
+registerAccessRule(AccessActions.DeploymentsManage, requireAuthentication());
 
 const projectRootPath = (() => {
   let root = normalize(fileURLToPath(new URL("..", import.meta.url)));
@@ -3790,6 +3797,17 @@ const handleApi = async (
       return denied;
     }
     const response = await todoApiHandler(request, url, method, authContext);
+    if (response) {
+      return response;
+    }
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
+  if (pathname.startsWith("/api/caprover")) {
+    const denied = await ensureApiAccess(AccessActions.DeploymentsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    const response = await caproverApiHandler(request, url, method, authContext);
     if (response) {
       return response;
     }
