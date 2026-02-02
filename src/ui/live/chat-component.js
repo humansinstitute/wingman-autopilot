@@ -66,6 +66,9 @@ function formatMessageContent(content) {
   // Handle bold (**text**)
   escaped = escaped.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
 
+  // Collapse multiple consecutive newlines (3+ becomes 2 max for paragraph breaks)
+  escaped = escaped.replace(/\n{3,}/g, "\n\n");
+
   // Handle newlines
   escaped = escaped.replace(/\n/g, "<br>");
 

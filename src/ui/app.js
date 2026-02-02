@@ -47,6 +47,7 @@ import {
   TERMINAL_CONTROL_ACTIONS,
 } from "./state/index.js";
 import { showToast } from "./utils/toast.js";
+import { collapseNewlines } from "./utils/text.js";
 import {
   copyTextToClipboard,
   attachCopyButton,
@@ -7191,7 +7192,7 @@ const updateConversationDOM = (sessionId) => {
       const bubble = document.createElement("article");
       bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
       const body = document.createElement("pre");
-      body.textContent = message.content ?? message.message ?? "";
+      body.textContent = collapseNewlines(message.content ?? message.message ?? "");
       bubble.append(body);
       attachCopyButton(bubble);
       container.append(bubble);
@@ -7211,7 +7212,7 @@ const updateConversationDOM = (sessionId) => {
         attachCopyButton(domMessage);
         const body = domMessage.querySelector('pre');
         const currentContent = body?.textContent || '';
-        const newContent = message.content ?? message.message ?? '';
+        const newContent = collapseNewlines(message.content ?? message.message ?? '');
 
         if (currentContent !== newContent) {
           contentChanged = true;
@@ -11510,7 +11511,7 @@ const renderArchivedConversation = (messages) => {
       const bubble = document.createElement("article");
       bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
       const body = document.createElement("pre");
-      body.textContent = message.content ?? message.message ?? "";
+      body.textContent = collapseNewlines(message.content ?? message.message ?? "");
       bubble.append(body);
       attachCopyButton(bubble);
       wrapper.append(bubble);
@@ -11554,7 +11555,7 @@ const renderConversation = (sessionId) => {
       const bubble = document.createElement("article");
       bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
       const body = document.createElement("pre");
-      body.textContent = message.content ?? message.message ?? "";
+      body.textContent = collapseNewlines(message.content ?? message.message ?? "");
       bubble.append(body);
       attachCopyButton(bubble);
       wrapper.append(bubble);
@@ -12574,7 +12575,7 @@ const renderChatMessage = (message, isStreaming = false) => {
 
   const contentEl = document.createElement("div");
   contentEl.className = "wm-chat-message-content";
-  contentEl.textContent = message.content;
+  contentEl.textContent = collapseNewlines(message.content);
 
   container.append(roleLabel, contentEl);
   return container;
