@@ -499,6 +499,26 @@
         </menu>
       </form>
     </dialog>
+    <dialog id="app-deploy-dialog">
+      <form method="dialog">
+        <h2 id="app-deploy-title">Deploy to CapRover</h2>
+        <p class="wm-dialog-help">Deploy this app to CapRover using its captain-definition.json file.</p>
+
+        <label for="app-deploy-name">CapRover App Name</label>
+        <input id="app-deploy-name" type="text" pattern="[a-z][a-z0-9-]*" autocomplete="off" required />
+        <p class="wm-field-note">Lowercase letters, numbers, and hyphens only. Must start with a letter.</p>
+
+        <div id="app-deploy-status" class="wm-deploy-status" hidden>
+          <p id="app-deploy-message"></p>
+          <a id="app-deploy-url" href="#" target="_blank" rel="noopener noreferrer" hidden>Open App</a>
+        </div>
+
+        <menu>
+          <button type="button" class="wm-button secondary" id="app-deploy-cancel">Cancel</button>
+          <button type="submit" class="wm-button" id="app-deploy-confirm">Deploy</button>
+        </menu>
+      </form>
+    </dialog>
     <dialog id="project-dialog" class="wm-project-dialog">
       <form method="dialog" class="wm-project-dialog__form">
         <header class="wm-project-dialog__header">

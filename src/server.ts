@@ -4948,6 +4948,146 @@ const handleApi = async (
         return Response.json({ error: (error as Error).message }, { status: 500 });
       }
     }
+
+    if (method === "POST" && parts[4] === "deploy-to-caprover") {
+      const app = await appRegistry.getApp(id);
+      if (!app) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+      if (!canAccessApp(app)) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+      if (!app.webApp) {
+        return Response.json({ error: "Only web apps can be deployed to CapRover" }, { status: 400 });
+      }
+
+      let payload: unknown;
+      try {
+        payload = await request.json();
+      } catch {
+        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+      }
+      if (!payload || typeof payload !== "object") {
+        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+      }
+
+      const record = payload as Record<string, unknown>;
+      const caproverNameRaw = normaliseOptionalString(record.caproverName);
+      if (!caproverNameRaw) {
+        return Response.json({ error: "caproverName is required" }, { status: 400 });
+      }
+
+      // Validate CapRover name format
+      const caproverName = caproverNameRaw.toLowerCase();
+      if (!/^[a-z][a-z0-9-]*$/.test(caproverName)) {
+        return Response.json(
+          { error: "caproverName must be lowercase, start with a letter, and contain only letters, numbers, and hyphens" },
+          { status: 400 },
+        );
+      }
+      if (caproverName.length > 50) {
+        return Response.json({ error: "caproverName must be 50 characters or less" }, { status: 400 });
+      }
+
+      // Read captain-definition.json from app root
+      const captainDefPath = join(app.root, "captain-definition.json");
+      let captainDefContent: string;
+      try {
+        captainDefContent = await readFile(captainDefPath, "utf8");
+      } catch {
+        return Response.json(
+          { error: `captain-definition.json not found in ${app.root}` },
+          { status: 400 },
+        );
+      }
+
+      let captainDef: unknown;
+      try {
+        captainDef = JSON.parse(captainDefContent);
+      } catch {
+        return Response.json({ error: "Invalid captain-definition.json format" }, { status: 400 });
+      }
+
+      // Validate captain-definition structure
+      if (!captainDef || typeof captainDef !== "object") {
+        return Response.json({ error: "captain-definition.json must be a valid object" }, { status: 400 });
+      }
+      const defRecord = captainDef as Record<string, unknown>;
+      if (defRecord.schemaVersion !== 2) {
+        return Response.json({ error: "captain-definition.json must have schemaVersion: 2" }, { status: 400 });
+      }
+
+      // Get CapRover client
+      const caproverClient = createCaproverClientFromEnv();
+      if (!caproverClient) {
+        return Response.json(
+          { error: "CapRover is not configured. Set CAPROVER_URL and LOGIN_CODE environment variables." },
+          { status: 503 },
+        );
+      }
+
+      try {
+        // Check if already tracked in store
+        let tracked = caproverStore.getAppByLocalAppId(id);
+
+        if (!tracked) {
+          // Check if app exists on CapRover
+          const existingRemote = await caproverClient.getApp(caproverName);
+          if (!existingRemote) {
+            // Create new app on CapRover
+            await caproverClient.createApp(caproverName, false);
+          }
+
+          // Get the live URL
+          const liveUrl = await caproverClient.getAppUrl(caproverName);
+
+          // Track in local store
+          tracked = caproverStore.createApp({
+            caproverName,
+            appId: id,
+            liveUrl,
+          });
+        }
+
+        // Create deployment record
+        const deployment = caproverStore.createDeployment({
+          caproverAppId: tracked.id,
+          deployMethod: "captain_definition",
+        });
+
+        // Deploy using captain-definition
+        await caproverClient.deployCaptainDefinition(
+          tracked.caproverName,
+          defRecord as { schemaVersion: 2; imageName?: string; dockerfileLines?: string[] },
+        );
+
+        // Get updated app info
+        const remoteApp = await caproverClient.getApp(tracked.caproverName);
+        const version = remoteApp?.deployedVersion ?? null;
+
+        // Update deployment record as success
+        caproverStore.updateDeployment(deployment.id, {
+          status: "success",
+          version,
+          completedAt: new Date().toISOString(),
+        });
+
+        // Update tracked app record
+        const updatedTracked = caproverStore.updateApp(tracked.id, {
+          deployedVersion: version,
+        });
+
+        return Response.json({
+          success: true,
+          liveUrl: updatedTracked.liveUrl,
+          caproverName: updatedTracked.caproverName,
+          deployedVersion: version,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return Response.json({ error: message }, { status: 502 });
+      }
+    }
   }
 
   if (pathname === "/api/config" && method === "GET") {

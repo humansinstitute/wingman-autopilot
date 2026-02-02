@@ -760,11 +760,213 @@ export const initAppDialogs = ({
     closeAppLogsDialog();
   });
 
+  // ============================================================
+  // Deploy Dialog
+  // ============================================================
+
+  const appDeployDialog = document.getElementById("app-deploy-dialog");
+  const appDeployForm = appDeployDialog?.querySelector("form") ?? null;
+  const appDeployTitle = document.getElementById("app-deploy-title");
+  const appDeployNameInput = document.getElementById("app-deploy-name");
+  const appDeployStatus = document.getElementById("app-deploy-status");
+  const appDeployMessage = document.getElementById("app-deploy-message");
+  const appDeployUrl = document.getElementById("app-deploy-url");
+  const appDeployCancelButton = document.getElementById("app-deploy-cancel");
+  const appDeployConfirmButton = document.getElementById("app-deploy-confirm");
+
+  const deployDialogState = {
+    appId: null,
+    deploying: false,
+  };
+
+  const resetDeployDialog = () => {
+    if (appDeployForm) {
+      appDeployForm.reset();
+    }
+    if (appDeployTitle) {
+      appDeployTitle.textContent = "Deploy to CapRover";
+    }
+    if (appDeployStatus) {
+      appDeployStatus.hidden = true;
+    }
+    if (appDeployMessage) {
+      appDeployMessage.textContent = "";
+      appDeployMessage.className = "";
+    }
+    if (appDeployUrl) {
+      appDeployUrl.hidden = true;
+      appDeployUrl.href = "#";
+    }
+    if (appDeployConfirmButton) {
+      appDeployConfirmButton.disabled = false;
+      appDeployConfirmButton.textContent = "Deploy";
+    }
+    deployDialogState.appId = null;
+    deployDialogState.deploying = false;
+  };
+
+  const closeDeployDialog = () => {
+    if (!appDeployDialog) return;
+    if (appDeployDialog.open) {
+      appDeployDialog.close();
+    }
+    resetDeployDialog();
+  };
+
+  const openDeployDialog = async (appId) => {
+    if (!appDeployDialog) return;
+
+    const app = getAppById(appId);
+    if (!app) {
+      showToast("App not found", { type: "error" });
+      return;
+    }
+
+    if (!app.webApp) {
+      showToast("Only web apps can be deployed to CapRover", { type: "error" });
+      return;
+    }
+
+    resetDeployDialog();
+    deployDialogState.appId = appId;
+
+    // Set dialog title with app name
+    if (appDeployTitle) {
+      const appName = app.label?.trim() || String(appId);
+      appDeployTitle.textContent = `Deploy ${appName}`;
+    }
+
+    // Pre-fill CapRover name from app label
+    if (appDeployNameInput && app.label) {
+      const derived = deriveCaproverNameFromLabel(app.label);
+      appDeployNameInput.value = derived;
+    }
+
+    if (appDeployDialog.open) {
+      appDeployDialog.close();
+    }
+    appDeployDialog.showModal();
+    appDeployNameInput?.focus();
+  };
+
+  const deriveCaproverNameFromLabel = (label) => {
+    if (!label || typeof label !== "string") return "";
+    return label
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+/, "")
+      .replace(/-+$/, "")
+      .replace(/^[^a-z]+/, "")
+      .slice(0, 50);
+  };
+
+  const handleDeploySubmit = async (event) => {
+    event.preventDefault();
+    if (deployDialogState.deploying) return;
+
+    const appId = deployDialogState.appId;
+    if (!appId) {
+      showToast("No app selected for deployment", { type: "error" });
+      return;
+    }
+
+    const caproverName = appDeployNameInput?.value?.trim() ?? "";
+    if (!caproverName) {
+      showToast("CapRover app name is required", { type: "error" });
+      appDeployNameInput?.focus();
+      return;
+    }
+
+    // Validate format
+    if (!/^[a-z][a-z0-9-]*$/.test(caproverName)) {
+      showToast("Invalid CapRover name format", { type: "error" });
+      appDeployNameInput?.focus();
+      return;
+    }
+
+    deployDialogState.deploying = true;
+    if (appDeployConfirmButton) {
+      appDeployConfirmButton.disabled = true;
+      appDeployConfirmButton.textContent = "Deploying…";
+    }
+    if (appDeployStatus) {
+      appDeployStatus.hidden = false;
+    }
+    if (appDeployMessage) {
+      appDeployMessage.textContent = "Deploying to CapRover…";
+      appDeployMessage.className = "wm-deploy-pending";
+    }
+    if (appDeployUrl) {
+      appDeployUrl.hidden = true;
+    }
+
+    try {
+      const response = await fetch(`/api/apps/${encodeURIComponent(appId)}/deploy-to-caprover`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ caproverName }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || response.statusText || "Deployment failed");
+      }
+
+      // Success
+      if (appDeployMessage) {
+        appDeployMessage.textContent = "Deployment successful!";
+        appDeployMessage.className = "wm-deploy-success";
+      }
+      if (appDeployUrl && data.liveUrl) {
+        appDeployUrl.href = data.liveUrl;
+        appDeployUrl.textContent = data.liveUrl;
+        appDeployUrl.hidden = false;
+      }
+      if (appDeployConfirmButton) {
+        appDeployConfirmButton.textContent = "Done";
+        appDeployConfirmButton.disabled = false;
+      }
+      showToast("Deployed to CapRover", { type: "success" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Deployment failed";
+      if (appDeployMessage) {
+        appDeployMessage.textContent = message;
+        appDeployMessage.className = "wm-deploy-error";
+      }
+      if (appDeployConfirmButton) {
+        appDeployConfirmButton.textContent = "Retry";
+        appDeployConfirmButton.disabled = false;
+      }
+      showToast(message, { type: "error" });
+    } finally {
+      deployDialogState.deploying = false;
+    }
+  };
+
+  appDeployForm?.addEventListener("submit", handleDeploySubmit);
+
+  appDeployCancelButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    closeDeployDialog();
+  });
+
+  appDeployDialog?.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeDeployDialog();
+  });
+
+  appDeployDialog?.addEventListener("close", () => {
+    resetDeployDialog();
+  });
+
   return {
     openAppDialog,
     closeAppDialog,
     openAppLogsDialog,
     refreshAppLogs,
     resetAppDialog,
+    openDeployDialog,
   };
 };

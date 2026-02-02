@@ -117,6 +117,7 @@ let syncOrchestratorAgents = () => {};
 let openAppDialog = () => {};
 let closeAppDialog = () => {};
 let openAppLogsDialog = () => {};
+let openDeployDialog = () => {};
 let refreshAppLogs = async () => {};
 let resetAppDialog = () => {};
 let createWorkspaceTreeSidebar = () => null;
@@ -8350,6 +8351,18 @@ const renderAppCard = (app) => {
   });
   controls.append(fixWithAiButton);
 
+  // Deploy button (web apps only)
+  if (isWebApp) {
+    const deployButton = document.createElement("button");
+    deployButton.type = "button";
+    deployButton.className = "wm-button secondary";
+    deployButton.textContent = "Deploy";
+    deployButton.addEventListener("click", () => {
+      openDeployDialog(app.id);
+    });
+    controls.append(deployButton);
+  }
+
   card.append(controls);
 
   const linkBar = document.createElement("div");
@@ -12959,6 +12972,7 @@ closeAppDialog = appDialogs.closeAppDialog;
 openAppLogsDialog = appDialogs.openAppLogsDialog;
 refreshAppLogs = appDialogs.refreshAppLogs;
 resetAppDialog = appDialogs.resetAppDialog;
+openDeployDialog = appDialogs.openDeployDialog;
 
 const workspaceTree = initWorkspaceTree({
   state,

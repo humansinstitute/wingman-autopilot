@@ -7316,3 +7316,39 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
     width: 100%;
   }
 }
+
+/* Deploy dialog styles */
+.wm-deploy-status {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+}
+
+.wm-deploy-status p {
+  margin: 0 0 0.5rem;
+}
+
+.wm-deploy-status a {
+  color: var(--accent-primary);
+  word-break: break-all;
+}
+
+.wm-deploy-pending {
+  color: var(--text-secondary);
+}
+
+.wm-deploy-success {
+  color: var(--accent-primary);
+}
+
+.wm-deploy-error {
+  color: #ef4444;
+}
+
+.wm-field-note {
+  margin: 0.25rem 0 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+}
