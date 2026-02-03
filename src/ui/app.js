@@ -3811,6 +3811,11 @@ const setActiveSession = (sessionId, options = {}) => {
         window.wingman.activeSessionId = sessionId;
         window.dispatchEvent(new CustomEvent("session-change", { detail: { sessionId } }));
       }
+
+      // Scroll to end when switching to a different session
+      if (previousSessionId !== sessionId) {
+        scheduleLiveScroll(sessionId, { includeWindow: true });
+      }
     }
 
     return true;
