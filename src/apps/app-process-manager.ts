@@ -143,8 +143,8 @@ export class AppProcessManager {
       // Start the process
       await startProcessFromConfig(ecosystemPath, processName);
 
-      // Detect and register runtime port
-      await this.detectAndRegisterPort(app.id, processName);
+      // Register runtime port - use known webAppPort if available, otherwise detect
+      await this.registerRuntimePort(app, processName);
 
       return {
         finalStatus: "running" as AppRuntimeStatus,
@@ -209,8 +209,8 @@ export class AppProcessManager {
           if (proc) {
             await restartProcess(processName);
 
-            // Detect and register new runtime port
-            await this.detectAndRegisterPort(app.id, processName);
+            // Register runtime port after restart
+            await this.registerRuntimePort(app, processName);
 
             return {
               finalStatus: "running" as AppRuntimeStatus,
@@ -235,8 +235,8 @@ export class AppProcessManager {
       await this.registry.updateApp(app.id, { pm2Name: newProcessName, logsDir });
       await startProcessFromConfig(ecosystemPath, newProcessName);
 
-      // Detect and register runtime port
-      await this.detectAndRegisterPort(app.id, newProcessName);
+      // Register runtime port
+      await this.registerRuntimePort(app, newProcessName);
 
       return {
         finalStatus: "running" as AppRuntimeStatus,
@@ -450,25 +450,36 @@ export class AppProcessManager {
   }
 
   /**
-   * Detect the runtime port from a PM2 process and register it.
-   * Polls for the port since the app may take time to bind after starting.
+   * Register the runtime port for an app after start/restart.
+   * Uses the known webAppPort if available, otherwise falls back to detection.
    */
-  private async detectAndRegisterPort(appId: string, processName: string): Promise<void> {
+  private async registerRuntimePort(app: AppRecord, processName: string): Promise<void> {
     try {
       const runtimeInfo = await getProcessRuntimeInfo(processName);
-      if (!runtimeInfo?.pid) {
+      const pid = runtimeInfo?.pid ?? 0;
+
+      // Use known webAppPort if this is a web app with assigned port
+      if (app.webApp && typeof app.webAppPort === "number" && app.webAppPort > 0) {
+        runtimePortRegistry.set(app.id, app.webAppPort, pid);
+        console.log(`[app-process-manager] Registered known port ${app.webAppPort} for ${processName}`);
+        return;
+      }
+
+      // Fall back to dynamic detection for apps without known port
+      if (!pid) {
         console.warn(`[app-process-manager] No PID found for ${processName}, cannot detect port`);
         return;
       }
 
-      const port = await waitForListeningPort(runtimeInfo.pid, { maxAttempts: 5, delayMs: 500 });
+      const port = await waitForListeningPort(pid, { maxAttempts: 5, delayMs: 500 });
       if (port !== null) {
-        runtimePortRegistry.set(appId, port, runtimeInfo.pid);
+        runtimePortRegistry.set(app.id, port, pid);
+        console.log(`[app-process-manager] Detected and registered port ${port} for ${processName}`);
       } else {
-        console.warn(`[app-process-manager] Could not detect listening port for ${processName} (pid ${runtimeInfo.pid})`);
+        console.warn(`[app-process-manager] Could not detect listening port for ${processName} (pid ${pid})`);
       }
     } catch (error) {
-      console.warn(`[app-process-manager] Error detecting port for ${processName}:`, error);
+      console.warn(`[app-process-manager] Error registering port for ${processName}:`, error);
     }
   }
 
