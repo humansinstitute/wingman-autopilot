@@ -3353,23 +3353,26 @@ const ensureQueueModalStyles = () => {
     .wm-prompt-queue-modal {
       max-width: 600px;
       width: 90vw;
+      min-height: 300px;
       max-height: 80vh;
       border: 1px solid #ccc;
       border-radius: 8px;
       padding: 0;
       background: white;
+      box-sizing: border-box;
     }
-    
+
     .wm-prompt-queue-modal::backdrop {
       background: rgba(0, 0, 0, 0.5);
     }
-    
+
     .wm-prompt-queue-modal .modal-content {
       display: flex;
       flex-direction: column;
-      height: 100%;
+      min-height: 300px;
+      height: auto;
     }
-    
+
     .wm-prompt-queue-modal .modal-header {
       display: flex;
       justify-content: space-between;
@@ -3377,90 +3380,118 @@ const ensureQueueModalStyles = () => {
       padding: 1rem;
       border-bottom: 1px solid #eee;
     }
-    
+
     .wm-prompt-queue-modal .modal-header h2 {
       margin: 0;
       font-size: 1.25rem;
     }
-    
+
     .wm-prompt-queue-modal .close-btn {
       background: none;
       border: none;
       font-size: 1.5rem;
       cursor: pointer;
-      padding: 0.25rem;
+      padding: 0.5rem;
       line-height: 1;
+      min-width: 44px;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
-    
+
     .wm-prompt-queue-modal .modal-body {
       flex: 1;
       padding: 1rem;
       overflow-y: auto;
+      min-height: 150px;
     }
-    
+
     .wm-prompt-queue-modal .empty-state {
       text-align: center;
       color: #666;
       font-style: italic;
       padding: 2rem;
     }
-    
+
     .wm-prompt-queue-modal .queue-list {
       display: flex;
       flex-direction: column;
       gap: 0.75rem;
     }
-    
+
     .wm-prompt-queue-modal .queue-item {
       display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
+      flex-direction: column;
+      gap: 0.5rem;
       padding: 0.75rem;
       border: 1px solid #ddd;
       border-radius: 4px;
       background: #f9f9f9;
     }
-    
+
     .wm-prompt-queue-modal .prompt-preview {
       flex: 1;
       font-family: monospace;
       font-size: 0.9rem;
       line-height: 1.4;
-      margin-right: 1rem;
       word-break: break-word;
     }
-    
+
     .wm-prompt-queue-modal .prompt-actions {
       display: flex;
       gap: 0.5rem;
       flex-shrink: 0;
     }
-    
+
     .wm-prompt-queue-modal .prompt-actions button {
-      padding: 0.25rem 0.5rem;
+      padding: 0.5rem 0.75rem;
       border: 1px solid #ccc;
       border-radius: 3px;
       background: white;
       cursor: pointer;
-      font-size: 0.85rem;
+      font-size: 0.9rem;
+      min-height: 44px;
     }
-    
+
     .wm-prompt-queue-modal .edit-btn:hover {
       background: #e3f2fd;
       border-color: #2196f3;
     }
-    
+
     .wm-prompt-queue-modal .delete-btn:hover {
       background: #ffebee;
       border-color: #f44336;
     }
-    
+
     .wm-prompt-queue-modal .modal-footer {
       padding: 1rem;
       border-top: 1px solid #eee;
       text-align: center;
       color: #666;
       font-size: 0.9rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    .wm-prompt-queue-modal .modal-footer button {
+      min-height: 44px;
+      padding: 0.5rem 1rem;
+    }
+
+    /* Desktop: side-by-side layout for queue items */
+    @media (min-width: 480px) {
+      .wm-prompt-queue-modal .queue-item {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: flex-start;
+      }
+
+      .wm-prompt-queue-modal .prompt-preview {
+        margin-right: 1rem;
+      }
     }
   `;
   
