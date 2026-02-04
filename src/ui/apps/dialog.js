@@ -836,10 +836,14 @@ export const initAppDialogs = ({
       appDeployTitle.textContent = `Deploy ${appName}`;
     }
 
-    // Pre-fill CapRover name from app label
-    if (appDeployNameInput && app.label) {
-      const derived = deriveCaproverNameFromLabel(app.label);
-      appDeployNameInput.value = derived;
+    // Pre-fill CapRover name from existing subdomain alias (three-word alias)
+    // Fall back to deriving from label if no alias exists
+    if (appDeployNameInput) {
+      if (app.subdomainAlias) {
+        appDeployNameInput.value = app.subdomainAlias;
+      } else if (app.label) {
+        appDeployNameInput.value = deriveCaproverNameFromLabel(app.label);
+      }
     }
 
     if (appDeployDialog.open) {
