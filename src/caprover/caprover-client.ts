@@ -122,6 +122,8 @@ export class CaproverClient {
 
   /**
    * Deploy app from a captain-definition object.
+   * Note: This only works if captain-definition specifies an imageName.
+   * For source code deployment, use deployFromTarball instead.
    */
   async deployCaptainDefinition(
     appName: string,
@@ -137,6 +139,55 @@ export class CaproverClient {
       },
       true,
     );
+  }
+
+  /**
+   * Deploy app from a tarball containing source code.
+   * The tarball must contain a captain-definition.json at the root,
+   * and either a Dockerfile or the captain-definition must specify
+   * imageName or dockerfileLines.
+   */
+  async deployFromTarball(appName: string, tarBuffer: Buffer, gitHash?: string): Promise<void> {
+    const token = await this.authenticate();
+    const url = `${this.serverUrl}/api/v2/user/apps/appData/${encodeURIComponent(appName)}`;
+
+    // Create form data with the tarball
+    const formData = new FormData();
+    const blob = new Blob([tarBuffer], { type: "application/x-tar" });
+    formData.append("sourceFile", blob, "source.tar");
+    if (gitHash) {
+      formData.append("gitHash", gitHash);
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "x-captain-auth": token,
+        },
+        body: formData,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new CaproverClientError(`Network error: ${message}`);
+    }
+
+    let data: CaproverApiResponse<unknown>;
+    try {
+      data = (await response.json()) as CaproverApiResponse<unknown>;
+    } catch {
+      throw new CaproverClientError(`Invalid JSON response from CapRover`, response.status);
+    }
+
+    // CapRover uses status 100 for success
+    if (data.status !== 100) {
+      throw new CaproverClientError(
+        data.description || "Unknown CapRover error",
+        response.status,
+        data.status,
+      );
+    }
   }
 
   /**

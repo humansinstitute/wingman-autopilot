@@ -64,7 +64,7 @@ import { ProjectStore } from "./projects/project-store";
 import { createProjectApiHandler } from "./projects/project-api";
 import { createNpubProjectApiHandler } from "./projects/npub-project-api";
 import { npubProjectStore } from "./projects/npub-project-store";
-import { CaproverStore, createCaproverApiHandler, createCaproverClientFromEnv } from "./caprover";
+import { CaproverStore, createCaproverApiHandler, createCaproverClientFromEnv, createAppTarball } from "./caprover";
 import { createBrowserLogHandler } from "./logging/browser-log-handler";
 import {
   buildAgentUrl,
@@ -5070,14 +5070,26 @@ const handleApi = async (
         // Create deployment record
         const deployment = caproverStore.createDeployment({
           caproverAppId: tracked.id,
-          deployMethod: "captain_definition",
+          deployMethod: "tar_upload",
         });
 
-        // Deploy using captain-definition
-        await caproverClient.deployCaptainDefinition(
-          tracked.caproverName,
-          defRecord as { schemaVersion: 2; imageName?: string; dockerfileLines?: string[] },
-        );
+        // Create tarball from app directory
+        let tarResult;
+        try {
+          tarResult = await createAppTarball(app.root);
+          console.log(`[caprover] Created tarball with ${tarResult.fileCount} files for ${caproverName}`);
+        } catch (tarError) {
+          const tarMessage = tarError instanceof Error ? tarError.message : String(tarError);
+          caproverStore.updateDeployment(deployment.id, {
+            status: "failed",
+            completedAt: new Date().toISOString(),
+            errorMessage: `Failed to create tarball: ${tarMessage}`,
+          });
+          return Response.json({ error: `Failed to create tarball: ${tarMessage}` }, { status: 400 });
+        }
+
+        // Deploy using tarball upload
+        await caproverClient.deployFromTarball(tracked.caproverName, tarResult.buffer);
 
         // Get updated app info
         const remoteApp = await caproverClient.getApp(tracked.caproverName);

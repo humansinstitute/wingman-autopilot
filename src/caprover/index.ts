@@ -7,5 +7,7 @@
 export { CaproverClient, CaproverClientError, createCaproverClientFromEnv } from "./caprover-client";
 export { CaproverStore } from "./caprover-store";
 export { createCaproverApiHandler } from "./caprover-api";
+export { createAppTarball, verifyDeployableApp } from "./tarball";
 export type { CaproverApiDependencies } from "./caprover-api";
+export type { CreateTarballOptions, CreateTarballResult } from "./tarball";
 export type * from "./types";
