@@ -6769,7 +6769,8 @@ const server = Bun.serve({
         pathname === "/chat" ||
         pathname.startsWith("/chat/") ||
         pathname === "/settings" ||
-        pathname.startsWith("/settings/");
+        pathname.startsWith("/settings/") ||
+        pathname === "/privacy";
 
       if (isSpaRoutePath && !assetService.isUiAssetPath(pathname)) {
         return serveIndex();

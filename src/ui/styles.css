@@ -462,6 +462,24 @@ body[data-theme="light"] .wm-logo.light {
   color: var(--accent-primary);
 }
 
+.wm-menu-footer {
+  margin-top: auto;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+
+.wm-menu-footer a {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+
+.wm-menu-footer a:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
 .wm-theme-toggle {
   align-self: flex-start;
   display: inline-flex;
@@ -991,6 +1009,102 @@ body[data-menu-open="true"] .wm-menu-panel {
 
   .wm-home-guest-hero-line {
     font-size: 3rem;
+  }
+}
+
+.wm-home-guest-footer__links {
+  margin-top: 0.5rem;
+}
+
+.wm-home-guest-footer__links a {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.wm-home-guest-footer__links a:hover {
+  color: #ffffff;
+  text-decoration: underline;
+}
+
+/* Privacy Policy Page */
+.wm-privacy-policy {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+.wm-privacy-policy__header {
+  margin-bottom: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.wm-privacy-policy__header h1 {
+  margin: 0 0 0.5rem;
+  font-size: 2rem;
+  color: var(--text-primary);
+}
+
+.wm-privacy-policy__date {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.wm-privacy-policy__content {
+  color: var(--text-primary);
+  line-height: 1.7;
+}
+
+.wm-privacy-policy__content section {
+  margin-bottom: 2rem;
+}
+
+.wm-privacy-policy__content h2 {
+  font-size: 1.4rem;
+  margin: 0 0 1rem;
+  color: var(--text-primary);
+}
+
+.wm-privacy-policy__content h3 {
+  font-size: 1.1rem;
+  margin: 1.25rem 0 0.75rem;
+  color: var(--text-primary);
+}
+
+.wm-privacy-policy__content p {
+  margin: 0 0 1rem;
+  color: var(--text-secondary);
+}
+
+.wm-privacy-policy__content ul {
+  margin: 0 0 1rem;
+  padding-left: 1.5rem;
+}
+
+.wm-privacy-policy__content li {
+  margin-bottom: 0.5rem;
+  color: var(--text-secondary);
+}
+
+.wm-privacy-policy__footer {
+  margin-top: 3rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 600px) {
+  .wm-privacy-policy {
+    padding: 1rem;
+  }
+
+  .wm-privacy-policy__header h1 {
+    font-size: 1.5rem;
+  }
+
+  .wm-privacy-policy__content h2 {
+    font-size: 1.2rem;
   }
 }
 
