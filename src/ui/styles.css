@@ -7491,9 +7491,9 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 0.375rem;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.5rem;
   border: 1px solid rgba(16, 185, 129, 0.25);
   background: transparent;
   color: var(--text-secondary);
