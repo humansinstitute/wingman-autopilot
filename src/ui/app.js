@@ -12607,6 +12607,7 @@ const renderLive = () => {
     const webviewCol = document.createElement("div");
     webviewCol.className = "wm-webview-col";
 
+    const webviewResult = createWebviewPanel(webApp);
     const toolbar = createLayoutToolbar(
       state.webviewLayout.mode,
       (newMode) => {
@@ -12616,11 +12617,11 @@ const renderLive = () => {
       () => {
         state.webviewLayout.open = false;
         render();
-      }
+      },
+      webviewResult
     );
     webviewCol.append(toolbar);
 
-    const webviewResult = createWebviewPanel(webApp);
     if (webviewResult) {
       webviewCol.append(webviewResult.panel);
     }

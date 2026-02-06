@@ -93,13 +93,32 @@ export function createWebviewPanel(app) {
 }
 
 /**
- * Create the layout toolbar with mode toggle and close button.
+ * Force-reload an iframe, bypassing cache where possible.
+ * Tries contentWindow.location.reload() for same-origin frames,
+ * falls back to resetting src with a cache-busting query param.
+ * @param {HTMLIFrameElement} iframe
+ */
+function forceReloadIframe(iframe) {
+  try {
+    // Same-origin: direct reload
+    iframe.contentWindow.location.reload();
+  } catch {
+    // Cross-origin: reset src with cache-buster
+    const url = new URL(iframe.src);
+    url.searchParams.set("_cb", Date.now().toString(36));
+    iframe.src = url.toString();
+  }
+}
+
+/**
+ * Create the layout toolbar with mode toggle, refresh, and close buttons.
  * @param {string} currentMode - 'chat-narrow' or 'app-narrow'
  * @param {Function} onModeChange - Called with new mode string
  * @param {Function} onClose - Called when close is clicked
+ * @param {{ iframe: HTMLIFrameElement }|null} webviewRef - Reference to the webview iframe
  * @returns {HTMLElement}
  */
-export function createLayoutToolbar(currentMode, onModeChange, onClose) {
+export function createLayoutToolbar(currentMode, onModeChange, onClose, webviewRef) {
   const toolbar = document.createElement("div");
   toolbar.className = "wm-webview-toolbar";
 
@@ -120,12 +139,26 @@ export function createLayoutToolbar(currentMode, onModeChange, onClose) {
 
   modeGroup.append(chatNarrowBtn, appNarrowBtn);
 
+  const actionsGroup = document.createElement("div");
+  actionsGroup.className = "wm-webview-toolbar-actions";
+
+  const refreshBtn = document.createElement("button");
+  refreshBtn.className = "wm-webview-refresh-btn";
+  refreshBtn.title = "Reload app (force refresh)";
+  refreshBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>`;
+  refreshBtn.addEventListener("click", () => {
+    if (webviewRef?.iframe) {
+      forceReloadIframe(webviewRef.iframe);
+    }
+  });
+
   const closeBtn = document.createElement("button");
   closeBtn.className = "wm-webview-close-btn";
   closeBtn.title = "Close webview";
   closeBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
   closeBtn.addEventListener("click", onClose);
 
-  toolbar.append(modeGroup, closeBtn);
+  actionsGroup.append(refreshBtn, closeBtn);
+  toolbar.append(modeGroup, actionsGroup);
   return toolbar;
 }

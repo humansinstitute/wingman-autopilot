@@ -7597,7 +7597,13 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   gap: 0.25rem;
 }
 
+.wm-webview-toolbar-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
 .wm-webview-mode-btn,
+.wm-webview-refresh-btn,
 .wm-webview-close-btn {
   display: flex;
   align-items: center;
@@ -7613,6 +7619,7 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 }
 
 .wm-webview-mode-btn:hover,
+.wm-webview-refresh-btn:hover,
 .wm-webview-close-btn:hover {
   color: var(--accent-primary);
   background: var(--bg-tertiary);
