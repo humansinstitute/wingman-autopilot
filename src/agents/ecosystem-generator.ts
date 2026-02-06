@@ -9,7 +9,6 @@ import { dirname, join } from "node:path";
 
 import type { AgentType, WingmanConfig } from "../config";
 import type { AppRecord } from "../apps/app-registry";
-import { readEnvFile } from "../utils/env-file";
 
 export interface EcosystemApp {
   name: string;
@@ -317,7 +316,7 @@ export function generateAppProcessName(userAlias: string, appLabel: string): str
 
 /**
  * Create an ecosystem app entry for a user app.
- * Reads .env file from app root to include environment variables.
+ * Sources .env at runtime via bash — secrets never touch the config file.
  */
 export async function createUserAppEcosystemConfig(config: UserAppConfig): Promise<EcosystemApp> {
   const { app, userAlias, userRootDir, isAdmin } = config;
@@ -330,19 +329,14 @@ export async function createUserAppEcosystemConfig(config: UserAppConfig): Promi
     throw new Error(`App ${app.id} has no start script defined`);
   }
 
-  // Read .env file from app root directory
-  const envFromFile = await readEnvFile(app.root);
+  // Build command that sources .env at runtime (secrets stay in .env, never written to config)
+  // set -a: auto-export all sourced vars; set +a: stop after sourcing
+  const envSource = "set -a; [ -f .env ] && . ./.env; set +a;";
+  const portPrefix = app.webApp && app.webAppPort ? `PORT=${app.webAppPort} ` : "";
+  const command = `${envSource} ${portPrefix}${startScript}`;
 
-  // Build command with port override for web apps
-  let command = startScript;
-  if (app.webApp && app.webAppPort) {
-    command = `PORT=${app.webAppPort} ${startScript}`;
-  }
-
-  // Merge environment variables: .env file first, then explicit overrides
-  // This allows webAppPort to override PORT from .env if set
+  // Only non-secret metadata in the config — no .env contents
   const env: Record<string, string> = {
-    ...envFromFile,
     APP_ID: app.id,
     APP_LABEL: app.label,
     USER_ALIAS: userAlias,
