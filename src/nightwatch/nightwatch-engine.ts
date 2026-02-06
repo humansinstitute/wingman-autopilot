@@ -7,6 +7,7 @@
  * or stop and produce a report card.
  */
 
+import { join } from "node:path";
 import type { SessionSnapshot } from "../agents/process-manager";
 import type { NightWatchStore, NightWatchReport } from "./nightwatch-store";
 import type { FeatureFlagRecord } from "../storage/feature-flag-store";
@@ -85,8 +86,8 @@ const nightwatchInFlight = new Set<string>();
 // System Prompt
 // ============================================================
 
-const SYSTEM_PROMPT = `You are Night Watchman, an autonomous review system for AI agent sessions.
-Your job is to review the conversation history of an AI agent session and decide what to do next.
+const SYSTEM_PROMPT = `You are Night Watchman, an autonomous supervisor for AI coding agent sessions.
+Your job is to keep the agent productive and moving forward. You act on behalf of the human boss who is away.
 
 You MUST respond with valid JSON only. No markdown, no explanation outside the JSON.
 
@@ -97,19 +98,65 @@ Response format:
 }
 
 Available actions:
-- "continue": The agent should continue working. Provide a clear, specific prompt in "content" that tells the agent what to do next.
-- "morehistory": You need more context to decide. Set content to explain what you need.
-- "complete": The task appears finished. Provide a brief summary of what was accomplished in "content".
-- "error": The agent seems stuck in an error loop or broken state. Describe the problem in "content".
-- "humanInput": The agent needs human guidance that you cannot provide. Explain what decision is needed in "content".
+- "continue": The agent should keep working. Provide a clear prompt in "content" telling it what to do next.
+- "complete": The task is finished. Summarise what was accomplished in "content".
+- "error": The agent is stuck in an error loop. Describe the problem in "content".
+- "humanInput": You genuinely cannot proceed without specific human knowledge. Explain what is needed in "content".
 
-Guidelines:
-- If the last messages show the agent completed its task successfully, use "complete".
-- If the last messages show repeated errors or the agent is going in circles, use "error".
-- If the agent is waiting for user input or a decision only a human can make, use "humanInput".
-- If the agent is mid-task and just paused, use "continue" with a prompt to keep going.
-- Only use "morehistory" if the recent messages alone are truly insufficient to judge.
-- Be concise. Your "content" should be actionable and specific.`;
+CRITICAL RULES — read carefully:
+
+1. YOUR DEFAULT ACTION IS "continue". Keep the agent working unless there is a clear reason to stop.
+
+2. MAKE DECISIONS. When the agent asks questions, presents options, or wants confirmation:
+   - Pick the most pragmatic, standard option and tell it to proceed.
+   - If there are numbered options, choose the one that best fits the project context and conventions.
+   - If the agent asks "should I proceed?", the answer is YES.
+   - If the agent presents a plan and asks for approval, approve it.
+   - Being wrong is fine. The human can fix it later. Blocked progress is worse than an imperfect choice.
+
+3. ANSWER QUESTIONS. If the agent needs information to continue:
+   - Use the project context provided to answer questions about conventions, tech stack, and preferences.
+   - Make reasonable assumptions for anything not covered by the project context.
+   - If the agent asks about implementation approach, pick the simplest one that works.
+
+4. USE "humanInput" ONLY for things you truly cannot decide:
+   - Credentials, API keys, passwords, or secrets the agent needs.
+   - Business decisions that require domain knowledge you don't have (which client, what price, etc.).
+   - Access permissions or deployments to production systems.
+   - DO NOT use humanInput for technical choices, design decisions, or "which approach" questions — just pick one.
+
+5. USE "error" only when the agent is clearly stuck in a loop (repeating the same failed action 3+ times).
+
+6. USE "complete" when the agent has explicitly finished its task and summarised the results.
+
+7. For "continue" prompts, be concise and direct. Examples:
+   - "Go with option 1. Proceed with the implementation."
+   - "Yes, that plan looks good. Continue."
+   - "Use the existing pattern from the codebase. Proceed."
+   - If the agent just needs a nudge, even just "Continue." or "Proceed with the next step." works.`;
+
+// ============================================================
+// Project Context
+// ============================================================
+
+async function loadProjectContext(workingDirectory: string): Promise<string | null> {
+  const candidates = ["CLAUDE.md", "claude.md", "README.md"];
+  for (const filename of candidates) {
+    try {
+      const filePath = join(workingDirectory, filename);
+      const file = Bun.file(filePath);
+      if (await file.exists()) {
+        const text = await file.text();
+        // Cap at ~4000 chars to avoid blowing up the prompt
+        const trimmed = text.length > 4000 ? text.slice(0, 4000) + "\n\n[...truncated]" : text;
+        return `Project context from ${filename}:\n${trimmed}`;
+      }
+    } catch {
+      // File not readable, skip
+    }
+  }
+  return null;
+}
 
 // ============================================================
 // Core Functions
@@ -117,17 +164,22 @@ Guidelines:
 
 function buildNightWatchPrompt(
   firstMessages: StoredMessage[],
-  historyMessages: StoredMessage[],
+  allMessages: StoredMessage[],
+  projectContext: string | null,
 ): ChatMessage[] {
   const goalSection = firstMessages.length > 0
     ? firstMessages.map((m) => `[${m.role}]: ${m.content}`).join("\n")
     : "(no initial messages available)";
 
-  const historySection = historyMessages.length > 0
-    ? historyMessages.map((m) => `[${m.role}]: ${m.content}`).join("\n")
+  const historySection = allMessages.length > 0
+    ? allMessages.map((m) => `[${m.role}]: ${m.content}`).join("\n")
     : "(no messages available)";
 
-  const userMessage = `What are we trying to achieve:\n${goalSection}\n\nMessage History (most recent):\n${historySection}`;
+  let userMessage = "";
+  if (projectContext) {
+    userMessage += `${projectContext}\n\n---\n\n`;
+  }
+  userMessage += `What are we trying to achieve:\n${goalSection}\n\nFull Conversation History:\n${historySection}`;
 
   return [
     { role: "system", content: SYSTEM_PROMPT },
@@ -157,6 +209,7 @@ async function callOpenRouter(
       stream: false,
       response_format: { type: "json_object" },
     }),
+    signal: AbortSignal.timeout(90_000),
   });
 
   if (!response.ok) {
@@ -225,17 +278,21 @@ async function executeNightWatchReview(
     return;
   }
 
-  // First 3 messages for goal context, last 5 for recent history
-  // If the model needs more, it can request "morehistory" for the full transcript
+  // Load project context from the session's working directory
+  const session = deps.getSession(sessionId);
+  let projectContext: string | null = null;
+  if (session?.workingDirectory) {
+    projectContext = await loadProjectContext(session.workingDirectory);
+  }
+
   const firstMessages = allMessages.slice(0, 3);
-  const recentMessages = allMessages.slice(-5);
   const model = sessionState.model || NIGHTWATCH_DEFAULT_MODEL;
 
   console.log(
-    `[nightwatch] Reviewing session ${sessionId} (cycle ${sessionState.cycleCount}/${sessionState.maxCycles}, model: ${model})`,
+    `[nightwatch] Reviewing session ${sessionId} (cycle ${sessionState.cycleCount}/${sessionState.maxCycles}, model: ${model}, messages: ${allMessages.length}${projectContext ? ", with project context" : ""})`,
   );
 
-  const prompt = buildNightWatchPrompt(firstMessages, recentMessages);
+  const prompt = buildNightWatchPrompt(firstMessages, allMessages, projectContext);
   let rawResponse: string;
 
   try {
@@ -256,26 +313,11 @@ async function executeNightWatchReview(
 
   console.log(`[nightwatch] Session ${sessionId} -> action: ${result.nextAction}`);
 
-  // Handle morehistory — retry once with full context
+  // "morehistory" is no longer needed since we send full history,
+  // but handle it gracefully by treating as "continue" with a nudge
   if (result.nextAction === "morehistory") {
-    console.log(`[nightwatch] Retrying session ${sessionId} with full history`);
-    const fullPrompt = buildNightWatchPrompt(firstMessages, allMessages);
-
-    try {
-      const retryRaw = await callOpenRouter(fullPrompt, model, apiKey, deps.openRouterBaseUrl);
-      const retryResult = parseNightWatchResponse(retryRaw);
-
-      if (retryResult.nextAction === "morehistory") {
-        // Second morehistory → treat as complete
-        result = { nextAction: "complete", content: retryResult.content };
-      } else {
-        result = retryResult;
-      }
-      console.log(`[nightwatch] Session ${sessionId} retry -> action: ${result.nextAction}`);
-    } catch (err) {
-      console.error(`[nightwatch] Retry failed for session ${sessionId}:`, err);
-      return;
-    }
+    console.log(`[nightwatch] Got morehistory but full history was already sent, treating as continue`);
+    result = { nextAction: "continue", content: "Continue with the current task." };
   }
 
   // Act on the result
@@ -283,10 +325,10 @@ async function executeNightWatchReview(
     deps.store.incrementCycle(sessionId);
     try {
       deps.promptQueueStore.addPrompt(sessionId, { content: result.content });
-      console.log(`[nightwatch] Queued continuation prompt for session ${sessionId}`);
-      const session = deps.getSession(sessionId);
-      if (session) {
-        deps.dispatchPrompt(session);
+      console.log(`[nightwatch] Queued continuation prompt for session ${sessionId}: ${result.content.slice(0, 120)}`);
+      const currentSession = deps.getSession(sessionId);
+      if (currentSession) {
+        deps.dispatchPrompt(currentSession);
       }
     } catch (err) {
       console.error(`[nightwatch] Failed to queue prompt for session ${sessionId}:`, err);
@@ -295,8 +337,8 @@ async function executeNightWatchReview(
   }
 
   // Terminal actions: complete, error, humanInput
-  const session = deps.getSession(sessionId);
-  const sessionName = session?.name ?? null;
+  const currentSession = deps.getSession(sessionId);
+  const sessionName = currentSession?.name ?? null;
   const currentState = deps.store.getSessionState(sessionId);
   const cycleCount = currentState?.cycleCount ?? 0;
 
@@ -326,13 +368,22 @@ export async function maybeTriggerNightWatch(
 
   // Check feature flag
   const flag = deps.featureFlagStore.getFlag(NIGHTWATCH_FEATURE_FLAG_KEY);
-  if (!flag || flag.state === "off") return;
+  if (!flag || flag.state === "off") {
+    console.log(`[nightwatch] Skipping session ${session.id}: feature flag is ${flag?.state ?? "missing"}`);
+    return;
+  }
 
   // Check session is enabled
-  if (!deps.store.isEnabled(session.id)) return;
+  if (!deps.store.isEnabled(session.id)) {
+    // This is high-frequency so only log at debug level (most sessions won't have NW)
+    return;
+  }
 
   // Prevent overlapping calls
-  if (nightwatchInFlight.has(session.id)) return;
+  if (nightwatchInFlight.has(session.id)) {
+    console.log(`[nightwatch] Skipping session ${session.id}: review already in flight`);
+    return;
+  }
 
   // Check cycle limit
   const sessionState = deps.store.getSessionState(session.id);
@@ -351,6 +402,7 @@ export async function maybeTriggerNightWatch(
     return;
   }
 
+  console.log(`[nightwatch] Triggering review for session ${session.id} (${session.name ?? "unnamed"})`);
   nightwatchInFlight.add(session.id);
   try {
     await executeNightWatchReview(session.id, deps);
