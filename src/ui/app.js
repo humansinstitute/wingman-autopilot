@@ -663,9 +663,14 @@ const requestPostAuthSessionsFetch = () => {
     return;
   }
   postAuthSessionsFetchScheduled = true;
-  const triggerFetch = () => {
+  const triggerFetch = async () => {
     postAuthSessionsFetchScheduled = false;
-    void fetchSessions();
+    await fetchSessions();
+    if (state.identity.authenticated) {
+      fetchApps({ tail: APP_LOG_PREVIEW_LINES }).catch(() => {});
+      fetchNpubProjects().catch(() => {});
+    }
+    render();
   };
   if (typeof queueMicrotask === "function") {
     queueMicrotask(triggerFetch);
