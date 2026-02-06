@@ -28,7 +28,12 @@ export const signNip98Description =
   "Get a signed NIP-98 authentication token for an HTTP request. " +
   "Tier 1 uses the Wingman server identity (instant). " +
   "Tier 2 uses the logged-in user's identity (requires an active browser session and an approved grant). " +
-  "Returns an Authorization header value you can use directly.";
+  "Returns an Authorization header value you can use directly.\n\n" +
+  "IMPORTANT: NIP-98 tokens are valid for ~60 seconds from creation. " +
+  "You can reuse a token for multiple requests to the same URL and method within that window — " +
+  "do NOT request a new token for every call. " +
+  "Batch your requests or reuse the Authorization header when making repeated calls to the same endpoint. " +
+  "Only request a fresh token when the URL, method, or body changes, or when more than 50 seconds have passed.";
 
 interface SignNip98Params {
   url: string;
