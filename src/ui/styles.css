@@ -707,6 +707,13 @@ body[data-menu-open="true"] .wm-menu-panel {
   padding-right: 0.75rem;
 }
 
+/* Lock viewport height when webview is open so each column scrolls independently */
+[data-webview-open="true"] .wm-live {
+  height: calc(100vh - var(--nav-height));
+  max-height: calc(100vh - var(--nav-height));
+  overflow: hidden;
+}
+
 .wm-home {
   display: flex;
   flex-direction: column;
@@ -7535,6 +7542,13 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   overflow-y: auto;
   height: 100%;
   padding-bottom: 1rem;
+  scrollbar-width: thin;
+}
+
+/* Single scroll container: conversation flows inside .wm-live-scroll */
+.wm-live-split .wm-live-conversation {
+  overflow-y: visible;
+  flex: none;
 }
 
 .wm-live-split > .wm-live-chat-col > .wm-composer-shell {
