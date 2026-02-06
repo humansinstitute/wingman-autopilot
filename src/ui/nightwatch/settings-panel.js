@@ -168,6 +168,13 @@ export function initNightWatchSettingsPanel({ state, render, showToast, createCo
     header.style.cssText = "display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;";
     header.append(createStatusBadge(report.status));
 
+    if (report.inputMode === "raw") {
+      const rawTag = document.createElement("span");
+      rawTag.textContent = "RAW";
+      rawTag.style.cssText = "display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; font-weight: 700; color: #fff; background: #8b5cf6; letter-spacing: 0.05em;";
+      header.append(rawTag);
+    }
+
     if (report.sessionName) {
       const link = document.createElement("a");
       link.href = `/live/${report.sessionId}`;

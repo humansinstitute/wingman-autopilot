@@ -836,6 +836,20 @@ const nightWatchDeps = {
   dispatchPrompt: (session: SessionSnapshot) => {
     void maybeAutoDispatchQueuedPrompt(session);
   },
+  sendRawInput: async (session: SessionSnapshot, content: string): Promise<boolean> => {
+    try {
+      const agentUrl = buildAgentUrl(agentHost, session.port, "/message");
+      const resp = await fetch(agentUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "raw", content }),
+      });
+      return resp.ok;
+    } catch (err) {
+      console.error(`[nightwatch] sendRawInput failed for session ${session.id}:`, err);
+      return false;
+    }
+  },
 };
 
 const wingmenRoot = join(projectRoot, ".wingmen");

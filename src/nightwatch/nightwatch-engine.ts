@@ -62,14 +62,19 @@ export interface NightWatchDeps {
   getSession: (sessionId: string) => SessionSnapshot | null;
   /** Trigger prompt queue dispatch for a session (immediate, not waiting for sweep) */
   dispatchPrompt: (session: SessionSnapshot) => void;
+  /** Send raw terminal input directly to the agent (bypasses prompt queue) */
+  sendRawInput: (session: SessionSnapshot, content: string) => Promise<boolean>;
 }
 
 type NightWatchAction = "continue" | "morehistory" | "complete" | "error" | "humanInput";
+
+type NightWatchInputMode = "queue" | "raw";
 
 interface NightWatchResponse {
   nextAction: NightWatchAction;
   content: string;
   reasoning: string;
+  inputMode: NightWatchInputMode;
 }
 
 interface ChatMessage {
@@ -96,7 +101,8 @@ Response format:
 {
   "nextAction": "<action>",
   "content": "<your message>",
-  "reasoning": "<brief explanation of why you chose this action>"
+  "reasoning": "<brief explanation of why you chose this action>",
+  "inputMode": "<queue or raw>"
 }
 
 Available actions:
@@ -104,6 +110,15 @@ Available actions:
 - "complete": The task is finished. Summarise what was accomplished in "content".
 - "error": The agent is stuck in an error loop. Describe the problem in "content".
 - "humanInput": You genuinely cannot proceed without specific human knowledge. Explain what is needed in "content".
+
+Input modes (only applies when nextAction is "continue"):
+- "queue" (default): Send content as a normal prompt via the message queue. Use this for regular continuation prompts.
+- "raw": Send content directly to the terminal as raw keystrokes. Use this when the agent is showing an INTERACTIVE PROMPT that requires direct terminal input, such as:
+  - A numbered menu (send just the number, e.g. "1")
+  - A yes/no confirmation prompt (send "y" or "n")
+  - A permission dialog asking to allow/deny (send "y" or the appropriate key)
+  - Any TUI (text user interface) selection that won't accept a normal message
+  When using "raw", keep content to the MINIMUM needed — usually a single character or short word.
 
 CRITICAL RULES — read carefully:
 
@@ -259,8 +274,10 @@ function parseNightWatchResponse(raw: string): NightWatchResponse {
 
   const content = String(parsed.content ?? "No details provided.");
   const reasoning = String(parsed.reasoning ?? "");
+  const rawInputMode = String(parsed.inputMode ?? "queue").toLowerCase();
+  const inputMode: NightWatchInputMode = rawInputMode === "raw" ? "raw" : "queue";
 
-  return { nextAction, content, reasoning };
+  return { nextAction, content, reasoning, inputMode };
 }
 
 async function executeNightWatchReview(
@@ -323,7 +340,7 @@ async function executeNightWatchReview(
   // but handle it gracefully by treating as "continue" with a nudge
   if (result.nextAction === "morehistory") {
     console.log(`[nightwatch] Got morehistory but full history was already sent, treating as continue`);
-    result = { nextAction: "continue", content: "Continue with the current task.", reasoning: "Full history already provided, continuing." };
+    result = { nextAction: "continue", content: "Continue with the current task.", reasoning: "Full history already provided, continuing.", inputMode: "queue" };
   }
 
   // Create a report card for every cycle (including continue)
@@ -339,20 +356,37 @@ async function executeNightWatchReview(
     status: result.nextAction as NightWatchReport["status"],
     summary: result.content,
     reasoning: result.reasoning || null,
+    inputMode: result.nextAction === "continue" ? result.inputMode : null,
     cycleCount,
   });
 
   // Act on the result
   if (result.nextAction === "continue") {
     deps.store.incrementCycle(sessionId);
-    try {
-      deps.promptQueueStore.addPrompt(sessionId, { content: result.content });
-      console.log(`[nightwatch] Queued continuation prompt for session ${sessionId}: ${result.content.slice(0, 120)}`);
-      if (currentSession) {
-        deps.dispatchPrompt(currentSession);
+
+    if (result.inputMode === "raw" && currentSession) {
+      // Raw mode: send directly to terminal (for interactive menus/prompts)
+      try {
+        const sent = await deps.sendRawInput(currentSession, result.content);
+        if (sent) {
+          console.log(`[nightwatch] Sent raw input to session ${sessionId}: "${result.content}"`);
+        } else {
+          console.warn(`[nightwatch] Failed to send raw input to session ${sessionId}`);
+        }
+      } catch (err) {
+        console.error(`[nightwatch] Raw input failed for session ${sessionId}:`, err);
       }
-    } catch (err) {
-      console.error(`[nightwatch] Failed to queue prompt for session ${sessionId}:`, err);
+    } else {
+      // Queue mode: standard prompt queue dispatch
+      try {
+        deps.promptQueueStore.addPrompt(sessionId, { content: result.content });
+        console.log(`[nightwatch] Queued continuation prompt for session ${sessionId}: ${result.content.slice(0, 120)}`);
+        if (currentSession) {
+          deps.dispatchPrompt(currentSession);
+        }
+      } catch (err) {
+        console.error(`[nightwatch] Failed to queue prompt for session ${sessionId}:`, err);
+      }
     }
     return;
   }

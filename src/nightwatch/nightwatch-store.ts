@@ -34,6 +34,7 @@ export interface NightWatchReport {
   status: "continue" | "complete" | "error" | "humanInput";
   summary: string;
   reasoning: string | null;
+  inputMode: string | null;
   cycleCount: number;
   createdAt: string;
 }
@@ -145,14 +146,15 @@ class NightWatchStore {
     status: NightWatchReport["status"];
     summary: string;
     reasoning?: string | null;
+    inputMode?: string | null;
     cycleCount: number;
   }): NightWatchReport {
     const id = randomUUID();
     const now = new Date().toISOString();
     this.db
       .query(
-        `INSERT INTO nightwatch_reports (id, session_id, session_name, working_directory, status, summary, reasoning, cycle_count, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+        `INSERT INTO nightwatch_reports (id, session_id, session_name, working_directory, status, summary, reasoning, input_mode, cycle_count, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
       )
       .run(
         id,
@@ -162,6 +164,7 @@ class NightWatchStore {
         input.status,
         input.summary,
         input.reasoning ?? null,
+        input.inputMode ?? null,
         input.cycleCount,
         now,
       );
@@ -174,6 +177,7 @@ class NightWatchStore {
       status: input.status,
       summary: input.summary,
       reasoning: input.reasoning ?? null,
+      inputMode: input.inputMode ?? null,
       cycleCount: input.cycleCount,
       createdAt: now,
     };
@@ -190,6 +194,7 @@ class NightWatchStore {
            status,
            summary,
            reasoning,
+           input_mode AS inputMode,
            cycle_count AS cycleCount,
            created_at AS createdAt
          FROM nightwatch_reports
@@ -287,6 +292,13 @@ class NightWatchStore {
     // Migration: add reasoning column if missing
     try {
       this.db.exec(`ALTER TABLE nightwatch_reports ADD COLUMN reasoning TEXT`);
+    } catch {
+      // Column already exists — ignore
+    }
+
+    // Migration: add input_mode column if missing
+    try {
+      this.db.exec(`ALTER TABLE nightwatch_reports ADD COLUMN input_mode TEXT`);
     } catch {
       // Column already exists — ignore
     }
