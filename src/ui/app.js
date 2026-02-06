@@ -12592,6 +12592,9 @@ const renderLive = () => {
   }
 
   if (webApp && state.webviewLayout.open) {
+    // Flag the app container so CSS can expand to full width
+    appRoot.dataset.webviewOpen = "true";
+
     // Split layout: chat column + webview column
     const split = document.createElement("div");
     split.className = `wm-live-split wm-live-split--${state.webviewLayout.mode}`;
@@ -12624,12 +12627,15 @@ const renderLive = () => {
 
     split.append(chatCol, webviewCol);
     wrapper.append(split);
+
+    // Composer inside chat column so app iframe gets full height
+    chatCol.append(renderComposer(sessionId));
   } else {
+    delete appRoot.dataset.webviewOpen;
     main.append(scrollRegion);
     wrapper.append(main);
+    wrapper.append(renderComposer(sessionId));
   }
-
-  wrapper.append(renderComposer(sessionId));
 
   return wrapper;
 };

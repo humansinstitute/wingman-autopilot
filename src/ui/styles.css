@@ -701,6 +701,12 @@ body[data-menu-open="true"] .wm-menu-panel {
   padding-bottom: 0;
 }
 
+#app[data-route="live"][data-webview-open="true"] {
+  max-width: none;
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+}
+
 .wm-home {
   display: flex;
   flex-direction: column;
@@ -7469,6 +7475,10 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 
 /* ── Webview split panel ────────────────────────────── */
 
+.wm-live-main {
+  position: relative;
+}
+
 .wm-webview-icon {
   position: absolute;
   top: 0.5rem;
@@ -7503,6 +7513,8 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   gap: 0.75rem;
   flex: 1;
   min-height: 0;
+  height: calc(100vh - var(--nav-height) - 2rem);
+  overflow: hidden;
 }
 
 .wm-live-split > .wm-live-chat-col {
@@ -7513,12 +7525,32 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   overflow: hidden;
 }
 
+.wm-live-split > .wm-live-chat-col > .wm-live-main {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.wm-live-split > .wm-live-chat-col > .wm-live-main > .wm-live-scroll {
+  overflow-y: auto;
+  height: 100%;
+  padding-bottom: 1rem;
+}
+
+.wm-live-split > .wm-live-chat-col > .wm-composer-shell {
+  position: relative;
+  flex-shrink: 0;
+}
+
 .wm-live-split > .wm-webview-col {
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
 }
 
 .wm-live-split--chat-narrow > .wm-live-chat-col {
@@ -7540,8 +7572,6 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 .wm-webview-panel {
   flex: 1;
   min-height: 0;
-  border: 1px solid rgba(16, 185, 129, 0.18);
-  border-radius: 0.5rem;
   overflow: hidden;
   background: var(--bg-primary);
 }
@@ -7601,16 +7631,25 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 @media (max-width: 768px) {
   .wm-live-split {
     flex-direction: column;
+    height: auto;
+    overflow: visible;
   }
 
   .wm-live-split--chat-narrow > .wm-live-chat-col,
   .wm-live-split--app-narrow > .wm-live-chat-col {
     flex: none;
+    max-height: 50vh;
+    overflow-y: auto;
   }
 
   .wm-live-split--chat-narrow > .wm-webview-col,
   .wm-live-split--app-narrow > .wm-webview-col {
     flex: none;
     height: 50vh;
+  }
+
+  .wm-live-split > .wm-live-chat-col > .wm-composer-shell {
+    position: sticky;
+    bottom: 0;
   }
 }
