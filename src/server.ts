@@ -65,6 +65,9 @@ import { createProjectApiHandler } from "./projects/project-api";
 import { createNpubProjectApiHandler } from "./projects/npub-project-api";
 import { npubProjectStore } from "./projects/npub-project-store";
 import { CaproverStore, createCaproverApiHandler, createCaproverClientFromEnv, createAppTarball } from "./caprover";
+import { NightWatchStore } from "./nightwatch/nightwatch-store";
+import { maybeTriggerNightWatch, NIGHTWATCH_FEATURE_FLAG_KEY } from "./nightwatch/nightwatch-engine";
+import { createNightWatchApiHandler } from "./nightwatch/nightwatch-api";
 import { createBrowserLogHandler } from "./logging/browser-log-handler";
 import {
   buildAgentUrl,
@@ -241,6 +244,12 @@ const FEATURE_FLAG_DEFAULTS: Array<{
     description: "Controls whether the Projects view is visible in the UI.",
     state: "on_admin",
   },
+  {
+    key: NIGHTWATCH_FEATURE_FLAG_KEY,
+    label: "Night Watchman",
+    description: "Autonomous agent review system that continues sessions overnight.",
+    state: "off",
+  },
 ];
 
 featureFlagStore.ensureDefaults(FEATURE_FLAG_DEFAULTS);
@@ -264,6 +273,11 @@ const caproverStore = new CaproverStore();
 const caproverApiHandler = createCaproverApiHandler({
   store: caproverStore,
   getClient: createCaproverClientFromEnv,
+});
+const nightWatchStore = new NightWatchStore();
+const nightWatchApiHandler = createNightWatchApiHandler({
+  store: nightWatchStore,
+  featureFlagStore,
 });
 
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
@@ -804,6 +818,16 @@ try {
 } catch (error) {
   console.warn(`[pm2] app reconciliation failed: ${(error as Error).message}`);
 }
+const nightWatchDeps = {
+  store: nightWatchStore,
+  featureFlagStore,
+  messageStore,
+  promptQueueStore,
+  openRouterApiKey: Bun.env.OPENROUTER_API?.trim() || null,
+  openRouterBaseUrl: "https://openrouter.ai/api",
+  getSession: (sid: string) => manager.getSession(sid) ?? null,
+};
+
 const wingmenRoot = join(projectRoot, ".wingmen");
 const orchestratorTriggersRoot = join(wingmenRoot, "orchestrator", "triggers");
 await mkdir(wingmenRoot, { recursive: true }).catch(() => undefined);
@@ -3061,7 +3085,10 @@ async function maybeAutoDispatchQueuedPrompt(session: SessionSnapshot | null) {
   if (!session) return;
   if (queueDispatchInFlight.has(session.id)) return;
   if (!shouldAutoDispatchSession(session)) return;
-  if (promptQueueStore.getQueueCount(session.id) === 0) return;
+  if (promptQueueStore.getQueueCount(session.id) === 0) {
+    void maybeTriggerNightWatch(session, nightWatchDeps);
+    return;
+  }
   const userNpub = session.npub ?? null;
   if (!userNpub) {
     console.warn(`[queue] cannot auto-dispatch session ${session.id} without owner npub`);
@@ -3797,6 +3824,17 @@ const handleApi = async (
       return denied;
     }
     const response = await todoApiHandler(request, url, method, authContext);
+    if (response) {
+      return response;
+    }
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
+  if (pathname.startsWith("/api/nightwatch")) {
+    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    const response = await nightWatchApiHandler(request, url, method);
     if (response) {
       return response;
     }
