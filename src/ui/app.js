@@ -35,6 +35,8 @@ import {
   initFeatureFlagsUI,
   ORCHESTRATOR_FLAG_KEY,
 } from "./feature-flags/index.js";
+import { addNightWatchToggle } from "./nightwatch/cmd-toggle.js";
+import { initNightWatchSettingsPanel } from "./nightwatch/settings-panel.js";
 import { buildSessionOrigin, createSessionLauncher } from "./helpers/session-launch.js";
 import {
   state,
@@ -132,6 +134,8 @@ let renderFeatureFlagsPanel = () => document.createDocumentFragment();
 let ensureFeatureFlagsLoaded = () => {};
 let resolveFeatureFlagForViewer = () => ({ state: "off", effectiveState: "off" });
 let isFeatureEnabledForViewer = () => false;
+let renderNightWatchSettingsPanel = () => document.createDocumentFragment();
+let ensureNightWatchLoaded = () => {};
 let orchestratorFeatureEnabledForViewer = () => false;
 let projectsFeatureEnabledForViewer = () => true;
 let syncFeatureFlagsFromConfig = () => {};
@@ -11331,6 +11335,10 @@ const renderSettings = () => {
   if (state.identity.isAdmin) {
     ensureFeatureFlagsLoaded();
     wrapper.append(renderFeatureFlagsPanel());
+    if (isFeatureEnabledForViewer("nightwatch_enabled")) {
+      ensureNightWatchLoaded();
+      wrapper.append(renderNightWatchSettingsPanel());
+    }
     if (!state.adminUsers.initialized && !state.adminUsers.loading && !state.adminUsers.error) {
       void fetchAdminUsers();
     }
@@ -12224,6 +12232,8 @@ const renderComposer = (sessionId) => {
       addSubmenu(`App: ${matchingApp.label}`, appItems);
     }
   }
+
+  addNightWatchToggle({ sessionId, addCommand, state, showToast, isFeatureEnabled: isFeatureEnabledForViewer });
 
   addCommandDivider();
 
@@ -13260,6 +13270,10 @@ resolveFeatureFlagForViewer = featureFlagsUI.resolveFlag;
 isFeatureEnabledForViewer = featureFlagsUI.isEnabled;
 orchestratorFeatureEnabledForViewer = featureFlagsUI.orchestratorEnabled;
 projectsFeatureEnabledForViewer = featureFlagsUI.projectsEnabled;
+
+const nightWatchUI = initNightWatchSettingsPanel({ state, render, showToast, createCollapsibleCard });
+renderNightWatchSettingsPanel = nightWatchUI.renderPanel;
+ensureNightWatchLoaded = nightWatchUI.ensureLoaded;
 
 renderMenuIdentitySection();
 

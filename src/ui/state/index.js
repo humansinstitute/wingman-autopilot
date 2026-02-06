@@ -117,6 +117,14 @@ export const state = {
     adminPortsCollapsed: false,
     adminUsersCollapsed: false,
     featureFlagsCollapsed: false,
+    nightwatchCollapsed: false,
+  },
+  nightwatch: {
+    sessionToggles: new Map(),
+    reports: [],
+    reportsLoading: false,
+    reportsInitialized: false,
+    config: { model: "google/gemini-3-flash-preview", maxCycles: 21, models: [], maxCycleOptions: [6, 21, 256] },
   },
   // Webview split-panel layout state
   webviewLayout: { open: false, mode: "chat-narrow" },
