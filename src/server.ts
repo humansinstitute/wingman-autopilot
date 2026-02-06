@@ -826,6 +826,9 @@ const nightWatchDeps = {
   openRouterApiKey: Bun.env.OPENROUTER_API?.trim() || null,
   openRouterBaseUrl: "https://openrouter.ai/api",
   getSession: (sid: string) => manager.getSession(sid) ?? null,
+  dispatchPrompt: (session: SessionSnapshot) => {
+    void maybeAutoDispatchQueuedPrompt(session);
+  },
 };
 
 const wingmenRoot = join(projectRoot, ".wingmen");

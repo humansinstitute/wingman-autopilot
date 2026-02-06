@@ -212,7 +212,7 @@ export function initNightWatchSettingsPanel({ state, render, showToast, createCo
 
     if (report.sessionName) {
       const link = document.createElement("a");
-      link.href = `/live#${report.sessionId}`;
+      link.href = `/live/${report.sessionId}`;
       link.textContent = report.sessionName;
       link.style.cssText = "font-weight: 600; text-decoration: none; color: var(--accent-color, #7dd3fc);";
       header.append(link);

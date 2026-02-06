@@ -59,6 +59,8 @@ export interface NightWatchDeps {
   openRouterApiKey: string | null;
   openRouterBaseUrl: string;
   getSession: (sessionId: string) => SessionSnapshot | null;
+  /** Trigger prompt queue dispatch for a session (immediate, not waiting for sweep) */
+  dispatchPrompt: (session: SessionSnapshot) => void;
 }
 
 type NightWatchAction = "continue" | "morehistory" | "complete" | "error" | "humanInput";
@@ -223,9 +225,10 @@ async function executeNightWatchReview(
     return;
   }
 
-  // First 3 messages for goal context, last 30 for recent history
+  // First 3 messages for goal context, last 5 for recent history
+  // If the model needs more, it can request "morehistory" for the full transcript
   const firstMessages = allMessages.slice(0, 3);
-  const recentMessages = allMessages.slice(-30);
+  const recentMessages = allMessages.slice(-5);
   const model = sessionState.model || NIGHTWATCH_DEFAULT_MODEL;
 
   console.log(
@@ -281,11 +284,9 @@ async function executeNightWatchReview(
     try {
       deps.promptQueueStore.addPrompt(sessionId, { content: result.content });
       console.log(`[nightwatch] Queued continuation prompt for session ${sessionId}`);
-      // Trigger dispatch
       const session = deps.getSession(sessionId);
       if (session) {
-        // The caller wired dispatchPrompt to maybeAutoDispatchQueuedPrompt
-        // which will pick up the queued prompt on the next sweep
+        deps.dispatchPrompt(session);
       }
     } catch (err) {
       console.error(`[nightwatch] Failed to queue prompt for session ${sessionId}:`, err);
