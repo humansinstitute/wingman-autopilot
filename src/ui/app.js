@@ -11384,10 +11384,6 @@ const renderSettings = () => {
   if (state.identity.isAdmin) {
     ensureFeatureFlagsLoaded();
     wrapper.append(renderFeatureFlagsPanel());
-    if (isFeatureEnabledForViewer("nightwatch_enabled")) {
-      ensureNightWatchLoaded();
-      wrapper.append(renderNightWatchSettingsPanel());
-    }
     if (!state.adminUsers.initialized && !state.adminUsers.loading && !state.adminUsers.error) {
       void fetchAdminUsers();
     }
