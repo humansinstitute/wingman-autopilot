@@ -31,8 +31,9 @@ export interface NightWatchReport {
   sessionId: string;
   sessionName: string | null;
   workingDirectory: string | null;
-  status: "complete" | "error" | "humanInput";
+  status: "continue" | "complete" | "error" | "humanInput";
   summary: string;
+  reasoning: string | null;
   cycleCount: number;
   createdAt: string;
 }
@@ -143,14 +144,15 @@ class NightWatchStore {
     workingDirectory?: string | null;
     status: NightWatchReport["status"];
     summary: string;
+    reasoning?: string | null;
     cycleCount: number;
   }): NightWatchReport {
     const id = randomUUID();
     const now = new Date().toISOString();
     this.db
       .query(
-        `INSERT INTO nightwatch_reports (id, session_id, session_name, working_directory, status, summary, cycle_count, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+        `INSERT INTO nightwatch_reports (id, session_id, session_name, working_directory, status, summary, reasoning, cycle_count, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
       )
       .run(
         id,
@@ -159,6 +161,7 @@ class NightWatchStore {
         input.workingDirectory ?? null,
         input.status,
         input.summary,
+        input.reasoning ?? null,
         input.cycleCount,
         now,
       );
@@ -170,6 +173,7 @@ class NightWatchStore {
       workingDirectory: input.workingDirectory ?? null,
       status: input.status,
       summary: input.summary,
+      reasoning: input.reasoning ?? null,
       cycleCount: input.cycleCount,
       createdAt: now,
     };
@@ -185,6 +189,7 @@ class NightWatchStore {
            working_directory AS workingDirectory,
            status,
            summary,
+           reasoning,
            cycle_count AS cycleCount,
            created_at AS createdAt
          FROM nightwatch_reports
@@ -275,6 +280,13 @@ class NightWatchStore {
     // Migration: add working_directory column if missing
     try {
       this.db.exec(`ALTER TABLE nightwatch_reports ADD COLUMN working_directory TEXT`);
+    } catch {
+      // Column already exists — ignore
+    }
+
+    // Migration: add reasoning column if missing
+    try {
+      this.db.exec(`ALTER TABLE nightwatch_reports ADD COLUMN reasoning TEXT`);
     } catch {
       // Column already exists — ignore
     }

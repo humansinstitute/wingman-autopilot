@@ -194,6 +194,14 @@ export function initNightWatchSettingsPanel({ state, render, showToast, createCo
     summary.style.cssText = "margin: 0; font-size: 0.85rem; line-height: 1.4;";
     item.append(summary);
 
+    // Reasoning (if present)
+    if (report.reasoning) {
+      const reasoning = document.createElement("p");
+      reasoning.textContent = report.reasoning;
+      reasoning.style.cssText = "margin: 0.25rem 0 0; font-size: 0.8rem; line-height: 1.3; opacity: 0.7; font-style: italic; border-left: 2px solid rgba(255,255,255,0.15); padding-left: 0.5rem;";
+      item.append(reasoning);
+    }
+
     // Dismiss button
     const actions = document.createElement("div");
     actions.style.cssText = "display: flex; justify-content: flex-end;";

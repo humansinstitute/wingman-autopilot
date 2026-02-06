@@ -69,6 +69,7 @@ type NightWatchAction = "continue" | "morehistory" | "complete" | "error" | "hum
 interface NightWatchResponse {
   nextAction: NightWatchAction;
   content: string;
+  reasoning: string;
 }
 
 interface ChatMessage {
@@ -94,7 +95,8 @@ You MUST respond with valid JSON only. No markdown, no explanation outside the J
 Response format:
 {
   "nextAction": "<action>",
-  "content": "<your message>"
+  "content": "<your message>",
+  "reasoning": "<brief explanation of why you chose this action>"
 }
 
 Available actions:
@@ -256,8 +258,9 @@ function parseNightWatchResponse(raw: string): NightWatchResponse {
     : "complete";
 
   const content = String(parsed.content ?? "No details provided.");
+  const reasoning = String(parsed.reasoning ?? "");
 
-  return { nextAction, content };
+  return { nextAction, content, reasoning };
 }
 
 async function executeNightWatchReview(
@@ -320,26 +323,10 @@ async function executeNightWatchReview(
   // but handle it gracefully by treating as "continue" with a nudge
   if (result.nextAction === "morehistory") {
     console.log(`[nightwatch] Got morehistory but full history was already sent, treating as continue`);
-    result = { nextAction: "continue", content: "Continue with the current task." };
+    result = { nextAction: "continue", content: "Continue with the current task.", reasoning: "Full history already provided, continuing." };
   }
 
-  // Act on the result
-  if (result.nextAction === "continue") {
-    deps.store.incrementCycle(sessionId);
-    try {
-      deps.promptQueueStore.addPrompt(sessionId, { content: result.content });
-      console.log(`[nightwatch] Queued continuation prompt for session ${sessionId}: ${result.content.slice(0, 120)}`);
-      const currentSession = deps.getSession(sessionId);
-      if (currentSession) {
-        deps.dispatchPrompt(currentSession);
-      }
-    } catch (err) {
-      console.error(`[nightwatch] Failed to queue prompt for session ${sessionId}:`, err);
-    }
-    return;
-  }
-
-  // Terminal actions: complete, error, humanInput
+  // Create a report card for every cycle (including continue)
   const currentSession = deps.getSession(sessionId);
   const sessionName = currentSession?.name ?? null;
   const currentState = deps.store.getSessionState(sessionId);
@@ -351,9 +338,26 @@ async function executeNightWatchReview(
     workingDirectory: currentSession?.workingDirectory ?? null,
     status: result.nextAction as NightWatchReport["status"],
     summary: result.content,
+    reasoning: result.reasoning || null,
     cycleCount,
   });
 
+  // Act on the result
+  if (result.nextAction === "continue") {
+    deps.store.incrementCycle(sessionId);
+    try {
+      deps.promptQueueStore.addPrompt(sessionId, { content: result.content });
+      console.log(`[nightwatch] Queued continuation prompt for session ${sessionId}: ${result.content.slice(0, 120)}`);
+      if (currentSession) {
+        deps.dispatchPrompt(currentSession);
+      }
+    } catch (err) {
+      console.error(`[nightwatch] Failed to queue prompt for session ${sessionId}:`, err);
+    }
+    return;
+  }
+
+  // Terminal actions: complete, error, humanInput — disable the session
   deps.store.disableSession(sessionId);
   console.log(
     `[nightwatch] Session ${sessionId} terminated with ${result.nextAction}: ${result.content.slice(0, 100)}`,
@@ -401,6 +405,7 @@ export async function maybeTriggerNightWatch(
       workingDirectory: session.workingDirectory ?? null,
       status: "complete",
       summary: `Reached maximum cycle limit (${sessionState.maxCycles}).`,
+      reasoning: "Automatic stop: cycle limit reached.",
       cycleCount: sessionState.cycleCount,
     });
     deps.store.disableSession(session.id);

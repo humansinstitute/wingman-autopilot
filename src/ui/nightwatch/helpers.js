@@ -6,12 +6,14 @@
  */
 
 export const STATUS_COLORS = {
+  continue: "#3b82f6",
   complete: "#22c55e",
   error: "#ef4444",
   humanInput: "#f59e0b",
 };
 
 export const STATUS_LABELS = {
+  continue: "Continue",
   complete: "Complete",
   error: "Error",
   humanInput: "Human Input",
