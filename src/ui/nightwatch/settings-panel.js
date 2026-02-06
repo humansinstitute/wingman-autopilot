@@ -69,6 +69,8 @@ export function initNightWatchSettingsPanel({ state, render, showToast, createCo
       state.nightwatch.config.model = data.model || "google/gemini-3-flash-preview";
       state.nightwatch.config.maxCycles = data.maxCycles || 21;
       state.nightwatch.config.maxCycleOptions = data.maxCycleOptions || [6, 21, 256];
+      state.nightwatch.config.prompt = data.prompt || "";
+      state.nightwatch.config.defaultPrompt = data.defaultPrompt || "";
     } catch (err) {
       console.warn("[nightwatch] Failed to load config:", err);
     }

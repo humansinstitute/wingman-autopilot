@@ -124,7 +124,7 @@ export const state = {
     reports: [],
     reportsLoading: false,
     reportsInitialized: false,
-    config: { model: "google/gemini-3-flash-preview", maxCycles: 21, models: [], maxCycleOptions: [6, 21, 256] },
+    config: { model: "google/gemini-3-flash-preview", maxCycles: 21, models: [], maxCycleOptions: [6, 21, 256], prompt: "", defaultPrompt: "" },
   },
   // Webview split-panel layout state
   webviewLayout: { open: false, mode: "chat-narrow" },

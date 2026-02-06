@@ -10,10 +10,11 @@ export async function fetchNightWatchConfig() {
   return res.json();
 }
 
-export async function updateNightWatchConfig({ model, maxCycles } = {}) {
+export async function updateNightWatchConfig({ model, maxCycles, prompt } = {}) {
   const body = {};
   if (model !== undefined) body.model = model;
   if (maxCycles !== undefined) body.maxCycles = maxCycles;
+  if (prompt !== undefined) body.prompt = prompt;
   const res = await fetch("/api/nightwatch/config", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },

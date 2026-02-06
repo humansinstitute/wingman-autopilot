@@ -86,7 +86,7 @@ const nightwatchInFlight = new Set<string>();
 // System Prompt
 // ============================================================
 
-const SYSTEM_PROMPT = `You are Night Watchman, an autonomous supervisor for AI coding agent sessions.
+export const NIGHTWATCH_DEFAULT_PROMPT = `You are Night Watchman, an autonomous supervisor for AI coding agent sessions.
 Your job is to keep the agent productive and moving forward. You act on behalf of the human boss who is away.
 
 You MUST respond with valid JSON only. No markdown, no explanation outside the JSON.
@@ -163,6 +163,7 @@ async function loadProjectContext(workingDirectory: string): Promise<string | nu
 // ============================================================
 
 function buildNightWatchPrompt(
+  systemPrompt: string,
   firstMessages: StoredMessage[],
   allMessages: StoredMessage[],
   projectContext: string | null,
@@ -182,7 +183,7 @@ function buildNightWatchPrompt(
   userMessage += `What are we trying to achieve:\n${goalSection}\n\nFull Conversation History:\n${historySection}`;
 
   return [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: systemPrompt },
     { role: "user", content: userMessage },
   ];
 }
@@ -287,12 +288,14 @@ async function executeNightWatchReview(
 
   const firstMessages = allMessages.slice(0, 3);
   const model = sessionState.model || NIGHTWATCH_DEFAULT_MODEL;
+  const customPrompt = deps.store.getConfig("custom_prompt");
+  const systemPrompt = customPrompt || NIGHTWATCH_DEFAULT_PROMPT;
 
   console.log(
-    `[nightwatch] Reviewing session ${sessionId} (cycle ${sessionState.cycleCount}/${sessionState.maxCycles}, model: ${model}, messages: ${allMessages.length}${projectContext ? ", with project context" : ""})`,
+    `[nightwatch] Reviewing session ${sessionId} (cycle ${sessionState.cycleCount}/${sessionState.maxCycles}, model: ${model}, messages: ${allMessages.length}${projectContext ? ", with project context" : ""}${customPrompt ? ", custom prompt" : ""})`,
   );
 
-  const prompt = buildNightWatchPrompt(firstMessages, allMessages, projectContext);
+  const prompt = buildNightWatchPrompt(systemPrompt, firstMessages, allMessages, projectContext);
   let rawResponse: string;
 
   try {

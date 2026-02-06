@@ -10,6 +10,7 @@ import {
   NIGHTWATCH_MODELS,
   NIGHTWATCH_MAX_CYCLE_OPTIONS,
   NIGHTWATCH_DEFAULT_MODEL,
+  NIGHTWATCH_DEFAULT_PROMPT,
 } from "./nightwatch-engine";
 
 // ============================================================
@@ -47,6 +48,8 @@ function handleGetConfig(deps: NightWatchApiDependencies): Response {
     maxCycleOptions: [...NIGHTWATCH_MAX_CYCLE_OPTIONS],
     model: allConfig.default_model ?? NIGHTWATCH_DEFAULT_MODEL,
     maxCycles: Number(allConfig.default_max_cycles ?? "21"),
+    prompt: allConfig.custom_prompt ?? "",
+    defaultPrompt: NIGHTWATCH_DEFAULT_PROMPT,
   });
 }
 
@@ -64,6 +67,15 @@ async function handleUpdateConfig(
     const maxCycles = Number(body.maxCycles);
     if (Number.isFinite(maxCycles) && maxCycles > 0) {
       deps.store.setConfig("default_max_cycles", String(Math.trunc(maxCycles)));
+    }
+  }
+  if (typeof body.prompt === "string") {
+    const trimmed = body.prompt.trim();
+    if (trimmed && trimmed !== NIGHTWATCH_DEFAULT_PROMPT) {
+      deps.store.setConfig("custom_prompt", trimmed);
+    } else {
+      // Empty or matches default — remove custom prompt
+      deps.store.setConfig("custom_prompt", "");
     }
   }
 
