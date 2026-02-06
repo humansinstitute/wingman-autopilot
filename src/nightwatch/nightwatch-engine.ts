@@ -345,6 +345,7 @@ async function executeNightWatchReview(
   deps.store.addReport({
     sessionId,
     sessionName,
+    workingDirectory: currentSession?.workingDirectory ?? null,
     status: result.nextAction as NightWatchReport["status"],
     summary: result.content,
     cycleCount,
@@ -394,6 +395,7 @@ export async function maybeTriggerNightWatch(
     deps.store.addReport({
       sessionId: session.id,
       sessionName: session.name ?? null,
+      workingDirectory: session.workingDirectory ?? null,
       status: "complete",
       summary: `Reached maximum cycle limit (${sessionState.maxCycles}).`,
       cycleCount: sessionState.cycleCount,

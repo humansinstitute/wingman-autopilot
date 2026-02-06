@@ -30,6 +30,7 @@ export interface NightWatchReport {
   id: string;
   sessionId: string;
   sessionName: string | null;
+  workingDirectory: string | null;
   status: "complete" | "error" | "humanInput";
   summary: string;
   cycleCount: number;
@@ -139,6 +140,7 @@ class NightWatchStore {
   addReport(input: {
     sessionId: string;
     sessionName?: string | null;
+    workingDirectory?: string | null;
     status: NightWatchReport["status"];
     summary: string;
     cycleCount: number;
@@ -147,13 +149,14 @@ class NightWatchStore {
     const now = new Date().toISOString();
     this.db
       .query(
-        `INSERT INTO nightwatch_reports (id, session_id, session_name, status, summary, cycle_count, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+        `INSERT INTO nightwatch_reports (id, session_id, session_name, working_directory, status, summary, cycle_count, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
       )
       .run(
         id,
         input.sessionId,
         input.sessionName ?? null,
+        input.workingDirectory ?? null,
         input.status,
         input.summary,
         input.cycleCount,
@@ -164,6 +167,7 @@ class NightWatchStore {
       id,
       sessionId: input.sessionId,
       sessionName: input.sessionName ?? null,
+      workingDirectory: input.workingDirectory ?? null,
       status: input.status,
       summary: input.summary,
       cycleCount: input.cycleCount,
@@ -178,6 +182,7 @@ class NightWatchStore {
            id,
            session_id AS sessionId,
            session_name AS sessionName,
+           working_directory AS workingDirectory,
            status,
            summary,
            cycle_count AS cycleCount,
@@ -266,6 +271,13 @@ class NightWatchStore {
         value TEXT NOT NULL
       );
     `);
+
+    // Migration: add working_directory column if missing
+    try {
+      this.db.exec(`ALTER TABLE nightwatch_reports ADD COLUMN working_directory TEXT`);
+    } catch {
+      // Column already exists — ignore
+    }
   }
 }
 
