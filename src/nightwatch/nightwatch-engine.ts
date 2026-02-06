@@ -44,7 +44,7 @@ interface StoredMessage {
 }
 
 interface MessageStore {
-  listMessages(sessionId: string): StoredMessage[];
+  listSessionMessages(sessionId: string): StoredMessage[];
 }
 
 interface FeatureFlagStore {
@@ -217,7 +217,7 @@ async function executeNightWatchReview(
     return;
   }
 
-  const allMessages = deps.messageStore.listMessages(sessionId);
+  const allMessages = deps.messageStore.listSessionMessages(sessionId);
   if (allMessages.length === 0) {
     console.log(`[nightwatch] No messages for session ${sessionId}, skipping`);
     return;
