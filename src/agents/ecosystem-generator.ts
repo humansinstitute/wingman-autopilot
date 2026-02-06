@@ -329,19 +329,21 @@ export async function createUserAppEcosystemConfig(config: UserAppConfig): Promi
     throw new Error(`App ${app.id} has no start script defined`);
   }
 
-  // Everything loaded at runtime — nothing written to the config file
-  // set -a: auto-export sourced vars; set +a: stop after sourcing
-  const parts = [
-    "set -a; [ -f .env ] && . ./.env; set +a;",
+  // Metadata vars set as env prefixes (available to child process)
+  const meta = [
     `APP_ID='${app.id}'`,
     `APP_LABEL='${app.label}'`,
     `USER_ALIAS='${userAlias}'`,
   ];
   if (app.webApp && app.webAppPort) {
-    parts.push(`PORT=${app.webAppPort}`);
+    meta.push(`PORT=${app.webAppPort}`);
   }
-  parts.push(startScript);
-  const command = parts.join(" ");
+
+  // Prefer Redshift if configured, fall back to sourcing .env
+  const hasRedshift = await Bun.file(join(app.root, "redshift.yaml")).exists();
+  const command = hasRedshift
+    ? `${meta.join(" ")} redshift run -- ${startScript}`
+    : `set -a; [ -f .env ] && . ./.env; set +a; ${meta.join(" ")} ${startScript}`;
 
   return {
     name: processName,
