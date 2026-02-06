@@ -4386,6 +4386,7 @@ const desktopSessionIndicatorName =
   desktopSessionIndicator?.querySelector('[data-part="name"]') ?? null;
 const desktopSessionIndicatorDirectory =
   desktopSessionIndicator?.querySelector('[data-part="directory"]') ?? null;
+const headerWebviewToggle = document.getElementById("header-webview-toggle");
 const quickLauncherButton = document.getElementById("quick-launcher-button");
 const quickLauncherMenu = document.getElementById("quick-launcher-menu");
 const quickLauncherList = document.getElementById("quick-launcher-list");
@@ -4772,6 +4773,29 @@ const syncDesktopSessionIndicator = () => {
 
   desktopSessionIndicator.hidden = false;
 };
+
+/**
+ * Sync the header webview toggle button.
+ * Shows a globe icon when the active session has an associated web app.
+ */
+function syncHeaderWebviewToggle(webApp) {
+  if (!headerWebviewToggle) return;
+  if (!webApp) {
+    headerWebviewToggle.hidden = true;
+    headerWebviewToggle.innerHTML = "";
+    return;
+  }
+  headerWebviewToggle.hidden = false;
+  headerWebviewToggle.innerHTML = "";
+  const btn = createWebviewIcon(webApp, () => {
+    state.webviewLayout.open = !state.webviewLayout.open;
+    render();
+  });
+  if (state.webviewLayout.open) {
+    btn.classList.add("active");
+  }
+  headerWebviewToggle.append(btn);
+}
 
 // Quick Launcher functionality
 const quickLauncherState = {
@@ -12580,17 +12604,7 @@ const renderLive = () => {
 
   // Check for a web app associated with this session
   const webApp = findWebAppForSession(sessionId, state.sessions, state.apps.items, npubProjectsState);
-
-  if (webApp) {
-    const webviewIcon = createWebviewIcon(webApp, () => {
-      state.webviewLayout.open = !state.webviewLayout.open;
-      render();
-    });
-    if (state.webviewLayout.open) {
-      webviewIcon.classList.add("active");
-    }
-    main.append(webviewIcon);
-  }
+  syncHeaderWebviewToggle(webApp);
 
   if (webApp && state.webviewLayout.open) {
     // Flag the app container so CSS can expand to full width
@@ -13188,6 +13202,10 @@ const render = () => {
       setActiveNav();
       syncMenuTabs();
       syncDesktopSessionIndicator();
+      // Hide header webview toggle when not on live route (renderLive handles showing it)
+      if (currentRoute !== "live") {
+        syncHeaderWebviewToggle(null);
+      }
       updateAgentStatusIndicators();
       updateDocumentTitle();
     } finally {
