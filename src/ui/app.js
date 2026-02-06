@@ -38,6 +38,7 @@ import {
 import { addNightWatchToggle } from "./nightwatch/cmd-toggle.js";
 import { initNightWatchSettingsPanel } from "./nightwatch/settings-panel.js";
 import { initNightWatchPage } from "./nightwatch/page.js";
+import { initNightWatchStore } from "./nightwatch/store.js";
 import { startSigningListener, stopSigningListener } from "./nip98/signing-listener.js";
 import { buildSessionOrigin, createSessionLauncher } from "./helpers/session-launch.js";
 import {
@@ -13343,7 +13344,7 @@ const nightWatchUI = initNightWatchSettingsPanel({ state, render, showToast, cre
 renderNightWatchSettingsPanel = nightWatchUI.renderPanel;
 ensureNightWatchLoaded = nightWatchUI.ensureLoaded;
 
-const nightWatchPageUI = initNightWatchPage({ state, render, showToast });
+const nightWatchPageUI = initNightWatchPage({ state, showToast });
 renderNightWatchPage = nightWatchPageUI.renderPage;
 ensureNightWatchPageLoaded = nightWatchPageUI.ensureLoaded;
 
@@ -13916,10 +13917,21 @@ dialog.addEventListener("cancel", (event) => {
   // Initialize live module (Dexie database for SSE updates)
   initLiveModule().catch((err) => console.warn("[app] Live module init failed:", err));
 
+  // Initialize Night Watch Alpine store (Dexie-backed, must register before Alpine.start)
+  initNightWatchStore({ showToast });
+
   // Initialize Alpine.js chat component if enabled
   if (isAlpineChatEnabled()) {
     initAlpineChat();
     console.log("[app] Alpine.js chat component enabled");
+  }
+
+  // Ensure Alpine.js is started (chat-component may have started it already)
+  if (!window.Alpine) {
+    const { default: Alpine } = await import("/vendor/alpinejs/module.esm.js");
+    window.Alpine = Alpine;
+    Alpine.start();
+    console.log("[app] Alpine.js started");
   }
 
   // Wire SSE status events to knight rider and status indicators
