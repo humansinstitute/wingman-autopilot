@@ -20,6 +20,7 @@ import {
   getProcessByName,
   waitForStatus,
 } from "./pm2-wrapper";
+import { injectMcpConfig, cleanupMcpConfig } from "./mcp-injector";
 
 const MAX_LOG_LINES = 500;
 
@@ -96,6 +97,8 @@ interface AgentSession {
   isAdmin?: boolean;
   /** PM2 process name when spawned via PM2 */
   pm2Name?: string;
+  /** Files created by MCP config injection to clean up on session stop. */
+  mcpCleanupFiles?: string[];
 }
 
 export class ProcessManager {
@@ -188,6 +191,24 @@ export class ProcessManager {
 
     this.sessions.set(id, session);
     this.emit({ type: "session-started", session: this.toSnapshot(session) });
+
+    // Inject MCP config so the agent discovers the Wingman MCP server
+    try {
+      const mcpResult = await injectMcpConfig({
+        sessionId: id,
+        agent,
+        workingDirectory: sessionWorkingDirectory,
+        config: this.config,
+      });
+      session.mcpCleanupFiles = mcpResult.cleanupFiles;
+      // Merge MCP env vars into the agent definition for spawning
+      session.definition = {
+        ...session.definition,
+        env: { ...session.definition.env, ...mcpResult.env },
+      };
+    } catch (mcpError) {
+      this.appendLog(session, `[manager] MCP config injection failed (non-fatal): ${(mcpError as Error).message}`);
+    }
 
     try {
       if (this.config.agentSpawnMode === "pm2") {
@@ -297,6 +318,12 @@ export class ProcessManager {
         // ignore failures when the process already exited or cannot be signalled
       }
       session.detachedPid = undefined;
+    }
+
+    // Clean up MCP config files created during injection
+    if (session.mcpCleanupFiles && session.mcpCleanupFiles.length > 0) {
+      cleanupMcpConfig(session.mcpCleanupFiles).catch(() => {});
+      session.mcpCleanupFiles = undefined;
     }
 
     session.status = "stopped";
