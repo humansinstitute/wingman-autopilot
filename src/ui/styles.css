@@ -7466,3 +7466,151 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   font-size: 0.8rem;
   color: var(--text-tertiary);
 }
+
+/* ── Webview split panel ────────────────────────────── */
+
+.wm-webview-icon {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.375rem;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.wm-webview-icon:hover {
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  background: var(--bg-tertiary);
+}
+
+.wm-webview-icon.active {
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.wm-live-split {
+  display: flex;
+  gap: 0.75rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.wm-live-split > .wm-live-chat-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.wm-live-split > .wm-webview-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.wm-live-split--chat-narrow > .wm-live-chat-col {
+  flex: 1;
+}
+
+.wm-live-split--chat-narrow > .wm-webview-col {
+  flex: 2;
+}
+
+.wm-live-split--app-narrow > .wm-live-chat-col {
+  flex: 2;
+}
+
+.wm-live-split--app-narrow > .wm-webview-col {
+  flex: 1;
+}
+
+.wm-webview-panel {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid rgba(16, 185, 129, 0.18);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+.wm-webview-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+}
+
+.wm-webview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid rgba(16, 185, 129, 0.18);
+  background: var(--bg-secondary);
+}
+
+.wm-webview-toolbar-modes {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.wm-webview-mode-btn,
+.wm-webview-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 0.25rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.wm-webview-mode-btn:hover,
+.wm-webview-close-btn:hover {
+  color: var(--accent-primary);
+  background: var(--bg-tertiary);
+}
+
+.wm-webview-mode-btn.active {
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  background: var(--bg-tertiary);
+}
+
+.wm-webview-close-btn:hover {
+  color: #ef4444;
+}
+
+@media (max-width: 768px) {
+  .wm-live-split {
+    flex-direction: column;
+  }
+
+  .wm-live-split--chat-narrow > .wm-live-chat-col,
+  .wm-live-split--app-narrow > .wm-live-chat-col {
+    flex: none;
+  }
+
+  .wm-live-split--chat-narrow > .wm-webview-col,
+  .wm-live-split--app-narrow > .wm-webview-col {
+    flex: none;
+    height: 50vh;
+  }
+}

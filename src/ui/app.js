@@ -17,6 +17,13 @@ import {
   initAlpineChat,
   getChatTemplate,
 } from "./live/index.js";
+import {
+  findAppForSession,
+  findWebAppForSession,
+  createWebviewIcon,
+  createWebviewPanel,
+  createLayoutToolbar,
+} from "./live/webview-panel.js";
 import { createHomeGuestHero } from "./home/hero.js";
 import { createArchiveComponent } from "./home/archive.js";
 import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
@@ -12170,18 +12177,7 @@ const renderComposer = (sessionId) => {
   ]);
 
   // Apps submenu - show if there's an app matching the session's working directory
-  const currentSession = state.sessions.find((s) => s.id === sessionId);
-  const sessionDirectory = currentSession?.workingDirectory;
-  // First try exact directory match, then fall back to appId from npub-project
-  let matchingApp = sessionDirectory
-    ? state.apps.items.find((app) => app.root === sessionDirectory)
-    : null;
-  if (!matchingApp && sessionDirectory) {
-    const project = npubProjectsState.items.find((p) => p.directoryPath === sessionDirectory);
-    if (project?.appId) {
-      matchingApp = state.apps.items.find((app) => app.id === project.appId);
-    }
-  }
+  const matchingApp = findAppForSession(sessionId, state.sessions, state.apps.items, npubProjectsState);
 
   if (matchingApp) {
     const appItems = [];
@@ -12545,6 +12541,7 @@ const renderLive = () => {
 
   const main = document.createElement("section");
   main.className = "wm-card wm-live-main";
+  main.style.position = "relative";
 
   const scrollRegion = document.createElement("div");
   scrollRegion.className = "wm-live-scroll";
@@ -12570,8 +12567,57 @@ const renderLive = () => {
   scrollRegion.append(conversationContainer);
   scheduleLiveScroll(sessionId, { includeWindow: true });
 
-  main.append(scrollRegion);
-  wrapper.append(main);
+  // Check for a web app associated with this session
+  const webApp = findWebAppForSession(sessionId, state.sessions, state.apps.items, npubProjectsState);
+
+  if (webApp) {
+    const webviewIcon = createWebviewIcon(webApp, () => {
+      state.webviewLayout.open = !state.webviewLayout.open;
+      render();
+    });
+    if (state.webviewLayout.open) {
+      webviewIcon.classList.add("active");
+    }
+    main.append(webviewIcon);
+  }
+
+  if (webApp && state.webviewLayout.open) {
+    // Split layout: chat column + webview column
+    const split = document.createElement("div");
+    split.className = `wm-live-split wm-live-split--${state.webviewLayout.mode}`;
+
+    const chatCol = document.createElement("div");
+    chatCol.className = "wm-live-chat-col";
+    main.append(scrollRegion);
+    chatCol.append(main);
+
+    const webviewCol = document.createElement("div");
+    webviewCol.className = "wm-webview-col";
+
+    const toolbar = createLayoutToolbar(
+      state.webviewLayout.mode,
+      (newMode) => {
+        state.webviewLayout.mode = newMode;
+        render();
+      },
+      () => {
+        state.webviewLayout.open = false;
+        render();
+      }
+    );
+    webviewCol.append(toolbar);
+
+    const webviewResult = createWebviewPanel(webApp);
+    if (webviewResult) {
+      webviewCol.append(webviewResult.panel);
+    }
+
+    split.append(chatCol, webviewCol);
+    wrapper.append(split);
+  } else {
+    main.append(scrollRegion);
+    wrapper.append(main);
+  }
 
   wrapper.append(renderComposer(sessionId));
 
