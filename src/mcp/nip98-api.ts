@@ -3,15 +3,27 @@
  *
  * HTTP handler for /api/mcp/nip98/* routes.
  * Called by the MCP stdio server (running inside agent processes)
- * to sign NIP-98 tokens and manage grants.
+ * to sign NIP-98 tokens and manage grants, and by browsers to
+ * subscribe to signing requests and post signed events back.
  *
  * Follows the CaproverApi pattern — factory function returning a
  * (request, url, method) => Response handler.
  */
 
 import type { SessionSnapshot } from "../agents/process-manager";
+import { readSessionCookie } from "../auth/session-cookie";
 import { signWithWingmanKey, isWingmanKeyAvailable } from "./wingman-signer";
+import { pendingSignRequests } from "./pending-requests";
+import { browserSubscribers } from "./browser-subscribers";
 import type { Nip98GrantStore } from "./grants-store";
+import type { SignRequestMessage } from "./types";
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const NIP98_KIND = 27235;
+const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -42,6 +54,17 @@ async function parseBody(request: Request): Promise<Record<string, unknown>> {
     return body as Record<string, unknown>;
   } catch {
     throw new Error("Invalid JSON body");
+  }
+}
+
+/** Extract npub from session cookie on a browser request. */
+function getNpubFromCookie(request: Request): string | null {
+  try {
+    const cookieHeader = request.headers.get("cookie");
+    const session = readSessionCookie(cookieHeader);
+    return session?.npub ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -86,6 +109,16 @@ export function createNip98ApiHandler(deps: Nip98ApiDependencies) {
       // GET /api/mcp/nip98/status
       if (segments.length === 4 && segments[3] === "status" && method === "GET") {
         return handleStatus();
+      }
+
+      // GET /api/mcp/nip98/subscribe — browser SSE for signing requests
+      if (segments.length === 4 && segments[3] === "subscribe" && method === "GET") {
+        return handleSubscribe(request);
+      }
+
+      // POST /api/mcp/nip98/sign-response — browser posts signed events
+      if (segments.length === 4 && segments[3] === "sign-response" && method === "POST") {
+        return await handleSignResponse(request);
       }
 
       return jsonError("Not found", 404);
@@ -134,30 +167,98 @@ async function handleSign(
   }
 
   if (tier === 2) {
-    // Tier 2: user delegation — check for active grant
-    if (!session.npub) {
-      return jsonError("Session has no associated user — cannot sign Tier 2", 403);
-    }
-
-    const domain = new URL(targetUrl).hostname;
-    const grant = deps.grantsStore.findActiveGrant(domain, session.npub, sessionId);
-    if (!grant) {
-      return jsonError(
-        `No active grant for ${domain}. Call request_api_access first.`,
-        403,
-      );
-    }
-
-    // TODO Phase 2: Route sign request to user's browser via SSE/WS.
-    // For now, return an error explaining browser signing is not yet wired.
-    return jsonError(
-      "Tier 2 browser signing is not yet implemented. " +
-        "Grant exists — browser signing pipeline coming in Phase 2.",
-      501,
-    );
+    return await handleTier2Sign(deps, session, sessionId, targetUrl, httpMethod, bodyHash);
   }
 
   return jsonError("tier must be 1 or 2", 400);
+}
+
+/**
+ * Tier 2 signing — route the request to the user's browser via SSE.
+ */
+async function handleTier2Sign(
+  deps: Nip98ApiDependencies,
+  session: SessionSnapshot,
+  sessionId: string,
+  targetUrl: string,
+  httpMethod: string,
+  bodyHash?: string,
+): Promise<Response> {
+  if (!session.npub) {
+    return jsonError("Session has no associated user — cannot sign Tier 2", 403);
+  }
+
+  const domain = new URL(targetUrl).hostname;
+  const grant = deps.grantsStore.findActiveGrant(domain, session.npub, sessionId);
+  if (!grant) {
+    return jsonError(
+      `No active grant for ${domain}. Call request_api_access first.`,
+      403,
+    );
+  }
+
+  // Check that at least one browser is listening
+  if (!browserSubscribers.hasSubscriber(session.npub)) {
+    return jsonError(
+      "No active browser session for this user. Open the Wingman UI in a browser to enable Tier 2 signing.",
+      503,
+    );
+  }
+
+  // Build the NIP-98 event template (unsigned)
+  const tags: string[][] = [
+    ["u", targetUrl],
+    ["method", httpMethod.toUpperCase()],
+  ];
+  if (bodyHash) {
+    tags.push(["payload", bodyHash]);
+  }
+
+  const eventTemplate = {
+    kind: NIP98_KIND,
+    created_at: Math.floor(Date.now() / 1000),
+    tags,
+    content: "",
+  };
+
+  // Create a pending request and send to browser
+  const { requestId, promise } = pendingSignRequests.create(session.npub);
+
+  const signRequest: SignRequestMessage = {
+    type: "nip98:sign_request",
+    requestId,
+    grantId: grant.id,
+    eventTemplate,
+  };
+
+  const delivered = browserSubscribers.send(session.npub, signRequest);
+  if (!delivered) {
+    pendingSignRequests.reject(requestId, "Failed to deliver signing request to browser");
+    return jsonError("Browser subscriber disconnected before delivery", 503);
+  }
+
+  console.log(
+    `[nip98-api] Tier 2 sign request ${requestId} sent to browser for ${domain} (npub=${session.npub.slice(0, 20)}…)`,
+  );
+
+  // Wait for browser to sign and post back
+  try {
+    const signedEvent = await promise;
+
+    // Build the Authorization header value
+    const eventJson = JSON.stringify(signedEvent);
+    const base64Token = btoa(eventJson);
+    const token = `Nostr ${base64Token}`;
+
+    // Extract signedBy from the event's pubkey
+    const signedBy = typeof signedEvent.pubkey === "string" ? signedEvent.pubkey : session.npub;
+
+    return Response.json({ token, signedBy });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Browser signing failed";
+    console.warn(`[nip98-api] Tier 2 sign failed: ${message}`);
+    return jsonError(message, 502);
+  }
 }
 
 /**
@@ -189,14 +290,12 @@ async function handleRequestGrant(
     return jsonError("Session has no associated user", 403);
   }
 
-  // TODO Phase 2: Send consent request to browser via SSE/WS and wait.
-  // For now, auto-approve grants so Tier 2 flow can be tested end-to-end
-  // once browser signing is wired up.
+  // Auto-approve grants (consent UI deferred to a later phase)
   const grant = deps.grantsStore.createGrant({
     domain,
     userNpub: session.npub,
     sessionId,
-    signerType: "ephemeral",
+    signerType: "nip07",
     durationHours: Math.min(durationHours, 168), // Cap at 7 days
     reason,
     endpoints: endpoints?.map((e) => ({
@@ -250,6 +349,108 @@ function handleRevokeGrant(deps: Nip98ApiDependencies, grantId: string): Respons
 function handleStatus(): Response {
   return Response.json({
     tier1Available: isWingmanKeyAvailable(),
-    tier2Available: false, // Phase 2
+    tier2Available: true,
   });
+}
+
+/**
+ * GET /api/mcp/nip98/subscribe
+ *
+ * Browser SSE endpoint. The browser subscribes after login to receive
+ * NIP-98 signing requests. Validated via session cookie.
+ */
+function handleSubscribe(request: Request): Response {
+  const npub = getNpubFromCookie(request);
+  if (!npub) {
+    return jsonError("Not authenticated — session cookie required", 401);
+  }
+
+  const encoder = new TextEncoder();
+  let subscriberController: ReadableStreamDefaultController<Uint8Array> | null = null;
+  let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        subscriberController = controller;
+        browserSubscribers.add(npub, controller);
+
+        // Send initial connected event
+        controller.enqueue(encoder.encode(": connected\n\n"));
+
+        // Keepalive to prevent proxy/browser idle timeout
+        keepaliveTimer = setInterval(() => {
+          try {
+            controller.enqueue(encoder.encode(": keepalive\n\n"));
+          } catch {
+            if (keepaliveTimer) {
+              clearInterval(keepaliveTimer);
+              keepaliveTimer = null;
+            }
+          }
+        }, SSE_KEEPALIVE_INTERVAL_MS);
+      },
+      cancel() {
+        if (keepaliveTimer) {
+          clearInterval(keepaliveTimer);
+          keepaliveTimer = null;
+        }
+        if (subscriberController) {
+          browserSubscribers.remove(npub, subscriberController);
+          subscriberController = null;
+        }
+      },
+    }),
+    {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
+    },
+  );
+}
+
+/**
+ * POST /api/mcp/nip98/sign-response
+ *
+ * Browser posts signed NIP-98 events back here to resolve pending requests.
+ * Body: { requestId, signedEvent? , error? }
+ * Validated via session cookie.
+ */
+async function handleSignResponse(request: Request): Promise<Response> {
+  const npub = getNpubFromCookie(request);
+  if (!npub) {
+    return jsonError("Not authenticated — session cookie required", 401);
+  }
+
+  const body = await parseBody(request);
+  const requestId = body.requestId as string | undefined;
+  if (!requestId) {
+    return jsonError("requestId is required", 400);
+  }
+
+  const signedEvent = body.signedEvent as Record<string, unknown> | undefined;
+  const error = body.error as string | undefined;
+
+  if (error) {
+    const rejected = pendingSignRequests.reject(requestId, error);
+    if (!rejected) {
+      return jsonError("No pending request found for this requestId (may have timed out)", 404);
+    }
+    return Response.json({ ok: true, resolved: false });
+  }
+
+  if (!signedEvent) {
+    return jsonError("Either signedEvent or error is required", 400);
+  }
+
+  const resolved = pendingSignRequests.resolve(requestId, signedEvent);
+  if (!resolved) {
+    return jsonError("No pending request found for this requestId (may have timed out)", 404);
+  }
+
+  console.log(`[nip98-api] Sign response received for request ${requestId}`);
+  return Response.json({ ok: true, resolved: true });
 }

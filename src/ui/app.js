@@ -38,6 +38,7 @@ import {
 import { addNightWatchToggle } from "./nightwatch/cmd-toggle.js";
 import { initNightWatchSettingsPanel } from "./nightwatch/settings-panel.js";
 import { initNightWatchPage } from "./nightwatch/page.js";
+import { startSigningListener, stopSigningListener } from "./nip98/signing-listener.js";
 import { buildSessionOrigin, createSessionLauncher } from "./helpers/session-launch.js";
 import {
   state,
@@ -872,6 +873,12 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
   }
   if (becameAuthenticated) {
     requestPostAuthSessionsFetch();
+    if (next.npub) {
+      startSigningListener(next.npub);
+    }
+  }
+  if (becameUnauthenticated) {
+    stopSigningListener();
   }
 
   return next;
@@ -13988,6 +13995,10 @@ dialog.addEventListener("cancel", (event) => {
     await fetchApps({ tail: APP_LOG_PREVIEW_LINES });
     // Also fetch npub projects for app fallback matching
     fetchNpubProjects().catch(() => {});
+    // Start NIP-98 signing listener for Tier 2 agent delegation
+    if (state.identity.npub) {
+      startSigningListener(state.identity.npub);
+    }
   } else if (currentRoute === "apps") {
     await fetchApps({ tail: APP_LOG_PREVIEW_LINES });
   }
