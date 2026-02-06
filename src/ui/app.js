@@ -12047,6 +12047,7 @@ const renderComposer = (sessionId) => {
       commandButton.setAttribute("aria-expanded", "false");
     });
     commandMenu.append(item);
+    return item;
   };
 
   const addCommandDivider = () => {
