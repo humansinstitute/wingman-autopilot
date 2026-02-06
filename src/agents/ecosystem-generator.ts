@@ -16,7 +16,7 @@ export interface EcosystemApp {
   script: string;
   args: string[];
   cwd: string;
-  env: Record<string, string>;
+  env?: Record<string, string>;
   out_file: string;
   error_file: string;
   log_date_format: string;
@@ -329,19 +329,19 @@ export async function createUserAppEcosystemConfig(config: UserAppConfig): Promi
     throw new Error(`App ${app.id} has no start script defined`);
   }
 
-  // Build command that sources .env at runtime (secrets stay in .env, never written to config)
-  // set -a: auto-export all sourced vars; set +a: stop after sourcing
-  const envSource = "set -a; [ -f .env ] && . ./.env; set +a;";
-  const portPrefix = app.webApp && app.webAppPort ? `PORT=${app.webAppPort} ` : "";
-  const command = `${envSource} ${portPrefix}${startScript}`;
-
-  // Only non-secret metadata in the config — no .env contents
-  const env: Record<string, string> = {
-    APP_ID: app.id,
-    APP_LABEL: app.label,
-    USER_ALIAS: userAlias,
-    ...(app.webAppPort ? { PORT: String(app.webAppPort) } : {}),
-  };
+  // Everything loaded at runtime — nothing written to the config file
+  // set -a: auto-export sourced vars; set +a: stop after sourcing
+  const parts = [
+    "set -a; [ -f .env ] && . ./.env; set +a;",
+    `APP_ID='${app.id}'`,
+    `APP_LABEL='${app.label}'`,
+    `USER_ALIAS='${userAlias}'`,
+  ];
+  if (app.webApp && app.webAppPort) {
+    parts.push(`PORT=${app.webAppPort}`);
+  }
+  parts.push(startScript);
+  const command = parts.join(" ");
 
   return {
     name: processName,
@@ -349,7 +349,6 @@ export async function createUserAppEcosystemConfig(config: UserAppConfig): Promi
     script: "bash",
     args: ["-c", command],
     cwd: app.root,
-    env,
     out_file: join(logsDir, `${processName}-out.log`),
     error_file: join(logsDir, `${processName}-error.log`),
     log_date_format: "YYYY-MM-DD HH:mm:ss",
@@ -398,20 +397,3 @@ export async function addUserAppToEcosystem(
   };
 }
 
-/**
- * Find a user app in the ecosystem config by APP_ID.
- */
-export async function findUserAppInEcosystem(
-  userRootDir: string,
-  isAdmin: boolean,
-  appId: string,
-): Promise<EcosystemApp | null> {
-  const ecosystemPath = getEcosystemPath(userRootDir, isAdmin);
-
-  try {
-    const config = await readEcosystemConfig(ecosystemPath);
-    return config.apps.find((app) => app.env.APP_ID === appId) ?? null;
-  } catch {
-    return null;
-  }
-}
