@@ -7671,3 +7671,92 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
     bottom: 0;
   }
 }
+
+/* ============================================================
+   Night Watchman Page
+   ============================================================ */
+
+.wm-nightwatch-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.5rem;
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.wm-nightwatch-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.wm-nightwatch-config {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.wm-nightwatch-filters {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.wm-nightwatch-filters .wm-select {
+  min-width: 160px;
+}
+
+.wm-nightwatch-report-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.wm-nightwatch-report-card {
+  border: 1px solid var(--border-primary, #333);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.wm-nightwatch-report-card__project {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: var(--bg-tertiary, #44403c);
+  color: var(--text-secondary, #e7e5e4);
+}
+
+.wm-nightwatch-prompt {
+  border: 1px solid var(--border-primary, #333);
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+.wm-nightwatch-prompt-textarea {
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  min-height: 200px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem;
+  border: 1px solid var(--border-primary, #333);
+  border-radius: 4px;
+  background: var(--bg-secondary, #292524);
+  color: var(--text-primary, #f5f5f4);
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.wm-nightwatch-prompt-textarea:focus {
+  outline: 2px solid var(--accent-primary, #10b981);
+  outline-offset: -1px;
+}
