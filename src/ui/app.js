@@ -37,6 +37,7 @@ import {
 } from "./feature-flags/index.js";
 import { addNightWatchToggle } from "./nightwatch/cmd-toggle.js";
 import { initNightWatchSettingsPanel } from "./nightwatch/settings-panel.js";
+import { initNightWatchPage } from "./nightwatch/page.js";
 import { buildSessionOrigin, createSessionLauncher } from "./helpers/session-launch.js";
 import {
   state,
@@ -136,6 +137,8 @@ let resolveFeatureFlagForViewer = () => ({ state: "off", effectiveState: "off" }
 let isFeatureEnabledForViewer = () => false;
 let renderNightWatchSettingsPanel = () => document.createDocumentFragment();
 let ensureNightWatchLoaded = () => {};
+let renderNightWatchPage = () => document.createDocumentFragment();
+let ensureNightWatchPageLoaded = () => {};
 let orchestratorFeatureEnabledForViewer = () => false;
 let projectsFeatureEnabledForViewer = () => true;
 let syncFeatureFlagsFromConfig = () => {};
@@ -3699,6 +3702,7 @@ const FILES_ROUTE = "/files";
 const SETTINGS_ROUTE = "/settings";
 const APPS_ROUTE = "/apps";
 const PROJECTS_ROUTE = "/projects";
+const NIGHTWATCH_ROUTE = "/nightwatch";
 const HOME_ROUTE = "/home";
 const PRIVACY_ROUTE = "/privacy";
 
@@ -3719,6 +3723,9 @@ const getRouteFromPath = (pathname) => {
   }
   if (pathname === PROJECTS_ROUTE) {
     return "projects";
+  }
+  if (pathname === NIGHTWATCH_ROUTE) {
+    return "nightwatch";
   }
   if (pathname === LIVE_ROUTE_PREFIX || pathname.startsWith(`${LIVE_ROUTE_PREFIX}/`)) {
     return "live";
@@ -4342,6 +4349,7 @@ const sessionForm = dialog?.querySelector("form");
 const appRoot = document.getElementById("app");
 const navLinks = Array.from(document.querySelectorAll("nav a[data-route]"));
 const projectsNavLink = navLinks.find((link) => link.dataset.route === "projects");
+const nightwatchNavLink = navLinks.find((link) => link.dataset.route === "nightwatch");
 const themeToggle = document.getElementById("theme-toggle");
 const tabsToggle = document.getElementById("tabs-toggle");
 const menuToggle = document.getElementById("menu-toggle");
@@ -4372,6 +4380,7 @@ performAuthUiSync = () => {
     headerLoginButton.disabled = authed;
   }
   syncProjectsNavigationVisibility();
+  syncNightWatchNavigationVisibility();
 };
 
 performAuthUiSync();
@@ -5039,6 +5048,8 @@ const updateDocumentTitle = () => {
     title = "Settings - Wingman";
   } else if (currentRoute === "projects") {
     title = "Projects - Wingman";
+  } else if (currentRoute === "nightwatch") {
+    title = "Night Watchman - Wingman";
   } else if (currentRoute === "home") {
     title = "Home - Wingman";
   }
@@ -5054,6 +5065,20 @@ function syncProjectsNavigationVisibility() {
       projectsNavLink.setAttribute("tabindex", "-1");
     } else if (state.identity.authenticated) {
       projectsNavLink.removeAttribute("tabindex");
+    }
+  }
+  return enabled;
+}
+
+function syncNightWatchNavigationVisibility() {
+  const enabled = isFeatureEnabledForViewer("nightwatch_enabled");
+  if (nightwatchNavLink) {
+    nightwatchNavLink.hidden = !enabled;
+    nightwatchNavLink.setAttribute("aria-hidden", enabled ? "false" : "true");
+    if (!enabled) {
+      nightwatchNavLink.setAttribute("tabindex", "-1");
+    } else if (state.identity.authenticated) {
+      nightwatchNavLink.removeAttribute("tabindex");
     }
   }
   return enabled;
@@ -13167,6 +13192,13 @@ const render = () => {
           window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
         }
       }
+      const nightwatchEnabled = syncNightWatchNavigationVisibility();
+      if (!nightwatchEnabled && currentRoute === "nightwatch") {
+        currentRoute = "home";
+        if (window.location.pathname === NIGHTWATCH_ROUTE) {
+          window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
+        }
+      }
       const focusSnapshot = captureFocusSnapshot();
       appRoot.innerHTML = "";
       let view;
@@ -13176,6 +13208,8 @@ const render = () => {
         view = renderApps();
       } else if (currentRoute === "projects") {
         view = renderProjects();
+      } else if (currentRoute === "nightwatch") {
+        view = renderNightWatchPage();
       } else if (currentRoute === "files") {
         view = renderFiles();
       } else if (currentRoute === "settings") {
@@ -13300,6 +13334,10 @@ projectsFeatureEnabledForViewer = featureFlagsUI.projectsEnabled;
 const nightWatchUI = initNightWatchSettingsPanel({ state, render, showToast, createCollapsibleCard });
 renderNightWatchSettingsPanel = nightWatchUI.renderPanel;
 ensureNightWatchLoaded = nightWatchUI.ensureLoaded;
+
+const nightWatchPageUI = initNightWatchPage({ state, render, showToast });
+renderNightWatchPage = nightWatchPageUI.renderPage;
+ensureNightWatchPageLoaded = nightWatchPageUI.ensureLoaded;
 
 renderMenuIdentitySection();
 
@@ -13427,6 +13465,29 @@ function navigateToProjects({ skipMenuClose = false } = {}) {
   render();
 }
 
+function navigateToNightWatch({ skipMenuClose = false } = {}) {
+  if (!state.identity.authenticated) {
+    openIdentityLoginDialog();
+    return;
+  }
+  if (!isFeatureEnabledForViewer("nightwatch_enabled")) {
+    showToast?.("Night Watchman is disabled", { variant: "info" });
+    return;
+  }
+  if (!skipMenuClose) {
+    closeMenu();
+  }
+  closeIdentityLoginDialog();
+  stopConversationPolling();
+  currentRoute = "nightwatch";
+  lastLoggedSessionId = null;
+  if (window.location.pathname !== NIGHTWATCH_ROUTE) {
+    window.history.pushState({ route: "nightwatch" }, "", NIGHTWATCH_ROUTE);
+  }
+  void ensureNightWatchPageLoaded();
+  render();
+}
+
 function navigateToSettings({ skipMenuClose = false } = {}) {
   if (!skipMenuClose) {
     closeMenu();
@@ -13466,6 +13527,9 @@ navLinks.forEach((link) => {
       return;
     } else if (targetRoute === "projects") {
       navigateToProjects({ skipMenuClose: true });
+      return;
+    } else if (targetRoute === "nightwatch") {
+      navigateToNightWatch({ skipMenuClose: true });
       return;
     } else if (targetRoute === "files") {
       // If navigating from live page with an active session, start in that session's directory
@@ -13785,6 +13849,15 @@ window.addEventListener("popstate", () => {
       }
     } else if (projectFeature) {
       void projectFeature.ensureLoaded();
+    }
+  } else if (currentRoute === "nightwatch") {
+    if (!isFeatureEnabledForViewer("nightwatch_enabled")) {
+      currentRoute = "home";
+      if (window.location.pathname !== HOME_ROUTE) {
+        window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
+      }
+    } else {
+      void ensureNightWatchPageLoaded();
     }
   }
   render();
