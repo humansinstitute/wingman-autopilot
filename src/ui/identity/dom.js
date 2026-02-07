@@ -1,0 +1,432 @@
+/**
+ * Identity DOM helpers — button state, display sync, countdown, persistence.
+ *
+ * Pure utility functions are top-level exports. Stateful functions that need
+ * access to `state` and `requestAuthUiSync` are returned from initIdentityDom().
+ */
+
+// ── Pure utility exports (no DI needed) ─────────────────────────────
+
+export const isFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
+
+export const toFiniteTimestamp = (value) => {
+  if (isFiniteNumber(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return value.getTime();
+  }
+  return null;
+};
+
+export const abbreviateNpub = (npub) => {
+  if (!npub || typeof npub !== "string") return "";
+  const trimmed = npub.trim();
+  if (trimmed.length <= 20) return trimmed;
+  return `${trimmed.slice(0, 8)}...${trimmed.slice(-6)}`;
+};
+
+export const formatSatoshis = (value) => {
+  const numeric = typeof value === "number" && Number.isFinite(value) ? value : 0;
+  const truncated = Math.trunc(numeric);
+  const positive = truncated < 0 ? 0 : truncated;
+  return positive.toLocaleString(undefined, { maximumFractionDigits: 0 });
+};
+
+export const normaliseNpubValue = (npub) => {
+  if (typeof npub !== "string") return null;
+  const trimmed = npub.trim();
+  return trimmed.length === 0 ? null : trimmed;
+};
+
+export const identityMethodLabels = {
+  none: "Not signed in",
+  nip07: "Browser extension",
+  local_keys: "BYO Nsec",
+  bunker: "Remote signer",
+};
+
+// ── Init (stateful functions that close over state + requestAuthUiSync) ──
+
+export function initIdentityDom(deps) {
+  const { state, requestAuthUiSync } = deps;
+
+  // ── constants ───────────────────────────────────────────────────
+
+  const IDENTITY_STORAGE_KEY = "wingman-identity-state";
+  const IDENTITY_EVENT_NAMES = ["wingman:identity-state", "identity:state", "nostr-auth:state"];
+
+  // ── shared data structures ──────────────────────────────────────
+
+  const identityDomEntries = new Set();
+  const identityDomEntryByNode = new WeakMap();
+  const identityCopyFeedbackTimeouts = new WeakMap();
+  const identityButtonTimers = new WeakMap();
+  let identityCountdownIntervalId = null;
+
+  // ── button state helpers ────────────────────────────────────────
+
+  function clearButtonStateTimer(button) {
+    if (!button) return;
+    const timerId = identityButtonTimers.get(button);
+    if (timerId) {
+      window.clearTimeout(timerId);
+      identityButtonTimers.delete(button);
+    }
+  }
+
+  function ensureButtonOriginalLabel(button) {
+    if (!button) return;
+    if (!button.dataset.originalLabel) {
+      button.dataset.originalLabel = button.textContent ?? "";
+    }
+  }
+
+  function resetButtonState(button) {
+    if (!button) return;
+    clearButtonStateTimer(button);
+    const originalLabel = button.dataset.originalLabel;
+    if (typeof originalLabel === "string") {
+      button.textContent = originalLabel;
+    }
+    delete button.dataset.state;
+    button.removeAttribute("aria-busy");
+  }
+
+  function setButtonState(button, options = {}) {
+    if (!button) return;
+    ensureButtonOriginalLabel(button);
+    const { state: btnState, label, disable, restoreAfterMs } = options;
+    if (btnState) {
+      button.dataset.state = btnState;
+      if (btnState === "loading") {
+        button.setAttribute("aria-busy", "true");
+      } else {
+        button.removeAttribute("aria-busy");
+      }
+    } else {
+      delete button.dataset.state;
+      button.removeAttribute("aria-busy");
+    }
+    if (typeof label === "string") {
+      button.textContent = label;
+    }
+    if (typeof disable === "boolean") {
+      button.disabled = disable;
+    }
+    if (restoreAfterMs && restoreAfterMs > 0) {
+      clearButtonStateTimer(button);
+      const timerId = window.setTimeout(() => {
+        resetButtonState(button);
+        identityButtonTimers.delete(button);
+      }, restoreAfterMs);
+      identityButtonTimers.set(button, timerId);
+    }
+  }
+
+  // ── formatting helpers ──────────────────────────────────────────
+
+  function formatIdentityDuration(ms) {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    const parts = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0 || days > 0) parts.push(`${hours}h`);
+    if (minutes > 0 && parts.length < 3) parts.push(`${minutes}m`);
+    if (parts.length < 3) parts.push(`${seconds}s`);
+    return parts.join(" ");
+  }
+
+  // ── copy feedback ───────────────────────────────────────────────
+
+  function showIdentityCopyFeedback(message, { error = false, entry } = {}) {
+    const targets = entry ? [entry] : Array.from(identityDomEntries);
+    targets.forEach((target) => {
+      const feedback = target.copyFeedback;
+      if (!feedback) return;
+      feedback.textContent = message;
+      feedback.hidden = false;
+      if (error) {
+        feedback.dataset.state = "error";
+      } else {
+        feedback.dataset.state = "success";
+      }
+      const existingTimeout = identityCopyFeedbackTimeouts.get(target);
+      if (existingTimeout) {
+        window.clearTimeout(existingTimeout);
+      }
+      const timeoutId = window.setTimeout(() => {
+        const currentFeedback = target.copyFeedback;
+        if (!currentFeedback) return;
+        currentFeedback.hidden = true;
+        delete currentFeedback.dataset.state;
+      }, 2000);
+      identityCopyFeedbackTimeouts.set(target, timeoutId);
+      if (target.copyButton) {
+        target.copyButton.dataset.state = error ? "error" : "success";
+        window.setTimeout(() => {
+          if (target.copyButton) {
+            delete target.copyButton.dataset.state;
+          }
+        }, error ? 2500 : 1500);
+      }
+    });
+  }
+
+  // ── countdown ───────────────────────────────────────────────────
+
+  function stopIdentityCountdown() {
+    if (identityCountdownIntervalId !== null) {
+      window.clearInterval(identityCountdownIntervalId);
+      identityCountdownIntervalId = null;
+    }
+  }
+
+  function updateIdentityCountdown() {
+    pruneIdentityDomEntries();
+    const expiresAt = state.identity.expiresAt;
+    const authenticated = state.identity.authenticated;
+    const expirationKnown = isFiniteNumber(expiresAt);
+    identityDomEntries.forEach((entry) => {
+      const expiry = entry.expiry;
+      if (!expiry) return;
+      if (!expirationKnown) {
+        expiry.textContent = authenticated ? "Session expiry unknown" : "\u2014";
+        expiry.dataset.state = authenticated ? "unknown" : "inactive";
+        expiry.title = "";
+        return;
+      }
+      const remaining = expiresAt - Date.now();
+      if (remaining <= 0) {
+        expiry.textContent = "Session expired";
+        expiry.dataset.state = "expired";
+        expiry.title = new Date(expiresAt).toLocaleString();
+        return;
+      }
+      expiry.textContent = `Expires in ${formatIdentityDuration(remaining)}`;
+      expiry.dataset.state = "active";
+      expiry.title = new Date(expiresAt).toLocaleString();
+    });
+    if (expirationKnown && expiresAt - Date.now() <= 0) {
+      stopIdentityCountdown();
+    }
+  }
+
+  function startIdentityCountdown() {
+    stopIdentityCountdown();
+    if (!state.identity.authenticated || !isFiniteNumber(state.identity.expiresAt)) {
+      return;
+    }
+    const hasExpiryTarget = Array.from(identityDomEntries).some((entry) => Boolean(entry.expiry));
+    if (!hasExpiryTarget) {
+      return;
+    }
+    updateIdentityCountdown();
+    identityCountdownIntervalId = window.setInterval(() => {
+      updateIdentityCountdown();
+    }, 1000);
+  }
+
+  // ── persistence ─────────────────────────────────────────────────
+
+  function persistIdentityState(identity) {
+    if (typeof window === "undefined" || !window.localStorage) {
+      return;
+    }
+    try {
+      if (identity.npub) {
+        const payload = {
+          npub: identity.npub,
+          method: identity.method,
+          expiresAt: identity.expiresAt ?? null,
+          alias: identity.alias ?? null,
+          picture: identity.picture ?? null,
+          ports: Array.isArray(identity.ports) ? [...identity.ports] : [],
+          balance: typeof identity.balance === "number" ? identity.balance : 0,
+        };
+        window.localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify(payload));
+      } else {
+        window.localStorage.removeItem(IDENTITY_STORAGE_KEY);
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  // ── display sync ────────────────────────────────────────────────
+
+  function syncIdentityDisplayForEntry(entry) {
+    const { npub, method, authenticated, expiresAt, alias, balance } = state.identity;
+    if (entry.root) {
+      if (authenticated) {
+        entry.root.dataset.authenticated = "true";
+      } else {
+        delete entry.root.dataset.authenticated;
+      }
+    }
+    if (entry.details) {
+      entry.details.hidden = !authenticated;
+    }
+    if (entry.registerSection) {
+      entry.registerSection.hidden = authenticated;
+    }
+    if (entry.alias) {
+      if (!authenticated) {
+        entry.alias.textContent = "Not signed in";
+        entry.alias.removeAttribute("title");
+      } else {
+        const abbreviated = npub ? abbreviateNpub(npub) : "";
+        if (alias && abbreviated) {
+          entry.alias.textContent = `${alias} (${abbreviated})`;
+          entry.alias.title = npub;
+        } else if (abbreviated) {
+          entry.alias.textContent = abbreviated;
+          entry.alias.title = npub;
+        } else if (alias) {
+          entry.alias.textContent = alias;
+          entry.alias.removeAttribute("title");
+        } else {
+          entry.alias.textContent = "Not signed in";
+          entry.alias.removeAttribute("title");
+        }
+      }
+    }
+    if (entry.npub) {
+      if (npub) {
+        entry.npub.textContent = abbreviateNpub(npub);
+        entry.npub.title = npub;
+      } else {
+        entry.npub.textContent = "Not signed in";
+        entry.npub.removeAttribute("title");
+      }
+    }
+    if (entry.method) {
+      entry.method.textContent = authenticated ? (identityMethodLabels[method] ?? method ?? "Unknown") : "\u2014";
+    }
+    if (entry.balance) {
+      if (!authenticated) {
+        entry.balance.textContent = "\u2014";
+      } else {
+        entry.balance.textContent = `${formatSatoshis(balance)} sats`;
+      }
+    }
+    if (entry.copyButton) {
+      entry.copyButton.disabled = !npub;
+    }
+    if (entry.copyNpubButton) {
+      entry.copyNpubButton.disabled = !authenticated || !npub;
+    }
+    if (entry.copyNsecButton) {
+      entry.copyNsecButton.disabled = !authenticated || method !== "local_keys";
+    }
+    if (entry.logoutButton) {
+      if (!authenticated) {
+        resetButtonState(entry.logoutButton);
+        entry.logoutButton.disabled = true;
+      } else {
+        entry.logoutButton.disabled = false;
+      }
+    }
+    if (entry.copyFeedback && !npub) {
+      entry.copyFeedback.hidden = true;
+      delete entry.copyFeedback.dataset.state;
+    }
+    if (entry.expiry) {
+      if (!authenticated) {
+        entry.expiry.textContent = "\u2014";
+        entry.expiry.dataset.state = "inactive";
+        entry.expiry.removeAttribute("title");
+      } else if (!isFiniteNumber(expiresAt)) {
+        entry.expiry.textContent = "Session expiry unknown";
+        entry.expiry.dataset.state = "unknown";
+        entry.expiry.removeAttribute("title");
+      } else {
+        updateIdentityCountdown();
+      }
+    }
+  }
+
+  function syncIdentityDisplay() {
+    pruneIdentityDomEntries();
+    identityDomEntries.forEach((entry) => {
+      syncIdentityDisplayForEntry(entry);
+    });
+    requestAuthUiSync();
+    if (state.identity.authenticated && isFiniteNumber(state.identity.expiresAt)) {
+      startIdentityCountdown();
+    } else {
+      stopIdentityCountdown();
+    }
+  }
+
+  // ── DOM entry management ────────────────────────────────────────
+
+  function detachIdentityDomEntry(entry) {
+    if (!entry) return;
+    if (entry.copyButton && entry.copyHandler) {
+      entry.copyButton.removeEventListener("click", entry.copyHandler);
+      identityDomEntryByNode.delete(entry.copyButton);
+      resetButtonState(entry.copyButton);
+    }
+    if (entry.registerButton && entry.registerHandler) {
+      entry.registerButton.removeEventListener("click", entry.registerHandler);
+      identityDomEntryByNode.delete(entry.registerButton);
+      resetButtonState(entry.registerButton);
+    }
+    if (entry.logoutButton && entry.logoutHandler) {
+      entry.logoutButton.removeEventListener("click", entry.logoutHandler);
+      identityDomEntryByNode.delete(entry.logoutButton);
+      resetButtonState(entry.logoutButton);
+    }
+    const timeoutId = identityCopyFeedbackTimeouts.get(entry);
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+      identityCopyFeedbackTimeouts.delete(entry);
+    }
+  }
+
+  function pruneIdentityDomEntries() {
+    const staleEntries = [];
+    identityDomEntries.forEach((entry) => {
+      if (!entry.root || !entry.root.isConnected) {
+        staleEntries.push(entry);
+      }
+    });
+    staleEntries.forEach((entry) => {
+      detachIdentityDomEntry(entry);
+      identityDomEntries.delete(entry);
+    });
+    if (staleEntries.length > 0 && identityDomEntries.size === 0) {
+      stopIdentityCountdown();
+    }
+  }
+
+  // ── public API ──────────────────────────────────────────────────
+
+  return {
+    IDENTITY_STORAGE_KEY,
+    IDENTITY_EVENT_NAMES,
+    identityDomEntries,
+    identityDomEntryByNode,
+    identityCopyFeedbackTimeouts,
+    identityButtonTimers,
+    clearButtonStateTimer,
+    ensureButtonOriginalLabel,
+    resetButtonState,
+    setButtonState,
+    formatIdentityDuration,
+    showIdentityCopyFeedback,
+    stopIdentityCountdown,
+    startIdentityCountdown,
+    persistIdentityState,
+    syncIdentityDisplayForEntry,
+    syncIdentityDisplay,
+    pruneIdentityDomEntries,
+    detachIdentityDomEntry,
+  };
+}
