@@ -46,6 +46,8 @@ export function initAppsStore({ showToast, getIdentity, onUnauthorized, formatWe
     loading: false,
     initialized: false,
     error: null,
+    pendingOpenDialog: null,
+    pendingFocusId: null,
     filters: {
       npub: "all",
       options: [],

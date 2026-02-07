@@ -175,7 +175,8 @@ export function initWorkspaceTree({ state, refreshApps, showToast }) {
 
       // Focus on the new app card
       if (payload && payload.app && payload.app.id) {
-        state.apps.pendingFocusId = payload.app.id;
+        const as = window.Alpine?.store("apps");
+        if (as) as.pendingFocusId = payload.app.id;
       }
 
       if (showToast) {

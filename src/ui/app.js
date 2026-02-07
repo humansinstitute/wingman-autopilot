@@ -727,17 +727,6 @@ if (currentRoute === "files" && window.location.pathname.startsWith("/docs")) {
   window.history.replaceState({ route: "files" }, "", newPath);
 }
 
-const initialRouteSessionId = getSessionIdFromPath(window.location.pathname);
-if (initialRouteSessionId) {
-  state.activeSessionId = initialRouteSessionId;
-  state.lastActiveSessionId = initialRouteSessionId;
-  const ss = sessionsStore();
-  if (ss) {
-    ss.activeSessionId = initialRouteSessionId;
-    ss.lastActiveSessionId = initialRouteSessionId;
-  }
-}
-
 const setActiveSession = (sessionId, options = {}) => {
   const { updateHistory = true, logPort = true, allowPending = false, forceLog = false } = options;
   const ss = sessionsStore();
@@ -3190,8 +3179,8 @@ const renderApps = () => {
   wrapper.className = "wm-apps";
 
   const schedulePendingAppDialog = () => {
-    if (state.apps.pendingOpenDialog === "create") {
-      state.apps.pendingOpenDialog = null;
+    if (appsStore().pendingOpenDialog === "create") {
+      appsStore().pendingOpenDialog = null;
       requestAnimationFrame(() => {
         openAppDialog();
       });
@@ -3338,11 +3327,11 @@ const renderApps = () => {
   wrapper.append(splitContainer);
 
   const focusPendingAppCard = () => {
-    if (!state.apps.pendingFocusId) {
+    if (!appsStore().pendingFocusId) {
       return;
     }
-    const targetId = state.apps.pendingFocusId;
-    state.apps.pendingFocusId = null;
+    const targetId = appsStore().pendingFocusId;
+    appsStore().pendingFocusId = null;
     requestAnimationFrame(() => {
       const escape = typeof CSS?.escape === "function" ? CSS.escape : (value) => value.replace(/"/g, '\\"');
       const selector = `[data-app-id=\"${escape(targetId)}\"]`;
@@ -4007,10 +3996,10 @@ function navigateToApps({ openNewAppDialog = false, skipMenuClose = false, focus
   }
   stopConversationPolling();
   if (openNewAppDialog) {
-    state.apps.pendingOpenDialog = "create";
+    appsStore().pendingOpenDialog = "create";
   }
   if (focusAppId) {
-    state.apps.pendingFocusId = focusAppId;
+    appsStore().pendingFocusId = focusAppId;
   }
   currentRoute = "apps";
   lastLoggedSessionId = null;
@@ -4399,6 +4388,16 @@ dialog.addEventListener("cancel", (event) => {
     window.Alpine = Alpine;
     Alpine.start();
     console.log("[app] Alpine.js started");
+  }
+
+  // Pre-populate active session from URL path (must run after Alpine.start)
+  const initialRouteSessionId = getSessionIdFromPath(window.location.pathname);
+  if (initialRouteSessionId) {
+    state.activeSessionId = initialRouteSessionId;
+    state.lastActiveSessionId = initialRouteSessionId;
+    const ss = sessionsStore();
+    ss.activeSessionId = initialRouteSessionId;
+    ss.lastActiveSessionId = initialRouteSessionId;
   }
 
   // Wire SSE status events to knight rider and status indicators
