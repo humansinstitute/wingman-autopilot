@@ -40,6 +40,7 @@ import { initNightWatchSettingsPanel } from "./nightwatch/settings-panel.js";
 import { initNightWatchPage } from "./nightwatch/page.js";
 import { initNightWatchStore } from "./nightwatch/store.js";
 import { initSessionsStore } from "./sessions/store.js";
+import { initAppsStore } from "./apps/store.js";
 import { startSigningListener, stopSigningListener } from "./nip98/signing-listener.js";
 import { buildSessionOrigin, createSessionLauncher } from "./helpers/session-launch.js";
 import {
@@ -13934,6 +13935,14 @@ dialog.addEventListener("cancel", (event) => {
     },
   });
 
+  // Initialize Apps Alpine store (Dexie-backed, must register before Alpine.start)
+  initAppsStore({
+    showToast,
+    getIdentity: () => state.identity,
+    onUnauthorized: () => handleUnauthorizedAccess(),
+    formatWebAppUrl,
+  });
+
   // Initialize Alpine.js chat component if enabled
   if (isAlpineChatEnabled()) {
     initAlpineChat();
@@ -14049,6 +14058,24 @@ dialog.addEventListener("cancel", (event) => {
     }
   } else if (currentRoute === "apps") {
     await fetchApps({ tail: APP_LOG_PREVIEW_LINES });
+  }
+  // Bridge: populate Dexie apps store with data already in state.apps
+  try {
+    const { AppsTable: AppsDb } = await import("./live/db.js");
+    if (state.apps.items.length > 0) {
+      await AppsDb.upsertMany(state.apps.items);
+    }
+    const appsStore = window.Alpine?.store("apps");
+    if (appsStore) {
+      appsStore.filters.npub = state.appFilters.npub;
+      appsStore.filters.options = state.appFilters.options;
+      appsStore.filters.initialized = state.appFilters.initialized;
+      appsStore.error = state.apps.error;
+      appsStore.initialized = true;
+      appsStore.loading = false;
+    }
+  } catch (err) {
+    console.warn("[app] Apps store bridge failed:", err);
   }
   render();
 })();
