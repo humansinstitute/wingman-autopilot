@@ -134,6 +134,7 @@ import { initPrivateChat } from "./chat/private-chat.js";
 import { initIdentityPanels } from "./identity/panels.js";
 import { initAdminUsersPanels } from "./api/admin-users-panels.js";
 import { initPrivacyPolicy } from "./views/privacy-policy.js";
+import { initSettingsView } from "./views/settings-view.js";
 
 const ace = globalThis.ace;
 if (!ace) {
@@ -158,6 +159,7 @@ let renderIdentitySummary = () => document.createDocumentFragment();
 let renderMenuIdentitySection = () => {};
 let renderAdminUsersPanel = () => document.createDocumentFragment();
 let renderPrivacyPolicy = () => document.createElement("div");
+let renderSettings = () => document.createElement("div");
 let renderOrchestratorPresetButtons = () => {};
 let ensureOrchestratorPresetsLoaded = () => {};
 let refreshOrchestratorPresets = async () => {};
@@ -6730,112 +6732,6 @@ const renderFiles = () => {
   return wrapper;
 };
 
-const renderSettings = () => {
-  const wrapper = document.createElement("div");
-  wrapper.className = "wm-settings";
-
-  const pageTitle = document.createElement("h1");
-  pageTitle.textContent = "Settings";
-  wrapper.append(pageTitle);
-
-  wrapper.append(renderIdentityPanel());
-
-  const wingmanCard = document.createElement("section");
-  wingmanCard.className = "wm-card";
-  const wingmanHeading = document.createElement("h2");
-  wingmanHeading.textContent = "Wingman Settings";
-  const wingmanDescription = document.createElement("p");
-  wingmanDescription.textContent = "Adjust global preferences for the Wingman workspace.";
-  wingmanCard.append(wingmanHeading, wingmanDescription);
-
-  const portsContainer = document.createElement("div");
-  portsContainer.className = "wm-settings__ports";
-  const portsHeading = document.createElement("h3");
-  portsHeading.textContent = "Assigned Web App Ports";
-  const portsList = document.createElement("ul");
-  portsList.className = "wm-settings__port-list";
-  const assignedPorts = Array.isArray(state.identity.ports) ? normalisePortList(state.identity.ports) : [];
-  if (assignedPorts.length > 0) {
-    assignedPorts.forEach((port) => {
-      const item = document.createElement("li");
-      const code = document.createElement("code");
-      code.textContent = String(port);
-      item.append(code);
-      portsList.append(item);
-    });
-  } else {
-    const item = document.createElement("li");
-    item.className = "wm-settings__port-empty";
-    item.textContent = state.identity.authenticated ? "Assigned ports will appear here once available." : "Sign in to view your assigned ports.";
-    portsList.append(item);
-  }
-  const portsNote = document.createElement("p");
-  portsNote.className = "wm-settings__port-note";
-  portsNote.textContent = "These dedicated ports are reserved for your personal Wingman web applications.";
-  portsContainer.append(portsHeading, portsList, portsNote);
-
-  if (state.identity.isAdmin) {
-    const adminPortsActions = document.createElement("div");
-    adminPortsActions.className = "wm-settings__ports-admin-actions";
-    const generatePortsButton = document.createElement("button");
-    generatePortsButton.type = "button";
-    generatePortsButton.className = "wm-button secondary";
-    generatePortsButton.textContent = "Generate 3 More Ports";
-    generatePortsButton.addEventListener("click", async () => {
-      generatePortsButton.disabled = true;
-      generatePortsButton.textContent = "Generating…";
-      const result = await generateAdminPorts(3);
-      if (result && result.success) {
-        render();
-      } else {
-        generatePortsButton.disabled = false;
-        generatePortsButton.textContent = "Generate 3 More Ports";
-        alert(result?.error || "Failed to generate ports");
-      }
-    });
-    adminPortsActions.append(generatePortsButton);
-    portsContainer.append(adminPortsActions);
-  }
-
-  wingmanCard.append(portsContainer);
-  wrapper.append(wingmanCard);
-
-  // Npub Projects section (for authenticated users)
-  if (state.identity.authenticated) {
-    if (!npubProjectsState.loading && npubProjectsState.items.length === 0 && !npubProjectsState.error) {
-      fetchNpubProjects().then(() => {
-        if (currentRoute === "settings") {
-          render();
-        }
-      });
-    }
-    wrapper.append(renderNpubProjectsPanel(() => {
-      fetchNpubProjects().then(() => {
-        if (currentRoute === "settings") {
-          render();
-        }
-      });
-    }));
-  }
-
-  if (state.identity.isAdmin) {
-    ensureFeatureFlagsLoaded();
-    wrapper.append(renderFeatureFlagsPanel());
-    if (!state.adminUsers.initialized && !state.adminUsers.loading && !state.adminUsers.error) {
-      void fetchAdminUsers();
-    }
-    wrapper.append(renderAdminUsersPanel());
-    const coreApp = (appsStore()?.items ?? state.apps.items).find((item) => item?.id === "wingman-core");
-    if (coreApp) {
-      const coreSection = document.createElement("section");
-      coreSection.className = "wm-card wm-app-card-core";
-      coreSection.append(renderWingmanCard(coreApp));
-      wrapper.append(coreSection);
-    }
-  }
-
-  return wrapper;
-};
 const renderSessionTabs = (options = {}) => {
   const onSelect = typeof options.onSelect === "function" ? options.onSelect : null;
   const tabs = document.createElement("div");
@@ -8240,6 +8136,25 @@ const privacyPolicyModule = initPrivacyPolicy({
   render,
 });
 renderPrivacyPolicy = privacyPolicyModule.renderPrivacyPolicy;
+
+const settingsViewModule = initSettingsView({
+  state,
+  appsStore,
+  getCurrentRoute: () => currentRoute,
+  render,
+  normalisePortList,
+  generateAdminPorts: (...args) => generateAdminPorts(...args),
+  renderIdentityPanel: (...args) => renderIdentityPanel(...args),
+  renderFeatureFlagsPanel: (...args) => renderFeatureFlagsPanel(...args),
+  ensureFeatureFlagsLoaded: (...args) => ensureFeatureFlagsLoaded(...args),
+  renderAdminUsersPanel: (...args) => renderAdminUsersPanel(...args),
+  fetchAdminUsers: (...args) => fetchAdminUsers(...args),
+  renderWingmanCard: (...args) => renderWingmanCard(...args),
+  npubProjectsState,
+  fetchNpubProjects,
+  renderNpubProjectsPanel,
+});
+renderSettings = settingsViewModule.renderSettings;
 
 const fileEditorModule = initFileEditor({
   state,
