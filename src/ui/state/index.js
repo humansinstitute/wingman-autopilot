@@ -11,7 +11,6 @@ export const TABS_VISIBILITY_STORAGE_KEY = "wingman-tabs-visible";
 export const FILES_SHOW_HIDDEN_STORAGE_KEY = "wingman-files-show-hidden";
 
 // Polling intervals
-export const SESSION_POLL_INTERVAL_MS = 5000;
 export const APPS_POLL_INTERVAL_MS = 5000;
 export const APP_LOG_PREVIEW_LINES = 5;
 
@@ -79,8 +78,10 @@ export function createAdminUsersState() {
  */
 export const state = {
   config: null,
+  // TODO: sessions, activeSessionId, lastActiveSessionId, sessionFilters are transitional —
+  // Alpine.store("sessions") is the source of truth. These remain as pre-Alpine fallbacks
+  // until all rendering code is migrated to read from the store directly.
   sessions: [],
-  identitySummaries: [],
   sessionFilters: {
     npub: "all",
     options: [],

@@ -5930,7 +5930,6 @@ const fetchSessions = async () => {
     await ss.sync();
     // Copy store data back to legacy state for code that still reads from it
     state.sessions = ss.items;
-    state.identitySummaries = ss.identitySummaries;
     state.sessionFilters.npub = ss.filters.npub;
     state.sessionFilters.options = ss.filters.options;
     state.sessionFilters.initialized = ss.filters.initialized;
