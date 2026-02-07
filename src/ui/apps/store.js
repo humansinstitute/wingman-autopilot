@@ -161,8 +161,11 @@ export function initAppsStore({ showToast, getIdentity, onUnauthorized, formatWe
         const rawItems = Array.isArray(payload?.apps) ? payload.apps : [];
         const items = rawItems.map((item) => this._transformAppItem(item));
 
-        // Write to Dexie — liveQuery fires -> this.items updates
+        // Write to Dexie — liveQuery fires -> this.items updates (async)
         await AppsTable.upsertMany(items);
+        // Sync items immediately so callers see fresh data without
+        // waiting for the asynchronous liveQuery callback.
+        this.items = items;
 
         // Process filter options (admin only)
         this._processFilters(payload, identity);

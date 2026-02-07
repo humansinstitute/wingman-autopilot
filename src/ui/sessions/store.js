@@ -139,8 +139,11 @@ export function initSessionsStore({ showToast, getIdentity, onUnauthorized, onId
         const identities = Array.isArray(data.identities) ? data.identities : [];
         this.identitySummaries = identities;
 
-        // Write to Dexie — liveQuery fires -> this.items updates
+        // Write to Dexie — liveQuery fires -> this.items updates (async)
         await ApiSessionStore.upsertMany(sessions);
+        // Sync items immediately so callers see fresh data without
+        // waiting for the asynchronous liveQuery callback.
+        this.items = sessions;
 
         // Process identity updates for the viewer
         if (onIdentityUpdate) {
