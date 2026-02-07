@@ -34,6 +34,41 @@ import {
   listGrantsDescription,
   handleListGrants,
 } from "./tools/list-grants";
+import {
+  listAppsSchema,
+  listAppsDescription,
+  handleListApps,
+} from "./tools/list-apps";
+import {
+  manageAppSchema,
+  manageAppDescription,
+  handleManageApp,
+} from "./tools/manage-app";
+import {
+  readLogsSchema,
+  readLogsDescription,
+  handleReadLogs,
+} from "./tools/read-logs";
+import {
+  listSessionsSchema,
+  listSessionsDescription,
+  handleListSessions,
+} from "./tools/list-sessions";
+import {
+  createSessionSchema,
+  createSessionDescription,
+  handleCreateSession,
+} from "./tools/create-session";
+import {
+  listCaproverAppsSchema,
+  listCaproverAppsDescription,
+  handleListCaproverApps,
+} from "./tools/list-caprover-apps";
+import {
+  deployCaproverAppSchema,
+  deployCaproverAppDescription,
+  handleDeployCaproverApp,
+} from "./tools/deploy-caprover-app";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -82,6 +117,62 @@ server.tool(
   listGrantsDescription,
   listGrantsSchema,
   (_params) => handleListGrants({} as Record<string, never>, wingmanUrl, sessionId),
+);
+
+// ---- list_apps ----
+server.tool(
+  "list_apps",
+  listAppsDescription,
+  listAppsSchema,
+  (_params) => handleListApps({} as Record<string, never>, wingmanUrl, sessionId),
+);
+
+// ---- manage_app ----
+server.tool(
+  "manage_app",
+  manageAppDescription,
+  manageAppSchema,
+  (params) => handleManageApp(params, wingmanUrl, sessionId),
+);
+
+// ---- read_logs ----
+server.tool(
+  "read_logs",
+  readLogsDescription,
+  readLogsSchema,
+  (params) => handleReadLogs(params, wingmanUrl, sessionId),
+);
+
+// ---- list_sessions ----
+server.tool(
+  "list_sessions",
+  listSessionsDescription,
+  listSessionsSchema,
+  (_params) => handleListSessions({} as Record<string, never>, wingmanUrl, sessionId),
+);
+
+// ---- create_session ----
+server.tool(
+  "create_session",
+  createSessionDescription,
+  createSessionSchema,
+  (params) => handleCreateSession(params, wingmanUrl, sessionId),
+);
+
+// ---- list_caprover_apps ----
+server.tool(
+  "list_caprover_apps",
+  listCaproverAppsDescription,
+  listCaproverAppsSchema,
+  (_params) => handleListCaproverApps({} as Record<string, never>, wingmanUrl, sessionId),
+);
+
+// ---- deploy_caprover_app ----
+server.tool(
+  "deploy_caprover_app",
+  deployCaproverAppDescription,
+  deployCaproverAppSchema,
+  (params) => handleDeployCaproverApp(params, wingmanUrl, sessionId),
 );
 
 // ---------------------------------------------------------------------------
