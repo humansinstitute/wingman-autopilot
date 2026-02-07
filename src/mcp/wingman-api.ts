@@ -16,6 +16,7 @@ import type { AppRecord, AppLifecycleAction } from "../apps/app-registry";
 import type { AppProcessStatus } from "../apps/app-process-manager";
 import type { CaproverStore } from "../caprover/caprover-store";
 import type { CaproverClient } from "../caprover/caprover-client";
+import { listSkills, loadSkill } from "./skill-loader";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -36,6 +37,8 @@ export interface WingmanMcpApiDependencies {
   tailAppLogs: (appId: string, lines?: number) => Promise<string[]>;
   caproverStore: CaproverStore;
   getCaproverClient: () => CaproverClient | null;
+  userSkillsRoot: string;
+  defaultSkillsRoot: string;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -129,6 +132,16 @@ export function createWingmanMcpApiHandler(deps: WingmanMcpApiDependencies) {
       // POST /api/mcp/wingman/caprover/deploy
       if (segments.length === 5 && segments[3] === "caprover" && segments[4] === "deploy" && method === "POST") {
         return await handleDeployCaproverApp(deps, request);
+      }
+
+      // GET /api/mcp/wingman/skills
+      if (segments.length === 4 && segments[3] === "skills" && method === "GET") {
+        return await handleListSkills(deps, url);
+      }
+
+      // GET /api/mcp/wingman/skills/load
+      if (segments.length === 5 && segments[3] === "skills" && segments[4] === "load" && method === "GET") {
+        return await handleLoadSkill(deps, url);
       }
 
       return jsonError("Not found", 404);
@@ -411,4 +424,52 @@ async function handleDeployCaproverApp(
 
     return jsonError(`Deployment failed: ${(err as Error).message}`, 502);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Skills
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /api/mcp/wingman/skills?sessionId=...&app=...
+ * List available skills, optionally filtered by app folder.
+ */
+async function handleListSkills(
+  deps: WingmanMcpApiDependencies,
+  url: URL,
+): Promise<Response> {
+  const sessionId = url.searchParams.get("sessionId");
+  const denied = requireSessionId(deps, sessionId);
+  if (denied) return denied;
+
+  const app = url.searchParams.get("app") ?? undefined;
+  const skills = await listSkills(deps.userSkillsRoot, deps.defaultSkillsRoot, app);
+  return jsonOk({ skills });
+}
+
+/**
+ * GET /api/mcp/wingman/skills/load?sessionId=...&app=...&name=...
+ * Load a specific skill's content.
+ */
+async function handleLoadSkill(
+  deps: WingmanMcpApiDependencies,
+  url: URL,
+): Promise<Response> {
+  const sessionId = url.searchParams.get("sessionId");
+  const denied = requireSessionId(deps, sessionId);
+  if (denied) return denied;
+
+  const app = url.searchParams.get("app");
+  const name = url.searchParams.get("name");
+
+  if (!app || !name) {
+    return jsonError("app and name are required query parameters", 400);
+  }
+
+  const skill = await loadSkill(deps.userSkillsRoot, deps.defaultSkillsRoot, app, name);
+  if (!skill) {
+    return jsonError(`Skill not found: ${app}/${name}`, 404);
+  }
+
+  return jsonOk({ skill });
 }
