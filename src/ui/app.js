@@ -90,6 +90,7 @@ import {
 import { initFileEditor } from "./modals/file-editor.js";
 import { initQueueModule } from "./sessions/queue-modal.js";
 import { initQuickLauncher } from "./core/quick-launcher.js";
+import { initImageAttachments } from "./core/image-attachments.js";
 import { showToast } from "./utils/toast.js";
 import { collapseNewlines } from "./utils/text.js";
 import {
@@ -1958,6 +1959,15 @@ let sendNextQueuedPrompt = async () => false;
 let openPromptQueueModal = async () => {};
 let closePromptQueueModal = () => {};
 
+// -- Image attachments initialized via initImageAttachments (see bootstrap) --
+let insertTextAtCursor = () => {};
+let clearImagePreviews = () => {};
+let extractImageFiles = () => [];
+let extractAttachmentFiles = () => [];
+let handleImageUploads = async () => {};
+let handleAttachmentUploads = async () => {};
+let cleanupOrphanedMarkers = () => {};
+
 const LIVE_ROUTE_PREFIX = "/live";
 const FILES_ROUTE = "/files";
 const SETTINGS_ROUTE = "/settings";
@@ -2187,442 +2197,6 @@ const applyRouteSessionFromPath = (options = {}) => {
     setActiveSession(null, { updateHistory: allowHistoryUpdate, logPort: false });
   }
   return false;
-};
-const insertTextAtCursor = (textarea, text, sessionId) => {
-  const start = textarea.selectionStart ?? textarea.value.length;
-  const end = textarea.selectionEnd ?? textarea.value.length;
-  const before = textarea.value.slice(0, start);
-  const after = textarea.value.slice(end);
-  const next = before + text + after;
-  const nextCursor = start + text.length;
-  textarea.value = next;
-  textarea.selectionStart = textarea.selectionEnd = nextCursor;
-  state.messageDrafts.set(sessionId, next);
-};
-
-const createThumbnail = (file, maxSize = 80) => {
-  return new Promise((resolve) => {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const img = new Image();
-    
-    img.onload = () => {
-      // Calculate thumbnail dimensions maintaining aspect ratio
-      let { width, height } = img;
-      if (width > height) {
-        if (width > maxSize) {
-          height = (height * maxSize) / width;
-          width = maxSize;
-        }
-      } else {
-        if (height > maxSize) {
-          width = (width * maxSize) / height;
-          height = maxSize;
-        }
-      }
-      
-      canvas.width = width;
-      canvas.height = height;
-      ctx.drawImage(img, 0, 0, width, height);
-      
-      canvas.toBlob((blob) => {
-        resolve(URL.createObjectURL(blob));
-      }, 'image/jpeg', 0.8);
-    };
-    
-    img.onerror = () => resolve(null);
-    img.src = URL.createObjectURL(file);
-  });
-};
-
-const addImagePreview = (sessionId, file, thumbnailUrl) => {
-  const composerShell = document.querySelector(`.wm-composer-shell[data-session-id="${sessionId}"]`);
-  if (!composerShell) return;
-  
-  const previewContainer = composerShell.querySelector('.wm-image-preview-container');
-  if (!previewContainer) return;
-  
-  // Generate unique marker ID for this upload
-  const markerId = `img_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  
-  const previewItem = document.createElement('div');
-  previewItem.className = 'wm-image-preview-item';
-  previewItem.style.cssText = `
-    position: relative;
-    display: inline-block;
-    border-radius: 4px;
-    overflow: hidden;
-    border: 1px solid #e1e5e9;
-    background: #f8f9fa;
-  `;
-  
-  const img = document.createElement('img');
-  img.src = thumbnailUrl;
-  img.style.cssText = `
-    width: 80px;
-    height: 80px;
-    object-fit: cover;
-    display: block;
-  `;
-  
-  const removeBtn = document.createElement('button');
-  removeBtn.type = 'button';
-  removeBtn.innerHTML = '×';
-  removeBtn.style.cssText = `
-    position: absolute;
-    top: 2px;
-    right: 2px;
-    width: 20px;
-    height: 20px;
-    border: none;
-    background: rgba(0, 0, 0, 0.7);
-    color: white;
-    border-radius: 50%;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: bold;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  `;
-  removeBtn.title = 'Remove image';
-  
-  removeBtn.addEventListener('click', () => {
-    // Remove the corresponding text from textarea
-    const textarea = composerShell.querySelector('textarea');
-    if (textarea) {
-      const currentText = textarea.value;
-      const markerIndex = imagePreviewTracker.findMarkerInText(currentText, markerId);
-      if (markerIndex !== -1) {
-        const newText = imagePreviewTracker.removeMarkerFromText(currentText, markerId);
-        textarea.value = newText;
-        state.messageDrafts.set(sessionId, newText);
-        resizeTextarea();
-      }
-    }
-    
-    // Remove the preview using tracker
-    imagePreviewTracker.remove(sessionId, markerId);
-  });
-  
-  previewItem.append(img, removeBtn);
-  previewContainer.append(previewItem);
-  previewContainer.style.display = 'flex';
-  
-  // Add to tracker
-  imagePreviewTracker.add(sessionId, markerId, previewItem, thumbnailUrl);
-  
-  return markerId;
-};
-
-// Track relationship between image previews and their text markers
-const imagePreviewTracker = {
-  // sessionId -> Map<markerId, {previewElement, thumbnailUrl}>
-  previews: new Map(),
-  
-  add: (sessionId, markerId, previewElement, thumbnailUrl) => {
-    if (!imagePreviewTracker.previews.has(sessionId)) {
-      imagePreviewTracker.previews.set(sessionId, new Map());
-    }
-    imagePreviewTracker.previews.get(sessionId).set(markerId, {
-      previewElement,
-      thumbnailUrl
-    });
-  },
-  
-  remove: (sessionId, markerId) => {
-    const sessionPreviews = imagePreviewTracker.previews.get(sessionId);
-    if (sessionPreviews) {
-      const previewData = sessionPreviews.get(markerId);
-      if (previewData) {
-        previewData.previewElement.remove();
-        URL.revokeObjectURL(previewData.thumbnailUrl);
-        sessionPreviews.delete(markerId);
-      }
-      
-      // Hide container if no more previews
-      const composerShell = document.querySelector(`.wm-composer-shell[data-session-id="${sessionId}"]`);
-      const previewContainer = composerShell?.querySelector('.wm-image-preview-container');
-      if (previewContainer && sessionPreviews.size === 0) {
-        previewContainer.style.display = 'none';
-      }
-    }
-  },
-  
-  clear: (sessionId) => {
-    const composerShell = document.querySelector(`.wm-composer-shell[data-session-id="${sessionId}"]`);
-    const sessionPreviews = imagePreviewTracker.previews.get(sessionId);
-    
-    if (sessionPreviews) {
-      // Clear markers from textarea first
-      const textarea = composerShell?.querySelector('textarea');
-      if (textarea) {
-        let cleanText = textarea.value;
-        sessionPreviews.forEach((_, markerId) => {
-          cleanText = imagePreviewTracker.removeMarkerFromText(cleanText, markerId);
-        });
-        textarea.value = cleanText;
-        state.messageDrafts.set(sessionId, cleanText);
-      }
-      
-      // Then remove preview elements
-      sessionPreviews.forEach((previewData, markerId) => {
-        previewData.previewElement.remove();
-        URL.revokeObjectURL(previewData.thumbnailUrl);
-      });
-      sessionPreviews.clear();
-      
-      const previewContainer = composerShell?.querySelector('.wm-image-preview-container');
-      if (previewContainer) {
-        previewContainer.style.display = 'none';
-      }
-    }
-  },
-  
-  findMarkerInText: (text, markerId) => {
-    const marker = `<!--IMG:${markerId}-->`;
-    return text.indexOf(marker);
-  },
-  
-  removeMarkerFromText: (text, markerId) => {
-    const marker = `<!--IMG:${markerId}-->`;
-    return text.replace(marker, '');
-  }
-};
-
-const clearImagePreviews = (sessionId) => {
-  imagePreviewTracker.clear(sessionId);
-};
-
-const extractImageFiles = (items) => {
-  if (!items) return [];
-  const files = [];
-  for (const item of Array.from(items)) {
-    if (!item) continue;
-    if (item.kind === "file") {
-      const file = item.getAsFile?.() ?? item;
-      if (file instanceof File && file.type?.startsWith?.("image/")) {
-        files.push(file);
-      }
-    } else if (item instanceof File || item instanceof Blob) {
-      if (item.type?.startsWith?.("image/")) {
-        files.push(item);
-      }
-    }
-  }
-  return files;
-};
-
-const extractAttachmentFiles = (items) => {
-  if (!items) return [];
-  const files = [];
-  for (const item of Array.from(items)) {
-    if (!item) continue;
-    if (item.kind === "file") {
-      const file = item.getAsFile?.() ?? item;
-      if (file instanceof File && !file.type?.startsWith?.("image/")) {
-        files.push(file);
-      }
-    } else if (item instanceof File || item instanceof Blob) {
-      if (!item.type || !item.type.startsWith("image/")) {
-        files.push(item);
-      }
-    }
-  }
-  return files;
-};
-
-const handleImageUploads = async (sessionId, files, textarea, resizeTextarea, setUploadingState) => {
-  if (!files || files.length === 0) return;
-  const session = getSessionById(sessionId);
-  if (!session) {
-    window.alert("Unable to locate session for image upload.");
-    return;
-  }
-
-  for (const file of files) {
-    if (!file?.type?.startsWith?.("image/")) {
-      continue;
-    }
-    
-    // Generate and show thumbnail preview immediately
-    const thumbnailUrl = await createThumbnail(file);
-    let markerId = null;
-    if (thumbnailUrl) {
-      markerId = addImagePreview(sessionId, file, thumbnailUrl);
-    }
-    
-    // Insert uploading placeholder with unique marker at cursor position
-    const marker = markerId ? `<!--IMG:${markerId}-->` : '';
-    const uploadingPlaceholder = markerId ? `${marker}[Uploading...]` : "[Uploading...]";
-    const uploadText = textarea.value.endsWith("\n") ? `${uploadingPlaceholder}\n` : `\n${uploadingPlaceholder}\n`;
-    insertTextAtCursor(textarea, uploadText, sessionId);
-    resizeTextarea();
-    
-    setUploadingState(true);
-    try {
-      const form = new FormData();
-      form.append("agent", session.agent);
-      form.append("image", file, file.name);
-
-      const response = await fetch("/api/uploads/images", {
-        method: "POST",
-        body: form,
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        const errorText = data?.error || response.statusText || "Unknown error";
-        const message = `Image upload failed (${response.status}): ${errorText}`;
-        console.error("[image-upload]", message, { status: response.status, data });
-        window.alert(message);
-        // Remove uploading placeholder on error
-        const currentValue = textarea.value;
-        const markerIndex = markerId ? imagePreviewTracker.findMarkerInText(currentValue, markerId) : currentValue.lastIndexOf(uploadingPlaceholder);
-        if (markerIndex !== -1) {
-          const newText = markerId ? imagePreviewTracker.removeMarkerFromText(currentValue, markerId) : currentValue.replace(uploadingPlaceholder, '');
-          textarea.value = newText;
-          state.messageDrafts.set(sessionId, textarea.value);
-        }
-        
-        // Remove preview on error
-        if (thumbnailUrl && markerId) {
-          imagePreviewTracker.remove(sessionId, markerId);
-        } else if (thumbnailUrl) {
-          URL.revokeObjectURL(thumbnailUrl);
-        }
-        continue;
-      }
-
-      const payload = await response.json().catch(() => ({}));
-      const placeholder =
-        typeof payload?.placeholder === "string"
-          ? payload.placeholder
-          : typeof payload?.publicPath === "string"
-            ? payload.publicPath
-            : null;
-
-      if (!placeholder) {
-        window.alert("Image upload succeeded without a usable reference.");
-        // Remove uploading placeholder on success but no reference
-        const currentValue = textarea.value;
-        const markerIndex = markerId ? imagePreviewTracker.findMarkerInText(currentValue, markerId) : currentValue.lastIndexOf(uploadingPlaceholder);
-        if (markerIndex !== -1) {
-          const newText = markerId ? imagePreviewTracker.removeMarkerFromText(currentValue, markerId) : currentValue.replace(uploadingPlaceholder, '');
-          textarea.value = newText;
-          state.messageDrafts.set(sessionId, textarea.value);
-        }
-        
-        // Remove preview on success but no reference
-        if (thumbnailUrl && markerId) {
-          imagePreviewTracker.remove(sessionId, markerId);
-        } else if (thumbnailUrl) {
-          URL.revokeObjectURL(thumbnailUrl);
-        }
-        continue;
-      }
-
-      // Replace uploading placeholder with actual image placeholder
-      const currentValue = textarea.value;
-      const markerIndex = markerId ? imagePreviewTracker.findMarkerInText(currentValue, markerId) : currentValue.lastIndexOf(uploadingPlaceholder);
-      if (markerIndex !== -1) {
-        const marker = markerId ? `<!--IMG:${markerId}-->[Uploading...]` : uploadingPlaceholder;
-        const beforePlaceholder = currentValue.substring(0, markerIndex);
-        const afterPlaceholder = currentValue.substring(markerIndex + marker.length);
-        textarea.value = beforePlaceholder + placeholder + afterPlaceholder;
-        state.messageDrafts.set(sessionId, textarea.value);
-      }
-      
-      // Clean up thumbnail URL on successful upload (preview will be removed when message is sent)
-      if (thumbnailUrl && markerId) {
-        // Replace thumbnail with the actual uploaded image URL for preview consistency
-        const sessionPreviews = imagePreviewTracker.previews.get(sessionId);
-        if (sessionPreviews && sessionPreviews.has(markerId)) {
-          const previewData = sessionPreviews.get(markerId);
-          URL.revokeObjectURL(previewData.thumbnailUrl);
-          // Keep the preview element but update the image source to the uploaded image
-          const img = previewData.previewElement.querySelector('img');
-          if (img) {
-            img.src = payload.publicPath || '';
-          }
-          sessionPreviews.set(markerId, { ...previewData, thumbnailUrl: null });
-        }
-      } else if (thumbnailUrl) {
-        URL.revokeObjectURL(thumbnailUrl);
-      }
-      
-      resizeTextarea();
-      textarea.focus();
-    } catch (error) {
-      console.error("Failed to upload image", error);
-      window.alert("Image upload failed. Check console for details.");
-    } finally {
-      setUploadingState(false);
-    }
-  }
-};
-
-const uploadLiveAttachment = async (agentId, file) => {
-  const form = new FormData();
-  form.append("agent", agentId);
-  form.append("file", file, file.name);
-
-  const response = await fetch("/api/uploads/files", {
-    method: "POST",
-    body: form,
-  });
-
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message = data?.error ?? response.statusText ?? "File upload failed";
-    throw new Error(message);
-  }
-
-  const data = await response.json().catch(() => ({}));
-  const first = Array.isArray(data?.files) ? data.files[0] : null;
-  if (!first) {
-    throw new Error("Upload succeeded without file details");
-  }
-  return first;
-};
-
-const handleAttachmentUploads = async (sessionId, files, textarea, resizeTextarea, setUploadingState) => {
-  if (!files || files.length === 0) return;
-  const session = getSessionById(sessionId);
-  if (!session) {
-    window.alert("Unable to locate session for file upload.");
-    return;
-  }
-
-  for (const file of files) {
-    setUploadingState(true);
-    try {
-      const payload = await uploadLiveAttachment(session.agent, file);
-      const placeholder = typeof payload?.placeholder === "string" ? payload.placeholder : null;
-      const fallback =
-        typeof payload?.publicPath === "string"
-          ? payload.publicPath
-          : typeof payload?.absolutePath === "string"
-            ? payload.absolutePath
-            : "";
-      const reference = placeholder || fallback;
-      if (!reference) {
-        window.alert("File upload succeeded without a usable reference.");
-        continue;
-      }
-      const needsPrefix = textarea.value.length > 0 && !textarea.value.endsWith("\n");
-      const textToInsert = needsPrefix ? `\n${reference}\n` : `${reference}\n`;
-      insertTextAtCursor(textarea, textToInsert, sessionId);
-      resizeTextarea();
-      textarea.focus();
-    } catch (error) {
-      console.error("Failed to upload file", error);
-      const message = error instanceof Error ? error.message : "File upload failed. Check console for details.";
-      window.alert(message);
-    } finally {
-      setUploadingState(false);
-    }
-  }
 };
 
 const dialog = document.getElementById("session-dialog");
@@ -9935,20 +9509,8 @@ const renderComposer = (sessionId) => {
     state.messageDrafts.set(sessionId, newText);
     resizeTextarea();
     
-    // Check if any image markers were removed from text and remove corresponding thumbnails
-    const sessionPreviews = imagePreviewTracker.previews.get(sessionId);
-    if (sessionPreviews) {
-      const markersToRemove = [];
-      sessionPreviews.forEach((previewData, markerId) => {
-        if (imagePreviewTracker.findMarkerInText(newText, markerId) === -1) {
-          markersToRemove.push(markerId);
-        }
-      });
-      
-      markersToRemove.forEach(markerId => {
-        imagePreviewTracker.remove(sessionId, markerId);
-      });
-    }
+    // Remove orphaned image markers when user edits text manually
+    cleanupOrphanedMarkers(sessionId, newText);
   });
   textarea.addEventListener("keydown", (event) => {
     // Direct pass-through shortcuts: send immediately when textarea is empty
@@ -11299,6 +10861,15 @@ openPromptQueueModal = queueModule.openPromptQueueModal;
 closePromptQueueModal = queueModule.closePromptQueueModal;
 
 initQuickLauncher({ state, launchSession, showToast });
+
+const imageAttachmentsModule = initImageAttachments({ state, getSessionById });
+insertTextAtCursor = imageAttachmentsModule.insertTextAtCursor;
+clearImagePreviews = imageAttachmentsModule.clearImagePreviews;
+extractImageFiles = imageAttachmentsModule.extractImageFiles;
+extractAttachmentFiles = imageAttachmentsModule.extractAttachmentFiles;
+handleImageUploads = imageAttachmentsModule.handleImageUploads;
+handleAttachmentUploads = imageAttachmentsModule.handleAttachmentUploads;
+cleanupOrphanedMarkers = imageAttachmentsModule.cleanupOrphanedMarkers;
 
 const fileEditorModule = initFileEditor({
   state,
