@@ -58,6 +58,35 @@ import {
   ADMIN_PICTURE_CACHE_TTL_MS,
   TERMINAL_CONTROL_ACTIONS,
 } from "./state/index.js";
+import {
+  decodeBase64ToUint8Array,
+  encodeUint8ArrayToBase64,
+  decodeBytesToText,
+  encodeTextToBytes,
+  readFileAsUint8Array,
+} from "./core/encoding.js";
+import {
+  createSvgShape,
+  createIconSvg,
+  FILE_BROWSER_ICON_DEFS,
+  setIconButton,
+  getSessionDisplayName,
+  truncateText,
+  scrollConversationToBottom,
+  getConversationScrollElement as _getConversationScrollElement,
+  scrollConversationAreaToBottom as _scrollConversationAreaToBottom,
+  isConversationScrolledToBottom as _isConversationScrolledToBottom,
+  isMobileFilesLayout,
+  escapeHtml,
+  escapeAttribute,
+  sanitizeLanguageClass,
+} from "./core/icons.js";
+import {
+  renderInlineMarkdown,
+  renderMarkdownToHtml,
+  renderCodeToHtml,
+  buildKeywordPattern,
+} from "./rendering/markdown.js";
 import { showToast } from "./utils/toast.js";
 import { collapseNewlines } from "./utils/text.js";
 import {
@@ -1614,273 +1643,18 @@ const attachIdentityUiApi = () => {
 
 attachIdentityUiApi();
 
-const textDecoder = typeof TextDecoder !== "undefined" ? new TextDecoder("utf-8", { fatal: false }) : null;
-const textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
-
-const decodeBase64ToUint8Array = (value) => {
-  if (!value) return new Uint8Array(0);
-  try {
-    const binary = atob(value);
-    const length = binary.length;
-    const bytes = new Uint8Array(length);
-    for (let i = 0; i < length; i += 1) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-  } catch {
-    return new Uint8Array(0);
-  }
-};
-
-const encodeUint8ArrayToBase64 = (bytes) => {
-  if (!bytes || bytes.length === 0) return "";
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-    binary += String.fromCharCode(...chunk);
-  }
-  return btoa(binary);
-};
-
-const decodeBytesToText = (bytes) => {
-  if (!bytes || bytes.length === 0) return "";
-  if (textDecoder) {
-    try {
-      return textDecoder.decode(bytes);
-    } catch {
-      // fall through to manual decoding
-    }
-  }
-  let result = "";
-  for (let i = 0; i < bytes.length; i += 1) {
-    result += String.fromCharCode(bytes[i]);
-  }
-  return result;
-};
-
-const encodeTextToBytes = (text) => {
-  if (!text || text.length === 0) return new Uint8Array(0);
-  if (textEncoder) {
-    try {
-      return textEncoder.encode(text);
-    } catch {
-      // fall through to manual encoding
-    }
-  }
-  const bytes = new Uint8Array(text.length);
-  for (let i = 0; i < text.length; i += 1) {
-    bytes[i] = text.charCodeAt(i) & 0xff;
-  }
-  return bytes;
-};
-
-const readFileAsUint8Array = (file) =>
-  new Promise((resolve, reject) => {
-    if (!(file instanceof File)) {
-      reject(new Error("Invalid file input"));
-      return;
-    }
-    const reader = new FileReader();
-    reader.onerror = () => {
-      reader.abort();
-      reject(new Error("Failed to read file"));
-    };
-    reader.onload = () => {
-      const { result } = reader;
-      if (result instanceof ArrayBuffer) {
-        resolve(new Uint8Array(result));
-        return;
-      }
-      if (ArrayBuffer.isView(result)) {
-        resolve(new Uint8Array(result.buffer));
-        return;
-      }
-      reject(new Error("Unsupported file result"));
-    };
-    reader.readAsArrayBuffer(file);
-  });
-
-const SVG_NS = "http://www.w3.org/2000/svg";
-
-const createSvgShape = (tag, attributes = {}) => {
-  const element = document.createElementNS(SVG_NS, tag);
-  Object.entries(attributes).forEach(([key, value]) => {
-    element.setAttribute(key, String(value));
-  });
-  if (!attributes.fill) {
-    element.setAttribute("fill", "none");
-  }
-  if (!attributes.stroke) {
-    element.setAttribute("stroke", "currentColor");
-  }
-  if (!attributes["stroke-width"]) {
-    element.setAttribute("stroke-width", "1.8");
-  }
-  if ((tag === "path" || tag === "line" || tag === "polyline") && !attributes["stroke-linecap"]) {
-    element.setAttribute("stroke-linecap", "round");
-  }
-  if ((tag === "path" || tag === "polyline") && !attributes["stroke-linejoin"]) {
-    element.setAttribute("stroke-linejoin", "round");
-  }
-  if ((tag === "circle" || tag === "ellipse") && !attributes["stroke-linecap"]) {
-    element.setAttribute("stroke-linecap", "round");
-  }
-  if ((tag === "circle" || tag === "ellipse") && !attributes["stroke-linejoin"]) {
-    element.setAttribute("stroke-linejoin", "round");
-  }
-  return element;
-};
-
-const createIconSvg = (definition) => {
-  const svg = document.createElementNS(SVG_NS, "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("aria-hidden", "true");
-  svg.setAttribute("focusable", "false");
-  svg.classList.add("wm-icon");
-  definition.forEach(([tag, attrs]) => {
-    svg.append(createSvgShape(tag, attrs));
-  });
-  return svg;
-};
-
-const FILE_BROWSER_ICON_DEFS = {
-  arrowUp: [
-    ["line", { x1: 12, y1: 19, x2: 12, y2: 7 }],
-    ["polyline", { points: "6 11 12 5 18 11" }],
-  ],
-  refresh: [
-    ["polyline", { points: "23 4 23 10 17 10" }],
-    ["path", { d: "M20.49 15a9 9 0 1 1-2.12-9.36" }],
-  ],
-  eye: [
-    ["ellipse", { cx: 12, cy: 12, rx: 9.5, ry: 6.5 }],
-    ["circle", { cx: 12, cy: 12, r: 2.5 }],
-  ],
-  eyeOff: [
-    ["ellipse", { cx: 12, cy: 12, rx: 9.5, ry: 6.5 }],
-    ["circle", { cx: 12, cy: 12, r: 2.5 }],
-    ["line", { x1: 4, y1: 4, x2: 20, y2: 20 }],
-  ],
-  folder: [
-    ["path", { d: "M3 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" }],
-    ["path", { d: "M3 7h18" }],
-  ],
-  file: [
-    ["path", { d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" }],
-    ["polyline", { points: "14 2 14 8 20 8" }],
-  ],
-  fileText: [
-    ["path", { d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" }],
-    ["polyline", { points: "14 2 14 8 20 8" }],
-    ["line", { x1: 16, y1: 13, x2: 8, y2: 13 }],
-    ["line", { x1: 16, y1: 17, x2: 8, y2: 17 }],
-    ["path", { d: "M10 9h4" }],
-  ],
-  fileCode: [
-    ["path", { d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" }],
-    ["polyline", { points: "14 2 14 8 20 8" }],
-    ["polyline", { points: "10 13 8 15 10 17" }],
-    ["polyline", { points: "14 17 16 15 14 13" }],
-  ],
-  ban: [
-    ["circle", { cx: 12, cy: 12, r: 9 }],
-    ["line", { x1: 5, y1: 19, x2: 19, y2: 5 }],
-  ],
-  folderPlus: [
-    ["path", { d: "M3 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" }],
-    ["path", { d: "M12 11v4" }],
-    ["path", { d: "M10 13h4" }],
-  ],
-  filePlus: [
-    ["path", { d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" }],
-    ["polyline", { points: "14 2 14 8 20 8" }],
-    ["path", { d: "M12 13v4" }],
-    ["path", { d: "M10 15h4" }],
-  ],
-  upload: [
-    ["path", { d: "M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" }],
-    ["polyline", { points: "16 6 12 2 8 6" }],
-    ["line", { x1: 12, y1: 2, x2: 12, y2: 16 }],
-  ],
-  branchPlus: [
-    ["circle", { cx: 6, cy: 6, r: 2.5 }],
-    ["circle", { cx: 6, cy: 18, r: 2.5 }],
-    ["circle", { cx: 18, cy: 12, r: 2.5 }],
-    ["line", { x1: 6, y1: 8.5, x2: 6, y2: 15.5 }],
-    ["path", { d: "M8.5 8.5a5 5 0 0 1 5.5 4.5" }],
-    ["line", { x1: 18, y1: 14.5, x2: 18, y2: 20 }],
-    ["line", { x1: 16, y1: 17, x2: 20, y2: 17 }],
-  ],
-};
-
-const setIconButton = (button, iconKey, label) => {
-  const definition = FILE_BROWSER_ICON_DEFS[iconKey];
-  if (!definition) return;
-  while (button.firstChild) {
-    button.removeChild(button.firstChild);
-  }
-  button.append(createIconSvg(definition));
-  if (label) {
-    button.setAttribute("aria-label", label);
-    button.title = label;
-  } else {
-    button.removeAttribute("aria-label");
-    button.removeAttribute("title");
-  }
-};
+// -- Encoding utilities imported from core/encoding.js --
+// -- SVG/icon utilities imported from core/icons.js --
 
 let aceEditorInstance = null;
 
-const getSessionDisplayName = (session) => {
-  if (!session || typeof session !== "object") return "";
-  const rawName = typeof session.name === "string" ? session.name.trim() : "";
-  if (rawName.length > 0) return rawName;
-  const agent = typeof session.agent === "string" ? session.agent : "agent";
-  const port = typeof session.port === "number" ? session.port : "";
-  return port ? `${agent} :${port}` : agent;
-};
+// Thin wrappers closing over state.conversationContainers for scroll utilities
+const getConversationScrollElement = (sessionId) =>
+  _getConversationScrollElement(sessionId, state.conversationContainers);
 
-const truncateText = (value, maxLength = 31) => {
-  if (typeof value !== "string") return "";
-  if (value.length <= maxLength) return value;
-  const safeLength = Math.max(0, maxLength - 3);
-  return `${value.slice(0, safeLength)}...`;
-};
+const scrollConversationAreaToBottom = (sessionId, options = {}) =>
+  _scrollConversationAreaToBottom(sessionId, state.conversationContainers, options);
 
-const scrollConversationToBottom = (element) => {
-  if (!element) return;
-  requestAnimationFrame(() => {
-    if (element === document.body || element === document.documentElement || element === document.scrollingElement) {
-      const target = document.scrollingElement || document.documentElement || document.body;
-      window.scrollTo(0, target.scrollHeight);
-      return;
-    }
-    element.scrollTop = element.scrollHeight;
-  });
-};
-
-const getConversationScrollElement = (sessionId) => {
-  const container = state.conversationContainers.get(sessionId);
-  if (!container) return null;
-  return container.closest('.wm-live-conversation');
-};
-
-const scrollConversationAreaToBottom = (sessionId, options = {}) => {
-  const { includeWindow = false } = options;
-  const target =
-    getConversationScrollElement(sessionId) ??
-    document.querySelector('.wm-live-conversation');
-  if (target) {
-    scrollConversationToBottom(target);
-  }
-  if (includeWindow) {
-    const fallback = document.scrollingElement || document.documentElement || document.body;
-    if (fallback && fallback !== target) {
-      scrollConversationToBottom(fallback);
-    }
-  }
-};
 const scheduleLiveScroll = (sessionId, options = {}) => {
   if (!sessionId || currentRoute !== "live") return;
   requestAnimationFrame(() => {
@@ -1890,235 +1664,8 @@ const scheduleLiveScroll = (sessionId, options = {}) => {
   });
 };
 
-const isConversationScrolledToBottom = (sessionId) => {
-  const scrollElement = getConversationScrollElement(sessionId);
-  if (!scrollElement) {
-    // If no scroll element, check main document
-    const doc = document.scrollingElement || document.documentElement || document.body;
-    const threshold = 50;
-    return doc.scrollHeight - doc.scrollTop - doc.clientHeight < threshold;
-  }
-  const threshold = 50;
-  return scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight < threshold;
-};
-
-const isMobileFilesLayout = () => {
-  if (window.matchMedia) {
-    try {
-      return window.matchMedia("(max-width: 720px)").matches;
-    } catch {
-      // fall through to manual check
-    }
-  }
-  return window.innerWidth <= 720;
-};
-
-const escapeHtml = (value) => {
-  if (value === null || value === undefined) return "";
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-};
-
-const escapeAttribute = (value) => {
-  if (value === null || value === undefined) return "#";
-  const trimmed = String(value).trim();
-  const allowed = /^(https?:\/\/|\/|#|mailto:|tel:)/i;
-  const safe = allowed.test(trimmed) ? trimmed : "#";
-  return escapeHtml(safe).replace(/"/g, "&quot;");
-};
-
-const sanitizeLanguageClass = (value) => {
-  if (!value) return "";
-  return String(value)
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "");
-};
-
-const renderInlineMarkdown = (text) => {
-  if (!text) return "";
-  let working = String(text);
-  const placeholders = [];
-  const createPlaceholder = (html) => {
-    const token = `@@MD${placeholders.length}@@`;
-    placeholders.push(html);
-    return token;
-  };
-
-  working = working.replace(/`([^`]+)`/g, (_, code) =>
-    createPlaceholder(`<code>${escapeHtml(code)}</code>`),
-  );
-
-  working = working.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, url) => {
-    const safeUrl = escapeAttribute(url);
-    const safeLabel = escapeHtml(label);
-    return createPlaceholder(
-      `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeLabel}</a>`,
-    );
-  });
-
-  working = working.replace(/(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g, (_, __, content) =>
-    createPlaceholder(`<strong>${renderInlineMarkdown(content)}</strong>`),
-  );
-
-  working = working.replace(/(\*|_)(?=\S)(.+?)(?<=\S)\1/g, (_, __, content) =>
-    createPlaceholder(`<em>${renderInlineMarkdown(content)}</em>`),
-  );
-
-  working = working.replace(/~~(?=\S)(.+?)(?<=\S)~~/g, (_, content) =>
-    createPlaceholder(`<del>${renderInlineMarkdown(content)}</del>`),
-  );
-
-  const escaped = escapeHtml(working);
-  return escaped.replace(/@@MD(\d+)@@/g, (_, index) => placeholders[Number(index)] ?? "");
-};
-
-const renderMarkdownToHtml = (markdown) => {
-  if (!markdown) return "";
-  const lines = String(markdown).replace(/\r\n?/g, "\n").split("\n");
-  let html = "";
-  let inCodeBlock = false;
-  let codeLanguage = "";
-  let codeBuffer = [];
-  let listType = null;
-  let listItems = [];
-  let paragraph = "";
-  let inBlockquote = false;
-
-  const closeParagraph = () => {
-    if (paragraph) {
-      html += `<p>${paragraph.trim()}</p>`;
-      paragraph = "";
-    }
-  };
-
-  const closeList = () => {
-    if (listType && listItems.length > 0) {
-      html += `<${listType}>${listItems.join("")}</${listType}>`;
-    }
-    listType = null;
-    listItems = [];
-  };
-
-  const closeBlockquote = () => {
-    if (inBlockquote) {
-      html += "</blockquote>";
-      inBlockquote = false;
-    }
-  };
-
-  for (const rawLine of lines) {
-    const line = rawLine.replace(/\s+$/, "");
-    if (line.startsWith("```")) {
-      if (inCodeBlock) {
-        const languageClass = sanitizeLanguageClass(codeLanguage);
-        const classAttr = languageClass ? ` class="language-${languageClass}"` : "";
-        html += `<pre><code${classAttr}>${escapeHtml(codeBuffer.join("\n"))}\n</code></pre>`;
-        inCodeBlock = false;
-        codeLanguage = "";
-        codeBuffer = [];
-      } else {
-        closeParagraph();
-        closeList();
-        closeBlockquote();
-        inCodeBlock = true;
-        codeLanguage = line.slice(3).trim();
-        codeBuffer = [];
-      }
-      continue;
-    }
-
-    if (inCodeBlock) {
-      codeBuffer.push(rawLine);
-      continue;
-    }
-
-    const trimmed = line.trim();
-    if (!trimmed) {
-      closeParagraph();
-      closeList();
-      closeBlockquote();
-      continue;
-    }
-
-    if (trimmed.startsWith(">")) {
-      closeParagraph();
-      closeList();
-      if (!inBlockquote) {
-        inBlockquote = true;
-        html += "<blockquote>";
-      }
-      const quote = trimmed.replace(/^>\s?/, "");
-      html += `<p>${renderInlineMarkdown(quote)}</p>`;
-      continue;
-    }
-
-    if (inBlockquote) {
-      closeBlockquote();
-    }
-
-    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
-    if (headingMatch) {
-      closeParagraph();
-      closeList();
-      const level = headingMatch[1].length;
-      const text = headingMatch[2];
-      html += `<h${level}>${renderInlineMarkdown(text)}</h${level}>`;
-      continue;
-    }
-
-    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
-      closeParagraph();
-      closeList();
-      html += "<hr />";
-      continue;
-    }
-
-    const orderedMatch = trimmed.match(/^(\d+)\.\s+(.*)$/);
-    if (orderedMatch) {
-      closeParagraph();
-      const content = renderInlineMarkdown(orderedMatch[2]);
-      if (listType !== "ol") {
-        closeList();
-        listType = "ol";
-      }
-      listItems.push(`<li>${content}</li>`);
-      continue;
-    }
-
-    const unorderedMatch = trimmed.match(/^[-*+]\s+(.*)$/);
-    if (unorderedMatch) {
-      closeParagraph();
-      const content = renderInlineMarkdown(unorderedMatch[1]);
-      if (listType !== "ul") {
-        closeList();
-        listType = "ul";
-      }
-      listItems.push(`<li>${content}</li>`);
-      continue;
-    }
-
-    closeList();
-    if (paragraph) {
-      paragraph += ` ${renderInlineMarkdown(trimmed)}`;
-    } else {
-      paragraph = renderInlineMarkdown(trimmed);
-    }
-  }
-
-  if (inCodeBlock) {
-    const languageClass = sanitizeLanguageClass(codeLanguage);
-    const classAttr = languageClass ? ` class="language-${languageClass}"` : "";
-    html += `<pre><code${classAttr}>${escapeHtml(codeBuffer.join("\n"))}\n</code></pre>`;
-  }
-  closeParagraph();
-  closeList();
-  closeBlockquote();
-  return html.trim();
-};
+const isConversationScrolledToBottom = (sessionId) =>
+  _isConversationScrolledToBottom(sessionId, state.conversationContainers);
 
 const resetFilesPreview = () => {
   state.files.previewPath = null;
@@ -2133,119 +1680,7 @@ const resetFilesPreview = () => {
   state.files.previewLabel = null;
 };
 
-const CODE_KEYWORDS = {
-  javascript: [
-    "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete", "do",
-    "else", "export", "extends", "finally", "for", "from", "function", "if", "import", "in", "instanceof",
-    "let", "new", "return", "super", "switch", "this", "throw", "try", "typeof", "var", "void", "while", "with", "yield", "await",
-  ],
-  typescript: [
-    "abstract", "any", "as", "asserts", "async", "await", "boolean", "break", "case", "catch", "class", "const",
-    "constructor", "continue", "declare", "default", "delete", "do", "else", "enum", "export", "extends", "false",
-    "finally", "for", "from", "function", "get", "if", "implements", "import", "in", "infer", "instanceof", "interface",
-    "is", "keyof", "let", "module", "namespace", "never", "new", "null", "number", "object", "package", "private", "protected",
-    "public", "readonly", "require", "return", "set", "static", "string", "super", "switch", "symbol", "this", "throw", "true",
-    "try", "type", "typeof", "undefined", "unique", "unknown", "var", "void", "while", "with", "yield",
-  ],
-  go: [
-    "break", "case", "chan", "const", "continue", "default", "defer", "else", "fallthrough", "for", "func", "go",
-    "goto", "if", "import", "interface", "map", "package", "range", "return", "select", "struct", "switch", "type", "var",
-  ],
-  json: ["true", "false", "null"],
-  yaml: ["true", "false", "null", "yes", "no", "on", "off"],
-  toml: ["true", "false"],
-  ini: ["true", "false"],
-  rust: [
-    "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let",
-    "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait",
-    "true", "type", "unsafe", "use", "where", "while",
-  ],
-  python: [
-    "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else", "except", "False", "finally", "for",
-    "from", "global", "if", "import", "in", "is", "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return",
-    "True", "try", "while", "with", "yield",
-  ],
-  shell: [
-    "if", "then", "else", "elif", "fi", "for", "while", "in", "do", "done", "case", "esac", "function", "select",
-  ],
-  css: ["@import", "@media", "@supports", "@keyframes", "from", "to"],
-  html: ["doctype", "html", "head", "body", "div", "span", "script", "style", "link", "meta", "title"],
-  plaintext: [],
-};
-
-const buildKeywordPattern = (keywords) => {
-  if (!keywords || keywords.length === 0) return null;
-  const escaped = keywords.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  return new RegExp(`\\b(${escaped.join("|")})\\b`, "g");
-};
-
-const CODE_KEYWORD_PATTERNS = Object.fromEntries(
-  Object.entries(CODE_KEYWORDS).map(([language, keywords]) => [language, buildKeywordPattern(keywords)]),
-);
-
-const renderCodeToHtml = (content, language = "plaintext") => {
-  const normalizedLanguage = CODE_KEYWORDS[language] ? language : "plaintext";
-  const escaped = escapeHtml(content ?? "");
-  const replacements = [];
-  const createToken = (html) => {
-    const token = `__WM_TOKEN_${replacements.length}__`;
-    replacements.push({ token, html });
-    return token;
-  };
-
-  let working = escaped;
-
-  if (normalizedLanguage === "json") {
-    working = working.replace(/(&quot;[^&]*?&quot;)(?=\s*:)/g, (match) =>
-      createToken(`<span class="token key">${match}</span>`),
-    );
-  } else if (normalizedLanguage === "yaml" || normalizedLanguage === "toml" || normalizedLanguage === "ini") {
-    working = working.replace(/^(\s*)([^\s:#][^:]*)(?=\s*:)/gm, (full, indent, key) => {
-      return `${indent}${createToken(`<span class="token key">${key}</span>`)}`;
-    });
-  }
-
-  if (
-    normalizedLanguage === "javascript" ||
-    normalizedLanguage === "typescript" ||
-    normalizedLanguage === "go" ||
-    normalizedLanguage === "rust"
-  ) {
-    working = working.replace(/(\/\/[^\n]*)/g, (match) => createToken(`<span class="token comment">${match}</span>`));
-    working = working.replace(/(\/\*[\s\S]*?\*\/)/g, (match) =>
-      createToken(`<span class="token comment">${match}</span>`),
-    );
-  }
-
-  if (
-    normalizedLanguage === "python" ||
-    normalizedLanguage === "shell" ||
-    normalizedLanguage === "yaml" ||
-    normalizedLanguage === "toml" ||
-    normalizedLanguage === "ini"
-  ) {
-    working = working.replace(/(^|\s)(#[^\n]*)/gm, (full, prefix, comment) => {
-      return `${prefix}${createToken(`<span class="token comment">${comment}</span>`)}`;
-    });
-  }
-
-  working = working.replace(/(&quot;.*?&quot;)/g, (match) => createToken(`<span class="token string">${match}</span>`));
-  working = working.replace(/(&#39;.*?&#39;)/g, (match) => createToken(`<span class="token string">${match}</span>`));
-  working = working.replace(/`[^`]*`/g, (match) => createToken(`<span class="token string">${match}</span>`));
-
-  working = working.replace(/\b(0x[a-fA-F0-9]+|\d+\.\d+|\d+)\b/g, '<span class="token number">$1</span>');
-
-  const keywordPattern = CODE_KEYWORD_PATTERNS[normalizedLanguage];
-  if (keywordPattern) {
-    working = working.replace(keywordPattern, '<span class="token keyword">$1</span>');
-  }
-
-  replacements.forEach(({ token, html }) => {
-    working = working.replaceAll(token, html);
-  });
-
-  return `<pre><code class="language-${normalizedLanguage}">${working}</code></pre>`;
-};
+// -- Markdown / code rendering imported from rendering/markdown.js --
 
 const loadFilesTree = async (path) => {
   const files = state.files;
