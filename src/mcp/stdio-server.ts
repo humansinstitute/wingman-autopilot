@@ -69,6 +69,16 @@ import {
   deployCaproverAppDescription,
   handleDeployCaproverApp,
 } from "./tools/deploy-caprover-app";
+import {
+  listSkillsSchema,
+  listSkillsDescription,
+  handleListSkills,
+} from "./tools/list-skills";
+import {
+  runSkillSchema,
+  runSkillDescription,
+  handleRunSkill,
+} from "./tools/run-skill";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -173,6 +183,22 @@ server.tool(
   deployCaproverAppDescription,
   deployCaproverAppSchema,
   (params) => handleDeployCaproverApp(params, wingmanUrl, sessionId),
+);
+
+// ---- list_skills ----
+server.tool(
+  "list_skills",
+  listSkillsDescription,
+  listSkillsSchema,
+  (params) => handleListSkills(params, wingmanUrl, sessionId),
+);
+
+// ---- run_skill ----
+server.tool(
+  "run_skill",
+  runSkillDescription,
+  runSkillSchema,
+  (params) => handleRunSkill(params, wingmanUrl, sessionId),
 );
 
 // ---------------------------------------------------------------------------
