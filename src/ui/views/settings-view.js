@@ -117,7 +117,7 @@ export function initSettingsView(deps) {
         void fetchAdminUsers();
       }
       wrapper.append(renderAdminUsersPanel());
-      const coreApp = (appsStore()?.items ?? state.apps.items).find((item) => item?.id === "wingman-core");
+      const coreApp = appsStore().items.find((item) => item?.id === "wingman-core");
       if (coreApp) {
         const coreSection = document.createElement("section");
         coreSection.className = "wm-card wm-app-card-core";

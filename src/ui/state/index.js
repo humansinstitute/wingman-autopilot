@@ -77,13 +77,6 @@ export function createAdminUsersState() {
  */
 export const state = {
   config: null,
-  // TODO: appFilters is transitional — Alpine.store("apps").filters is the source of truth.
-  // Remains as a pre-Alpine fallback until all rendering code reads from the store directly.
-  appFilters: {
-    npub: "all",
-    options: [],
-    initialized: false,
-  },
   orchestratorPresets: [],
   orchestratorPresetsLoading: false,
   orchestratorPresetsLoaded: false,
@@ -124,35 +117,8 @@ export const state = {
   logContainers: new Map(), // sessionId -> DOM element
   lastMessageCount: new Map(), // sessionId -> number of messages
   lastLogLength: new Map(), // sessionId -> length of logs
-  // TODO: apps is transitional — Alpine.store("apps") is the source of truth.
-  // Remains as a pre-Alpine fallback until all rendering code reads from the store directly.
-  apps: {
-    items: [],
-    loading: false,
-    initialized: false,
-    error: null,
-    pendingOpenDialog: null,
-    pendingFocusId: null,
-  },
   adminUsers: createAdminUsersState(),
   featureFlags: createFeatureFlagsState(),
-  // TODO: system is transitional — Alpine.store("apps").system is the source of truth.
-  // Remains as a pre-Alpine fallback until all rendering code reads from the store directly.
-  system: {
-    restart: {
-      loading: false,
-      inProgress: false,
-      marker: null,
-      outcome: null,
-      error: null,
-      submitting: false,
-    },
-    cleanup: {
-      running: false,
-      result: null,
-      error: null,
-    },
-  },
   appLogViewer: {
     appId: null,
     title: "",

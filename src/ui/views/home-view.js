@@ -45,6 +45,7 @@ export function initHomeView(deps) {
   const {
     state,
     sessionsStore,
+    appsStore,
     getCurrentRoute,
     setCurrentRoute,
     render,
@@ -202,7 +203,7 @@ export function initHomeView(deps) {
 
     ensureFeatureFlagsLoaded();
 
-    if (!state.apps.initialized && !state.apps.loading) {
+    if (!appsStore().initialized && !appsStore().loading) {
       // void ensureAppsLoaded(); // DISABLED
     }
 
@@ -294,17 +295,17 @@ export function initHomeView(deps) {
     const appsContent = document.createElement("div");
     appsContent.className = "wm-home-apps-content";
 
-    if (state.apps.error) {
+    if (appsStore().error) {
       const error = document.createElement("p");
       error.className = "wm-home-apps-status";
-      error.textContent = state.apps.error;
+      error.textContent = appsStore().error;
       appsContent.append(error);
     } else {
-      const runningApps = Array.isArray(state.apps.items)
-        ? state.apps.items.filter((app) => app?.status?.status === "running")
+      const runningApps = Array.isArray(appsStore().items)
+        ? appsStore().items.filter((app) => app?.status?.status === "running")
         : [];
 
-      if (state.apps.loading && !state.apps.initialized) {
+      if (appsStore().loading && !appsStore().initialized) {
         const loading = document.createElement("p");
         loading.className = "wm-home-apps-status";
         loading.textContent = "Loading apps\u2026";
@@ -453,7 +454,7 @@ export function initHomeView(deps) {
         const opt = document.createElement("option");
         opt.value = option.value;
         opt.textContent = option.label;
-        const currentFilterNpub = sessionsStore()?.filters?.npub ?? state.sessionFilters.npub;
+        const currentFilterNpub = sessionsStore().filters.npub;
         if (option.value === currentFilterNpub) {
           opt.selected = true;
         }
@@ -462,13 +463,9 @@ export function initHomeView(deps) {
       filterSelect.addEventListener("change", (event) => {
         const target = event.target;
         const value = target instanceof HTMLSelectElement && target.value ? target.value : "all";
-        state.sessionFilters.npub = value;
-        state.sessionFilters.initialized = true;
         const ss = sessionsStore();
-        if (ss) {
-          ss.filters.npub = value;
-          ss.filters.initialized = true;
-        }
+        ss.filters.npub = value;
+        ss.filters.initialized = true;
         void fetchSessions().then(() => {
           syncMenuTabs();
           const route = getCurrentRoute();

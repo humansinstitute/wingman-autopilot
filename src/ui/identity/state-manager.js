@@ -264,19 +264,10 @@ export function initIdentityStateManager(deps) {
       } else if (!next.isAdmin && !viewerNormalized) {
         ss.filters.npub = "all";
       }
-      state.appFilters.initialized = false;
-      state.appFilters.options = [];
-      if (viewerNormalized) {
-        state.appFilters.npub = viewerNormalized;
-      } else {
-        state.appFilters.npub = "all";
-      }
       const as = appsStore();
-      if (as) {
-        as.filters.initialized = false;
-        as.filters.options = [];
-        as.filters.npub = viewerNormalized ?? "all";
-      }
+      as.filters.initialized = false;
+      as.filters.options = [];
+      as.filters.npub = viewerNormalized ?? "all";
     }
 
     if (persist) {

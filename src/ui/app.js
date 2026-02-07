@@ -1225,7 +1225,7 @@ const resolveProjectAppEntry = (entry) => {
     }
   }
   if (entry.folderPath) {
-    return (appsStore()?.items ?? state.apps.items).find((app) => app.root === entry.folderPath) ?? null;
+    return appsStore().items.find((app) => app.root === entry.folderPath) ?? null;
   }
   return null;
 };
@@ -1750,7 +1750,7 @@ const buildAppFilterOptions = () => {
     appendOption(viewerNpub, `My apps (${abbreviateNpub(viewerNpub)})`);
   }
   appendOption("all", "All apps");
-  const appFilterOptions = appsStore()?.filters?.options ?? state.appFilters.options;
+  const appFilterOptions = appsStore().filters.options;
   appFilterOptions.forEach((option) => {
     if (!option || typeof option !== "object") return;
     const value = typeof option.value === "string" ? option.value : "__anonymous__";
@@ -1794,52 +1794,19 @@ const fetchConversation = async (sessionId) => {
 };
 
 const fetchApps = async ({ tail = APP_LOG_PREVIEW_LINES } = {}) => {
-  const as = appsStore();
-
-  // Delegate API call + Dexie write + filter processing to store
-  if (as) {
-    await as.sync({ tail });
-    // Copy store data back to legacy state for code that still reads from it
-    state.apps.items = as.items;
-    state.apps.loading = as.loading;
-    state.apps.initialized = as.initialized;
-    state.apps.error = as.error;
-    state.appFilters.npub = as.filters.npub;
-    state.appFilters.options = as.filters.options;
-    state.appFilters.initialized = as.filters.initialized;
-    return;
-  }
-
-  // Fallback: direct API call if Alpine store not available
-  state.apps.loading = true;
-  try {
-    const payload = await fetchAppsApi({ tail });
-    if (payload.unauthorized) {
-      handleUnauthorizedAccess();
-      state.apps.items = [];
-      state.apps.error = "Unauthorized";
-      return;
-    }
-    state.apps.items = Array.isArray(payload?.apps) ? payload.apps : [];
-    state.apps.error = null;
-  } catch (error) {
-    state.apps.error = error instanceof Error ? error.message : "Failed to load apps";
-  } finally {
-    state.apps.loading = false;
-    state.apps.initialized = true;
-  }
+  await appsStore().sync({ tail });
 };
 
 const fetchRestartStatus = async () => {
   if (!state.identity.isAdmin) {
-    state.system.restart.loading = false;
-    state.system.restart.inProgress = false;
-    state.system.restart.marker = null;
-    state.system.restart.outcome = null;
-    state.system.restart.error = null;
+    appsStore().system.restart.loading = false;
+    appsStore().system.restart.inProgress = false;
+    appsStore().system.restart.marker = null;
+    appsStore().system.restart.outcome = null;
+    appsStore().system.restart.error = null;
     return;
   }
-  state.system.restart.loading = true;
+  appsStore().system.restart.loading = true;
   try {
     const response = await fetch("/api/system/restart/status");
     const payload = await response.json().catch(() => null);
@@ -1850,15 +1817,15 @@ const fetchRestartStatus = async () => {
           : response.statusText || "Failed to load restart status";
       throw new Error(message);
     }
-    state.system.restart.inProgress = Boolean(payload?.inProgress);
-    state.system.restart.marker = payload?.marker ?? null;
-    state.system.restart.outcome = payload?.outcome ?? null;
-    state.system.restart.error = null;
+    appsStore().system.restart.inProgress = Boolean(payload?.inProgress);
+    appsStore().system.restart.marker = payload?.marker ?? null;
+    appsStore().system.restart.outcome = payload?.outcome ?? null;
+    appsStore().system.restart.error = null;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load restart status";
-    state.system.restart.error = message;
+    appsStore().system.restart.error = message;
   } finally {
-    state.system.restart.loading = false;
+    appsStore().system.restart.loading = false;
   }
 };
 
@@ -1875,8 +1842,8 @@ const refreshApps = async ({ tail = APP_LOG_PREVIEW_LINES, skipRender = false } 
 };
 
 const ensureAppsLoaded = async () => {
-  if (state.apps.loading) return;
-  if (!state.apps.initialized) {
+  if (appsStore().loading) return;
+  if (!appsStore().initialized) {
     await refreshApps({ skipRender: false });
   }
 };
@@ -2348,7 +2315,7 @@ const formatAppTimestamp = (value) => {
   }
 };
 
-const getAppById = (appId) => (appsStore()?.items ?? state.apps.items).find((item) => item?.id === appId) ?? null;
+const getAppById = (appId) => appsStore().items.find((item) => item?.id === appId) ?? null;
 
 const isAppBusy = (app) => {
   const status = app?.status;
@@ -2423,14 +2390,14 @@ const triggerAppAction = async (appId, action) => {
 };
 
 const triggerWarmRestart = async () => {
-  if (state.system.restart.submitting || state.system.restart.inProgress) {
+  if (appsStore().system.restart.submitting || appsStore().system.restart.inProgress) {
     return false;
   }
-  state.system.restart.submitting = true;
+  appsStore().system.restart.submitting = true;
   try {
     await triggerWarmRestartApi();
-    state.system.restart.inProgress = true;
-    state.system.restart.error = null;
+    appsStore().system.restart.inProgress = true;
+    appsStore().system.restart.error = null;
     await fetchRestartStatus();
     if (currentRoute === "apps") {
       render();
@@ -2438,27 +2405,27 @@ const triggerWarmRestart = async () => {
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to initiate restart";
-    state.system.restart.error = message;
+    appsStore().system.restart.error = message;
     window.alert(message);
     return false;
   } finally {
-    state.system.restart.submitting = false;
+    appsStore().system.restart.submitting = false;
   }
 };
 
 const runSystemCleanup = async () => {
-  if (state.system.cleanup.running) {
+  if (appsStore().system.cleanup.running) {
     return false;
   }
-  state.system.cleanup.running = true;
-  state.system.cleanup.error = null;
+  appsStore().system.cleanup.running = true;
+  appsStore().system.cleanup.error = null;
   if (currentRoute === "apps") {
     render();
   }
   try {
     const payload = await runSystemCleanupApi();
-    state.system.cleanup.result = payload;
-    state.system.cleanup.error = null;
+    appsStore().system.cleanup.result = payload;
+    appsStore().system.cleanup.error = null;
     await Promise.all([
       fetchSessions(),
       refreshApps({ skipRender: true }),
@@ -2466,11 +2433,11 @@ const runSystemCleanup = async () => {
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to stop agents and apps";
-    state.system.cleanup.error = message;
+    appsStore().system.cleanup.error = message;
     window.alert(message);
     return false;
   } finally {
-    state.system.cleanup.running = false;
+    appsStore().system.cleanup.running = false;
     if (currentRoute === "apps") {
       render();
     }
@@ -2614,8 +2581,8 @@ const renderWingmanCard = (app) => {
 
   const statusBadge = document.createElement("span");
   statusBadge.className = "wm-app-status";
-  const restartInProgress = state.system.restart.inProgress;
-  const cleanupState = state.system.cleanup;
+  const restartInProgress = appsStore().system.restart.inProgress;
+  const cleanupState = appsStore().system.cleanup;
   const cleanupRunning = cleanupState.running;
   const statusValue = restartInProgress ? "restarting" : app?.status?.status ?? "running";
   statusBadge.dataset.state = statusValue;
@@ -2626,23 +2593,23 @@ const renderWingmanCard = (app) => {
   const statusInfo = document.createElement("div");
   statusInfo.className = "wm-app-status-info";
 
-  if (state.system.restart.error) {
+  if (appsStore().system.restart.error) {
     const errorLine = document.createElement("p");
     errorLine.className = "wm-app-status-error";
-    errorLine.textContent = state.system.restart.error;
+    errorLine.textContent = appsStore().system.restart.error;
     statusInfo.append(errorLine);
   } else if (restartInProgress) {
     const progressLine = document.createElement("p");
-    const sessionCount = Array.isArray(state.system.restart.marker?.sessionIds)
-      ? state.system.restart.marker.sessionIds.length
+    const sessionCount = Array.isArray(appsStore().system.restart.marker?.sessionIds)
+      ? appsStore().system.restart.marker.sessionIds.length
       : null;
     progressLine.textContent =
       sessionCount && sessionCount > 0
         ? `Warm restart in progress… preserving ${sessionCount} active session${sessionCount === 1 ? "" : "s"}.`
         : "Warm restart in progress… Wingman will reload without interrupting active sessions.";
     statusInfo.append(progressLine);
-  } else if (state.system.restart.outcome) {
-    const outcome = state.system.restart.outcome;
+  } else if (appsStore().system.restart.outcome) {
+    const outcome = appsStore().system.restart.outcome;
     const summaryLine = document.createElement("p");
     summaryLine.textContent = `Last warm restart restored ${outcome.restored} session${
       outcome.restored === 1 ? "" : "s"
@@ -2661,7 +2628,7 @@ const renderWingmanCard = (app) => {
     statusInfo.append(idleLine);
   }
 
-  const marker = state.system.restart.marker;
+  const marker = appsStore().system.restart.marker;
   if (marker?.createdAt && !restartInProgress) {
     const scheduledLine = document.createElement("p");
     scheduledLine.textContent = `Last restart request: ${formatAppTimestamp(marker.createdAt)}`;
@@ -2726,7 +2693,7 @@ const renderWingmanCard = (app) => {
   restartButton.className = "wm-button";
   restartButton.textContent = restartInProgress ? "Restarting…" : "Restart Wingman";
   restartButton.disabled =
-    state.system.restart.submitting || restartInProgress || cleanupRunning;
+    appsStore().system.restart.submitting || restartInProgress || cleanupRunning;
   restartButton.addEventListener("click", async () => {
     if (restartButton.disabled) return;
     restartButton.disabled = true;
@@ -2743,7 +2710,7 @@ const renderWingmanCard = (app) => {
     const cleanupButton = document.createElement("button");
     cleanupButton.type = "button";
     cleanupButton.className = "wm-button danger";
-    const cleanupDisabled = cleanupRunning || restartInProgress || state.system.restart.submitting;
+    const cleanupDisabled = cleanupRunning || restartInProgress || appsStore().system.restart.submitting;
     cleanupButton.textContent = cleanupRunning ? "Stopping…" : "Stop Agents & Apps";
     cleanupButton.disabled = cleanupDisabled;
     cleanupButton.addEventListener("click", async () => {
@@ -3194,7 +3161,7 @@ const renderApps = () => {
         const opt = document.createElement("option");
         opt.value = option.value;
         opt.textContent = option.label;
-        const currentAppFilter = appsStore()?.filters?.npub ?? state.appFilters.npub;
+        const currentAppFilter = appsStore().filters.npub;
         if (option.value === currentAppFilter) {
           opt.selected = true;
         }
@@ -3203,13 +3170,9 @@ const renderApps = () => {
       filterSelect.addEventListener("change", (event) => {
         const target = event.target;
         const value = target instanceof HTMLSelectElement && target.value ? target.value : "all";
-        state.appFilters.npub = value;
-        state.appFilters.initialized = true;
         const as = appsStore();
-        if (as) {
-          as.filters.npub = value;
-          as.filters.initialized = true;
-        }
+        as.filters.npub = value;
+        as.filters.initialized = true;
         void fetchApps({ tail: APP_LOG_PREVIEW_LINES }).then(() => {
           if (currentRoute === "apps") {
             render();
@@ -3225,8 +3188,8 @@ const renderApps = () => {
   const refreshButton = document.createElement("button");
   refreshButton.type = "button";
   refreshButton.className = "wm-button secondary";
-  refreshButton.textContent = state.apps.loading ? "Refreshing…" : "Refresh";
-  refreshButton.disabled = state.apps.loading;
+  refreshButton.textContent = appsStore().loading ? "Refreshing…" : "Refresh";
+  refreshButton.disabled = appsStore().loading;
   refreshButton.addEventListener("click", () => {
     refreshButton.disabled = true;
     void refreshApps({ skipRender: false });
@@ -3242,7 +3205,7 @@ const renderApps = () => {
   header.append(headerActions);
   wrapper.append(header);
 
-  if (!state.apps.initialized && !state.apps.loading) {
+  if (!appsStore().initialized && !appsStore().loading) {
     void refreshApps({ skipRender: false });
   }
 
@@ -3260,11 +3223,11 @@ const renderApps = () => {
   const mainArea = document.createElement("div");
   mainArea.className = "wm-apps-main";
 
-  if (state.apps.error) {
+  if (appsStore().error) {
     const errorBox = document.createElement("div");
     errorBox.className = "wm-apps-error";
     const errorText = document.createElement("p");
-    errorText.textContent = state.apps.error;
+    errorText.textContent = appsStore().error;
     const retry = document.createElement("button");
     retry.type = "button";
     retry.className = "wm-button secondary";
@@ -3276,8 +3239,8 @@ const renderApps = () => {
     mainArea.append(errorBox);
   }
 
-  const apps = Array.isArray(state.apps.items) ? state.apps.items : [];
-  if (state.apps.loading && apps.length === 0) {
+  const apps = Array.isArray(appsStore().items) ? appsStore().items : [];
+  if (appsStore().loading && apps.length === 0) {
     const loading = document.createElement("p");
     loading.className = "wm-apps-empty";
     loading.textContent = "Loading apps…";
@@ -3621,6 +3584,7 @@ renderSettings = settingsViewModule.renderSettings;
 const homeViewModule = initHomeView({
   state,
   sessionsStore,
+  appsStore,
   getCurrentRoute: () => currentRoute,
   setCurrentRoute: (r) => { currentRoute = r; },
   render,
@@ -3710,6 +3674,7 @@ renderFiles = filesViewModule.renderFiles;
 
 const liveViewModule = initLiveView({
   sessionsStore,
+  appsStore,
   getCurrentRoute: () => currentRoute,
   setCurrentRoute: (r) => { currentRoute = r; },
   getTabsVisible: () => tabsVisible,

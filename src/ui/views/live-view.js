@@ -20,6 +20,7 @@ import { state, TERMINAL_CONTROL_ACTIONS } from "../state/index.js";
 export function initLiveView(deps) {
   const {
     sessionsStore,
+    appsStore,
     getCurrentRoute,
     setCurrentRoute,
     getTabsVisible,
@@ -702,7 +703,7 @@ export function initLiveView(deps) {
       },
     ]);
 
-    const matchingApp = findAppForSession(sessionId, sessionsStore().items, state.apps.items, npubProjectsState);
+    const matchingApp = findAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
 
     if (matchingApp) {
       const appItems = [];
@@ -1084,7 +1085,7 @@ export function initLiveView(deps) {
     scrollRegion.append(conversationContainer);
     scheduleLiveScroll(sessionId, { includeWindow: true });
 
-    const webApp = findWebAppForSession(sessionId, sessionsStore().items, state.apps.items, npubProjectsState);
+    const webApp = findWebAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
     syncHeaderWebviewToggle(webApp);
 
     if (webApp && state.webviewLayout.open) {
