@@ -52,7 +52,6 @@ import {
   THEME_STORAGE_KEY,
   TABS_VISIBILITY_STORAGE_KEY,
   FILES_SHOW_HIDDEN_STORAGE_KEY,
-  SESSION_POLL_INTERVAL_MS,
   APPS_POLL_INTERVAL_MS,
   APP_LOG_PREVIEW_LINES,
   TOAST_DEFAULT_DURATION_MS,
@@ -115,8 +114,9 @@ if (!ace) {
   throw new Error("Ace editor failed to load");
 }
 
-let sessionPollIntervalId = null;
-let sessionPollInFlight = false;
+/** Lazy accessor for the Dexie-backed sessions Alpine store. */
+const sessionsStore = () => window.Alpine?.store("sessions");
+
 let appsPollIntervalId = null;
 let appsPollInFlight = false;
 let conversationPollIntervalId = null;
@@ -837,6 +837,15 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
       state.sessionFilters.npub = viewerNormalized;
     } else if (!next.isAdmin && !viewerNormalized) {
       state.sessionFilters.npub = "all";
+    }
+    const ss = sessionsStore();
+    if (ss) {
+      ss.filters.initialized = false;
+      if (!next.isAdmin && viewerNormalized) {
+        ss.filters.npub = viewerNormalized;
+      } else if (!next.isAdmin && !viewerNormalized) {
+        ss.filters.npub = "all";
+      }
     }
     state.appFilters.initialized = false;
     state.appFilters.options = [];
@@ -3140,10 +3149,10 @@ const renderWorktreeModal = () => {
   }
 };
 
-const getSessionById = (sessionId) => state.sessions.find((session) => session.id === sessionId);
+const getSessionById = (sessionId) => (sessionsStore()?.items ?? state.sessions).find((session) => session.id === sessionId);
 const ACTIVE_SESSION_STATUSES = new Set(["starting", "running"]);
 const isSessionActive = (session) => ACTIVE_SESSION_STATUSES.has(session?.status);
-const getActiveSessions = () => state.sessions.filter((session) => isSessionActive(session));
+const getActiveSessions = () => (sessionsStore()?.items ?? state.sessions).filter((session) => isSessionActive(session));
 
 const isSessionBusy = (session) => {
   if (!session) return false;
@@ -3791,16 +3800,24 @@ const initialRouteSessionId = getSessionIdFromPath(window.location.pathname);
 if (initialRouteSessionId) {
   state.activeSessionId = initialRouteSessionId;
   state.lastActiveSessionId = initialRouteSessionId;
+  const ss = sessionsStore();
+  if (ss) {
+    ss.activeSessionId = initialRouteSessionId;
+    ss.lastActiveSessionId = initialRouteSessionId;
+  }
 }
 
 const setActiveSession = (sessionId, options = {}) => {
   const { updateHistory = true, logPort = true, allowPending = false, forceLog = false } = options;
-  const previousSessionId = state.activeSessionId;
+  const ss = sessionsStore();
+  const previousSessionId = ss?.activeSessionId ?? state.activeSessionId;
+  const allSessions = ss?.items ?? state.sessions;
 
   if (sessionId) {
-    const sessionExists = state.sessions.some((session) => session.id === sessionId);
+    const sessionExists = allSessions.some((session) => session.id === sessionId);
     if (!sessionExists && !allowPending) {
       state.activeSessionId = null;
+      if (ss) ss.activeSessionId = null;
       lastLoggedSessionId = null;
       syncDesktopSessionIndicator();
       return false;
@@ -3808,6 +3825,10 @@ const setActiveSession = (sessionId, options = {}) => {
 
     state.activeSessionId = sessionId;
     state.lastActiveSessionId = sessionId;
+    if (ss) {
+      ss.activeSessionId = sessionId;
+      ss.lastActiveSessionId = sessionId;
+    }
 
     if (updateHistory && currentRoute === "live") {
       const targetPath = `${LIVE_ROUTE_PREFIX}/${sessionId}`;
@@ -3860,6 +3881,7 @@ const setActiveSession = (sessionId, options = {}) => {
 
   // No session selected - stop polling
   state.activeSessionId = null;
+  if (ss) ss.activeSessionId = null;
   lastLoggedSessionId = null;
   stopConversationPolling();
   if (updateHistory && currentRoute === "live" && window.location.pathname !== LIVE_ROUTE_PREFIX) {
@@ -3871,50 +3893,59 @@ const setActiveSession = (sessionId, options = {}) => {
 };
 
 const ensureActiveSession = () => {
-  if (state.activeSessionId && state.sessions.some((session) => session.id === state.activeSessionId)) {
-    return state.activeSessionId;
+  const ss = sessionsStore();
+  const allSessions = ss?.items ?? state.sessions;
+  const activeId = ss?.activeSessionId ?? state.activeSessionId;
+  const lastId = ss?.lastActiveSessionId ?? state.lastActiveSessionId;
+
+  if (activeId && allSessions.some((session) => session.id === activeId)) {
+    return activeId;
   }
-  if (state.lastActiveSessionId && state.sessions.some((session) => session.id === state.lastActiveSessionId)) {
-    setActiveSession(state.lastActiveSessionId, { updateHistory: false, logPort: false });
-    return state.activeSessionId;
+  if (lastId && allSessions.some((session) => session.id === lastId)) {
+    setActiveSession(lastId, { updateHistory: false, logPort: false });
+    return ss?.activeSessionId ?? state.activeSessionId;
   }
   if (currentRoute === "live") {
     setActiveSession(null, { updateHistory: false, logPort: false });
     return null;
   }
   const activeSessions = getActiveSessions();
-  const fallback = activeSessions[0] ?? state.sessions[0] ?? null;
+  const fallback = activeSessions[0] ?? allSessions[0] ?? null;
   if (fallback) {
     setActiveSession(fallback.id, { updateHistory: false, logPort: false });
   } else {
     setActiveSession(null, { updateHistory: false, logPort: false });
   }
-  return state.activeSessionId;
+  return ss?.activeSessionId ?? state.activeSessionId;
 };
 
 const applyRouteSessionFromPath = (options = {}) => {
   const { allowHistoryUpdate = false, logPort = true } = options;
   const routeSessionId = getSessionIdFromPath(window.location.pathname);
+  const ss = sessionsStore();
+  const allSessions = ss?.items ?? state.sessions;
+  const activeId = ss?.activeSessionId ?? state.activeSessionId;
+  const lastId = ss?.lastActiveSessionId ?? state.lastActiveSessionId;
 
   if (routeSessionId) {
-    if (state.sessions.some((session) => session.id === routeSessionId)) {
-      if (state.activeSessionId !== routeSessionId) {
+    if (allSessions.some((session) => session.id === routeSessionId)) {
+      if (activeId !== routeSessionId) {
         setActiveSession(routeSessionId, { updateHistory: false, logPort });
       }
       return false;
     }
-    if (state.activeSessionId) {
+    if (activeId) {
       setActiveSession(null, { updateHistory: false, logPort: false });
     }
     return true;
   }
 
-  if (allowHistoryUpdate && state.lastActiveSessionId && state.sessions.some((session) => session.id === state.lastActiveSessionId)) {
-    setActiveSession(state.lastActiveSessionId, { updateHistory: true, logPort });
+  if (allowHistoryUpdate && lastId && allSessions.some((session) => session.id === lastId)) {
+    setActiveSession(lastId, { updateHistory: true, logPort });
     return false;
   }
 
-  if (state.activeSessionId && !state.sessions.some((session) => session.id === state.activeSessionId)) {
+  if (activeId && !allSessions.some((session) => session.id === activeId)) {
     setActiveSession(null, { updateHistory: allowHistoryUpdate, logPort: false });
   }
   return false;
@@ -4759,8 +4790,9 @@ const applyTheme = (theme, persist = true) => {
 };
 
 const getActiveSessionForIndicator = () => {
-  if (!state.activeSessionId) return null;
-  return state.sessions.find((session) => session.id === state.activeSessionId) ?? null;
+  const activeId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+  if (!activeId) return null;
+  return (sessionsStore()?.items ?? state.sessions).find((session) => session.id === activeId) ?? null;
 };
 
 const shouldShowDesktopIndicator = () => currentRoute === "live" && window.innerWidth >= 900;
@@ -5046,8 +5078,9 @@ const setActiveNav = () => {
 const updateDocumentTitle = () => {
   let title = "Wingman";
   if (currentRoute === "live") {
-    const session = state.activeSessionId
-      ? state.sessions.find((s) => s.id === state.activeSessionId)
+    const titleActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+    const session = titleActiveId
+      ? (sessionsStore()?.items ?? state.sessions).find((s) => s.id === titleActiveId)
       : null;
     if (session) {
       const sessionName = getSessionDisplayName(session);
@@ -5890,26 +5923,21 @@ const fetchConfig = async () => {
 };
 
 const fetchSessions = async () => {
-  const viewerNormalized = normaliseNpubValue(state.identity.npub);
-  if (!state.identity.isAdmin) {
-    if (viewerNormalized && state.sessionFilters.npub !== viewerNormalized) {
-      state.sessionFilters.npub = viewerNormalized;
-    }
-  } else if (!state.sessionFilters.initialized && viewerNormalized) {
-    state.sessionFilters.npub = viewerNormalized;
+  const ss = sessionsStore();
+
+  // Delegate API call + Dexie write + filter/identity processing to store
+  if (ss) {
+    await ss.sync();
+    // Copy store data back to legacy state for code that still reads from it
+    state.sessions = ss.items;
+    state.identitySummaries = ss.identitySummaries;
+    state.sessionFilters.npub = ss.filters.npub;
+    state.sessionFilters.options = ss.filters.options;
+    state.sessionFilters.initialized = ss.filters.initialized;
   }
-  const activeFilter = state.sessionFilters.npub;
-  const query = activeFilter && activeFilter !== "all" ? `?npub=${encodeURIComponent(activeFilter)}` : "";
-  const response = await fetch(`/api/sessions${query}`);
-  if (response.status === 401) {
-    handleUnauthorizedAccess();
-    state.sessions = [];
-    state.identitySummaries = [];
-    state.sessionFilters.options = [];
-    state.sessionFilters.npub = "all";
-    state.sessionFilters.initialized = false;
-    state.activeSessionId = null;
-    state.lastActiveSessionId = null;
+
+  // Handle 401 redirect (store sets items to [] on unauthorized)
+  if (ss && ss.items.length === 0 && !ss.initialized) {
     if (currentRoute !== "home") {
       currentRoute = "home";
       if (window.location.pathname !== HOME_ROUTE) {
@@ -5918,81 +5946,13 @@ const fetchSessions = async () => {
     }
     return;
   }
-  if (!response.ok) {
-    console.error("Failed to load sessions:", response.status, response.statusText);
-    return;
-  }
-  const data = await response.json();
-  state.sessions = Array.isArray(data.sessions) ? data.sessions : [];
-  state.identitySummaries = Array.isArray(data.identities) ? data.identities : [];
-  const viewerNpub = typeof state.identity.npub === "string" ? state.identity.npub.trim() : null;
-  const viewerSummary =
-    viewerNpub
-      ? state.identitySummaries.find(
-          (summary) =>
-            summary &&
-            typeof summary === "object" &&
-            typeof summary.npub === "string" &&
-            summary.npub === viewerNpub,
-        ) ??
-        state.identitySummaries.find(
-          (summary) =>
-            summary &&
-            typeof summary === "object" &&
-            typeof summary.normalizedNpub === "string" &&
-            viewerNormalized &&
-            summary.normalizedNpub === viewerNormalized,
-        ) ??
-        null
-      : null;
-  const currentAlias =
-    viewerSummary?.alias ??
-    (viewerNpub
-      ? state.sessions.find(
-          (session) => session && typeof session === "object" && typeof session.npub === "string" && session.npub === viewerNpub,
-        )?.identityAlias ?? null
-      : null);
-  const identityUpdate = { alias: currentAlias };
-  if (viewerSummary && typeof viewerSummary === "object" && Object.prototype.hasOwnProperty.call(viewerSummary, "ports")) {
-    identityUpdate.ports = Array.isArray(viewerSummary.ports) ? normalisePortList(viewerSummary.ports) : [];
-  }
-  if (
-    viewerSummary &&
-    typeof viewerSummary === "object" &&
-    Object.prototype.hasOwnProperty.call(viewerSummary, "balance") &&
-    typeof viewerSummary.balance === "number" &&
-    Number.isFinite(viewerSummary.balance)
-  ) {
-    identityUpdate.balance = Math.max(0, Math.trunc(viewerSummary.balance));
-  } else {
-    identityUpdate.balance = 0;
-  }
-  updateIdentityState(identityUpdate, { persist: true, emit: true });
-  const filterPayload = data.filters && typeof data.filters === "object" ? data.filters : null;
-  const npubOptions = filterPayload && Array.isArray(filterPayload.npubs) ? filterPayload.npubs : [];
-  state.sessionFilters.options = npubOptions;
-  const optionValues = new Set([
-    "all",
-    ...npubOptions
-      .filter((option) => option && typeof option === "object" && typeof option.value === "string")
-      .map((option) => option.value),
-  ]);
-  let nextFilter = state.sessionFilters.npub;
-  if (!state.identity.isAdmin) {
-    nextFilter = viewerNormalized ?? "all";
-  } else if (filterPayload && typeof filterPayload.active === "string" && optionValues.has(filterPayload.active)) {
-    nextFilter = filterPayload.active;
-  } else if (filterPayload && filterPayload.active === null) {
-    nextFilter = "all";
-  } else if (!optionValues.has(nextFilter)) {
-    nextFilter = viewerNormalized ?? "all";
-  }
-  state.sessionFilters.npub = nextFilter;
-  state.sessionFilters.initialized = true;
 
-  const sessionIds = new Set(state.sessions.map((session) => session.id));
-  if (state.lastActiveSessionId && !sessionIds.has(state.lastActiveSessionId)) {
+  const allSessions = ss?.items ?? state.sessions;
+  const sessionIds = new Set(allSessions.map((session) => session.id));
+  const lastId = ss?.lastActiveSessionId ?? state.lastActiveSessionId;
+  if (lastId && !sessionIds.has(lastId)) {
     state.lastActiveSessionId = null;
+    if (ss) ss.lastActiveSessionId = null;
   }
 
   // Clean up data and DOM references for deleted sessions
@@ -6031,22 +5991,23 @@ const fetchSessions = async () => {
     }
   }
   ensureActiveSession();
+  const activeId = ss?.activeSessionId ?? state.activeSessionId;
   if (
     !redirectHome &&
     currentRoute === "live" &&
-    state.activeSessionId &&
-    state.sessions.some((session) => session.id === state.activeSessionId)
+    activeId &&
+    allSessions.some((session) => session.id === activeId)
   ) {
-    setActiveSession(state.activeSessionId, { updateHistory: false, forceLog: true });
+    setActiveSession(activeId, { updateHistory: false, forceLog: true });
   }
 
   syncDesktopSessionIndicator();
 
-  if (!redirectHome && currentRoute === "live" && state.activeSessionId) {
+  if (!redirectHome && currentRoute === "live" && activeId) {
     await Promise.all([
-      fetchLogs(state.activeSessionId),
-      fetchConversation(state.activeSessionId),
-      fetchSessionQueue(state.activeSessionId),
+      fetchLogs(activeId),
+      fetchConversation(activeId),
+      fetchSessionQueue(activeId),
     ]);
   }
 };
@@ -6067,7 +6028,8 @@ const buildSessionFilterOptions = () => {
 
   appendOption("all", "All identities");
 
-  state.sessionFilters.options.forEach((option) => {
+  const sessionFilterOptions = sessionsStore()?.filters?.options ?? state.sessionFilters.options;
+  sessionFilterOptions.forEach((option) => {
     if (!option || typeof option !== "object") return;
     const value = typeof option.value === "string" ? option.value : "__anonymous__";
     const npub = typeof option.npub === "string" ? option.npub : null;
@@ -6118,7 +6080,7 @@ const fetchLogs = async (sessionId) => {
   state.logs.set(sessionId, data.logs);
 
   // Trigger incremental DOM update if on live route
-  if (currentRoute === "live" && sessionId === state.activeSessionId) {
+  if (currentRoute === "live" && sessionId === (sessionsStore()?.activeSessionId ?? state.activeSessionId)) {
     updateLogsDOM(sessionId);
   }
 };
@@ -6131,7 +6093,7 @@ const fetchConversation = async (sessionId) => {
     state.conversations.set(sessionId, items);
 
     // Trigger incremental DOM update if on live route
-    if (currentRoute === "live" && sessionId === state.activeSessionId) {
+    if (currentRoute === "live" && sessionId === (sessionsStore()?.activeSessionId ?? state.activeSessionId)) {
       updateConversationDOM(sessionId);
     }
   } catch (error) {
@@ -7006,15 +6968,17 @@ const syncAppsPolling = () => {
 
 const pollSessions = async () => {
   try {
-    const previousSessionCount = state.sessions.length;
-    const previousSessionIds = state.sessions.map(s => s.id).join(',');
+    const allSessions = sessionsStore()?.items ?? state.sessions;
+    const previousSessionCount = allSessions.length;
+    const previousSessionIds = allSessions.map(s => s.id).join(',');
 
     await fetchSessions();
     syncMenuTabs();
     syncDesktopSessionIndicator();
 
-    const currentSessionCount = state.sessions.length;
-    const currentSessionIds = state.sessions.map(s => s.id).join(',');
+    const updatedSessions = sessionsStore()?.items ?? state.sessions;
+    const currentSessionCount = updatedSessions.length;
+    const currentSessionIds = updatedSessions.map(s => s.id).join(',');
     const sessionsChanged = previousSessionCount !== currentSessionCount || previousSessionIds !== currentSessionIds;
 
     if (currentRoute === "home") {
@@ -7030,7 +6994,8 @@ const pollSessions = async () => {
       return;
     }
 
-    if (!state.activeSessionId) {
+    const activeId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+    if (!activeId) {
       // On live route with no active session, render to show empty state
       render();
     } else {
@@ -7058,37 +7023,11 @@ const pollSessions = async () => {
   }
 };
 
-const pollSessionsLoop = async () => {
-  if (sessionPollInFlight) {
-    return;
-  }
-  sessionPollInFlight = true;
-  try {
-    await pollSessions();
-  } catch (error) {
-    console.error("Session polling loop failed", error);
-  } finally {
-    sessionPollInFlight = false;
-  }
-};
-
-const startSessionPolling = () => {
-  // NEVER START POLLING - COMPLETELY DISABLED
-  return;
-};
-
-const stopSessionPolling = () => {
-  if (sessionPollIntervalId === null) {
-    return;
-  }
-  window.clearInterval(sessionPollIntervalId);
-  sessionPollIntervalId = null;
-};
-
-const syncSessionPolling = () => {
-  // Disable polling entirely - use manual refresh instead
-  stopSessionPolling();
-};
+// Session polling has been replaced by Dexie-backed Alpine store with liveQuery.
+// These stubs remain for callers that haven't been updated yet.
+const startSessionPolling = () => {};
+const stopSessionPolling = () => {};
+const syncSessionPolling = () => {};
 
 // Conversation polling for live view - polls every 100ms for responsiveness
 const CONVERSATION_POLL_INTERVAL = 100;
@@ -7101,7 +7040,8 @@ const startConversationPolling = (sessionId) => {
 
   conversationPollIntervalId = window.setInterval(async () => {
     if (conversationPollInFlight) return;
-    if (currentRoute !== "live" || state.activeSessionId !== sessionId) {
+    const pollingActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+    if (currentRoute !== "live" || pollingActiveId !== sessionId) {
       stopConversationPolling();
       return;
     }
@@ -7117,7 +7057,7 @@ const startConversationPolling = (sessionId) => {
 
       // Update session status if we got data
       if (sessionData) {
-        const session = state.sessions.find((s) => s.id === sessionId);
+        const session = (sessionsStore()?.items ?? state.sessions).find((s) => s.id === sessionId);
         if (session) {
           const oldStatus = session.agentRuntimeStatus;
           session.agentRuntimeStatus = sessionData.agentRuntimeStatus ?? null;
@@ -9794,7 +9734,8 @@ const renderHome = () => {
       const opt = document.createElement("option");
       opt.value = option.value;
       opt.textContent = option.label;
-      if (option.value === state.sessionFilters.npub) {
+      const currentFilterNpub = sessionsStore()?.filters?.npub ?? state.sessionFilters.npub;
+      if (option.value === currentFilterNpub) {
         opt.selected = true;
       }
       filterSelect.append(opt);
@@ -9804,6 +9745,11 @@ const renderHome = () => {
       const value = target instanceof HTMLSelectElement && target.value ? target.value : "all";
       state.sessionFilters.npub = value;
       state.sessionFilters.initialized = true;
+      const ss = sessionsStore();
+      if (ss) {
+        ss.filters.npub = value;
+        ss.filters.initialized = true;
+      }
       void fetchSessions().then(() => {
         syncMenuTabs();
         if (currentRoute === "home" || currentRoute === "live") {
@@ -11571,7 +11517,8 @@ const renderSessionTabs = (options = {}) => {
   activeSessions.forEach((session) => {
     const tab = document.createElement("div");
     tab.className = "wm-tab";
-    if (session.id === state.activeSessionId) {
+    const tabActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+    if (session.id === tabActiveId) {
       tab.classList.add("active");
     }
 
@@ -11585,7 +11532,8 @@ const renderSessionTabs = (options = {}) => {
 
     tab.addEventListener("click", () => {
       const wasLiveRoute = currentRoute === "live";
-      if (state.activeSessionId === session.id && wasLiveRoute) {
+      const clickActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+      if (clickActiveId === session.id && wasLiveRoute) {
         // Already active, no need to switch
         onSelect?.();
         return;
@@ -11637,7 +11585,8 @@ const renderTabs = (options = {}) => {
   activeSessions.forEach((session) => {
     const tab = document.createElement("div");
     tab.className = "wm-tab";
-    if (session.id === state.activeSessionId) {
+    const menuTabActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+    if (session.id === menuTabActiveId) {
       tab.classList.add("active");
     }
 
@@ -11650,7 +11599,8 @@ const renderTabs = (options = {}) => {
     tab.title = `${displayName} - ${session.agent}:${session.port}`;
 
     tab.addEventListener("click", () => {
-      if (state.activeSessionId === session.id && currentRoute === "live") {
+      const menuClickActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+      if (menuClickActiveId === session.id && currentRoute === "live") {
         // Already active, no need to switch
         onSelect?.();
         return;
@@ -12594,11 +12544,14 @@ const renderLive = () => {
     return wrapper;
   }
 
-  if (!state.activeSessionId || !state.sessions.some((session) => session.id === state.activeSessionId)) {
+  const liveActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+  const liveSessions = sessionsStore()?.items ?? state.sessions;
+  if (!liveActiveId || !liveSessions.some((session) => session.id === liveActiveId)) {
     ensureActiveSession();
   }
 
-  if (!state.activeSessionId) {
+  const resolvedActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+  if (!resolvedActiveId) {
     const container = document.createElement("section");
     container.className = "wm-card wm-live-main";
     const empty = document.createElement("p");
@@ -12608,7 +12561,7 @@ const renderLive = () => {
     return wrapper;
   }
 
-  const sessionId = state.activeSessionId;
+  const sessionId = resolvedActiveId;
 
   const main = document.createElement("section");
   main.className = "wm-card wm-live-main";
@@ -13190,8 +13143,8 @@ const render = () => {
           sseManager.disconnectAll();
         }
         // Entering live view - connect to active session
-        if (currentRoute === "live" && state.activeSessionId) {
-          sseManager.connect(state.activeSessionId);
+        if (currentRoute === "live" && (sessionsStore()?.activeSessionId ?? state.activeSessionId)) {
+          sseManager.connect(sessionsStore()?.activeSessionId ?? state.activeSessionId);
         }
         previousRenderRoute = currentRoute;
       }
@@ -13525,9 +13478,13 @@ navLinks.forEach((link) => {
     closeMenu();
     if (targetRoute === "live") {
       currentRoute = "live";
-      const hasActive = state.activeSessionId && state.sessions.some((session) => session.id === state.activeSessionId);
-      const hasLast = state.lastActiveSessionId && state.sessions.some((session) => session.id === state.lastActiveSessionId);
-      const targetSessionId = hasActive ? state.activeSessionId : hasLast ? state.lastActiveSessionId : null;
+      const ss = sessionsStore();
+      const navSessions = ss?.items ?? state.sessions;
+      const navActiveId = ss?.activeSessionId ?? state.activeSessionId;
+      const navLastId = ss?.lastActiveSessionId ?? state.lastActiveSessionId;
+      const hasActive = navActiveId && navSessions.some((session) => session.id === navActiveId);
+      const hasLast = navLastId && navSessions.some((session) => session.id === navLastId);
+      const targetSessionId = hasActive ? navActiveId : hasLast ? navLastId : null;
       if (targetSessionId) {
         setActiveSession(targetSessionId, { updateHistory: true, forceLog: true });
       } else {
@@ -13805,17 +13762,18 @@ const scrollLiveViewIfVisible = () => {
   if (currentRoute !== "live") {
     return;
   }
-  if (!state.activeSessionId) {
+  const scrollActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+  if (!scrollActiveId) {
     return;
   }
-  scheduleLiveScroll(state.activeSessionId, { includeWindow: true });
+  scheduleLiveScroll(scrollActiveId, { includeWindow: true });
 };
 
 window.addEventListener("focus", scrollLiveViewIfVisible);
 
 // Initialize visibility manager for SSE reconnection on tab return
 visibilityManager.init({
-  getSessionId: () => state.activeSessionId,
+  getSessionId: () => sessionsStore()?.activeSessionId ?? state.activeSessionId,
   checkHealth: (sessionId) => sseManager.isConnectionHealthy(sessionId),
   reconnect: (sessionId) => sseManager.reconnect(sessionId),
 });
@@ -13959,7 +13917,7 @@ dialog.addEventListener("cancel", (event) => {
 
   // Wire SSE status events to knight rider and status indicators
   sseManager.onStatusChange((sessionId, status) => {
-    const session = state.sessions.find((s) => s.id === sessionId);
+    const session = (sessionsStore()?.items ?? state.sessions).find((s) => s.id === sessionId);
     if (session) {
       session.agentRuntimeStatus = status;
       updateAgentStatusIndicators();
@@ -13989,7 +13947,7 @@ dialog.addEventListener("cancel", (event) => {
     state.conversations.set(sessionId, existing);
 
     // Update DOM if on live view with this session active
-    if (currentRoute === "live" && sessionId === state.activeSessionId) {
+    if (currentRoute === "live" && sessionId === (sessionsStore()?.activeSessionId ?? state.activeSessionId)) {
       updateConversationDOM(sessionId);
     }
   });
@@ -14025,28 +13983,6 @@ dialog.addEventListener("cancel", (event) => {
     await refreshOrchestratorPresets();
   }
   await fetchSessions();
-  // Bridge: populate Dexie sessions store with data already in state.sessions
-  // The liveQuery will fire and Alpine store items will update automatically
-  try {
-    const { ApiSessionStore } = await import("./live/db.js");
-    if (state.sessions.length > 0) {
-      await ApiSessionStore.upsertMany(state.sessions);
-    }
-    // Sync identity summaries and filters to Alpine store
-    const sessionsStore = window.Alpine?.store("sessions");
-    if (sessionsStore) {
-      sessionsStore.identitySummaries = state.identitySummaries;
-      sessionsStore.filters.npub = state.sessionFilters.npub;
-      sessionsStore.filters.options = state.sessionFilters.options;
-      sessionsStore.filters.initialized = state.sessionFilters.initialized;
-      sessionsStore.activeSessionId = state.activeSessionId;
-      sessionsStore.lastActiveSessionId = state.lastActiveSessionId;
-      sessionsStore.initialized = true;
-      sessionsStore.loading = false;
-    }
-  } catch (err) {
-    console.warn("[app] Sessions store bridge failed:", err);
-  }
   // Always fetch apps for authenticated users (needed for CMD menu app actions)
   if (state.identity.authenticated) {
     await fetchApps({ tail: APP_LOG_PREVIEW_LINES });
