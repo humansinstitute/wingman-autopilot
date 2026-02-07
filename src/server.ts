@@ -6886,6 +6886,14 @@ const server = Bun.serve({
         return serveIndex();
       }
 
+      // Serve UI module assets before API routing so paths like
+      // /api/admin-users.js resolve to src/ui/api/ instead of the
+      // JSON API handler.
+      const earlyUiAsset = assetService.resolveUiAsset(pathname);
+      if (earlyUiAsset) {
+        return earlyUiAsset;
+      }
+
       if (pathname.startsWith("/api/")) {
         return handleApi(request, url, method, authContext);
       }
