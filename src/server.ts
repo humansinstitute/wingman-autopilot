@@ -298,6 +298,8 @@ const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   tailAppLogs: (appId, lines) => appProcessManager.tailLogs(appId, lines),
   caproverStore,
   getCaproverClient: createCaproverClientFromEnv,
+  userSkillsRoot: join(homeDirectory, ".wingmen", "skills"),
+  defaultSkillsRoot: join(projectRootPath, "skills"),
 });
 
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
