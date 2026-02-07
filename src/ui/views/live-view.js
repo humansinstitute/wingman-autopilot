@@ -5,7 +5,7 @@
  * Depends on: state, sessions store, navigation, session actions, image attachments (via DI).
  */
 
-import { escapeHtml, getSessionDisplayName, scrollConversationAreaToBottom, isConversationScrolledToBottom } from "../core/icons.js";
+import { escapeHtml, getSessionDisplayName } from "../core/icons.js";
 import { collapseNewlines } from "../utils/text.js";
 import { attachCopyButton, copyConversationToClipboard } from "../utils/clipboard.js";
 import { showToast } from "../utils/toast.js";
@@ -39,6 +39,8 @@ export function initLiveView(deps) {
     sendControlCommand,
     syncHeaderWebviewToggle,
     scheduleLiveScroll,
+    isConversationScrolledToBottom,
+    scrollConversationAreaToBottom,
     // Stubs (late-bound)
     createAgentStatusIndicator,
     resolveAgentRuntimeStatus,

@@ -5052,6 +5052,8 @@ const liveViewModule = initLiveView({
   sendControlCommand,
   syncHeaderWebviewToggle,
   scheduleLiveScroll,
+  isConversationScrolledToBottom,
+  scrollConversationAreaToBottom,
   createAgentStatusIndicator,
   resolveAgentRuntimeStatus,
   extractImageFiles,
