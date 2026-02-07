@@ -11,12 +11,16 @@ export const db = new Dexie("WingmanLive");
 // Define schema
 // Version 1: Initial schema with messages and sessions tables
 db.version(1).stores({
-  // Messages table
-  // Primary key: auto-increment id
-  // Indexes: sessionId, compound [sessionId+createdAt] for ordered queries, messageHash for dedup
   messages: "++id, sessionId, [sessionId+createdAt], messageHash",
-  // Sessions table for status caching
   sessions: "id, status, updatedAt",
+});
+
+// Version 2: Add apiSessions (full session objects from /api/sessions) and apps tables
+db.version(2).stores({
+  messages: "++id, sessionId, [sessionId+createdAt], messageHash",
+  sessions: "id, status, updatedAt",
+  apiSessions: "id, status, agentType, npub, updatedAt",
+  apps: "id, label, updatedAt",
 });
 
 /**
@@ -158,6 +162,80 @@ export const SessionStore = {
 };
 
 /**
+ * API session store operations.
+ * Caches full session objects from /api/sessions for instant page loads.
+ */
+export const ApiSessionStore = {
+  /** Get all cached API sessions. */
+  async getAll() {
+    return db.apiSessions.toArray();
+  },
+
+  /** Bulk upsert sessions from API response. Replaces cache with server truth. */
+  async upsertMany(sessions) {
+    if (!Array.isArray(sessions) || sessions.length === 0) return;
+    await db.transaction("rw", db.apiSessions, async () => {
+      await db.apiSessions.clear();
+      await db.apiSessions.bulkPut(
+        sessions.map((s) => ({ ...s, updatedAt: new Date().toISOString() })),
+      );
+    });
+  },
+
+  /** Get a single session by id. */
+  async getById(id) {
+    return db.apiSessions.get(id);
+  },
+
+  /** Remove a single session by id. */
+  async remove(id) {
+    return db.apiSessions.delete(id);
+  },
+
+  /** Clear all cached sessions. */
+  async clear() {
+    return db.apiSessions.clear();
+  },
+};
+
+/**
+ * Apps table operations.
+ * Caches full app objects from /api/apps for instant page loads.
+ */
+export const AppsTable = {
+  /** Get all cached apps. */
+  async getAll() {
+    return db.apps.toArray();
+  },
+
+  /** Bulk upsert apps from API response. Replaces cache with server truth. */
+  async upsertMany(apps) {
+    if (!Array.isArray(apps) || apps.length === 0) return;
+    await db.transaction("rw", db.apps, async () => {
+      await db.apps.clear();
+      await db.apps.bulkPut(
+        apps.map((a) => ({ ...a, updatedAt: new Date().toISOString() })),
+      );
+    });
+  },
+
+  /** Get a single app by id. */
+  async getById(id) {
+    return db.apps.get(id);
+  },
+
+  /** Remove a single app by id. */
+  async remove(id) {
+    return db.apps.delete(id);
+  },
+
+  /** Clear all cached apps. */
+  async clear() {
+    return db.apps.clear();
+  },
+};
+
+/**
  * Database utilities.
  */
 export const DbUtils = {
@@ -167,24 +245,34 @@ export const DbUtils = {
   async clearAll() {
     await db.messages.clear();
     await db.sessions.clear();
+    await db.apiSessions.clear();
+    await db.apps.clear();
   },
 
   /**
    * Get database statistics.
    */
   async getStats() {
-    const messageCount = await db.messages.count();
-    const sessionCount = await db.sessions.count();
-    return { messageCount, sessionCount };
+    const [messageCount, sessionCount, apiSessionCount, appCount] = await Promise.all([
+      db.messages.count(),
+      db.sessions.count(),
+      db.apiSessions.count(),
+      db.apps.count(),
+    ]);
+    return { messageCount, sessionCount, apiSessionCount, appCount };
   },
 
   /**
    * Export all data (for debugging).
    */
   async exportAll() {
-    const messages = await db.messages.toArray();
-    const sessions = await db.sessions.toArray();
-    return { messages, sessions };
+    const [messages, sessions, apiSessions, apps] = await Promise.all([
+      db.messages.toArray(),
+      db.sessions.toArray(),
+      db.apiSessions.toArray(),
+      db.apps.toArray(),
+    ]);
+    return { messages, sessions, apiSessions, apps };
   },
 };
 
