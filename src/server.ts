@@ -287,21 +287,6 @@ const nip98ApiHandler = createNip98ApiHandler({
   grantsStore: nip98GrantsStore,
   getSession: (sid: string) => manager.getSession(sid) ?? null,
 });
-const wingmanMcpApiHandler = createWingmanMcpApiHandler({
-  getSession: (sid: string) => manager.getSession(sid) ?? null,
-  listSessions: () => manager.listSessions(),
-  createSession: (agent, dir, name) => manager.createSession(agent, dir, name),
-  getSessionLogs: (sid) => manager.getLogs(sid),
-  listApps: () => appRegistry.listApps(),
-  getAppStatus: (appId) => appProcessManager.getStatus(appId),
-  runAppAction: (appId, action) => appProcessManager[action](appId),
-  tailAppLogs: (appId, lines) => appProcessManager.tailLogs(appId, lines),
-  caproverStore,
-  getCaproverClient: createCaproverClientFromEnv,
-  userSkillsRoot: join(homeDirectory, ".wingmen", "skills"),
-  defaultSkillsRoot: join(projectRootPath, "skills"),
-});
-
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());
 registerAccessRule(AccessActions.FilesWrite, requireAuthentication());
@@ -830,6 +815,21 @@ try {
 }
 
 const manager = new ProcessManager(config);
+
+const wingmanMcpApiHandler = createWingmanMcpApiHandler({
+  getSession: (sid: string) => manager.getSession(sid) ?? null,
+  listSessions: () => manager.listSessions(),
+  createSession: (agent, dir, name) => manager.createSession(agent, dir, name),
+  getSessionLogs: (sid) => manager.getLogs(sid),
+  listApps: () => appRegistry.listApps(),
+  getAppStatus: (appId) => appProcessManager.getStatus(appId),
+  runAppAction: (appId, action) => appProcessManager[action](appId),
+  tailAppLogs: (appId, lines) => appProcessManager.tailLogs(appId, lines),
+  caproverStore,
+  getCaproverClient: createCaproverClientFromEnv,
+  userSkillsRoot: join(homeDirectory, ".wingmen", "skills"),
+  defaultSkillsRoot: join(projectRoot, "skills"),
+});
 
 // Reconcile PM2 processes with app registry
 try {
