@@ -10,8 +10,7 @@ export const THEME_STORAGE_KEY = "wingman-theme";
 export const TABS_VISIBILITY_STORAGE_KEY = "wingman-tabs-visible";
 export const FILES_SHOW_HIDDEN_STORAGE_KEY = "wingman-files-show-hidden";
 
-// Polling intervals
-export const APPS_POLL_INTERVAL_MS = 5000;
+// Constants
 export const APP_LOG_PREVIEW_LINES = 5;
 
 // URL configuration
@@ -87,6 +86,8 @@ export const state = {
     options: [],
     initialized: false,
   },
+  // TODO: appFilters is transitional — Alpine.store("apps").filters is the source of truth.
+  // Remains as a pre-Alpine fallback until all rendering code reads from the store directly.
   appFilters: {
     npub: "all",
     options: [],
@@ -134,6 +135,8 @@ export const state = {
   logContainers: new Map(), // sessionId -> DOM element
   lastMessageCount: new Map(), // sessionId -> number of messages
   lastLogLength: new Map(), // sessionId -> length of logs
+  // TODO: apps is transitional — Alpine.store("apps") is the source of truth.
+  // Remains as a pre-Alpine fallback until all rendering code reads from the store directly.
   apps: {
     items: [],
     loading: false,
@@ -144,6 +147,8 @@ export const state = {
   },
   adminUsers: createAdminUsersState(),
   featureFlags: createFeatureFlagsState(),
+  // TODO: system is transitional — Alpine.store("apps").system is the source of truth.
+  // Remains as a pre-Alpine fallback until all rendering code reads from the store directly.
   system: {
     restart: {
       loading: false,
