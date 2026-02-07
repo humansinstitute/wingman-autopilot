@@ -52,7 +52,6 @@ import {
   THEME_STORAGE_KEY,
   TABS_VISIBILITY_STORAGE_KEY,
   FILES_SHOW_HIDDEN_STORAGE_KEY,
-  APPS_POLL_INTERVAL_MS,
   APP_LOG_PREVIEW_LINES,
   TOAST_DEFAULT_DURATION_MS,
   DEFAULT_CONNECT_RELAYS,
@@ -116,9 +115,8 @@ if (!ace) {
 
 /** Lazy accessor for the Dexie-backed sessions Alpine store. */
 const sessionsStore = () => window.Alpine?.store("sessions");
-
-let appsPollIntervalId = null;
-let appsPollInFlight = false;
+/** Lazy accessor for the Dexie-backed apps Alpine store. */
+const appsStore = () => window.Alpine?.store("apps");
 let conversationPollIntervalId = null;
 let conversationPollInFlight = false;
 let sessionDialogController = null;
@@ -853,6 +851,12 @@ const updateIdentityState = (partial, { persist = true, emit = true } = {}) => {
       state.appFilters.npub = viewerNormalized;
     } else {
       state.appFilters.npub = "all";
+    }
+    const as = appsStore();
+    if (as) {
+      as.filters.initialized = false;
+      as.filters.options = [];
+      as.filters.npub = viewerNormalized ?? "all";
     }
   }
 
@@ -4753,7 +4757,7 @@ const resolveProjectAppEntry = (entry) => {
     }
   }
   if (entry.folderPath) {
-    return state.apps.items.find((app) => app.root === entry.folderPath) ?? null;
+    return (appsStore()?.items ?? state.apps.items).find((app) => app.root === entry.folderPath) ?? null;
   }
   return null;
 };
@@ -6058,7 +6062,8 @@ const buildAppFilterOptions = () => {
     appendOption(viewerNpub, `My apps (${abbreviateNpub(viewerNpub)})`);
   }
   appendOption("all", "All apps");
-  state.appFilters.options.forEach((option) => {
+  const appFilterOptions = appsStore()?.filters?.options ?? state.appFilters.options;
+  appFilterOptions.forEach((option) => {
     if (!option || typeof option !== "object") return;
     const value = typeof option.value === "string" ? option.value : "__anonymous__";
     if (seen.has(value)) return;
@@ -6101,95 +6106,36 @@ const fetchConversation = async (sessionId) => {
 };
 
 const fetchApps = async ({ tail = APP_LOG_PREVIEW_LINES } = {}) => {
+  const as = appsStore();
+
+  // Delegate API call + Dexie write + filter processing to store
+  if (as) {
+    await as.sync({ tail });
+    // Copy store data back to legacy state for code that still reads from it
+    state.apps.items = as.items;
+    state.apps.loading = as.loading;
+    state.apps.initialized = as.initialized;
+    state.apps.error = as.error;
+    state.appFilters.npub = as.filters.npub;
+    state.appFilters.options = as.filters.options;
+    state.appFilters.initialized = as.filters.initialized;
+    return;
+  }
+
+  // Fallback: direct API call if Alpine store not available
   state.apps.loading = true;
-  const viewerNormalized = normaliseNpubValue(state.identity.npub);
-  if (state.identity.isAdmin) {
-    if (!state.appFilters.initialized && viewerNormalized) {
-      state.appFilters.npub = viewerNormalized;
-    }
-  } else if (viewerNormalized) {
-    state.appFilters.npub = viewerNormalized;
-  } else {
-    state.appFilters.npub = "all";
-  }
-  const searchParams = new URLSearchParams();
-  searchParams.set("tail", String(tail));
-  if (state.identity.isAdmin) {
-    const filterValue = state.appFilters.npub;
-    if (filterValue && filterValue !== "all") {
-      searchParams.set("npub", filterValue);
-    }
-  }
   try {
-    const response = await fetch(`/api/apps?${searchParams.toString()}`);
-    if (response.status === 401) {
+    const payload = await fetchAppsApi({ tail });
+    if (payload.unauthorized) {
       handleUnauthorizedAccess();
       state.apps.items = [];
-      state.appFilters.options = [];
-      state.appFilters.npub = "all";
-      state.appFilters.initialized = false;
       state.apps.error = "Unauthorized";
       return;
     }
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      const errorMessage =
-        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
-          ? payload.error
-          : response.statusText || "Failed to load apps";
-      throw new Error(errorMessage);
-    }
-    const items = Array.isArray(payload?.apps) ? payload.apps : [];
-    state.apps.items = items.map((item) => {
-      const logs = Array.isArray(item?.logs) ? item.logs : [];
-      const availableScripts =
-        item && typeof item === "object" && item.availableScripts && typeof item.availableScripts === "object"
-          ? item.availableScripts
-          : {
-              start: Boolean(item?.scripts?.start),
-              stop: Boolean(item?.scripts?.stop),
-              restart: Boolean(item?.scripts?.restart),
-              build: Boolean(item?.scripts?.build),
-            };
-      const webApp = Boolean(item?.webApp);
-      const webAppPort =
-        typeof item?.webAppPort === "number" && Number.isFinite(item.webAppPort) ? Math.trunc(item.webAppPort) : null;
-      let webAppUrl = typeof item?.webAppUrl === "string" && item.webAppUrl.length > 0 ? item.webAppUrl : null;
-      if (!webAppUrl && webApp && webAppPort !== null) {
-        webAppUrl = formatWebAppUrl(webAppPort);
-      }
-      return {
-        ...item,
-        webApp,
-        webAppPort,
-        webAppUrl,
-        logs,
-        availableScripts,
-      };
-    });
-    if (state.identity.isAdmin) {
-      const filterPayload = payload && typeof payload === "object" ? payload.filters : null;
-      const ownerOptions =
-        filterPayload && Array.isArray(filterPayload.npubs) ? filterPayload.npubs : [];
-      state.appFilters.options = ownerOptions;
-      const activeValue =
-        filterPayload && Object.prototype.hasOwnProperty.call(filterPayload, "active")
-          ? filterPayload.active
-          : undefined;
-      if (typeof activeValue === "string" && activeValue.length > 0) {
-        state.appFilters.npub = activeValue;
-      } else if (activeValue === null) {
-        state.appFilters.npub = "all";
-      }
-      state.appFilters.initialized = true;
-    } else {
-      state.appFilters.options = [];
-      state.appFilters.initialized = true;
-    }
+    state.apps.items = Array.isArray(payload?.apps) ? payload.apps : [];
     state.apps.error = null;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to load apps";
-    state.apps.error = message;
+    state.apps.error = error instanceof Error ? error.message : "Failed to load apps";
   } finally {
     state.apps.loading = false;
     state.apps.initialized = true;
@@ -6932,38 +6878,9 @@ const ensureAppsLoaded = async () => {
   }
 };
 
-const pollApps = async () => {
-  if (appsPollInFlight || state.apps.loading) {
-    return;
-  }
-  appsPollInFlight = true;
-  try {
-    await fetchApps({ tail: APP_LOG_PREVIEW_LINES });
-    if (state.identity.isAdmin) {
-      await fetchRestartStatus();
-    }
-    if (currentRoute === "apps") {
-      render();
-    }
-  } catch (error) {
-    console.error("Failed to poll apps", error);
-  } finally {
-    appsPollInFlight = false;
-  }
-};
-
-const syncAppsPolling = () => {
-  if (currentRoute === "apps") {
-    if (!appsPollIntervalId) {
-      appsPollIntervalId = setInterval(() => {
-        void pollApps();
-      }, APPS_POLL_INTERVAL_MS);
-    }
-  } else if (appsPollIntervalId) {
-    clearInterval(appsPollIntervalId);
-    appsPollIntervalId = null;
-  }
-};
+// Apps polling has been replaced by Dexie-backed Alpine store with liveQuery.
+// These stubs remain for callers that haven't been updated yet.
+const syncAppsPolling = () => {};
 
 const pollSessions = async () => {
   try {
@@ -7644,7 +7561,7 @@ const formatAppTimestamp = (value) => {
   }
 };
 
-const getAppById = (appId) => state.apps.items.find((item) => item?.id === appId) ?? null;
+const getAppById = (appId) => (appsStore()?.items ?? state.apps.items).find((item) => item?.id === appId) ?? null;
 
 const isAppBusy = (app) => {
   const status = app?.status;
@@ -8490,7 +8407,8 @@ const renderApps = () => {
         const opt = document.createElement("option");
         opt.value = option.value;
         opt.textContent = option.label;
-        if (option.value === state.appFilters.npub) {
+        const currentAppFilter = appsStore()?.filters?.npub ?? state.appFilters.npub;
+        if (option.value === currentAppFilter) {
           opt.selected = true;
         }
         filterSelect.append(opt);
@@ -8500,6 +8418,11 @@ const renderApps = () => {
         const value = target instanceof HTMLSelectElement && target.value ? target.value : "all";
         state.appFilters.npub = value;
         state.appFilters.initialized = true;
+        const as = appsStore();
+        if (as) {
+          as.filters.npub = value;
+          as.filters.initialized = true;
+        }
         void fetchApps({ tail: APP_LOG_PREVIEW_LINES }).then(() => {
           if (currentRoute === "apps") {
             render();
@@ -11348,7 +11271,7 @@ const renderSettings = () => {
       void fetchAdminUsers();
     }
     wrapper.append(renderAdminUsersPanel());
-    const coreApp = state.apps.items.find((item) => item?.id === "wingman-core");
+    const coreApp = (appsStore()?.items ?? state.apps.items).find((item) => item?.id === "wingman-core");
     if (coreApp) {
       const coreSection = document.createElement("section");
       coreSection.className = "wm-card wm-app-card-core";
@@ -13993,24 +13916,6 @@ dialog.addEventListener("cancel", (event) => {
     }
   } else if (currentRoute === "apps") {
     await fetchApps({ tail: APP_LOG_PREVIEW_LINES });
-  }
-  // Bridge: populate Dexie apps store with data already in state.apps
-  try {
-    const { AppsTable: AppsDb } = await import("./live/db.js");
-    if (state.apps.items.length > 0) {
-      await AppsDb.upsertMany(state.apps.items);
-    }
-    const appsStore = window.Alpine?.store("apps");
-    if (appsStore) {
-      appsStore.filters.npub = state.appFilters.npub;
-      appsStore.filters.options = state.appFilters.options;
-      appsStore.filters.initialized = state.appFilters.initialized;
-      appsStore.error = state.apps.error;
-      appsStore.initialized = true;
-      appsStore.loading = false;
-    }
-  } catch (err) {
-    console.warn("[app] Apps store bridge failed:", err);
   }
   render();
 })();
