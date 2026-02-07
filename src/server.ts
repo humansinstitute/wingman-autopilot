@@ -71,6 +71,7 @@ import { createNightWatchApiHandler } from "./nightwatch/nightwatch-api";
 import { createBrowserLogHandler } from "./logging/browser-log-handler";
 import { Nip98GrantStore } from "./mcp/grants-store";
 import { createNip98ApiHandler } from "./mcp/nip98-api";
+import { createWingmanMcpApiHandler } from "./mcp/wingman-api";
 import {
   buildAgentUrl,
   fetchAgentMessages,
@@ -285,6 +286,18 @@ const nip98GrantsStore = new Nip98GrantStore();
 const nip98ApiHandler = createNip98ApiHandler({
   grantsStore: nip98GrantsStore,
   getSession: (sid: string) => manager.getSession(sid) ?? null,
+});
+const wingmanMcpApiHandler = createWingmanMcpApiHandler({
+  getSession: (sid: string) => manager.getSession(sid) ?? null,
+  listSessions: () => manager.listSessions(),
+  createSession: (agent, dir, name) => manager.createSession(agent, dir, name),
+  getSessionLogs: (sid) => manager.getLogs(sid),
+  listApps: () => appRegistry.listApps(),
+  getAppStatus: (appId) => appProcessManager.getStatus(appId),
+  runAppAction: (appId, action) => appProcessManager[action](appId),
+  tailAppLogs: (appId, lines) => appProcessManager.tailLogs(appId, lines),
+  caproverStore,
+  getCaproverClient: createCaproverClientFromEnv,
 });
 
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
@@ -3868,6 +3881,15 @@ const handleApi = async (
   // No auth gate: requests are validated by session ID in the handler.
   if (pathname.startsWith("/api/mcp/nip98")) {
     const response = await nip98ApiHandler(request, url, method);
+    if (response) {
+      return response;
+    }
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
+  // MCP Wingman Action API — called by the MCP stdio server running inside agents.
+  // No auth gate: requests are validated by session ID in the handler.
+  if (pathname.startsWith("/api/mcp/wingman")) {
+    const response = await wingmanMcpApiHandler(request, url, method);
     if (response) {
       return response;
     }
