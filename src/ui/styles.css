@@ -95,6 +95,7 @@ body[data-admin="false"] .requires-admin {
   gap: 1rem;
   text-decoration: none;
   color: inherit;
+  margin-right: auto;
 }
 
 .wm-brand h1 {

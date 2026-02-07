@@ -752,6 +752,14 @@ export function initLiveView(deps) {
 
     addNightWatchToggle({ sessionId, addCommand, state, showToast, isFeatureEnabled: isFeatureEnabledForViewer });
 
+    const cmdWebApp = findWebAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
+    if (cmdWebApp) {
+      addCommand(state.webviewLayout.open ? "Close Web View" : "Open Web View", () => {
+        state.webviewLayout.open = !state.webviewLayout.open;
+        render();
+      });
+    }
+
     addCommandDivider();
 
     addCommand("Scroll to end", () => {
