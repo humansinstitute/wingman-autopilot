@@ -39,6 +39,7 @@ import { addNightWatchToggle } from "./nightwatch/cmd-toggle.js";
 import { initNightWatchSettingsPanel } from "./nightwatch/settings-panel.js";
 import { initNightWatchPage } from "./nightwatch/page.js";
 import { initNightWatchStore } from "./nightwatch/store.js";
+import { initSessionsStore } from "./sessions/store.js";
 import { startSigningListener, stopSigningListener } from "./nip98/signing-listener.js";
 import { buildSessionOrigin, createSessionLauncher } from "./helpers/session-launch.js";
 import {
@@ -13920,6 +13921,19 @@ dialog.addEventListener("cancel", (event) => {
   // Initialize Night Watch Alpine store (Dexie-backed, must register before Alpine.start)
   initNightWatchStore({ showToast });
 
+  // Initialize Sessions Alpine store (Dexie-backed, must register before Alpine.start)
+  initSessionsStore({
+    showToast,
+    getIdentity: () => state.identity,
+    onUnauthorized: () => handleUnauthorizedAccess(),
+    onIdentityUpdate: (update) => {
+      if (update.ports) {
+        update.ports = normalisePortList(update.ports);
+      }
+      updateIdentityState(update, { persist: true, emit: true });
+    },
+  });
+
   // Initialize Alpine.js chat component if enabled
   if (isAlpineChatEnabled()) {
     initAlpineChat();
@@ -14002,6 +14016,28 @@ dialog.addEventListener("cancel", (event) => {
     await refreshOrchestratorPresets();
   }
   await fetchSessions();
+  // Bridge: populate Dexie sessions store with data already in state.sessions
+  // The liveQuery will fire and Alpine store items will update automatically
+  try {
+    const { ApiSessionStore } = await import("./live/db.js");
+    if (state.sessions.length > 0) {
+      await ApiSessionStore.upsertMany(state.sessions);
+    }
+    // Sync identity summaries and filters to Alpine store
+    const sessionsStore = window.Alpine?.store("sessions");
+    if (sessionsStore) {
+      sessionsStore.identitySummaries = state.identitySummaries;
+      sessionsStore.filters.npub = state.sessionFilters.npub;
+      sessionsStore.filters.options = state.sessionFilters.options;
+      sessionsStore.filters.initialized = state.sessionFilters.initialized;
+      sessionsStore.activeSessionId = state.activeSessionId;
+      sessionsStore.lastActiveSessionId = state.lastActiveSessionId;
+      sessionsStore.initialized = true;
+      sessionsStore.loading = false;
+    }
+  } catch (err) {
+    console.warn("[app] Sessions store bridge failed:", err);
+  }
   // Always fetch apps for authenticated users (needed for CMD menu app actions)
   if (state.identity.authenticated) {
     await fetchApps({ tail: APP_LOG_PREVIEW_LINES });
