@@ -77,15 +77,6 @@ export function createAdminUsersState() {
  */
 export const state = {
   config: null,
-  // TODO: sessions, activeSessionId, lastActiveSessionId, sessionFilters are transitional —
-  // Alpine.store("sessions") is the source of truth. These remain as pre-Alpine fallbacks
-  // until all rendering code is migrated to read from the store directly.
-  sessions: [],
-  sessionFilters: {
-    npub: "all",
-    options: [],
-    initialized: false,
-  },
   // TODO: appFilters is transitional — Alpine.store("apps").filters is the source of truth.
   // Remains as a pre-Alpine fallback until all rendering code reads from the store directly.
   appFilters: {
@@ -102,9 +93,7 @@ export const state = {
   messageDrafts: new Map(),
   logPanelOpen: new Map(),
   promptQueues: new Map(), // sessionId -> {prompts: [], maxSize: 21}
-  activeSessionId: null,
   lastWorkingDirectory: null,
-  lastActiveSessionId: null,
   // Archived session data for viewing historical sessions
   archivedSession: {
     sessionId: null,

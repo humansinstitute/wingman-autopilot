@@ -256,21 +256,13 @@ export function initIdentityStateManager(deps) {
     }
 
     if (next.npub !== current.npub || next.isAdmin !== current.isAdmin) {
-      state.sessionFilters.initialized = false;
       const viewerNormalized = normaliseNpubValue(next.npub);
-      if (!next.isAdmin && viewerNormalized) {
-        state.sessionFilters.npub = viewerNormalized;
-      } else if (!next.isAdmin && !viewerNormalized) {
-        state.sessionFilters.npub = "all";
-      }
       const ss = sessionsStore();
-      if (ss) {
-        ss.filters.initialized = false;
-        if (!next.isAdmin && viewerNormalized) {
-          ss.filters.npub = viewerNormalized;
-        } else if (!next.isAdmin && !viewerNormalized) {
-          ss.filters.npub = "all";
-        }
+      ss.filters.initialized = false;
+      if (!next.isAdmin && viewerNormalized) {
+        ss.filters.npub = viewerNormalized;
+      } else if (!next.isAdmin && !viewerNormalized) {
+        ss.filters.npub = "all";
       }
       state.appFilters.initialized = false;
       state.appFilters.options = [];

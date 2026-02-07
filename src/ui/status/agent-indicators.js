@@ -10,6 +10,7 @@ import { attachCopyButton } from "../utils/clipboard.js";
 export function initAgentIndicators(deps) {
   const {
     state,
+    sessionsStore,
     getCurrentRoute,
     getQueueCount,
     isSessionBusy,
@@ -21,7 +22,7 @@ export function initAgentIndicators(deps) {
   // ── Status resolution ───────────────────────────────────────────
 
   const resolveAgentRuntimeStatus = (sessionId) => {
-    const session = state.sessions.find((entry) => entry && entry.id === sessionId);
+    const session = sessionsStore().items.find((entry) => entry && entry.id === sessionId);
     if (!session) {
       return null;
     }
@@ -114,7 +115,7 @@ export function initAgentIndicators(deps) {
     document.querySelectorAll(".wm-knight-rider").forEach((element) => {
       const sessionId = element.dataset.sessionId;
       if (targetSessionId && sessionId !== targetSessionId) return;
-      const session = state.sessions.find((s) => s.id === sessionId);
+      const session = sessionsStore().items.find((s) => s.id === sessionId);
       const isBusy = isSessionBusy(session);
       element.classList.toggle("active", isBusy);
     });

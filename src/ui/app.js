@@ -730,25 +730,20 @@ if (currentRoute === "files" && window.location.pathname.startsWith("/docs")) {
 const setActiveSession = (sessionId, options = {}) => {
   const { updateHistory = true, logPort = true, allowPending = false, forceLog = false } = options;
   const ss = sessionsStore();
-  const previousSessionId = ss?.activeSessionId ?? state.activeSessionId;
-  const allSessions = ss?.items ?? state.sessions;
+  const previousSessionId = ss.activeSessionId;
+  const allSessions = ss.items;
 
   if (sessionId) {
     const sessionExists = allSessions.some((session) => session.id === sessionId);
     if (!sessionExists && !allowPending) {
-      state.activeSessionId = null;
-      if (ss) ss.activeSessionId = null;
+      ss.activeSessionId = null;
       lastLoggedSessionId = null;
       syncDesktopSessionIndicator();
       return false;
     }
 
-    state.activeSessionId = sessionId;
-    state.lastActiveSessionId = sessionId;
-    if (ss) {
-      ss.activeSessionId = sessionId;
-      ss.lastActiveSessionId = sessionId;
-    }
+    ss.activeSessionId = sessionId;
+    ss.lastActiveSessionId = sessionId;
 
     if (updateHistory && currentRoute === "live") {
       const targetPath = `${LIVE_ROUTE_PREFIX}/${sessionId}`;
@@ -800,8 +795,7 @@ const setActiveSession = (sessionId, options = {}) => {
   }
 
   // No session selected - stop polling
-  state.activeSessionId = null;
-  if (ss) ss.activeSessionId = null;
+  ss.activeSessionId = null;
   lastLoggedSessionId = null;
   stopConversationPolling();
   if (updateHistory && currentRoute === "live" && window.location.pathname !== LIVE_ROUTE_PREFIX) {
@@ -813,17 +807,16 @@ const setActiveSession = (sessionId, options = {}) => {
 };
 
 const ensureActiveSession = () => {
-  const ss = sessionsStore();
-  const allSessions = ss?.items ?? state.sessions;
-  const activeId = ss?.activeSessionId ?? state.activeSessionId;
-  const lastId = ss?.lastActiveSessionId ?? state.lastActiveSessionId;
+  const allSessions = sessionsStore().items;
+  const activeId = sessionsStore().activeSessionId;
+  const lastId = sessionsStore().lastActiveSessionId;
 
   if (activeId && allSessions.some((session) => session.id === activeId)) {
     return activeId;
   }
   if (lastId && allSessions.some((session) => session.id === lastId)) {
     setActiveSession(lastId, { updateHistory: false, logPort: false });
-    return ss?.activeSessionId ?? state.activeSessionId;
+    return sessionsStore().activeSessionId;
   }
   if (currentRoute === "live") {
     setActiveSession(null, { updateHistory: false, logPort: false });
@@ -836,16 +829,15 @@ const ensureActiveSession = () => {
   } else {
     setActiveSession(null, { updateHistory: false, logPort: false });
   }
-  return ss?.activeSessionId ?? state.activeSessionId;
+  return sessionsStore().activeSessionId;
 };
 
 const applyRouteSessionFromPath = (options = {}) => {
   const { allowHistoryUpdate = false, logPort = true } = options;
   const routeSessionId = getSessionIdFromPath(window.location.pathname);
-  const ss = sessionsStore();
-  const allSessions = ss?.items ?? state.sessions;
-  const activeId = ss?.activeSessionId ?? state.activeSessionId;
-  const lastId = ss?.lastActiveSessionId ?? state.lastActiveSessionId;
+  const allSessions = sessionsStore().items;
+  const activeId = sessionsStore().activeSessionId;
+  const lastId = sessionsStore().lastActiveSessionId;
 
   if (routeSessionId) {
     if (allSessions.some((session) => session.id === routeSessionId)) {
@@ -1270,9 +1262,9 @@ const applyTheme = (theme, persist = true) => {
 };
 
 const getActiveSessionForIndicator = () => {
-  const activeId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+  const activeId = sessionsStore().activeSessionId;
   if (!activeId) return null;
-  return (sessionsStore()?.items ?? state.sessions).find((session) => session.id === activeId) ?? null;
+  return sessionsStore().items.find((session) => session.id === activeId) ?? null;
 };
 
 const shouldShowDesktopIndicator = () => currentRoute === "live" && window.innerWidth >= 900;
@@ -1443,9 +1435,9 @@ const setActiveNav = () => {
 const updateDocumentTitle = () => {
   let title = "Wingman";
   if (currentRoute === "live") {
-    const titleActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+    const titleActiveId = sessionsStore().activeSessionId;
     const session = titleActiveId
-      ? (sessionsStore()?.items ?? state.sessions).find((s) => s.id === titleActiveId)
+      ? sessionsStore().items.find((s) => s.id === titleActiveId)
       : null;
     if (session) {
       const sessionName = getSessionDisplayName(session);
@@ -1634,17 +1626,10 @@ const fetchSessions = async () => {
   const ss = sessionsStore();
 
   // Delegate API call + Dexie write + filter/identity processing to store
-  if (ss) {
-    await ss.sync();
-    // Copy store data back to legacy state for code that still reads from it
-    state.sessions = ss.items;
-    state.sessionFilters.npub = ss.filters.npub;
-    state.sessionFilters.options = ss.filters.options;
-    state.sessionFilters.initialized = ss.filters.initialized;
-  }
+  await ss.sync();
 
   // Handle 401 redirect (store sets items to [] on unauthorized)
-  if (ss && ss.items.length === 0 && !ss.initialized) {
+  if (ss.items.length === 0 && !ss.initialized) {
     if (currentRoute !== "home") {
       currentRoute = "home";
       if (window.location.pathname !== HOME_ROUTE) {
@@ -1654,12 +1639,11 @@ const fetchSessions = async () => {
     return;
   }
 
-  const allSessions = ss?.items ?? state.sessions;
+  const allSessions = ss.items;
   const sessionIds = new Set(allSessions.map((session) => session.id));
-  const lastId = ss?.lastActiveSessionId ?? state.lastActiveSessionId;
+  const lastId = ss.lastActiveSessionId;
   if (lastId && !sessionIds.has(lastId)) {
-    state.lastActiveSessionId = null;
-    if (ss) ss.lastActiveSessionId = null;
+    ss.lastActiveSessionId = null;
   }
 
   // Clean up data and DOM references for deleted sessions
@@ -1698,7 +1682,7 @@ const fetchSessions = async () => {
     }
   }
   ensureActiveSession();
-  const activeId = ss?.activeSessionId ?? state.activeSessionId;
+  const activeId = ss.activeSessionId;
   if (
     !redirectHome &&
     currentRoute === "live" &&
@@ -1735,7 +1719,7 @@ const buildSessionFilterOptions = () => {
 
   appendOption("all", "All identities");
 
-  const sessionFilterOptions = sessionsStore()?.filters?.options ?? state.sessionFilters.options;
+  const sessionFilterOptions = sessionsStore().filters.options;
   sessionFilterOptions.forEach((option) => {
     if (!option || typeof option !== "object") return;
     const value = typeof option.value === "string" ? option.value : "__anonymous__";
@@ -1788,7 +1772,7 @@ const fetchLogs = async (sessionId) => {
   state.logs.set(sessionId, data.logs);
 
   // Trigger incremental DOM update if on live route
-  if (currentRoute === "live" && sessionId === (sessionsStore()?.activeSessionId ?? state.activeSessionId)) {
+  if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
     updateLogsDOM(sessionId);
   }
 };
@@ -1801,7 +1785,7 @@ const fetchConversation = async (sessionId) => {
     state.conversations.set(sessionId, items);
 
     // Trigger incremental DOM update if on live route
-    if (currentRoute === "live" && sessionId === (sessionsStore()?.activeSessionId ?? state.activeSessionId)) {
+    if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
       updateConversationDOM(sessionId);
     }
   } catch (error) {
@@ -1903,7 +1887,7 @@ const syncAppsPolling = () => {};
 
 const pollSessions = async () => {
   try {
-    const allSessions = sessionsStore()?.items ?? state.sessions;
+    const allSessions = sessionsStore().items;
     const previousSessionCount = allSessions.length;
     const previousSessionIds = allSessions.map(s => s.id).join(',');
 
@@ -1911,7 +1895,7 @@ const pollSessions = async () => {
     syncMenuTabs();
     syncDesktopSessionIndicator();
 
-    const updatedSessions = sessionsStore()?.items ?? state.sessions;
+    const updatedSessions = sessionsStore().items;
     const currentSessionCount = updatedSessions.length;
     const currentSessionIds = updatedSessions.map(s => s.id).join(',');
     const sessionsChanged = previousSessionCount !== currentSessionCount || previousSessionIds !== currentSessionIds;
@@ -1929,7 +1913,7 @@ const pollSessions = async () => {
       return;
     }
 
-    const activeId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+    const activeId = sessionsStore().activeSessionId;
     if (!activeId) {
       // On live route with no active session, render to show empty state
       render();
@@ -1975,7 +1959,7 @@ const startConversationPolling = (sessionId) => {
 
   conversationPollIntervalId = window.setInterval(async () => {
     if (conversationPollInFlight) return;
-    const pollingActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+    const pollingActiveId = sessionsStore().activeSessionId;
     if (currentRoute !== "live" || pollingActiveId !== sessionId) {
       stopConversationPolling();
       return;
@@ -1992,7 +1976,7 @@ const startConversationPolling = (sessionId) => {
 
       // Update session status if we got data
       if (sessionData) {
-        const session = (sessionsStore()?.items ?? state.sessions).find((s) => s.id === sessionId);
+        const session = sessionsStore().items.find((s) => s.id === sessionId);
         if (session) {
           const oldStatus = session.agentRuntimeStatus;
           session.agentRuntimeStatus = sessionData.agentRuntimeStatus ?? null;
@@ -2233,7 +2217,7 @@ const postSessionMessage = async (sessionId, content, type = "user") => {
 };
 
 const sendMessage = async (sessionId, content) => {
-  const session = state.sessions.find((item) => item.id === sessionId);
+  const session = sessionsStore().items.find((item) => item.id === sessionId);
   if (!session) return;
   const trimmed = typeof content === "string" ? content.trim() : "";
   if (!trimmed) {
@@ -2315,7 +2299,7 @@ const sendMessage = async (sessionId, content) => {
 };
 
 const sendControlCommand = async (sessionId, action) => {
-  const session = state.sessions.find((item) => item.id === sessionId);
+  const session = sessionsStore().items.find((item) => item.id === sessionId);
   if (!session || !action || typeof action.sequence !== "string") {
     return;
   }
@@ -3413,8 +3397,8 @@ const render = () => {
           sseManager.disconnectAll();
         }
         // Entering live view - connect to active session
-        if (currentRoute === "live" && (sessionsStore()?.activeSessionId ?? state.activeSessionId)) {
-          sseManager.connect(sessionsStore()?.activeSessionId ?? state.activeSessionId);
+        if (currentRoute === "live" && sessionsStore().activeSessionId) {
+          sseManager.connect(sessionsStore().activeSessionId);
         }
         previousRenderRoute = currentRoute;
       }
@@ -3543,6 +3527,7 @@ cleanupOrphanedMarkers = imageAttachmentsModule.cleanupOrphanedMarkers;
 
 const agentIndicatorsModule = initAgentIndicators({
   state,
+  sessionsStore,
   getCurrentRoute: () => currentRoute,
   getQueueCount,
   isSessionBusy,
@@ -4085,9 +4070,9 @@ navLinks.forEach((link) => {
     if (targetRoute === "live") {
       currentRoute = "live";
       const ss = sessionsStore();
-      const navSessions = ss?.items ?? state.sessions;
-      const navActiveId = ss?.activeSessionId ?? state.activeSessionId;
-      const navLastId = ss?.lastActiveSessionId ?? state.lastActiveSessionId;
+      const navSessions = ss.items;
+      const navActiveId = ss.activeSessionId;
+      const navLastId = ss.lastActiveSessionId;
       const hasActive = navActiveId && navSessions.some((session) => session.id === navActiveId);
       const hasLast = navLastId && navSessions.some((session) => session.id === navLastId);
       const targetSessionId = hasActive ? navActiveId : hasLast ? navLastId : null;
@@ -4237,7 +4222,7 @@ const scrollLiveViewIfVisible = () => {
   if (currentRoute !== "live") {
     return;
   }
-  const scrollActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+  const scrollActiveId = sessionsStore().activeSessionId;
   if (!scrollActiveId) {
     return;
   }
@@ -4248,7 +4233,7 @@ window.addEventListener("focus", scrollLiveViewIfVisible);
 
 // Initialize visibility manager for SSE reconnection on tab return
 visibilityManager.init({
-  getSessionId: () => sessionsStore()?.activeSessionId ?? state.activeSessionId,
+  getSessionId: () => sessionsStore().activeSessionId,
   checkHealth: (sessionId) => sseManager.isConnectionHealthy(sessionId),
   reconnect: (sessionId) => sseManager.reconnect(sessionId),
 });
@@ -4393,8 +4378,6 @@ dialog.addEventListener("cancel", (event) => {
   // Pre-populate active session from URL path (must run after Alpine.start)
   const initialRouteSessionId = getSessionIdFromPath(window.location.pathname);
   if (initialRouteSessionId) {
-    state.activeSessionId = initialRouteSessionId;
-    state.lastActiveSessionId = initialRouteSessionId;
     const ss = sessionsStore();
     ss.activeSessionId = initialRouteSessionId;
     ss.lastActiveSessionId = initialRouteSessionId;
@@ -4402,7 +4385,7 @@ dialog.addEventListener("cancel", (event) => {
 
   // Wire SSE status events to knight rider and status indicators
   sseManager.onStatusChange((sessionId, status) => {
-    const session = (sessionsStore()?.items ?? state.sessions).find((s) => s.id === sessionId);
+    const session = sessionsStore().items.find((s) => s.id === sessionId);
     if (session) {
       session.agentRuntimeStatus = status;
       updateAgentStatusIndicators();
@@ -4432,7 +4415,7 @@ dialog.addEventListener("cancel", (event) => {
     state.conversations.set(sessionId, existing);
 
     // Update DOM if on live view with this session active
-    if (currentRoute === "live" && sessionId === (sessionsStore()?.activeSessionId ?? state.activeSessionId)) {
+    if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
       updateConversationDOM(sessionId);
     }
   });

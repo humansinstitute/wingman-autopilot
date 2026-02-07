@@ -30,12 +30,12 @@ export function initQueueModule(deps) {
   // ── Session helpers ───────────────────────────────────────────────
 
   const getSessionById = (sessionId) =>
-    (sessionsStore()?.items ?? state.sessions).find((session) => session.id === sessionId);
+    sessionsStore().items.find((session) => session.id === sessionId);
 
   const isSessionActive = (session) => ACTIVE_SESSION_STATUSES.has(session?.status);
 
   const getActiveSessions = () =>
-    (sessionsStore()?.items ?? state.sessions).filter((session) => isSessionActive(session));
+    sessionsStore().items.filter((session) => isSessionActive(session));
 
   const isSessionBusy = (session) => {
     if (!session) return false;

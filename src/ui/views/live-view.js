@@ -65,7 +65,7 @@ export function initLiveView(deps) {
     activeSessions.forEach((session) => {
       const tab = document.createElement("div");
       tab.className = "wm-tab";
-      const tabActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+      const tabActiveId = sessionsStore().activeSessionId;
       if (session.id === tabActiveId) {
         tab.classList.add("active");
       }
@@ -80,7 +80,7 @@ export function initLiveView(deps) {
 
       tab.addEventListener("click", () => {
         const wasLiveRoute = getCurrentRoute() === "live";
-        const clickActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+        const clickActiveId = sessionsStore().activeSessionId;
         if (clickActiveId === session.id && wasLiveRoute) {
           onSelect?.();
           return;
@@ -130,7 +130,7 @@ export function initLiveView(deps) {
     activeSessions.forEach((session) => {
       const tab = document.createElement("div");
       tab.className = "wm-tab";
-      const menuTabActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+      const menuTabActiveId = sessionsStore().activeSessionId;
       if (session.id === menuTabActiveId) {
         tab.classList.add("active");
       }
@@ -144,7 +144,7 @@ export function initLiveView(deps) {
       tab.title = `${displayName} - ${session.agent}:${session.port}`;
 
       tab.addEventListener("click", () => {
-        const menuClickActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+        const menuClickActiveId = sessionsStore().activeSessionId;
         if (menuClickActiveId === session.id && getCurrentRoute() === "live") {
           onSelect?.();
           return;
@@ -611,7 +611,7 @@ export function initLiveView(deps) {
     };
 
     const executeGitAction = async (action, options = {}) => {
-      const session = state.sessions.find((s) => s.id === sessionId);
+      const session = sessionsStore().items.find((s) => s.id === sessionId);
       const directory = session?.workingDirectory;
       if (!directory) {
         showToast("No working directory set for this session", { type: "error" });
@@ -654,7 +654,7 @@ export function initLiveView(deps) {
       {
         label: "Fork to Worktree...",
         handler: async () => {
-          const session = state.sessions.find((s) => s.id === sessionId);
+          const session = sessionsStore().items.find((s) => s.id === sessionId);
           if (!session?.workingDirectory) {
             showToast("No working directory set for this session", { type: "error" });
             return;
@@ -702,7 +702,7 @@ export function initLiveView(deps) {
       },
     ]);
 
-    const matchingApp = findAppForSession(sessionId, state.sessions, state.apps.items, npubProjectsState);
+    const matchingApp = findAppForSession(sessionId, sessionsStore().items, state.apps.items, npubProjectsState);
 
     if (matchingApp) {
       const appItems = [];
@@ -774,7 +774,7 @@ export function initLiveView(deps) {
     });
 
     addCommand("Rename session", () => {
-      const session = state.sessions.find((s) => s.id === sessionId);
+      const session = sessionsStore().items.find((s) => s.id === sessionId);
       if (session) {
         promptRenameSession(session);
       }
@@ -796,7 +796,7 @@ export function initLiveView(deps) {
 
     addCommandDivider();
     addCommand("Stop Session", () => {
-      const session = state.sessions.find((s) => s.id === sessionId);
+      const session = sessionsStore().items.find((s) => s.id === sessionId);
       const displayName = session ? getSessionDisplayName(session) : "this session";
       const confirmed = window.confirm(
         `Are you sure you want to stop "${displayName}"?\n\nThe session will be archived after 5 seconds.`
@@ -923,7 +923,7 @@ export function initLiveView(deps) {
     }
 
     const routeSessionId = getSessionIdFromPath(window.location.pathname);
-    const isLiveSession = routeSessionId && state.sessions.some((s) => s.id === routeSessionId);
+    const isLiveSession = routeSessionId && sessionsStore().items.some((s) => s.id === routeSessionId);
 
     if (routeSessionId && !isLiveSession) {
       if (state.archivedSession.sessionId !== routeSessionId && !state.archivedSession.loading) {
@@ -1015,7 +1015,7 @@ export function initLiveView(deps) {
       };
     }
 
-    if (state.sessions.length === 0) {
+    if (sessionsStore().items.length === 0) {
       const container = document.createElement("section");
       container.className = "wm-card wm-live-main";
 
@@ -1039,13 +1039,13 @@ export function initLiveView(deps) {
       return wrapper;
     }
 
-    const liveActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
-    const liveSessions = sessionsStore()?.items ?? state.sessions;
+    const liveActiveId = sessionsStore().activeSessionId;
+    const liveSessions = sessionsStore().items;
     if (!liveActiveId || !liveSessions.some((session) => session.id === liveActiveId)) {
       ensureActiveSession();
     }
 
-    const resolvedActiveId = sessionsStore()?.activeSessionId ?? state.activeSessionId;
+    const resolvedActiveId = sessionsStore().activeSessionId;
     if (!resolvedActiveId) {
       const container = document.createElement("section");
       container.className = "wm-card wm-live-main";
@@ -1084,7 +1084,7 @@ export function initLiveView(deps) {
     scrollRegion.append(conversationContainer);
     scheduleLiveScroll(sessionId, { includeWindow: true });
 
-    const webApp = findWebAppForSession(sessionId, state.sessions, state.apps.items, npubProjectsState);
+    const webApp = findWebAppForSession(sessionId, sessionsStore().items, state.apps.items, npubProjectsState);
     syncHeaderWebviewToggle(webApp);
 
     if (webApp && state.webviewLayout.open) {

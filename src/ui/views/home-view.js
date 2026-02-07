@@ -531,7 +531,7 @@ export function initHomeView(deps) {
     table.append(thead);
 
     const tbody = document.createElement("tbody");
-    if (state.sessions.length === 0) {
+    if (sessionsStore().items.length === 0) {
       const row = document.createElement("tr");
       const cell = document.createElement("td");
       cell.colSpan = 9;
@@ -539,7 +539,7 @@ export function initHomeView(deps) {
       row.append(cell);
       tbody.append(row);
     } else {
-      state.sessions.forEach((session) => {
+      sessionsStore().items.forEach((session) => {
         const row = document.createElement("tr");
         const displayName = getSessionDisplayName(session);
         const identityAlias = typeof session.identityAlias === "string" && session.identityAlias.trim().length > 0 ? session.identityAlias.trim() : null;
@@ -599,13 +599,13 @@ export function initHomeView(deps) {
 
     const cardsContainer = document.createElement("div");
     cardsContainer.className = "session-card-list";
-    if (state.sessions.length === 0) {
+    if (sessionsStore().items.length === 0) {
       const emptyCard = document.createElement("article");
       emptyCard.className = "session-card empty";
       emptyCard.textContent = "No active sessions";
       cardsContainer.append(emptyCard);
     } else {
-      state.sessions.forEach((session) => {
+      sessionsStore().items.forEach((session) => {
         const card = document.createElement("article");
         card.className = "session-card";
 
