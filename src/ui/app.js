@@ -91,6 +91,7 @@ import { initFileEditor } from "./modals/file-editor.js";
 import { initQueueModule } from "./sessions/queue-modal.js";
 import { initQuickLauncher } from "./core/quick-launcher.js";
 import { initImageAttachments } from "./core/image-attachments.js";
+import { initAgentIndicators } from "./status/agent-indicators.js";
 import { showToast } from "./utils/toast.js";
 import { collapseNewlines } from "./utils/text.js";
 import {
@@ -1967,6 +1968,14 @@ let extractAttachmentFiles = () => [];
 let handleImageUploads = async () => {};
 let handleAttachmentUploads = async () => {};
 let cleanupOrphanedMarkers = () => {};
+
+// -- Agent indicators initialized via initAgentIndicators (see bootstrap) --
+let resolveAgentRuntimeStatus = () => null;
+let createAgentStatusIndicator = () => document.createElement("div");
+let updateAgentStatusIndicators = () => {};
+let updateKnightRiderState = () => {};
+let updateConversationDOM = () => {};
+let updateLogsDOM = () => {};
 
 const LIVE_ROUTE_PREFIX = "/live";
 const FILES_ROUTE = "/files";
@@ -4700,222 +4709,6 @@ const stopConversationPolling = () => {
     conversationPollIntervalId = null;
   }
   conversationPollInFlight = false;
-};
-
-// Agent Status Indicator Functions
-const resolveAgentRuntimeStatus = (sessionId) => {
-  const session = state.sessions.find((entry) => entry && entry.id === sessionId);
-  if (!session) {
-    return null;
-  }
-  if (session.agentRuntimeStatus === "running" || session.agentRuntimeStatus === "stable") {
-    return session.agentRuntimeStatus;
-  }
-  if (session.status === "running") {
-    return "running";
-  }
-  return null;
-};
-
-const createAgentStatusIndicator = (sessionId, options = {}) => {
-  const variant = typeof options.variant === "string" ? options.variant : "bar";
-  const indicator = document.createElement(variant === "pill" ? "button" : "div");
-  indicator.className = "wm-agent-status-indicator";
-  indicator.setAttribute("data-session-id", sessionId);
-  indicator.setAttribute("role", "status");
-  indicator.setAttribute("aria-live", "polite");
-  indicator.dataset.variant = variant;
-
-  if (variant === "pill") {
-    indicator.classList.add("wm-agent-status-pill");
-    indicator.type = "button";
-  }
-  
-  // Make all indicators clickable to open queue modal
-  indicator.style.cursor = "pointer";
-  indicator.addEventListener("click", () => {
-    openPromptQueueModal(sessionId);
-  });
-  
-  applyAgentStatusIndicatorState(indicator, sessionId);
-  return indicator;
-};
-
-const applyAgentStatusIndicatorState = (indicator, sessionId) => {
-  const status = resolveAgentRuntimeStatus(sessionId);
-  const variant = indicator.dataset.variant ?? "bar";
-  const preservedClasses = indicator.className
-    .split(" ")
-    .filter(
-      (cls) =>
-        cls &&
-        (cls === "wm-agent-status-indicator" ||
-          cls === "status-small" ||
-          cls.startsWith("wm-agent-status-") ||
-          !cls.startsWith("status-")),
-    );
-  const baseClasses = new Set(preservedClasses.length > 0 ? preservedClasses : ["wm-agent-status-indicator"]);
-  baseClasses.add("wm-agent-status-indicator");
-  // Remove any previous status-* classes except the optional small modifier
-  for (const value of Array.from(baseClasses)) {
-    if (value.startsWith("status-") && value !== "status-small") {
-      baseClasses.delete(value);
-    }
-  }
-
-  let ariaLabel = "Agent status: unknown";
-  if (status === "running") {
-    baseClasses.add("status-running");
-    ariaLabel = "Agent status: running";
-  } else if (status === "stable") {
-    baseClasses.add("status-stable");
-    ariaLabel = "Agent status: stable";
-  } else {
-    baseClasses.add("status-unknown");
-  }
-
-  indicator.className = Array.from(baseClasses).join(" ");
-  indicator.setAttribute("aria-label", ariaLabel);
-  
-  // Get queue count for this session
-  const queueCount = getQueueCount(sessionId);
-  
-  indicator.textContent =
-    variant === "pill"
-      ? queueCount > 0
-        ? queueCount.toString()
-        : status === "running"
-          ? "0"
-          : status === "stable"
-            ? "-"
-            : "?"
-      : "";
-};
-
-const updateAgentStatusIndicators = () => {
-  // Skip status updates on home route - no indicators visible
-  if (currentRoute === "home") {
-    return;
-  }
-  
-  // Debounce status indicator updates to prevent performance issues
-  if (updateAgentStatusIndicatorsDebounceTimer) {
-    clearTimeout(updateAgentStatusIndicatorsDebounceTimer);
-  }
-  
-  updateAgentStatusIndicatorsDebounceTimer = setTimeout(() => {
-    document.querySelectorAll(".wm-agent-status-indicator").forEach((indicator) => {
-      const sessionId = indicator.getAttribute("data-session-id");
-      if (sessionId) {
-        applyAgentStatusIndicatorState(indicator, sessionId);
-      }
-    });
-    updateKnightRiderState();
-    updateAgentStatusIndicatorsDebounceTimer = null;
-  }, 100); // 100ms debounce for status updates
-};
-
-const updateKnightRiderState = (targetSessionId) => {
-  document.querySelectorAll(".wm-knight-rider").forEach((element) => {
-    const sessionId = element.dataset.sessionId;
-    if (targetSessionId && sessionId !== targetSessionId) return;
-    const session = state.sessions.find((s) => s.id === sessionId);
-    const isBusy = isSessionBusy(session);
-    element.classList.toggle("active", isBusy);
-  });
-};
-
-const updateConversationDOM = (sessionId) => {
-  let container = state.conversationContainers.get(sessionId);
-
-  // If container reference is lost, try to find it in the DOM
-  if (!container || !document.contains(container)) {
-    const conversationWrapper = document.querySelector('.wm-live-conversation .wm-conversation');
-    if (conversationWrapper) {
-      container = conversationWrapper;
-      state.conversationContainers.set(sessionId, container);
-      // Re-sync the message count based on actual DOM
-      const existingMessages = container.querySelectorAll('.wm-message');
-      existingMessages.forEach((node) => attachCopyButton(node));
-      state.lastMessageCount.set(sessionId, existingMessages.length);
-    } else {
-      return;
-    }
-  }
-
-  const conversation = state.conversations.get(sessionId) ?? [];
-  const lastCount = state.lastMessageCount.get(sessionId) ?? 0;
-
-  // Handle new messages
-  if (conversation.length > lastCount) {
-    const newMessages = conversation.slice(lastCount);
-
-    newMessages.forEach((message) => {
-      const bubble = document.createElement("article");
-      bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
-      const body = document.createElement("pre");
-      body.textContent = collapseNewlines(message.content ?? message.message ?? "");
-      bubble.append(body);
-      attachCopyButton(bubble);
-      container.append(bubble);
-    });
-
-    state.lastMessageCount.set(sessionId, conversation.length);
-  }
-
-  // Handle updated messages (streaming SSE - message content changes)
-  if (conversation.length === lastCount && conversation.length > 0) {
-    const domMessages = container.querySelectorAll('.wm-message');
-    let contentChanged = false;
-
-    conversation.forEach((message, idx) => {
-      const domMessage = domMessages[idx];
-      if (domMessage) {
-        attachCopyButton(domMessage);
-        const body = domMessage.querySelector('pre');
-        const currentContent = body?.textContent || '';
-        const newContent = collapseNewlines(message.content ?? message.message ?? '');
-
-        if (currentContent !== newContent) {
-          contentChanged = true;
-          if (body) {
-            body.textContent = newContent;
-          }
-        }
-      }
-    });
-
-    if (contentChanged) {
-      state.lastMessageCount.set(sessionId, conversation.length);
-    }
-  }
-};
-
-const updateLogsDOM = (sessionId) => {
-  let container = state.logContainers.get(sessionId);
-
-  // If container reference is lost, try to find it in the DOM
-  if (!container || !document.contains(container)) {
-    const logViewer = document.querySelector('.wm-log-panel .log-viewer');
-    if (logViewer) {
-      container = logViewer;
-      state.logContainers.set(sessionId, container);
-      // Re-sync the log length
-      const currentLines = container.textContent.split('\n').filter(l => l.length > 0);
-      state.lastLogLength.set(sessionId, currentLines.length);
-    } else {
-      return;
-    }
-  }
-
-  const logs = state.logs.get(sessionId) ?? [];
-  const lastLength = state.lastLogLength.get(sessionId) ?? 0;
-
-  // Only update if logs changed
-  if (logs.length !== lastLength || logs.join("\n") !== container.textContent) {
-    container.textContent = logs.join("\n");
-    state.lastLogLength.set(sessionId, logs.length);
-  }
 };
 
 const getSessionFallbackDirectory = () => {
@@ -10297,7 +10090,6 @@ function restoreFocusFromSnapshot(snapshot) {
 }
 
 let renderDebounceTimer = null;
-let updateAgentStatusIndicatorsDebounceTimer = null;
 let isRendering = false;
 let previousRenderRoute = null;
 
@@ -10840,8 +10632,8 @@ const queueModule = initQueueModule({
   state,
   sessionsStore,
   showToast,
-  updateAgentStatusIndicators,
-  updateConversationDOM,
+  updateAgentStatusIndicators: (...args) => updateAgentStatusIndicators(...args),
+  updateConversationDOM: (...args) => updateConversationDOM(...args),
   scrollConversationAreaToBottom,
 });
 getSessionById = queueModule.getSessionById;
@@ -10870,6 +10662,20 @@ extractAttachmentFiles = imageAttachmentsModule.extractAttachmentFiles;
 handleImageUploads = imageAttachmentsModule.handleImageUploads;
 handleAttachmentUploads = imageAttachmentsModule.handleAttachmentUploads;
 cleanupOrphanedMarkers = imageAttachmentsModule.cleanupOrphanedMarkers;
+
+const agentIndicatorsModule = initAgentIndicators({
+  state,
+  getCurrentRoute: () => currentRoute,
+  getQueueCount,
+  isSessionBusy,
+  openPromptQueueModal,
+});
+resolveAgentRuntimeStatus = agentIndicatorsModule.resolveAgentRuntimeStatus;
+createAgentStatusIndicator = agentIndicatorsModule.createAgentStatusIndicator;
+updateAgentStatusIndicators = agentIndicatorsModule.updateAgentStatusIndicators;
+updateKnightRiderState = agentIndicatorsModule.updateKnightRiderState;
+updateConversationDOM = agentIndicatorsModule.updateConversationDOM;
+updateLogsDOM = agentIndicatorsModule.updateLogsDOM;
 
 const fileEditorModule = initFileEditor({
   state,
