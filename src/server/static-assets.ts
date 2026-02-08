@@ -1,5 +1,54 @@
 import { extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "bun";
+
+// ── Gzip compression helper ────────────────────────────────────────
+
+const COMPRESSIBLE_TYPES = new Set([
+  "application/javascript",
+  "text/css",
+  "text/html",
+  "application/json",
+  "text/plain",
+  "image/svg+xml",
+]);
+
+function isCompressible(contentType: string | null): boolean {
+  if (!contentType) return false;
+  const base = contentType.split(";")[0].trim();
+  return COMPRESSIBLE_TYPES.has(base);
+}
+
+/**
+ * Wraps a Response with gzip compression if the client accepts it and the
+ * content type is compressible. Returns the original response unchanged for
+ * non-compressible types, tiny payloads, or clients that don't accept gzip.
+ */
+export async function compressResponse(
+  request: Request,
+  response: Response,
+): Promise<Response> {
+  const accept = request.headers.get("accept-encoding") ?? "";
+  if (!accept.includes("gzip")) return response;
+
+  const contentType = response.headers.get("content-type");
+  if (!isCompressible(contentType)) return response;
+
+  const body = await response.arrayBuffer();
+  if (body.byteLength < 256) return new Response(body, { status: response.status, headers: response.headers });
+
+  const compressed = gzipSync(new Uint8Array(body));
+  const headers = new Headers(response.headers);
+  headers.set("content-encoding", "gzip");
+  headers.set("content-length", String(compressed.byteLength));
+  headers.delete("content-length"); // let runtime set if needed
+  headers.set("vary", "Accept-Encoding");
+  return new Response(compressed, { status: response.status, headers });
+}
+
+// ── Vendor module gzip cache ────────────────────────────────────────
+
+const vendorGzipCache = new Map<string, { data: Uint8Array; headers: Record<string, string> }>();
 
 const uiAssetMap: Record<string, { url: URL; type: string }> = {
   "/app.js": { url: new URL("../ui/app.js", import.meta.url), type: "application/javascript; charset=utf-8" },
@@ -224,9 +273,21 @@ export const createStaticAssetService = (options: StaticAssetServiceOptions) => 
     };
 
     if (extension === ".js") {
+      // Cache rewritten + gzipped vendor JS to avoid repeated work
+      const cached = vendorGzipCache.get(pathname);
+      if (cached) {
+        return new Response(cached.data, { headers: { ...cached.headers } });
+      }
       const source = await file.text();
       const rewritten = rewriteVendorModuleSpecifiers(source);
-      return new Response(rewritten, { headers });
+      const compressed = gzipSync(new TextEncoder().encode(rewritten));
+      const gzHeaders: Record<string, string> = {
+        ...headers,
+        "content-encoding": "gzip",
+        "vary": "Accept-Encoding",
+      };
+      vendorGzipCache.set(pathname, { data: compressed, headers: gzHeaders });
+      return new Response(compressed, { headers: { ...gzHeaders } });
     }
 
     return new Response(file, { headers });

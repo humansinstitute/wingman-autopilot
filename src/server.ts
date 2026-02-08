@@ -109,7 +109,7 @@ import {
   type AccessRule,
 } from "./auth/access-control";
 import { handleKeyTeleport, handleKeyTeleportRegistration } from "./auth/keyteleport";
-import { createStaticAssetService } from "./server/static-assets";
+import { createStaticAssetService, compressResponse } from "./server/static-assets";
 import { maybeRefreshSessionCookie } from "./server/session-refresh";
 import { handleSubdomainRequest, resolveAliasToPort, proxyRequestToApp, type SubdomainProxyConfig } from "./server/subdomain-proxy";
 import { isAgentRuntimeStatus } from "./types/agent-status";
@@ -7058,7 +7058,7 @@ const server = Bun.serve({
         pathname.startsWith("/nightwatch/");
 
       if (isSpaRoutePath && !assetService.isUiAssetPath(pathname)) {
-        return serveIndex();
+        return compressResponse(request, serveIndex());
       }
 
       // Serve UI module assets before API routing so paths like
@@ -7066,7 +7066,7 @@ const server = Bun.serve({
       // JSON API handler.
       const earlyUiAsset = assetService.resolveUiAsset(pathname);
       if (earlyUiAsset) {
-        return earlyUiAsset;
+        return compressResponse(request, earlyUiAsset);
       }
 
       if (pathname.startsWith("/api/")) {
@@ -7085,9 +7085,10 @@ const server = Bun.serve({
 
       const aceAsset = assetService.serveAceBuildsAsset(pathname);
       if (aceAsset) {
-        return aceAsset;
+        return compressResponse(request, aceAsset);
       }
 
+      // Vendor modules handle their own gzip caching internally
       const vendorAsset = await assetService.serveVendorModule(pathname);
       if (vendorAsset) {
         return vendorAsset;
@@ -7095,12 +7096,12 @@ const server = Bun.serve({
 
       const assetResponse = assetService.resolveUiAsset(pathname);
       if (assetResponse) {
-        return assetResponse;
+        return compressResponse(request, assetResponse);
       }
 
       const publicAsset = assetService.servePublicAsset(pathname);
       if (publicAsset) {
-        return publicAsset;
+        return compressResponse(request, publicAsset);
       }
 
       return new Response("Not Found", { status: 404 });
