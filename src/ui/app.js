@@ -4510,6 +4510,11 @@ dialog.addEventListener("cancel", (event) => {
     }
   });
 
+  // Render immediately from Dexie cache so the UI is visible while
+  // network requests are in flight.
+  render();
+
+  // ── Sequential auth chain (each step depends on the previous) ──
   await fetchConfig();
 
   // Try to restore session from device keystore first
@@ -4537,21 +4542,25 @@ dialog.addEventListener("cancel", (event) => {
   }
 
   ensureFeatureFlagsLoaded();
+
+  // ── Parallel data fetches (independent of each other) ──
+  const dataFetches = [fetchSessions()];
   if (orchestratorFeatureEnabledForViewer()) {
-    await refreshOrchestratorPresets();
+    dataFetches.push(refreshOrchestratorPresets());
   }
-  await fetchSessions();
-  // Always fetch apps for authenticated users (needed for CMD menu app actions)
   if (state.identity.authenticated) {
-    await fetchApps({ tail: APP_LOG_PREVIEW_LINES });
-    // Also fetch npub projects for app fallback matching
-    fetchNpubProjects().catch(() => {});
-    // Start NIP-98 signing listener for Tier 2 agent delegation
-    if (state.identity.npub) {
-      startSigningListener(state.identity.npub);
-    }
+    dataFetches.push(fetchApps({ tail: APP_LOG_PREVIEW_LINES }));
+    dataFetches.push(fetchNpubProjects().catch(() => {}));
   } else if (currentRoute === "apps") {
-    await fetchApps({ tail: APP_LOG_PREVIEW_LINES });
+    dataFetches.push(fetchApps({ tail: APP_LOG_PREVIEW_LINES }));
   }
+  await Promise.all(dataFetches);
+
+  // Start NIP-98 signing listener after auth + data are settled
+  if (state.identity.authenticated && state.identity.npub) {
+    startSigningListener(state.identity.npub);
+  }
+
+  // Re-render with fresh server data
   render();
 })();
