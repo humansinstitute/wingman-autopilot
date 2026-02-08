@@ -5915,6 +5915,18 @@ dialog button[value="cancel"] {
   background: rgba(16, 185, 129, 0.18);
 }
 
+.wm-files-browser__item[data-dragover="true"] button {
+  border-color: var(--accent-primary);
+  background: rgba(16, 185, 129, 0.22);
+  outline: 2px dashed var(--accent-primary);
+  outline-offset: -2px;
+}
+
+.wm-button[data-dragover="true"] {
+  outline: 2px dashed var(--accent-primary);
+  outline-offset: -2px;
+}
+
 .wm-files-browser__item button[aria-disabled="true"] {
   color: var(--text-tertiary);
   cursor: not-allowed;

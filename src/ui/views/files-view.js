@@ -79,6 +79,8 @@ export function initFilesView(deps) {
     openWorktreeModal,
     // Directory browser
     openFileTransferDialogForMode,
+    // File move
+    moveFilesEntry,
     // Session launcher for writer mode
     launchSession,
     getConfig,
@@ -364,6 +366,31 @@ export function initFilesView(deps) {
       }
     });
 
+    // ── Drop target: "Go up" accepts dragged items → moves to parent dir ──
+    if (files.parent?.path) {
+      upButton.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        upButton.dataset.dragover = "true";
+      });
+      upButton.addEventListener("dragleave", () => {
+        delete upButton.dataset.dragover;
+      });
+      upButton.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        delete upButton.dataset.dragover;
+        const sourcePath = e.dataTransfer.getData("text/plain");
+        if (!sourcePath) return;
+        try {
+          await moveFilesEntry(sourcePath, files.parent.path, null);
+          await loadFilesTree(files.currentPath);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "Failed to move item";
+          window.alert(msg);
+        }
+      });
+    }
+
     const refreshButton = document.createElement("button");
     refreshButton.type = "button";
     refreshButton.className = "wm-button secondary wm-button-icon";
@@ -591,6 +618,14 @@ export function initFilesView(deps) {
         const button = document.createElement("button");
         button.type = "button";
 
+        // ── Drag source: every entry is draggable ──
+        button.draggable = true;
+        button.addEventListener("dragstart", (e) => {
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", entry.path);
+          e.dataTransfer.setData("application/x-wingman-name", entry.name);
+        });
+
         const name = document.createElement("span");
         name.className = "wm-files-browser__name";
         const iconKey =
@@ -627,6 +662,29 @@ export function initFilesView(deps) {
           button.addEventListener("click", () => {
             if (files.loading) return;
             void loadFilesTree(entry.path);
+          });
+
+          // ── Drop target: folders accept dragged items ──
+          item.addEventListener("dragover", (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            item.dataset.dragover = "true";
+          });
+          item.addEventListener("dragleave", () => {
+            delete item.dataset.dragover;
+          });
+          item.addEventListener("drop", async (e) => {
+            e.preventDefault();
+            delete item.dataset.dragover;
+            const sourcePath = e.dataTransfer.getData("text/plain");
+            if (!sourcePath || sourcePath === entry.path) return;
+            try {
+              await moveFilesEntry(sourcePath, entry.path, null);
+              await loadFilesTree(files.currentPath);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : "Failed to move item";
+              window.alert(msg);
+            }
           });
         } else if (entry.previewable) {
           button.addEventListener("click", () => {

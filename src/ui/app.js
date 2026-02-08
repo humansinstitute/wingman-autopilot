@@ -3782,6 +3782,7 @@ const filesViewModule = initFilesView({
   canCreateWorktree: (...args) => canCreateWorktree(...args),
   openWorktreeModal: (...args) => openWorktreeModal(...args),
   openFileTransferDialogForMode,
+  moveFilesEntry,
   launchSession: (...args) => launchSession(...args),
   getConfig: () => state.config,
   showToast,
