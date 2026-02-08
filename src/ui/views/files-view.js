@@ -5,9 +5,9 @@
  */
 
 import { createIconSvg, setIconButton, FILE_BROWSER_ICON_DEFS } from "../core/icons.js";
-import { renderMarkdownToHtml, renderCodeToHtml } from "../rendering/markdown.js";
 import { copyTextToClipboard } from "../utils/clipboard.js";
 import { FILES_SHOW_HIDDEN_STORAGE_KEY } from "../state/index.js";
+import { createWriterPanel } from "../writer/writer-panel.js";
 
 /**
  * Show a small floating agent picker menu anchored to a button.
@@ -78,7 +78,11 @@ export function initFilesView(deps) {
     // Session launcher for writer mode
     launchSession,
     getConfig,
+    showToast,
   } = deps;
+
+  // ── Active writer panel (persisted across re-renders) ──────────
+  let activeFileWriter = null; // { path, panel, cleanup }
 
   // ── File CRUD helpers ───────────────────────────────────────────
 
@@ -844,6 +848,13 @@ export function initFilesView(deps) {
     const previewBody = document.createElement("div");
     previewBody.className = "wm-files-preview__body";
 
+    // Clean up stale writer panel when file changes or view state changes
+    const shouldHaveWriter = !files.previewLoading && !files.previewError && files.previewContent !== null;
+    if (activeFileWriter && (!shouldHaveWriter || activeFileWriter.path !== files.previewPath)) {
+      activeFileWriter.cleanup();
+      activeFileWriter = null;
+    }
+
     if (files.previewLoading) {
       previewBody.dataset.loading = "true";
       previewBody.textContent = "Loading preview\u2026";
@@ -853,21 +864,13 @@ export function initFilesView(deps) {
       error.textContent = files.previewError;
       previewBody.append(error);
     } else if (files.previewContent !== null) {
-      if (files.previewFormat === "markdown") {
-        if (files.previewContent.trim().length > 0) {
-          const content = document.createElement("div");
-          content.className = "wm-files-preview-content";
-          content.innerHTML = renderMarkdownToHtml(files.previewContent);
-          previewBody.append(content);
-        } else {
-          previewBody.dataset.empty = "true";
-          previewBody.textContent = "This document is empty.";
-        }
+      // Reuse existing writer panel if same file, otherwise create a new one
+      if (activeFileWriter && activeFileWriter.path === files.previewPath) {
+        previewBody.append(activeFileWriter.panel);
       } else {
-        const content = document.createElement("div");
-        content.className = "wm-files-preview-code";
-        content.innerHTML = renderCodeToHtml(files.previewContent, files.previewLanguage ?? "plaintext");
-        previewBody.append(content);
+        const { panel: writerEl, cleanup } = createWriterPanel(null, files.previewPath, { showToast });
+        activeFileWriter = { path: files.previewPath, panel: writerEl, cleanup };
+        previewBody.append(writerEl);
       }
     } else {
       previewBody.dataset.empty = "true";

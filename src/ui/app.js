@@ -3784,6 +3784,7 @@ const filesViewModule = initFilesView({
   openFileTransferDialogForMode,
   launchSession: (...args) => launchSession(...args),
   getConfig: () => state.config,
+  showToast,
   initFilesFromUrl: () => {
     const parsed = parseFilesPathFromUrl();
     if (parsed.slug) {
