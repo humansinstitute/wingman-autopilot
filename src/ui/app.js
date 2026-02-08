@@ -3697,6 +3697,8 @@ const filesViewModule = initFilesView({
   canCreateWorktree: (...args) => canCreateWorktree(...args),
   openWorktreeModal: (...args) => openWorktreeModal(...args),
   openFileTransferDialogForMode,
+  launchSession: (...args) => launchSession(...args),
+  getConfig: () => state.config,
 });
 renderFiles = filesViewModule.renderFiles;
 

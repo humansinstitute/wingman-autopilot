@@ -9,6 +9,51 @@ import { renderMarkdownToHtml, renderCodeToHtml } from "../rendering/markdown.js
 import { copyTextToClipboard } from "../utils/clipboard.js";
 import { FILES_SHOW_HIDDEN_STORAGE_KEY } from "../state/index.js";
 
+/**
+ * Show a small floating agent picker menu anchored to a button.
+ * Calls onSelect(agentId) when an agent is chosen, then removes the menu.
+ */
+function showQuickAgentPicker(anchor, agents, onSelect) {
+  // Remove any existing picker
+  document.querySelectorAll(".wm-writer-agent-picker").forEach((el) => el.remove());
+
+  const menu = document.createElement("div");
+  menu.className = "wm-writer-agent-picker";
+
+  agents.forEach((agent) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "wm-writer-agent-picker__item";
+    item.textContent = agent.label || agent.id;
+    item.addEventListener("click", () => {
+      menu.remove();
+      onSelect(agent.id);
+    });
+    menu.append(item);
+  });
+
+  // Position relative to the anchor
+  const rect = anchor.getBoundingClientRect();
+  menu.style.position = "fixed";
+  menu.style.top = `${rect.bottom + 4}px`;
+  menu.style.left = `${rect.left}px`;
+  menu.style.zIndex = "1000";
+
+  document.body.append(menu);
+
+  // Close on outside click
+  const closeHandler = (e) => {
+    if (!menu.contains(e.target) && e.target !== anchor) {
+      menu.remove();
+      document.removeEventListener("click", closeHandler, true);
+    }
+  };
+  // Delay to avoid immediate close from the button click
+  requestAnimationFrame(() => {
+    document.addEventListener("click", closeHandler, true);
+  });
+}
+
 export function initFilesView(deps) {
   const {
     state,
@@ -30,6 +75,9 @@ export function initFilesView(deps) {
     openWorktreeModal,
     // Directory browser
     openFileTransferDialogForMode,
+    // Session launcher for writer mode
+    launchSession,
+    getConfig,
   } = deps;
 
   // ── File CRUD helpers ───────────────────────────────────────────
@@ -661,6 +709,33 @@ export function initFilesView(deps) {
         void openFileEditor(files.previewPath, files.previewDisplayPath ?? null, files.previewName ?? null);
       });
       previewActions.append(editButton);
+    }
+
+    // Writer button — visible for .md files with a selection
+    const isMdFile = hasFileSelection && typeof files.previewPath === "string" && files.previewPath.endsWith(".md");
+    if (isMdFile) {
+      const writerButton = document.createElement("button");
+      writerButton.type = "button";
+      writerButton.className = "wm-button secondary";
+      writerButton.textContent = "Writer";
+      writerButton.title = "Open in writer mode with a live agent";
+      writerButton.addEventListener("click", () => {
+        const config = typeof getConfig === "function" ? getConfig() : null;
+        const agents = config?.agents ?? [];
+        if (agents.length === 0) {
+          window.alert("No agents available.");
+          return;
+        }
+        // Quick agent picker — show a small floating menu
+        showQuickAgentPicker(writerButton, agents, (agentId) => {
+          if (typeof launchSession === "function") {
+            launchSession(agentId, files.currentPath, files.previewName ?? "", null, {
+              targetFile: files.previewPath,
+            });
+          }
+        });
+      });
+      previewActions.append(writerButton);
     }
 
     if (hasFileSelection) {
