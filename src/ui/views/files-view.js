@@ -593,6 +593,58 @@ export function initFilesView(deps) {
       }
     });
 
+    // ── Favourite folder helpers ──────────────────────────────────
+    function isFavourite(path) {
+      return files.favourites.some((f) => f.path === path);
+    }
+    function toggleFavourite(path, name) {
+      if (isFavourite(path)) {
+        files.favourites = files.favourites.filter((f) => f.path !== path);
+      } else {
+        files.favourites = [...files.favourites, { path, name }];
+      }
+      try {
+        localStorage.setItem(FILES_FAVORITES_STORAGE_KEY, JSON.stringify(files.favourites));
+      } catch { /* ignore */ }
+      if (getCurrentRoute() === "files") render();
+    }
+
+    // ── Favourites section (above file list) ──────────────────────
+    let favsSection = null;
+    if (files.favourites.length > 0) {
+      favsSection = document.createElement("div");
+      favsSection.className = "wm-files-favourites";
+      const favsLabel = document.createElement("span");
+      favsLabel.className = "wm-files-favourites__label";
+      favsLabel.textContent = "Favourites";
+      favsSection.append(favsLabel);
+      files.favourites.forEach((fav) => {
+        const favItem = document.createElement("button");
+        favItem.type = "button";
+        favItem.className = "wm-files-favourites__item";
+        const favIcon = createIconSvg(FILE_BROWSER_ICON_DEFS.starFilled);
+        favIcon.classList.add("wm-files-favourites__star");
+        const favName = document.createElement("span");
+        favName.textContent = fav.name;
+        favItem.append(favIcon, favName);
+        favItem.addEventListener("click", () => {
+          void loadFilesTree(fav.path);
+        });
+        const unstarBtn = document.createElement("button");
+        unstarBtn.type = "button";
+        unstarBtn.className = "wm-files-favourites__unstar";
+        setIconButton(unstarBtn, "star", "Remove from favourites");
+        unstarBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          toggleFavourite(fav.path, fav.name);
+        });
+        const wrapper = document.createElement("div");
+        wrapper.className = "wm-files-favourites__entry";
+        wrapper.append(favItem, unstarBtn);
+        favsSection.append(wrapper);
+      });
+    }
+
     if (files.error) {
       const item = document.createElement("li");
       item.className = "wm-files-browser__status";
@@ -700,7 +752,21 @@ export function initFilesView(deps) {
           });
         }
 
-        item.append(button);
+        // Star toggle for folders
+        if (entry.type === "directory") {
+          const starred = isFavourite(entry.path);
+          const starBtn = document.createElement("button");
+          starBtn.type = "button";
+          starBtn.className = "wm-files-browser__star" + (starred ? " wm-files-browser__star--active" : "");
+          setIconButton(starBtn, starred ? "starFilled" : "star", starred ? "Remove from favourites" : "Add to favourites");
+          starBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            toggleFavourite(entry.path, entry.name);
+          });
+          item.append(button, starBtn);
+        } else {
+          item.append(button);
+        }
         list.append(item);
       });
 
@@ -719,7 +785,11 @@ export function initFilesView(deps) {
       }
     }
 
-    browserCard.append(browserHeader, list);
+    if (favsSection) {
+      browserCard.append(browserHeader, favsSection, list);
+    } else {
+      browserCard.append(browserHeader, list);
+    }
 
     const previewCard = document.createElement("section");
     previewCard.className = "wm-card wm-files-preview";

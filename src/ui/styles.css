@@ -5960,6 +5960,129 @@ dialog button[value="cancel"] {
   font-size: 0.9rem;
 }
 
+/* ── Star button on folder items ─────────────────────────────── */
+.wm-files-browser__item[data-type="directory"] {
+  position: relative;
+}
+
+.wm-files-browser__star {
+  position: absolute;
+  right: 0.4rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.wm-files-browser__star .wm-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.wm-files-browser__item:hover .wm-files-browser__star,
+.wm-files-browser__item:focus-within .wm-files-browser__star,
+.wm-files-browser__star--active {
+  display: inline-flex;
+}
+
+.wm-files-browser__star:hover {
+  color: var(--accent-primary);
+}
+
+.wm-files-browser__star--active {
+  color: var(--accent-primary);
+}
+
+/* ── Favourites section ─────────────────────────────────────── */
+.wm-files-favourites {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.wm-files-favourites__label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+  margin-right: 0.25rem;
+}
+
+.wm-files-favourites__entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+
+.wm-files-favourites__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.wm-files-favourites__item:hover {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.wm-files-favourites__star {
+  width: 12px;
+  height: 12px;
+  color: var(--accent-primary);
+  flex-shrink: 0;
+}
+
+.wm-files-favourites__unstar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 150ms ease, color 150ms ease;
+}
+
+.wm-files-favourites__unstar .wm-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.wm-files-favourites__entry:hover .wm-files-favourites__unstar {
+  opacity: 1;
+}
+
+.wm-files-favourites__unstar:hover {
+  color: var(--accent-primary);
+}
+
 .wm-files-preview__header {
   display: flex;
   flex-wrap: wrap;
