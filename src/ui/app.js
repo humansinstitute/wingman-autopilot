@@ -928,6 +928,9 @@ const sessionWorkspaceModeSelect = document.getElementById("session-workspace-mo
 const sessionWorktreeField = document.querySelector('[data-workspace="worktree"]');
 const sessionWorktreeNameInput = document.getElementById("session-worktree-name");
 const sessionWorktreeHint = document.getElementById("session-worktree-hint");
+const sessionWriterModeCheckbox = document.getElementById("session-writer-mode");
+const sessionTargetFileInput = document.getElementById("session-target-file");
+const sessionTargetFileField = document.getElementById("session-target-file-field");
 const directoryInput = document.getElementById("working-directory");
 const directorySuggestions = document.getElementById("directory-suggestions");
 const browseDirectoryButton = document.getElementById("browse-directory");
@@ -2116,13 +2119,17 @@ sessionDialogController = createSessionDialogController({
   worktreeField: sessionWorktreeField,
   worktreeNameInput: sessionWorktreeNameInput,
   worktreeHint: sessionWorktreeHint,
+  writerModeCheckbox: sessionWriterModeCheckbox,
+  targetFileInput: sessionTargetFileInput,
+  targetFileField: sessionTargetFileField,
   isAuthenticated: () => Boolean(state.identity.authenticated),
   getConfig: () => state.config,
   getFallbackDirectory: getSessionFallbackDirectory,
   onRequireAuth: openIdentityLoginDialog,
   onDirectoryPrefill: (...args) => scheduleDirectorySuggestions(...args),
-  onSubmit: ({ agentId, workingDirectory, sessionName, workspace }) => {
-    launchSession(agentId, workingDirectory, sessionName, workspace);
+  onSubmit: ({ agentId, workingDirectory, sessionName, workspace, targetFile }) => {
+    const options = targetFile ? { targetFile } : undefined;
+    launchSession(agentId, workingDirectory, sessionName, workspace, options);
   },
 });
 sessionDialogController.resetFormState();
