@@ -95,6 +95,7 @@ export function createWriterPanel(sessionId, targetFile, deps) {
   let editingIndex = -1;
   let pollTimer = null;
   let destroyed = false;
+  let commitInProgress = false;
 
   // ── File operations ──────────────────────────────────────────
 
@@ -251,6 +252,7 @@ export function createWriterPanel(sessionId, targetFile, deps) {
   // ── Edit operations ──────────────────────────────────────────
 
   async function commitEdit() {
+    if (commitInProgress) return;
     if (editingIndex < 0 || editingIndex >= blocks.length) {
       editingIndex = -1;
       return;
@@ -262,29 +264,27 @@ export function createWriterPanel(sessionId, targetFile, deps) {
       return;
     }
 
+    commitInProgress = true;
     const newRaw = editor.value;
-    const oldRaw = blocks[editingIndex].raw;
+    const changedIndex = editingIndex;
     editingIndex = -1;
 
-    if (newRaw === oldRaw) {
+    if (newRaw === blocks[changedIndex].raw) {
+      commitInProgress = false;
       renderBlocks();
       return;
     }
 
-    // Update block
-    blocks[editingIndex >= 0 ? editingIndex : blocks.length - 1] = {
-      ...blocks.find((_, idx) => idx === (editingIndex >= 0 ? editingIndex : blocks.length - 1)),
-    };
-    // Re-parse from the edited block to handle structural changes
-    const fullContent = blocks.map((b, idx) => {
-      if (idx === blocks.findIndex((bb) => bb.raw === oldRaw)) return newRaw;
-      return b.raw;
-    }).join("\n\n");
+    // Build the full content with the edited block replaced
+    const fullContent = blocks.map((b, idx) =>
+      idx === changedIndex ? newRaw : b.raw
+    ).join("\n\n");
 
     const saved = await saveFile(fullContent);
     if (saved) {
       blocks = parseMarkdownBlocks(fullContent);
     }
+    commitInProgress = false;
     renderBlocks();
   }
 
