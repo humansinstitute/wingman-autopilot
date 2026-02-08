@@ -201,7 +201,8 @@ export const createNpubProjectApiHandler = () => {
       return null;
     }
 
-    if (!authContext.session) {
+    // Auth is handled by the server route guard (supports both session and NIP-98)
+    if (!authContext.session && !authContext.npub) {
       return Response.json({ error: "Authentication required" }, { status: 401 });
     }
 
