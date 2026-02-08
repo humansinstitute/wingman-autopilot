@@ -302,11 +302,17 @@ export function initFilesView(deps) {
 
   // ── Main renderer ───────────────────────────────────────────────
 
+  const { initFilesFromUrl } = deps;
+
   const renderFiles = () => {
     const files = state.files;
     if (!files.initialized) {
       files.initialized = true;
-      void loadFilesTree();
+      if (typeof initFilesFromUrl === "function") {
+        initFilesFromUrl();
+      } else {
+        void loadFilesTree();
+      }
     }
 
     const wrapper = document.createElement("div");

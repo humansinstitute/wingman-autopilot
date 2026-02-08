@@ -340,6 +340,74 @@ const resetFilesPreview = () => {
   state.files.previewLabel = null;
 };
 
+/**
+ * Build the browser URL for the current files view state and update the address bar.
+ * Format: /files/<relativePath>[?file=<filename>]
+ */
+function updateFilesUrl({ replace = false } = {}) {
+  if (currentRoute !== "files") return;
+  const dirRelative = state.files.relativePath || "";
+  const slug = dirRelative ? `${FILES_ROUTE}/${dirRelative}` : FILES_ROUTE;
+  const fileRelative = state.files.previewRelativePath || "";
+  let target = slug;
+  if (fileRelative) {
+    target = `${FILES_ROUTE}/${fileRelative}`;
+  }
+  if (window.location.pathname === target) return;
+  const stateObj = { route: "files" };
+  if (replace) {
+    window.history.replaceState(stateObj, "", target);
+  } else {
+    window.history.pushState(stateObj, "", target);
+  }
+}
+
+/**
+ * Extract a docs-root-relative path from the current URL when on the files route.
+ * Returns { slug } where slug is the path after /files/.
+ */
+function parseFilesPathFromUrl() {
+  const pathname = window.location.pathname;
+  const prefix = `${FILES_ROUTE}/`;
+  if (!pathname.startsWith(prefix)) {
+    return { slug: null };
+  }
+  const slug = decodeURIComponent(pathname.slice(prefix.length));
+  return { slug: slug || null };
+}
+
+/**
+ * Navigate to a files URL slug — tries as directory first, falls back to
+ * loading parent directory + file preview if the slug points to a file.
+ */
+async function navigateToFilesSlug(slug) {
+  if (!slug) {
+    void loadFilesTree();
+    return;
+  }
+  const files = state.files;
+  // Probe the slug to see if it's a directory or file
+  try {
+    const probeUrl = new URL("/api/docs/tree", window.location.origin);
+    probeUrl.searchParams.set("path", slug);
+    if (files.showHidden) probeUrl.searchParams.set("showHidden", "1");
+    const response = await fetch(probeUrl.toString(), { method: "GET" });
+    if (response.ok) {
+      // It's a directory — load it via the normal path
+      void loadFilesTree(slug);
+      return;
+    }
+  } catch {
+    // fall through to file attempt
+  }
+  // Slug is likely a file — load parent directory, then preview the file
+  const lastSlash = slug.lastIndexOf("/");
+  const parentSlug = lastSlash > 0 ? slug.slice(0, lastSlash) : null;
+  await loadFilesTree(parentSlug || undefined);
+  // The backend resolveDocsPath handles relative paths, so pass the slug directly
+  void loadFilesPreview(slug);
+}
+
 // -- Markdown / code rendering imported from rendering/markdown.js --
 
 const loadFilesTree = async (path) => {
@@ -389,6 +457,7 @@ const loadFilesTree = async (path) => {
         resetFilesPreview();
       }
     }
+    updateFilesUrl({ replace: true });
   } catch (error) {
     files.loading = false;
     files.error = error instanceof Error ? error.message : String(error);
@@ -449,6 +518,7 @@ const loadFilesPreview = async (path) => {
     files.previewLabel = data?.label ?? null;
     files.previewLoading = false;
     files.previewError = null;
+    updateFilesUrl();
   } catch (error) {
     files.previewLoading = false;
     files.previewError = error instanceof Error ? error.message : String(error);
@@ -472,6 +542,7 @@ const showFilesPreviewUnavailable = (entry) => {
   files.previewContent = null;
   files.previewLoading = false;
   files.previewError = "Preview not available for this file type.";
+  updateFilesUrl();
   if (currentRoute === "files") {
     render();
   }
@@ -3706,6 +3777,14 @@ const filesViewModule = initFilesView({
   openFileTransferDialogForMode,
   launchSession: (...args) => launchSession(...args),
   getConfig: () => state.config,
+  initFilesFromUrl: () => {
+    const parsed = parseFilesPathFromUrl();
+    if (parsed.slug) {
+      void navigateToFilesSlug(parsed.slug);
+    } else {
+      void loadFilesTree();
+    }
+  },
 });
 renderFiles = filesViewModule.renderFiles;
 
@@ -4101,15 +4180,15 @@ navLinks.forEach((link) => {
       stopConversationPolling();
       currentRoute = "files";
       lastLoggedSessionId = null;
-      if (window.location.pathname !== FILES_ROUTE) {
-        window.history.pushState({ route: "files" }, "", FILES_ROUTE);
-      }
       if (!state.files.initialized) {
         state.files.initialized = true;
         void loadFilesTree(sessionDir);
       } else if (sessionDir) {
         // Already initialized but coming from live with a session directory - navigate there
         void loadFilesTree(sessionDir);
+      } else {
+        // Already initialized — sync URL to current state
+        updateFilesUrl({ replace: true });
       }
     } else if (targetRoute === "settings") {
       navigateToSettings({ skipMenuClose: true });
@@ -4266,9 +4345,16 @@ window.addEventListener("popstate", () => {
       const newPath = window.location.pathname.replace("/docs", "/files");
       window.history.replaceState({ route: "files" }, "", newPath);
     }
+    const parsed = parseFilesPathFromUrl();
     if (!state.files.initialized) {
       state.files.initialized = true;
-      void loadFilesTree();
+      if (parsed.slug) {
+        void navigateToFilesSlug(parsed.slug);
+      } else {
+        void loadFilesTree();
+      }
+    } else if (parsed.slug) {
+      void navigateToFilesSlug(parsed.slug);
     } else if (!state.files.loading && !state.files.currentPath) {
       void loadFilesTree();
     }
