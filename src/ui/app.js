@@ -36,12 +36,11 @@ import { buildSessionOrigin, createSessionLauncher } from "./helpers/session-lau
 import {
   state,
   createAdminUsersState,
-  initFilesShowHidden,
+  initFilesPreferences,
   resolveWebAppBase,
   formatWebAppUrl,
   THEME_STORAGE_KEY,
   TABS_VISIBILITY_STORAGE_KEY,
-  FILES_SHOW_HIDDEN_STORAGE_KEY,
   APP_LOG_PREVIEW_LINES,
   TOAST_DEFAULT_DURATION_MS,
   DEFAULT_CONNECT_RELAYS,
@@ -227,8 +226,8 @@ const requestAuthUiSync = () => {
 
 requestAuthUiSync();
 
-// Initialize files.showHidden from localStorage
-initFilesShowHidden();
+// Initialize files preferences (showHidden, browserShelved, favourites) from localStorage
+initFilesPreferences();
 
 const normalisePortList = (value) => {
   if (!Array.isArray(value)) {

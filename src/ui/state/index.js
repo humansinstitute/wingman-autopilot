@@ -274,9 +274,6 @@ export function initFilesPreferences() {
   }
 }
 
-/** @deprecated Use initFilesPreferences instead */
-export const initFilesShowHidden = initFilesPreferences;
-
 /**
  * Resolves the web app base URL from config or uses default.
  */
