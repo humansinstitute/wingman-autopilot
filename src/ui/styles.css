@@ -5962,26 +5962,29 @@ dialog button[value="cancel"] {
 
 /* ── Star button on folder items ─────────────────────────────── */
 .wm-files-browser__item[data-type="directory"] {
-  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.wm-files-browser__item[data-type="directory"] button:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .wm-files-browser__star {
-  position: absolute;
-  right: 0.4rem;
-  top: 50%;
-  transform: translateY(-50%);
+  flex-shrink: 0;
   display: none;
   align-items: center;
   justify-content: center;
-  width: 1.6rem;
-  height: 1.6rem;
+  width: 1.8rem;
+  height: 1.8rem;
   padding: 0;
   border: none;
   border-radius: 6px;
   background: none;
   color: var(--text-tertiary);
   cursor: pointer;
-  transition: color 150ms ease;
+  transition: color 150ms ease, background 150ms ease;
 }
 
 .wm-files-browser__star .wm-icon {
@@ -5997,6 +6000,7 @@ dialog button[value="cancel"] {
 
 .wm-files-browser__star:hover {
   color: var(--accent-primary);
+  background: rgba(16, 185, 129, 0.1);
 }
 
 .wm-files-browser__star--active {
