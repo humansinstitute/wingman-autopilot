@@ -25,6 +25,8 @@ export interface AgentDefinition {
 
 export interface WingmanConfig {
   port: number;
+  /** Public base URL for this Wingman instance (e.g. https://wm21.otherstuff.ai) */
+  baseUrl: string;
   agentPortStart: number;
   agentPortMax: number;
   defaultWorkingDirectory: string;
@@ -239,6 +241,10 @@ export const loadConfig = (): WingmanConfig => {
     console.log(`[Config] App routing mode: subdomain (<alias>.${subdomainBaseDomain})`);
   }
 
+  // Public base URL (for external links in notifications, etc.)
+  const baseUrl = parseEnvironmentString(Bun.env.WINGMAN_BASE_URL, `http://localhost:${port}`);
+  console.log(`[Config] Base URL: ${baseUrl}`);
+
   // Maple Proxy configuration for private chat
   const mapleProxyUrl = parseEnvironmentString(Bun.env.MAPLE_PROXY_URL, "http://localhost:8091");
   const mapleDefaultModel = parseEnvironmentString(Bun.env.MAPLE_DEFAULT_MODEL, "llama-3.3-70b");
@@ -247,6 +253,7 @@ export const loadConfig = (): WingmanConfig => {
 
   return {
     port,
+    baseUrl,
     agentPortStart,
     agentPortMax,
     defaultWorkingDirectory,

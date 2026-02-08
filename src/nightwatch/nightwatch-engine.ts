@@ -60,6 +60,8 @@ export interface NightWatchDeps {
   promptQueueStore: PromptQueueStore;
   openRouterApiKey: string | null;
   openRouterBaseUrl: string;
+  /** Public base URL for this Wingman instance (used in notification links) */
+  wingmanBaseUrl: string;
   getSession: (sessionId: string) => SessionSnapshot | null;
   /** Trigger prompt queue dispatch for a session (immediate, not waiting for sweep) */
   dispatchPrompt: (session: SessionSnapshot) => void;
@@ -418,7 +420,7 @@ async function executeNightWatchReview(
   }
 
   // Send push notification via ntfy
-  const ntfyConfig = getNtfyConfig();
+  const ntfyConfig = getNtfyConfig(deps.wingmanBaseUrl);
   if (ntfyConfig) {
     sendNtfyNotification(terminalReport, ntfyConfig).catch((err) => {
       console.error("[nightwatch] ntfy notification failed:", err);
@@ -490,7 +492,7 @@ export async function maybeTriggerNightWatch(
     }
 
     // Send push notification via ntfy
-    const ntfyConfig = getNtfyConfig();
+    const ntfyConfig = getNtfyConfig(deps.wingmanBaseUrl);
     if (ntfyConfig) {
       sendNtfyNotification(maxCycleReport, ntfyConfig).catch((err) => {
         console.error("[nightwatch] ntfy notification failed:", err);

@@ -14,12 +14,11 @@ export interface NtfyConfig {
   baseUrl: string; // Wingman UI base URL for session links
 }
 
-export function getNtfyConfig(): NtfyConfig | null {
+export function getNtfyConfig(wingmanBaseUrl?: string): NtfyConfig | null {
   const topic = Bun.env.NTFY_TOPIC;
   if (!topic) return null;
 
-  const port = Bun.env.PORT || "3600";
-  const baseUrl = Bun.env.WINGMAN_BASE_URL || `http://localhost:${port}`;
+  const baseUrl = wingmanBaseUrl || Bun.env.WINGMAN_BASE_URL || `http://localhost:${Bun.env.PORT || "3600"}`;
 
   return { topic, baseUrl };
 }

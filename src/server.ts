@@ -863,6 +863,7 @@ const nightWatchDeps = {
   promptQueueStore,
   openRouterApiKey: Bun.env.OPENROUTER_API?.trim() || null,
   openRouterBaseUrl: "https://openrouter.ai/api",
+  wingmanBaseUrl: config.baseUrl,
   getSession: (sid: string) => manager.getSession(sid) ?? null,
   dispatchPrompt: (session: SessionSnapshot) => {
     void maybeAutoDispatchQueuedPrompt(session);
