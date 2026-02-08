@@ -106,6 +106,11 @@ export const FILE_BROWSER_ICON_DEFS = {
     ["polyline", { points: "16 6 12 2 8 6" }],
     ["line", { x1: 12, y1: 2, x2: 12, y2: 16 }],
   ],
+  download: [
+    ["path", { d: "M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" }],
+    ["polyline", { points: "8 12 12 16 16 12" }],
+    ["line", { x1: 12, y1: 2, x2: 12, y2: 16 }],
+  ],
   branchPlus: [
     ["circle", { cx: 6, cy: 6, r: 2.5 }],
     ["circle", { cx: 6, cy: 18, r: 2.5 }],

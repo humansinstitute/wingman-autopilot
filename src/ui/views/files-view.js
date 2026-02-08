@@ -738,6 +738,24 @@ export function initFilesView(deps) {
     }
 
     if (hasFileSelection) {
+      const downloadButton = document.createElement("button");
+      downloadButton.type = "button";
+      downloadButton.className = "wm-button secondary wm-button-icon";
+      setIconButton(downloadButton, "download", "Download file");
+      downloadButton.addEventListener("click", () => {
+        const targetPath = typeof files.previewPath === "string" ? files.previewPath : null;
+        if (!targetPath) return;
+        const downloadUrl = `/api/docs/file/download?path=${encodeURIComponent(targetPath)}`;
+        const link = document.createElement("a");
+        link.href = downloadUrl;
+        link.download = files.previewName || "";
+        link.style.display = "none";
+        document.body.append(link);
+        link.click();
+        link.remove();
+      });
+      previewActions.append(downloadButton);
+
       const copyUrlButton = document.createElement("button");
       copyUrlButton.type = "button";
       copyUrlButton.className = "wm-button secondary";

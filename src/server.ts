@@ -69,6 +69,7 @@ import { CaproverStore, createCaproverApiHandler, createCaproverClientFromEnv, c
 import { NightWatchStore } from "./nightwatch/nightwatch-store";
 import { maybeTriggerNightWatch, NIGHTWATCH_FEATURE_FLAG_KEY } from "./nightwatch/nightwatch-engine";
 import { createNightWatchApiHandler } from "./nightwatch/nightwatch-api";
+import { nip19, verifyEvent } from "nostr-tools";
 import { startTaskListener } from "./nostr/task-listener";
 import { createTaskExecutor } from "./nostr/task-executor";
 import { signWithWingmanKey } from "./mcp/wingman-signer";
@@ -3624,6 +3625,46 @@ const isAdminContext = (authContext: RequestAuthContext): boolean => {
   return normalized === adminNpub;
 };
 
+/**
+ * Verify a NIP-98 Authorization header and return the signer's npub if valid.
+ * Returns null if no valid NIP-98 header is present.
+ */
+const verifyNip98AuthHeader = (request: Request, url: URL): string | null => {
+  const authHeader = request.headers.get("authorization");
+  if (!authHeader?.startsWith("Nostr ")) return null;
+
+  try {
+    const base64Token = authHeader.slice(6);
+    const eventJson = atob(base64Token);
+    const event = JSON.parse(eventJson);
+
+    // Verify the event signature
+    if (!verifyEvent(event)) return null;
+
+    // Verify kind 27235 (NIP-98)
+    if (event.kind !== 27235) return null;
+
+    // Verify the URL tag matches
+    const uTag = event.tags?.find((t: string[]) => t[0] === "u");
+    if (!uTag) return null;
+    const eventUrl = new URL(uTag[1]);
+    if (eventUrl.origin !== url.origin || eventUrl.pathname !== url.pathname) return null;
+
+    // Verify the method tag
+    const methodTag = event.tags?.find((t: string[]) => t[0] === "method");
+    if (!methodTag || methodTag[1] !== request.method) return null;
+
+    // Verify the event is recent (within 60 seconds)
+    const now = Math.floor(Date.now() / 1000);
+    if (Math.abs(now - event.created_at) > 60) return null;
+
+    // Convert pubkey to npub
+    return nip19.npubEncode(event.pubkey);
+  } catch {
+    return null;
+  }
+};
+
 type SessionCleanupDetail = {
   id: string;
   agent: AgentType;
@@ -3906,15 +3947,26 @@ const handleApi = async (
     return browserLogResponse;
   }
   if (pathname.startsWith("/api/npub-projects")) {
+    let effectiveAuth = authContext;
+    let effectiveIsAdmin = workspaceScope.isAdmin;
+
+    // Allow NIP-98 auth as fallback when no session cookie
     if (!authContext.session) {
-      return Response.json({ error: "Authentication required" }, { status: 401 });
+      const nip98Npub = verifyNip98AuthHeader(request, url);
+      if (nip98Npub) {
+        effectiveAuth = { npub: nip98Npub, session: null };
+        effectiveIsAdmin = true; // NIP-98 server keys treated as admin for project lookups
+      } else {
+        return Response.json({ error: "Authentication required" }, { status: 401 });
+      }
     }
+
     const response = await npubProjectApiHandler(
       request,
       url,
       method,
-      authContext,
-      workspaceScope.isAdmin,
+      effectiveAuth,
+      effectiveIsAdmin,
     );
     if (response) {
       return response;
@@ -5558,6 +5610,40 @@ const handleApi = async (
     try {
       const data = await loadDocsFileRaw(pathParam);
       return Response.json(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/docs/file/download" && method === "GET") {
+    const denied = await ensureApiAccess(AccessActions.FilesRead, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    const pathParam = url.searchParams.get("path");
+    if (!pathParam) {
+      return Response.json({ error: "File path is required" }, { status: 400 });
+    }
+    try {
+      const filePath = resolveDocsPath(pathParam);
+      const fileStats = await stat(filePath);
+      if (!fileStats.isFile()) {
+        return Response.json({ error: "Requested path is not a file" }, { status: 400 });
+      }
+      if (fileStats.size > MAX_DOCS_FILE_SIZE) {
+        return Response.json({ error: "File is too large to download" }, { status: 400 });
+      }
+      const data = await readFile(filePath);
+      const fileName = basename(filePath);
+      const bunFile = Bun.file(filePath);
+      return new Response(data, {
+        headers: {
+          "content-disposition": `attachment; filename="${fileName.replace(/"/g, '\\"')}"`,
+          "content-type": bunFile.type || "application/octet-stream",
+          "content-length": String(fileStats.size),
+        },
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Response.json({ error: message }, { status: 400 });
