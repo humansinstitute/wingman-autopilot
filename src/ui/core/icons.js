@@ -136,6 +136,33 @@ export const FILE_BROWSER_ICON_DEFS = {
   starFilled: [
     ["path", { d: "M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14l-5-4.87 6.91-1.01L12 2z", fill: "currentColor" }],
   ],
+  pencil: [
+    ["path", { d: "M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" }],
+    ["path", { d: "m15 5 4 4" }],
+  ],
+  penTool: [
+    ["path", { d: "m12 19 7-7 3 3-7 7Z" }],
+    ["path", { d: "m18 13-1.5-7.5L2 2l3.5 14.5L13 18Z" }],
+    ["path", { d: "m2 2 7.586 7.586" }],
+    ["circle", { cx: 11, cy: 11, r: 2 }],
+  ],
+  link: [
+    ["path", { d: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" }],
+    ["path", { d: "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" }],
+  ],
+  clipboardCopy: [
+    ["path", { d: "M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" }],
+    ["path", { d: "M15 2H9a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1Z" }],
+  ],
+  arrowRightCircle: [
+    ["circle", { cx: 12, cy: 12, r: 10 }],
+    ["polyline", { points: "12 16 16 12 12 8" }],
+    ["line", { x1: 8, y1: 12, x2: 16, y2: 12 }],
+  ],
+  trash: [
+    ["polyline", { points: "3 6 5 6 21 6" }],
+    ["path", { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }],
+  ],
 };
 
 export const setIconButton = (button, iconKey, label) => {

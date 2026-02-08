@@ -5737,17 +5737,8 @@ dialog button[value="cancel"] {
 @media (min-width: 720px) {
   .wm-files-preview__header {
     flex-direction: row;
-    align-items: flex-start;
-    gap: 1rem;
-  }
-
-  .wm-files-preview__info {
-    flex: 1 1 auto;
-  }
-
-  .wm-files-preview__actions {
-    margin-left: auto;
-    align-self: center;
+    align-items: center;
+    gap: 0.75rem;
   }
 }
 
@@ -5971,76 +5962,19 @@ dialog button[value="cancel"] {
 
 .wm-files-preview__header {
   display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  margin-bottom: 1rem;
-}
-
-.wm-files-preview__info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.wm-files-preview__path-row {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
   flex-wrap: wrap;
-}
-
-.wm-files-copy-link {
-  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  border: 1px solid rgba(16, 185, 129, 0.3);
-  background: rgba(16, 185, 129, 0.08);
-  color: var(--accent-primary);
-  cursor: pointer;
-  transition: background 180ms ease, transform 180ms ease, border-color 180ms ease;
-}
-
-.wm-files-copy-link:hover {
-  background: rgba(16, 185, 129, 0.16);
-}
-
-.wm-files-copy-link:active {
-  transform: translateY(1px);
-}
-
-.wm-files-copy-link:focus-visible {
-  outline: 2px solid var(--accent-primary);
-  outline-offset: 2px;
-}
-
-.wm-files-copy-link[data-copied="true"] {
-  background: rgba(16, 185, 129, 0.26);
-  border-color: rgba(16, 185, 129, 0.45);
-}
-
-.wm-files-preview__actions {
-  display: flex;
-  flex-wrap: wrap;
   gap: 0.5rem;
-  align-self: flex-start;
-}
-
-.wm-files-preview__actions .wm-button {
-  padding: 0.5rem 0.9rem;
+  margin-bottom: 1rem;
 }
 
 .wm-files-preview__title {
   margin: 0;
-}
-
-.wm-files-preview__path {
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 0.85rem;
-  color: var(--text-tertiary);
-  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .wm-files-preview__badge {
@@ -6056,6 +5990,70 @@ dialog button[value="cancel"] {
   margin-left: 0.35rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  vertical-align: middle;
+}
+
+.wm-files-preview__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.wm-files-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.2rem;
+  height: 2.2rem;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 180ms ease, border-color 180ms ease, color 180ms ease;
+}
+
+.wm-files-toolbar-btn .wm-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.wm-files-toolbar-btn:hover {
+  border-color: rgba(16, 185, 129, 0.3);
+  background: rgba(16, 185, 129, 0.08);
+  color: var(--accent-primary);
+}
+
+.wm-files-toolbar-btn:active {
+  transform: translateY(1px);
+}
+
+.wm-files-toolbar-btn:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.wm-files-toolbar-btn[data-copied="true"] {
+  color: var(--accent-primary);
+  background: rgba(16, 185, 129, 0.18);
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.wm-files-toolbar-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.wm-files-toolbar-btn--danger {
+  color: #ef4444;
+}
+
+.wm-files-toolbar-btn--danger:hover {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
 }
 
 .wm-files-preview__body[data-empty="true"] {

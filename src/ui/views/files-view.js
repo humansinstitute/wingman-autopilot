@@ -726,95 +726,67 @@ export function initFilesView(deps) {
 
     const previewHeader = document.createElement("div");
     previewHeader.className = "wm-files-preview__header";
+
     const previewTitle = document.createElement("h2");
     previewTitle.className = "wm-files-preview__title";
     previewTitle.textContent = files.previewName ?? "Preview";
-    const previewPathRow = document.createElement("div");
-    previewPathRow.className = "wm-files-preview__path-row";
-    const previewPath = document.createElement("p");
-    previewPath.className = "wm-files-preview__path";
-    if (files.previewDisplayPath) {
-      previewPath.textContent = files.previewDisplayPath;
-    } else if (files.previewName) {
-      previewPath.textContent = files.previewName;
-    } else {
-      previewPath.textContent = "~";
-    }
     if (files.previewLabel) {
       const formatBadge = document.createElement("span");
       formatBadge.className = "wm-files-preview__badge";
       formatBadge.textContent = files.previewLabel;
-      previewPath.append(document.createTextNode(" "), formatBadge);
+      previewTitle.append(document.createTextNode(" "), formatBadge);
     }
-    previewPathRow.append(previewPath);
+    previewHeader.append(previewTitle);
 
-    const copyablePath = files.previewDisplayPath || files.previewPath || null;
-    if (copyablePath) {
-      const copyButton = document.createElement("button");
-      copyButton.type = "button";
-      copyButton.className = "wm-files-copy-link";
-      copyButton.setAttribute("aria-label", "Copy file path");
-      copyButton.title = "Copy file path";
-      const defaultIcon =
-        '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M16 1H8a2 2 0 0 0-2 2v2H5a2 2 0 0 0-2 2v12c0 1.1.9 2 2 2h8l1-2H5V7h1v2h10V3h2v9l2-1V3a2 2 0 0 0-2-2Zm-2 6H8V3h6v4Zm7.71 9.29-5-5a1 1 0 0 0-1.42 1.42l1.3 1.29-4.59 4.59V22h3.41l4.59-4.59 1.29 1.3a1 1 0 0 0 1.42-1.42Z"/></svg>';
-      const successIcon =
-        '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="m9 16.17-3.5-3.5L4.08 14.1 9 19l12-12-1.41-1.42Z"/></svg>';
-      copyButton.innerHTML = defaultIcon;
-      copyButton.addEventListener("click", async () => {
-        const text = copyablePath;
-        if (!text) return;
-        const success = await copyTextToClipboard(text);
-        if (success) {
-          copyButton.dataset.copied = "true";
-          copyButton.innerHTML = successIcon;
-          setTimeout(() => {
-            if (copyButton.isConnected) {
-              delete copyButton.dataset.copied;
-              copyButton.innerHTML = defaultIcon;
-            }
-          }, 1600);
-        }
-      });
-      previewPathRow.append(copyButton);
-    }
-
-    const previewInfo = document.createElement("div");
-    previewInfo.className = "wm-files-preview__info";
-    previewInfo.append(previewTitle, previewPathRow);
-    previewHeader.append(previewInfo);
-
-    const previewActions = document.createElement("div");
-    previewActions.className = "wm-files-preview__actions";
+    // ── Compact icon toolbar ────────────────────────────────────────
+    const toolbar = document.createElement("div");
+    toolbar.className = "wm-files-preview__toolbar";
     const hasFileSelection = typeof files.previewPath === "string" && !files.previewLoading;
     const canEdit = hasFileSelection && !files.previewError && files.previewContent !== null;
 
-    if (canEdit) {
-      const editButton = document.createElement("button");
-      editButton.type = "button";
-      editButton.className = "wm-button secondary";
-      editButton.textContent = "Edit File";
-      editButton.addEventListener("click", () => {
-        void openFileEditor(files.previewPath, files.previewDisplayPath ?? null, files.previewName ?? null);
-      });
-      previewActions.append(editButton);
+    /** Helper: create a small icon button for the toolbar */
+    function toolbarButton(iconKey, label, extraClass) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "wm-files-toolbar-btn" + (extraClass ? " " + extraClass : "");
+      setIconButton(btn, iconKey, label);
+      return btn;
     }
 
-    // Writer button — visible for any editable text file (code, config, markdown, etc.)
+    // Copy file path
+    const copyablePath = files.previewDisplayPath || files.previewPath || null;
+    if (copyablePath) {
+      const copyPathBtn = toolbarButton("clipboardCopy", "Copy file path");
+      copyPathBtn.addEventListener("click", async () => {
+        const success = await copyTextToClipboard(copyablePath);
+        if (success) {
+          copyPathBtn.dataset.copied = "true";
+          setTimeout(() => { if (copyPathBtn.isConnected) delete copyPathBtn.dataset.copied; }, 1600);
+        }
+      });
+      toolbar.append(copyPathBtn);
+    }
+
+    // Edit file
     if (canEdit) {
-      const writerButton = document.createElement("button");
-      writerButton.type = "button";
-      writerButton.className = "wm-button secondary";
-      writerButton.textContent = "Writer";
-      writerButton.title = "Open in writer mode with a live agent";
-      writerButton.addEventListener("click", () => {
+      const editBtn = toolbarButton("pencil", "Edit file");
+      editBtn.addEventListener("click", () => {
+        void openFileEditor(files.previewPath, files.previewDisplayPath ?? null, files.previewName ?? null);
+      });
+      toolbar.append(editBtn);
+    }
+
+    // Writer
+    if (canEdit) {
+      const writerBtn = toolbarButton("penTool", "Writer");
+      writerBtn.addEventListener("click", () => {
         const config = typeof getConfig === "function" ? getConfig() : null;
         const agents = config?.agents ?? [];
         if (agents.length === 0) {
           window.alert("No agents available.");
           return;
         }
-        // Quick agent picker — show a small floating menu
-        showQuickAgentPicker(writerButton, agents, (agentId) => {
+        showQuickAgentPicker(writerBtn, agents, (agentId) => {
           if (typeof launchSession === "function") {
             launchSession(agentId, files.currentPath, files.previewName ?? "", null, {
               targetFile: files.previewPath,
@@ -822,105 +794,83 @@ export function initFilesView(deps) {
           }
         });
       });
-      previewActions.append(writerButton);
+      toolbar.append(writerBtn);
     }
 
     if (hasFileSelection) {
-      const downloadButton = document.createElement("button");
-      downloadButton.type = "button";
-      downloadButton.className = "wm-button secondary wm-button-icon";
-      setIconButton(downloadButton, "download", "Download file");
-      downloadButton.addEventListener("click", () => {
+      // Download
+      const downloadBtn = toolbarButton("download", "Download file");
+      downloadBtn.addEventListener("click", () => {
         const targetPath = typeof files.previewPath === "string" ? files.previewPath : null;
         if (!targetPath) return;
         const downloadUrl = `/api/docs/file/download?path=${encodeURIComponent(targetPath)}`;
-        const link = document.createElement("a");
-        link.href = downloadUrl;
-        link.download = files.previewName || "";
-        link.style.display = "none";
-        document.body.append(link);
-        link.click();
-        link.remove();
+        const a = document.createElement("a");
+        a.href = downloadUrl;
+        a.download = files.previewName || "";
+        a.style.display = "none";
+        document.body.append(a);
+        a.click();
+        a.remove();
       });
-      previewActions.append(downloadButton);
+      toolbar.append(downloadBtn);
 
-      const copyUrlButton = document.createElement("button");
-      copyUrlButton.type = "button";
-      copyUrlButton.className = "wm-button secondary";
-      copyUrlButton.textContent = "Copy URL";
-      copyUrlButton.addEventListener("click", async () => {
+      // Copy URL
+      const copyUrlBtn = toolbarButton("link", "Copy URL");
+      copyUrlBtn.addEventListener("click", async () => {
         const targetPath = typeof files.previewPath === "string" ? files.previewPath : null;
         if (!targetPath) return;
         const rawUrl = `${window.location.origin}/api/docs/file/raw?path=${encodeURIComponent(targetPath)}`;
         const success = await copyTextToClipboard(rawUrl);
         if (success) {
-          const originalText = "Copy URL";
-          copyUrlButton.dataset.copied = "true";
-          copyUrlButton.textContent = "Copied!";
-          setTimeout(() => {
-            if (copyUrlButton.isConnected) {
-              delete copyUrlButton.dataset.copied;
-              copyUrlButton.textContent = originalText;
-            }
-          }, 1600);
+          copyUrlBtn.dataset.copied = "true";
+          setTimeout(() => { if (copyUrlBtn.isConnected) delete copyUrlBtn.dataset.copied; }, 1600);
         } else {
-          window.alert("Unable to copy the file URL. Copy it manually from the address bar instead.");
+          window.alert("Unable to copy the file URL.");
         }
       });
-      previewActions.append(copyUrlButton);
+      toolbar.append(copyUrlBtn);
 
-      const copyToButton = document.createElement("button");
-      copyToButton.type = "button";
-      copyToButton.className = "wm-button";
-      copyToButton.textContent = "Copy File To\u2026";
-      copyToButton.addEventListener("click", () => {
+      // Copy file to…
+      const copyToBtn = toolbarButton("clipboardCopy", "Copy file to\u2026");
+      copyToBtn.addEventListener("click", () => {
         void openFileTransferDialogForMode("copy");
       });
-      previewActions.append(copyToButton);
+      toolbar.append(copyToBtn);
 
-      const moveToButton = document.createElement("button");
-      moveToButton.type = "button";
-      moveToButton.className = "wm-button";
-      moveToButton.textContent = "Move File To\u2026";
-      moveToButton.addEventListener("click", () => {
+      // Move file to…
+      const moveToBtn = toolbarButton("arrowRightCircle", "Move file to\u2026");
+      moveToBtn.addEventListener("click", () => {
         void openFileTransferDialogForMode("move");
       });
-      previewActions.append(moveToButton);
+      toolbar.append(moveToBtn);
 
-      const deleteButton = document.createElement("button");
-      deleteButton.type = "button";
-      deleteButton.className = "wm-button secondary";
-      deleteButton.textContent = "Delete File";
-      deleteButton.addEventListener("click", async () => {
+      // Delete — red destructive
+      const deleteBtn = toolbarButton("trash", "Delete file", "wm-files-toolbar-btn--danger");
+      deleteBtn.addEventListener("click", async () => {
         const targetPath = typeof files.previewPath === "string" ? files.previewPath : null;
         if (!targetPath) return;
         const displayName = files.previewName ?? files.previewDisplayPath ?? targetPath;
         const confirmed = window.confirm(`Delete "${displayName}"? This cannot be undone.`);
-        if (!confirmed) {
-          return;
-        }
-        const originalText = deleteButton.textContent;
-        deleteButton.disabled = true;
-        deleteButton.dataset.loading = "true";
-        deleteButton.textContent = "Deleting\u2026";
+        if (!confirmed) return;
+        deleteBtn.disabled = true;
+        deleteBtn.dataset.loading = "true";
         try {
           await deleteFilesEntry(targetPath);
           resetFilesPreview();
           render();
           await loadFilesTree(state.files.currentPath);
         } catch (error) {
-          deleteButton.disabled = false;
-          deleteButton.textContent = originalText;
-          deleteButton.removeAttribute("data-loading");
+          deleteBtn.disabled = false;
+          delete deleteBtn.dataset.loading;
           const message = error instanceof Error ? error.message : "Failed to delete file";
           window.alert(message);
         }
       });
-      previewActions.append(deleteButton);
+      toolbar.append(deleteBtn);
     }
 
-    if (previewActions.childElementCount > 0) {
-      previewHeader.append(previewActions);
+    if (toolbar.childElementCount > 0) {
+      previewHeader.append(toolbar);
     }
 
     const previewBody = document.createElement("div");
