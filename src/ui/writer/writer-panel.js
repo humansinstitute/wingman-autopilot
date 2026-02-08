@@ -130,18 +130,18 @@ export function createWriterPanel(sessionId, targetFile, deps) {
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
         if (resp.status === 409) {
-          showToast?.("File was modified externally. Reloading...", 3000);
+          showToast?.("File was modified externally. Reloading...", { duration: 3000 });
           await refreshContent();
           return false;
         }
-        showToast?.(`Save failed: ${data.error ?? resp.statusText}`, 3000);
+        showToast?.(`Save failed: ${data.error ?? resp.statusText}`, { variant: "error" });
         return false;
       }
       const result = await resp.json();
       lastMtimeMs = result.mtimeMs ?? lastMtimeMs;
       return true;
     } catch (err) {
-      showToast?.(`Save failed: ${err.message}`, 3000);
+      showToast?.(`Save failed: ${err.message}`, { variant: "error" });
       return false;
     }
   }
