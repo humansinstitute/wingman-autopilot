@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import "./logging/server-logger";
 
 import type { AgentType } from "./config";
+import { getKeyTeleportIdentity } from "./config";
 import { z } from "zod";
 import { 
   validateInput, 
@@ -68,6 +69,9 @@ import { CaproverStore, createCaproverApiHandler, createCaproverClientFromEnv, c
 import { NightWatchStore } from "./nightwatch/nightwatch-store";
 import { maybeTriggerNightWatch, NIGHTWATCH_FEATURE_FLAG_KEY } from "./nightwatch/nightwatch-engine";
 import { createNightWatchApiHandler } from "./nightwatch/nightwatch-api";
+import { startTaskListener } from "./nostr/task-listener";
+import { createTaskExecutor } from "./nostr/task-executor";
+import { signWithWingmanKey } from "./mcp/wingman-signer";
 import { createBrowserLogHandler } from "./logging/browser-log-handler";
 import { Nip98GrantStore } from "./mcp/grants-store";
 import { createNip98ApiHandler } from "./mcp/nip98-api";
@@ -252,6 +256,12 @@ const FEATURE_FLAG_DEFAULTS: Array<{
     label: "Night Watchman",
     description: "Autonomous agent review system that continues sessions overnight.",
     state: "off",
+  },
+  {
+    key: "task_listener_enabled",
+    label: "MG Task Listener",
+    description: "Receives task assignments from MG via Nostr and auto-creates agent sessions.",
+    state: "on",
   },
 ];
 
@@ -865,7 +875,77 @@ const nightWatchDeps = {
       return false;
     }
   },
+  onSessionComplete: (sessionId, report) => {
+    // Check if this session is linked to an MG task
+    const taskSession = nightWatchStore.getTaskSession(sessionId);
+    if (!taskSession) return;
+
+    console.log(`[task-executor] Session ${sessionId} completed, moving task ${taskSession.taskId} to review`);
+    nightWatchStore.updateTaskSessionStatus(sessionId, "completed");
+
+    // Move task to review in MG (fire-and-forget)
+    void (async () => {
+      try {
+        const stateUrl = `${taskSession.mgBaseUrl}/t/${taskSession.teamSlug}/api/todos/${taskSession.taskId}/state`;
+        const body = JSON.stringify({ state: "review" });
+        const bodyHash = new Bun.CryptoHasher("sha256").update(new TextEncoder().encode(body)).digest("hex");
+        const { token } = await signWithWingmanKey(stateUrl, "POST", bodyHash);
+        const resp = await fetch(stateUrl, {
+          method: "POST",
+          headers: {
+            Authorization: token,
+            "Content-Type": "application/json",
+          },
+          body,
+        });
+        if (resp.ok) {
+          console.log(`[task-executor] Moved task ${taskSession.taskId} to review`);
+        } else {
+          console.warn(`[task-executor] Failed to move task to review: ${resp.status}`);
+        }
+      } catch (err) {
+        console.error(`[task-executor] Failed to move task to review:`, err);
+      }
+    })();
+  },
 };
+
+// Task assignment listener (receives Nostr kind 9802 events)
+const taskListenerFlag = featureFlagStore.getFlag("task_listener_enabled");
+const taskListenerIdentity = getKeyTeleportIdentity();
+if (taskListenerIdentity && config.connectRelays.length > 0 && taskListenerFlag?.state !== "off") {
+  const mgBaseUrl = Bun.env.MG_BASE_URL ?? "https://mg.otherstuff.ai";
+
+  const executor = createTaskExecutor({
+    signNip98: async (url, method, bodyHash) => {
+      const { token } = await signWithWingmanKey(url, method, bodyHash);
+      return token;
+    },
+    createSession: (agent, dir, name, origin) => manager.createSession(agent, dir, name, origin),
+    enableNightwatch: (sid) => nightWatchStore.enableSession(sid),
+    addPrompt: (sid, content) => promptQueueStore.addPrompt(sid, { content }),
+    dispatchPrompt: (session) => {
+      void maybeAutoDispatchQueuedPrompt(session);
+    },
+    getSession: (sid) => manager.getSession(sid) ?? null,
+    trackTaskSession: (params) => nightWatchStore.addTaskSession(params),
+    mgBaseUrl,
+    workingDirectory: config.defaultWorkingDirectory,
+  });
+
+  startTaskListener({
+    secretKey: taskListenerIdentity.secretKey,
+    pubkeyHex: taskListenerIdentity.pubkey,
+    relays: config.connectRelays,
+    onTaskAssigned: executor,
+  });
+
+  console.log(`[task-listener] MG task listener active (relays: ${config.connectRelays.length}, mgBaseUrl: ${mgBaseUrl})`);
+} else if (!taskListenerIdentity) {
+  console.log("[task-listener] No KEYTELEPORT_PRIVKEY configured, MG task listener disabled");
+} else {
+  console.log("[task-listener] No CONNECT_RELAYS configured, MG task listener disabled");
+}
 
 const wingmenRoot = join(projectRoot, ".wingmen");
 const orchestratorTriggersRoot = join(wingmenRoot, "orchestrator", "triggers");

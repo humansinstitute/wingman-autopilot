@@ -1,7 +1,8 @@
 /**
  * MCP Tool: deploy_caprover_app
  *
- * Deploy a CapRover app using a Docker image.
+ * Deploy a CapRover app from a Docker image or by tarball upload
+ * from the linked local app directory.
  */
 
 import { z } from "zod";
@@ -12,7 +13,8 @@ export const deployCaproverAppSchema = {
     .describe("The CapRover app tracking ID (from list_caprover_apps)"),
   docker_image: z
     .string()
-    .describe("Docker image to deploy (e.g. 'myregistry/myapp:latest')"),
+    .optional()
+    .describe("Docker image to deploy (e.g. 'myregistry/myapp:latest'). If omitted, deploys via tarball from the linked local app directory"),
   git_hash: z
     .string()
     .optional()
@@ -26,7 +28,7 @@ export const deployCaproverAppDescription =
 
 interface DeployCaproverAppParams {
   app_id: string;
-  docker_image: string;
+  docker_image?: string;
   git_hash?: string;
 }
 
@@ -66,14 +68,15 @@ export async function handleDeployCaproverApp(
     }
 
     const result = await response.json();
+    const method = result.deployMethod === "tar_upload" ? "tarball" : "image";
     return {
       content: [
         {
           type: "text" as const,
           text: [
-            `Deployment successful`,
+            `Deployment successful (${method})`,
             `  App: ${result.caproverName}`,
-            `  Image: ${result.dockerImage}`,
+            result.dockerImage ? `  Image: ${result.dockerImage}` : `  Files: ${result.fileCount ?? "unknown"}`,
             `  Version: ${result.deployedVersion ?? "unknown"}`,
           ].join("\n"),
         },

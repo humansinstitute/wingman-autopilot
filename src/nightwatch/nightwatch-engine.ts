@@ -64,6 +64,8 @@ export interface NightWatchDeps {
   dispatchPrompt: (session: SessionSnapshot) => void;
   /** Send raw terminal input directly to the agent (bypasses prompt queue) */
   sendRawInput: (session: SessionSnapshot, content: string) => Promise<boolean>;
+  /** Called when a session reaches a terminal state (complete/error/humanInput) */
+  onSessionComplete?: (sessionId: string, report: NightWatchReport) => void;
 }
 
 type NightWatchAction = "continue" | "morehistory" | "complete" | "error" | "humanInput";
@@ -396,6 +398,22 @@ async function executeNightWatchReview(
   console.log(
     `[nightwatch] Session ${sessionId} terminated with ${result.nextAction}: ${result.content.slice(0, 100)}`,
   );
+
+  if (deps.onSessionComplete) {
+    const report: NightWatchReport = {
+      id: "",
+      sessionId,
+      sessionName,
+      workingDirectory: currentSession?.workingDirectory ?? null,
+      status: result.nextAction as NightWatchReport["status"],
+      summary: result.content,
+      reasoning: result.reasoning || null,
+      inputMode: result.nextAction === "continue" ? result.inputMode : null,
+      cycleCount,
+      createdAt: new Date().toISOString(),
+    };
+    deps.onSessionComplete(sessionId, report);
+  }
 }
 
 // ============================================================
@@ -443,6 +461,21 @@ export async function maybeTriggerNightWatch(
       cycleCount: sessionState.cycleCount,
     });
     deps.store.disableSession(session.id);
+
+    if (deps.onSessionComplete) {
+      deps.onSessionComplete(session.id, {
+        id: "",
+        sessionId: session.id,
+        sessionName: session.name ?? null,
+        workingDirectory: session.workingDirectory ?? null,
+        status: "complete",
+        summary: `Reached maximum cycle limit (${sessionState.maxCycles}).`,
+        reasoning: "Automatic stop: cycle limit reached.",
+        inputMode: null,
+        cycleCount: sessionState.cycleCount,
+        createdAt: new Date().toISOString(),
+      });
+    }
     return;
   }
 

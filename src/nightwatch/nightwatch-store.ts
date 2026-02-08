@@ -302,7 +302,80 @@ class NightWatchStore {
     } catch {
       // Column already exists — ignore
     }
+
+    // Task sessions table - tracks MG task ↔ agent session links
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS task_sessions (
+        session_id TEXT PRIMARY KEY,
+        task_id INTEGER NOT NULL,
+        team_slug TEXT NOT NULL,
+        task_url TEXT NOT NULL,
+        mg_base_url TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL
+      );
+    `);
   }
+
+  // ----------------------------------------------------------
+  // Task Session Methods
+  // ----------------------------------------------------------
+
+  addTaskSession(params: {
+    sessionId: string;
+    taskId: number;
+    teamSlug: string;
+    taskUrl: string;
+    mgBaseUrl: string;
+  }): void {
+    const now = new Date().toISOString();
+    this.db
+      .query(
+        `INSERT INTO task_sessions (session_id, task_id, team_slug, task_url, mg_base_url, status, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'active', ?6)
+         ON CONFLICT(session_id) DO UPDATE SET
+           task_id = excluded.task_id,
+           team_slug = excluded.team_slug,
+           task_url = excluded.task_url,
+           mg_base_url = excluded.mg_base_url,
+           status = 'active',
+           created_at = excluded.created_at`,
+      )
+      .run(params.sessionId, params.taskId, params.teamSlug, params.taskUrl, params.mgBaseUrl, now);
+  }
+
+  getTaskSession(sessionId: string): TaskSessionRecord | null {
+    return this.db
+      .query<TaskSessionRecord, [string]>(
+        `SELECT
+           session_id AS sessionId,
+           task_id AS taskId,
+           team_slug AS teamSlug,
+           task_url AS taskUrl,
+           mg_base_url AS mgBaseUrl,
+           status,
+           created_at AS createdAt
+         FROM task_sessions
+         WHERE session_id = ?1`,
+      )
+      .get(sessionId) ?? null;
+  }
+
+  updateTaskSessionStatus(sessionId: string, status: string): void {
+    this.db
+      .query(`UPDATE task_sessions SET status = ?2 WHERE session_id = ?1`)
+      .run(sessionId, status);
+  }
+}
+
+export interface TaskSessionRecord {
+  sessionId: string;
+  taskId: number;
+  teamSlug: string;
+  taskUrl: string;
+  mgBaseUrl: string;
+  status: string;
+  createdAt: string;
 }
 
 export { NightWatchStore };
