@@ -18,6 +18,9 @@ import type { CaproverStore } from "../caprover/caprover-store";
 import type { CaproverClient } from "../caprover/caprover-client";
 import { createAppTarball } from "../caprover/tarball";
 import { listSkills, loadSkill } from "./skill-loader";
+import { generateAndSaveImages } from "./services/image-generator";
+import type { UserSettingsStore } from "../storage/user-settings-store";
+import type { ArtifactsStore, CreateArtifactInput } from "../storage/artifacts-store";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -40,6 +43,9 @@ export interface WingmanMcpApiDependencies {
   getCaproverClient: () => CaproverClient | null;
   userSkillsRoot: string;
   defaultSkillsRoot: string;
+  userSettingsStore: UserSettingsStore;
+  artifactsStore: ArtifactsStore;
+  openRouterApiKey: string | null;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -143,6 +149,21 @@ export function createWingmanMcpApiHandler(deps: WingmanMcpApiDependencies) {
       // GET /api/mcp/wingman/skills/load
       if (segments.length === 5 && segments[3] === "skills" && segments[4] === "load" && method === "GET") {
         return await handleLoadSkill(deps, url);
+      }
+
+      // POST /api/mcp/wingman/generate-image
+      if (segments.length === 4 && segments[3] === "generate-image" && method === "POST") {
+        return await handleGenerateImage(deps, request);
+      }
+
+      // GET /api/mcp/wingman/artifacts?sessionId=...
+      if (segments.length === 4 && segments[3] === "artifacts" && method === "GET") {
+        return handleListArtifacts(deps, url);
+      }
+
+      // POST /api/mcp/wingman/artifacts
+      if (segments.length === 4 && segments[3] === "artifacts" && method === "POST") {
+        return await handleRegisterArtifact(deps, request);
       }
 
       return jsonError("Not found", 404);
@@ -534,4 +555,140 @@ async function handleLoadSkill(
   }
 
   return jsonOk({ skill });
+}
+
+// ---------------------------------------------------------------------------
+// Image Generation + Artifacts
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /api/mcp/wingman/generate-image
+ * Body: { sessionId, prompt, filename?, model? }
+ */
+async function handleGenerateImage(
+  deps: WingmanMcpApiDependencies,
+  request: Request,
+): Promise<Response> {
+  const body = await parseBody(request);
+  const sessionId = body.sessionId as string | undefined;
+  const prompt = body.prompt as string | undefined;
+  const filename = body.filename as string | undefined;
+  const model = body.model as string | undefined;
+
+  const denied = requireSessionId(deps, sessionId);
+  if (denied) return denied;
+
+  if (!prompt) {
+    return jsonError("prompt is required", 400);
+  }
+
+  const session = deps.getSession(sessionId!);
+  if (!session) {
+    return jsonError("Session not found", 404);
+  }
+
+  // Resolve API key: per-user setting > env var
+  let apiKey: string | null = null;
+  if (session.npub) {
+    apiKey = deps.userSettingsStore.get(session.npub, "openrouter_api_key");
+  }
+  if (!apiKey) {
+    apiKey = deps.openRouterApiKey;
+  }
+  if (!apiKey) {
+    return jsonError(
+      "No OpenRouter API key configured. Set one in Settings or set the OPENROUTER_API environment variable.",
+      400,
+    );
+  }
+
+  const directory = session.workingDirectory;
+  if (!directory) {
+    return jsonError("Session has no working directory", 400);
+  }
+
+  const result = await generateAndSaveImages(prompt, directory, apiKey, {
+    model,
+    filename,
+  });
+
+  // Register artifacts
+  const artifacts = result.images.map((img) =>
+    deps.artifactsStore.add({
+      sessionId: sessionId!,
+      type: "image",
+      label: filename || prompt.slice(0, 60),
+      filePath: img.path,
+      mimeType: img.mimeType,
+    }),
+  );
+
+  return jsonOk({
+    content: result.content,
+    images: result.images,
+    artifacts: artifacts.map((a) => ({
+      id: a.id,
+      type: a.type,
+      label: a.label,
+      filePath: a.filePath,
+      mimeType: a.mimeType,
+    })),
+  });
+}
+
+/**
+ * GET /api/mcp/wingman/artifacts?sessionId=...
+ * List artifacts for a session (called by MCP tool).
+ */
+function handleListArtifacts(
+  deps: WingmanMcpApiDependencies,
+  url: URL,
+): Response {
+  const sessionId = url.searchParams.get("sessionId");
+  const denied = requireSessionId(deps, sessionId);
+  if (denied) return denied;
+
+  const artifacts = deps.artifactsStore.listBySession(sessionId!);
+  return jsonOk({ artifacts });
+}
+
+/**
+ * POST /api/mcp/wingman/artifacts
+ * Body: { sessionId, type, label, filePath, url?, mimeType? }
+ * Register a new artifact (for agents to register non-image artifacts).
+ */
+async function handleRegisterArtifact(
+  deps: WingmanMcpApiDependencies,
+  request: Request,
+): Promise<Response> {
+  const body = await parseBody(request);
+  const sessionId = body.sessionId as string | undefined;
+  const type = body.type as string | undefined;
+  const label = body.label as string | undefined;
+  const filePath = body.filePath as string | undefined;
+  const url = body.url as string | undefined;
+  const mimeType = body.mimeType as string | undefined;
+
+  const denied = requireSessionId(deps, sessionId);
+  if (denied) return denied;
+
+  if (!type || !label || !filePath) {
+    return jsonError("type, label, and filePath are required", 400);
+  }
+
+  const validTypes = ["image", "document", "webview", "file"];
+  if (!validTypes.includes(type)) {
+    return jsonError(`type must be one of: ${validTypes.join(", ")}`, 400);
+  }
+
+  const artifact = deps.artifactsStore.add({
+    sessionId: sessionId!,
+    type: type as "image" | "document" | "webview" | "file",
+    label,
+    filePath,
+    url,
+    mimeType,
+  });
+
+  return jsonOk({ artifact });
 }

@@ -77,6 +77,8 @@ import { createBrowserLogHandler } from "./logging/browser-log-handler";
 import { Nip98GrantStore } from "./mcp/grants-store";
 import { createNip98ApiHandler } from "./mcp/nip98-api";
 import { createWingmanMcpApiHandler } from "./mcp/wingman-api";
+import { userSettingsStore } from "./storage/user-settings-store";
+import { artifactsStore } from "./storage/artifacts-store";
 import {
   buildAgentUrl,
   fetchAgentMessages,
@@ -840,6 +842,9 @@ const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   getCaproverClient: createCaproverClientFromEnv,
   userSkillsRoot: join(homeDirectory, ".wingmen", "skills"),
   defaultSkillsRoot: join(projectRoot, "skills"),
+  userSettingsStore,
+  artifactsStore,
+  openRouterApiKey: Bun.env.OPENROUTER_API?.trim() || null,
 });
 
 // Reconcile PM2 processes with app registry
@@ -6473,6 +6478,88 @@ const handleApi = async (
     }
   }
 
+  // GET /api/artifacts/:id/raw — Serve artifact file content
+  if (pathname.startsWith("/api/artifacts/") && method === "GET") {
+    const artParts = pathname.split("/");
+    const artifactId = artParts[3];
+    if (artifactId && artParts[4] === "raw") {
+      const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
+      if (denied) return denied;
+
+      const artifact = artifactsStore.get(artifactId);
+      if (!artifact) {
+        return Response.json({ error: "Artifact not found" }, { status: 404 });
+      }
+
+      try {
+        const file = Bun.file(artifact.filePath);
+        if (!(await file.exists())) {
+          return Response.json({ error: "Artifact file not found on disk" }, { status: 404 });
+        }
+        return new Response(file, {
+          headers: {
+            "Content-Type": artifact.mimeType || "application/octet-stream",
+            "Cache-Control": "private, max-age=3600",
+          },
+        });
+      } catch {
+        return Response.json({ error: "Failed to read artifact file" }, { status: 500 });
+      }
+    }
+  }
+
+  // User settings API
+  if (pathname.startsWith("/api/user/settings")) {
+    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
+    if (denied) return denied;
+
+    const viewerNpub = authContext.npub;
+    if (!viewerNpub) {
+      return Response.json({ error: "Authentication required" }, { status: 401 });
+    }
+
+    const settingsParts = pathname.split("/");
+    const settingKey = settingsParts[4]; // /api/user/settings/:key
+
+    if (method === "GET" && !settingKey) {
+      // GET /api/user/settings — list all settings for user
+      const settings = userSettingsStore.getAll(viewerNpub);
+      // Mask sensitive keys
+      const masked: Record<string, string> = {};
+      for (const [k, v] of Object.entries(settings)) {
+        masked[k] = k.includes("key") || k.includes("secret")
+          ? (v.length > 8 ? `${v.slice(0, 4)}..${v.slice(-4)}` : "****")
+          : v;
+      }
+      return Response.json({ settings: masked });
+    }
+
+    if (method === "PUT" && settingKey) {
+      // PUT /api/user/settings/:key — set a setting
+      let payload: unknown;
+      try {
+        payload = await request.json();
+      } catch {
+        return Response.json({ error: "Invalid JSON" }, { status: 400 });
+      }
+      const record = payload as Record<string, unknown>;
+      const value = typeof record.value === "string" ? record.value.trim() : "";
+      if (!value) {
+        return Response.json({ error: "value is required" }, { status: 400 });
+      }
+      userSettingsStore.set(viewerNpub, settingKey, value);
+      return Response.json({ success: true, key: settingKey });
+    }
+
+    if (method === "DELETE" && settingKey) {
+      // DELETE /api/user/settings/:key — remove a setting
+      userSettingsStore.delete(viewerNpub, settingKey);
+      return Response.json({ success: true, key: settingKey, deleted: true });
+    }
+
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
+
   if (pathname.startsWith("/api/sessions/")) {
     const parts = pathname.split("/");
     const id = parts[3];
@@ -6584,6 +6671,13 @@ const handleApi = async (
       const logs = await manager.getLogs(id);
       if (!logs) return Response.json({ error: "Not found" }, { status: 404 });
       return Response.json({ id, logs });
+    }
+
+    // GET /api/sessions/:id/artifacts
+    if (method === "GET" && parts[4] === "artifacts") {
+      // Allow viewing artifacts for both live and archived sessions
+      const artifacts = artifactsStore.listBySession(id);
+      return Response.json({ artifacts });
     }
 
     // Note: SSE endpoint (/events) is handled earlier in the route chain

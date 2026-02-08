@@ -114,6 +114,10 @@ export const state = {
   webviewLayout: { open: false, mode: "chat-narrow" },
   // Writer split-panel layout state
   writerLayout: { open: false, mode: "chat-narrow" },
+  // Artifacts split-panel layout state
+  artifactsLayout: { open: false, mode: "chat-narrow" },
+  // Cached artifact counts per session
+  artifactCounts: new Map(),
   // DOM references for incremental updates
   conversationContainers: new Map(), // sessionId -> DOM element
   logContainers: new Map(), // sessionId -> DOM element

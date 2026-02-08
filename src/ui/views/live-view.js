@@ -14,6 +14,7 @@ import { triggerAppActionApi } from "../services/apps.js";
 import { isAlpineChatEnabled, getChatTemplate } from "../live/index.js";
 import { findAppForSession, findWebAppForSession, createWebviewPanel, createLayoutToolbar } from "../live/webview-panel.js";
 import { createWriterPanel, createWriterToolbar } from "../writer/writer-panel.js";
+import { fetchSessionArtifacts, createArtifactsPanel, createArtifactsToolbar } from "../live/artifacts-panel.js";
 import { addNightWatchToggle } from "../nightwatch/cmd-toggle.js";
 import { npubProjectsState } from "../npub-projects/index.js";
 import { state, TERMINAL_CONTROL_ACTIONS } from "../state/index.js";
@@ -766,6 +767,11 @@ export function initLiveView(deps) {
       });
     }
 
+    addCommand(state.artifactsLayout.open ? "Close Artifacts" : "Open Artifacts", () => {
+      state.artifactsLayout.open = !state.artifactsLayout.open;
+      render();
+    });
+
     addCommandDivider();
 
     addCommand("Scroll to end", () => {
@@ -1118,7 +1124,14 @@ export function initLiveView(deps) {
     syncHeaderWebviewToggle(webApp);
     syncHeaderWriterToggle(targetFile);
 
-    // Writer split takes priority over webview split
+    // Fetch artifacts count for header icon (non-blocking)
+    fetchSessionArtifacts(sessionId).then((items) => {
+      state.artifactCounts.set(sessionId, items.length);
+      // Store artifacts for panel rendering
+      state._sessionArtifacts = items;
+    });
+
+    // Writer split takes priority, then artifacts, then webview
     if (targetFile && state.writerLayout.open) {
       appRoot.dataset.webviewOpen = "true";
 
@@ -1151,6 +1164,44 @@ export function initLiveView(deps) {
       writerCol.append(writerResult.panel);
 
       split.append(chatCol, writerCol);
+      wrapper.append(split);
+
+      chatCol.append(renderComposer(sessionId));
+    } else if (state.artifactsLayout.open) {
+      appRoot.dataset.webviewOpen = "true";
+
+      const split = document.createElement("div");
+      split.className = `wm-live-split wm-live-split--${state.artifactsLayout.mode}`;
+
+      const chatCol = document.createElement("div");
+      chatCol.className = "wm-live-chat-col";
+      main.append(scrollRegion);
+      chatCol.append(main);
+
+      const artifactsCol = document.createElement("div");
+      artifactsCol.className = "wm-webview-col";
+
+      const artToolbar = createArtifactsToolbar(
+        state.artifactsLayout.mode,
+        (newMode) => {
+          state.artifactsLayout.mode = newMode;
+          render();
+        },
+        () => {
+          state.artifactsLayout.open = false;
+          render();
+        },
+      );
+      artifactsCol.append(artToolbar);
+
+      const cachedArtifacts = state._sessionArtifacts || [];
+      const artResult = createArtifactsPanel(sessionId, cachedArtifacts);
+      artifactsCol.append(artResult.panel);
+
+      // Refresh artifacts after a short delay in case the fetch is still in flight
+      setTimeout(() => artResult.refresh(), 500);
+
+      split.append(chatCol, artifactsCol);
       wrapper.append(split);
 
       chatCol.append(renderComposer(sessionId));

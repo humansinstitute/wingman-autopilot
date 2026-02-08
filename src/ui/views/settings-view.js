@@ -23,6 +23,118 @@ export function initSettingsView(deps) {
     renderNpubProjectsPanel,
   } = deps;
 
+  function renderApiKeysSection() {
+    const container = document.createElement("div");
+    container.className = "wm-settings__api-keys";
+
+    const heading = document.createElement("h3");
+    heading.textContent = "API Keys";
+    container.append(heading);
+
+    const description = document.createElement("p");
+    description.className = "wm-settings__port-note";
+    description.textContent = "Configure API keys for agent tools. Keys are stored per-user and used when agents generate images or call external APIs.";
+    container.append(description);
+
+    // OpenRouter API Key
+    const keyRow = document.createElement("div");
+    keyRow.className = "wm-settings__key-row";
+    keyRow.style.cssText = "display:flex;gap:8px;align-items:center;margin-top:8px;";
+
+    const label = document.createElement("label");
+    label.textContent = "OpenRouter API Key";
+    label.style.cssText = "font-size:0.85em;font-weight:500;min-width:140px;";
+
+    const input = document.createElement("input");
+    input.type = "password";
+    input.placeholder = "sk-or-...";
+    input.className = "wm-input";
+    input.style.cssText = "flex:1;font-family:monospace;font-size:0.85em;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary);color:var(--text);";
+
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.className = "wm-button secondary";
+    saveBtn.textContent = "Save";
+    saveBtn.style.cssText = "font-size:0.85em;padding:6px 12px;";
+
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "wm-button secondary";
+    clearBtn.textContent = "Clear";
+    clearBtn.style.cssText = "font-size:0.85em;padding:6px 12px;";
+
+    const status = document.createElement("span");
+    status.style.cssText = "font-size:0.8em;color:var(--text-muted);";
+
+    // Load current masked value
+    fetch("/api/user/settings")
+      .then((r) => r.json())
+      .then((data) => {
+        const masked = data.settings?.openrouter_api_key;
+        if (masked) {
+          input.placeholder = masked;
+          status.textContent = "Key set";
+          status.style.color = "var(--success, #4caf50)";
+        }
+      })
+      .catch(() => {});
+
+    saveBtn.addEventListener("click", async () => {
+      const value = input.value.trim();
+      if (!value) return;
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving...";
+      try {
+        const resp = await fetch("/api/user/settings/openrouter_api_key", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value }),
+        });
+        if (resp.ok) {
+          input.value = "";
+          input.placeholder = value.slice(0, 4) + ".." + value.slice(-4);
+          status.textContent = "Saved";
+          status.style.color = "var(--success, #4caf50)";
+        } else {
+          const err = await resp.json();
+          status.textContent = err.error || "Save failed";
+          status.style.color = "var(--error, #f44336)";
+        }
+      } catch (e) {
+        status.textContent = "Network error";
+        status.style.color = "var(--error, #f44336)";
+      }
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save";
+    });
+
+    clearBtn.addEventListener("click", async () => {
+      clearBtn.disabled = true;
+      try {
+        await fetch("/api/user/settings/openrouter_api_key", { method: "DELETE" });
+        input.value = "";
+        input.placeholder = "sk-or-...";
+        status.textContent = "Cleared";
+        status.style.color = "var(--text-muted)";
+      } catch {
+        status.textContent = "Failed to clear";
+        status.style.color = "var(--error, #f44336)";
+      }
+      clearBtn.disabled = false;
+    });
+
+    keyRow.append(label, input, saveBtn, clearBtn, status);
+    container.append(keyRow);
+
+    const helpText = document.createElement("p");
+    helpText.className = "wm-settings__port-note";
+    helpText.style.cssText = "margin-top:6px;font-size:0.8em;";
+    helpText.innerHTML = 'Get your API key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>. Used by the <code>generate_image</code> agent tool.';
+    container.append(helpText);
+
+    return container;
+  }
+
   const renderSettings = () => {
     const wrapper = document.createElement("div");
     wrapper.className = "wm-settings";
@@ -91,6 +203,12 @@ export function initSettingsView(deps) {
     }
 
     wingmanCard.append(portsContainer);
+
+    // API Keys section (only for authenticated users)
+    if (state.identity.authenticated) {
+      wingmanCard.append(renderApiKeysSection());
+    }
+
     wrapper.append(wingmanCard);
 
     if (state.identity.authenticated) {
