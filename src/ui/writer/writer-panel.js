@@ -9,8 +9,45 @@
  */
 
 import { parseMarkdownBlocks, assembleBlocks } from "./block-parser.js";
-import { renderMarkdownToHtml } from "../rendering/markdown.js";
+import { renderMarkdownToHtml, renderCodeToHtml } from "../rendering/markdown.js";
 import { escapeHtml } from "../core/icons.js";
+
+/**
+ * Markdown extensions that should use block-based editing.
+ * All other text files use single-block code editing.
+ */
+const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown", ".mdx"]);
+
+/**
+ * Map file extension to a syntax language hint for code rendering.
+ */
+const EXT_LANGUAGE_MAP = {
+  ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript", ".jsx": "javascript",
+  ".ts": "typescript", ".tsx": "typescript",
+  ".json": "json", ".jsonc": "json",
+  ".yaml": "yaml", ".yml": "yaml",
+  ".toml": "toml",
+  ".ini": "ini", ".conf": "ini", ".env": "ini",
+  ".py": "python",
+  ".go": "go",
+  ".rs": "rust",
+  ".sh": "shell", ".bash": "shell", ".zsh": "shell",
+  ".css": "css",
+  ".html": "html",
+};
+
+function getFileExtension(filePath) {
+  const dot = filePath.lastIndexOf(".");
+  return dot >= 0 ? filePath.slice(dot).toLowerCase() : "";
+}
+
+function isMarkdownFile(filePath) {
+  return MARKDOWN_EXTENSIONS.has(getFileExtension(filePath));
+}
+
+function detectLanguage(filePath) {
+  return EXT_LANGUAGE_MAP[getFileExtension(filePath)] || "plaintext";
+}
 
 const POLL_INTERVAL_MS = 2500;
 
@@ -90,7 +127,11 @@ export function createWriterPanel(sessionId, targetFile, deps) {
   blocksContainer.className = "wm-writer-blocks";
   panel.append(blocksContainer);
 
+  const mdMode = isMarkdownFile(targetFile);
+  const codeLang = mdMode ? null : detectLanguage(targetFile);
+
   let blocks = [];
+  let rawContent = "";
   let lastMtimeMs = null;
   let editingIndex = -1;
   let pollTimer = null;
@@ -166,6 +207,13 @@ export function createWriterPanel(sessionId, targetFile, deps) {
 
   function renderBlocks() {
     blocksContainer.innerHTML = "";
+
+    // Code-file mode: single editable block for the entire file
+    if (!mdMode) {
+      renderCodeFileView();
+      return;
+    }
+
     if (blocks.length === 0) {
       const empty = document.createElement("div");
       empty.className = "wm-writer-loading";
@@ -186,14 +234,98 @@ export function createWriterPanel(sessionId, targetFile, deps) {
       if (editingIndex === index) {
         renderEditor(wrapper, block, index);
       } else {
-        renderView(wrapper, block, index);
+        renderMdBlockView(wrapper, block, index);
       }
 
       blocksContainer.append(wrapper);
     });
   }
 
-  function renderView(wrapper, block, index) {
+  /**
+   * Render the entire file as a single code block (non-markdown mode).
+   * Click to edit the whole file in a textarea.
+   */
+  function renderCodeFileView() {
+    const wrapper = document.createElement("div");
+    wrapper.className = "wm-writer-block";
+    wrapper.dataset.blockIndex = "0";
+    wrapper.dataset.blockType = "code-file";
+
+    if (editingIndex === 0) {
+      // Full-file editor
+      const editor = document.createElement("textarea");
+      editor.className = "wm-writer-block__editor";
+      editor.value = rawContent;
+      editor.spellcheck = false;
+
+      function autoResize() {
+        editor.style.height = "auto";
+        editor.style.height = editor.scrollHeight + "px";
+      }
+      editor.addEventListener("input", autoResize);
+      editor.addEventListener("keydown", (e) => {
+        // Allow Tab to insert a tab character
+        if (e.key === "Tab") {
+          e.preventDefault();
+          const start = editor.selectionStart;
+          const end = editor.selectionEnd;
+          editor.value = editor.value.substring(0, start) + "  " + editor.value.substring(end);
+          editor.selectionStart = editor.selectionEnd = start + 2;
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          editingIndex = -1;
+          renderBlocks();
+        }
+      });
+      editor.addEventListener("blur", () => commitCodeFileEdit(editor));
+
+      wrapper.append(editor);
+      blocksContainer.append(wrapper);
+      requestAnimationFrame(() => {
+        autoResize();
+        editor.focus();
+      });
+      return;
+    }
+
+    // Read-only rendered code view
+    const rendered = document.createElement("div");
+    rendered.className = "wm-writer-block__rendered";
+    if (rawContent.trim().length === 0) {
+      rendered.textContent = "Empty file";
+    } else {
+      rendered.innerHTML = renderCodeToHtml(rawContent, codeLang);
+    }
+    rendered.addEventListener("click", () => {
+      editingIndex = 0;
+      renderBlocks();
+    });
+    wrapper.append(rendered);
+    blocksContainer.append(wrapper);
+  }
+
+  async function commitCodeFileEdit(editor) {
+    if (commitInProgress) return;
+    const newContent = editor.value;
+    editingIndex = -1;
+
+    if (newContent === rawContent) {
+      renderBlocks();
+      return;
+    }
+
+    commitInProgress = true;
+    const saved = await saveFile(newContent);
+    if (saved) {
+      rawContent = newContent;
+    }
+    commitInProgress = false;
+    renderBlocks();
+  }
+
+  function renderMdBlockView(wrapper, block, index) {
     const rendered = document.createElement("div");
     rendered.className = "wm-writer-block__rendered";
 
@@ -305,7 +437,8 @@ export function createWriterPanel(sessionId, targetFile, deps) {
       if (mtime !== null && lastMtimeMs !== null && mtime !== lastMtimeMs) {
         const content = data.base64 ? atob(data.base64) : "";
         lastMtimeMs = mtime;
-        blocks = parseMarkdownBlocks(content);
+        rawContent = content;
+        blocks = mdMode ? parseMarkdownBlocks(content) : [];
         renderBlocks();
       }
     } catch {
@@ -316,7 +449,8 @@ export function createWriterPanel(sessionId, targetFile, deps) {
   async function refreshContent() {
     const content = await loadFile();
     if (content !== null) {
-      blocks = parseMarkdownBlocks(content);
+      rawContent = content;
+      blocks = mdMode ? parseMarkdownBlocks(content) : [];
       editingIndex = -1;
       renderBlocks();
     }
@@ -346,7 +480,8 @@ export function createWriterPanel(sessionId, targetFile, deps) {
   loadFile().then((content) => {
     if (destroyed) return;
     if (content !== null) {
-      blocks = parseMarkdownBlocks(content);
+      rawContent = content;
+      blocks = mdMode ? parseMarkdownBlocks(content) : [];
       renderBlocks();
       startPolling();
     }

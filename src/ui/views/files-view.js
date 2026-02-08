@@ -711,9 +711,8 @@ export function initFilesView(deps) {
       previewActions.append(editButton);
     }
 
-    // Writer button — visible for .md files with a selection
-    const isMdFile = hasFileSelection && typeof files.previewPath === "string" && files.previewPath.endsWith(".md");
-    if (isMdFile) {
+    // Writer button — visible for any editable text file (code, config, markdown, etc.)
+    if (canEdit) {
       const writerButton = document.createElement("button");
       writerButton.type = "button";
       writerButton.className = "wm-button secondary";
