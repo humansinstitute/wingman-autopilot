@@ -12,6 +12,7 @@ import type { SessionSnapshot } from "../agents/process-manager";
 import type { NightWatchStore, NightWatchReport } from "./nightwatch-store";
 import type { FeatureFlagRecord } from "../storage/feature-flag-store";
 import type { PromptQueueStore } from "../storage/prompt-queue-store";
+import { getNtfyConfig, sendNtfyNotification } from "./ntfy-notify";
 
 // ============================================================
 // Constants & Configuration
@@ -399,20 +400,29 @@ async function executeNightWatchReview(
     `[nightwatch] Session ${sessionId} terminated with ${result.nextAction}: ${result.content.slice(0, 100)}`,
   );
 
+  const terminalReport: NightWatchReport = {
+    id: "",
+    sessionId,
+    sessionName,
+    workingDirectory: currentSession?.workingDirectory ?? null,
+    status: result.nextAction as NightWatchReport["status"],
+    summary: result.content,
+    reasoning: result.reasoning || null,
+    inputMode: result.nextAction === "continue" ? result.inputMode : null,
+    cycleCount,
+    createdAt: new Date().toISOString(),
+  };
+
   if (deps.onSessionComplete) {
-    const report: NightWatchReport = {
-      id: "",
-      sessionId,
-      sessionName,
-      workingDirectory: currentSession?.workingDirectory ?? null,
-      status: result.nextAction as NightWatchReport["status"],
-      summary: result.content,
-      reasoning: result.reasoning || null,
-      inputMode: result.nextAction === "continue" ? result.inputMode : null,
-      cycleCount,
-      createdAt: new Date().toISOString(),
-    };
-    deps.onSessionComplete(sessionId, report);
+    deps.onSessionComplete(sessionId, terminalReport);
+  }
+
+  // Send push notification via ntfy
+  const ntfyConfig = getNtfyConfig();
+  if (ntfyConfig) {
+    sendNtfyNotification(terminalReport, ntfyConfig).catch((err) => {
+      console.error("[nightwatch] ntfy notification failed:", err);
+    });
   }
 }
 
@@ -462,18 +472,28 @@ export async function maybeTriggerNightWatch(
     });
     deps.store.disableSession(session.id);
 
+    const maxCycleReport: NightWatchReport = {
+      id: "",
+      sessionId: session.id,
+      sessionName: session.name ?? null,
+      workingDirectory: session.workingDirectory ?? null,
+      status: "complete",
+      summary: `Reached maximum cycle limit (${sessionState.maxCycles}).`,
+      reasoning: "Automatic stop: cycle limit reached.",
+      inputMode: null,
+      cycleCount: sessionState.cycleCount,
+      createdAt: new Date().toISOString(),
+    };
+
     if (deps.onSessionComplete) {
-      deps.onSessionComplete(session.id, {
-        id: "",
-        sessionId: session.id,
-        sessionName: session.name ?? null,
-        workingDirectory: session.workingDirectory ?? null,
-        status: "complete",
-        summary: `Reached maximum cycle limit (${sessionState.maxCycles}).`,
-        reasoning: "Automatic stop: cycle limit reached.",
-        inputMode: null,
-        cycleCount: sessionState.cycleCount,
-        createdAt: new Date().toISOString(),
+      deps.onSessionComplete(session.id, maxCycleReport);
+    }
+
+    // Send push notification via ntfy
+    const ntfyConfig = getNtfyConfig();
+    if (ntfyConfig) {
+      sendNtfyNotification(maxCycleReport, ntfyConfig).catch((err) => {
+        console.error("[nightwatch] ntfy notification failed:", err);
       });
     }
     return;
