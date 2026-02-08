@@ -113,7 +113,7 @@ export const state = {
   // Webview split-panel layout state
   webviewLayout: { open: false, mode: "chat-narrow" },
   // Writer split-panel layout state
-  writerLayout: { open: false, mode: "chat-narrow" },
+  writerLayout: { open: false, mode: "chat-narrow", mobileTab: "chat" },
   // Artifacts split-panel layout state
   artifactsLayout: { open: false, mode: "chat-narrow" },
   // Cached artifact counts per session

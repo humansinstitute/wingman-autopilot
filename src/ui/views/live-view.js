@@ -14,6 +14,7 @@ import { triggerAppActionApi } from "../services/apps.js";
 import { isAlpineChatEnabled, getChatTemplate } from "../live/index.js";
 import { findAppForSession, findWebAppForSession, createWebviewPanel, createLayoutToolbar } from "../live/webview-panel.js";
 import { createWriterPanel, createWriterToolbar } from "../writer/writer-panel.js";
+import { createMobileTabBar, attachSwipeGesture } from "../writer/mobile-tabs.js";
 import { fetchSessionArtifacts, createArtifactsPanel, createArtifactsToolbar } from "../live/artifacts-panel.js";
 import { addNightWatchToggle } from "../nightwatch/cmd-toggle.js";
 import { npubProjectsState } from "../npub-projects/index.js";
@@ -1135,8 +1136,16 @@ export function initLiveView(deps) {
     if (targetFile && state.writerLayout.open) {
       appRoot.dataset.webviewOpen = "true";
 
+      const mobileTab = state.writerLayout.mobileTab || "chat";
       const split = document.createElement("div");
-      split.className = `wm-live-split wm-live-split--${state.writerLayout.mode}`;
+      split.className = `wm-live-split wm-live-split--${state.writerLayout.mode} wm-live-split--mobile-${mobileTab}`;
+
+      // Mobile tab bar (hidden on desktop via CSS)
+      const mobileTabBar = createMobileTabBar(mobileTab, (tab) => {
+        state.writerLayout.mobileTab = tab;
+        render();
+      });
+      split.prepend(mobileTabBar);
 
       const chatCol = document.createElement("div");
       chatCol.className = "wm-live-chat-col";
@@ -1167,6 +1176,22 @@ export function initLiveView(deps) {
       wrapper.append(split);
 
       chatCol.append(renderComposer(sessionId));
+
+      // Swipe gestures for mobile
+      attachSwipeGesture(split, {
+        onSwipeLeft: () => {
+          if (state.writerLayout.mobileTab !== "writer") {
+            state.writerLayout.mobileTab = "writer";
+            render();
+          }
+        },
+        onSwipeRight: () => {
+          if (state.writerLayout.mobileTab !== "chat") {
+            state.writerLayout.mobileTab = "chat";
+            render();
+          }
+        },
+      });
     } else if (state.artifactsLayout.open) {
       appRoot.dataset.webviewOpen = "true";
 
