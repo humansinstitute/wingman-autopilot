@@ -13,6 +13,7 @@ import { fetchSessionHistoryApi, forkSessionToWorktreeApi } from "../services/se
 import { triggerAppActionApi } from "../services/apps.js";
 import { isAlpineChatEnabled, getChatTemplate } from "../live/index.js";
 import { findAppForSession, findWebAppForSession, createWebviewPanel, createLayoutToolbar } from "../live/webview-panel.js";
+import { createWriterPanel, createWriterToolbar } from "../writer/writer-panel.js";
 import { addNightWatchToggle } from "../nightwatch/cmd-toggle.js";
 import { npubProjectsState } from "../npub-projects/index.js";
 import { state, TERMINAL_CONTROL_ACTIONS } from "../state/index.js";
@@ -39,6 +40,7 @@ export function initLiveView(deps) {
     promptRenameSession,
     sendControlCommand,
     syncHeaderWebviewToggle,
+    syncHeaderWriterToggle,
     scheduleLiveScroll,
     isConversationScrolledToBottom,
     scrollConversationAreaToBottom,
@@ -53,7 +55,11 @@ export function initLiveView(deps) {
     clearImagePreviews,
     openDialog,
     isFeatureEnabledForViewer,
+    showToast,
   } = deps;
+
+  // Track active writer panel cleanup function
+  let activeWriterCleanup = null;
 
   // ── Session tabs ────────────────────────────────────────────────
 
@@ -1093,10 +1099,62 @@ export function initLiveView(deps) {
     scrollRegion.append(conversationContainer);
     scheduleLiveScroll(sessionId, { includeWindow: true });
 
+    // Clean up previous writer panel if any
+    if (activeWriterCleanup) {
+      activeWriterCleanup();
+      activeWriterCleanup = null;
+    }
+
+    // Determine if this session has a target file for writer mode
+    const activeSession = sessionsStore().items.find((s) => s.id === sessionId);
+    const targetFile = activeSession?.targetFile ?? null;
+
+    // Auto-open writer layout when session has targetFile
+    if (targetFile && !state.writerLayout.open) {
+      state.writerLayout.open = true;
+    }
+
     const webApp = findWebAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
     syncHeaderWebviewToggle(webApp);
+    syncHeaderWriterToggle(targetFile);
 
-    if (webApp && state.webviewLayout.open) {
+    // Writer split takes priority over webview split
+    if (targetFile && state.writerLayout.open) {
+      appRoot.dataset.webviewOpen = "true";
+
+      const split = document.createElement("div");
+      split.className = `wm-live-split wm-live-split--${state.writerLayout.mode}`;
+
+      const chatCol = document.createElement("div");
+      chatCol.className = "wm-live-chat-col";
+      main.append(scrollRegion);
+      chatCol.append(main);
+
+      const writerCol = document.createElement("div");
+      writerCol.className = "wm-webview-col";
+
+      const writerResult = createWriterPanel(sessionId, targetFile, { showToast });
+      activeWriterCleanup = writerResult.cleanup;
+
+      const toolbar = createWriterToolbar(
+        state.writerLayout.mode,
+        (newMode) => {
+          state.writerLayout.mode = newMode;
+          render();
+        },
+        () => {
+          state.writerLayout.open = false;
+          render();
+        },
+      );
+      writerCol.append(toolbar);
+      writerCol.append(writerResult.panel);
+
+      split.append(chatCol, writerCol);
+      wrapper.append(split);
+
+      chatCol.append(renderComposer(sessionId));
+    } else if (webApp && state.webviewLayout.open) {
       appRoot.dataset.webviewOpen = "true";
 
       const split = document.createElement("div");

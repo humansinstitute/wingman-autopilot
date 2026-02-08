@@ -112,6 +112,8 @@ export const state = {
   },
   // Webview split-panel layout state
   webviewLayout: { open: false, mode: "chat-narrow" },
+  // Writer split-panel layout state
+  writerLayout: { open: false, mode: "chat-narrow" },
   // DOM references for incremental updates
   conversationContainers: new Map(), // sessionId -> DOM element
   logContainers: new Map(), // sessionId -> DOM element

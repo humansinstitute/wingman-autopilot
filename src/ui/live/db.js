@@ -23,6 +23,14 @@ db.version(2).stores({
   apps: "id, label, updatedAt",
 });
 
+// Version 3: Add targetFile index to apiSessions for writer-mode lookups
+db.version(3).stores({
+  messages: "++id, sessionId, [sessionId+createdAt], messageHash",
+  sessions: "id, status, updatedAt",
+  apiSessions: "id, status, agentType, npub, updatedAt, targetFile",
+  apps: "id, label, updatedAt",
+});
+
 /**
  * Generate a hash for message deduplication.
  * Uses sessionId, role, createdAt, and first 100 chars of content.

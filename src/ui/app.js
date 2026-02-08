@@ -18,6 +18,9 @@ import {
 import {
   createWebviewIcon,
 } from "./live/webview-panel.js";
+import {
+  createWriterIcon,
+} from "./writer/writer-panel.js";
 import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
 import { createSessionDialogController } from "./common/session-dialog.js";
 import { initOrchestratorUI } from "./orchestrator/index.js";
@@ -917,6 +920,7 @@ const desktopSessionIndicatorName =
 const desktopSessionIndicatorDirectory =
   desktopSessionIndicator?.querySelector('[data-part="directory"]') ?? null;
 const headerWebviewToggle = document.getElementById("header-webview-toggle");
+const headerWriterToggle = document.getElementById("header-writer-toggle");
 const sessionNameInput = document.getElementById("session-name");
 const sessionAdvancedToggle = document.getElementById("session-advanced-toggle");
 const sessionAdvancedPanel = document.getElementById("session-advanced-panel");
@@ -1323,6 +1327,29 @@ function syncHeaderWebviewToggle(webApp) {
     btn.classList.add("active");
   }
   headerWebviewToggle.append(btn);
+}
+
+/**
+ * Sync the header writer toggle button.
+ * Shows a pencil icon when the active session has a targetFile.
+ */
+function syncHeaderWriterToggle(targetFile) {
+  if (!headerWriterToggle) return;
+  if (!targetFile) {
+    headerWriterToggle.hidden = true;
+    headerWriterToggle.innerHTML = "";
+    return;
+  }
+  headerWriterToggle.hidden = false;
+  headerWriterToggle.innerHTML = "";
+  const btn = createWriterIcon(() => {
+    state.writerLayout.open = !state.writerLayout.open;
+    render();
+  });
+  if (state.writerLayout.open) {
+    btn.classList.add("active");
+  }
+  headerWriterToggle.append(btn);
 }
 
 const getStoredThemePreference = () => {
@@ -3417,9 +3444,10 @@ const render = () => {
       setActiveNav();
       syncMenuTabs();
       syncDesktopSessionIndicator();
-      // Hide header webview toggle when not on live route (renderLive handles showing it)
+      // Hide header webview/writer toggles when not on live route (renderLive handles showing them)
       if (currentRoute !== "live") {
         syncHeaderWebviewToggle(null);
+        syncHeaderWriterToggle(null);
       }
       updateAgentStatusIndicators();
       updateDocumentTitle();
@@ -3692,6 +3720,7 @@ const liveViewModule = initLiveView({
   promptRenameSession,
   sendControlCommand,
   syncHeaderWebviewToggle,
+  syncHeaderWriterToggle,
   scheduleLiveScroll,
   isConversationScrolledToBottom,
   scrollConversationAreaToBottom,
@@ -3705,6 +3734,7 @@ const liveViewModule = initLiveView({
   clearImagePreviews,
   openDialog,
   isFeatureEnabledForViewer: (...args) => isFeatureEnabledForViewer(...args),
+  showToast,
 });
 renderLive = liveViewModule.renderLive;
 renderSessionTabs = liveViewModule.renderSessionTabs;
