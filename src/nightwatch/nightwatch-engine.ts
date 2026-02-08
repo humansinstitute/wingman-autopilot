@@ -12,6 +12,7 @@ import type { SessionSnapshot } from "../agents/process-manager";
 import type { NightWatchStore, NightWatchReport } from "./nightwatch-store";
 import type { FeatureFlagRecord } from "../storage/feature-flag-store";
 import type { PromptQueueStore } from "../storage/prompt-queue-store";
+import { getNtfyConfig, sendNtfyNotification } from "./ntfy-notify";
 
 // ============================================================
 // Constants & Configuration
@@ -59,11 +60,15 @@ export interface NightWatchDeps {
   promptQueueStore: PromptQueueStore;
   openRouterApiKey: string | null;
   openRouterBaseUrl: string;
+  /** Public base URL for this Wingman instance (used in notification links) */
+  wingmanBaseUrl: string;
   getSession: (sessionId: string) => SessionSnapshot | null;
   /** Trigger prompt queue dispatch for a session (immediate, not waiting for sweep) */
   dispatchPrompt: (session: SessionSnapshot) => void;
   /** Send raw terminal input directly to the agent (bypasses prompt queue) */
   sendRawInput: (session: SessionSnapshot, content: string) => Promise<boolean>;
+  /** Called when a session reaches a terminal state (complete/error/humanInput) */
+  onSessionComplete?: (sessionId: string, report: NightWatchReport) => void;
 }
 
 type NightWatchAction = "continue" | "morehistory" | "complete" | "error" | "humanInput";
@@ -396,6 +401,31 @@ async function executeNightWatchReview(
   console.log(
     `[nightwatch] Session ${sessionId} terminated with ${result.nextAction}: ${result.content.slice(0, 100)}`,
   );
+
+  const terminalReport: NightWatchReport = {
+    id: "",
+    sessionId,
+    sessionName,
+    workingDirectory: currentSession?.workingDirectory ?? null,
+    status: result.nextAction as NightWatchReport["status"],
+    summary: result.content,
+    reasoning: result.reasoning || null,
+    inputMode: result.nextAction === "continue" ? result.inputMode : null,
+    cycleCount,
+    createdAt: new Date().toISOString(),
+  };
+
+  if (deps.onSessionComplete) {
+    deps.onSessionComplete(sessionId, terminalReport);
+  }
+
+  // Send push notification via ntfy
+  const ntfyConfig = getNtfyConfig(deps.wingmanBaseUrl);
+  if (ntfyConfig) {
+    sendNtfyNotification(terminalReport, ntfyConfig).catch((err) => {
+      console.error("[nightwatch] ntfy notification failed:", err);
+    });
+  }
 }
 
 // ============================================================
@@ -443,6 +473,31 @@ export async function maybeTriggerNightWatch(
       cycleCount: sessionState.cycleCount,
     });
     deps.store.disableSession(session.id);
+
+    const maxCycleReport: NightWatchReport = {
+      id: "",
+      sessionId: session.id,
+      sessionName: session.name ?? null,
+      workingDirectory: session.workingDirectory ?? null,
+      status: "complete",
+      summary: `Reached maximum cycle limit (${sessionState.maxCycles}).`,
+      reasoning: "Automatic stop: cycle limit reached.",
+      inputMode: null,
+      cycleCount: sessionState.cycleCount,
+      createdAt: new Date().toISOString(),
+    };
+
+    if (deps.onSessionComplete) {
+      deps.onSessionComplete(session.id, maxCycleReport);
+    }
+
+    // Send push notification via ntfy
+    const ntfyConfig = getNtfyConfig(deps.wingmanBaseUrl);
+    if (ntfyConfig) {
+      sendNtfyNotification(maxCycleReport, ntfyConfig).catch((err) => {
+        console.error("[nightwatch] ntfy notification failed:", err);
+      });
+    }
     return;
   }
 

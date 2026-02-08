@@ -16,7 +16,11 @@ import type { AppRecord, AppLifecycleAction } from "../apps/app-registry";
 import type { AppProcessStatus } from "../apps/app-process-manager";
 import type { CaproverStore } from "../caprover/caprover-store";
 import type { CaproverClient } from "../caprover/caprover-client";
+import { createAppTarball } from "../caprover/tarball";
 import { listSkills, loadSkill } from "./skill-loader";
+import { generateAndSaveImages } from "./services/image-generator";
+import type { UserSettingsStore } from "../storage/user-settings-store";
+import type { ArtifactsStore, CreateArtifactInput } from "../storage/artifacts-store";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -39,6 +43,9 @@ export interface WingmanMcpApiDependencies {
   getCaproverClient: () => CaproverClient | null;
   userSkillsRoot: string;
   defaultSkillsRoot: string;
+  userSettingsStore: UserSettingsStore;
+  artifactsStore: ArtifactsStore;
+  openRouterApiKey: string | null;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -142,6 +149,21 @@ export function createWingmanMcpApiHandler(deps: WingmanMcpApiDependencies) {
       // GET /api/mcp/wingman/skills/load
       if (segments.length === 5 && segments[3] === "skills" && segments[4] === "load" && method === "GET") {
         return await handleLoadSkill(deps, url);
+      }
+
+      // POST /api/mcp/wingman/generate-image
+      if (segments.length === 4 && segments[3] === "generate-image" && method === "POST") {
+        return await handleGenerateImage(deps, request);
+      }
+
+      // GET /api/mcp/wingman/artifacts?sessionId=...
+      if (segments.length === 4 && segments[3] === "artifacts" && method === "GET") {
+        return handleListArtifacts(deps, url);
+      }
+
+      // POST /api/mcp/wingman/artifacts
+      if (segments.length === 4 && segments[3] === "artifacts" && method === "POST") {
+        return await handleRegisterArtifact(deps, request);
       }
 
       return jsonError("Not found", 404);
@@ -351,6 +373,10 @@ function handleListCaproverApps(
 /**
  * POST /api/mcp/wingman/caprover/deploy
  * Body: { sessionId, appId, dockerImage?, gitHash? }
+ *
+ * When dockerImage is provided, deploys from that image.
+ * When omitted, creates a tarball from the linked local app directory
+ * and uploads it to CapRover for building.
  */
 async function handleDeployCaproverApp(
   deps: WingmanMcpApiDependencies,
@@ -379,22 +405,81 @@ async function handleDeployCaproverApp(
     return jsonError("CapRover is not configured — set CAPROVER_URL and CAPROVER_PASSWORD", 503);
   }
 
-  if (!dockerImage) {
-    return jsonError("dockerImage is required for deployment", 400);
+  // Docker image deployment
+  if (dockerImage) {
+    const deployment = deps.caproverStore.createDeployment({
+      caproverAppId: appId,
+      deployMethod: "docker_image",
+      dockerImage,
+      gitHash: gitHash ?? null,
+    });
+
+    try {
+      await client.deployFromImage(app.caproverName, dockerImage);
+
+      const remoteApp = await client.getApp(app.caproverName);
+      const version = remoteApp?.deployedVersion ?? null;
+
+      deps.caproverStore.updateDeployment(deployment.id, {
+        status: "success",
+        version,
+        completedAt: new Date().toISOString(),
+      });
+
+      deps.caproverStore.updateApp(appId, { deployedVersion: version });
+
+      return jsonOk({
+        success: true,
+        appId,
+        caproverName: app.caproverName,
+        deployMethod: "docker_image",
+        dockerImage,
+        deployedVersion: version,
+      });
+    } catch (err) {
+      deps.caproverStore.updateDeployment(deployment.id, {
+        status: "failed",
+        completedAt: new Date().toISOString(),
+        errorMessage: (err as Error).message,
+      });
+      return jsonError(`Deployment failed: ${(err as Error).message}`, 502);
+    }
   }
 
-  // Create deployment record
+  // Tarball deployment from linked local app
+  if (!app.appId) {
+    return jsonError(
+      "No dockerImage provided and no local app linked. Either pass dockerImage or link a local app to this CapRover app.",
+      400,
+    );
+  }
+
+  const allApps = await deps.listApps();
+  const localApp = allApps.find((a) => a.id === app.appId);
+  if (!localApp) {
+    return jsonError(`Linked local app ${app.appId} not found in app registry`, 404);
+  }
+
+  const appRoot = localApp.root;
+
+  // Create tarball
+  let tarResult;
+  try {
+    tarResult = await createAppTarball(appRoot);
+  } catch (err) {
+    return jsonError(`Failed to create tarball from ${appRoot}: ${(err as Error).message}`, 400);
+  }
+
   const deployment = deps.caproverStore.createDeployment({
     caproverAppId: appId,
-    deployMethod: "docker_image",
-    dockerImage,
+    deployMethod: "tar_upload",
+    dockerImage: null,
     gitHash: gitHash ?? null,
   });
 
   try {
-    await client.deployFromImage(app.caproverName, dockerImage);
+    await client.deployFromTarball(app.caproverName, tarResult.buffer, gitHash);
 
-    // Get updated version from CapRover
     const remoteApp = await client.getApp(app.caproverName);
     const version = remoteApp?.deployedVersion ?? null;
 
@@ -404,15 +489,14 @@ async function handleDeployCaproverApp(
       completedAt: new Date().toISOString(),
     });
 
-    deps.caproverStore.updateApp(appId, {
-      deployedVersion: version,
-    });
+    deps.caproverStore.updateApp(appId, { deployedVersion: version });
 
     return jsonOk({
       success: true,
       appId,
       caproverName: app.caproverName,
-      dockerImage,
+      deployMethod: "tar_upload",
+      fileCount: tarResult.fileCount,
       deployedVersion: version,
     });
   } catch (err) {
@@ -421,8 +505,7 @@ async function handleDeployCaproverApp(
       completedAt: new Date().toISOString(),
       errorMessage: (err as Error).message,
     });
-
-    return jsonError(`Deployment failed: ${(err as Error).message}`, 502);
+    return jsonError(`Tarball deployment failed: ${(err as Error).message}`, 502);
   }
 }
 
@@ -472,4 +555,140 @@ async function handleLoadSkill(
   }
 
   return jsonOk({ skill });
+}
+
+// ---------------------------------------------------------------------------
+// Image Generation + Artifacts
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /api/mcp/wingman/generate-image
+ * Body: { sessionId, prompt, filename?, model? }
+ */
+async function handleGenerateImage(
+  deps: WingmanMcpApiDependencies,
+  request: Request,
+): Promise<Response> {
+  const body = await parseBody(request);
+  const sessionId = body.sessionId as string | undefined;
+  const prompt = body.prompt as string | undefined;
+  const filename = body.filename as string | undefined;
+  const model = body.model as string | undefined;
+
+  const denied = requireSessionId(deps, sessionId);
+  if (denied) return denied;
+
+  if (!prompt) {
+    return jsonError("prompt is required", 400);
+  }
+
+  const session = deps.getSession(sessionId!);
+  if (!session) {
+    return jsonError("Session not found", 404);
+  }
+
+  // Resolve API key: per-user setting > env var
+  let apiKey: string | null = null;
+  if (session.npub) {
+    apiKey = deps.userSettingsStore.get(session.npub, "openrouter_api_key");
+  }
+  if (!apiKey) {
+    apiKey = deps.openRouterApiKey;
+  }
+  if (!apiKey) {
+    return jsonError(
+      "No OpenRouter API key configured. Set one in Settings or set the OPENROUTER_API environment variable.",
+      400,
+    );
+  }
+
+  const directory = session.workingDirectory;
+  if (!directory) {
+    return jsonError("Session has no working directory", 400);
+  }
+
+  const result = await generateAndSaveImages(prompt, directory, apiKey, {
+    model,
+    filename,
+  });
+
+  // Register artifacts
+  const artifacts = result.images.map((img) =>
+    deps.artifactsStore.add({
+      sessionId: sessionId!,
+      type: "image",
+      label: filename || prompt.slice(0, 60),
+      filePath: img.path,
+      mimeType: img.mimeType,
+    }),
+  );
+
+  return jsonOk({
+    content: result.content,
+    images: result.images,
+    artifacts: artifacts.map((a) => ({
+      id: a.id,
+      type: a.type,
+      label: a.label,
+      filePath: a.filePath,
+      mimeType: a.mimeType,
+    })),
+  });
+}
+
+/**
+ * GET /api/mcp/wingman/artifacts?sessionId=...
+ * List artifacts for a session (called by MCP tool).
+ */
+function handleListArtifacts(
+  deps: WingmanMcpApiDependencies,
+  url: URL,
+): Response {
+  const sessionId = url.searchParams.get("sessionId");
+  const denied = requireSessionId(deps, sessionId);
+  if (denied) return denied;
+
+  const artifacts = deps.artifactsStore.listBySession(sessionId!);
+  return jsonOk({ artifacts });
+}
+
+/**
+ * POST /api/mcp/wingman/artifacts
+ * Body: { sessionId, type, label, filePath, url?, mimeType? }
+ * Register a new artifact (for agents to register non-image artifacts).
+ */
+async function handleRegisterArtifact(
+  deps: WingmanMcpApiDependencies,
+  request: Request,
+): Promise<Response> {
+  const body = await parseBody(request);
+  const sessionId = body.sessionId as string | undefined;
+  const type = body.type as string | undefined;
+  const label = body.label as string | undefined;
+  const filePath = body.filePath as string | undefined;
+  const url = body.url as string | undefined;
+  const mimeType = body.mimeType as string | undefined;
+
+  const denied = requireSessionId(deps, sessionId);
+  if (denied) return denied;
+
+  if (!type || !label || !filePath) {
+    return jsonError("type, label, and filePath are required", 400);
+  }
+
+  const validTypes = ["image", "document", "webview", "file"];
+  if (!validTypes.includes(type)) {
+    return jsonError(`type must be one of: ${validTypes.join(", ")}`, 400);
+  }
+
+  const artifact = deps.artifactsStore.add({
+    sessionId: sessionId!,
+    type: type as "image" | "document" | "webview" | "file",
+    label,
+    filePath,
+    url,
+    mimeType,
+  });
+
+  return jsonOk({ artifact });
 }

@@ -23,6 +23,9 @@ export const createSessionDialogController = (options) => {
     worktreeField,
     worktreeNameInput,
     worktreeHint,
+    writerModeCheckbox,
+    targetFileInput,
+    targetFileField,
     isAuthenticated,
     getConfig,
     getFallbackDirectory,
@@ -68,6 +71,15 @@ export const createSessionDialogController = (options) => {
       worktreeNameInput.value = "";
       worktreeNameInput.setCustomValidity("");
     }
+    if (writerModeCheckbox) {
+      writerModeCheckbox.checked = false;
+    }
+    if (targetFileInput) {
+      targetFileInput.value = "";
+    }
+    if (targetFileField) {
+      targetFileField.hidden = true;
+    }
     syncWorkspaceFields();
   };
 
@@ -88,7 +100,9 @@ export const createSessionDialogController = (options) => {
       workspaceSelect?.value === "worktree"
         ? { mode: "worktree", name: (worktreeNameInput?.value ?? "").trim() }
         : null;
-    return { agentId, workingDirectory, sessionName, workspace };
+    const writerMode = writerModeCheckbox?.checked ?? false;
+    const targetFile = writerMode ? (targetFileInput?.value?.trim() || null) : null;
+    return { agentId, workingDirectory, sessionName, workspace, targetFile };
   };
 
   const handleSubmit = () => {
@@ -149,6 +163,15 @@ export const createSessionDialogController = (options) => {
       onSubmit({ agentId: agent, workingDirectory: directory, sessionName: name, workspace: null });
     }
   };
+
+  writerModeCheckbox?.addEventListener("change", () => {
+    if (targetFileField) {
+      targetFileField.hidden = !writerModeCheckbox.checked;
+    }
+    if (writerModeCheckbox.checked && targetFileInput) {
+      targetFileInput.focus();
+    }
+  });
 
   advancedToggle?.addEventListener("click", () => {
     const expanded = advancedToggle.getAttribute("aria-expanded") === "true";

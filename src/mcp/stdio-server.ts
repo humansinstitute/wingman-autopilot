@@ -79,6 +79,11 @@ import {
   runSkillDescription,
   handleRunSkill,
 } from "./tools/run-skill";
+import {
+  generateImageSchema,
+  generateImageDescription,
+  handleGenerateImage,
+} from "./tools/generate-image";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -199,6 +204,14 @@ server.tool(
   runSkillDescription,
   runSkillSchema,
   (params) => handleRunSkill(params, wingmanUrl, sessionId),
+);
+
+// ---- generate_image ----
+server.tool(
+  "generate_image",
+  generateImageDescription,
+  generateImageSchema,
+  (params) => handleGenerateImage(params, wingmanUrl, sessionId),
 );
 
 // ---------------------------------------------------------------------------

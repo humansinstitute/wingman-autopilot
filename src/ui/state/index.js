@@ -10,9 +10,7 @@ export const THEME_STORAGE_KEY = "wingman-theme";
 export const TABS_VISIBILITY_STORAGE_KEY = "wingman-tabs-visible";
 export const FILES_SHOW_HIDDEN_STORAGE_KEY = "wingman-files-show-hidden";
 
-// Polling intervals
-export const SESSION_POLL_INTERVAL_MS = 5000;
-export const APPS_POLL_INTERVAL_MS = 5000;
+// Constants
 export const APP_LOG_PREVIEW_LINES = 5;
 
 // URL configuration
@@ -79,18 +77,6 @@ export function createAdminUsersState() {
  */
 export const state = {
   config: null,
-  sessions: [],
-  identitySummaries: [],
-  sessionFilters: {
-    npub: "all",
-    options: [],
-    initialized: false,
-  },
-  appFilters: {
-    npub: "all",
-    options: [],
-    initialized: false,
-  },
   orchestratorPresets: [],
   orchestratorPresetsLoading: false,
   orchestratorPresetsLoaded: false,
@@ -100,9 +86,7 @@ export const state = {
   messageDrafts: new Map(),
   logPanelOpen: new Map(),
   promptQueues: new Map(), // sessionId -> {prompts: [], maxSize: 21}
-  activeSessionId: null,
   lastWorkingDirectory: null,
-  lastActiveSessionId: null,
   // Archived session data for viewing historical sessions
   archivedSession: {
     sessionId: null,
@@ -128,36 +112,19 @@ export const state = {
   },
   // Webview split-panel layout state
   webviewLayout: { open: false, mode: "chat-narrow" },
+  // Writer split-panel layout state
+  writerLayout: { open: false, mode: "chat-narrow", mobileTab: "chat" },
+  // Artifacts split-panel layout state
+  artifactsLayout: { open: false, mode: "chat-narrow" },
+  // Cached artifact counts per session
+  artifactCounts: new Map(),
   // DOM references for incremental updates
   conversationContainers: new Map(), // sessionId -> DOM element
   logContainers: new Map(), // sessionId -> DOM element
   lastMessageCount: new Map(), // sessionId -> number of messages
   lastLogLength: new Map(), // sessionId -> length of logs
-  apps: {
-    items: [],
-    loading: false,
-    initialized: false,
-    error: null,
-    pendingOpenDialog: null,
-    pendingFocusId: null,
-  },
   adminUsers: createAdminUsersState(),
   featureFlags: createFeatureFlagsState(),
-  system: {
-    restart: {
-      loading: false,
-      inProgress: false,
-      marker: null,
-      outcome: null,
-      error: null,
-      submitting: false,
-    },
-    cleanup: {
-      running: false,
-      result: null,
-      error: null,
-    },
-  },
   appLogViewer: {
     appId: null,
     title: "",

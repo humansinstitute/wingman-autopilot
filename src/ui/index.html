@@ -32,7 +32,6 @@
           <p class="wm-tagline">Solvitur Ambulando</p>
         </div>
       </a>
-      <div id="header-webview-toggle" class="wm-header-webview-toggle requires-auth" hidden></div>
       <div id="quick-launcher" class="wm-quick-launcher requires-auth">
         <button
           type="button"
@@ -49,6 +48,8 @@
           <div id="quick-launcher-list" class="wm-quick-launcher-list"></div>
         </div>
       </div>
+      <div id="header-webview-toggle" class="wm-header-webview-toggle requires-auth" hidden></div>
+      <div id="header-writer-toggle" class="wm-header-writer-toggle requires-auth" hidden></div>
       <div id="desktop-session-indicator" class="wm-session-indicator requires-auth" role="status" aria-live="polite" hidden>
         <button
           type="button"
@@ -146,6 +147,28 @@
             />
             <p class="wm-session-dialog__hint">
               Make it easier to spot later by adding a short label.
+            </p>
+          </div>
+          <div class="wm-session-dialog__field">
+            <label class="wm-session-dialog__checkbox-label">
+              <input id="session-writer-mode" type="checkbox" />
+              Writer Mode
+            </label>
+            <p class="wm-session-dialog__hint">
+              Opens a split markdown editor alongside the agent chat.
+            </p>
+          </div>
+          <div class="wm-session-dialog__field" id="session-target-file-field" hidden>
+            <label for="session-target-file">Target File</label>
+            <input
+              id="session-target-file"
+              type="text"
+              autocomplete="off"
+              maxlength="512"
+              placeholder="README.md or /absolute/path.md"
+            />
+            <p class="wm-session-dialog__hint">
+              Relative paths resolve against the project folder. Absolute paths also accepted.
             </p>
           </div>
           <div class="wm-session-dialog__advanced">

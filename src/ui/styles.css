@@ -95,6 +95,7 @@ body[data-admin="false"] .requires-admin {
   gap: 1rem;
   text-decoration: none;
   color: inherit;
+  margin-right: auto;
 }
 
 .wm-brand h1 {
@@ -7646,30 +7647,299 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   color: #ef4444;
 }
 
+/* ---- Mobile tab bar (hidden on desktop) ---- */
+.wm-writer-mobile-tabs {
+  display: none;
+}
+
 @media (max-width: 768px) {
-  .wm-live-split {
-    flex-direction: column;
-    height: auto;
-    overflow: visible;
+  /* Mobile tab bar for writer split */
+  .wm-writer-mobile-tabs {
+    display: flex;
+    gap: 0;
+    width: 100%;
+    border-bottom: 1px solid var(--border-primary);
+    background: var(--bg-secondary);
+    flex-shrink: 0;
   }
 
-  .wm-live-split--chat-narrow > .wm-live-chat-col,
-  .wm-live-split--app-narrow > .wm-live-chat-col {
+  .wm-writer-mobile-tab {
+    flex: 1;
+    padding: 0.5rem 0;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+  }
+
+  .wm-writer-mobile-tab:hover {
+    color: var(--text-primary);
+  }
+
+  .wm-writer-mobile-tab.active {
+    color: var(--accent-primary);
+    border-bottom-color: var(--accent-primary);
+  }
+
+  /* Writer split: stack vertically, fill viewport */
+  .wm-live-split {
+    flex-direction: column;
+    height: calc(100vh - var(--nav-height) - 2rem);
+    overflow: hidden;
+  }
+
+  /* Default mobile stacking for non-writer splits (artifacts, webview) */
+  .wm-live-split:not([class*="mobile-"]) > .wm-live-chat-col {
     flex: none;
     max-height: 50vh;
     overflow-y: auto;
   }
 
-  .wm-live-split--chat-narrow > .wm-webview-col,
-  .wm-live-split--app-narrow > .wm-webview-col {
+  .wm-live-split:not([class*="mobile-"]) > .wm-webview-col {
     flex: none;
     height: 50vh;
+  }
+
+  /* Writer mobile: show only the active tab panel */
+  .wm-live-split--mobile-chat > .wm-live-chat-col {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .wm-live-split--mobile-chat > .wm-webview-col {
+    display: none;
+  }
+
+  .wm-live-split--mobile-writer > .wm-live-chat-col {
+    display: none;
+  }
+
+  .wm-live-split--mobile-writer > .wm-webview-col {
+    flex: 1;
+    min-height: 0;
+    height: auto;
   }
 
   .wm-live-split > .wm-live-chat-col > .wm-composer-shell {
     position: sticky;
     bottom: 0;
   }
+}
+
+/* ============================================================
+   Writer Panel
+   ============================================================ */
+
+.wm-writer-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(168, 130, 255, 0.25);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.wm-writer-icon:hover {
+  color: #a882ff;
+  border-color: #a882ff;
+  background: var(--bg-tertiary);
+}
+
+.wm-writer-icon.active {
+  color: #a882ff;
+  border-color: #a882ff;
+}
+
+.wm-writer-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.wm-writer-blocks {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem 1.25rem;
+  scrollbar-width: thin;
+}
+
+.wm-writer-block {
+  position: relative;
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.25rem;
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.wm-writer-block:hover {
+  border-left-color: rgba(168, 130, 255, 0.4);
+  background: var(--bg-tertiary);
+}
+
+.wm-writer-block__rendered {
+  line-height: 1.6;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.wm-writer-block__rendered h1,
+.wm-writer-block__rendered h2,
+.wm-writer-block__rendered h3,
+.wm-writer-block__rendered h4,
+.wm-writer-block__rendered h5,
+.wm-writer-block__rendered h6 {
+  margin: 0 0 0.25rem;
+}
+
+.wm-writer-block__rendered p {
+  margin: 0 0 0.25rem;
+}
+
+.wm-writer-block__rendered pre {
+  margin: 0;
+  border-radius: 0.375rem;
+}
+
+.wm-writer-block__rendered hr {
+  border: none;
+  border-top: 1px solid var(--border-primary);
+  margin: 0.5rem 0;
+}
+
+.wm-writer-block__rendered ul,
+.wm-writer-block__rendered ol {
+  margin: 0;
+  padding-left: 1.5rem;
+}
+
+.wm-writer-block__rendered blockquote {
+  margin: 0;
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--border-primary);
+  color: var(--text-secondary);
+}
+
+.wm-writer-block__rendered table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.wm-writer-block__rendered th,
+.wm-writer-block__rendered td {
+  border: 1px solid var(--border-primary);
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+}
+
+.wm-writer-block__editor {
+  display: block;
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.5rem;
+  margin: 0;
+  border: 1px solid #a882ff;
+  border-radius: 0.375rem;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono", monospace;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  resize: none;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.wm-writer-block__editor:focus {
+  outline: none;
+  border-color: #a882ff;
+  box-shadow: 0 0 0 2px rgba(168, 130, 255, 0.2);
+}
+
+.wm-writer-frontmatter {
+  opacity: 0.6;
+}
+
+.wm-writer-frontmatter .wm-writer-block__rendered pre {
+  font-size: 0.8rem;
+}
+
+.wm-writer-loading,
+.wm-writer-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 8rem;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.wm-writer-error {
+  color: #ef4444;
+}
+
+/* Session dialog — checkbox label */
+.wm-session-dialog__checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.wm-session-dialog__checkbox-label input[type="checkbox"] {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: #a882ff;
+}
+
+/* Quick agent picker (files view) */
+.wm-writer-agent-picker {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  padding: 0.25rem;
+  min-width: 10rem;
+}
+
+.wm-writer-agent-picker__item {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: none;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.wm-writer-agent-picker__item:hover {
+  background: var(--bg-tertiary);
+}
+
+/* Header writer toggle — same position pattern as webview toggle */
+.wm-header-writer-toggle {
+  display: flex;
+  align-items: center;
 }
 
 /* ============================================================

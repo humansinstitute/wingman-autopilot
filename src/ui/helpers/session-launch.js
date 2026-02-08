@@ -44,7 +44,7 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = 
       return;
     }
 
-    const { openInNewTab = false, origin = null, initialPrompt = null } = options ?? {};
+    const { openInNewTab = false, origin = null, initialPrompt = null, targetFile = null } = options ?? {};
     const payload = { agent: normalizedAgent };
     const trimmedName = typeof name === "string" ? name.trim() : "";
     if (trimmedName.length > 0) {
@@ -61,6 +61,9 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = 
     }
     if (typeof initialPrompt === "string" && initialPrompt.trim().length > 0) {
       payload.initialPrompt = initialPrompt.trim();
+    }
+    if (typeof targetFile === "string" && targetFile.trim().length > 0) {
+      payload.targetFile = targetFile.trim();
     }
 
     const response = await fetch("/api/sessions", {

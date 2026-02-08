@@ -166,6 +166,7 @@ export const rehydrateWarmSessions = async (
       agentRuntimeStatus: isAgentRuntimeStatus(record.runtimeStatus) ? record.runtimeStatus : null,
       origin: record.origin ?? null,
       pm2Name: record.pm2Name ?? undefined,
+      targetFile: record.targetFile ?? undefined,
     });
 
     if (!snapshot) {
@@ -303,6 +304,7 @@ export const rehydrateOrphanedSessions = async (
       agentRuntimeStatus: isAgentRuntimeStatus(record.runtimeStatus) ? record.runtimeStatus : null,
       origin: record.origin ?? null,
       pm2Name: record.pm2Name ?? undefined,
+      targetFile: record.targetFile ?? undefined,
     });
 
     if (!snapshot) {

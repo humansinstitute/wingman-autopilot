@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import "./logging/server-logger";
 
 import type { AgentType } from "./config";
+import { getKeyTeleportIdentity } from "./config";
 import { z } from "zod";
 import { 
   validateInput, 
@@ -68,10 +69,16 @@ import { CaproverStore, createCaproverApiHandler, createCaproverClientFromEnv, c
 import { NightWatchStore } from "./nightwatch/nightwatch-store";
 import { maybeTriggerNightWatch, NIGHTWATCH_FEATURE_FLAG_KEY } from "./nightwatch/nightwatch-engine";
 import { createNightWatchApiHandler } from "./nightwatch/nightwatch-api";
+import { nip19, verifyEvent } from "nostr-tools";
+import { startTaskListener } from "./nostr/task-listener";
+import { createTaskExecutor } from "./nostr/task-executor";
+import { signWithWingmanKey } from "./mcp/wingman-signer";
 import { createBrowserLogHandler } from "./logging/browser-log-handler";
 import { Nip98GrantStore } from "./mcp/grants-store";
 import { createNip98ApiHandler } from "./mcp/nip98-api";
 import { createWingmanMcpApiHandler } from "./mcp/wingman-api";
+import { userSettingsStore } from "./storage/user-settings-store";
+import { artifactsStore } from "./storage/artifacts-store";
 import {
   buildAgentUrl,
   fetchAgentMessages,
@@ -104,7 +111,7 @@ import {
   type AccessRule,
 } from "./auth/access-control";
 import { handleKeyTeleport, handleKeyTeleportRegistration } from "./auth/keyteleport";
-import { createStaticAssetService } from "./server/static-assets";
+import { createStaticAssetService, compressResponse } from "./server/static-assets";
 import { maybeRefreshSessionCookie } from "./server/session-refresh";
 import { handleSubdomainRequest, resolveAliasToPort, proxyRequestToApp, type SubdomainProxyConfig } from "./server/subdomain-proxy";
 import { isAgentRuntimeStatus } from "./types/agent-status";
@@ -253,6 +260,12 @@ const FEATURE_FLAG_DEFAULTS: Array<{
     description: "Autonomous agent review system that continues sessions overnight.",
     state: "off",
   },
+  {
+    key: "task_listener_enabled",
+    label: "MG Task Listener",
+    description: "Receives task assignments from MG via Nostr and auto-creates agent sessions.",
+    state: "on",
+  },
 ];
 
 featureFlagStore.ensureDefaults(FEATURE_FLAG_DEFAULTS);
@@ -287,21 +300,6 @@ const nip98ApiHandler = createNip98ApiHandler({
   grantsStore: nip98GrantsStore,
   getSession: (sid: string) => manager.getSession(sid) ?? null,
 });
-const wingmanMcpApiHandler = createWingmanMcpApiHandler({
-  getSession: (sid: string) => manager.getSession(sid) ?? null,
-  listSessions: () => manager.listSessions(),
-  createSession: (agent, dir, name) => manager.createSession(agent, dir, name),
-  getSessionLogs: (sid) => manager.getLogs(sid),
-  listApps: () => appRegistry.listApps(),
-  getAppStatus: (appId) => appProcessManager.getStatus(appId),
-  runAppAction: (appId, action) => appProcessManager[action](appId),
-  tailAppLogs: (appId, lines) => appProcessManager.tailLogs(appId, lines),
-  caproverStore,
-  getCaproverClient: createCaproverClientFromEnv,
-  userSkillsRoot: join(homeDirectory, ".wingmen", "skills"),
-  defaultSkillsRoot: join(projectRootPath, "skills"),
-});
-
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());
 registerAccessRule(AccessActions.FilesWrite, requireAuthentication());
@@ -831,6 +829,24 @@ try {
 
 const manager = new ProcessManager(config);
 
+const wingmanMcpApiHandler = createWingmanMcpApiHandler({
+  getSession: (sid: string) => manager.getSession(sid) ?? null,
+  listSessions: () => manager.listSessions(),
+  createSession: (agent, dir, name) => manager.createSession(agent, dir, name),
+  getSessionLogs: (sid) => manager.getLogs(sid),
+  listApps: () => appRegistry.listApps(),
+  getAppStatus: (appId) => appProcessManager.getStatus(appId),
+  runAppAction: (appId, action) => appProcessManager[action](appId),
+  tailAppLogs: (appId, lines) => appProcessManager.tailLogs(appId, lines),
+  caproverStore,
+  getCaproverClient: createCaproverClientFromEnv,
+  userSkillsRoot: join(homeDirectory, ".wingmen", "skills"),
+  defaultSkillsRoot: join(projectRoot, "skills"),
+  userSettingsStore,
+  artifactsStore,
+  openRouterApiKey: Bun.env.OPENROUTER_API?.trim() || null,
+});
+
 // Reconcile PM2 processes with app registry
 try {
   const appReconcileResult = await reconcileAppsWithPM2(appRegistry);
@@ -847,6 +863,7 @@ const nightWatchDeps = {
   promptQueueStore,
   openRouterApiKey: Bun.env.OPENROUTER_API?.trim() || null,
   openRouterBaseUrl: "https://openrouter.ai/api",
+  wingmanBaseUrl: config.baseUrl,
   getSession: (sid: string) => manager.getSession(sid) ?? null,
   dispatchPrompt: (session: SessionSnapshot) => {
     void maybeAutoDispatchQueuedPrompt(session);
@@ -865,7 +882,77 @@ const nightWatchDeps = {
       return false;
     }
   },
+  onSessionComplete: (sessionId, report) => {
+    // Check if this session is linked to an MG task
+    const taskSession = nightWatchStore.getTaskSession(sessionId);
+    if (!taskSession) return;
+
+    console.log(`[task-executor] Session ${sessionId} completed, moving task ${taskSession.taskId} to review`);
+    nightWatchStore.updateTaskSessionStatus(sessionId, "completed");
+
+    // Move task to review in MG (fire-and-forget)
+    void (async () => {
+      try {
+        const stateUrl = `${taskSession.mgBaseUrl}/t/${taskSession.teamSlug}/api/todos/${taskSession.taskId}/state`;
+        const body = JSON.stringify({ state: "review" });
+        const bodyHash = new Bun.CryptoHasher("sha256").update(new TextEncoder().encode(body)).digest("hex");
+        const { token } = await signWithWingmanKey(stateUrl, "POST", bodyHash);
+        const resp = await fetch(stateUrl, {
+          method: "POST",
+          headers: {
+            Authorization: token,
+            "Content-Type": "application/json",
+          },
+          body,
+        });
+        if (resp.ok) {
+          console.log(`[task-executor] Moved task ${taskSession.taskId} to review`);
+        } else {
+          console.warn(`[task-executor] Failed to move task to review: ${resp.status}`);
+        }
+      } catch (err) {
+        console.error(`[task-executor] Failed to move task to review:`, err);
+      }
+    })();
+  },
 };
+
+// Task assignment listener (receives Nostr kind 9802 events)
+const taskListenerFlag = featureFlagStore.getFlag("task_listener_enabled");
+const taskListenerIdentity = getKeyTeleportIdentity();
+if (taskListenerIdentity && config.connectRelays.length > 0 && taskListenerFlag?.state !== "off") {
+  const mgBaseUrl = Bun.env.MG_BASE_URL ?? "https://mg.otherstuff.ai";
+
+  const executor = createTaskExecutor({
+    signNip98: async (url, method, bodyHash) => {
+      const { token } = await signWithWingmanKey(url, method, bodyHash);
+      return token;
+    },
+    createSession: (agent, dir, name, origin) => manager.createSession(agent, dir, name, origin),
+    enableNightwatch: (sid) => nightWatchStore.enableSession(sid),
+    addPrompt: (sid, content) => promptQueueStore.addPrompt(sid, { content }),
+    dispatchPrompt: (session) => {
+      void maybeAutoDispatchQueuedPrompt(session);
+    },
+    getSession: (sid) => manager.getSession(sid) ?? null,
+    trackTaskSession: (params) => nightWatchStore.addTaskSession(params),
+    mgBaseUrl,
+    workingDirectory: config.defaultWorkingDirectory,
+  });
+
+  startTaskListener({
+    secretKey: taskListenerIdentity.secretKey,
+    pubkeyHex: taskListenerIdentity.pubkey,
+    relays: config.connectRelays,
+    onTaskAssigned: executor,
+  });
+
+  console.log(`[task-listener] MG task listener active (relays: ${config.connectRelays.length}, mgBaseUrl: ${mgBaseUrl})`);
+} else if (!taskListenerIdentity) {
+  console.log("[task-listener] No KEYTELEPORT_PRIVKEY configured, MG task listener disabled");
+} else {
+  console.log("[task-listener] No CONNECT_RELAYS configured, MG task listener disabled");
+}
 
 const wingmenRoot = join(projectRoot, ".wingmen");
 const orchestratorTriggersRoot = join(wingmenRoot, "orchestrator", "triggers");
@@ -3544,6 +3631,46 @@ const isAdminContext = (authContext: RequestAuthContext): boolean => {
   return normalized === adminNpub;
 };
 
+/**
+ * Verify a NIP-98 Authorization header and return the signer's npub if valid.
+ * Returns null if no valid NIP-98 header is present.
+ */
+const verifyNip98AuthHeader = (request: Request, url: URL): string | null => {
+  const authHeader = request.headers.get("authorization");
+  if (!authHeader?.startsWith("Nostr ")) return null;
+
+  try {
+    const base64Token = authHeader.slice(6);
+    const eventJson = atob(base64Token);
+    const event = JSON.parse(eventJson);
+
+    // Verify the event signature
+    if (!verifyEvent(event)) return null;
+
+    // Verify kind 27235 (NIP-98)
+    if (event.kind !== 27235) return null;
+
+    // Verify the URL tag matches
+    const uTag = event.tags?.find((t: string[]) => t[0] === "u");
+    if (!uTag) return null;
+    const eventUrl = new URL(uTag[1]);
+    if (eventUrl.origin !== url.origin || eventUrl.pathname !== url.pathname) return null;
+
+    // Verify the method tag
+    const methodTag = event.tags?.find((t: string[]) => t[0] === "method");
+    if (!methodTag || methodTag[1] !== request.method) return null;
+
+    // Verify the event is recent (within 60 seconds)
+    const now = Math.floor(Date.now() / 1000);
+    if (Math.abs(now - event.created_at) > 60) return null;
+
+    // Convert pubkey to npub
+    return nip19.npubEncode(event.pubkey);
+  } catch {
+    return null;
+  }
+};
+
 type SessionCleanupDetail = {
   id: string;
   agent: AgentType;
@@ -3826,15 +3953,26 @@ const handleApi = async (
     return browserLogResponse;
   }
   if (pathname.startsWith("/api/npub-projects")) {
+    let effectiveAuth = authContext;
+    let effectiveIsAdmin = workspaceScope.isAdmin;
+
+    // Allow NIP-98 auth as fallback when no session cookie
     if (!authContext.session) {
-      return Response.json({ error: "Authentication required" }, { status: 401 });
+      const nip98Npub = verifyNip98AuthHeader(request, url);
+      if (nip98Npub) {
+        effectiveAuth = { npub: nip98Npub, session: null };
+        effectiveIsAdmin = true; // NIP-98 server keys treated as admin for project lookups
+      } else {
+        return Response.json({ error: "Authentication required" }, { status: 401 });
+      }
     }
+
     const response = await npubProjectApiHandler(
       request,
       url,
       method,
-      authContext,
-      workspaceScope.isAdmin,
+      effectiveAuth,
+      effectiveIsAdmin,
     );
     if (response) {
       return response;
@@ -5484,6 +5622,40 @@ const handleApi = async (
     }
   }
 
+  if (pathname === "/api/docs/file/download" && method === "GET") {
+    const denied = await ensureApiAccess(AccessActions.FilesRead, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    const pathParam = url.searchParams.get("path");
+    if (!pathParam) {
+      return Response.json({ error: "File path is required" }, { status: 400 });
+    }
+    try {
+      const filePath = resolveDocsPath(pathParam);
+      const fileStats = await stat(filePath);
+      if (!fileStats.isFile()) {
+        return Response.json({ error: "Requested path is not a file" }, { status: 400 });
+      }
+      if (fileStats.size > MAX_DOCS_FILE_SIZE) {
+        return Response.json({ error: "File is too large to download" }, { status: 400 });
+      }
+      const data = await readFile(filePath);
+      const fileName = basename(filePath);
+      const bunFile = Bun.file(filePath);
+      return new Response(data, {
+        headers: {
+          "content-disposition": `attachment; filename="${fileName.replace(/"/g, '\\"')}"`,
+          "content-type": bunFile.type || "application/octet-stream",
+          "content-length": String(fileStats.size),
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
   if (pathname === "/api/docs/file" && method === "PUT") {
     const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
     if (denied) {
@@ -6276,7 +6448,15 @@ const handleApi = async (
       } catch (error) {
         return Response.json({ error: (error as Error).message }, { status: 400 });
       }
-      const session = await manager.createSession(agent, workingDirectory, sessionName ?? undefined, origin);
+      // Parse optional target file for writer-mode sessions
+      const rawTargetFile = typeof payload?.targetFile === "string" ? payload.targetFile.trim() : "";
+      let targetFile: string | undefined;
+      if (rawTargetFile.length > 0) {
+        targetFile = rawTargetFile.startsWith("/")
+          ? rawTargetFile
+          : resolvePath(workingDirectory, rawTargetFile);
+      }
+      const session = await manager.createSession(agent, workingDirectory, sessionName ?? undefined, origin, targetFile);
       messageStore.recordSession({
         id: session.id,
         agent: session.agent,
@@ -6290,12 +6470,95 @@ const handleApi = async (
         runtimeStatus: session.agentRuntimeStatus ?? null,
         origin: session.origin ?? null,
         pm2Name: session.pm2Name,
+        targetFile: session.targetFile,
       });
       await syncSessionMessages(session.id, true);
       return Response.json(serializeSession(session), { status: 201 });
     } catch (error) {
       return Response.json({ error: (error as Error).message }, { status: 500 });
     }
+  }
+
+  // GET /api/artifacts/:id/raw — Serve artifact file content
+  if (pathname.startsWith("/api/artifacts/") && method === "GET") {
+    const artParts = pathname.split("/");
+    const artifactId = artParts[3];
+    if (artifactId && artParts[4] === "raw") {
+      const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
+      if (denied) return denied;
+
+      const artifact = artifactsStore.get(artifactId);
+      if (!artifact) {
+        return Response.json({ error: "Artifact not found" }, { status: 404 });
+      }
+
+      try {
+        const file = Bun.file(artifact.filePath);
+        if (!(await file.exists())) {
+          return Response.json({ error: "Artifact file not found on disk" }, { status: 404 });
+        }
+        return new Response(file, {
+          headers: {
+            "Content-Type": artifact.mimeType || "application/octet-stream",
+            "Cache-Control": "private, max-age=3600",
+          },
+        });
+      } catch {
+        return Response.json({ error: "Failed to read artifact file" }, { status: 500 });
+      }
+    }
+  }
+
+  // User settings API
+  if (pathname.startsWith("/api/user/settings")) {
+    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
+    if (denied) return denied;
+
+    const viewerNpub = authContext.npub;
+    if (!viewerNpub) {
+      return Response.json({ error: "Authentication required" }, { status: 401 });
+    }
+
+    const settingsParts = pathname.split("/");
+    const settingKey = settingsParts[4]; // /api/user/settings/:key
+
+    if (method === "GET" && !settingKey) {
+      // GET /api/user/settings — list all settings for user
+      const settings = userSettingsStore.getAll(viewerNpub);
+      // Mask sensitive keys
+      const masked: Record<string, string> = {};
+      for (const [k, v] of Object.entries(settings)) {
+        masked[k] = k.includes("key") || k.includes("secret")
+          ? (v.length > 8 ? `${v.slice(0, 4)}..${v.slice(-4)}` : "****")
+          : v;
+      }
+      return Response.json({ settings: masked });
+    }
+
+    if (method === "PUT" && settingKey) {
+      // PUT /api/user/settings/:key — set a setting
+      let payload: unknown;
+      try {
+        payload = await request.json();
+      } catch {
+        return Response.json({ error: "Invalid JSON" }, { status: 400 });
+      }
+      const record = payload as Record<string, unknown>;
+      const value = typeof record.value === "string" ? record.value.trim() : "";
+      if (!value) {
+        return Response.json({ error: "value is required" }, { status: 400 });
+      }
+      userSettingsStore.set(viewerNpub, settingKey, value);
+      return Response.json({ success: true, key: settingKey });
+    }
+
+    if (method === "DELETE" && settingKey) {
+      // DELETE /api/user/settings/:key — remove a setting
+      userSettingsStore.delete(viewerNpub, settingKey);
+      return Response.json({ success: true, key: settingKey, deleted: true });
+    }
+
+    return Response.json({ error: "Not found" }, { status: 404 });
   }
 
   if (pathname.startsWith("/api/sessions/")) {
@@ -6409,6 +6672,13 @@ const handleApi = async (
       const logs = await manager.getLogs(id);
       if (!logs) return Response.json({ error: "Not found" }, { status: 404 });
       return Response.json({ id, logs });
+    }
+
+    // GET /api/sessions/:id/artifacts
+    if (method === "GET" && parts[4] === "artifacts") {
+      // Allow viewing artifacts for both live and archived sessions
+      const artifacts = artifactsStore.listBySession(id);
+      return Response.json({ artifacts });
     }
 
     // Note: SSE endpoint (/events) is handled earlier in the route chain
@@ -6883,7 +7153,15 @@ const server = Bun.serve({
         pathname.startsWith("/nightwatch/");
 
       if (isSpaRoutePath && !assetService.isUiAssetPath(pathname)) {
-        return serveIndex();
+        return compressResponse(request, serveIndex());
+      }
+
+      // Serve UI module assets before API routing so paths like
+      // /api/admin-users.js resolve to src/ui/api/ instead of the
+      // JSON API handler.
+      const earlyUiAsset = assetService.resolveUiAsset(pathname);
+      if (earlyUiAsset) {
+        return compressResponse(request, earlyUiAsset);
       }
 
       if (pathname.startsWith("/api/")) {
@@ -6902,9 +7180,10 @@ const server = Bun.serve({
 
       const aceAsset = assetService.serveAceBuildsAsset(pathname);
       if (aceAsset) {
-        return aceAsset;
+        return compressResponse(request, aceAsset);
       }
 
+      // Vendor modules handle their own gzip caching internally
       const vendorAsset = await assetService.serveVendorModule(pathname);
       if (vendorAsset) {
         return vendorAsset;
@@ -6912,12 +7191,12 @@ const server = Bun.serve({
 
       const assetResponse = assetService.resolveUiAsset(pathname);
       if (assetResponse) {
-        return assetResponse;
+        return compressResponse(request, assetResponse);
       }
 
       const publicAsset = assetService.servePublicAsset(pathname);
       if (publicAsset) {
-        return publicAsset;
+        return compressResponse(request, publicAsset);
       }
 
       return new Response("Not Found", { status: 404 });
