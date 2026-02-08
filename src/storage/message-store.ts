@@ -37,6 +37,8 @@ export interface SessionRecordInput {
   origin?: SessionOrigin | null;
   /** Model used for private chat sessions (agent='chat') */
   model?: string;
+  /** Target file for writer-mode sessions */
+  targetFile?: string;
 }
 
 export interface StoredSessionRecord {
@@ -55,6 +57,8 @@ export interface StoredSessionRecord {
   origin: SessionOrigin | null;
   /** Model used for private chat sessions (agent='chat') */
   model: string | null;
+  /** Target file for writer-mode sessions */
+  targetFile: string | null;
 }
 
 export const databaseFile = new URL("../../data/wingman.db", import.meta.url).pathname;
@@ -133,6 +137,7 @@ export class MessageStore {
       session.runtimeStatus ?? null,
       session.origin ? JSON.stringify(session.origin) : null,
       session.model ?? null,
+      session.targetFile ?? null,
     );
   }
 
@@ -182,7 +187,8 @@ export class MessageStore {
         command,
         runtime_status as runtimeStatus,
         origin,
-        model
+        model,
+        target_file as targetFile
       FROM sessions
       WHERE id = ?1
     `).get(sessionId) as (Omit<StoredSessionRecord, "origin"> & { origin: string | null }) | null;
@@ -226,7 +232,8 @@ export class MessageStore {
         command,
         runtime_status as runtimeStatus,
         origin,
-        model
+        model,
+        target_file as targetFile
       FROM sessions
       WHERE port IS NOT NULL
         AND pid IS NOT NULL
@@ -290,12 +297,13 @@ export class MessageStore {
     ensureColumn("runtime_status", "TEXT");
     ensureColumn("origin", "TEXT");
     ensureColumn("model", "TEXT");
+    ensureColumn("target_file", "TEXT");
   }
 
   private prepareInsertSession() {
     return this.db.prepare(
-      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, pm2_name, logs_dir, working_directory, command, runtime_status, origin, model)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, pm2_name, logs_dir, working_directory, command, runtime_status, origin, model, target_file)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
        ON CONFLICT(id) DO UPDATE SET
          agent = excluded.agent,
          started_at = excluded.started_at,
@@ -309,7 +317,8 @@ export class MessageStore {
          command = excluded.command,
          runtime_status = excluded.runtime_status,
          origin = excluded.origin,
-         model = excluded.model`,
+         model = excluded.model,
+         target_file = excluded.target_file`,
     );
   }
 
@@ -333,7 +342,8 @@ export class MessageStore {
          command,
          runtime_status as runtimeStatus,
          origin,
-         model
+         model,
+         target_file as targetFile
        FROM sessions`,
     );
   }

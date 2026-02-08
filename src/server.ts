@@ -6356,7 +6356,15 @@ const handleApi = async (
       } catch (error) {
         return Response.json({ error: (error as Error).message }, { status: 400 });
       }
-      const session = await manager.createSession(agent, workingDirectory, sessionName ?? undefined, origin);
+      // Parse optional target file for writer-mode sessions
+      const rawTargetFile = typeof payload?.targetFile === "string" ? payload.targetFile.trim() : "";
+      let targetFile: string | undefined;
+      if (rawTargetFile.length > 0) {
+        targetFile = rawTargetFile.startsWith("/")
+          ? rawTargetFile
+          : resolvePath(workingDirectory, rawTargetFile);
+      }
+      const session = await manager.createSession(agent, workingDirectory, sessionName ?? undefined, origin, targetFile);
       messageStore.recordSession({
         id: session.id,
         agent: session.agent,
@@ -6370,6 +6378,7 @@ const handleApi = async (
         runtimeStatus: session.agentRuntimeStatus ?? null,
         origin: session.origin ?? null,
         pm2Name: session.pm2Name,
+        targetFile: session.targetFile,
       });
       await syncSessionMessages(session.id, true);
       return Response.json(serializeSession(session), { status: 201 });

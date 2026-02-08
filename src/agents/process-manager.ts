@@ -52,6 +52,8 @@ export interface SessionSnapshot {
   isAdmin?: boolean;
   /** PM2 process name if spawned via PM2 */
   pm2Name?: string;
+  /** Target file for writer-mode sessions */
+  targetFile?: string;
 }
 
 type SessionEvent =
@@ -74,6 +76,8 @@ export interface RehydrateSessionInput {
   origin?: SessionOrigin | null;
   /** PM2 process name if this was a PM2-managed session */
   pm2Name?: string;
+  /** Target file for writer-mode sessions */
+  targetFile?: string;
 }
 
 interface AgentSession {
@@ -97,6 +101,8 @@ interface AgentSession {
   isAdmin?: boolean;
   /** PM2 process name when spawned via PM2 */
   pm2Name?: string;
+  /** Target file for writer-mode sessions */
+  targetFile?: string;
   /** Files created by MCP config injection to clean up on session stop. */
   mcpCleanupFiles?: string[];
 }
@@ -148,6 +154,7 @@ export class ProcessManager {
     workingDirectory?: string,
     name?: string,
     origin?: SessionOrigin | null,
+    targetFile?: string,
   ): Promise<SessionSnapshot> {
     const definition = this.config.agents[agent];
     if (!definition) {
@@ -187,6 +194,7 @@ export class ProcessManager {
       origin: origin ?? undefined,
       userAlias,
       isAdmin,
+      targetFile: targetFile ?? undefined,
     };
 
     this.sessions.set(id, session);
@@ -280,6 +288,7 @@ export class ProcessManager {
       userAlias,
       isAdmin,
       pm2Name: input.pm2Name,
+      targetFile: input.targetFile,
     };
 
     this.sessions.set(session.id, session);
@@ -616,6 +625,7 @@ export class ProcessManager {
       userAlias: session.userAlias,
       isAdmin: session.isAdmin,
       pm2Name: session.pm2Name,
+      targetFile: session.targetFile,
     };
   }
 
