@@ -1,7 +1,3 @@
-import "/ace-builds/src-noconflict/ace.js";
-import "/ace-builds/src-noconflict/mode-text.js";
-import "/ace-builds/src-noconflict/theme-chrome.js";
-import "/ace-builds/src-noconflict/theme-tomorrow_night.js";
 import "./identity/index.js";
 import { fetchIdentityProfile, fetchAdminUserProfile } from "./identity/profile.js";
 import { createProjectFeature } from "./projects/index.js";
@@ -134,9 +130,20 @@ import { initDirectoryBrowser } from "./modals/directory-browser.js";
 import { abbreviateNpub, formatSatoshis, normaliseNpubValue, isFiniteNumber, initIdentityDom } from "./identity/dom.js";
 import { initIdentityStateManager } from "./identity/state-manager.js";
 
-const ace = globalThis.ace;
-if (!ace) {
-  throw new Error("Ace editor failed to load");
+// Ace editor is lazy-loaded when the file editor is first opened.
+// See loadAceEditor() below and initFileEditor deps.
+let aceInstance = null;
+
+async function loadAceEditor() {
+  if (aceInstance) return aceInstance;
+  await import("/ace-builds/src-noconflict/ace.js");
+  await Promise.all([
+    import("/ace-builds/src-noconflict/mode-text.js"),
+    import("/ace-builds/src-noconflict/theme-chrome.js"),
+    import("/ace-builds/src-noconflict/theme-tomorrow_night.js"),
+  ]);
+  aceInstance = globalThis.ace;
+  return aceInstance;
 }
 
 /** Lazy accessor for the Dexie-backed sessions Alpine store. */
@@ -3837,7 +3844,7 @@ const fileEditorModule = initFileEditor({
   loadFilesTree,
   applyAceTheme,
   appRoot,
-  ace,
+  loadAceEditor,
 });
 canCreateWorktree = fileEditorModule.canCreateWorktree;
 openWorktreeModal = fileEditorModule.openWorktreeModal;

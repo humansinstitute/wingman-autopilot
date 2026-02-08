@@ -18,10 +18,10 @@ import {
  * @param {function}          deps.loadFilesTree  - reloads the file browser tree
  * @param {function}          deps.applyAceTheme  - applies light/dark theme to ace
  * @param {HTMLElement}       deps.appRoot        - root DOM node to append overlays
- * @param {object}            deps.ace            - global Ace editor factory
+ * @param {function}          deps.loadAceEditor  - async function that lazy-loads and returns the ace editor factory
  */
 export function initFileEditor(deps) {
-  const { state, render, loadFilesTree, applyAceTheme, appRoot, ace } = deps;
+  const { state, render, loadFilesTree, applyAceTheme, appRoot, loadAceEditor } = deps;
 
   let aceEditorInstance = null;
 
@@ -196,7 +196,7 @@ export function initFileEditor(deps) {
     }
   };
 
-  const ensureAceEditorMounted = () => {
+  const ensureAceEditorMounted = async () => {
     const editor = state.fileEditor;
     if (!editor.open || editor.loading || editor.error) {
       destroyAceEditor();
@@ -210,6 +210,9 @@ export function initFileEditor(deps) {
     }
 
     if (!aceEditorInstance) {
+      const ace = await loadAceEditor();
+      // Re-check state hasn't changed while loading
+      if (!state.fileEditor.open) return;
       aceEditorInstance = ace.edit(container);
       aceEditorInstance.session.setMode("ace/mode/text");
       aceEditorInstance.session.setUseWrapMode(true);

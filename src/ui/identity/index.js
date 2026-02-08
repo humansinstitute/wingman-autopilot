@@ -11,9 +11,21 @@ const KEYTELEPORT_PARAM = "keyteleport";
 
 import { nip19, nip44 } from "/vendor/nostr-tools/index.js";
 import { schnorr, secp256k1 } from "/vendor/@noble/curves/secp256k1.js";
-import { NostrConnectSigner, RelayPool } from "/vendor/bunker-client.js";
 import { renderQrCode } from "./nostrconnect-qr.js";
 import * as deviceKeystore from "./device-keystore.js";
+
+// bunker-client.js (1.4 MB) is lazy-loaded only when Nostr Connect is needed
+let _bunkerModule = null;
+async function loadBunkerClient() {
+  if (_bunkerModule) return _bunkerModule;
+  _bunkerModule = await import("/vendor/bunker-client.js");
+  ensureSecretlessBunkerSupport();
+  return _bunkerModule;
+}
+function getBunkerModule() {
+  if (!_bunkerModule) throw new Error("bunker-client not loaded yet — call loadBunkerClient() first");
+  return _bunkerModule;
+}
 
 class PasswordPromptCancelledError extends Error {
   constructor() {
@@ -90,10 +102,18 @@ const sessionCache = {
 const BUNKER_SESSION_STORAGE_KEY = "wingman_identity_bunker_session";
 const BUNKER_PERMISSION_KINDS = [22242, 0, 1, 3, 4, 5, 7, 10002];
 const BUNKER_PERMISSION_FEATURES = ["nip04_encrypt", "nip04_decrypt", "nip44_encrypt", "nip44_decrypt"];
-const BUNKER_SIGNING_PERMISSIONS = [
-  ...BUNKER_PERMISSION_FEATURES,
-  ...NostrConnectSigner.buildSigningPermissions(BUNKER_PERMISSION_KINDS),
-];
+// Computed lazily after bunker-client is loaded
+let _bunkerSigningPermissions = null;
+function getBunkerSigningPermissions() {
+  if (!_bunkerSigningPermissions) {
+    const { NostrConnectSigner } = getBunkerModule();
+    _bunkerSigningPermissions = [
+      ...BUNKER_PERMISSION_FEATURES,
+      ...NostrConnectSigner.buildSigningPermissions(BUNKER_PERMISSION_KINDS),
+    ];
+  }
+  return _bunkerSigningPermissions;
+}
 let bunkerPatchedForSecretless = false;
 let bunkerRelayPool = null;
 let bunkerRestorePromise = null;
@@ -132,6 +152,7 @@ const buildNostrConnectMetadata = () => {
 
 const getRelayPool = () => {
   if (!bunkerRelayPool) {
+    const { RelayPool } = getBunkerModule();
     bunkerRelayPool = new RelayPool();
   }
   return bunkerRelayPool;
@@ -142,8 +163,9 @@ const getRelayPool = () => {
 // which can be treated by some providers as an incorrect secret instead of
 // "no secret". Normalize that case to `null` so secretless bunkers are
 // recognized correctly.
-const ensureSecretlessBunkerSupport = () => {
+function ensureSecretlessBunkerSupport() {
   if (bunkerPatchedForSecretless) return;
+  const { NostrConnectSigner } = getBunkerModule();
   const originalMakeRequest = NostrConnectSigner.prototype.makeRequest;
   if (typeof originalMakeRequest !== "function") return;
   NostrConnectSigner.prototype.makeRequest = function patchedMakeRequest(method, params, kind) {
@@ -157,9 +179,7 @@ const ensureSecretlessBunkerSupport = () => {
     return originalMakeRequest.call(this, method, params, kind);
   };
   bunkerPatchedForSecretless = true;
-};
-
-ensureSecretlessBunkerSupport();
+}
 
 const loadBunkerSession = () => {
   if (typeof window === "undefined" || !window.localStorage) return null;
@@ -246,14 +266,16 @@ const attemptBunkerRestore = async ({ context, setStatus, form, enableInputs, ro
   form?.classList.add("is-loading");
   enableInputs(false);
   try {
+    await loadBunkerClient();
     await disconnectBunkerSigner();
+    const { NostrConnectSigner } = getBunkerModule();
     const signer = new NostrConnectSigner({
       relays: stored.relays,
       remote: stored.remote,
       pubkey: stored.pubkey ?? undefined,
       pool: getRelayPool(),
     });
-    await signer.connect(undefined, BUNKER_SIGNING_PERMISSIONS);
+    await signer.connect(undefined, getBunkerSigningPermissions());
     activeBunkerSigner = signer;
     identityApi.bunkerSigner = signer;
     const pubkeyHex = await signer.getPublicKey();
@@ -439,12 +461,14 @@ const createNostrConnectController = ({ root, context, onConnected }) => {
       return null;
     }
     try {
+      await loadBunkerClient();
+      const { NostrConnectSigner } = getBunkerModule();
       const metadata = buildNostrConnectMetadata();
       const signer = new NostrConnectSigner({
         relays,
         pool: getRelayPool(),
       });
-      const url = signer.getNostrConnectURI({ ...metadata, permissions: BUNKER_SIGNING_PERMISSIONS });
+      const url = signer.getNostrConnectURI({ ...metadata, permissions: getBunkerSigningPermissions() });
       currentOffer = {
         signer,
         url,
@@ -1100,13 +1124,15 @@ const initBunkerPanel = (root, context) => {
     form?.classList.add("is-loading");
     enableInputs(false);
     try {
+      await loadBunkerClient();
+      const { NostrConnectSigner } = getBunkerModule();
       console.log("[identity] connecting with normalized URI:", normalized.replace(/secret=([^&#]*)/i, 'secret=[REDACTED]'));
       parsed = NostrConnectSigner.parseBunkerURI(normalized);
       console.log("[identity] parsed bunker URI:", { remote: parsed.remote, relays: parsed.relays, hasSecret: !!parsed.secret });
       await disconnectBunkerSigner();
       const signer = await NostrConnectSigner.fromBunkerURI(normalized, {
         pool: getRelayPool(),
-        permissions: BUNKER_SIGNING_PERMISSIONS,
+        permissions: getBunkerSigningPermissions(),
       });
       activeBunkerSigner = signer;
       identityApi.bunkerSigner = signer;
