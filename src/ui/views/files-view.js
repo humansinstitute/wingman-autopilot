@@ -6,7 +6,11 @@
 
 import { createIconSvg, setIconButton, FILE_BROWSER_ICON_DEFS } from "../core/icons.js";
 import { copyTextToClipboard } from "../utils/clipboard.js";
-import { FILES_SHOW_HIDDEN_STORAGE_KEY } from "../state/index.js";
+import {
+  FILES_SHOW_HIDDEN_STORAGE_KEY,
+  FILES_BROWSER_SHELVED_STORAGE_KEY,
+  FILES_FAVORITES_STORAGE_KEY,
+} from "../state/index.js";
 import { createWriterPanel } from "../writer/writer-panel.js";
 
 /**
@@ -324,6 +328,9 @@ export function initFilesView(deps) {
 
     const layout = document.createElement("div");
     layout.className = "wm-files-layout";
+    if (files.browserShelved) {
+      layout.dataset.shelved = "true";
+    }
 
     const browserCard = document.createElement("section");
     browserCard.className = "wm-card wm-files-browser";
@@ -487,6 +494,18 @@ export function initFilesView(deps) {
     });
     gitWrapper.append(gitSelect, gitRunButton);
 
+    const shelveButton = document.createElement("button");
+    shelveButton.type = "button";
+    shelveButton.className = "wm-button secondary wm-button-icon";
+    setIconButton(shelveButton, "sidebarClose", "Hide file browser");
+    shelveButton.addEventListener("click", () => {
+      files.browserShelved = true;
+      try {
+        localStorage.setItem(FILES_BROWSER_SHELVED_STORAGE_KEY, "true");
+      } catch { /* ignore */ }
+      if (getCurrentRoute() === "files") render();
+    });
+
     controls.append(
       upButton,
       refreshButton,
@@ -494,6 +513,7 @@ export function initFilesView(deps) {
       newFolderButton,
       newFileButton,
       uploadButton,
+      shelveButton,
       gitWrapper,
     );
 
@@ -878,6 +898,23 @@ export function initFilesView(deps) {
     }
 
     previewCard.append(previewHeader, previewBody);
+
+    // Shelve/unshelve: hide browser card and show floating unshelve button
+    if (files.browserShelved) {
+      browserCard.style.display = "none";
+      const unshelveButton = document.createElement("button");
+      unshelveButton.type = "button";
+      unshelveButton.className = "wm-button secondary wm-button-icon wm-files-unshelve";
+      setIconButton(unshelveButton, "sidebarOpen", "Show file browser");
+      unshelveButton.addEventListener("click", () => {
+        files.browserShelved = false;
+        try {
+          localStorage.setItem(FILES_BROWSER_SHELVED_STORAGE_KEY, "false");
+        } catch { /* ignore */ }
+        if (getCurrentRoute() === "files") render();
+      });
+      previewCard.prepend(unshelveButton);
+    }
 
     layout.append(browserCard, previewCard);
     wrapper.append(layout);

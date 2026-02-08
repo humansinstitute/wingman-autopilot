@@ -9,6 +9,8 @@ import { createFeatureFlagsState } from "../feature-flags/index.js";
 export const THEME_STORAGE_KEY = "wingman-theme";
 export const TABS_VISIBILITY_STORAGE_KEY = "wingman-tabs-visible";
 export const FILES_SHOW_HIDDEN_STORAGE_KEY = "wingman-files-show-hidden";
+export const FILES_BROWSER_SHELVED_STORAGE_KEY = "wingman-files-browser-shelved";
+export const FILES_FAVORITES_STORAGE_KEY = "wingman-files-favorites";
 
 // Constants
 export const APP_LOG_PREVIEW_LINES = 5;
@@ -166,6 +168,8 @@ export const state = {
     previewLabel: null,
     showHidden: false,
     browserCollapsed: false,
+    browserShelved: false,
+    favourites: [],
     uploading: false,
     gitCommandPending: false,
     worktreeModal: {
@@ -237,19 +241,41 @@ export const state = {
 };
 
 /**
- * Initializes files.showHidden from localStorage.
+ * Initializes files preferences from localStorage (showHidden, browserShelved, favourites).
  * Call this once during app bootstrap.
  */
-export function initFilesShowHidden() {
+export function initFilesPreferences() {
   try {
     const storedShowHidden = localStorage.getItem(FILES_SHOW_HIDDEN_STORAGE_KEY);
     if (storedShowHidden === "true" || storedShowHidden === "false") {
       state.files.showHidden = storedShowHidden === "true";
     }
   } catch {
-    // Ignore storage errors (e.g., during private browsing)
+    // Ignore storage errors
+  }
+  try {
+    const storedShelved = localStorage.getItem(FILES_BROWSER_SHELVED_STORAGE_KEY);
+    if (storedShelved === "true" || storedShelved === "false") {
+      state.files.browserShelved = storedShelved === "true";
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  try {
+    const raw = localStorage.getItem(FILES_FAVORITES_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        state.files.favourites = parsed;
+      }
+    }
+  } catch {
+    // Ignore storage errors
   }
 }
+
+/** @deprecated Use initFilesPreferences instead */
+export const initFilesShowHidden = initFilesPreferences;
 
 /**
  * Resolves the web app base URL from config or uses default.

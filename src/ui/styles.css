@@ -5706,6 +5706,21 @@ dialog button[value="cancel"] {
   min-height: 0;
 }
 
+.wm-files-layout[data-shelved="true"] {
+  grid-template-columns: 1fr;
+}
+
+.wm-files-unshelve {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 2;
+}
+
+.wm-files-preview {
+  position: relative;
+}
+
 @media (max-width: 980px) {
   .wm-files-layout {
     grid-template-columns: 1fr;
