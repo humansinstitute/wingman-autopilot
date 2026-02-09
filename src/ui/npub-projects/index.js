@@ -3,7 +3,7 @@
  * Renders the list of auto-tracked projects for the current user
  */
 
-/** @typedef {{ id: string, npub: string, directoryPath: string, name: string, isCustomName: boolean, worktreeName: string | null, appId: string | null, lastUsedAt: string, sessionCount: number }} NpubProject */
+/** @typedef {{ id: string, npub: string, directoryPath: string, name: string, isCustomName: boolean, worktreeName: string | null, appId: string | null, taskBoardUrl: string | null, lastUsedAt: string, sessionCount: number }} NpubProject */
 
 /** @type {{ items: NpubProject[], loading: boolean, error: string | null }} */
 const npubProjectsState = {
@@ -62,6 +62,29 @@ const resetProjectName = async (projectId) => {
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ resetName: true }),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    const index = npubProjectsState.items.findIndex((p) => p.id === projectId);
+    if (index !== -1 && data.project) {
+      npubProjectsState.items[index] = data.project;
+    }
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+};
+
+const updateProjectTaskBoardUrl = async (projectId, taskBoardUrl) => {
+  try {
+    const response = await fetch(`/api/npub-projects/${encodeURIComponent(projectId)}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ taskBoardUrl: taskBoardUrl || null }),
     });
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
@@ -180,7 +203,103 @@ const renderProjectRow = (project, onUpdate) => {
   meta.className = "wm-npub-project-meta";
   meta.textContent = `${project.sessionCount} session${project.sessionCount !== 1 ? "s" : ""} · ${formatRelativeTime(project.lastUsedAt)}`;
 
-  info.append(nameContainer, pathSpan, meta);
+  // Task board URL row
+  const boardRow = document.createElement("div");
+  boardRow.className = "wm-npub-project-board-row";
+
+  if (project.taskBoardUrl) {
+    const boardLink = document.createElement("a");
+    boardLink.className = "wm-npub-project-board-link";
+    boardLink.href = project.taskBoardUrl;
+    boardLink.target = "_blank";
+    boardLink.rel = "noopener noreferrer";
+    // Show a short label: hostname + path
+    try {
+      const u = new URL(project.taskBoardUrl);
+      boardLink.textContent = u.host + u.pathname + u.search;
+    } catch {
+      boardLink.textContent = project.taskBoardUrl;
+    }
+    boardLink.title = project.taskBoardUrl;
+    boardRow.append(boardLink);
+  }
+
+  const boardEditBtn = document.createElement("button");
+  boardEditBtn.type = "button";
+  boardEditBtn.className = "wm-npub-project-board-edit";
+  boardEditBtn.textContent = project.taskBoardUrl ? "Edit" : "Add Board";
+  boardEditBtn.title = "Set task board URL";
+  boardRow.append(boardEditBtn);
+
+  const boardInput = document.createElement("input");
+  boardInput.type = "url";
+  boardInput.className = "wm-npub-project-board-input";
+  boardInput.placeholder = "https://mg.otherstuff.ai/t/project/todo/kanban";
+  boardInput.value = project.taskBoardUrl || "";
+  boardInput.style.display = "none";
+
+  const boardSaveBtn = document.createElement("button");
+  boardSaveBtn.type = "button";
+  boardSaveBtn.className = "wm-button small primary";
+  boardSaveBtn.textContent = "Save";
+  boardSaveBtn.style.display = "none";
+
+  const boardCancelBtn = document.createElement("button");
+  boardCancelBtn.type = "button";
+  boardCancelBtn.className = "wm-button small secondary";
+  boardCancelBtn.textContent = "Cancel";
+  boardCancelBtn.style.display = "none";
+
+  const boardClearBtn = document.createElement("button");
+  boardClearBtn.type = "button";
+  boardClearBtn.className = "wm-button small danger";
+  boardClearBtn.textContent = "Clear";
+  boardClearBtn.style.display = "none";
+
+  boardRow.append(boardInput, boardSaveBtn, boardCancelBtn);
+  if (project.taskBoardUrl) boardRow.append(boardClearBtn);
+
+  boardEditBtn.addEventListener("click", () => {
+    boardEditBtn.style.display = "none";
+    boardInput.style.display = "inline-block";
+    boardSaveBtn.style.display = "inline-block";
+    boardCancelBtn.style.display = "inline-block";
+    if (project.taskBoardUrl) boardClearBtn.style.display = "inline-block";
+    boardInput.focus();
+  });
+
+  boardCancelBtn.addEventListener("click", () => {
+    boardInput.value = project.taskBoardUrl || "";
+    boardInput.style.display = "none";
+    boardSaveBtn.style.display = "none";
+    boardCancelBtn.style.display = "none";
+    boardClearBtn.style.display = "none";
+    boardEditBtn.style.display = "inline-block";
+  });
+
+  const saveBoardUrl = async (url) => {
+    boardSaveBtn.disabled = true;
+    boardSaveBtn.textContent = "Saving...";
+    const result = await updateProjectTaskBoardUrl(project.id, url);
+    if (result.success) {
+      onUpdate();
+    } else {
+      alert(result.error || "Failed to update task board URL");
+      boardSaveBtn.disabled = false;
+      boardSaveBtn.textContent = "Save";
+    }
+  };
+
+  boardSaveBtn.addEventListener("click", () => saveBoardUrl(boardInput.value.trim()));
+
+  boardClearBtn.addEventListener("click", () => saveBoardUrl(""));
+
+  boardInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") boardSaveBtn.click();
+    else if (e.key === "Escape") boardCancelBtn.click();
+  });
+
+  info.append(nameContainer, pathSpan, meta, boardRow);
 
   const actions = document.createElement("div");
   actions.className = "wm-npub-project-actions";

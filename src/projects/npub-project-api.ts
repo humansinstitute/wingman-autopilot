@@ -16,6 +16,7 @@ const serializeProject = (project: NpubProjectRecord) => ({
   isCustomName: project.isCustomName,
   worktreeName: project.worktreeName,
   appId: project.appId,
+  taskBoardUrl: project.taskBoardUrl,
   lastUsedAt: project.lastUsedAt,
   sessionCount: project.sessionCount,
   createdAt: project.createdAt,
@@ -172,6 +173,16 @@ export const createNpubProjectApiHandler = () => {
         const updated = npubProjectStore.resetName(projectId);
         if (!updated) {
           return Response.json({ error: "Failed to reset project name" }, { status: 500 });
+        }
+        return Response.json({ project: serializeProject(updated) });
+      }
+
+      // Handle task board URL update
+      if ("taskBoardUrl" in body) {
+        const url = typeof body.taskBoardUrl === "string" ? body.taskBoardUrl.trim() : null;
+        const updated = npubProjectStore.updateTaskBoardUrl(projectId, url || null);
+        if (!updated) {
+          return Response.json({ error: "Failed to update task board URL" }, { status: 500 });
         }
         return Response.json({ project: serializeProject(updated) });
       }

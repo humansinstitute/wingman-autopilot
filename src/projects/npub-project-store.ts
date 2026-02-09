@@ -14,6 +14,7 @@ export interface NpubProjectRecord {
   isCustomName: boolean;
   worktreeName: string | null;
   appId: string | null;
+  taskBoardUrl: string | null;
   lastUsedAt: string;
   sessionCount: number;
   createdAt: string;
@@ -28,6 +29,7 @@ type NpubProjectRow = {
   isCustomName: number;
   worktreeName: string | null;
   appId: string | null;
+  taskBoardUrl: string | null;
   lastUsedAt: string;
   sessionCount: number;
   createdAt: string;
@@ -72,12 +74,17 @@ class NpubProjectStore {
       CREATE INDEX IF NOT EXISTS idx_npub_projects_last_used ON npub_projects(last_used_at DESC);
     `);
 
-    // Migration: add app_id column if it doesn't exist
+    // Migrations: add columns if they don't exist
     const columns = this.db.query("PRAGMA table_info(npub_projects)").all() as { name: string }[];
-    const hasAppId = columns.some((col) => col.name === "app_id");
-    if (!hasAppId) {
+    const colNames = new Set(columns.map((c) => c.name));
+
+    if (!colNames.has("app_id")) {
       this.db.exec("ALTER TABLE npub_projects ADD COLUMN app_id TEXT");
       this.db.exec("CREATE INDEX IF NOT EXISTS idx_npub_projects_app_id ON npub_projects(app_id)");
+    }
+
+    if (!colNames.has("task_board_url")) {
+      this.db.exec("ALTER TABLE npub_projects ADD COLUMN task_board_url TEXT");
     }
   }
 
@@ -129,7 +136,8 @@ class NpubProjectStore {
       SELECT
         id, npub, directory_path as directoryPath, name,
         is_custom_name as isCustomName, worktree_name as worktreeName,
-        app_id as appId, last_used_at as lastUsedAt, session_count as sessionCount,
+        app_id as appId, task_board_url as taskBoardUrl,
+        last_used_at as lastUsedAt, session_count as sessionCount,
         created_at as createdAt, updated_at as updatedAt
       FROM npub_projects
       WHERE npub = ?1
@@ -144,7 +152,8 @@ class NpubProjectStore {
       SELECT
         id, npub, directory_path as directoryPath, name,
         is_custom_name as isCustomName, worktree_name as worktreeName,
-        app_id as appId, last_used_at as lastUsedAt, session_count as sessionCount,
+        app_id as appId, task_board_url as taskBoardUrl,
+        last_used_at as lastUsedAt, session_count as sessionCount,
         created_at as createdAt, updated_at as updatedAt
       FROM npub_projects
       WHERE id = ?1
@@ -164,7 +173,8 @@ class NpubProjectStore {
       SELECT
         id, npub, directory_path as directoryPath, name,
         is_custom_name as isCustomName, worktree_name as worktreeName,
-        app_id as appId, last_used_at as lastUsedAt, session_count as sessionCount,
+        app_id as appId, task_board_url as taskBoardUrl,
+        last_used_at as lastUsedAt, session_count as sessionCount,
         created_at as createdAt, updated_at as updatedAt
       FROM npub_projects
       WHERE npub = ?1 AND directory_path = ?2
@@ -328,13 +338,35 @@ class NpubProjectStore {
       SELECT
         id, npub, directory_path as directoryPath, name,
         is_custom_name as isCustomName, worktree_name as worktreeName,
-        app_id as appId, last_used_at as lastUsedAt, session_count as sessionCount,
+        app_id as appId, task_board_url as taskBoardUrl,
+        last_used_at as lastUsedAt, session_count as sessionCount,
         created_at as createdAt, updated_at as updatedAt
       FROM npub_projects
       WHERE npub = ?1 AND app_id = ?2
     `);
     const row = statement.get(normalized, appId);
     return row ? this.hydrate(row) : null;
+  }
+
+  /**
+   * Update the task board URL for a project.
+   * Pass null to clear.
+   */
+  updateTaskBoardUrl(id: string, url: string | null): NpubProjectRecord | null {
+    const existing = this.getById(id);
+    if (!existing) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    const update = this.db.prepare(`
+      UPDATE npub_projects
+      SET task_board_url = ?2,
+          updated_at = ?3
+      WHERE id = ?1
+    `);
+    update.run(id, url, now);
+    return this.getById(id);
   }
 
   private hydrate(row: NpubProjectRow): NpubProjectRecord {
@@ -346,6 +378,7 @@ class NpubProjectStore {
       isCustomName: row.isCustomName === 1,
       worktreeName: row.worktreeName,
       appId: row.appId,
+      taskBoardUrl: row.taskBoardUrl,
       lastUsedAt: row.lastUsedAt,
       sessionCount: row.sessionCount,
       createdAt: row.createdAt,
