@@ -1,32 +1,35 @@
 /**
- * Mobile tab bar and swipe gesture support for the writer split view.
- * On screens <= 768px, shows a tab bar to switch between Chat and Writer
- * panels, plus swipe left/right gesture support.
+ * Mobile tab bar and swipe gesture support for split views.
+ * On screens <= 768px, shows a tab bar to switch between Chat and
+ * a secondary panel (Writer / App / Artifacts), plus swipe left/right gesture support.
  */
 
 const SWIPE_THRESHOLD = 50; // min px for a swipe
 
 /**
  * Create the mobile tab bar element.
- * @param {string} activeTab - 'chat' or 'writer'
+ * @param {string} activeTab - 'chat' or the secondary tab key
  * @param {(tab: string) => void} onSwitch
+ * @param {{ key: string, label: string }[]} [tabs] - tab definitions (default: Chat/Writer)
  * @returns {HTMLElement}
  */
-export function createMobileTabBar(activeTab, onSwitch) {
+export function createMobileTabBar(activeTab, onSwitch, tabs) {
+  const defs = tabs || [
+    { key: "chat", label: "Chat" },
+    { key: "writer", label: "Writer" },
+  ];
+
   const bar = document.createElement("div");
   bar.className = "wm-writer-mobile-tabs";
 
-  const chatBtn = document.createElement("button");
-  chatBtn.className = `wm-writer-mobile-tab${activeTab === "chat" ? " active" : ""}`;
-  chatBtn.textContent = "Chat";
-  chatBtn.addEventListener("click", () => onSwitch("chat"));
+  for (const def of defs) {
+    const btn = document.createElement("button");
+    btn.className = `wm-writer-mobile-tab${activeTab === def.key ? " active" : ""}`;
+    btn.textContent = def.label;
+    btn.addEventListener("click", () => onSwitch(def.key));
+    bar.append(btn);
+  }
 
-  const writerBtn = document.createElement("button");
-  writerBtn.className = `wm-writer-mobile-tab${activeTab === "writer" ? " active" : ""}`;
-  writerBtn.textContent = "Writer";
-  writerBtn.addEventListener("click", () => onSwitch("writer"));
-
-  bar.append(chatBtn, writerBtn);
   return bar;
 }
 

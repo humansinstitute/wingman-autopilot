@@ -1195,8 +1195,19 @@ export function initLiveView(deps) {
     } else if (state.artifactsLayout.open) {
       appRoot.dataset.webviewOpen = "true";
 
+      const artMobileTab = state.artifactsLayout.mobileTab || "chat";
       const split = document.createElement("div");
-      split.className = `wm-live-split wm-live-split--${state.artifactsLayout.mode}`;
+      split.className = `wm-live-split wm-live-split--${state.artifactsLayout.mode} wm-live-split--mobile-${artMobileTab}`;
+
+      // Mobile tab bar (hidden on desktop via CSS)
+      const artMobileTabBar = createMobileTabBar(artMobileTab, (tab) => {
+        state.artifactsLayout.mobileTab = tab;
+        render();
+      }, [
+        { key: "chat", label: "Chat" },
+        { key: "app", label: "App" },
+      ]);
+      split.prepend(artMobileTabBar);
 
       const chatCol = document.createElement("div");
       chatCol.className = "wm-live-chat-col";
@@ -1230,11 +1241,38 @@ export function initLiveView(deps) {
       wrapper.append(split);
 
       chatCol.append(renderComposer(sessionId));
+
+      // Swipe gestures for mobile
+      attachSwipeGesture(split, {
+        onSwipeLeft: () => {
+          if (state.artifactsLayout.mobileTab !== "app") {
+            state.artifactsLayout.mobileTab = "app";
+            render();
+          }
+        },
+        onSwipeRight: () => {
+          if (state.artifactsLayout.mobileTab !== "chat") {
+            state.artifactsLayout.mobileTab = "chat";
+            render();
+          }
+        },
+      });
     } else if (webApp && state.webviewLayout.open) {
       appRoot.dataset.webviewOpen = "true";
 
+      const webMobileTab = state.webviewLayout.mobileTab || "chat";
       const split = document.createElement("div");
-      split.className = `wm-live-split wm-live-split--${state.webviewLayout.mode}`;
+      split.className = `wm-live-split wm-live-split--${state.webviewLayout.mode} wm-live-split--mobile-${webMobileTab}`;
+
+      // Mobile tab bar (hidden on desktop via CSS)
+      const webMobileTabBar = createMobileTabBar(webMobileTab, (tab) => {
+        state.webviewLayout.mobileTab = tab;
+        render();
+      }, [
+        { key: "chat", label: "Chat" },
+        { key: "app", label: "App" },
+      ]);
+      split.prepend(webMobileTabBar);
 
       const chatCol = document.createElement("div");
       chatCol.className = "wm-live-chat-col";
@@ -1267,6 +1305,22 @@ export function initLiveView(deps) {
       wrapper.append(split);
 
       chatCol.append(renderComposer(sessionId));
+
+      // Swipe gestures for mobile
+      attachSwipeGesture(split, {
+        onSwipeLeft: () => {
+          if (state.webviewLayout.mobileTab !== "app") {
+            state.webviewLayout.mobileTab = "app";
+            render();
+          }
+        },
+        onSwipeRight: () => {
+          if (state.webviewLayout.mobileTab !== "chat") {
+            state.webviewLayout.mobileTab = "chat";
+            render();
+          }
+        },
+      });
     } else {
       delete appRoot.dataset.webviewOpen;
       main.append(scrollRegion);

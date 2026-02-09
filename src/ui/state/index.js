@@ -113,11 +113,11 @@ export const state = {
     config: { model: "google/gemini-3-flash-preview", maxCycles: 21, models: [], maxCycleOptions: [6, 21, 256], prompt: "", defaultPrompt: "" },
   },
   // Webview split-panel layout state
-  webviewLayout: { open: false, mode: "chat-narrow" },
+  webviewLayout: { open: false, mode: "chat-narrow", mobileTab: "chat" },
   // Writer split-panel layout state
   writerLayout: { open: false, mode: "chat-narrow", mobileTab: "chat" },
   // Artifacts split-panel layout state
-  artifactsLayout: { open: false, mode: "chat-narrow" },
+  artifactsLayout: { open: false, mode: "chat-narrow", mobileTab: "chat" },
   // Cached artifact counts per session
   artifactCounts: new Map(),
   // DOM references for incremental updates

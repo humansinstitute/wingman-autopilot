@@ -7908,7 +7908,7 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
     height: 50vh;
   }
 
-  /* Writer mobile: show only the active tab panel */
+  /* Mobile split: show only the active tab panel */
   .wm-live-split--mobile-chat > .wm-live-chat-col {
     flex: 1;
     min-height: 0;
@@ -7919,11 +7919,13 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
     display: none;
   }
 
-  .wm-live-split--mobile-writer > .wm-live-chat-col {
+  .wm-live-split--mobile-writer > .wm-live-chat-col,
+  .wm-live-split--mobile-app > .wm-live-chat-col {
     display: none;
   }
 
-  .wm-live-split--mobile-writer > .wm-webview-col {
+  .wm-live-split--mobile-writer > .wm-webview-col,
+  .wm-live-split--mobile-app > .wm-webview-col {
     flex: 1;
     min-height: 0;
     height: auto;
