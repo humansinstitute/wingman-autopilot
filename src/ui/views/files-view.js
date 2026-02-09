@@ -534,13 +534,13 @@ export function initFilesView(deps) {
     });
 
     controls.append(
+      shelveButton,
       upButton,
       refreshButton,
       toggleHiddenButton,
       newFolderButton,
       newFileButton,
       uploadButton,
-      shelveButton,
       gitWrapper,
     );
 
