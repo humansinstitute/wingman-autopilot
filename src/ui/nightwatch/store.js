@@ -132,12 +132,14 @@ export function initNightWatchStore({ showToast }) {
     async updateConfig(patch) {
       try {
         const data = await updateNightWatchConfig(patch);
+        // Unwrap Alpine proxy to plain object for IndexedDB storage
+        const current = JSON.parse(JSON.stringify(this.config || {}));
         const updated = {
-          ...this.config,
-          model: data.model ?? this.config?.model,
-          maxCycles: data.maxCycles ?? this.config?.maxCycles,
-          prompt: data.prompt ?? this.config?.prompt,
-          defaultPrompt: data.defaultPrompt ?? this.config?.defaultPrompt,
+          ...current,
+          model: data.model ?? current.model,
+          maxCycles: data.maxCycles ?? current.maxCycles,
+          prompt: data.prompt ?? current.prompt,
+          defaultPrompt: data.defaultPrompt ?? current.defaultPrompt,
         };
         this.config = updated;
         await ConfigStore.put(updated);
