@@ -60,6 +60,7 @@ export function initHomeView(deps) {
     ensureOrchestratorPresetsLoaded,
     orchestratorFeatureEnabledForViewer,
     ensureFeatureFlagsLoaded,
+    isFeatureEnabledForViewer,
     // Session helpers
     isSessionActive,
     resumeSession,
@@ -485,12 +486,14 @@ export function initHomeView(deps) {
     launchBtn.addEventListener("click", openDialog);
     actions.append(launchBtn);
 
-    const privateChatBtn = document.createElement("button");
-    privateChatBtn.className = "wm-button secondary";
-    privateChatBtn.textContent = "Private Chats";
-    privateChatBtn.title = "View private AI chats";
-    privateChatBtn.addEventListener("click", () => navigateToChat(null));
-    actions.append(privateChatBtn);
+    if (isFeatureEnabledForViewer("private_chats_enabled")) {
+      const privateChatBtn = document.createElement("button");
+      privateChatBtn.className = "wm-button secondary";
+      privateChatBtn.textContent = "Private Chats";
+      privateChatBtn.title = "View private AI chats";
+      privateChatBtn.addEventListener("click", () => navigateToChat(null));
+      actions.append(privateChatBtn);
+    }
 
     const refreshBtn = document.createElement("button");
     refreshBtn.className = "wm-button secondary";

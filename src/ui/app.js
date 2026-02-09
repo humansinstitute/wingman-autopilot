@@ -3709,6 +3709,7 @@ const homeViewModule = initHomeView({
   ensureOrchestratorPresetsLoaded: (...args) => ensureOrchestratorPresetsLoaded(...args),
   orchestratorFeatureEnabledForViewer: (...args) => orchestratorFeatureEnabledForViewer(...args),
   ensureFeatureFlagsLoaded: (...args) => ensureFeatureFlagsLoaded(...args),
+  isFeatureEnabledForViewer: (...args) => isFeatureEnabledForViewer(...args),
   isSessionActive,
   resumeSession,
   stopSession,

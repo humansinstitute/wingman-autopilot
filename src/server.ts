@@ -266,6 +266,12 @@ const FEATURE_FLAG_DEFAULTS: Array<{
     description: "Receives task assignments from MG via Nostr and auto-creates agent sessions.",
     state: "on",
   },
+  {
+    key: "private_chats_enabled",
+    label: "Private Chats",
+    description: "Controls whether the Private Chats button is visible on the home screen.",
+    state: "on",
+  },
 ];
 
 featureFlagStore.ensureDefaults(FEATURE_FLAG_DEFAULTS);
