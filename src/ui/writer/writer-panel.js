@@ -11,6 +11,12 @@
 import { parseMarkdownBlocks, assembleBlocks } from "./block-parser.js";
 import { renderMarkdownToHtml, renderCodeToHtml } from "../rendering/markdown.js";
 import { escapeHtml } from "../core/icons.js";
+import {
+  decodeBase64ToUint8Array,
+  decodeBytesToText,
+  encodeTextToBytes,
+  encodeUint8ArrayToBase64,
+} from "../core/encoding.js";
 
 /**
  * Markdown extensions that should use block-based editing.
@@ -148,7 +154,9 @@ export function createWriterPanel(sessionId, targetFile, deps) {
         return null;
       }
       const data = await resp.json();
-      const content = data.base64 ? atob(data.base64) : "";
+      const content = data.base64
+        ? decodeBytesToText(decodeBase64ToUint8Array(data.base64))
+        : "";
       lastMtimeMs = data.mtimeMs ?? null;
       return content;
     } catch (err) {
@@ -164,7 +172,7 @@ export function createWriterPanel(sessionId, targetFile, deps) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           path: targetFile,
-          base64: btoa(content),
+          base64: encodeUint8ArrayToBase64(encodeTextToBytes(content)),
           expectedMtimeMs: lastMtimeMs,
         }),
       });
@@ -435,7 +443,9 @@ export function createWriterPanel(sessionId, targetFile, deps) {
       const data = await resp.json();
       const mtime = data.mtimeMs ?? null;
       if (mtime !== null && lastMtimeMs !== null && mtime !== lastMtimeMs) {
-        const content = data.base64 ? atob(data.base64) : "";
+        const content = data.base64
+          ? decodeBytesToText(decodeBase64ToUint8Array(data.base64))
+          : "";
         lastMtimeMs = mtime;
         rawContent = content;
         blocks = mdMode ? parseMarkdownBlocks(content) : [];
