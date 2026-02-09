@@ -89,6 +89,21 @@ import {
   getProjectDescription,
   handleGetProject,
 } from "./tools/get-project";
+import {
+  saveMemorySchema,
+  saveMemoryDescription,
+  handleSaveMemory,
+} from "./tools/save-memory";
+import {
+  searchMemorySchema,
+  searchMemoryDescription,
+  handleSearchMemory,
+} from "./tools/search-memory";
+import {
+  deleteMemorySchema,
+  deleteMemoryDescription,
+  handleDeleteMemory,
+} from "./tools/delete-memory";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -225,6 +240,30 @@ server.tool(
   getProjectDescription,
   getProjectSchema,
   (_params) => handleGetProject({} as Record<string, never>, wingmanUrl, sessionId),
+);
+
+// ---- save_memory ----
+server.tool(
+  "save_memory",
+  saveMemoryDescription,
+  saveMemorySchema,
+  (params) => handleSaveMemory(params, wingmanUrl, sessionId),
+);
+
+// ---- search_memory ----
+server.tool(
+  "search_memory",
+  searchMemoryDescription,
+  searchMemorySchema,
+  (params) => handleSearchMemory(params, wingmanUrl, sessionId),
+);
+
+// ---- delete_memory ----
+server.tool(
+  "delete_memory",
+  deleteMemoryDescription,
+  deleteMemorySchema,
+  (params) => handleDeleteMemory(params, wingmanUrl, sessionId),
 );
 
 // ---------------------------------------------------------------------------

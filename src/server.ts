@@ -77,6 +77,7 @@ import { createBrowserLogHandler } from "./logging/browser-log-handler";
 import { Nip98GrantStore } from "./mcp/grants-store";
 import { createNip98ApiHandler } from "./mcp/nip98-api";
 import { createWingmanMcpApiHandler } from "./mcp/wingman-api";
+import { MemoryStore } from "./mcp/memory-store";
 import { userSettingsStore } from "./storage/user-settings-store";
 import { artifactsStore } from "./storage/artifacts-store";
 import {
@@ -302,6 +303,7 @@ const nightWatchApiHandler = createNightWatchApiHandler({
   featureFlagStore,
 });
 const nip98GrantsStore = new Nip98GrantStore();
+const memoryStore = new MemoryStore();
 const nip98ApiHandler = createNip98ApiHandler({
   grantsStore: nip98GrantsStore,
   getSession: (sid: string) => manager.getSession(sid) ?? null,
@@ -852,6 +854,8 @@ const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   artifactsStore,
   openRouterApiKey: Bun.env.OPENROUTER_API?.trim() || null,
   findProjectByDirectory: (dir) => npubProjectStore.findByDirectory(dir),
+  memoryStore,
+  getWingmanNpub: () => getKeyTeleportIdentity()?.npub ?? null,
 });
 
 // Reconcile PM2 processes with app registry

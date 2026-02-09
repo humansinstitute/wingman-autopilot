@@ -22,6 +22,7 @@ import { generateAndSaveImages } from "./services/image-generator";
 import type { UserSettingsStore } from "../storage/user-settings-store";
 import type { ArtifactsStore, CreateArtifactInput } from "../storage/artifacts-store";
 import type { NpubProjectRecord } from "../projects/npub-project-store";
+import type { MemoryStore } from "./memory-store";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -48,6 +49,8 @@ export interface WingmanMcpApiDependencies {
   artifactsStore: ArtifactsStore;
   openRouterApiKey: string | null;
   findProjectByDirectory: (directoryPath: string) => NpubProjectRecord | null;
+  memoryStore: MemoryStore;
+  getWingmanNpub: () => string | null;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -171,6 +174,21 @@ export function createWingmanMcpApiHandler(deps: WingmanMcpApiDependencies) {
       // GET /api/mcp/wingman/project?sessionId=...
       if (segments.length === 4 && segments[3] === "project" && method === "GET") {
         return handleGetProject(deps, url);
+      }
+
+      // GET /api/mcp/wingman/memory?sessionId=...&query=...&tags=...
+      if (segments.length === 4 && segments[3] === "memory" && method === "GET") {
+        return handleSearchMemory(deps, url);
+      }
+
+      // POST /api/mcp/wingman/memory
+      if (segments.length === 4 && segments[3] === "memory" && method === "POST") {
+        return await handleSaveMemory(deps, request);
+      }
+
+      // DELETE /api/mcp/wingman/memory?sessionId=...&id=...
+      if (segments.length === 4 && segments[3] === "memory" && method === "DELETE") {
+        return handleDeleteMemory(deps, url);
       }
 
       return jsonError("Not found", 404);
@@ -744,4 +762,141 @@ function handleGetProject(
     },
     directory,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Memory
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /api/mcp/wingman/memory?sessionId=...&query=...&tags=...&project=...&limit=...
+ * Search memories. Falls back to listing recent memories for the user.
+ */
+function handleSearchMemory(
+  deps: WingmanMcpApiDependencies,
+  url: URL,
+): Response {
+  const sessionId = url.searchParams.get("sessionId");
+  const denied = requireSessionId(deps, sessionId);
+  if (denied) return denied;
+
+  const session = deps.getSession(sessionId!);
+  if (!session) {
+    return jsonError("Session not found", 404);
+  }
+
+  const query = url.searchParams.get("query") ?? undefined;
+  const tags = url.searchParams.get("tags") ?? undefined;
+  const project = url.searchParams.get("project") ?? undefined;
+  const limitParam = url.searchParams.get("limit");
+  const limit = limitParam ? Number(limitParam) : undefined;
+
+  const wingmanNpub = deps.getWingmanNpub() ?? undefined;
+  const userNpub = session.npub ?? undefined;
+
+  // If no specific filters, list recent memories for the user
+  const hasFilters = query || tags || project;
+  if (!hasFilters && userNpub) {
+    const memories = deps.memoryStore.listMemories(userNpub, wingmanNpub, limit);
+    return jsonOk({ memories });
+  }
+
+  const memories = deps.memoryStore.searchMemories({
+    query,
+    tags,
+    project,
+    userNpub,
+    wingmanNpub,
+    limit,
+  });
+
+  return jsonOk({ memories });
+}
+
+/**
+ * POST /api/mcp/wingman/memory
+ * Body: { sessionId, content, tags? }
+ * Auto-populates wingman_npub, user_npub, project, working_dir, project_metadata.
+ */
+async function handleSaveMemory(
+  deps: WingmanMcpApiDependencies,
+  request: Request,
+): Promise<Response> {
+  const body = await parseBody(request);
+  const sessionId = body.sessionId as string | undefined;
+  const content = body.content as string | undefined;
+  const tags = body.tags as string | undefined;
+
+  const denied = requireSessionId(deps, sessionId);
+  if (denied) return denied;
+
+  if (!content) {
+    return jsonError("content is required", 400);
+  }
+
+  const session = deps.getSession(sessionId!);
+  if (!session) {
+    return jsonError("Session not found", 404);
+  }
+
+  const wingmanNpub = deps.getWingmanNpub();
+  if (!wingmanNpub) {
+    return jsonError("Wingman identity not configured (KEYTELEPORT_PRIVKEY)", 500);
+  }
+
+  const userNpub = session.npub;
+  if (!userNpub) {
+    return jsonError("Session has no user npub", 400);
+  }
+
+  // Auto-populate project context
+  const directory = session.workingDirectory;
+  let projectName: string | null = null;
+  let projectMetadata: Record<string, unknown> | null = null;
+
+  if (directory) {
+    const project = deps.findProjectByDirectory(directory);
+    if (project) {
+      projectName = project.name;
+      projectMetadata = {
+        id: project.id,
+        appId: project.appId ?? null,
+        taskBoardUrl: project.taskBoardUrl ?? null,
+        worktreeName: project.worktreeName ?? null,
+      };
+    }
+  }
+
+  const memory = deps.memoryStore.saveMemory({
+    wingmanNpub,
+    userNpub,
+    project: projectName,
+    workingDir: directory ?? null,
+    projectMetadata,
+    tags: tags ?? null,
+    content,
+  });
+
+  return jsonOk({ memory });
+}
+
+/**
+ * DELETE /api/mcp/wingman/memory?sessionId=...&id=...
+ * Delete a memory by ID.
+ */
+function handleDeleteMemory(
+  deps: WingmanMcpApiDependencies,
+  url: URL,
+): Response {
+  const sessionId = url.searchParams.get("sessionId");
+  const denied = requireSessionId(deps, sessionId);
+  if (denied) return denied;
+
+  const memoryId = url.searchParams.get("id");
+  if (!memoryId) {
+    return jsonError("id is required", 400);
+  }
+
+  const deleted = deps.memoryStore.deleteMemory(memoryId);
+  return jsonOk({ deleted });
 }
