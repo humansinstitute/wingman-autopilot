@@ -5751,6 +5751,35 @@ dialog button[value="cancel"] {
   margin-bottom: 1rem;
 }
 
+/* ── Shelve / collapse sidebar button ──────────────────────── */
+.wm-files-browser__shelve {
+  flex-shrink: 0;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.wm-files-browser__shelve .wm-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.wm-files-browser__shelve:hover {
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  background: rgba(16, 185, 129, 0.08);
+}
+
 .wm-files-browser__info {
   background: none;
   border: none;

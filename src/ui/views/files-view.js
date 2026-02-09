@@ -523,8 +523,8 @@ export function initFilesView(deps) {
 
     const shelveButton = document.createElement("button");
     shelveButton.type = "button";
-    shelveButton.className = "wm-button secondary wm-button-icon";
-    setIconButton(shelveButton, "sidebarClose", "Hide file browser");
+    shelveButton.className = "wm-files-browser__shelve";
+    setIconButton(shelveButton, "sidebarClose", "Collapse sidebar");
     shelveButton.addEventListener("click", () => {
       files.browserShelved = true;
       try {
@@ -534,7 +534,6 @@ export function initFilesView(deps) {
     });
 
     controls.append(
-      shelveButton,
       upButton,
       refreshButton,
       toggleHiddenButton,
@@ -560,7 +559,7 @@ export function initFilesView(deps) {
       controls.append(worktreeButton);
     }
 
-    browserHeader.append(headerButton, controls);
+    browserHeader.append(headerButton, shelveButton, controls);
 
     const list = document.createElement("ul");
     list.className = "wm-files-browser__list";
@@ -983,7 +982,7 @@ export function initFilesView(deps) {
       const unshelveButton = document.createElement("button");
       unshelveButton.type = "button";
       unshelveButton.className = "wm-button secondary wm-button-icon wm-files-unshelve";
-      setIconButton(unshelveButton, "sidebarOpen", "Show file browser");
+      setIconButton(unshelveButton, "sidebarOpen", "Expand sidebar");
       unshelveButton.addEventListener("click", () => {
         files.browserShelved = false;
         try {

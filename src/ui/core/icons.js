@@ -121,14 +121,12 @@ export const FILE_BROWSER_ICON_DEFS = {
     ["line", { x1: 16, y1: 17, x2: 20, y2: 17 }],
   ],
   sidebarClose: [
-    ["path", { d: "M3 3h18v18H3z", fill: "none" }],
-    ["line", { x1: 9, y1: 3, x2: 9, y2: 21 }],
-    ["polyline", { points: "15 9 12 12 15 15" }],
+    ["polyline", { points: "11 17 6 12 11 7" }],
+    ["polyline", { points: "18 17 13 12 18 7" }],
   ],
   sidebarOpen: [
-    ["path", { d: "M3 3h18v18H3z", fill: "none" }],
-    ["line", { x1: 9, y1: 3, x2: 9, y2: 21 }],
-    ["polyline", { points: "13 9 16 12 13 15" }],
+    ["polyline", { points: "6 17 11 12 6 7" }],
+    ["polyline", { points: "13 17 18 12 13 7" }],
   ],
   star: [
     ["path", { d: "M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14l-5-4.87 6.91-1.01L12 2z", fill: "none" }],
