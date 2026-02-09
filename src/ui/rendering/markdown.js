@@ -44,6 +44,28 @@ export const renderInlineMarkdown = (text) => {
   return escaped.replace(/@@MD(\d+)@@/g, (_, index) => placeholders[Number(index)] ?? "");
 };
 
+/** Detect a GFM table separator row: |---|---|  or  |:---:|---:|  etc. */
+const TABLE_SEP_RE = /^\|?[\s:]*-{2,}[\s:]*(\|[\s:]*-{2,}[\s:]*)+\|?\s*$/;
+
+/** Split a pipe-table row into cell strings. */
+function splitTableRow(line) {
+  let trimmed = line.trim();
+  if (trimmed.startsWith("|")) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith("|")) trimmed = trimmed.slice(0, -1);
+  return trimmed.split("|").map((c) => c.trim());
+}
+
+/** Parse alignment from a separator row. Returns array of 'left'|'center'|'right'. */
+function parseTableAlignments(sepLine) {
+  return splitTableRow(sepLine).map((cell) => {
+    const left = cell.startsWith(":");
+    const right = cell.endsWith(":");
+    if (left && right) return "center";
+    if (right) return "right";
+    return "left";
+  });
+}
+
 export const renderMarkdownToHtml = (markdown) => {
   if (!markdown) return "";
   const lines = String(markdown).replace(/\r\n?/g, "\n").split("\n");
@@ -78,7 +100,8 @@ export const renderMarkdownToHtml = (markdown) => {
     }
   };
 
-  for (const rawLine of lines) {
+  for (let idx = 0; idx < lines.length; idx++) {
+    const rawLine = lines[idx];
     const line = rawLine.replace(/\s+$/, "");
     if (line.startsWith("```")) {
       if (inCodeBlock) {
@@ -142,6 +165,49 @@ export const renderMarkdownToHtml = (markdown) => {
       closeParagraph();
       closeList();
       html += "<hr />";
+      continue;
+    }
+
+    // GFM table: header row followed by separator row
+    if (
+      trimmed.includes("|") &&
+      idx + 1 < lines.length &&
+      TABLE_SEP_RE.test(lines[idx + 1].trim())
+    ) {
+      closeParagraph();
+      closeList();
+      closeBlockquote();
+      const headerCells = splitTableRow(trimmed);
+      const alignments = parseTableAlignments(lines[idx + 1]);
+      idx++; // skip separator
+
+      const alignAttr = (i) => {
+        const a = alignments[i];
+        return a && a !== "left" ? ` style="text-align:${a}"` : "";
+      };
+
+      let tableHtml = "<table><thead><tr>";
+      headerCells.forEach((cell, i) => {
+        tableHtml += `<th${alignAttr(i)}>${renderInlineMarkdown(cell)}</th>`;
+      });
+      tableHtml += "</tr></thead><tbody>";
+
+      // Consume body rows
+      while (idx + 1 < lines.length) {
+        const nextLine = lines[idx + 1].trim();
+        if (!nextLine || !nextLine.includes("|")) break;
+        idx++;
+        const bodyCells = splitTableRow(nextLine);
+        tableHtml += "<tr>";
+        headerCells.forEach((_, i) => {
+          const cellContent = i < bodyCells.length ? bodyCells[i] : "";
+          tableHtml += `<td${alignAttr(i)}>${renderInlineMarkdown(cellContent)}</td>`;
+        });
+        tableHtml += "</tr>";
+      }
+
+      tableHtml += "</tbody></table>";
+      html += tableHtml;
       continue;
     }
 
