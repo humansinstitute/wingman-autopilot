@@ -21,6 +21,7 @@ import { listSkills, loadSkill } from "./skill-loader";
 import { generateAndSaveImages } from "./services/image-generator";
 import type { UserSettingsStore } from "../storage/user-settings-store";
 import type { ArtifactsStore, CreateArtifactInput } from "../storage/artifacts-store";
+import type { NpubProjectRecord } from "../projects/npub-project-store";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -46,6 +47,7 @@ export interface WingmanMcpApiDependencies {
   userSettingsStore: UserSettingsStore;
   artifactsStore: ArtifactsStore;
   openRouterApiKey: string | null;
+  findProjectByDirectory: (directoryPath: string) => NpubProjectRecord | null;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -164,6 +166,11 @@ export function createWingmanMcpApiHandler(deps: WingmanMcpApiDependencies) {
       // POST /api/mcp/wingman/artifacts
       if (segments.length === 4 && segments[3] === "artifacts" && method === "POST") {
         return await handleRegisterArtifact(deps, request);
+      }
+
+      // GET /api/mcp/wingman/project?sessionId=...
+      if (segments.length === 4 && segments[3] === "project" && method === "GET") {
+        return handleGetProject(deps, url);
       }
 
       return jsonError("Not found", 404);
@@ -691,4 +698,50 @@ async function handleRegisterArtifact(
   });
 
   return jsonOk({ artifact });
+}
+
+// ---------------------------------------------------------------------------
+// Project
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /api/mcp/wingman/project?sessionId=...
+ * Returns the project details for the calling session's working directory.
+ */
+function handleGetProject(
+  deps: WingmanMcpApiDependencies,
+  url: URL,
+): Response {
+  const sessionId = url.searchParams.get("sessionId");
+  const denied = requireSessionId(deps, sessionId);
+  if (denied) return denied;
+
+  const session = deps.getSession(sessionId!);
+  if (!session) {
+    return jsonError("Session not found", 404);
+  }
+
+  const directory = session.workingDirectory;
+  if (!directory) {
+    return jsonError("Session has no working directory", 400);
+  }
+
+  const project = deps.findProjectByDirectory(directory);
+  if (!project) {
+    return jsonOk({ project: null, directory });
+  }
+
+  return jsonOk({
+    project: {
+      id: project.id,
+      name: project.name,
+      directoryPath: project.directoryPath,
+      taskBoardUrl: project.taskBoardUrl,
+      appId: project.appId,
+      worktreeName: project.worktreeName,
+      sessionCount: project.sessionCount,
+      lastUsedAt: project.lastUsedAt,
+    },
+    directory,
+  });
 }

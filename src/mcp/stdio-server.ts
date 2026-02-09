@@ -84,6 +84,11 @@ import {
   generateImageDescription,
   handleGenerateImage,
 } from "./tools/generate-image";
+import {
+  getProjectSchema,
+  getProjectDescription,
+  handleGetProject,
+} from "./tools/get-project";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -212,6 +217,14 @@ server.tool(
   generateImageDescription,
   generateImageSchema,
   (params) => handleGenerateImage(params, wingmanUrl, sessionId),
+);
+
+// ---- get_project ----
+server.tool(
+  "get_project",
+  getProjectDescription,
+  getProjectSchema,
+  (_params) => handleGetProject({} as Record<string, never>, wingmanUrl, sessionId),
 );
 
 // ---------------------------------------------------------------------------

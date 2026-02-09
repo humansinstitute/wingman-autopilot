@@ -369,6 +369,28 @@ class NpubProjectStore {
     return this.getById(id);
   }
 
+  /**
+   * Find any project matching a directory path (regardless of npub).
+   * Useful for MCP tools that only know the session working directory.
+   */
+  findByDirectory(directoryPath: string): NpubProjectRecord | null {
+    const normalizedPath = normalize(directoryPath);
+    const statement = this.db.prepare<NpubProjectRow, [string]>(`
+      SELECT
+        id, npub, directory_path as directoryPath, name,
+        is_custom_name as isCustomName, worktree_name as worktreeName,
+        app_id as appId, task_board_url as taskBoardUrl,
+        last_used_at as lastUsedAt, session_count as sessionCount,
+        created_at as createdAt, updated_at as updatedAt
+      FROM npub_projects
+      WHERE directory_path = ?1
+      ORDER BY last_used_at DESC
+      LIMIT 1
+    `);
+    const row = statement.get(normalizedPath);
+    return row ? this.hydrate(row) : null;
+  }
+
   private hydrate(row: NpubProjectRow): NpubProjectRecord {
     return {
       id: row.id,

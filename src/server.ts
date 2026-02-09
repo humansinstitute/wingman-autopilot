@@ -851,6 +851,7 @@ const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   userSettingsStore,
   artifactsStore,
   openRouterApiKey: Bun.env.OPENROUTER_API?.trim() || null,
+  findProjectByDirectory: (dir) => npubProjectStore.findByDirectory(dir),
 });
 
 // Reconcile PM2 processes with app registry
