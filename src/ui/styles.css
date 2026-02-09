@@ -7857,7 +7857,7 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 }
 
 @media (max-width: 768px) {
-  /* Mobile tab bar for writer split */
+  /* Mobile tab bar — pinned under the header */
   .wm-writer-mobile-tabs {
     display: flex;
     gap: 0;
@@ -7865,6 +7865,9 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
     border-bottom: 1px solid var(--border-primary);
     background: var(--bg-secondary);
     flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    z-index: 10;
   }
 
   .wm-writer-mobile-tab {
