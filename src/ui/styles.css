@@ -5751,10 +5751,16 @@ dialog button[value="cancel"] {
   margin-bottom: 1rem;
 }
 
-/* ── Shelve / collapse sidebar button ──────────────────────── */
+/* ── Shelve / collapse sidebar button (pinned top-right) ──── */
+.wm-files-browser {
+  position: relative;
+}
+
 .wm-files-browser__shelve {
-  flex-shrink: 0;
-  align-self: flex-start;
+  position: absolute;
+  top: 0.85rem;
+  right: 0.85rem;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;

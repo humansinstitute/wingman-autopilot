@@ -559,7 +559,7 @@ export function initFilesView(deps) {
       controls.append(worktreeButton);
     }
 
-    browserHeader.append(headerButton, shelveButton, controls);
+    browserHeader.append(headerButton, controls);
 
     const list = document.createElement("ul");
     list.className = "wm-files-browser__list";
@@ -785,9 +785,9 @@ export function initFilesView(deps) {
     }
 
     if (favsSection) {
-      browserCard.append(browserHeader, favsSection, list);
+      browserCard.append(shelveButton, browserHeader, favsSection, list);
     } else {
-      browserCard.append(browserHeader, list);
+      browserCard.append(shelveButton, browserHeader, list);
     }
 
     const previewCard = document.createElement("section");
