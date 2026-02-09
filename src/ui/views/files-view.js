@@ -325,6 +325,18 @@ export function initFilesView(deps) {
       }
     }
 
+    // ── Shared drag-and-drop handlers (function declarations for hoisting) ──
+    function handleDragOver(e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      e.currentTarget.dataset.dragover = "true";
+    }
+    function handleDragLeave(e) {
+      // Only clear highlight when actually leaving the element, not entering a child
+      if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget)) return;
+      delete e.currentTarget.dataset.dragover;
+    }
+
     const wrapper = document.createElement("div");
     wrapper.className = "wm-files";
 
@@ -368,17 +380,11 @@ export function initFilesView(deps) {
 
     // ── Drop target: "Go up" accepts dragged items → moves to parent dir ──
     if (files.parent?.path) {
-      upButton.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
-        upButton.dataset.dragover = "true";
-      });
-      upButton.addEventListener("dragleave", () => {
-        delete upButton.dataset.dragover;
-      });
+      upButton.addEventListener("dragover", handleDragOver);
+      upButton.addEventListener("dragleave", handleDragLeave);
       upButton.addEventListener("drop", async (e) => {
         e.preventDefault();
-        delete upButton.dataset.dragover;
+        delete e.currentTarget.dataset.dragover;
         const sourcePath = e.dataTransfer.getData("text/plain");
         if (!sourcePath) return;
         try {
@@ -716,17 +722,11 @@ export function initFilesView(deps) {
           });
 
           // ── Drop target: folders accept dragged items ──
-          item.addEventListener("dragover", (e) => {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = "move";
-            item.dataset.dragover = "true";
-          });
-          item.addEventListener("dragleave", () => {
-            delete item.dataset.dragover;
-          });
+          item.addEventListener("dragover", handleDragOver);
+          item.addEventListener("dragleave", handleDragLeave);
           item.addEventListener("drop", async (e) => {
             e.preventDefault();
-            delete item.dataset.dragover;
+            delete e.currentTarget.dataset.dragover;
             const sourcePath = e.dataTransfer.getData("text/plain");
             if (!sourcePath || sourcePath === entry.path) return;
             try {
