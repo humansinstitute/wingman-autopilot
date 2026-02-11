@@ -769,11 +769,6 @@ export function initLiveView(deps) {
       });
     }
 
-    addCommand(state.artifactsLayout.open ? "Close Artifacts" : "Open Artifacts", () => {
-      state.artifactsLayout.open = !state.artifactsLayout.open;
-      render();
-    });
-
     const hasPinnedFile = state.pinnedFiles.has(sessionId);
     addCommand(hasPinnedFile ? "Close Artifact" : "Open Artifact", () => {
       if (hasPinnedFile) {
