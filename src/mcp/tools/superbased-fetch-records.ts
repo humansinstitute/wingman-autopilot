@@ -78,7 +78,11 @@ export async function handleSuperbasedFetchRecords(
       };
     }
 
-    const result = await response.json();
+    const result = await response.json() as {
+      records: Record<string, unknown>[];
+      count: number;
+      cursor: string | null;
+    };
 
     if (result.count === 0) {
       return {

@@ -210,11 +210,14 @@ async function handleFetchRecords(
       return jsonError(`Upstream API error (${response.status}): ${text}`, response.status);
     }
 
-    const data = await response.json();
-    const records = Array.isArray(data) ? data : data.records ?? [];
+    const data = await response.json() as
+      | Record<string, unknown>[]
+      | { records?: Record<string, unknown>[]; cursor?: string };
+    const rawRecords = Array.isArray(data) ? data : (data.records ?? []);
+    const cursor = Array.isArray(data) ? null : (data.cursor ?? null);
 
     // Decrypt each record's delegate_payload
-    const decryptedRecords = records.map((record: Record<string, unknown>) => {
+    const decryptedRecords = rawRecords.map((record: Record<string, unknown>) => {
       const delegatePayload = record.delegate_payload as string | undefined;
       const ownerPubkey = record.owner_pubkey as string | undefined;
 
@@ -233,7 +236,7 @@ async function handleFetchRecords(
     return Response.json({
       records: decryptedRecords,
       count: decryptedRecords.length,
-      cursor: data.cursor ?? null,
+      cursor,
     });
   } catch (err) {
     console.warn(`[superbased-api] Fetch records failed: ${(err as Error).message}`);

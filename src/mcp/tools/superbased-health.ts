@@ -51,7 +51,7 @@ export async function handleSuperbasedHealth(
       };
     }
 
-    const result = await response.json();
+    const result = await response.json() as { status: number; data: unknown };
 
     return {
       content: [

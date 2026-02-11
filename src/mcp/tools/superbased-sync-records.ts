@@ -83,7 +83,7 @@ export async function handleSuperbasedSyncRecords(
       };
     }
 
-    const result = await response.json();
+    const result = await response.json() as { synced: number; result: unknown };
 
     return {
       content: [
