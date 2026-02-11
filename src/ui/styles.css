@@ -5833,30 +5833,11 @@ dialog button[value="cancel"] {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 0.4rem;
+  gap: 0.3rem;
   flex-wrap: wrap;
   margin-left: auto;
   overflow-x: auto;
   padding-bottom: 0.15rem;
-}
-
-.wm-files-browser__controls .wm-button-icon {
-  padding: 0;
-  width: 2.4rem;
-  min-width: 2.4rem;
-  height: 2.4rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.wm-files-browser__git {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  flex-basis: auto;
-  justify-content: flex-start;
-  margin-top: 0.15rem;
 }
 
 .wm-select {
@@ -5880,13 +5861,6 @@ dialog button[value="cancel"] {
 .wm-select:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-}
-
-.wm-files-browser__git .wm-select {
-  min-width: 0;
-  width: auto;
-  max-width: 12rem;
-  white-space: nowrap;
 }
 
 .wm-files-browser[data-collapsed="true"] .wm-files-browser__list {
