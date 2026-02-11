@@ -38,6 +38,8 @@ import type {
 } from "./event-builder";
 import { publishToRelays, queryRelays } from "./relay-publisher";
 import type { SignedEvent } from "./relay-publisher";
+import { getOrCreateRepo, isGiteaConfigured } from "../gitea/gitea-client";
+import type { GiteaConfig } from "../gitea/gitea-client";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -55,6 +57,8 @@ export interface NgitApiDependencies {
   getSession: (sessionId: string) => SessionSnapshot | null;
   /** Default relay list from config.connectRelays. */
   defaultRelays: string[];
+  /** Gitea configuration for automatic repo provisioning. */
+  gitea: Partial<GiteaConfig>;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -473,9 +477,13 @@ async function handleListRepos(
 /**
  * POST /api/ngit/init
  *
- * Convenience endpoint: publishes both a kind 30617 repo announcement
- * and a kind 30618 repo state in a single call. Equivalent to
- * calling publish-repo + push-state sequentially.
+ * Full project initialization:
+ *   Step 0 (optional): Create repo on Gitea if configured and no clone_urls provided
+ *   Step 1: Publish kind 30617 repo announcement to Nostr
+ *   Step 2: Publish kind 30618 repo state to Nostr
+ *
+ * Returns clone URLs and event IDs so the agent can set up the git remote
+ * and push locally.
  */
 async function handleInit(
   deps: NgitApiDependencies,
@@ -507,13 +515,48 @@ async function handleInit(
     ? callerRelays
     : deps.defaultRelays;
 
+  // --- Step 0: Create Gitea repo if configured and no clone_urls provided ---
+  let cloneUrls = body.clone_urls as string[] | undefined;
+  let webUrls = body.web_urls as string[] | undefined;
+  let giteaResult: { cloneUrl: string; sshUrl: string; htmlUrl: string; created: boolean } | null = null;
+
+  const createRemote = body.create_remote !== false; // default true
+  if (createRemote && (!cloneUrls || cloneUrls.length === 0) && isGiteaConfigured(deps.gitea)) {
+    try {
+      const { repo, created } = await getOrCreateRepo(deps.gitea, {
+        name: identifier,
+        description: body.description as string | undefined,
+        isPrivate: false,
+      });
+
+      giteaResult = {
+        cloneUrl: repo.cloneUrl,
+        sshUrl: repo.sshUrl,
+        htmlUrl: repo.htmlUrl,
+        created,
+      };
+
+      // Use Gitea URLs as the clone/web URLs for the Nostr announcement
+      cloneUrls = [repo.cloneUrl];
+      webUrls = [repo.htmlUrl];
+
+      console.log(
+        `[ngit-api] Init step 0: Gitea repo ${created ? "created" : "found"}: ${repo.fullName} (${repo.cloneUrl})`,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Gitea repo creation failed";
+      console.warn(`[ngit-api] Init step 0 (Gitea) failed: ${message}`);
+      return jsonError(`Gitea repo creation failed: ${message}`, 502);
+    }
+  }
+
   // --- Step 1: Repo announcement (kind 30617) ---
   const announcementInput: RepoAnnouncementInput = {
     identifier,
     name: body.name as string | undefined,
     description: body.description as string | undefined,
-    cloneUrls: body.clone_urls as string[] | undefined,
-    webUrls: body.web_urls as string[] | undefined,
+    cloneUrls,
+    webUrls,
     relays,
     maintainers: body.maintainers as string[] | undefined,
     hashtags: body.hashtags as string[] | undefined,
@@ -571,9 +614,9 @@ async function handleInit(
   } catch (err) {
     const message = err instanceof Error ? err.message : "Repo state signing/publishing failed";
     console.warn(`[ngit-api] Init step 2 (state) failed: ${message}`);
-    // Announcement already succeeded — return partial success
     return Response.json({
       partial: true,
+      gitea: giteaResult,
       announcement: {
         eventId: announcementEventId,
         kind: REPO_ANNOUNCEMENT_KIND,
@@ -591,6 +634,7 @@ async function handleInit(
 
   return Response.json({
     identifier,
+    gitea: giteaResult,
     announcement: {
       eventId: announcementEventId,
       kind: REPO_ANNOUNCEMENT_KIND,

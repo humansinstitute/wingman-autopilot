@@ -313,6 +313,11 @@ const ngitApiHandler = createNgitApiHandler({
   grantsStore: nip98GrantsStore,
   getSession: (sid: string) => manager.getSession(sid) ?? null,
   defaultRelays: config.connectRelays,
+  gitea: {
+    url: config.giteaUrl ?? undefined,
+    apiToken: config.giteaApiToken ?? undefined,
+    owner: config.giteaOwner ?? undefined,
+  },
 });
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());

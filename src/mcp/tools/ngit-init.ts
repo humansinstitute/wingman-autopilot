@@ -25,7 +25,7 @@ export const ngitInitSchema = {
   clone_urls: z
     .array(z.string())
     .optional()
-    .describe("Git clone URLs (https, ssh). E.g. ['https://github.com/user/repo.git']"),
+    .describe("Git clone URLs (https, ssh). If omitted and Gitea is configured, a repo is auto-created on Gitea."),
   web_urls: z
     .array(z.string())
     .optional()
@@ -53,6 +53,10 @@ export const ngitInitSchema = {
     .string()
     .optional()
     .describe("SHA of the earliest unique commit — used to identify the repo among forks"),
+  create_remote: z
+    .boolean()
+    .optional()
+    .describe("Whether to auto-create a Gitea repo (default true). Set false to skip Gitea provisioning."),
 };
 
 export const ngitInitDescription =
@@ -60,14 +64,19 @@ export const ngitInitDescription =
   "Publishes both the repository announcement (kind 30617) and the initial " +
   "branch/tag state (kind 30618). This makes the repository discoverable on " +
   "gitworkshop.dev and other NIP-34 clients.\n\n" +
-  "This is a convenience wrapper around ngit_publish_repo + ngit_push_state. " +
+  "If Gitea is configured on the server, this tool also auto-creates a git " +
+  "repository on the Gitea instance (unless clone_urls are provided or " +
+  "create_remote=false). The Gitea clone URL is then included in the Nostr " +
+  "announcement so gitworkshop.dev users can clone via the Gitea server.\n\n" +
   "The event is signed with the logged-in user's Nostr identity.\n\n" +
   "IMPORTANT: You must first call request_api_access with domain='nostr.git' to get a signing grant. " +
   "The user must have an active browser session for Tier 2 signing.\n\n" +
   "Typical usage:\n" +
   "1. Read git repo info: `git remote -v`, `git rev-parse HEAD`, `git branch -a`\n" +
   "2. Call request_api_access(domain='nostr.git', reason='Initialize repo on Nostr')\n" +
-  "3. Call ngit_init with the repo metadata and branch refs";
+  "3. Call ngit_init with the repo metadata and branch refs\n" +
+  "4. If Gitea repo was created, add the remote and push: " +
+  "`git remote add origin <clone_url> && git push -u origin main`";
 
 interface NgitInitParams {
   identifier: string;
@@ -81,6 +90,29 @@ interface NgitInitParams {
   maintainers?: string[];
   hashtags?: string[];
   earliest_unique_commit?: string;
+  create_remote?: boolean;
+}
+
+interface GiteaResultInfo {
+  cloneUrl: string;
+  sshUrl: string;
+  htmlUrl: string;
+  created: boolean;
+}
+
+function formatGiteaResult(gitea: GiteaResultInfo | null | undefined): string[] {
+  if (!gitea) return [];
+  return [
+    "",
+    `Gitea: ${gitea.created ? "created" : "found existing"} repository`,
+    `  Clone URL: ${gitea.cloneUrl}`,
+    `  SSH URL:   ${gitea.sshUrl}`,
+    `  Web URL:   ${gitea.htmlUrl}`,
+    "",
+    "Next steps:",
+    `  git remote add origin ${gitea.cloneUrl}`,
+    `  git push -u origin main`,
+  ];
 }
 
 export async function handleNgitInit(
@@ -108,6 +140,9 @@ export async function handleNgitInit(
 
     const result = await response.json();
 
+    // Build Gitea section if present
+    const giteaLines = formatGiteaResult(result.gitea);
+
     // Handle partial success (announcement OK, state failed)
     if (result.partial) {
       return {
@@ -115,6 +150,7 @@ export async function handleNgitInit(
           type: "text" as const,
           text: [
             `Repository "${params.name ?? params.identifier}" partially initialized`,
+            ...giteaLines,
             "",
             `Announcement: published (event ${result.announcement.eventId})`,
             `  Relays: ${result.announcement.successes} succeeded, ${result.announcement.failures} failed`,
@@ -144,6 +180,7 @@ export async function handleNgitInit(
         type: "text" as const,
         text: [
           `Repository "${params.name ?? params.identifier}" initialized on Nostr`,
+          ...giteaLines,
           "",
           `Announcement (kind 30617):`,
           `  Event ID: ${result.announcement.eventId}`,

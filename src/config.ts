@@ -57,6 +57,12 @@ export interface WingmanConfig {
   mapleDefaultModel: string;
   /** API key for Maple Proxy authentication (null if not required) */
   mapleApiKey: string | null;
+  /** Gitea instance base URL (e.g. https://gitea.pages.otherstuff.ai) */
+  giteaUrl: string | null;
+  /** Gitea API token for repo creation */
+  giteaApiToken: string | null;
+  /** Gitea username/org that owns created repos */
+  giteaOwner: string | null;
 }
 
 const DEFAULT_PORT = 3600;
@@ -251,6 +257,19 @@ export const loadConfig = (): WingmanConfig => {
   const mapleApiKeyInput = Bun.env.MAPLE_API?.trim();
   const mapleApiKey = mapleApiKeyInput && mapleApiKeyInput.length > 0 ? mapleApiKeyInput : null;
 
+  // Gitea configuration for ngit repo hosting
+  const giteaUrlInput = Bun.env.GITEA_URL?.trim();
+  const giteaUrl = giteaUrlInput && giteaUrlInput.length > 0 ? giteaUrlInput.replace(/\/+$/, "") : null;
+  const giteaApiTokenInput = Bun.env.GITEA_API_TOKEN?.trim();
+  const giteaApiToken = giteaApiTokenInput && giteaApiTokenInput.length > 0 ? giteaApiTokenInput : null;
+  const giteaOwnerInput = Bun.env.GITEA_OWNER?.trim();
+  const giteaOwner = giteaOwnerInput && giteaOwnerInput.length > 0 ? giteaOwnerInput : null;
+  if (giteaUrl && giteaApiToken && giteaOwner) {
+    console.log(`[Config] Gitea: ${giteaUrl} (owner: ${giteaOwner})`);
+  } else if (giteaUrl || giteaApiToken || giteaOwner) {
+    console.warn("[Config] Gitea partially configured — need GITEA_URL, GITEA_API_TOKEN, and GITEA_OWNER");
+  }
+
   return {
     port,
     baseUrl,
@@ -275,6 +294,9 @@ export const loadConfig = (): WingmanConfig => {
     mapleProxyUrl,
     mapleDefaultModel,
     mapleApiKey,
+    giteaUrl,
+    giteaApiToken,
+    giteaOwner,
   };
 };
 
