@@ -119,6 +119,31 @@ import {
   ngitListReposDescription,
   handleNgitListRepos,
 } from "./tools/ngit-list-repos";
+import {
+  ngitSendPatchSchema,
+  ngitSendPatchDescription,
+  handleNgitSendPatch,
+} from "./tools/ngit-send-patch";
+import {
+  ngitCreatePrSchema,
+  ngitCreatePrDescription,
+  handleNgitCreatePr,
+} from "./tools/ngit-create-pr";
+import {
+  ngitCreateIssueSchema,
+  ngitCreateIssueDescription,
+  handleNgitCreateIssue,
+} from "./tools/ngit-create-issue";
+import {
+  ngitSetStatusSchema,
+  ngitSetStatusDescription,
+  handleNgitSetStatus,
+} from "./tools/ngit-set-status";
+import {
+  ngitListProposalsSchema,
+  ngitListProposalsDescription,
+  handleNgitListProposals,
+} from "./tools/ngit-list-proposals";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -303,6 +328,46 @@ server.tool(
   ngitListReposDescription,
   ngitListReposSchema,
   (params) => handleNgitListRepos(params, wingmanUrl, sessionId),
+);
+
+// ---- ngit_send_patch ----
+server.tool(
+  "ngit_send_patch",
+  ngitSendPatchDescription,
+  ngitSendPatchSchema,
+  (params) => handleNgitSendPatch(params, wingmanUrl, sessionId),
+);
+
+// ---- ngit_create_pr ----
+server.tool(
+  "ngit_create_pr",
+  ngitCreatePrDescription,
+  ngitCreatePrSchema,
+  (params) => handleNgitCreatePr(params, wingmanUrl, sessionId),
+);
+
+// ---- ngit_create_issue ----
+server.tool(
+  "ngit_create_issue",
+  ngitCreateIssueDescription,
+  ngitCreateIssueSchema,
+  (params) => handleNgitCreateIssue(params, wingmanUrl, sessionId),
+);
+
+// ---- ngit_set_status ----
+server.tool(
+  "ngit_set_status",
+  ngitSetStatusDescription,
+  ngitSetStatusSchema,
+  (params) => handleNgitSetStatus(params, wingmanUrl, sessionId),
+);
+
+// ---- ngit_list_proposals ----
+server.tool(
+  "ngit_list_proposals",
+  ngitListProposalsDescription,
+  ngitListProposalsSchema,
+  (params) => handleNgitListProposals(params, wingmanUrl, sessionId),
 );
 
 // ---------------------------------------------------------------------------

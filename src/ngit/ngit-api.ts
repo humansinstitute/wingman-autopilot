@@ -16,10 +16,26 @@ import { browserSubscribers } from "../mcp/browser-subscribers";
 import {
   buildRepoAnnouncement,
   buildRepoState,
+  buildPatch,
+  buildPullRequest,
+  buildIssue,
+  buildStatus,
   REPO_ANNOUNCEMENT_KIND,
   REPO_STATE_KIND,
+  PATCH_KIND,
+  PULL_REQUEST_KIND,
+  ISSUE_KIND,
 } from "./event-builder";
-import type { RepoAnnouncementInput, RepoStateInput, UnsignedEventTemplate } from "./event-builder";
+import type {
+  RepoAnnouncementInput,
+  RepoStateInput,
+  PatchInput,
+  PullRequestInput,
+  IssueInput,
+  StatusInput,
+  StatusValue,
+  UnsignedEventTemplate,
+} from "./event-builder";
 import { publishToRelays, queryRelays } from "./relay-publisher";
 import type { SignedEvent } from "./relay-publisher";
 
@@ -134,9 +150,34 @@ export function createNgitApiHandler(deps: NgitApiDependencies) {
         return await handlePushState(deps, request);
       }
 
+      // POST /api/ngit/send-patch
+      if (segments.length === 3 && segments[2] === "send-patch" && method === "POST") {
+        return await handleSendPatch(deps, request);
+      }
+
+      // POST /api/ngit/create-pr
+      if (segments.length === 3 && segments[2] === "create-pr" && method === "POST") {
+        return await handleCreatePR(deps, request);
+      }
+
+      // POST /api/ngit/create-issue
+      if (segments.length === 3 && segments[2] === "create-issue" && method === "POST") {
+        return await handleCreateIssue(deps, request);
+      }
+
+      // POST /api/ngit/set-status
+      if (segments.length === 3 && segments[2] === "set-status" && method === "POST") {
+        return await handleSetStatus(deps, request);
+      }
+
       // GET /api/ngit/repos?sessionId=...&pubkey=...
       if (segments.length === 3 && segments[2] === "repos" && method === "GET") {
         return await handleListRepos(deps, url);
+      }
+
+      // GET /api/ngit/proposals?sessionId=...&repo_reference=...
+      if (segments.length === 3 && segments[2] === "proposals" && method === "GET") {
+        return await handleListProposals(deps, url);
       }
 
       return jsonError("Not found", 404);
@@ -420,6 +461,415 @@ async function handleListRepos(
   } catch (err) {
     const message = err instanceof Error ? err.message : "Relay query failed";
     console.warn(`[ngit-api] List repos failed: ${message}`);
+    return jsonError(message, 502);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 route handlers
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper to extract relays from request body, falling back to defaults.
+ */
+function resolveRelays(body: Record<string, unknown>, defaults: string[]): string[] {
+  const callerRelays = body.relays as string[] | undefined;
+  return callerRelays && callerRelays.length > 0 ? callerRelays : defaults;
+}
+
+/**
+ * Shared sign-and-publish flow. Builds event, signs via browser, publishes to relays.
+ */
+async function signAndPublish(
+  eventTemplate: UnsignedEventTemplate,
+  npub: string,
+  grantId: string,
+  description: string,
+  relays: string[],
+): Promise<{ signedEvent: SignedEvent; publishResult: Awaited<ReturnType<typeof publishToRelays>> }> {
+  const signedEvent = await requestBrowserSign(eventTemplate, npub, grantId, description);
+  const publishResult = await publishToRelays(signedEvent, relays);
+  return { signedEvent, publishResult };
+}
+
+/**
+ * POST /api/ngit/send-patch
+ *
+ * Build a kind 1617 patch event, sign via browser, publish to relays.
+ */
+async function handleSendPatch(
+  deps: NgitApiDependencies,
+  request: Request,
+): Promise<Response> {
+  const body = await parseBody(request);
+  const sessionId = body.sessionId as string | undefined;
+
+  if (!sessionId) return jsonError("sessionId is required", 400);
+
+  const repoReference = body.repo_reference as string | undefined;
+  const patchContent = body.patch_content as string | undefined;
+  const earliestUniqueCommit = body.earliest_unique_commit as string | undefined;
+  const repoOwnerPubkey = body.repo_owner_pubkey as string | undefined;
+
+  if (!repoReference) return jsonError("repo_reference is required", 400);
+  if (!patchContent) return jsonError("patch_content is required", 400);
+  if (!earliestUniqueCommit) return jsonError("earliest_unique_commit is required", 400);
+  if (!repoOwnerPubkey) return jsonError("repo_owner_pubkey is required", 400);
+
+  if (patchContent.length > 60_000) {
+    return jsonError("Patch content exceeds 60kb limit", 400);
+  }
+
+  let validated: ValidatedSession;
+  try {
+    validated = validateSessionAndGrant(deps, sessionId);
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500;
+    return jsonError((err as Error).message, status);
+  }
+
+  const relays = resolveRelays(body, deps.defaultRelays);
+
+  const input: PatchInput = {
+    repoReference,
+    earliestUniqueCommit,
+    repoOwnerPubkey,
+    patchContent,
+    isRoot: body.is_root as boolean | undefined,
+    isRootRevision: body.is_root_revision as boolean | undefined,
+    commitId: body.commit_id as string | undefined,
+    parentCommitId: body.parent_commit_id as string | undefined,
+    committer: body.committer as PatchInput["committer"],
+    replyTo: body.reply_to as string | undefined,
+    recipients: body.recipients as string[] | undefined,
+  };
+
+  const eventTemplate = buildPatch(input);
+
+  try {
+    const { signedEvent, publishResult } = await signAndPublish(
+      eventTemplate,
+      validated.npub,
+      validated.grantId,
+      `Send patch to Nostr (NIP-34)`,
+      relays,
+    );
+
+    console.log(
+      `[ngit-api] Patch published: ${signedEvent.id.slice(0, 12)}… → ${publishResult.successes}/${relays.length} relays`,
+    );
+
+    return Response.json({
+      eventId: signedEvent.id,
+      kind: PATCH_KIND,
+      relays: publishResult.results,
+      successes: publishResult.successes,
+      failures: publishResult.failures,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Signing or publishing failed";
+    console.warn(`[ngit-api] Send patch failed: ${message}`);
+    return jsonError(message, 502);
+  }
+}
+
+/**
+ * POST /api/ngit/create-pr
+ *
+ * Build a kind 1618 pull request event, sign via browser, publish to relays.
+ */
+async function handleCreatePR(
+  deps: NgitApiDependencies,
+  request: Request,
+): Promise<Response> {
+  const body = await parseBody(request);
+  const sessionId = body.sessionId as string | undefined;
+
+  if (!sessionId) return jsonError("sessionId is required", 400);
+
+  const repoReference = body.repo_reference as string | undefined;
+  const earliestUniqueCommit = body.earliest_unique_commit as string | undefined;
+  const repoOwnerPubkey = body.repo_owner_pubkey as string | undefined;
+  const subject = body.subject as string | undefined;
+  const description = body.description as string | undefined;
+  const commitId = body.commit_id as string | undefined;
+  const cloneUrls = body.clone_urls as string[] | undefined;
+
+  if (!repoReference) return jsonError("repo_reference is required", 400);
+  if (!earliestUniqueCommit) return jsonError("earliest_unique_commit is required", 400);
+  if (!repoOwnerPubkey) return jsonError("repo_owner_pubkey is required", 400);
+  if (!subject) return jsonError("subject is required", 400);
+  if (!commitId) return jsonError("commit_id is required (branch tip commit)", 400);
+  if (!cloneUrls || cloneUrls.length === 0) return jsonError("clone_urls is required (at least one)", 400);
+
+  let validated: ValidatedSession;
+  try {
+    validated = validateSessionAndGrant(deps, sessionId);
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500;
+    return jsonError((err as Error).message, status);
+  }
+
+  const relays = resolveRelays(body, deps.defaultRelays);
+
+  const input: PullRequestInput = {
+    repoReference,
+    earliestUniqueCommit,
+    repoOwnerPubkey,
+    description: description ?? "",
+    subject,
+    commitId,
+    cloneUrls,
+    branchName: body.branch_name as string | undefined,
+    mergeBase: body.merge_base as string | undefined,
+    labels: body.labels as string[] | undefined,
+    replacesPatchId: body.replaces_patch_id as string | undefined,
+    recipients: body.recipients as string[] | undefined,
+  };
+
+  const eventTemplate = buildPullRequest(input);
+
+  try {
+    const { signedEvent, publishResult } = await signAndPublish(
+      eventTemplate,
+      validated.npub,
+      validated.grantId,
+      `Create pull request "${subject}" on Nostr (NIP-34)`,
+      relays,
+    );
+
+    console.log(
+      `[ngit-api] PR published: "${subject}" → ${publishResult.successes}/${relays.length} relays`,
+    );
+
+    return Response.json({
+      eventId: signedEvent.id,
+      kind: PULL_REQUEST_KIND,
+      subject,
+      relays: publishResult.results,
+      successes: publishResult.successes,
+      failures: publishResult.failures,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Signing or publishing failed";
+    console.warn(`[ngit-api] Create PR failed: ${message}`);
+    return jsonError(message, 502);
+  }
+}
+
+/**
+ * POST /api/ngit/create-issue
+ *
+ * Build a kind 1621 issue event, sign via browser, publish to relays.
+ */
+async function handleCreateIssue(
+  deps: NgitApiDependencies,
+  request: Request,
+): Promise<Response> {
+  const body = await parseBody(request);
+  const sessionId = body.sessionId as string | undefined;
+
+  if (!sessionId) return jsonError("sessionId is required", 400);
+
+  const repoReference = body.repo_reference as string | undefined;
+  const repoOwnerPubkey = body.repo_owner_pubkey as string | undefined;
+  const content = body.content as string | undefined;
+
+  if (!repoReference) return jsonError("repo_reference is required", 400);
+  if (!repoOwnerPubkey) return jsonError("repo_owner_pubkey is required", 400);
+  if (!content) return jsonError("content is required", 400);
+
+  let validated: ValidatedSession;
+  try {
+    validated = validateSessionAndGrant(deps, sessionId);
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500;
+    return jsonError((err as Error).message, status);
+  }
+
+  const relays = resolveRelays(body, deps.defaultRelays);
+
+  const input: IssueInput = {
+    repoReference,
+    repoOwnerPubkey,
+    content,
+    subject: body.subject as string | undefined,
+    labels: body.labels as string[] | undefined,
+  };
+
+  const eventTemplate = buildIssue(input);
+  const issueSubject = input.subject ?? "Untitled issue";
+
+  try {
+    const { signedEvent, publishResult } = await signAndPublish(
+      eventTemplate,
+      validated.npub,
+      validated.grantId,
+      `Create issue "${issueSubject}" on Nostr (NIP-34)`,
+      relays,
+    );
+
+    console.log(
+      `[ngit-api] Issue published: "${issueSubject}" → ${publishResult.successes}/${relays.length} relays`,
+    );
+
+    return Response.json({
+      eventId: signedEvent.id,
+      kind: ISSUE_KIND,
+      subject: issueSubject,
+      relays: publishResult.results,
+      successes: publishResult.successes,
+      failures: publishResult.failures,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Signing or publishing failed";
+    console.warn(`[ngit-api] Create issue failed: ${message}`);
+    return jsonError(message, 502);
+  }
+}
+
+/**
+ * POST /api/ngit/set-status
+ *
+ * Build a kind 1630-1633 status event, sign via browser, publish to relays.
+ */
+async function handleSetStatus(
+  deps: NgitApiDependencies,
+  request: Request,
+): Promise<Response> {
+  const body = await parseBody(request);
+  const sessionId = body.sessionId as string | undefined;
+
+  if (!sessionId) return jsonError("sessionId is required", 400);
+
+  const targetEventId = body.target_event_id as string | undefined;
+  const status = body.status as string | undefined;
+
+  if (!targetEventId) return jsonError("target_event_id is required", 400);
+  if (!status) return jsonError("status is required", 400);
+
+  const validStatuses: StatusValue[] = ["open", "applied", "closed", "draft"];
+  if (!validStatuses.includes(status as StatusValue)) {
+    return jsonError(`status must be one of: ${validStatuses.join(", ")}`, 400);
+  }
+
+  let validated: ValidatedSession;
+  try {
+    validated = validateSessionAndGrant(deps, sessionId);
+  } catch (err) {
+    const errStatus = (err as { status?: number }).status ?? 500;
+    return jsonError((err as Error).message, errStatus);
+  }
+
+  const relays = resolveRelays(body, deps.defaultRelays);
+
+  const input: StatusInput = {
+    targetEventId,
+    status: status as StatusValue,
+    content: body.content as string | undefined,
+    repoReference: body.repo_reference as string | undefined,
+    earliestUniqueCommit: body.earliest_unique_commit as string | undefined,
+    repoOwnerPubkey: body.repo_owner_pubkey as string | undefined,
+    targetAuthorPubkey: body.target_author_pubkey as string | undefined,
+    acceptedRevisionId: body.accepted_revision_id as string | undefined,
+    mergeCommit: body.merge_commit as string | undefined,
+    appliedAsCommits: body.applied_as_commits as string[] | undefined,
+    appliedPatchIds: body.applied_patch_ids as StatusInput["appliedPatchIds"],
+  };
+
+  const eventTemplate = buildStatus(input);
+
+  try {
+    const { signedEvent, publishResult } = await signAndPublish(
+      eventTemplate,
+      validated.npub,
+      validated.grantId,
+      `Set status to "${status}" on Nostr (NIP-34)`,
+      relays,
+    );
+
+    console.log(
+      `[ngit-api] Status published: ${status} for ${targetEventId.slice(0, 12)}… → ${publishResult.successes}/${relays.length} relays`,
+    );
+
+    return Response.json({
+      eventId: signedEvent.id,
+      kind: eventTemplate.kind,
+      status,
+      targetEventId,
+      relays: publishResult.results,
+      successes: publishResult.successes,
+      failures: publishResult.failures,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Signing or publishing failed";
+    console.warn(`[ngit-api] Set status failed: ${message}`);
+    return jsonError(message, 502);
+  }
+}
+
+/**
+ * GET /api/ngit/proposals?sessionId=...&repo_reference=...
+ *
+ * Query relays for patches (1617), PRs (1618), and issues (1621) on a repo.
+ */
+async function handleListProposals(
+  deps: NgitApiDependencies,
+  url: URL,
+): Promise<Response> {
+  const sessionId = url.searchParams.get("sessionId");
+  if (!sessionId) return jsonError("sessionId query parameter is required", 400);
+
+  const session = deps.getSession(sessionId);
+  if (!session) return jsonError("Unknown session", 404);
+
+  const repoReference = url.searchParams.get("repo_reference");
+  if (!repoReference) {
+    return jsonError("repo_reference query parameter is required (format: 30617:<pubkey>:<identifier>)", 400);
+  }
+
+  const relayParam = url.searchParams.get("relays");
+  const relays = relayParam
+    ? relayParam.split(",").map((r) => r.trim()).filter(Boolean)
+    : deps.defaultRelays;
+
+  const kindsParam = url.searchParams.get("kinds");
+  const kinds = kindsParam
+    ? kindsParam.split(",").map((k) => Number(k.trim())).filter((k) => !isNaN(k))
+    : [PATCH_KIND, PULL_REQUEST_KIND, ISSUE_KIND];
+
+  try {
+    const events = await queryRelays(relays, {
+      kinds,
+      "#a": [repoReference],
+      limit: 100,
+    } as Parameters<typeof queryRelays>[1]);
+
+    const proposals = events.map((e) => {
+      const kindLabel =
+        e.kind === PATCH_KIND ? "patch" :
+        e.kind === PULL_REQUEST_KIND ? "pull_request" :
+        e.kind === ISSUE_KIND ? "issue" : `kind_${e.kind}`;
+
+      return {
+        eventId: e.id,
+        kind: e.kind,
+        type: kindLabel,
+        subject: e.tags.find((t) => t[0] === "subject")?.[1],
+        content: e.content.slice(0, 500) + (e.content.length > 500 ? "…" : ""),
+        pubkey: e.pubkey,
+        createdAt: e.created_at,
+        commitId: e.tags.find((t) => t[0] === "c" || t[0] === "commit")?.[1],
+        branchName: e.tags.find((t) => t[0] === "branch-name")?.[1],
+        labels: e.tags.filter((t) => t[0] === "t").map((t) => t[1]),
+        isRoot: e.tags.some((t) => t[0] === "t" && t[1] === "root"),
+      };
+    });
+
+    return Response.json({ proposals, count: proposals.length });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Relay query failed";
+    console.warn(`[ngit-api] List proposals failed: ${message}`);
     return jsonError(message, 502);
   }
 }

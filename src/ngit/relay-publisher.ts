@@ -99,7 +99,7 @@ export async function publishToRelays(
  */
 export async function queryRelays(
   relays: string[],
-  filter: { kinds?: number[]; authors?: string[]; "#d"?: string[]; limit?: number },
+  filter: { kinds?: number[]; authors?: string[]; "#d"?: string[]; "#a"?: string[]; limit?: number },
 ): Promise<SignedEvent[]> {
   if (relays.length === 0) return [];
 
