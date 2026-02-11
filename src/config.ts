@@ -63,6 +63,8 @@ export interface WingmanConfig {
   giteaApiToken: string | null;
   /** Gitea username/org that owns created repos */
   giteaOwner: string | null;
+  /** SuperBased / Flux Adaptor API base URL */
+  superbasedUrl: string | null;
 }
 
 const DEFAULT_PORT = 3600;
@@ -270,6 +272,15 @@ export const loadConfig = (): WingmanConfig => {
     console.warn("[Config] Gitea partially configured — need GITEA_URL, GITEA_API_TOKEN, and GITEA_OWNER");
   }
 
+  // SuperBased / Flux Adaptor configuration
+  const superbasedUrlInput = Bun.env.SUPERBASED_URL?.trim();
+  const superbasedUrl = superbasedUrlInput && superbasedUrlInput.length > 0
+    ? superbasedUrlInput.replace(/\/+$/, "")
+    : null;
+  if (superbasedUrl) {
+    console.log(`[Config] SuperBased: ${superbasedUrl}`);
+  }
+
   return {
     port,
     baseUrl,
@@ -297,6 +308,7 @@ export const loadConfig = (): WingmanConfig => {
     giteaUrl,
     giteaApiToken,
     giteaOwner,
+    superbasedUrl,
   };
 };
 
