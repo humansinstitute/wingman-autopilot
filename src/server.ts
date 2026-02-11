@@ -867,6 +867,7 @@ const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   findProjectByDirectory: (dir) => npubProjectStore.findByDirectory(dir),
   memoryStore,
   getWingmanNpub: () => getKeyTeleportIdentity()?.npub ?? null,
+  setPinnedFile: (sid, filePath) => manager.setPinnedFile(sid, filePath),
 });
 
 // Reconcile PM2 processes with app registry

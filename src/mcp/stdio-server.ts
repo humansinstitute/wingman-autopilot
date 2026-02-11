@@ -105,6 +105,16 @@ import {
   handleDeleteMemory,
 } from "./tools/delete-memory";
 import {
+  pinArtifactSchema,
+  pinArtifactDescription,
+  handlePinArtifact,
+} from "./tools/pin-artifact";
+import {
+  getPinnedArtifactSchema,
+  getPinnedArtifactDescription,
+  handleGetPinnedArtifact,
+} from "./tools/get-pinned-artifact";
+import {
   ngitInitSchema,
   ngitInitDescription,
   handleNgitInit,
@@ -285,6 +295,22 @@ server.tool(
   getProjectDescription,
   getProjectSchema,
   (_params) => handleGetProject({} as Record<string, never>, wingmanUrl, sessionId),
+);
+
+// ---- pin_artifact ----
+server.tool(
+  "pin_artifact",
+  pinArtifactDescription,
+  pinArtifactSchema,
+  (params) => handlePinArtifact(params, wingmanUrl, sessionId),
+);
+
+// ---- get_pinned_artifact ----
+server.tool(
+  "get_pinned_artifact",
+  getPinnedArtifactDescription,
+  getPinnedArtifactSchema,
+  (_params) => handleGetPinnedArtifact({} as Record<string, never>, wingmanUrl, sessionId),
 );
 
 // ---- save_memory ----

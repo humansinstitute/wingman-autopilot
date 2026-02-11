@@ -17,6 +17,7 @@ import { createWriterPanel, createWriterToolbar } from "../writer/writer-panel.j
 import { createMobileTabBar, attachSwipeGesture } from "../writer/mobile-tabs.js";
 import { fetchSessionArtifacts, createArtifactsPanel, createArtifactsToolbar } from "../live/artifacts-panel.js";
 import { addNightWatchToggle } from "../nightwatch/cmd-toggle.js";
+import { openFilePicker } from "../modals/file-picker.js";
 import { npubProjectsState } from "../npub-projects/index.js";
 import { state, TERMINAL_CONTROL_ACTIONS } from "../state/index.js";
 
@@ -773,6 +774,25 @@ export function initLiveView(deps) {
       render();
     });
 
+    const hasPinnedFile = state.pinnedFiles.has(sessionId);
+    addCommand(hasPinnedFile ? "Close Artifact" : "Open Artifact", () => {
+      if (hasPinnedFile) {
+        state.pinnedFiles.delete(sessionId);
+        state.writerLayout.open = false;
+        render();
+      } else {
+        const session = sessionsStore().items.find((s) => s.id === sessionId);
+        const startPath = session?.workingDirectory || "";
+        openFilePicker({ initialPath: startPath }).then((filePath) => {
+          if (filePath) {
+            state.pinnedFiles.set(sessionId, filePath);
+            state.writerLayout.open = true;
+            render();
+          }
+        });
+      }
+    });
+
     addCommandDivider();
 
     addCommand("Scroll to end", () => {
@@ -1116,14 +1136,22 @@ export function initLiveView(deps) {
     const activeSession = sessionsStore().items.find((s) => s.id === sessionId);
     const targetFile = activeSession?.targetFile ?? null;
 
-    // Auto-open writer layout when session has targetFile
-    if (targetFile && !state.writerLayout.open) {
+    // Sync server-side pinnedFile into client state
+    if (activeSession?.pinnedFile && !state.pinnedFiles.has(sessionId)) {
+      state.pinnedFiles.set(sessionId, activeSession.pinnedFile);
+    }
+
+    // Pinned file takes priority over session targetFile
+    const effectiveFile = state.pinnedFiles.get(sessionId) || targetFile;
+
+    // Auto-open writer layout when session has an effective file
+    if (effectiveFile && !state.writerLayout.open) {
       state.writerLayout.open = true;
     }
 
     const webApp = findWebAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
     syncHeaderWebviewToggle(webApp);
-    syncHeaderWriterToggle(targetFile);
+    syncHeaderWriterToggle(effectiveFile);
 
     // Fetch artifacts count for header icon (non-blocking)
     fetchSessionArtifacts(sessionId).then((items) => {
@@ -1133,7 +1161,7 @@ export function initLiveView(deps) {
     });
 
     // Writer split takes priority, then artifacts, then webview
-    if (targetFile && state.writerLayout.open) {
+    if (effectiveFile && state.writerLayout.open) {
       appRoot.dataset.webviewOpen = "true";
 
       const mobileTab = state.writerLayout.mobileTab || "chat";
@@ -1155,7 +1183,7 @@ export function initLiveView(deps) {
       const writerCol = document.createElement("div");
       writerCol.className = "wm-webview-col";
 
-      const writerResult = createWriterPanel(sessionId, targetFile, { showToast });
+      const writerResult = createWriterPanel(sessionId, effectiveFile, { showToast });
       activeWriterCleanup = writerResult.cleanup;
 
       const toolbar = createWriterToolbar(
@@ -1166,6 +1194,7 @@ export function initLiveView(deps) {
         },
         () => {
           state.writerLayout.open = false;
+          state.pinnedFiles.delete(sessionId);
           render();
         },
       );

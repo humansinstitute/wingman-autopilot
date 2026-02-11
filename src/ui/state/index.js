@@ -120,6 +120,8 @@ export const state = {
   writerLayout: { open: false, mode: "chat-narrow", mobileTab: "chat" },
   // Artifacts split-panel layout state
   artifactsLayout: { open: false, mode: "chat-narrow", mobileTab: "chat" },
+  // Per-session pinned artifact file path
+  pinnedFiles: new Map(),
   // Cached artifact counts per session
   artifactCounts: new Map(),
   // DOM references for incremental updates

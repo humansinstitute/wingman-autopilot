@@ -54,6 +54,8 @@ export interface SessionSnapshot {
   pm2Name?: string;
   /** Target file for writer-mode sessions */
   targetFile?: string;
+  /** File pinned as artifact in the UI right-hand panel */
+  pinnedFile?: string;
 }
 
 type SessionEvent =
@@ -78,6 +80,8 @@ export interface RehydrateSessionInput {
   pm2Name?: string;
   /** Target file for writer-mode sessions */
   targetFile?: string;
+  /** File pinned as artifact in the UI right-hand panel */
+  pinnedFile?: string;
 }
 
 interface AgentSession {
@@ -103,6 +107,8 @@ interface AgentSession {
   pm2Name?: string;
   /** Target file for writer-mode sessions */
   targetFile?: string;
+  /** File pinned as artifact in the UI right-hand panel */
+  pinnedFile?: string;
   /** Files created by MCP config injection to clean up on session stop. */
   mcpCleanupFiles?: string[];
 }
@@ -289,6 +295,7 @@ export class ProcessManager {
       isAdmin,
       pm2Name: input.pm2Name,
       targetFile: input.targetFile,
+      pinnedFile: input.pinnedFile,
     };
 
     this.sessions.set(session.id, session);
@@ -375,6 +382,15 @@ export class ProcessManager {
       return this.toSnapshot(session);
     }
     session.agentRuntimeStatus = nextStatus;
+    const snapshot = this.toSnapshot(session);
+    this.emit({ type: "session-updated", session: snapshot });
+    return snapshot;
+  }
+
+  setPinnedFile(id: string, filePath: string | null): SessionSnapshot | null {
+    const session = this.sessions.get(id);
+    if (!session) return null;
+    session.pinnedFile = filePath ?? undefined;
     const snapshot = this.toSnapshot(session);
     this.emit({ type: "session-updated", session: snapshot });
     return snapshot;
@@ -626,6 +642,7 @@ export class ProcessManager {
       isAdmin: session.isAdmin,
       pm2Name: session.pm2Name,
       targetFile: session.targetFile,
+      pinnedFile: session.pinnedFile,
     };
   }
 

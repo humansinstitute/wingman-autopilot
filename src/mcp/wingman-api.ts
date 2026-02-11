@@ -51,6 +51,7 @@ export interface WingmanMcpApiDependencies {
   findProjectByDirectory: (directoryPath: string) => NpubProjectRecord | null;
   memoryStore: MemoryStore;
   getWingmanNpub: () => string | null;
+  setPinnedFile: (sessionId: string, filePath: string | null) => unknown;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -189,6 +190,16 @@ export function createWingmanMcpApiHandler(deps: WingmanMcpApiDependencies) {
       // DELETE /api/mcp/wingman/memory?sessionId=...&id=...
       if (segments.length === 4 && segments[3] === "memory" && method === "DELETE") {
         return handleDeleteMemory(deps, url);
+      }
+
+      // POST /api/mcp/wingman/artifact/pin
+      if (segments.length === 5 && segments[3] === "artifact" && segments[4] === "pin" && method === "POST") {
+        return await handlePinArtifact(deps, request);
+      }
+
+      // GET /api/mcp/wingman/artifact/pin?sessionId=...
+      if (segments.length === 5 && segments[3] === "artifact" && segments[4] === "pin" && method === "GET") {
+        return handleGetPinnedArtifact(deps, url);
       }
 
       return jsonError("Not found", 404);
@@ -899,4 +910,44 @@ function handleDeleteMemory(
 
   const deleted = deps.memoryStore.deleteMemory(memoryId);
   return jsonOk({ deleted });
+}
+
+// ---------------------------------------------------------------------------
+// Artifact pinning
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /api/mcp/wingman/artifact/pin
+ * Body: { sessionId, filePath }
+ * Pin a file as the active artifact in the UI panel.
+ */
+async function handlePinArtifact(
+  deps: WingmanMcpApiDependencies,
+  request: Request,
+): Promise<Response> {
+  const body = await parseBody(request);
+  const sessionId = body.sessionId as string | undefined;
+  const denied = requireSessionId(deps, sessionId);
+  if (denied) return denied;
+
+  const filePath = typeof body.filePath === "string" ? body.filePath : null;
+  deps.setPinnedFile(sessionId!, filePath);
+
+  return jsonOk({ pinnedFile: filePath });
+}
+
+/**
+ * GET /api/mcp/wingman/artifact/pin?sessionId=...
+ * Returns the currently pinned file for a session.
+ */
+function handleGetPinnedArtifact(
+  deps: WingmanMcpApiDependencies,
+  url: URL,
+): Response {
+  const sessionId = url.searchParams.get("sessionId");
+  const denied = requireSessionId(deps, sessionId);
+  if (denied) return denied;
+
+  const session = deps.getSession(sessionId!);
+  return jsonOk({ pinnedFile: session?.pinnedFile ?? null });
 }
