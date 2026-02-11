@@ -1,0 +1,124 @@
+/**
+ * MCP Tool: superbased_fetch_records
+ *
+ * Fetch records delegated to Wingman from a SuperBased / Flux Adaptor API.
+ * Records are auto-decrypted server-side before being returned.
+ */
+
+import { z } from "zod";
+
+export const superbasedFetchRecordsSchema = {
+  app_npub: z
+    .string()
+    .describe("The app's npub identifier for the SuperBased collection"),
+  collection: z
+    .string()
+    .optional()
+    .describe("Filter by collection name"),
+  since: z
+    .string()
+    .optional()
+    .describe("ISO timestamp — only return records modified after this time"),
+  limit: z
+    .number()
+    .optional()
+    .describe("Maximum number of records to return"),
+  cursor: z
+    .string()
+    .optional()
+    .describe("Pagination cursor from a previous response"),
+  base_url: z
+    .string()
+    .optional()
+    .describe("SuperBased API base URL. Uses SUPERBASED_URL env var if omitted."),
+};
+
+export const superbasedFetchRecordsDescription =
+  "Fetch encrypted records where Wingman is a delegate from a SuperBased / Flux Adaptor API. " +
+  "Records are automatically decrypted using Wingman's NIP-44 key. " +
+  "Each record includes a `decrypted_payload` field (or `decrypt_error` if decryption failed). " +
+  "Supports filtering by collection, time range, and pagination.";
+
+interface SuperbasedFetchRecordsParams {
+  app_npub: string;
+  collection?: string;
+  since?: string;
+  limit?: number;
+  cursor?: string;
+  base_url?: string;
+}
+
+export async function handleSuperbasedFetchRecords(
+  params: SuperbasedFetchRecordsParams,
+  wingmanUrl: string,
+  _sessionId: string,
+) {
+  try {
+    const query = new URLSearchParams();
+    query.set("app_npub", params.app_npub);
+    if (params.collection) query.set("collection", params.collection);
+    if (params.since) query.set("since", params.since);
+    if (params.limit !== undefined) query.set("limit", String(params.limit));
+    if (params.cursor) query.set("cursor", params.cursor);
+    if (params.base_url) query.set("base_url", params.base_url);
+
+    const url = `${wingmanUrl}/api/superbased/records?${query.toString()}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      const error = await response.text();
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text" as const,
+            text: `Fetch records failed (${response.status}): ${error}`,
+          },
+        ],
+      };
+    }
+
+    const result = await response.json();
+
+    if (result.count === 0) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "No delegated records found.",
+          },
+        ],
+      };
+    }
+
+    // Format records for display
+    const decrypted = result.records.filter(
+      (r: Record<string, unknown>) => r.decrypted_payload !== null,
+    ).length;
+    const failed = result.count - decrypted;
+
+    const summary = [
+      `Found ${result.count} records (${decrypted} decrypted, ${failed} failed).`,
+      result.cursor ? `Cursor for next page: ${result.cursor}` : null,
+    ].filter(Boolean).join("\n");
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: summary + "\n\n" + JSON.stringify(result.records, null, 2),
+        },
+      ],
+    };
+  } catch (err) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text" as const,
+          text: `Failed to reach Wingman server: ${(err as Error).message}`,
+        },
+      ],
+    };
+  }
+}
