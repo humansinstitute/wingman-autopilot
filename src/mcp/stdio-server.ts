@@ -105,6 +105,11 @@ import {
   handleDeleteMemory,
 } from "./tools/delete-memory";
 import {
+  ngitInitSchema,
+  ngitInitDescription,
+  handleNgitInit,
+} from "./tools/ngit-init";
+import {
   ngitPublishRepoSchema,
   ngitPublishRepoDescription,
   handleNgitPublishRepo,
@@ -304,6 +309,14 @@ server.tool(
   deleteMemoryDescription,
   deleteMemorySchema,
   (params) => handleDeleteMemory(params, wingmanUrl, sessionId),
+);
+
+// ---- ngit_init ----
+server.tool(
+  "ngit_init",
+  ngitInitDescription,
+  ngitInitSchema,
+  (params) => handleNgitInit(params, wingmanUrl, sessionId),
 );
 
 // ---- ngit_publish_repo ----

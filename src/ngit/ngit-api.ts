@@ -140,6 +140,11 @@ export function createNgitApiHandler(deps: NgitApiDependencies) {
     // segments: ["api", "ngit", ...]
 
     try {
+      // POST /api/ngit/init
+      if (segments.length === 3 && segments[2] === "init" && method === "POST") {
+        return await handleInit(deps, request);
+      }
+
       // POST /api/ngit/publish-repo
       if (segments.length === 3 && segments[2] === "publish-repo" && method === "POST") {
         return await handlePublishRepo(deps, request);
@@ -463,6 +468,145 @@ async function handleListRepos(
     console.warn(`[ngit-api] List repos failed: ${message}`);
     return jsonError(message, 502);
   }
+}
+
+/**
+ * POST /api/ngit/init
+ *
+ * Convenience endpoint: publishes both a kind 30617 repo announcement
+ * and a kind 30618 repo state in a single call. Equivalent to
+ * calling publish-repo + push-state sequentially.
+ */
+async function handleInit(
+  deps: NgitApiDependencies,
+  request: Request,
+): Promise<Response> {
+  const body = await parseBody(request);
+  const sessionId = body.sessionId as string | undefined;
+
+  if (!sessionId) return jsonError("sessionId is required", 400);
+
+  const identifier = body.identifier as string | undefined;
+  if (!identifier) return jsonError("identifier is required", 400);
+
+  const refs = body.refs as Record<string, string> | undefined;
+  if (!refs || typeof refs !== "object" || Object.keys(refs).length === 0) {
+    return jsonError("refs is required and must be a non-empty object (branch → commit SHA)", 400);
+  }
+
+  let validated: ValidatedSession;
+  try {
+    validated = validateSessionAndGrant(deps, sessionId);
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500;
+    return jsonError((err as Error).message, status);
+  }
+
+  const callerRelays = body.relays as string[] | undefined;
+  const relays = callerRelays && callerRelays.length > 0
+    ? callerRelays
+    : deps.defaultRelays;
+
+  // --- Step 1: Repo announcement (kind 30617) ---
+  const announcementInput: RepoAnnouncementInput = {
+    identifier,
+    name: body.name as string | undefined,
+    description: body.description as string | undefined,
+    cloneUrls: body.clone_urls as string[] | undefined,
+    webUrls: body.web_urls as string[] | undefined,
+    relays,
+    maintainers: body.maintainers as string[] | undefined,
+    hashtags: body.hashtags as string[] | undefined,
+    earliestUniqueCommit: body.earliest_unique_commit as string | undefined,
+  };
+
+  const announcementTemplate = buildRepoAnnouncement(announcementInput);
+
+  let announcementEventId: string;
+  let announcementPublishResult: Awaited<ReturnType<typeof publishToRelays>>;
+
+  try {
+    const { signedEvent, publishResult } = await signAndPublish(
+      announcementTemplate,
+      validated.npub,
+      validated.grantId,
+      `Initialize git repository "${announcementInput.name ?? identifier}" on Nostr (NIP-34)`,
+      relays,
+    );
+    announcementEventId = signedEvent.id;
+    announcementPublishResult = publishResult;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Repo announcement signing/publishing failed";
+    console.warn(`[ngit-api] Init step 1 (announcement) failed: ${message}`);
+    return jsonError(message, 502);
+  }
+
+  console.log(
+    `[ngit-api] Init step 1: Repo announcement published: ${identifier} → ${announcementPublishResult.successes}/${relays.length} relays`,
+  );
+
+  // --- Step 2: Repo state (kind 30618) ---
+  const stateInput: RepoStateInput = {
+    identifier,
+    refs,
+    head: body.head as string | undefined,
+    relays,
+  };
+
+  const stateTemplate = buildRepoState(stateInput);
+
+  let stateEventId: string;
+  let statePublishResult: Awaited<ReturnType<typeof publishToRelays>>;
+
+  try {
+    const { signedEvent, publishResult } = await signAndPublish(
+      stateTemplate,
+      validated.npub,
+      validated.grantId,
+      `Push initial state for "${identifier}" to Nostr (NIP-34)`,
+      relays,
+    );
+    stateEventId = signedEvent.id;
+    statePublishResult = publishResult;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Repo state signing/publishing failed";
+    console.warn(`[ngit-api] Init step 2 (state) failed: ${message}`);
+    // Announcement already succeeded — return partial success
+    return Response.json({
+      partial: true,
+      announcement: {
+        eventId: announcementEventId,
+        kind: REPO_ANNOUNCEMENT_KIND,
+        successes: announcementPublishResult.successes,
+        failures: announcementPublishResult.failures,
+      },
+      state: { error: message },
+      identifier,
+    }, { status: 207 });
+  }
+
+  console.log(
+    `[ngit-api] Init step 2: Repo state published: ${identifier} (${Object.keys(refs).length} refs) → ${statePublishResult.successes}/${relays.length} relays`,
+  );
+
+  return Response.json({
+    identifier,
+    announcement: {
+      eventId: announcementEventId,
+      kind: REPO_ANNOUNCEMENT_KIND,
+      relays: announcementPublishResult.results,
+      successes: announcementPublishResult.successes,
+      failures: announcementPublishResult.failures,
+    },
+    state: {
+      eventId: stateEventId,
+      kind: REPO_STATE_KIND,
+      refsCount: Object.keys(refs).length,
+      relays: statePublishResult.results,
+      successes: statePublishResult.successes,
+      failures: statePublishResult.failures,
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
