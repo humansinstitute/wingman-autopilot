@@ -180,6 +180,24 @@ async function loadProjectContext(workingDirectory: string): Promise<string | nu
   return null;
 }
 
+async function loadAgentContext(workingDirectory: string): Promise<string | null> {
+  const candidates = ["agents.md", "AGENTS.md", "CLAUDE.md", "claude.md"];
+  for (const filename of candidates) {
+    try {
+      const filePath = join(workingDirectory, filename);
+      const file = Bun.file(filePath);
+      if (await file.exists()) {
+        const text = await file.text();
+        const trimmed = text.length > 6000 ? text.slice(0, 6000) + "\n\n[...truncated]" : text;
+        return `Decisions should bear in mind the project context, which can be read in the agents.md below\n\n========= AGENTS.md =========\n\n${trimmed}`;
+      }
+    } catch {
+      // File not readable, skip
+    }
+  }
+  return null;
+}
+
 // ============================================================
 // Core Functions
 // ============================================================
@@ -189,6 +207,7 @@ function buildNightWatchPrompt(
   firstMessages: StoredMessage[],
   allMessages: StoredMessage[],
   projectContext: string | null,
+  agentContext: string | null,
 ): ChatMessage[] {
   const goalSection = firstMessages.length > 0
     ? firstMessages.map((m) => `[${m.role}]: ${m.content}`).join("\n")
@@ -203,6 +222,9 @@ function buildNightWatchPrompt(
     userMessage += `${projectContext}\n\n---\n\n`;
   }
   userMessage += `What are we trying to achieve:\n${goalSection}\n\nFull Conversation History:\n${historySection}`;
+  if (agentContext) {
+    userMessage += `\n\n---\n\n${agentContext}`;
+  }
 
   return [
     { role: "system", content: systemPrompt },
@@ -307,8 +329,10 @@ async function executeNightWatchReview(
   // Load project context from the session's working directory
   const session = deps.getSession(sessionId);
   let projectContext: string | null = null;
+  let agentContext: string | null = null;
   if (session?.workingDirectory) {
     projectContext = await loadProjectContext(session.workingDirectory);
+    agentContext = await loadAgentContext(session.workingDirectory);
   }
 
   const firstMessages = allMessages.slice(0, 3);
@@ -317,10 +341,10 @@ async function executeNightWatchReview(
   const systemPrompt = customPrompt || NIGHTWATCH_DEFAULT_PROMPT;
 
   console.log(
-    `[nightwatch] Reviewing session ${sessionId} (cycle ${sessionState.cycleCount}/${sessionState.maxCycles}, model: ${model}, messages: ${allMessages.length}${projectContext ? ", with project context" : ""}${customPrompt ? ", custom prompt" : ""})`,
+    `[nightwatch] Reviewing session ${sessionId} (cycle ${sessionState.cycleCount}/${sessionState.maxCycles}, model: ${model}, messages: ${allMessages.length}${projectContext ? ", with project context" : ""}${agentContext ? ", with agent context" : ""}${customPrompt ? ", custom prompt" : ""})`,
   );
 
-  const prompt = buildNightWatchPrompt(systemPrompt, firstMessages, allMessages, projectContext);
+  const prompt = buildNightWatchPrompt(systemPrompt, firstMessages, allMessages, projectContext, agentContext);
   let rawResponse: string;
 
   try {
