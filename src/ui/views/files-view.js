@@ -551,6 +551,30 @@ export function initFilesView(deps) {
           });
         }
 
+        // Delete button (hover-reveal, all entries)
+        const deleteBtn = document.createElement("button");
+        deleteBtn.type = "button";
+        deleteBtn.className = "wm-files-browser__delete";
+        setIconButton(deleteBtn, "trash", `Delete ${entry.type === "directory" ? "folder" : "file"}`);
+        deleteBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const displayName = entry.name || entry.path;
+          const confirmed = window.confirm(`Delete "${displayName}"? This cannot be undone.`);
+          if (!confirmed) return;
+          deleteBtn.disabled = true;
+          try {
+            await deleteFilesEntry(entry.path);
+            if (entry.path === files.previewPath) {
+              resetFilesPreview();
+            }
+            await loadFilesTree(files.currentPath);
+          } catch (err) {
+            deleteBtn.disabled = false;
+            const msg = err instanceof Error ? err.message : "Failed to delete";
+            window.alert(msg);
+          }
+        });
+
         // Star toggle for folders
         if (entry.type === "directory") {
           const starred = isFavourite(entry.path);
@@ -562,9 +586,9 @@ export function initFilesView(deps) {
             e.stopPropagation();
             toggleFavourite(entry.path, entry.name);
           });
-          item.append(button, starBtn);
+          item.append(button, starBtn, deleteBtn);
         } else {
-          item.append(button);
+          item.append(button, deleteBtn);
         }
         list.append(item);
       });

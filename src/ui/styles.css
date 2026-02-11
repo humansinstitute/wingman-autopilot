@@ -5899,8 +5899,15 @@ dialog button[value="cancel"] {
   gap: 0.25rem;
 }
 
-.wm-files-browser__item button:not(.wm-files-browser__star) {
-  width: 100%;
+.wm-files-browser__item {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.wm-files-browser__item button:not(.wm-files-browser__star):not(.wm-files-browser__delete) {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -5913,17 +5920,17 @@ dialog button[value="cancel"] {
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
-.wm-files-browser__item button:not(.wm-files-browser__star):hover {
+.wm-files-browser__item button:not(.wm-files-browser__star):not(.wm-files-browser__delete):hover {
   border-color: rgba(16, 185, 129, 0.3);
   background: rgba(16, 185, 129, 0.08);
 }
 
-.wm-files-browser__item[data-selected="true"] button:not(.wm-files-browser__star) {
+.wm-files-browser__item[data-selected="true"] button:not(.wm-files-browser__star):not(.wm-files-browser__delete) {
   border-color: var(--accent-primary);
   background: rgba(16, 185, 129, 0.18);
 }
 
-.wm-files-browser__item[data-dragover="true"] button:not(.wm-files-browser__star) {
+.wm-files-browser__item[data-dragover="true"] button:not(.wm-files-browser__star):not(.wm-files-browser__delete) {
   border-color: var(--accent-primary);
   background: rgba(16, 185, 129, 0.22);
   outline: 2px dashed var(--accent-primary);
@@ -5935,14 +5942,14 @@ dialog button[value="cancel"] {
   outline-offset: -2px;
 }
 
-.wm-files-browser__item button:not(.wm-files-browser__star)[aria-disabled="true"] {
+.wm-files-browser__item button:not(.wm-files-browser__star):not(.wm-files-browser__delete)[aria-disabled="true"] {
   color: var(--text-tertiary);
   cursor: not-allowed;
   border-color: transparent;
   background: none;
 }
 
-.wm-files-browser__item button:not(.wm-files-browser__star)[aria-disabled="true"]:hover {
+.wm-files-browser__item button:not(.wm-files-browser__star):not(.wm-files-browser__delete)[aria-disabled="true"]:hover {
   border-color: transparent;
   background: none;
 }
@@ -6022,6 +6029,38 @@ dialog button[value="cancel"] {
 
 .wm-files-browser__star--active {
   color: var(--accent-primary);
+}
+
+/* ── Delete button (hover-reveal) ─────────────────────────── */
+.wm-files-browser__delete {
+  flex-shrink: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease;
+}
+
+.wm-files-browser__delete .wm-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.wm-files-browser__item:hover .wm-files-browser__delete,
+.wm-files-browser__item:focus-within .wm-files-browser__delete {
+  display: inline-flex;
+}
+
+.wm-files-browser__delete:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
 }
 
 /* ── Favourites section ─────────────────────────────────────── */
