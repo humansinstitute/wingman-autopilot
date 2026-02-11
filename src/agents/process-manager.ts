@@ -21,6 +21,7 @@ import {
   waitForStatus,
 } from "./pm2-wrapper";
 import { injectMcpConfig, cleanupMcpConfig } from "./mcp-injector";
+import { ensureCredentialHelper, getGiteaGitEnv } from "../gitea/credential-helper";
 
 const MAX_LOG_LINES = 500;
 
@@ -222,6 +223,24 @@ export class ProcessManager {
       };
     } catch (mcpError) {
       this.appendLog(session, `[manager] MCP config injection failed (non-fatal): ${(mcpError as Error).message}`);
+    }
+
+    // Inject Gitea git credentials so agents can push to the Gitea server
+    if (this.config.giteaUrl && this.config.giteaApiToken && this.config.giteaOwner) {
+      try {
+        const dataDir = new URL("../../data", import.meta.url).pathname;
+        const helperPath = ensureCredentialHelper(dataDir);
+        if (helperPath) {
+          const giteaEnv = getGiteaGitEnv(this.config, helperPath);
+          session.definition = {
+            ...session.definition,
+            env: { ...session.definition.env, ...giteaEnv },
+          };
+          this.appendLog(session, `[manager] Gitea git credentials configured for ${this.config.giteaUrl}`);
+        }
+      } catch (giteaError) {
+        this.appendLog(session, `[manager] Gitea credential setup failed (non-fatal): ${(giteaError as Error).message}`);
+      }
     }
 
     try {
