@@ -78,6 +78,7 @@ import { Nip98GrantStore } from "./mcp/grants-store";
 import { createNip98ApiHandler } from "./mcp/nip98-api";
 import { createWingmanMcpApiHandler } from "./mcp/wingman-api";
 import { createNgitApiHandler } from "./ngit/ngit-api";
+import { createSuperbasedApiHandler } from "./superbased/superbased-api";
 import { MemoryStore } from "./mcp/memory-store";
 import { userSettingsStore } from "./storage/user-settings-store";
 import { artifactsStore } from "./storage/artifacts-store";
@@ -318,6 +319,9 @@ const ngitApiHandler = createNgitApiHandler({
     apiToken: config.giteaApiToken ?? undefined,
     owner: config.giteaOwner ?? undefined,
   },
+});
+const superbasedApiHandler = createSuperbasedApiHandler({
+  defaultBaseUrl: config.superbasedUrl,
 });
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());
@@ -4053,6 +4057,15 @@ const handleApi = async (
   // No auth gate: requests are validated by session ID and grants in the handler.
   if (pathname.startsWith("/api/ngit")) {
     const response = await ngitApiHandler(request, url, method);
+    if (response) {
+      return response;
+    }
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
+  // SuperBased API — encrypted record CRUD via Flux Adaptor.
+  // No auth gate: uses Tier 1 NIP-98 signing internally.
+  if (pathname.startsWith("/api/superbased")) {
+    const response = await superbasedApiHandler(request, url, method);
     if (response) {
       return response;
     }
