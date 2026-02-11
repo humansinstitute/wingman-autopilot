@@ -704,12 +704,9 @@ body[data-menu-open="true"] .wm-menu-panel {
 
 #app[data-route="live"][data-webview-open="true"] {
   max-width: none;
-  padding-left: 0.75rem;
-  padding-right: 0.75rem;
-  padding-top: 0;
-  padding-bottom: 0;
-  flex: 0 0 auto;
-  height: calc(100vh - var(--nav-height));
+  padding: 0 0.75rem;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 
