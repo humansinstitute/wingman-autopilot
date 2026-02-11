@@ -706,13 +706,18 @@ body[data-menu-open="true"] .wm-menu-panel {
   max-width: none;
   padding-left: 0.75rem;
   padding-right: 0.75rem;
+  padding-top: 0;
+  padding-bottom: 0;
+  height: calc(100vh - var(--nav-height));
+  overflow: hidden;
 }
 
 /* Lock viewport height when webview is open so each column scrolls independently */
 [data-webview-open="true"] .wm-live {
-  height: calc(100vh - var(--nav-height));
-  max-height: calc(100vh - var(--nav-height));
+  height: 100%;
+  max-height: 100%;
   overflow: hidden;
+  gap: 0;
 }
 
 .wm-home {
@@ -7770,7 +7775,6 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   gap: 0.75rem;
   flex: 1;
   min-height: 0;
-  height: calc(100vh - var(--nav-height) - 2rem);
   overflow: hidden;
 }
 
@@ -7943,7 +7947,6 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   /* Writer split: stack vertically, fill viewport */
   .wm-live-split {
     flex-direction: column;
-    height: calc(100vh - var(--nav-height) - 2rem);
     overflow: hidden;
   }
 
