@@ -20,7 +20,7 @@ export const superbasedSyncRecordsSchema = {
           .array(z.string())
           .optional()
           .describe("Additional delegate public keys (Wingman is always included)"),
-        record_id: z.string().optional().describe("Record ID for updates (omit for new records)"),
+        record_id: z.string().describe("Record ID (required). Format: todo_{16-char-hex}. Generate for new records, reuse for updates."),
         collection: z.string().optional().describe("Collection name"),
         metadata: z.record(z.unknown()).optional().describe("Arbitrary metadata to store alongside the record"),
       }),

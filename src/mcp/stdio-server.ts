@@ -184,6 +184,11 @@ import {
   superbasedSyncRecordsDescription,
   handleSuperbasedSyncRecords,
 } from "./tools/superbased-sync-records";
+import {
+  gitPushSchema,
+  gitPushDescription,
+  handleGitPush,
+} from "./tools/git-push";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -472,6 +477,14 @@ server.tool(
   superbasedSyncRecordsDescription,
   superbasedSyncRecordsSchema,
   (params) => handleSuperbasedSyncRecords(params, wingmanUrl, sessionId),
+);
+
+// ---- git_push ----
+server.tool(
+  "git_push",
+  gitPushDescription,
+  gitPushSchema,
+  (params) => handleGitPush(params, wingmanUrl, sessionId),
 );
 
 // ---------------------------------------------------------------------------

@@ -232,11 +232,19 @@ export class ProcessManager {
         const helperPath = ensureCredentialHelper(dataDir);
         if (helperPath) {
           const giteaEnv = getGiteaGitEnv(this.config, helperPath);
+          // Also inject git identity so agent commits use the Gitea owner name
+          // (doesn't touch user's .gitconfig — scoped to this subprocess)
+          const gitIdentityEnv: Record<string, string> = {
+            GIT_AUTHOR_NAME: this.config.giteaOwner!,
+            GIT_AUTHOR_EMAIL: `${this.config.giteaOwner}@noreply.gitea`,
+            GIT_COMMITTER_NAME: this.config.giteaOwner!,
+            GIT_COMMITTER_EMAIL: `${this.config.giteaOwner}@noreply.gitea`,
+          };
           session.definition = {
             ...session.definition,
-            env: { ...session.definition.env, ...giteaEnv },
+            env: { ...session.definition.env, ...giteaEnv, ...gitIdentityEnv },
           };
-          this.appendLog(session, `[manager] Gitea git credentials configured for ${this.config.giteaUrl}`);
+          this.appendLog(session, `[manager] Gitea git credentials + identity configured for ${this.config.giteaUrl}`);
         }
       } catch (giteaError) {
         this.appendLog(session, `[manager] Gitea credential setup failed (non-fatal): ${(giteaError as Error).message}`);

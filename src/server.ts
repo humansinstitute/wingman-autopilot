@@ -78,6 +78,7 @@ import { Nip98GrantStore } from "./mcp/grants-store";
 import { createNip98ApiHandler } from "./mcp/nip98-api";
 import { createWingmanMcpApiHandler } from "./mcp/wingman-api";
 import { createNgitApiHandler } from "./ngit/ngit-api";
+import { createGiteaApiHandler } from "./gitea/gitea-api";
 import { createSuperbasedApiHandler } from "./superbased/superbased-api";
 import { MemoryStore } from "./mcp/memory-store";
 import { userSettingsStore } from "./storage/user-settings-store";
@@ -322,6 +323,11 @@ const ngitApiHandler = createNgitApiHandler({
 });
 const superbasedApiHandler = createSuperbasedApiHandler({
   defaultBaseUrl: config.superbasedUrl,
+});
+const giteaApiHandler = createGiteaApiHandler({
+  getSession: (sid: string) => manager.getSession(sid),
+  config,
+  dataDir: new URL("../data", import.meta.url).pathname,
 });
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());
@@ -4048,6 +4054,15 @@ const handleApi = async (
   // No auth gate: requests are validated by session ID in the handler.
   if (pathname.startsWith("/api/mcp/nip98")) {
     const response = await nip98ApiHandler(request, url, method);
+    if (response) {
+      return response;
+    }
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
+  // Gitea API — programmatic git operations scoped to the Gitea remote.
+  // No auth gate: validated by session ID in the handler.
+  if (pathname.startsWith("/api/gitea")) {
+    const response = await giteaApiHandler(request, url, method);
     if (response) {
       return response;
     }

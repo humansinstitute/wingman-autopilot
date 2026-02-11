@@ -712,6 +712,57 @@ export function initLiveView(deps) {
       },
     ]);
 
+    // ---- Gitea submenu ----
+    const executeGiteaAction = async (action, options = {}) => {
+      try {
+        const response = await fetch(`/api/gitea/${action}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId, ...options }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          showToast(`Gitea ${action} failed: ${data.error || "Unknown error"}`, { type: "error", duration: 5000 });
+          return null;
+        }
+        showToast(`Gitea ${action} successful`, { type: "success" });
+        if (data.stdout) {
+          console.log(`Gitea ${action} output:`, data.stdout);
+        }
+        return data;
+      } catch (error) {
+        showToast(`Gitea ${action} failed: ${error.message}`, { type: "error" });
+        return null;
+      }
+    };
+
+    addSubmenu("Gitea", [
+      {
+        label: "Set Remote",
+        handler: async () => {
+          const session = sessionsStore().items.find((s) => s.id === sessionId);
+          const dirName = session?.workingDirectory?.split("/").pop() || "";
+          const projectName = window.prompt("Project name for Gitea repo:", dirName);
+          if (projectName === null) return; // cancelled
+          showToast("Setting up Gitea remote...", { type: "info" });
+          const data = await executeGiteaAction("set-remote", { projectName: projectName || undefined });
+          if (data?.cloneUrl) {
+            showToast(`Remote set: ${data.cloneUrl}`, { type: "success", duration: 5000 });
+          }
+        },
+      },
+      { label: "Push", handler: () => executeGiteaAction("push") },
+      { label: "Pull", handler: () => executeGiteaAction("pull") },
+      {
+        label: "Commit and Push All",
+        handler: () => {
+          const message = window.prompt("Commit message:", "updates");
+          if (message === null) return; // cancelled
+          executeGiteaAction("commit-and-push", { message: message || "updates" });
+        },
+      },
+    ]);
+
     const matchingApp = findAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
 
     if (matchingApp) {
