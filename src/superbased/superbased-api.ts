@@ -315,12 +315,18 @@ async function handleSyncRecords(
     );
 
     // Build the record for the upstream API
+    const { plaintext_payload, id, ...rest } = record;
+    const existingMetadata = (rest.metadata as Record<string, unknown>) ?? {};
     return {
-      ...record,
-      plaintext_payload: undefined, // strip plaintext
-      encrypted_payloads: encryptedPayloads,
+      ...rest,
+      record_id: (record as Record<string, unknown>).record_id ?? id,
+      encrypted_data: encryptedPayloads,
       owner_pubkey: ownerPubkey,
       delegate_pubkeys: Array.from(allRecipients),
+      metadata: {
+        ...existingMetadata,
+        encrypted_from: identity.pubkey,
+      },
     };
   });
 

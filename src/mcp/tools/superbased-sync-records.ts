@@ -20,7 +20,7 @@ export const superbasedSyncRecordsSchema = {
           .array(z.string())
           .optional()
           .describe("Additional delegate public keys (Wingman is always included)"),
-        id: z.string().optional().describe("Record ID for updates (omit for new records)"),
+        record_id: z.string().optional().describe("Record ID for updates (omit for new records)"),
         collection: z.string().optional().describe("Collection name"),
         metadata: z.record(z.unknown()).optional().describe("Arbitrary metadata to store alongside the record"),
       }),
@@ -43,7 +43,7 @@ interface SyncRecord {
   plaintext_payload: string;
   owner_pubkey: string;
   delegate_pubkeys?: string[];
-  id?: string;
+  record_id?: string;
   collection?: string;
   metadata?: Record<string, unknown>;
 }
