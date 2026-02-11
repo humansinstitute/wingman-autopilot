@@ -107,9 +107,72 @@ Client pulls the same Docker image and runs on their own infrastructure. We prov
 
 Volumes are **named Docker volumes** on managed deployments and **bind mounts** for self-hosted.
 
-### 3.3 Resource Limits
+### 3.3 Disk Quota Enforcement
 
-Each container runs with enforced limits to prevent runaway agents or bloated installs:
+Docker volumes have **no native size quota**. Since agents can install large dependency trees (a single Next.js project can pull 500MB+ of `node_modules`), disk limits must be enforced at the host level.
+
+#### Primary: XFS Project Quotas (Recommended for Fleet)
+
+The host VM's volume partition must be formatted as XFS with project quotas enabled:
+
+```bash
+# Host setup (one-time, in Proxmox VM template)
+mkfs.xfs /dev/sdb
+mount -o pquota /dev/sdb /var/lib/docker/volumes
+
+# Per-client quota (run during provisioning)
+xfs_quota -x -c "project -s -p /var/lib/docker/volumes/wm01-workspace 101" /dev/sdb
+xfs_quota -x -c "limit -p bhard=50g 101" /dev/sdb
+
+xfs_quota -x -c "project -s -p /var/lib/docker/volumes/wm01-data 102" /dev/sdb
+xfs_quota -x -c "limit -p bhard=5g 102" /dev/sdb
+```
+
+This gives hard kernel-level enforcement with zero runtime overhead. When the limit is hit, writes fail with `ENOSPC` — `npm install` and similar tools handle this gracefully.
+
+#### Fallback: Loopback Device (Simpler, Portable)
+
+If XFS isn't available, create a fixed-size file per volume:
+
+```bash
+truncate -s 50G /volumes/wm01-workspace.img
+mkfs.ext4 /volumes/wm01-workspace.img
+mount -o loop /volumes/wm01-workspace.img /mnt/wm01-workspace
+# Then bind-mount /mnt/wm01-workspace into the container
+```
+
+Hard limit enforced. Downside: can't resize without downtime (must create larger image, copy data, swap).
+
+#### Always: Monitoring Sidecar
+
+Regardless of quota method, run a periodic disk usage check:
+
+| Threshold | Action |
+|-----------|--------|
+| 80% of plan limit | Warning in Wingman admin UI |
+| 90% | Block new agent sessions, notify operator |
+| 95% | Alert operator, suggest cleanup or plan upgrade |
+
+```bash
+# Cron job or monitoring sidecar
+du -sb /var/lib/docker/volumes/wm01-workspace/_data | awk '{
+  used=$1; limit=50*1024*1024*1024;
+  pct=used/limit*100;
+  if (pct > 80) print "WARN: wm01 workspace at " pct "%"
+}'
+```
+
+#### Quota by Plan
+
+| Plan | Workspace Quota | Data Quota | Total Disk |
+|------|----------------|------------|------------|
+| Starter | 20GB | 2GB | ~22GB |
+| Standard | 50GB | 5GB | ~55GB |
+| Pro | 100GB | 10GB | ~110GB |
+
+### 3.4 Resource Limits (CPU/Memory)
+
+Each container runs with enforced limits to prevent runaway agents:
 
 ```yaml
 deploy:
