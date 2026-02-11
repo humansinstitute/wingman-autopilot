@@ -159,6 +159,31 @@ import {
   ngitListProposalsDescription,
   handleNgitListProposals,
 } from "./tools/ngit-list-proposals";
+import {
+  nip44EncryptSchema,
+  nip44EncryptDescription,
+  handleNip44Encrypt,
+} from "./tools/nip44-encrypt";
+import {
+  nip44DecryptSchema,
+  nip44DecryptDescription,
+  handleNip44Decrypt,
+} from "./tools/nip44-decrypt";
+import {
+  superbasedHealthSchema,
+  superbasedHealthDescription,
+  handleSuperbasedHealth,
+} from "./tools/superbased-health";
+import {
+  superbasedFetchRecordsSchema,
+  superbasedFetchRecordsDescription,
+  handleSuperbasedFetchRecords,
+} from "./tools/superbased-fetch-records";
+import {
+  superbasedSyncRecordsSchema,
+  superbasedSyncRecordsDescription,
+  handleSuperbasedSyncRecords,
+} from "./tools/superbased-sync-records";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -407,6 +432,46 @@ server.tool(
   ngitListProposalsDescription,
   ngitListProposalsSchema,
   (params) => handleNgitListProposals(params, wingmanUrl, sessionId),
+);
+
+// ---- nip44_encrypt ----
+server.tool(
+  "nip44_encrypt",
+  nip44EncryptDescription,
+  nip44EncryptSchema,
+  (params) => handleNip44Encrypt(params),
+);
+
+// ---- nip44_decrypt ----
+server.tool(
+  "nip44_decrypt",
+  nip44DecryptDescription,
+  nip44DecryptSchema,
+  (params) => handleNip44Decrypt(params),
+);
+
+// ---- superbased_health ----
+server.tool(
+  "superbased_health",
+  superbasedHealthDescription,
+  superbasedHealthSchema,
+  (params) => handleSuperbasedHealth(params, wingmanUrl, sessionId),
+);
+
+// ---- superbased_fetch_records ----
+server.tool(
+  "superbased_fetch_records",
+  superbasedFetchRecordsDescription,
+  superbasedFetchRecordsSchema,
+  (params) => handleSuperbasedFetchRecords(params, wingmanUrl, sessionId),
+);
+
+// ---- superbased_sync_records ----
+server.tool(
+  "superbased_sync_records",
+  superbasedSyncRecordsDescription,
+  superbasedSyncRecordsSchema,
+  (params) => handleSuperbasedSyncRecords(params, wingmanUrl, sessionId),
 );
 
 // ---------------------------------------------------------------------------
