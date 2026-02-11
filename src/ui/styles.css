@@ -708,6 +708,7 @@ body[data-menu-open="true"] .wm-menu-panel {
   padding-right: 0.75rem;
   padding-top: 0;
   padding-bottom: 0;
+  flex: 0 0 auto;
   height: calc(100vh - var(--nav-height));
   overflow: hidden;
 }
