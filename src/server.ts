@@ -77,6 +77,7 @@ import { createBrowserLogHandler } from "./logging/browser-log-handler";
 import { Nip98GrantStore } from "./mcp/grants-store";
 import { createNip98ApiHandler } from "./mcp/nip98-api";
 import { createWingmanMcpApiHandler } from "./mcp/wingman-api";
+import { createNgitApiHandler } from "./ngit/ngit-api";
 import { MemoryStore } from "./mcp/memory-store";
 import { userSettingsStore } from "./storage/user-settings-store";
 import { artifactsStore } from "./storage/artifacts-store";
@@ -307,6 +308,11 @@ const memoryStore = new MemoryStore();
 const nip98ApiHandler = createNip98ApiHandler({
   grantsStore: nip98GrantsStore,
   getSession: (sid: string) => manager.getSession(sid) ?? null,
+});
+const ngitApiHandler = createNgitApiHandler({
+  grantsStore: nip98GrantsStore,
+  getSession: (sid: string) => manager.getSession(sid) ?? null,
+  defaultRelays: config.connectRelays,
 });
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());
@@ -4032,6 +4038,15 @@ const handleApi = async (
   // No auth gate: requests are validated by session ID in the handler.
   if (pathname.startsWith("/api/mcp/nip98")) {
     const response = await nip98ApiHandler(request, url, method);
+    if (response) {
+      return response;
+    }
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
+  // ngit API — NIP-34 git repository operations (publish, push state, list).
+  // No auth gate: requests are validated by session ID and grants in the handler.
+  if (pathname.startsWith("/api/ngit")) {
+    const response = await ngitApiHandler(request, url, method);
     if (response) {
       return response;
     }

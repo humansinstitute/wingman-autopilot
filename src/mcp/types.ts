@@ -135,3 +135,21 @@ export interface SignResponseMessage {
   signedEvent?: Record<string, unknown>;
   error?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Generic Nostr event signing (used by ngit / NIP-34)
+// ---------------------------------------------------------------------------
+
+export interface NostrSignRequestMessage {
+  type: 'nostr:sign_request';
+  requestId: string;
+  grantId: string;
+  /** Human-readable description of what is being signed. */
+  description: string;
+  eventTemplate: {
+    kind: number;
+    created_at: number;
+    tags: string[][];
+    content: string;
+  };
+}

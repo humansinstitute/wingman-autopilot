@@ -104,6 +104,21 @@ import {
   deleteMemoryDescription,
   handleDeleteMemory,
 } from "./tools/delete-memory";
+import {
+  ngitPublishRepoSchema,
+  ngitPublishRepoDescription,
+  handleNgitPublishRepo,
+} from "./tools/ngit-publish-repo";
+import {
+  ngitPushStateSchema,
+  ngitPushStateDescription,
+  handleNgitPushState,
+} from "./tools/ngit-push-state";
+import {
+  ngitListReposSchema,
+  ngitListReposDescription,
+  handleNgitListRepos,
+} from "./tools/ngit-list-repos";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -264,6 +279,30 @@ server.tool(
   deleteMemoryDescription,
   deleteMemorySchema,
   (params) => handleDeleteMemory(params, wingmanUrl, sessionId),
+);
+
+// ---- ngit_publish_repo ----
+server.tool(
+  "ngit_publish_repo",
+  ngitPublishRepoDescription,
+  ngitPublishRepoSchema,
+  (params) => handleNgitPublishRepo(params, wingmanUrl, sessionId),
+);
+
+// ---- ngit_push_state ----
+server.tool(
+  "ngit_push_state",
+  ngitPushStateDescription,
+  ngitPushStateSchema,
+  (params) => handleNgitPushState(params, wingmanUrl, sessionId),
+);
+
+// ---- ngit_list_repos ----
+server.tool(
+  "ngit_list_repos",
+  ngitListReposDescription,
+  ngitListReposSchema,
+  (params) => handleNgitListRepos(params, wingmanUrl, sessionId),
 );
 
 // ---------------------------------------------------------------------------

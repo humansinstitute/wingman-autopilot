@@ -112,15 +112,20 @@ async function signEvent(eventTemplate) {
 // ---------------------------------------------------------------------------
 
 async function handleSignRequest(request) {
-  const { requestId, eventTemplate } = request;
+  const { requestId, eventTemplate, type } = request;
 
   if (!requestId || !eventTemplate) {
     console.warn("[nip98-listener] Invalid sign request — missing fields");
     return;
   }
 
+  const isNostrEvent = type === "nostr:sign_request";
+  const label = isNostrEvent
+    ? `kind ${eventTemplate.kind} (NIP-34 Git)`
+    : eventTemplate.tags?.find((t) => t[0] === "u")?.[1] ?? "unknown URL";
+
   console.log(
-    `[nip98-listener] Received sign request ${requestId} for ${eventTemplate.tags?.find((t) => t[0] === "u")?.[1] ?? "unknown URL"}`,
+    `[nip98-listener] Received sign request ${requestId} for ${label}`,
   );
 
   try {
@@ -177,7 +182,7 @@ function connect(npub) {
   eventSource.onmessage = async (event) => {
     try {
       const data = JSON.parse(event.data);
-      if (data.type === "nip98:sign_request") {
+      if (data.type === "nip98:sign_request" || data.type === "nostr:sign_request") {
         await handleSignRequest(data);
       }
     } catch (err) {
