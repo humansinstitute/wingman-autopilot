@@ -220,13 +220,17 @@ async function handleFetchRecords(
     const decryptedRecords = rawRecords.map((record: Record<string, unknown>) => {
       const delegatePayload = record.delegate_payload as string | undefined;
       const ownerPubkey = record.owner_pubkey as string | undefined;
+      const metadata = record.metadata as Record<string, unknown> | undefined;
+      // Use encrypted_from if available (delegate-written records),
+      // otherwise fall back to owner pubkey (owner-written records)
+      const senderPubkey = (metadata?.encrypted_from as string) || ownerPubkey;
 
-      if (!delegatePayload || !ownerPubkey) {
-        return { ...record, decrypted_payload: null, decrypt_error: "Missing delegate_payload or owner_pubkey" };
+      if (!delegatePayload || !senderPubkey) {
+        return { ...record, decrypted_payload: null, decrypt_error: "Missing delegate_payload or sender pubkey" };
       }
 
       try {
-        const plaintext = nip44Decrypt(delegatePayload, identity.secretKey, ownerPubkey);
+        const plaintext = nip44Decrypt(delegatePayload, identity.secretKey, senderPubkey);
         return { ...record, decrypted_payload: plaintext, decrypt_error: null };
       } catch (err) {
         return { ...record, decrypted_payload: null, decrypt_error: (err as Error).message };
@@ -314,18 +318,30 @@ async function handleSyncRecords(
       Array.from(allRecipients),
     );
 
+    // Split: owner's copy → encrypted_data (string),
+    //        delegate copies → delegate_payloads (map)
+    const ownerCiphertext = encryptedPayloads[ownerPubkey];
+    const delegatePayloads: Record<string, string> = {};
+    for (const [pubkey, ciphertext] of Object.entries(encryptedPayloads)) {
+      if (pubkey !== ownerPubkey) {
+        delegatePayloads[pubkey] = ciphertext;
+      }
+    }
+
     // Build the record for the upstream API
-    const { plaintext_payload, id, ...rest } = record;
+    const { plaintext_payload, delegate_pubkeys: _dp, id, ...rest } = record;
     const existingMetadata = (rest.metadata as Record<string, unknown>) ?? {};
     return {
       ...rest,
       record_id: (record as Record<string, unknown>).record_id ?? id,
-      encrypted_data: encryptedPayloads,
+      encrypted_data: ownerCiphertext,
+      delegate_payloads: delegatePayloads,
       owner_pubkey: ownerPubkey,
-      delegate_pubkeys: Array.from(allRecipients),
       metadata: {
         ...existingMetadata,
         encrypted_from: identity.pubkey,
+        read_delegates: Array.from(allRecipients).filter(k => k !== ownerPubkey),
+        write_delegates: Array.from(allRecipients).filter(k => k !== ownerPubkey),
       },
     };
   });
