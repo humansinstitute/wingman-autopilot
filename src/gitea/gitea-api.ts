@@ -4,6 +4,10 @@
  * HTTP handler for /api/gitea/* routes. Provides programmatic git
  * operations (set-remote, push, pull, commit-and-push) scoped to
  * the Gitea remote. Follows the same factory pattern as ngit-api.ts.
+ *
+ * Supports per-user Gitea credentials: if the session's npub has a
+ * provisioned Gitea account, operations use that user's token/owner.
+ * Otherwise falls back to the admin (wm21) credentials.
  */
 
 import type { SessionSnapshot } from "../agents/process-manager";
@@ -15,6 +19,8 @@ import {
   commitAndPushToGitea,
   type GiteaOperationConfig,
 } from "./gitea-operations";
+import { resolveGiteaCredentials } from "./gitea-user-manager";
+import { runPushGuard } from "./push-guard";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -53,7 +59,8 @@ async function parseBody(request: Request): Promise<Record<string, unknown>> {
 }
 
 /**
- * Resolve session → working directory, plus build the GiteaOperationConfig.
+ * Resolve session → working directory, plus build the GiteaOperationConfig
+ * with per-user credential override when available.
  */
 function resolveSessionContext(
   deps: GiteaApiDependencies,
@@ -72,9 +79,13 @@ function resolveSessionContext(
     return jsonError("Session has no working directory", 400);
   }
 
+  // Resolve per-user credentials (falls back to admin)
+  const giteaOverride = resolveGiteaCredentials(session.npub, deps.config) ?? undefined;
+
   const opConfig: GiteaOperationConfig = {
     wingmanConfig: deps.config,
     dataDir: deps.dataDir,
+    giteaOverride,
   };
 
   return { directory: session.workingDirectory, opConfig };
@@ -184,6 +195,15 @@ async function handlePush(
   const ctx = resolveSessionContext(deps, sessionId);
   if (ctx instanceof Response) return ctx;
 
+  // Run push safety guard
+  const guard = await runPushGuard(ctx.directory);
+  if (!guard.allowed) {
+    return Response.json(
+      { error: "Push blocked by safety guard", issues: guard.issues },
+      { status: 400 },
+    );
+  }
+
   const result = await pushToGitea({
     directory: ctx.directory,
     opConfig: ctx.opConfig,
@@ -247,6 +267,15 @@ async function handleCommitAndPush(
 
   const ctx = resolveSessionContext(deps, sessionId);
   if (ctx instanceof Response) return ctx;
+
+  // Run push safety guard
+  const guard = await runPushGuard(ctx.directory);
+  if (!guard.allowed) {
+    return Response.json(
+      { error: "Push blocked by safety guard", issues: guard.issues },
+      { status: 400 },
+    );
+  }
 
   const result = await commitAndPushToGitea({
     directory: ctx.directory,
