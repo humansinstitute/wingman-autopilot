@@ -6239,6 +6239,16 @@ dialog button[value="cancel"] {
   color: #ef4444;
 }
 
+.wm-files-toolbar-btn--agent {
+  color: #22c55e;
+}
+
+.wm-files-toolbar-btn--agent:hover {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
+}
+
 .wm-files-preview__body[data-empty="true"] {
   border: 1px dashed var(--border-primary);
   border-radius: 12px;

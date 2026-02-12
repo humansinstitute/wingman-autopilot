@@ -356,6 +356,28 @@ export function initFilesView(deps) {
       if (getCurrentRoute() === "files") render();
     });
 
+    const agentButton = document.createElement("button");
+    agentButton.type = "button";
+    agentButton.className = "wm-files-toolbar-btn wm-files-toolbar-btn--agent";
+    setIconButton(agentButton, "terminal", "Start agent session here");
+    agentButton.disabled = files.loading || !files.currentPath;
+    agentButton.addEventListener("click", () => {
+      if (files.loading || !files.currentPath) return;
+      const config = typeof getConfig === "function" ? getConfig() : null;
+      const agents = config?.agents ?? [];
+      if (agents.length === 0) {
+        window.alert("No agents available.");
+        return;
+      }
+      showQuickAgentPicker(agentButton, agents, (agentId) => {
+        if (typeof launchSession === "function") {
+          launchSession(agentId, files.currentPath, "", null, {
+            openInNewTab: true,
+          });
+        }
+      });
+    });
+
     controls.append(
       upButton,
       refreshButton,
@@ -363,6 +385,7 @@ export function initFilesView(deps) {
       newFolderButton,
       newFileButton,
       uploadButton,
+      agentButton,
     );
 
     browserHeader.append(headerButton, controls);
