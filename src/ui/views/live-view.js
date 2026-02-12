@@ -738,16 +738,16 @@ export function initLiveView(deps) {
 
     addSubmenu("Gitea", [
       {
-        label: "Set Remote",
+        label: "Setup",
         handler: async () => {
           const session = sessionsStore().items.find((s) => s.id === sessionId);
           const dirName = session?.workingDirectory?.split("/").pop() || "";
           const projectName = window.prompt("Project name for Gitea repo:", dirName);
           if (projectName === null) return; // cancelled
-          showToast("Setting up Gitea remote...", { type: "info" });
+          showToast("Setting up Gitea repo...", { type: "info" });
           const data = await executeGiteaAction("set-remote", { projectName: projectName || undefined });
           if (data?.cloneUrl) {
-            showToast(`Remote set: ${data.cloneUrl}`, { type: "success", duration: 5000 });
+            showToast(`Gitea repo ready: ${data.cloneUrl}`, { type: "success", duration: 5000 });
           }
         },
       },
