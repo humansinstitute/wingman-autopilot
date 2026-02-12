@@ -79,6 +79,7 @@ import { createNip98ApiHandler } from "./mcp/nip98-api";
 import { createWingmanMcpApiHandler } from "./mcp/wingman-api";
 import { createNgitApiHandler } from "./ngit/ngit-api";
 import { createGiteaApiHandler } from "./gitea/gitea-api";
+import { ensureGiteaUser } from "./gitea/gitea-user-manager";
 import { createSuperbasedApiHandler } from "./superbased/superbased-api";
 import { MemoryStore } from "./mcp/memory-store";
 import { userSettingsStore } from "./storage/user-settings-store";
@@ -4257,14 +4258,23 @@ const handleApi = async (
       authContext.npub = payload.npub;
       authContext.session = payload;
       delete authContext.error;
+      const alias = generateIdentityAlias(trimmedNpub);
       try {
         identityUserStore.touch(trimmedNpub, {
-          alias: generateIdentityAlias(trimmedNpub),
+          alias,
           lastSeenAt: new Date().toISOString(),
         });
       } catch (error) {
         console.warn(`[admin] failed to record identity ${trimmedNpub}:`, error);
       }
+
+      // Fire-and-forget Gitea user provisioning
+      if (config.giteaUrl && config.giteaApiToken && config.giteaOwner) {
+        ensureGiteaUser(config, trimmedNpub, alias).catch((err) => {
+          console.warn(`[gitea] user provisioning failed for ${trimmedNpub}:`, err);
+        });
+      }
+
       const headers = new Headers({
         "cache-control": "no-store",
       });
@@ -5429,6 +5439,7 @@ const handleApi = async (
       })),
       defaultAgent: config.defaultAgent,
       featureFlags: serialiseFeatureFlagsForViewer(workspaceScope.isAdmin),
+      giteaUrl: config.giteaUrl ?? null,
     });
   }
 
