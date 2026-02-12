@@ -111,6 +111,36 @@ async function getCurrentBranch(
   return result.stdout || "main";
 }
 
+/**
+ * Ensure the directory has its own git repo. If the directory is inside a
+ * parent repo (or has no repo at all), run `git init` so that all
+ * subsequent operations are scoped to this directory — not a parent.
+ *
+ * Returns true if a new repo was initialised, false if one already existed.
+ */
+async function ensureGitRepo(
+  directory: string,
+  opConfig: GiteaOperationConfig,
+): Promise<boolean> {
+  const toplevel = await runGiteaGit(
+    ["rev-parse", "--show-toplevel"],
+    directory,
+    opConfig,
+  );
+
+  // Normalise paths for comparison (strip trailing slashes)
+  const normalise = (p: string) => p.replace(/\/+$/, "");
+  const isOwnRepo =
+    toplevel.exitCode === 0 &&
+    normalise(toplevel.stdout) === normalise(directory);
+
+  if (isOwnRepo) return false;
+
+  // Either no repo or a parent repo — init a fresh one here
+  await runGiteaGit(["init"], directory, opConfig);
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Public operations
 // ---------------------------------------------------------------------------
@@ -129,6 +159,9 @@ export async function setGiteaRemote(opts: {
   if (!giteaConfig) {
     return { success: false, stdout: "", stderr: "Gitea is not configured" };
   }
+
+  // Make sure this directory has its own git repo — not a parent's
+  await ensureGitRepo(directory, opConfig);
 
   // Generate a repo name from the project name (or random alias)
   const repoName = generateRepoName(projectName);
@@ -247,6 +280,9 @@ export async function commitAndPushToGitea(opts: {
 }): Promise<GiteaOperationResult> {
   const { directory, opConfig } = opts;
   const commitMessage = opts.message || "updates";
+
+  // Make sure this directory has its own git repo — not a parent's
+  await ensureGitRepo(directory, opConfig);
 
   // Stage all changes
   const add = await runGiteaGit(["add", "."], directory, opConfig);
