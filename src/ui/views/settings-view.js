@@ -135,6 +135,98 @@ export function initSettingsView(deps) {
     return container;
   }
 
+  function renderGiteaSection(giteaUrl) {
+    const container = document.createElement("div");
+    container.className = "wm-settings__gitea";
+    container.style.cssText = "margin-top:16px;";
+
+    const heading = document.createElement("h3");
+    heading.textContent = "Gitea";
+    container.append(heading);
+
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:12px;align-items:center;margin-top:8px;";
+
+    const usernameLabel = document.createElement("span");
+    usernameLabel.style.cssText = "font-size:0.85em;font-weight:500;min-width:80px;";
+    usernameLabel.textContent = "Username:";
+
+    const usernameValue = document.createElement("code");
+    usernameValue.style.cssText = "font-size:0.85em;color:var(--text-muted);";
+    usernameValue.textContent = "Loading...";
+
+    const statusBadge = document.createElement("span");
+    statusBadge.style.cssText = "font-size:0.8em;padding:2px 8px;border-radius:10px;";
+
+    const repoLink = document.createElement("a");
+    repoLink.style.cssText = "font-size:0.85em;display:none;";
+    repoLink.target = "_blank";
+    repoLink.rel = "noopener";
+    repoLink.textContent = "My Repositories";
+
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.className = "wm-button secondary";
+    resetBtn.textContent = "Reset";
+    resetBtn.style.cssText = "font-size:0.8em;padding:4px 10px;margin-left:auto;display:none;";
+    resetBtn.title = "Clear stored Gitea credentials — re-provisioned on next login";
+
+    // Load user settings to display Gitea info
+    fetch("/api/user/settings")
+      .then((r) => r.json())
+      .then((data) => {
+        const username = data.settings?.gitea_username;
+        const token = data.settings?.gitea_api_token;
+        if (username && token) {
+          usernameValue.textContent = username;
+          statusBadge.textContent = "Account active";
+          statusBadge.style.background = "var(--success, #4caf50)";
+          statusBadge.style.color = "#fff";
+          repoLink.href = `${giteaUrl}/${username}`;
+          repoLink.style.display = "inline";
+          resetBtn.style.display = "inline-block";
+        } else {
+          usernameValue.textContent = "—";
+          statusBadge.textContent = "Not provisioned";
+          statusBadge.style.background = "var(--bg-secondary)";
+          statusBadge.style.color = "var(--text-muted)";
+        }
+      })
+      .catch(() => {
+        usernameValue.textContent = "Error loading";
+      });
+
+    resetBtn.addEventListener("click", async () => {
+      resetBtn.disabled = true;
+      resetBtn.textContent = "Resetting...";
+      try {
+        await fetch("/api/user/settings/gitea_api_token", { method: "DELETE" });
+        await fetch("/api/user/settings/gitea_username", { method: "DELETE" });
+        usernameValue.textContent = "—";
+        statusBadge.textContent = "Reset — log in again to re-provision";
+        statusBadge.style.background = "var(--bg-secondary)";
+        statusBadge.style.color = "var(--text-muted)";
+        repoLink.style.display = "none";
+        resetBtn.style.display = "none";
+      } catch {
+        resetBtn.textContent = "Failed";
+      }
+      resetBtn.disabled = false;
+      resetBtn.textContent = "Reset";
+    });
+
+    row.append(usernameLabel, usernameValue, statusBadge, repoLink, resetBtn);
+    container.append(row);
+
+    const helpText = document.createElement("p");
+    helpText.className = "wm-settings__port-note";
+    helpText.style.cssText = "margin-top:6px;font-size:0.8em;";
+    helpText.textContent = "Your Gitea account is auto-provisioned on login. Repos you create via agents are owned by your account.";
+    container.append(helpText);
+
+    return container;
+  }
+
   const renderSettings = () => {
     const wrapper = document.createElement("div");
     wrapper.className = "wm-settings";
@@ -207,6 +299,20 @@ export function initSettingsView(deps) {
     // API Keys section (only for authenticated users)
     if (state.identity.authenticated) {
       wingmanCard.append(renderApiKeysSection());
+    }
+
+    // Gitea section (only for authenticated users when Gitea is configured)
+    if (state.identity.authenticated) {
+      const giteaPlaceholder = document.createElement("div");
+      wingmanCard.append(giteaPlaceholder);
+      fetch("/api/config")
+        .then((r) => r.json())
+        .then((cfg) => {
+          if (cfg.giteaUrl) {
+            giteaPlaceholder.replaceWith(renderGiteaSection(cfg.giteaUrl));
+          }
+        })
+        .catch(() => {});
     }
 
     wrapper.append(wingmanCard);
