@@ -67,19 +67,30 @@ export function ensureCredentialHelper(dataDir: string): string | null {
  * Build environment variables that configure git to use the Wingman
  * credential helper for the Gitea domain.
  *
- * Returns an empty object if Gitea is not configured.
+ * Accepts either a WingmanConfig (legacy) or a resolved GiteaConfig
+ * (per-user credentials). Returns an empty object if Gitea is not
+ * configured.
  */
 export function getGiteaGitEnv(
-  config: WingmanConfig,
+  config: WingmanConfig | GiteaConfig,
   helperPath: string,
 ): Record<string, string> {
-  const giteaConfig: Partial<GiteaConfig> = {
-    url: config.giteaUrl ?? undefined,
-    apiToken: config.giteaApiToken ?? undefined,
-    owner: config.giteaOwner ?? undefined,
-  };
+  let giteaConfig: GiteaConfig | null;
 
-  if (!isGiteaConfigured(giteaConfig)) return {};
+  if ("port" in config) {
+    // WingmanConfig — resolve to GiteaConfig
+    const partial: Partial<GiteaConfig> = {
+      url: config.giteaUrl ?? undefined,
+      apiToken: config.giteaApiToken ?? undefined,
+      owner: config.giteaOwner ?? undefined,
+    };
+    giteaConfig = isGiteaConfigured(partial) ? partial : null;
+  } else {
+    // Already a GiteaConfig
+    giteaConfig = config;
+  }
+
+  if (!giteaConfig) return {};
 
   // GIT_CONFIG_COUNT + GIT_CONFIG_KEY_N + GIT_CONFIG_VALUE_N
   // tells git to treat these as config entries. We scope the

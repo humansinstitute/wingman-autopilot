@@ -22,6 +22,8 @@ export interface GiteaOperationConfig {
   wingmanConfig: WingmanConfig;
   /** Path to the data directory (for the credential helper script). */
   dataDir: string;
+  /** Per-user Gitea credentials override. When set, used instead of config. */
+  giteaOverride?: GiteaConfig;
 }
 
 export interface GiteaOperationResult {
@@ -39,13 +41,16 @@ export interface GiteaOperationResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Build the Gitea config object from WingmanConfig, if configured.
+ * Build the Gitea config object — uses per-user override if present,
+ * otherwise falls back to extracting from WingmanConfig.
  */
-function resolveGiteaConfig(config: WingmanConfig): GiteaConfig | null {
+function resolveGiteaConfig(opConfig: GiteaOperationConfig): GiteaConfig | null {
+  if (opConfig.giteaOverride) return opConfig.giteaOverride;
+
   const partial = {
-    url: config.giteaUrl ?? undefined,
-    apiToken: config.giteaApiToken ?? undefined,
-    owner: config.giteaOwner ?? undefined,
+    url: opConfig.wingmanConfig.giteaUrl ?? undefined,
+    apiToken: opConfig.wingmanConfig.giteaApiToken ?? undefined,
+    owner: opConfig.wingmanConfig.giteaOwner ?? undefined,
   };
   return isGiteaConfigured(partial) ? partial : null;
 }
@@ -57,13 +62,13 @@ function resolveGiteaConfig(config: WingmanConfig): GiteaConfig | null {
 function buildGiteaEnv(
   opConfig: GiteaOperationConfig,
 ): Record<string, string | undefined> | null {
-  const giteaConfig = resolveGiteaConfig(opConfig.wingmanConfig);
+  const giteaConfig = resolveGiteaConfig(opConfig);
   if (!giteaConfig) return null;
 
   const helperPath = ensureCredentialHelper(opConfig.dataDir);
   if (!helperPath) return null;
 
-  const giteaEnv = getGiteaGitEnv(opConfig.wingmanConfig, helperPath);
+  const giteaEnv = getGiteaGitEnv(giteaConfig, helperPath);
   return { ...process.env, ...giteaEnv };
 }
 
@@ -155,7 +160,7 @@ export async function setGiteaRemote(opts: {
 }): Promise<GiteaOperationResult> {
   const { directory, opConfig, projectName } = opts;
 
-  const giteaConfig = resolveGiteaConfig(opConfig.wingmanConfig);
+  const giteaConfig = resolveGiteaConfig(opConfig);
   if (!giteaConfig) {
     return { success: false, stdout: "", stderr: "Gitea is not configured" };
   }
