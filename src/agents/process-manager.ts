@@ -22,6 +22,7 @@ import {
 } from "./pm2-wrapper";
 import { injectMcpConfig, cleanupMcpConfig } from "./mcp-injector";
 import { ensureCredentialHelper, getGiteaGitEnv } from "../gitea/credential-helper";
+import { resolveGiteaCredentials } from "../gitea/gitea-user-manager";
 
 const MAX_LOG_LINES = 500;
 
@@ -226,25 +227,29 @@ export class ProcessManager {
     }
 
     // Inject Gitea git credentials so agents can push to the Gitea server
+    // Uses per-user credentials when available, falls back to admin (wm21)
     if (this.config.giteaUrl && this.config.giteaApiToken && this.config.giteaOwner) {
       try {
-        const dataDir = new URL("../../data", import.meta.url).pathname;
-        const helperPath = ensureCredentialHelper(dataDir);
-        if (helperPath) {
-          const giteaEnv = getGiteaGitEnv(this.config, helperPath);
-          // Also inject git identity so agent commits use the Gitea owner name
-          // (doesn't touch user's .gitconfig — scoped to this subprocess)
-          const gitIdentityEnv: Record<string, string> = {
-            GIT_AUTHOR_NAME: this.config.giteaOwner!,
-            GIT_AUTHOR_EMAIL: `${this.config.giteaOwner}@noreply.gitea`,
-            GIT_COMMITTER_NAME: this.config.giteaOwner!,
-            GIT_COMMITTER_EMAIL: `${this.config.giteaOwner}@noreply.gitea`,
-          };
-          session.definition = {
-            ...session.definition,
-            env: { ...session.definition.env, ...giteaEnv, ...gitIdentityEnv },
-          };
-          this.appendLog(session, `[manager] Gitea git credentials + identity configured for ${this.config.giteaUrl}`);
+        const giteaCreds = resolveGiteaCredentials(npub, this.config);
+        if (giteaCreds) {
+          const dataDir = new URL("../../data", import.meta.url).pathname;
+          const helperPath = ensureCredentialHelper(dataDir);
+          if (helperPath) {
+            const giteaEnv = getGiteaGitEnv(giteaCreds, helperPath);
+            // Also inject git identity so agent commits use the correct owner name
+            // (doesn't touch user's .gitconfig — scoped to this subprocess)
+            const gitIdentityEnv: Record<string, string> = {
+              GIT_AUTHOR_NAME: giteaCreds.owner,
+              GIT_AUTHOR_EMAIL: `${giteaCreds.owner}@wingman-os.ai`,
+              GIT_COMMITTER_NAME: giteaCreds.owner,
+              GIT_COMMITTER_EMAIL: `${giteaCreds.owner}@wingman-os.ai`,
+            };
+            session.definition = {
+              ...session.definition,
+              env: { ...session.definition.env, ...giteaEnv, ...gitIdentityEnv },
+            };
+            this.appendLog(session, `[manager] Gitea credentials configured for ${giteaCreds.owner}@${this.config.giteaUrl}`);
+          }
         }
       } catch (giteaError) {
         this.appendLog(session, `[manager] Gitea credential setup failed (non-fatal): ${(giteaError as Error).message}`);
