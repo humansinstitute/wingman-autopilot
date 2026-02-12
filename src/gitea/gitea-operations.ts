@@ -9,8 +9,8 @@
  */
 
 import { ensureCredentialHelper, getGiteaGitEnv } from "./credential-helper";
-import { getOrCreateRepo, isGiteaConfigured, type GiteaConfig } from "./gitea-client";
-import { generateRepoName } from "./name-generator";
+import { repoExists, createRepo, isGiteaConfigured, type GiteaConfig } from "./gitea-client";
+import { deriveRepoName } from "./name-generator";
 import type { WingmanConfig } from "../config";
 
 // ---------------------------------------------------------------------------
@@ -168,24 +168,34 @@ export async function setGiteaRemote(opts: {
   // Make sure this directory has its own git repo — not a parent's
   await ensureGitRepo(directory, opConfig);
 
-  // Generate a repo name from the project name (or random alias)
-  const repoName = generateRepoName(projectName);
+  // Derive repo name from project name or directory basename
+  const repoName = deriveRepoName(projectName, directory);
 
-  // Create or get the repo on Gitea
+  // Check if a repo with this name already exists
   let cloneUrl: string;
   let repoCreated: boolean;
   try {
-    const { repo, created } = await getOrCreateRepo(giteaConfig, {
+    const existing = await repoExists(giteaConfig, repoName);
+    if (existing) {
+      return {
+        success: false,
+        stdout: "",
+        stderr: `A Gitea repo named "${repoName}" already exists (${existing.htmlUrl}). ` +
+          `Pass a different projectName to use a different name.`,
+      };
+    }
+
+    const repo = await createRepo(giteaConfig, {
       name: repoName,
-      description: projectName ? `Wingman: ${projectName}` : "Wingman project",
+      description: projectName ? `Wingman: ${projectName}` : `Wingman: ${repoName}`,
     });
     cloneUrl = repo.cloneUrl;
-    repoCreated = created;
+    repoCreated = true;
   } catch (err) {
     return {
       success: false,
       stdout: "",
-      stderr: `Failed to create/get Gitea repo: ${(err as Error).message}`,
+      stderr: `Failed to create Gitea repo: ${(err as Error).message}`,
     };
   }
 

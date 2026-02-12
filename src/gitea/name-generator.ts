@@ -1,43 +1,18 @@
 /**
- * 3-Word Alias Generator for Gitea Repo Names
+ * Repo Name Generator for Gitea
  *
- * Generates memorable, unique-ish aliases like "quick-jumps-fox"
- * for use as Gitea repository names when the user doesn't provide one.
+ * Derives a kebab-case repository name from the project name
+ * or working directory basename.
  */
 
-// ---------------------------------------------------------------------------
-// Word lists (~16 each)
-// ---------------------------------------------------------------------------
-
-const ADJECTIVES = [
-  "bold", "calm", "dark", "fast", "keen", "loud", "mild", "neat",
-  "pure", "rare", "slim", "soft", "tall", "warm", "wide", "wise",
-];
-
-const VERBS = [
-  "binds", "calls", "darts", "finds", "grabs", "holds", "jumps", "keeps",
-  "leads", "marks", "opens", "pulls", "reads", "sends", "takes", "wraps",
-];
-
-const NOUNS = [
-  "arch", "bolt", "cube", "disk", "edge", "flux", "gate", "hive",
-  "iron", "jade", "knot", "lens", "mesh", "node", "orb", "pine",
-];
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function pick(list: readonly string[]): string {
-  return list[Math.floor(Math.random() * list.length)];
-}
+import { basename } from "node:path";
 
 /**
  * Sanitize a string to kebab-case suitable for a git repo name.
  * Strips non-alphanumeric characters (except hyphens), collapses runs,
  * trims leading/trailing hyphens, and lowercases.
  */
-function toKebab(input: string): string {
+export function toKebab(input: string): string {
   return input
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, "-")
@@ -45,28 +20,24 @@ function toKebab(input: string): string {
     .replace(/^-|-$/g, "");
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 /**
- * Generate a 3-word alias like "bold-jumps-arch".
- */
-export function generate3WordAlias(): string {
-  return `${pick(ADJECTIVES)}-${pick(VERBS)}-${pick(NOUNS)}`;
-}
-
-/**
- * Generate a repo name, optionally incorporating a project name.
+ * Derive a repo name from the project name or directory path.
  *
- * - No project name: "bold-jumps-arch"
- * - With project name: "bold-jumps-arch-my-project"
+ * - If projectName is provided, sanitize it to kebab-case.
+ * - Otherwise, use the directory basename.
+ * - Falls back to "project" if both are empty after sanitization.
  */
-export function generateRepoName(projectName?: string): string {
-  const alias = generate3WordAlias();
-  if (!projectName || projectName.trim().length === 0) {
-    return alias;
+export function deriveRepoName(projectName?: string, directory?: string): string {
+  if (projectName && projectName.trim().length > 0) {
+    const sanitized = toKebab(projectName.trim());
+    if (sanitized) return sanitized;
   }
-  const sanitized = toKebab(projectName.trim());
-  return sanitized ? `${alias}-${sanitized}` : alias;
+
+  if (directory) {
+    const dirName = basename(directory);
+    const sanitized = toKebab(dirName);
+    if (sanitized) return sanitized;
+  }
+
+  return "project";
 }
