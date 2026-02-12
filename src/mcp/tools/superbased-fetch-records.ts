@@ -11,6 +11,9 @@ export const superbasedFetchRecordsSchema = {
   app_npub: z
     .string()
     .describe("The app's npub identifier for the SuperBased collection"),
+  owner_pubkey: z
+    .string()
+    .describe("Hex pubkey of the record owner to fetch records for. Records are scoped to this owner only."),
   collection: z
     .string()
     .optional()
@@ -35,12 +38,14 @@ export const superbasedFetchRecordsSchema = {
 
 export const superbasedFetchRecordsDescription =
   "Fetch encrypted records where Wingman is a delegate from a SuperBased / Flux Adaptor API. " +
+  "Records are scoped to the specified owner_pubkey — only that user's records are returned. " +
   "Records are automatically decrypted using Wingman's NIP-44 key. " +
   "Each record includes a `decrypted_payload` field (or `decrypt_error` if decryption failed). " +
   "Supports filtering by collection, time range, and pagination.";
 
 interface SuperbasedFetchRecordsParams {
   app_npub: string;
+  owner_pubkey: string;
   collection?: string;
   since?: string;
   limit?: number;
@@ -56,6 +61,7 @@ export async function handleSuperbasedFetchRecords(
   try {
     const query = new URLSearchParams();
     query.set("app_npub", params.app_npub);
+    query.set("owner_pubkey", params.owner_pubkey);
     if (params.collection) query.set("collection", params.collection);
     if (params.since) query.set("since", params.since);
     if (params.limit !== undefined) query.set("limit", String(params.limit));

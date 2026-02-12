@@ -186,6 +186,11 @@ async function handleFetchRecords(
     return jsonError("app_npub query parameter is required", 400);
   }
 
+  const ownerPubkey = url.searchParams.get("owner_pubkey");
+  if (!ownerPubkey) {
+    return jsonError("owner_pubkey query parameter is required", 400);
+  }
+
   const identity = getKeyTeleportIdentity();
   if (!identity) {
     return jsonError("Wingman server key not configured (KEYTELEPORT_PRIVKEY)", 500);
@@ -193,6 +198,7 @@ async function handleFetchRecords(
 
   // Build the upstream URL with query params
   const upstreamUrl = new URL(`${baseUrl}/records/${appNpub}/delegated`);
+  upstreamUrl.searchParams.set("owner", ownerPubkey);
   const collection = url.searchParams.get("collection");
   const since = url.searchParams.get("since");
   const limit = url.searchParams.get("limit");
@@ -237,9 +243,14 @@ async function handleFetchRecords(
       }
     });
 
+    // Defense in depth: filter to only the requested owner's records
+    const ownerFiltered = decryptedRecords.filter(
+      (r: Record<string, unknown>) => r.owner_pubkey === ownerPubkey,
+    );
+
     return Response.json({
-      records: decryptedRecords,
-      count: decryptedRecords.length,
+      records: ownerFiltered,
+      count: ownerFiltered.length,
       cursor,
     });
   } catch (err) {
