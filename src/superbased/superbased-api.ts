@@ -13,6 +13,7 @@ import { getKeyTeleportIdentity } from "../config";
 import { nip44Encrypt, nip44Decrypt, encryptToMultipleRecipients } from "./nip44-crypto";
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex } from "@noble/hashes/utils";
+import { nip19 } from "nostr-tools";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -313,6 +314,19 @@ async function handleSyncRecords(
       throw new Error(`Record ${index}: owner_pubkey is required`);
     }
 
+    // Validate record_id format: must be todo_{hex} for app compatibility
+    const recordId = (record.record_id ?? record.id) as string | undefined;
+    if (recordId) {
+      const hexMatch = recordId.match(/^todo_([a-f0-9]+)$/i);
+      if (!hexMatch) {
+        throw new Error(
+          `Record ${index}: record_id "${recordId}" is invalid. ` +
+          `Must be "todo_{hex}" (e.g. "todo_a1b2c3d4e5f67890"). ` +
+          `Non-hex characters are not allowed.`,
+        );
+      }
+    }
+
     // Collect all recipients: owner + delegates (including Wingman itself)
     const allRecipients = new Set<string>();
     allRecipients.add(ownerPubkey);
@@ -342,17 +356,43 @@ async function handleSyncRecords(
     // Build the record for the upstream API
     const { plaintext_payload, delegate_pubkeys: _dp, id, ...rest } = record;
     const existingMetadata = (rest.metadata as Record<string, unknown>) ?? {};
+
+    // Derive local_id from record_id (the hex portion after "todo_")
+    const finalRecordId = ((record as Record<string, unknown>).record_id ?? id) as string;
+    const localIdMatch = finalRecordId?.match(/^todo_([a-f0-9]+)$/i);
+    const localId = localIdMatch?.[1] || (existingMetadata.local_id as string) || undefined;
+
+    // Derive owner npub from hex pubkey
+    const ownerNpub = nip19.npubEncode(ownerPubkey);
+
+    // Extract updated_at from payload for metadata (used by app sync logic)
+    let payloadUpdatedAt = existingMetadata.updated_at as string | undefined;
+    if (!payloadUpdatedAt) {
+      try {
+        const parsed = JSON.parse(plaintext as string);
+        payloadUpdatedAt = parsed.updated_at || parsed.created_at;
+      } catch { /* ignore parse errors */ }
+    }
+
     return {
       ...rest,
-      record_id: (record as Record<string, unknown>).record_id ?? id,
+      record_id: finalRecordId,
       encrypted_data: ownerCiphertext,
       delegate_payloads: delegatePayloads,
       owner_pubkey: ownerPubkey,
       metadata: {
         ...existingMetadata,
+        // Always enforced by Wingman — agents don't need to provide these
         encrypted_from: identity.pubkey,
         read_delegates: Array.from(allRecipients).filter(k => k !== ownerPubkey),
         write_delegates: Array.from(allRecipients).filter(k => k !== ownerPubkey),
+        schema_version: 1,
+        // Derived from record_id and owner_pubkey — never rely on agent input
+        ...(localId ? { local_id: localId } : {}),
+        owner: ownerNpub,
+        // Sensible defaults for fields agents shouldn't need to set
+        device_id: (existingMetadata.device_id as string) || "wingman",
+        ...(payloadUpdatedAt ? { updated_at: payloadUpdatedAt } : {}),
       },
     };
   });
