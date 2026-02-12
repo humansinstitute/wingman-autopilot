@@ -335,7 +335,17 @@ export function initHomeView(deps) {
           const row = document.createElement("tr");
 
           const nameCell = document.createElement("td");
-          nameCell.textContent = app.label ?? app.id;
+          const nameLink = document.createElement("a");
+          nameLink.textContent = app.label ?? app.id;
+          nameLink.href = "/apps";
+          nameLink.style.color = "inherit";
+          nameLink.style.textDecoration = "underline";
+          nameLink.style.cursor = "pointer";
+          nameLink.addEventListener("click", (e) => {
+            e.preventDefault();
+            navigateToApps({ focusAppId: app.id });
+          });
+          nameCell.append(nameLink);
           row.append(nameCell);
 
           const statusCell = document.createElement("td");
