@@ -94,19 +94,57 @@ async function createGiteaUser(
 }
 
 /**
- * Create an API token for a Gitea user.
+ * Reset a Gitea user's password via the admin API.
+ * Used when the user exists but we don't have credentials for them.
  */
-async function createGiteaToken(
+async function resetGiteaUserPassword(
   baseUrl: string,
   adminToken: string,
   username: string,
+  newPassword: string,
+): Promise<void> {
+  const resp = await fetch(`${baseUrl}/api/v1/admin/users/${username}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `token ${adminToken}`,
+    },
+    body: JSON.stringify({
+      password: newPassword,
+      must_change_password: false,
+      source_id: 0,
+      login_name: username,
+    }),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Gitea password reset failed (${resp.status}): ${text}`);
+  }
+}
+
+/**
+ * Create an API token for a Gitea user.
+ *
+ * Uses the user's own basic auth credentials (username:password) since
+ * Gitea blocks token creation for other users via token auth.
+ * See: https://github.com/go-gitea/gitea/issues/21186
+ */
+async function createGiteaToken(
+  baseUrl: string,
+  username: string,
+  password: string,
 ): Promise<string> {
-  const resp = await adminPost(
-    baseUrl,
-    `/users/${username}/tokens`,
-    adminToken,
-    { name: "wingman", scopes: ["all"] },
-  );
+  const basicAuth = Buffer.from(`${username}:${password}`).toString("base64");
+
+  const resp = await fetch(`${baseUrl}/api/v1/users/${username}/tokens`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Basic ${basicAuth}`,
+    },
+    body: JSON.stringify({ name: "wingman", scopes: ["all"] }),
+  });
 
   if (!resp.ok) {
     const text = await resp.text();
@@ -155,6 +193,7 @@ export async function ensureGiteaUser(
   // Try the primary alias as username
   let username = alias;
   const password = randomBytes(32).toString("hex");
+  let userCreated = false;
 
   const exists = await giteaUserExists(baseUrl, adminToken, username);
   if (!exists) {
@@ -170,20 +209,30 @@ export async function ensureGiteaUser(
         if (!suffixedExists) {
           throw new Error(`Failed to create Gitea user: ${username} (both alias and suffix taken)`);
         }
+        // Exists from a previous attempt — reset their password so we can auth
+        await resetGiteaUserPassword(baseUrl, adminToken, username, password);
+      } else {
+        userCreated = true;
       }
+    } else {
+      userCreated = true;
     }
+  } else {
+    // User already exists — reset password so we can create a token
+    await resetGiteaUserPassword(baseUrl, adminToken, username, password);
   }
 
-  // Create API token
-  const apiToken = await createGiteaToken(baseUrl, adminToken, username);
+  // Create API token using the user's basic auth credentials
+  // (Gitea blocks token creation for other users via token auth)
+  const apiToken = await createGiteaToken(baseUrl, username, password);
 
   // Persist
   userSettingsStore.set(npub, "gitea_username", username);
   userSettingsStore.set(npub, "gitea_api_token", apiToken);
 
-  console.log(`[gitea] User provisioned: ${username} for ${npub.slice(0, 16)}...`);
+  console.log(`[gitea] User provisioned: ${username} for ${npub.slice(0, 16)}...${userCreated ? " (new account)" : " (existing account)"}`);
 
-  return { username, apiToken, created: true };
+  return { username, apiToken, created: userCreated };
 }
 
 /**
