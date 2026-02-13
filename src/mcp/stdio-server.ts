@@ -190,6 +190,11 @@ import {
   handleSuperbasedRecordHistory,
 } from "./tools/superbased-record-history";
 import {
+  wingmanIdentitySchema,
+  wingmanIdentityDescription,
+  handleGetWingmanIdentity,
+} from "./tools/wingman-identity";
+import {
   gitPushSchema,
   gitPushDescription,
   handleGitPush,
@@ -458,6 +463,14 @@ server.tool(
   nip44DecryptDescription,
   nip44DecryptSchema,
   (params) => handleNip44Decrypt(params),
+);
+
+// ---- get_wingman_identity ----
+server.tool(
+  "get_wingman_identity",
+  wingmanIdentityDescription,
+  wingmanIdentitySchema,
+  () => handleGetWingmanIdentity(),
 );
 
 // ---- superbased_health ----
