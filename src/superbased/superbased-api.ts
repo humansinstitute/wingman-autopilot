@@ -349,6 +349,7 @@ async function handleSyncRecords(
 
     return {
       record_id: recordId,
+      owner_pubkey: ownerPubkey,
       collection,
       encrypted_data: encryptedData,
       encrypted_from: identity.pubkey,
