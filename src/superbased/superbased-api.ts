@@ -1,11 +1,11 @@
 /**
- * SuperBased API Handler
+ * SuperBased API Handler (v3)
  *
  * HTTP handler for /api/superbased/* routes. Proxies requests to a
  * SuperBased / Flux Adaptor API with NIP-98 authentication (Tier 1),
  * and handles NIP-44 encryption/decryption of record payloads.
  *
- * Follows the same factory pattern as ngit-api.ts.
+ * v3: Append-only versioned records, UUID record IDs, no metadata column.
  */
 
 import { signWithWingmanKey } from "../mcp/wingman-signer";
@@ -13,7 +13,6 @@ import { getKeyTeleportIdentity } from "../config";
 import { nip44Encrypt, nip44Decrypt, encryptToMultipleRecipients } from "./nip44-crypto";
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex } from "@noble/hashes/utils";
-import { nip19 } from "nostr-tools";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -25,6 +24,8 @@ export interface SuperbasedApiDependencies {
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -106,12 +107,12 @@ export function createSuperbasedApiHandler(deps: SuperbasedApiDependencies) {
     // segments: ["api", "superbased", ...]
 
     try {
-      // GET /api/superbased/health?base_url=...
+      // GET /api/superbased/health
       if (segments.length === 3 && segments[2] === "health" && method === "GET") {
         return await handleHealth(deps, url);
       }
 
-      // GET /api/superbased/records?app_npub=...&base_url=...&collection=...&since=...&limit=...&cursor=...
+      // GET /api/superbased/records
       if (segments.length === 3 && segments[2] === "records" && method === "GET") {
         return await handleFetchRecords(deps, url);
       }
@@ -119,6 +120,11 @@ export function createSuperbasedApiHandler(deps: SuperbasedApiDependencies) {
       // POST /api/superbased/sync
       if (segments.length === 3 && segments[2] === "sync" && method === "POST") {
         return await handleSyncRecords(deps, request);
+      }
+
+      // GET /api/superbased/history
+      if (segments.length === 3 && segments[2] === "history" && method === "GET") {
+        return await handleHistory(deps, url);
       }
 
       return jsonError("Not found", 404);
@@ -135,8 +141,6 @@ export function createSuperbasedApiHandler(deps: SuperbasedApiDependencies) {
 
 /**
  * GET /api/superbased/health
- *
- * Proxy to the SuperBased health endpoint.
  */
 async function handleHealth(
   deps: SuperbasedApiDependencies,
@@ -167,6 +171,7 @@ async function handleHealth(
  * GET /api/superbased/records
  *
  * Fetch records delegated to Wingman, auto-decrypt each delegate_payload.
+ * v3: encrypted_from is a top-level field, delegate_payload is singular.
  */
 async function handleFetchRecords(
   deps: SuperbasedApiDependencies,
@@ -221,19 +226,17 @@ async function handleFetchRecords(
       | Record<string, unknown>[]
       | { records?: Record<string, unknown>[]; cursor?: string };
     const rawRecords = Array.isArray(data) ? data : (data.records ?? []);
-    const cursor = Array.isArray(data) ? null : (data.cursor ?? null);
+    const nextCursor = Array.isArray(data) ? null : (data.cursor ?? null);
 
-    // Decrypt each record's delegate_payload
+    // Decrypt each record's delegate_payload (singular in v3)
     const decryptedRecords = rawRecords.map((record: Record<string, unknown>) => {
+      // v3: delegate_payload (singular) — the ciphertext for this delegate only
       const delegatePayload = record.delegate_payload as string | undefined;
-      const ownerPubkey = record.owner_pubkey as string | undefined;
-      const metadata = record.metadata as Record<string, unknown> | undefined;
-      // Use encrypted_from if available (delegate-written records),
-      // otherwise fall back to owner pubkey (owner-written records)
-      const senderPubkey = (metadata?.encrypted_from as string) || ownerPubkey;
+      // v3: encrypted_from is a top-level field
+      const senderPubkey = record.encrypted_from as string | undefined;
 
       if (!delegatePayload || !senderPubkey) {
-        return { ...record, decrypted_payload: null, decrypt_error: "Missing delegate_payload or sender pubkey" };
+        return { ...record, decrypted_payload: null, decrypt_error: "Missing delegate_payload or encrypted_from" };
       }
 
       try {
@@ -252,7 +255,7 @@ async function handleFetchRecords(
     return Response.json({
       records: ownerFiltered,
       count: ownerFiltered.length,
-      cursor,
+      cursor: nextCursor,
     });
   } catch (err) {
     console.warn(`[superbased-api] Fetch records failed: ${(err as Error).message}`);
@@ -263,7 +266,8 @@ async function handleFetchRecords(
 /**
  * POST /api/superbased/sync
  *
- * Encrypt payloads to owner + delegates, then POST to the upstream sync endpoint.
+ * Encrypt payloads to owner + delegates, then POST to upstream v3 sync endpoint.
+ * v3: No metadata, encrypted_from is top-level, UUID record IDs.
  */
 async function handleSyncRecords(
   deps: SuperbasedApiDependencies,
@@ -291,6 +295,11 @@ async function handleSyncRecords(
     return jsonError("app_npub is required", 400);
   }
 
+  const ownerPubkey = body.owner_pubkey as string | undefined;
+  if (!ownerPubkey) {
+    return jsonError("owner_pubkey is required", 400);
+  }
+
   const records = body.records as Array<Record<string, unknown>> | undefined;
   if (!records || !Array.isArray(records) || records.length === 0) {
     return jsonError("records array is required and must be non-empty", 400);
@@ -301,99 +310,49 @@ async function handleSyncRecords(
     return jsonError("Wingman server key not configured (KEYTELEPORT_PRIVKEY)", 500);
   }
 
-  // Encrypt each record's plaintext_payload to owner + delegates
+  // Encrypt each record and build v3 upstream payload
   const encryptedRecords = records.map((record, index) => {
     const plaintext = record.plaintext_payload as string | undefined;
-    const ownerPubkey = record.owner_pubkey as string | undefined;
-    const delegatePubkeys = record.delegate_pubkeys as string[] | undefined;
-
     if (!plaintext) {
       throw new Error(`Record ${index}: plaintext_payload is required`);
     }
-    if (!ownerPubkey) {
-      throw new Error(`Record ${index}: owner_pubkey is required`);
+
+    // Auto-generate UUID if not provided; validate format when provided
+    let recordId = record.record_id as string | undefined;
+    if (!recordId) {
+      recordId = crypto.randomUUID();
+    } else if (!UUID_RE.test(recordId)) {
+      throw new Error(
+        `Record ${index}: record_id "${recordId}" is not a valid UUID. ` +
+        `Use UUID format or omit to auto-generate.`,
+      );
     }
 
-    // Validate record_id format: must be todo_{hex} for app compatibility
-    const recordId = (record.record_id ?? record.id) as string | undefined;
-    if (recordId) {
-      const hexMatch = recordId.match(/^todo_([a-f0-9]+)$/i);
-      if (!hexMatch) {
-        throw new Error(
-          `Record ${index}: record_id "${recordId}" is invalid. ` +
-          `Must be "todo_{hex}" (e.g. "todo_a1b2c3d4e5f67890"). ` +
-          `Non-hex characters are not allowed.`,
-        );
-      }
-    }
+    const collection = (record.collection as string) || "default";
+    const delegatePubkeys = record.delegate_pubkeys as string[] | undefined;
 
-    // Collect all recipients: owner + delegates (including Wingman itself)
-    const allRecipients = new Set<string>();
-    allRecipients.add(ownerPubkey);
-    allRecipients.add(identity.pubkey); // Wingman's own key for future reads
-    if (delegatePubkeys) {
-      for (const dp of delegatePubkeys) {
-        allRecipients.add(dp);
-      }
-    }
+    // Encrypt to owner
+    const encryptedData = nip44Encrypt(plaintext, identity.secretKey, ownerPubkey);
 
-    const encryptedPayloads = encryptToMultipleRecipients(
-      plaintext,
-      identity.secretKey,
-      Array.from(allRecipients),
-    );
-
-    // Split: owner's copy → encrypted_data (string),
-    //        delegate copies → delegate_payloads (map)
-    const ownerCiphertext = encryptedPayloads[ownerPubkey];
+    // Encrypt to each delegate (if any) — do NOT auto-add Wingman
     const delegatePayloads: Record<string, string> = {};
-    for (const [pubkey, ciphertext] of Object.entries(encryptedPayloads)) {
-      if (pubkey !== ownerPubkey) {
+    if (delegatePubkeys && delegatePubkeys.length > 0) {
+      const delegateEncrypted = encryptToMultipleRecipients(
+        plaintext,
+        identity.secretKey,
+        delegatePubkeys,
+      );
+      for (const [pubkey, ciphertext] of Object.entries(delegateEncrypted)) {
         delegatePayloads[pubkey] = ciphertext;
       }
     }
 
-    // Build the record for the upstream API
-    const { plaintext_payload, delegate_pubkeys: _dp, id, ...rest } = record;
-    const existingMetadata = (rest.metadata as Record<string, unknown>) ?? {};
-
-    // Derive local_id from record_id (the hex portion after "todo_")
-    const finalRecordId = ((record as Record<string, unknown>).record_id ?? id) as string;
-    const localIdMatch = finalRecordId?.match(/^todo_([a-f0-9]+)$/i);
-    const localId = localIdMatch?.[1] || (existingMetadata.local_id as string) || undefined;
-
-    // Derive owner npub from hex pubkey
-    const ownerNpub = nip19.npubEncode(ownerPubkey);
-
-    // Extract updated_at from payload for metadata (used by app sync logic)
-    let payloadUpdatedAt = existingMetadata.updated_at as string | undefined;
-    if (!payloadUpdatedAt) {
-      try {
-        const parsed = JSON.parse(plaintext as string);
-        payloadUpdatedAt = parsed.updated_at || parsed.created_at;
-      } catch { /* ignore parse errors */ }
-    }
-
     return {
-      ...rest,
-      record_id: finalRecordId,
-      encrypted_data: ownerCiphertext,
-      delegate_payloads: delegatePayloads,
-      owner_pubkey: ownerPubkey,
-      metadata: {
-        ...existingMetadata,
-        // Always enforced by Wingman — agents don't need to provide these
-        encrypted_from: identity.pubkey,
-        read_delegates: Array.from(allRecipients).filter(k => k !== ownerPubkey),
-        write_delegates: Array.from(allRecipients).filter(k => k !== ownerPubkey),
-        schema_version: 1,
-        // Derived from record_id and owner_pubkey — never rely on agent input
-        ...(localId ? { local_id: localId } : {}),
-        owner: ownerNpub,
-        // Sensible defaults for fields agents shouldn't need to set
-        device_id: (existingMetadata.device_id as string) || "wingman",
-        ...(payloadUpdatedAt ? { updated_at: payloadUpdatedAt } : {}),
-      },
+      record_id: recordId,
+      collection,
+      encrypted_data: encryptedData,
+      encrypted_from: identity.pubkey,
+      delegate_payloads: Object.keys(delegatePayloads).length > 0 ? delegatePayloads : undefined,
     };
   });
 
@@ -409,18 +368,109 @@ async function handleSyncRecords(
       return jsonError(`Upstream sync error (${response.status}): ${text}`, response.status);
     }
 
-    const result = await response.json();
+    const result = await response.json() as {
+      synced?: Array<{ record_id: string; version: number }>;
+      created?: number;
+      updated?: number;
+      rejected?: unknown[];
+    };
 
     console.log(
       `[superbased-api] Synced ${encryptedRecords.length} records to ${appNpub}`,
     );
 
+    // Return per-record record_id + version from upstream,
+    // falling back to our generated IDs if upstream doesn't return synced array
+    const synced = result.synced ?? encryptedRecords.map(r => ({
+      record_id: r.record_id,
+      version: 1,
+    }));
+
     return Response.json({
-      synced: encryptedRecords.length,
-      result,
+      synced,
+      created: result.created ?? 0,
+      updated: result.updated ?? 0,
+      rejected: result.rejected ?? [],
     });
   } catch (err) {
     console.warn(`[superbased-api] Sync records failed: ${(err as Error).message}`);
     return jsonError(`Sync records failed: ${(err as Error).message}`, 502);
+  }
+}
+
+/**
+ * GET /api/superbased/history
+ *
+ * Proxy to upstream history endpoint for a specific record.
+ * Returns version chain. Optionally decrypts data if include_data=true.
+ */
+async function handleHistory(
+  deps: SuperbasedApiDependencies,
+  url: URL,
+): Promise<Response> {
+  let baseUrl: string;
+  try {
+    baseUrl = resolveBaseUrl(
+      url.searchParams.get("base_url") ?? undefined,
+      deps.defaultBaseUrl,
+    );
+  } catch (err) {
+    return jsonError((err as Error).message, 400);
+  }
+
+  const appNpub = url.searchParams.get("app_npub");
+  if (!appNpub) {
+    return jsonError("app_npub query parameter is required", 400);
+  }
+
+  const recordId = url.searchParams.get("record_id");
+  if (!recordId) {
+    return jsonError("record_id query parameter is required", 400);
+  }
+
+  const includeData = url.searchParams.get("include_data") === "true";
+
+  const upstreamUrl = new URL(
+    `${baseUrl}/records/${appNpub}/history/${recordId}`,
+  );
+  if (includeData) {
+    upstreamUrl.searchParams.set("include_data", "true");
+  }
+
+  try {
+    const response = await authenticatedGet(upstreamUrl.toString());
+
+    if (!response.ok) {
+      const text = await response.text();
+      return jsonError(`Upstream API error (${response.status}): ${text}`, response.status);
+    }
+
+    const data = await response.json() as Record<string, unknown>;
+
+    // If include_data=true and we have versions with delegate payloads, decrypt them
+    if (includeData && data.versions && Array.isArray(data.versions)) {
+      const identity = getKeyTeleportIdentity();
+      if (identity) {
+        data.versions = (data.versions as Record<string, unknown>[]).map(
+          (ver: Record<string, unknown>) => {
+            const delegatePayload = ver.delegate_payload as string | undefined;
+            const senderPubkey = ver.encrypted_from as string | undefined;
+            if (!delegatePayload || !senderPubkey) return ver;
+
+            try {
+              const plaintext = nip44Decrypt(delegatePayload, identity.secretKey, senderPubkey);
+              return { ...ver, decrypted_payload: plaintext };
+            } catch {
+              return { ...ver, decrypt_error: "Failed to decrypt" };
+            }
+          },
+        );
+      }
+    }
+
+    return Response.json(data);
+  } catch (err) {
+    console.warn(`[superbased-api] History fetch failed: ${(err as Error).message}`);
+    return jsonError(`History fetch failed: ${(err as Error).message}`, 502);
   }
 }

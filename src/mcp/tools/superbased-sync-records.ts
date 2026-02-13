@@ -1,28 +1,40 @@
 /**
- * MCP Tool: superbased_sync_records
+ * MCP Tool: superbased_sync_records (v3)
  *
- * Sync records to a SuperBased / Flux Adaptor API. Plaintext payloads
- * are encrypted server-side to owner + all delegates before upload.
+ * Minimal agent interface for syncing records to SuperBased.
+ * Agent provides plaintext + owner — system handles UUID generation,
+ * encryption, and v3 formatting.
  */
 
 import { z } from "zod";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const superbasedSyncRecordsSchema = {
   app_npub: z
     .string()
     .describe("The app's npub identifier for the SuperBased collection"),
+  owner_pubkey: z
+    .string()
+    .describe("Record owner's public key (64-char hex). Applies to all records in this batch."),
   records: z
     .array(
       z.object({
-        plaintext_payload: z.string().describe("The plaintext content to encrypt and sync"),
-        owner_pubkey: z.string().describe("Record owner's public key (64-char hex)"),
+        plaintext_payload: z
+          .string()
+          .describe("Free text content to encrypt and sync"),
+        record_id: z
+          .string()
+          .optional()
+          .describe("UUID for updates. Omit to auto-generate a new UUID for new records."),
+        collection: z
+          .string()
+          .optional()
+          .describe("Collection name (default: 'default')"),
         delegate_pubkeys: z
           .array(z.string())
           .optional()
-          .describe("Additional delegate public keys (Wingman is always included)"),
-        record_id: z.string().describe("Record ID (required). Format: todo_{16-char-hex}. Generate for new records, reuse for updates."),
-        collection: z.string().optional().describe("Collection name"),
-        metadata: z.record(z.unknown()).optional().describe("Arbitrary metadata to store alongside the record"),
+          .describe("Extra delegate pubkeys to encrypt for (optional)"),
       }),
     )
     .describe("Array of records to encrypt and sync"),
@@ -34,22 +46,20 @@ export const superbasedSyncRecordsSchema = {
 
 export const superbasedSyncRecordsDescription =
   "Encrypt and sync records to a SuperBased / Flux Adaptor API. " +
-  "Each record's plaintext_payload is encrypted to the owner, all specified delegates, " +
-  "and Wingman itself (so it can read the records back later). " +
-  "Authentication uses Wingman's NIP-98 identity. " +
-  "Returns the sync result from the upstream API.";
+  "Each record's plaintext_payload is encrypted to the owner and any specified delegates. " +
+  "Record IDs are auto-generated UUIDs when omitted, or provide an existing UUID for updates. " +
+  "Returns the record_id and version for each synced record.";
 
 interface SyncRecord {
   plaintext_payload: string;
-  owner_pubkey: string;
-  delegate_pubkeys?: string[];
   record_id?: string;
   collection?: string;
-  metadata?: Record<string, unknown>;
+  delegate_pubkeys?: string[];
 }
 
 interface SuperbasedSyncRecordsParams {
   app_npub: string;
+  owner_pubkey: string;
   records: SyncRecord[];
   base_url?: string;
 }
@@ -59,12 +69,30 @@ export async function handleSuperbasedSyncRecords(
   wingmanUrl: string,
   _sessionId: string,
 ) {
+  // Validate record_ids are UUIDs when provided
+  for (let i = 0; i < params.records.length; i++) {
+    const rid = params.records[i].record_id;
+    if (rid && !UUID_RE.test(rid)) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text" as const,
+            text: `Record ${i}: record_id "${rid}" is not a valid UUID. ` +
+              `Use UUID format (e.g. "550e8400-e29b-41d4-a716-446655440000") or omit to auto-generate.`,
+          },
+        ],
+      };
+    }
+  }
+
   try {
     const response = await fetch(`${wingmanUrl}/api/superbased/sync`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         app_npub: params.app_npub,
+        owner_pubkey: params.owner_pubkey,
         records: params.records,
         base_url: params.base_url,
       }),
@@ -83,17 +111,29 @@ export async function handleSuperbasedSyncRecords(
       };
     }
 
-    const result = await response.json() as { synced: number; result: unknown };
+    const result = await response.json() as {
+      synced: Array<{ record_id: string; version: number }>;
+      created: number;
+      updated: number;
+      rejected: unknown[];
+    };
+
+    const lines = [
+      `Synced ${result.synced.length} records (${result.created} created, ${result.updated} updated).`,
+    ];
+    if (result.rejected.length > 0) {
+      lines.push(`Rejected: ${JSON.stringify(result.rejected)}`);
+    }
+    lines.push("");
+    for (const r of result.synced) {
+      lines.push(`  ${r.record_id}  v${r.version}`);
+    }
 
     return {
       content: [
         {
           type: "text" as const,
-          text: [
-            `Successfully synced ${result.synced} records.`,
-            "",
-            JSON.stringify(result.result, null, 2),
-          ].join("\n"),
+          text: lines.join("\n"),
         },
       ],
     };

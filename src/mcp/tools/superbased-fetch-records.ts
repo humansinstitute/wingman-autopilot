@@ -1,8 +1,9 @@
 /**
- * MCP Tool: superbased_fetch_records
+ * MCP Tool: superbased_fetch_records (v3)
  *
  * Fetch records delegated to Wingman from a SuperBased / Flux Adaptor API.
  * Records are auto-decrypted server-side before being returned.
+ * v3: Includes version numbers and uses top-level encrypted_from.
  */
 
 import { z } from "zod";
@@ -41,6 +42,7 @@ export const superbasedFetchRecordsDescription =
   "Records are scoped to the specified owner_pubkey — only that user's records are returned. " +
   "Records are automatically decrypted using Wingman's NIP-44 key. " +
   "Each record includes a `decrypted_payload` field (or `decrypt_error` if decryption failed). " +
+  "Records include `version` numbers and `record_id` (UUID) for sync tracking. " +
   "Supports filtering by collection, time range, and pagination.";
 
 interface SuperbasedFetchRecordsParams {

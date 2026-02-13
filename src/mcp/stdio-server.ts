@@ -185,6 +185,11 @@ import {
   handleSuperbasedSyncRecords,
 } from "./tools/superbased-sync-records";
 import {
+  superbasedRecordHistorySchema,
+  superbasedRecordHistoryDescription,
+  handleSuperbasedRecordHistory,
+} from "./tools/superbased-record-history";
+import {
   gitPushSchema,
   gitPushDescription,
   handleGitPush,
@@ -477,6 +482,14 @@ server.tool(
   superbasedSyncRecordsDescription,
   superbasedSyncRecordsSchema,
   (params) => handleSuperbasedSyncRecords(params, wingmanUrl, sessionId),
+);
+
+// ---- superbased_record_history ----
+server.tool(
+  "superbased_record_history",
+  superbasedRecordHistoryDescription,
+  superbasedRecordHistorySchema,
+  (params) => handleSuperbasedRecordHistory(params, wingmanUrl, sessionId),
 );
 
 // ---- git_push ----
