@@ -7,6 +7,7 @@
  */
 
 import { z } from "zod";
+import { wingmanIdentityPreamble } from "./nip44-utils";
 
 export const superbasedRecordHistorySchema = {
   app_npub: z
@@ -90,8 +91,9 @@ export async function handleSuperbasedRecordHistory(
       };
     }
 
+    const preamble = wingmanIdentityPreamble();
     const lines = [
-      `Record: ${result.record_id}`,
+      preamble + `Record: ${result.record_id}`,
       `Owner: ${result.owner_pubkey}`,
       `Versions: ${result.versions.length}`,
       "",

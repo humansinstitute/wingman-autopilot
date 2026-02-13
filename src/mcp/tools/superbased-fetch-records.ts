@@ -7,6 +7,7 @@
  */
 
 import { z } from "zod";
+import { wingmanIdentityPreamble } from "./nip44-utils";
 
 export const superbasedFetchRecordsSchema = {
   app_npub: z
@@ -39,7 +40,7 @@ export const superbasedFetchRecordsSchema = {
 
 export const superbasedFetchRecordsDescription =
   "Fetch encrypted records where Wingman is a delegate from a SuperBased / Flux Adaptor API. " +
-  "Records are scoped to the specified owner_pubkey — only that user's records are returned. " +
+  "Records are scoped to the specified owner_pubkey (the end-user's pubkey, NOT Wingman's). " +
   "Records are automatically decrypted using Wingman's NIP-44 key. " +
   "Each record includes a `decrypted_payload` field (or `decrypt_error` if decryption failed). " +
   "Records include `version` numbers and `record_id` (UUID) for sync tracking. " +
@@ -92,12 +93,14 @@ export async function handleSuperbasedFetchRecords(
       cursor: string | null;
     };
 
+    const preamble = wingmanIdentityPreamble();
+
     if (result.count === 0) {
       return {
         content: [
           {
             type: "text" as const,
-            text: "No delegated records found.",
+            text: preamble + "No delegated records found.",
           },
         ],
       };
@@ -118,7 +121,7 @@ export async function handleSuperbasedFetchRecords(
       content: [
         {
           type: "text" as const,
-          text: summary + "\n\n" + JSON.stringify(result.records, null, 2),
+          text: preamble + summary + "\n\n" + JSON.stringify(result.records, null, 2),
         },
       ],
     };

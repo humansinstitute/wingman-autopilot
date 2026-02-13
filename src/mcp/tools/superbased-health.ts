@@ -6,6 +6,7 @@
  */
 
 import { z } from "zod";
+import { wingmanIdentityPreamble } from "./nip44-utils";
 
 export const superbasedHealthSchema = {
   base_url: z
@@ -57,7 +58,7 @@ export async function handleSuperbasedHealth(
       content: [
         {
           type: "text" as const,
-          text: `SuperBased API is healthy.\n\n${JSON.stringify(result.data, null, 2)}`,
+          text: wingmanIdentityPreamble() + `SuperBased API is healthy.\n\n${JSON.stringify(result.data, null, 2)}`,
         },
       ],
     };

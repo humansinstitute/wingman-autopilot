@@ -55,3 +55,29 @@ export function resolvePrivateKey(): ResolvedKey {
 
   return { secretKey, pubkeyHex, npub };
 }
+
+// Cached pubkey (no secret key exposed)
+let _cachedPubkey: string | null = null;
+
+/**
+ * Get Wingman's hex pubkey (cached). Returns null if key not configured.
+ */
+export function getWingmanPubkey(): string | null {
+  if (_cachedPubkey) return _cachedPubkey;
+  try {
+    _cachedPubkey = resolvePrivateKey().pubkeyHex;
+    return _cachedPubkey;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Identity preamble for superbased tool responses.
+ * Reminds the agent which pubkey is Wingman (delegate) vs the user (owner).
+ */
+export function wingmanIdentityPreamble(): string {
+  const pubkey = getWingmanPubkey();
+  if (!pubkey) return "";
+  return `[Wingman agent identity: ${pubkey} — this is your delegate pubkey, never use it as owner_pubkey]\n\n`;
+}

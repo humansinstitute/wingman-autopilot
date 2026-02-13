@@ -7,6 +7,7 @@
  */
 
 import { z } from "zod";
+import { wingmanIdentityPreamble } from "./nip44-utils";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -47,6 +48,9 @@ export const superbasedSyncRecordsSchema = {
 export const superbasedSyncRecordsDescription =
   "Encrypt and sync records to a SuperBased / Flux Adaptor API. " +
   "Each record's plaintext_payload is encrypted to the owner and any specified delegates. " +
+  "IMPORTANT: owner_pubkey must be the end-user's pubkey, NOT Wingman's. " +
+  "Include Wingman's pubkey in delegate_pubkeys so Wingman can later fetch and decrypt the records. " +
+  "Use get_wingman_identity to find Wingman's pubkey if you don't know it. " +
   "Record IDs are auto-generated UUIDs when omitted, or provide an existing UUID for updates. " +
   "Returns the record_id and version for each synced record.";
 
@@ -118,8 +122,9 @@ export async function handleSuperbasedSyncRecords(
       rejected: unknown[];
     };
 
+    const preamble = wingmanIdentityPreamble();
     const lines = [
-      `Synced ${result.synced.length} records (${result.created} created, ${result.updated} updated).`,
+      preamble + `Synced ${result.synced.length} records (${result.created} created, ${result.updated} updated).`,
     ];
     if (result.rejected.length > 0) {
       lines.push(`Rejected: ${JSON.stringify(result.rejected)}`);
