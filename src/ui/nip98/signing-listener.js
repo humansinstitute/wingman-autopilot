@@ -13,6 +13,7 @@
 
 import { schnorr } from "/vendor/@noble/curves/secp256k1.js";
 import * as deviceKeystore from "../identity/device-keystore.js";
+import { showToast } from "../utils/toast.js";
 
 let eventSource = null;
 let currentNpub = null;
@@ -236,6 +237,33 @@ async function handleBotKeyDecryptRequest(request) {
 }
 
 // ---------------------------------------------------------------------------
+// Push guard blocked handler
+// ---------------------------------------------------------------------------
+
+/**
+ * Handle a push guard blocked notification from the server.
+ * Displays the reason in both a toast and the browser console.
+ */
+function handlePushGuardBlocked(data) {
+  const issues = data.issues || [];
+  const summary = issues.map((i) => `[${i.category}] ${i.message}`).join("\n");
+
+  console.error("[push-guard] Push blocked by safety guard:\n" + summary);
+  if (issues.length > 0) {
+    for (const issue of issues) {
+      if (issue.details && issue.details.length > 0) {
+        console.error(`[push-guard] ${issue.category} details:`, issue.details);
+      }
+    }
+  }
+
+  const toastMsg = issues.length > 0
+    ? `Push blocked: ${issues[0].message}`
+    : "Push blocked by safety guard";
+  showToast(toastMsg, { variant: "error", duration: 8000 });
+}
+
+// ---------------------------------------------------------------------------
 // SSE lifecycle
 // ---------------------------------------------------------------------------
 
@@ -263,6 +291,8 @@ function connect(npub) {
         await handleSignRequest(data);
       } else if (data.type === "botkey:decrypt_request") {
         await handleBotKeyDecryptRequest(data);
+      } else if (data.type === "pushguard:blocked") {
+        handlePushGuardBlocked(data);
       }
     } catch (err) {
       console.error("[nip98-listener] Error handling SSE message:", err);

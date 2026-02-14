@@ -27,7 +27,6 @@ export const gitMergeDescription =
   "This is the integration manager tool for the Wingman branching model. " +
   "Generates a merge report with: commit summary, files changed with diff stats, " +
   "and an auto-generated test plan based on affected areas. " +
-  "Merging to main requires the allow_main_push feature flag. " +
   "Merge conflicts are detected and reported — the merge is aborted cleanly if conflicts occur.";
 
 interface GitMergeParams {
@@ -65,12 +64,6 @@ export async function handleGitMerge(
         errorMessage = parsed.error || errorText;
       } catch {
         errorMessage = errorText;
-      }
-
-      // Add context for main branch blocks
-      if (response.status === 403) {
-        errorMessage += "\n\nTo enable merging to main, an admin must turn on the " +
-          "'allow_main_push' feature flag in the Wingman UI.";
       }
 
       return {

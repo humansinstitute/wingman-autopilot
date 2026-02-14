@@ -283,12 +283,6 @@ const FEATURE_FLAG_DEFAULTS: Array<{
     description: "Controls whether the Private Chats button is visible on the home screen.",
     state: "on",
   },
-  {
-    key: "allow_main_push",
-    label: "Allow Main Push",
-    description: "Permits merging and pushing directly to the main (production) branch.",
-    state: "off",
-  },
 ];
 
 featureFlagStore.ensureDefaults(FEATURE_FLAG_DEFAULTS);
@@ -376,7 +370,6 @@ const gitWorkflowApiHandler = createGitWorkflowApiHandler({
   getSession: (sid: string) => manager.getSession(sid),
   config,
   dataDir: new URL("../data", import.meta.url).pathname,
-  getFeatureFlag: (key: string) => featureFlagStore.getFlag(key) === "on",
 });
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());

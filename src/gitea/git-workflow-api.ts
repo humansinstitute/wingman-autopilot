@@ -30,7 +30,6 @@ export interface GitWorkflowApiDependencies {
   getSession: (sessionId: string) => SessionSnapshot | undefined;
   config: WingmanConfig;
   dataDir: string;
-  getFeatureFlag: (key: string) => boolean;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -308,14 +307,6 @@ async function handleMerge(
 
   const ctx = resolveSessionContext(deps, sessionId);
   if (ctx instanceof Response) return ctx;
-
-  // Warn/block main merges without feature flag
-  if (target === "main" && !deps.getFeatureFlag("allow_main_push")) {
-    return jsonError(
-      "Merging to main is blocked. Enable the allow_main_push feature flag to override.",
-      403,
-    );
-  }
 
   // Generate pre-merge report if requested
   let report: string | undefined;

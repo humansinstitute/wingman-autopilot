@@ -61,9 +61,7 @@ export function buildWorkflowContext(branch: string): string {
   if (branch === "main") {
     lines.push(
       `Branch: ${branch} (production)`,
-      "WARNING: You are on the production branch. Direct changes are discouraged.",
-      "Prefer: Create a feature branch or work on staging.",
-      "Override: Admin can enable via allow_main_push feature flag.",
+      "Note: You are on the production branch.",
     );
   } else if (branch === "staging") {
     lines.push(

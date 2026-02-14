@@ -21,6 +21,7 @@ import {
 } from "./gitea-operations";
 import { resolveGiteaCredentials } from "./gitea-user-manager";
 import { runPushGuard } from "./push-guard";
+import { browserSubscribers } from "../mcp/browser-subscribers";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -203,6 +204,14 @@ async function handlePush(
   // Run push safety guard
   const guard = await runPushGuard(ctx.directory);
   if (!guard.allowed) {
+    // Notify browser via SSE so the user sees why
+    const session = deps.getSession(sessionId);
+    if (session?.npub) {
+      browserSubscribers.send(session.npub, {
+        type: "pushguard:blocked",
+        issues: guard.issues,
+      });
+    }
     return Response.json(
       { error: "Push blocked by safety guard", issues: guard.issues },
       { status: 400 },
@@ -276,6 +285,14 @@ async function handleCommitAndPush(
   // Run push safety guard
   const guard = await runPushGuard(ctx.directory);
   if (!guard.allowed) {
+    // Notify browser via SSE so the user sees why
+    const session = deps.getSession(sessionId);
+    if (session?.npub) {
+      browserSubscribers.send(session.npub, {
+        type: "pushguard:blocked",
+        issues: guard.issues,
+      });
+    }
     return Response.json(
       { error: "Push blocked by safety guard", issues: guard.issues },
       { status: 400 },
