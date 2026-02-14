@@ -85,7 +85,8 @@ import { createSuperbasedApiHandler } from "./superbased/superbased-api";
 import { BotKeyStore } from "./identity/bot-key-store";
 import { createBotKeyApiHandler } from "./identity/bot-key-api";
 import { createBotCryptoApiHandler } from "./identity/bot-crypto-api";
-import { generateBotKey, clearBotKey } from "./identity/bot-key-manager";
+import { generateBotKey, clearBotKey, isBotKeyUnlocked } from "./identity/bot-key-manager";
+import { browserSubscribers } from "./mcp/browser-subscribers";
 import { MemoryStore } from "./mcp/memory-store";
 import { userSettingsStore } from "./storage/user-settings-store";
 import { artifactsStore } from "./storage/artifacts-store";
@@ -322,6 +323,28 @@ const memoryStore = new MemoryStore();
 const nip98ApiHandler = createNip98ApiHandler({
   grantsStore: nip98GrantsStore,
   getSession: (sid: string) => manager.getSession(sid) ?? null,
+  onBrowserSubscribe: (npub: string) => {
+    // When browser subscribes to SSE, send bot key decrypt request if needed
+    try {
+      if (!isBotKeyUnlocked(npub)) {
+        const botRecord = botKeyStore.getActiveKeyForUser(npub);
+        if (botRecord) {
+          const rootIdentity = getKeyTeleportIdentity();
+          if (rootIdentity) {
+            browserSubscribers.send(npub, {
+              type: "botkey:decrypt_request",
+              encryptedToUser: botRecord.encryptedToUser,
+              senderPubkey: rootIdentity.pubkey,
+              botPubkeyHex: botRecord.botPubkeyHex,
+            });
+            console.log(`[bot-key] Sent decrypt request on SSE subscribe for ${npub.slice(0, 20)}…`);
+          }
+        }
+      }
+    } catch (error) {
+      console.warn(`[bot-key] Failed to send decrypt request on subscribe:`, error);
+    }
+  },
 });
 const ngitApiHandler = createNgitApiHandler({
   grantsStore: nip98GrantsStore,
@@ -1677,6 +1700,26 @@ manager.on((event) => {
         }
       } catch (error) {
         console.warn(`[bot-key] Failed to auto-generate bot key for ${event.session.npub}:`, error);
+      }
+      // Trigger SSE auto-unlock if bot key exists but isn't in memory
+      try {
+        if (!isBotKeyUnlocked(event.session.npub)) {
+          const botRecord = botKeyStore.getActiveKeyForUser(event.session.npub);
+          if (botRecord) {
+            const rootIdentity = getKeyTeleportIdentity();
+            if (rootIdentity && browserSubscribers.hasSubscriber(event.session.npub)) {
+              browserSubscribers.send(event.session.npub, {
+                type: "botkey:decrypt_request",
+                encryptedToUser: botRecord.encryptedToUser,
+                senderPubkey: rootIdentity.pubkey,
+                botPubkeyHex: botRecord.botPubkeyHex,
+              });
+              console.log(`[bot-key] Sent decrypt request to browser for ${event.session.npub.slice(0, 20)}…`);
+            }
+          }
+        }
+      } catch (error) {
+        console.warn(`[bot-key] Failed to send decrypt request:`, error);
       }
     }
     messageStore.recordSession({

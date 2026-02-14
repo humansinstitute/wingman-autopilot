@@ -33,6 +33,8 @@ export interface Nip98ApiDependencies {
   grantsStore: Nip98GrantStore;
   /** Resolve a session by its ID. Returns null if not found. */
   getSession: (sessionId: string) => SessionSnapshot | null;
+  /** Called when a browser subscribes to SSE — used to trigger bot key unlock. */
+  onBrowserSubscribe?: (npub: string) => void;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -113,7 +115,7 @@ export function createNip98ApiHandler(deps: Nip98ApiDependencies) {
 
       // GET /api/mcp/nip98/subscribe — browser SSE for signing requests
       if (segments.length === 4 && segments[3] === "subscribe" && method === "GET") {
-        return handleSubscribe(request);
+        return handleSubscribe(request, deps);
       }
 
       // POST /api/mcp/nip98/sign-response — browser posts signed events
@@ -359,7 +361,7 @@ function handleStatus(): Response {
  * Browser SSE endpoint. The browser subscribes after login to receive
  * NIP-98 signing requests. Validated via session cookie.
  */
-function handleSubscribe(request: Request): Response {
+function handleSubscribe(request: Request, deps: Nip98ApiDependencies): Response {
   const npub = getNpubFromCookie(request);
   if (!npub) {
     return jsonError("Not authenticated — session cookie required", 401);
@@ -377,6 +379,11 @@ function handleSubscribe(request: Request): Response {
 
         // Send initial connected event
         controller.enqueue(encoder.encode(": connected\n\n"));
+
+        // Notify callback so server can trigger pending bot key unlock
+        if (deps.onBrowserSubscribe) {
+          try { deps.onBrowserSubscribe(npub); } catch { /* non-fatal */ }
+        }
 
         // Keepalive to prevent proxy/browser idle timeout
         keepaliveTimer = setInterval(() => {
