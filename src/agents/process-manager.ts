@@ -21,6 +21,7 @@ import {
   waitForStatus,
 } from "./pm2-wrapper";
 import { injectMcpConfig, cleanupMcpConfig } from "./mcp-injector";
+import { BotKeyStore } from "../identity/bot-key-store";
 import { ensureCredentialHelper, getGiteaGitEnv } from "../gitea/credential-helper";
 import { resolveGiteaCredentials } from "../gitea/gitea-user-manager";
 
@@ -210,11 +211,28 @@ export class ProcessManager {
 
     // Inject MCP config so the agent discovers the Wingman MCP server
     try {
+      // Look up bot identity for this user's session
+      let botPubkeyHex: string | undefined;
+      let botNpub: string | undefined;
+      if (npub) {
+        try {
+          const botKeyStore = new BotKeyStore();
+          const botKey = botKeyStore.getActiveKeyForUser(npub);
+          if (botKey) {
+            botPubkeyHex = botKey.botPubkeyHex;
+            botNpub = botKey.botNpub;
+          }
+        } catch {
+          // Non-fatal: bot key lookup may fail if DB not initialized
+        }
+      }
       const mcpResult = await injectMcpConfig({
         sessionId: id,
         agent,
         workingDirectory: sessionWorkingDirectory,
         config: this.config,
+        botPubkeyHex,
+        botNpub,
       });
       session.mcpCleanupFiles = mcpResult.cleanupFiles;
       // Merge MCP env vars into the agent definition for spawning

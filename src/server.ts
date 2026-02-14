@@ -84,6 +84,7 @@ import { ensureGiteaUser } from "./gitea/gitea-user-manager";
 import { createSuperbasedApiHandler } from "./superbased/superbased-api";
 import { BotKeyStore } from "./identity/bot-key-store";
 import { createBotKeyApiHandler } from "./identity/bot-key-api";
+import { createBotCryptoApiHandler } from "./identity/bot-crypto-api";
 import { generateBotKey, clearBotKey } from "./identity/bot-key-manager";
 import { MemoryStore } from "./mcp/memory-store";
 import { userSettingsStore } from "./storage/user-settings-store";
@@ -338,6 +339,9 @@ const superbasedApiHandler = createSuperbasedApiHandler({
 const botKeyStore = new BotKeyStore();
 const botKeyApiHandler = createBotKeyApiHandler({
   store: botKeyStore,
+  getSession: (sid: string) => manager.getSession(sid),
+});
+const botCryptoApiHandler = createBotCryptoApiHandler({
   getSession: (sid: string) => manager.getSession(sid),
 });
 const giteaApiHandler = createGiteaApiHandler({
@@ -4108,6 +4112,15 @@ const handleApi = async (
   // Auth: cookie-based for browser routes, session ID for escrow unlock.
   if (pathname.startsWith("/api/bot-keys")) {
     const response = await botKeyApiHandler(request, url, method);
+    if (response) {
+      return response;
+    }
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
+  // Bot crypto API — NIP-44 encrypt/decrypt using user's bot key.
+  // No auth gate: validated by session ID in the handler.
+  if (pathname.startsWith("/api/mcp/bot-crypto")) {
+    const response = await botCryptoApiHandler(request, url, method);
     if (response) {
       return response;
     }

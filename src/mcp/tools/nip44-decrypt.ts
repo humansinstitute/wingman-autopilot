@@ -2,7 +2,9 @@
  * MCP Tool: nip44_decrypt
  *
  * Decrypt a NIP-44 v2 ciphertext from a sender pubkey.
- * Runs directly in the MCP process — pure crypto, no server call.
+ * When a per-user bot key is active (BOT_PUBKEY_HEX env var set),
+ * routes through the server's bot-crypto API. Otherwise falls back
+ * to local crypto with the root key.
  */
 
 import { z } from "zod";
@@ -29,10 +31,37 @@ interface Nip44DecryptParams {
   sender_pubkey: string;
 }
 
+async function tryBotCryptoDecrypt(
+  params: Nip44DecryptParams,
+): Promise<{ plaintext: string; decryptedBy: string } | null> {
+  const botPubkey = process.env.BOT_PUBKEY_HEX;
+  const wingmanUrl = process.env.WINGMAN_URL;
+  const sessionId = process.env.SESSION_ID;
+
+  if (!botPubkey || !wingmanUrl || !sessionId) return null;
+
+  try {
+    const response = await fetch(`${wingmanUrl}/api/mcp/bot-crypto/decrypt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId,
+        ciphertext: params.ciphertext,
+        senderPubkey: params.sender_pubkey,
+      }),
+    });
+
+    if (!response.ok) return null;
+
+    const data = await response.json() as { plaintext: string; decryptedBy: string };
+    return data;
+  } catch {
+    return null;
+  }
+}
+
 export async function handleNip44Decrypt(params: Nip44DecryptParams) {
   try {
-    const { secretKey, pubkeyHex } = resolvePrivateKey();
-
     if (!/^[0-9a-fA-F]{64}$/.test(params.sender_pubkey)) {
       return {
         isError: true,
@@ -45,6 +74,26 @@ export async function handleNip44Decrypt(params: Nip44DecryptParams) {
       };
     }
 
+    // Try bot key via server proxy first
+    const botResult = await tryBotCryptoDecrypt(params);
+    if (botResult) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: [
+              `Decrypted by ${botResult.decryptedBy} (bot key)`,
+              `Sender: ${params.sender_pubkey}`,
+              "",
+              botResult.plaintext,
+            ].join("\n"),
+          },
+        ],
+      };
+    }
+
+    // Fall back to root key
+    const { secretKey, pubkeyHex } = resolvePrivateKey();
     const plaintext = nip44Decrypt(params.ciphertext, secretKey, params.sender_pubkey);
 
     return {
