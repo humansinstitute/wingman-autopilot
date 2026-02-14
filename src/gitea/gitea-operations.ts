@@ -75,7 +75,7 @@ function buildGiteaEnv(
 /**
  * Run a git command in a given directory with Gitea credentials injected.
  */
-async function runGiteaGit(
+export async function runGiteaGit(
   args: string[],
   directory: string,
   opConfig: GiteaOperationConfig,
@@ -104,7 +104,7 @@ async function runGiteaGit(
 /**
  * Detect the current branch name.
  */
-async function getCurrentBranch(
+export async function getCurrentBranch(
   directory: string,
   opConfig: GiteaOperationConfig,
 ): Promise<string> {
