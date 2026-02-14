@@ -6,10 +6,14 @@
  * and handles NIP-44 encryption/decryption of record payloads.
  *
  * v3: Append-only versioned records, UUID record IDs, no metadata column.
+ *
+ * When a per-user bot key is unlocked, uses it for signing and crypto.
+ * Falls back to root key (KEYTELEPORT_PRIVKEY) when bot key unavailable.
  */
 
-import { signWithWingmanKey } from "../mcp/wingman-signer";
+import { signForSession } from "../mcp/wingman-signer";
 import { getKeyTeleportIdentity } from "../config";
+import { getDecryptedBotKey } from "../identity/bot-key-manager";
 import { nip44Encrypt, nip44Decrypt, encryptToMultipleRecipients } from "./nip44-crypto";
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex } from "@noble/hashes/utils";
@@ -60,10 +64,31 @@ function resolveBaseUrl(
 }
 
 /**
+ * Resolve the signing key identity — bot key preferred, root fallback.
+ */
+function resolveSigningIdentity(userNpub?: string | null): {
+  secretKey: Uint8Array;
+  pubkey: string;
+  source: "bot" | "root";
+} {
+  if (userNpub) {
+    const botKey = getDecryptedBotKey(userNpub);
+    if (botKey) {
+      return { secretKey: botKey.secretKey, pubkey: botKey.pubkeyHex, source: "bot" };
+    }
+  }
+  const identity = getKeyTeleportIdentity();
+  if (!identity) {
+    throw new Error("No signing key available (KEYTELEPORT_PRIVKEY not set, bot key not unlocked)");
+  }
+  return { secretKey: identity.secretKey, pubkey: identity.pubkey, source: "root" };
+}
+
+/**
  * Make an authenticated GET request to the SuperBased API.
  */
-async function authenticatedGet(url: string): Promise<globalThis.Response> {
-  const { token } = await signWithWingmanKey(url, "GET");
+async function authenticatedGet(url: string, userNpub?: string | null): Promise<globalThis.Response> {
+  const { token } = await signForSession(url, "GET", userNpub);
   return fetch(url, {
     headers: { Authorization: token },
   });
@@ -75,10 +100,11 @@ async function authenticatedGet(url: string): Promise<globalThis.Response> {
 async function authenticatedPost(
   url: string,
   body: unknown,
+  userNpub?: string | null,
 ): Promise<globalThis.Response> {
   const jsonBody = JSON.stringify(body);
   const bodyHash = bytesToHex(sha256(new TextEncoder().encode(jsonBody)));
-  const { token } = await signWithWingmanKey(url, "POST", bodyHash);
+  const { token } = await signForSession(url, "POST", userNpub, bodyHash);
   return fetch(url, {
     method: "POST",
     headers: {
@@ -156,9 +182,11 @@ async function handleHealth(
     return jsonError((err as Error).message, 400);
   }
 
+  const userNpub = url.searchParams.get("user_npub") ?? undefined;
+
   try {
     const healthUrl = `${baseUrl}/health`;
-    const response = await authenticatedGet(healthUrl);
+    const response = await authenticatedGet(healthUrl, userNpub);
     const data = await response.json();
     return Response.json({ status: response.status, data });
   } catch (err) {
@@ -197,9 +225,13 @@ async function handleFetchRecords(
     return jsonError("owner_pubkey query parameter is required", 400);
   }
 
-  const identity = getKeyTeleportIdentity();
-  if (!identity) {
-    return jsonError("Wingman server key not configured (KEYTELEPORT_PRIVKEY)", 500);
+  const userNpub = url.searchParams.get("user_npub") ?? undefined;
+
+  let signingIdentity: { secretKey: Uint8Array; pubkey: string; source: string };
+  try {
+    signingIdentity = resolveSigningIdentity(userNpub);
+  } catch (err) {
+    return jsonError((err as Error).message, 500);
   }
 
   // Build the upstream URL with query params
@@ -215,7 +247,7 @@ async function handleFetchRecords(
   if (cursor) upstreamUrl.searchParams.set("cursor", cursor);
 
   try {
-    const response = await authenticatedGet(upstreamUrl.toString());
+    const response = await authenticatedGet(upstreamUrl.toString(), userNpub);
 
     if (!response.ok) {
       const text = await response.text();
@@ -230,9 +262,7 @@ async function handleFetchRecords(
 
     // Decrypt each record's delegate_payload (singular in v3)
     const decryptedRecords = rawRecords.map((record: Record<string, unknown>) => {
-      // v3: delegate_payload (singular) — the ciphertext for this delegate only
       const delegatePayload = record.delegate_payload as string | undefined;
-      // v3: encrypted_from is a top-level field
       const senderPubkey = record.encrypted_from as string | undefined;
 
       if (!delegatePayload || !senderPubkey) {
@@ -240,7 +270,7 @@ async function handleFetchRecords(
       }
 
       try {
-        const plaintext = nip44Decrypt(delegatePayload, identity.secretKey, senderPubkey);
+        const plaintext = nip44Decrypt(delegatePayload, signingIdentity.secretKey, senderPubkey);
         return { ...record, decrypted_payload: plaintext, decrypt_error: null };
       } catch (err) {
         return { ...record, decrypted_payload: null, decrypt_error: (err as Error).message };
@@ -305,9 +335,13 @@ async function handleSyncRecords(
     return jsonError("records array is required and must be non-empty", 400);
   }
 
-  const identity = getKeyTeleportIdentity();
-  if (!identity) {
-    return jsonError("Wingman server key not configured (KEYTELEPORT_PRIVKEY)", 500);
+  const userNpub = body.user_npub as string | undefined;
+
+  let signingIdentity: { secretKey: Uint8Array; pubkey: string; source: string };
+  try {
+    signingIdentity = resolveSigningIdentity(userNpub);
+  } catch (err) {
+    return jsonError((err as Error).message, 500);
   }
 
   // Encrypt each record and build v3 upstream payload
@@ -332,14 +366,14 @@ async function handleSyncRecords(
     const delegatePubkeys = record.delegate_pubkeys as string[] | undefined;
 
     // Encrypt to owner
-    const encryptedData = nip44Encrypt(plaintext, identity.secretKey, ownerPubkey);
+    const encryptedData = nip44Encrypt(plaintext, signingIdentity.secretKey, ownerPubkey);
 
     // Encrypt to each delegate (if any) — do NOT auto-add Wingman
     const delegatePayloads: Record<string, string> = {};
     if (delegatePubkeys && delegatePubkeys.length > 0) {
       const delegateEncrypted = encryptToMultipleRecipients(
         plaintext,
-        identity.secretKey,
+        signingIdentity.secretKey,
         delegatePubkeys,
       );
       for (const [pubkey, ciphertext] of Object.entries(delegateEncrypted)) {
@@ -352,7 +386,7 @@ async function handleSyncRecords(
       owner_pubkey: ownerPubkey,
       collection,
       encrypted_data: encryptedData,
-      encrypted_from: identity.pubkey,
+      encrypted_from: signingIdentity.pubkey,
       delegate_payloads: Object.keys(delegatePayloads).length > 0 ? delegatePayloads : undefined,
     };
   });
@@ -362,7 +396,7 @@ async function handleSyncRecords(
   try {
     const response = await authenticatedPost(syncUrl, {
       records: encryptedRecords,
-    });
+    }, userNpub);
 
     if (!response.ok) {
       const text = await response.text();
@@ -430,6 +464,7 @@ async function handleHistory(
   }
 
   const includeData = url.searchParams.get("include_data") === "true";
+  const userNpub = url.searchParams.get("user_npub") ?? undefined;
 
   const upstreamUrl = new URL(
     `${baseUrl}/records/${appNpub}/history/${recordId}`,
@@ -439,7 +474,7 @@ async function handleHistory(
   }
 
   try {
-    const response = await authenticatedGet(upstreamUrl.toString());
+    const response = await authenticatedGet(upstreamUrl.toString(), userNpub);
 
     if (!response.ok) {
       const text = await response.text();
@@ -450,8 +485,15 @@ async function handleHistory(
 
     // If include_data=true and we have versions with delegate payloads, decrypt them
     if (includeData && data.versions && Array.isArray(data.versions)) {
-      const identity = getKeyTeleportIdentity();
-      if (identity) {
+      let signingIdentity: { secretKey: Uint8Array; pubkey: string } | null = null;
+      try {
+        signingIdentity = resolveSigningIdentity(userNpub);
+      } catch {
+        // Non-fatal: just skip decryption
+      }
+
+      if (signingIdentity) {
+        const key = signingIdentity;
         data.versions = (data.versions as Record<string, unknown>[]).map(
           (ver: Record<string, unknown>) => {
             const delegatePayload = ver.delegate_payload as string | undefined;
@@ -459,7 +501,7 @@ async function handleHistory(
             if (!delegatePayload || !senderPubkey) return ver;
 
             try {
-              const plaintext = nip44Decrypt(delegatePayload, identity.secretKey, senderPubkey);
+              const plaintext = nip44Decrypt(delegatePayload, key.secretKey, senderPubkey);
               return { ...ver, decrypted_payload: plaintext };
             } catch {
               return { ...ver, decrypt_error: "Failed to decrypt" };
