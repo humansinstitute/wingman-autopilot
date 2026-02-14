@@ -115,51 +115,6 @@ import {
   handleGetPinnedArtifact,
 } from "./tools/get-pinned-artifact";
 import {
-  ngitInitSchema,
-  ngitInitDescription,
-  handleNgitInit,
-} from "./tools/ngit-init";
-import {
-  ngitPublishRepoSchema,
-  ngitPublishRepoDescription,
-  handleNgitPublishRepo,
-} from "./tools/ngit-publish-repo";
-import {
-  ngitPushStateSchema,
-  ngitPushStateDescription,
-  handleNgitPushState,
-} from "./tools/ngit-push-state";
-import {
-  ngitListReposSchema,
-  ngitListReposDescription,
-  handleNgitListRepos,
-} from "./tools/ngit-list-repos";
-import {
-  ngitSendPatchSchema,
-  ngitSendPatchDescription,
-  handleNgitSendPatch,
-} from "./tools/ngit-send-patch";
-import {
-  ngitCreatePrSchema,
-  ngitCreatePrDescription,
-  handleNgitCreatePr,
-} from "./tools/ngit-create-pr";
-import {
-  ngitCreateIssueSchema,
-  ngitCreateIssueDescription,
-  handleNgitCreateIssue,
-} from "./tools/ngit-create-issue";
-import {
-  ngitSetStatusSchema,
-  ngitSetStatusDescription,
-  handleNgitSetStatus,
-} from "./tools/ngit-set-status";
-import {
-  ngitListProposalsSchema,
-  ngitListProposalsDescription,
-  handleNgitListProposals,
-} from "./tools/ngit-list-proposals";
-import {
   nip44EncryptSchema,
   nip44EncryptDescription,
   handleNip44Encrypt,
@@ -209,6 +164,11 @@ import {
   nostrGetFeedDescription,
   handleNostrGetFeed,
 } from "./tools/nostr-feed";
+import {
+  giteaInfoSchema,
+  giteaInfoDescription,
+  handleGiteaInfo,
+} from "./tools/gitea-info";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -387,78 +347,6 @@ server.tool(
   (params) => handleDeleteMemory(params, wingmanUrl, sessionId),
 );
 
-// ---- ngit_init ----
-server.tool(
-  "ngit_init",
-  ngitInitDescription,
-  ngitInitSchema,
-  (params) => handleNgitInit(params, wingmanUrl, sessionId),
-);
-
-// ---- ngit_publish_repo ----
-server.tool(
-  "ngit_publish_repo",
-  ngitPublishRepoDescription,
-  ngitPublishRepoSchema,
-  (params) => handleNgitPublishRepo(params, wingmanUrl, sessionId),
-);
-
-// ---- ngit_push_state ----
-server.tool(
-  "ngit_push_state",
-  ngitPushStateDescription,
-  ngitPushStateSchema,
-  (params) => handleNgitPushState(params, wingmanUrl, sessionId),
-);
-
-// ---- ngit_list_repos ----
-server.tool(
-  "ngit_list_repos",
-  ngitListReposDescription,
-  ngitListReposSchema,
-  (params) => handleNgitListRepos(params, wingmanUrl, sessionId),
-);
-
-// ---- ngit_send_patch ----
-server.tool(
-  "ngit_send_patch",
-  ngitSendPatchDescription,
-  ngitSendPatchSchema,
-  (params) => handleNgitSendPatch(params, wingmanUrl, sessionId),
-);
-
-// ---- ngit_create_pr ----
-server.tool(
-  "ngit_create_pr",
-  ngitCreatePrDescription,
-  ngitCreatePrSchema,
-  (params) => handleNgitCreatePr(params, wingmanUrl, sessionId),
-);
-
-// ---- ngit_create_issue ----
-server.tool(
-  "ngit_create_issue",
-  ngitCreateIssueDescription,
-  ngitCreateIssueSchema,
-  (params) => handleNgitCreateIssue(params, wingmanUrl, sessionId),
-);
-
-// ---- ngit_set_status ----
-server.tool(
-  "ngit_set_status",
-  ngitSetStatusDescription,
-  ngitSetStatusSchema,
-  (params) => handleNgitSetStatus(params, wingmanUrl, sessionId),
-);
-
-// ---- ngit_list_proposals ----
-server.tool(
-  "ngit_list_proposals",
-  ngitListProposalsDescription,
-  ngitListProposalsSchema,
-  (params) => handleNgitListProposals(params, wingmanUrl, sessionId),
-);
-
 // ---- nip44_encrypt ----
 server.tool(
   "nip44_encrypt",
@@ -521,6 +409,14 @@ server.tool(
   gitPushDescription,
   gitPushSchema,
   (params) => handleGitPush(params, wingmanUrl, sessionId),
+);
+
+// ---- gitea_info ----
+server.tool(
+  "gitea_info",
+  giteaInfoDescription,
+  giteaInfoSchema,
+  (_params) => handleGiteaInfo({} as Record<string, never>, wingmanUrl, sessionId),
 );
 
 // ---- nostr_get_profile ----
