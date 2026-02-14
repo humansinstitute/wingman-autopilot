@@ -129,6 +129,11 @@ export function createGiteaApiHandler(deps: GiteaApiDependencies) {
         return await handleCommitAndPush(deps, request);
       }
 
+      // GET /api/gitea/remote-url?sessionId=...
+      if (segments.length === 3 && segments[2] === "remote-url" && method === "GET") {
+        return await handleGetRemoteUrl(deps, url);
+      }
+
       return jsonError("Not found", 404);
     } catch (err) {
       console.error("[gitea-api] Error:", err);
@@ -290,4 +295,48 @@ async function handleCommitAndPush(
   console.log(`[gitea-api] Commit+push for session ${sessionId}: ${result.stdout || "ok"}`);
 
   return jsonOk({ stdout: result.stdout, stderr: result.stderr });
+}
+
+/**
+ * GET /api/gitea/remote-url?sessionId=...
+ *
+ * Returns the "gitea" remote URL and a web-browsable link for the repo.
+ * Reads from `git remote get-url gitea` in the session's working directory.
+ */
+async function handleGetRemoteUrl(
+  deps: GiteaApiDependencies,
+  url: URL,
+): Promise<Response> {
+  const sessionId = url.searchParams.get("sessionId");
+  if (!sessionId) return jsonError("sessionId query param is required", 400);
+
+  const session = deps.getSession(sessionId);
+  if (!session) return jsonError("Unknown session", 404);
+  if (!session.workingDirectory) return jsonError("Session has no working directory", 400);
+
+  try {
+    const proc = Bun.spawn(["git", "remote", "get-url", "gitea"], {
+      cwd: session.workingDirectory,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    await proc.exited;
+
+    if (proc.exitCode !== 0) {
+      return jsonOk({ configured: false, error: stderr.trim() || "No gitea remote found" });
+    }
+
+    const cloneUrl = stdout.trim();
+
+    // Convert clone URL to a web-browsable URL
+    // e.g. https://gitea.example.com/user/repo.git → https://gitea.example.com/user/repo
+    const webUrl = cloneUrl.replace(/\.git$/, "");
+
+    return jsonOk({ configured: true, cloneUrl, webUrl });
+  } catch (err) {
+    return jsonError(`Failed to read git remote: ${(err as Error).message}`, 500);
+  }
 }

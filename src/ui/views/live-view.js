@@ -738,6 +738,22 @@ export function initLiveView(deps) {
 
     addSubmenu("Gitea", [
       {
+        label: "Go to repo",
+        handler: async () => {
+          try {
+            const resp = await fetch(`/api/gitea/remote-url?sessionId=${sessionId}`);
+            const data = await resp.json();
+            if (!resp.ok || !data.configured) {
+              showToast(data.error || "No Gitea remote configured — run Setup first", { type: "warning", duration: 4000 });
+              return;
+            }
+            window.open(data.webUrl, "_blank");
+          } catch (err) {
+            showToast(`Failed to get repo URL: ${err.message}`, { type: "error" });
+          }
+        },
+      },
+      {
         label: "Setup",
         handler: async () => {
           const session = sessionsStore().items.find((s) => s.id === sessionId);
