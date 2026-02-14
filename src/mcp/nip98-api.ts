@@ -12,7 +12,7 @@
 
 import type { SessionSnapshot } from "../agents/process-manager";
 import { readSessionCookie } from "../auth/session-cookie";
-import { signWithWingmanKey, isWingmanKeyAvailable } from "./wingman-signer";
+import { signWithWingmanKey, signForSession, isWingmanKeyAvailable } from "./wingman-signer";
 import { pendingSignRequests } from "./pending-requests";
 import { browserSubscribers } from "./browser-subscribers";
 import type { Nip98GrantStore } from "./grants-store";
@@ -161,8 +161,8 @@ async function handleSign(
   }
 
   if (tier === 1) {
-    // Tier 1: sign with Wingman's server key
-    const result = await signWithWingmanKey(targetUrl, httpMethod, bodyHash);
+    // Tier 1: sign with user's bot key (preferred) or root key (fallback)
+    const result = await signForSession(targetUrl, httpMethod, session.npub ?? null, bodyHash);
     return Response.json(result);
   }
 
