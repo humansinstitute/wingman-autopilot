@@ -30,6 +30,8 @@ export interface McpInjectionContext {
   /** Per-user bot identity (set when bot key exists for session owner). */
   botPubkeyHex?: string;
   botNpub?: string;
+  /** User's npub (for bot key signing in superbased tools). */
+  userNpub?: string;
 }
 
 export interface McpInjectionResult {
@@ -66,6 +68,9 @@ export async function injectMcpConfig(
   }
   if (ctx.botNpub) {
     baseEnv.BOT_NPUB = ctx.botNpub;
+  }
+  if (ctx.userNpub) {
+    baseEnv.USER_NPUB = ctx.userNpub;
   }
 
   switch (ctx.agent) {

@@ -34,6 +34,9 @@ export async function handleSuperbasedHealth(
     if (params.base_url) {
       query.set("base_url", params.base_url);
     }
+    // Pass user identity so server uses bot key for signing
+    const userNpub = process.env.USER_NPUB;
+    if (userNpub) query.set("user_npub", userNpub);
 
     const qs = query.toString();
     const url = `${wingmanUrl}/api/superbased/health${qs ? `?${qs}` : ""}`;

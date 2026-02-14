@@ -50,6 +50,9 @@ export async function handleSuperbasedRecordHistory(
     query.set("record_id", params.record_id);
     if (params.include_data) query.set("include_data", "true");
     if (params.base_url) query.set("base_url", params.base_url);
+    // Pass user identity so server uses bot key for decryption
+    const userNpub = process.env.USER_NPUB;
+    if (userNpub) query.set("user_npub", userNpub);
 
     const url = `${wingmanUrl}/api/superbased/history?${query.toString()}`;
     const response = await fetch(url);

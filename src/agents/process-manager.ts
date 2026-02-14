@@ -233,6 +233,7 @@ export class ProcessManager {
         config: this.config,
         botPubkeyHex,
         botNpub,
+        userNpub: npub,
       });
       session.mcpCleanupFiles = mcpResult.cleanupFiles;
       // Merge MCP env vars into the agent definition for spawning

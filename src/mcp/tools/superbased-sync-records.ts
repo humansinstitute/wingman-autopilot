@@ -99,6 +99,8 @@ export async function handleSuperbasedSyncRecords(
         owner_pubkey: params.owner_pubkey,
         records: params.records,
         base_url: params.base_url,
+        // Pass user identity so server uses bot key for signing/encryption
+        user_npub: process.env.USER_NPUB || undefined,
       }),
     });
 
