@@ -159,6 +159,83 @@ async function handleSignRequest(request) {
 }
 
 // ---------------------------------------------------------------------------
+// Bot key decrypt handler
+// ---------------------------------------------------------------------------
+
+/**
+ * Handle a bot key decrypt request from the server.
+ * The server sends the NIP-44 encrypted bot nsec, we decrypt it using
+ * the user's key (NIP-07 nip44.decrypt or device keystore), then POST
+ * the decrypted nsec hex back to /api/bot-keys/unlock.
+ */
+async function handleBotKeyDecryptRequest(request) {
+  const { encryptedToUser, senderPubkey, botPubkeyHex } = request;
+
+  if (!encryptedToUser || !senderPubkey) {
+    console.warn("[nip98-listener] Invalid bot key decrypt request — missing fields");
+    return;
+  }
+
+  console.log(`[nip98-listener] Received bot key decrypt request for bot ${botPubkeyHex?.slice(0, 16)}…`);
+
+  try {
+    let nsecHex = null;
+
+    // Try NIP-07 extension nip44.decrypt first
+    if (
+      typeof window !== "undefined" &&
+      window.nostr &&
+      window.nostr.nip44 &&
+      typeof window.nostr.nip44.decrypt === "function"
+    ) {
+      console.log("[nip98-listener] Decrypting bot key with NIP-07 nip44.decrypt");
+      nsecHex = await window.nostr.nip44.decrypt(senderPubkey, encryptedToUser);
+    }
+
+    // Try device keystore if NIP-07 didn't work
+    if (!nsecHex && deviceKeystore.isAvailable()) {
+      const stored = await deviceKeystore.retrieveNsec();
+      if (stored && stored.nsec instanceof Uint8Array && stored.nsec.length === 32) {
+        console.log("[nip98-listener] Decrypting bot key with device keystore");
+        // Device keystore gives us the raw secret key — we need NIP-44 decrypt
+        // which requires the nostr-tools nip44 module. Since we're in the browser
+        // and don't have nostr-tools, we can only use NIP-07 for NIP-44 decryption.
+        console.warn("[nip98-listener] Device keystore cannot perform NIP-44 decryption — NIP-07 extension required for bot key unlock");
+      }
+    }
+
+    if (!nsecHex) {
+      console.warn("[nip98-listener] No NIP-44 decryption method available for bot key unlock");
+      return;
+    }
+
+    // Validate: should be 64-char hex
+    if (!/^[0-9a-fA-F]{64}$/.test(nsecHex)) {
+      console.error("[nip98-listener] Decrypted bot key is not valid 64-char hex");
+      return;
+    }
+
+    // POST the decrypted nsec to unlock the bot key
+    const response = await fetch("/api/bot-keys/unlock", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ nsecHex }),
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      console.log(`[nip98-listener] Bot key unlocked successfully: ${result.botNpub?.slice(0, 20)}…`);
+    } else {
+      const error = await response.text();
+      console.error(`[nip98-listener] Bot key unlock failed: ${error}`);
+    }
+  } catch (err) {
+    console.error("[nip98-listener] Bot key decryption failed:", err);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // SSE lifecycle
 // ---------------------------------------------------------------------------
 
@@ -184,6 +261,8 @@ function connect(npub) {
       const data = JSON.parse(event.data);
       if (data.type === "nip98:sign_request" || data.type === "nostr:sign_request") {
         await handleSignRequest(data);
+      } else if (data.type === "botkey:decrypt_request") {
+        await handleBotKeyDecryptRequest(data);
       }
     } catch (err) {
       console.error("[nip98-listener] Error handling SSE message:", err);
