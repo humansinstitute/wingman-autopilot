@@ -112,7 +112,7 @@ export function initIdentityPanels(deps) {
     botHeader.textContent = "Bot Identity";
     botHeader.dataset.role = "identity-bot-header";
     const botHeaderSpacer = document.createElement("dd");
-    botHeaderSpacer.className = "wm-identity-summary-header-spacer";
+    botHeaderSpacer.style.display = "none";
     list.append(botHeader, botHeaderSpacer);
 
     const botNpubLabel = document.createElement("dt");

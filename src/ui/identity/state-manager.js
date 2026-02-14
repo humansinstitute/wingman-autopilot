@@ -983,6 +983,11 @@ export function initIdentityStateManager(deps) {
   // Load immediately
   loadPersistedIdentityState();
 
+  // If already authenticated from cache, fetch fresh bot identity
+  if (state.identity.authenticated) {
+    fetchBotIdentity();
+  }
+
   // Cross-tab sync
   const handleIdentityStorageEvent = (event) => {
     if (!event) return;
