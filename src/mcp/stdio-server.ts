@@ -169,6 +169,26 @@ import {
   giteaInfoDescription,
   handleGiteaInfo,
 } from "./tools/gitea-info";
+import {
+  gitStatusSchema,
+  gitStatusDescription,
+  handleGitStatus,
+} from "./tools/git-status";
+import {
+  gitBranchSchema,
+  gitBranchDescription,
+  handleGitBranch,
+} from "./tools/git-branch";
+import {
+  gitWorktreeSchema,
+  gitWorktreeDescription,
+  handleGitWorktree,
+} from "./tools/git-worktree";
+import {
+  gitMergeSchema,
+  gitMergeDescription,
+  handleGitMerge,
+} from "./tools/git-merge";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -433,6 +453,38 @@ server.tool(
   nostrGetFeedDescription,
   nostrGetFeedSchema,
   (params) => handleNostrGetFeed(params),
+);
+
+// ---- git_status ----
+server.tool(
+  "git_status",
+  gitStatusDescription,
+  gitStatusSchema,
+  (_params) => handleGitStatus({} as Record<string, never>, wingmanUrl, sessionId),
+);
+
+// ---- git_branch ----
+server.tool(
+  "git_branch",
+  gitBranchDescription,
+  gitBranchSchema,
+  (params) => handleGitBranch(params, wingmanUrl, sessionId),
+);
+
+// ---- git_worktree ----
+server.tool(
+  "git_worktree",
+  gitWorktreeDescription,
+  gitWorktreeSchema,
+  (params) => handleGitWorktree(params, wingmanUrl, sessionId),
+);
+
+// ---- git_merge ----
+server.tool(
+  "git_merge",
+  gitMergeDescription,
+  gitMergeSchema,
+  (params) => handleGitMerge(params, wingmanUrl, sessionId),
 );
 
 // ---------------------------------------------------------------------------
