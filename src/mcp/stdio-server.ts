@@ -199,6 +199,16 @@ import {
   gitPushDescription,
   handleGitPush,
 } from "./tools/git-push";
+import {
+  nostrGetProfileSchema,
+  nostrGetProfileDescription,
+  handleNostrGetProfile,
+} from "./tools/nostr-profile";
+import {
+  nostrGetFeedSchema,
+  nostrGetFeedDescription,
+  handleNostrGetFeed,
+} from "./tools/nostr-feed";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -511,6 +521,22 @@ server.tool(
   gitPushDescription,
   gitPushSchema,
   (params) => handleGitPush(params, wingmanUrl, sessionId),
+);
+
+// ---- nostr_get_profile ----
+server.tool(
+  "nostr_get_profile",
+  nostrGetProfileDescription,
+  nostrGetProfileSchema,
+  (params) => handleNostrGetProfile(params),
+);
+
+// ---- nostr_get_feed ----
+server.tool(
+  "nostr_get_feed",
+  nostrGetFeedDescription,
+  nostrGetFeedSchema,
+  (params) => handleNostrGetFeed(params),
 );
 
 // ---------------------------------------------------------------------------
