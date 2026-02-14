@@ -79,6 +79,7 @@ import { createNip98ApiHandler } from "./mcp/nip98-api";
 import { createWingmanMcpApiHandler } from "./mcp/wingman-api";
 import { createNgitApiHandler } from "./ngit/ngit-api";
 import { createGiteaApiHandler } from "./gitea/gitea-api";
+import { createGitWorkflowApiHandler } from "./gitea/git-workflow-api";
 import { ensureGiteaUser } from "./gitea/gitea-user-manager";
 import { createSuperbasedApiHandler } from "./superbased/superbased-api";
 import { MemoryStore } from "./mcp/memory-store";
@@ -277,6 +278,12 @@ const FEATURE_FLAG_DEFAULTS: Array<{
     description: "Controls whether the Private Chats button is visible on the home screen.",
     state: "on",
   },
+  {
+    key: "allow_main_push",
+    label: "Allow Main Push",
+    description: "Permits merging and pushing directly to the main (production) branch.",
+    state: "off",
+  },
 ];
 
 featureFlagStore.ensureDefaults(FEATURE_FLAG_DEFAULTS);
@@ -329,6 +336,12 @@ const giteaApiHandler = createGiteaApiHandler({
   getSession: (sid: string) => manager.getSession(sid),
   config,
   dataDir: new URL("../data", import.meta.url).pathname,
+});
+const gitWorkflowApiHandler = createGitWorkflowApiHandler({
+  getSession: (sid: string) => manager.getSession(sid),
+  config,
+  dataDir: new URL("../data", import.meta.url).pathname,
+  getFeatureFlag: (key: string) => featureFlagStore.getFlag(key) === "on",
 });
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());
@@ -4055,6 +4068,15 @@ const handleApi = async (
   // No auth gate: requests are validated by session ID in the handler.
   if (pathname.startsWith("/api/mcp/nip98")) {
     const response = await nip98ApiHandler(request, url, method);
+    if (response) {
+      return response;
+    }
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
+  // Git workflow API — branch, worktree, merge, and status operations.
+  // No auth gate: validated by session ID in the handler.
+  if (pathname.startsWith("/api/git/")) {
+    const response = await gitWorkflowApiHandler(request, url, method);
     if (response) {
       return response;
     }
