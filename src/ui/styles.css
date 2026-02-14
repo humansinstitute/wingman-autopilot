@@ -2779,6 +2779,11 @@ body[data-menu-open="true"] .wm-menu-panel {
   text-decoration: underline;
 }
 
+.wm-button.wm-button--small {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
+}
+
 .wm-button.secondary {
   background: rgba(16, 185, 129, 0.15);
   color: var(--accent-primary);

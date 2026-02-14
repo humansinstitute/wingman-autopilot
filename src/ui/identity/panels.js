@@ -151,6 +151,23 @@ export function initIdentityPanels(deps) {
     botStatusValue.textContent = "-";
     list.append(botStatusLabel, botStatusValue);
 
+    // Export nsec row — sits below the status in a full-width cell
+    const botExportLabel = document.createElement("dt");
+    botExportLabel.textContent = "Export";
+    const botExportValue = document.createElement("dd");
+    botExportValue.className = "wm-identity-summary-item";
+    const botExportButton = document.createElement("button");
+    botExportButton.type = "button";
+    botExportButton.className = "wm-button secondary wm-button--small";
+    botExportButton.dataset.action = "export-bot-nsec";
+    botExportButton.textContent = "Copy bot nsec";
+    botExportButton.disabled = true;
+    const botExportFeedback = document.createElement("span");
+    botExportFeedback.className = "wm-identity-copy-feedback";
+    botExportFeedback.dataset.role = "identity-bot-export-feedback";
+    botExportValue.append(botExportButton, botExportFeedback);
+    list.append(botExportLabel, botExportValue);
+
     details.append(list);
 
     const actions = document.createElement("div");

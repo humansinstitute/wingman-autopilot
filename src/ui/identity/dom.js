@@ -402,6 +402,13 @@ export function initIdentityDom(deps) {
       entry.botCopyFeedback.hidden = true;
       delete entry.botCopyFeedback.dataset.state;
     }
+    if (entry.botExportButton) {
+      entry.botExportButton.disabled = !hasBotKey;
+    }
+    if (entry.botExportFeedback && !hasBotKey) {
+      entry.botExportFeedback.hidden = true;
+      delete entry.botExportFeedback.dataset.state;
+    }
   }
 
   function syncIdentityDisplay() {

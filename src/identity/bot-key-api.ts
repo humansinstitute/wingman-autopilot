@@ -170,10 +170,19 @@ function handleGetEncrypted(deps: BotKeyApiDependencies, request: Request): Resp
     return jsonError("No active bot key for this user", 404);
   }
 
+  // Include the root pubkey so the browser knows the sender for NIP-44 decrypt
+  let senderPubkey: string | null = null;
+  try {
+    const { getKeyTeleportIdentity } = await import("../config");
+    const identity = getKeyTeleportIdentity();
+    senderPubkey = identity?.pubkey ?? null;
+  } catch { /* non-fatal */ }
+
   return Response.json({
     encryptedToUser: record.encryptedToUser,
     botPubkeyHex: record.botPubkeyHex,
     botNpub: record.botNpub,
+    senderPubkey,
   });
 }
 

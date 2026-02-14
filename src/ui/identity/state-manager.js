@@ -142,6 +142,96 @@ export function initIdentityStateManager(deps) {
     }
   };
 
+  // ── export bot nsec ──────────────────────────────────────────────
+
+  async function handleExportBotNsec(entry) {
+    const btn = entry.botExportButton;
+    const feedback = entry.botExportFeedback;
+    if (!btn) return;
+
+    // Warn the user before proceeding
+    const confirmed = window.confirm(
+      "WARNING: You are about to copy your bot's private key (nsec) to the clipboard.\n\n" +
+      "Anyone with this key can sign events as your bot identity. " +
+      "Only proceed if you understand the risk and need to export it.\n\n" +
+      "Continue?",
+    );
+    if (!confirmed) return;
+
+    setButtonState(btn, { state: "loading", label: "Fetching\u2026", disable: true });
+
+    try {
+      // 1. Fetch the encrypted blob + sender pubkey
+      const res = await fetch("/api/bot-keys/encrypted", { credentials: "include" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Failed to fetch encrypted key (${res.status})`);
+      }
+      const { encryptedToUser, senderPubkey } = await res.json();
+      if (!encryptedToUser || !senderPubkey) {
+        throw new Error("Missing encrypted data or sender pubkey from server");
+      }
+
+      // 2. Decrypt via NIP-07
+      setButtonState(btn, { state: "loading", label: "Decrypting\u2026", disable: true });
+
+      if (!window.nostr?.nip44?.decrypt) {
+        throw new Error("NIP-07 extension with NIP-44 support required to export bot nsec");
+      }
+      const nsecHex = await window.nostr.nip44.decrypt(senderPubkey, encryptedToUser);
+
+      if (!nsecHex || !/^[0-9a-fA-F]{64}$/.test(nsecHex)) {
+        throw new Error("Decryption returned invalid data");
+      }
+
+      // 3. Convert hex to bech32 nsec
+      setButtonState(btn, { state: "loading", label: "Copying\u2026", disable: true });
+
+      const nip19Module = await import("/vendor/nostr-tools/index.js");
+      const secretBytes = new Uint8Array(32);
+      for (let i = 0; i < 64; i += 2) {
+        secretBytes[i / 2] = parseInt(nsecHex.substring(i, i + 2), 16);
+      }
+      const nsec = nip19Module.nip19.nsecEncode(secretBytes);
+
+      // Wipe the byte array
+      secretBytes.fill(0);
+
+      // 4. Copy to clipboard
+      await navigator.clipboard.writeText(nsec);
+
+      setButtonState(btn, { state: "success", label: "Copied!", disable: false });
+      if (feedback) {
+        feedback.textContent = "nsec copied to clipboard";
+        feedback.hidden = false;
+        feedback.dataset.state = "success";
+      }
+      setTimeout(() => {
+        resetButtonState(btn);
+        if (feedback) {
+          feedback.hidden = true;
+          delete feedback.dataset.state;
+        }
+      }, 3000);
+    } catch (err) {
+      console.error("[identity] bot nsec export failed:", err);
+      const message = err instanceof Error ? err.message : "Export failed";
+      setButtonState(btn, { state: "error", label: "Failed", disable: false });
+      if (feedback) {
+        feedback.textContent = message;
+        feedback.hidden = false;
+        feedback.dataset.state = "error";
+      }
+      setTimeout(() => {
+        resetButtonState(btn);
+        if (feedback) {
+          feedback.hidden = true;
+          delete feedback.dataset.state;
+        }
+      }, 4000);
+    }
+  }
+
   // ── core state updater ──────────────────────────────────────────
 
   function updateIdentityState(partial, { persist = true, emit = true } = {}) {
@@ -766,12 +856,15 @@ export function initIdentityStateManager(deps) {
       botStatus: root.querySelector('[data-role="identity-bot-status"]'),
       botCopyButton: root.querySelector('[data-action="copy-bot-npub"]'),
       botCopyFeedback: root.querySelector('[data-role="identity-bot-copy-feedback"]'),
+      botExportButton: root.querySelector('[data-action="export-bot-nsec"]'),
+      botExportFeedback: root.querySelector('[data-role="identity-bot-export-feedback"]'),
       copyHandler: null,
       registerHandler: null,
       copyNpubHandler: null,
       copyNsecHandler: null,
       logoutHandler: null,
       botCopyHandler: null,
+      botExportHandler: null,
     };
 
     if (entry.copyButton) {
@@ -832,6 +925,14 @@ export function initIdentityStateManager(deps) {
         }
       };
       entry.botCopyButton.addEventListener("click", entry.botCopyHandler);
+    }
+
+    if (entry.botExportButton) {
+      ensureButtonOriginalLabel(entry.botExportButton);
+      entry.botExportHandler = async () => {
+        await handleExportBotNsec(entry);
+      };
+      entry.botExportButton.addEventListener("click", entry.botExportHandler);
     }
 
     identityDomEntries.add(entry);
