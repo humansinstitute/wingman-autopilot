@@ -159,7 +159,7 @@ function handleGetMe(deps: BotKeyApiDependencies, request: Request): Response {
  *
  * Returns the NIP-44 blob encrypted to the user's pubkey for browser decryption.
  */
-function handleGetEncrypted(deps: BotKeyApiDependencies, request: Request): Response {
+async function handleGetEncrypted(deps: BotKeyApiDependencies, request: Request): Promise<Response> {
   const npub = getNpubFromCookie(request);
   if (!npub) {
     return jsonError("Not authenticated — session cookie required", 401);
