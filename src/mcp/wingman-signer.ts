@@ -6,7 +6,7 @@
  *   https://github.com/nostr-protocol/nips/blob/master/98.md
  */
 
-import { finalizeEvent, nip19 } from "nostr-tools";
+import { finalizeEvent } from "nostr-tools";
 import { getKeyTeleportIdentity } from "../config";
 import { getDecryptedBotKey } from "../identity/bot-key-manager";
 import type { SignNip98Response } from "./types";
