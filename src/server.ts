@@ -82,6 +82,9 @@ import { createGiteaApiHandler } from "./gitea/gitea-api";
 import { createGitWorkflowApiHandler } from "./gitea/git-workflow-api";
 import { ensureGiteaUser } from "./gitea/gitea-user-manager";
 import { createSuperbasedApiHandler } from "./superbased/superbased-api";
+import { BotKeyStore } from "./identity/bot-key-store";
+import { createBotKeyApiHandler } from "./identity/bot-key-api";
+import { generateBotKey, clearBotKey } from "./identity/bot-key-manager";
 import { MemoryStore } from "./mcp/memory-store";
 import { userSettingsStore } from "./storage/user-settings-store";
 import { artifactsStore } from "./storage/artifacts-store";
@@ -331,6 +334,11 @@ const ngitApiHandler = createNgitApiHandler({
 });
 const superbasedApiHandler = createSuperbasedApiHandler({
   defaultBaseUrl: config.superbasedUrl,
+});
+const botKeyStore = new BotKeyStore();
+const botKeyApiHandler = createBotKeyApiHandler({
+  store: botKeyStore,
+  getSession: (sid: string) => manager.getSession(sid),
 });
 const giteaApiHandler = createGiteaApiHandler({
   getSession: (sid: string) => manager.getSession(sid),
@@ -1644,6 +1652,28 @@ manager.on((event) => {
       } catch (error) {
         console.warn(`[admin] failed to record identity ${event.session.npub}:`, error);
       }
+      // Auto-generate bot key if user doesn't have one yet
+      try {
+        const existingBotKey = botKeyStore.getActiveKeyForUser(event.session.npub);
+        if (!existingBotKey) {
+          const decoded = nip19.decode(event.session.npub);
+          if (decoded.type === "npub") {
+            const userPubkeyHex = decoded.data as string;
+            const generated = generateBotKey(userPubkeyHex);
+            botKeyStore.createKey({
+              userNpub: event.session.npub,
+              botPubkeyHex: generated.botPubkeyHex,
+              botNpub: generated.botNpub,
+              encryptedToUser: generated.encryptedToUser,
+              encryptedEscrow: generated.encryptedEscrow,
+              escrowUuid: generated.escrowUuid,
+            });
+            console.log(`[bot-key] Generated bot key for ${event.session.npub.slice(0, 20)}…: ${generated.botNpub.slice(0, 20)}…`);
+          }
+        }
+      } catch (error) {
+        console.warn(`[bot-key] Failed to auto-generate bot key for ${event.session.npub}:`, error);
+      }
     }
     messageStore.recordSession({
       id: event.session.id,
@@ -1672,6 +1702,16 @@ manager.on((event) => {
         });
       } catch (error) {
         console.warn(`[admin] failed to update identity ${event.session.npub}:`, error);
+      }
+      // Clear bot key from memory when last session for this user stops
+      if (event.type === "session-stopped") {
+        const userNpub = event.session.npub;
+        const otherActive = manager.listSessions().some(
+          (s) => s.npub === userNpub && s.id !== event.session.id,
+        );
+        if (!otherActive) {
+          clearBotKey(userNpub);
+        }
       }
     }
     messageStore.recordSession({
@@ -4059,6 +4099,15 @@ const handleApi = async (
       return denied;
     }
     const response = await nightWatchApiHandler(request, url, method);
+    if (response) {
+      return response;
+    }
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
+  // Bot key API — per-user bot identity management.
+  // Auth: cookie-based for browser routes, session ID for escrow unlock.
+  if (pathname.startsWith("/api/bot-keys")) {
+    const response = await botKeyApiHandler(request, url, method);
     if (response) {
       return response;
     }
