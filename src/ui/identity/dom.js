@@ -248,6 +248,9 @@ export function initIdentityDom(deps) {
           picture: identity.picture ?? null,
           ports: Array.isArray(identity.ports) ? [...identity.ports] : [],
           balance: typeof identity.balance === "number" ? identity.balance : 0,
+          botNpub: identity.botNpub ?? null,
+          botPubkeyHex: identity.botPubkeyHex ?? null,
+          botUnlocked: identity.botUnlocked ?? false,
         };
         window.localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify(payload));
       } else {
@@ -348,6 +351,56 @@ export function initIdentityDom(deps) {
       } else {
         updateIdentityCountdown();
       }
+    }
+    // ── Bot identity display ──────────────────────────────────────
+    const { botNpub, botPubkeyHex, botUnlocked } = state.identity;
+    const hasBotKey = Boolean(botNpub);
+    if (entry.botHeader) {
+      entry.botHeader.hidden = !authenticated;
+      // Also hide the spacer dd (next sibling)
+      const spacer = entry.botHeader.nextElementSibling;
+      if (spacer) spacer.hidden = !authenticated;
+    }
+    if (entry.botNpub) {
+      if (hasBotKey) {
+        entry.botNpub.textContent = abbreviateNpub(botNpub);
+        entry.botNpub.title = botNpub;
+      } else {
+        entry.botNpub.textContent = authenticated ? "Not generated" : "\u2014";
+        entry.botNpub.removeAttribute("title");
+      }
+    }
+    if (entry.botPubkey) {
+      if (botPubkeyHex) {
+        const abbreviated = `${botPubkeyHex.slice(0, 8)}...${botPubkeyHex.slice(-8)}`;
+        entry.botPubkey.textContent = abbreviated;
+        entry.botPubkey.title = botPubkeyHex;
+      } else {
+        entry.botPubkey.textContent = authenticated ? "Not generated" : "\u2014";
+        entry.botPubkey.removeAttribute("title");
+      }
+    }
+    if (entry.botStatus) {
+      if (!authenticated) {
+        entry.botStatus.textContent = "\u2014";
+        delete entry.botStatus.dataset.state;
+      } else if (!hasBotKey) {
+        entry.botStatus.textContent = "No bot key";
+        entry.botStatus.dataset.state = "inactive";
+      } else if (botUnlocked) {
+        entry.botStatus.textContent = "Unlocked";
+        entry.botStatus.dataset.state = "active";
+      } else {
+        entry.botStatus.textContent = "Locked";
+        entry.botStatus.dataset.state = "locked";
+      }
+    }
+    if (entry.botCopyButton) {
+      entry.botCopyButton.disabled = !hasBotKey;
+    }
+    if (entry.botCopyFeedback && !hasBotKey) {
+      entry.botCopyFeedback.hidden = true;
+      delete entry.botCopyFeedback.dataset.state;
     }
   }
 

@@ -123,6 +123,25 @@ export function initIdentityStateManager(deps) {
     }
   };
 
+  // ── bot identity fetch ──────────────────────────────────────────
+
+  const fetchBotIdentity = async () => {
+    try {
+      const response = await fetch("/api/bot-keys/me", { credentials: "include" });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data && data.hasKey) {
+        updateIdentityState({
+          botNpub: data.botNpub ?? null,
+          botPubkeyHex: data.botPubkeyHex ?? null,
+          botUnlocked: Boolean(data.unlocked),
+        }, { persist: true, emit: true });
+      }
+    } catch (error) {
+      console.warn("[identity] failed to fetch bot identity:", error);
+    }
+  };
+
   // ── core state updater ──────────────────────────────────────────
 
   function updateIdentityState(partial, { persist = true, emit = true } = {}) {
@@ -140,6 +159,9 @@ export function initIdentityStateManager(deps) {
       isAdmin: current.isAdmin,
       ports: Array.isArray(current.ports) ? [...current.ports] : [],
       balance: typeof current.balance === "number" ? current.balance : 0,
+      botNpub: current.botNpub ?? null,
+      botPubkeyHex: current.botPubkeyHex ?? null,
+      botUnlocked: current.botUnlocked ?? false,
     };
     const wasAdmin = current.isAdmin;
 
@@ -192,6 +214,9 @@ export function initIdentityStateManager(deps) {
       next.picture = null;
       next.ports = [];
       next.balance = 0;
+      next.botNpub = null;
+      next.botPubkeyHex = null;
+      next.botUnlocked = false;
     }
 
     const configuredAdminNpub = getConfiguredAdminNpub();
@@ -223,6 +248,16 @@ export function initIdentityStateManager(deps) {
       }
     }
 
+    if ("botNpub" in partial) {
+      next.botNpub = typeof partial.botNpub === "string" ? partial.botNpub : null;
+    }
+    if ("botPubkeyHex" in partial) {
+      next.botPubkeyHex = typeof partial.botPubkeyHex === "string" ? partial.botPubkeyHex : null;
+    }
+    if ("botUnlocked" in partial) {
+      next.botUnlocked = Boolean(partial.botUnlocked);
+    }
+
     next.authenticated = Boolean(next.npub);
     const becameAuthenticated = !current.authenticated && next.authenticated;
     const becameUnauthenticated = current.authenticated && !next.authenticated;
@@ -240,7 +275,10 @@ export function initIdentityStateManager(deps) {
       next.alias !== current.alias ||
       next.picture !== current.picture ||
       portsChanged ||
-      next.balance !== (current.balance ?? 0);
+      next.balance !== (current.balance ?? 0) ||
+      next.botNpub !== (current.botNpub ?? null) ||
+      next.botPubkeyHex !== (current.botPubkeyHex ?? null) ||
+      next.botUnlocked !== (current.botUnlocked ?? false);
 
     if (!changed) {
       return current;
@@ -303,6 +341,7 @@ export function initIdentityStateManager(deps) {
       if (next.npub) {
         startSigningListener(next.npub);
       }
+      fetchBotIdentity();
     }
     if (becameUnauthenticated) {
       stopSigningListener();
@@ -721,11 +760,18 @@ export function initIdentityStateManager(deps) {
       copyNpubButton: root.querySelector('[data-action="copy-nostr-user-id"]'),
       copyNsecButton: root.querySelector('[data-action="copy-nostr-password"]'),
       logoutButton: root.querySelector('[data-action="identity-logout"]'),
+      botHeader: root.querySelector('[data-role="identity-bot-header"]'),
+      botNpub: root.querySelector('[data-role="identity-bot-npub"]'),
+      botPubkey: root.querySelector('[data-role="identity-bot-pubkey"]'),
+      botStatus: root.querySelector('[data-role="identity-bot-status"]'),
+      botCopyButton: root.querySelector('[data-action="copy-bot-npub"]'),
+      botCopyFeedback: root.querySelector('[data-role="identity-bot-copy-feedback"]'),
       copyHandler: null,
       registerHandler: null,
       copyNpubHandler: null,
       copyNsecHandler: null,
       logoutHandler: null,
+      botCopyHandler: null,
     };
 
     if (entry.copyButton) {
@@ -771,6 +817,21 @@ export function initIdentityStateManager(deps) {
       };
       entry.logoutButton.addEventListener("click", entry.logoutHandler);
       identityDomEntryByNode.set(entry.logoutButton, entry);
+    }
+
+    if (entry.botCopyButton) {
+      ensureButtonOriginalLabel(entry.botCopyButton);
+      entry.botCopyHandler = async () => {
+        const botNpub = state.identity.botNpub;
+        if (!botNpub) return;
+        try {
+          await navigator.clipboard.writeText(botNpub);
+          showIdentityCopyFeedback(entry.botCopyFeedback, "Copied!");
+        } catch {
+          showIdentityCopyFeedback(entry.botCopyFeedback, "Failed");
+        }
+      };
+      entry.botCopyButton.addEventListener("click", entry.botCopyHandler);
     }
 
     identityDomEntries.add(entry);

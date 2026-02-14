@@ -4319,6 +4319,39 @@ dialog textarea {
   display: none;
 }
 
+/* Bot identity section */
+.wm-identity-summary-header {
+  font-weight: 700;
+  color: var(--text-secondary);
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+  grid-column: 1 / -1;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.wm-identity-summary-header-spacer {
+  display: none;
+}
+
+.wm-identity-mono {
+  font-family: monospace;
+  font-size: 0.85rem;
+}
+
+[data-role="identity-bot-status"][data-state="active"] {
+  color: #4ade80;
+}
+
+[data-role="identity-bot-status"][data-state="locked"] {
+  color: #fbbf24;
+}
+
+[data-role="identity-bot-status"][data-state="inactive"] {
+  color: var(--text-tertiary);
+}
+
 /* Key Teleport login section */
 .wm-identity-keyteleport {
   margin-top: 1.25rem;

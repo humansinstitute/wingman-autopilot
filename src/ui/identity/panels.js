@@ -106,6 +106,51 @@ export function initIdentityPanels(deps) {
     expiryValue.textContent = "-";
     list.append(expiryLabel, expiryValue);
 
+    // ── Bot identity section ──────────────────────────────────────
+    const botHeader = document.createElement("dt");
+    botHeader.className = "wm-identity-summary-header";
+    botHeader.textContent = "Bot Identity";
+    botHeader.dataset.role = "identity-bot-header";
+    const botHeaderSpacer = document.createElement("dd");
+    botHeaderSpacer.className = "wm-identity-summary-header-spacer";
+    list.append(botHeader, botHeaderSpacer);
+
+    const botNpubLabel = document.createElement("dt");
+    botNpubLabel.textContent = "Bot npub";
+    const botNpubValue = document.createElement("dd");
+    botNpubValue.className = "wm-identity-summary-item";
+    const botNpubText = document.createElement("span");
+    botNpubText.dataset.role = "identity-bot-npub";
+    botNpubText.textContent = "-";
+    const botCopyButton = document.createElement("button");
+    botCopyButton.type = "button";
+    botCopyButton.className = "wm-icon-button";
+    botCopyButton.dataset.action = "copy-bot-npub";
+    botCopyButton.setAttribute("aria-label", "Copy bot npub");
+    botCopyButton.disabled = true;
+    botCopyButton.innerHTML = '<span class="wm-icon" aria-hidden="true">\u{1F4CB}</span>';
+    const botCopyFeedback = document.createElement("span");
+    botCopyFeedback.className = "wm-identity-copy-feedback";
+    botCopyFeedback.dataset.role = "identity-bot-copy-feedback";
+    botNpubValue.append(botNpubText, botCopyButton, botCopyFeedback);
+    list.append(botNpubLabel, botNpubValue);
+
+    const botPubkeyLabel = document.createElement("dt");
+    botPubkeyLabel.textContent = "Bot hexpub";
+    const botPubkeyValue = document.createElement("dd");
+    botPubkeyValue.className = "wm-identity-summary-item wm-identity-mono";
+    botPubkeyValue.dataset.role = "identity-bot-pubkey";
+    botPubkeyValue.textContent = "-";
+    list.append(botPubkeyLabel, botPubkeyValue);
+
+    const botStatusLabel = document.createElement("dt");
+    botStatusLabel.textContent = "Bot status";
+    const botStatusValue = document.createElement("dd");
+    botStatusValue.className = "wm-identity-summary-item";
+    botStatusValue.dataset.role = "identity-bot-status";
+    botStatusValue.textContent = "-";
+    list.append(botStatusLabel, botStatusValue);
+
     details.append(list);
 
     const actions = document.createElement("div");
