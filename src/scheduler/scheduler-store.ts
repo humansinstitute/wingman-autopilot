@@ -17,6 +17,8 @@ import { databaseFile } from "../storage/message-store";
 // Types
 // ============================================================
 
+export type TriggerType = "cron" | "file_watcher";
+
 export interface ScheduledJob {
   id: string;
   name: string;
@@ -28,8 +30,11 @@ export interface ScheduledJob {
   workingDirectory: string;
   initialPrompt: string;
   nightwatchmanEnabled: boolean;
+  triggerType: TriggerType;
   cronExpression: string;
   timezone: string;
+  watchDirectory: string | null;
+  filePattern: string;
   enabled: boolean;
   lastRunAt: string | null;
   nextRunAt: string | null;
@@ -56,8 +61,11 @@ export interface CreateJobInput {
   workingDirectory: string;
   initialPrompt: string;
   nightwatchmanEnabled?: boolean;
-  cronExpression: string;
+  triggerType?: TriggerType;
+  cronExpression?: string;
   timezone?: string;
+  watchDirectory?: string;
+  filePattern?: string;
 }
 
 export interface UpdateJobInput {
@@ -66,8 +74,11 @@ export interface UpdateJobInput {
   workingDirectory?: string;
   initialPrompt?: string;
   nightwatchmanEnabled?: boolean;
+  triggerType?: TriggerType;
   cronExpression?: string;
   timezone?: string;
+  watchDirectory?: string;
+  filePattern?: string;
   enabled?: boolean;
   lastRunAt?: string;
   nextRunAt?: string;
@@ -88,8 +99,11 @@ interface RawJobRow {
   workingDirectory: string;
   initialPrompt: string;
   nightwatchmanEnabled: number;
+  triggerType: string;
   cronExpression: string;
   timezone: string;
+  watchDirectory: string | null;
+  filePattern: string;
   enabled: number;
   lastRunAt: string | null;
   nextRunAt: string | null;
@@ -101,6 +115,8 @@ function rowToJob(row: RawJobRow): ScheduledJob {
   return {
     ...row,
     nightwatchmanEnabled: Boolean(row.nightwatchmanEnabled),
+    triggerType: (row.triggerType || "cron") as TriggerType,
+    filePattern: row.filePattern || "*",
     enabled: Boolean(row.enabled),
   };
 }
@@ -110,6 +126,26 @@ function rowToJob(row: RawJobRow): ScheduledJob {
 // ============================================================
 
 const DEFAULT_DB_PATH = databaseFile;
+
+const JOB_SELECT_COLS = `
+  id, name,
+  user_npub AS userNpub,
+  bot_npub AS botNpub,
+  wrapped_key_ciphertext AS wrappedKeyCiphertext,
+  wrapped_key_nonce AS wrappedKeyNonce,
+  agent, working_directory AS workingDirectory,
+  initial_prompt AS initialPrompt,
+  nightwatchman_enabled AS nightwatchmanEnabled,
+  trigger_type AS triggerType,
+  cron_expression AS cronExpression,
+  timezone,
+  watch_directory AS watchDirectory,
+  file_pattern AS filePattern,
+  enabled,
+  last_run_at AS lastRunAt,
+  next_run_at AS nextRunAt,
+  created_at AS createdAt,
+  updated_at AS updatedAt`;
 
 class SchedulerStore {
   private readonly db: Database;
@@ -134,10 +170,11 @@ class SchedulerStore {
            id, name, user_npub, bot_npub,
            wrapped_key_ciphertext, wrapped_key_nonce,
            agent, working_directory, initial_prompt,
-           nightwatchman_enabled, cron_expression, timezone,
+           nightwatchman_enabled, trigger_type, cron_expression, timezone,
+           watch_directory, file_pattern,
            enabled, last_run_at, next_run_at,
            created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, NULL, NULL, ?13, ?14)`,
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 1, NULL, NULL, ?16, ?17)`,
       )
       .run(
         id,
@@ -150,8 +187,11 @@ class SchedulerStore {
         input.workingDirectory,
         input.initialPrompt,
         input.nightwatchmanEnabled !== false ? 1 : 0,
-        input.cronExpression,
+        input.triggerType ?? "cron",
+        input.cronExpression ?? "",
         input.timezone ?? "UTC",
+        input.watchDirectory ?? null,
+        input.filePattern ?? "*",
         now,
         now,
       );
@@ -162,26 +202,7 @@ class SchedulerStore {
   getJob(id: string): ScheduledJob | null {
     const row = this.db
       .query<RawJobRow, [string]>(
-        `SELECT
-           id,
-           name,
-           user_npub AS userNpub,
-           bot_npub AS botNpub,
-           wrapped_key_ciphertext AS wrappedKeyCiphertext,
-           wrapped_key_nonce AS wrappedKeyNonce,
-           agent,
-           working_directory AS workingDirectory,
-           initial_prompt AS initialPrompt,
-           nightwatchman_enabled AS nightwatchmanEnabled,
-           cron_expression AS cronExpression,
-           timezone,
-           enabled,
-           last_run_at AS lastRunAt,
-           next_run_at AS nextRunAt,
-           created_at AS createdAt,
-           updated_at AS updatedAt
-         FROM scheduled_jobs
-         WHERE id = ?1`,
+        `SELECT ${JOB_SELECT_COLS} FROM scheduled_jobs WHERE id = ?1`,
       )
       .get(id);
     return row ? rowToJob(row) : null;
@@ -191,24 +212,7 @@ class SchedulerStore {
     if (userNpub) {
       const rows = this.db
         .query<RawJobRow, [string]>(
-          `SELECT
-             id, name,
-             user_npub AS userNpub,
-             bot_npub AS botNpub,
-             wrapped_key_ciphertext AS wrappedKeyCiphertext,
-             wrapped_key_nonce AS wrappedKeyNonce,
-             agent, working_directory AS workingDirectory,
-             initial_prompt AS initialPrompt,
-             nightwatchman_enabled AS nightwatchmanEnabled,
-             cron_expression AS cronExpression,
-             timezone, enabled,
-             last_run_at AS lastRunAt,
-             next_run_at AS nextRunAt,
-             created_at AS createdAt,
-             updated_at AS updatedAt
-           FROM scheduled_jobs
-           WHERE user_npub = ?1
-           ORDER BY created_at DESC`,
+          `SELECT ${JOB_SELECT_COLS} FROM scheduled_jobs WHERE user_npub = ?1 ORDER BY created_at DESC`,
         )
         .all(userNpub);
       return rows.map(rowToJob);
@@ -216,23 +220,7 @@ class SchedulerStore {
 
     const rows = this.db
       .query<RawJobRow, []>(
-        `SELECT
-           id, name,
-           user_npub AS userNpub,
-           bot_npub AS botNpub,
-           wrapped_key_ciphertext AS wrappedKeyCiphertext,
-           wrapped_key_nonce AS wrappedKeyNonce,
-           agent, working_directory AS workingDirectory,
-           initial_prompt AS initialPrompt,
-           nightwatchman_enabled AS nightwatchmanEnabled,
-           cron_expression AS cronExpression,
-           timezone, enabled,
-           last_run_at AS lastRunAt,
-           next_run_at AS nextRunAt,
-           created_at AS createdAt,
-           updated_at AS updatedAt
-         FROM scheduled_jobs
-         ORDER BY created_at DESC`,
+        `SELECT ${JOB_SELECT_COLS} FROM scheduled_jobs ORDER BY created_at DESC`,
       )
       .all();
     return rows.map(rowToJob);
@@ -241,24 +229,7 @@ class SchedulerStore {
   listEnabledJobs(): ScheduledJob[] {
     const rows = this.db
       .query<RawJobRow, []>(
-        `SELECT
-           id, name,
-           user_npub AS userNpub,
-           bot_npub AS botNpub,
-           wrapped_key_ciphertext AS wrappedKeyCiphertext,
-           wrapped_key_nonce AS wrappedKeyNonce,
-           agent, working_directory AS workingDirectory,
-           initial_prompt AS initialPrompt,
-           nightwatchman_enabled AS nightwatchmanEnabled,
-           cron_expression AS cronExpression,
-           timezone, enabled,
-           last_run_at AS lastRunAt,
-           next_run_at AS nextRunAt,
-           created_at AS createdAt,
-           updated_at AS updatedAt
-         FROM scheduled_jobs
-         WHERE enabled = 1
-         ORDER BY created_at DESC`,
+        `SELECT ${JOB_SELECT_COLS} FROM scheduled_jobs WHERE enabled = 1 ORDER BY created_at DESC`,
       )
       .all();
     return rows.map(rowToJob);
@@ -289,6 +260,10 @@ class SchedulerStore {
       sets.push(`nightwatchman_enabled = ?${paramIndex++}`);
       values.push(input.nightwatchmanEnabled ? 1 : 0);
     }
+    if (input.triggerType !== undefined) {
+      sets.push(`trigger_type = ?${paramIndex++}`);
+      values.push(input.triggerType);
+    }
     if (input.cronExpression !== undefined) {
       sets.push(`cron_expression = ?${paramIndex++}`);
       values.push(input.cronExpression);
@@ -296,6 +271,14 @@ class SchedulerStore {
     if (input.timezone !== undefined) {
       sets.push(`timezone = ?${paramIndex++}`);
       values.push(input.timezone);
+    }
+    if (input.watchDirectory !== undefined) {
+      sets.push(`watch_directory = ?${paramIndex++}`);
+      values.push(input.watchDirectory);
+    }
+    if (input.filePattern !== undefined) {
+      sets.push(`file_pattern = ?${paramIndex++}`);
+      values.push(input.filePattern);
     }
     if (input.enabled !== undefined) {
       sets.push(`enabled = ?${paramIndex++}`);
@@ -427,6 +410,16 @@ class SchedulerStore {
       CREATE INDEX IF NOT EXISTS idx_scheduled_job_runs_started
         ON scheduled_job_runs(started_at DESC);
     `);
+
+    // Migration: add trigger_type columns for file watcher support
+    const migrations = [
+      "ALTER TABLE scheduled_jobs ADD COLUMN trigger_type TEXT NOT NULL DEFAULT 'cron'",
+      "ALTER TABLE scheduled_jobs ADD COLUMN watch_directory TEXT",
+      "ALTER TABLE scheduled_jobs ADD COLUMN file_pattern TEXT DEFAULT '*'",
+    ];
+    for (const sql of migrations) {
+      try { this.db.exec(sql); } catch { /* column already exists */ }
+    }
   }
 }
 
