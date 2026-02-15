@@ -164,6 +164,7 @@ export class ProcessManager {
     name?: string,
     origin?: SessionOrigin | null,
     targetFile?: string,
+    explicitNpub?: string,
   ): Promise<SessionSnapshot> {
     const definition = this.config.agents[agent];
     if (!definition) {
@@ -180,7 +181,7 @@ export class ProcessManager {
         : await this.resolveDefaultWorkingDirectory();
 
     // Resolve user info
-    const npub = getAuthenticatedNpub() ?? undefined;
+    const npub = explicitNpub ?? getAuthenticatedNpub() ?? undefined;
     const isAdmin = this.isAdminUser(npub);
     const userAlias = this.resolveUserAlias(npub);
 

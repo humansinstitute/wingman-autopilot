@@ -315,6 +315,27 @@ const nightWatchApiHandler = createNightWatchApiHandler({
   store: nightWatchStore,
   featureFlagStore,
 });
+const schedulerStore = new SchedulerStore();
+const schedulerEngine = new SchedulerEngine({
+  store: schedulerStore,
+  botKeyStore,
+  nightWatchStore,
+  createSession: (agent, dir, name, origin, targetFile, explicitNpub) =>
+    manager.createSession(agent, dir, name, origin, targetFile, explicitNpub),
+  addPrompt: (sid, content) => promptQueueStore.addPrompt(sid, { content }),
+  dispatchPrompt: (session) => {
+    void maybeAutoDispatchQueuedPrompt(session);
+  },
+});
+const schedulerApiHandler = createSchedulerApiHandler({
+  store: schedulerStore,
+  engine: schedulerEngine,
+  botKeyStore,
+  getNpub: (request: Request) => {
+    const ctx = getRequestContext();
+    return ctx?.npub ?? null;
+  },
+});
 const nip98GrantsStore = new Nip98GrantStore();
 const memoryStore = new MemoryStore();
 const nip98ApiHandler = createNip98ApiHandler({
@@ -4147,6 +4168,17 @@ const handleApi = async (
     }
     return Response.json({ error: "Not found" }, { status: 404 });
   }
+  if (pathname.startsWith("/api/scheduler")) {
+    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
+    if (denied) {
+      return denied;
+    }
+    const response = await schedulerApiHandler(request, url, method);
+    if (response) {
+      return response;
+    }
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
   // Bot key API — per-user bot identity management.
   // Auth: cookie-based for browser routes, session ID for escrow unlock.
   if (pathname.startsWith("/api/bot-keys")) {
@@ -7300,6 +7332,7 @@ const server = Bun.serve({
         pathname.startsWith("/projects") ||
         pathname.startsWith("/apps") ||
         pathname.startsWith("/nightwatch") ||
+        pathname.startsWith("/scheduler") ||
         pathname.startsWith("/orchestrator") ||
         pathname.startsWith("/auth") ||
         pathname === "/" ||
@@ -7345,7 +7378,9 @@ const server = Bun.serve({
         pathname.startsWith("/settings/") ||
         pathname === "/privacy" ||
         pathname === "/nightwatch" ||
-        pathname.startsWith("/nightwatch/");
+        pathname.startsWith("/nightwatch/") ||
+        pathname === "/scheduler" ||
+        pathname.startsWith("/scheduler/");
 
       if (isSpaRoutePath && !assetService.isUiAssetPath(pathname)) {
         return compressResponse(request, serveIndex());
@@ -7425,6 +7460,12 @@ const initiateShutdown = async (reason: string) => {
   console.log(`[shutdown] initiated by ${reason}. Shutting down services...`);
 
   try {
+    schedulerEngine.stop();
+  } catch (error) {
+    console.warn(`[shutdown] failed to stop scheduler engine: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  try {
     fileWatcherRunner.stop();
   } catch (error) {
     console.warn(`[shutdown] failed to stop file watcher runner: ${error instanceof Error ? error.message : String(error)}`);
@@ -7453,6 +7494,9 @@ registerShutdownHandlers();
 console.log(
   `Wingman V2 orchestrator listening on http://localhost:${config.port} (agents ${config.agentPortStart} - ${config.agentPortStart + config.agentPortMax - 1})`,
 );
+
+// Start scheduler engine (loads enabled jobs from DB)
+schedulerEngine.start();
 
 // Ensure admin has balance after all env vars are loaded (important for first-run wizard)
 identityUserStore.ensureAdminBalance();
