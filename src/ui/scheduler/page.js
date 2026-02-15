@@ -444,7 +444,10 @@ function getPageTemplate() {
               <span :style="'color: ' + statusColor(run.status) + '; font-weight: 600;'" x-text="run.status"></span>
               <span x-text="formatTime(run.startedAt)" style="color: var(--text-secondary);"></span>
               <template x-if="run.sessionId">
-                <span style="font-family: monospace; font-size: 0.75rem;" x-text="run.sessionId.slice(0, 8) + '\u2026'"></span>
+                <a :href="'/live/' + run.sessionId"
+                   style="font-family: monospace; font-size: 0.75rem; color: var(--accent-primary); text-decoration: none;"
+                   x-text="run.sessionId.slice(0, 8) + '\u2026'"
+                   title="Open session"></a>
               </template>
               <template x-if="run.errorMessage">
                 <span style="color: #ef4444; font-size: 0.8rem;" x-text="run.errorMessage"></span>
