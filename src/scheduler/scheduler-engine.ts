@@ -16,8 +16,8 @@ import { unwrapEscrowUuid } from "./key-wrapper";
 import { unlockViaEscrow, storeBotKeyInMemory, isBotKeyUnlocked } from "../identity/bot-key-manager";
 import type { BotKeyStore } from "../identity/bot-key-store";
 import type { NightWatchStore } from "../nightwatch/nightwatch-store";
-import type { SessionSnapshot, AgentType } from "../types";
-import type { SessionOrigin } from "../agents/process-manager";
+import type { AgentType } from "../config";
+import type { SessionSnapshot, SessionOrigin } from "../agents/process-manager";
 import { getSessionSecretBytes } from "../auth/session-secret";
 
 // ============================================================

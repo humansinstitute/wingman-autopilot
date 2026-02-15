@@ -320,7 +320,7 @@ class SchedulerStore {
 
     this.db
       .query(`UPDATE scheduled_jobs SET ${sets.join(", ")} WHERE id = ?${paramIndex}`)
-      .run(...values);
+      .run(...(values as [string, ...string[]]));
 
     return this.getJob(id);
   }
