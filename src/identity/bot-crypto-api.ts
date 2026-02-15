@@ -232,10 +232,28 @@ async function handleSignEvent(
     created_at: eventTemplate.created_at ?? Math.floor(Date.now() / 1000),
   };
 
-  const signedEvent = finalizeEvent(template, botKey.secretKey);
+  let signedEvent;
+  try {
+    signedEvent = finalizeEvent(template, botKey.secretKey);
+  } catch (err) {
+    console.error("[bot-crypto-api] finalizeEvent failed:", err);
+    return jsonError(`Event signing failed: ${(err as Error).message}`, 500);
+  }
+
+  // Serialize to plain object — finalizeEvent returns a branded type
+  // with Symbol properties that could cause issues with JSON.stringify
+  const eventPayload = {
+    id: signedEvent.id,
+    pubkey: signedEvent.pubkey,
+    created_at: signedEvent.created_at,
+    kind: signedEvent.kind,
+    tags: signedEvent.tags,
+    content: signedEvent.content,
+    sig: signedEvent.sig,
+  };
 
   return Response.json({
-    event: signedEvent,
+    event: eventPayload,
     signerPubkey: botKey.pubkeyHex,
   });
 }
@@ -296,15 +314,35 @@ async function handlePublishEvent(
     created_at: eventTemplate.created_at ?? Math.floor(Date.now() / 1000),
   };
 
-  const signedEvent = finalizeEvent(template, botKey.secretKey);
+  let signedEvent;
+  try {
+    signedEvent = finalizeEvent(template, botKey.secretKey);
+  } catch (err) {
+    console.error("[bot-crypto-api] finalizeEvent failed:", err);
+    return jsonError(`Event signing failed: ${(err as Error).message}`, 500);
+  }
 
-  const publishResult = await publishToRelays(
-    signedEvent as Parameters<typeof publishToRelays>[0],
-    relays,
-  );
+  // Serialize to plain object for safe JSON transport
+  const eventPayload = {
+    id: signedEvent.id,
+    pubkey: signedEvent.pubkey,
+    created_at: signedEvent.created_at,
+    kind: signedEvent.kind,
+    tags: signedEvent.tags,
+    content: signedEvent.content,
+    sig: signedEvent.sig,
+  };
+
+  let publishResult;
+  try {
+    publishResult = await publishToRelays(eventPayload, relays);
+  } catch (err) {
+    console.error("[bot-crypto-api] publishToRelays failed:", err);
+    return jsonError(`Relay publishing failed: ${(err as Error).message}`, 500);
+  }
 
   return Response.json({
-    event: signedEvent,
+    event: eventPayload,
     signerPubkey: botKey.pubkeyHex,
     publish: publishResult,
   });
