@@ -165,6 +165,16 @@ import {
   handleNostrGetFeed,
 } from "./tools/nostr-feed";
 import {
+  nostrSignEventSchema,
+  nostrSignEventDescription,
+  handleNostrSignEvent,
+} from "./tools/nostr-sign-event";
+import {
+  nostrPublishEventSchema,
+  nostrPublishEventDescription,
+  handleNostrPublishEvent,
+} from "./tools/nostr-publish-event";
+import {
   giteaInfoSchema,
   giteaInfoDescription,
   handleGiteaInfo,
@@ -453,6 +463,22 @@ server.tool(
   nostrGetFeedDescription,
   nostrGetFeedSchema,
   (params) => handleNostrGetFeed(params),
+);
+
+// ---- nostr_sign_event ----
+server.tool(
+  "nostr_sign_event",
+  nostrSignEventDescription,
+  nostrSignEventSchema,
+  (params) => handleNostrSignEvent(params, wingmanUrl, sessionId),
+);
+
+// ---- nostr_publish_event ----
+server.tool(
+  "nostr_publish_event",
+  nostrPublishEventDescription,
+  nostrPublishEventSchema,
+  (params) => handleNostrPublishEvent(params, wingmanUrl, sessionId),
 );
 
 // ---- git_status ----

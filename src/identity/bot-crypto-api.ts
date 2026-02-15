@@ -6,10 +6,11 @@
  * for MCP child processes that don't have direct access to the key.
  */
 
-import { getPublicKey } from "nostr-tools";
+import { getPublicKey, finalizeEvent } from "nostr-tools";
 
 import { getDecryptedBotKey } from "./bot-key-manager";
 import { nip44Encrypt, nip44Decrypt } from "../superbased/nip44-crypto";
+import { publishToRelays } from "../ngit/relay-publisher";
 import type { SessionSnapshot } from "../agents/process-manager";
 
 // ---------------------------------------------------------------------------
@@ -68,6 +69,16 @@ export function createBotCryptoApiHandler(deps: BotCryptoApiDependencies) {
       // POST /api/mcp/bot-crypto/decrypt
       if (segments.length === 4 && segments[3] === "decrypt" && method === "POST") {
         return await handleDecrypt(deps, request);
+      }
+
+      // POST /api/mcp/bot-crypto/sign-event
+      if (segments.length === 4 && segments[3] === "sign-event" && method === "POST") {
+        return await handleSignEvent(deps, request);
+      }
+
+      // POST /api/mcp/bot-crypto/publish-event
+      if (segments.length === 4 && segments[3] === "publish-event" && method === "POST") {
+        return await handlePublishEvent(deps, request);
       }
 
       return jsonError("Not found", 404);
@@ -164,4 +175,137 @@ async function handleDecrypt(
   } catch (err) {
     return jsonError(`Decryption failed: ${(err as Error).message}`, 400);
   }
+}
+
+/**
+ * POST /api/mcp/bot-crypto/sign-event
+ *
+ * Body: { sessionId, event: { kind, content, tags, created_at? } }
+ * Returns: { event: <signed event>, signerPubkey }
+ */
+async function handleSignEvent(
+  deps: BotCryptoApiDependencies,
+  request: Request,
+): Promise<Response> {
+  const body = await parseBody(request);
+  const sessionId = body.sessionId as string | undefined;
+  const eventTemplate = body.event as {
+    kind?: number;
+    content?: string;
+    tags?: string[][];
+    created_at?: number;
+  } | undefined;
+
+  if (!sessionId || !eventTemplate) {
+    return jsonError("sessionId and event are required", 400);
+  }
+
+  if (typeof eventTemplate.kind !== "number") {
+    return jsonError("event.kind must be a number", 400);
+  }
+
+  if (typeof eventTemplate.content !== "string") {
+    return jsonError("event.content must be a string", 400);
+  }
+
+  if (!Array.isArray(eventTemplate.tags)) {
+    return jsonError("event.tags must be an array", 400);
+  }
+
+  const session = deps.getSession(sessionId);
+  if (!session) {
+    return jsonError("Unknown session", 404);
+  }
+  if (!session.npub) {
+    return jsonError("Session has no associated user", 403);
+  }
+
+  const botKey = getDecryptedBotKey(session.npub);
+  if (!botKey) {
+    return jsonError("Bot key not unlocked for this user", 503);
+  }
+
+  const template = {
+    kind: eventTemplate.kind,
+    content: eventTemplate.content,
+    tags: eventTemplate.tags,
+    created_at: eventTemplate.created_at ?? Math.floor(Date.now() / 1000),
+  };
+
+  const signedEvent = finalizeEvent(template, botKey.secretKey);
+
+  return Response.json({
+    event: signedEvent,
+    signerPubkey: botKey.pubkeyHex,
+  });
+}
+
+/**
+ * POST /api/mcp/bot-crypto/publish-event
+ *
+ * Body: { sessionId, event: { kind, content, tags, created_at? }, relays: string[] }
+ * Returns: { event: <signed event>, signerPubkey, publish: PublishResult }
+ */
+async function handlePublishEvent(
+  deps: BotCryptoApiDependencies,
+  request: Request,
+): Promise<Response> {
+  const body = await parseBody(request);
+  const sessionId = body.sessionId as string | undefined;
+  const eventTemplate = body.event as {
+    kind?: number;
+    content?: string;
+    tags?: string[][];
+    created_at?: number;
+  } | undefined;
+  const relays = body.relays as string[] | undefined;
+
+  if (!sessionId || !eventTemplate || !Array.isArray(relays) || relays.length === 0) {
+    return jsonError("sessionId, event, and relays (non-empty array) are required", 400);
+  }
+
+  if (typeof eventTemplate.kind !== "number") {
+    return jsonError("event.kind must be a number", 400);
+  }
+
+  if (typeof eventTemplate.content !== "string") {
+    return jsonError("event.content must be a string", 400);
+  }
+
+  if (!Array.isArray(eventTemplate.tags)) {
+    return jsonError("event.tags must be an array", 400);
+  }
+
+  const session = deps.getSession(sessionId);
+  if (!session) {
+    return jsonError("Unknown session", 404);
+  }
+  if (!session.npub) {
+    return jsonError("Session has no associated user", 403);
+  }
+
+  const botKey = getDecryptedBotKey(session.npub);
+  if (!botKey) {
+    return jsonError("Bot key not unlocked for this user", 503);
+  }
+
+  const template = {
+    kind: eventTemplate.kind,
+    content: eventTemplate.content,
+    tags: eventTemplate.tags,
+    created_at: eventTemplate.created_at ?? Math.floor(Date.now() / 1000),
+  };
+
+  const signedEvent = finalizeEvent(template, botKey.secretKey);
+
+  const publishResult = await publishToRelays(
+    signedEvent as Parameters<typeof publishToRelays>[0],
+    relays,
+  );
+
+  return Response.json({
+    event: signedEvent,
+    signerPubkey: botKey.pubkeyHex,
+    publish: publishResult,
+  });
 }
