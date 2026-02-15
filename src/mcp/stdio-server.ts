@@ -164,16 +164,20 @@ import {
   nostrGetFeedDescription,
   handleNostrGetFeed,
 } from "./tools/nostr-feed";
-import {
-  nostrSignEventSchema,
-  nostrSignEventDescription,
-  handleNostrSignEvent,
-} from "./tools/nostr-sign-event";
-import {
-  nostrPublishEventSchema,
-  nostrPublishEventDescription,
-  handleNostrPublishEvent,
-} from "./tools/nostr-publish-event";
+// NOTE: nostr_sign_event and nostr_publish_event temporarily disabled
+// to test whether the tool count (37) is causing agent session failures.
+// Re-enable once session stability is confirmed or MCP server is split.
+//
+// import {
+//   nostrSignEventSchema,
+//   nostrSignEventDescription,
+//   handleNostrSignEvent,
+// } from "./tools/nostr-sign-event";
+// import {
+//   nostrPublishEventSchema,
+//   nostrPublishEventDescription,
+//   handleNostrPublishEvent,
+// } from "./tools/nostr-publish-event";
 import {
   giteaInfoSchema,
   giteaInfoDescription,
@@ -465,21 +469,21 @@ server.tool(
   (params) => handleNostrGetFeed(params),
 );
 
-// ---- nostr_sign_event ----
-server.tool(
-  "nostr_sign_event",
-  nostrSignEventDescription,
-  nostrSignEventSchema,
-  (params) => handleNostrSignEvent(params, wingmanUrl, sessionId),
-);
+// ---- nostr_sign_event (temporarily disabled — tool count test) ----
+// server.tool(
+//   "nostr_sign_event",
+//   nostrSignEventDescription,
+//   nostrSignEventSchema,
+//   (params) => handleNostrSignEvent(params, wingmanUrl, sessionId),
+// );
 
-// ---- nostr_publish_event ----
-server.tool(
-  "nostr_publish_event",
-  nostrPublishEventDescription,
-  nostrPublishEventSchema,
-  (params) => handleNostrPublishEvent(params, wingmanUrl, sessionId),
-);
+// ---- nostr_publish_event (temporarily disabled — tool count test) ----
+// server.tool(
+//   "nostr_publish_event",
+//   nostrPublishEventDescription,
+//   nostrPublishEventSchema,
+//   (params) => handleNostrPublishEvent(params, wingmanUrl, sessionId),
+// );
 
 // ---- git_status ----
 server.tool(

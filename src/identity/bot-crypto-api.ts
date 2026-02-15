@@ -6,7 +6,7 @@
  * for MCP child processes that don't have direct access to the key.
  */
 
-import { getPublicKey, finalizeEvent } from "nostr-tools";
+import { finalizeEvent } from "nostr-tools";
 
 import { getDecryptedBotKey } from "./bot-key-manager";
 import { nip44Encrypt, nip44Decrypt } from "../superbased/nip44-crypto";
