@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
-import { join, normalize } from "node:path";
+import { homedir } from "node:os";
+import { join, normalize, resolve } from "node:path";
 
 import type { AgentDefinition, AgentType, WingmanConfig } from "../config";
 import { getAuthenticatedNpub } from "../auth/request-context";
@@ -175,10 +176,14 @@ export class ProcessManager {
     const id = crypto.randomUUID();
     const sessionName = this.normaliseSessionName(name, agent, port);
     const command = definition.command({ port, agent, config: this.config });
-    const sessionWorkingDirectory =
+    const rawWorkingDirectory =
       typeof workingDirectory === "string" && workingDirectory.length > 0
         ? workingDirectory
         : await this.resolveDefaultWorkingDirectory();
+    // Expand ~ to user home so Bun.spawn gets an absolute path
+    const sessionWorkingDirectory = rawWorkingDirectory.startsWith("~/")
+      ? resolve(homedir(), rawWorkingDirectory.slice(2))
+      : rawWorkingDirectory;
 
     // Resolve user info
     const npub = explicitNpub ?? getAuthenticatedNpub() ?? undefined;
