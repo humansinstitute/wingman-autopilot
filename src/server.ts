@@ -315,6 +315,7 @@ const nightWatchApiHandler = createNightWatchApiHandler({
   store: nightWatchStore,
   featureFlagStore,
 });
+const botKeyStore = new BotKeyStore();
 const schedulerStore = new SchedulerStore();
 const schedulerEngine = new SchedulerEngine({
   store: schedulerStore,
@@ -377,7 +378,6 @@ const ngitApiHandler = createNgitApiHandler({
 const superbasedApiHandler = createSuperbasedApiHandler({
   defaultBaseUrl: config.superbasedUrl,
 });
-const botKeyStore = new BotKeyStore();
 const botKeyApiHandler = createBotKeyApiHandler({
   store: botKeyStore,
   getSession: (sid: string) => manager.getSession(sid),
