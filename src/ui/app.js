@@ -29,6 +29,8 @@ import {
 import { initNightWatchSettingsPanel } from "./nightwatch/settings-panel.js";
 import { initNightWatchPage } from "./nightwatch/page.js";
 import { initNightWatchStore } from "./nightwatch/store.js";
+import { initSchedulerStore } from "./scheduler/store.js";
+import { initSchedulerPage } from "./scheduler/page.js";
 import { initSessionsStore } from "./sessions/store.js";
 import { initAppsStore } from "./apps/store.js";
 import { startSigningListener, stopSigningListener } from "./nip98/signing-listener.js";
@@ -192,6 +194,8 @@ let renderNightWatchSettingsPanel = () => document.createDocumentFragment();
 let ensureNightWatchLoaded = () => {};
 let renderNightWatchPage = () => document.createDocumentFragment();
 let ensureNightWatchPageLoaded = () => {};
+let renderSchedulerPage = () => document.createDocumentFragment();
+let ensureSchedulerPageLoaded = () => {};
 let orchestratorFeatureEnabledForViewer = () => false;
 let projectsFeatureEnabledForViewer = () => true;
 let syncFeatureFlagsFromConfig = () => {};
@@ -737,6 +741,7 @@ const SETTINGS_ROUTE = "/settings";
 const APPS_ROUTE = "/apps";
 const PROJECTS_ROUTE = "/projects";
 const NIGHTWATCH_ROUTE = "/nightwatch";
+const SCHEDULER_ROUTE = "/scheduler";
 const HOME_ROUTE = "/home";
 const PRIVACY_ROUTE = "/privacy";
 
@@ -760,6 +765,9 @@ const getRouteFromPath = (pathname) => {
   }
   if (pathname === NIGHTWATCH_ROUTE) {
     return "nightwatch";
+  }
+  if (pathname === SCHEDULER_ROUTE) {
+    return "scheduler";
   }
   if (pathname === LIVE_ROUTE_PREFIX || pathname.startsWith(`${LIVE_ROUTE_PREFIX}/`)) {
     return "live";
@@ -1562,6 +1570,8 @@ const updateDocumentTitle = () => {
     title = "Projects - Wingman";
   } else if (currentRoute === "nightwatch") {
     title = "Night Watchman - Wingman";
+  } else if (currentRoute === "scheduler") {
+    title = "Scheduler - Wingman";
   } else if (currentRoute === "home") {
     title = "Home - Wingman";
   }
@@ -3502,6 +3512,8 @@ const render = () => {
         view = renderProjects();
       } else if (currentRoute === "nightwatch") {
         view = renderNightWatchPage();
+      } else if (currentRoute === "scheduler") {
+        view = renderSchedulerPage();
       } else if (currentRoute === "files") {
         view = renderFiles();
       } else if (currentRoute === "settings") {
@@ -3986,6 +3998,10 @@ const nightWatchPageUI = initNightWatchPage({ state, showToast });
 renderNightWatchPage = nightWatchPageUI.renderPage;
 ensureNightWatchPageLoaded = nightWatchPageUI.ensureLoaded;
 
+const schedulerPageUI = initSchedulerPage({ showToast });
+renderSchedulerPage = schedulerPageUI.renderPage;
+ensureSchedulerPageLoaded = schedulerPageUI.ensureLoaded;
+
 renderMenuIdentitySection();
 
 const handleTouchStart = (event) => {
@@ -4135,6 +4151,25 @@ function navigateToNightWatch({ skipMenuClose = false } = {}) {
   render();
 }
 
+function navigateToScheduler({ skipMenuClose = false } = {}) {
+  if (!state.identity.authenticated) {
+    openIdentityLoginDialog();
+    return;
+  }
+  if (!skipMenuClose) {
+    closeMenu();
+  }
+  closeIdentityLoginDialog();
+  stopConversationPolling();
+  currentRoute = "scheduler";
+  lastLoggedSessionId = null;
+  if (window.location.pathname !== SCHEDULER_ROUTE) {
+    window.history.pushState({ route: "scheduler" }, "", SCHEDULER_ROUTE);
+  }
+  void ensureSchedulerPageLoaded();
+  render();
+}
+
 function navigateToSettings({ skipMenuClose = false } = {}) {
   if (!skipMenuClose) {
     closeMenu();
@@ -4181,6 +4216,9 @@ navLinks.forEach((link) => {
       return;
     } else if (targetRoute === "nightwatch") {
       navigateToNightWatch({ skipMenuClose: true });
+      return;
+    } else if (targetRoute === "scheduler") {
+      navigateToScheduler({ skipMenuClose: true });
       return;
     } else if (targetRoute === "files") {
       // If navigating from live page with an active session, start in that session's directory
@@ -4387,6 +4425,8 @@ window.addEventListener("popstate", () => {
     } else {
       void ensureNightWatchPageLoaded();
     }
+  } else if (currentRoute === "scheduler") {
+    void ensureSchedulerPageLoaded();
   }
   render();
 });
@@ -4438,6 +4478,7 @@ dialog.addEventListener("cancel", (event) => {
 
   // Initialize Night Watch Alpine store (Dexie-backed, must register before Alpine.start)
   initNightWatchStore({ showToast });
+  initSchedulerStore({ showToast });
 
   // Initialize Sessions Alpine store (Dexie-backed, must register before Alpine.start)
   initSessionsStore({
