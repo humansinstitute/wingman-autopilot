@@ -88,10 +88,10 @@ export function initSchedulerStore({ showToast }) {
         if (result.job) {
           await JobStore.upsertMany([result.job]);
         }
-        showToast("Scheduled job created");
+        showToast("Trigger created");
         return result.job;
       } catch (err) {
-        showToast(`Failed to create job: ${err.message}`, { type: "error" });
+        showToast(`Failed to create trigger: ${err.message}`, { type: "error" });
         throw err;
       }
     },
@@ -102,10 +102,10 @@ export function initSchedulerStore({ showToast }) {
         if (result.job) {
           await JobStore.upsertMany([result.job]);
         }
-        showToast("Job updated");
+        showToast("Trigger updated");
         return result.job;
       } catch (err) {
-        showToast(`Failed to update job: ${err.message}`, { type: "error" });
+        showToast(`Failed to update trigger: ${err.message}`, { type: "error" });
         throw err;
       }
     },
@@ -114,7 +114,7 @@ export function initSchedulerStore({ showToast }) {
       try {
         await deleteSchedulerJob(id);
         await JobStore.remove(id);
-        showToast("Job deleted");
+        showToast("Trigger deleted");
       } catch (err) {
         showToast(`Failed to delete: ${err.message}`, { type: "error" });
       }
@@ -123,7 +123,7 @@ export function initSchedulerStore({ showToast }) {
     async trigger(id) {
       try {
         const result = await triggerSchedulerJob(id);
-        showToast(`Job triggered — session ${result.sessionId?.slice(0, 8)}…`);
+        showToast(`Triggered — session ${result.sessionId?.slice(0, 8)}…`);
         await this.sync();
         return result;
       } catch (err) {
