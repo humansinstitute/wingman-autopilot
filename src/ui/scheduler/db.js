@@ -11,6 +11,10 @@ schedulerDb.version(1).stores({
   jobs: "id, userNpub, enabled, createdAt",
 });
 
+schedulerDb.version(2).stores({
+  jobs: "id, userNpub, enabled, triggerType, createdAt",
+});
+
 /**
  * Job store operations.
  */

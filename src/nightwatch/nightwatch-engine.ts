@@ -477,7 +477,7 @@ export async function maybeTriggerNightWatch(
 
   // Grace period: let the agent fully start before issuing the first review.
   // Without this, NW tries to review an empty/starting session and hangs.
-  const STARTUP_GRACE_MS = 61_500;
+  const STARTUP_GRACE_MS = 21_000;
   const sessionAge = Date.now() - new Date(session.startedAt).getTime();
   if (sessionAge < STARTUP_GRACE_MS) {
     return;

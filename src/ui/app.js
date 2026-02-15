@@ -742,6 +742,7 @@ const APPS_ROUTE = "/apps";
 const PROJECTS_ROUTE = "/projects";
 const NIGHTWATCH_ROUTE = "/nightwatch";
 const SCHEDULER_ROUTE = "/scheduler";
+const TRIGGERS_ROUTE = "/triggers";
 const HOME_ROUTE = "/home";
 const PRIVACY_ROUTE = "/privacy";
 
@@ -766,7 +767,7 @@ const getRouteFromPath = (pathname) => {
   if (pathname === NIGHTWATCH_ROUTE) {
     return "nightwatch";
   }
-  if (pathname === SCHEDULER_ROUTE) {
+  if (pathname === SCHEDULER_ROUTE || pathname === TRIGGERS_ROUTE) {
     return "scheduler";
   }
   if (pathname === LIVE_ROUTE_PREFIX || pathname.startsWith(`${LIVE_ROUTE_PREFIX}/`)) {
@@ -1571,7 +1572,7 @@ const updateDocumentTitle = () => {
   } else if (currentRoute === "nightwatch") {
     title = "Night Watchman - Wingman";
   } else if (currentRoute === "scheduler") {
-    title = "Scheduler - Wingman";
+    title = "Triggers - Wingman";
   } else if (currentRoute === "home") {
     title = "Home - Wingman";
   }
@@ -4163,8 +4164,8 @@ function navigateToScheduler({ skipMenuClose = false } = {}) {
   stopConversationPolling();
   currentRoute = "scheduler";
   lastLoggedSessionId = null;
-  if (window.location.pathname !== SCHEDULER_ROUTE) {
-    window.history.pushState({ route: "scheduler" }, "", SCHEDULER_ROUTE);
+  if (window.location.pathname !== TRIGGERS_ROUTE && window.location.pathname !== SCHEDULER_ROUTE) {
+    window.history.pushState({ route: "scheduler" }, "", TRIGGERS_ROUTE);
   }
   void ensureSchedulerPageLoaded();
   render();

@@ -89,6 +89,7 @@ export function initSchedulerPage({ showToast }) {
   Alpine.data("schedulerPage", () => ({
     // Create form state
     showForm: false,
+    triggerType: "cron",
     form: {
       name: "",
       agent: "claude",
@@ -96,6 +97,8 @@ export function initSchedulerPage({ showToast }) {
       initialPrompt: "",
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
       nightwatchmanEnabled: true,
+      watchDirectory: "",
+      filePattern: "*",
     },
     // Schedule picker state (separate from form to keep API payload clean)
     sched: {
@@ -110,6 +113,10 @@ export function initSchedulerPage({ showToast }) {
     runsJobId: null,
     runs: [],
     loadingRuns: false,
+
+    get isCron() {
+      return this.triggerType === "cron";
+    },
 
     get computedCron() {
       return buildCron(this.sched.frequency, this.sched.hour, this.sched.minute, this.sched.weekday);
@@ -137,6 +144,7 @@ export function initSchedulerPage({ showToast }) {
     },
 
     resetForm() {
+      this.triggerType = "cron";
       this.form = {
         name: "",
         agent: "claude",
@@ -144,6 +152,8 @@ export function initSchedulerPage({ showToast }) {
         initialPrompt: "",
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         nightwatchmanEnabled: true,
+        watchDirectory: "",
+        filePattern: "*",
       };
       this.sched = { frequency: "daily", hour: 9, minute: 0, weekday: "1" };
     },
@@ -153,9 +163,20 @@ export function initSchedulerPage({ showToast }) {
       this.submitting = true;
       try {
         const payload = {
-          ...this.form,
-          cronExpression: this.computedCron,
+          name: this.form.name,
+          agent: this.form.agent,
+          workingDirectory: this.form.workingDirectory,
+          initialPrompt: this.form.initialPrompt,
+          nightwatchmanEnabled: this.form.nightwatchmanEnabled,
+          triggerType: this.triggerType,
         };
+        if (this.triggerType === "cron") {
+          payload.cronExpression = this.computedCron;
+          payload.timezone = this.form.timezone;
+        } else {
+          payload.watchDirectory = this.form.watchDirectory;
+          payload.filePattern = this.form.filePattern;
+        }
         await this.$store.scheduler.create(payload);
         this.showForm = false;
         this.resetForm();
@@ -176,7 +197,7 @@ export function initSchedulerPage({ showToast }) {
     },
 
     async deleteJob(job) {
-      if (!confirm(`Delete scheduled job "${job.name}"?`)) return;
+      if (!confirm(`Delete trigger "${job.name}"?`)) return;
       await this.$store.scheduler.remove(job.id);
     },
 
@@ -204,6 +225,14 @@ export function initSchedulerPage({ showToast }) {
 
     describeJobCron(expr) {
       return describeCron(expr);
+    },
+
+    describeTrigger(job) {
+      if (job.triggerType === "file_watcher") {
+        const pat = job.filePattern && job.filePattern !== "*" ? ` (${job.filePattern})` : "";
+        return `Watching: ${job.watchDirectory}${pat}`;
+      }
+      return describeCron(job.cronExpression);
     },
 
     statusColor(status) {
@@ -246,10 +275,10 @@ function getPageTemplate() {
   return `
   <!-- Header -->
   <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
-    <h2 style="margin: 0; flex: 1;">Scheduled Jobs</h2>
+    <h2 style="margin: 0; flex: 1;">Triggers</h2>
     <button type="button" class="wm-btn wm-btn--sm" @click="refresh()">Refresh</button>
     <button type="button" class="wm-btn wm-btn--sm wm-btn--primary" @click="showForm = !showForm">
-      <span x-text="showForm ? 'Cancel' : '+ New Job'"></span>
+      <span x-text="showForm ? 'Cancel' : '+ New Trigger'"></span>
     </button>
   </div>
 
@@ -257,10 +286,20 @@ function getPageTemplate() {
   <template x-if="showForm">
     <div style="background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
 
+      <!-- Trigger Type Selector -->
+      <div style="display: flex; gap: 0.5rem; margin-bottom: 0.75rem;">
+        <button type="button" class="wm-btn wm-btn--sm"
+          :class="isCron ? 'wm-btn--primary' : ''"
+          @click="triggerType = 'cron'">Schedule</button>
+        <button type="button" class="wm-btn wm-btn--sm"
+          :class="!isCron ? 'wm-btn--primary' : ''"
+          @click="triggerType = 'file_watcher'">File Watcher</button>
+      </div>
+
       <!-- Row 1: Name + Agent -->
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
         <div class="wm-form-group">
-          <label>Job Name</label>
+          <label>Trigger Name</label>
           <input type="text" class="wm-input" x-model="form.name" placeholder="e.g. Daily code review">
         </div>
         <div class="wm-form-group">
@@ -281,62 +320,69 @@ function getPageTemplate() {
         <input type="text" class="wm-input" x-model="form.workingDirectory" placeholder="/path/to/project">
       </div>
 
-      <!-- Row 3: Schedule Picker -->
-      <div style="margin-top: 0.75rem;">
-        <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Schedule</label>
-        <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-          <!-- Frequency -->
-          <select class="wm-select" x-model="sched.frequency">
-            <option value="every_minute">Every minute</option>
-            <option value="every_5min">Every 5 minutes</option>
-            <option value="every_15min">Every 15 minutes</option>
-            <option value="every_30min">Every 30 minutes</option>
-            <option value="hourly">Hourly</option>
-            <option value="every_6h">Every 6 hours</option>
-            <option value="daily">Daily</option>
-            <option value="weekdays">Weekdays</option>
-            <option value="weekly">Weekly</option>
-          </select>
-
-          <!-- Weekday (only for weekly) -->
-          <template x-if="needsWeekday">
-            <select class="wm-select" x-model="sched.weekday">
-              <option value="1">Monday</option>
-              <option value="2">Tuesday</option>
-              <option value="3">Wednesday</option>
-              <option value="4">Thursday</option>
-              <option value="5">Friday</option>
-              <option value="6">Saturday</option>
-              <option value="0">Sunday</option>
+      <!-- Row 3a: Schedule Picker (cron only) -->
+      <template x-if="isCron">
+        <div style="margin-top: 0.75rem;">
+          <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Schedule</label>
+          <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+            <select class="wm-select" x-model="sched.frequency">
+              <option value="every_minute">Every minute</option>
+              <option value="every_5min">Every 5 minutes</option>
+              <option value="every_15min">Every 15 minutes</option>
+              <option value="every_30min">Every 30 minutes</option>
+              <option value="hourly">Hourly</option>
+              <option value="every_6h">Every 6 hours</option>
+              <option value="daily">Daily</option>
+              <option value="weekdays">Weekdays</option>
+              <option value="weekly">Weekly</option>
             </select>
-          </template>
-
-          <!-- "at" label -->
-          <template x-if="needsTime">
-            <span style="font-size: 0.85rem; color: var(--text-secondary);">at</span>
-          </template>
-
-          <!-- Hour (for daily/weekdays/weekly) -->
-          <template x-if="needsHour">
-            <select class="wm-select" x-model.number="sched.hour">
-              ${hourOptions()}
-            </select>
-          </template>
-
-          <!-- Separator -->
-          <template x-if="needsHour">
-            <span style="font-size: 0.85rem; color: var(--text-secondary);">:</span>
-          </template>
-
-          <!-- Minute (for hourly+) -->
-          <template x-if="needsTime">
-            <select class="wm-select" x-model.number="sched.minute">
-              ${minuteOptions()}
-            </select>
-          </template>
+            <template x-if="needsWeekday">
+              <select class="wm-select" x-model="sched.weekday">
+                <option value="1">Monday</option>
+                <option value="2">Tuesday</option>
+                <option value="3">Wednesday</option>
+                <option value="4">Thursday</option>
+                <option value="5">Friday</option>
+                <option value="6">Saturday</option>
+                <option value="0">Sunday</option>
+              </select>
+            </template>
+            <template x-if="needsTime">
+              <span style="font-size: 0.85rem; color: var(--text-secondary);">at</span>
+            </template>
+            <template x-if="needsHour">
+              <select class="wm-select" x-model.number="sched.hour">
+                ${hourOptions()}
+              </select>
+            </template>
+            <template x-if="needsHour">
+              <span style="font-size: 0.85rem; color: var(--text-secondary);">:</span>
+            </template>
+            <template x-if="needsTime">
+              <select class="wm-select" x-model.number="sched.minute">
+                ${minuteOptions()}
+              </select>
+            </template>
+          </div>
+          <small style="color: var(--text-secondary); margin-top: 4px; display: block;" x-text="cronDescription"></small>
         </div>
-        <small style="color: var(--text-secondary); margin-top: 4px; display: block;" x-text="cronDescription"></small>
-      </div>
+      </template>
+
+      <!-- Row 3b: File Watcher fields -->
+      <template x-if="!isCron">
+        <div style="margin-top: 0.75rem;">
+          <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 0.75rem;">
+            <div class="wm-form-group">
+              <label>Watch Directory</label>
+              <input type="text" class="wm-input" x-model="form.watchDirectory" placeholder="/path/to/watch">
+            </div>
+            <div class="wm-form-group">
+              <label>File Pattern</label>
+              <input type="text" class="wm-input" x-model="form.filePattern" placeholder="*.json">
+            </div>
+          </div>
+        </div>
+      </template>
 
       <!-- Row 4: Initial Prompt -->
       <div class="wm-form-group" style="margin-top: 0.75rem;">
@@ -350,17 +396,20 @@ function getPageTemplate() {
           <input type="checkbox" x-model="form.nightwatchmanEnabled">
           <span style="font-weight: 600;">Enable Night Watchman</span>
         </label>
-        <div style="margin-left: auto; display: flex; align-items: center; gap: 0.4rem;">
-          <span style="font-size: 0.8rem; color: var(--text-secondary);">TZ:</span>
-          <input type="text" class="wm-input" style="width: 10rem;" x-model="form.timezone">
-        </div>
+        <template x-if="isCron">
+          <div style="margin-left: auto; display: flex; align-items: center; gap: 0.4rem;">
+            <span style="font-size: 0.8rem; color: var(--text-secondary);">TZ:</span>
+            <input type="text" class="wm-input" style="width: 10rem;" x-model="form.timezone">
+          </div>
+        </template>
       </div>
 
       <!-- Submit row -->
       <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; border-top: 1px solid var(--border-primary); padding-top: 0.75rem;">
         <button type="button" class="wm-btn wm-btn--sm" @click="showForm = false; resetForm()">Cancel</button>
-        <button type="button" class="wm-btn wm-btn--sm wm-btn--primary" @click="submitJob()" :disabled="submitting || !form.name || !form.workingDirectory || !form.initialPrompt">
-          <span x-text="submitting ? 'Creating\u2026' : 'Create Job'"></span>
+        <button type="button" class="wm-btn wm-btn--sm wm-btn--primary" @click="submitJob()"
+          :disabled="submitting || !form.name || !form.workingDirectory || !form.initialPrompt || (!isCron && !form.watchDirectory)">
+          <span x-text="submitting ? 'Creating\u2026' : 'Create Trigger'"></span>
         </button>
       </div>
     </div>
@@ -373,7 +422,7 @@ function getPageTemplate() {
 
   <!-- Empty state -->
   <template x-if="!$store.scheduler.loading && $store.scheduler.jobs.length === 0 && !showForm">
-    <p style="color: var(--text-secondary);">No scheduled jobs yet. Create one to get started.</p>
+    <p style="color: var(--text-secondary);">No triggers yet. Create one to get started.</p>
   </template>
 
   <!-- Job list -->
@@ -396,11 +445,11 @@ function getPageTemplate() {
             <div style="display: flex; align-items: baseline; gap: 0.5rem;">
               <strong x-text="job.name" style="font-size: 0.95rem;"></strong>
               <span x-text="job.agent" style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;"></span>
-              <span x-text="describeJobCron(job.cronExpression)" style="font-size: 0.75rem; color: var(--accent-primary);"></span>
+              <span x-text="describeTrigger(job)" style="font-size: 0.75rem; color: var(--accent-primary);"></span>
             </div>
             <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px;">
               <span x-text="job.workingDirectory" style="opacity: 0.8;"></span>
-              <template x-if="job.nextRunAt">
+              <template x-if="job.nextRunAt && job.triggerType !== 'file_watcher'">
                 <span> &middot; Next: <span x-text="formatTime(job.nextRunAt)"></span></span>
               </template>
               <template x-if="job.lastRunAt">

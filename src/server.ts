@@ -7333,6 +7333,7 @@ const server = Bun.serve({
         pathname.startsWith("/apps") ||
         pathname.startsWith("/nightwatch") ||
         pathname.startsWith("/scheduler") ||
+        pathname.startsWith("/triggers") ||
         pathname.startsWith("/orchestrator") ||
         pathname.startsWith("/auth") ||
         pathname === "/" ||
@@ -7380,7 +7381,9 @@ const server = Bun.serve({
         pathname === "/nightwatch" ||
         pathname.startsWith("/nightwatch/") ||
         pathname === "/scheduler" ||
-        pathname.startsWith("/scheduler/");
+        pathname.startsWith("/scheduler/") ||
+        pathname === "/triggers" ||
+        pathname.startsWith("/triggers/");
 
       if (isSpaRoutePath && !assetService.isUiAssetPath(pathname)) {
         return compressResponse(request, serveIndex());
