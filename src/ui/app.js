@@ -4135,6 +4135,10 @@ function navigateToNightWatch({ skipMenuClose = false } = {}) {
     openIdentityLoginDialog();
     return;
   }
+  if (!state.identity.isAdmin) {
+    showToast?.("Night Watchman is admin-only", { variant: "info" });
+    return;
+  }
   if (!isFeatureEnabledForViewer("nightwatch_enabled")) {
     showToast?.("Night Watchman is disabled", { variant: "info" });
     return;
@@ -4156,6 +4160,10 @@ function navigateToNightWatch({ skipMenuClose = false } = {}) {
 function navigateToScheduler({ skipMenuClose = false } = {}) {
   if (!state.identity.authenticated) {
     openIdentityLoginDialog();
+    return;
+  }
+  if (!state.identity.isAdmin) {
+    showToast?.("Triggers is admin-only", { variant: "info" });
     return;
   }
   if (!skipMenuClose) {
@@ -4419,7 +4427,7 @@ window.addEventListener("popstate", () => {
       void projectFeature.ensureLoaded();
     }
   } else if (currentRoute === "nightwatch") {
-    if (!isFeatureEnabledForViewer("nightwatch_enabled")) {
+    if (!state.identity.isAdmin || !isFeatureEnabledForViewer("nightwatch_enabled")) {
       currentRoute = "home";
       if (window.location.pathname !== HOME_ROUTE) {
         window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
@@ -4428,7 +4436,14 @@ window.addEventListener("popstate", () => {
       void ensureNightWatchPageLoaded();
     }
   } else if (currentRoute === "scheduler") {
-    void ensureSchedulerPageLoaded();
+    if (!state.identity.isAdmin) {
+      currentRoute = "home";
+      if (window.location.pathname !== HOME_ROUTE) {
+        window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
+      }
+    } else {
+      void ensureSchedulerPageLoaded();
+    }
   }
   render();
 });
