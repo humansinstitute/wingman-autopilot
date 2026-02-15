@@ -12,6 +12,61 @@ import Alpine from "/vendor/alpinejs/module.esm.js";
 import { fetchSchedulerJobRuns } from "./api.js";
 
 // ============================================================
+// Schedule → cron helpers
+// ============================================================
+
+/** Build a cron expression from the friendly schedule fields. */
+function buildCron(frequency, hour, minute, weekday) {
+  const mm = String(minute);
+  const hh = String(hour);
+  switch (frequency) {
+    case "every_minute":  return "* * * * *";
+    case "every_5min":    return "*/5 * * * *";
+    case "every_15min":   return "*/15 * * * *";
+    case "every_30min":   return "*/30 * * * *";
+    case "hourly":        return `${mm} * * * *`;
+    case "every_6h":      return `${mm} */6 * * *`;
+    case "daily":         return `${mm} ${hh} * * *`;
+    case "weekdays":      return `${mm} ${hh} * * 1-5`;
+    case "weekly":        return `${mm} ${hh} * * ${weekday}`;
+    default:              return `${mm} ${hh} * * *`;
+  }
+}
+
+/** Describe a cron expression in plain English. */
+function describeCron(expr) {
+  if (!expr) return "";
+  const map = {
+    "* * * * *": "Every minute",
+    "*/5 * * * *": "Every 5 minutes",
+    "*/15 * * * *": "Every 15 minutes",
+    "*/30 * * * *": "Every 30 minutes",
+  };
+  if (map[expr]) return map[expr];
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length !== 5) return expr;
+  const [mm, hh, , , dow] = parts;
+  const time = `${hh.padStart(2, "0")}:${mm.padStart(2, "0")}`;
+  if (parts[1] === "*") return `Hourly at :${mm.padStart(2, "0")}`;
+  if (parts[1].startsWith("*/")) return `Every ${parts[1].slice(2)}h at :${mm.padStart(2, "0")}`;
+  const days = { "0": "Sunday", "1": "Monday", "2": "Tuesday", "3": "Wednesday", "4": "Thursday", "5": "Friday", "6": "Saturday" };
+  if (dow === "1-5") return `Weekdays at ${time}`;
+  if (dow !== "*" && days[dow]) return `${days[dow]}s at ${time}`;
+  if (dow === "*") return `Daily at ${time}`;
+  return expr;
+}
+
+/** Check whether frequency needs a time picker. */
+function frequencyNeedsTime(freq) {
+  return ["hourly", "every_6h", "daily", "weekdays", "weekly"].includes(freq);
+}
+
+/** Check whether frequency needs hour picker (not just minute). */
+function frequencyNeedsHour(freq) {
+  return ["daily", "weekdays", "weekly"].includes(freq);
+}
+
+// ============================================================
 // Page Module
 // ============================================================
 
@@ -39,9 +94,15 @@ export function initSchedulerPage({ showToast }) {
       agent: "claude",
       workingDirectory: "",
       initialPrompt: "",
-      cronExpression: "",
-      timezone: "UTC",
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
       nightwatchmanEnabled: true,
+    },
+    // Schedule picker state (separate from form to keep API payload clean)
+    sched: {
+      frequency: "daily",
+      hour: 9,
+      minute: 0,
+      weekday: "1", // Monday
     },
     submitting: false,
 
@@ -49,6 +110,26 @@ export function initSchedulerPage({ showToast }) {
     runsJobId: null,
     runs: [],
     loadingRuns: false,
+
+    get computedCron() {
+      return buildCron(this.sched.frequency, this.sched.hour, this.sched.minute, this.sched.weekday);
+    },
+
+    get cronDescription() {
+      return describeCron(this.computedCron);
+    },
+
+    get needsTime() {
+      return frequencyNeedsTime(this.sched.frequency);
+    },
+
+    get needsHour() {
+      return frequencyNeedsHour(this.sched.frequency);
+    },
+
+    get needsWeekday() {
+      return this.sched.frequency === "weekly";
+    },
 
     async refresh() {
       await this.$store.scheduler.sync();
@@ -61,17 +142,21 @@ export function initSchedulerPage({ showToast }) {
         agent: "claude",
         workingDirectory: "",
         initialPrompt: "",
-        cronExpression: "",
-        timezone: "UTC",
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         nightwatchmanEnabled: true,
       };
+      this.sched = { frequency: "daily", hour: 9, minute: 0, weekday: "1" };
     },
 
     async submitJob() {
       if (this.submitting) return;
       this.submitting = true;
       try {
-        await this.$store.scheduler.create(this.form);
+        const payload = {
+          ...this.form,
+          cronExpression: this.computedCron,
+        };
+        await this.$store.scheduler.create(payload);
         this.showForm = false;
         this.resetForm();
       } catch { /* store shows toast */ }
@@ -117,21 +202,8 @@ export function initSchedulerPage({ showToast }) {
       return this.$store.scheduler.formatTime(iso);
     },
 
-    cronHint(expr) {
-      if (!expr) return "";
-      const presets = {
-        "* * * * *": "Every minute",
-        "*/5 * * * *": "Every 5 minutes",
-        "*/15 * * * *": "Every 15 minutes",
-        "*/30 * * * *": "Every 30 minutes",
-        "0 * * * *": "Every hour",
-        "0 */6 * * *": "Every 6 hours",
-        "0 0 * * *": "Daily at midnight",
-        "0 9 * * *": "Daily at 9am",
-        "0 9 * * 1-5": "Weekdays at 9am",
-        "0 0 * * 0": "Weekly on Sunday",
-      };
-      return presets[expr.trim()] || "";
+    describeJobCron(expr) {
+      return describeCron(expr);
     },
 
     statusColor(status) {
@@ -145,13 +217,35 @@ export function initSchedulerPage({ showToast }) {
 }
 
 // ============================================================
+// Hour / minute option generators (used in template)
+// ============================================================
+
+function hourOptions() {
+  let opts = "";
+  for (let h = 0; h < 24; h++) {
+    const label = String(h).padStart(2, "0");
+    opts += `<option value="${h}">${label}</option>`;
+  }
+  return opts;
+}
+
+function minuteOptions() {
+  let opts = "";
+  for (let m = 0; m < 60; m += 5) {
+    const label = String(m).padStart(2, "0");
+    opts += `<option value="${m}">${label}</option>`;
+  }
+  return opts;
+}
+
+// ============================================================
 // Alpine HTML Template
 // ============================================================
 
 function getPageTemplate() {
   return `
   <!-- Header -->
-  <div class="wm-scheduler-header" style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+  <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
     <h2 style="margin: 0; flex: 1;">Scheduled Jobs</h2>
     <button type="button" class="wm-btn wm-btn--sm" @click="refresh()">Refresh</button>
     <button type="button" class="wm-btn wm-btn--sm wm-btn--primary" @click="showForm = !showForm">
@@ -161,14 +255,16 @@ function getPageTemplate() {
 
   <!-- Create Form -->
   <template x-if="showForm">
-    <div class="wm-scheduler-form" style="background: var(--wm-bg-secondary); border: 1px solid var(--wm-border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+    <div style="background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+
+      <!-- Row 1: Name + Agent -->
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
         <div class="wm-form-group">
-          <label style="font-weight: 600; font-size: 0.85rem;">Job Name</label>
+          <label>Job Name</label>
           <input type="text" class="wm-input" x-model="form.name" placeholder="e.g. Daily code review">
         </div>
         <div class="wm-form-group">
-          <label style="font-weight: 600; font-size: 0.85rem;">Agent</label>
+          <label>Agent</label>
           <select class="wm-select" x-model="form.agent">
             <option value="claude">Claude</option>
             <option value="codex">Codex</option>
@@ -177,32 +273,94 @@ function getPageTemplate() {
             <option value="gemini">Gemini</option>
           </select>
         </div>
-        <div class="wm-form-group" style="grid-column: 1 / -1;">
-          <label style="font-weight: 600; font-size: 0.85rem;">Working Directory</label>
-          <input type="text" class="wm-input" x-model="form.workingDirectory" placeholder="/path/to/project">
+      </div>
+
+      <!-- Row 2: Working Directory -->
+      <div class="wm-form-group" style="margin-top: 0.75rem;">
+        <label>Working Directory</label>
+        <input type="text" class="wm-input" x-model="form.workingDirectory" placeholder="/path/to/project">
+      </div>
+
+      <!-- Row 3: Schedule Picker -->
+      <div style="margin-top: 0.75rem;">
+        <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Schedule</label>
+        <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+          <!-- Frequency -->
+          <select class="wm-select" x-model="sched.frequency">
+            <option value="every_minute">Every minute</option>
+            <option value="every_5min">Every 5 minutes</option>
+            <option value="every_15min">Every 15 minutes</option>
+            <option value="every_30min">Every 30 minutes</option>
+            <option value="hourly">Hourly</option>
+            <option value="every_6h">Every 6 hours</option>
+            <option value="daily">Daily</option>
+            <option value="weekdays">Weekdays</option>
+            <option value="weekly">Weekly</option>
+          </select>
+
+          <!-- Weekday (only for weekly) -->
+          <template x-if="needsWeekday">
+            <select class="wm-select" x-model="sched.weekday">
+              <option value="1">Monday</option>
+              <option value="2">Tuesday</option>
+              <option value="3">Wednesday</option>
+              <option value="4">Thursday</option>
+              <option value="5">Friday</option>
+              <option value="6">Saturday</option>
+              <option value="0">Sunday</option>
+            </select>
+          </template>
+
+          <!-- "at" label -->
+          <template x-if="needsTime">
+            <span style="font-size: 0.85rem; color: var(--text-secondary);">at</span>
+          </template>
+
+          <!-- Hour (for daily/weekdays/weekly) -->
+          <template x-if="needsHour">
+            <select class="wm-select" x-model.number="sched.hour">
+              ${hourOptions()}
+            </select>
+          </template>
+
+          <!-- Separator -->
+          <template x-if="needsHour">
+            <span style="font-size: 0.85rem; color: var(--text-secondary);">:</span>
+          </template>
+
+          <!-- Minute (for hourly+) -->
+          <template x-if="needsTime">
+            <select class="wm-select" x-model.number="sched.minute">
+              ${minuteOptions()}
+            </select>
+          </template>
         </div>
-        <div class="wm-form-group">
-          <label style="font-weight: 600; font-size: 0.85rem;">Cron Expression</label>
-          <input type="text" class="wm-input" x-model="form.cronExpression" placeholder="0 9 * * *">
-          <small x-text="cronHint(form.cronExpression)" style="color: var(--wm-text-secondary); margin-top: 2px;"></small>
-        </div>
-        <div class="wm-form-group">
-          <label style="font-weight: 600; font-size: 0.85rem;">Timezone</label>
-          <input type="text" class="wm-input" x-model="form.timezone" placeholder="UTC">
-        </div>
-        <div class="wm-form-group" style="grid-column: 1 / -1;">
-          <label style="font-weight: 600; font-size: 0.85rem;">Initial Prompt</label>
-          <textarea class="wm-input" x-model="form.initialPrompt" rows="4" placeholder="What should the agent do?"></textarea>
-        </div>
-        <div class="wm-form-group" style="display: flex; align-items: center; gap: 0.5rem;">
-          <input type="checkbox" id="sched-nw-enabled" x-model="form.nightwatchmanEnabled">
-          <label for="sched-nw-enabled" style="font-weight: 600; font-size: 0.85rem; margin: 0;">Enable Night Watchman</label>
+        <small style="color: var(--text-secondary); margin-top: 4px; display: block;" x-text="cronDescription"></small>
+      </div>
+
+      <!-- Row 4: Initial Prompt -->
+      <div class="wm-form-group" style="margin-top: 0.75rem;">
+        <label>Initial Prompt</label>
+        <textarea class="wm-input" x-model="form.initialPrompt" rows="4" placeholder="What should the agent do?"></textarea>
+      </div>
+
+      <!-- Row 5: Night Watchman + Timezone -->
+      <div style="display: flex; align-items: center; gap: 1rem; margin-top: 0.75rem; flex-wrap: wrap;">
+        <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer;">
+          <input type="checkbox" x-model="form.nightwatchmanEnabled">
+          <span style="font-weight: 600;">Enable Night Watchman</span>
+        </label>
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 0.4rem;">
+          <span style="font-size: 0.8rem; color: var(--text-secondary);">TZ:</span>
+          <input type="text" class="wm-input" style="width: 10rem;" x-model="form.timezone">
         </div>
       </div>
-      <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.75rem;">
+
+      <!-- Submit row -->
+      <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; border-top: 1px solid var(--border-primary); padding-top: 0.75rem;">
         <button type="button" class="wm-btn wm-btn--sm" @click="showForm = false; resetForm()">Cancel</button>
-        <button type="button" class="wm-btn wm-btn--sm wm-btn--primary" @click="submitJob()" :disabled="submitting || !form.name || !form.cronExpression || !form.workingDirectory || !form.initialPrompt">
-          <span x-text="submitting ? 'Creating…' : 'Create Job'"></span>
+        <button type="button" class="wm-btn wm-btn--sm wm-btn--primary" @click="submitJob()" :disabled="submitting || !form.name || !form.workingDirectory || !form.initialPrompt">
+          <span x-text="submitting ? 'Creating\u2026' : 'Create Job'"></span>
         </button>
       </div>
     </div>
@@ -210,24 +368,24 @@ function getPageTemplate() {
 
   <!-- Loading -->
   <template x-if="$store.scheduler.loading">
-    <p style="color: var(--wm-text-secondary);">Loading…</p>
+    <p style="color: var(--text-secondary);">Loading\u2026</p>
   </template>
 
   <!-- Empty state -->
-  <template x-if="!$store.scheduler.loading && $store.scheduler.jobs.length === 0">
-    <p style="color: var(--wm-text-secondary);">No scheduled jobs yet. Create one to get started.</p>
+  <template x-if="!$store.scheduler.loading && $store.scheduler.jobs.length === 0 && !showForm">
+    <p style="color: var(--text-secondary);">No scheduled jobs yet. Create one to get started.</p>
   </template>
 
   <!-- Job list -->
-  <div class="wm-scheduler-jobs" style="display: flex; flex-direction: column; gap: 0.5rem;">
+  <div style="display: flex; flex-direction: column; gap: 0.5rem;">
     <template x-for="job in $store.scheduler.jobs" :key="job.id">
-      <div class="wm-scheduler-job-card" style="background: var(--wm-bg-secondary); border: 1px solid var(--wm-border); border-radius: 8px; padding: 0.75rem;">
+      <div style="background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 8px; padding: 0.75rem;">
         <div style="display: flex; align-items: center; gap: 0.75rem;">
           <!-- Enable toggle -->
           <button
             type="button"
             class="wm-btn wm-btn--sm"
-            :style="'width: 2.5rem; color: ' + (job.enabled ? '#22c55e' : '#6b7280')"
+            :style="'min-width: 2.5rem; color: ' + (job.enabled ? '#22c55e' : '#6b7280')"
             @click="toggleEnabled(job)"
             :title="job.enabled ? 'Disable' : 'Enable'"
             x-text="job.enabled ? 'ON' : 'OFF'"
@@ -237,10 +395,10 @@ function getPageTemplate() {
           <div style="flex: 1; min-width: 0;">
             <div style="display: flex; align-items: baseline; gap: 0.5rem;">
               <strong x-text="job.name" style="font-size: 0.95rem;"></strong>
-              <span x-text="job.agent" style="font-size: 0.75rem; color: var(--wm-text-secondary); text-transform: uppercase;"></span>
-              <code x-text="job.cronExpression" style="font-size: 0.75rem; color: var(--wm-text-secondary);"></code>
+              <span x-text="job.agent" style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;"></span>
+              <span x-text="describeJobCron(job.cronExpression)" style="font-size: 0.75rem; color: var(--accent-primary);"></span>
             </div>
-            <div style="font-size: 0.8rem; color: var(--wm-text-secondary); margin-top: 2px;">
+            <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px;">
               <span x-text="job.workingDirectory" style="opacity: 0.8;"></span>
               <template x-if="job.nextRunAt">
                 <span> &middot; Next: <span x-text="formatTime(job.nextRunAt)"></span></span>
@@ -259,34 +417,34 @@ function getPageTemplate() {
 
         <!-- Prompt preview -->
         <details style="margin-top: 0.5rem;">
-          <summary style="cursor: pointer; font-size: 0.8rem; color: var(--wm-text-secondary);">Prompt</summary>
-          <pre style="font-size: 0.8rem; white-space: pre-wrap; margin: 0.25rem 0 0; padding: 0.5rem; background: var(--wm-bg-primary); border-radius: 4px; max-height: 200px; overflow: auto;" x-text="job.initialPrompt"></pre>
+          <summary style="cursor: pointer; font-size: 0.8rem; color: var(--text-secondary);">Prompt</summary>
+          <pre style="font-size: 0.8rem; white-space: pre-wrap; margin: 0.25rem 0 0; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px; max-height: 200px; overflow: auto;" x-text="job.initialPrompt"></pre>
         </details>
       </div>
     </template>
   </div>
 
-  <!-- Run History Modal -->
+  <!-- Run History Panel -->
   <template x-if="runsJobId">
-    <div style="margin-top: 1rem; background: var(--wm-bg-secondary); border: 1px solid var(--wm-border); border-radius: 8px; padding: 0.75rem;">
+    <div style="margin-top: 1rem; background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 8px; padding: 0.75rem;">
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
         <strong>Run History</strong>
         <button type="button" class="wm-btn wm-btn--sm" @click="closeRuns()">Close</button>
       </div>
       <template x-if="loadingRuns">
-        <p style="color: var(--wm-text-secondary); font-size: 0.85rem;">Loading…</p>
+        <p style="color: var(--text-secondary); font-size: 0.85rem;">Loading\u2026</p>
       </template>
       <template x-if="!loadingRuns && runs.length === 0">
-        <p style="color: var(--wm-text-secondary); font-size: 0.85rem;">No runs yet.</p>
+        <p style="color: var(--text-secondary); font-size: 0.85rem;">No runs yet.</p>
       </template>
       <template x-if="!loadingRuns && runs.length > 0">
         <div style="display: flex; flex-direction: column; gap: 0.25rem;">
           <template x-for="run in runs" :key="run.id">
-            <div style="display: flex; align-items: center; gap: 0.75rem; font-size: 0.85rem; padding: 0.25rem 0; border-bottom: 1px solid var(--wm-border);">
-              <span :style="'color: ' + statusColor(run.status); font-weight: 600;'" x-text="run.status"></span>
-              <span x-text="formatTime(run.startedAt)" style="color: var(--wm-text-secondary);"></span>
+            <div style="display: flex; align-items: center; gap: 0.75rem; font-size: 0.85rem; padding: 0.25rem 0; border-bottom: 1px solid var(--border-primary);">
+              <span :style="'color: ' + statusColor(run.status) + '; font-weight: 600;'" x-text="run.status"></span>
+              <span x-text="formatTime(run.startedAt)" style="color: var(--text-secondary);"></span>
               <template x-if="run.sessionId">
-                <span style="font-family: monospace; font-size: 0.75rem;" x-text="run.sessionId.slice(0, 8) + '…'"></span>
+                <span style="font-family: monospace; font-size: 0.75rem;" x-text="run.sessionId.slice(0, 8) + '\u2026'"></span>
               </template>
               <template x-if="run.errorMessage">
                 <span style="color: #ef4444; font-size: 0.8rem;" x-text="run.errorMessage"></span>
