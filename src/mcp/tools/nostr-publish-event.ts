@@ -1,17 +1,23 @@
 /**
  * MCP Tool: nostr_publish_event
  *
- * Sign a Nostr event with the user's bot key and publish it to relays.
- * Combines signing (via bot-crypto API) and relay publishing in one step.
+ * Sign a Nostr event with the user's bot key (via server API) and
+ * publish it to relays directly from the MCP child process.
+ *
+ * Two-step flow:
+ *   1. POST to /api/mcp/bot-crypto/sign-event → get signed event
+ *   2. Publish signed event to relays using SimplePool (local)
+ *
+ * This avoids opening WebSocket connections in the main Wingman server,
+ * which caused unhandled promise rejections on relay timeouts that
+ * crashed the process and killed agent sessions.
  */
 
 import { z } from "zod";
+import { SimplePool } from "nostr-tools";
+import { resolveRelays, type NostrEvent } from "./nostr-relay-utils";
 
-const DEFAULT_RELAYS = [
-  "wss://relay.damus.io",
-  "wss://nos.lol",
-  "wss://relay.nostr.band",
-];
+const PUBLISH_TIMEOUT_MS = 8_000;
 
 export const nostrPublishEventSchema = {
   kind: z
@@ -55,11 +61,8 @@ export async function handleNostrPublishEvent(
   sessionId: string,
 ) {
   try {
-    const relays = params.relays && params.relays.length > 0
-      ? params.relays
-      : DEFAULT_RELAYS;
-
-    const response = await fetch(`${wingmanUrl}/api/mcp/bot-crypto/publish-event`, {
+    // ---- Step 1: Sign the event via server API (bot key lives there) ----
+    const signResponse = await fetch(`${wingmanUrl}/api/mcp/bot-crypto/sign-event`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -70,34 +73,34 @@ export async function handleNostrPublishEvent(
           tags: params.tags,
           created_at: params.created_at,
         },
-        relays,
       }),
     });
 
-    if (!response.ok) {
-      const err = await response.json() as { error?: string };
+    if (!signResponse.ok) {
+      const err = await signResponse.json() as { error?: string };
       return {
         isError: true,
         content: [
           {
             type: "text" as const,
-            text: `Failed to publish event: ${err.error ?? response.statusText}`,
+            text: `Failed to sign event: ${err.error ?? signResponse.statusText}`,
           },
         ],
       };
     }
 
-    const data = await response.json() as {
-      event: Record<string, unknown>;
+    const signData = await signResponse.json() as {
+      event: NostrEvent;
       signerPubkey: string;
-      publish: {
-        successes: number;
-        failures: number;
-        results: { relay: string; ok: boolean; error?: string }[];
-      };
     };
 
-    const relayLines = data.publish.results.map(
+    const signedEvent = signData.event;
+
+    // ---- Step 2: Publish from MCP process directly ----
+    const relays = resolveRelays(params.relays);
+    const publishResults = await publishEventToRelays(signedEvent, relays);
+
+    const relayLines = publishResults.results.map(
       (r) => `  ${r.ok ? "OK" : "FAIL"} ${r.relay}${r.error ? ` — ${r.error}` : ""}`,
     );
 
@@ -106,15 +109,15 @@ export async function handleNostrPublishEvent(
         {
           type: "text" as const,
           text: [
-            `Signed by: ${data.signerPubkey} (bot key)`,
-            `Event ID: ${data.event.id}`,
-            `Kind: ${data.event.kind}`,
-            `Published: ${data.publish.successes}/${data.publish.results.length} relays`,
+            `Signed by: ${signData.signerPubkey} (bot key)`,
+            `Event ID: ${signedEvent.id}`,
+            `Kind: ${signedEvent.kind}`,
+            `Published: ${publishResults.successes}/${publishResults.results.length} relays`,
             "",
             "Relay results:",
             ...relayLines,
             "",
-            JSON.stringify(data.event, null, 2),
+            JSON.stringify(signedEvent, null, 2),
           ].join("\n"),
         },
       ],
@@ -130,4 +133,62 @@ export async function handleNostrPublishEvent(
       ],
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Local relay publisher — runs in MCP child process
+// ---------------------------------------------------------------------------
+
+interface RelayResult {
+  relay: string;
+  ok: boolean;
+  error?: string;
+}
+
+async function publishEventToRelays(
+  event: NostrEvent,
+  relays: string[],
+): Promise<{ successes: number; failures: number; results: RelayResult[] }> {
+  if (relays.length === 0) {
+    return { successes: 0, failures: 0, results: [] };
+  }
+
+  const pool = new SimplePool();
+  const results: RelayResult[] = [];
+
+  try {
+    const promises = relays.map(async (relay) => {
+      try {
+        await Promise.race([
+          pool.publish([relay], event as Parameters<typeof pool.publish>[1]),
+          new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("Publish timeout")), PUBLISH_TIMEOUT_MS);
+            // Ensure timer doesn't keep the process alive
+            if (typeof timer === "object" && "unref" in timer) {
+              (timer as NodeJS.Timeout).unref();
+            }
+          }),
+        ]);
+        results.push({ relay, ok: true });
+      } catch (err) {
+        results.push({
+          relay,
+          ok: false,
+          error: err instanceof Error ? err.message : "Unknown error",
+        });
+      }
+    });
+
+    await Promise.allSettled(promises);
+  } finally {
+    // Swallow errors from pool.close — stale connections may throw
+    try {
+      pool.close(relays);
+    } catch {
+      // ignore
+    }
+  }
+
+  const successes = results.filter((r) => r.ok).length;
+  return { successes, failures: results.length - successes, results };
 }
