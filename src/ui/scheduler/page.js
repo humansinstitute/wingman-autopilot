@@ -66,6 +66,29 @@ function frequencyNeedsHour(freq) {
   return ["daily", "weekdays", "weekly"].includes(freq);
 }
 
+/** Parse a cron expression back into friendly schedule picker fields. */
+function parseCron(expr) {
+  if (!expr) return { frequency: "daily", hour: 9, minute: 0, weekday: "1" };
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length !== 5) return { frequency: "daily", hour: 9, minute: 0, weekday: "1" };
+  const [mm, hh, , , dow] = parts;
+
+  // Fixed-interval patterns
+  if (expr === "* * * * *") return { frequency: "every_minute", hour: 9, minute: 0, weekday: "1" };
+  if (expr === "*/5 * * * *") return { frequency: "every_5min", hour: 9, minute: 0, weekday: "1" };
+  if (expr === "*/15 * * * *") return { frequency: "every_15min", hour: 9, minute: 0, weekday: "1" };
+  if (expr === "*/30 * * * *") return { frequency: "every_30min", hour: 9, minute: 0, weekday: "1" };
+
+  const minute = parseInt(mm, 10) || 0;
+  const hour = parseInt(hh, 10) || 9;
+
+  if (hh === "*") return { frequency: "hourly", hour: 9, minute, weekday: "1" };
+  if (hh.startsWith("*/")) return { frequency: "every_6h", hour: 9, minute, weekday: "1" };
+  if (dow === "1-5") return { frequency: "weekdays", hour, minute, weekday: "1" };
+  if (dow !== "*") return { frequency: "weekly", hour, minute, weekday: dow };
+  return { frequency: "daily", hour, minute, weekday: "1" };
+}
+
 // ============================================================
 // Page Module
 // ============================================================
@@ -109,6 +132,13 @@ export function initSchedulerPage({ showToast }) {
     },
     submitting: false,
 
+    // Edit state
+    editingJobId: null,
+    editTriggerType: "cron",
+    editForm: {},
+    editSched: {},
+    editSubmitting: false,
+
     // Run history
     runsJobId: null,
     runs: [],
@@ -136,6 +166,79 @@ export function initSchedulerPage({ showToast }) {
 
     get needsWeekday() {
       return this.sched.frequency === "weekly";
+    },
+
+    get editIsCron() {
+      return this.editTriggerType === "cron";
+    },
+
+    get editComputedCron() {
+      return buildCron(this.editSched.frequency, this.editSched.hour, this.editSched.minute, this.editSched.weekday);
+    },
+
+    get editCronDescription() {
+      return describeCron(this.editComputedCron);
+    },
+
+    get editNeedsTime() {
+      return frequencyNeedsTime(this.editSched.frequency);
+    },
+
+    get editNeedsHour() {
+      return frequencyNeedsHour(this.editSched.frequency);
+    },
+
+    get editNeedsWeekday() {
+      return this.editSched.frequency === "weekly";
+    },
+
+    startEdit(job) {
+      this.editingJobId = job.id;
+      this.editTriggerType = job.triggerType || "cron";
+      this.editForm = {
+        name: job.name,
+        agent: job.agent,
+        workingDirectory: job.workingDirectory,
+        initialPrompt: job.initialPrompt,
+        timezone: job.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        nightwatchmanEnabled: !!job.nightwatchmanEnabled,
+        watchDirectory: job.watchDirectory || "",
+        filePattern: job.filePattern || "*",
+      };
+      this.editSched = parseCron(job.cronExpression);
+    },
+
+    cancelEdit() {
+      this.editingJobId = null;
+      this.editForm = {};
+      this.editSched = {};
+    },
+
+    async saveEdit() {
+      if (this.editSubmitting) return;
+      this.editSubmitting = true;
+      try {
+        const payload = {
+          name: this.editForm.name,
+          agent: this.editForm.agent,
+          workingDirectory: this.editForm.workingDirectory,
+          initialPrompt: this.editForm.initialPrompt,
+          nightwatchmanEnabled: this.editForm.nightwatchmanEnabled,
+          triggerType: this.editTriggerType,
+        };
+        if (this.editTriggerType === "cron") {
+          payload.cronExpression = this.editComputedCron;
+          payload.timezone = this.editForm.timezone;
+        } else {
+          payload.watchDirectory = this.editForm.watchDirectory;
+          payload.filePattern = this.editForm.filePattern;
+        }
+        await this.$store.scheduler.update(this.editingJobId, payload);
+        this.editingJobId = null;
+        this.editForm = {};
+        this.editSched = {};
+      } catch { /* store shows toast */ }
+      this.editSubmitting = false;
     },
 
     async refresh() {
@@ -459,16 +562,152 @@ function getPageTemplate() {
           </div>
 
           <!-- Actions -->
+          <button type="button" class="wm-btn wm-btn--sm" @click="startEdit(job)" title="Edit" x-show="editingJobId !== job.id">Edit</button>
           <button type="button" class="wm-btn wm-btn--sm" @click="showRuns(job)" title="View runs">Runs</button>
           <button type="button" class="wm-btn wm-btn--sm" @click="triggerJob(job)" title="Run now">Trigger</button>
           <button type="button" class="wm-btn wm-btn--sm wm-btn--danger" @click="deleteJob(job)" title="Delete">&times;</button>
         </div>
 
-        <!-- Prompt preview -->
-        <details style="margin-top: 0.5rem;">
-          <summary style="cursor: pointer; font-size: 0.8rem; color: var(--text-secondary);">Prompt</summary>
-          <pre style="font-size: 0.8rem; white-space: pre-wrap; margin: 0.25rem 0 0; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px; max-height: 200px; overflow: auto;" x-text="job.initialPrompt"></pre>
-        </details>
+        <!-- Prompt preview (shown when NOT editing) -->
+        <template x-if="editingJobId !== job.id">
+          <details style="margin-top: 0.5rem;">
+            <summary style="cursor: pointer; font-size: 0.8rem; color: var(--text-secondary);">Prompt</summary>
+            <pre style="font-size: 0.8rem; white-space: pre-wrap; margin: 0.25rem 0 0; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px; max-height: 200px; overflow: auto;" x-text="job.initialPrompt"></pre>
+          </details>
+        </template>
+
+        <!-- Inline Edit Form -->
+        <template x-if="editingJobId === job.id">
+          <div style="margin-top: 0.75rem; border-top: 1px solid var(--border-primary); padding-top: 0.75rem;">
+
+            <!-- Trigger Type Selector -->
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.75rem;">
+              <button type="button" class="wm-btn wm-btn--sm"
+                :class="editIsCron ? 'wm-btn--primary' : ''"
+                @click="editTriggerType = 'cron'">Schedule</button>
+              <button type="button" class="wm-btn wm-btn--sm"
+                :class="!editIsCron ? 'wm-btn--primary' : ''"
+                @click="editTriggerType = 'file_watcher'">File Watcher</button>
+            </div>
+
+            <!-- Row 1: Name + Agent -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+              <div class="wm-form-group">
+                <label>Trigger Name</label>
+                <input type="text" class="wm-input" x-model="editForm.name">
+              </div>
+              <div class="wm-form-group">
+                <label>Agent</label>
+                <select class="wm-select" x-model="editForm.agent">
+                  <option value="claude">Claude</option>
+                  <option value="codex">Codex</option>
+                  <option value="goose">Goose</option>
+                  <option value="opencode">OpenCode</option>
+                  <option value="gemini">Gemini</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Row 2: Working Directory -->
+            <div class="wm-form-group" style="margin-top: 0.75rem;">
+              <label>Working Directory</label>
+              <input type="text" class="wm-input" x-model="editForm.workingDirectory">
+            </div>
+
+            <!-- Row 3a: Schedule Picker (cron only) -->
+            <template x-if="editIsCron">
+              <div style="margin-top: 0.75rem;">
+                <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Schedule</label>
+                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                  <select class="wm-select" x-model="editSched.frequency">
+                    <option value="every_minute">Every minute</option>
+                    <option value="every_5min">Every 5 minutes</option>
+                    <option value="every_15min">Every 15 minutes</option>
+                    <option value="every_30min">Every 30 minutes</option>
+                    <option value="hourly">Hourly</option>
+                    <option value="every_6h">Every 6 hours</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekdays">Weekdays</option>
+                    <option value="weekly">Weekly</option>
+                  </select>
+                  <template x-if="editNeedsWeekday">
+                    <select class="wm-select" x-model="editSched.weekday">
+                      <option value="1">Monday</option>
+                      <option value="2">Tuesday</option>
+                      <option value="3">Wednesday</option>
+                      <option value="4">Thursday</option>
+                      <option value="5">Friday</option>
+                      <option value="6">Saturday</option>
+                      <option value="0">Sunday</option>
+                    </select>
+                  </template>
+                  <template x-if="editNeedsTime">
+                    <span style="font-size: 0.85rem; color: var(--text-secondary);">at</span>
+                  </template>
+                  <template x-if="editNeedsHour">
+                    <select class="wm-select" x-model.number="editSched.hour">
+                      ${hourOptions()}
+                    </select>
+                  </template>
+                  <template x-if="editNeedsHour">
+                    <span style="font-size: 0.85rem; color: var(--text-secondary);">:</span>
+                  </template>
+                  <template x-if="editNeedsTime">
+                    <select class="wm-select" x-model.number="editSched.minute">
+                      ${minuteOptions()}
+                    </select>
+                  </template>
+                </div>
+                <small style="color: var(--text-secondary); margin-top: 4px; display: block;" x-text="editCronDescription"></small>
+              </div>
+            </template>
+
+            <!-- Row 3b: File Watcher fields -->
+            <template x-if="!editIsCron">
+              <div style="margin-top: 0.75rem;">
+                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 0.75rem;">
+                  <div class="wm-form-group">
+                    <label>Watch Directory</label>
+                    <input type="text" class="wm-input" x-model="editForm.watchDirectory">
+                  </div>
+                  <div class="wm-form-group">
+                    <label>File Pattern</label>
+                    <input type="text" class="wm-input" x-model="editForm.filePattern">
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- Row 4: Initial Prompt -->
+            <div class="wm-form-group" style="margin-top: 0.75rem;">
+              <label>Initial Prompt</label>
+              <textarea class="wm-input" x-model="editForm.initialPrompt" rows="4"></textarea>
+            </div>
+
+            <!-- Row 5: Night Watchman + Timezone -->
+            <div style="display: flex; align-items: center; gap: 1rem; margin-top: 0.75rem; flex-wrap: wrap;">
+              <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer;">
+                <input type="checkbox" x-model="editForm.nightwatchmanEnabled">
+                <span style="font-weight: 600;">Enable Night Watchman</span>
+              </label>
+              <template x-if="editIsCron">
+                <div style="margin-left: auto; display: flex; align-items: center; gap: 0.4rem;">
+                  <span style="font-size: 0.8rem; color: var(--text-secondary);">TZ:</span>
+                  <input type="text" class="wm-input" style="width: 10rem;" x-model="editForm.timezone">
+                </div>
+              </template>
+            </div>
+
+            <!-- Save / Cancel -->
+            <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; border-top: 1px solid var(--border-primary); padding-top: 0.75rem;">
+              <button type="button" class="wm-btn wm-btn--sm" @click="cancelEdit()">Cancel</button>
+              <button type="button" class="wm-btn wm-btn--sm wm-btn--primary" @click="saveEdit()"
+                :disabled="editSubmitting || !editForm.name || !editForm.workingDirectory || !editForm.initialPrompt || (!editIsCron && !editForm.watchDirectory)">
+                <span x-text="editSubmitting ? 'Saving\u2026' : 'Save Changes'"></span>
+              </button>
+            </div>
+          </div>
+        </template>
       </div>
     </template>
   </div>
