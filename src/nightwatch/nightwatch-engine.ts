@@ -475,6 +475,14 @@ export async function maybeTriggerNightWatch(
     return;
   }
 
+  // Grace period: let the agent fully start before issuing the first review.
+  // Without this, NW tries to review an empty/starting session and hangs.
+  const STARTUP_GRACE_MS = 61_500;
+  const sessionAge = Date.now() - new Date(session.startedAt).getTime();
+  if (sessionAge < STARTUP_GRACE_MS) {
+    return;
+  }
+
   // Prevent overlapping calls
   if (nightwatchInFlight.has(session.id)) {
     console.log(`[nightwatch] Skipping session ${session.id}: review already in flight`);
