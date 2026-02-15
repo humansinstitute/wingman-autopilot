@@ -68,8 +68,11 @@ async function handleCreateJob(
   const agent = typeof body.agent === "string" ? body.agent.trim() : "";
   const workingDirectory = typeof body.workingDirectory === "string" ? body.workingDirectory.trim() : "";
   const initialPrompt = typeof body.initialPrompt === "string" ? body.initialPrompt.trim() : "";
+  const triggerType = body.triggerType === "file_watcher" ? "file_watcher" as const : "cron" as const;
   const cronExpression = typeof body.cronExpression === "string" ? body.cronExpression.trim() : "";
   const timezone = typeof body.timezone === "string" ? body.timezone.trim() : "UTC";
+  const watchDirectory = typeof body.watchDirectory === "string" ? body.watchDirectory.trim() : "";
+  const filePattern = typeof body.filePattern === "string" ? body.filePattern.trim() : "*";
   const nightwatchmanEnabled = body.nightwatchmanEnabled !== false;
 
   if (!name) return Response.json({ error: "name is required" }, { status: 400 });
@@ -78,16 +81,21 @@ async function handleCreateJob(
   }
   if (!workingDirectory) return Response.json({ error: "workingDirectory is required" }, { status: 400 });
   if (!initialPrompt) return Response.json({ error: "initialPrompt is required" }, { status: 400 });
-  if (!cronExpression) return Response.json({ error: "cronExpression is required" }, { status: 400 });
-  if (!validateCronExpression(cronExpression)) {
-    return Response.json({ error: "Invalid cron expression" }, { status: 400 });
+
+  if (triggerType === "cron") {
+    if (!cronExpression) return Response.json({ error: "cronExpression is required for schedule triggers" }, { status: 400 });
+    if (!validateCronExpression(cronExpression)) {
+      return Response.json({ error: "Invalid cron expression" }, { status: 400 });
+    }
+  } else {
+    if (!watchDirectory) return Response.json({ error: "watchDirectory is required for file watcher triggers" }, { status: 400 });
   }
 
   // Lookup bot key for wrapping
   const botKey = deps.botKeyStore.getActiveKeyForUser(userNpub);
   if (!botKey) {
     return Response.json(
-      { error: "No bot key found. A bot key is required for scheduled jobs." },
+      { error: "No bot key found. A bot key is required for triggers." },
       { status: 400 },
     );
   }
@@ -106,8 +114,11 @@ async function handleCreateJob(
     workingDirectory,
     initialPrompt,
     nightwatchmanEnabled,
+    triggerType,
     cronExpression,
     timezone,
+    watchDirectory: triggerType === "file_watcher" ? watchDirectory : undefined,
+    filePattern: triggerType === "file_watcher" ? filePattern : undefined,
   });
 
   // Schedule it
@@ -141,6 +152,9 @@ async function handleUpdateJob(
   if (typeof body.workingDirectory === "string") update.workingDirectory = body.workingDirectory.trim();
   if (typeof body.initialPrompt === "string") update.initialPrompt = body.initialPrompt.trim();
   if (typeof body.nightwatchmanEnabled === "boolean") update.nightwatchmanEnabled = body.nightwatchmanEnabled;
+  if (body.triggerType === "cron" || body.triggerType === "file_watcher") {
+    update.triggerType = body.triggerType;
+  }
   if (typeof body.cronExpression === "string") {
     if (!validateCronExpression(body.cronExpression)) {
       return Response.json({ error: "Invalid cron expression" }, { status: 400 });
@@ -148,6 +162,8 @@ async function handleUpdateJob(
     update.cronExpression = body.cronExpression.trim();
   }
   if (typeof body.timezone === "string") update.timezone = body.timezone.trim();
+  if (typeof body.watchDirectory === "string") update.watchDirectory = body.watchDirectory.trim();
+  if (typeof body.filePattern === "string") update.filePattern = body.filePattern.trim();
   if (typeof body.enabled === "boolean") update.enabled = body.enabled;
 
   const job = deps.store.updateJob(jobId, update);
