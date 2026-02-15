@@ -34,6 +34,7 @@ import { initSchedulerPage } from "./scheduler/page.js";
 import { initSessionsStore } from "./sessions/store.js";
 import { initAppsStore } from "./apps/store.js";
 import { startSigningListener, stopSigningListener } from "./nip98/signing-listener.js";
+import { startSessionSubscriber, stopSessionSubscriber } from "./sessions/subscriber.js";
 import { buildSessionOrigin, createSessionLauncher } from "./helpers/session-launch.js";
 import {
   state,
@@ -4610,6 +4611,17 @@ dialog.addEventListener("cancel", (event) => {
   // Start NIP-98 signing listener after auth + data are settled
   if (state.identity.authenticated && state.identity.npub) {
     startSigningListener(state.identity.npub);
+  }
+
+  // Live-refresh sessions via SSE so home page / nav update without reload
+  if (state.identity.authenticated) {
+    startSessionSubscriber(() => {
+      fetchSessions().then(() => {
+        syncMenuTabs();
+        render();
+      });
+    });
+    window.addEventListener("wingman:identity-logout", () => stopSessionSubscriber(), { once: true });
   }
 
   // Re-render with fresh server data

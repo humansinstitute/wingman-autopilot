@@ -127,6 +127,7 @@ import { maybeRefreshSessionCookie } from "./server/session-refresh";
 import { handleSubdomainRequest, resolveAliasToPort, proxyRequestToApp, type SubdomainProxyConfig } from "./server/subdomain-proxy";
 import { isAgentRuntimeStatus } from "./types/agent-status";
 import { createSessionEventsHandler } from "./server/session-events";
+import { sessionBroadcaster, createSessionSubscribeResponse } from "./server/session-broadcaster";
 import { handleChatApi, type ChatApiContext } from "./server/chat-routes";
 import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import { SchedulerStore } from "./scheduler/scheduler-store";
@@ -1755,6 +1756,15 @@ manager.on((event) => {
     });
     messageStore.replaceMessages(event.session.id, []);
     void maybeAutoDispatchQueuedPrompt(event.session);
+    // Broadcast to browser so home page / nav live-refresh
+    if (event.session.npub) {
+      sessionBroadcaster.broadcast(event.session.npub, {
+        type: "session-started",
+        sessionId: event.session.id,
+        agent: event.session.agent,
+        name: event.session.name ?? undefined,
+      });
+    }
     return;
   }
   if (event.type === "session-updated" || event.type === "session-stopped") {
@@ -1793,6 +1803,16 @@ manager.on((event) => {
       pm2Name: event.session.pm2Name,
     });
     void maybeAutoDispatchQueuedPrompt(event.session);
+    // Broadcast to browser so home page / nav live-refresh
+    if (event.session.npub) {
+      sessionBroadcaster.broadcast(event.session.npub, {
+        type: event.type as "session-updated" | "session-stopped",
+        sessionId: event.session.id,
+        agent: event.session.agent,
+        name: event.session.name ?? undefined,
+        status: event.session.agentRuntimeStatus ?? undefined,
+      });
+    }
   }
 });
 
@@ -6491,6 +6511,15 @@ const handleApi = async (
       return Response.json({ error: "Archived session not found" }, { status: 404 });
     }
     return Response.json({ id: sessionId, deleted: true });
+  }
+
+  // SSE stream for live session list updates (scoped to viewer npub)
+  if (pathname === "/api/sessions/subscribe" && method === "GET") {
+    const viewerNpub = getViewerNormalizedNpub(authContext);
+    if (!viewerNpub) {
+      return Response.json({ error: "Not authenticated" }, { status: 401 });
+    }
+    return createSessionSubscribeResponse(viewerNpub);
   }
 
   if (pathname === "/api/sessions" && method === "GET") {
