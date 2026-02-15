@@ -129,6 +129,9 @@ import { isAgentRuntimeStatus } from "./types/agent-status";
 import { createSessionEventsHandler } from "./server/session-events";
 import { handleChatApi, type ChatApiContext } from "./server/chat-routes";
 import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
+import { SchedulerStore } from "./scheduler/scheduler-store";
+import { SchedulerEngine } from "./scheduler/scheduler-engine";
+import { createSchedulerApiHandler } from "./scheduler/scheduler-api";
 import {
   clearWarmRestartMarker,
   loadWarmRestartMarker,
@@ -6410,6 +6413,7 @@ const handleApi = async (
       const total = sessionArchiveStore.getArchiveCount();
       return Response.json({ sessions, total, limit: validatedOptions.limit, offset: validatedOptions.offset });
     } catch (error) {
+      logger.warn("Archive list error:", error instanceof Error ? error.message : error);
       return Response.json({ error: "Invalid request parameters" }, { status: 400 });
     }
   }

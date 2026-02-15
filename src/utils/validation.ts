@@ -49,7 +49,10 @@ export const FilterSchema = z.string().max(100).refine((filter) => {
 export const ArchiveListOptionsSchema = z.object({
   limit: LimitSchema,
   offset: OffsetSchema,
-  filter: FilterSchema.optional().transform(val => val?.trim() || "")
+  filter: z.preprocess(
+    (val) => (val === null || val === '' ? undefined : val),
+    FilterSchema.optional()
+  ).transform(val => val?.trim() || "")
 });
 
 export const AuthContextSchema = z.object({
