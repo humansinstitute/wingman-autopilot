@@ -10,6 +10,7 @@
 
 import Alpine from "/vendor/alpinejs/module.esm.js";
 import { fetchSchedulerJobRuns } from "./api.js";
+import { attachDirAutocomplete } from "./dir-autocomplete.js";
 
 // ============================================================
 // Schedule → cron helpers
@@ -110,6 +111,9 @@ export function initSchedulerPage({ showToast }) {
   }
 
   Alpine.data("schedulerPage", () => ({
+    // Autocomplete cleanup handles
+    _acCleanups: [],
+
     // Create form state
     showForm: false,
     triggerType: "cron",
@@ -166,6 +170,72 @@ export function initSchedulerPage({ showToast }) {
 
     get needsWeekday() {
       return this.sched.frequency === "weekly";
+    },
+
+    init() {
+      // Watch showForm toggle to attach/detach autocomplete on create form
+      this.$watch("showForm", (open) => {
+        if (open) {
+          this.$nextTick(() => this._attachCreateAC());
+        } else {
+          this._detachAC();
+        }
+      });
+      // Re-attach when trigger type changes (watch dir input appears/disappears)
+      this.$watch("triggerType", () => {
+        if (this.showForm) {
+          this.$nextTick(() => this._attachCreateAC());
+        }
+      });
+      // Watch editingJobId to attach/detach autocomplete on edit form
+      this.$watch("editingJobId", (id) => {
+        if (id) {
+          this.$nextTick(() => this._attachEditAC());
+        } else {
+          this._detachAC();
+        }
+      });
+      // Re-attach when edit trigger type changes
+      this.$watch("editTriggerType", () => {
+        if (this.editingJobId) {
+          this.$nextTick(() => this._attachEditAC());
+        }
+      });
+    },
+
+    _attachCreateAC() {
+      this._detachAC();
+      const root = this.$el;
+      const workDirInput = root.querySelector("[data-ac='create-workdir']");
+      const workDirList = root.querySelector("[data-ac='create-workdir-list']");
+      if (workDirInput && workDirList) {
+        this._acCleanups.push(attachDirAutocomplete(workDirInput, workDirList));
+      }
+      const watchDirInput = root.querySelector("[data-ac='create-watchdir']");
+      const watchDirList = root.querySelector("[data-ac='create-watchdir-list']");
+      if (watchDirInput && watchDirList) {
+        this._acCleanups.push(attachDirAutocomplete(watchDirInput, watchDirList));
+      }
+    },
+
+    _attachEditAC() {
+      this._detachAC();
+      const root = this.$el;
+      const workDirInput = root.querySelector("[data-ac='edit-workdir']");
+      const workDirList = root.querySelector("[data-ac='edit-workdir-list']");
+      if (workDirInput && workDirList) {
+        this._acCleanups.push(attachDirAutocomplete(workDirInput, workDirList));
+      }
+      const watchDirInput = root.querySelector("[data-ac='edit-watchdir']");
+      const watchDirList = root.querySelector("[data-ac='edit-watchdir-list']");
+      if (watchDirInput && watchDirList) {
+        this._acCleanups.push(attachDirAutocomplete(watchDirInput, watchDirList));
+      }
+    },
+
+    _detachAC() {
+      this._acCleanups.forEach((fn) => fn());
+      this._acCleanups = [];
     },
 
     get editIsCron() {
@@ -259,6 +329,7 @@ export function initSchedulerPage({ showToast }) {
         filePattern: "*",
       };
       this.sched = { frequency: "daily", hour: 9, minute: 0, weekday: "1" };
+      this._detachAC();
     },
 
     async submitJob() {
@@ -420,7 +491,9 @@ function getPageTemplate() {
       <!-- Row 2: Working Directory -->
       <div class="wm-form-group" style="margin-top: 0.75rem;">
         <label>Working Directory</label>
-        <input type="text" class="wm-input" x-model="form.workingDirectory" placeholder="/path/to/project">
+        <input type="text" class="wm-input" x-model="form.workingDirectory" placeholder="/path/to/project"
+          data-ac="create-workdir" list="create-workdir-suggestions" autocomplete="off">
+        <datalist id="create-workdir-suggestions" data-ac="create-workdir-list"></datalist>
       </div>
 
       <!-- Row 3a: Schedule Picker (cron only) -->
@@ -477,7 +550,9 @@ function getPageTemplate() {
           <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 0.75rem;">
             <div class="wm-form-group">
               <label>Watch Directory</label>
-              <input type="text" class="wm-input" x-model="form.watchDirectory" placeholder="/path/to/watch">
+              <input type="text" class="wm-input" x-model="form.watchDirectory" placeholder="/path/to/watch"
+                data-ac="create-watchdir" list="create-watchdir-suggestions" autocomplete="off">
+              <datalist id="create-watchdir-suggestions" data-ac="create-watchdir-list"></datalist>
             </div>
             <div class="wm-form-group">
               <label>File Pattern</label>
@@ -611,7 +686,9 @@ function getPageTemplate() {
             <!-- Row 2: Working Directory -->
             <div class="wm-form-group" style="margin-top: 0.75rem;">
               <label>Working Directory</label>
-              <input type="text" class="wm-input" x-model="editForm.workingDirectory">
+              <input type="text" class="wm-input" x-model="editForm.workingDirectory"
+                data-ac="edit-workdir" list="edit-workdir-suggestions" autocomplete="off">
+              <datalist id="edit-workdir-suggestions" data-ac="edit-workdir-list"></datalist>
             </div>
 
             <!-- Row 3a: Schedule Picker (cron only) -->
@@ -668,7 +745,9 @@ function getPageTemplate() {
                 <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 0.75rem;">
                   <div class="wm-form-group">
                     <label>Watch Directory</label>
-                    <input type="text" class="wm-input" x-model="editForm.watchDirectory">
+                    <input type="text" class="wm-input" x-model="editForm.watchDirectory"
+                      data-ac="edit-watchdir" list="edit-watchdir-suggestions" autocomplete="off">
+                    <datalist id="edit-watchdir-suggestions" data-ac="edit-watchdir-list"></datalist>
                   </div>
                   <div class="wm-form-group">
                     <label>File Pattern</label>
