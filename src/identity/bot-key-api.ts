@@ -204,7 +204,9 @@ async function handleUnlock(deps: BotKeyApiDependencies, request: Request): Resp
   }
 
   const body = await parseBody(request);
-  const nsecHex = body.nsecHex as string | undefined;
+  let nsecHex = (body.nsecHex as string | undefined)?.trim();
+  // Left-pad if leading zero was dropped (some NIP-07 extensions strip it)
+  if (nsecHex && /^[0-9a-fA-F]{63}$/.test(nsecHex)) nsecHex = "0" + nsecHex;
   if (!nsecHex || !/^[0-9a-fA-F]{64}$/.test(nsecHex)) {
     return jsonError("nsecHex must be a 64-character hex string", 400);
   }

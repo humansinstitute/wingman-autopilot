@@ -178,7 +178,12 @@ export function initIdentityStateManager(deps) {
       if (!window.nostr?.nip44?.decrypt) {
         throw new Error("NIP-07 extension with NIP-44 support required to export bot nsec");
       }
-      const nsecHex = await window.nostr.nip44.decrypt(senderPubkey, encryptedToUser);
+      let nsecHex = await window.nostr.nip44.decrypt(senderPubkey, encryptedToUser);
+
+      // NIP-44 decrypt returns a string — trim whitespace and left-pad if a
+      // leading zero was dropped (some NIP-07 extensions do this).
+      if (typeof nsecHex === "string") nsecHex = nsecHex.trim();
+      if (nsecHex && /^[0-9a-fA-F]{63}$/.test(nsecHex)) nsecHex = "0" + nsecHex;
 
       if (!nsecHex || !/^[0-9a-fA-F]{64}$/.test(nsecHex)) {
         throw new Error("Decryption returned invalid data");

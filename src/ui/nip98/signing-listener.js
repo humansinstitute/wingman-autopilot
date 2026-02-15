@@ -210,6 +210,11 @@ async function handleBotKeyDecryptRequest(request) {
       return;
     }
 
+    // Trim whitespace and left-pad if a leading zero was dropped (some NIP-07
+    // extensions strip leading zeros when returning hex strings).
+    nsecHex = nsecHex.trim();
+    if (/^[0-9a-fA-F]{63}$/.test(nsecHex)) nsecHex = "0" + nsecHex;
+
     // Validate: should be 64-char hex
     if (!/^[0-9a-fA-F]{64}$/.test(nsecHex)) {
       console.error("[nip98-listener] Decrypted bot key is not valid 64-char hex");
