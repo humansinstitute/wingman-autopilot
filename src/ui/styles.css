@@ -8457,3 +8457,96 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 .wm-file-picker-error {
   color: var(--accent-danger, #ef4444);
 }
+
+/* ================================================================
+   Shared Form Primitives — wm-btn, wm-input, wm-form-group
+   Used by scheduler, nightwatch, and other settings pages
+   ================================================================ */
+
+.wm-btn {
+  appearance: none;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.4rem;
+  padding: 0.5rem 1rem;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.wm-btn:hover {
+  background: var(--bg-tertiary);
+}
+
+.wm-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.wm-btn--sm {
+  padding: 0.3rem 0.65rem;
+  font-size: 0.78rem;
+}
+
+.wm-btn--primary {
+  background: var(--accent-primary);
+  color: #fff;
+  border-color: var(--accent-primary);
+}
+
+.wm-btn--primary:hover {
+  background: var(--accent-secondary);
+  border-color: var(--accent-secondary);
+}
+
+.wm-btn--danger {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.wm-btn--danger:hover {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.wm-input {
+  appearance: none;
+  width: 100%;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 0.4rem;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  padding: 0.4rem 0.6rem;
+}
+
+.wm-input:focus {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
+}
+
+.wm-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+textarea.wm-input {
+  resize: vertical;
+  min-height: 3rem;
+}
+
+.wm-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.wm-form-group > label {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
