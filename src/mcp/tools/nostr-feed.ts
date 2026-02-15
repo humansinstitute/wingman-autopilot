@@ -7,7 +7,7 @@
  */
 
 import { z } from "zod";
-import { resolvePrivateKey } from "./nip44-utils";
+import { getBotPubkey } from "./nip44-utils";
 import { resolveRelays, queryNostrEvents } from "./nostr-relay-utils";
 
 export const nostrGetFeedSchema = {
@@ -15,7 +15,7 @@ export const nostrGetFeedSchema = {
     .string()
     .optional()
     .describe(
-      "Hex pubkey to fetch notes for. If omitted, uses Wingman's own pubkey.",
+      "Hex pubkey to fetch notes for. If omitted, uses your bot key's pubkey.",
     ),
   limit: z
     .number()
@@ -31,7 +31,7 @@ export const nostrGetFeedSchema = {
 
 export const nostrGetFeedDescription =
   "Fetch recent Nostr notes (kind 1) from relays for a given pubkey. " +
-  "If no pubkey is provided, fetches Wingman's own notes — useful for " +
+  "If no pubkey is provided, fetches your bot key's notes — useful for " +
   "understanding what you have posted, your tone, topics, and interests. " +
   "Returns note content, timestamps, and any referenced events or tags. " +
   "This is a read-only operation — no signing grant required.";
@@ -49,8 +49,20 @@ export async function handleNostrGetFeed(params: NostrGetFeedParams) {
     let isSelf = false;
 
     if (!targetPubkey) {
-      const key = resolvePrivateKey();
-      targetPubkey = key.pubkeyHex;
+      const botPubkey = getBotPubkey();
+      if (!botPubkey) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text" as const,
+              text: "No pubkey provided and bot key identity is not available. " +
+                "Provide a pubkey parameter, or ensure the session has a bot key configured.",
+            },
+          ],
+        };
+      }
+      targetPubkey = botPubkey;
       isSelf = true;
     }
 
@@ -70,7 +82,7 @@ export async function handleNostrGetFeed(params: NostrGetFeedParams) {
           {
             type: "text" as const,
             text: isSelf
-              ? `No notes found for Wingman's pubkey (${targetPubkey}). ` +
+              ? `No notes found for your bot key pubkey (${targetPubkey}). ` +
                 `This identity may not have published any kind 1 events yet.`
               : `No notes found for pubkey ${targetPubkey}.`,
           },

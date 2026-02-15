@@ -454,8 +454,11 @@ export class ProcessManager {
   }
 
   private spawnAgentProcess(session: AgentSession): Bun.Subprocess {
+    // Strip KEYTELEPORT_PRIVKEY from child env — agents must use their
+    // per-user bot key via the bot-crypto API, never the root server key.
+    const { KEYTELEPORT_PRIVKEY: _stripped, ...parentEnv } = Bun.env;
     const env = {
-      ...Bun.env,
+      ...parentEnv,
       SESSION_ID: session.id,
       SESSION_AGENT: session.agent,
       SESSION_PORT: session.port.toString(),

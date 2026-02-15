@@ -1,13 +1,11 @@
 /**
  * MCP Tool: get_wingman_identity
  *
- * Returns Wingman's public key (hex and npub) so the agent knows its
- * delegate identity. Returns the per-user bot identity when available
- * (BOT_PUBKEY_HEX / BOT_NPUB env vars), otherwise falls back to the
- * root identity. Never exposes the private key.
+ * Returns the agent's per-user bot key identity (hex and npub).
+ * Never exposes the root server key.
  */
 
-import { resolvePrivateKey } from "./nip44-utils";
+import { getBotPubkey, getBotNpub } from "./nip44-utils";
 
 export const wingmanIdentitySchema = {};
 
@@ -18,20 +16,10 @@ export const wingmanIdentityDescription =
   "but never as owner_pubkey (the owner is always the end-user).";
 
 export function handleGetWingmanIdentity() {
-  // Prefer per-user bot identity when available
-  const botPubkeyHex = process.env.BOT_PUBKEY_HEX;
-  const botNpub = process.env.BOT_NPUB;
+  const botPubkeyHex = getBotPubkey();
+  const botNpub = getBotNpub();
 
   if (botPubkeyHex && botNpub) {
-    // Also resolve root key for reference
-    let rootInfo = "";
-    try {
-      const rootKey = resolvePrivateKey();
-      rootInfo = `\n\nRoot (shared) identity: ${rootKey.pubkeyHex}\nBot key takes priority for all signing and crypto operations.`;
-    } catch {
-      // Root key may not be available
-    }
-
     return {
       content: [
         {
@@ -43,42 +31,21 @@ export function handleGetWingmanIdentity() {
             ``,
             `This is your per-user bot identity. When syncing records to SuperBased, ` +
             `include this pubkey in delegate_pubkeys so you can later fetch and decrypt them. ` +
-            `The owner_pubkey must always be the end-user's pubkey, never this one.` +
-            rootInfo,
+            `The owner_pubkey must always be the end-user's pubkey, never this one.`,
           ].join("\n"),
         },
       ],
     };
   }
 
-  // Fall back to root key
-  try {
-    const key = resolvePrivateKey();
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: [
-            `Wingman identity:`,
-            `  hexpub: ${key.pubkeyHex}`,
-            `  npub:   ${key.npub}`,
-            ``,
-            `This is your delegate identity. When syncing records to SuperBased, ` +
-            `include this pubkey in delegate_pubkeys so you can later fetch and decrypt them. ` +
-            `The owner_pubkey must always be the end-user's pubkey, never this one.`,
-          ].join("\n"),
-        },
-      ],
-    };
-  } catch (err) {
-    return {
-      isError: true,
-      content: [
-        {
-          type: "text" as const,
-          text: `Failed to resolve Wingman identity: ${(err as Error).message}`,
-        },
-      ],
-    };
-  }
+  return {
+    isError: true,
+    content: [
+      {
+        type: "text" as const,
+        text: "Bot key identity not available. The session may not have a bot key configured yet. " +
+          "A bot key is auto-generated when the session starts — try again shortly.",
+      },
+    ],
+  };
 }

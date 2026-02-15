@@ -8,8 +8,6 @@
  */
 
 import { z } from "zod";
-import { resolvePrivateKey } from "./nip44-utils";
-import { nip44Decrypt } from "../../superbased/nip44-crypto";
 
 export const nip44DecryptSchema = {
   ciphertext: z
@@ -21,10 +19,9 @@ export const nip44DecryptSchema = {
 };
 
 export const nip44DecryptDescription =
-  "Decrypt a NIP-44 v2 encrypted payload using the Wingman server identity. " +
+  "Decrypt a NIP-44 v2 encrypted payload using your per-user bot key. " +
   "Requires the sender's pubkey to derive the conversation key. " +
-  "Returns the decrypted plaintext. " +
-  "This is direct crypto — no server round-trip needed.";
+  "Returns the decrypted plaintext.";
 
 interface Nip44DecryptParams {
   ciphertext: string;
@@ -74,7 +71,6 @@ export async function handleNip44Decrypt(params: Nip44DecryptParams) {
       };
     }
 
-    // Try bot key via server proxy first
     const botResult = await tryBotCryptoDecrypt(params);
     if (botResult) {
       return {
@@ -92,20 +88,13 @@ export async function handleNip44Decrypt(params: Nip44DecryptParams) {
       };
     }
 
-    // Fall back to root key
-    const { secretKey, pubkeyHex } = resolvePrivateKey();
-    const plaintext = nip44Decrypt(params.ciphertext, secretKey, params.sender_pubkey);
-
     return {
+      isError: true,
       content: [
         {
           type: "text" as const,
-          text: [
-            `Decrypted by ${pubkeyHex}`,
-            `Sender: ${params.sender_pubkey}`,
-            "",
-            plaintext,
-          ].join("\n"),
+          text: "NIP-44 decryption failed: bot key is not available. " +
+            "Ensure the session has a bot key configured and unlocked.",
         },
       ],
     };

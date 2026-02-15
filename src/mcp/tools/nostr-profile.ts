@@ -7,7 +7,7 @@
  */
 
 import { z } from "zod";
-import { resolvePrivateKey } from "./nip44-utils";
+import { getBotPubkey } from "./nip44-utils";
 import { resolveRelays, queryNostrEvents } from "./nostr-relay-utils";
 
 export const nostrGetProfileSchema = {
@@ -15,7 +15,7 @@ export const nostrGetProfileSchema = {
     .string()
     .optional()
     .describe(
-      "Hex pubkey to fetch the profile for. If omitted, uses Wingman's own pubkey.",
+      "Hex pubkey to fetch the profile for. If omitted, uses your bot key's pubkey.",
     ),
   relays: z
     .array(z.string())
@@ -25,7 +25,7 @@ export const nostrGetProfileSchema = {
 
 export const nostrGetProfileDescription =
   "Fetch a Nostr profile (kind 0 metadata) from relays. " +
-  "If no pubkey is provided, fetches Wingman's own profile — useful for " +
+  "If no pubkey is provided, fetches your bot key's profile — useful for " +
   "understanding your name, bio, avatar, and other identity details. " +
   "Returns parsed profile fields including name, about, picture, nip05, " +
   "banner, lud16 (Lightning address), and more. " +
@@ -56,8 +56,20 @@ export async function handleNostrGetProfile(params: NostrGetProfileParams) {
     let isSelf = false;
 
     if (!targetPubkey) {
-      const key = resolvePrivateKey();
-      targetPubkey = key.pubkeyHex;
+      const botPubkey = getBotPubkey();
+      if (!botPubkey) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text" as const,
+              text: "No pubkey provided and bot key identity is not available. " +
+                "Provide a pubkey parameter, or ensure the session has a bot key configured.",
+            },
+          ],
+        };
+      }
+      targetPubkey = botPubkey;
       isSelf = true;
     }
 
@@ -76,7 +88,7 @@ export async function handleNostrGetProfile(params: NostrGetProfileParams) {
           {
             type: "text" as const,
             text: isSelf
-              ? `No Nostr profile found for Wingman's pubkey (${targetPubkey}). ` +
+              ? `No Nostr profile found for your bot key pubkey (${targetPubkey}). ` +
                 `This pubkey may not have published a kind 0 event yet.`
               : `No Nostr profile found for pubkey ${targetPubkey}.`,
           },
