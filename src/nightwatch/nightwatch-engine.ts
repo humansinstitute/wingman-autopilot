@@ -7,7 +7,6 @@
  * or stop and produce a report card.
  */
 
-import { join } from "node:path";
 import type { SessionSnapshot } from "../agents/process-manager";
 import type { NightWatchStore, NightWatchReport } from "./nightwatch-store";
 import type { FeatureFlagRecord } from "../storage/feature-flag-store";
@@ -162,73 +161,23 @@ CRITICAL RULES — read carefully:
    - If the agent just needs a nudge, even just "Continue." or "Proceed with the next step." works.`;
 
 // ============================================================
-// Project Context
-// ============================================================
-
-async function loadProjectContext(workingDirectory: string): Promise<string | null> {
-  const candidates = ["CLAUDE.md", "claude.md", "README.md"];
-  for (const filename of candidates) {
-    try {
-      const filePath = join(workingDirectory, filename);
-      const file = Bun.file(filePath);
-      if (await file.exists()) {
-        const text = await file.text();
-        // Cap at ~4000 chars to avoid blowing up the prompt
-        const trimmed = text.length > 4000 ? text.slice(0, 4000) + "\n\n[...truncated]" : text;
-        return `Project context from ${filename}:\n${trimmed}`;
-      }
-    } catch {
-      // File not readable, skip
-    }
-  }
-  return null;
-}
-
-async function loadAgentContext(workingDirectory: string): Promise<string | null> {
-  const candidates = ["agents.md", "AGENTS.md", "CLAUDE.md", "claude.md"];
-  for (const filename of candidates) {
-    try {
-      const filePath = join(workingDirectory, filename);
-      const file = Bun.file(filePath);
-      if (await file.exists()) {
-        const text = await file.text();
-        const trimmed = text.length > 6000 ? text.slice(0, 6000) + "\n\n[...truncated]" : text;
-        return `Decisions should bear in mind the project context, which can be read in the agents.md below\n\n========= AGENTS.md =========\n\n${trimmed}`;
-      }
-    } catch {
-      // File not readable, skip
-    }
-  }
-  return null;
-}
-
-// ============================================================
 // Core Functions
 // ============================================================
 
 function buildNightWatchPrompt(
   systemPrompt: string,
   firstMessages: StoredMessage[],
-  allMessages: StoredMessage[],
-  projectContext: string | null,
-  agentContext: string | null,
+  recentMessages: StoredMessage[],
 ): ChatMessage[] {
   const goalSection = firstMessages.length > 0
     ? firstMessages.map((m) => `[${m.role}]: ${m.content}`).join("\n")
     : "(no initial messages available)";
 
-  const historySection = allMessages.length > 0
-    ? allMessages.map((m) => `[${m.role}]: ${m.content}`).join("\n")
+  const historySection = recentMessages.length > 0
+    ? recentMessages.map((m) => `[${m.role}]: ${m.content}`).join("\n")
     : "(no messages available)";
 
-  let userMessage = "";
-  if (projectContext) {
-    userMessage += `${projectContext}\n\n---\n\n`;
-  }
-  userMessage += `What are we trying to achieve:\n${goalSection}\n\nFull Conversation History:\n${historySection}`;
-  if (agentContext) {
-    userMessage += `\n\n---\n\n${agentContext}`;
-  }
+  const userMessage = `What are we trying to achieve:\n${goalSection}\n\nRecent conversation (last ${recentMessages.length} messages):\n${historySection}`;
 
   return [
     { role: "system", content: systemPrompt },
@@ -401,25 +350,20 @@ async function executeNightWatchReview(
     return;
   }
 
-  // Load project context from the session's working directory
   const session = deps.getSession(sessionId);
-  let projectContext: string | null = null;
-  let agentContext: string | null = null;
-  if (session?.workingDirectory) {
-    projectContext = await loadProjectContext(session.workingDirectory);
-    agentContext = await loadAgentContext(session.workingDirectory);
-  }
 
+  // Only send the first 3 messages (goal context) and last 5 agent messages
   const firstMessages = allMessages.slice(0, 3);
+  const recentMessages = allMessages.slice(-5);
   const model = sessionState.model || NIGHTWATCH_DEFAULT_MODEL;
   const customPrompt = deps.store.getConfig("custom_prompt");
   const systemPrompt = customPrompt || NIGHTWATCH_DEFAULT_PROMPT;
 
   console.log(
-    `[nightwatch] Reviewing session ${sessionId} (cycle ${sessionState.cycleCount}/${sessionState.maxCycles}, model: ${model}, messages: ${allMessages.length}${projectContext ? ", with project context" : ""}${agentContext ? ", with agent context" : ""}${customPrompt ? ", custom prompt" : ""})`,
+    `[nightwatch] Reviewing session ${sessionId} (cycle ${sessionState.cycleCount}/${sessionState.maxCycles}, model: ${model}, messages: ${allMessages.length}, sending last 5${customPrompt ? ", custom prompt" : ""})`,
   );
 
-  const prompt = buildNightWatchPrompt(systemPrompt, firstMessages, allMessages, projectContext, agentContext);
+  const prompt = buildNightWatchPrompt(systemPrompt, firstMessages, recentMessages);
   let rawResponse: string;
 
   try {
