@@ -4639,7 +4639,13 @@ dialog.addEventListener("cancel", (event) => {
     startSessionSubscriber(() => {
       fetchSessions().then(() => {
         syncMenuTabs();
-        render();
+        // Only full-render on pages that need it (home, apps).
+        // On live route the conversation is already updating via SSE
+        // and a full render() nukes the DOM, resets scroll, and breaks
+        // the reading experience.
+        if (currentRoute !== "live") {
+          render();
+        }
       });
     });
     window.addEventListener("wingman:identity-logout", () => stopSessionSubscriber(), { once: true });
