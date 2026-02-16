@@ -67,7 +67,7 @@ export async function handleStopSession(
       };
     }
 
-    const result = await response.json();
+    const result = (await response.json()) as Record<string, unknown>;
     return {
       content: [
         {
