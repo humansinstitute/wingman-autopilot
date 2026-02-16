@@ -292,11 +292,13 @@ export function initAlpineChat() {
 /**
  * Get the HTML template for the Alpine chat component.
  * This replaces the existing chat container when Alpine is enabled.
+ * @param {string} sessionId - The session to initialize the chat for
  * @returns {string}
  */
-export function getChatTemplate() {
+export function getChatTemplate(sessionId) {
+  const sid = sessionId || window.wingman?.activeSessionId || "";
   return `
-<div x-data x-init="$store.chat.init('${window.wingman?.activeSessionId || ""}')"
+<div x-data x-init="$store.chat.init('${sid}')"
      class="chat-container alpine-chat"
      @session-change.window="$store.chat.init($event.detail.sessionId)">
 

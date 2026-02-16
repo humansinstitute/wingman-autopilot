@@ -993,12 +993,7 @@ export function initLiveView(deps) {
       const conversationContainer = document.createElement("div");
       conversationContainer.className = "wm-live-conversation";
       if (isAlpineChatEnabled()) {
-        conversationContainer.innerHTML = getChatTemplate().replace(
-          "'${window.wingman?.activeSessionId || \"\"}'",
-          `'${sessionId}'`
-        );
-        window.wingman = window.wingman || {};
-        window.wingman.activeSessionId = sessionId;
+        conversationContainer.innerHTML = getChatTemplate(sessionId);
       } else {
         conversationContainer.append(renderConversation(sessionId));
       }
@@ -1196,12 +1191,7 @@ export function initLiveView(deps) {
     conversationContainer.className = "wm-live-conversation";
 
     if (isAlpineChatEnabled()) {
-      conversationContainer.innerHTML = getChatTemplate().replace(
-        "'${window.wingman?.activeSessionId || \"\"}'",
-        `'${sessionId}'`
-      );
-      window.wingman = window.wingman || {};
-      window.wingman.activeSessionId = sessionId;
+      conversationContainer.innerHTML = getChatTemplate(sessionId);
     } else {
       conversationContainer.append(renderConversation(sessionId));
     }
