@@ -1904,14 +1904,18 @@ const fetchConversation = async (sessionId) => {
     const items = Array.isArray(data?.messages) ? data.messages : [];
     state.conversations.set(sessionId, items);
 
-    // Sync to Dexie and push directly to Alpine store for immediate update
+    // Push conversation directly to Alpine store — no Dexie intermediary.
+    // This is the most reliable path: API truth → Alpine → DOM.
     if (isAlpineChatEnabled()) {
-      await MessageStore.syncFromServer(sessionId, items);
-      // Also update Alpine store directly so we don't wait for liveQuery
       const chatStore = window.Alpine?.store("chat");
       if (chatStore && chatStore.sessionId === sessionId) {
-        const freshMessages = await MessageStore.getSessionMessages(sessionId);
-        chatStore.messages = freshMessages;
+        chatStore.messages = items.map((msg, idx) => ({
+          id: `api-${idx}`,
+          sessionId,
+          role: msg.role || msg.type || "assistant",
+          content: msg.content || msg.message || "",
+          createdAt: msg.createdAt || msg.created_at || "",
+        }));
       }
       return;
     }
@@ -2384,9 +2388,18 @@ const sendMessage = async (sessionId, content) => {
     const knightRider = document.querySelector(`.wm-knight-rider[data-session-id="${sessionId}"]`);
     if (knightRider) knightRider.classList.add("active");
 
-    // After sending, sync messages and scroll to bottom
+    // After sending, update conversation display
     if (isAlpineChatEnabled()) {
-      await MessageStore.syncFromServer(sessionId, messages);
+      const chatStore = window.Alpine?.store("chat");
+      if (chatStore && chatStore.sessionId === sessionId) {
+        chatStore.messages = messages.map((msg, idx) => ({
+          id: `api-${idx}`,
+          sessionId,
+          role: msg.role || msg.type || "assistant",
+          content: msg.content || msg.message || "",
+          createdAt: msg.createdAt || msg.created_at || "",
+        }));
+      }
     } else {
       updateConversationDOM(sessionId);
     }
@@ -4594,9 +4607,19 @@ dialog.addEventListener("cancel", (event) => {
     }
     state.conversations.set(sessionId, existing);
 
-    // Alpine chat: Dexie liveQuery handles DOM updates reactively.
-    // Only show the scroll pill when the user is scrolled up.
+    // Alpine chat: push conversation state directly to store for instant update.
     if (isAlpineChatEnabled()) {
+      const chatStore = window.Alpine?.store("chat");
+      if (chatStore && chatStore.sessionId === sessionId) {
+        const conv = state.conversations.get(sessionId) || [];
+        chatStore.messages = conv.map((msg, idx) => ({
+          id: `api-${idx}`,
+          sessionId,
+          role: msg.role || msg.type || "assistant",
+          content: msg.content || msg.message || "",
+          createdAt: msg.createdAt || msg.created_at || "",
+        }));
+      }
       if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
         if (!scrollPillIsNearBottom() && !isStreamingUpdate) {
           scrollPillShow();

@@ -1,10 +1,9 @@
 /**
  * Alpine.js reactive chat component for live session view.
- * Uses Dexie liveQuery for real-time message updates from IndexedDB.
+ * Messages are pushed to the store directly by app.js (poll + SSE).
  */
 
 import Alpine from "/vendor/alpinejs/module.esm.js";
-import { Dexie, db, MessageStore, SessionStore } from "./db.js";
 import { sseManager } from "./sse-manager.js";
 import { show as scrollPillShow, isNearBottom as scrollPillIsNearBottom } from "./scroll-pill.js";
 
@@ -93,7 +92,6 @@ export function registerChatComponent() {
     connectionState: "disconnected",
     isLoading: false,
     error: null,
-    _liveQuerySubscription: null,
     _sseUnsubscribers: [],
 
     /** Alpine auto-calls init() on store registration — nothing to do yet. */
@@ -111,55 +109,20 @@ export function registerChatComponent() {
       this.error = null;
 
       try {
-        // Load initial messages from Dexie
-        this.messages = await MessageStore.getSessionMessages(sessionId);
-
-        // Set up live query for reactive updates
-        this._setupLiveQuery(sessionId);
-
-        // Subscribe to SSE events
+        // Subscribe to SSE status/connection events
         this._setupSSEListeners(sessionId);
 
         // Connect SSE
         sseManager.connect(sessionId);
         this.connectionState = sseManager.getConnectionState(sessionId);
 
-        // Load session status
-        const session = await SessionStore.getSession(sessionId);
-        if (session) {
-          this.status = session.agentRuntimeStatus || session.status || "stable";
-        }
-
         this.isLoading = false;
-        console.log("[chat] Initialized for session", sessionId, "with", this.messages.length, "messages");
+        console.log("[chat] Loaded session", sessionId);
       } catch (error) {
         console.error("[chat] Failed to initialize:", error);
         this.error = error.message;
         this.isLoading = false;
       }
-    },
-
-    /**
-     * Set up Dexie liveQuery for reactive message updates.
-     * @param {string} sessionId
-     */
-    _setupLiveQuery(sessionId) {
-      // Use Dexie's liveQuery for reactive updates
-      const observable = Dexie.liveQuery(() => MessageStore.getSessionMessages(sessionId));
-
-      this._liveQuerySubscription = observable.subscribe({
-        next: (messages) => {
-          const prevCount = this.messages.length;
-          this.messages = messages;
-          if (messages.length > prevCount) {
-            // New message arrived, trigger auto-scroll
-            this._scheduleScroll();
-          }
-        },
-        error: (error) => {
-          console.error("[chat] LiveQuery error:", error);
-        },
-      });
     },
 
     /**
@@ -200,10 +163,6 @@ export function registerChatComponent() {
      * Clean up subscriptions and connections.
      */
     cleanup() {
-      if (this._liveQuerySubscription) {
-        this._liveQuerySubscription.unsubscribe();
-        this._liveQuerySubscription = null;
-      }
       this._sseUnsubscribers.forEach((unsub) => unsub());
       this._sseUnsubscribers = [];
       if (this.sessionId) {
