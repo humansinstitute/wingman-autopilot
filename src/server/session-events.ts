@@ -87,8 +87,13 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
               break;
             }
           }
-        } catch (error) {
-          console.error(`[session-events] Stream error for ${sessionId}:`, error);
+        } catch (error: any) {
+          // TimeoutError is expected when the agent goes quiet — not a real error.
+          if (error?.name === "TimeoutError") {
+            console.log(`[session-events] Agent stream idle timeout for ${sessionId}, closing proxy`);
+          } else {
+            console.error(`[session-events] Stream error for ${sessionId}:`, error?.message || error);
+          }
           try { streamController?.close(); } catch {}
         } finally {
           try { reader.releaseLock(); } catch {}
