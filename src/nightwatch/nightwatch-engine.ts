@@ -75,11 +75,15 @@ type NightWatchAction = "continue" | "morehistory" | "complete" | "error" | "hum
 
 type NightWatchInputMode = "queue" | "raw";
 
+const VALID_RAW_INPUTS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "y", "n"] as const;
+type NightWatchRawInput = (typeof VALID_RAW_INPUTS)[number];
+
 interface NightWatchResponse {
   nextAction: NightWatchAction;
   content: string;
   reasoning: string;
   inputMode: NightWatchInputMode;
+  inputRaw: NightWatchRawInput | null;
 }
 
 interface ChatMessage {
@@ -105,9 +109,10 @@ You MUST respond with valid JSON only. No markdown, no explanation outside the J
 Response format:
 {
   "nextAction": "<action>",
-  "content": "<your message>",
+  "inputMode": "<queue or raw>",
+  "inputRaw": "<1-9, y, or n — ONLY used when inputMode is raw>",
   "reasoning": "<brief explanation of why you chose this action>",
-  "inputMode": "<queue or raw>"
+  "content": "<your message>"
 }
 
 Available actions:
@@ -118,12 +123,11 @@ Available actions:
 
 Input modes (only applies when nextAction is "continue"):
 - "queue" (default): Send content as a normal prompt via the message queue. Use this for regular continuation prompts.
-- "raw": Send content directly to the terminal as raw keystrokes. Use this when the agent is showing an INTERACTIVE PROMPT that requires direct terminal input, such as:
-  - A numbered menu (send just the number, e.g. "1")
-  - A yes/no confirmation prompt (send "y" or "n")
-  - A permission dialog asking to allow/deny (send "y" or the appropriate key)
+- "raw": The agent is showing an INTERACTIVE PROMPT that requires direct terminal input. When using raw mode, you MUST set "inputRaw" to one of these exact values: "1", "2", "3", "4", "5", "6", "7", "8", "9", "y", or "n". The inputRaw value is sent directly to the terminal as a keystroke. The "content" field is still used for your reasoning/report but is NOT sent to the terminal. Use raw mode for:
+  - A numbered menu (set inputRaw to the number, e.g. "1")
+  - A yes/no confirmation prompt (set inputRaw to "y" or "n")
+  - A permission dialog asking to allow/deny (set inputRaw to "y")
   - Any TUI (text user interface) selection that won't accept a normal message
-  When using "raw", keep content to the MINIMUM needed — usually a single character or short word.
 
 CRITICAL RULES — read carefully:
 
@@ -302,9 +306,18 @@ function parseNightWatchResponse(raw: string): NightWatchResponse {
   const content = String(parsed.content ?? "No details provided.");
   const reasoning = String(parsed.reasoning ?? "");
   const rawInputMode = String(parsed.inputMode ?? "queue").toLowerCase();
-  const inputMode: NightWatchInputMode = rawInputMode === "raw" ? "raw" : "queue";
 
-  return { nextAction, content, reasoning, inputMode };
+  // Validate inputRaw against the allowed enum
+  const rawInputValue = parsed.inputRaw != null ? String(parsed.inputRaw).trim() : null;
+  const inputRaw: NightWatchRawInput | null =
+    rawInputValue && (VALID_RAW_INPUTS as readonly string[]).includes(rawInputValue)
+      ? (rawInputValue as NightWatchRawInput)
+      : null;
+
+  // Only allow raw mode if inputRaw is valid — fall back to queue otherwise
+  const inputMode: NightWatchInputMode = rawInputMode === "raw" && inputRaw ? "raw" : "queue";
+
+  return { nextAction, content, reasoning, inputMode, inputRaw };
 }
 
 async function executeNightWatchReview(
@@ -369,7 +382,7 @@ async function executeNightWatchReview(
   // but handle it gracefully by treating as "continue" with a nudge
   if (result.nextAction === "morehistory") {
     console.log(`[nightwatch] Got morehistory but full history was already sent, treating as continue`);
-    result = { nextAction: "continue", content: "Continue with the current task.", reasoning: "Full history already provided, continuing.", inputMode: "queue" };
+    result = { nextAction: "continue", content: "Continue with the current task.", reasoning: "Full history already provided, continuing.", inputMode: "queue", inputRaw: null };
   }
 
   // Create a report card for every cycle (including continue)
@@ -386,6 +399,7 @@ async function executeNightWatchReview(
     summary: result.content,
     reasoning: result.reasoning || null,
     inputMode: result.nextAction === "continue" ? result.inputMode : null,
+    inputRaw: result.nextAction === "continue" ? result.inputRaw : null,
     cycleCount,
   });
 
@@ -393,12 +407,12 @@ async function executeNightWatchReview(
   if (result.nextAction === "continue") {
     deps.store.incrementCycle(sessionId);
 
-    if (result.inputMode === "raw" && currentSession) {
-      // Raw mode: send directly to terminal (for interactive menus/prompts)
+    if (result.inputMode === "raw" && result.inputRaw && currentSession) {
+      // Raw mode: send the validated inputRaw keystroke directly to terminal
       try {
-        const sent = await deps.sendRawInput(currentSession, result.content);
+        const sent = await deps.sendRawInput(currentSession, result.inputRaw);
         if (sent) {
-          console.log(`[nightwatch] Sent raw input to session ${sessionId}: "${result.content}"`);
+          console.log(`[nightwatch] Sent raw input to session ${sessionId}: "${result.inputRaw}" (reason: ${result.content.slice(0, 80)})`);
         } else {
           console.warn(`[nightwatch] Failed to send raw input to session ${sessionId}`);
         }

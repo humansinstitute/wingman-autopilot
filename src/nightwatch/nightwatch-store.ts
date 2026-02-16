@@ -35,6 +35,7 @@ export interface NightWatchReport {
   summary: string;
   reasoning: string | null;
   inputMode: string | null;
+  inputRaw: string | null;
   cycleCount: number;
   createdAt: string;
 }
@@ -147,14 +148,15 @@ class NightWatchStore {
     summary: string;
     reasoning?: string | null;
     inputMode?: string | null;
+    inputRaw?: string | null;
     cycleCount: number;
   }): NightWatchReport {
     const id = randomUUID();
     const now = new Date().toISOString();
     this.db
       .query(
-        `INSERT INTO nightwatch_reports (id, session_id, session_name, working_directory, status, summary, reasoning, input_mode, cycle_count, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
+        `INSERT INTO nightwatch_reports (id, session_id, session_name, working_directory, status, summary, reasoning, input_mode, input_raw, cycle_count, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
       )
       .run(
         id,
@@ -165,6 +167,7 @@ class NightWatchStore {
         input.summary,
         input.reasoning ?? null,
         input.inputMode ?? null,
+        input.inputRaw ?? null,
         input.cycleCount,
         now,
       );
@@ -178,6 +181,7 @@ class NightWatchStore {
       summary: input.summary,
       reasoning: input.reasoning ?? null,
       inputMode: input.inputMode ?? null,
+      inputRaw: input.inputRaw ?? null,
       cycleCount: input.cycleCount,
       createdAt: now,
     };
@@ -195,6 +199,7 @@ class NightWatchStore {
            summary,
            reasoning,
            input_mode AS inputMode,
+           input_raw AS inputRaw,
            cycle_count AS cycleCount,
            created_at AS createdAt
          FROM nightwatch_reports
@@ -299,6 +304,13 @@ class NightWatchStore {
     // Migration: add input_mode column if missing
     try {
       this.db.exec(`ALTER TABLE nightwatch_reports ADD COLUMN input_mode TEXT`);
+    } catch {
+      // Column already exists — ignore
+    }
+
+    // Migration: add input_raw column if missing
+    try {
+      this.db.exec(`ALTER TABLE nightwatch_reports ADD COLUMN input_raw TEXT`);
     } catch {
       // Column already exists — ignore
     }
