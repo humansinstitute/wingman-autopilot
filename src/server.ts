@@ -3182,9 +3182,22 @@ const assetService = createStaticAssetService({
   vendorPackages,
 });
 
-const serveIndex = () => {
+// Asset version — increment to bust browser caches after deploys.
+const ASSET_VERSION = "6";
+
+const serveIndex = async () => {
   const url = new URL("./ui/index.html", import.meta.url);
-  return new Response(Bun.file(url), {
+  let html = await Bun.file(url).text();
+  // Append cache-busting version to main asset URLs
+  html = html.replace(
+    /href="\/styles\.css"/,
+    `href="/styles.css?v=${ASSET_VERSION}"`,
+  );
+  html = html.replace(
+    /src="\/app\.js"/,
+    `src="/app.js?v=${ASSET_VERSION}"`,
+  );
+  return new Response(html, {
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-cache",
@@ -7415,7 +7428,7 @@ const server = Bun.serve({
         pathname.startsWith("/triggers/");
 
       if (isSpaRoutePath && !assetService.isUiAssetPath(pathname)) {
-        return compressResponse(request, serveIndex());
+        return compressResponse(request, await serveIndex());
       }
 
       // Serve UI module assets before API routing so paths like
