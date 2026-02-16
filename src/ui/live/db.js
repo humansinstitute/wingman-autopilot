@@ -32,50 +32,49 @@ db.version(3).stores({
 });
 
 /**
- * Generate a hash for message deduplication.
- * Uses sessionId, role, createdAt, and first 100 chars of content.
- */
-const hashMessage = (sessionId, role, content, createdAt) => {
-  return `${sessionId}:${role}:${createdAt}:${content.slice(0, 100)}`;
-};
-
-/**
  * Message store operations.
+ *
+ * Messages are identified by session + position index (messageIdx).
+ * Streaming updates grow the content of the last message in-place
+ * rather than inserting duplicates.
  */
 export const MessageStore = {
   /**
-   * Upsert a message (insert or update if exists).
-   * Handles streaming updates where content changes but message identity stays same.
+   * Upsert a single SSE message.
+   * For streaming, the server re-sends the last message with growing content.
+   * We find the last message for this session+role and update it in-place
+   * when the new content is a longer version of the existing content.
    */
   async upsertMessage(sessionId, message) {
     const role = message.role || message.type || "assistant";
     const content = message.content || message.message || "";
     const createdAt = message.createdAt || message.created_at || new Date().toISOString();
 
-    const messageHash = hashMessage(sessionId, role, content, createdAt);
+    // Find the last message for this session
+    const existing = await db.messages
+      .where("sessionId").equals(sessionId)
+      .last();
 
-    // Check for existing message with same hash (streaming update)
-    const existing = await db.messages.where("messageHash").equals(messageHash).first();
-
-    if (existing) {
-      // Update content for streaming (content might have grown)
-      if (content.length > existing.content.length) {
+    // Streaming update: same role and new content extends the old content
+    if (existing && existing.role === role) {
+      const oldContent = existing.content || "";
+      if (content.length > oldContent.length && content.startsWith(oldContent.slice(0, 50))) {
         await db.messages.update(existing.id, {
           content,
           updatedAt: new Date().toISOString(),
         });
+        return existing.id;
       }
-      return existing.id;
     }
 
-    // Insert new message
+    // New message
     return db.messages.add({
       sessionId,
       role,
       content,
       createdAt,
       updatedAt: new Date().toISOString(),
-      messageHash,
+      messageHash: `${sessionId}:${role}:${Date.now()}`,
     });
   },
 
@@ -104,28 +103,35 @@ export const MessageStore = {
   },
 
   /**
-   * Sync messages from server (initial load or refresh).
-   * Performs bulk upsert within a transaction.
+   * Sync full conversation from server (initial load or refresh).
+   * Replaces all messages for the session with the server's truth.
    */
   async syncFromServer(sessionId, messages) {
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return;
-    }
+    if (!Array.isArray(messages)) return;
 
     await db.transaction("rw", db.messages, async () => {
-      for (const msg of messages) {
-        await this.upsertMessage(sessionId, msg);
-      }
+      // Clear existing and bulk-insert server state
+      await db.messages.where("sessionId").equals(sessionId).delete();
+      if (messages.length === 0) return;
+
+      const now = new Date().toISOString();
+      const rows = messages.map((msg, idx) => ({
+        sessionId,
+        role: msg.role || msg.type || "assistant",
+        content: msg.content || msg.message || "",
+        createdAt: msg.createdAt || msg.created_at || now,
+        updatedAt: now,
+        messageHash: `${sessionId}:${idx}:${now}`,
+      }));
+      await db.messages.bulkAdd(rows);
     });
   },
 
   /**
    * Subscribe to message changes for a session.
-   * Returns an observable-like object with subscribe method.
-   * Uses Dexie's liveQuery under the hood.
+   * Returns a function for Dexie's liveQuery.
    */
   liveQuery(sessionId) {
-    // Return a function that creates the live query when called
     return () => this.getSessionMessages(sessionId);
   },
 };
