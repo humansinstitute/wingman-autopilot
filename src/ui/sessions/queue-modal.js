@@ -6,6 +6,7 @@
 
 import { getSessionDisplayName } from "../core/icons.js";
 import { show as scrollPillShow } from "../live/scroll-pill.js";
+import { isAlpineChatEnabled, MessageStore } from "../live/index.js";
 
 const ACTIVE_SESSION_STATUSES = new Set(["starting", "running"]);
 
@@ -198,7 +199,11 @@ export function initQueueModule(deps) {
 
       if (result.messages) {
         state.conversations.set(sessionId, result.messages);
-        updateConversationDOM(sessionId);
+        if (isAlpineChatEnabled()) {
+          MessageStore.syncFromServer(sessionId, result.messages);
+        } else {
+          updateConversationDOM(sessionId);
+        }
         // Show pill instead of force-scrolling — user may be reading history
         scrollPillShow();
       }

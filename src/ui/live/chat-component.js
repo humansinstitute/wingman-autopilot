@@ -14,9 +14,11 @@ import { show as scrollPillShow } from "./scroll-pill.js";
  */
 export function isAlpineChatEnabled() {
   try {
-    return localStorage.getItem("wingman-alpine-chat") === "true";
+    // Enabled by default — set to "false" to disable
+    const flag = localStorage.getItem("wingman-alpine-chat");
+    return flag !== "false";
   } catch {
-    return false;
+    return true;
   }
 }
 

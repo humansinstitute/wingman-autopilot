@@ -992,7 +992,16 @@ export function initLiveView(deps) {
       scrollRegion.append(logSection);
       const conversationContainer = document.createElement("div");
       conversationContainer.className = "wm-live-conversation";
-      conversationContainer.append(renderConversation(sessionId));
+      if (isAlpineChatEnabled()) {
+        conversationContainer.innerHTML = getChatTemplate().replace(
+          "'${window.wingman?.activeSessionId || \"\"}'",
+          `'${sessionId}'`
+        );
+        window.wingman = window.wingman || {};
+        window.wingman.activeSessionId = sessionId;
+      } else {
+        conversationContainer.append(renderConversation(sessionId));
+      }
       scrollRegion.append(conversationContainer);
     }
 

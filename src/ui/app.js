@@ -1904,7 +1904,13 @@ const fetchConversation = async (sessionId) => {
     const items = Array.isArray(data?.messages) ? data.messages : [];
     state.conversations.set(sessionId, items);
 
-    // Trigger incremental DOM update if on live route
+    // Sync to Dexie so Alpine liveQuery picks up the full history
+    if (isAlpineChatEnabled()) {
+      await MessageStore.syncFromServer(sessionId, items);
+      return;
+    }
+
+    // Legacy: manual DOM update
     if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
       updateConversationDOM(sessionId);
     }
@@ -2041,6 +2047,10 @@ const CONVERSATION_POLL_INTERVAL = 100;
 const startConversationPolling = (sessionId) => {
   stopConversationPolling();
   if (!sessionId) return;
+
+  // Alpine chat uses SSE → Dexie → liveQuery for reactive updates.
+  // No polling needed — it would just hammer the API and fight Alpine.
+  if (isAlpineChatEnabled()) return;
 
   console.log(`[poll] Starting conversation polling for ${sessionId}`);
 
@@ -2367,8 +2377,12 @@ const sendMessage = async (sessionId, content) => {
     const knightRider = document.querySelector(`.wm-knight-rider[data-session-id="${sessionId}"]`);
     if (knightRider) knightRider.classList.add("active");
 
-    // Trigger incremental updates instead of full render
-    updateConversationDOM(sessionId);
+    // After sending, sync messages and scroll to bottom
+    if (isAlpineChatEnabled()) {
+      await MessageStore.syncFromServer(sessionId, messages);
+    } else {
+      updateConversationDOM(sessionId);
+    }
     scrollPillHide();
     requestAnimationFrame(() => {
       scrollConversationAreaToBottom(sessionId, { includeWindow: true });
@@ -4551,20 +4565,20 @@ dialog.addEventListener("cancel", (event) => {
     }
   });
 
-  // Wire SSE message events to update conversation state
+  // Wire SSE message events to update conversation state.
+  // SSE manager already writes each message to Dexie (MessageStore).
+  // When Alpine chat is enabled, Dexie liveQuery drives the DOM reactively
+  // so we only need to keep state.conversations in sync for legacy callers.
   sseManager.onMessage((sessionId, message) => {
     const existing = state.conversations.get(sessionId) || [];
-    // Check if this is a new message or an update to the last message
     const lastMessage = existing[existing.length - 1];
     const isStreamingUpdate = lastMessage &&
       lastMessage.role === (message.role || message.type) &&
       message.content?.startsWith(lastMessage.content?.slice(0, 50));
 
     if (isStreamingUpdate) {
-      // Update last message content (streaming)
       lastMessage.content = message.content || message.message || "";
     } else {
-      // Add new message
       existing.push({
         role: message.role || message.type || "assistant",
         content: message.content || message.message || "",
@@ -4573,7 +4587,18 @@ dialog.addEventListener("cancel", (event) => {
     }
     state.conversations.set(sessionId, existing);
 
-    // Update DOM if on live view with this session active
+    // Alpine chat: Dexie liveQuery handles DOM updates reactively.
+    // Only show the scroll pill when the user is scrolled up.
+    if (isAlpineChatEnabled()) {
+      if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
+        if (!scrollPillIsNearBottom() && !isStreamingUpdate) {
+          scrollPillShow();
+        }
+      }
+      return;
+    }
+
+    // Legacy manual DOM path (non-Alpine)
     if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
       const wasNearBottom = scrollPillIsNearBottom();
       updateConversationDOM(sessionId);
