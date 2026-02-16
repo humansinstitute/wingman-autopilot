@@ -4710,9 +4710,11 @@ dialog.addEventListener("cancel", (event) => {
         // Only full-render on pages that need it (home, apps).
         // On live route the conversation is already updating via SSE
         // and a full render() nukes the DOM, resets scroll, and breaks
-        // the reading experience.
+        // the reading experience — but we still need to refresh indicators.
         if (currentRoute !== "live") {
           render();
+        } else {
+          updateAgentStatusIndicators();
         }
       });
     });

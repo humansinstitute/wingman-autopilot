@@ -26,6 +26,10 @@ export function initAgentIndicators(deps) {
     if (!session) {
       return null;
     }
+    // Session is no longer running — ignore stale agentRuntimeStatus
+    if (session.status === "stopped" || session.status === "error") {
+      return null;
+    }
     if (session.agentRuntimeStatus === "running" || session.agentRuntimeStatus === "stable") {
       return session.agentRuntimeStatus;
     }
