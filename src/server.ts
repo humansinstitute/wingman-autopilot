@@ -982,6 +982,9 @@ const nightWatchDeps = {
       return false;
     }
   },
+  markDispatchCooldown: (sessionId: string) => {
+    markQueueDispatchCooldown(sessionId);
+  },
   onSessionComplete: (sessionId, report) => {
     // Check if this session is linked to an MG task
     const taskSession = nightWatchStore.getTaskSession(sessionId);

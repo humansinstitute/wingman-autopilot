@@ -66,6 +66,8 @@ export interface NightWatchDeps {
   dispatchPrompt: (session: SessionSnapshot) => void;
   /** Send raw terminal input directly to the agent (bypasses prompt queue) */
   sendRawInput: (session: SessionSnapshot, content: string) => Promise<boolean>;
+  /** Mark a dispatch cooldown so the sweep skips this session briefly */
+  markDispatchCooldown?: (sessionId: string) => void;
   /** Called when a session reaches a terminal state (complete/error/humanInput) */
   onSessionComplete?: (sessionId: string, report: NightWatchReport) => void;
 }
@@ -95,6 +97,10 @@ interface ChatMessage {
 // ============================================================
 
 const nightwatchInFlight = new Set<string>();
+
+// Cooldown after sending raw input — prevents re-triggering before the agent processes it
+const RAW_INPUT_COOLDOWN_MS = 15_000;
+const rawInputCooldowns = new Map<string, number>();
 
 // ============================================================
 // System Prompt
@@ -428,6 +434,11 @@ async function executeNightWatchReview(
         const sent = await deps.sendRawInput(currentSession, result.inputRaw);
         if (sent) {
           console.log(`[nightwatch] Sent raw input to session ${sessionId}: "${result.inputRaw}" (reason: ${result.content.slice(0, 80)})`);
+          // Set cooldown so the sweep doesn't re-trigger before the agent processes the input
+          rawInputCooldowns.set(sessionId, Date.now());
+          if (deps.markDispatchCooldown) {
+            deps.markDispatchCooldown(sessionId);
+          }
         } else {
           console.warn(`[nightwatch] Failed to send raw input to session ${sessionId}`);
         }
@@ -450,6 +461,7 @@ async function executeNightWatchReview(
   }
 
   // Terminal actions: complete, error, humanInput — disable the session
+  rawInputCooldowns.delete(sessionId);
   deps.store.disableSession(sessionId);
   console.log(
     `[nightwatch] Session ${sessionId} terminated with ${result.nextAction}: ${result.content.slice(0, 100)}`,
@@ -515,6 +527,12 @@ export async function maybeTriggerNightWatch(
   // Prevent overlapping calls
   if (nightwatchInFlight.has(session.id)) {
     console.log(`[nightwatch] Skipping session ${session.id}: review already in flight`);
+    return;
+  }
+
+  // Cooldown after raw input — let the agent process before re-evaluating
+  const lastRawInput = rawInputCooldowns.get(session.id);
+  if (lastRawInput && Date.now() - lastRawInput < RAW_INPUT_COOLDOWN_MS) {
     return;
   }
 
