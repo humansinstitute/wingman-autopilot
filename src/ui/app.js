@@ -2043,16 +2043,18 @@ const syncSessionPolling = () => {};
 
 // Conversation polling for live view - polls every 100ms for responsiveness
 const CONVERSATION_POLL_INTERVAL = 100;
+// When Alpine handles messages via SSE, we still need to poll session status
+// and queue data, but at a slower cadence (1s) to avoid hammering the API.
+const STATUS_POLL_INTERVAL = 1000;
 
 const startConversationPolling = (sessionId) => {
   stopConversationPolling();
   if (!sessionId) return;
 
-  // Alpine chat uses SSE → Dexie → liveQuery for reactive updates.
-  // No polling needed — it would just hammer the API and fight Alpine.
-  if (isAlpineChatEnabled()) return;
+  const alpineActive = isAlpineChatEnabled();
+  const interval = alpineActive ? STATUS_POLL_INTERVAL : CONVERSATION_POLL_INTERVAL;
 
-  console.log(`[poll] Starting conversation polling for ${sessionId}`);
+  console.log(`[poll] Starting ${alpineActive ? "status" : "conversation"} polling for ${sessionId} (${interval}ms)`);
 
   conversationPollIntervalId = window.setInterval(async () => {
     if (conversationPollInFlight) return;
@@ -2064,12 +2066,11 @@ const startConversationPolling = (sessionId) => {
 
     conversationPollInFlight = true;
     try {
-      // Fetch conversation, session status, and queue in parallel
-      const [, sessionData, queueData] = await Promise.all([
-        fetchConversation(sessionId),
-        fetchSessionApi(sessionId),
-        fetchSessionQueueApi(sessionId),
-      ]);
+      // Fetch conversation, session status, and queue in parallel.
+      // Alpine mode: fetchConversation syncs to Dexie (no manual DOM).
+      const fetches = [fetchConversation(sessionId), fetchSessionApi(sessionId), fetchSessionQueueApi(sessionId)];
+
+      const [, sessionData, queueData] = await Promise.all(fetches);
 
       // Update session status if we got data
       if (sessionData) {
@@ -2096,11 +2097,11 @@ const startConversationPolling = (sessionId) => {
         }
       }
     } catch (err) {
-      console.warn("[poll] Conversation poll failed:", err);
+      console.warn("[poll] Poll failed:", err);
     } finally {
       conversationPollInFlight = false;
     }
-  }, CONVERSATION_POLL_INTERVAL);
+  }, interval);
 };
 
 const stopConversationPolling = () => {
