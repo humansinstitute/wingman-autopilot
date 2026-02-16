@@ -96,11 +96,15 @@ export function registerChatComponent() {
     _liveQuerySubscription: null,
     _sseUnsubscribers: [],
 
+    /** Alpine auto-calls init() on store registration — nothing to do yet. */
+    init() {},
+
     /**
-     * Initialize the chat store for a session.
+     * Load (or switch to) a session's chat.
      * @param {string} sessionId
      */
-    async init(sessionId) {
+    async loadSession(sessionId) {
+      if (!sessionId) return;
       this.cleanup();
       this.sessionId = sessionId;
       this.isLoading = true;
@@ -329,9 +333,9 @@ export function initAlpineChat() {
 export function getChatTemplate(sessionId) {
   const sid = sessionId || window.wingman?.activeSessionId || "";
   return `
-<div x-data x-init="$store.chat.init('${sid}')"
+<div x-data x-init="$store.chat.loadSession('${sid}')"
      class="chat-container alpine-chat"
-     @session-change.window="$store.chat.init($event.detail.sessionId)">
+     @session-change.window="$store.chat.loadSession($event.detail.sessionId)">
 
   <!-- Connection status indicator -->
   <div class="chat-status-bar" :class="{ 'connected': $store.chat.connectionState === 'connected', 'connecting': $store.chat.connectionState === 'connecting' }">
