@@ -2349,7 +2349,20 @@ const sendMessage = async (sessionId, content) => {
         textarea.style.height = "auto";
         requestAnimationFrame(() => textarea.focus({ preventScroll: true }));
       }
-      await fetchLogs(sessionId);
+      // Show the raw input in the chat and refresh conversation
+      if (isAlpineChatEnabled()) {
+        const chatStore = window.Alpine?.store("chat");
+        if (chatStore && chatStore.sessionId === sessionId) {
+          chatStore.messages = [...chatStore.messages, {
+            id: `raw-${Date.now()}`,
+            sessionId,
+            role: "user",
+            content: trimmed,
+            createdAt: new Date().toISOString(),
+          }];
+        }
+      }
+      await Promise.all([fetchConversation(sessionId), fetchLogs(sessionId)]);
     } catch (error) {
       console.error("Failed to send raw input", error);
       showToast(`Failed to send ${trimmed}`, { variant: "error" });
