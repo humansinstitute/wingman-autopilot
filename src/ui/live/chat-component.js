@@ -6,6 +6,7 @@
 import Alpine from "/vendor/alpinejs/module.esm.js";
 import { Dexie, db, MessageStore, SessionStore } from "./db.js";
 import { sseManager } from "./sse-manager.js";
+import { show as scrollPillShow } from "./scroll-pill.js";
 
 /**
  * Check if Alpine chat is enabled via feature flag.
@@ -180,19 +181,17 @@ export function registerChatComponent() {
     },
 
     /**
-     * Schedule a scroll to bottom after DOM update.
-     * Only scrolls if the user is already near the bottom (within 50px).
+     * Show the scroll pill if user is scrolled up, otherwise do nothing
+     * (the user is already at the bottom and will see new content naturally).
      */
     _scheduleScroll() {
       const container = document.querySelector("[x-ref='chatContainer']");
       if (!container) return;
-      // Don't interrupt the user if they've scrolled up to read history
       const threshold = 50;
       const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
-      if (!isNearBottom) return;
-      requestAnimationFrame(() => {
-        container.scrollTop = container.scrollHeight;
-      });
+      if (!isNearBottom) {
+        scrollPillShow();
+      }
     },
 
     /**

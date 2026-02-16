@@ -20,6 +20,7 @@ import { addNightWatchToggle } from "../nightwatch/cmd-toggle.js";
 import { openFilePicker } from "../modals/file-picker.js";
 import { npubProjectsState } from "../npub-projects/index.js";
 import { state, TERMINAL_CONTROL_ACTIONS } from "../state/index.js";
+import * as scrollPill from "../live/scroll-pill.js";
 
 export function initLiveView(deps) {
   const {
@@ -859,6 +860,7 @@ export function initLiveView(deps) {
 
     addCommand("Scroll to end", () => {
       scrollConversationAreaToBottom(sessionId, { includeWindow: true });
+      scrollPill.hide();
     });
 
     addCommand("Last question", () => {
@@ -992,18 +994,30 @@ export function initLiveView(deps) {
       conversationContainer.className = "wm-live-conversation";
       conversationContainer.append(renderConversation(sessionId));
       scrollRegion.append(conversationContainer);
-      scheduleLiveScroll(sessionId, { includeWindow: true, force: true });
+      // Panel switch: scroll to bottom once DOM is ready
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          scrollConversationAreaToBottom(sessionId, { includeWindow: true });
+        });
+      });
     }
 
     const currentComposer = document.querySelector('.wm-composer-shell');
+    const newComposer = renderComposer(sessionId);
     if (currentComposer) {
-      currentComposer.replaceWith(renderComposer(sessionId));
+      currentComposer.replaceWith(newComposer);
     } else {
       const liveWrapper = document.querySelector('.wm-live');
       if (liveWrapper) {
-        liveWrapper.append(renderComposer(sessionId));
+        liveWrapper.append(newComposer);
       }
     }
+    // Re-attach scroll pill to new composer
+    requestAnimationFrame(() => {
+      const splitScroll = newComposer.closest('.wm-live-chat-col')?.querySelector('.wm-live-scroll');
+      const docScroll = document.scrollingElement || document.documentElement || document.body;
+      scrollPill.attachScrollPill(newComposer, splitScroll || docScroll);
+    });
 
     requestAnimationFrame(() => {
       const textarea = document.querySelector('.wm-composer textarea');
@@ -1186,7 +1200,12 @@ export function initLiveView(deps) {
     }
 
     scrollRegion.append(conversationContainer);
-    scheduleLiveScroll(sessionId, { includeWindow: true, force: true });
+    // Initial render: scroll to bottom once DOM is ready
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        scrollConversationAreaToBottom(sessionId, { includeWindow: true });
+      });
+    });
 
     // Clean up previous writer panel if any
     if (activeWriterCleanup) {
@@ -1266,7 +1285,12 @@ export function initLiveView(deps) {
       split.append(chatCol, writerCol);
       wrapper.append(split);
 
-      chatCol.append(renderComposer(sessionId));
+      const writerComposerEl = renderComposer(sessionId);
+      chatCol.append(writerComposerEl);
+      requestAnimationFrame(() => {
+        const splitScroll = chatCol.querySelector('.wm-live-scroll');
+        scrollPill.attachScrollPill(writerComposerEl, splitScroll || scrollRegion);
+      });
 
       // Swipe gestures for mobile
       attachSwipeGesture(split, {
@@ -1331,7 +1355,13 @@ export function initLiveView(deps) {
       split.append(chatCol, artifactsCol);
       wrapper.append(split);
 
-      chatCol.append(renderComposer(sessionId));
+      const artComposerEl = renderComposer(sessionId);
+      chatCol.append(artComposerEl);
+      // In split mode, the scroll target is .wm-live-scroll inside chatCol
+      requestAnimationFrame(() => {
+        const splitScroll = chatCol.querySelector('.wm-live-scroll');
+        scrollPill.attachScrollPill(artComposerEl, splitScroll || scrollRegion);
+      });
 
       // Swipe gestures for mobile
       attachSwipeGesture(split, {
@@ -1395,7 +1425,12 @@ export function initLiveView(deps) {
       split.append(chatCol, webviewCol);
       wrapper.append(split);
 
-      chatCol.append(renderComposer(sessionId));
+      const webComposerEl = renderComposer(sessionId);
+      chatCol.append(webComposerEl);
+      requestAnimationFrame(() => {
+        const splitScroll = chatCol.querySelector('.wm-live-scroll');
+        scrollPill.attachScrollPill(webComposerEl, splitScroll || scrollRegion);
+      });
 
       // Swipe gestures for mobile
       attachSwipeGesture(split, {
@@ -1416,7 +1451,13 @@ export function initLiveView(deps) {
       delete appRoot.dataset.webviewOpen;
       main.append(scrollRegion);
       wrapper.append(main);
-      wrapper.append(renderComposer(sessionId));
+      const composerEl = renderComposer(sessionId);
+      wrapper.append(composerEl);
+      // Attach scroll pill to the composer — scrollTarget is the document for non-split
+      requestAnimationFrame(() => {
+        const docScroll = document.scrollingElement || document.documentElement || document.body;
+        scrollPill.attachScrollPill(composerEl, docScroll);
+      });
     }
 
     return wrapper;

@@ -83,6 +83,7 @@ import { initQueueModule } from "./sessions/queue-modal.js";
 import { initQuickLauncher } from "./core/quick-launcher.js";
 import { initImageAttachments } from "./core/image-attachments.js";
 import { initAgentIndicators } from "./status/agent-indicators.js";
+import { show as scrollPillShow, hide as scrollPillHide } from "./live/scroll-pill.js";
 import { initAdminUsersApi } from "./api/admin-users.js";
 import { showToast } from "./utils/toast.js";
 import { collapseNewlines } from "./utils/text.js";
@@ -327,15 +328,12 @@ const scrollConversationAreaToBottom = (sessionId, options = {}) =>
   _scrollConversationAreaToBottom(sessionId, state.conversationContainers, options);
 
 const scheduleLiveScroll = (sessionId, options = {}) => {
-  const { force = false, ...scrollOptions } = options;
   if (!sessionId || currentRoute !== "live") return;
-  // Unless forced, only auto-scroll if user is already near the bottom
-  if (!force && !isConversationScrolledToBottom(sessionId)) return;
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      scrollConversationAreaToBottom(sessionId, scrollOptions);
-    });
-  });
+  // Never auto-scroll — show the pill if user is scrolled up
+  if (!isConversationScrolledToBottom(sessionId)) {
+    scrollPillShow();
+    return;
+  }
 };
 
 const isConversationScrolledToBottom = (sessionId) =>
@@ -2371,6 +2369,7 @@ const sendMessage = async (sessionId, content) => {
 
     // Trigger incremental updates instead of full render
     updateConversationDOM(sessionId);
+    scrollPillHide();
     requestAnimationFrame(() => {
       scrollConversationAreaToBottom(sessionId, { includeWindow: true });
     });

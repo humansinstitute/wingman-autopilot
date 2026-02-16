@@ -3196,6 +3196,33 @@ body[data-menu-open="true"] .wm-menu-panel {
   backface-visibility: hidden;
 }
 
+/* Floating scroll-to-bottom pill */
+.wm-scroll-pill {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 0.5rem;
+  padding: 0.3rem 1rem;
+  font-size: 0.8rem;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary, rgba(60, 60, 60, 0.85));
+  border: 1px solid rgba(100, 100, 100, 0.3);
+  border-radius: 999px;
+  cursor: pointer;
+  z-index: 7;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  white-space: nowrap;
+  transition: opacity 0.15s ease;
+}
+
+.wm-scroll-pill:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary, rgba(80, 80, 80, 0.9));
+}
+
 /* Archived session view styles */
 .wm-live-main-archived {
   border: 1px solid rgba(100, 100, 100, 0.3);
