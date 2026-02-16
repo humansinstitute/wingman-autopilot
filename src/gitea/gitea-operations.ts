@@ -168,6 +168,17 @@ export async function setGiteaRemote(opts: {
   // Make sure this directory has its own git repo — not a parent's
   await ensureGitRepo(directory, opConfig);
 
+  // If the repo is a shallow clone (e.g. cloned from GitHub with --depth 1),
+  // unshallow it now so Gitea won't reject the push later.
+  const shallowCheck = await runGiteaGit(
+    ["rev-parse", "--is-shallow-repository"],
+    directory,
+    opConfig,
+  );
+  if (shallowCheck.stdout.trim() === "true") {
+    await runGiteaGit(["fetch", "--unshallow"], directory, opConfig);
+  }
+
   // Derive repo name from project name or directory basename
   const repoName = deriveRepoName(projectName, directory);
 
