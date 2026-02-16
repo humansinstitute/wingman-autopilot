@@ -60,6 +60,11 @@ import {
   handleCreateSession,
 } from "./tools/create-session";
 import {
+  stopSessionSchema,
+  stopSessionDescription,
+  handleStopSession,
+} from "./tools/stop-session";
+import {
   listCaproverAppsSchema,
   listCaproverAppsDescription,
   handleListCaproverApps,
@@ -287,6 +292,14 @@ server.tool(
   createSessionDescription,
   createSessionSchema,
   (params) => handleCreateSession(params, wingmanUrl, sessionId),
+);
+
+// ---- stop_session ----
+server.tool(
+  "stop_session",
+  stopSessionDescription,
+  stopSessionSchema,
+  (params) => handleStopSession(params, wingmanUrl, sessionId),
 );
 
 // ---- list_caprover_apps ----

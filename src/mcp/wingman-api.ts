@@ -36,6 +36,8 @@ export interface WingmanMcpApiDependencies {
     workingDirectory?: string,
     name?: string,
   ) => Promise<SessionSnapshot>;
+  stopSession: (sessionId: string) => Promise<SessionSnapshot | null>;
+  scheduleArchive: (sessionId: string) => void;
   getSessionLogs: (sessionId: string) => Promise<string[] | undefined>;
   listApps: () => Promise<AppRecord[]>;
   getAppStatus: (appId: string) => Promise<AppProcessStatus>;
@@ -135,6 +137,11 @@ export function createWingmanMcpApiHandler(deps: WingmanMcpApiDependencies) {
       // POST /api/mcp/wingman/sessions
       if (segments.length === 4 && segments[3] === "sessions" && method === "POST") {
         return await handleCreateSession(deps, request);
+      }
+
+      // POST /api/mcp/wingman/sessions/stop
+      if (segments.length === 5 && segments[3] === "sessions" && segments[4] === "stop" && method === "POST") {
+        return await handleStopSession(deps, request);
       }
 
       // GET /api/mcp/wingman/caprover/apps
@@ -378,6 +385,71 @@ async function handleCreateSession(
     port: session.port,
     workingDirectory: session.workingDirectory,
     startedAt: session.startedAt,
+  });
+}
+
+/**
+ * POST /api/mcp/wingman/sessions/stop
+ * Body: { sessionId, targetSessionId }
+ *
+ * Stops another session. The caller's npub must match the target's npub
+ * (same-owner constraint). An agent cannot stop its own session.
+ */
+async function handleStopSession(
+  deps: WingmanMcpApiDependencies,
+  request: Request,
+): Promise<Response> {
+  const body = await parseBody(request);
+  const sessionId = body.sessionId as string | undefined;
+  const targetSessionId = body.targetSessionId as string | undefined;
+
+  const denied = requireSessionId(deps, sessionId);
+  if (denied) return denied;
+
+  if (!targetSessionId) {
+    return jsonError("targetSessionId is required", 400);
+  }
+
+  if (targetSessionId === sessionId) {
+    return jsonError("Cannot stop your own session", 403);
+  }
+
+  const callerSession = deps.getSession(sessionId!);
+  if (!callerSession) {
+    return jsonError("Caller session not found", 404);
+  }
+
+  const targetSession = deps.getSession(targetSessionId);
+  if (!targetSession) {
+    return jsonError("Target session not found", 404);
+  }
+
+  // Same-owner check: caller's npub must match target's npub
+  const callerNpub = callerSession.npub ?? null;
+  const targetNpub = targetSession.npub ?? null;
+  if (!callerNpub || !targetNpub || callerNpub !== targetNpub) {
+    return jsonError("Cannot stop sessions belonging to another user", 403);
+  }
+
+  console.log(
+    `[wingman-mcp-api] Agent session ${sessionId} (${callerSession.name ?? "unnamed"}) ` +
+    `stopping session ${targetSessionId} (${targetSession.name ?? "unnamed"})`,
+  );
+
+  const stopped = await deps.stopSession(targetSessionId);
+  if (!stopped) {
+    return jsonError("Failed to stop session", 500);
+  }
+
+  // Schedule archive like the normal DELETE endpoint does
+  deps.scheduleArchive(targetSessionId);
+
+  return jsonOk({
+    id: stopped.id,
+    agent: stopped.agent,
+    name: stopped.name,
+    status: stopped.status,
+    stoppedBy: sessionId,
   });
 }
 
