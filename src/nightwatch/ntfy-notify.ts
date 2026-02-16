@@ -25,9 +25,10 @@ export function getNtfyConfig(wingmanBaseUrl?: string): NtfyConfig | null {
 
 function formatTitle(report: NightWatchReport): string {
   const statusLabels: Record<string, string> = {
+    raw: "Raw Input Sent",
+    humanInput: "Human Input Needed",
     complete: "Session Complete",
     error: "Session Error",
-    humanInput: "Human Input Needed",
   };
   const label = statusLabels[report.status] || report.status;
   const name = report.sessionName || report.sessionId.slice(0, 8);
