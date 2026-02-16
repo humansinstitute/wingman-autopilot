@@ -11,7 +11,7 @@ import { attachCopyButton, copyConversationToClipboard } from "../utils/clipboar
 import { showToast } from "../utils/toast.js";
 import { fetchSessionHistoryApi, forkSessionToWorktreeApi } from "../services/sessions.js";
 import { triggerAppActionApi } from "../services/apps.js";
-import { isAlpineChatEnabled, getChatTemplate } from "../live/index.js";
+import { isAlpineChatEnabled, getChatTemplate, Alpine } from "../live/index.js";
 import { findAppForSession, findWebAppForSession, createWebviewPanel, createLayoutToolbar } from "../live/webview-panel.js";
 import { createWriterPanel, createWriterToolbar } from "../writer/writer-panel.js";
 import { createMobileTabBar, attachSwipeGesture } from "../writer/mobile-tabs.js";
@@ -1003,6 +1003,10 @@ export function initLiveView(deps) {
         conversationContainer.append(renderConversation(sessionId));
       }
       scrollRegion.append(conversationContainer);
+      // Tell Alpine to process the new DOM tree
+      if (isAlpineChatEnabled()) {
+        Alpine.initTree(conversationContainer);
+      }
     }
 
     const currentComposer = document.querySelector('.wm-composer-shell');
@@ -1203,6 +1207,10 @@ export function initLiveView(deps) {
     }
 
     scrollRegion.append(conversationContainer);
+    // Tell Alpine to process the new DOM tree
+    if (isAlpineChatEnabled()) {
+      Alpine.initTree(conversationContainer);
+    }
     // Initial render: scroll to bottom once DOM is ready
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
