@@ -326,16 +326,24 @@ export function getChatTemplate(sessionId) {
   </template>
 
   <!-- Messages container -->
-  <div x-ref="chatContainer" class="chat-messages" :class="{ 'loading': $store.chat.isLoading }">
+  <div x-ref="chatContainer" class="wm-conversation" :class="{ 'loading': $store.chat.isLoading }">
     <template x-for="message in $store.chat.messages" :key="message.id">
-      <div class="chat-message"
-           :class="{ 'user': message.role === 'user', 'assistant': message.role === 'assistant' || message.role === 'agent', 'system': message.role === 'system' }">
-        <div class="message-header">
-          <span class="message-role" x-text="message.role"></span>
-          <span class="message-time" x-text="message.createdAt ? new Date(message.createdAt).toLocaleTimeString() : ''"></span>
-        </div>
-        <div class="message-content" x-html="$store.chat.formatMessage(message).formattedContent"></div>
-      </div>
+      <article class="wm-message"
+               :class="message.role === 'user' ? 'user' : (message.role === 'assistant' || message.role === 'agent' ? 'assistant' : 'system')">
+        <pre x-text="message.content"></pre>
+        <button type="button" class="wm-message-copy" aria-label="Copy message"
+                @click.stop="
+                  const text = message.content || '';
+                  if (text && navigator.clipboard?.writeText) {
+                    navigator.clipboard.writeText(text).then(() => {
+                      $el.closest('.wm-message').dataset.copied = 'true';
+                      setTimeout(() => { delete $el.closest('.wm-message').dataset.copied }, 1600);
+                    });
+                  }
+                ">
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M15 3H7a2 2 0 0 0-2 2v10h2V5h8V3zm4 4h-8a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zm0 12h-8V9h8v10z"/></svg>
+        </button>
+      </article>
     </template>
 
     <!-- Empty state -->
