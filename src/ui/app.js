@@ -83,7 +83,7 @@ import { initQueueModule } from "./sessions/queue-modal.js";
 import { initQuickLauncher } from "./core/quick-launcher.js";
 import { initImageAttachments } from "./core/image-attachments.js";
 import { initAgentIndicators } from "./status/agent-indicators.js";
-import { show as scrollPillShow, hide as scrollPillHide } from "./live/scroll-pill.js";
+import { show as scrollPillShow, hide as scrollPillHide, isNearBottom as scrollPillIsNearBottom } from "./live/scroll-pill.js";
 import { initAdminUsersApi } from "./api/admin-users.js";
 import { showToast } from "./utils/toast.js";
 import { collapseNewlines } from "./utils/text.js";
@@ -330,7 +330,7 @@ const scrollConversationAreaToBottom = (sessionId, options = {}) =>
 const scheduleLiveScroll = (sessionId, options = {}) => {
   if (!sessionId || currentRoute !== "live") return;
   // Never auto-scroll — show the pill if user is scrolled up
-  if (!isConversationScrolledToBottom(sessionId)) {
+  if (!scrollPillIsNearBottom()) {
     scrollPillShow();
     return;
   }
@@ -4575,7 +4575,7 @@ dialog.addEventListener("cancel", (event) => {
 
     // Update DOM if on live view with this session active
     if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
-      const wasNearBottom = isConversationScrolledToBottom(sessionId);
+      const wasNearBottom = scrollPillIsNearBottom();
       updateConversationDOM(sessionId);
       if (!wasNearBottom && !isStreamingUpdate) {
         scrollPillShow();
