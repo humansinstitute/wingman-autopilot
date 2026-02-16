@@ -347,6 +347,5 @@ async function handleReplace(deps: BotKeyApiDependencies, request: Request): Res
     replaced: true,
     botNpub: record.botNpub,
     botPubkeyHex: record.botPubkeyHex,
-    escrowUuid: record.escrowUuid,
   });
 }
