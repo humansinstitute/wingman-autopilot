@@ -167,41 +167,6 @@ export function registerChatComponent() {
      * @param {string} sessionId
      */
     _setupSSEListeners(sessionId) {
-      // Message events — update Alpine store immediately instead of
-      // waiting for Dexie liveQuery (which can lag ~1-2s).
-      this._sseUnsubscribers.push(
-        sseManager.onMessage((sid, message) => {
-          if (sid !== sessionId) return;
-          const role = message.role || message.type || "assistant";
-          const content = message.content || message.message || "";
-          const now = new Date().toISOString();
-
-          // Streaming: update last message in-place if same role and content extends
-          const last = this.messages[this.messages.length - 1];
-          if (last && last.role === role) {
-            const oldContent = last.content || "";
-            if (content.length > oldContent.length && content.startsWith(oldContent.slice(0, 50))) {
-              // Mutate + reassign for Alpine reactivity
-              last.content = content;
-              last.updatedAt = now;
-              this.messages = [...this.messages];
-              return;
-            }
-          }
-
-          // New message
-          this.messages = [...this.messages, {
-            sessionId,
-            role,
-            content,
-            createdAt: message.createdAt || message.created_at || now,
-            updatedAt: now,
-            id: `sse-${Date.now()}`,
-          }];
-          this._scheduleScroll();
-        })
-      );
-
       // Status changes
       this._sseUnsubscribers.push(
         sseManager.onStatusChange((sid, status) => {

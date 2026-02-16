@@ -1904,9 +1904,15 @@ const fetchConversation = async (sessionId) => {
     const items = Array.isArray(data?.messages) ? data.messages : [];
     state.conversations.set(sessionId, items);
 
-    // Sync to Dexie so Alpine liveQuery picks up the full history
+    // Sync to Dexie and push directly to Alpine store for immediate update
     if (isAlpineChatEnabled()) {
       await MessageStore.syncFromServer(sessionId, items);
+      // Also update Alpine store directly so we don't wait for liveQuery
+      const chatStore = window.Alpine?.store("chat");
+      if (chatStore && chatStore.sessionId === sessionId) {
+        const freshMessages = await MessageStore.getSessionMessages(sessionId);
+        chatStore.messages = freshMessages;
+      }
       return;
     }
 
