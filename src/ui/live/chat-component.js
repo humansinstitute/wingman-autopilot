@@ -103,6 +103,8 @@ export function registerChatComponent() {
      */
     async loadSession(sessionId) {
       if (!sessionId) return;
+      // Already loaded for this session — don't wipe messages
+      if (this.sessionId === sessionId) return;
       this.cleanup();
       this.sessionId = sessionId;
       this.isLoading = true;

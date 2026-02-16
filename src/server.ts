@@ -3183,7 +3183,7 @@ const assetService = createStaticAssetService({
 });
 
 // Asset version — increment to bust browser caches after deploys.
-const ASSET_VERSION = "10";
+const ASSET_VERSION = "11";
 
 const serveIndex = async () => {
   const url = new URL("./ui/index.html", import.meta.url);
