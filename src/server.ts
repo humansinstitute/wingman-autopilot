@@ -5817,7 +5817,7 @@ const handleApi = async (
       const validatedPayload = validateInput(JsonRequestSchema.extend({
         name: z.string().min(1).max(255).refine(name => !/[<>:"|?*\x00]/.test(name)),
         content: z.string().optional(),
-        base64: z.boolean().optional(),
+        base64: z.string().optional(),
         directory: PathSchema.optional()
       }), payload);
 
