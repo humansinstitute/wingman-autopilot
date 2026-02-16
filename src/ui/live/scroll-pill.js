@@ -11,12 +11,46 @@ const THRESHOLD = 50;
 let pillEl = null;
 let scrollTarget = null;
 let scrollListener = null;
+let scrollListenerTarget = null; // the actual element we bind "scroll" on
+
+/**
+ * Resolve which element to listen for scroll events on.
+ * For document-level scroll targets the event fires on the window, not on
+ * the scrollingElement itself.
+ */
+function resolveListenerTarget(el) {
+  if (
+    el === document.body ||
+    el === document.documentElement ||
+    el === document.scrollingElement
+  ) {
+    return window;
+  }
+  return el;
+}
+
+/**
+ * Check whether a scroll target is near its bottom edge.
+ */
+function checkNearBottom(el) {
+  if (!el) return true;
+  if (
+    el === document.body ||
+    el === document.documentElement ||
+    el === document.scrollingElement
+  ) {
+    const doc = document.scrollingElement || document.documentElement || document.body;
+    return doc.scrollHeight - doc.scrollTop - doc.clientHeight < THRESHOLD;
+  }
+  return el.scrollHeight - el.scrollTop - el.clientHeight < THRESHOLD;
+}
 
 /**
  * Create (or re-use) the floating pill and attach it to a parent container.
- * The parent should be position:relative so the pill can anchor itself.
+ * The parent should be position:sticky or position:relative so the pill can
+ * anchor itself via position:absolute.
  *
- * @param {HTMLElement} parent  - element to append the pill into (e.g. wrapper or composer-shell)
+ * @param {HTMLElement} parent  - element to append the pill into (e.g. composer-shell)
  * @param {HTMLElement} scrollElement - the scrollable element to watch & scroll
  */
 export function attachScrollPill(parent, scrollElement) {
@@ -35,7 +69,7 @@ export function attachScrollPill(parent, scrollElement) {
   pillEl.addEventListener("click", () => {
     if (!scrollTarget) return;
     scrollTarget.scrollTo({ top: scrollTarget.scrollHeight, behavior: "smooth" });
-    // Also scroll the window for non-split layouts
+    // For non-split layouts also scroll the window if it's a different target
     const docTarget = document.scrollingElement || document.documentElement || document.body;
     if (docTarget !== scrollTarget) {
       docTarget.scrollTo({ top: docTarget.scrollHeight, behavior: "smooth" });
@@ -45,13 +79,13 @@ export function attachScrollPill(parent, scrollElement) {
 
   parent.appendChild(pillEl);
 
-  // Listen for scroll on the scroll region to auto-hide when user reaches bottom
+  // Listen for scroll to auto-hide when user reaches bottom
   scrollListener = () => {
     if (!scrollTarget || !pillEl) return;
-    const nearBottom = scrollTarget.scrollHeight - scrollTarget.scrollTop - scrollTarget.clientHeight < THRESHOLD;
-    if (nearBottom) hide();
+    if (checkNearBottom(scrollTarget)) hide();
   };
-  scrollTarget.addEventListener("scroll", scrollListener, { passive: true });
+  scrollListenerTarget = resolveListenerTarget(scrollElement);
+  scrollListenerTarget.addEventListener("scroll", scrollListener, { passive: true });
 }
 
 /** Show the pill (call when new content arrives and user is scrolled up). */
@@ -66,14 +100,13 @@ export function hide() {
 
 /** Returns true if the scroll target is near the bottom. */
 export function isNearBottom() {
-  if (!scrollTarget) return true;
-  return scrollTarget.scrollHeight - scrollTarget.scrollTop - scrollTarget.clientHeight < THRESHOLD;
+  return checkNearBottom(scrollTarget);
 }
 
 /** Remove listeners and element. Call on view teardown. */
 export function cleanup() {
-  if (scrollTarget && scrollListener) {
-    scrollTarget.removeEventListener("scroll", scrollListener);
+  if (scrollListenerTarget && scrollListener) {
+    scrollListenerTarget.removeEventListener("scroll", scrollListener);
   }
   if (pillEl && pillEl.parentNode) {
     pillEl.parentNode.removeChild(pillEl);
@@ -81,4 +114,5 @@ export function cleanup() {
   pillEl = null;
   scrollTarget = null;
   scrollListener = null;
+  scrollListenerTarget = null;
 }
