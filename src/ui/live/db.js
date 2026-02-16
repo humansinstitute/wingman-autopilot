@@ -104,26 +104,62 @@ export const MessageStore = {
 
   /**
    * Sync full conversation from server (initial load or refresh).
-   * Replaces all messages for the session with the server's truth.
+   * Updates existing messages in-place (preserving Dexie IDs so Alpine
+   * `:key` stays stable) and only adds/removes rows when the count changes.
    */
   async syncFromServer(sessionId, messages) {
     if (!Array.isArray(messages)) return;
 
     await db.transaction("rw", db.messages, async () => {
-      // Clear existing and bulk-insert server state
-      await db.messages.where("sessionId").equals(sessionId).delete();
-      if (messages.length === 0) return;
+      const existing = await db.messages
+        .where("[sessionId+createdAt]")
+        .between([sessionId, Dexie.minKey], [sessionId, Dexie.maxKey])
+        .toArray();
 
       const now = new Date().toISOString();
-      const rows = messages.map((msg, idx) => ({
-        sessionId,
+      const incoming = messages.map((msg) => ({
         role: msg.role || msg.type || "assistant",
         content: msg.content || msg.message || "",
         createdAt: msg.createdAt || msg.created_at || now,
-        updatedAt: now,
-        messageHash: `${sessionId}:${idx}:${now}`,
       }));
-      await db.messages.bulkAdd(rows);
+
+      // Update existing rows in-place where content changed
+      const updates = [];
+      const minLen = Math.min(existing.length, incoming.length);
+      for (let i = 0; i < minLen; i++) {
+        const old = existing[i];
+        const inc = incoming[i];
+        if (old.content !== inc.content || old.role !== inc.role) {
+          updates.push(
+            db.messages.update(old.id, {
+              content: inc.content,
+              role: inc.role,
+              updatedAt: now,
+            }),
+          );
+        }
+      }
+
+      // Remove extras if server has fewer messages
+      if (existing.length > incoming.length) {
+        const idsToDelete = existing.slice(incoming.length).map((m) => m.id);
+        updates.push(db.messages.bulkDelete(idsToDelete));
+      }
+
+      // Add new messages if server has more
+      if (incoming.length > existing.length) {
+        const newRows = incoming.slice(existing.length).map((inc, idx) => ({
+          sessionId,
+          role: inc.role,
+          content: inc.content,
+          createdAt: inc.createdAt,
+          updatedAt: now,
+          messageHash: `${sessionId}:${existing.length + idx}:${now}`,
+        }));
+        updates.push(db.messages.bulkAdd(newRows));
+      }
+
+      await Promise.all(updates);
     });
   },
 
