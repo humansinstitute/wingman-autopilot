@@ -209,6 +209,10 @@ function getPageTemplate() {
           <!-- Meta -->
           <span style="font-size: 0.75rem; opacity: 0.6; margin-left: auto;"
                 x-text="report.cycleCount + ' cycles \\u00b7 ' + $store.nightwatch.formatTime(report.createdAt)"></span>
+
+          <!-- JSON toggle -->
+          <a href="#" style="font-size: 0.65rem; font-weight: 600; color: #8b5cf6; text-decoration: none; opacity: 0.7; margin-left: 0.5rem;"
+             @click.prevent="report._showJson = !report._showJson">JSON</a>
         </div>
 
         <!-- Summary -->
@@ -218,6 +222,12 @@ function getPageTemplate() {
         <template x-if="report.reasoning">
           <p style="margin: 0.25rem 0 0; font-size: 0.8rem; line-height: 1.3; opacity: 0.7; font-style: italic; border-left: 2px solid rgba(255,255,255,0.15); padding-left: 0.5rem;"
              x-text="report.reasoning"></p>
+        </template>
+
+        <!-- Raw JSON debug -->
+        <template x-if="report._showJson">
+          <pre style="margin: 0.5rem 0 0; padding: 0.5rem; background: rgba(0,0,0,0.3); border-radius: 4px; font-size: 0.7rem; line-height: 1.3; overflow-x: auto; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto;"
+               x-text="JSON.stringify(report, (k, v) => k.startsWith('_') ? undefined : v, 2)"></pre>
         </template>
 
         <!-- Dismiss button -->
