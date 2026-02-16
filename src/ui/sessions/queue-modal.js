@@ -5,6 +5,7 @@
  */
 
 import { getSessionDisplayName } from "../core/icons.js";
+import { show as scrollPillShow } from "../live/scroll-pill.js";
 
 const ACTIVE_SESSION_STATUSES = new Set(["starting", "running"]);
 
@@ -180,7 +181,7 @@ export function initQueueModule(deps) {
             textarea.value = data.failedPrompt.content;
             textarea.style.height = "auto";
             textarea.style.height = textarea.scrollHeight + "px";
-            textarea.focus();
+            textarea.focus({ preventScroll: true });
           }
           showToast("Failed to send queued prompt - inserted into text area for manual retry", {
             type: "error",
@@ -198,9 +199,8 @@ export function initQueueModule(deps) {
       if (result.messages) {
         state.conversations.set(sessionId, result.messages);
         updateConversationDOM(sessionId);
-        requestAnimationFrame(() => {
-          scrollConversationAreaToBottom(sessionId, { includeWindow: true });
-        });
+        // Show pill instead of force-scrolling — user may be reading history
+        scrollPillShow();
       }
 
       const queue = getSessionQueue(sessionId);

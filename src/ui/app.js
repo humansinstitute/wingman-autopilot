@@ -2326,7 +2326,7 @@ const sendMessage = async (sessionId, content) => {
       if (textarea) {
         textarea.value = "";
         textarea.style.height = "auto";
-        requestAnimationFrame(() => textarea.focus());
+        requestAnimationFrame(() => textarea.focus({ preventScroll: true }));
       }
       await fetchLogs(sessionId);
     } catch (error) {
@@ -2347,7 +2347,7 @@ const sendMessage = async (sessionId, content) => {
         textarea.value = "";
         textarea.style.height = "auto";
         requestAnimationFrame(() => {
-          textarea.focus();
+          textarea.focus({ preventScroll: true });
         });
       }
       // Update status indicators to show queue count
@@ -2380,7 +2380,7 @@ const sendMessage = async (sessionId, content) => {
       textarea.value = "";
       textarea.style.height = "auto";
       requestAnimationFrame(() => {
-        textarea.focus();
+        textarea.focus({ preventScroll: true });
       });
     }
   } catch (error) {
@@ -3538,7 +3538,7 @@ const render = () => {
       if (currentRoute === "live" && (!document.activeElement || document.activeElement === document.body)) {
         const textarea = document.querySelector('.wm-composer textarea');
         if (textarea) {
-          textarea.focus();
+          textarea.focus({ preventScroll: true });
         }
       }
       setActiveNav();
@@ -4575,7 +4575,11 @@ dialog.addEventListener("cancel", (event) => {
 
     // Update DOM if on live view with this session active
     if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
+      const wasNearBottom = isConversationScrolledToBottom(sessionId);
       updateConversationDOM(sessionId);
+      if (!wasNearBottom && !isStreamingUpdate) {
+        scrollPillShow();
+      }
     }
   });
 

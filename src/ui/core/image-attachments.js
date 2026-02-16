@@ -365,7 +365,7 @@ export function initImageAttachments(deps) {
         }
 
         resizeTextarea();
-        textarea.focus();
+        textarea.focus({ preventScroll: true });
       } catch (error) {
         console.error("Failed to upload image", error);
         window.alert("Image upload failed. Check console for details.");
@@ -427,7 +427,7 @@ export function initImageAttachments(deps) {
         const textToInsert = needsPrefix ? `\n${reference}\n` : `${reference}\n`;
         insertTextAtCursor(textarea, textToInsert, sessionId);
         resizeTextarea();
-        textarea.focus();
+        textarea.focus({ preventScroll: true });
       } catch (error) {
         console.error("Failed to upload file", error);
         const message = error instanceof Error ? error.message : "File upload failed. Check console for details.";

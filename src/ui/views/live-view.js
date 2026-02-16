@@ -548,7 +548,7 @@ export function initLiveView(deps) {
           requestAnimationFrame(() => {
             const newTextarea = document.querySelector('.wm-composer textarea');
             if (newTextarea) {
-              newTextarea.focus();
+              newTextarea.focus({ preventScroll: true });
             }
           });
         });
@@ -967,7 +967,7 @@ export function initLiveView(deps) {
 
     requestAnimationFrame(() => {
       if (!document.contains(textarea)) return;
-      textarea.focus();
+      textarea.focus({ preventScroll: true });
       resizeTextarea();
 
       if (shouldAutoSubmit && textarea.value.trim()) {
@@ -994,12 +994,6 @@ export function initLiveView(deps) {
       conversationContainer.className = "wm-live-conversation";
       conversationContainer.append(renderConversation(sessionId));
       scrollRegion.append(conversationContainer);
-      // Panel switch: scroll to bottom once DOM is ready
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          scrollConversationAreaToBottom(sessionId, { includeWindow: true });
-        });
-      });
     }
 
     const currentComposer = document.querySelector('.wm-composer-shell');
@@ -1022,7 +1016,7 @@ export function initLiveView(deps) {
     requestAnimationFrame(() => {
       const textarea = document.querySelector('.wm-composer textarea');
       if (textarea) {
-        textarea.focus();
+        textarea.focus({ preventScroll: true });
       }
     });
   };
