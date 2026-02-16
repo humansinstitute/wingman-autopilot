@@ -181,13 +181,17 @@ export function registerChatComponent() {
 
     /**
      * Schedule a scroll to bottom after DOM update.
+     * Only scrolls if the user is already near the bottom (within 50px).
      */
     _scheduleScroll() {
+      const container = document.querySelector("[x-ref='chatContainer']");
+      if (!container) return;
+      // Don't interrupt the user if they've scrolled up to read history
+      const threshold = 50;
+      const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
+      if (!isNearBottom) return;
       requestAnimationFrame(() => {
-        const container = document.querySelector("[x-ref='chatContainer']");
-        if (container) {
-          container.scrollTop = container.scrollHeight;
-        }
+        container.scrollTop = container.scrollHeight;
       });
     },
 

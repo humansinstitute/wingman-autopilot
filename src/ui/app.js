@@ -327,10 +327,13 @@ const scrollConversationAreaToBottom = (sessionId, options = {}) =>
   _scrollConversationAreaToBottom(sessionId, state.conversationContainers, options);
 
 const scheduleLiveScroll = (sessionId, options = {}) => {
+  const { force = false, ...scrollOptions } = options;
   if (!sessionId || currentRoute !== "live") return;
+  // Unless forced, only auto-scroll if user is already near the bottom
+  if (!force && !isConversationScrolledToBottom(sessionId)) return;
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      scrollConversationAreaToBottom(sessionId, options);
+      scrollConversationAreaToBottom(sessionId, scrollOptions);
     });
   });
 };

@@ -992,7 +992,7 @@ export function initLiveView(deps) {
       conversationContainer.className = "wm-live-conversation";
       conversationContainer.append(renderConversation(sessionId));
       scrollRegion.append(conversationContainer);
-      scheduleLiveScroll(sessionId, { includeWindow: true });
+      scheduleLiveScroll(sessionId, { includeWindow: true, force: true });
     }
 
     const currentComposer = document.querySelector('.wm-composer-shell');
@@ -1186,7 +1186,7 @@ export function initLiveView(deps) {
     }
 
     scrollRegion.append(conversationContainer);
-    scheduleLiveScroll(sessionId, { includeWindow: true });
+    scheduleLiveScroll(sessionId, { includeWindow: true, force: true });
 
     // Clean up previous writer panel if any
     if (activeWriterCleanup) {
