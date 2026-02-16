@@ -320,6 +320,68 @@ function parseNightWatchResponse(raw: string): NightWatchResponse {
   return { nextAction, content, reasoning, inputMode, inputRaw };
 }
 
+/**
+ * Detect when the last agent message contains an interactive prompt
+ * (numbered menu or yes/no) that the model failed to handle with raw mode.
+ * Returns a corrected NightWatchResponse or null if no correction needed.
+ */
+function detectInteractivePrompt(
+  messages: StoredMessage[],
+  original: NightWatchResponse,
+): NightWatchResponse | null {
+  // Look at the last 2 messages for interactive patterns
+  const tail = messages.slice(-2);
+  const lastContent = tail.map((m) => m.content).join("\n");
+
+  // Pattern: numbered menu like "1. Yes" / "2. No" / "> 1. Yes"
+  // Matches lines starting with optional ">", whitespace, then a digit 1-9 followed by ". "
+  const numberedMenuPattern = /^[\s>]*([1-9])\.\s+/gm;
+  const menuMatches = [...lastContent.matchAll(numberedMenuPattern)];
+
+  if (menuMatches.length >= 2) {
+    // It's a numbered menu — pick "1" (first/default option) unless the model's
+    // content hints at a specific number
+    let pick: NightWatchRawInput = "1";
+    const numberHint = original.content.match(/\b(?:option|choice|pick|select|go with|choose)\s*(\d)\b/i);
+    if (numberHint) {
+      const hinted = numberHint[1] as NightWatchRawInput;
+      if ((VALID_RAW_INPUTS as readonly string[]).includes(hinted)) {
+        pick = hinted;
+      }
+    }
+    return {
+      ...original,
+      inputMode: "raw",
+      inputRaw: pick,
+      reasoning: `[auto-corrected to raw] ${original.reasoning}`,
+    };
+  }
+
+  // Pattern: yes/no confirmation like "(y/n)", "[Y/n]", "yes/no"
+  const yesNoPattern = /\(y\/n\)|\[Y\/n\]|\[y\/N\]|\byes\s*\/\s*no\b/i;
+  if (yesNoPattern.test(lastContent)) {
+    return {
+      ...original,
+      inputMode: "raw",
+      inputRaw: "y",
+      reasoning: `[auto-corrected to raw y/n] ${original.reasoning}`,
+    };
+  }
+
+  // Pattern: "Esc to cancel" / "Tab to amend" — Claude Code permission prompt
+  // These always have numbered options above
+  if (/Esc to cancel/i.test(lastContent) && /^\s*[1-9]\./m.test(lastContent)) {
+    return {
+      ...original,
+      inputMode: "raw",
+      inputRaw: "1",
+      reasoning: `[auto-corrected to raw: Claude permission prompt] ${original.reasoning}`,
+    };
+  }
+
+  return null;
+}
+
 async function executeNightWatchReview(
   sessionId: string,
   deps: NightWatchDeps,
@@ -374,6 +436,15 @@ async function executeNightWatchReview(
     console.error(`[nightwatch] Failed to parse response for session ${sessionId}:`, err);
     console.error(`[nightwatch] Raw response: ${rawResponse.slice(0, 500)}`);
     return;
+  }
+
+  // Post-process: detect interactive prompts the model missed
+  if (result.nextAction === "continue" && result.inputMode === "queue") {
+    const corrected = detectInteractivePrompt(allMessages, result);
+    if (corrected) {
+      console.log(`[nightwatch] Auto-corrected to raw mode: inputRaw="${corrected.inputRaw}" (was queue). Last message matched interactive pattern.`);
+      result = corrected;
+    }
   }
 
   console.log(`[nightwatch] Session ${sessionId} -> action: ${result.nextAction}`);
