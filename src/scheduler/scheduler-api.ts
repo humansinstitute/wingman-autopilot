@@ -10,6 +10,7 @@ import type { SchedulerEngine } from "./scheduler-engine";
 import { wrapEscrowUuid } from "./key-wrapper";
 import type { BotKeyStore } from "../identity/bot-key-store";
 import { getSessionSecretBytes } from "../auth/session-secret";
+import { PathSchema } from "../utils/validation";
 
 // ============================================================
 // Types
@@ -80,6 +81,10 @@ async function handleCreateJob(
     return Response.json({ error: `agent must be one of: ${VALID_AGENTS.join(", ")}` }, { status: 400 });
   }
   if (!workingDirectory) return Response.json({ error: "workingDirectory is required" }, { status: 400 });
+  const wdResult = PathSchema.safeParse(workingDirectory);
+  if (!wdResult.success) {
+    return Response.json({ error: wdResult.error.issues[0]?.message ?? "Invalid workingDirectory" }, { status: 400 });
+  }
   if (!initialPrompt) return Response.json({ error: "initialPrompt is required" }, { status: 400 });
 
   if (triggerType === "cron") {
@@ -89,6 +94,10 @@ async function handleCreateJob(
     }
   } else {
     if (!watchDirectory) return Response.json({ error: "watchDirectory is required for file watcher triggers" }, { status: 400 });
+    const watchResult = PathSchema.safeParse(watchDirectory);
+    if (!watchResult.success) {
+      return Response.json({ error: watchResult.error.issues[0]?.message ?? "Invalid watchDirectory" }, { status: 400 });
+    }
   }
 
   // Lookup bot key for wrapping
@@ -149,7 +158,13 @@ async function handleUpdateJob(
     }
     update.agent = body.agent;
   }
-  if (typeof body.workingDirectory === "string") update.workingDirectory = body.workingDirectory.trim();
+  if (typeof body.workingDirectory === "string") {
+    const wdResult = PathSchema.safeParse(body.workingDirectory.trim());
+    if (!wdResult.success) {
+      return Response.json({ error: wdResult.error.issues[0]?.message ?? "Invalid workingDirectory" }, { status: 400 });
+    }
+    update.workingDirectory = body.workingDirectory.trim();
+  }
   if (typeof body.initialPrompt === "string") update.initialPrompt = body.initialPrompt.trim();
   if (typeof body.nightwatchmanEnabled === "boolean") update.nightwatchmanEnabled = body.nightwatchmanEnabled;
   if (body.triggerType === "cron" || body.triggerType === "file_watcher") {
@@ -162,7 +177,13 @@ async function handleUpdateJob(
     update.cronExpression = body.cronExpression.trim();
   }
   if (typeof body.timezone === "string") update.timezone = body.timezone.trim();
-  if (typeof body.watchDirectory === "string") update.watchDirectory = body.watchDirectory.trim();
+  if (typeof body.watchDirectory === "string") {
+    const watchResult = PathSchema.safeParse(body.watchDirectory.trim());
+    if (!watchResult.success) {
+      return Response.json({ error: watchResult.error.issues[0]?.message ?? "Invalid watchDirectory" }, { status: 400 });
+    }
+    update.watchDirectory = body.watchDirectory.trim();
+  }
   if (typeof body.filePattern === "string") update.filePattern = body.filePattern.trim();
   if (typeof body.enabled === "boolean") update.enabled = body.enabled;
 
