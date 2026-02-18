@@ -6,17 +6,23 @@
  */
 
 export const STATUS_COLORS = {
+  raw: "#8b5cf6",
+  monitor: "#3b82f6",
+  humanInput: "#f59e0b",
+  // Legacy statuses from old reports still in DB
   continue: "#3b82f6",
   complete: "#22c55e",
   error: "#ef4444",
-  humanInput: "#f59e0b",
 };
 
 export const STATUS_LABELS = {
+  raw: "Raw Input",
+  monitor: "Monitor",
+  humanInput: "Human Input",
+  // Legacy
   continue: "Continue",
   complete: "Complete",
   error: "Error",
-  humanInput: "Human Input",
 };
 
 export function createStatusBadge(status) {

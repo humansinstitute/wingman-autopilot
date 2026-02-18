@@ -2,7 +2,7 @@
  * NTFY Notification Helper
  *
  * Sends push notifications via ntfy.sh when Night Watchman
- * reaches a terminal state (complete, error, humanInput).
+ * reaches a terminal state (humanInput).
  */
 
 import type { NightWatchReport } from "./nightwatch-store";

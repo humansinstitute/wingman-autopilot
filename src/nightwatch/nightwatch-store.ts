@@ -31,7 +31,7 @@ export interface NightWatchReport {
   sessionId: string;
   sessionName: string | null;
   workingDirectory: string | null;
-  status: "continue" | "complete" | "error" | "humanInput";
+  status: "raw" | "monitor" | "humanInput" | "continue" | "complete" | "error";
   summary: string;
   reasoning: string | null;
   inputMode: string | null;

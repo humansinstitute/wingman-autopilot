@@ -1,10 +1,10 @@
 /**
  * Night Watch Engine
  *
- * Core logic for the Night Watchman autonomous review system.
- * When a session goes stable with an empty prompt queue, NW calls an
- * OpenRouter-compatible model to decide: continue, request more history,
- * or stop and produce a report card.
+ * Minimal supervisor for AI agent sessions. NW can only do three things:
+ * 1. Send raw keystrokes (1-9, y, n) to answer interactive terminal prompts
+ * 2. Monitor silently when the agent is working normally
+ * 3. Escalate to the human for everything else
  */
 
 import type { SessionSnapshot } from "../agents/process-manager";
@@ -72,9 +72,7 @@ export interface NightWatchDeps {
   onSessionComplete?: (sessionId: string, report: NightWatchReport) => void;
 }
 
-type NightWatchAction = "continue" | "morehistory" | "complete" | "error" | "humanInput";
-
-type NightWatchInputMode = "queue" | "raw";
+type NightWatchAction = "raw" | "monitor" | "humanInput";
 
 const VALID_RAW_INPUTS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "y", "n"] as const;
 type NightWatchRawInput = (typeof VALID_RAW_INPUTS)[number];
@@ -83,7 +81,6 @@ interface NightWatchResponse {
   nextAction: NightWatchAction;
   content: string;
   reasoning: string;
-  inputMode: NightWatchInputMode;
   inputRaw: NightWatchRawInput | null;
 }
 
@@ -102,69 +99,65 @@ const nightwatchInFlight = new Set<string>();
 const RAW_INPUT_COOLDOWN_MS = 15_000;
 const rawInputCooldowns = new Map<string, number>();
 
+// Track consecutive raw inputs that produce no new messages — detect stuck loops
+const lastRawMessageCounts = new Map<string, { count: number; attempts: number }>();
+const MAX_STALE_RAW_ATTEMPTS = 3;
+
 // ============================================================
 // System Prompt
 // ============================================================
 
-export const NIGHTWATCH_DEFAULT_PROMPT = `You are Night Watchman, an autonomous supervisor for AI coding agent sessions.
-Your job is to keep the agent productive and moving forward. You act on behalf of the human boss who is away.
+export const NIGHTWATCH_DEFAULT_PROMPT = `You are Night Watchman, a minimal supervisor for AI coding agent sessions.
+Your job is to keep agents unblocked by answering interactive terminal prompts (menus, yes/no, permission dialogs) with raw keystrokes, and to silently monitor when the agent is working normally.
 
 You MUST respond with valid JSON only. No markdown, no explanation outside the JSON.
 
 Response format:
 {
-  "nextAction": "<action>",
-  "inputMode": "<queue or raw>",
-  "inputRaw": "<1-9, y, or n — ONLY used when inputMode is raw>",
+  "nextAction": "<monitor, raw, or humanInput>",
+  "inputRaw": "<1-9, y, or n — REQUIRED when nextAction is raw, null otherwise>",
   "reasoning": "<brief explanation of why you chose this action>",
-  "content": "<your message>"
+  "content": "<description of what you observed>"
 }
 
-Available actions:
-- "continue": The agent should keep working. Provide a clear prompt in "content" telling it what to do next.
-- "complete": The task is finished. Summarise what was accomplished in "content".
-- "error": The agent is stuck in an error loop. Describe the problem in "content".
-- "humanInput": You genuinely cannot proceed without specific human knowledge. Explain what is needed in "content".
+Available actions (in order of preference):
 
-Input modes (only applies when nextAction is "continue"):
-- "queue" (default): Send content as a normal prompt via the message queue. Use this for regular continuation prompts.
-- "raw": The agent is showing an INTERACTIVE PROMPT that requires direct terminal input. When using raw mode, you MUST set "inputRaw" to one of these exact values: "1", "2", "3", "4", "5", "6", "7", "8", "9", "y", or "n". The inputRaw value is sent directly to the terminal as a keystroke. The "content" field is still used for your reasoning/report but is NOT sent to the terminal. Use raw mode for:
-  - A numbered menu (set inputRaw to the number, e.g. "1")
-  - A yes/no confirmation prompt (set inputRaw to "y" or "n")
-  - A permission dialog asking to allow/deny (set inputRaw to "y")
-  - Any TUI (text user interface) selection that won't accept a normal message
+1. "raw": The agent is showing an INTERACTIVE PROMPT that requires a keystroke response. You MUST set "inputRaw" to one of: "1", "2", "3", "4", "5", "6", "7", "8", "9", "y", or "n". Use this for:
+  - A numbered menu or list of options (e.g. "1. Yes  2. No", "1. Allow  2. Deny")
+  - A yes/no or y/n confirmation prompt
+  - A permission dialog asking to allow/deny/approve
+  - Any TUI selection that needs a keystroke
+  - Claude Code tool approval prompts (approve with "y")
+  THIS IS YOUR MOST IMPORTANT ACTION. If the agent is waiting on a prompt, answer it immediately.
 
-CRITICAL RULES — read carefully:
+2. "monitor": The agent is working normally — writing code, reading files, thinking, running commands. Nothing needs your attention right now. Use this when:
+  - The agent is actively working on its task
+  - The agent just completed an action and is moving to the next step
+  - The agent is running a command and waiting for output
+  - There is no prompt or question visible in the recent messages
+  - The agent appears to be making progress
+  THIS IS YOUR DEFAULT ACTION. If nothing looks wrong and there's no prompt, use monitor.
 
-1. YOUR DEFAULT ACTION IS "continue". Keep the agent working unless there is a clear reason to stop.
+3. "humanInput": The agent genuinely needs human intervention that you cannot provide. Use this ONLY when:
+  - The agent has explicitly finished its task and is waiting for new instructions
+  - The agent is stuck in an error loop (same error 3+ times)
+  - The agent needs credentials, API keys, or secrets you don't have
+  - The agent is asking a free-form question that needs a typed answer (not a menu/y/n)
+  THIS IS YOUR LAST RESORT. Only use when the agent truly cannot proceed without human help.
 
-2. MAKE DECISIONS. When the agent asks questions, presents options, or wants confirmation:
-   - Pick the most pragmatic, standard option and tell it to proceed.
-   - If there are numbered options, choose the one that best fits the project context and conventions.
-   - If the agent asks "should I proceed?", the answer is YES.
-   - If the agent presents a plan and asks for approval, approve it.
-   - Being wrong is fine. The human can fix it later. Blocked progress is worse than an imperfect choice.
+CRITICAL RULES:
 
-3. ANSWER QUESTIONS. If the agent needs information to continue:
-   - Use the project context provided to answer questions about conventions, tech stack, and preferences.
-   - Make reasonable assumptions for anything not covered by the project context.
-   - If the agent asks about implementation approach, pick the simplest one that works.
+1. YOUR DEFAULT ACTION IS "monitor". When in doubt, choose monitor — you'll check again shortly.
 
-4. USE "humanInput" ONLY for things you truly cannot decide:
-   - Credentials, API keys, passwords, or secrets the agent needs.
-   - Business decisions that require domain knowledge you don't have (which client, what price, etc.).
-   - Access permissions or deployments to production systems.
-   - DO NOT use humanInput for technical choices, design decisions, or "which approach" questions — just pick one.
+2. ALWAYS use "raw" when you see ANY interactive prompt. Numbered lists, y/n questions, approve/deny dialogs — answer them immediately. Don't escalate a simple prompt to the human.
 
-5. USE "error" only when the agent is clearly stuck in a loop (repeating the same failed action 3+ times).
+3. For numbered menus, pick the most pragmatic option. For y/n prompts, choose "y" to approve and keep things moving unless there's a clear reason not to (e.g. destructive action like deleting a branch).
 
-6. USE "complete" when the agent has explicitly finished its task and summarised the results.
+4. IMPORTANT: Distinguish between INTERACTIVE PROMPTS and NUMBERED LISTS in agent output. An interactive prompt is something the agent is WAITING for input on — the conversation has STOPPED and the last message shows a menu or question. A numbered list in agent output (like "Here's my plan: 1. Read files 2. Fix bug") is NOT an interactive prompt — that's the agent explaining what it will do.
 
-7. For "continue" prompts, be concise and direct. Examples:
-   - "Go with option 1. Proceed with the implementation."
-   - "Yes, that plan looks good. Continue."
-   - "Use the existing pattern from the codebase. Proceed."
-   - If the agent just needs a nudge, even just "Continue." or "Proceed with the next step." works.`;
+5. NEVER try to give the agent instructions or answer free-form questions. You can only press buttons or watch.
+
+6. The "content" field is for YOUR report to the human. It is never sent to the agent.`;
 
 // ============================================================
 // Core Functions
@@ -246,21 +239,8 @@ function parseNightWatchResponse(raw: string): NightWatchResponse {
 
   const parsed = JSON.parse(cleaned) as Record<string, unknown>;
 
-  const validActions: NightWatchAction[] = [
-    "continue",
-    "morehistory",
-    "complete",
-    "error",
-    "humanInput",
-  ];
-  const action = String(parsed.nextAction ?? "complete");
-  const nextAction = validActions.includes(action as NightWatchAction)
-    ? (action as NightWatchAction)
-    : "complete";
-
   const content = String(parsed.content ?? "No details provided.");
   const reasoning = String(parsed.reasoning ?? "");
-  const rawInputMode = String(parsed.inputMode ?? "queue").toLowerCase();
 
   // Validate inputRaw against the allowed enum
   const rawInputValue = parsed.inputRaw != null ? String(parsed.inputRaw).trim() : null;
@@ -269,72 +249,19 @@ function parseNightWatchResponse(raw: string): NightWatchResponse {
       ? (rawInputValue as NightWatchRawInput)
       : null;
 
-  // Only allow raw mode if inputRaw is valid — fall back to queue otherwise
-  const inputMode: NightWatchInputMode = rawInputMode === "raw" && inputRaw ? "raw" : "queue";
-
-  return { nextAction, content, reasoning, inputMode, inputRaw };
-}
-
-/**
- * Detect when the last agent message contains an interactive prompt
- * (numbered menu or yes/no) that the model failed to handle with raw mode.
- * Returns a corrected NightWatchResponse or null if no correction needed.
- */
-function detectInteractivePrompt(
-  messages: StoredMessage[],
-  original: NightWatchResponse,
-): NightWatchResponse | null {
-  // Look at the last 2 messages for interactive patterns
-  const tail = messages.slice(-2);
-  const lastContent = tail.map((m) => m.content).join("\n");
-
-  // Pattern: numbered menu like "1. Yes" / "2. No" / "> 1. Yes"
-  // Matches lines starting with optional ">", whitespace, then a digit 1-9 followed by ". "
-  const numberedMenuPattern = /^[\s>]*([1-9])\.\s+/gm;
-  const menuMatches = [...lastContent.matchAll(numberedMenuPattern)];
-
-  if (menuMatches.length >= 2) {
-    // It's a numbered menu — pick "1" (first/default option) unless the model's
-    // content hints at a specific number
-    let pick: NightWatchRawInput = "1";
-    const numberHint = original.content.match(/\b(?:option|choice|pick|select|go with|choose)\s*(\d)\b/i);
-    if (numberHint) {
-      const hinted = numberHint[1] as NightWatchRawInput;
-      if ((VALID_RAW_INPUTS as readonly string[]).includes(hinted)) {
-        pick = hinted;
-      }
-    }
-    return {
-      ...original,
-      inputMode: "raw",
-      inputRaw: pick,
-      reasoning: `[auto-corrected to raw] ${original.reasoning}`,
-    };
+  // Validate action: raw (with valid inputRaw), monitor, or humanInput
+  const action = String(parsed.nextAction ?? "monitor").toLowerCase();
+  let nextAction: NightWatchAction;
+  if (action === "raw" && inputRaw) {
+    nextAction = "raw";
+  } else if (action === "monitor" || action === "continue") {
+    // Accept "continue" as alias for "monitor" for backward compat with old custom prompts
+    nextAction = "monitor";
+  } else {
+    nextAction = "humanInput";
   }
 
-  // Pattern: yes/no confirmation like "(y/n)", "[Y/n]", "yes/no"
-  const yesNoPattern = /\(y\/n\)|\[Y\/n\]|\[y\/N\]|\byes\s*\/\s*no\b/i;
-  if (yesNoPattern.test(lastContent)) {
-    return {
-      ...original,
-      inputMode: "raw",
-      inputRaw: "y",
-      reasoning: `[auto-corrected to raw y/n] ${original.reasoning}`,
-    };
-  }
-
-  // Pattern: "Esc to cancel" / "Tab to amend" — Claude Code permission prompt
-  // These always have numbered options above
-  if (/Esc to cancel/i.test(lastContent) && /^\s*[1-9]\./m.test(lastContent)) {
-    return {
-      ...original,
-      inputMode: "raw",
-      inputRaw: "1",
-      reasoning: `[auto-corrected to raw: Claude permission prompt] ${original.reasoning}`,
-    };
-  }
-
-  return null;
+  return { nextAction, content, reasoning, inputRaw };
 }
 
 async function executeNightWatchReview(
@@ -388,25 +315,36 @@ async function executeNightWatchReview(
     return;
   }
 
-  // Post-process: detect interactive prompts the model missed
-  if (result.nextAction === "continue" && result.inputMode === "queue") {
-    const corrected = detectInteractivePrompt(allMessages, result);
-    if (corrected) {
-      console.log(`[nightwatch] Auto-corrected to raw mode: inputRaw="${corrected.inputRaw}" (was queue). Last message matched interactive pattern.`);
-      result = corrected;
-    }
-  }
-
   console.log(`[nightwatch] Session ${sessionId} -> action: ${result.nextAction}`);
 
-  // "morehistory" is no longer needed since we send full history,
-  // but handle it gracefully by treating as "continue" with a nudge
-  if (result.nextAction === "morehistory") {
-    console.log(`[nightwatch] Got morehistory but full history was already sent, treating as continue`);
-    result = { nextAction: "continue", content: "Continue with the current task.", reasoning: "Full history already provided, continuing.", inputMode: "queue", inputRaw: null };
+  // Stale raw input detection: if we're about to send raw input but the message
+  // count hasn't changed since the last raw input, the agent isn't responding to
+  // our keystrokes. After MAX_STALE_RAW_ATTEMPTS, force monitor instead.
+  if (result.nextAction === "raw") {
+    const staleState = lastRawMessageCounts.get(sessionId);
+    if (staleState && staleState.count === allMessages.length) {
+      staleState.attempts += 1;
+      if (staleState.attempts >= MAX_STALE_RAW_ATTEMPTS) {
+        console.log(
+          `[nightwatch] Session ${sessionId}: raw input sent ${staleState.attempts} times with no new messages (${allMessages.length}), switching to monitor`,
+        );
+        result = {
+          nextAction: "monitor",
+          content: `Raw input not advancing session (${staleState.attempts} attempts, ${allMessages.length} messages). Switching to monitor.`,
+          reasoning: "Stale raw input detection triggered.",
+          inputRaw: null,
+        };
+        lastRawMessageCounts.delete(sessionId);
+      }
+    } else {
+      lastRawMessageCounts.set(sessionId, { count: allMessages.length, attempts: 1 });
+    }
+  } else {
+    // Non-raw action — reset stale tracking
+    lastRawMessageCounts.delete(sessionId);
   }
 
-  // Create a report card for every cycle (including continue)
+  // Create a report card for every cycle
   const currentSession = deps.getSession(sessionId);
   const sessionName = currentSession?.name ?? null;
   const currentState = deps.store.getSessionState(sessionId);
@@ -419,52 +357,45 @@ async function executeNightWatchReview(
     status: result.nextAction as NightWatchReport["status"],
     summary: result.content,
     reasoning: result.reasoning || null,
-    inputMode: result.nextAction === "continue" ? result.inputMode : null,
-    inputRaw: result.nextAction === "continue" ? result.inputRaw : null,
+    inputMode: result.nextAction === "raw" ? "raw" : null,
+    inputRaw: result.nextAction === "raw" ? result.inputRaw : null,
     cycleCount,
   });
 
   // Act on the result
-  if (result.nextAction === "continue") {
+  if (result.nextAction === "raw" && result.inputRaw && currentSession) {
+    // Raw mode: send the validated inputRaw keystroke directly to terminal
     deps.store.incrementCycle(sessionId);
-
-    if (result.inputMode === "raw" && result.inputRaw && currentSession) {
-      // Raw mode: send the validated inputRaw keystroke directly to terminal
-      try {
-        const sent = await deps.sendRawInput(currentSession, result.inputRaw);
-        if (sent) {
-          console.log(`[nightwatch] Sent raw input to session ${sessionId}: "${result.inputRaw}" (reason: ${result.content.slice(0, 80)})`);
-          // Set cooldown so the sweep doesn't re-trigger before the agent processes the input
-          rawInputCooldowns.set(sessionId, Date.now());
-          if (deps.markDispatchCooldown) {
-            deps.markDispatchCooldown(sessionId);
-          }
-        } else {
-          console.warn(`[nightwatch] Failed to send raw input to session ${sessionId}`);
+    try {
+      const sent = await deps.sendRawInput(currentSession, result.inputRaw);
+      if (sent) {
+        console.log(`[nightwatch] Sent raw input to session ${sessionId}: "${result.inputRaw}" (reason: ${result.content.slice(0, 80)})`);
+        rawInputCooldowns.set(sessionId, Date.now());
+        if (deps.markDispatchCooldown) {
+          deps.markDispatchCooldown(sessionId);
         }
-      } catch (err) {
-        console.error(`[nightwatch] Raw input failed for session ${sessionId}:`, err);
+      } else {
+        console.warn(`[nightwatch] Failed to send raw input to session ${sessionId}`);
       }
-    } else {
-      // Queue mode: standard prompt queue dispatch
-      try {
-        deps.promptQueueStore.addPrompt(sessionId, { content: result.content });
-        console.log(`[nightwatch] Queued continuation prompt for session ${sessionId}: ${result.content.slice(0, 120)}`);
-        if (currentSession) {
-          deps.dispatchPrompt(currentSession);
-        }
-      } catch (err) {
-        console.error(`[nightwatch] Failed to queue prompt for session ${sessionId}:`, err);
-      }
+    } catch (err) {
+      console.error(`[nightwatch] Raw input failed for session ${sessionId}:`, err);
     }
     return;
   }
 
-  // Terminal actions: complete, error, humanInput — disable the session
+  if (result.nextAction === "monitor") {
+    // Agent is working fine — increment cycle, do nothing, check again next sweep
+    deps.store.incrementCycle(sessionId);
+    console.log(`[nightwatch] Session ${sessionId} monitoring: ${result.content.slice(0, 100)}`);
+    return;
+  }
+
+  // humanInput — disable nightwatch and notify the human
   rawInputCooldowns.delete(sessionId);
+  lastRawMessageCounts.delete(sessionId);
   deps.store.disableSession(sessionId);
   console.log(
-    `[nightwatch] Session ${sessionId} terminated with ${result.nextAction}: ${result.content.slice(0, 100)}`,
+    `[nightwatch] Session ${sessionId} needs human input: ${result.content.slice(0, 100)}`,
   );
 
   const terminalReport: NightWatchReport = {
@@ -472,10 +403,10 @@ async function executeNightWatchReview(
     sessionId,
     sessionName,
     workingDirectory: currentSession?.workingDirectory ?? null,
-    status: result.nextAction as NightWatchReport["status"],
+    status: "humanInput",
     summary: result.content,
     reasoning: result.reasoning || null,
-    inputMode: result.nextAction === "continue" ? result.inputMode : null,
+    inputMode: null,
     cycleCount,
     createdAt: new Date().toISOString(),
   };
@@ -546,8 +477,8 @@ export async function maybeTriggerNightWatch(
       sessionId: session.id,
       sessionName: session.name ?? null,
       workingDirectory: session.workingDirectory ?? null,
-      status: "complete",
-      summary: `Reached maximum cycle limit (${sessionState.maxCycles}).`,
+      status: "humanInput",
+      summary: `Reached maximum cycle limit (${sessionState.maxCycles}). Human review needed.`,
       reasoning: "Automatic stop: cycle limit reached.",
       cycleCount: sessionState.cycleCount,
     });
@@ -558,8 +489,8 @@ export async function maybeTriggerNightWatch(
       sessionId: session.id,
       sessionName: session.name ?? null,
       workingDirectory: session.workingDirectory ?? null,
-      status: "complete",
-      summary: `Reached maximum cycle limit (${sessionState.maxCycles}).`,
+      status: "humanInput",
+      summary: `Reached maximum cycle limit (${sessionState.maxCycles}). Human review needed.`,
       reasoning: "Automatic stop: cycle limit reached.",
       inputMode: null,
       cycleCount: sessionState.cycleCount,

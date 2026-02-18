@@ -156,9 +156,8 @@ function getPageTemplate() {
     </select>
     <select class="wm-select" x-model="$store.nightwatch.filterStatus">
       <option value="">All Statuses</option>
-      <option value="continue">Continue</option>
-      <option value="complete">Complete</option>
-      <option value="error">Error</option>
+      <option value="raw">Raw Input</option>
+      <option value="monitor">Monitor</option>
       <option value="humanInput">Human Input</option>
     </select>
   </div>
