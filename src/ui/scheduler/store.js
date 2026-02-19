@@ -86,7 +86,11 @@ export function initSchedulerStore({ showToast }) {
       try {
         const result = await createSchedulerJob(data);
         if (result.job) {
-          await JobStore.upsertMany([result.job]);
+          // Persist botPubkeyHex on the job record for nostr triggers
+          const job = result.botPubkeyHex
+            ? { ...result.job, botPubkeyHex: result.botPubkeyHex }
+            : result.job;
+          await JobStore.upsertMany([job]);
         }
         showToast("Trigger created");
         return result.job;
@@ -100,7 +104,10 @@ export function initSchedulerStore({ showToast }) {
       try {
         const result = await updateSchedulerJob(id, data);
         if (result.job) {
-          await JobStore.upsertMany([result.job]);
+          const job = result.botPubkeyHex
+            ? { ...result.job, botPubkeyHex: result.botPubkeyHex }
+            : result.job;
+          await JobStore.upsertMany([job]);
         }
         showToast("Trigger updated");
         return result.job;

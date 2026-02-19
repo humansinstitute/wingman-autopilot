@@ -152,6 +152,14 @@ export function initSchedulerPage({ showToast }) {
       return this.triggerType === "cron";
     },
 
+    get isNostr() {
+      return this.triggerType === "nostr";
+    },
+
+    get isFileWatcher() {
+      return this.triggerType === "file_watcher";
+    },
+
     get computedCron() {
       return buildCron(this.sched.frequency, this.sched.hour, this.sched.minute, this.sched.weekday);
     },
@@ -242,6 +250,14 @@ export function initSchedulerPage({ showToast }) {
       return this.editTriggerType === "cron";
     },
 
+    get editIsNostr() {
+      return this.editTriggerType === "nostr";
+    },
+
+    get editIsFileWatcher() {
+      return this.editTriggerType === "file_watcher";
+    },
+
     get editComputedCron() {
       return buildCron(this.editSched.frequency, this.editSched.hour, this.editSched.minute, this.editSched.weekday);
     },
@@ -299,7 +315,7 @@ export function initSchedulerPage({ showToast }) {
         if (this.editTriggerType === "cron") {
           payload.cronExpression = this.editComputedCron;
           payload.timezone = this.editForm.timezone;
-        } else {
+        } else if (this.editTriggerType === "file_watcher") {
           payload.watchDirectory = this.editForm.watchDirectory;
           payload.filePattern = this.editForm.filePattern;
         }
@@ -347,10 +363,11 @@ export function initSchedulerPage({ showToast }) {
         if (this.triggerType === "cron") {
           payload.cronExpression = this.computedCron;
           payload.timezone = this.form.timezone;
-        } else {
+        } else if (this.triggerType === "file_watcher") {
           payload.watchDirectory = this.form.watchDirectory;
           payload.filePattern = this.form.filePattern;
         }
+        // nostr triggers need no extra fields
         await this.$store.scheduler.create(payload);
         this.showForm = false;
         this.resetForm();
@@ -402,11 +419,21 @@ export function initSchedulerPage({ showToast }) {
     },
 
     describeTrigger(job) {
+      if (job.triggerType === "nostr") return "Nostr Remote Trigger";
       if (job.triggerType === "file_watcher") {
         const pat = job.filePattern && job.filePattern !== "*" ? ` (${job.filePattern})` : "";
         return `Watching: ${job.watchDirectory}${pat}`;
       }
       return describeCron(job.cronExpression);
+    },
+
+    async copyToClipboard(text, label) {
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast(`${label} copied`);
+      } catch {
+        showToast("Copy failed", { type: "error" });
+      }
     },
 
     statusColor(status) {
@@ -463,11 +490,14 @@ function getPageTemplate() {
       <!-- Trigger Type Selector -->
       <div style="display: flex; gap: 0.5rem; margin-bottom: 0.75rem;">
         <button type="button" class="wm-btn wm-btn--sm"
-          :class="isCron ? 'wm-btn--primary' : ''"
+          :class="triggerType === 'cron' ? 'wm-btn--primary' : ''"
           @click="triggerType = 'cron'">Schedule</button>
         <button type="button" class="wm-btn wm-btn--sm"
-          :class="!isCron ? 'wm-btn--primary' : ''"
+          :class="triggerType === 'file_watcher' ? 'wm-btn--primary' : ''"
           @click="triggerType = 'file_watcher'">File Watcher</button>
+        <button type="button" class="wm-btn wm-btn--sm"
+          :class="triggerType === 'nostr' ? 'wm-btn--primary' : ''"
+          @click="triggerType = 'nostr'">Nostr</button>
       </div>
 
       <!-- Row 1: Name + Agent -->
@@ -545,7 +575,7 @@ function getPageTemplate() {
       </template>
 
       <!-- Row 3b: File Watcher fields -->
-      <template x-if="!isCron">
+      <template x-if="isFileWatcher">
         <div style="margin-top: 0.75rem;">
           <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 0.75rem;">
             <div class="wm-form-group">
@@ -559,6 +589,16 @@ function getPageTemplate() {
               <input type="text" class="wm-input" x-model="form.filePattern" placeholder="*.json">
             </div>
           </div>
+        </div>
+      </template>
+
+      <!-- Row 3c: Nostr info -->
+      <template x-if="isNostr">
+        <div style="margin-top: 0.75rem; padding: 0.75rem; background: var(--bg-primary); border-radius: 6px; border: 1px solid var(--border-primary);">
+          <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0;">
+            Nostr triggers are activated by publishing a <strong>kind 9256</strong> event encrypted to your bot's pubkey.
+            After creating this trigger, you'll see the Trigger ID and Bot Pubkey needed to fire it remotely.
+          </p>
         </div>
       </template>
 
@@ -586,7 +626,7 @@ function getPageTemplate() {
       <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; border-top: 1px solid var(--border-primary); padding-top: 0.75rem;">
         <button type="button" class="wm-btn wm-btn--sm" @click="showForm = false; resetForm()">Cancel</button>
         <button type="button" class="wm-btn wm-btn--sm wm-btn--primary" @click="submitJob()"
-          :disabled="submitting || !form.name || !form.workingDirectory || !form.initialPrompt || (!isCron && !form.watchDirectory)">
+          :disabled="submitting || !form.name || !form.workingDirectory || !form.initialPrompt || (triggerType === 'file_watcher' && !form.watchDirectory)">
           <span x-text="submitting ? 'Creating\u2026' : 'Create Trigger'"></span>
         </button>
       </div>
@@ -627,7 +667,7 @@ function getPageTemplate() {
             </div>
             <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px;">
               <span x-text="job.workingDirectory" style="opacity: 0.8;"></span>
-              <template x-if="job.nextRunAt && job.triggerType !== 'file_watcher'">
+              <template x-if="job.nextRunAt && job.triggerType !== 'file_watcher' && job.triggerType !== 'nostr'">
                 <span> &middot; Next: <span x-text="formatTime(job.nextRunAt)"></span></span>
               </template>
               <template x-if="job.lastRunAt">
@@ -642,6 +682,38 @@ function getPageTemplate() {
           <button type="button" class="wm-btn wm-btn--sm" @click="triggerJob(job)" title="Run now">Trigger</button>
           <button type="button" class="wm-btn wm-btn--sm wm-btn--danger" @click="deleteJob(job)" title="Delete">&times;</button>
         </div>
+
+        <!-- Trigger Info (nostr jobs — always visible when not editing) -->
+        <template x-if="job.triggerType === 'nostr' && editingJobId !== job.id">
+          <div style="margin-top: 0.5rem; padding: 0.5rem 0.75rem; background: var(--bg-primary); border-radius: 6px; border: 1px solid var(--border-primary);">
+            <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem;">
+              <span style="font-size: 0.75rem; color: var(--text-secondary); min-width: 5rem;">Trigger ID</span>
+              <code style="font-size: 0.75rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" x-text="job.id"></code>
+              <button type="button" class="wm-btn wm-btn--sm" style="font-size: 0.7rem; padding: 2px 8px;"
+                @click="copyToClipboard(job.id, 'Trigger ID')">Copy</button>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span style="font-size: 0.75rem; color: var(--text-secondary); min-width: 5rem;">Bot Pubkey</span>
+              <code style="font-size: 0.75rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" x-text="job.botPubkeyHex || 'Loading\u2026'"></code>
+              <button type="button" class="wm-btn wm-btn--sm" style="font-size: 0.7rem; padding: 2px 8px;"
+                @click="copyToClipboard(job.botPubkeyHex, 'Bot Pubkey')" :disabled="!job.botPubkeyHex">Copy</button>
+            </div>
+          </div>
+        </template>
+
+        <!-- Trigger ID (non-nostr jobs — collapsible) -->
+        <template x-if="job.triggerType !== 'nostr' && editingJobId !== job.id">
+          <div style="margin-top: 0.5rem;">
+            <details>
+              <summary style="cursor: pointer; font-size: 0.8rem; color: var(--text-secondary);">Trigger ID</summary>
+              <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px;">
+                <code style="font-size: 0.75rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" x-text="job.id"></code>
+                <button type="button" class="wm-btn wm-btn--sm" style="font-size: 0.7rem; padding: 2px 8px;"
+                  @click="copyToClipboard(job.id, 'Trigger ID')">Copy</button>
+              </div>
+            </details>
+          </div>
+        </template>
 
         <!-- Prompt preview (shown when NOT editing) -->
         <template x-if="editingJobId !== job.id">
@@ -658,11 +730,14 @@ function getPageTemplate() {
             <!-- Trigger Type Selector -->
             <div style="display: flex; gap: 0.5rem; margin-bottom: 0.75rem;">
               <button type="button" class="wm-btn wm-btn--sm"
-                :class="editIsCron ? 'wm-btn--primary' : ''"
+                :class="editTriggerType === 'cron' ? 'wm-btn--primary' : ''"
                 @click="editTriggerType = 'cron'">Schedule</button>
               <button type="button" class="wm-btn wm-btn--sm"
-                :class="!editIsCron ? 'wm-btn--primary' : ''"
+                :class="editTriggerType === 'file_watcher' ? 'wm-btn--primary' : ''"
                 @click="editTriggerType = 'file_watcher'">File Watcher</button>
+              <button type="button" class="wm-btn wm-btn--sm"
+                :class="editTriggerType === 'nostr' ? 'wm-btn--primary' : ''"
+                @click="editTriggerType = 'nostr'">Nostr</button>
             </div>
 
             <!-- Row 1: Name + Agent -->
@@ -740,7 +815,7 @@ function getPageTemplate() {
             </template>
 
             <!-- Row 3b: File Watcher fields -->
-            <template x-if="!editIsCron">
+            <template x-if="editIsFileWatcher">
               <div style="margin-top: 0.75rem;">
                 <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 0.75rem;">
                   <div class="wm-form-group">
@@ -754,6 +829,15 @@ function getPageTemplate() {
                     <input type="text" class="wm-input" x-model="editForm.filePattern">
                   </div>
                 </div>
+              </div>
+            </template>
+
+            <!-- Row 3c: Nostr info -->
+            <template x-if="editIsNostr">
+              <div style="margin-top: 0.75rem; padding: 0.75rem; background: var(--bg-primary); border-radius: 6px; border: 1px solid var(--border-primary);">
+                <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0;">
+                  Nostr triggers are activated by publishing a <strong>kind 9256</strong> event encrypted to your bot's pubkey.
+                </p>
               </div>
             </template>
 
@@ -781,7 +865,7 @@ function getPageTemplate() {
             <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; border-top: 1px solid var(--border-primary); padding-top: 0.75rem;">
               <button type="button" class="wm-btn wm-btn--sm" @click="cancelEdit()">Cancel</button>
               <button type="button" class="wm-btn wm-btn--sm wm-btn--primary" @click="saveEdit()"
-                :disabled="editSubmitting || !editForm.name || !editForm.workingDirectory || !editForm.initialPrompt || (!editIsCron && !editForm.watchDirectory)">
+                :disabled="editSubmitting || !editForm.name || !editForm.workingDirectory || !editForm.initialPrompt || (editTriggerType === 'file_watcher' && !editForm.watchDirectory)">
                 <span x-text="editSubmitting ? 'Saving\u2026' : 'Save Changes'"></span>
               </button>
             </div>

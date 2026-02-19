@@ -53,7 +53,17 @@ function handleListJobs(
   userNpub: string,
 ): Response {
   const jobs = deps.store.listJobs(userNpub);
-  return Response.json({ jobs });
+
+  // Enrich nostr-type jobs with botPubkeyHex so the UI can display trigger info
+  const botKey = deps.botKeyStore.getActiveKeyForUser(userNpub);
+  const enriched = jobs.map((job) => {
+    if (job.triggerType === "nostr" && botKey) {
+      return { ...job, botPubkeyHex: botKey.botPubkeyHex };
+    }
+    return job;
+  });
+
+  return Response.json({ jobs: enriched });
 }
 
 /** POST /api/scheduler/jobs */
@@ -204,6 +214,14 @@ async function handleUpdateJob(
     deps.engine.scheduleJob(job);
   } else {
     deps.engine.unscheduleJob(job.id);
+  }
+
+  // Include botPubkeyHex for nostr-type jobs
+  if (job.triggerType === "nostr") {
+    const botKey = deps.botKeyStore.getActiveKeyForUser(userNpub);
+    if (botKey) {
+      return Response.json({ job, botPubkeyHex: botKey.botPubkeyHex });
+    }
   }
 
   return Response.json({ job });
