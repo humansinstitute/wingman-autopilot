@@ -3553,6 +3553,19 @@ const render = () => {
         }
       }
       const focusSnapshot = captureFocusSnapshot();
+
+      // Skip full DOM rebuild for pages that manage their own Alpine state
+      // to avoid destroying in-progress form edits
+      const stablePages = ["scheduler"];
+      if (!routeChanged && stablePages.includes(currentRoute)) {
+        setActiveNav();
+        syncMenuTabs();
+        syncDesktopSessionIndicator();
+        updateAgentStatusIndicators();
+        updateDocumentTitle();
+        return;
+      }
+
       appRoot.innerHTML = "";
       let view;
       if (currentRoute === "live") {
