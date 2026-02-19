@@ -921,6 +921,10 @@ const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   stopSession: async (sid) => (await manager.stopSession(sid)) ?? null,
   scheduleArchive: (sid) => scheduleSessionArchive(sid, manager),
   getSessionLogs: (sid) => manager.getLogs(sid),
+  getSessionMessages: async (sid) => {
+    const msgs = await syncSessionMessages(sid);
+    return (msgs ?? []).map((m) => ({ role: m.role, content: m.content, createdAt: m.createdAt }));
+  },
   listApps: () => appRegistry.listApps(),
   getAppStatus: (appId) => appProcessManager.getStatus(appId),
   runAppAction: (appId, action) => appProcessManager[action](appId),

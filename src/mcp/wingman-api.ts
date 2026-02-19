@@ -42,6 +42,7 @@ export interface WingmanMcpApiDependencies {
   stopSession: (sessionId: string) => Promise<SessionSnapshot | null>;
   scheduleArchive: (sessionId: string) => void;
   getSessionLogs: (sessionId: string) => Promise<string[] | undefined>;
+  getSessionMessages: (sessionId: string) => Promise<{ role: string; content: string; createdAt: string }[]>;
   listApps: () => Promise<AppRecord[]>;
   getAppStatus: (appId: string) => Promise<AppProcessStatus>;
   runAppAction: (appId: string, action: AppLifecycleAction) => Promise<AppProcessStatus>;
@@ -300,6 +301,19 @@ async function handleReadLogs(
   }
 
   if (source === "session") {
+    const messages = await deps.getSessionMessages(targetId);
+    if (messages.length > 0) {
+      const formatted = messages.map((m) => {
+        const truncated =
+          m.content.length > 2000
+            ? m.content.slice(0, 2000) + "... [truncated]"
+            : m.content;
+        return `[${m.role}] ${truncated}`;
+      });
+      const tail = formatted.slice(-lines);
+      return jsonOk({ source, id: targetId, lines: tail.length, logs: tail });
+    }
+    // Fall back to process logs if no conversation messages available
     const logs = await deps.getSessionLogs(targetId);
     if (!logs) {
       return jsonError("Session not found or has no logs", 404);
