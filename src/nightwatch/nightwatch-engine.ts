@@ -165,22 +165,11 @@ CRITICAL RULES:
 
 function buildNightWatchPrompt(
   systemPrompt: string,
-  firstMessages: StoredMessage[],
-  recentMessages: StoredMessage[],
+  latestMessage: StoredMessage,
 ): ChatMessage[] {
-  const goalSection = firstMessages.length > 0
-    ? firstMessages.map((m) => `[${m.role}]: ${m.content}`).join("\n")
-    : "(no initial messages available)";
-
-  const historySection = recentMessages.length > 0
-    ? recentMessages.map((m) => `[${m.role}]: ${m.content}`).join("\n")
-    : "(no messages available)";
-
-  const userMessage = `What are we trying to achieve:\n${goalSection}\n\nRecent conversation (last ${recentMessages.length} messages):\n${historySection}`;
-
   return [
     { role: "system", content: systemPrompt },
-    { role: "user", content: userMessage },
+    { role: "user", content: `[${latestMessage.role}]: ${latestMessage.content}` },
   ];
 }
 
@@ -285,18 +274,16 @@ async function executeNightWatchReview(
 
   const session = deps.getSession(sessionId);
 
-  // Only send the first 3 messages (goal context) and the latest message
-  const firstMessages = allMessages.slice(0, 3);
-  const recentMessages = allMessages.slice(-1);
+  const latestMessage = allMessages[allMessages.length - 1];
   const model = sessionState.model || NIGHTWATCH_DEFAULT_MODEL;
   const customPrompt = deps.store.getConfig("custom_prompt");
   const systemPrompt = customPrompt || NIGHTWATCH_DEFAULT_PROMPT;
 
   console.log(
-    `[nightwatch] Reviewing session ${sessionId} (cycle ${sessionState.cycleCount}/${sessionState.maxCycles}, model: ${model}, messages: ${allMessages.length}, sending latest${customPrompt ? ", custom prompt" : ""})`,
+    `[nightwatch] Reviewing session ${sessionId} (cycle ${sessionState.cycleCount}/${sessionState.maxCycles}, model: ${model}, messages: ${allMessages.length}, sending latest only${customPrompt ? ", custom prompt" : ""})`,
   );
 
-  const prompt = buildNightWatchPrompt(systemPrompt, firstMessages, recentMessages);
+  const prompt = buildNightWatchPrompt(systemPrompt, latestMessage);
   let rawResponse: string;
 
   try {
