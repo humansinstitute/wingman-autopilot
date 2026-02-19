@@ -47,7 +47,7 @@ export function startTaskListener(deps: TaskListenerDeps): () => void {
 
   console.log(`[task-listener] Subscribing to ${relays.length} relays for kind 9802 events (pubkey: ${pubkeyHex.slice(0, 12)}...)`);
 
-  const sub = pool.subscribeMany(
+  const sub = pool.subscribe(
     relays,
     { kinds: [9802], "#p": [pubkeyHex], since },
     {

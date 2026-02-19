@@ -103,16 +103,26 @@ function createTriggerListener(deps: TriggerListenerDeps) {
     const since = Math.floor(Date.now() / 1000);
 
     console.log(
-      `[trigger-listener] Subscribing for bot ${botPubkeyHex.slice(0, 12)}… (owner: ${ownerNpub.slice(0, 20)}…)`,
+      `[trigger-listener] Subscribing for bot ${botPubkeyHex.slice(0, 12)}… (owner: ${ownerNpub.slice(0, 20)}…) on ${deps.relays.length} relays: ${deps.relays.join(", ")}`,
+    );
+    console.log(
+      `[trigger-listener] Filter: kinds=[9256], #p=[${botPubkeyHex}], since=${since} (${new Date(since * 1000).toISOString()})`,
     );
 
-    const sub = pool.subscribeMany(
+    const sub = pool.subscribe(
       deps.relays,
       { kinds: [9256], "#p": [botPubkeyHex], since },
       {
         onevent(event) {
+          console.log(
+            `[trigger-listener] Received kind 9256 event ${event.id.slice(0, 12)}… from ${event.pubkey.slice(0, 12)}… (created_at: ${new Date(event.created_at * 1000).toISOString()})`,
+          );
+
           // Dedup across relays
-          if (processedEvents.has(event.id)) return;
+          if (processedEvents.has(event.id)) {
+            console.log(`[trigger-listener] Skipping duplicate event ${event.id.slice(0, 12)}…`);
+            return;
+          }
           processedEvents.add(event.id);
           cullDedup();
 
@@ -125,10 +135,12 @@ function createTriggerListener(deps: TriggerListenerDeps) {
           // Authorization: only the bot's owner can trigger
           if (event.pubkey !== ownerPubkeyHex) {
             console.warn(
-              `[trigger-listener] Unauthorized sender ${event.pubkey.slice(0, 12)}… (expected ${ownerPubkeyHex.slice(0, 12)}…)`,
+              `[trigger-listener] Unauthorized sender ${event.pubkey.slice(0, 12)}… (expected owner ${ownerPubkeyHex.slice(0, 12)}…)`,
             );
             return;
           }
+
+          console.log(`[trigger-listener] Auth OK — decrypting NIP-44 payload…`);
 
           // Decrypt NIP-44 content
           let payload: TriggerPayload;
@@ -139,6 +151,7 @@ function createTriggerListener(deps: TriggerListenerDeps) {
             );
             const decrypted = nip44.v2.decrypt(event.content, conversationKey);
             const parsed = JSON.parse(decrypted);
+            console.log(`[trigger-listener] Decrypted payload: trigger_id=${(parsed as any)?.trigger_id}, type=${(parsed as any)?.type}`);
 
             if (!isValidTriggerPayload(parsed)) {
               console.warn("[trigger-listener] Invalid payload shape, ignoring");
@@ -154,12 +167,14 @@ function createTriggerListener(deps: TriggerListenerDeps) {
           const job = deps.schedulerStore.getJob(payload.trigger_id);
           if (!job) {
             console.warn(`[trigger-listener] No job found for trigger_id=${payload.trigger_id}`);
+            const allJobs = deps.schedulerStore.listJobs();
+            console.warn(`[trigger-listener] Known jobs (${allJobs.length}): ${allJobs.map(j => `${j.id} (${j.triggerType})`).join(", ")}`);
             return;
           }
 
           // Validate: job belongs to the owner, is a nostr trigger, and is enabled
           if (job.userNpub !== ownerNpub) {
-            console.warn(`[trigger-listener] Job ${job.id} does not belong to sender`);
+            console.warn(`[trigger-listener] Job ${job.id} does not belong to sender (job owner: ${job.userNpub})`);
             return;
           }
           if (job.triggerType !== "nostr") {
@@ -182,7 +197,7 @@ function createTriggerListener(deps: TriggerListenerDeps) {
         },
         oneose() {
           console.log(
-            `[trigger-listener] Connected to relays for bot ${botPubkeyHex.slice(0, 12)}…`,
+            `[trigger-listener] EOSE — connected to relays for bot ${botPubkeyHex.slice(0, 12)}…, listening for new events`,
           );
         },
       },
