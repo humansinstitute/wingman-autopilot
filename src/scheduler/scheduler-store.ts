@@ -17,7 +17,7 @@ import { databaseFile } from "../storage/message-store";
 // Types
 // ============================================================
 
-export type TriggerType = "cron" | "file_watcher";
+export type TriggerType = "cron" | "file_watcher" | "nostr";
 
 export interface ScheduledJob {
   id: string;

@@ -27,6 +27,7 @@ import { normaliseNpub } from "./npub-utils";
 export interface BotKeyApiDependencies {
   store: BotKeyStore;
   getSession: (sessionId: string) => SessionSnapshot | undefined;
+  onBotKeyUnlocked?: (npub: string, secretKey: Uint8Array, botPubkeyHex: string) => void;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -220,6 +221,7 @@ async function handleUnlock(deps: BotKeyApiDependencies, request: Request): Resp
   }
 
   storeBotKeyInMemory(npub, secretKey, record.botPubkeyHex, "browser");
+  deps.onBotKeyUnlocked?.(npub, secretKey, record.botPubkeyHex);
 
   return Response.json({ unlocked: true, botNpub: record.botNpub });
 }
@@ -259,6 +261,7 @@ async function handleUnlockEscrow(deps: BotKeyApiDependencies, request: Request)
   try {
     const secretKey = unlockViaEscrow(record.encryptedEscrow, record.botPubkeyHex, escrowUuid);
     storeBotKeyInMemory(session.npub, secretKey, record.botPubkeyHex, "escrow");
+    deps.onBotKeyUnlocked?.(session.npub, secretKey, record.botPubkeyHex);
     return Response.json({ unlocked: true, botNpub: record.botNpub });
   } catch (err) {
     return jsonError(`Escrow unlock failed: ${(err as Error).message}`, 403);

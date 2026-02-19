@@ -42,6 +42,7 @@ export interface SchedulerEngineDeps {
   ) => Promise<SessionSnapshot>;
   addPrompt: (sessionId: string, content: string) => void;
   dispatchPrompt: (session: SessionSnapshot) => void;
+  onBotKeyUnlocked?: (npub: string, secretKey: Uint8Array, botPubkeyHex: string) => void;
 }
 
 // ============================================================
@@ -105,6 +106,11 @@ class SchedulerEngine {
   scheduleJob(job: ScheduledJob): void {
     // Remove existing schedule if present
     this.unscheduleJob(job.id);
+
+    if (job.triggerType === "nostr") {
+      // Nostr triggers are handled by the trigger listener, not scheduled
+      return;
+    }
 
     if (job.triggerType === "file_watcher") {
       this.startFileWatcher(job);
@@ -203,9 +209,36 @@ class SchedulerEngine {
   }
 
   /**
+   * Trigger a job with an appended message (used by Nostr triggers).
+   * Composes the prompt as `initialPrompt + "\n\n" + message`.
+   */
+  async executeJobWithMessage(jobId: string, message?: string): Promise<string> {
+    const job = this.deps.store.getJob(jobId);
+    if (!job) throw new Error(`Job ${jobId} not found`);
+
+    const promptOverride = message
+      ? `${job.initialPrompt}\n\n${message}`
+      : undefined;
+
+    const now = new Date();
+    const dd = String(now.getDate()).padStart(2, "0");
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const hh = String(now.getHours()).padStart(2, "0");
+    const min = String(now.getMinutes()).padStart(2, "0");
+    const sessionNamePrefix = `[nostr] ${job.name} ${dd}/${mm} ${hh}:${min}`;
+
+    return this.onJobTriggered(jobId, promptOverride, { type: "nostr", id: jobId }, sessionNamePrefix);
+  }
+
+  /**
    * Core execution flow when a job triggers.
    */
-  private async onJobTriggered(jobId: string): Promise<string> {
+  private async onJobTriggered(
+    jobId: string,
+    promptOverride?: string,
+    originOverride?: SessionOrigin,
+    sessionNameOverride?: string,
+  ): Promise<string> {
     // Reload job from DB to get latest state
     const job = this.deps.store.getJob(jobId);
     if (!job) {
@@ -238,26 +271,33 @@ class SchedulerEngine {
           escrowUuid,
         );
         storeBotKeyInMemory(job.userNpub, secretKey, botKey.botPubkeyHex, "escrow");
+        this.deps.onBotKeyUnlocked?.(job.userNpub, secretKey, botKey.botPubkeyHex);
       }
 
       // 3. Create session with explicit npub
-      const now = new Date();
-      const dd = String(now.getDate()).padStart(2, "0");
-      const mm = String(now.getMonth() + 1).padStart(2, "0");
-      const hh = String(now.getHours()).padStart(2, "0");
-      const min = String(now.getMinutes()).padStart(2, "0");
-      const sessionName = `[sched] ${job.name} ${dd}/${mm} ${hh}:${min}`;
+      let sessionName: string;
+      if (sessionNameOverride) {
+        sessionName = sessionNameOverride;
+      } else {
+        const now = new Date();
+        const dd = String(now.getDate()).padStart(2, "0");
+        const mm = String(now.getMonth() + 1).padStart(2, "0");
+        const hh = String(now.getHours()).padStart(2, "0");
+        const min = String(now.getMinutes()).padStart(2, "0");
+        sessionName = `[sched] ${job.name} ${dd}/${mm} ${hh}:${min}`;
+      }
+      const origin = originOverride ?? { type: "scheduler" as const, id: job.id };
       const session = await this.deps.createSession(
         job.agent as AgentType,
         job.workingDirectory,
         sessionName,
-        { type: "scheduler", id: job.id },
+        origin,
         undefined,
         job.userNpub,
       );
 
-      // 4. Inject initial prompt
-      this.deps.addPrompt(session.id, job.initialPrompt);
+      // 4. Inject initial prompt (or override)
+      this.deps.addPrompt(session.id, promptOverride ?? job.initialPrompt);
 
       // 5. Enable Night Watchman if configured
       if (job.nightwatchmanEnabled) {

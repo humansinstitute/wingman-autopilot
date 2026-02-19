@@ -133,6 +133,7 @@ import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import { SchedulerStore } from "./scheduler/scheduler-store";
 import { SchedulerEngine } from "./scheduler/scheduler-engine";
 import { createSchedulerApiHandler } from "./scheduler/scheduler-api";
+import { createTriggerListener, type TriggerListener } from "./nostr/trigger-listener";
 import {
   clearWarmRestartMarker,
   loadWarmRestartMarker,
@@ -318,6 +319,16 @@ const nightWatchApiHandler = createNightWatchApiHandler({
 });
 const botKeyStore = new BotKeyStore();
 const schedulerStore = new SchedulerStore();
+const triggerListener: TriggerListener = createTriggerListener({
+  schedulerStore,
+  relays: config.connectRelays,
+  onTriggerMatched: async (job, message) => {
+    await schedulerEngine.executeJobWithMessage(job.id, message || undefined);
+  },
+});
+function onBotKeyUnlockedHook(npub: string, secretKey: Uint8Array, botPubkeyHex: string): void {
+  triggerListener.subscribe(npub, secretKey, botPubkeyHex);
+}
 const schedulerEngine = new SchedulerEngine({
   store: schedulerStore,
   botKeyStore,
@@ -328,6 +339,7 @@ const schedulerEngine = new SchedulerEngine({
   dispatchPrompt: (session) => {
     void maybeAutoDispatchQueuedPrompt(session);
   },
+  onBotKeyUnlocked: onBotKeyUnlockedHook,
 });
 const schedulerApiHandler = createSchedulerApiHandler({
   store: schedulerStore,
@@ -382,6 +394,7 @@ const superbasedApiHandler = createSuperbasedApiHandler({
 const botKeyApiHandler = createBotKeyApiHandler({
   store: botKeyStore,
   getSession: (sid: string) => manager.getSession(sid),
+  onBotKeyUnlocked: onBotKeyUnlockedHook,
 });
 const botCryptoApiHandler = createBotCryptoApiHandler({
   getSession: (sid: string) => manager.getSession(sid),
@@ -1788,6 +1801,7 @@ manager.on((event) => {
         );
         if (!otherActive) {
           clearBotKey(userNpub);
+          triggerListener.unsubscribe(userNpub);
         }
       }
     }
@@ -7506,6 +7520,12 @@ const initiateShutdown = async (reason: string) => {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[shutdown] initiated by ${reason}. Shutting down services...`);
+
+  try {
+    triggerListener.shutdown();
+  } catch (error) {
+    console.warn(`[shutdown] failed to stop trigger listener: ${error instanceof Error ? error.message : String(error)}`);
+  }
 
   try {
     schedulerEngine.stop();

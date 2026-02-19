@@ -69,7 +69,11 @@ async function handleCreateJob(
   const agent = typeof body.agent === "string" ? body.agent.trim() : "";
   const workingDirectory = typeof body.workingDirectory === "string" ? body.workingDirectory.trim() : "";
   const initialPrompt = typeof body.initialPrompt === "string" ? body.initialPrompt.trim() : "";
-  const triggerType = body.triggerType === "file_watcher" ? "file_watcher" as const : "cron" as const;
+  const triggerType = body.triggerType === "file_watcher"
+    ? "file_watcher" as const
+    : body.triggerType === "nostr"
+      ? "nostr" as const
+      : "cron" as const;
   const cronExpression = typeof body.cronExpression === "string" ? body.cronExpression.trim() : "";
   const timezone = typeof body.timezone === "string" ? body.timezone.trim() : "UTC";
   const watchDirectory = typeof body.watchDirectory === "string" ? body.watchDirectory.trim() : "";
@@ -92,13 +96,14 @@ async function handleCreateJob(
     if (!validateCronExpression(cronExpression)) {
       return Response.json({ error: "Invalid cron expression" }, { status: 400 });
     }
-  } else {
+  } else if (triggerType === "file_watcher") {
     if (!watchDirectory) return Response.json({ error: "watchDirectory is required for file watcher triggers" }, { status: 400 });
     const watchResult = PathSchema.safeParse(watchDirectory);
     if (!watchResult.success) {
       return Response.json({ error: watchResult.error.issues[0]?.message ?? "Invalid watchDirectory" }, { status: 400 });
     }
   }
+  // nostr triggers need no cron expression or watch directory
 
   // Lookup bot key for wrapping
   const botKey = deps.botKeyStore.getActiveKeyForUser(userNpub);
@@ -133,7 +138,9 @@ async function handleCreateJob(
   // Schedule it
   deps.engine.scheduleJob(job);
 
-  return Response.json({ job }, { status: 201 });
+  // For nostr triggers, include the bot pubkey hex so external apps know where to send events
+  const extra = triggerType === "nostr" ? { botPubkeyHex: botKey.botPubkeyHex } : {};
+  return Response.json({ job, ...extra }, { status: 201 });
 }
 
 /** PATCH /api/scheduler/jobs/:id */
@@ -167,7 +174,7 @@ async function handleUpdateJob(
   }
   if (typeof body.initialPrompt === "string") update.initialPrompt = body.initialPrompt.trim();
   if (typeof body.nightwatchmanEnabled === "boolean") update.nightwatchmanEnabled = body.nightwatchmanEnabled;
-  if (body.triggerType === "cron" || body.triggerType === "file_watcher") {
+  if (body.triggerType === "cron" || body.triggerType === "file_watcher" || body.triggerType === "nostr") {
     update.triggerType = body.triggerType;
   }
   if (typeof body.cronExpression === "string") {
