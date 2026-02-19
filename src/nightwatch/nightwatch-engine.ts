@@ -285,15 +285,15 @@ async function executeNightWatchReview(
 
   const session = deps.getSession(sessionId);
 
-  // Only send the first 3 messages (goal context) and last 5 agent messages
+  // Only send the first 3 messages (goal context) and the latest message
   const firstMessages = allMessages.slice(0, 3);
-  const recentMessages = allMessages.slice(-5);
+  const recentMessages = allMessages.slice(-1);
   const model = sessionState.model || NIGHTWATCH_DEFAULT_MODEL;
   const customPrompt = deps.store.getConfig("custom_prompt");
   const systemPrompt = customPrompt || NIGHTWATCH_DEFAULT_PROMPT;
 
   console.log(
-    `[nightwatch] Reviewing session ${sessionId} (cycle ${sessionState.cycleCount}/${sessionState.maxCycles}, model: ${model}, messages: ${allMessages.length}, sending last 5${customPrompt ? ", custom prompt" : ""})`,
+    `[nightwatch] Reviewing session ${sessionId} (cycle ${sessionState.cycleCount}/${sessionState.maxCycles}, model: ${model}, messages: ${allMessages.length}, sending latest${customPrompt ? ", custom prompt" : ""})`,
   );
 
   const prompt = buildNightWatchPrompt(systemPrompt, firstMessages, recentMessages);
