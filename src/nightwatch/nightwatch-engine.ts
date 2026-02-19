@@ -103,6 +103,10 @@ const rawInputCooldowns = new Map<string, number>();
 const lastRawMessageCounts = new Map<string, { count: number; attempts: number }>();
 const MAX_STALE_RAW_ATTEMPTS = 3;
 
+// Track last reviewed message to avoid burning API calls on unchanged state
+const lastReviewedMessageId = new Map<string, { messageId: string; reviewCount: number }>();
+const MAX_SAME_MESSAGE_REVIEWS = 3;
+
 // ============================================================
 // System Prompt
 // ============================================================
@@ -232,19 +236,33 @@ function parseNightWatchResponse(raw: string): NightWatchResponse {
   const reasoning = String(parsed.reasoning ?? "");
 
   // Validate inputRaw against the allowed enum
-  const rawInputValue = parsed.inputRaw != null ? String(parsed.inputRaw).trim() : null;
-  const inputRaw: NightWatchRawInput | null =
+  let rawInputValue = parsed.inputRaw != null ? String(parsed.inputRaw).trim() : null;
+  let inputRaw: NightWatchRawInput | null =
     rawInputValue && (VALID_RAW_INPUTS as readonly string[]).includes(rawInputValue)
       ? (rawInputValue as NightWatchRawInput)
       : null;
 
+  // Rescue: if inputRaw is missing but the content/summary is a single valid keystroke,
+  // the model likely intended to send raw input but put it in the wrong field.
+  // Also catch action "send" which some models use instead of "raw".
+  if (!inputRaw) {
+    const contentTrimmed = content.trim();
+    if ((VALID_RAW_INPUTS as readonly string[]).includes(contentTrimmed)) {
+      inputRaw = contentTrimmed as NightWatchRawInput;
+      rawInputValue = contentTrimmed;
+    }
+  }
+
   // Validate action: raw (with valid inputRaw), monitor, or humanInput
   const action = String(parsed.nextAction ?? "monitor").toLowerCase();
   let nextAction: NightWatchAction;
-  if (action === "raw" && inputRaw) {
+  if ((action === "raw" || action === "send") && inputRaw) {
+    nextAction = "raw";
+  } else if (inputRaw && (action === "monitor" || action === "continue")) {
+    // Model said "monitor" but provided a keystroke — it meant to send raw input.
+    // This catches the common misformat: { nextAction: "monitor", content: "2" }
     nextAction = "raw";
   } else if (action === "monitor" || action === "continue") {
-    // Accept "continue" as alias for "monitor" for backward compat with old custom prompts
     nextAction = "monitor";
   } else {
     nextAction = "humanInput";
@@ -270,6 +288,22 @@ async function executeNightWatchReview(
   if (allMessages.length === 0) {
     console.log(`[nightwatch] No messages for session ${sessionId}, skipping`);
     return;
+  }
+
+  // Dedup: if we've already reviewed this exact message multiple times,
+  // the agent isn't progressing — stop wasting API calls
+  const latestMsgId = allMessages[allMessages.length - 1].id;
+  const lastReviewed = lastReviewedMessageId.get(sessionId);
+  if (lastReviewed && lastReviewed.messageId === latestMsgId) {
+    lastReviewed.reviewCount += 1;
+    if (lastReviewed.reviewCount > MAX_SAME_MESSAGE_REVIEWS) {
+      console.log(
+        `[nightwatch] Session ${sessionId}: same message reviewed ${lastReviewed.reviewCount} times, skipping until new activity`,
+      );
+      return;
+    }
+  } else {
+    lastReviewedMessageId.set(sessionId, { messageId: latestMsgId, reviewCount: 1 });
   }
 
   const session = deps.getSession(sessionId);
@@ -358,6 +392,7 @@ async function executeNightWatchReview(
       if (sent) {
         console.log(`[nightwatch] Sent raw input to session ${sessionId}: "${result.inputRaw}" (reason: ${result.content.slice(0, 80)})`);
         rawInputCooldowns.set(sessionId, Date.now());
+        lastReviewedMessageId.delete(sessionId); // Reset dedup — expect new messages
         if (deps.markDispatchCooldown) {
           deps.markDispatchCooldown(sessionId);
         }
