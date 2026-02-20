@@ -124,9 +124,23 @@ export class ProcessManager {
   private readonly allocatedPorts = new Set<number>();
   private readonly listeners = new Set<(event: SessionEvent) => void>();
   private readonly adminNpub = normaliseNpub(Bun.env.ADMIN_NPUB ?? null);
+  private botKeyStore: BotKeyStore | null | undefined;
 
   constructor(config: WingmanConfig) {
     this.config = config;
+  }
+
+  private getBotKeyStore(): BotKeyStore | null {
+    if (this.botKeyStore !== undefined) {
+      return this.botKeyStore;
+    }
+    try {
+      this.botKeyStore = new BotKeyStore();
+    } catch (error) {
+      this.botKeyStore = null;
+      console.warn(`[manager] bot key store init failed (non-fatal): ${(error as Error).message}`);
+    }
+    return this.botKeyStore;
   }
 
   on(listener: (event: SessionEvent) => void): () => void {
@@ -168,6 +182,7 @@ export class ProcessManager {
     targetFile?: string,
     explicitNpub?: string,
   ): Promise<SessionSnapshot> {
+    const launchStartedAt = Date.now();
     const definition = this.config.agents[agent];
     if (!definition) {
       throw new Error(`Unknown agent: ${agent}`);
@@ -216,15 +231,21 @@ export class ProcessManager {
     this.sessions.set(id, session);
     this.emit({ type: "session-started", session: this.toSnapshot(session) });
 
+    let botKeyLookupMs = 0;
+    let mcpInjectMs = 0;
+    let giteaInjectMs = 0;
+    let spawnMs = 0;
+
     // Inject MCP config so the agent discovers the Wingman MCP server
     try {
+      const botKeyLookupStartedAt = Date.now();
       // Look up bot identity for this user's session
       let botPubkeyHex: string | undefined;
       let botNpub: string | undefined;
       if (npub) {
         try {
-          const botKeyStore = new BotKeyStore();
-          const botKey = botKeyStore.getActiveKeyForUser(npub);
+          const botKeyStore = this.getBotKeyStore();
+          const botKey = botKeyStore?.getActiveKeyForUser(npub) ?? null;
           if (botKey) {
             botPubkeyHex = botKey.botPubkeyHex;
             botNpub = botKey.botNpub;
@@ -233,6 +254,8 @@ export class ProcessManager {
           // Non-fatal: bot key lookup may fail if DB not initialized
         }
       }
+      botKeyLookupMs = Date.now() - botKeyLookupStartedAt;
+      const mcpInjectStartedAt = Date.now();
       const mcpResult = await injectMcpConfig({
         sessionId: id,
         agent,
@@ -251,6 +274,7 @@ export class ProcessManager {
       if (Array.isArray(mcpResult.commandArgs) && mcpResult.commandArgs.length > 0) {
         session.command = [...session.command, ...mcpResult.commandArgs];
       }
+      mcpInjectMs = Date.now() - mcpInjectStartedAt;
     } catch (mcpError) {
       this.appendLog(session, `[manager] MCP config injection failed (non-fatal): ${(mcpError as Error).message}`);
     }
@@ -259,6 +283,7 @@ export class ProcessManager {
     // Uses per-user credentials when available, falls back to admin (wm21)
     if (this.config.giteaUrl && this.config.giteaApiToken && this.config.giteaOwner) {
       try {
+        const giteaInjectStartedAt = Date.now();
         const giteaCreds = resolveGiteaCredentials(npub, this.config);
         if (giteaCreds) {
           const dataDir = new URL("../../data", import.meta.url).pathname;
@@ -280,20 +305,28 @@ export class ProcessManager {
             this.appendLog(session, `[manager] Gitea credentials configured for ${giteaCreds.owner}@${this.config.giteaUrl}`);
           }
         }
+        giteaInjectMs = Date.now() - giteaInjectStartedAt;
       } catch (giteaError) {
         this.appendLog(session, `[manager] Gitea credential setup failed (non-fatal): ${(giteaError as Error).message}`);
       }
     }
 
     try {
+      const spawnStartedAt = Date.now();
       if (this.config.agentSpawnMode === "pm2") {
         await this.spawnAgentProcessViaPM2(session);
       } else {
         session.process = this.spawnAgentProcess(session);
         await this.monitorSession(session);
       }
+      spawnMs = Date.now() - spawnStartedAt;
       session.status = "running";
       this.emit({ type: "session-updated", session: this.toSnapshot(session) });
+      const totalLaunchMs = Date.now() - launchStartedAt;
+      console.log(
+        `[manager] session ${id} (${agent}:${port}) launch timings total=${totalLaunchMs}ms ` +
+          `botKey=${botKeyLookupMs}ms mcp=${mcpInjectMs}ms gitea=${giteaInjectMs}ms spawn=${spawnMs}ms`,
+      );
     } catch (error) {
       session.status = "error";
       this.appendLog(session, `[manager] failed to launch session: ${(error as Error).message}`);
