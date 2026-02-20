@@ -4242,6 +4242,30 @@ dialog textarea {
   padding-bottom: 0.25rem;
 }
 
+.wm-identity-primary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.9rem;
+  margin-top: 0.65rem;
+}
+
+.wm-identity-option {
+  border: 1px solid var(--border-primary);
+  border-radius: 0.75rem;
+  background: var(--bg-secondary);
+  padding: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.wm-identity-option__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
 .wm-identity-alias {
   margin: 0;
   font-size: 1.4rem;
@@ -4386,18 +4410,8 @@ dialog textarea {
 
 /* Key Teleport login section */
 .wm-identity-keyteleport {
-  margin-top: 1.25rem;
-  padding: 1rem;
-  border: 1px solid var(--border-primary);
-  border-radius: 0.75rem;
-  background: var(--bg-secondary);
-}
-
-.wm-identity-keyteleport__title {
-  margin: 0 0 0.5rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text-primary);
+  margin-top: 0;
+  padding: 0.9rem;
 }
 
 .wm-card[data-authenticated="true"] .wm-identity-keyteleport {
@@ -4656,12 +4670,20 @@ dialog textarea {
 .wm-identity-secret-field {
   flex: 1;
   min-width: 0;
-  border-radius: 0.6rem;
-  border: 1px solid rgba(16, 185, 129, 0.3);
-  background: var(--bg-tertiary);
+  border-radius: 0.35rem;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-primary);
   color: var(--text-primary);
-  padding: 0.6rem 0.75rem;
+  padding: 0.55rem 0.7rem;
   font-family: "JetBrains Mono", "SF Mono", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+}
+
+.wm-identity-input-flat {
+  border: 1px solid var(--border-primary);
+  border-radius: 0.35rem;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  padding: 0.55rem 0.7rem;
 }
 
 .wm-identity-toggle-secret {
