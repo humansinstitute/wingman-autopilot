@@ -18,6 +18,8 @@ import { bytesToHex } from "@noble/hashes/utils";
 
 import { nip44Encrypt, nip44Decrypt } from "../superbased/nip44-crypto";
 import { getKeyTeleportIdentity } from "../config";
+import { signBotProfileEvent, getBotDisplayName } from "./bot-identity-publisher";
+import type { SignedNostrEvent } from "./bot-identity-publisher";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -29,6 +31,8 @@ export interface GeneratedBotKey {
   encryptedToUser: string;
   encryptedEscrow: string;
   escrowUuid: string;
+  displayName: string;
+  signedProfileEvent: SignedNostrEvent;
 }
 
 export interface UnlockedBotKey {
@@ -97,6 +101,10 @@ export function generateBotKey(userPubkeyHex: string): GeneratedBotKey {
   const escrowSecret = deriveEscrowSecret(identity.secretKey, escrowUuid);
   const encryptedEscrow = nip44Encrypt(nsecHex, escrowSecret, botPubkeyHex);
 
+  // Sign kind 0 profile event BEFORE wiping the secret key
+  const displayName = getBotDisplayName(botPubkeyHex);
+  const signedProfileEvent = signBotProfileEvent(botSecret, displayName);
+
   // Wipe raw secret from memory
   botSecret.fill(0);
 
@@ -106,6 +114,8 @@ export function generateBotKey(userPubkeyHex: string): GeneratedBotKey {
     encryptedToUser,
     encryptedEscrow,
     escrowUuid,
+    displayName,
+    signedProfileEvent,
   };
 }
 

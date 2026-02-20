@@ -17,6 +17,7 @@ import {
   getDecryptedBotKey,
   isBotKeyUnlocked,
 } from "./bot-key-manager";
+import { buildDelegateRegistryTemplate, getBotDisplayName } from "./bot-identity-publisher";
 import type { SessionSnapshot } from "../agents/process-manager";
 import { normaliseNpub } from "./npub-utils";
 
@@ -118,6 +119,11 @@ export function createBotKeyApiHandler(deps: BotKeyApiDependencies) {
         return await handleReplace(deps, request);
       }
 
+      // GET /api/bot-keys/delegate-registry
+      if (segments.length === 3 && segments[2] === "delegate-registry" && method === "GET") {
+        return handleDelegateRegistry(deps, request);
+      }
+
       return jsonError("Not found", 404);
     } catch (err) {
       console.error("[bot-key-api] Error:", err);
@@ -150,6 +156,7 @@ function handleGetMe(deps: BotKeyApiDependencies, request: Request): Response {
     hasKey: true,
     botNpub: record.botNpub,
     botPubkeyHex: record.botPubkeyHex,
+    displayName: record.displayName || getBotDisplayName(record.botPubkeyHex),
     unlocked: isBotKeyUnlocked(npub),
     createdAt: record.createdAt,
   });
@@ -332,12 +339,13 @@ async function handleReplace(deps: BotKeyApiDependencies, request: Request): Res
     deps.store.deactivateKey(existing.id);
   }
 
-  // Generate new keypair
+  // Generate new keypair (also signs kind 0 profile event)
   const generated = generateBotKey(userPubkeyHex);
   const record = deps.store.createKey({
     userNpub: npub,
     botPubkeyHex: generated.botPubkeyHex,
     botNpub: generated.botNpub,
+    displayName: generated.displayName,
     encryptedToUser: generated.encryptedToUser,
     encryptedEscrow: generated.encryptedEscrow,
     escrowUuid: generated.escrowUuid,
@@ -347,5 +355,46 @@ async function handleReplace(deps: BotKeyApiDependencies, request: Request): Res
     replaced: true,
     botNpub: record.botNpub,
     botPubkeyHex: record.botPubkeyHex,
+    displayName: generated.displayName,
+    signedProfileEvent: generated.signedProfileEvent,
+  });
+}
+
+/**
+ * GET /api/bot-keys/delegate-registry
+ *
+ * Returns an unsigned kind 30078 event template listing the user's bot
+ * delegates. The browser signs it with NIP-07 and publishes to relays.
+ */
+function handleDelegateRegistry(deps: BotKeyApiDependencies, request: Request): Response {
+  const npub = getNpubFromCookie(request);
+  if (!npub) {
+    return jsonError("Not authenticated — session cookie required", 401);
+  }
+
+  const record = deps.store.getActiveKeyForUser(npub);
+  if (!record) {
+    return jsonError("No active bot key for this user", 404);
+  }
+
+  const displayName = record.displayName || getBotDisplayName(record.botPubkeyHex);
+
+  const template = buildDelegateRegistryTemplate([
+    {
+      pubkey: record.botPubkeyHex,
+      name: displayName,
+      active: true,
+    },
+  ]);
+
+  return Response.json({
+    eventTemplate: template,
+    delegates: [
+      {
+        pubkey: record.botPubkeyHex,
+        npub: record.botNpub,
+        name: displayName,
+      },
+    ],
   });
 }

@@ -25,6 +25,7 @@ export interface BotKeyRecord {
   userNpub: string;
   botPubkeyHex: string;
   botNpub: string;
+  displayName: string;
   encryptedToUser: string;
   encryptedEscrow: string;
   escrowUuid: string;
@@ -37,6 +38,7 @@ export interface CreateBotKeyInput {
   userNpub: string;
   botPubkeyHex: string;
   botNpub: string;
+  displayName: string;
   encryptedToUser: string;
   encryptedEscrow: string;
   escrowUuid: string;
@@ -65,6 +67,7 @@ class BotKeyStore {
            user_npub AS userNpub,
            bot_pubkey_hex AS botPubkeyHex,
            bot_npub AS botNpub,
+           COALESCE(display_name, '') AS displayName,
            encrypted_to_user AS encryptedToUser,
            encrypted_escrow AS encryptedEscrow,
            escrow_uuid AS escrowUuid,
@@ -85,16 +88,17 @@ class BotKeyStore {
     this.db
       .query(
         `INSERT INTO bot_keys (
-           id, user_npub, bot_pubkey_hex, bot_npub,
+           id, user_npub, bot_pubkey_hex, bot_npub, display_name,
            encrypted_to_user, encrypted_escrow, escrow_uuid,
            is_active, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9)`,
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9, ?10)`,
       )
       .run(
         id,
         input.userNpub,
         input.botPubkeyHex,
         input.botNpub,
+        input.displayName,
         input.encryptedToUser,
         input.encryptedEscrow,
         input.escrowUuid,
@@ -137,6 +141,7 @@ class BotKeyStore {
            user_npub AS userNpub,
            bot_pubkey_hex AS botPubkeyHex,
            bot_npub AS botNpub,
+           COALESCE(display_name, '') AS displayName,
            encrypted_to_user AS encryptedToUser,
            encrypted_escrow AS encryptedEscrow,
            escrow_uuid AS escrowUuid,
@@ -157,6 +162,7 @@ class BotKeyStore {
         user_npub TEXT NOT NULL,
         bot_pubkey_hex TEXT NOT NULL,
         bot_npub TEXT NOT NULL,
+        display_name TEXT NOT NULL DEFAULT '',
         encrypted_to_user TEXT NOT NULL,
         encrypted_escrow TEXT NOT NULL,
         escrow_uuid TEXT NOT NULL,
@@ -168,6 +174,13 @@ class BotKeyStore {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_keys_user_active
         ON bot_keys(user_npub) WHERE is_active = 1;
     `);
+
+    // Migration: add display_name column to existing tables
+    try {
+      this.db.exec(`ALTER TABLE bot_keys ADD COLUMN display_name TEXT NOT NULL DEFAULT ''`);
+    } catch {
+      // Column already exists — expected after first migration
+    }
   }
 }
 
