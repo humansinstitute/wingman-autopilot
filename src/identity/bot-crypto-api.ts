@@ -11,6 +11,7 @@ import { finalizeEvent } from "nostr-tools";
 import { getDecryptedBotKey } from "./bot-key-manager";
 import { nip44Encrypt, nip44Decrypt } from "../superbased/nip44-crypto";
 import type { SessionSnapshot } from "../agents/process-manager";
+import { RateLimiter } from "../security/rate-limiter";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -43,6 +44,19 @@ async function parseBody(request: Request): Promise<Record<string, unknown>> {
 }
 
 // ---------------------------------------------------------------------------
+// Rate limiters (W3 security)
+// ---------------------------------------------------------------------------
+
+/** 60 sign-event calls per minute per session. */
+const signEventLimiter = new RateLimiter({ maxCalls: 60, windowMs: 60_000 });
+
+/** 120 encrypt/decrypt calls per minute per session. */
+const cryptoLimiter = new RateLimiter({ maxCalls: 120, windowMs: 60_000 });
+
+/** 300 total crypto calls per minute across all sessions. */
+const globalCryptoLimiter = new RateLimiter({ maxCalls: 300, windowMs: 60_000 });
+
+// ---------------------------------------------------------------------------
 // Handler factory
 // ---------------------------------------------------------------------------
 
@@ -62,17 +76,17 @@ export function createBotCryptoApiHandler(deps: BotCryptoApiDependencies) {
     try {
       // POST /api/mcp/bot-crypto/encrypt
       if (segments.length === 4 && segments[3] === "encrypt" && method === "POST") {
-        return await handleEncrypt(deps, request);
+        return await withRateLimit(request, deps, "encrypt", () => handleEncrypt(deps, request));
       }
 
       // POST /api/mcp/bot-crypto/decrypt
       if (segments.length === 4 && segments[3] === "decrypt" && method === "POST") {
-        return await handleDecrypt(deps, request);
+        return await withRateLimit(request, deps, "decrypt", () => handleDecrypt(deps, request));
       }
 
       // POST /api/mcp/bot-crypto/sign-event
       if (segments.length === 4 && segments[3] === "sign-event" && method === "POST") {
-        return await handleSignEvent(deps, request);
+        return await withRateLimit(request, deps, "sign-event", () => handleSignEvent(deps, request));
       }
 
       return jsonError("Not found", 404);
@@ -81,6 +95,44 @@ export function createBotCryptoApiHandler(deps: BotCryptoApiDependencies) {
       return jsonError((err as Error).message, 500);
     }
   };
+}
+
+// ---------------------------------------------------------------------------
+// Rate limit wrapper
+// ---------------------------------------------------------------------------
+
+async function withRateLimit(
+  request: Request,
+  deps: BotCryptoApiDependencies,
+  operation: "encrypt" | "decrypt" | "sign-event",
+  handler: () => Promise<Response>,
+): Promise<Response> {
+  // Extract sessionId for per-session limiting (peek at body without consuming)
+  const cloned = request.clone();
+  let sessionId = "unknown";
+  try {
+    const body = await cloned.json() as Record<string, unknown>;
+    if (body.sessionId && typeof body.sessionId === "string") {
+      sessionId = body.sessionId;
+    }
+  } catch {
+    // Fall through — will still hit global limiter
+  }
+
+  // Global cap across all sessions
+  const globalDenied = globalCryptoLimiter.check("global");
+  if (globalDenied) return globalDenied;
+
+  // Per-session limits
+  if (operation === "sign-event") {
+    const denied = signEventLimiter.check(sessionId);
+    if (denied) return denied;
+  } else {
+    const denied = cryptoLimiter.check(sessionId);
+    if (denied) return denied;
+  }
+
+  return handler();
 }
 
 // ---------------------------------------------------------------------------

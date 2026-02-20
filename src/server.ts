@@ -942,6 +942,8 @@ const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   getSession: (sid: string) => manager.getSession(sid) ?? null,
   listSessions: () => manager.listSessions(),
   createSession: (agent, dir, name) => manager.createSession(agent, dir, name),
+  stopSession: async (sid) => (await manager.stopSession(sid)) ?? null,
+  scheduleArchive: (sid) => scheduleSessionArchive(sid, manager),
   getSessionLogs: (sid) => manager.getLogs(sid),
   listApps: () => appRegistry.listApps(),
   getAppStatus: (appId) => appProcessManager.getStatus(appId),
@@ -1776,6 +1778,18 @@ manager.on((event) => {
     if (event.session.npub) {
       sessionBroadcaster.broadcast(event.session.npub, {
         type: "session-started",
+        sessionId: event.session.id,
+        agent: event.session.agent,
+        name: event.session.name ?? undefined,
+      });
+    }
+    return;
+  }
+  if (event.type === "session-deleted") {
+    // Session archived and removed from memory — notify browsers to refresh
+    if (event.session.npub) {
+      sessionBroadcaster.broadcast(event.session.npub, {
+        type: "session-deleted",
         sessionId: event.session.id,
         agent: event.session.agent,
         name: event.session.name ?? undefined,
@@ -4131,6 +4145,7 @@ const handleApi = async (
   url: URL,
   method: HttpMethod,
   authContext: RequestAuthContext,
+  bunServer: import("bun").Server,
 ): Promise<Response> => {
   const pathname = url.pathname;
   const workspaceScope = resolveWorkspace(authContext);
@@ -7457,7 +7472,7 @@ const server = Bun.serve({
       }
 
       if (pathname.startsWith("/api/")) {
-        return handleApi(request, url, method, authContext);
+        return handleApi(request, url, method, authContext, bunServer);
       }
 
       const tempAttachment = resolveTempAttachment(pathname, authContext);

@@ -13,7 +13,7 @@ interface Subscriber {
 }
 
 export interface SessionEvent {
-  type: "session-started" | "session-stopped" | "session-updated";
+  type: "session-started" | "session-stopped" | "session-updated" | "session-deleted";
   sessionId: string;
   agent?: string;
   name?: string;
