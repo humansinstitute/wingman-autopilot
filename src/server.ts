@@ -4469,6 +4469,15 @@ const handleApi = async (
     }
 
     try {
+      // Block new registrations when REGISTER=FALSE
+      if (!config.registrationEnabled) {
+        const normalized = normaliseNpub(trimmedNpub);
+        const existingUser = normalized ? identityUserStore.getByNormalized(normalized) : null;
+        if (!existingUser) {
+          return Response.json({ error: "Registration is currently disabled" }, { status: 403 });
+        }
+      }
+
       const existingSession = authContext.session;
       if (existingSession && existingSession.npub !== trimmedNpub) {
         // Allow overwriting with a new npub, but clear stale signed data by minting a new cookie.

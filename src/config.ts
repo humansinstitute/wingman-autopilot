@@ -65,6 +65,8 @@ export interface WingmanConfig {
   giteaOwner: string | null;
   /** SuperBased / Flux Adaptor API base URL */
   superbasedUrl: string | null;
+  /** Whether new user registration is allowed (REGISTER env var, default true) */
+  registrationEnabled: boolean;
 }
 
 const DEFAULT_PORT = 3600;
@@ -272,6 +274,13 @@ export const loadConfig = (): WingmanConfig => {
     console.warn("[Config] Gitea partially configured — need GITEA_URL, GITEA_API_TOKEN, and GITEA_OWNER");
   }
 
+  // Registration toggle — set REGISTER=FALSE to block new signups
+  const registerInput = (Bun.env.REGISTER ?? "").trim().toUpperCase();
+  const registrationEnabled = registerInput !== "FALSE";
+  if (!registrationEnabled) {
+    console.log("[Config] Registration disabled (REGISTER=FALSE)");
+  }
+
   // SuperBased / Flux Adaptor configuration
   const superbasedUrlInput = Bun.env.SUPERBASED_URL?.trim();
   const superbasedUrl = superbasedUrlInput && superbasedUrlInput.length > 0
@@ -309,6 +318,7 @@ export const loadConfig = (): WingmanConfig => {
     giteaApiToken,
     giteaOwner,
     superbasedUrl,
+    registrationEnabled,
   };
 };
 
