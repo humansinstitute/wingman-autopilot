@@ -248,6 +248,9 @@ export class ProcessManager {
         ...session.definition,
         env: { ...session.definition.env, ...mcpResult.env },
       };
+      if (Array.isArray(mcpResult.commandArgs) && mcpResult.commandArgs.length > 0) {
+        session.command = [...session.command, ...mcpResult.commandArgs];
+      }
     } catch (mcpError) {
       this.appendLog(session, `[manager] MCP config injection failed (non-fatal): ${(mcpError as Error).message}`);
     }

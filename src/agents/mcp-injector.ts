@@ -37,6 +37,8 @@ export interface McpInjectionContext {
 export interface McpInjectionResult {
   /** Additional env vars to pass to the agent process. */
   env: Record<string, string>;
+  /** Additional CLI args to append when launching the agent process. */
+  commandArgs?: string[];
   /** Files modified by injection — cleanup will remove our entry only. */
   cleanupFiles: string[];
 }
@@ -74,6 +76,8 @@ export async function injectMcpConfig(
   }
 
   switch (ctx.agent) {
+    case "codex":
+      return injectCodex(ctx, mcpServerPath, baseEnv);
     case "claude":
       return injectClaude(ctx, mcpServerPath, baseEnv);
     case "goose":
@@ -187,6 +191,31 @@ async function injectClaude(
   console.log(`[mcp-injector] Wrote Claude MCP config: ${mcpConfigPath}`);
 
   return { env: baseEnv, cleanupFiles: [mcpConfigPath] };
+}
+
+/**
+ * Codex supports MCP server configuration via CLI config overrides.
+ * We inject a wingman stdio server entry with `-c` flags so each
+ * session gets the right SESSION_ID without mutating global user config.
+ */
+function injectCodex(
+  ctx: McpInjectionContext,
+  mcpServerPath: string,
+  baseEnv: Record<string, string>,
+): McpInjectionResult {
+  const commandArgs = [
+    "-c",
+    'mcp_servers.wingman.command="bun"',
+    "-c",
+    `mcp_servers.wingman.args=${JSON.stringify(["run", mcpServerPath])}`,
+    "-c",
+    `mcp_servers.wingman.env=${JSON.stringify({
+      WINGMAN_URL: baseEnv.WINGMAN_URL!,
+      SESSION_ID: ctx.sessionId,
+    })}`,
+  ];
+
+  return { env: baseEnv, commandArgs, cleanupFiles: [] };
 }
 
 /**
