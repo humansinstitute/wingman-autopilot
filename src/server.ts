@@ -4145,7 +4145,6 @@ const handleApi = async (
   url: URL,
   method: HttpMethod,
   authContext: RequestAuthContext,
-  bunServer: import("bun").Server,
 ): Promise<Response> => {
   const pathname = url.pathname;
   const workspaceScope = resolveWorkspace(authContext);
@@ -7481,7 +7480,7 @@ const server = Bun.serve({
       }
 
       if (pathname.startsWith("/api/")) {
-        return handleApi(request, url, method, authContext, bunServer);
+        return handleApi(request, url, method, authContext);
       }
 
       const tempAttachment = resolveTempAttachment(pathname, authContext);
