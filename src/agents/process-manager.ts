@@ -65,7 +65,8 @@ export interface SessionSnapshot {
 type SessionEvent =
   | { type: "session-started"; session: SessionSnapshot }
   | { type: "session-updated"; session: SessionSnapshot }
-  | { type: "session-stopped"; session: SessionSnapshot };
+  | { type: "session-stopped"; session: SessionSnapshot }
+  | { type: "session-deleted"; session: SessionSnapshot };
 
 export interface RehydrateSessionInput {
   id: string;
@@ -424,8 +425,11 @@ export class ProcessManager {
       session.process = null;
     }
 
+    // Snapshot before deleting so we can notify browsers
+    const snapshot = this.toSnapshot(session);
     this.releasePort(session.port);
     this.sessions.delete(id);
+    this.emit({ type: "session-deleted", session: snapshot });
     return true;
   }
 

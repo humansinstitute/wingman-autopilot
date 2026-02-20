@@ -1785,6 +1785,18 @@ manager.on((event) => {
     }
     return;
   }
+  if (event.type === "session-deleted") {
+    // Session archived and removed from memory — notify browsers to refresh
+    if (event.session.npub) {
+      sessionBroadcaster.broadcast(event.session.npub, {
+        type: "session-deleted",
+        sessionId: event.session.id,
+        agent: event.session.agent,
+        name: event.session.name ?? undefined,
+      });
+    }
+    return;
+  }
   if (event.type === "session-updated" || event.type === "session-stopped") {
     ensureUserWorkspace(event.session.npub ?? null);
     if (event.session.npub) {
