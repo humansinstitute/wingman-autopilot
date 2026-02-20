@@ -203,16 +203,17 @@ function injectCodex(
   mcpServerPath: string,
   baseEnv: Record<string, string>,
 ): McpInjectionResult {
+  const escapeTomlString = (value: string) => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const codexEnvInlineTable =
+    `{ WINGMAN_URL = "${escapeTomlString(baseEnv.WINGMAN_URL!)}", SESSION_ID = "${escapeTomlString(ctx.sessionId)}" }`;
+
   const commandArgs = [
     "-c",
     'mcp_servers.wingman.command="bun"',
     "-c",
     `mcp_servers.wingman.args=${JSON.stringify(["run", mcpServerPath])}`,
     "-c",
-    `mcp_servers.wingman.env=${JSON.stringify({
-      WINGMAN_URL: baseEnv.WINGMAN_URL!,
-      SESSION_ID: ctx.sessionId,
-    })}`,
+    `mcp_servers.wingman.env=${codexEnvInlineTable}`,
   ];
 
   return { env: baseEnv, commandArgs, cleanupFiles: [] };
