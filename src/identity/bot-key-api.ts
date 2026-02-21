@@ -19,6 +19,7 @@ import {
 } from "./bot-key-manager";
 import { buildDelegateRegistryTemplate, getBotDisplayName } from "./bot-identity-publisher";
 import { publishDelegateRegistryEvent } from "./delegate-registry-publisher";
+import { getBotProfileStatus, publishBotProfileEvent } from "./bot-profile-publisher";
 import type { SessionSnapshot } from "../agents/process-manager";
 import { normaliseNpub } from "./npub-utils";
 
@@ -134,6 +135,14 @@ export function createBotKeyApiHandler(deps: BotKeyApiDependencies) {
       ) {
         return await handlePublishDelegateRegistry(deps, request);
       }
+      // GET /api/bot-keys/bot-profile/status
+      if (segments.length === 4 && segments[2] === "bot-profile" && segments[3] === "status" && method === "GET") {
+        return await handleBotProfileStatus(deps, request, url);
+      }
+      // POST /api/bot-keys/bot-profile/publish
+      if (segments.length === 4 && segments[2] === "bot-profile" && segments[3] === "publish" && method === "POST") {
+        return await handlePublishBotProfile(deps, request);
+      }
 
       return jsonError("Not found", 404);
     } catch (err) {
@@ -166,6 +175,81 @@ async function handlePublishDelegateRegistry(deps: BotKeyApiDependencies, reques
   try {
     const result = await publishDelegateRegistryEvent({
       ownerNpub: userNpub,
+      signedEvent,
+      requestedRelays: relays,
+      defaultRelays: Array.isArray(deps.defaultRelays) ? deps.defaultRelays : [],
+    });
+    return Response.json({ published: true, ...result });
+  } catch (err) {
+    return jsonError((err as Error).message, 400);
+  }
+}
+
+/**
+ * GET /api/bot-keys/bot-profile/status
+ *
+ * Checks whether the active bot already has a kind 0 profile on relays.
+ * Query: ?relays=wss://...,wss://...
+ */
+async function handleBotProfileStatus(deps: BotKeyApiDependencies, request: Request, url: URL): Promise<Response> {
+  const npub = getNpubFromCookie(request);
+  if (!npub) {
+    return jsonError("Not authenticated — session cookie required", 401);
+  }
+
+  const record = deps.store.getActiveKeyForUser(npub);
+  if (!record) {
+    return jsonError("No active bot key for this user", 404);
+  }
+
+  const relayParam = url.searchParams.get("relays");
+  const requestedRelays = relayParam
+    ? relayParam
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0)
+    : undefined;
+
+  try {
+    const status = await getBotProfileStatus({
+      botPubkeyHex: record.botPubkeyHex,
+      requestedRelays,
+      defaultRelays: Array.isArray(deps.defaultRelays) ? deps.defaultRelays : [],
+    });
+    return Response.json({
+      ...status,
+      botPubkeyHex: record.botPubkeyHex,
+      botNpub: record.botNpub,
+    });
+  } catch (err) {
+    return jsonError((err as Error).message, 400);
+  }
+}
+
+/**
+ * POST /api/bot-keys/bot-profile/publish
+ *
+ * Publishes a browser-signed kind 0 profile event for the active bot.
+ * Body: { signedEvent, relays? }
+ */
+async function handlePublishBotProfile(deps: BotKeyApiDependencies, request: Request): Promise<Response> {
+  const npub = getNpubFromCookie(request);
+  if (!npub) {
+    return jsonError("Not authenticated — session cookie required", 401);
+  }
+
+  const record = deps.store.getActiveKeyForUser(npub);
+  if (!record) {
+    return jsonError("No active bot key for this user", 404);
+  }
+
+  const body = await parseBody(request);
+  const signedEvent = body.signedEvent;
+  const relays = body.relays;
+
+  try {
+    const result = await publishBotProfileEvent({
+      botPubkeyHex: record.botPubkeyHex,
       signedEvent,
       requestedRelays: relays,
       defaultRelays: Array.isArray(deps.defaultRelays) ? deps.defaultRelays : [],

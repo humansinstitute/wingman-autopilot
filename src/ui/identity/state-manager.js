@@ -247,6 +247,12 @@ export function initIdentityStateManager(deps) {
 
     try {
       const result = await publishDelegateRegistryForCurrentUser(state.config);
+      if (result?.botProfileSignedEvent) {
+        if (typeof window !== "undefined") {
+          window.wingmanLastBotKind0Tx = result.botProfileSignedEvent;
+        }
+        console.log("[identity] bot profile tx (kind 0):", result.botProfileSignedEvent);
+      }
       if (typeof window !== "undefined") {
         window.wingmanLastDelegateRegistryTx = result?.signedEvent ?? null;
       }
