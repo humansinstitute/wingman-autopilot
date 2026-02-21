@@ -3682,6 +3682,15 @@ const render = () => {
   }, 50); // 50ms debounce to prevent rapid re-renders
 };
 
+function shouldFullRenderOnSessionUpdate(route) {
+  // Files view should not full re-render on background session updates because
+  // it resets reading position in the spec/file preview.
+  if (route === "files" || route === "live") {
+    return false;
+  }
+  return true;
+}
+
 projectFeature = createProjectFeature({
   onRenderRequested: () => {
     if (currentRoute === "projects") {
@@ -4757,11 +4766,8 @@ dialog.addEventListener("cancel", (event) => {
     startSessionSubscriber(() => {
       fetchSessions().then(() => {
         syncMenuTabs();
-        // Only full-render on pages that need it (home, apps).
-        // On live route the conversation is already updating via SSE
-        // and a full render() nukes the DOM, resets scroll, and breaks
-        // the reading experience — but we still need to refresh indicators.
-        if (currentRoute !== "live") {
+        // Avoid full-render on routes where it disrupts in-progress reading/editing.
+        if (shouldFullRenderOnSessionUpdate(currentRoute)) {
           render();
         } else {
           updateAgentStatusIndicators();
