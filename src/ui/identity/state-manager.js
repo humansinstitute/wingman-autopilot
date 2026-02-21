@@ -247,6 +247,10 @@ export function initIdentityStateManager(deps) {
 
     try {
       const result = await publishDelegateRegistryForCurrentUser(state.config);
+      if (typeof window !== "undefined") {
+        window.wingmanLastDelegateRegistryTx = result?.signedEvent ?? null;
+      }
+      console.log("[identity] delegate registry tx (kind 30078):", result?.signedEvent ?? null);
       const relayCount = Array.isArray(result?.results) ? result.results.length : 0;
       const successCount = Number.isFinite(result?.successes) ? Number(result.successes) : 0;
       setButtonState(btn, { state: "success", label: "Published", disable: false });

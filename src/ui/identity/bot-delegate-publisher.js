@@ -70,5 +70,10 @@ export async function publishDelegateRegistryForCurrentUser(config) {
   const eventTemplate = await fetchDelegateRegistryTemplate();
   const signedEvent = await window.nostr.signEvent(eventTemplate);
   const relays = resolvePublishRelays(config);
-  return publishSignedDelegateRegistry(signedEvent, relays);
+  const publishResult = await publishSignedDelegateRegistry(signedEvent, relays);
+  return {
+    ...publishResult,
+    signedEvent,
+    eventTemplate,
+  };
 }
