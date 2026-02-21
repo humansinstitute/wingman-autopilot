@@ -396,6 +396,7 @@ const botKeyApiHandler = createBotKeyApiHandler({
   store: botKeyStore,
   getSession: (sid: string) => manager.getSession(sid),
   onBotKeyUnlocked: onBotKeyUnlockedHook,
+  defaultRelays: config.connectRelays,
 });
 const botCryptoApiHandler = createBotCryptoApiHandler({
   getSession: (sid: string) => manager.getSession(sid),

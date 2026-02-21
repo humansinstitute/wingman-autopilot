@@ -1,0 +1,74 @@
+const DEFAULT_CONNECT_RELAYS = [
+  'wss://relay.nsec.app',
+  'wss://nos.lol',
+  'wss://relay.getalby.com/v1',
+  'wss://nostr.mineracks.com',
+];
+
+function parseRelayList(input) {
+  if (!Array.isArray(input)) return [];
+  return Array.from(
+    new Set(
+      input
+        .map((value) => (typeof value === 'string' ? value.trim() : ''))
+        .filter((value) => value.length > 0),
+    ),
+  );
+}
+
+function resolvePublishRelays(config) {
+  const configured = parseRelayList(config?.connectRelays);
+  if (configured.length > 0) return configured;
+  return [...DEFAULT_CONNECT_RELAYS];
+}
+
+function ensureNip07SigningAvailable() {
+  if (!window.nostr || typeof window.nostr.signEvent !== 'function') {
+    throw new Error('NIP-07 signing is required to publish delegate discovery');
+  }
+}
+
+async function fetchDelegateRegistryTemplate() {
+  const response = await fetch('/api/bot-keys/delegate-registry', { credentials: 'include' });
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const message = payload && typeof payload.error === 'string'
+      ? payload.error
+      : `Failed to fetch delegate registry template (${response.status})`;
+    throw new Error(message);
+  }
+
+  if (!payload || typeof payload !== 'object' || !payload.eventTemplate) {
+    throw new Error('Delegate registry template missing from server response');
+  }
+
+  return payload.eventTemplate;
+}
+
+async function publishSignedDelegateRegistry(signedEvent, relays) {
+  const response = await fetch('/api/bot-keys/delegate-registry/publish', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ signedEvent, relays }),
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = payload && typeof payload.error === 'string'
+      ? payload.error
+      : `Failed to publish delegate registry (${response.status})`;
+    throw new Error(message);
+  }
+
+  return payload;
+}
+
+export async function publishDelegateRegistryForCurrentUser(config) {
+  ensureNip07SigningAvailable();
+  const eventTemplate = await fetchDelegateRegistryTemplate();
+  const signedEvent = await window.nostr.signEvent(eventTemplate);
+  const relays = resolvePublishRelays(config);
+  return publishSignedDelegateRegistry(signedEvent, relays);
+}

@@ -18,6 +18,7 @@ import {
   isBotKeyUnlocked,
 } from "./bot-key-manager";
 import { buildDelegateRegistryTemplate, getBotDisplayName } from "./bot-identity-publisher";
+import { publishDelegateRegistryEvent } from "./delegate-registry-publisher";
 import type { SessionSnapshot } from "../agents/process-manager";
 import { normaliseNpub } from "./npub-utils";
 
@@ -29,6 +30,7 @@ export interface BotKeyApiDependencies {
   store: BotKeyStore;
   getSession: (sessionId: string) => SessionSnapshot | undefined;
   onBotKeyUnlocked?: (npub: string, secretKey: Uint8Array, botPubkeyHex: string) => void;
+  defaultRelays?: string[];
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -123,6 +125,15 @@ export function createBotKeyApiHandler(deps: BotKeyApiDependencies) {
       if (segments.length === 3 && segments[2] === "delegate-registry" && method === "GET") {
         return handleDelegateRegistry(deps, request);
       }
+      // POST /api/bot-keys/delegate-registry/publish
+      if (
+        segments.length === 4 &&
+        segments[2] === "delegate-registry" &&
+        segments[3] === "publish" &&
+        method === "POST"
+      ) {
+        return await handlePublishDelegateRegistry(deps, request);
+      }
 
       return jsonError("Not found", 404);
     } catch (err) {
@@ -130,6 +141,39 @@ export function createBotKeyApiHandler(deps: BotKeyApiDependencies) {
       return jsonError((err as Error).message, 500);
     }
   };
+}
+
+/**
+ * POST /api/bot-keys/delegate-registry/publish
+ *
+ * Accepts a browser-signed kind 30078 event and publishes it to relays.
+ * Body: { signedEvent, relays? }
+ */
+async function handlePublishDelegateRegistry(deps: BotKeyApiDependencies, request: Request): Promise<Response> {
+  const npub = getNpubFromCookie(request);
+  if (!npub) {
+    return jsonError("Not authenticated — session cookie required", 401);
+  }
+  const userNpub = normaliseNpub(npub);
+  if (!userNpub) {
+    return jsonError("Invalid session npub", 400);
+  }
+
+  const body = await parseBody(request);
+  const signedEvent = body.signedEvent;
+  const relays = body.relays;
+
+  try {
+    const result = await publishDelegateRegistryEvent({
+      ownerNpub: userNpub,
+      signedEvent,
+      requestedRelays: relays,
+      defaultRelays: Array.isArray(deps.defaultRelays) ? deps.defaultRelays : [],
+    });
+    return Response.json({ published: true, ...result });
+  } catch (err) {
+    return jsonError((err as Error).message, 400);
+  }
 }
 
 // ---------------------------------------------------------------------------
