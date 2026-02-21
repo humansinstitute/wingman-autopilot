@@ -1897,33 +1897,110 @@ const fetchLogs = async (sessionId) => {
   }
 };
 
+const conversationSelectionState = {
+  pointerDownInConversation: false,
+  locked: false,
+};
+
+function isConversationSelectionInsideLiveChat() {
+  const selection = typeof window !== "undefined" ? window.getSelection?.() : null;
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    return false;
+  }
+  const anchorNode = selection.anchorNode;
+  const focusNode = selection.focusNode;
+  const anchorEl = anchorNode instanceof Element ? anchorNode : anchorNode?.parentElement ?? null;
+  const focusEl = focusNode instanceof Element ? focusNode : focusNode?.parentElement ?? null;
+  const anchorInConversation = Boolean(anchorEl?.closest?.(".wm-live-conversation .wm-conversation"));
+  const focusInConversation = Boolean(focusEl?.closest?.(".wm-live-conversation .wm-conversation"));
+  return anchorInConversation || focusInConversation;
+}
+
+function isConversationRenderLocked(sessionId) {
+  return conversationSelectionState.locked &&
+    currentRoute === "live" &&
+    sessionId === sessionsStore().activeSessionId;
+}
+
+function pushConversationToAlpineStore(sessionId) {
+  const chatStore = window.Alpine?.store("chat");
+  if (!chatStore || chatStore.sessionId !== sessionId) {
+    return;
+  }
+  const conv = state.conversations.get(sessionId) || [];
+  chatStore.messages = conv.map((msg, idx) => ({
+    id: `api-${idx}`,
+    sessionId,
+    role: msg.role || msg.type || "assistant",
+    content: msg.content || msg.message || "",
+    createdAt: msg.createdAt || msg.created_at || "",
+  }));
+}
+
+function renderConversationForSession(sessionId, options = {}) {
+  const { isStreamingUpdate = false } = options;
+  if (isConversationRenderLocked(sessionId)) {
+    return;
+  }
+  if (isAlpineChatEnabled()) {
+    pushConversationToAlpineStore(sessionId);
+    if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
+      if (!scrollPillIsNearBottom() && !isStreamingUpdate) {
+        scrollPillShow();
+      }
+    }
+    return;
+  }
+  if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
+    const wasNearBottom = scrollPillIsNearBottom();
+    updateConversationDOM(sessionId);
+    if (!wasNearBottom && !isStreamingUpdate) {
+      scrollPillShow();
+    }
+  }
+}
+
+function flushConversationRenderLock() {
+  const activeSessionId = sessionsStore().activeSessionId;
+  if (!activeSessionId) {
+    return;
+  }
+  renderConversationForSession(activeSessionId);
+}
+
+function setupConversationSelectionLock() {
+  document.addEventListener("mousedown", (event) => {
+    const target = event.target;
+    conversationSelectionState.pointerDownInConversation = Boolean(
+      target instanceof Element && target.closest(".wm-live-conversation .wm-conversation"),
+    );
+  });
+  document.addEventListener("mouseup", () => {
+    conversationSelectionState.pointerDownInConversation = false;
+    const shouldLock = isConversationSelectionInsideLiveChat();
+    const wasLocked = conversationSelectionState.locked;
+    conversationSelectionState.locked = shouldLock;
+    if (wasLocked && !shouldLock) {
+      flushConversationRenderLock();
+    }
+  });
+  document.addEventListener("selectionchange", () => {
+    const shouldLock = conversationSelectionState.pointerDownInConversation && isConversationSelectionInsideLiveChat();
+    const wasLocked = conversationSelectionState.locked;
+    conversationSelectionState.locked = shouldLock;
+    if (wasLocked && !shouldLock) {
+      flushConversationRenderLock();
+    }
+  });
+}
+
 const fetchConversation = async (sessionId) => {
   try {
     const data = await fetchSessionMessagesApi(sessionId);
     if (!data) return;
     const items = Array.isArray(data?.messages) ? data.messages : [];
     state.conversations.set(sessionId, items);
-
-    // Push conversation directly to Alpine store — no Dexie intermediary.
-    // This is the most reliable path: API truth → Alpine → DOM.
-    if (isAlpineChatEnabled()) {
-      const chatStore = window.Alpine?.store("chat");
-      if (chatStore && chatStore.sessionId === sessionId) {
-        chatStore.messages = items.map((msg, idx) => ({
-          id: `api-${idx}`,
-          sessionId,
-          role: msg.role || msg.type || "assistant",
-          content: msg.content || msg.message || "",
-          createdAt: msg.createdAt || msg.created_at || "",
-        }));
-      }
-      return;
-    }
-
-    // Legacy: manual DOM update
-    if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
-      updateConversationDOM(sessionId);
-    }
+    renderConversationForSession(sessionId);
   } catch (error) {
     console.error("Failed to load conversation", error);
   }
@@ -2402,20 +2479,7 @@ const sendMessage = async (sessionId, content) => {
     if (knightRider) knightRider.classList.add("active");
 
     // After sending, update conversation display
-    if (isAlpineChatEnabled()) {
-      const chatStore = window.Alpine?.store("chat");
-      if (chatStore && chatStore.sessionId === sessionId) {
-        chatStore.messages = messages.map((msg, idx) => ({
-          id: `api-${idx}`,
-          sessionId,
-          role: msg.role || msg.type || "assistant",
-          content: msg.content || msg.message || "",
-          createdAt: msg.createdAt || msg.created_at || "",
-        }));
-      }
-    } else {
-      updateConversationDOM(sessionId);
-    }
+    renderConversationForSession(sessionId);
     scrollPillHide();
     requestAnimationFrame(() => {
       scrollConversationAreaToBottom(sessionId, { includeWindow: true });
@@ -4552,6 +4616,7 @@ dialog.addEventListener("cancel", (event) => {
 (async () => {
   initTheme();
   initTabsVisibility();
+  setupConversationSelectionLock();
   // Initialize live module (Dexie database for SSE updates)
   initLiveModule().catch((err) => console.warn("[app] Live module init failed:", err));
 
@@ -4633,35 +4698,7 @@ dialog.addEventListener("cancel", (event) => {
     }
     state.conversations.set(sessionId, existing);
 
-    // Alpine chat: push conversation state directly to store for instant update.
-    if (isAlpineChatEnabled()) {
-      const chatStore = window.Alpine?.store("chat");
-      if (chatStore && chatStore.sessionId === sessionId) {
-        const conv = state.conversations.get(sessionId) || [];
-        chatStore.messages = conv.map((msg, idx) => ({
-          id: `api-${idx}`,
-          sessionId,
-          role: msg.role || msg.type || "assistant",
-          content: msg.content || msg.message || "",
-          createdAt: msg.createdAt || msg.created_at || "",
-        }));
-      }
-      if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
-        if (!scrollPillIsNearBottom() && !isStreamingUpdate) {
-          scrollPillShow();
-        }
-      }
-      return;
-    }
-
-    // Legacy manual DOM path (non-Alpine)
-    if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
-      const wasNearBottom = scrollPillIsNearBottom();
-      updateConversationDOM(sessionId);
-      if (!wasNearBottom && !isStreamingUpdate) {
-        scrollPillShow();
-      }
-    }
+    renderConversationForSession(sessionId, { isStreamingUpdate });
   });
 
   // Render immediately from Dexie cache so the UI is visible while
