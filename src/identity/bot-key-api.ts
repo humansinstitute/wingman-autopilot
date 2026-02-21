@@ -17,7 +17,7 @@ import {
   getDecryptedBotKey,
   isBotKeyUnlocked,
 } from "./bot-key-manager";
-import { buildDelegateRegistryTemplate, getBotDisplayName } from "./bot-identity-publisher";
+import { buildDelegateRegistryTemplate, getBotDisplayName, signBotProfileEvent } from "./bot-identity-publisher";
 import { publishDelegateRegistryEvent } from "./delegate-registry-publisher";
 import { getBotProfileStatus, publishBotProfileEvent } from "./bot-profile-publisher";
 import type { SessionSnapshot } from "../agents/process-manager";
@@ -167,6 +167,10 @@ async function handlePublishDelegateRegistry(deps: BotKeyApiDependencies, reques
   if (!userNpub) {
     return jsonError("Invalid session npub", 400);
   }
+  const record = deps.store.getActiveKeyForUser(userNpub);
+  if (!record) {
+    return jsonError("No active bot key for this user", 404);
+  }
 
   const body = await parseBody(request);
   const signedEvent = body.signedEvent;
@@ -176,6 +180,7 @@ async function handlePublishDelegateRegistry(deps: BotKeyApiDependencies, reques
     const result = await publishDelegateRegistryEvent({
       ownerNpub: userNpub,
       signedEvent,
+      expectedDelegatePubkeys: [record.botPubkeyHex],
       requestedRelays: relays,
       defaultRelays: Array.isArray(deps.defaultRelays) ? deps.defaultRelays : [],
     });
@@ -229,8 +234,8 @@ async function handleBotProfileStatus(deps: BotKeyApiDependencies, request: Requ
 /**
  * POST /api/bot-keys/bot-profile/publish
  *
- * Publishes a browser-signed kind 0 profile event for the active bot.
- * Body: { signedEvent, relays? }
+ * Publishes a server-signed kind 0 profile event for the active bot.
+ * Body: { relays? }
  */
 async function handlePublishBotProfile(deps: BotKeyApiDependencies, request: Request): Promise<Response> {
   const npub = getNpubFromCookie(request);
@@ -244,19 +249,34 @@ async function handlePublishBotProfile(deps: BotKeyApiDependencies, request: Req
   }
 
   const body = await parseBody(request);
-  const signedEvent = body.signedEvent;
   const relays = body.relays;
+  const displayName = record.displayName || getBotDisplayName(record.botPubkeyHex);
+
+  // Resolve signing key for this authenticated user's active bot.
+  // Prefer unlocked in-memory key; otherwise unlock via escrow on demand.
+  let transientSecretKey: Uint8Array | null = null;
+  const unlocked = getDecryptedBotKey(npub);
+  const signingKey = unlocked?.pubkeyHex === record.botPubkeyHex
+    ? unlocked.secretKey
+    : (transientSecretKey = unlockViaEscrow(
+      record.encryptedEscrow,
+      record.botPubkeyHex,
+      record.escrowUuid,
+    ));
 
   try {
+    const signedEvent = signBotProfileEvent(signingKey, displayName);
     const result = await publishBotProfileEvent({
       botPubkeyHex: record.botPubkeyHex,
       signedEvent,
       requestedRelays: relays,
       defaultRelays: Array.isArray(deps.defaultRelays) ? deps.defaultRelays : [],
     });
-    return Response.json({ published: true, ...result });
+    return Response.json({ published: true, signedEvent, ...result });
   } catch (err) {
     return jsonError((err as Error).message, 400);
+  } finally {
+    transientSecretKey?.fill(0);
   }
 }
 

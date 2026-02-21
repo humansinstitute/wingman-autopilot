@@ -7,6 +7,7 @@ const RELAY_URL_PATTERN = /^wss?:\/\/.+/i;
 interface DelegateRegistryPublishRequest {
   ownerNpub: string;
   signedEvent: unknown;
+  expectedDelegatePubkeys: string[];
   requestedRelays?: unknown;
   defaultRelays: string[];
 }
@@ -43,7 +44,11 @@ function isStringArrayArray(value: unknown): value is string[][] {
   return value.every((row) => Array.isArray(row) && row.every((cell) => typeof cell === 'string'));
 }
 
-function validateSignedDelegateRegistryEvent(input: unknown, ownerPubkeyHex: string): SignedEvent {
+function validateSignedDelegateRegistryEvent(
+  input: unknown,
+  ownerPubkeyHex: string,
+  expectedDelegatePubkeys: string[],
+): SignedEvent {
   if (!input || typeof input !== 'object') {
     throw new Error('signedEvent must be an object');
   }
@@ -76,6 +81,32 @@ function validateSignedDelegateRegistryEvent(input: unknown, ownerPubkeyHex: str
     throw new Error('signedEvent must include d-tag wingman-delegates');
   }
 
+  const expected = Array.from(new Set(
+    expectedDelegatePubkeys
+      .filter((value) => typeof value === 'string')
+      .map((value) => value.trim().toLowerCase())
+      .filter((value) => /^[0-9a-f]{64}$/.test(value)),
+  ));
+  if (expected.length === 0) {
+    throw new Error('No expected delegates configured for validation');
+  }
+
+  const publishedDelegates = Array.from(new Set(
+    event.tags
+      .filter((tag) => tag[0] === 'p' && typeof tag[1] === 'string')
+      .map((tag) => String(tag[1]).trim().toLowerCase())
+      .filter((value) => /^[0-9a-f]{64}$/.test(value)),
+  ));
+
+  if (publishedDelegates.length !== expected.length) {
+    throw new Error('signedEvent delegates must match the active bot list exactly');
+  }
+  const publishedSet = new Set(publishedDelegates);
+  const hasMismatch = expected.some((pubkey) => !publishedSet.has(pubkey));
+  if (hasMismatch) {
+    throw new Error('signedEvent delegates must match the active bot list exactly');
+  }
+
   const signedEvent: SignedEvent = {
     id: event.id,
     pubkey: event.pubkey,
@@ -95,7 +126,11 @@ function validateSignedDelegateRegistryEvent(input: unknown, ownerPubkeyHex: str
 
 export async function publishDelegateRegistryEvent(request: DelegateRegistryPublishRequest) {
   const ownerPubkeyHex = decodeNpubToPubkeyHex(request.ownerNpub);
-  const signedEvent = validateSignedDelegateRegistryEvent(request.signedEvent, ownerPubkeyHex);
+  const signedEvent = validateSignedDelegateRegistryEvent(
+    request.signedEvent,
+    ownerPubkeyHex,
+    request.expectedDelegatePubkeys,
+  );
   const relays = parseRelays(request.requestedRelays, request.defaultRelays);
 
   if (relays.length === 0) {
