@@ -59,6 +59,7 @@ Visit `http://localhost:<PORT>/home` for the session dashboard or `/live` for th
 | `AGENT_MODE`     | Switch orchestration mode; set to `tmux` to launch via `agentapi-tmux`         | `standard`              |
 | `AGENTAPI_BIN`   | Absolute path to the AgentAPI binary used to host each agent                   | `./out/agentapi` or `./out/agentapi-tmux` when `AGENT_MODE=tmux` |
 | `CLAUDE_CLI`     | Executable invoked for Claude sessions (override if not simply `claude`)       | `claude`                |
+| `GLOVES`         | Claude approval mode; set `OFF` to add `--dangerously-skip-permissions`         | unset (normal approvals) |
 | `GOOSE_CLI`      | Executable invoked for Goose sessions                                          | `goose`                 |
 | `CODEX_CLI`      | Executable invoked for Codex sessions (Wingman passes `--type=codex` as well)  | `codex`                 |
 | `OPENCODE_CLI`   | Executable invoked for OpenCode sessions                                       | `opencode`              |

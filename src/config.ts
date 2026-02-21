@@ -163,9 +163,22 @@ const withAgentCommand = (
   },
 });
 
+function resolveClaudeExtraArgs(glovesValue: string | undefined): string[] {
+  const normalized = glovesValue?.trim().toUpperCase();
+  if (!normalized) {
+    return [];
+  }
+  if (["OFF", "FALSE", "0", "NO"].includes(normalized)) {
+    return ["--dangerously-skip-permissions"];
+  }
+  return [];
+}
+
+const claudeExtraArgs = resolveClaudeExtraArgs(Bun.env.GLOVES);
+
 const defaultAgents: Record<AgentType, AgentDefinition> = {
   codex: withAgentCommand("Codex", Bun.env.CODEX_CLI ?? "codex", { type: "codex" }),
-  claude: withAgentCommand("Claude", Bun.env.CLAUDE_CLI ?? "claude"),
+  claude: withAgentCommand("Claude", Bun.env.CLAUDE_CLI ?? "claude", { extraArgs: claudeExtraArgs }),
   goose: withAgentCommand("Goose", Bun.env.GOOSE_CLI ?? "goose"),
   opencode: withAgentCommand("OpenCode", Bun.env.OPENCODE_CLI ?? "opencode"),
   gemini: withAgentCommand("Gemini", Bun.env.GEMINI_CLI ?? "gemini"),
@@ -228,6 +241,9 @@ export const loadConfig = (): WingmanConfig => {
     ? (defaultAgentInput as AgentType)
     : "claude";
   console.log(`[Config] Default agent: ${defaultAgent}${defaultAgentInput && defaultAgentInput !== defaultAgent ? ` (DEFAULT_AGENT="${defaultAgentInput}" was invalid)` : ""}`);
+  if (claudeExtraArgs.includes("--dangerously-skip-permissions")) {
+    console.log("[Config] Claude approvals: disabled (GLOVES=OFF)");
+  }
 
   // Agent spawn mode - "bun" (default) or "pm2" for persistence across restarts
   const validSpawnModes: AgentSpawnMode[] = ["bun", "pm2"];
