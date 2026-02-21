@@ -149,6 +149,7 @@ import { reconcileAppsWithPM2 } from "./server/bootstrap/pm2-reconcile";
 import { connectPM2 } from "./agents/pm2-wrapper";
 import { createUploadHelpers } from "./server/uploads/helpers";
 import { resolveAndCacheNostrProfile } from "./server/nostr-profile";
+import { shouldKeepBotKeyForNostrTriggers } from "./server/botkey-lifecycle";
 import {
   validateForkInput,
   getRecentMessages,
@@ -1813,9 +1814,12 @@ manager.on((event) => {
         const otherActive = manager.listSessions().some(
           (s) => s.npub === userNpub && s.id !== event.session.id,
         );
-        if (!otherActive) {
+        const hasEnabledNostrTrigger = shouldKeepBotKeyForNostrTriggers(schedulerStore, userNpub);
+        if (!otherActive && !hasEnabledNostrTrigger) {
           clearBotKey(userNpub);
           triggerListener.unsubscribe(userNpub);
+        } else if (!otherActive && hasEnabledNostrTrigger) {
+          console.log(`[trigger-listener] Keeping bot key unlocked for ${userNpub.slice(0, 20)}… (enabled nostr trigger)`);
         }
       }
     }
