@@ -1730,6 +1730,57 @@ body[data-menu-open="true"] .wm-menu-panel {
   gap: 1.5rem;
 }
 
+.wm-settings-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.wm-settings-tabs__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.wm-settings-tabs__tab {
+  border: 1px solid transparent;
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.55rem 0.9rem;
+  border-radius: 0.6rem;
+  cursor: pointer;
+}
+
+.wm-settings-tabs__tab:hover {
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.wm-settings-tabs__tab.is-active {
+  background: color-mix(in srgb, var(--accent-color) 18%, var(--surface-secondary));
+  border-color: color-mix(in srgb, var(--accent-color) 30%, var(--border));
+  color: var(--text-primary);
+}
+
+.wm-settings-tabs__tab:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-color) 60%, white);
+  outline-offset: 2px;
+}
+
+.wm-settings-tabs__panels {
+  min-width: 0;
+}
+
+.wm-settings-tabs__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
 .wm-settings > h1 {
   margin: 0 0 0.75rem;
   color: var(--text-primary);
@@ -1804,6 +1855,19 @@ body[data-menu-open="true"] .wm-menu-panel {
   display: flex;
   gap: 0.5rem;
   margin-top: 0.5rem;
+}
+
+@media (max-width: 720px) {
+  .wm-settings-tabs__list {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 0.6rem;
+    scrollbar-width: thin;
+  }
+
+  .wm-settings-tabs__tab {
+    white-space: nowrap;
+  }
 }
 
 .wm-home-section-header {
