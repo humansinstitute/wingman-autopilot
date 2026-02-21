@@ -6,6 +6,7 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun run src/index.ts",
+    "test": "bun test",
     "build:bunker-client": "bun build src/ui/identity/bunker-client.ts --target browser --outfile public/vendor/bunker-client.js",
     "cleanports": "bun run scripts/clean-ports.ts"
   },

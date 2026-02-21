@@ -17,6 +17,17 @@ import { homedir } from "node:os";
 import * as yaml from "js-yaml";
 
 import type { AgentType, WingmanConfig } from "../config";
+import {
+  buildClaudeWingmanServer,
+  buildGooseWingmanExtension,
+  buildOpenCodeWingmanMcp,
+  removeClaudeWingmanServer,
+  removeGooseWingmanExtension,
+  removeOpenCodeWingmanMcp,
+  upsertClaudeWingmanServer,
+  upsertGooseWingmanExtension,
+  upsertOpenCodeWingmanMcp,
+} from "./mcp-config-helpers";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -111,33 +122,30 @@ export async function cleanupMcpConfig(files: string[]): Promise<void> {
       if (filePath.endsWith('.json')) {
         // Handle JSON config files (Claude/OpenCode)
         const config = await file.json() as Record<string, unknown>;
-        const servers = config.mcpServers as Record<string, unknown> | undefined;
-        const opencodeMcp = config.mcp as Record<string, unknown> | undefined;
-
-        if (servers && "wingman" in servers) {
-          delete servers.wingman;
-
-          // If no servers remain and no other top-level keys, remove the file
-          if (Object.keys(servers).length === 0 && Object.keys(config).length <= 1) {
+        const claudeResult = removeClaudeWingmanServer(config);
+        if (claudeResult.changed) {
+          if (claudeResult.shouldDeleteFile) {
             const { unlink } = await import("node:fs/promises");
             await unlink(filePath);
           } else {
-            await Bun.write(filePath, JSON.stringify(config, null, 2) + "\n");
+            await Bun.write(filePath, JSON.stringify(claudeResult.config, null, 2) + "\n");
           }
-        } else if (opencodeMcp && "wingman" in opencodeMcp) {
-          delete opencodeMcp.wingman;
-          await Bun.write(filePath, JSON.stringify(config, null, 2) + "\n");
+          continue;
+        }
+
+        const opencodeResult = removeOpenCodeWingmanMcp(config);
+        if (opencodeResult.changed) {
+          await Bun.write(filePath, JSON.stringify(opencodeResult.config, null, 2) + "\n");
         }
       } else if (filePath.endsWith('.yaml') || filePath.endsWith('.yml')) {
         // Handle YAML config files (Goose)
         const yamlContent = await file.text();
-        const config = yaml.load(yamlContent) as any;
-        
-        if (config?.extensions?.wingman) {
-          delete config.extensions.wingman;
-          
+        const parsedConfig = yaml.load(yamlContent) as Record<string, unknown> | null;
+        const config = parsedConfig ?? {};
+        const result = removeGooseWingmanExtension(config);
+        if (result.changed) {
           // Write back the updated config
-          const yamlOutput = yaml.dump(config, {
+          const yamlOutput = yaml.dump(result.config, {
             indent: 2,
             lineWidth: -1,
             noRefs: true,
@@ -165,16 +173,11 @@ async function injectClaude(
   baseEnv: Record<string, string>,
 ): Promise<McpInjectionResult> {
   const mcpConfigPath = join(ctx.workingDirectory, ".mcp.json");
-
-  const wingmanServer = {
-    type: "stdio" as const,
-    command: "bun",
-    args: ["run", mcpServerPath],
-    env: {
-      WINGMAN_URL: baseEnv.WINGMAN_URL!,
-      SESSION_ID: ctx.sessionId,
-    },
-  };
+  const wingmanServer = buildClaudeWingmanServer(
+    mcpServerPath,
+    baseEnv.WINGMAN_URL!,
+    ctx.sessionId,
+  );
 
   // Merge into existing .mcp.json if present
   let existingConfig: Record<string, unknown> = {};
@@ -187,11 +190,7 @@ async function injectClaude(
     }
   }
 
-  const mcpServers =
-    (existingConfig.mcpServers as Record<string, unknown>) ?? {};
-  mcpServers.wingman = wingmanServer;
-
-  const config = { ...existingConfig, mcpServers };
+  const config = upsertClaudeWingmanServer(existingConfig, wingmanServer);
   await Bun.write(mcpConfigPath, JSON.stringify(config, null, 2) + "\n");
 
   console.log(`[mcp-injector] Wrote Claude MCP config: ${mcpConfigPath}`);
@@ -236,46 +235,28 @@ async function injectGoose(
 ): Promise<McpInjectionResult> {
   const gooseConfigDir = join(homedir(), ".config", "goose");
   const gooseConfigPath = join(gooseConfigDir, "config.yaml");
-
-  const wingmanExtension = {
-    args: ["run", mcpServerPath],
-    available_tools: [],
-    bundled: null,
-    cmd: "bun",
-    description: "Wingman MCP server providing AI agent tools",
-    enabled: true,
-    env_keys: [],
-    envs: {
-      WINGMAN_URL: baseEnv.WINGMAN_URL!,
-      SESSION_ID: ctx.sessionId,
-    },
-    name: "wingman",
-    timeout: 300,
-    type: "stdio",
-  };
+  const wingmanExtension = buildGooseWingmanExtension(
+    mcpServerPath,
+    baseEnv.WINGMAN_URL!,
+    ctx.sessionId,
+  );
 
   // Merge into existing config.yaml if present
-  let existingConfig: any = {};
+  let existingConfig: Record<string, unknown> = {};
   if (existsSync(gooseConfigPath)) {
     try {
       const file = Bun.file(gooseConfigPath);
       const yamlContent = await file.text();
-      existingConfig = yaml.load(yamlContent) as any;
+      existingConfig = (yaml.load(yamlContent) as Record<string, unknown> | null) ?? {};
     } catch {
       // Corrupted file — start fresh
     }
   }
 
-  // Ensure extensions section exists
-  if (!existingConfig.extensions) {
-    existingConfig.extensions = {};
-  }
-
-  // Add/update wingman extension
-  existingConfig.extensions.wingman = wingmanExtension;
+  const config = upsertGooseWingmanExtension(existingConfig, wingmanExtension);
 
   // Write back to config file
-  const yamlOutput = yaml.dump(existingConfig, {
+  const yamlOutput = yaml.dump(config, {
     indent: 2,
     lineWidth: -1,
     noRefs: true,
@@ -305,16 +286,11 @@ async function injectOpenCode(
 ): Promise<McpInjectionResult> {
   const opencodeConfigDir = join(homedir(), ".config", "opencode");
   const opencodeConfigPath = join(opencodeConfigDir, "opencode.json");
-
-  const wingmanMcp = {
-    type: "local",
-    command: ["bun", "run", mcpServerPath],
-    enabled: true,
-    environment: {
-      WINGMAN_URL: baseEnv.WINGMAN_URL!,
-      SESSION_ID: ctx.sessionId,
-    },
-  };
+  const wingmanMcp = buildOpenCodeWingmanMcp(
+    mcpServerPath,
+    baseEnv.WINGMAN_URL!,
+    ctx.sessionId,
+  );
 
   let existingConfig: Record<string, unknown> = {
     $schema: "https://opencode.ai/config.json",
@@ -328,16 +304,14 @@ async function injectOpenCode(
     }
   }
 
-  const mcp = (existingConfig.mcp as Record<string, unknown>) ?? {};
-  mcp.wingman = wingmanMcp;
-  existingConfig.mcp = mcp;
+  const config = upsertOpenCodeWingmanMcp(existingConfig, wingmanMcp);
 
   if (!existsSync(opencodeConfigDir)) {
     const { mkdir } = await import("node:fs/promises");
     await mkdir(opencodeConfigDir, { recursive: true });
   }
 
-  await Bun.write(opencodeConfigPath, JSON.stringify(existingConfig, null, 2) + "\n");
+  await Bun.write(opencodeConfigPath, JSON.stringify(config, null, 2) + "\n");
   console.log(`[mcp-injector] Wrote OpenCode MCP config: ${opencodeConfigPath}`);
 
   return { env: baseEnv, cleanupFiles: [opencodeConfigPath] };
