@@ -6,7 +6,7 @@
  *
  *   Claude  → .mcp.json in the working directory
  *   Goose   → config.yaml extension entry
- *   Others  → TBD per agent support
+ *   OpenCode → ~/.config/opencode/opencode.json mcp entry
  *
  * Called from process-manager before spawning the agent process.
  */
@@ -82,6 +82,8 @@ export async function injectMcpConfig(
       return injectClaude(ctx, mcpServerPath, baseEnv);
     case "goose":
       return injectGoose(ctx, mcpServerPath, baseEnv);
+    case "opencode":
+      return injectOpenCode(ctx, mcpServerPath, baseEnv);
     default:
       // Other agents: just pass env vars. The stdio server path is
       // available if the agent supports MCP via environment config.
@@ -107,9 +109,10 @@ export async function cleanupMcpConfig(files: string[]): Promise<void> {
       const file = Bun.file(filePath);
       
       if (filePath.endsWith('.json')) {
-        // Handle JSON config files (Claude)
+        // Handle JSON config files (Claude/OpenCode)
         const config = await file.json() as Record<string, unknown>;
         const servers = config.mcpServers as Record<string, unknown> | undefined;
+        const opencodeMcp = config.mcp as Record<string, unknown> | undefined;
 
         if (servers && "wingman" in servers) {
           delete servers.wingman;
@@ -121,6 +124,9 @@ export async function cleanupMcpConfig(files: string[]): Promise<void> {
           } else {
             await Bun.write(filePath, JSON.stringify(config, null, 2) + "\n");
           }
+        } else if (opencodeMcp && "wingman" in opencodeMcp) {
+          delete opencodeMcp.wingman;
+          await Bun.write(filePath, JSON.stringify(config, null, 2) + "\n");
         }
       } else if (filePath.endsWith('.yaml') || filePath.endsWith('.yml')) {
         // Handle YAML config files (Goose)
@@ -286,4 +292,53 @@ async function injectGoose(
   console.log(`[mcp-injector] Wrote Goose MCP config: ${gooseConfigPath}`);
 
   return { env: baseEnv, cleanupFiles: [gooseConfigPath] };
+}
+
+/**
+ * OpenCode discovers MCP servers from ~/.config/opencode/opencode.json mcp entries.
+ * We merge a "wingman" local MCP entry into the existing config.
+ */
+async function injectOpenCode(
+  ctx: McpInjectionContext,
+  mcpServerPath: string,
+  baseEnv: Record<string, string>,
+): Promise<McpInjectionResult> {
+  const opencodeConfigDir = join(homedir(), ".config", "opencode");
+  const opencodeConfigPath = join(opencodeConfigDir, "opencode.json");
+
+  const wingmanMcp = {
+    type: "local",
+    command: ["bun", "run", mcpServerPath],
+    enabled: true,
+    environment: {
+      WINGMAN_URL: baseEnv.WINGMAN_URL!,
+      SESSION_ID: ctx.sessionId,
+    },
+  };
+
+  let existingConfig: Record<string, unknown> = {
+    $schema: "https://opencode.ai/config.json",
+  };
+  if (existsSync(opencodeConfigPath)) {
+    try {
+      const file = Bun.file(opencodeConfigPath);
+      existingConfig = await file.json();
+    } catch {
+      // Corrupted file — start fresh
+    }
+  }
+
+  const mcp = (existingConfig.mcp as Record<string, unknown>) ?? {};
+  mcp.wingman = wingmanMcp;
+  existingConfig.mcp = mcp;
+
+  if (!existsSync(opencodeConfigDir)) {
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(opencodeConfigDir, { recursive: true });
+  }
+
+  await Bun.write(opencodeConfigPath, JSON.stringify(existingConfig, null, 2) + "\n");
+  console.log(`[mcp-injector] Wrote OpenCode MCP config: ${opencodeConfigPath}`);
+
+  return { env: baseEnv, cleanupFiles: [opencodeConfigPath] };
 }
