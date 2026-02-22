@@ -148,6 +148,10 @@ function buildAgentCommand(sessionConfig: SessionConfig): { script: string; args
   return { script: script!, args };
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
 /**
  * Create an ecosystem app entry for a session.
  */
@@ -157,11 +161,15 @@ export function createAppConfig(sessionConfig: SessionConfig): EcosystemApp {
   const logsDir = getLogsDirectory(workingDirectory, isAdmin);
   const { script, args } = buildAgentCommand(sessionConfig);
 
+  const command = [script, ...args].map(shellQuote).join(" ");
+
   return {
     name: processName,
     namespace: PM2_NAMESPACE_AGENTS,
-    script,
-    args,
+    // AgentAPI blocks on stdin in PM2 unless stdin is closed.
+    // Run via bash and redirect stdin from /dev/null so the server can start.
+    script: "bash",
+    args: ["-lc", `exec ${command} < /dev/null`],
     cwd: workingDirectory,
     env: {
       SESSION_ID: sessionId,
@@ -398,4 +406,3 @@ export async function addUserAppToEcosystem(
     logsDir,
   };
 }
-
