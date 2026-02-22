@@ -406,6 +406,7 @@ const ngitApiHandler = createNgitApiHandler({
 });
 const superbasedApiHandler = createSuperbasedApiHandler({
   defaultBaseUrl: config.superbasedUrl,
+  getSession: (sid: string) => manager.getSession(sid) ?? null,
 });
 const botKeyApiHandler = createBotKeyApiHandler({
   store: botKeyStore,
@@ -6944,7 +6945,10 @@ const handleApi = async (
       const liveSession = manager.getSession(id);
       const viewerNormalizedNpub = getViewerNormalizedNpub(authContext);
       const viewerIsAdmin = Boolean(adminNpub && viewerNormalizedNpub && viewerNormalizedNpub === adminNpub);
-      const ownedSession = liveSession && (viewerIsAdmin || liveSession.ownerNpub === viewerNormalizedNpub) ? liveSession : null;
+      const ownedSession =
+        liveSession && sessionBelongsToViewer(liveSession.npub ?? null, viewerNormalizedNpub, viewerIsAdmin)
+          ? liveSession
+          : null;
       if (!ownedSession) {
         return Response.json({ error: "Not found" }, { status: 404 });
       }
