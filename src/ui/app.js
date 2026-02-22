@@ -49,13 +49,7 @@ import {
   DEFAULT_CONNECT_RELAYS,
   ADMIN_PICTURE_CACHE_TTL_MS,
 } from "./state/index.js";
-import {
-  decodeBase64ToUint8Array,
-  encodeUint8ArrayToBase64,
-  decodeBytesToText,
-  encodeTextToBytes,
-  readFileAsUint8Array,
-} from "./core/encoding.js";
+// encoding utilities used by extracted modules (core/encoding.js)
 import {
   createSvgShape,
   createIconSvg,
@@ -128,6 +122,7 @@ import { initPrivacyPolicy } from "./views/privacy-policy.js";
 import { initSettingsView } from "./views/settings-view.js";
 import { initHomeView } from "./views/home-view.js";
 import { initFilesView } from "./views/files-view.js";
+import { initFilesApi } from "./files/api.js";
 import { initLiveView } from "./views/live-view.js";
 import { initDirectoryBrowser } from "./modals/directory-browser.js";
 import { abbreviateNpub, formatSatoshis, normaliseNpubValue, isFiniteNumber, initIdentityDom } from "./identity/dom.js";
@@ -340,334 +335,23 @@ const scheduleLiveScroll = (sessionId, options = {}) => {
 const isConversationScrolledToBottom = (sessionId) =>
   _isConversationScrolledToBottom(sessionId, state.conversationContainers);
 
-const resetFilesPreview = () => {
-  state.files.previewPath = null;
-  state.files.previewRelativePath = null;
-  state.files.previewDisplayPath = "";
-  state.files.previewName = null;
-  state.files.previewContent = null;
-  state.files.previewLoading = false;
-  state.files.previewError = null;
-  state.files.previewFormat = null;
-  state.files.previewLanguage = null;
-  state.files.previewLabel = null;
-};
-
-/**
- * Build the browser URL for the current files view state and update the address bar.
- * Format: /files/<relativePath>[?file=<filename>]
- */
-function updateFilesUrl({ replace = false } = {}) {
-  if (currentRoute !== "files") return;
-  const dirRelative = state.files.relativePath || "";
-  const slug = dirRelative ? `${FILES_ROUTE}/${dirRelative}` : FILES_ROUTE;
-  const fileRelative = state.files.previewRelativePath || "";
-  let target = slug;
-  if (fileRelative) {
-    target = `${FILES_ROUTE}/${fileRelative}`;
-  }
-  if (window.location.pathname === target) return;
-  const stateObj = { route: "files" };
-  if (replace) {
-    window.history.replaceState(stateObj, "", target);
-  } else {
-    window.history.pushState(stateObj, "", target);
-  }
-}
-
-/**
- * Extract a docs-root-relative path from the current URL when on the files route.
- * Returns { slug } where slug is the path after /files/.
- */
-function parseFilesPathFromUrl() {
-  const pathname = window.location.pathname;
-  const prefix = `${FILES_ROUTE}/`;
-  if (!pathname.startsWith(prefix)) {
-    return { slug: null };
-  }
-  const slug = decodeURIComponent(pathname.slice(prefix.length));
-  return { slug: slug || null };
-}
-
-/**
- * Navigate to a files URL slug — tries as directory first, falls back to
- * loading parent directory + file preview if the slug points to a file.
- */
-async function navigateToFilesSlug(slug) {
-  if (!slug) {
-    void loadFilesTree();
-    return;
-  }
-  const files = state.files;
-  // Probe the slug to see if it's a directory or file
-  try {
-    const probeUrl = new URL("/api/docs/tree", window.location.origin);
-    probeUrl.searchParams.set("path", slug);
-    if (files.showHidden) probeUrl.searchParams.set("showHidden", "1");
-    const response = await fetch(probeUrl.toString(), { method: "GET" });
-    if (response.ok) {
-      // It's a directory — load it via the normal path
-      void loadFilesTree(slug);
-      return;
-    }
-  } catch {
-    // fall through to file attempt
-  }
-  // Slug is likely a file — load parent directory, then preview the file
-  const lastSlash = slug.lastIndexOf("/");
-  const parentSlug = lastSlash > 0 ? slug.slice(0, lastSlash) : null;
-  await loadFilesTree(parentSlug || undefined);
-  // The backend resolveDocsPath handles relative paths, so pass the slug directly
-  void loadFilesPreview(slug);
-}
+// -- Files API helpers (populated in bootstrap via initFilesApi) --
+let resetFilesPreview = () => {};
+let updateFilesUrl = () => {};
+let parseFilesPathFromUrl = () => ({ slug: null });
+let navigateToFilesSlug = async () => {};
+let loadFilesTree = async () => {};
+let loadFilesPreview = async () => {};
+let showFilesPreviewUnavailable = () => {};
+let createFilesDirectory = async () => {};
+let createFilesTextFile = async () => {};
+let uploadFilesBinary = async () => {};
+let deleteFilesEntry = async () => {};
+let createDirectoryEntry = async () => {};
+let copyFilesEntry = async () => {};
+let moveFilesEntry = async () => {};
 
 // -- Markdown / code rendering imported from rendering/markdown.js --
-
-const loadFilesTree = async (path) => {
-  const files = state.files;
-  const targetPath = typeof path === "string" && path.length > 0 ? path : files.currentPath;
-  if (typeof path === "string" && path.length > 0 && path !== files.currentPath) {
-    resetFilesPreview();
-  }
-  files.loading = true;
-  files.error = null;
-
-  try {
-    const url = new URL("/api/docs/tree", window.location.origin);
-    if (targetPath) {
-      url.searchParams.set("path", targetPath);
-    }
-    if (files.showHidden) {
-      url.searchParams.set("showHidden", "1");
-    }
-    const response = await fetch(url.toString(), { method: "GET" });
-    if (!response.ok) {
-      let message = response.statusText || "Failed to load directory";
-      try {
-        const payload = await response.json();
-        if (payload && typeof payload.error === "string") {
-          message = payload.error;
-        }
-      } catch {
-        // ignore json parsing error
-      }
-      throw new Error(message);
-    }
-
-    const data = await response.json();
-    files.currentPath = data?.path ?? targetPath ?? files.currentPath;
-    files.relativePath = data?.relativePath ?? "";
-    files.displayPath = data?.displayPath ?? (files.relativePath ? `~/${files.relativePath}` : "~");
-    files.parent = data?.parent ?? null;
-    files.entries = Array.isArray(data?.entries) ? data.entries : [];
-    files.git = data?.git ?? null;
-    files.loading = false;
-    files.error = null;
-
-    if (files.previewPath) {
-      const exists = files.entries.some((entry) => entry.path === files.previewPath);
-      if (!exists) {
-        resetFilesPreview();
-      }
-    }
-    updateFilesUrl({ replace: true });
-  } catch (error) {
-    files.loading = false;
-    files.error = error instanceof Error ? error.message : String(error);
-    files.entries = [];
-    files.git = null;
-    if (typeof path === "string" && path.length > 0) {
-      files.currentPath = path;
-    }
-  } finally {
-    if (currentRoute === "files") {
-      render();
-    }
-  }
-};
-
-const loadFilesPreview = async (path) => {
-  if (!path) return;
-  const files = state.files;
-  files.previewPath = path;
-  files.previewRelativePath = "";
-  files.previewDisplayPath = "";
-  files.previewName = null;
-  files.previewContent = null;
-  files.previewError = null;
-  files.previewLoading = true;
-  files.previewFormat = null;
-  files.previewLanguage = null;
-  files.previewLabel = null;
-  if (currentRoute === "files") {
-    render();
-  }
-
-  try {
-    const url = new URL("/api/docs/file", window.location.origin);
-    url.searchParams.set("path", path);
-    const response = await fetch(url.toString(), { method: "GET" });
-    if (!response.ok) {
-      let message = response.statusText || "Failed to load file";
-      try {
-        const payload = await response.json();
-        if (payload && typeof payload.error === "string") {
-          message = payload.error;
-        }
-      } catch {
-        // ignore json parse error
-      }
-      throw new Error(message);
-    }
-
-    const data = await response.json();
-    files.previewPath = data?.path ?? path;
-    files.previewRelativePath = data?.relativePath ?? "";
-    files.previewDisplayPath = data?.displayPath ?? (files.previewRelativePath ? `~/${files.previewRelativePath}` : "");
-    files.previewName = data?.name ?? null;
-    files.previewContent = data?.content ?? "";
-    files.previewFormat = data?.format ?? null;
-    files.previewLanguage = data?.language ?? null;
-    files.previewLabel = data?.label ?? null;
-    files.previewLoading = false;
-    files.previewError = null;
-    updateFilesUrl();
-  } catch (error) {
-    files.previewLoading = false;
-    files.previewError = error instanceof Error ? error.message : String(error);
-    files.previewContent = null;
-  } finally {
-    if (currentRoute === "files") {
-      render();
-    }
-  }
-};
-
-const showFilesPreviewUnavailable = (entry) => {
-  const files = state.files;
-  files.previewPath = entry?.path ?? null;
-  files.previewRelativePath = entry?.relativePath ?? "";
-  files.previewDisplayPath = entry?.displayPath ?? "";
-  files.previewName = entry?.name ?? null;
-  files.previewFormat = null;
-  files.previewLanguage = null;
-  files.previewLabel = entry?.previewLabel ?? null;
-  files.previewContent = null;
-  files.previewLoading = false;
-  files.previewError = "Preview not available for this file type.";
-  updateFilesUrl();
-  if (currentRoute === "files") {
-    render();
-  }
-};
-
-const createFilesDirectory = async (parentPath, name) => {
-  const response = await fetch("/api/docs/directory", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ parent: parentPath, name }),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message = data?.error ?? response.statusText ?? "Failed to create directory";
-    throw new Error(message);
-  }
-  return response.json();
-};
-
-const createFilesTextFile = async (parentPath, name, content = "") => {
-  const response = await fetch("/api/docs/file", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ directory: parentPath, name, content }),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message = data?.error ?? response.statusText ?? "Failed to create file";
-    throw new Error(message);
-  }
-  return response.json();
-};
-
-const uploadFilesBinary = async (parentPath, file) => {
-  const bytes = await readFileAsUint8Array(file);
-  const base64 = encodeUint8ArrayToBase64(bytes);
-  const response = await fetch("/api/docs/file", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ directory: parentPath, name: file.name, base64 }),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message = data?.error ?? response.statusText ?? "Failed to upload file";
-    throw new Error(message);
-  }
-  return response.json();
-};
-
-const deleteFilesEntry = async (path) => {
-  const response = await fetch("/api/docs/file", {
-    method: "DELETE",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ path }),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message = data?.error ?? response.statusText ?? "Failed to delete file";
-    throw new Error(message);
-  }
-  return response.json();
-};
-
-const createDirectoryEntry = async (parent, name) => {
-  const response = await fetch("/api/directories", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ parent, name }),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message = data?.error ?? response.statusText ?? "Failed to create folder";
-    throw new Error(message);
-  }
-  return response.json();
-};
-
-const copyFilesEntry = async (path, targetDirectory, name) => {
-  const payload = { path, targetDirectory };
-  if (typeof name === "string" && name.trim().length > 0) {
-    payload.name = name.trim();
-  }
-  const response = await fetch("/api/docs/file/copy", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message = data?.error ?? response.statusText ?? "Failed to copy file";
-    throw new Error(message);
-  }
-  return response.json();
-};
-
-const moveFilesEntry = async (path, targetDirectory, name) => {
-  const payload = { path, targetDirectory };
-  if (typeof name === "string" && name.trim().length > 0) {
-    payload.name = name.trim();
-  }
-  const response = await fetch("/api/docs/file/move", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message = data?.error ?? response.statusText ?? "Failed to move file";
-    throw new Error(message);
-  }
-  return response.json();
-};
 
 // -- File editor + worktree modal initialized via initFileEditor (see bootstrap) --
 let canCreateWorktree = () => false;
@@ -3894,6 +3578,28 @@ const homeViewModule = initHomeView({
   LIVE_ROUTE_PREFIX,
 });
 renderHome = homeViewModule.renderHome;
+
+// Files API module — must init before dirBrowser and filesView which depend on these
+const filesApiModule = initFilesApi({
+  state,
+  getCurrentRoute: () => currentRoute,
+  render,
+  FILES_ROUTE,
+});
+resetFilesPreview = filesApiModule.resetFilesPreview;
+updateFilesUrl = filesApiModule.updateFilesUrl;
+parseFilesPathFromUrl = filesApiModule.parseFilesPathFromUrl;
+navigateToFilesSlug = filesApiModule.navigateToFilesSlug;
+loadFilesTree = filesApiModule.loadFilesTree;
+loadFilesPreview = filesApiModule.loadFilesPreview;
+showFilesPreviewUnavailable = filesApiModule.showFilesPreviewUnavailable;
+createFilesDirectory = filesApiModule.createFilesDirectory;
+createFilesTextFile = filesApiModule.createFilesTextFile;
+uploadFilesBinary = filesApiModule.uploadFilesBinary;
+deleteFilesEntry = filesApiModule.deleteFilesEntry;
+createDirectoryEntry = filesApiModule.createDirectoryEntry;
+copyFilesEntry = filesApiModule.copyFilesEntry;
+moveFilesEntry = filesApiModule.moveFilesEntry;
 
 const dirBrowserModule = initDirectoryBrowser({
   state,
