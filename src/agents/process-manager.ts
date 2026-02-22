@@ -183,6 +183,7 @@ export class ProcessManager {
     explicitNpub?: string,
   ): Promise<SessionSnapshot> {
     const launchStartedAt = Date.now();
+    const requestNpub = explicitNpub ?? getAuthenticatedNpub() ?? undefined;
     const definition = this.config.agents[agent];
     if (!definition) {
       throw new Error(`Unknown agent: ${agent}`);
@@ -195,14 +196,14 @@ export class ProcessManager {
     const rawWorkingDirectory =
       typeof workingDirectory === "string" && workingDirectory.length > 0
         ? workingDirectory
-        : await this.resolveDefaultWorkingDirectory();
+        : await this.resolveDefaultWorkingDirectory(requestNpub);
     // Expand ~ to user home so Bun.spawn gets an absolute path
     const sessionWorkingDirectory = rawWorkingDirectory.startsWith("~/")
       ? resolve(homedir(), rawWorkingDirectory.slice(2))
       : rawWorkingDirectory;
 
     // Resolve user info
-    const npub = explicitNpub ?? getAuthenticatedNpub() ?? undefined;
+    const npub = requestNpub;
     const isAdmin = this.isAdminUser(npub);
     const userAlias = this.resolveUserAlias(npub);
 
@@ -640,8 +641,8 @@ export class ProcessManager {
     this.emit({ type: "session-updated", session: this.toSnapshot(session) });
   }
 
-  private async resolveDefaultWorkingDirectory(): Promise<string> {
-    const npub = normaliseNpub(getAuthenticatedNpub());
+  private async resolveDefaultWorkingDirectory(npubHint?: string): Promise<string> {
+    const npub = normaliseNpub(npubHint ?? getAuthenticatedNpub());
     if (!npub) {
       return this.config.defaultWorkingDirectory;
     }
