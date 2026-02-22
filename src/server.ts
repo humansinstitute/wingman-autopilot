@@ -127,6 +127,7 @@ import { createStaticAssetService, compressResponse } from "./server/static-asse
 import { maybeRefreshSessionCookie } from "./server/session-refresh";
 import { handleSubdomainRequest, resolveAliasToPort, proxyRequestToApp, type SubdomainProxyConfig } from "./server/subdomain-proxy";
 import { isAgentRuntimeStatus } from "./types/agent-status";
+import { scheduleCleanup } from "./uploads/cleanup";
 import { createSessionEventsHandler } from "./server/session-events";
 import { sessionBroadcaster, createSessionSubscribeResponse } from "./server/session-broadcaster";
 import { handleChatApi, type ChatApiContext } from "./server/chat-routes";
@@ -1066,10 +1067,6 @@ const orchestratorActiveRootBase = join(userDataRoot, "orchestrator", "active");
 const warmRestartManagerScriptPath = join(projectRoot, "scripts", "warm-restart-manager.ts");
 const maxImageSizeBytes = 10 * 1024 * 1024; // 10MB
 const maxAttachmentSizeBytes = 25 * 1024 * 1024; // 25MB
-const imageTtlMs = 24 * 60 * 60 * 1000;
-const attachmentTtlMs = 24 * 60 * 60 * 1000;
-const imageCleanupIntervalMs = 24 * 60 * 60 * 1000;
-const attachmentCleanupIntervalMs = 24 * 60 * 60 * 1000;
 
 const {
   ensureUserWorkspace,
@@ -1470,148 +1467,10 @@ const resolveTempAttachment = (pathname: string, authContext: RequestAuthContext
   });
 };
 
-const runImageCleanup = async () => {
-  let directories: Dirent[];
-  try {
-    directories = await readdir(imageRoot, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return;
-    }
-    console.error("[uploads] failed to list image directory", error);
-    return;
-  }
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-  const threshold = Date.now() - imageTtlMs;
-
-  await Promise.all(
-    directories
-      .filter((entry) => entry.isDirectory())
-      .map(async (userDir) => {
-        const userPath = join(imageRoot, userDir.name);
-        let agentEntries: Dirent[];
-        try {
-          agentEntries = await readdir(userPath, { withFileTypes: true });
-        } catch (error) {
-          console.error(`[uploads] failed to list user image directory ${userDir.name}`, error);
-          return;
-        }
-
-        await Promise.all(
-          agentEntries
-            .filter((entry) => entry.isDirectory())
-            .map(async (agentDir) => {
-              const agentPath = join(userPath, agentDir.name);
-              let files: Dirent[];
-              try {
-                files = await readdir(agentPath, { withFileTypes: true });
-              } catch (error) {
-                console.error(`[uploads] failed to list agent image directory ${agentDir.name}`, error);
-                return;
-              }
-
-              await Promise.all(
-                files
-                  .filter((entry) => entry.isFile())
-                  .map(async (file) => {
-                    const filePath = join(agentPath, file.name);
-                    try {
-                      const stats = await stat(filePath);
-                      if (stats.mtimeMs < threshold) {
-                        await rm(filePath, { force: true });
-                        console.log(`[uploads] removed expired image ${filePath}`);
-                      }
-                    } catch (error) {
-                      console.error(`[uploads] failed to cleanup ${filePath}`, error);
-                    }
-                  }),
-              );
-            }),
-        );
-      }),
-  );
-};
-
-const scheduleImageCleanup = () => {
-  // Fire-and-forget; best-effort cleanup
-  runImageCleanup().catch((error) => console.error("[uploads] initial cleanup failed", error));
-  setInterval(() => {
-    runImageCleanup().catch((error) => console.error("[uploads] scheduled cleanup failed", error));
-  }, imageCleanupIntervalMs).unref?.();
-};
-
-scheduleImageCleanup();
-
-const runAttachmentCleanup = async () => {
-  let directories: Dirent[];
-  try {
-    directories = await readdir(attachmentRoot, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return;
-    }
-    console.error("[uploads] failed to list attachment directory", error);
-    return;
-  }
-
-  const threshold = Date.now() - attachmentTtlMs;
-
-  await Promise.all(
-    directories
-      .filter((entry) => entry.isDirectory())
-      .map(async (userDir) => {
-        const userPath = join(attachmentRoot, userDir.name);
-        let agentEntries: Dirent[];
-        try {
-          agentEntries = await readdir(userPath, { withFileTypes: true });
-        } catch (error) {
-          console.error(`[uploads] failed to list user attachment directory ${userDir.name}`, error);
-          return;
-        }
-
-        await Promise.all(
-          agentEntries
-            .filter((entry) => entry.isDirectory())
-            .map(async (agentDir) => {
-              const agentPath = join(userPath, agentDir.name);
-              let files: Dirent[];
-              try {
-                files = await readdir(agentPath, { withFileTypes: true });
-              } catch (error) {
-                console.error(`[uploads] failed to list attachment subdirectory ${agentDir.name}`, error);
-                return;
-              }
-
-              await Promise.all(
-                files
-                  .filter((entry) => entry.isFile())
-                  .map(async (file) => {
-                    const filePath = join(agentPath, file.name);
-                    try {
-                      const stats = await stat(filePath);
-                      if (stats.mtimeMs < threshold) {
-                        await rm(filePath, { force: true });
-                        console.log(`[uploads] removed expired attachment ${filePath}`);
-                      }
-                    } catch (error) {
-                      console.error(`[uploads] failed to cleanup attachment ${filePath}`, error);
-                    }
-                  }),
-              );
-            }),
-        );
-      }),
-  );
-};
-
-const scheduleAttachmentCleanup = () => {
-  runAttachmentCleanup().catch((error) => console.error("[uploads] initial attachment cleanup failed", error));
-  setInterval(() => {
-    runAttachmentCleanup().catch((error) => console.error("[uploads] scheduled attachment cleanup failed", error));
-  }, attachmentCleanupIntervalMs).unref?.();
-};
-
-scheduleAttachmentCleanup();
+scheduleCleanup({ root: imageRoot, ttlMs: ONE_DAY_MS, intervalMs: ONE_DAY_MS, label: "image" });
+scheduleCleanup({ root: attachmentRoot, ttlMs: ONE_DAY_MS, intervalMs: ONE_DAY_MS, label: "attachment" });
 
 manager.on((event) => {
   if (event.type === "session-started") {
