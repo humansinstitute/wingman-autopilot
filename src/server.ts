@@ -129,6 +129,7 @@ import { isAgentRuntimeStatus } from "./types/agent-status";
 import { createSessionEventsHandler } from "./server/session-events";
 import { sessionBroadcaster, createSessionSubscribeResponse } from "./server/session-broadcaster";
 import { handleChatApi, type ChatApiContext } from "./server/chat-routes";
+import { handleSessionApi, type SessionApiContext } from "./server/session-api-routes";
 import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import { SchedulerStore } from "./scheduler/scheduler-store";
 import { SchedulerEngine } from "./scheduler/scheduler-engine";
@@ -4203,6 +4204,47 @@ const resolveFeatureFlagStateForViewer = (
   return { flag, state: baseState, effectiveState };
 };
 
+const sessionApiContext: SessionApiContext = {
+  manager,
+  adminNpub,
+  agentHost,
+  messageStore,
+  sessionArchiveStore,
+  identityUserStore,
+  promptQueueStore,
+  artifactsStore,
+  userIdentityRoot,
+  attachmentRoot,
+  imageRoot,
+  MESSAGE_COST_SATS,
+  ensureApiAccess,
+  ensureViewerHasBalance,
+  serializeSession,
+  sessionBelongsToViewer,
+  getViewerNormalizedNpub,
+  buildIdentitySummaries,
+  createSessionSubscribeResponse,
+  handleSessionEvents,
+  syncSessionMessages,
+  waitForMessageUpdate,
+  scheduleSessionArchive,
+  cancelPendingArchive,
+  isAgentType,
+  normaliseSessionNameInput,
+  parseSessionWorkspaceRequest,
+  resolveSessionWorkingDirectory,
+  parseSessionOriginInput,
+  buildAgentUrl,
+  queueDispatchInFlight,
+  maybeAutoDispatchQueuedPrompt,
+  dispatchNextQueuedPromptForSession,
+  validateForkInput,
+  getRecentMessages,
+  formatMessagesAsContext,
+  createGitWorktree,
+  AccessActions,
+};
+
 const handleApi = async (
   request: Request,
   url: URL,
@@ -6563,164 +6605,10 @@ const handleApi = async (
     return Response.json({ files: results }, { status: 201 });
   }
 
-  // Archive API endpoints
-  if (pathname === "/api/archive" && method === "GET") {
-    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    
-    try {
-      const validatedOptions = validateInput(ArchiveListOptionsSchema, {
-        limit: url.searchParams.get("limit"),
-        offset: url.searchParams.get("offset"),
-        filter: url.searchParams.get("filter")
-      });
-
-      const sessions = sessionArchiveStore.listArchivedSessions(validatedOptions);
-      const total = sessionArchiveStore.getArchiveCount();
-      return Response.json({ sessions, total, limit: validatedOptions.limit, offset: validatedOptions.offset });
-    } catch (error) {
-      logger.warn("Archive list error:", error instanceof Error ? error.message : error);
-      return Response.json({ error: "Invalid request parameters" }, { status: 400 });
-    }
-  }
-
-  if (pathname.startsWith("/api/archive/") && method === "GET") {
-    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const archiveParts = pathname.split("/").filter(Boolean);
-    const sessionId = archiveParts[2];
-    if (!sessionId) {
-      return Response.json({ error: "Session ID required" }, { status: 400 });
-    }
-
-    // GET /api/archive/:id/messages
-    if (archiveParts[3] === "messages") {
-      const messages = sessionArchiveStore.getArchivedMessages(sessionId);
-      return Response.json({ sessionId, messages });
-    }
-
-    // GET /api/archive/:id
-    const session = sessionArchiveStore.getArchivedSession(sessionId);
-    if (!session) {
-      return Response.json({ error: "Archived session not found" }, { status: 404 });
-    }
-    const messages = sessionArchiveStore.getArchivedMessages(sessionId);
-    return Response.json({ session, messages });
-  }
-
-  if (pathname.startsWith("/api/archive/") && method === "DELETE") {
-    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const archiveParts = pathname.split("/").filter(Boolean);
-    const sessionId = archiveParts[2];
-    if (!sessionId) {
-      return Response.json({ error: "Session ID required" }, { status: 400 });
-    }
-    const deleted = sessionArchiveStore.deleteArchivedSession(sessionId);
-    if (!deleted) {
-      return Response.json({ error: "Archived session not found" }, { status: 404 });
-    }
-    return Response.json({ id: sessionId, deleted: true });
-  }
-
-  // SSE stream for live session list updates (scoped to viewer npub)
-  if (pathname === "/api/sessions/subscribe" && method === "GET") {
-    const viewerNpub = getViewerNormalizedNpub(authContext);
-    if (!viewerNpub) {
-      return Response.json({ error: "Not authenticated" }, { status: 401 });
-    }
-    return createSessionSubscribeResponse(viewerNpub);
-  }
-
-  if (pathname === "/api/sessions" && method === "GET") {
-    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const viewerNormalizedNpub = getViewerNormalizedNpub(authContext);
-    const viewerIsAdmin = Boolean(adminNpub && viewerNormalizedNpub && viewerNormalizedNpub === adminNpub);
-    const allSessions = manager.listSessions();
-    const accessibleSessions = viewerIsAdmin
-      ? allSessions
-      : viewerNormalizedNpub
-        ? allSessions.filter((session) => sessionBelongsToViewer(session.npub ?? null, viewerNormalizedNpub, false))
-        : [];
-    const filterParam = url.searchParams.get("npub");
-
-    const normalizeFilterValue = (value: string | null): string | null | "__anonymous__" => {
-      if (!value || value === "all") return null;
-      if (value === "__anonymous__") return "__anonymous__";
-      const normalized = normaliseNpub(value);
-      return normalized ?? null;
-    };
-
-    const filterValue = normalizeFilterValue(filterParam);
-    const filteredSessions = accessibleSessions.filter((session) => {
-      if (filterValue === null) {
-        return true;
-      }
-      const sessionNormalized = normaliseNpub(session.npub ?? null);
-      if (filterValue === "__anonymous__") {
-        return sessionNormalized === null;
-      }
-      return sessionNormalized === filterValue;
-    });
-
-    let identitySummaries = viewerIsAdmin
-      ? buildIdentitySummaries(allSessions, viewerNormalizedNpub, { includeAll: true })
-      : buildIdentitySummaries(accessibleSessions, viewerNormalizedNpub, { includeAll: false });
-
-    if (!viewerIsAdmin && identitySummaries.length === 0 && viewerNormalizedNpub && authContext.npub) {
-      const segment = deriveNpubSegment(authContext.npub);
-      const dataRoot = normalize(join(userIdentityRoot, segment));
-      const logsRoot = normalize(join(dataRoot, "logs"));
-      const attachmentsRoot = normalize(join(attachmentRoot, segment));
-      const imagesRoot = normalize(join(imageRoot, segment));
-      const viewerRecord = identityUserStore.getByNormalized(viewerNormalizedNpub);
-      const ports = viewerRecord?.ports ?? identityUserStore.ensurePortsFor(authContext.npub);
-      const balance = viewerRecord?.balance ?? 0;
-      identitySummaries = [
-        {
-          npub: authContext.npub,
-          normalizedNpub: viewerNormalizedNpub,
-          segment,
-          alias: generateIdentityAlias(authContext.npub),
-          ports,
-          balance,
-          sessionIds: [],
-          activeSessionIds: [],
-          lastSeenAt: null,
-          dataRoot,
-          logsRoot,
-          attachmentsRoot,
-          imagesRoot,
-        },
-      ];
-    }
-
-    const npubFilters = identitySummaries.map((identity) => ({
-      value: identity.normalizedNpub ?? "__anonymous__",
-      npub: identity.npub,
-      alias: identity.alias,
-      label: identity.alias ?? identity.npub ?? "Anonymous",
-      sessionCount: identity.sessionIds.length,
-      activeCount: identity.activeSessionIds.length,
-    }));
-
-    return Response.json({
-      sessions: filteredSessions.map(serializeSession),
-      identities: identitySummaries,
-      filters: {
-        npubs: npubFilters,
-        active: filterValue,
-      },
-    });
+  // Session & archive API routes (delegated to session-api-routes.ts)
+  if (pathname.startsWith("/api/archive") || pathname.startsWith("/api/sessions")) {
+    const sessionApiResponse = await handleSessionApi(request, url, method, authContext, sessionApiContext);
+    if (sessionApiResponse) return sessionApiResponse;
   }
 
   if (pathname.startsWith("/api/orchestrators/")) {
@@ -6775,81 +6663,7 @@ const handleApi = async (
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
-  if (pathname === "/api/sessions" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    try {
-      const payload = await request.json();
-      const agent = typeof payload?.agent === "string" ? payload.agent.toLowerCase() : "";
-      if (!isAgentType(agent)) {
-        return Response.json({ error: "Invalid agent selection" }, { status: 400 });
-      }
-      const balanceCheck = ensureViewerHasBalance(authContext, {
-        feature: "start an agent session",
-        message: "Add sats to your balance to start an agent session.",
-      });
-      if (balanceCheck instanceof Response) {
-        return balanceCheck;
-      }
-      const directoryInput = typeof payload?.directory === "string" ? payload.directory : undefined;
-      const rawName =
-        payload && typeof payload === "object" && payload !== null
-          ? (payload as Record<string, unknown>).name
-          : null;
-      let workspace: SessionWorkspaceRequest = null;
-      try {
-        workspace =
-          payload && typeof payload === "object" && payload !== null
-            ? parseSessionWorkspaceRequest((payload as Record<string, unknown>).workspace)
-            : null;
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 400 });
-      }
-      const sessionName = normaliseSessionNameInput(rawName);
-      let workingDirectory: string;
-      try {
-        workingDirectory = await resolveSessionWorkingDirectory(directoryInput, workspace);
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 400 });
-      }
-      let origin: SessionOrigin | null = null;
-      try {
-        origin = parseSessionOriginInput(payload?.origin ?? null);
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 400 });
-      }
-      // Parse optional target file for writer-mode sessions
-      const rawTargetFile = typeof payload?.targetFile === "string" ? payload.targetFile.trim() : "";
-      let targetFile: string | undefined;
-      if (rawTargetFile.length > 0) {
-        targetFile = rawTargetFile.startsWith("/")
-          ? rawTargetFile
-          : resolvePath(workingDirectory, rawTargetFile);
-      }
-      const session = await manager.createSession(agent, workingDirectory, sessionName ?? undefined, origin, targetFile);
-      messageStore.recordSession({
-        id: session.id,
-        agent: session.agent,
-        startedAt: session.startedAt,
-        name: session.name,
-        npub: session.npub,
-        port: session.port,
-        pid: session.pid,
-        workingDirectory: session.workingDirectory,
-        command: session.command,
-        runtimeStatus: session.agentRuntimeStatus ?? null,
-        origin: session.origin ?? null,
-        pm2Name: session.pm2Name,
-        targetFile: session.targetFile,
-      });
-      await syncSessionMessages(session.id, true);
-      return Response.json(serializeSession(session), { status: 201 });
-    } catch (error) {
-      return Response.json({ error: (error as Error).message }, { status: 500 });
-    }
-  }
+  // POST /api/sessions is handled by sessionApiContext above
 
   // GET /api/artifacts/:id/raw — Serve artifact file content
   if (pathname.startsWith("/api/artifacts/") && method === "GET") {
@@ -6933,500 +6747,7 @@ const handleApi = async (
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
-  if (pathname.startsWith("/api/sessions/")) {
-    const parts = pathname.split("/");
-    const id = parts[3];
-
-    // SSE endpoint - check auth and handle specially
-    if (method === "GET" && parts[4] === "events" && id) {
-      const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-      if (denied) {
-        return denied;
-      }
-      const liveSession = manager.getSession(id);
-      const viewerNormalizedNpub = getViewerNormalizedNpub(authContext);
-      const viewerIsAdmin = Boolean(adminNpub && viewerNormalizedNpub && viewerNormalizedNpub === adminNpub);
-      const ownedSession =
-        liveSession && sessionBelongsToViewer(liveSession.npub ?? null, viewerNormalizedNpub, viewerIsAdmin)
-          ? liveSession
-          : null;
-      if (!ownedSession) {
-        return Response.json({ error: "Not found" }, { status: 404 });
-      }
-      return handleSessionEvents(id, request);
-    }
-
-    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    if (!id) {
-      return Response.json({ error: "Session id required" }, { status: 400 });
-    }
-
-    const viewerNormalizedNpub = getViewerNormalizedNpub(authContext);
-    const viewerIsAdmin = Boolean(adminNpub && viewerNormalizedNpub && viewerNormalizedNpub === adminNpub);
-    if (!viewerIsAdmin && !viewerNormalizedNpub) {
-      return Response.json({ error: "Not found" }, { status: 404 });
-    }
-
-    const liveSession = manager.getSession(id);
-    const ownedSession =
-      liveSession && sessionBelongsToViewer(liveSession.npub ?? null, viewerNormalizedNpub, viewerIsAdmin)
-        ? liveSession
-        : null;
-
-    if (method === "GET" && parts.length === 4) {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      return Response.json(serializeSession(ownedSession));
-    }
-
-    if (method === "PATCH" && parts.length === 4) {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      let payload: unknown;
-      try {
-        payload = await request.json();
-      } catch {
-        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-      }
-      if (!payload || typeof payload !== "object") {
-        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-      }
-      const record = payload as Record<string, unknown>;
-      const desiredName = typeof record.name === "string" ? record.name : "";
-      const trimmedName = desiredName.trim();
-      if (!trimmedName) {
-        return Response.json({ error: "Session name is required" }, { status: 400 });
-      }
-      const renamed = manager.renameSession(id, trimmedName);
-      if (!renamed) return Response.json({ error: "Not found" }, { status: 404 });
-      return Response.json(serializeSession(renamed));
-    }
-
-    if (method === "DELETE" && parts.length === 4) {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      const session = await manager.stopSession(id);
-      if (!session) return Response.json({ error: "Not found" }, { status: 404 });
-      // Schedule archive after 5 seconds
-      scheduleSessionArchive(id, manager);
-      return Response.json(serializeSession(session));
-    }
-
-    if (method === "DELETE" && parts[4] === "storage") {
-      if (ownedSession && (ownedSession.status === "starting" || ownedSession.status === "running")) {
-        return Response.json({ error: "Stop the session before deleting it" }, { status: 409 });
-      }
-
-      if (!ownedSession) {
-        if (!viewerIsAdmin) {
-          const storedRecord = messageStore
-            .listSessions()
-            .find((record) => record.id === id && sessionBelongsToViewer(record.npub, viewerNormalizedNpub, viewerIsAdmin));
-          if (!storedRecord) {
-            return Response.json({ error: "Not found" }, { status: 404 });
-          }
-        } else if (!messageStore.listSessions().some((record) => record.id === id)) {
-          return Response.json({ error: "Not found" }, { status: 404 });
-        }
-      }
-
-      // Cancel any pending archive since user wants immediate deletion
-      cancelPendingArchive(id);
-
-      try {
-        manager.deleteSession(id);
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 400 });
-      }
-      messageStore.removeSession(id);
-      return Response.json({ id, deleted: true });
-    }
-
-    if (method === "GET" && parts[4] === "logs") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      const logs = await manager.getLogs(id);
-      if (!logs) return Response.json({ error: "Not found" }, { status: 404 });
-      return Response.json({ id, logs });
-    }
-
-    // GET /api/sessions/:id/artifacts
-    if (method === "GET" && parts[4] === "artifacts") {
-      // Allow viewing artifacts for both live and archived sessions
-      const artifacts = artifactsStore.listBySession(id);
-      return Response.json({ artifacts });
-    }
-
-    // Note: SSE endpoint (/events) is handled earlier in the route chain
-
-    if (parts[4] === "messages") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-
-      if (method === "GET") {
-        const refresh = url.searchParams.get("refresh") === "true";
-        const messages = await (refresh ? syncSessionMessages(id, true) : messageStore.listSessionMessages(id));
-        return Response.json({ id, messages });
-      }
-
-      if (method === "POST") {
-        let payload: unknown;
-        try {
-          payload = await request.json();
-        } catch (error) {
-          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-        }
-
-        if (!payload || typeof payload !== "object") {
-          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-        }
-
-        const record = payload as Record<string, unknown>;
-        const requestTypeRaw = typeof record.type === "string" ? record.type.trim().toLowerCase() : "user";
-        const messageType = requestTypeRaw === "raw" ? "raw" : "user";
-        const rawContent = typeof record.content === "string" ? record.content : "";
-        const content = messageType === "raw" ? rawContent : rawContent.trim();
-
-        if (!content) {
-          return Response.json({ error: "Message content is required" }, { status: 400 });
-        }
-
-        const userNpub = authContext.npub ?? null;
-        if (!userNpub) {
-          return Response.json({ error: "Sign in to send messages", balance: 0 }, { status: 403 });
-        }
-
-        if (messageType === "raw") {
-          try {
-            const agentUrl = buildAgentUrl(agentHost, ownedSession.port, "/message");
-            const agentResponse = await fetch(agentUrl, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ type: messageType, content }),
-            });
-            if (!agentResponse.ok) {
-              const errorPayload = await agentResponse.json().catch(() => ({}));
-              const message = (errorPayload?.error as string) ?? agentResponse.statusText ?? "Agent request failed";
-              return Response.json({ error: message }, { status: agentResponse.status });
-            }
-            return Response.json({ id, ok: true });
-          } catch (error) {
-            return Response.json(
-              { error: `Failed to contact agent: ${(error as Error).message ?? "unknown error"}` },
-              { status: 502 },
-            );
-          }
-        }
-
-        let currentBalance: number;
-        try {
-          currentBalance = identityUserStore.debit(userNpub, MESSAGE_COST_SATS);
-        } catch (error) {
-          if (error instanceof InsufficientBalanceError) {
-            return Response.json(
-              {
-                error: "Insufficient balance to send message",
-                balance: error.balance,
-              },
-              { status: 402 },
-            );
-          }
-          console.error("[billing] failed to debit message cost:", error);
-          return Response.json({ error: "Failed to debit balance" }, { status: 500 });
-        }
-
-        try {
-          const initialCount = messageStore.listSessionMessages(id).length;
-          const agentUrl = buildAgentUrl(agentHost, ownedSession.port, "/message");
-          const agentResponse = await fetch(agentUrl, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ type: messageType, content }),
-          });
-          if (!agentResponse.ok) {
-            const errorPayload = await agentResponse.json().catch(() => ({}));
-            const message = (errorPayload?.error as string) ?? agentResponse.statusText ?? "Agent request failed";
-            try {
-              currentBalance = identityUserStore.credit(userNpub, MESSAGE_COST_SATS);
-            } catch (creditError) {
-              console.error("[billing] failed to refund after agent rejection:", creditError);
-            }
-            return Response.json({ error: message, balance: currentBalance }, { status: agentResponse.status });
-          }
-
-          const messages = await waitForMessageUpdate(id, initialCount);
-          return Response.json({ id, messages, balance: currentBalance });
-        } catch (error) {
-          try {
-            currentBalance = identityUserStore.credit(userNpub, MESSAGE_COST_SATS);
-          } catch (creditError) {
-            console.error("[billing] failed to refund after agent error:", creditError);
-          }
-          return Response.json(
-            { error: `Failed to contact agent: ${(error as Error).message}`, balance: currentBalance },
-            { status: 502 },
-          );
-        }
-      }
-    }
-
-    // GET /api/sessions/:id/history - returns session + messages from any source (live, abandoned, or archived)
-    if (method === "GET" && parts[4] === "history") {
-      // Check if session is running first
-      if (ownedSession) {
-        const messages = await syncSessionMessages(id, true);
-        return Response.json({
-          id,
-          status: "live",
-          session: serializeSession(ownedSession),
-          messages,
-        });
-      }
-
-      // Check wingman.db for abandoned session (server restart, etc.)
-      const storedSession = messageStore.getSession(id);
-      if (storedSession) {
-        const isOwned = sessionBelongsToViewer(storedSession.npub, viewerNormalizedNpub, viewerIsAdmin);
-        if (isOwned) {
-          const messages = messageStore.listSessionMessages(id);
-          return Response.json({
-            id,
-            status: "abandoned",
-            session: {
-              id: storedSession.id,
-              agent: storedSession.agent,
-              name: storedSession.name,
-              npub: storedSession.npub,
-              workingDirectory: storedSession.workingDirectory,
-              startedAt: storedSession.startedAt,
-              origin: storedSession.origin,
-            },
-            messages,
-          });
-        }
-      }
-
-      // Check archive store
-      const archivedSession = sessionArchiveStore.getArchivedSession(id);
-      if (archivedSession) {
-        const isOwned = sessionBelongsToViewer(archivedSession.npub, viewerNormalizedNpub, viewerIsAdmin);
-        if (isOwned) {
-          const messages = sessionArchiveStore.getArchivedMessages(id);
-          return Response.json({
-            id,
-            status: "archived",
-            session: {
-              id: archivedSession.id,
-              agent: archivedSession.agent,
-              name: archivedSession.name,
-              npub: archivedSession.npub,
-              workingDirectory: archivedSession.workingDirectory,
-              startedAt: archivedSession.startedAt,
-              archivedAt: archivedSession.archivedAt,
-              origin: archivedSession.origin,
-            },
-            messages,
-          });
-        }
-      }
-
-      return Response.json({ error: "Session not found" }, { status: 404 });
-    }
-
-    if (parts[4] === "queue") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-
-      if (method === "GET") {
-        const prompts = promptQueueStore.getSessionQueue(id);
-        return Response.json({ id, queue: { prompts, maxSize: 21 } });
-      }
-
-      if (method === "POST") {
-        let payload: unknown;
-        try {
-          payload = await request.json();
-        } catch {
-          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-        }
-
-        if (!payload || typeof payload !== "object") {
-          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-        }
-
-        const record = payload as Record<string, unknown>;
-        const content = typeof record.content === "string" ? record.content.trim() : "";
-
-        if (!content) {
-          return Response.json({ error: "Prompt content is required" }, { status: 400 });
-        }
-
-        try {
-          const prompt = promptQueueStore.addPrompt(id, { content });
-          if (!prompt) {
-            return Response.json({ error: "Failed to add prompt to queue" }, { status: 400 });
-          }
-          void maybeAutoDispatchQueuedPrompt(ownedSession);
-          return Response.json({ id, prompt });
-        } catch (error) {
-          return Response.json({ error: (error as Error).message }, { status: 400 });
-        }
-      }
-
-      if (method === "PUT" && parts.length === 6) {
-        const promptId = parts[5];
-        if (!promptId) {
-          return Response.json({ error: "Prompt ID required" }, { status: 400 });
-        }
-
-        let payload: unknown;
-        try {
-          payload = await request.json();
-        } catch {
-          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-        }
-
-        if (!payload || typeof payload !== "object") {
-          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-        }
-
-        const record = payload as Record<string, unknown>;
-        const content = typeof record.content === "string" ? record.content.trim() : "";
-
-        if (!content) {
-          return Response.json({ error: "Prompt content is required" }, { status: 400 });
-        }
-
-        const updated = promptQueueStore.updatePromptContent(id, promptId, content);
-        if (!updated) {
-          return Response.json({ error: "Prompt not found or failed to update" }, { status: 404 });
-        }
-
-        return Response.json({ id, promptId, updated: true });
-      }
-
-      if (method === "DELETE" && parts.length === 6) {
-        const promptId = parts[5];
-        if (!promptId) {
-          return Response.json({ error: "Prompt ID required" }, { status: 400 });
-        }
-
-        const deleted = promptQueueStore.deletePromptById(id, promptId);
-        if (!deleted) {
-          return Response.json({ error: "Prompt not found" }, { status: 404 });
-        }
-
-        return Response.json({ id, promptId, deleted: true });
-      }
-    }
-
-    if (method === "POST" && parts[4] === "queue" && parts[5] === "next") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-
-      if (queueDispatchInFlight.has(id)) {
-        return Response.json({ error: "Prompt dispatch already in progress" }, { status: 409 });
-      }
-
-      queueDispatchInFlight.add(id);
-      try {
-        const result = await dispatchNextQueuedPromptForSession(ownedSession, authContext.npub ?? null);
-        return Response.json(result);
-      } catch (error) {
-        if (error instanceof QueueDispatchError) {
-          return Response.json({ error: error.message, ...(error.payload ?? {}) }, { status: error.status });
-        }
-        console.error("[queue] failed to send queued prompt:", error);
-        return Response.json({ error: "Failed to send queued prompt" }, { status: 500 });
-      } finally {
-        queueDispatchInFlight.delete(id);
-      }
-    }
-
-    // Fork session to a new git worktree
-    if (method === "POST" && parts[4] === "fork-to-worktree") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-
-      const sourceDirectory = ownedSession.workingDirectory;
-      if (!sourceDirectory) {
-        return Response.json({ error: "Source session has no working directory" }, { status: 400 });
-      }
-
-      let payload: unknown;
-      try {
-        payload = await request.json();
-      } catch {
-        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-      }
-
-      let forkInput: ReturnType<typeof validateForkInput>;
-      try {
-        forkInput = validateForkInput(payload);
-        forkInput.sourceSessionId = id;
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 400 });
-      }
-
-      // Get recent messages from source session
-      const contextMessages = getRecentMessages(messageStore, id, forkInput.messageCount ?? 5);
-
-      // Create worktree
-      let worktreeResult: Awaited<ReturnType<typeof createGitWorktree>>;
-      try {
-        worktreeResult = await createGitWorktree({
-          directory: sourceDirectory,
-          branch: forkInput.branch,
-          startPoint: null,
-        });
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 400 });
-      }
-
-      // Create new session in the worktree with the same agent
-      const balanceCheck = ensureViewerHasBalance(authContext, {
-        feature: "start an agent session",
-        message: "Add sats to your balance to fork to a worktree.",
-      });
-      if (balanceCheck instanceof Response) {
-        return balanceCheck;
-      }
-
-      const sessionName = `${ownedSession.name || "session"} (${forkInput.branch})`;
-      let newSession: SessionSnapshot;
-      try {
-        newSession = await manager.createSession(
-          ownedSession.agent,
-          worktreeResult.path,
-          sessionName,
-          { type: "fork", id: id, label: `Forked from ${ownedSession.name || id}` }
-        );
-        messageStore.recordSession({
-          id: newSession.id,
-          agent: newSession.agent,
-          startedAt: newSession.startedAt,
-          name: newSession.name,
-          npub: newSession.npub,
-          port: newSession.port,
-          pid: newSession.pid,
-          workingDirectory: newSession.workingDirectory,
-          command: newSession.command,
-          runtimeStatus: newSession.agentRuntimeStatus ?? null,
-          origin: newSession.origin ?? null,
-          pm2Name: newSession.pm2Name,
-        });
-        await syncSessionMessages(newSession.id, true);
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 500 });
-      }
-
-      // Format context for injection
-      const initialPrompt = formatMessagesAsContext(contextMessages);
-
-      return Response.json({
-        session: serializeSession(newSession),
-        contextMessages,
-        worktreePath: worktreeResult.path,
-        sourceSessionId: id,
-        initialPrompt,
-      }, { status: 201 });
-    }
-  }
+  // /api/sessions/:id/* routes are handled by sessionApiContext above
 
   return Response.json({ error: "Not found" }, { status: 404 });
 };
