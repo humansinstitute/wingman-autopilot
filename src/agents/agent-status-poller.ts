@@ -7,6 +7,8 @@ interface AgentStatusPollerOptions {
   intervalMs: number;
   maxIntervalMs: number;
   timeoutMs: number;
+  /** Delay before first poll for new sessions (avoids overlap with session-readiness polling). Default: 0 */
+  initialDelayMs?: number;
 }
 
 interface PollState {
@@ -76,7 +78,7 @@ export class AgentRuntimeStatusPoller {
     };
 
     this.watchers.set(session.id, state);
-    this.schedulePoll(session.id, state, 0);
+    this.schedulePoll(session.id, state, this.options.initialDelayMs ?? 0);
   }
 
   private stopWatcher(sessionId: string) {
