@@ -935,23 +935,22 @@ const applyRouteSessionFromPath = (options = {}) => {
       if (activeId !== routeSessionId) {
         setActiveSession(routeSessionId, { updateHistory: false, logPort });
       }
-      return false;
+      return;
     }
     if (activeId) {
       setActiveSession(null, { updateHistory: false, logPort: false });
     }
-    return true;
+    return;
   }
 
   if (allowHistoryUpdate && lastId && allSessions.some((session) => session.id === lastId)) {
     setActiveSession(lastId, { updateHistory: true, logPort });
-    return false;
+    return;
   }
 
   if (activeId && !allSessions.some((session) => session.id === activeId)) {
     setActiveSession(null, { updateHistory: allowHistoryUpdate, logPort: false });
   }
-  return false;
 };
 
 const dialog = document.getElementById("session-dialog");
@@ -1793,18 +1792,10 @@ const fetchSessions = async () => {
   }
   const routeSessionId = getSessionIdFromPath(window.location.pathname);
   const allowHistoryUpdate = currentRoute === "live" && !routeSessionId;
-  const redirectHome = applyRouteSessionFromPath({ allowHistoryUpdate });
-  if (redirectHome) {
-    currentRoute = "home";
-    lastLoggedSessionId = null;
-    if (window.location.pathname !== HOME_ROUTE) {
-      window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
-    }
-  }
+  applyRouteSessionFromPath({ allowHistoryUpdate });
   ensureActiveSession();
   const activeId = ss.activeSessionId;
   if (
-    !redirectHome &&
     currentRoute === "live" &&
     activeId &&
     allSessions.some((session) => session.id === activeId)
@@ -1814,7 +1805,7 @@ const fetchSessions = async () => {
 
   syncDesktopSessionIndicator();
 
-  if (!redirectHome && currentRoute === "live" && activeId) {
+  if (currentRoute === "live" && activeId) {
     await Promise.all([
       fetchLogs(activeId),
       fetchConversation(activeId),
@@ -4525,13 +4516,7 @@ window.addEventListener("popstate", () => {
   if (currentRoute !== "live") {
     lastLoggedSessionId = null;
   }
-  const redirectHome = applyRouteSessionFromPath({ allowHistoryUpdate: false });
-  if (redirectHome) {
-    currentRoute = "home";
-    if (window.location.pathname !== HOME_ROUTE) {
-      window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
-    }
-  }
+  applyRouteSessionFromPath({ allowHistoryUpdate: false });
   if (currentRoute === "files") {
     if (window.location.pathname.startsWith("/docs")) {
       const newPath = window.location.pathname.replace("/docs", "/files");
