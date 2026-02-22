@@ -4,6 +4,8 @@
  * Depends on: state, render, various panel renderers, admin APIs (via DI).
  */
 
+import { createSettingsTabs } from './settings-tabs.js';
+
 export function initSettingsView(deps) {
   const {
     state,
@@ -22,83 +24,6 @@ export function initSettingsView(deps) {
     fetchNpubProjects,
     renderNpubProjectsPanel,
   } = deps;
-
-  function buildSettingsTabs(tabDefs) {
-    const shell = document.createElement('div');
-    shell.className = 'wm-settings-tabs';
-
-    const tabList = document.createElement('div');
-    tabList.className = 'wm-settings-tabs__list';
-    tabList.setAttribute('role', 'tablist');
-    tabList.setAttribute('aria-label', 'Settings sections');
-
-    const panels = document.createElement('div');
-    panels.className = 'wm-settings-tabs__panels';
-
-    const tabButtons = [];
-    const tabPanels = [];
-
-    function activateTab(tabId) {
-      tabButtons.forEach((button) => {
-        const isActive = button.dataset.tabId === tabId;
-        button.classList.toggle('is-active', isActive);
-        button.setAttribute('aria-selected', isActive ? 'true' : 'false');
-        button.setAttribute('tabindex', isActive ? '0' : '-1');
-      });
-
-      tabPanels.forEach((panel) => {
-        const isActive = panel.dataset.tabId === tabId;
-        panel.hidden = !isActive;
-      });
-    }
-
-    tabDefs.forEach((tabDef, index) => {
-      const tabButton = document.createElement('button');
-      tabButton.type = 'button';
-      tabButton.className = 'wm-settings-tabs__tab';
-      tabButton.dataset.tabId = tabDef.id;
-      tabButton.id = `wm-settings-tab-${tabDef.id}`;
-      tabButton.setAttribute('role', 'tab');
-      tabButton.setAttribute('aria-controls', `wm-settings-panel-${tabDef.id}`);
-      tabButton.textContent = tabDef.label;
-      tabButton.addEventListener('click', () => activateTab(tabDef.id));
-      tabList.append(tabButton);
-      tabButtons.push(tabButton);
-
-      const panel = document.createElement('section');
-      panel.className = 'wm-settings-tabs__panel';
-      panel.dataset.tabId = tabDef.id;
-      panel.id = `wm-settings-panel-${tabDef.id}`;
-      panel.setAttribute('role', 'tabpanel');
-      panel.setAttribute('aria-labelledby', tabButton.id);
-      panel.hidden = index !== 0;
-      panel.append(tabDef.render());
-      panels.append(panel);
-      tabPanels.push(panel);
-    });
-
-    tabList.addEventListener('keydown', (event) => {
-      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
-        return;
-      }
-      const currentIndex = tabButtons.findIndex((button) => button.getAttribute('aria-selected') === 'true');
-      if (currentIndex < 0) return;
-      const offset = event.key === 'ArrowRight' ? 1 : -1;
-      const nextIndex = (currentIndex + offset + tabButtons.length) % tabButtons.length;
-      const nextButton = tabButtons[nextIndex];
-      if (!nextButton) return;
-      activateTab(nextButton.dataset.tabId ?? tabDefs[0].id);
-      nextButton.focus();
-      event.preventDefault();
-    });
-
-    if (tabDefs.length > 0) {
-      activateTab(tabDefs[0].id);
-    }
-
-    shell.append(tabList, panels);
-    return shell;
-  }
 
   function renderApiKeysSection() {
     const container = document.createElement('div');
@@ -455,7 +380,14 @@ export function initSettingsView(deps) {
       tabDefs.push({ id: 'admin', label: 'Admin', render: renderAdminTab });
     }
 
-    wrapper.append(buildSettingsTabs(tabDefs));
+    wrapper.append(createSettingsTabs({
+      tabDefs,
+      activeTabId: state.ui?.settingsActiveTabId ?? tabDefs[0]?.id,
+      onTabChange: (tabId) => {
+        if (!state.ui) state.ui = {};
+        state.ui.settingsActiveTabId = tabId;
+      },
+    }));
     return wrapper;
   }
 
