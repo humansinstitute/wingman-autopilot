@@ -2918,7 +2918,7 @@ const homeViewModule = initHomeView({
   setCurrentRoute: (r) => { currentRoute = r; },
   render,
   openIdentityLoginDialog,
-  navigateToApps,
+  navigateToApps: (...args) => navigateToApps(...args),
   navigateToChat: (...args) => navigateToChat(...args),
   openDialog,
   openOrchestratorDialog: (...args) => openOrchestratorDialog(...args),
