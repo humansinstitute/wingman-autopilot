@@ -128,6 +128,7 @@ import { initLiveView } from "./views/live-view.js";
 import { initDirectoryBrowser } from "./modals/directory-browser.js";
 import { abbreviateNpub, formatSatoshis, normaliseNpubValue, isFiniteNumber, initIdentityDom } from "./identity/dom.js";
 import { initIdentityStateManager } from "./identity/state-manager.js";
+import { createNavigation } from "./navigation/navigation.js";
 
 // Ace editor is lazy-loaded when the file editor is first opened.
 // See loadAceEditor() below and initFileEditor deps.
@@ -3224,7 +3225,7 @@ const identityStateModule = initIdentityStateManager({
   fetchConfig: (...args) => fetchConfig(...args),
   normalisePortList,
   closeIdentityLoginDialog,
-  navigateToHome,
+  navigateToHome: (...args) => navigateToHome(...args),
   getCurrentRoute: () => currentRoute,
   setCurrentRoute: (r) => { currentRoute = r; },
   HOME_ROUTE,
@@ -3396,273 +3397,58 @@ const finishPull = () => {
   }
 };
 
-function navigateToHome({ replaceHistory = false, skipMenuClose = false } = {}) {
-  if (!skipMenuClose) {
-    closeMenu();
-  }
-  closeIdentityLoginDialog();
-  stopConversationPolling();
-  currentRoute = "home";
-  lastLoggedSessionId = null;
-  if (replaceHistory) {
-    window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
-  } else if (window.location.pathname !== HOME_ROUTE) {
-    window.history.pushState({ route: "home" }, "", HOME_ROUTE);
-  }
-  render();
-}
-
-function navigateToApps({ openNewAppDialog = false, skipMenuClose = false, focusAppId = null } = {}) {
-  if (!state.identity.authenticated) {
-    openIdentityLoginDialog();
-    return;
-  }
-  if (!skipMenuClose) {
-    closeMenu();
-  }
-  stopConversationPolling();
-  if (openNewAppDialog) {
-    appsStore().pendingOpenDialog = "create";
-  }
-  if (focusAppId) {
-    appsStore().pendingFocusId = focusAppId;
-  }
-  currentRoute = "apps";
-  lastLoggedSessionId = null;
-  if (window.location.pathname !== APPS_ROUTE) {
-    window.history.pushState({ route: "apps" }, "", APPS_ROUTE);
-  }
-  // void ensureAppsLoaded(); // DISABLED
-  render();
-}
-
-function navigateToProjects({ skipMenuClose = false } = {}) {
-  if (!state.identity.authenticated) {
-    openIdentityLoginDialog();
-    return;
-  }
-  if (!projectsFeatureEnabledForViewer()) {
-    showToast?.("Projects are disabled right now", { variant: "info" });
-    return;
-  }
-  if (!skipMenuClose) {
-    closeMenu();
-  }
-  closeIdentityLoginDialog();
-  stopConversationPolling();
-  currentRoute = "projects";
-  lastLoggedSessionId = null;
-  if (window.location.pathname !== PROJECTS_ROUTE) {
-    window.history.pushState({ route: "projects" }, "", PROJECTS_ROUTE);
-  }
-  if (projectFeature) {
-    void projectFeature.ensureLoaded();
-  }
-  render();
-}
-
-function navigateToNightWatch({ skipMenuClose = false } = {}) {
-  if (!state.identity.authenticated) {
-    openIdentityLoginDialog();
-    return;
-  }
-  if (!state.identity.isAdmin) {
-    showToast?.("Night Watchman is admin-only", { variant: "info" });
-    return;
-  }
-  if (!isFeatureEnabledForViewer("nightwatch_enabled")) {
-    showToast?.("Night Watchman is disabled", { variant: "info" });
-    return;
-  }
-  if (!skipMenuClose) {
-    closeMenu();
-  }
-  closeIdentityLoginDialog();
-  stopConversationPolling();
-  currentRoute = "nightwatch";
-  lastLoggedSessionId = null;
-  if (window.location.pathname !== NIGHTWATCH_ROUTE) {
-    window.history.pushState({ route: "nightwatch" }, "", NIGHTWATCH_ROUTE);
-  }
-  void ensureNightWatchPageLoaded();
-  render();
-}
-
-function navigateToScheduler({ skipMenuClose = false } = {}) {
-  if (!state.identity.authenticated) {
-    openIdentityLoginDialog();
-    return;
-  }
-  if (!state.identity.isAdmin) {
-    showToast?.("Triggers is admin-only", { variant: "info" });
-    return;
-  }
-  if (!skipMenuClose) {
-    closeMenu();
-  }
-  closeIdentityLoginDialog();
-  stopConversationPolling();
-  currentRoute = "scheduler";
-  lastLoggedSessionId = null;
-  if (window.location.pathname !== TRIGGERS_ROUTE && window.location.pathname !== SCHEDULER_ROUTE) {
-    window.history.pushState({ route: "scheduler" }, "", TRIGGERS_ROUTE);
-  }
-  void ensureSchedulerPageLoaded();
-  render();
-}
-
-function navigateToSettings({ skipMenuClose = false } = {}) {
-  if (!skipMenuClose) {
-    closeMenu();
-  }
-  closeIdentityLoginDialog();
-  stopConversationPolling();
-  currentRoute = "settings";
-  lastLoggedSessionId = null;
-  if (window.location.pathname !== SETTINGS_ROUTE) {
-    window.history.pushState({ route: "settings" }, "", SETTINGS_ROUTE);
-  }
-  render();
-}
-
-navLinks.forEach((link) => {
-  link.addEventListener("click", (event) => {
-    event.preventDefault();
-    const targetRoute = link.dataset.route;
-    if (!targetRoute || targetRoute === currentRoute) return;
-    if (!state.identity.authenticated) {
-      openIdentityLoginDialog();
-      return;
-    }
-    closeMenu();
-    if (targetRoute === "live") {
-      currentRoute = "live";
-      const ss = sessionsStore();
-      const navSessions = ss.items;
-      const navActiveId = ss.activeSessionId;
-      const navLastId = ss.lastActiveSessionId;
-      const hasActive = navActiveId && navSessions.some((session) => session.id === navActiveId);
-      const hasLast = navLastId && navSessions.some((session) => session.id === navLastId);
-      const targetSessionId = hasActive ? navActiveId : hasLast ? navLastId : null;
-      if (targetSessionId) {
-        setActiveSession(targetSessionId, { updateHistory: true, forceLog: true });
-      } else {
-        setActiveSession(null, { updateHistory: true });
-      }
-    } else if (targetRoute === "apps") {
-      navigateToApps({ skipMenuClose: true });
-      return;
-    } else if (targetRoute === "projects") {
-      navigateToProjects({ skipMenuClose: true });
-      return;
-    } else if (targetRoute === "nightwatch") {
-      navigateToNightWatch({ skipMenuClose: true });
-      return;
-    } else if (targetRoute === "scheduler") {
-      navigateToScheduler({ skipMenuClose: true });
-      return;
-    } else if (targetRoute === "files") {
-      // If navigating from live page with an active session, start in that session's directory
-      const activeSession = currentRoute === "live" ? getActiveSessionForIndicator() : null;
-      const sessionDir = activeSession?.workingDirectory;
-      stopConversationPolling();
-      currentRoute = "files";
-      lastLoggedSessionId = null;
-      if (!state.files.initialized) {
-        state.files.initialized = true;
-        void loadFilesTree(sessionDir);
-      } else if (sessionDir) {
-        // Already initialized but coming from live with a session directory - navigate there
-        void loadFilesTree(sessionDir);
-      } else {
-        // Already initialized — sync URL to current state
-        updateFilesUrl({ replace: true });
-      }
-    } else if (targetRoute === "settings") {
-      navigateToSettings({ skipMenuClose: true });
-      return;
-    } else {
-      navigateToHome({ skipMenuClose: true });
-      return;
-    }
-    render();
-  });
+// Navigation module — extracted from app.js.
+// All six navigateTo* functions and the nav event listeners live in navigation.js.
+const {
+  navigateToHome,
+  navigateToApps,
+  navigateToProjects,
+  navigateToNightWatch,
+  navigateToScheduler,
+  navigateToSettings,
+  setupNavListeners,
+} = createNavigation({
+  closeMenu,
+  closeIdentityLoginDialog,
+  openIdentityLoginDialog,
+  stopConversationPolling,
+  render,
+  getCurrentRoute: () => currentRoute,
+  setCurrentRoute: (r) => { currentRoute = r; },
+  setLastLoggedSessionId: (id) => { lastLoggedSessionId = id; },
+  appsStore,
+  sessionsStore,
+  setActiveSession,
+  state,
+  showToast,
+  projectsFeatureEnabledForViewer: (...args) => projectsFeatureEnabledForViewer(...args),
+  isFeatureEnabledForViewer: (...args) => isFeatureEnabledForViewer(...args),
+  get projectFeature() { return projectFeature; },
+  ensureNightWatchPageLoaded: (...args) => ensureNightWatchPageLoaded(...args),
+  ensureSchedulerPageLoaded: (...args) => ensureSchedulerPageLoaded(...args),
+  loadFilesTree: (...args) => loadFilesTree(...args),
+  updateFilesUrl: (...args) => updateFilesUrl(...args),
+  getActiveSessionForIndicator,
+  scrollConversationAreaToBottom,
+  HOME_ROUTE,
+  APPS_ROUTE,
+  PROJECTS_ROUTE,
+  NIGHTWATCH_ROUTE,
+  TRIGGERS_ROUTE,
+  SCHEDULER_ROUTE,
+  SETTINGS_ROUTE,
+  PRIVACY_ROUTE,
+  navLinks,
+  menuToggle,
+  menuPanel,
+  desktopSessionIndicatorButton,
+  toggleMenu,
+  getHandleIdentityLogout: () => handleIdentityLogout,
+  getHandleIdentityCopy: () => handleIdentityCopy,
+  getIdentityDomEntryByNode: () => identityDomEntryByNode,
 });
 
-// Handle menu footer links (privacy policy, etc.)
-const menuFooterLinks = Array.from(document.querySelectorAll(".wm-menu-footer a[data-route]"));
-menuFooterLinks.forEach((link) => {
-  link.addEventListener("click", (event) => {
-    event.preventDefault();
-    const targetRoute = link.dataset.route;
-    if (!targetRoute || targetRoute === currentRoute) return;
-    closeMenu();
-    if (targetRoute === "privacy") {
-      currentRoute = "privacy";
-      if (window.location.pathname !== PRIVACY_ROUTE) {
-        window.history.pushState({ route: "privacy" }, "", PRIVACY_ROUTE);
-      }
-      render();
-    }
-  });
-});
-
-if (typeof window !== "undefined") {
-  window.navigateToProjects = navigateToProjects;
-}
-
-menuToggle?.addEventListener("click", (event) => {
-  event.stopPropagation();
-  if (!state.identity.authenticated) {
-    openIdentityLoginDialog();
-    return;
-  }
-  toggleMenu();
-});
-
-desktopSessionIndicatorButton?.addEventListener("click", (event) => {
-  event.preventDefault();
-  if (!state.identity.authenticated) {
-    openIdentityLoginDialog();
-    return;
-  }
-  const session = getActiveSessionForIndicator();
-  if (!session) return;
-  closeMenu();
-  if (currentRoute !== "live") {
-    currentRoute = "live";
-  }
-  setActiveSession(session.id, { updateHistory: true, forceLog: true });
-  render();
-  requestAnimationFrame(() => {
-    scrollConversationAreaToBottom(session.id, { includeWindow: true });
-  });
-});
-
-document.addEventListener("click", (event) => {
-  if (document.body.dataset.menuOpen === "true") {
-    const target = event.target;
-    if (target instanceof Node && !menuToggle?.contains(target) && !menuPanel?.contains(target)) {
-      closeMenu();
-    }
-  }
-
-  const clickTarget = event.target;
-  if (clickTarget instanceof HTMLElement) {
-    if (clickTarget.matches('[data-action="identity-logout"]')) {
-      if (!clickTarget.disabled) {
-        void handleIdentityLogout(event, identityDomEntryByNode.get(clickTarget) ?? null);
-      } else {
-        event.preventDefault();
-      }
-      return;
-    }
-    if (clickTarget.matches('[data-action="copy-active-npub"]')) {
-      void handleIdentityCopy(event, identityDomEntryByNode.get(clickTarget) ?? null);
-      return;
-    }
-  }
-});
+setupNavListeners();
 
 window.addEventListener("resize", () => {
   if (window.innerWidth > 720) {
