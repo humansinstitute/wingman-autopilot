@@ -150,6 +150,7 @@ import { connectPM2 } from "./agents/pm2-wrapper";
 import { createUploadHelpers } from "./server/uploads/helpers";
 import { resolveAndCacheNostrProfile } from "./server/nostr-profile";
 import { shouldKeepBotKeyForNostrTriggers } from "./server/botkey-lifecycle";
+import { waitForSessionPromptReadiness } from "./server/session-readiness";
 import {
   validateForkInput,
   getRecentMessages,
@@ -339,6 +340,18 @@ const schedulerEngine = new SchedulerEngine({
   addPrompt: (sid, content) => promptQueueStore.addPrompt(sid, { content }),
   dispatchPrompt: (session) => {
     void maybeAutoDispatchQueuedPrompt(session);
+  },
+  awaitSessionReadyForPrompt: async (session, agent) => {
+    const timeoutMs = agent === "codex" ? 120000 : 60000;
+    await waitForSessionPromptReadiness({
+      getSession: (sessionId) => manager.getSession(sessionId) ?? null,
+      sessionId: session.id,
+      host: agentHost,
+      timeoutMs,
+      pollIntervalMs: 500,
+      requiredStablePolls: 3,
+      requestTimeoutMs: 2500,
+    });
   },
   onBotKeyUnlocked: onBotKeyUnlockedHook,
 });

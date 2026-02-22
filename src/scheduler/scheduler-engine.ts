@@ -42,6 +42,7 @@ export interface SchedulerEngineDeps {
   ) => Promise<SessionSnapshot>;
   addPrompt: (sessionId: string, content: string) => void;
   dispatchPrompt: (session: SessionSnapshot) => void;
+  awaitSessionReadyForPrompt?: (session: SessionSnapshot, agent: AgentType) => Promise<void>;
   onBotKeyUnlocked?: (npub: string, secretKey: Uint8Array, botPubkeyHex: string) => void;
 }
 
@@ -331,18 +332,23 @@ class SchedulerEngine {
         job.userNpub,
       );
 
-      // 4. Inject initial prompt (or override)
+      // 4. Wait for steady runtime readiness before prompt injection
+      if (this.deps.awaitSessionReadyForPrompt) {
+        await this.deps.awaitSessionReadyForPrompt(session, job.agent as AgentType);
+      }
+
+      // 5. Inject initial prompt (or override)
       this.deps.addPrompt(session.id, promptOverride ?? job.initialPrompt);
 
-      // 5. Enable Night Watchman if configured
+      // 6. Enable Night Watchman if configured
       if (job.nightwatchmanEnabled) {
         this.deps.nightWatchStore.enableSession(session.id);
       }
 
-      // 6. Dispatch the prompt
+      // 7. Dispatch the prompt
       this.deps.dispatchPrompt(session);
 
-      // 7. Update job and record success
+      // 8. Update job and record success
       const now = new Date().toISOString();
       const updateFields: Record<string, unknown> = { lastRunAt: now };
       const cron = this.cronJobs.get(jobId);
