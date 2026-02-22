@@ -122,6 +122,7 @@ import {
   type AccessRule,
 } from "./auth/access-control";
 import { handleKeyTeleport, handleKeyTeleportRegistration } from "./auth/keyteleport";
+import { secureResolvePath, validatePathSegment, sanitizePath } from "./server/path-security.js";
 import { createStaticAssetService, compressResponse } from "./server/static-assets";
 import { maybeRefreshSessionCookie } from "./server/session-refresh";
 import { handleSubdomainRequest, resolveAliasToPort, proxyRequestToApp, type SubdomainProxyConfig } from "./server/subdomain-proxy";
@@ -883,42 +884,6 @@ const resolveWorkspace = (context?: RequestAuthContext): WorkspaceScope => {
   return resolveWorkspaceScope(config, activeContext, adminNpub, systemDocsRoot, systemDocsRootBoundary);
 };
 
-const secureResolvePath = (base: string, target: string): string => {
-  if (!isAbsolute(base)) {
-    throw new Error("Base path must be absolute");
-  }
-  
-  const normalizedBase = normalize(base);
-  const resolvedTarget = resolvePath(normalizedBase, target);
-  const normalizedTarget = normalize(resolvedTarget);
-  
-  if (!normalizedTarget.startsWith(normalizedBase + sep) && normalizedTarget !== normalizedBase) {
-    throw new Error(`Path traversal detected: ${target} escapes allowed directory`);
-  }
-  
-  return normalizedTarget;
-};
-
-const validatePathSegment = (segment: string): boolean => {
-  const dangerousPatterns = [
-    /\.\./,
-    /[<>:"|?*]/,
-    /^[.]/,
-    /[.]+$/,
-    /\x00/,
-  ];
-  
-  return !dangerousPatterns.some(pattern => pattern.test(segment));
-};
-
-const sanitizePath = (path: string): string => {
-  const wasAbsolute = isAbsolute(path);
-  const sanitized = path
-    .split(sep)
-    .filter(segment => segment.length > 0 && validatePathSegment(segment))
-    .join(sep);
-  return wasAbsolute ? sep + sanitized : sanitized;
-};
 
 const ensureWithinAllowedDirectories = (candidate: string, scope?: WorkspaceScope) => {
   const activeScope = scope ?? resolveWorkspace();
