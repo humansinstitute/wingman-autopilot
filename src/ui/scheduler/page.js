@@ -26,6 +26,9 @@ function buildCron(frequency, hour, minute, weekday) {
     case "every_15min":   return "*/15 * * * *";
     case "every_30min":   return "*/30 * * * *";
     case "hourly":        return `${mm} * * * *`;
+    case "every_2h":      return `${mm} */2 * * *`;
+    case "every_3h":      return `${mm} */3 * * *`;
+    case "every_4h":      return `${mm} */4 * * *`;
     case "every_6h":      return `${mm} */6 * * *`;
     case "daily":         return `${mm} ${hh} * * *`;
     case "weekdays":      return `${mm} ${hh} * * 1-5`;
@@ -59,7 +62,7 @@ function describeCron(expr) {
 
 /** Check whether frequency needs a time picker. */
 function frequencyNeedsTime(freq) {
-  return ["hourly", "every_6h", "daily", "weekdays", "weekly"].includes(freq);
+  return ["hourly", "every_2h", "every_3h", "every_4h", "every_6h", "daily", "weekdays", "weekly"].includes(freq);
 }
 
 /** Check whether frequency needs hour picker (not just minute). */
@@ -84,6 +87,10 @@ function parseCron(expr) {
   const hour = parseInt(hh, 10) || 9;
 
   if (hh === "*") return { frequency: "hourly", hour: 9, minute, weekday: "1" };
+  if (hh === "*/2") return { frequency: "every_2h", hour: 9, minute, weekday: "1" };
+  if (hh === "*/3") return { frequency: "every_3h", hour: 9, minute, weekday: "1" };
+  if (hh === "*/4") return { frequency: "every_4h", hour: 9, minute, weekday: "1" };
+  if (hh === "*/6") return { frequency: "every_6h", hour: 9, minute, weekday: "1" };
   if (hh.startsWith("*/")) return { frequency: "every_6h", hour: 9, minute, weekday: "1" };
   if (dow === "1-5") return { frequency: "weekdays", hour, minute, weekday: "1" };
   if (dow !== "*") return { frequency: "weekly", hour, minute, weekday: dow };
@@ -537,6 +544,9 @@ function getPageTemplate() {
               <option value="every_15min">Every 15 minutes</option>
               <option value="every_30min">Every 30 minutes</option>
               <option value="hourly">Hourly</option>
+              <option value="every_2h">Every 2 hours</option>
+              <option value="every_3h">Every 3 hours</option>
+              <option value="every_4h">Every 4 hours</option>
               <option value="every_6h">Every 6 hours</option>
               <option value="daily">Daily</option>
               <option value="weekdays">Weekdays</option>
@@ -777,6 +787,9 @@ function getPageTemplate() {
                     <option value="every_15min">Every 15 minutes</option>
                     <option value="every_30min">Every 30 minutes</option>
                     <option value="hourly">Hourly</option>
+                    <option value="every_2h">Every 2 hours</option>
+                    <option value="every_3h">Every 3 hours</option>
+                    <option value="every_4h">Every 4 hours</option>
                     <option value="every_6h">Every 6 hours</option>
                     <option value="daily">Daily</option>
                     <option value="weekdays">Weekdays</option>
