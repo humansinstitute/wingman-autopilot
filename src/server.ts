@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type Dirent } from "node:fs";
 import { cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -123,6 +123,15 @@ import {
 } from "./auth/access-control";
 import { handleKeyTeleport, handleKeyTeleportRegistration } from "./auth/keyteleport";
 import { secureResolvePath, validatePathSegment, sanitizePath } from "./server/path-security.js";
+import {
+  MAX_DIRECTORY_RESULTS,
+  DIRECTORY_BROWSER_ROOT,
+  expandHomeDirectory,
+  formatHomeRelativePath,
+  formatRootDirectoryName,
+  ensureWithinBase,
+  createPathUtils,
+} from "./server/path-utils";
 import { createStaticAssetService, compressResponse } from "./server/static-assets";
 import { maybeRefreshSessionCookie } from "./server/session-refresh";
 import { handleSubdomainRequest, resolveAliasToPort, proxyRequestToApp, type SubdomainProxyConfig } from "./server/subdomain-proxy";
@@ -886,31 +895,14 @@ const resolveWorkspace = (context?: RequestAuthContext): WorkspaceScope => {
   return resolveWorkspaceScope(config, activeContext, adminNpub, systemDocsRoot, systemDocsRootBoundary);
 };
 
-
-const ensureWithinAllowedDirectories = (candidate: string, scope?: WorkspaceScope) => {
-  const activeScope = scope ?? resolveWorkspace();
-  if (activeScope.allowedDirectories.length === 0) {
-    throw new Error("No allowed directories configured");
-  }
-
-  const sanitizedCandidate = sanitizePath(candidate);
-  
-  if (!isAbsolute(sanitizedCandidate)) {
-    throw new Error("Path must be absolute");
-  }
-
-  const normalizedCandidate = normalize(sanitizedCandidate);
-  
-  for (const base of activeScope.allowedDirectories) {
-    const normalizedBase = normalize(base);
-    if (normalizedCandidate === normalizedBase || 
-        normalizedCandidate.startsWith(normalizedBase + sep)) {
-      return normalizedCandidate;
-    }
-  }
-
-  throw new Error(`Directory outside permitted locations: ${normalizedCandidate}`);
-};
+const {
+  ensureWithinAllowedDirectories,
+  toAbsoluteDirectory,
+  ensureDirectory,
+  listRootDirectories,
+  resolveDirectoryParent,
+  toProjectRelativePath,
+} = createPathUtils(resolveWorkspace, projectRoot);
 warmRestartState.marker = warmRestartMarker;
 
 // Initialize PM2 connection
@@ -1621,155 +1613,6 @@ manager.on((event) => {
   }
 });
 
-const MAX_DIRECTORY_RESULTS = 50;
-const DIRECTORY_BROWSER_ROOT = "__root__";
-
-const expandHomeDirectory = (input: string): string => {
-  if (!input.startsWith("~")) {
-    return input;
-  }
-  const home = Bun.env.HOME ?? "";
-  return home ? input.replace("~", home) : input;
-};
-
-const toAbsoluteDirectory = (input: string, scope?: WorkspaceScope): string => {
-  const activeScope = scope ?? resolveWorkspace();
-  const expanded = expandHomeDirectory(input);
-  const candidate = isAbsolute(expanded)
-    ? expanded
-    : resolvePath(activeScope.defaultDirectory, expanded);
-  const normalised = normalize(candidate);
-  ensureWithinAllowedDirectories(normalised, activeScope);
-  return normalised;
-};
-
-const formatHomeRelativePath = (absolute: string): string => {
-  try {
-    const home = homedir();
-    if (!home) {
-      return absolute;
-    }
-    const normalisedHome = normalize(home);
-    if (absolute === normalisedHome) {
-      return "~";
-    }
-    const prefix = normalisedHome.endsWith(sep) ? normalisedHome : `${normalisedHome}${sep}`;
-    if (absolute.startsWith(prefix)) {
-      const suffix = absolute.slice(prefix.length);
-      return suffix.length > 0 ? `~${sep}${suffix}` : "~";
-    }
-  } catch {
-    // Ignore homedir resolution errors and fall back to the basename below.
-  }
-  return absolute;
-};
-
-const formatRootDirectoryName = (absolute: string): string => {
-  const homeRelative = formatHomeRelativePath(absolute);
-  if (homeRelative !== absolute) {
-    return homeRelative;
-  }
-  const name = basename(absolute);
-  return name.length > 0 ? name : absolute;
-};
-
-const ensureDirectory = async (
-  input: string | null | undefined,
-  scopeOverride?: WorkspaceScope,
-): Promise<string> => {
-  const activeScope = scopeOverride ?? resolveWorkspace();
-  const source = input?.trim();
-  const candidate = source && source.length > 0 ? source : activeScope.defaultDirectory;
-  const absolute = toAbsoluteDirectory(candidate, activeScope);
-  let resolved = absolute;
-
-  try {
-    resolved = await realpath(absolute);
-  } catch {
-    // realpath fails when the directory does not exist; keep the normalized path.
-    resolved = absolute;
-  } finally {
-    ensureWithinAllowedDirectories(resolved, activeScope);
-  }
-
-  let stats: Awaited<ReturnType<typeof stat>>;
-  try {
-    stats = await stat(resolved);
-  } catch {
-    throw new Error(`Directory not found: ${resolved}`);
-  }
-
-  if (!stats.isDirectory()) {
-    throw new Error(`Path is not a directory: ${resolved}`);
-  }
-
-  return resolved;
-};
-
-const listRootDirectories = async (query?: string, scopeOverride?: WorkspaceScope) => {
-  const activeScope = scopeOverride ?? resolveWorkspace();
-  const term = query?.trim().toLowerCase() ?? "";
-  const seen = new Set<string>();
-  const entries: Array<{ name: string; path: string }> = [];
-
-  for (const absolute of activeScope.allowedDirectories) {
-    if (seen.has(absolute)) {
-      continue;
-    }
-    seen.add(absolute);
-    let stats: Awaited<ReturnType<typeof stat>>;
-    try {
-      stats = await stat(absolute);
-    } catch {
-      continue;
-    }
-    if (!stats.isDirectory()) {
-      continue;
-    }
-    entries.push({
-      name: formatRootDirectoryName(absolute),
-      path: absolute,
-    });
-  }
-
-  entries.sort((a, b) => a.name.localeCompare(b.name));
-
-  const filtered = term.length === 0
-    ? entries
-    : entries.filter((entry) =>
-        entry.name.toLowerCase().includes(term) || entry.path.toLowerCase().includes(term),
-      );
-
-  const limited = term.length === 0 ? filtered : filtered.slice(0, MAX_DIRECTORY_RESULTS);
-
-  return {
-    path: "",
-    parent: null as string | null,
-    entries: limited,
-  };
-};
-
-const resolveDirectoryParent = (directory: string, scopeOverride?: WorkspaceScope): string | null => {
-  const activeScope = scopeOverride ?? resolveWorkspace();
-  for (const allowed of activeScope.allowedDirectories) {
-    if (directory === allowed) {
-      return DIRECTORY_BROWSER_ROOT;
-    }
-  }
-
-  const candidate = dirname(directory);
-  if (candidate === directory) {
-    return null;
-  }
-
-  try {
-    ensureWithinAllowedDirectories(candidate, activeScope);
-    return candidate;
-  } catch {
-    return DIRECTORY_BROWSER_ROOT;
-  }
-};
-
 const DIRECTORY_NAME_MAX_LENGTH = 160;
 
 const normaliseDirectoryEntryName = (value: unknown): string => {
@@ -1939,27 +1782,6 @@ const parsePresetInteger = (value: unknown, fallback: number, minimum?: number):
     return fallback;
   }
   return numeric;
-};
-
-const toProjectRelativePath = (absolute: string): string => {
-  const normalized = normalize(absolute);
-  if (!normalized.startsWith(projectRoot)) {
-    return normalized;
-  }
-  if (normalized === projectRoot) {
-    return ".";
-  }
-  const offset = projectRoot.endsWith("/") ? projectRoot.length : projectRoot.length + 1;
-  return normalized.slice(offset);
-};
-
-const ensureWithinBase = (absolute: string, base: string) => {
-  const normalized = normalize(absolute);
-  const normalizedBase = normalize(base);
-  if (!normalized.startsWith(normalizedBase)) {
-    throw new Error("Invalid directory path");
-  }
-  return normalized;
 };
 
 const listOrchestratorDirectories = async (target: "templates" | "active", relativeInput: string | null) => {
