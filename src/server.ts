@@ -133,6 +133,7 @@ import { handleChatApi, type ChatApiContext } from "./server/chat-routes";
 import { handleSessionApi, type SessionApiContext } from "./server/session-api-routes";
 import { handleDocsApi, type DocsApiContext } from "./server/docs-routes";
 import { handleAdminUsersApi, type AdminUsersApiContext } from "./server/admin-users-routes";
+import { performSystemCleanup } from "./server/system-cleanup.js";
 import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import { SchedulerStore } from "./scheduler/scheduler-store";
 import { SchedulerEngine } from "./scheduler/scheduler-engine";
@@ -2981,183 +2982,6 @@ const verifyNip98AuthHeader = (request: Request, url: URL): string | null => {
   }
 };
 
-type SessionCleanupDetail = {
-  id: string;
-  agent: AgentType;
-  name: string;
-  port: number;
-  npub: string | null;
-  stopped: boolean;
-  deleted: boolean;
-  stopError?: string;
-  deleteError?: string;
-};
-
-type AppCleanupDetail = {
-  id: string;
-  label: string;
-  running: boolean;
-  killed: boolean;
-  removed: boolean;
-  killError?: string;
-  removeError?: string;
-};
-
-type SystemCleanupResult = {
-  timestamp: string;
-  preservedCoreApp: boolean;
-  sessions: {
-    total: number;
-    stopped: number;
-    deleted: number;
-    failed: number;
-    details: SessionCleanupDetail[];
-  };
-  apps: {
-    total: number;
-    killed: number;
-    removed: number;
-    failed: number;
-    skipped: number;
-    details: AppCleanupDetail[];
-  };
-};
-
-async function performSystemCleanup(): Promise<SystemCleanupResult> {
-  const snapshotTimestamp = new Date().toISOString();
-  const sessionSnapshots = manager.listSessions();
-  const sessionDetails: SessionCleanupDetail[] = [];
-  let sessionsStopped = 0;
-  let sessionsDeleted = 0;
-  let sessionFailures = 0;
-
-  for (const snapshot of sessionSnapshots) {
-    const detail: SessionCleanupDetail = {
-      id: snapshot.id,
-      agent: snapshot.agent,
-      name: snapshot.name,
-      port: snapshot.port,
-      npub: snapshot.npub ?? null,
-      stopped: false,
-      deleted: false,
-    };
-
-    try {
-      await manager.stopSession(snapshot.id);
-      detail.stopped = true;
-      sessionsStopped += 1;
-    } catch (error) {
-      detail.stopError = error instanceof Error ? error.message : String(error);
-    }
-
-    const current = manager.getSession(snapshot.id);
-    const canDelete =
-      !current ||
-      current.status === "stopped" ||
-      current.status === "error";
-
-    if (canDelete) {
-      try {
-        const removed = manager.deleteSession(snapshot.id);
-        if (removed) {
-          detail.deleted = true;
-          sessionsDeleted += 1;
-          try {
-            messageStore.removeSession(snapshot.id);
-          } catch (error) {
-            detail.deleteError = error instanceof Error ? error.message : String(error);
-            detail.deleted = false;
-            sessionsDeleted -= 1;
-          }
-        }
-      } catch (error) {
-        detail.deleteError = error instanceof Error ? error.message : String(error);
-      }
-    } else if (!detail.stopError) {
-      detail.stopError = "Session still running after stop attempt";
-    }
-
-    if (detail.stopError || detail.deleteError) {
-      sessionFailures += 1;
-    }
-
-    sessionDetails.push(detail);
-  }
-
-  const appDetails: AppCleanupDetail[] = [];
-  const appStatuses = await appProcessManager.listStatuses().catch(() => []);
-  const statusMap = new Map(appStatuses.map((status) => [status.appId, status]));
-  const apps = await appRegistry.listApps();
-  let appsKilled = 0;
-  let appsRemoved = 0;
-  let appFailures = 0;
-  let appSkipped = 0;
-  let preservedCoreApp = false;
-
-  for (const app of apps) {
-    if (app.id === "wingman-core") {
-      preservedCoreApp = true;
-      appSkipped += 1;
-      continue;
-    }
-
-    const status = statusMap.get(app.id);
-    const detail: AppCleanupDetail = {
-      id: app.id,
-      label: app.label,
-      running: Boolean(status?.running),
-      killed: false,
-      removed: false,
-    };
-
-    try {
-      await appProcessManager.kill(app.id);
-      detail.killed = true;
-      appsKilled += 1;
-    } catch (error) {
-      detail.killError = error instanceof Error ? error.message : String(error);
-    }
-
-    try {
-      const removed = await appRegistry.removeApp(app.id);
-      if (removed) {
-        detail.removed = true;
-        appsRemoved += 1;
-      }
-    } catch (error) {
-      detail.removeError = error instanceof Error ? error.message : String(error);
-    } finally {
-      appProcessManager.forget(app.id);
-    }
-
-    if (detail.killError || detail.removeError) {
-      appFailures += 1;
-    }
-
-    appDetails.push(detail);
-  }
-
-  return {
-    timestamp: snapshotTimestamp,
-    preservedCoreApp,
-    sessions: {
-      total: sessionDetails.length,
-      stopped: sessionsStopped,
-      deleted: sessionsDeleted,
-      failed: sessionFailures,
-      details: sessionDetails,
-    },
-    apps: {
-      total: appDetails.length,
-      killed: appsKilled,
-      removed: appsRemoved,
-      failed: appFailures,
-      skipped: appSkipped,
-      details: appDetails,
-    },
-  };
-}
-
 const requireAdminAccess = (): AccessRule => {
   return (context) => {
     if (!adminNpub) {
@@ -3582,7 +3406,7 @@ const handleApi = async (
       return denied;
     }
     try {
-      const result = await performSystemCleanup();
+      const result = await performSystemCleanup({ manager, messageStore, appProcessManager, appRegistry });
       return Response.json(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
