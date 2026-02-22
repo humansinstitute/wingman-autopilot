@@ -7587,8 +7587,9 @@ const server = Bun.serve({
 });
 
 const stopAllSessions = async () => {
-  if (preserveSessionsOnShutdown) {
-    console.log("[shutdown] preserving running agent sessions for warm restart");
+  if (preserveSessionsOnShutdown || config.agentSpawnMode === "pm2") {
+    const reason = preserveSessionsOnShutdown ? "warm restart" : "pm2 agent spawn mode";
+    console.log(`[shutdown] preserving running agent sessions (${reason})`);
     return;
   }
 
