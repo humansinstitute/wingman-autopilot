@@ -350,7 +350,7 @@ const schedulerEngine = new SchedulerEngine({
       host: agentHost,
       timeoutMs,
       pollIntervalMs: 500,
-      requiredStablePolls: 3,
+      requiredStablePolls: agent === "codex" ? 3 : 2,
       requestTimeoutMs: 2500,
     });
     markPromptStartupReady(session.id);
@@ -3326,6 +3326,7 @@ const agentStatusPoller = new AgentRuntimeStatusPoller(manager, {
   intervalMs: config.agentStatusPollIntervalMs,
   maxIntervalMs: config.agentStatusPollMaxIntervalMs,
   timeoutMs: config.agentStatusPollTimeoutMs,
+  initialDelayMs: 3000,
 });
 agentStatusPoller.start();
 
@@ -3397,7 +3398,7 @@ async function ensureSessionReadyForPromptDispatch(session: SessionSnapshot): Pr
     host: agentHost,
     timeoutMs,
     pollIntervalMs: 500,
-    requiredStablePolls: 3,
+    requiredStablePolls: session.agent === "codex" ? 3 : 2,
     requestTimeoutMs: 2500,
   });
   markPromptStartupReady(session.id);
