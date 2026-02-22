@@ -1781,6 +1781,10 @@ body[data-menu-open="true"] .wm-menu-panel {
   gap: 1rem;
 }
 
+.wm-settings-tabs__panel[hidden] {
+  display: none;
+}
+
 .wm-settings > h1 {
   margin: 0 0 0.75rem;
   color: var(--text-primary);
