@@ -129,6 +129,7 @@ import { initDirectoryBrowser } from "./modals/directory-browser.js";
 import { abbreviateNpub, formatSatoshis, normaliseNpubValue, isFiniteNumber, initIdentityDom } from "./identity/dom.js";
 import { initIdentityStateManager } from "./identity/state-manager.js";
 import { createNavigation } from "./navigation/navigation.js";
+import { createSessionRouting } from "./sessions/session-routing.js";
 
 // Ace editor is lazy-loaded when the file editor is first opened.
 // See loadAceEditor() below and initFileEditor deps.
@@ -507,140 +508,32 @@ if (currentRoute === "files" && window.location.pathname.startsWith("/docs")) {
   window.history.replaceState({ route: "files" }, "", newPath);
 }
 
-const setActiveSession = (sessionId, options = {}) => {
-  const { updateHistory = true, logPort = true, allowPending = false, forceLog = false } = options;
-  const ss = sessionsStore();
-  const previousSessionId = ss.activeSessionId;
-  const allSessions = ss.items;
-
-  if (sessionId) {
-    const sessionExists = allSessions.some((session) => session.id === sessionId);
-    if (!sessionExists && !allowPending) {
-      ss.activeSessionId = null;
-      lastLoggedSessionId = null;
-      syncDesktopSessionIndicator();
-      return false;
-    }
-
-    ss.activeSessionId = sessionId;
-    ss.lastActiveSessionId = sessionId;
-
-    if (updateHistory && currentRoute === "live") {
-      const targetPath = `${LIVE_ROUTE_PREFIX}/${sessionId}`;
-      if (window.location.pathname !== targetPath) {
-        window.history.pushState({ route: "live", sessionId }, "", targetPath);
-      }
-    }
-
-    if (logPort && sessionExists) {
-      const shouldLog = forceLog ? lastLoggedSessionId !== sessionId : sessionId !== previousSessionId;
-      if (shouldLog) {
-        const session = getSessionById(sessionId);
-        if (session) {
-          console.log("This session is sending to port:", session.port);
-          lastLoggedSessionId = sessionId;
-        }
-      }
-    }
-
-    syncDesktopSessionIndicator();
-    updateDocumentTitle();
-
-    // Manage SSE connections and polling for live view
-    if (currentRoute === "live" && sessionExists) {
-      // Disconnect previous session if different
-      if (previousSessionId && previousSessionId !== sessionId) {
-        sseManager.disconnect(previousSessionId);
-      }
-      // Connect to new session
-      sseManager.connect(sessionId);
-
-      // Start conversation polling (1 second interval)
-      startConversationPolling(sessionId);
-
-      // Dispatch session-change event for Alpine.js chat component
-      if (isAlpineChatEnabled() && previousSessionId !== sessionId) {
-        window.wingman = window.wingman || {};
-        window.wingman.activeSessionId = sessionId;
-        window.dispatchEvent(new CustomEvent("session-change", { detail: { sessionId } }));
-      }
-
-      // Scroll to end when switching to a different session
-      if (previousSessionId !== sessionId) {
-        scheduleLiveScroll(sessionId, { includeWindow: true });
-      }
-    }
-
-    return true;
-  }
-
-  // No session selected - stop polling
-  ss.activeSessionId = null;
-  lastLoggedSessionId = null;
-  stopConversationPolling();
-  if (updateHistory && currentRoute === "live" && window.location.pathname !== LIVE_ROUTE_PREFIX) {
-    window.history.pushState({ route: "live" }, "", LIVE_ROUTE_PREFIX);
-  }
-  syncDesktopSessionIndicator();
-  updateDocumentTitle();
-  return true;
-};
-
-const ensureActiveSession = () => {
-  const allSessions = sessionsStore().items;
-  const activeId = sessionsStore().activeSessionId;
-  const lastId = sessionsStore().lastActiveSessionId;
-
-  if (activeId && allSessions.some((session) => session.id === activeId)) {
-    return activeId;
-  }
-  if (lastId && allSessions.some((session) => session.id === lastId)) {
-    setActiveSession(lastId, { updateHistory: false, logPort: false });
-    return sessionsStore().activeSessionId;
-  }
-  if (currentRoute === "live") {
-    setActiveSession(null, { updateHistory: false, logPort: false });
-    return null;
-  }
-  const activeSessions = getActiveSessions();
-  const fallback = activeSessions[0] ?? allSessions[0] ?? null;
-  if (fallback) {
-    setActiveSession(fallback.id, { updateHistory: false, logPort: false });
-  } else {
-    setActiveSession(null, { updateHistory: false, logPort: false });
-  }
-  return sessionsStore().activeSessionId;
-};
-
-const applyRouteSessionFromPath = (options = {}) => {
-  const { allowHistoryUpdate = false, logPort = true } = options;
-  const routeSessionId = getSessionIdFromPath(window.location.pathname);
-  const allSessions = sessionsStore().items;
-  const activeId = sessionsStore().activeSessionId;
-  const lastId = sessionsStore().lastActiveSessionId;
-
-  if (routeSessionId) {
-    if (allSessions.some((session) => session.id === routeSessionId)) {
-      if (activeId !== routeSessionId) {
-        setActiveSession(routeSessionId, { updateHistory: false, logPort });
-      }
-      return;
-    }
-    if (activeId) {
-      setActiveSession(null, { updateHistory: false, logPort: false });
-    }
-    return;
-  }
-
-  if (allowHistoryUpdate && lastId && allSessions.some((session) => session.id === lastId)) {
-    setActiveSession(lastId, { updateHistory: true, logPort });
-    return;
-  }
-
-  if (activeId && !allSessions.some((session) => session.id === activeId)) {
-    setActiveSession(null, { updateHistory: allowHistoryUpdate, logPort: false });
-  }
-};
+// Session routing module — extracted from app.js.
+// setActiveSession, ensureActiveSession, and applyRouteSessionFromPath live in sessions/session-routing.js.
+// syncDesktopSessionIndicator and updateDocumentTitle are defined later in this file; they are
+// referenced via closures inside the module so forward-declaration is fine (the functions are only
+// called at runtime, never at module initialisation time).
+const {
+  setActiveSession,
+  ensureActiveSession,
+  applyRouteSessionFromPath,
+} = createSessionRouting({
+  sessionsStore,
+  getCurrentRoute: () => currentRoute,
+  getLastLoggedSessionId: () => lastLoggedSessionId,
+  setLastLoggedSessionId: (id) => { lastLoggedSessionId = id; },
+  LIVE_ROUTE_PREFIX,
+  getSessionById: (...args) => getSessionById(...args),
+  getActiveSessions: (...args) => getActiveSessions(...args),
+  getSessionIdFromPath,
+  syncDesktopSessionIndicator: (...args) => syncDesktopSessionIndicator(...args),
+  updateDocumentTitle: (...args) => updateDocumentTitle(...args),
+  sseManager,
+  startConversationPolling: (...args) => startConversationPolling(...args),
+  stopConversationPolling: (...args) => stopConversationPolling(...args),
+  isAlpineChatEnabled,
+  scheduleLiveScroll: (...args) => scheduleLiveScroll(...args),
+});
 
 const dialog = document.getElementById("session-dialog");
 const agentSelect = document.getElementById("agent-select");
