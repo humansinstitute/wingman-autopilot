@@ -240,10 +240,32 @@ export function initSettingsView(deps) {
     wingmanDescription.textContent = 'Everything related to this Wingman workspace lives here.';
     wingmanCard.append(wingmanHeading, wingmanDescription);
 
-    const portsContainer = document.createElement('div');
-    portsContainer.className = 'wm-settings__ports';
-    const portsHeading = document.createElement('h3');
+    if (state.identity.authenticated) {
+      wingmanCard.append(renderApiKeysSection());
+      const giteaPlaceholder = document.createElement('div');
+      wingmanCard.append(giteaPlaceholder);
+      fetch('/api/config')
+        .then((r) => r.json())
+        .then((cfg) => {
+          if (cfg.giteaUrl) {
+            giteaPlaceholder.replaceWith(renderGiteaSection(cfg.giteaUrl));
+          }
+        })
+        .catch(() => {});
+    }
+
+    fragment.append(wingmanCard);
+    return fragment;
+  }
+
+  function renderAssignedPortsSection() {
+    const portsContainer = document.createElement('section');
+    portsContainer.className = 'wm-card';
+
+    const portsHeading = document.createElement('h2');
     portsHeading.textContent = 'Assigned Web App Ports';
+    portsContainer.append(portsHeading);
+
     const portsList = document.createElement('ul');
     portsList.className = 'wm-settings__port-list';
     const assignedPorts = Array.isArray(state.identity.ports) ? normalisePortList(state.identity.ports) : [];
@@ -261,10 +283,11 @@ export function initSettingsView(deps) {
       item.textContent = state.identity.authenticated ? 'Assigned ports will appear here once available.' : 'Sign in to view your assigned ports.';
       portsList.append(item);
     }
+
     const portsNote = document.createElement('p');
     portsNote.className = 'wm-settings__port-note';
     portsNote.textContent = 'These dedicated ports are reserved for your personal Wingman web applications.';
-    portsContainer.append(portsHeading, portsList, portsNote);
+    portsContainer.append(portsList, portsNote);
 
     if (state.identity.isAdmin) {
       const adminPortsActions = document.createElement('div');
@@ -289,24 +312,7 @@ export function initSettingsView(deps) {
       portsContainer.append(adminPortsActions);
     }
 
-    wingmanCard.append(portsContainer);
-
-    if (state.identity.authenticated) {
-      wingmanCard.append(renderApiKeysSection());
-      const giteaPlaceholder = document.createElement('div');
-      wingmanCard.append(giteaPlaceholder);
-      fetch('/api/config')
-        .then((r) => r.json())
-        .then((cfg) => {
-          if (cfg.giteaUrl) {
-            giteaPlaceholder.replaceWith(renderGiteaSection(cfg.giteaUrl));
-          }
-        })
-        .catch(() => {});
-    }
-
-    fragment.append(wingmanCard);
-    return fragment;
+    return portsContainer;
   }
 
   function renderProfileTab() {
@@ -341,15 +347,29 @@ export function initSettingsView(deps) {
     return fragment;
   }
 
+  function renderUsersTab() {
+    const fragment = document.createDocumentFragment();
+    fragment.append(renderAssignedPortsSection());
+
+    if (state.identity.isAdmin) {
+      if (!state.adminUsers.initialized && !state.adminUsers.loading && !state.adminUsers.error) {
+        void fetchAdminUsers();
+      }
+      fragment.append(renderAdminUsersPanel());
+      return fragment;
+    }
+
+    const note = document.createElement('section');
+    note.className = 'wm-card';
+    note.innerHTML = '<h2>Users</h2><p>Admin access is required to view user management and balance tools.</p>';
+    fragment.append(note);
+    return fragment;
+  }
+
   function renderAdminTab() {
     const fragment = document.createDocumentFragment();
     ensureFeatureFlagsLoaded();
     fragment.append(renderFeatureFlagsPanel());
-
-    if (!state.adminUsers.initialized && !state.adminUsers.loading && !state.adminUsers.error) {
-      void fetchAdminUsers();
-    }
-    fragment.append(renderAdminUsersPanel());
 
     const coreApp = appsStore().items.find((item) => item?.id === 'wingman-core');
     if (coreApp) {
@@ -373,6 +393,7 @@ export function initSettingsView(deps) {
     const tabDefs = [
       { id: 'profile', label: 'Profile', render: renderProfileTab },
       { id: 'workspace', label: 'Workspace', render: renderWorkspaceTab },
+      { id: 'users', label: 'Users', render: renderUsersTab },
       { id: 'projects', label: 'Projects', render: renderProjectsTab },
     ];
 
