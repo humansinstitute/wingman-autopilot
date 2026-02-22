@@ -58,7 +58,7 @@ import {
   type FeatureFlagState,
 } from "./storage/feature-flag-store";
 import { FileWatcherRunner } from "./watchers/file-watcher-runner";
-import { identityUserStore, InsufficientBalanceError } from "./storage/identity-user-store";
+import { identityUserStore } from "./storage/identity-user-store";
 import { TodoStore } from "./todos/todo-store";
 import { createTodoApiHandler } from "./todos/todo-api";
 import { ProjectStore } from "./projects/project-store";
@@ -154,6 +154,7 @@ import { createUploadHelpers } from "./server/uploads/helpers";
 import { resolveAndCacheNostrProfile } from "./server/nostr-profile";
 import { shouldKeepBotKeyForNostrTriggers } from "./server/botkey-lifecycle";
 import { waitForSessionPromptReadiness } from "./server/session-readiness";
+import { createPromptDispatchEngine, QueueDispatchError } from "./server/prompt-dispatch";
 import {
   validateForkInput,
   getRecentMessages,
@@ -302,10 +303,6 @@ const MESSAGE_COST_SATS = 100;
 const projectStore = new ProjectStore();
 const todoStore = new TodoStore();
 const promptQueueStore = new PromptQueueStore("data/prompt-queue.db");
-const QUEUE_DISPATCH_RETRY_MS = 5000;
-const queueDispatchInFlight = new Set<string>();
-const queueDispatchCooldowns = new Map<string, number>();
-const promptStartupReadiness = new Set<string>();
 const todoApiHandler = createTodoApiHandler({ store: todoStore, projectStore });
 const projectApiHandler = createProjectApiHandler({
   store: projectStore,
@@ -2569,8 +2566,6 @@ const syncSessionMessages = async (sessionId: string, force = false) => {
   return messageStore.listSessionMessages(sessionId);
 };
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 const agentStatusPoller = new AgentRuntimeStatusPoller(manager, {
   host: agentHost,
   intervalMs: config.agentStatusPollIntervalMs,
@@ -2580,207 +2575,29 @@ const agentStatusPoller = new AgentRuntimeStatusPoller(manager, {
 });
 agentStatusPoller.start();
 
-const waitForMessageUpdate = async (sessionId: string, initialCount: number, timeoutMs = 20000) => {
-  let messages = await syncSessionMessages(sessionId, true);
-  if (messages.length > initialCount) {
-    return messages;
-  }
+const promptDispatchEngine = createPromptDispatchEngine({
+  manager,
+  agentHost,
+  messageStore,
+  identityUserStore,
+  promptQueueStore,
+  MESSAGE_COST_SATS,
+  buildAgentUrl,
+  waitForSessionPromptReadiness,
+  syncSessionMessages,
+  maybeTriggerNightWatch,
+  nightWatchDeps,
+});
+const {
+  dispatchNextQueuedPromptForSession,
+  maybeAutoDispatchQueuedPrompt,
+  markPromptStartupReady,
+  clearPromptStartupReady,
+  markQueueDispatchCooldown,
+  queueDispatchInFlight,
+  waitForMessageUpdate,
+} = promptDispatchEngine;
 
-  const deadline = Date.now() + Math.max(timeoutMs, 1000);
-  while (Date.now() < deadline) {
-    await sleep(750);
-    messages = await syncSessionMessages(sessionId, true);
-    if (messages.length > initialCount) {
-      return messages;
-    }
-  }
-  return messages;
-};
-
-class QueueDispatchError extends Error {
-  constructor(
-    message: string,
-    public status: number,
-    public payload: Record<string, unknown> = {},
-  ) {
-    super(message);
-    this.name = "QueueDispatchError";
-  }
-}
-
-const getQueueDispatchCooldown = (sessionId: string) => queueDispatchCooldowns.get(sessionId) ?? 0;
-
-const shouldAutoDispatchSession = (session: SessionSnapshot | null): boolean => {
-  if (!session) return false;
-  if (session.status !== "running") return false;
-  return session.agentRuntimeStatus === "stable";
-};
-
-const clearQueueDispatchCooldown = (sessionId: string) => {
-  queueDispatchCooldowns.delete(sessionId);
-};
-
-const markQueueDispatchCooldown = (sessionId: string) => {
-  queueDispatchCooldowns.set(sessionId, Date.now() + QUEUE_DISPATCH_RETRY_MS);
-};
-
-function markPromptStartupReady(sessionId: string): void {
-  promptStartupReadiness.add(sessionId);
-}
-
-function clearPromptStartupReady(sessionId: string): void {
-  promptStartupReadiness.delete(sessionId);
-}
-
-function getPromptStartupTimeoutMs(agent: AgentType): number {
-  return agent === "codex" ? 120000 : 60000;
-}
-
-async function ensureSessionReadyForPromptDispatch(session: SessionSnapshot): Promise<void> {
-  if (promptStartupReadiness.has(session.id)) {
-    return;
-  }
-
-  const timeoutMs = getPromptStartupTimeoutMs(session.agent);
-  await waitForSessionPromptReadiness({
-    getSession: (sessionId) => manager.getSession(sessionId) ?? null,
-    sessionId: session.id,
-    host: agentHost,
-    timeoutMs,
-    pollIntervalMs: 500,
-    requiredStablePolls: session.agent === "codex" ? 3 : 2,
-    requestTimeoutMs: 2500,
-  });
-  markPromptStartupReady(session.id);
-}
-
-async function dispatchNextQueuedPromptForSession(session: SessionSnapshot, userNpub: string | null) {
-  if (!userNpub) {
-    throw new QueueDispatchError("Sign in to send messages", 403, { balance: 0 });
-  }
-
-  try {
-    await ensureSessionReadyForPromptDispatch(session);
-  } catch (error) {
-    throw new QueueDispatchError(
-      `Session is not ready for prompt dispatch: ${(error as Error).message}`,
-      503,
-    );
-  }
-
-  const nextPrompt = promptQueueStore.getNextQueuedPrompt(session.id);
-  if (!nextPrompt) {
-    throw new QueueDispatchError("No prompts in queue", 404);
-  }
-
-  let currentBalance = 0;
-  let debitApplied = false;
-  const refundDebit = () => {
-    if (!debitApplied) return;
-    try {
-      currentBalance = identityUserStore.credit(userNpub, MESSAGE_COST_SATS);
-    } catch (creditError) {
-      console.error("[billing] failed to refund queued prompt debit:", creditError);
-    } finally {
-      debitApplied = false;
-    }
-  };
-
-  try {
-    currentBalance = identityUserStore.debit(userNpub, MESSAGE_COST_SATS);
-    debitApplied = true;
-  } catch (error) {
-    if (error instanceof InsufficientBalanceError) {
-      throw new QueueDispatchError("Insufficient balance", 402, {
-        balance: error.currentBalance,
-        required: MESSAGE_COST_SATS,
-      });
-    }
-    console.error("[billing] failed to debit message cost:", error);
-    throw new QueueDispatchError("Failed to debit balance", 500);
-  }
-
-  try {
-    const initialCount = messageStore.listSessionMessages(session.id).length;
-    const agentUrl = buildAgentUrl(agentHost, session.port, "/message");
-    const agentResponse = await fetch(agentUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ type: "user", content: nextPrompt.content }),
-    });
-
-    if (!agentResponse.ok) {
-      const errorPayload = await agentResponse.json().catch(() => ({}));
-      const message = (errorPayload?.error as string) ?? agentResponse.statusText ?? "Agent request failed";
-      refundDebit();
-      throw new QueueDispatchError(message, agentResponse.status, {
-        balance: currentBalance,
-        failedPrompt: nextPrompt,
-      });
-    }
-
-    promptQueueStore.removeNextPrompt(session.id);
-    const messages = await waitForMessageUpdate(session.id, initialCount);
-    clearQueueDispatchCooldown(session.id);
-    return { id: session.id, messages, balance: currentBalance, sentPrompt: nextPrompt };
-  } catch (error) {
-    if (error instanceof QueueDispatchError) {
-      throw error;
-    }
-    refundDebit();
-    throw new QueueDispatchError(`Failed to contact agent: ${(error as Error).message}`, 502, {
-      balance: currentBalance,
-      failedPrompt: nextPrompt,
-    });
-  }
-}
-
-async function maybeAutoDispatchQueuedPrompt(session: SessionSnapshot | null) {
-  if (!session) return;
-  if (queueDispatchInFlight.has(session.id)) return;
-  if (!shouldAutoDispatchSession(session)) return;
-  if (promptQueueStore.getQueueCount(session.id) === 0) {
-    void maybeTriggerNightWatch(session, nightWatchDeps);
-    return;
-  }
-  const userNpub = session.npub ?? null;
-  if (!userNpub) {
-    console.warn(`[queue] cannot auto-dispatch session ${session.id} without owner npub`);
-    return;
-  }
-  const cooldownUntil = getQueueDispatchCooldown(session.id);
-  if (cooldownUntil && cooldownUntil > Date.now()) {
-    return;
-  }
-
-  queueDispatchInFlight.add(session.id);
-  try {
-    await dispatchNextQueuedPromptForSession(session, userNpub);
-  } catch (error) {
-    if (error instanceof QueueDispatchError) {
-      if (error.status === 404) {
-        clearQueueDispatchCooldown(session.id);
-      } else {
-        markQueueDispatchCooldown(session.id);
-        console.warn(`[queue] auto-dispatch failed for session ${session.id}: ${error.message}`);
-      }
-    } else {
-      markQueueDispatchCooldown(session.id);
-      console.error(`[queue] auto-dispatch failed for session ${session.id}:`, error);
-    }
-  } finally {
-    queueDispatchInFlight.delete(session.id);
-  }
-}
-
-const sweepQueuedSessionsForDispatch = () => {
-  for (const session of manager.listSessions()) {
-    void maybeAutoDispatchQueuedPrompt(session);
-  }
-};
-
-sweepQueuedSessionsForDispatch();
-setInterval(sweepQueuedSessionsForDispatch, 5000).unref?.();
 const APP_ACTIONS: AppLifecycleAction[] = ["start", "stop", "restart", "setup", "build"];
 
 const parseAppScripts = (input: unknown): AppLifecycleScripts => {
