@@ -125,6 +125,8 @@ export class ProcessManager {
   private readonly listeners = new Set<(event: SessionEvent) => void>();
   private readonly adminNpub = normaliseNpub(Bun.env.ADMIN_NPUB ?? null);
   private botKeyStore: BotKeyStore | null | undefined;
+  /** Debounce timers for log-driven session-updated events */
+  private readonly logUpdateDebounce = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(config: WingmanConfig) {
     this.config = config;
@@ -581,17 +583,10 @@ export class ProcessManager {
   }
 
   private async monitorSession(session: AgentSession): Promise<void> {
-    await new Promise<void>((resolve) => {
-      const checkInterval = setInterval(() => {
-        if (!session.process) return;
-        // Consider the process "running" as soon as we can observe a PID.
-        if (typeof session.process.pid === "number" && session.process.pid > 0) {
-          session.detachedPid = session.process.pid;
-          clearInterval(checkInterval);
-          resolve();
-        }
-      }, 50);
-    });
+    // Bun.spawn returns PID synchronously — no polling needed.
+    if (session.process && typeof session.process.pid === "number" && session.process.pid > 0) {
+      session.detachedPid = session.process.pid;
+    }
   }
 
   private captureStream(stream: ReadableStream<any>, session: AgentSession, label: "stdout" | "stderr") {
@@ -638,7 +633,17 @@ export class ProcessManager {
     if (session.logs.length > MAX_LOG_LINES) {
       session.logs.splice(0, session.logs.length - MAX_LOG_LINES);
     }
-    this.emit({ type: "session-updated", session: this.toSnapshot(session) });
+    this.emitSessionUpdatedDebounced(session);
+  }
+
+  /** Debounce session-updated emissions from rapid log appends (200ms) */
+  private emitSessionUpdatedDebounced(session: AgentSession) {
+    const existing = this.logUpdateDebounce.get(session.id);
+    if (existing) clearTimeout(existing);
+    this.logUpdateDebounce.set(session.id, setTimeout(() => {
+      this.logUpdateDebounce.delete(session.id);
+      this.emit({ type: "session-updated", session: this.toSnapshot(session) });
+    }, 200));
   }
 
   private async resolveDefaultWorkingDirectory(npubHint?: string): Promise<string> {
