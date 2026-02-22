@@ -3489,7 +3489,9 @@ const renderApps = () => {
     mainArea.append(errorBox);
   }
 
-  const apps = Array.isArray(appsStore().items) ? appsStore().items : [];
+  const apps = Array.isArray(appsStore().items)
+    ? appsStore().items.filter((app) => app?.id !== "wingman-core")
+    : [];
   if (appsStore().loading && apps.length === 0) {
     const loading = document.createElement("p");
     loading.className = "wm-apps-empty";
