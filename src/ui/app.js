@@ -155,6 +155,7 @@ const sessionsStore = () => window.Alpine?.store("sessions");
 const appsStore = () => window.Alpine?.store("apps");
 let conversationPollIntervalId = null;
 let conversationPollInFlight = false;
+const sessionMessageSendInFlight = new Set();
 let sessionDialogController = null;
 let loadChats = async () => {};
 let loadChatMessages = async () => {};
@@ -2405,6 +2406,11 @@ const sendMessage = async (sessionId, content) => {
     return;
   }
 
+  if (sessionMessageSendInFlight.has(sessionId)) {
+    showToast("Agent working", { variant: "info", duration: 2200 });
+    return;
+  }
+
   // Single alphanumeric character: send as raw terminal input for TUI interaction
   if (/^[a-zA-Z0-9]$/.test(trimmed)) {
     try {
@@ -2460,6 +2466,7 @@ const sendMessage = async (sessionId, content) => {
 
   // Agent is not busy - send message immediately
   try {
+    sessionMessageSendInFlight.add(sessionId);
     const payload = await postSessionMessage(sessionId, trimmed, "user");
     const messages = Array.isArray(payload?.messages) ? payload.messages : [];
     state.conversations.set(sessionId, messages);
@@ -2487,8 +2494,24 @@ const sendMessage = async (sessionId, content) => {
     }
   } catch (error) {
     const message = error instanceof Error && error.message ? error.message : "Failed to send message to agent.";
+    const status = Number(error?.status ?? 0);
+    const normalized = message.toLowerCase();
+    const isWorkingState =
+      status === 409 ||
+      status === 429 ||
+      normalized.includes("already in progress") ||
+      normalized.includes("already posted") ||
+      normalized.includes("already processing") ||
+      normalized.includes("agent working") ||
+      normalized.includes("not ready for prompt dispatch");
+    if (isWorkingState) {
+      showToast("Agent working", { variant: "info", duration: 2600 });
+      return;
+    }
     console.error("Failed to send agent message", error);
-    window.alert(`Agent request failed: ${message}`);
+    showToast(`Failed to send message: ${message}`, { variant: "error" });
+  } finally {
+    sessionMessageSendInFlight.delete(sessionId);
   }
 };
 
