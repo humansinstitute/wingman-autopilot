@@ -22,6 +22,7 @@ import { publishDelegateRegistryEvent } from "./delegate-registry-publisher";
 import { getBotProfileStatus, publishBotProfileEvent } from "./bot-profile-publisher";
 import type { SessionSnapshot } from "../agents/process-manager";
 import { normaliseNpub } from "./npub-utils";
+import { parseBody, jsonError } from "../utils/request-utils";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -40,28 +41,12 @@ type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function jsonError(message: string, status: number): Response {
-  return Response.json({ error: message }, { status });
-}
-
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < hex.length; i += 2) {
     bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
   }
   return bytes;
-}
-
-async function parseBody(request: Request): Promise<Record<string, unknown>> {
-  try {
-    const body = await request.json();
-    if (!body || typeof body !== "object") {
-      throw new Error("Expected JSON object");
-    }
-    return body as Record<string, unknown>;
-  } catch {
-    throw new Error("Invalid JSON body");
-  }
 }
 
 function getNpubFromCookie(request: Request): string | null {
