@@ -128,8 +128,16 @@ const parseEnvironmentString = (input: string | undefined, fallback: string): st
   return trimmed;
 };
 
-const defaultAgentApiPath = "../out/agentapi";
-const agentApiBinary = Bun.env.AGENTAPI_BIN ?? new URL(defaultAgentApiPath, import.meta.url).pathname;
+const resolveAgentApiBinary = (): string => {
+  if (Bun.env.AGENTAPI_BIN && Bun.env.AGENTAPI_BIN.trim().length > 0) {
+    return Bun.env.AGENTAPI_BIN;
+  }
+  const legacyMode = Bun.env.AGENT_MODE?.trim().toLowerCase();
+  const defaultAgentApiPath = legacyMode === "tmux" ? "../out/agentapi-tmux" : "../out/agentapi";
+  return new URL(defaultAgentApiPath, import.meta.url).pathname;
+};
+
+const agentApiBinary = resolveAgentApiBinary();
 
 const baseCommand = (ctx: AgentCommandContext) => {
   return [
@@ -247,10 +255,18 @@ export const loadConfig = (): WingmanConfig => {
 
   // Agent spawn mode - "bun" (default) or "pm2" for persistence across restarts
   const validSpawnModes: AgentSpawnMode[] = ["bun", "pm2"];
+  const legacyModeInput = Bun.env.AGENT_MODE?.trim().toLowerCase();
   const spawnModeInput = Bun.env.AGENT_SPAWN_MODE?.trim().toLowerCase();
-  const agentSpawnMode: AgentSpawnMode = spawnModeInput && validSpawnModes.includes(spawnModeInput as AgentSpawnMode)
-    ? (spawnModeInput as AgentSpawnMode)
-    : "bun";
+  let agentSpawnMode: AgentSpawnMode = "bun";
+  if (spawnModeInput && validSpawnModes.includes(spawnModeInput as AgentSpawnMode)) {
+    agentSpawnMode = spawnModeInput as AgentSpawnMode;
+  } else if (legacyModeInput === "pm2") {
+    // Backwards compatibility: AGENT_MODE=pm2 should behave like AGENT_SPAWN_MODE=pm2.
+    agentSpawnMode = "pm2";
+    console.warn("[Config] AGENT_MODE=pm2 is deprecated; use AGENT_SPAWN_MODE=pm2");
+  } else if (legacyModeInput && !["standard", "tmux"].includes(legacyModeInput)) {
+    console.warn(`[Config] Ignoring unrecognized AGENT_MODE="${legacyModeInput}"`);
+  }
   if (agentSpawnMode === "pm2") {
     console.log("[Config] Agent spawn mode: pm2 (sessions persist across restarts)");
   }
