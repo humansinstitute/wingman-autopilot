@@ -302,6 +302,7 @@ const promptQueueStore = new PromptQueueStore("data/prompt-queue.db");
 const QUEUE_DISPATCH_RETRY_MS = 5000;
 const queueDispatchInFlight = new Set<string>();
 const queueDispatchCooldowns = new Map<string, number>();
+const promptStartupReadiness = new Set<string>();
 const todoApiHandler = createTodoApiHandler({ store: todoStore, projectStore });
 const projectApiHandler = createProjectApiHandler({
   store: projectStore,
@@ -352,6 +353,7 @@ const schedulerEngine = new SchedulerEngine({
       requiredStablePolls: 3,
       requestTimeoutMs: 2500,
     });
+    markPromptStartupReady(session.id);
   },
   onBotKeyUnlocked: onBotKeyUnlockedHook,
 });
@@ -1801,6 +1803,7 @@ manager.on((event) => {
     return;
   }
   if (event.type === "session-deleted") {
+    clearPromptStartupReady(event.session.id);
     // Session archived and removed from memory — notify browsers to refresh
     if (event.session.npub) {
       sessionBroadcaster.broadcast(event.session.npub, {
@@ -1824,6 +1827,7 @@ manager.on((event) => {
       }
       // Clear bot key from memory when last session for this user stops
       if (event.type === "session-stopped") {
+        clearPromptStartupReady(event.session.id);
         const userNpub = event.session.npub;
         const otherActive = manager.listSessions().some(
           (s) => s.npub === userNpub && s.id !== event.session.id,
@@ -3368,9 +3372,48 @@ const markQueueDispatchCooldown = (sessionId: string) => {
   queueDispatchCooldowns.set(sessionId, Date.now() + QUEUE_DISPATCH_RETRY_MS);
 };
 
+function markPromptStartupReady(sessionId: string): void {
+  promptStartupReadiness.add(sessionId);
+}
+
+function clearPromptStartupReady(sessionId: string): void {
+  promptStartupReadiness.delete(sessionId);
+}
+
+function getPromptStartupTimeoutMs(agent: AgentType): number {
+  return agent === "codex" ? 120000 : 60000;
+}
+
+async function ensureSessionReadyForPromptDispatch(session: SessionSnapshot): Promise<void> {
+  if (promptStartupReadiness.has(session.id)) {
+    return;
+  }
+
+  const timeoutMs = getPromptStartupTimeoutMs(session.agent);
+  await waitForSessionPromptReadiness({
+    getSession: (sessionId) => manager.getSession(sessionId) ?? null,
+    sessionId: session.id,
+    host: agentHost,
+    timeoutMs,
+    pollIntervalMs: 500,
+    requiredStablePolls: 3,
+    requestTimeoutMs: 2500,
+  });
+  markPromptStartupReady(session.id);
+}
+
 async function dispatchNextQueuedPromptForSession(session: SessionSnapshot, userNpub: string | null) {
   if (!userNpub) {
     throw new QueueDispatchError("Sign in to send messages", 403, { balance: 0 });
+  }
+
+  try {
+    await ensureSessionReadyForPromptDispatch(session);
+  } catch (error) {
+    throw new QueueDispatchError(
+      `Session is not ready for prompt dispatch: ${(error as Error).message}`,
+      503,
+    );
   }
 
   const nextPrompt = promptQueueStore.getNextQueuedPrompt(session.id);
