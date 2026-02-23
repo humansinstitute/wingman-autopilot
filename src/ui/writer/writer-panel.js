@@ -156,6 +156,45 @@ function replaceUploadPlaceholder(textarea, markerId, replacement) {
   return true;
 }
 
+function isAbsoluteOrSchemePath(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return false;
+  if (text.startsWith("/") || text.startsWith("#")) return true;
+  return /^[a-z][a-z0-9+.-]*:/i.test(text);
+}
+
+function normalisePosixPath(path) {
+  const input = String(path ?? "").replace(/\\/g, "/");
+  const isAbs = input.startsWith("/");
+  const out = [];
+  for (const part of input.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      if (out.length > 0) out.pop();
+      continue;
+    }
+    out.push(part);
+  }
+  return `${isAbs ? "/" : ""}${out.join("/")}`;
+}
+
+function buildResolvedDocPath(baseDir, relativePath) {
+  return normalisePosixPath(`${baseDir}/${relativePath}`);
+}
+
+function buildDocsDownloadUrl(docPath) {
+  return `/api/docs/file/download?path=${encodeURIComponent(docPath)}`;
+}
+
+function rewriteMarkdownImagePathsForPreview(markdown, baseDir) {
+  return String(markdown ?? "").replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (full, alt, rawUrl) => {
+    if (isAbsoluteOrSchemePath(rawUrl)) return full;
+    const resolved = buildResolvedDocPath(baseDir, rawUrl);
+    const previewUrl = buildDocsDownloadUrl(resolved);
+    return `![${alt}](${previewUrl})`;
+  });
+}
+
 /**
  * Create the pencil icon button that toggles the writer panel.
  * @param {Function} onToggle
@@ -234,6 +273,7 @@ export function createWriterPanel(sessionId, targetFile, deps) {
 
   const mdMode = isMarkdownFile(targetFile);
   const codeLang = mdMode ? null : detectLanguage(targetFile);
+  const fileDirectory = getParentDirectory(targetFile);
 
   let blocks = [];
   let rawContent = "";
@@ -502,7 +542,8 @@ export function createWriterPanel(sessionId, targetFile, deps) {
     } else if (block.type === "hr") {
       rendered.innerHTML = "<hr />";
     } else {
-      rendered.innerHTML = renderMarkdownToHtml(block.raw);
+      const previewMarkdown = rewriteMarkdownImagePathsForPreview(block.raw, fileDirectory);
+      rendered.innerHTML = renderMarkdownToHtml(previewMarkdown);
     }
 
     rendered.addEventListener("click", () => {
