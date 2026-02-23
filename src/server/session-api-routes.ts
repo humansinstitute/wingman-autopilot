@@ -15,6 +15,7 @@ import { InsufficientBalanceError } from "../storage/identity-user-store";
 import type { messageStore as MessageStoreInstance, StoredMessage } from "../storage/message-store";
 import type { sessionArchiveStore as SessionArchiveStoreInstance } from "../storage/session-archive-store";
 import type { ForkToWorktreeInput } from "../sessions/fork-to-worktree";
+import { deliverSessionAgentMessage } from "./session-agent-message";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
@@ -575,25 +576,19 @@ async function handlePostMessage(
   }
 
   if (messageType === "raw") {
-    try {
-      const agentUrl = ctx.buildAgentUrl(ctx.agentHost, ownedSession.port, "/message");
-      const agentResponse = await fetch(agentUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: messageType, content }),
-      });
-      if (!agentResponse.ok) {
-        const errorPayload = (await agentResponse.json().catch(() => ({}))) as Record<string, unknown>;
-        const message = (errorPayload?.error as string) ?? agentResponse.statusText ?? "Agent request failed";
-        return Response.json({ error: message }, { status: agentResponse.status });
-      }
-      return Response.json({ id, ok: true });
-    } catch (error) {
-      return Response.json(
-        { error: `Failed to contact agent: ${(error as Error).message ?? "unknown error"}` },
-        { status: 502 },
-      );
+    const result = await deliverSessionAgentMessage({
+      agentHost: ctx.agentHost,
+      buildAgentUrl: ctx.buildAgentUrl,
+      agent: ownedSession.agent,
+      port: ownedSession.port,
+      content,
+      type: messageType,
+      pm2Name: ownedSession.pm2Name,
+    });
+    if (!result.ok) {
+      return Response.json({ error: result.message }, { status: result.status });
     }
+    return Response.json({ id, ok: true });
   }
 
   let currentBalance: number;
@@ -615,21 +610,22 @@ async function handlePostMessage(
 
   try {
     const initialCount = ctx.messageStore.listSessionMessages(id).length;
-    const agentUrl = ctx.buildAgentUrl(ctx.agentHost, ownedSession.port, "/message");
-    const agentResponse = await fetch(agentUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ type: messageType, content }),
+    const result = await deliverSessionAgentMessage({
+      agentHost: ctx.agentHost,
+      buildAgentUrl: ctx.buildAgentUrl,
+      agent: ownedSession.agent,
+      port: ownedSession.port,
+      content,
+      type: messageType,
+      pm2Name: ownedSession.pm2Name,
     });
-    if (!agentResponse.ok) {
-      const errorPayload = (await agentResponse.json().catch(() => ({}))) as Record<string, unknown>;
-      const message = (errorPayload?.error as string) ?? agentResponse.statusText ?? "Agent request failed";
+    if (!result.ok) {
       try {
         currentBalance = ctx.identityUserStore.credit(userNpub, ctx.MESSAGE_COST_SATS);
       } catch (creditError) {
         console.error("[billing] failed to refund after agent rejection:", creditError);
       }
-      return Response.json({ error: message, balance: currentBalance }, { status: agentResponse.status });
+      return Response.json({ error: result.message, balance: currentBalance }, { status: result.status });
     }
 
     const messages = await ctx.waitForMessageUpdate(id, initialCount);
