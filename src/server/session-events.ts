@@ -14,6 +14,10 @@ export interface SessionEventsOptions {
 }
 
 const DEFAULT_KEEPALIVE_INTERVAL_MS = 30000;
+const UPSTREAM_RETRY_BASE_DELAY_MS = 1000;
+const UPSTREAM_RETRY_MAX_DELAY_MS = 10000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function createSessionEventsHandler(options: SessionEventsOptions) {
   const { manager, agentHost, sseKeepaliveIntervalMs = DEFAULT_KEEPALIVE_INTERVAL_MS } = options;
@@ -41,122 +45,146 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
       abortController.abort();
     });
 
-    try {
-      // Connect to AgentAPI SSE
-      const agentResponse = await fetch(agentEventsUrl.toString(), {
-        signal: abortController.signal,
-        headers: { Accept: "text/event-stream" },
-      });
+    const encoder = new TextEncoder();
+    let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
 
-      if (!agentResponse.ok) {
-        console.warn(`[session-events] Agent returned ${agentResponse.status} for ${sessionId}`);
-        return Response.json(
-          { error: "Failed to connect to agent", status: agentResponse.status },
-          { status: 502 }
-        );
+    const writeSseComment = (comment: string) => {
+      if (!streamController) return;
+      streamController.enqueue(encoder.encode(`: ${comment}\n\n`));
+    };
+
+    const writeSseEvent = (event: string, payload: Record<string, unknown>) => {
+      if (!streamController) return;
+      streamController.enqueue(
+        encoder.encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`),
+      );
+    };
+
+    const readUpstreamStream = async (reader: any) => {
+      try {
+        while (streamController && !abortController.signal.aborted) {
+          const { done, value } = await reader.read();
+          if (done) {
+            return;
+          }
+          if (value && streamController) {
+            streamController.enqueue(value);
+          }
+        }
+      } finally {
+        try {
+          reader.releaseLock();
+        } catch {}
       }
+    };
 
-      if (!agentResponse.body) {
-        console.warn(`[session-events] Agent returned no body for ${sessionId}`);
-        return Response.json({ error: "No stream from agent" }, { status: 502 });
-      }
-
-      // Create a streaming response
-      // IMPORTANT: start() must return immediately - async reading happens in background
-      const reader = agentResponse.body.getReader();
-      const encoder = new TextEncoder();
-
-      // Store controller reference for background pump
-      let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
-
-      // Background pump function - reads from agent and pushes to client
-      async function pumpData() {
-        if (!streamController) return;
+    const pumpUpstreamWithReconnect = async () => {
+      let attempt = 0;
+      while (streamController && !abortController.signal.aborted) {
+        const currentSession = manager.getSession(sessionId);
+        if (!currentSession || currentSession.status !== "running") {
+          writeSseEvent("status", { type: "session_stopped", sessionId });
+          break;
+        }
 
         try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              try { streamController.close(); } catch {}
-              break;
-            }
-            try {
-              streamController.enqueue(value);
-            } catch (err) {
-              // Controller was closed (client disconnected)
-              break;
-            }
+          const agentResponse = await fetch(agentEventsUrl.toString(), {
+            signal: abortController.signal,
+            headers: { Accept: "text/event-stream" },
+          });
+
+          if (!agentResponse.ok || !agentResponse.body) {
+            const statusCode = agentResponse.status;
+            attempt += 1;
+            const delayMs = Math.min(
+              UPSTREAM_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+              UPSTREAM_RETRY_MAX_DELAY_MS,
+            );
+            console.warn(
+              `[session-events] Upstream unavailable for ${sessionId} (status ${statusCode}), retry in ${delayMs}ms`,
+            );
+            writeSseEvent("status", {
+              type: "upstream_unavailable",
+              sessionId,
+              status: statusCode,
+              retryInMs: delayMs,
+            });
+            await sleep(delayMs);
+            continue;
           }
+
+          // Reset attempts once upstream is reachable.
+          attempt = 0;
+          writeSseComment("upstream-connected");
+          await readUpstreamStream(agentResponse.body.getReader());
+          writeSseComment("upstream-disconnected");
         } catch (error: any) {
-          // TimeoutError is expected when the agent goes quiet — not a real error.
-          if (error?.name === "TimeoutError") {
-            console.log(`[session-events] Agent stream idle timeout for ${sessionId}, closing proxy`);
-          } else {
-            console.error(`[session-events] Stream error for ${sessionId}:`, error?.message || error);
+          if (error?.name === "AbortError") {
+            break;
           }
-          try { streamController?.close(); } catch {}
-        } finally {
-          try { reader.releaseLock(); } catch {}
+          attempt += 1;
+          const delayMs = Math.min(
+            UPSTREAM_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+            UPSTREAM_RETRY_MAX_DELAY_MS,
+          );
+          console.error(`[session-events] Upstream stream error for ${sessionId}:`, error?.message || error);
+          writeSseEvent("status", {
+            type: "upstream_error",
+            sessionId,
+            message: error?.message || String(error),
+            retryInMs: delayMs,
+          });
+          await sleep(delayMs);
         }
       }
+    };
 
-      // Track keepalive timer for cleanup
-      let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
-
-      return new Response(
-        new ReadableStream({
-          start(controller) {
-            streamController = controller;
-            // Send initial keepalive comment (SSE format)
-            controller.enqueue(encoder.encode(": connected\n\n"));
-
-            // Set up periodic keepalive to prevent idle timeout
-            keepaliveTimer = setInterval(() => {
-              try {
-                if (streamController) {
-                  streamController.enqueue(encoder.encode(": keepalive\n\n"));
-                }
-              } catch {
-                // Controller closed, clear the timer
-                if (keepaliveTimer) {
-                  clearInterval(keepaliveTimer);
-                  keepaliveTimer = null;
-                }
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          streamController = controller;
+          writeSseComment("connected");
+          keepaliveTimer = setInterval(() => {
+            try {
+              writeSseComment("keepalive");
+            } catch {
+              if (keepaliveTimer) {
+                clearInterval(keepaliveTimer);
+                keepaliveTimer = null;
               }
-            }, sseKeepaliveIntervalMs);
-
-            // Start background pump - DO NOT await, must return immediately
-            pumpData();
-          },
-          cancel() {
-            // Clear keepalive timer
+            }
+          }, sseKeepaliveIntervalMs);
+          pumpUpstreamWithReconnect().finally(() => {
+            if (streamController) {
+              try {
+                streamController.close();
+              } catch {}
+              streamController = null;
+            }
             if (keepaliveTimer) {
               clearInterval(keepaliveTimer);
               keepaliveTimer = null;
             }
-            streamController = null;
-            try { reader.cancel(); } catch {}
-            abortController.abort();
+          });
+        },
+        cancel() {
+          if (keepaliveTimer) {
+            clearInterval(keepaliveTimer);
+            keepaliveTimer = null;
           }
-        }),
-        {
-          headers: {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no", // Disable proxy buffering
-          },
-        }
-      );
-    } catch (error) {
-      if ((error as Error).name === "AbortError") {
-        return new Response(null, { status: 499 }); // Client closed request
-      }
-      console.error(`[session-events] Failed to connect to agent for ${sessionId}:`, error);
-      return Response.json(
-        { error: "Failed to connect to agent", details: String(error) },
-        { status: 502 }
-      );
-    }
+          streamController = null;
+          abortController.abort();
+        },
+      }),
+      {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+        },
+      },
+    );
   };
 }
