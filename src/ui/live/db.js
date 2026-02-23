@@ -223,12 +223,14 @@ export const ApiSessionStore = {
 
   /** Bulk upsert sessions from API response. Replaces cache with server truth. */
   async upsertMany(sessions) {
-    if (!Array.isArray(sessions) || sessions.length === 0) return;
+    if (!Array.isArray(sessions)) return;
     await db.transaction("rw", db.apiSessions, async () => {
       await db.apiSessions.clear();
-      await db.apiSessions.bulkPut(
-        sessions.map((s) => ({ ...s, updatedAt: new Date().toISOString() })),
-      );
+      if (sessions.length > 0) {
+        await db.apiSessions.bulkPut(
+          sessions.map((s) => ({ ...s, updatedAt: new Date().toISOString() })),
+        );
+      }
     });
   },
 

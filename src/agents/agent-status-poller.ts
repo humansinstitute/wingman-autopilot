@@ -1,6 +1,7 @@
 import { buildAgentUrl } from "./agent-client";
 import type { ProcessManager, SessionSnapshot } from "./process-manager";
 import { isAgentRuntimeStatus, type AgentRuntimeStatus } from "../types/agent-status";
+import { getProcessByName } from "./pm2-wrapper";
 
 interface AgentStatusPollerOptions {
   host: string;
@@ -18,6 +19,21 @@ interface PollState {
   consecutiveFailures: number;
   errorLogged: boolean;
 }
+
+const MAX_CONSECUTIVE_FAILURES_BEFORE_STALE_STOP = 8;
+
+const isPidAlive = (pid: number | null | undefined): boolean => {
+  if (!pid || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException;
+    return nodeError?.code === "EPERM";
+  }
+};
 
 export class AgentRuntimeStatusPoller {
   private readonly watchers = new Map<string, PollState>();
@@ -114,6 +130,7 @@ export class AgentRuntimeStatusPoller {
       state.nextIntervalMs = this.options.intervalMs;
     } catch (error) {
       state.consecutiveFailures += 1;
+      this.manager.setAgentRuntimeStatus(sessionId, null);
       state.nextIntervalMs = Math.min(
         this.options.maxIntervalMs,
         Math.max(
@@ -126,11 +143,36 @@ export class AgentRuntimeStatusPoller {
         console.warn(`[agent-status] polling ${sessionId} failed: ${reason}`);
         state.errorLogged = true;
       }
+
+      if (state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES_BEFORE_STALE_STOP) {
+        const shouldStop = await this.shouldStopDeadSession(sessionId);
+        if (shouldStop) {
+          console.warn(`[agent-status] stopping stale session ${sessionId} after repeated status failures`);
+          await this.manager.stopSession(sessionId);
+          this.stopWatcher(sessionId);
+          return;
+        }
+      }
     } finally {
       if (this.watchers.has(sessionId)) {
         this.schedulePoll(sessionId, state, state.nextIntervalMs);
       }
     }
+  }
+
+  private async shouldStopDeadSession(sessionId: string): Promise<boolean> {
+    const session = this.manager.getSession(sessionId);
+    if (!session || session.status !== "running") {
+      return true;
+    }
+
+    if (session.pm2Name) {
+      const proc = await getProcessByName(session.pm2Name).catch(() => null);
+      const pm2Status = proc?.pm2_env?.status;
+      return pm2Status !== "online";
+    }
+
+    return !isPidAlive(session.pid);
   }
 
   private async fetchAgentStatus(port: number): Promise<AgentRuntimeStatus | null> {
