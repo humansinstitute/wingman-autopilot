@@ -3,6 +3,7 @@ import { getProcessByName, restartProcess } from "../agents/pm2-wrapper";
 import type { AgentType } from "../config";
 
 export interface SessionAgentMessageInput {
+  sessionId?: string;
   agentHost: string;
   buildAgentUrl: (host: string, port: number, path: string) => string | URL;
   agent: AgentType;
@@ -19,6 +20,12 @@ export interface SessionAgentMessageResult {
 }
 
 const RECOVERABLE_STATUS_CODES = new Set([404, 408, 429, 500, 502, 503, 504]);
+const TRANSIENT_RETRY_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const REQUEST_TIMEOUT_MS = 15000;
+const MAX_TRANSIENT_ATTEMPTS = 3;
+const TRANSIENT_RETRY_BASE_DELAY_MS = 350;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const parseErrorMessage = async (response: Response): Promise<string> => {
   const errorPayload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
@@ -28,11 +35,18 @@ const parseErrorMessage = async (response: Response): Promise<string> => {
 
 async function postMessage(input: SessionAgentMessageInput): Promise<Response> {
   const agentUrl = input.buildAgentUrl(input.agentHost, input.port, "/message");
-  return fetch(agentUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ type: input.type, content: input.content }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(agentUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: input.type, content: input.content }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 const shouldAttemptPm2Recovery = (statusCode: number, pm2Name?: string): boolean => {
@@ -63,55 +77,54 @@ async function recoverPm2Session(input: SessionAgentMessageInput): Promise<boole
   return true;
 }
 
+async function tryWithTransientRetries(input: SessionAgentMessageInput): Promise<SessionAgentMessageResult> {
+  let lastStatus = 502;
+  let lastMessage = "Agent request failed";
+
+  for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await postMessage(input);
+      if (response.ok) {
+        return { ok: true, status: response.status, message: "" };
+      }
+
+      const message = await parseErrorMessage(response);
+      lastStatus = response.status;
+      lastMessage = message;
+
+      if (TRANSIENT_RETRY_STATUS_CODES.has(response.status) && attempt < MAX_TRANSIENT_ATTEMPTS) {
+        await sleep(TRANSIENT_RETRY_BASE_DELAY_MS * attempt);
+        continue;
+      }
+
+      return { ok: false, status: response.status, message };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      lastStatus = 502;
+      lastMessage = `Failed to contact agent: ${message}`;
+      if (attempt < MAX_TRANSIENT_ATTEMPTS) {
+        await sleep(TRANSIENT_RETRY_BASE_DELAY_MS * attempt);
+        continue;
+      }
+      return { ok: false, status: lastStatus, message: lastMessage };
+    }
+  }
+
+  return { ok: false, status: lastStatus, message: lastMessage };
+}
+
 export async function deliverSessionAgentMessage(
   input: SessionAgentMessageInput,
 ): Promise<SessionAgentMessageResult> {
-  try {
-    const initialResponse = await postMessage(input);
-    if (initialResponse.ok) {
-      return { ok: true, status: initialResponse.status, message: "" };
-    }
-
-    const initialMessage = await parseErrorMessage(initialResponse);
-    if (!shouldAttemptPm2Recovery(initialResponse.status, input.pm2Name)) {
-      return { ok: false, status: initialResponse.status, message: initialMessage };
-    }
-
-    const recovered = await recoverPm2Session(input).catch(() => false);
-    if (!recovered) {
-      return { ok: false, status: initialResponse.status, message: initialMessage };
-    }
-
-    const retryResponse = await postMessage(input);
-    if (retryResponse.ok) {
-      return { ok: true, status: retryResponse.status, message: "" };
-    }
-
-    const retryMessage = await parseErrorMessage(retryResponse);
-    return { ok: false, status: retryResponse.status, message: retryMessage };
-  } catch (error) {
-    const recovered = await recoverPm2Session(input).catch(() => false);
-    if (!recovered) {
-      return {
-        ok: false,
-        status: 502,
-        message: `Failed to contact agent: ${(error as Error).message ?? "unknown error"}`,
-      };
-    }
-
-    try {
-      const retryResponse = await postMessage(input);
-      if (retryResponse.ok) {
-        return { ok: true, status: retryResponse.status, message: "" };
-      }
-      const retryMessage = await parseErrorMessage(retryResponse);
-      return { ok: false, status: retryResponse.status, message: retryMessage };
-    } catch (retryError) {
-      return {
-        ok: false,
-        status: 502,
-        message: `Failed to contact agent: ${(retryError as Error).message ?? "unknown error"}`,
-      };
-    }
+  const initialResult = await tryWithTransientRetries(input);
+  if (initialResult.ok || !shouldAttemptPm2Recovery(initialResult.status, input.pm2Name)) {
+    return initialResult;
   }
+
+  const recovered = await recoverPm2Session(input).catch(() => false);
+  if (!recovered) {
+    return initialResult;
+  }
+
+  return tryWithTransientRetries(input);
 }
