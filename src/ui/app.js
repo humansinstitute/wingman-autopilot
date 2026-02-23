@@ -1377,13 +1377,6 @@ const fetchSessions = async () => {
   applyRouteSessionFromPath({ allowHistoryUpdate });
   ensureActiveSession();
   const activeId = ss.activeSessionId;
-  if (
-    currentRoute === "live" &&
-    activeId &&
-    allSessions.some((session) => session.id === activeId)
-  ) {
-    setActiveSession(activeId, { updateHistory: false, forceLog: true });
-  }
 
   syncDesktopSessionIndicator();
 

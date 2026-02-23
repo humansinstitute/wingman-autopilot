@@ -86,25 +86,29 @@ export function createSessionRouting(deps) {
 
       // Manage SSE connections and polling for live view
       if (getCurrentRoute() === "live" && sessionExists) {
-        // Disconnect previous session if different
-        if (previousSessionId && previousSessionId !== sessionId) {
-          sseManager.disconnect(previousSessionId);
-        }
-        // Connect to new session
-        sseManager.connect(sessionId);
+        const switchedSessions = previousSessionId !== sessionId;
+        const alreadyConnected = typeof sseManager.isConnected === "function"
+          ? sseManager.isConnected(sessionId)
+          : false;
 
-        // Start conversation polling (1 second interval)
-        startConversationPolling(sessionId);
+        // Only churn live transport when switching sessions or recovering a dead connection.
+        if (switchedSessions || !alreadyConnected) {
+          if (previousSessionId && switchedSessions) {
+            sseManager.disconnect(previousSessionId);
+          }
+          sseManager.connect(sessionId);
+          startConversationPolling(sessionId);
+        }
 
         // Dispatch session-change event for Alpine.js chat component
-        if (isAlpineChatEnabled() && previousSessionId !== sessionId) {
+        if (isAlpineChatEnabled() && switchedSessions) {
           window.wingman = window.wingman || {};
           window.wingman.activeSessionId = sessionId;
           window.dispatchEvent(new CustomEvent("session-change", { detail: { sessionId } }));
         }
 
         // Scroll to end when switching to a different session
-        if (previousSessionId !== sessionId) {
+        if (switchedSessions) {
           scheduleLiveScroll(sessionId, { includeWindow: true });
         }
       }
