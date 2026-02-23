@@ -2796,6 +2796,20 @@ const handleApi = async (
   method: HttpMethod,
   authContext: RequestAuthContext,
 ): Promise<Response> => {
+  const withProjectApiCors = (response: Response): Response => {
+    const headers = new Headers(response.headers);
+    const origin = request.headers.get("origin");
+    headers.set("Access-Control-Allow-Origin", origin || "*");
+    headers.set("Vary", "Origin");
+    headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  };
+
   const pathname = url.pathname;
   const workspaceScope = resolveWorkspace(authContext);
   const viewerIsAdmin = workspaceScope.isAdmin;
@@ -2818,6 +2832,10 @@ const handleApi = async (
     return browserLogResponse;
   }
   if (pathname.startsWith("/api/npub-projects")) {
+    if (method === "OPTIONS") {
+      return withProjectApiCors(new Response(null, { status: 204 }));
+    }
+
     let effectiveAuth = authContext;
     let effectiveIsAdmin = workspaceScope.isAdmin;
 
@@ -2828,7 +2846,7 @@ const handleApi = async (
         effectiveAuth = { npub: nip98Npub, session: null };
         effectiveIsAdmin = true; // NIP-98 server keys treated as admin for project lookups
       } else {
-        return Response.json({ error: "Authentication required" }, { status: 401 });
+        return withProjectApiCors(Response.json({ error: "Authentication required" }, { status: 401 }));
       }
     }
 
@@ -2840,9 +2858,9 @@ const handleApi = async (
       effectiveIsAdmin,
     );
     if (response) {
-      return response;
+      return withProjectApiCors(response);
     }
-    return Response.json({ error: "Not found" }, { status: 404 });
+    return withProjectApiCors(Response.json({ error: "Not found" }, { status: 404 }));
   }
   if (pathname.startsWith("/api/projects")) {
     const denied = await ensureApiAccess(AccessActions.ProjectsManage, request, url, authContext);
