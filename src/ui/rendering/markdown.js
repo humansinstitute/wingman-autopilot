@@ -287,7 +287,7 @@ export const renderMarkdownToHtml = (markdown) => {
       continue;
     }
 
-    const orderedMatch = line.match(/^\s*(\d+)\.\s+(.*)$/);
+    const orderedMatch = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
     if (orderedMatch) {
       closeParagraph();
       const content = renderInlineMarkdown(orderedMatch[2]);
