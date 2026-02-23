@@ -2627,6 +2627,10 @@ const isAdminContext = (authContext: RequestAuthContext): boolean => {
  * Returns null if no valid NIP-98 header is present.
  */
 const verifyNip98AuthHeader = (request: Request, url: URL): string | null => {
+  const normalizePathname = (value: string): string => {
+    const normalized = value.replace(/\/+$/, "");
+    return normalized || "/";
+  };
   const authHeader = request.headers.get("authorization");
   if (!authHeader?.startsWith("Nostr ")) return null;
 
@@ -2645,15 +2649,18 @@ const verifyNip98AuthHeader = (request: Request, url: URL): string | null => {
     const uTag = event.tags?.find((t: string[]) => t[0] === "u");
     if (!uTag) return null;
     const eventUrl = new URL(uTag[1]);
-    if (eventUrl.origin !== url.origin || eventUrl.pathname !== url.pathname) return null;
+    if (
+      eventUrl.origin !== url.origin ||
+      normalizePathname(eventUrl.pathname) !== normalizePathname(url.pathname)
+    ) return null;
 
     // Verify the method tag
     const methodTag = event.tags?.find((t: string[]) => t[0] === "method");
     if (!methodTag || methodTag[1] !== request.method) return null;
 
-    // Verify the event is recent (within 60 seconds)
+    // Verify the event is recent (allow clock skew up to 5 minutes)
     const now = Math.floor(Date.now() / 1000);
-    if (Math.abs(now - event.created_at) > 60) return null;
+    if (Math.abs(now - event.created_at) > 300) return null;
 
     // Convert pubkey to npub
     return nip19.npubEncode(event.pubkey);
