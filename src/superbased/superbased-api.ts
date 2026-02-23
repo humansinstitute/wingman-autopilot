@@ -156,6 +156,16 @@ export function createSuperbasedApiHandler(deps: SuperbasedApiDependencies) {
         return await handleHistory(deps, url);
       }
 
+      // GET /api/superbased/storage/:objectId/download-url
+      if (
+        segments.length === 5 &&
+        segments[2] === "storage" &&
+        segments[4] === "download-url" &&
+        method === "GET"
+      ) {
+        return await handleStorageDownloadUrl(deps, url, segments[3]!);
+      }
+
       return jsonError("Not found", 404);
     } catch (err) {
       console.error("[superbased-api] Error:", err);
@@ -526,5 +536,51 @@ async function handleHistory(
   } catch (err) {
     console.warn(`[superbased-api] History fetch failed: ${(err as Error).message}`);
     return jsonError(`History fetch failed: ${(err as Error).message}`, 502);
+  }
+}
+
+/**
+ * GET /api/superbased/storage/:objectId/download-url
+ *
+ * Proxy a presigned download URL request for a storage object.
+ * Signs with the user's bot key (or root fallback) via signForSession.
+ */
+async function handleStorageDownloadUrl(
+  deps: SuperbasedApiDependencies,
+  url: URL,
+  objectId: string,
+): Promise<Response> {
+  let baseUrl: string;
+  try {
+    baseUrl = resolveBaseUrl(
+      url.searchParams.get("base_url") ?? undefined,
+      deps.defaultBaseUrl,
+    );
+  } catch (err) {
+    return jsonError((err as Error).message, 400);
+  }
+
+  const userNpub = url.searchParams.get("user_npub") ?? undefined;
+  const sessionId = url.searchParams.get("session_id") ?? undefined;
+  const effectiveUserNpub = resolveUserNpub(deps, userNpub, sessionId);
+  if (!effectiveUserNpub) {
+    return jsonError("user_npub query parameter is required", 400);
+  }
+
+  const targetUrl = `${baseUrl}/storage/${objectId}/download-url`;
+
+  try {
+    const response = await authenticatedGet(targetUrl, effectiveUserNpub);
+
+    if (!response.ok) {
+      const text = await response.text();
+      return jsonError(`Upstream API error (${response.status}): ${text}`, response.status);
+    }
+
+    const data = await response.json();
+    return Response.json(data);
+  } catch (err) {
+    console.warn(`[superbased-api] Storage download URL failed: ${(err as Error).message}`);
+    return jsonError(`Storage download URL failed: ${(err as Error).message}`, 502);
   }
 }
