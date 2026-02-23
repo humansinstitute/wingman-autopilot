@@ -108,7 +108,7 @@ function createTriggerListener(deps: TriggerListenerDeps) {
 
     const sub = pool.subscribeMany(
       deps.relays,
-      [{ kinds: [9256], "#p": [botPubkeyHex], since }],
+      { kinds: [9256], "#p": [botPubkeyHex], since },
       {
         onevent(event) {
           // Dedup across relays
