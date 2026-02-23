@@ -76,13 +76,15 @@ export function getLogsDirectory(userRootDir: string, isAdmin: boolean): string 
 
 /**
  * Generate a PM2 process name from user alias and session name.
- * Format: {alias}-{sanitized-session-name}
+ * Format: {alias}-{sanitized-session-name}-{session-id-prefix}
+ * This keeps names human-readable while guaranteeing uniqueness per session.
  */
-export function generateProcessName(userAlias: string, sessionName: string): string {
+export function generateProcessName(userAlias: string, sessionName: string, sessionId: string): string {
   const sanitizedAlias = userAlias.toLowerCase().replace(/[^a-z0-9-]/g, "");
   const sanitizedName = sessionName.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
   const truncatedName = sanitizedName.slice(0, 32) || "session";
-  return `${sanitizedAlias}-${truncatedName}`;
+  const sessionSuffix = sessionId.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8) || "session";
+  return `${sanitizedAlias}-${truncatedName}-${sessionSuffix}`;
 }
 
 /**
@@ -157,7 +159,7 @@ function shellQuote(value: string): string {
  */
 export function createAppConfig(sessionConfig: SessionConfig): EcosystemApp {
   const { sessionId, sessionName, port, workingDirectory, userAlias, isAdmin } = sessionConfig;
-  const processName = generateProcessName(userAlias, sessionName);
+  const processName = generateProcessName(userAlias, sessionName, sessionId);
   const logsDir = getLogsDirectory(workingDirectory, isAdmin);
   const { script, args } = buildAgentCommand(sessionConfig);
 
