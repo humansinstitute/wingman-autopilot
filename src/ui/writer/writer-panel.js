@@ -57,6 +57,41 @@ function detectLanguage(filePath) {
 
 const POLL_INTERVAL_MS = 2500;
 
+function getScrollableAncestor(element) {
+  let current = element?.parentElement ?? null;
+  while (current) {
+    const style = window.getComputedStyle(current);
+    const canScrollY = /(auto|scroll)/.test(style.overflowY);
+    if (canScrollY && current.scrollHeight > current.clientHeight) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function resizeTextareaPreserveScroll(editor) {
+  const scrollParent = getScrollableAncestor(editor);
+  const parentScrollTop = scrollParent?.scrollTop ?? 0;
+  const windowScrollY = window.scrollY;
+
+  editor.style.height = "auto";
+  editor.style.height = `${editor.scrollHeight}px`;
+
+  if (scrollParent) {
+    scrollParent.scrollTop = parentScrollTop;
+  }
+  window.scrollTo(window.scrollX, windowScrollY);
+}
+
+function focusEditorWithoutScroll(editor) {
+  try {
+    editor.focus({ preventScroll: true });
+  } catch {
+    editor.focus();
+  }
+}
+
 /**
  * Create the pencil icon button that toggles the writer panel.
  * @param {Function} onToggle
@@ -267,8 +302,7 @@ export function createWriterPanel(sessionId, targetFile, deps) {
       editor.spellcheck = false;
 
       function autoResize() {
-        editor.style.height = "auto";
-        editor.style.height = editor.scrollHeight + "px";
+        resizeTextareaPreserveScroll(editor);
       }
       editor.addEventListener("input", autoResize);
       editor.addEventListener("keydown", (e) => {
@@ -293,7 +327,7 @@ export function createWriterPanel(sessionId, targetFile, deps) {
       blocksContainer.append(wrapper);
       requestAnimationFrame(() => {
         autoResize();
-        editor.focus();
+        focusEditorWithoutScroll(editor);
       });
       return;
     }
@@ -364,8 +398,7 @@ export function createWriterPanel(sessionId, targetFile, deps) {
 
     // Auto-height
     function autoResize() {
-      editor.style.height = "auto";
-      editor.style.height = editor.scrollHeight + "px";
+      resizeTextareaPreserveScroll(editor);
     }
 
     editor.addEventListener("input", autoResize);
@@ -385,7 +418,7 @@ export function createWriterPanel(sessionId, targetFile, deps) {
     // Focus after append
     requestAnimationFrame(() => {
       autoResize();
-      editor.focus();
+      focusEditorWithoutScroll(editor);
     });
   }
 
