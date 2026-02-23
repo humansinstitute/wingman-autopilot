@@ -92,6 +92,52 @@ function focusEditorWithoutScroll(editor) {
   }
 }
 
+function getParentDirectory(filePath) {
+  const normalized = String(filePath ?? "").replace(/\\/g, "/");
+  const index = normalized.lastIndexOf("/");
+  return index >= 0 ? normalized.slice(0, index) : normalized;
+}
+
+function guessImageExtension(mimeType) {
+  const mime = String(mimeType ?? "").toLowerCase();
+  if (mime === "image/jpeg") return "jpg";
+  if (mime === "image/png") return "png";
+  if (mime === "image/gif") return "gif";
+  if (mime === "image/webp") return "webp";
+  if (mime === "image/svg+xml") return "svg";
+  if (mime === "image/bmp") return "bmp";
+  if (mime === "image/heic") return "heic";
+  if (mime === "image/heif") return "heif";
+  return "png";
+}
+
+function createPastedImageFilename(file) {
+  const now = new Date();
+  const stamp = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+    "-",
+    String(now.getHours()).padStart(2, "0"),
+    String(now.getMinutes()).padStart(2, "0"),
+    String(now.getSeconds()).padStart(2, "0"),
+  ].join("");
+  const random = Math.random().toString(36).slice(2, 8);
+  const ext = guessImageExtension(file?.type);
+  return `pasted-image-${stamp}-${random}.${ext}`;
+}
+
+function insertTextAtCursor(textarea, text) {
+  const start = textarea.selectionStart ?? 0;
+  const end = textarea.selectionEnd ?? start;
+  const value = textarea.value ?? "";
+  textarea.value = value.slice(0, start) + text + value.slice(end);
+  const next = start + text.length;
+  textarea.selectionStart = next;
+  textarea.selectionEnd = next;
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 /**
  * Create the pencil icon button that toggles the writer panel.
  * @param {Function} onToggle
@@ -178,6 +224,56 @@ export function createWriterPanel(sessionId, targetFile, deps) {
   let pollTimer = null;
   let destroyed = false;
   let commitInProgress = false;
+
+  async function uploadPastedImageToCurrentDirectory(file) {
+    const parentDirectory = getParentDirectory(targetFile);
+    const uploadName = createPastedImageFilename(file);
+    const base64 = encodeUint8ArrayToBase64(new Uint8Array(await file.arrayBuffer()));
+    const response = await fetch("/api/docs/file", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        directory: parentDirectory,
+        name: uploadName,
+        base64,
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = data?.error ?? response.statusText ?? "Failed to upload pasted image";
+      throw new Error(message);
+    }
+    return data?.name || uploadName;
+  }
+
+  async function handleEditorPaste(event, editor) {
+    if (!mdMode) return;
+    const items = Array.from(event.clipboardData?.items ?? []);
+    const imageFiles = items
+      .filter((item) => item.kind === "file" && String(item.type || "").startsWith("image/"))
+      .map((item) => item.getAsFile())
+      .filter((file) => file instanceof File);
+
+    if (imageFiles.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    try {
+      const links = [];
+      for (const imageFile of imageFiles) {
+        const savedName = await uploadPastedImageToCurrentDirectory(imageFile);
+        links.push(`![${savedName}](${savedName})`);
+      }
+      const prefix = editor.selectionStart > 0 ? "\n" : "";
+      const suffix = editor.value.endsWith("\n") ? "" : "\n";
+      insertTextAtCursor(editor, `${prefix}${links.join("\n")}${suffix}`);
+      showToast?.(`Uploaded ${imageFiles.length} image${imageFiles.length > 1 ? "s" : ""}`, { duration: 2000 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to upload pasted image";
+      showToast?.(message, { variant: "error" });
+    }
+  }
 
   // ── File operations ──────────────────────────────────────────
 
@@ -305,6 +401,9 @@ export function createWriterPanel(sessionId, targetFile, deps) {
         resizeTextareaPreserveScroll(editor);
       }
       editor.addEventListener("input", autoResize);
+      editor.addEventListener("paste", (event) => {
+        void handleEditorPaste(event, editor);
+      });
       editor.addEventListener("keydown", (e) => {
         // Allow Tab to insert a tab character
         if (e.key === "Tab") {
@@ -402,6 +501,9 @@ export function createWriterPanel(sessionId, targetFile, deps) {
     }
 
     editor.addEventListener("input", autoResize);
+    editor.addEventListener("paste", (event) => {
+      void handleEditorPaste(event, editor);
+    });
 
     editor.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
