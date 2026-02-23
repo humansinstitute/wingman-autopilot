@@ -6,6 +6,19 @@
 
 import { escapeHtml, escapeAttribute, sanitizeLanguageClass } from "../core/icons.js";
 
+const sanitizeImageSrc = (value) => {
+  if (value === null || value === undefined) return "#";
+  const trimmed = String(value).trim();
+  if (!trimmed || /\s/.test(trimmed)) return "#";
+  const explicitlyAllowed = /^(https?:\/\/|\/|\.{1,2}\/|#)/i.test(trimmed);
+  if (explicitlyAllowed) {
+    return escapeHtml(trimmed).replace(/"/g, "&quot;");
+  }
+  // Relative paths are allowed, but block arbitrary URI schemes like javascript:
+  if (trimmed.includes(":")) return "#";
+  return escapeHtml(trimmed).replace(/"/g, "&quot;");
+};
+
 export const renderInlineMarkdown = (text) => {
   if (!text) return "";
   let working = String(text);
@@ -19,6 +32,12 @@ export const renderInlineMarkdown = (text) => {
   working = working.replace(/`([^`]+)`/g, (_, code) =>
     createPlaceholder(`<code>${escapeHtml(code)}</code>`),
   );
+
+  working = working.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_, alt, url) => {
+    const safeUrl = sanitizeImageSrc(url);
+    const safeAlt = escapeHtml(alt).replace(/"/g, "&quot;");
+    return createPlaceholder(`<img src="${safeUrl}" alt="${safeAlt}" loading="lazy" />`);
+  });
 
   working = working.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, url) => {
     const safeUrl = escapeAttribute(url);

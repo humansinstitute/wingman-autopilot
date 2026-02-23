@@ -138,6 +138,24 @@ function insertTextAtCursor(textarea, text) {
   textarea.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+function createUploadMarkerId() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function buildUploadPlaceholder(markerId) {
+  return `<!--UPL:${markerId}-->[Uploading...]`;
+}
+
+function replaceUploadPlaceholder(textarea, markerId, replacement) {
+  const marker = buildUploadPlaceholder(markerId);
+  const currentValue = textarea.value ?? "";
+  const index = currentValue.indexOf(marker);
+  if (index === -1) return false;
+  textarea.value = currentValue.slice(0, index) + replacement + currentValue.slice(index + marker.length);
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}
+
 /**
  * Create the pencil icon button that toggles the writer panel.
  * @param {Function} onToggle
@@ -259,19 +277,28 @@ export function createWriterPanel(sessionId, targetFile, deps) {
     }
 
     event.preventDefault();
-    try {
-      const links = [];
-      for (const imageFile of imageFiles) {
-        const savedName = await uploadPastedImageToCurrentDirectory(imageFile);
-        links.push(`![${savedName}](${savedName})`);
+    const queued = imageFiles.map((file) => ({ file, markerId: createUploadMarkerId() }));
+    const placeholders = queued.map(({ markerId }) => buildUploadPlaceholder(markerId));
+    const prefix = editor.selectionStart > 0 ? "\n" : "";
+    const suffix = editor.value.endsWith("\n") ? "" : "\n";
+    insertTextAtCursor(editor, `${prefix}${placeholders.join("\n")}${suffix}`);
+    focusEditorWithoutScroll(editor);
+
+    let uploadedCount = 0;
+    for (const item of queued) {
+      try {
+        const savedName = await uploadPastedImageToCurrentDirectory(item.file);
+        replaceUploadPlaceholder(editor, item.markerId, `![${savedName}](${savedName})`);
+        uploadedCount += 1;
+      } catch (error) {
+        replaceUploadPlaceholder(editor, item.markerId, "");
+        const message = error instanceof Error ? error.message : "Failed to upload pasted image";
+        showToast?.(message, { variant: "error" });
       }
-      const prefix = editor.selectionStart > 0 ? "\n" : "";
-      const suffix = editor.value.endsWith("\n") ? "" : "\n";
-      insertTextAtCursor(editor, `${prefix}${links.join("\n")}${suffix}`);
-      showToast?.(`Uploaded ${imageFiles.length} image${imageFiles.length > 1 ? "s" : ""}`, { duration: 2000 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to upload pasted image";
-      showToast?.(message, { variant: "error" });
+    }
+
+    if (uploadedCount > 0) {
+      showToast?.(`Uploaded ${uploadedCount} image${uploadedCount > 1 ? "s" : ""}`, { duration: 2000 });
     }
   }
 
