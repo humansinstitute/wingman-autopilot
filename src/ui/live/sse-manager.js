@@ -103,6 +103,10 @@ class SSEManager {
         }
       });
 
+      source.addEventListener("heartbeat", () => {
+        this.lastEventTime.set(sessionId, Date.now());
+      });
+
       source.addEventListener("error", async (event) => {
         try {
           const data = JSON.parse(event.data);

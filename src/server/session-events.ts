@@ -147,7 +147,9 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
           writeSseComment("connected");
           keepaliveTimer = setInterval(() => {
             try {
-              writeSseComment("keepalive");
+              // Use a real SSE event (not a comment) so browser JS can observe
+              // heartbeat traffic and avoid false "stale" health checks.
+              writeSseEvent("heartbeat", { ts: Date.now() });
             } catch {
               if (keepaliveTimer) {
                 clearInterval(keepaliveTimer);
