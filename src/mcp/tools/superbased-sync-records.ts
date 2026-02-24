@@ -12,9 +12,14 @@ import { wingmanIdentityPreamble } from "./nip44-utils";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const superbasedSyncRecordsSchema = {
+  namespace_mode: z
+    .string()
+    .optional()
+    .describe('Namespace mode. App-less only; use "default" (or omit).'),
   app_npub: z
     .string()
-    .describe("The app's npub identifier for the SuperBased collection"),
+    .optional()
+    .describe("Legacy metadata only in app-less mode. Ignored for routing."),
   owner_pubkey: z
     .string()
     .describe("Record owner's public key (64-char hex). Applies to all records in this batch."),
@@ -47,6 +52,7 @@ export const superbasedSyncRecordsSchema = {
 
 export const superbasedSyncRecordsDescription =
   "Encrypt and sync records to a SuperBased / Flux Adaptor API. " +
+  'Uses app-less SuperBased routes (namespace_mode="default"). ' +
   "Each record's plaintext_payload is encrypted to the owner and any specified delegates. " +
   "IMPORTANT: owner_pubkey must be the end-user's pubkey, NOT Wingman's. " +
   "Include Wingman's pubkey in delegate_pubkeys so Wingman can later fetch and decrypt the records. " +
@@ -62,7 +68,8 @@ interface SyncRecord {
 }
 
 interface SuperbasedSyncRecordsParams {
-  app_npub: string;
+  namespace_mode?: string;
+  app_npub?: string;
   owner_pubkey: string;
   records: SyncRecord[];
   base_url?: string;
@@ -73,6 +80,19 @@ export async function handleSuperbasedSyncRecords(
   wingmanUrl: string,
   _sessionId: string,
 ) {
+  const namespaceMode = (params.namespace_mode ?? "default").trim().toLowerCase();
+  if (!["default", "appless", "app-less"].includes(namespaceMode)) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text" as const,
+          text: "This tool is app-less only. Use namespace_mode=\"default\".",
+        },
+      ],
+    };
+  }
+
   // Validate record_ids are UUIDs when provided
   for (let i = 0; i < params.records.length; i++) {
     const rid = params.records[i].record_id;
@@ -95,7 +115,7 @@ export async function handleSuperbasedSyncRecords(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        app_npub: params.app_npub,
+        namespace_mode: "default",
         owner_pubkey: params.owner_pubkey,
         records: params.records,
         base_url: params.base_url,

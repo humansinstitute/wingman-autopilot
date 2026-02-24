@@ -10,9 +10,14 @@ import { z } from "zod";
 import { wingmanIdentityPreamble } from "./nip44-utils";
 
 export const superbasedRecordHistorySchema = {
+  namespace_mode: z
+    .string()
+    .optional()
+    .describe('Namespace mode. App-less only; use "default" (or omit).'),
   app_npub: z
     .string()
-    .describe("The app's npub identifier for the SuperBased collection"),
+    .optional()
+    .describe("Legacy metadata only in app-less mode. Ignored for routing."),
   record_id: z
     .string()
     .describe("UUID of the record to fetch history for"),
@@ -28,12 +33,14 @@ export const superbasedRecordHistorySchema = {
 
 export const superbasedRecordHistoryDescription =
   "Fetch version history for a specific record from a SuperBased / Flux Adaptor API. " +
+  'Uses app-less SuperBased routes (namespace_mode="default"). ' +
   "Returns the version chain showing version number, record_state, encrypted_from, and created_at " +
   "for each version. Set include_data=true to also decrypt and return payload content. " +
   "Useful for debugging sync issues and auditing record changes.";
 
 interface SuperbasedRecordHistoryParams {
-  app_npub: string;
+  namespace_mode?: string;
+  app_npub?: string;
   record_id: string;
   include_data?: boolean;
   base_url?: string;
@@ -45,8 +52,15 @@ export async function handleSuperbasedRecordHistory(
   _sessionId: string,
 ) {
   try {
+    const namespaceMode = (params.namespace_mode ?? "default").trim().toLowerCase();
+    if (!["default", "appless", "app-less"].includes(namespaceMode)) {
+      return {
+        isError: true,
+        content: [{ type: "text" as const, text: "This tool is app-less only. Use namespace_mode=\"default\"." }],
+      };
+    }
     const query = new URLSearchParams();
-    query.set("app_npub", params.app_npub);
+    query.set("namespace_mode", "default");
     query.set("record_id", params.record_id);
     if (params.include_data) query.set("include_data", "true");
     if (params.base_url) query.set("base_url", params.base_url);

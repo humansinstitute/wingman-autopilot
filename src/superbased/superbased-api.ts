@@ -31,6 +31,7 @@ export interface SuperbasedApiDependencies {
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+type NamespaceMode = "default";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -48,6 +49,14 @@ function resolveBaseUrl(
   throw new Error(
     "No SuperBased URL configured. Set SUPERBASED_URL or pass base_url parameter.",
   );
+}
+
+function resolveNamespaceMode(raw: unknown): NamespaceMode {
+  const value = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (!value || value === "default" || value === "appless" || value === "app-less") {
+    return "default";
+  }
+  throw new Error("This Wingman SuperBased proxy is app-less only (namespace_mode=default)");
 }
 
 function resolveUserNpub(
@@ -234,8 +243,13 @@ async function handleFetchRecords(
   }
 
   const appNpub = url.searchParams.get("app_npub");
-  if (!appNpub) {
-    return jsonError("app_npub query parameter is required", 400);
+  try {
+    resolveNamespaceMode(url.searchParams.get("namespace_mode"));
+  } catch (err) {
+    return jsonError((err as Error).message, 400);
+  }
+  if (appNpub) {
+    // Legacy metadata only in app-less mode; ignored for routing.
   }
 
   const ownerPubkey = url.searchParams.get("owner_pubkey");
@@ -255,7 +269,7 @@ async function handleFetchRecords(
   }
 
   // Build the upstream URL with query params
-  const upstreamUrl = new URL(`${baseUrl}/records/${appNpub}/delegated`);
+  const upstreamUrl = new URL(`${baseUrl}/records/delegated`);
   upstreamUrl.searchParams.set("owner", ownerPubkey);
   const collection = url.searchParams.get("collection");
   const since = url.searchParams.get("since");
@@ -341,8 +355,13 @@ async function handleSyncRecords(
   }
 
   const appNpub = body.app_npub as string | undefined;
-  if (!appNpub) {
-    return jsonError("app_npub is required", 400);
+  try {
+    resolveNamespaceMode(body.namespace_mode);
+  } catch (err) {
+    return jsonError((err as Error).message, 400);
+  }
+  if (appNpub) {
+    // Legacy metadata only in app-less mode; ignored for routing.
   }
 
   const ownerPubkey = body.owner_pubkey as string | undefined;
@@ -413,7 +432,7 @@ async function handleSyncRecords(
     };
   });
 
-  const syncUrl = `${baseUrl}/records/${appNpub}/sync`;
+  const syncUrl = `${baseUrl}/records/sync`;
 
   try {
     const response = await authenticatedPost(syncUrl, {
@@ -433,7 +452,7 @@ async function handleSyncRecords(
     };
 
     console.log(
-      `[superbased-api] Synced ${encryptedRecords.length} records to ${appNpub}`,
+      `[superbased-api] Synced ${encryptedRecords.length} records to default namespace`,
     );
 
     // Return per-record record_id + version from upstream,
@@ -476,8 +495,13 @@ async function handleHistory(
   }
 
   const appNpub = url.searchParams.get("app_npub");
-  if (!appNpub) {
-    return jsonError("app_npub query parameter is required", 400);
+  try {
+    resolveNamespaceMode(url.searchParams.get("namespace_mode"));
+  } catch (err) {
+    return jsonError((err as Error).message, 400);
+  }
+  if (appNpub) {
+    // Legacy metadata only in app-less mode; ignored for routing.
   }
 
   const recordId = url.searchParams.get("record_id");
@@ -491,7 +515,7 @@ async function handleHistory(
   const effectiveUserNpub = resolveUserNpub(deps, userNpub, sessionId);
 
   const upstreamUrl = new URL(
-    `${baseUrl}/records/${appNpub}/history/${recordId}`,
+    `${baseUrl}/records/history/${recordId}`,
   );
   if (includeData) {
     upstreamUrl.searchParams.set("include_data", "true");

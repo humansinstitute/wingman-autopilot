@@ -10,9 +10,14 @@ import { z } from "zod";
 import { wingmanIdentityPreamble } from "./nip44-utils";
 
 export const superbasedFetchRecordsSchema = {
+  namespace_mode: z
+    .string()
+    .optional()
+    .describe('Namespace mode. App-less only; use "default" (or omit).'),
   app_npub: z
     .string()
-    .describe("The app's npub identifier for the SuperBased collection"),
+    .optional()
+    .describe("Legacy metadata only in app-less mode. Ignored for routing."),
   owner_pubkey: z
     .string()
     .describe("Hex pubkey of the record owner to fetch records for. Records are scoped to this owner only."),
@@ -40,6 +45,7 @@ export const superbasedFetchRecordsSchema = {
 
 export const superbasedFetchRecordsDescription =
   "Fetch encrypted records where Wingman is a delegate from a SuperBased / Flux Adaptor API. " +
+  'Uses app-less SuperBased routes (namespace_mode="default"). ' +
   "Records are scoped to the specified owner_pubkey (the end-user's pubkey, NOT Wingman's). " +
   "Records are automatically decrypted using Wingman's NIP-44 key. " +
   "Each record includes a `decrypted_payload` field (or `decrypt_error` if decryption failed). " +
@@ -47,7 +53,8 @@ export const superbasedFetchRecordsDescription =
   "Supports filtering by collection, time range, and pagination.";
 
 interface SuperbasedFetchRecordsParams {
-  app_npub: string;
+  namespace_mode?: string;
+  app_npub?: string;
   owner_pubkey: string;
   collection?: string;
   since?: string;
@@ -62,8 +69,15 @@ export async function handleSuperbasedFetchRecords(
   _sessionId: string,
 ) {
   try {
+    const namespaceMode = (params.namespace_mode ?? "default").trim().toLowerCase();
+    if (!["default", "appless", "app-less"].includes(namespaceMode)) {
+      return {
+        isError: true,
+        content: [{ type: "text" as const, text: "This tool is app-less only. Use namespace_mode=\"default\"." }],
+      };
+    }
     const query = new URLSearchParams();
-    query.set("app_npub", params.app_npub);
+    query.set("namespace_mode", "default");
     query.set("owner_pubkey", params.owner_pubkey);
     if (params.collection) query.set("collection", params.collection);
     if (params.since) query.set("since", params.since);
