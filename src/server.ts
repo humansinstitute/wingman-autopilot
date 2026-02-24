@@ -84,7 +84,7 @@ import { createSuperbasedApiHandler } from "./superbased/superbased-api";
 import { BotKeyStore } from "./identity/bot-key-store";
 import { createBotKeyApiHandler } from "./identity/bot-key-api";
 import { createBotCryptoApiHandler } from "./identity/bot-crypto-api";
-import { generateBotKey, clearBotKey, isBotKeyUnlocked } from "./identity/bot-key-manager";
+import { generateBotKey, clearBotKey, isBotKeyUnlocked, storeBotKeyInMemory, unlockViaEscrow } from "./identity/bot-key-manager";
 import { browserSubscribers } from "./mcp/browser-subscribers";
 import { MemoryStore } from "./mcp/memory-store";
 import { userSettingsStore } from "./storage/user-settings-store";
@@ -345,6 +345,30 @@ const triggerListener: TriggerListener = createTriggerListener({
 function onBotKeyUnlockedHook(npub: string, secretKey: Uint8Array, botPubkeyHex: string): void {
   triggerListener.subscribe(npub, secretKey, botPubkeyHex);
 }
+
+function tryAutoUnlockBotKeyViaEscrow(
+  npub: string,
+  reason: "sse-subscribe" | "session-start",
+): boolean {
+  try {
+    if (isBotKeyUnlocked(npub)) return true;
+    const botRecord = botKeyStore.getActiveKeyForUser(npub);
+    if (!botRecord) return false;
+
+    const secretKey = unlockViaEscrow(
+      botRecord.encryptedEscrow,
+      botRecord.botPubkeyHex,
+      botRecord.escrowUuid,
+    );
+    storeBotKeyInMemory(npub, secretKey, botRecord.botPubkeyHex, "escrow");
+    onBotKeyUnlockedHook(npub, secretKey, botRecord.botPubkeyHex);
+    console.log(`[bot-key] Auto-unlocked via escrow on ${reason} for ${npub.slice(0, 20)}…`);
+    return true;
+  } catch (error) {
+    console.warn(`[bot-key] Auto-unlock via escrow failed on ${reason} for ${npub.slice(0, 20)}…:`, error);
+    return false;
+  }
+}
 const schedulerEngine = new SchedulerEngine({
   store: schedulerStore,
   botKeyStore,
@@ -385,9 +409,10 @@ const nip98ApiHandler = createNip98ApiHandler({
   grantsStore: nip98GrantsStore,
   getSession: (sid: string) => manager.getSession(sid) ?? null,
   onBrowserSubscribe: (npub: string) => {
-    // When browser subscribes to SSE, send bot key decrypt request if needed
+    // When browser subscribes to SSE, attempt escrow auto-unlock first.
+    // If that fails, request browser-side decrypt as fallback.
     try {
-      if (!isBotKeyUnlocked(npub)) {
+      if (!isBotKeyUnlocked(npub) && !tryAutoUnlockBotKeyViaEscrow(npub, "sse-subscribe")) {
         const botRecord = botKeyStore.getActiveKeyForUser(npub);
         if (botRecord) {
           const rootIdentity = getKeyTeleportIdentity();
@@ -1504,20 +1529,25 @@ manager.on((event) => {
       } catch (error) {
         console.warn(`[bot-key] Failed to auto-generate bot key for ${event.session.npub}:`, error);
       }
-      // Trigger SSE auto-unlock if bot key exists but isn't in memory
+      // Trigger auto-unlock if bot key exists but isn't in memory.
+      // Prefer escrow unlock immediately; if that fails and browser is connected,
+      // request browser-side decrypt.
       try {
         if (!isBotKeyUnlocked(event.session.npub)) {
-          const botRecord = botKeyStore.getActiveKeyForUser(event.session.npub);
-          if (botRecord) {
-            const rootIdentity = getKeyTeleportIdentity();
-            if (rootIdentity && browserSubscribers.hasSubscriber(event.session.npub)) {
-              browserSubscribers.send(event.session.npub, {
-                type: "botkey:decrypt_request",
-                encryptedToUser: botRecord.encryptedToUser,
-                senderPubkey: rootIdentity.pubkey,
-                botPubkeyHex: botRecord.botPubkeyHex,
-              });
-              console.log(`[bot-key] Sent decrypt request to browser for ${event.session.npub.slice(0, 20)}…`);
+          const unlocked = tryAutoUnlockBotKeyViaEscrow(event.session.npub, "session-start");
+          if (!unlocked) {
+            const botRecord = botKeyStore.getActiveKeyForUser(event.session.npub);
+            if (botRecord) {
+              const rootIdentity = getKeyTeleportIdentity();
+              if (rootIdentity && browserSubscribers.hasSubscriber(event.session.npub)) {
+                browserSubscribers.send(event.session.npub, {
+                  type: "botkey:decrypt_request",
+                  encryptedToUser: botRecord.encryptedToUser,
+                  senderPubkey: rootIdentity.pubkey,
+                  botPubkeyHex: botRecord.botPubkeyHex,
+                });
+                console.log(`[bot-key] Sent decrypt request to browser for ${event.session.npub.slice(0, 20)}…`);
+              }
             }
           }
         }
