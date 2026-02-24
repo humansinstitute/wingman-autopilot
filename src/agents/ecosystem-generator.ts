@@ -76,13 +76,15 @@ export function getLogsDirectory(userRootDir: string, isAdmin: boolean): string 
 
 /**
  * Generate a PM2 process name from user alias and session name.
- * Format: {alias}-{sanitized-session-name}
+ * Format: {alias}-{sanitized-session-name}-{session-id-prefix}
+ * This keeps names human-readable while guaranteeing uniqueness per session.
  */
-export function generateProcessName(userAlias: string, sessionName: string): string {
+export function generateProcessName(userAlias: string, sessionName: string, sessionId: string): string {
   const sanitizedAlias = userAlias.toLowerCase().replace(/[^a-z0-9-]/g, "");
   const sanitizedName = sessionName.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
   const truncatedName = sanitizedName.slice(0, 32) || "session";
-  return `${sanitizedAlias}-${truncatedName}`;
+  const sessionSuffix = sessionId.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8) || "session";
+  return `${sanitizedAlias}-${truncatedName}-${sessionSuffix}`;
 }
 
 /**
@@ -148,20 +150,28 @@ function buildAgentCommand(sessionConfig: SessionConfig): { script: string; args
   return { script: script!, args };
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
 /**
  * Create an ecosystem app entry for a session.
  */
 export function createAppConfig(sessionConfig: SessionConfig): EcosystemApp {
   const { sessionId, sessionName, port, workingDirectory, userAlias, isAdmin } = sessionConfig;
-  const processName = generateProcessName(userAlias, sessionName);
+  const processName = generateProcessName(userAlias, sessionName, sessionId);
   const logsDir = getLogsDirectory(workingDirectory, isAdmin);
   const { script, args } = buildAgentCommand(sessionConfig);
+
+  const command = [script, ...args].map(shellQuote).join(" ");
 
   return {
     name: processName,
     namespace: PM2_NAMESPACE_AGENTS,
-    script,
-    args,
+    // AgentAPI blocks on stdin in PM2 unless stdin is closed.
+    // Run via bash and redirect stdin from /dev/null so the server can start.
+    script: "bash",
+    args: ["-lc", `exec ${command} < /dev/null`],
     cwd: workingDirectory,
     env: {
       SESSION_ID: sessionId,
@@ -398,4 +408,3 @@ export async function addUserAppToEcosystem(
     logsDir,
   };
 }
-

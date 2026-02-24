@@ -409,6 +409,13 @@ export function initIdentityDom(deps) {
       entry.botExportFeedback.hidden = true;
       delete entry.botExportFeedback.dataset.state;
     }
+    if (entry.botPublishDelegateButton) {
+      entry.botPublishDelegateButton.disabled = !hasBotKey;
+    }
+    if (entry.botPublishDelegateFeedback && !hasBotKey) {
+      entry.botPublishDelegateFeedback.hidden = true;
+      delete entry.botPublishDelegateFeedback.dataset.state;
+    }
   }
 
   function syncIdentityDisplay() {
@@ -442,6 +449,21 @@ export function initIdentityDom(deps) {
       entry.logoutButton.removeEventListener("click", entry.logoutHandler);
       identityDomEntryByNode.delete(entry.logoutButton);
       resetButtonState(entry.logoutButton);
+    }
+    if (entry.botCopyButton && entry.botCopyHandler) {
+      entry.botCopyButton.removeEventListener("click", entry.botCopyHandler);
+      identityDomEntryByNode.delete(entry.botCopyButton);
+      resetButtonState(entry.botCopyButton);
+    }
+    if (entry.botExportButton && entry.botExportHandler) {
+      entry.botExportButton.removeEventListener("click", entry.botExportHandler);
+      identityDomEntryByNode.delete(entry.botExportButton);
+      resetButtonState(entry.botExportButton);
+    }
+    if (entry.botPublishDelegateButton && entry.botPublishDelegateHandler) {
+      entry.botPublishDelegateButton.removeEventListener("click", entry.botPublishDelegateHandler);
+      identityDomEntryByNode.delete(entry.botPublishDelegateButton);
+      resetButtonState(entry.botPublishDelegateButton);
     }
     const timeoutId = identityCopyFeedbackTimeouts.get(entry);
     if (timeoutId) {

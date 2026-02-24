@@ -12,6 +12,7 @@ import { getDecryptedBotKey } from "./bot-key-manager";
 import { nip44Encrypt, nip44Decrypt } from "../superbased/nip44-crypto";
 import type { SessionSnapshot } from "../agents/process-manager";
 import { RateLimiter } from "../security/rate-limiter";
+import { parseBody, jsonError } from "../utils/request-utils";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -22,26 +23,6 @@ export interface BotCryptoApiDependencies {
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function jsonError(message: string, status: number): Response {
-  return Response.json({ error: message }, { status });
-}
-
-async function parseBody(request: Request): Promise<Record<string, unknown>> {
-  try {
-    const body = await request.json();
-    if (!body || typeof body !== "object") {
-      throw new Error("Expected JSON object");
-    }
-    return body as Record<string, unknown>;
-  } catch {
-    throw new Error("Invalid JSON body");
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Rate limiters (W3 security)

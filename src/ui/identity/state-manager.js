@@ -11,6 +11,7 @@ import { createUnauthorizedGuard } from "../common/unauthorized-guard.js";
 import { createAdminUsersState } from "../state/index.js";
 import { showToast } from "../utils/toast.js";
 import { fetchNpubProjects } from "../npub-projects/index.js";
+import { publishDelegateRegistryForCurrentUser } from "./bot-delegate-publisher.js";
 import { normaliseNpubValue, isFiniteNumber, toFiniteTimestamp } from "./dom.js";
 
 export function initIdentityStateManager(deps) {
@@ -234,6 +235,59 @@ export function initIdentityStateManager(deps) {
           delete feedback.dataset.state;
         }
       }, 4000);
+    }
+  }
+
+  async function handlePublishBotDelegateKind(entry) {
+    const btn = entry.botPublishDelegateButton;
+    const feedback = entry.botPublishDelegateFeedback;
+    if (!btn) return;
+
+    setButtonState(btn, { state: "loading", label: "Signing\u2026", disable: true });
+
+    try {
+      const result = await publishDelegateRegistryForCurrentUser(state.config);
+      if (result?.botProfileSignedEvent) {
+        if (typeof window !== "undefined") {
+          window.wingmanLastBotKind0Tx = result.botProfileSignedEvent;
+        }
+        console.log("[identity] bot profile tx (kind 0):", result.botProfileSignedEvent);
+      }
+      if (typeof window !== "undefined") {
+        window.wingmanLastDelegateRegistryTx = result?.signedEvent ?? null;
+      }
+      console.log("[identity] delegate registry tx (kind 30078):", result?.signedEvent ?? null);
+      const relayCount = Array.isArray(result?.results) ? result.results.length : 0;
+      const successCount = Number.isFinite(result?.successes) ? Number(result.successes) : 0;
+      setButtonState(btn, { state: "success", label: "Published", disable: false });
+      if (feedback) {
+        feedback.textContent = relayCount > 0 ? `${successCount}/${relayCount} relays` : "Published";
+        feedback.hidden = false;
+        feedback.dataset.state = successCount > 0 ? "success" : "error";
+      }
+      setTimeout(() => {
+        resetButtonState(btn);
+        if (feedback) {
+          feedback.hidden = true;
+          delete feedback.dataset.state;
+        }
+      }, 4000);
+    } catch (err) {
+      console.error("[identity] delegate registry publish failed:", err);
+      const message = err instanceof Error ? err.message : "Publish failed";
+      setButtonState(btn, { state: "error", label: "Failed", disable: false });
+      if (feedback) {
+        feedback.textContent = message;
+        feedback.hidden = false;
+        feedback.dataset.state = "error";
+      }
+      setTimeout(() => {
+        resetButtonState(btn);
+        if (feedback) {
+          feedback.hidden = true;
+          delete feedback.dataset.state;
+        }
+      }, 5000);
     }
   }
 
@@ -863,6 +917,8 @@ export function initIdentityStateManager(deps) {
       botCopyFeedback: root.querySelector('[data-role="identity-bot-copy-feedback"]'),
       botExportButton: root.querySelector('[data-action="export-bot-nsec"]'),
       botExportFeedback: root.querySelector('[data-role="identity-bot-export-feedback"]'),
+      botPublishDelegateButton: root.querySelector('[data-action="publish-bot-delegate-kind"]'),
+      botPublishDelegateFeedback: root.querySelector('[data-role="identity-bot-delegate-publish-feedback"]'),
       copyHandler: null,
       registerHandler: null,
       copyNpubHandler: null,
@@ -870,6 +926,7 @@ export function initIdentityStateManager(deps) {
       logoutHandler: null,
       botCopyHandler: null,
       botExportHandler: null,
+      botPublishDelegateHandler: null,
     };
 
     if (entry.copyButton) {
@@ -930,6 +987,7 @@ export function initIdentityStateManager(deps) {
         }
       };
       entry.botCopyButton.addEventListener("click", entry.botCopyHandler);
+      identityDomEntryByNode.set(entry.botCopyButton, entry);
     }
 
     if (entry.botExportButton) {
@@ -938,6 +996,16 @@ export function initIdentityStateManager(deps) {
         await handleExportBotNsec(entry);
       };
       entry.botExportButton.addEventListener("click", entry.botExportHandler);
+      identityDomEntryByNode.set(entry.botExportButton, entry);
+    }
+
+    if (entry.botPublishDelegateButton) {
+      ensureButtonOriginalLabel(entry.botPublishDelegateButton);
+      entry.botPublishDelegateHandler = async () => {
+        await handlePublishBotDelegateKind(entry);
+      };
+      entry.botPublishDelegateButton.addEventListener("click", entry.botPublishDelegateHandler);
+      identityDomEntryByNode.set(entry.botPublishDelegateButton, entry);
     }
 
     identityDomEntries.add(entry);

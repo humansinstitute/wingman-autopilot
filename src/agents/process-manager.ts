@@ -6,6 +6,7 @@ import type { AgentDefinition, AgentType, WingmanConfig } from "../config";
 import { getAuthenticatedNpub } from "../auth/request-context";
 import { generateIdentityAlias } from "../identity/identity-alias";
 import { normaliseNpub } from "../identity/npub-utils";
+import { isPortAvailable } from "../utils/port-utils.js";
 import { sanitizeLogEntry } from "../logging/log-sanitizer";
 import { trackProjectForSession } from "../projects/npub-project-tracker";
 import type { AgentRuntimeStatus } from "../types/agent-status";
@@ -124,9 +125,25 @@ export class ProcessManager {
   private readonly allocatedPorts = new Set<number>();
   private readonly listeners = new Set<(event: SessionEvent) => void>();
   private readonly adminNpub = normaliseNpub(Bun.env.ADMIN_NPUB ?? null);
+  private botKeyStore: BotKeyStore | null | undefined;
+  /** Debounce timers for log-driven session-updated events */
+  private readonly logUpdateDebounce = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(config: WingmanConfig) {
     this.config = config;
+  }
+
+  private getBotKeyStore(): BotKeyStore | null {
+    if (this.botKeyStore !== undefined) {
+      return this.botKeyStore;
+    }
+    try {
+      this.botKeyStore = new BotKeyStore();
+    } catch (error) {
+      this.botKeyStore = null;
+      console.warn(`[manager] bot key store init failed (non-fatal): ${(error as Error).message}`);
+    }
+    return this.botKeyStore;
   }
 
   on(listener: (event: SessionEvent) => void): () => void {
@@ -168,6 +185,8 @@ export class ProcessManager {
     targetFile?: string,
     explicitNpub?: string,
   ): Promise<SessionSnapshot> {
+    const launchStartedAt = Date.now();
+    const requestNpub = explicitNpub ?? getAuthenticatedNpub() ?? undefined;
     const definition = this.config.agents[agent];
     if (!definition) {
       throw new Error(`Unknown agent: ${agent}`);
@@ -180,14 +199,14 @@ export class ProcessManager {
     const rawWorkingDirectory =
       typeof workingDirectory === "string" && workingDirectory.length > 0
         ? workingDirectory
-        : await this.resolveDefaultWorkingDirectory();
+        : await this.resolveDefaultWorkingDirectory(requestNpub);
     // Expand ~ to user home so Bun.spawn gets an absolute path
     const sessionWorkingDirectory = rawWorkingDirectory.startsWith("~/")
       ? resolve(homedir(), rawWorkingDirectory.slice(2))
       : rawWorkingDirectory;
 
     // Resolve user info
-    const npub = explicitNpub ?? getAuthenticatedNpub() ?? undefined;
+    const npub = requestNpub;
     const isAdmin = this.isAdminUser(npub);
     const userAlias = this.resolveUserAlias(npub);
 
@@ -216,15 +235,21 @@ export class ProcessManager {
     this.sessions.set(id, session);
     this.emit({ type: "session-started", session: this.toSnapshot(session) });
 
+    let botKeyLookupMs = 0;
+    let mcpInjectMs = 0;
+    let giteaInjectMs = 0;
+    let spawnMs = 0;
+
     // Inject MCP config so the agent discovers the Wingman MCP server
     try {
+      const botKeyLookupStartedAt = Date.now();
       // Look up bot identity for this user's session
       let botPubkeyHex: string | undefined;
       let botNpub: string | undefined;
       if (npub) {
         try {
-          const botKeyStore = new BotKeyStore();
-          const botKey = botKeyStore.getActiveKeyForUser(npub);
+          const botKeyStore = this.getBotKeyStore();
+          const botKey = botKeyStore?.getActiveKeyForUser(npub) ?? null;
           if (botKey) {
             botPubkeyHex = botKey.botPubkeyHex;
             botNpub = botKey.botNpub;
@@ -233,6 +258,8 @@ export class ProcessManager {
           // Non-fatal: bot key lookup may fail if DB not initialized
         }
       }
+      botKeyLookupMs = Date.now() - botKeyLookupStartedAt;
+      const mcpInjectStartedAt = Date.now();
       const mcpResult = await injectMcpConfig({
         sessionId: id,
         agent,
@@ -248,6 +275,10 @@ export class ProcessManager {
         ...session.definition,
         env: { ...session.definition.env, ...mcpResult.env },
       };
+      if (Array.isArray(mcpResult.commandArgs) && mcpResult.commandArgs.length > 0) {
+        session.command = [...session.command, ...mcpResult.commandArgs];
+      }
+      mcpInjectMs = Date.now() - mcpInjectStartedAt;
     } catch (mcpError) {
       this.appendLog(session, `[manager] MCP config injection failed (non-fatal): ${(mcpError as Error).message}`);
     }
@@ -256,6 +287,7 @@ export class ProcessManager {
     // Uses per-user credentials when available, falls back to admin (wm21)
     if (this.config.giteaUrl && this.config.giteaApiToken && this.config.giteaOwner) {
       try {
+        const giteaInjectStartedAt = Date.now();
         const giteaCreds = resolveGiteaCredentials(npub, this.config);
         if (giteaCreds) {
           const dataDir = new URL("../../data", import.meta.url).pathname;
@@ -277,20 +309,28 @@ export class ProcessManager {
             this.appendLog(session, `[manager] Gitea credentials configured for ${giteaCreds.owner}@${this.config.giteaUrl}`);
           }
         }
+        giteaInjectMs = Date.now() - giteaInjectStartedAt;
       } catch (giteaError) {
         this.appendLog(session, `[manager] Gitea credential setup failed (non-fatal): ${(giteaError as Error).message}`);
       }
     }
 
     try {
+      const spawnStartedAt = Date.now();
       if (this.config.agentSpawnMode === "pm2") {
         await this.spawnAgentProcessViaPM2(session);
       } else {
         session.process = this.spawnAgentProcess(session);
         await this.monitorSession(session);
       }
+      spawnMs = Date.now() - spawnStartedAt;
       session.status = "running";
       this.emit({ type: "session-updated", session: this.toSnapshot(session) });
+      const totalLaunchMs = Date.now() - launchStartedAt;
+      console.log(
+        `[manager] session ${id} (${agent}:${port}) launch timings total=${totalLaunchMs}ms ` +
+          `botKey=${botKeyLookupMs}ms mcp=${mcpInjectMs}ms gitea=${giteaInjectMs}ms spawn=${spawnMs}ms`,
+      );
     } catch (error) {
       session.status = "error";
       this.appendLog(session, `[manager] failed to launch session: ${(error as Error).message}`);
@@ -544,17 +584,10 @@ export class ProcessManager {
   }
 
   private async monitorSession(session: AgentSession): Promise<void> {
-    await new Promise<void>((resolve) => {
-      const checkInterval = setInterval(() => {
-        if (!session.process) return;
-        // Consider the process "running" as soon as we can observe a PID.
-        if (typeof session.process.pid === "number" && session.process.pid > 0) {
-          session.detachedPid = session.process.pid;
-          clearInterval(checkInterval);
-          resolve();
-        }
-      }, 50);
-    });
+    // Bun.spawn returns PID synchronously — no polling needed.
+    if (session.process && typeof session.process.pid === "number" && session.process.pid > 0) {
+      session.detachedPid = session.process.pid;
+    }
   }
 
   private captureStream(stream: ReadableStream<any>, session: AgentSession, label: "stdout" | "stderr") {
@@ -601,11 +634,21 @@ export class ProcessManager {
     if (session.logs.length > MAX_LOG_LINES) {
       session.logs.splice(0, session.logs.length - MAX_LOG_LINES);
     }
-    this.emit({ type: "session-updated", session: this.toSnapshot(session) });
+    this.emitSessionUpdatedDebounced(session);
   }
 
-  private async resolveDefaultWorkingDirectory(): Promise<string> {
-    const npub = normaliseNpub(getAuthenticatedNpub());
+  /** Debounce session-updated emissions from rapid log appends (200ms) */
+  private emitSessionUpdatedDebounced(session: AgentSession) {
+    const existing = this.logUpdateDebounce.get(session.id);
+    if (existing) clearTimeout(existing);
+    this.logUpdateDebounce.set(session.id, setTimeout(() => {
+      this.logUpdateDebounce.delete(session.id);
+      this.emit({ type: "session-updated", session: this.toSnapshot(session) });
+    }, 200));
+  }
+
+  private async resolveDefaultWorkingDirectory(npubHint?: string): Promise<string> {
+    const npub = normaliseNpub(npubHint ?? getAuthenticatedNpub());
     if (!npub) {
       return this.config.defaultWorkingDirectory;
     }
@@ -640,31 +683,6 @@ export class ProcessManager {
     return generateIdentityAlias(npub);
   }
 
-  private isPortAvailable(port: number): boolean {
-    let server: ReturnType<typeof Bun.listen> | null = null;
-    try {
-      server = Bun.listen({
-        hostname: "127.0.0.1",
-        port,
-        // Dummy socket handlers to satisfy Bun.listen requirements.
-        socket: {
-          data() {},
-          close() {},
-          open() {},
-        },
-      });
-      return true;
-    } catch (error) {
-      const nodeError = error as NodeJS.ErrnoException;
-      if (nodeError?.code !== "EADDRINUSE") {
-        console.warn(`[manager] failed to probe port ${port}: ${nodeError?.message ?? error}`);
-      }
-      return false;
-    } finally {
-      server?.stop(true);
-    }
-  }
-
   private allocatePort(): number {
     const { agentPortStart, agentPortMax } = this.config;
     for (let offset = 0; offset < agentPortMax; offset += 1) {
@@ -672,7 +690,7 @@ export class ProcessManager {
       if (this.allocatedPorts.has(candidate)) {
         continue;
       }
-      if (!this.isPortAvailable(candidate)) {
+      if (!isPortAvailable(candidate)) {
         console.warn(`[manager] skipping port ${candidate} because it is already in use`);
         continue;
       }

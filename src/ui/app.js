@@ -22,6 +22,7 @@ import { createSessionDialogController } from "./common/session-dialog.js";
 import { initOrchestratorUI } from "./orchestrator/index.js";
 import { initAppDialogs } from "./apps/dialog.js";
 import { initWorkspaceTree } from "./apps/tree.js";
+import { initAppCards } from "./apps/cards.js";
 import {
   initFeatureFlagsUI,
   ORCHESTRATOR_FLAG_KEY,
@@ -49,13 +50,7 @@ import {
   DEFAULT_CONNECT_RELAYS,
   ADMIN_PICTURE_CACHE_TTL_MS,
 } from "./state/index.js";
-import {
-  decodeBase64ToUint8Array,
-  encodeUint8ArrayToBase64,
-  decodeBytesToText,
-  encodeTextToBytes,
-  readFileAsUint8Array,
-} from "./core/encoding.js";
+// encoding utilities used by extracted modules (core/encoding.js)
 import {
   createSvgShape,
   createIconSvg,
@@ -128,10 +123,13 @@ import { initPrivacyPolicy } from "./views/privacy-policy.js";
 import { initSettingsView } from "./views/settings-view.js";
 import { initHomeView } from "./views/home-view.js";
 import { initFilesView } from "./views/files-view.js";
+import { initFilesApi } from "./files/api.js";
 import { initLiveView } from "./views/live-view.js";
 import { initDirectoryBrowser } from "./modals/directory-browser.js";
 import { abbreviateNpub, formatSatoshis, normaliseNpubValue, isFiniteNumber, initIdentityDom } from "./identity/dom.js";
 import { initIdentityStateManager } from "./identity/state-manager.js";
+import { createNavigation } from "./navigation/navigation.js";
+import { createSessionRouting } from "./sessions/session-routing.js";
 
 // Ace editor is lazy-loaded when the file editor is first opened.
 // See loadAceEditor() below and initFileEditor deps.
@@ -155,6 +153,7 @@ const sessionsStore = () => window.Alpine?.store("sessions");
 const appsStore = () => window.Alpine?.store("apps");
 let conversationPollIntervalId = null;
 let conversationPollInFlight = false;
+const sessionMessageSendInFlight = new Set();
 let sessionDialogController = null;
 let loadChats = async () => {};
 let loadChatMessages = async () => {};
@@ -188,6 +187,8 @@ let openDeployDialog = () => {};
 let refreshAppLogs = async () => {};
 let resetAppDialog = () => {};
 let createWorkspaceTreeSidebar = () => null;
+let renderAppCard = () => document.createElement("section");
+let renderWingmanCard = () => document.createElement("section");
 let renderFeatureFlagsPanel = () => document.createDocumentFragment();
 let ensureFeatureFlagsLoaded = () => {};
 let resolveFeatureFlagForViewer = () => ({ state: "off", effectiveState: "off" });
@@ -339,334 +340,23 @@ const scheduleLiveScroll = (sessionId, options = {}) => {
 const isConversationScrolledToBottom = (sessionId) =>
   _isConversationScrolledToBottom(sessionId, state.conversationContainers);
 
-const resetFilesPreview = () => {
-  state.files.previewPath = null;
-  state.files.previewRelativePath = null;
-  state.files.previewDisplayPath = "";
-  state.files.previewName = null;
-  state.files.previewContent = null;
-  state.files.previewLoading = false;
-  state.files.previewError = null;
-  state.files.previewFormat = null;
-  state.files.previewLanguage = null;
-  state.files.previewLabel = null;
-};
-
-/**
- * Build the browser URL for the current files view state and update the address bar.
- * Format: /files/<relativePath>[?file=<filename>]
- */
-function updateFilesUrl({ replace = false } = {}) {
-  if (currentRoute !== "files") return;
-  const dirRelative = state.files.relativePath || "";
-  const slug = dirRelative ? `${FILES_ROUTE}/${dirRelative}` : FILES_ROUTE;
-  const fileRelative = state.files.previewRelativePath || "";
-  let target = slug;
-  if (fileRelative) {
-    target = `${FILES_ROUTE}/${fileRelative}`;
-  }
-  if (window.location.pathname === target) return;
-  const stateObj = { route: "files" };
-  if (replace) {
-    window.history.replaceState(stateObj, "", target);
-  } else {
-    window.history.pushState(stateObj, "", target);
-  }
-}
-
-/**
- * Extract a docs-root-relative path from the current URL when on the files route.
- * Returns { slug } where slug is the path after /files/.
- */
-function parseFilesPathFromUrl() {
-  const pathname = window.location.pathname;
-  const prefix = `${FILES_ROUTE}/`;
-  if (!pathname.startsWith(prefix)) {
-    return { slug: null };
-  }
-  const slug = decodeURIComponent(pathname.slice(prefix.length));
-  return { slug: slug || null };
-}
-
-/**
- * Navigate to a files URL slug — tries as directory first, falls back to
- * loading parent directory + file preview if the slug points to a file.
- */
-async function navigateToFilesSlug(slug) {
-  if (!slug) {
-    void loadFilesTree();
-    return;
-  }
-  const files = state.files;
-  // Probe the slug to see if it's a directory or file
-  try {
-    const probeUrl = new URL("/api/docs/tree", window.location.origin);
-    probeUrl.searchParams.set("path", slug);
-    if (files.showHidden) probeUrl.searchParams.set("showHidden", "1");
-    const response = await fetch(probeUrl.toString(), { method: "GET" });
-    if (response.ok) {
-      // It's a directory — load it via the normal path
-      void loadFilesTree(slug);
-      return;
-    }
-  } catch {
-    // fall through to file attempt
-  }
-  // Slug is likely a file — load parent directory, then preview the file
-  const lastSlash = slug.lastIndexOf("/");
-  const parentSlug = lastSlash > 0 ? slug.slice(0, lastSlash) : null;
-  await loadFilesTree(parentSlug || undefined);
-  // The backend resolveDocsPath handles relative paths, so pass the slug directly
-  void loadFilesPreview(slug);
-}
+// -- Files API helpers (populated in bootstrap via initFilesApi) --
+let resetFilesPreview = () => {};
+let updateFilesUrl = () => {};
+let parseFilesPathFromUrl = () => ({ slug: null });
+let navigateToFilesSlug = async () => {};
+let loadFilesTree = async () => {};
+let loadFilesPreview = async () => {};
+let showFilesPreviewUnavailable = () => {};
+let createFilesDirectory = async () => {};
+let createFilesTextFile = async () => {};
+let uploadFilesBinary = async () => {};
+let deleteFilesEntry = async () => {};
+let createDirectoryEntry = async () => {};
+let copyFilesEntry = async () => {};
+let moveFilesEntry = async () => {};
 
 // -- Markdown / code rendering imported from rendering/markdown.js --
-
-const loadFilesTree = async (path) => {
-  const files = state.files;
-  const targetPath = typeof path === "string" && path.length > 0 ? path : files.currentPath;
-  if (typeof path === "string" && path.length > 0 && path !== files.currentPath) {
-    resetFilesPreview();
-  }
-  files.loading = true;
-  files.error = null;
-
-  try {
-    const url = new URL("/api/docs/tree", window.location.origin);
-    if (targetPath) {
-      url.searchParams.set("path", targetPath);
-    }
-    if (files.showHidden) {
-      url.searchParams.set("showHidden", "1");
-    }
-    const response = await fetch(url.toString(), { method: "GET" });
-    if (!response.ok) {
-      let message = response.statusText || "Failed to load directory";
-      try {
-        const payload = await response.json();
-        if (payload && typeof payload.error === "string") {
-          message = payload.error;
-        }
-      } catch {
-        // ignore json parsing error
-      }
-      throw new Error(message);
-    }
-
-    const data = await response.json();
-    files.currentPath = data?.path ?? targetPath ?? files.currentPath;
-    files.relativePath = data?.relativePath ?? "";
-    files.displayPath = data?.displayPath ?? (files.relativePath ? `~/${files.relativePath}` : "~");
-    files.parent = data?.parent ?? null;
-    files.entries = Array.isArray(data?.entries) ? data.entries : [];
-    files.git = data?.git ?? null;
-    files.loading = false;
-    files.error = null;
-
-    if (files.previewPath) {
-      const exists = files.entries.some((entry) => entry.path === files.previewPath);
-      if (!exists) {
-        resetFilesPreview();
-      }
-    }
-    updateFilesUrl({ replace: true });
-  } catch (error) {
-    files.loading = false;
-    files.error = error instanceof Error ? error.message : String(error);
-    files.entries = [];
-    files.git = null;
-    if (typeof path === "string" && path.length > 0) {
-      files.currentPath = path;
-    }
-  } finally {
-    if (currentRoute === "files") {
-      render();
-    }
-  }
-};
-
-const loadFilesPreview = async (path) => {
-  if (!path) return;
-  const files = state.files;
-  files.previewPath = path;
-  files.previewRelativePath = "";
-  files.previewDisplayPath = "";
-  files.previewName = null;
-  files.previewContent = null;
-  files.previewError = null;
-  files.previewLoading = true;
-  files.previewFormat = null;
-  files.previewLanguage = null;
-  files.previewLabel = null;
-  if (currentRoute === "files") {
-    render();
-  }
-
-  try {
-    const url = new URL("/api/docs/file", window.location.origin);
-    url.searchParams.set("path", path);
-    const response = await fetch(url.toString(), { method: "GET" });
-    if (!response.ok) {
-      let message = response.statusText || "Failed to load file";
-      try {
-        const payload = await response.json();
-        if (payload && typeof payload.error === "string") {
-          message = payload.error;
-        }
-      } catch {
-        // ignore json parse error
-      }
-      throw new Error(message);
-    }
-
-    const data = await response.json();
-    files.previewPath = data?.path ?? path;
-    files.previewRelativePath = data?.relativePath ?? "";
-    files.previewDisplayPath = data?.displayPath ?? (files.previewRelativePath ? `~/${files.previewRelativePath}` : "");
-    files.previewName = data?.name ?? null;
-    files.previewContent = data?.content ?? "";
-    files.previewFormat = data?.format ?? null;
-    files.previewLanguage = data?.language ?? null;
-    files.previewLabel = data?.label ?? null;
-    files.previewLoading = false;
-    files.previewError = null;
-    updateFilesUrl();
-  } catch (error) {
-    files.previewLoading = false;
-    files.previewError = error instanceof Error ? error.message : String(error);
-    files.previewContent = null;
-  } finally {
-    if (currentRoute === "files") {
-      render();
-    }
-  }
-};
-
-const showFilesPreviewUnavailable = (entry) => {
-  const files = state.files;
-  files.previewPath = entry?.path ?? null;
-  files.previewRelativePath = entry?.relativePath ?? "";
-  files.previewDisplayPath = entry?.displayPath ?? "";
-  files.previewName = entry?.name ?? null;
-  files.previewFormat = null;
-  files.previewLanguage = null;
-  files.previewLabel = entry?.previewLabel ?? null;
-  files.previewContent = null;
-  files.previewLoading = false;
-  files.previewError = "Preview not available for this file type.";
-  updateFilesUrl();
-  if (currentRoute === "files") {
-    render();
-  }
-};
-
-const createFilesDirectory = async (parentPath, name) => {
-  const response = await fetch("/api/docs/directory", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ parent: parentPath, name }),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message = data?.error ?? response.statusText ?? "Failed to create directory";
-    throw new Error(message);
-  }
-  return response.json();
-};
-
-const createFilesTextFile = async (parentPath, name, content = "") => {
-  const response = await fetch("/api/docs/file", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ directory: parentPath, name, content }),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message = data?.error ?? response.statusText ?? "Failed to create file";
-    throw new Error(message);
-  }
-  return response.json();
-};
-
-const uploadFilesBinary = async (parentPath, file) => {
-  const bytes = await readFileAsUint8Array(file);
-  const base64 = encodeUint8ArrayToBase64(bytes);
-  const response = await fetch("/api/docs/file", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ directory: parentPath, name: file.name, base64 }),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message = data?.error ?? response.statusText ?? "Failed to upload file";
-    throw new Error(message);
-  }
-  return response.json();
-};
-
-const deleteFilesEntry = async (path) => {
-  const response = await fetch("/api/docs/file", {
-    method: "DELETE",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ path }),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message = data?.error ?? response.statusText ?? "Failed to delete file";
-    throw new Error(message);
-  }
-  return response.json();
-};
-
-const createDirectoryEntry = async (parent, name) => {
-  const response = await fetch("/api/directories", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ parent, name }),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message = data?.error ?? response.statusText ?? "Failed to create folder";
-    throw new Error(message);
-  }
-  return response.json();
-};
-
-const copyFilesEntry = async (path, targetDirectory, name) => {
-  const payload = { path, targetDirectory };
-  if (typeof name === "string" && name.trim().length > 0) {
-    payload.name = name.trim();
-  }
-  const response = await fetch("/api/docs/file/copy", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message = data?.error ?? response.statusText ?? "Failed to copy file";
-    throw new Error(message);
-  }
-  return response.json();
-};
-
-const moveFilesEntry = async (path, targetDirectory, name) => {
-  const payload = { path, targetDirectory };
-  if (typeof name === "string" && name.trim().length > 0) {
-    payload.name = name.trim();
-  }
-  const response = await fetch("/api/docs/file/move", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message = data?.error ?? response.statusText ?? "Failed to move file";
-    throw new Error(message);
-  }
-  return response.json();
-};
 
 // -- File editor + worktree modal initialized via initFileEditor (see bootstrap) --
 let canCreateWorktree = () => false;
@@ -818,141 +508,32 @@ if (currentRoute === "files" && window.location.pathname.startsWith("/docs")) {
   window.history.replaceState({ route: "files" }, "", newPath);
 }
 
-const setActiveSession = (sessionId, options = {}) => {
-  const { updateHistory = true, logPort = true, allowPending = false, forceLog = false } = options;
-  const ss = sessionsStore();
-  const previousSessionId = ss.activeSessionId;
-  const allSessions = ss.items;
-
-  if (sessionId) {
-    const sessionExists = allSessions.some((session) => session.id === sessionId);
-    if (!sessionExists && !allowPending) {
-      ss.activeSessionId = null;
-      lastLoggedSessionId = null;
-      syncDesktopSessionIndicator();
-      return false;
-    }
-
-    ss.activeSessionId = sessionId;
-    ss.lastActiveSessionId = sessionId;
-
-    if (updateHistory && currentRoute === "live") {
-      const targetPath = `${LIVE_ROUTE_PREFIX}/${sessionId}`;
-      if (window.location.pathname !== targetPath) {
-        window.history.pushState({ route: "live", sessionId }, "", targetPath);
-      }
-    }
-
-    if (logPort && sessionExists) {
-      const shouldLog = forceLog ? lastLoggedSessionId !== sessionId : sessionId !== previousSessionId;
-      if (shouldLog) {
-        const session = getSessionById(sessionId);
-        if (session) {
-          console.log("This session is sending to port:", session.port);
-          lastLoggedSessionId = sessionId;
-        }
-      }
-    }
-
-    syncDesktopSessionIndicator();
-    updateDocumentTitle();
-
-    // Manage SSE connections and polling for live view
-    if (currentRoute === "live" && sessionExists) {
-      // Disconnect previous session if different
-      if (previousSessionId && previousSessionId !== sessionId) {
-        sseManager.disconnect(previousSessionId);
-      }
-      // Connect to new session
-      sseManager.connect(sessionId);
-
-      // Start conversation polling (1 second interval)
-      startConversationPolling(sessionId);
-
-      // Dispatch session-change event for Alpine.js chat component
-      if (isAlpineChatEnabled() && previousSessionId !== sessionId) {
-        window.wingman = window.wingman || {};
-        window.wingman.activeSessionId = sessionId;
-        window.dispatchEvent(new CustomEvent("session-change", { detail: { sessionId } }));
-      }
-
-      // Scroll to end when switching to a different session
-      if (previousSessionId !== sessionId) {
-        scheduleLiveScroll(sessionId, { includeWindow: true });
-      }
-    }
-
-    return true;
-  }
-
-  // No session selected - stop polling
-  ss.activeSessionId = null;
-  lastLoggedSessionId = null;
-  stopConversationPolling();
-  if (updateHistory && currentRoute === "live" && window.location.pathname !== LIVE_ROUTE_PREFIX) {
-    window.history.pushState({ route: "live" }, "", LIVE_ROUTE_PREFIX);
-  }
-  syncDesktopSessionIndicator();
-  updateDocumentTitle();
-  return true;
-};
-
-const ensureActiveSession = () => {
-  const allSessions = sessionsStore().items;
-  const activeId = sessionsStore().activeSessionId;
-  const lastId = sessionsStore().lastActiveSessionId;
-
-  if (activeId && allSessions.some((session) => session.id === activeId)) {
-    return activeId;
-  }
-  if (lastId && allSessions.some((session) => session.id === lastId)) {
-    setActiveSession(lastId, { updateHistory: false, logPort: false });
-    return sessionsStore().activeSessionId;
-  }
-  if (currentRoute === "live") {
-    setActiveSession(null, { updateHistory: false, logPort: false });
-    return null;
-  }
-  const activeSessions = getActiveSessions();
-  const fallback = activeSessions[0] ?? allSessions[0] ?? null;
-  if (fallback) {
-    setActiveSession(fallback.id, { updateHistory: false, logPort: false });
-  } else {
-    setActiveSession(null, { updateHistory: false, logPort: false });
-  }
-  return sessionsStore().activeSessionId;
-};
-
-const applyRouteSessionFromPath = (options = {}) => {
-  const { allowHistoryUpdate = false, logPort = true } = options;
-  const routeSessionId = getSessionIdFromPath(window.location.pathname);
-  const allSessions = sessionsStore().items;
-  const activeId = sessionsStore().activeSessionId;
-  const lastId = sessionsStore().lastActiveSessionId;
-
-  if (routeSessionId) {
-    if (allSessions.some((session) => session.id === routeSessionId)) {
-      if (activeId !== routeSessionId) {
-        setActiveSession(routeSessionId, { updateHistory: false, logPort });
-      }
-      return false;
-    }
-    if (activeId) {
-      setActiveSession(null, { updateHistory: false, logPort: false });
-    }
-    return true;
-  }
-
-  if (allowHistoryUpdate && lastId && allSessions.some((session) => session.id === lastId)) {
-    setActiveSession(lastId, { updateHistory: true, logPort });
-    return false;
-  }
-
-  if (activeId && !allSessions.some((session) => session.id === activeId)) {
-    setActiveSession(null, { updateHistory: allowHistoryUpdate, logPort: false });
-  }
-  return false;
-};
+// Session routing module — extracted from app.js.
+// setActiveSession, ensureActiveSession, and applyRouteSessionFromPath live in sessions/session-routing.js.
+// syncDesktopSessionIndicator and updateDocumentTitle are defined later in this file; they are
+// referenced via closures inside the module so forward-declaration is fine (the functions are only
+// called at runtime, never at module initialisation time).
+const {
+  setActiveSession,
+  ensureActiveSession,
+  applyRouteSessionFromPath,
+} = createSessionRouting({
+  sessionsStore,
+  getCurrentRoute: () => currentRoute,
+  getLastLoggedSessionId: () => lastLoggedSessionId,
+  setLastLoggedSessionId: (id) => { lastLoggedSessionId = id; },
+  LIVE_ROUTE_PREFIX,
+  getSessionById: (...args) => getSessionById(...args),
+  getActiveSessions: (...args) => getActiveSessions(...args),
+  getSessionIdFromPath,
+  syncDesktopSessionIndicator: (...args) => syncDesktopSessionIndicator(...args),
+  updateDocumentTitle: (...args) => updateDocumentTitle(...args),
+  sseManager,
+  startConversationPolling: (...args) => startConversationPolling(...args),
+  stopConversationPolling: (...args) => stopConversationPolling(...args),
+  isAlpineChatEnabled,
+  scheduleLiveScroll: (...args) => scheduleLiveScroll(...args),
+});
 
 const dialog = document.getElementById("session-dialog");
 const agentSelect = document.getElementById("agent-select");
@@ -1793,28 +1374,13 @@ const fetchSessions = async () => {
   }
   const routeSessionId = getSessionIdFromPath(window.location.pathname);
   const allowHistoryUpdate = currentRoute === "live" && !routeSessionId;
-  const redirectHome = applyRouteSessionFromPath({ allowHistoryUpdate });
-  if (redirectHome) {
-    currentRoute = "home";
-    lastLoggedSessionId = null;
-    if (window.location.pathname !== HOME_ROUTE) {
-      window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
-    }
-  }
+  applyRouteSessionFromPath({ allowHistoryUpdate });
   ensureActiveSession();
   const activeId = ss.activeSessionId;
-  if (
-    !redirectHome &&
-    currentRoute === "live" &&
-    activeId &&
-    allSessions.some((session) => session.id === activeId)
-  ) {
-    setActiveSession(activeId, { updateHistory: false, forceLog: true });
-  }
 
   syncDesktopSessionIndicator();
 
-  if (!redirectHome && currentRoute === "live" && activeId) {
+  if (currentRoute === "live" && activeId) {
     await Promise.all([
       fetchLogs(activeId),
       fetchConversation(activeId),
@@ -1897,33 +1463,110 @@ const fetchLogs = async (sessionId) => {
   }
 };
 
+const conversationSelectionState = {
+  pointerDownInConversation: false,
+  locked: false,
+};
+
+function isConversationSelectionInsideLiveChat() {
+  const selection = typeof window !== "undefined" ? window.getSelection?.() : null;
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    return false;
+  }
+  const anchorNode = selection.anchorNode;
+  const focusNode = selection.focusNode;
+  const anchorEl = anchorNode instanceof Element ? anchorNode : anchorNode?.parentElement ?? null;
+  const focusEl = focusNode instanceof Element ? focusNode : focusNode?.parentElement ?? null;
+  const anchorInConversation = Boolean(anchorEl?.closest?.(".wm-live-conversation .wm-conversation"));
+  const focusInConversation = Boolean(focusEl?.closest?.(".wm-live-conversation .wm-conversation"));
+  return anchorInConversation || focusInConversation;
+}
+
+function isConversationRenderLocked(sessionId) {
+  return conversationSelectionState.locked &&
+    currentRoute === "live" &&
+    sessionId === sessionsStore().activeSessionId;
+}
+
+function pushConversationToAlpineStore(sessionId) {
+  const chatStore = window.Alpine?.store("chat");
+  if (!chatStore || chatStore.sessionId !== sessionId) {
+    return;
+  }
+  const conv = state.conversations.get(sessionId) || [];
+  chatStore.messages = conv.map((msg, idx) => ({
+    id: `api-${idx}`,
+    sessionId,
+    role: msg.role || msg.type || "assistant",
+    content: msg.content || msg.message || "",
+    createdAt: msg.createdAt || msg.created_at || "",
+  }));
+}
+
+function renderConversationForSession(sessionId, options = {}) {
+  const { isStreamingUpdate = false } = options;
+  if (isConversationRenderLocked(sessionId)) {
+    return;
+  }
+  if (isAlpineChatEnabled()) {
+    pushConversationToAlpineStore(sessionId);
+    if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
+      if (!scrollPillIsNearBottom() && !isStreamingUpdate) {
+        scrollPillShow();
+      }
+    }
+    return;
+  }
+  if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
+    const wasNearBottom = scrollPillIsNearBottom();
+    updateConversationDOM(sessionId);
+    if (!wasNearBottom && !isStreamingUpdate) {
+      scrollPillShow();
+    }
+  }
+}
+
+function flushConversationRenderLock() {
+  const activeSessionId = sessionsStore().activeSessionId;
+  if (!activeSessionId) {
+    return;
+  }
+  renderConversationForSession(activeSessionId);
+}
+
+function setupConversationSelectionLock() {
+  document.addEventListener("mousedown", (event) => {
+    const target = event.target;
+    conversationSelectionState.pointerDownInConversation = Boolean(
+      target instanceof Element && target.closest(".wm-live-conversation .wm-conversation"),
+    );
+  });
+  document.addEventListener("mouseup", () => {
+    conversationSelectionState.pointerDownInConversation = false;
+    const shouldLock = isConversationSelectionInsideLiveChat();
+    const wasLocked = conversationSelectionState.locked;
+    conversationSelectionState.locked = shouldLock;
+    if (wasLocked && !shouldLock) {
+      flushConversationRenderLock();
+    }
+  });
+  document.addEventListener("selectionchange", () => {
+    const shouldLock = conversationSelectionState.pointerDownInConversation && isConversationSelectionInsideLiveChat();
+    const wasLocked = conversationSelectionState.locked;
+    conversationSelectionState.locked = shouldLock;
+    if (wasLocked && !shouldLock) {
+      flushConversationRenderLock();
+    }
+  });
+}
+
 const fetchConversation = async (sessionId) => {
   try {
     const data = await fetchSessionMessagesApi(sessionId);
     if (!data) return;
     const items = Array.isArray(data?.messages) ? data.messages : [];
     state.conversations.set(sessionId, items);
-
-    // Push conversation directly to Alpine store — no Dexie intermediary.
-    // This is the most reliable path: API truth → Alpine → DOM.
-    if (isAlpineChatEnabled()) {
-      const chatStore = window.Alpine?.store("chat");
-      if (chatStore && chatStore.sessionId === sessionId) {
-        chatStore.messages = items.map((msg, idx) => ({
-          id: `api-${idx}`,
-          sessionId,
-          role: msg.role || msg.type || "assistant",
-          content: msg.content || msg.message || "",
-          createdAt: msg.createdAt || msg.created_at || "",
-        }));
-      }
-      return;
-    }
-
-    // Legacy: manual DOM update
-    if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
-      updateConversationDOM(sessionId);
-    }
+    renderConversationForSession(sessionId);
   } catch (error) {
     console.error("Failed to load conversation", error);
   }
@@ -2337,6 +1980,11 @@ const sendMessage = async (sessionId, content) => {
     return;
   }
 
+  if (sessionMessageSendInFlight.has(sessionId)) {
+    showToast("Agent working", { variant: "info", duration: 2200 });
+    return;
+  }
+
   // Single alphanumeric character: send as raw terminal input for TUI interaction
   if (/^[a-zA-Z0-9]$/.test(trimmed)) {
     try {
@@ -2392,6 +2040,7 @@ const sendMessage = async (sessionId, content) => {
 
   // Agent is not busy - send message immediately
   try {
+    sessionMessageSendInFlight.add(sessionId);
     const payload = await postSessionMessage(sessionId, trimmed, "user");
     const messages = Array.isArray(payload?.messages) ? payload.messages : [];
     state.conversations.set(sessionId, messages);
@@ -2402,20 +2051,7 @@ const sendMessage = async (sessionId, content) => {
     if (knightRider) knightRider.classList.add("active");
 
     // After sending, update conversation display
-    if (isAlpineChatEnabled()) {
-      const chatStore = window.Alpine?.store("chat");
-      if (chatStore && chatStore.sessionId === sessionId) {
-        chatStore.messages = messages.map((msg, idx) => ({
-          id: `api-${idx}`,
-          sessionId,
-          role: msg.role || msg.type || "assistant",
-          content: msg.content || msg.message || "",
-          createdAt: msg.createdAt || msg.created_at || "",
-        }));
-      }
-    } else {
-      updateConversationDOM(sessionId);
-    }
+    renderConversationForSession(sessionId);
     scrollPillHide();
     requestAnimationFrame(() => {
       scrollConversationAreaToBottom(sessionId, { includeWindow: true });
@@ -2432,8 +2068,24 @@ const sendMessage = async (sessionId, content) => {
     }
   } catch (error) {
     const message = error instanceof Error && error.message ? error.message : "Failed to send message to agent.";
+    const status = Number(error?.status ?? 0);
+    const normalized = message.toLowerCase();
+    const isWorkingState =
+      status === 409 ||
+      status === 429 ||
+      normalized.includes("already in progress") ||
+      normalized.includes("already posted") ||
+      normalized.includes("already processing") ||
+      normalized.includes("agent working") ||
+      normalized.includes("not ready for prompt dispatch");
+    if (isWorkingState) {
+      showToast("Agent working", { variant: "info", duration: 2600 });
+      return;
+    }
     console.error("Failed to send agent message", error);
-    window.alert(`Agent request failed: ${message}`);
+    showToast(`Failed to send message: ${message}`, { variant: "error" });
+  } finally {
+    sessionMessageSendInFlight.delete(sessionId);
   }
 };
 
@@ -2741,562 +2393,6 @@ const renderAppLogPreview = (logs) => {
   return preview;
 };
 
-const renderWingmanCard = (app) => {
-  const card = document.createElement("section");
-  card.className = "wm-card wm-app-card wm-app-card-core";
-
-  const header = document.createElement("div");
-  header.className = "wm-app-card__header";
-  const title = document.createElement("h3");
-  title.textContent = app.label ?? "Wingman Server";
-  header.append(title);
-
-  const statusBadge = document.createElement("span");
-  statusBadge.className = "wm-app-status";
-  const restartInProgress = appsStore().system.restart.inProgress;
-  const cleanupState = appsStore().system.cleanup;
-  const cleanupRunning = cleanupState.running;
-  const statusValue = restartInProgress ? "restarting" : app?.status?.status ?? "running";
-  statusBadge.dataset.state = statusValue;
-  statusBadge.textContent = APP_STATUS_LABELS[statusValue] ?? statusValue;
-  header.append(statusBadge);
-  card.append(header);
-
-  const statusInfo = document.createElement("div");
-  statusInfo.className = "wm-app-status-info";
-
-  if (appsStore().system.restart.error) {
-    const errorLine = document.createElement("p");
-    errorLine.className = "wm-app-status-error";
-    errorLine.textContent = appsStore().system.restart.error;
-    statusInfo.append(errorLine);
-  } else if (restartInProgress) {
-    const progressLine = document.createElement("p");
-    const sessionCount = Array.isArray(appsStore().system.restart.marker?.sessionIds)
-      ? appsStore().system.restart.marker.sessionIds.length
-      : null;
-    progressLine.textContent =
-      sessionCount && sessionCount > 0
-        ? `Warm restart in progress… preserving ${sessionCount} active session${sessionCount === 1 ? "" : "s"}.`
-        : "Warm restart in progress… Wingman will reload without interrupting active sessions.";
-    statusInfo.append(progressLine);
-  } else if (appsStore().system.restart.outcome) {
-    const outcome = appsStore().system.restart.outcome;
-    const summaryLine = document.createElement("p");
-    summaryLine.textContent = `Last warm restart restored ${outcome.restored} session${
-      outcome.restored === 1 ? "" : "s"
-    } (${formatAppTimestamp(outcome.timestamp)}).`;
-    statusInfo.append(summaryLine);
-    if (outcome.failed?.length > 0) {
-      const failedLine = document.createElement("p");
-      failedLine.textContent = `Unable to rehydrate ${outcome.failed.length} session${
-        outcome.failed.length === 1 ? "" : "s"
-      }.`;
-      statusInfo.append(failedLine);
-    }
-  } else {
-    const idleLine = document.createElement("p");
-    idleLine.textContent = "Warm restart keeps agent sessions alive while Wingman reloads.";
-    statusInfo.append(idleLine);
-  }
-
-  const marker = appsStore().system.restart.marker;
-  if (marker?.createdAt && !restartInProgress) {
-    const scheduledLine = document.createElement("p");
-    scheduledLine.textContent = `Last restart request: ${formatAppTimestamp(marker.createdAt)}`;
-    statusInfo.append(scheduledLine);
-  }
-
-  const cleanupResult =
-    cleanupState.result && typeof cleanupState.result === "object" ? cleanupState.result : null;
-  if (cleanupState.error) {
-    const cleanupError = document.createElement("p");
-    cleanupError.className = "wm-app-status-error";
-    cleanupError.textContent = cleanupState.error;
-    statusInfo.append(cleanupError);
-  }
-  if (cleanupResult && typeof cleanupResult.timestamp === "string") {
-    const sessionsSummary =
-      cleanupResult.sessions && typeof cleanupResult.sessions === "object"
-        ? cleanupResult.sessions
-        : {};
-    const appsSummary =
-      cleanupResult.apps && typeof cleanupResult.apps === "object"
-        ? cleanupResult.apps
-        : {};
-    const deletedSessions =
-      typeof sessionsSummary.deleted === "number" ? sessionsSummary.deleted : 0;
-    const removedApps = typeof appsSummary.removed === "number" ? appsSummary.removed : 0;
-    const summaryLine = document.createElement("p");
-    summaryLine.textContent = `Last cleanup removed ${deletedSessions} session${deletedSessions === 1 ? "" : "s"} and ${removedApps} app${removedApps === 1 ? "" : "s"} (${formatAppTimestamp(cleanupResult.timestamp)}).`;
-    statusInfo.append(summaryLine);
-    const sessionFailures =
-      typeof sessionsSummary.failed === "number" ? sessionsSummary.failed : 0;
-    const appFailures = typeof appsSummary.failed === "number" ? appsSummary.failed : 0;
-    const totalFailures = sessionFailures + appFailures;
-    if (totalFailures > 0) {
-      const failureLine = document.createElement("p");
-      failureLine.textContent = `${totalFailures} cleanup action${totalFailures === 1 ? "" : "s"} reported errors.`;
-      statusInfo.append(failureLine);
-    }
-    if (cleanupResult.preservedCoreApp) {
-      const preservedLine = document.createElement("p");
-      preservedLine.textContent = "Wingman core app preserved during cleanup.";
-      statusInfo.append(preservedLine);
-    }
-  }
-
-  card.append(statusInfo);
-
-  card.append(renderAppLogPreview(app.logs));
-
-  const actions = document.createElement("div");
-  actions.className = "wm-app-actions";
-
-  const viewLogsButton = document.createElement("button");
-  viewLogsButton.type = "button";
-  viewLogsButton.className = "wm-button secondary";
-  viewLogsButton.textContent = "View Logs";
-  viewLogsButton.addEventListener("click", () => void openAppLogsDialog(app.id));
-  actions.append(viewLogsButton);
-
-  const restartButton = document.createElement("button");
-  restartButton.type = "button";
-  restartButton.className = "wm-button";
-  restartButton.textContent = restartInProgress ? "Restarting…" : "Restart Wingman";
-  restartButton.disabled =
-    appsStore().system.restart.submitting || restartInProgress || cleanupRunning;
-  restartButton.addEventListener("click", async () => {
-    if (restartButton.disabled) return;
-    restartButton.disabled = true;
-    restartButton.textContent = "Restarting…";
-    const success = await triggerWarmRestart();
-    if (!success) {
-      restartButton.disabled = false;
-      restartButton.textContent = "Restart Wingman";
-    }
-  });
-  actions.append(restartButton);
-
-  if (state.identity.isAdmin) {
-    const cleanupButton = document.createElement("button");
-    cleanupButton.type = "button";
-    cleanupButton.className = "wm-button danger";
-    const cleanupDisabled = cleanupRunning || restartInProgress || appsStore().system.restart.submitting;
-    cleanupButton.textContent = cleanupRunning ? "Stopping…" : "Stop Agents & Apps";
-    cleanupButton.disabled = cleanupDisabled;
-    cleanupButton.addEventListener("click", async () => {
-      if (cleanupButton.disabled) return;
-      cleanupButton.disabled = true;
-      cleanupButton.textContent = "Stopping…";
-      const success = await runSystemCleanup();
-      if (!success) {
-        cleanupButton.disabled = false;
-        cleanupButton.textContent = "Stop Agents & Apps";
-      }
-    });
-    actions.append(cleanupButton);
-  }
-
-  card.append(actions);
-  return card;
-};
-
-const renderAppCard = (app) => {
-  const card = document.createElement("section");
-  card.className = "wm-card wm-app-card";
-  card.dataset.appId = app.id;
-  if (app.id === "wingman-core") {
-    card.classList.add("wm-app-card-core");
-  }
-
-  const header = document.createElement("div");
-  header.className = "wm-app-card__header";
-  const title = document.createElement("h3");
-  title.textContent = app.label ?? app.id;
-  header.append(title);
-
-  const statusBadge = document.createElement("span");
-  statusBadge.className = "wm-app-status";
-  const statusValue = app?.status?.status ?? "idle";
-  statusBadge.dataset.state = statusValue;
-  statusBadge.textContent = APP_STATUS_LABELS[statusValue] ?? statusValue;
-  header.append(statusBadge);
-  card.append(header);
-
-  const meta = document.createElement("div");
-  meta.className = "wm-app-meta";
-
-  const rootRow = document.createElement("div");
-  rootRow.className = "wm-app-meta-row";
-  const rootLabel = document.createElement("span");
-  rootLabel.className = "wm-app-meta-label";
-  rootLabel.textContent = "Root";
-  const rootValue = document.createElement("code");
-  rootValue.textContent = app.root;
-  rootValue.title = app.root;
-  rootRow.append(rootLabel, rootValue);
-  meta.append(rootRow);
-
-  const isWebApp = Boolean(app.webApp);
-  const webAppRow = document.createElement("div");
-  webAppRow.className = "wm-app-meta-row";
-  const webAppLabel = document.createElement("span");
-  webAppLabel.className = "wm-app-meta-label";
-  webAppLabel.textContent = "Web app";
-  const webAppValue = document.createElement("span");
-  webAppValue.className = "wm-app-meta-value";
-  webAppValue.textContent = isWebApp ? "Yes" : "No";
-  webAppRow.append(webAppLabel, webAppValue);
-  meta.append(webAppRow);
-
-  if (isWebApp) {
-    const portRow = document.createElement("div");
-    portRow.className = "wm-app-meta-row";
-    const portLabel = document.createElement("span");
-    portLabel.className = "wm-app-meta-label";
-    portLabel.textContent = "Port";
-    const portValue = document.createElement("span");
-    portValue.className = "wm-app-meta-value";
-    if (typeof app.webAppPort === "number") {
-      const code = document.createElement("code");
-      code.textContent = String(app.webAppPort);
-      portValue.append(code);
-      const href =
-        typeof app.webAppUrl === "string" && app.webAppUrl.length > 0
-          ? app.webAppUrl
-          : formatWebAppUrl(app.webAppPort);
-      if (href) {
-        const link = document.createElement("a");
-        link.href = href;
-        link.target = "_blank";
-        link.rel = "noopener noreferrer";
-        link.textContent = "Open";
-        portValue.append(link);
-      }
-    } else {
-      portValue.textContent = "Assigning…";
-    }
-    portRow.append(portLabel, portValue);
-    meta.append(portRow);
-
-    // Subdomain URL row (alias-based routing)
-    if (app.subdomainUrl) {
-      const subdomainRow = document.createElement("div");
-      subdomainRow.className = "wm-app-meta-row";
-      const subdomainLabel = document.createElement("span");
-      subdomainLabel.className = "wm-app-meta-label";
-      subdomainLabel.textContent = "Open App";
-      const subdomainValue = document.createElement("span");
-      subdomainValue.className = "wm-app-meta-value";
-      const subdomainLink = document.createElement("a");
-      subdomainLink.href = app.subdomainUrl;
-      subdomainLink.target = "_blank";
-      subdomainLink.rel = "noopener noreferrer";
-      // For path-based URLs, show just the alias; for full URLs, show the URL
-      const displayText = app.subdomainUrl.startsWith("/host/")
-        ? app.subdomainAlias ?? app.subdomainUrl
-        : app.subdomainUrl;
-      subdomainLink.textContent = displayText;
-      subdomainValue.append(subdomainLink);
-      subdomainRow.append(subdomainLabel, subdomainValue);
-      meta.append(subdomainRow);
-    }
-  }
-
-  const windowRow = document.createElement("div");
-  windowRow.className = "wm-app-meta-row";
-  const windowValue = document.createElement("code");
-  const windowName = app.tmuxWindow ?? app.tmuxSession ?? deriveAppWindowName(app.label ?? "", app.root ?? "");
-  windowValue.textContent = windowName;
-  windowValue.title = windowName;
-  windowRow.append(windowValue);
-  meta.append(windowRow);
-
-  appendVariableUrlRow(meta, app.logs);
-  appendVariablePubkeyRow(meta, app.logs);
-
-  card.append(meta);
-
-  if (app.notes) {
-    const notes = document.createElement("p");
-    notes.className = "wm-app-notes";
-    notes.textContent = app.notes;
-    card.append(notes);
-  }
-
-  const statusInfo = document.createElement("div");
-  statusInfo.className = "wm-app-status-info";
-
-  const lastAction = document.createElement("p");
-  lastAction.textContent = `Last Action: ${
-    app.status?.lastAction ? formatAppActionLabel(app.status.lastAction) : "—"
-  }`;
-  statusInfo.append(lastAction);
-
-  const updatedLine = document.createElement("p");
-  updatedLine.textContent = `Updated: ${formatAppTimestamp(app.status?.updatedAt ?? null)}`;
-  statusInfo.append(updatedLine);
-
-  const messageLine = document.createElement("p");
-  messageLine.textContent = `Message: ${app.status?.message ?? "—"}`;
-  statusInfo.append(messageLine);
-
-  if (typeof app.status?.lastExitCode === "number") {
-    const exitLine = document.createElement("p");
-    exitLine.textContent = `Last Exit Code: ${app.status.lastExitCode}`;
-    statusInfo.append(exitLine);
-  }
-
-  card.append(statusInfo);
-
-  card.append(renderAppLogPreview(app.logs));
-
-  const isCoreApp = app.id === "wingman-core";
-
-  const controls = document.createElement("div");
-  controls.className = "wm-app-actions";
-
-  if (!isCoreApp && app.availableScripts?.start) {
-    const startButton = document.createElement("button");
-    startButton.type = "button";
-    startButton.className = "wm-button";
-    startButton.textContent = "Start";
-    startButton.disabled = isAppActionDisabled(app, "start");
-    startButton.addEventListener("click", async () => {
-      if (startButton.disabled) return;
-      startButton.disabled = true;
-      const success = await triggerAppAction(app.id, "start");
-      if (!success && startButton.isConnected) {
-        startButton.disabled = false;
-      }
-    });
-    controls.append(startButton);
-  }
-
-  if (!isCoreApp) {
-    const stopButton = document.createElement("button");
-    stopButton.type = "button";
-    stopButton.className = "wm-button secondary";
-    stopButton.textContent = "Stop";
-    stopButton.disabled = isAppActionDisabled(app, "stop");
-    stopButton.addEventListener("click", async () => {
-      if (stopButton.disabled) return;
-      stopButton.disabled = true;
-      const success = await triggerAppAction(app.id, "stop");
-      if (!success && stopButton.isConnected) {
-        stopButton.disabled = false;
-      }
-    });
-    controls.append(stopButton);
-  }
-
-  const restartButton = document.createElement("button");
-  restartButton.type = "button";
-  restartButton.className = "wm-button";
-  restartButton.textContent = "Restart";
-  restartButton.disabled = isAppActionDisabled(app, "restart");
-  restartButton.addEventListener("click", async () => {
-    if (restartButton.disabled) return;
-    restartButton.disabled = true;
-    const success = await triggerAppAction(app.id, "restart");
-    if (!success && restartButton.isConnected) {
-      restartButton.disabled = false;
-    }
-  });
-  controls.append(restartButton);
-
-  if (!isCoreApp && app.availableScripts?.setup) {
-    const setupButton = document.createElement("button");
-    setupButton.type = "button";
-    setupButton.className = "wm-button secondary";
-    setupButton.textContent = "Setup";
-    setupButton.disabled = isAppActionDisabled(app, "setup");
-    setupButton.addEventListener("click", async () => {
-      if (setupButton.disabled) return;
-      setupButton.disabled = true;
-      const success = await triggerAppAction(app.id, "setup");
-      if (!success && setupButton.isConnected) {
-        setupButton.disabled = false;
-      }
-    });
-    controls.append(setupButton);
-  }
-
-  const editWithAiButton = document.createElement("button");
-  editWithAiButton.type = "button";
-  editWithAiButton.className = "wm-button secondary";
-  editWithAiButton.textContent = "Edit with AI";
-  editWithAiButton.addEventListener("click", async () => {
-    if (editWithAiButton.disabled) return;
-    if (!state.identity.authenticated) {
-      openIdentityLoginDialog();
-      return;
-    }
-    const workingDirectory = typeof app.root === "string" ? app.root : "";
-    if (!workingDirectory) {
-      window.alert("App root directory is unavailable for this app.");
-      return;
-    }
-    const agentId = state.config?.defaultAgent ?? "claude";
-    const configuredAgents = Array.isArray(state.config?.agents) ? state.config.agents : null;
-    if (configuredAgents && !configuredAgents.some((agent) => agent && typeof agent.id === "string" && agent.id === agentId)) {
-      window.alert(`${agentId} agent is not available. Update your configuration and try again.`);
-      return;
-    }
-    const appName =
-      typeof app.label === "string" && app.label.trim().length > 0 ? app.label.trim() : String(app.id ?? "app");
-    const sessionName = `editing ${appName}`;
-    const origin = buildSessionOrigin({
-      type: "app",
-      id: app.id ?? "",
-      url: app.id !== undefined && app.id !== null ? `/apps/${app.id}` : undefined,
-      label: app.label,
-    });
-    const originalLabel = editWithAiButton.textContent;
-    editWithAiButton.disabled = true;
-    editWithAiButton.textContent = "Launching…";
-    try {
-      await launchSession(agentId, workingDirectory, sessionName, undefined, { openInNewTab: true, origin });
-    } finally {
-      if (editWithAiButton.isConnected) {
-        editWithAiButton.disabled = false;
-        editWithAiButton.textContent = originalLabel ?? "Edit with AI";
-      }
-    }
-  });
-  controls.append(editWithAiButton);
-
-  // Fix with AI button - fetches logs and launches Claude with them pre-filled
-  const fixWithAiButton = document.createElement("button");
-  fixWithAiButton.type = "button";
-  fixWithAiButton.className = "wm-button secondary";
-  fixWithAiButton.textContent = "Fix with AI";
-  fixWithAiButton.addEventListener("click", async () => {
-    if (fixWithAiButton.disabled) return;
-    if (!state.identity.authenticated) {
-      openIdentityLoginDialog();
-      return;
-    }
-    const workingDirectory = typeof app.root === "string" ? app.root : "";
-    if (!workingDirectory) {
-      window.alert("App root directory is unavailable for this app.");
-      return;
-    }
-    const agentId = state.config?.defaultAgent ?? "claude";
-    const configuredAgents = Array.isArray(state.config?.agents) ? state.config.agents : null;
-    if (configuredAgents && !configuredAgents.some((agent) => agent && typeof agent.id === "string" && agent.id === agentId)) {
-      window.alert(`${agentId} agent is not available. Update your configuration and try again.`);
-      return;
-    }
-
-    const originalLabel = fixWithAiButton.textContent;
-    fixWithAiButton.disabled = true;
-    fixWithAiButton.textContent = "Loading logs…";
-
-    try {
-      // Fetch the app's recent logs
-      const logsResponse = await fetchAppLogsApi(app.id, 100);
-      const logs = logsResponse?.logs ?? [];
-
-      // Build log file paths
-      const logFilePaths = [];
-      if (app.logsDir && app.pm2Name) {
-        logFilePaths.push(`${app.logsDir}/${app.pm2Name}-out.log`);
-        logFilePaths.push(`${app.logsDir}/${app.pm2Name}-error.log`);
-      }
-
-      // Build the initial prompt
-      const appName =
-        typeof app.label === "string" && app.label.trim().length > 0 ? app.label.trim() : String(app.id ?? "app");
-      const sessionName = `fixing ${appName}`;
-
-      let initialPrompt = `Please review these logs and the full log file if needed. I would like assistance debugging this issue and approaches to fix. Please ask questions if you need more context.\n\n`;
-
-      if (logs.length > 0) {
-        initialPrompt += `## Recent Logs (tail)\n\`\`\`\n${logs.join("\n")}\n\`\`\`\n\n`;
-      } else {
-        initialPrompt += `## Recent Logs\nNo recent logs available.\n\n`;
-      }
-
-      if (logFilePaths.length > 0) {
-        initialPrompt += `## Full Log Files\n${logFilePaths.map((p) => `- ${p}`).join("\n")}\n`;
-      }
-
-      const origin = buildSessionOrigin({
-        type: "app",
-        id: app.id ?? "",
-        url: app.id !== undefined && app.id !== null ? `/apps/${app.id}` : undefined,
-        label: app.label,
-      });
-
-      fixWithAiButton.textContent = "Launching…";
-      await launchSession(agentId, workingDirectory, sessionName, undefined, {
-        openInNewTab: true,
-        origin,
-        initialPrompt,
-      });
-    } catch (error) {
-      console.error("Fix with AI failed:", error);
-      window.alert("Failed to launch Fix with AI. Check console for details.");
-    } finally {
-      if (fixWithAiButton.isConnected) {
-        fixWithAiButton.disabled = false;
-        fixWithAiButton.textContent = originalLabel ?? "Fix with AI";
-      }
-    }
-  });
-  controls.append(fixWithAiButton);
-
-  // Deploy button (web apps only)
-  if (isWebApp) {
-    const deployButton = document.createElement("button");
-    deployButton.type = "button";
-    deployButton.className = "wm-button secondary";
-    deployButton.textContent = "Deploy";
-    deployButton.addEventListener("click", () => {
-      openDeployDialog(app.id);
-    });
-    controls.append(deployButton);
-  }
-
-  card.append(controls);
-
-  const linkBar = document.createElement("div");
-  linkBar.className = "wm-app-links";
-
-  const viewLogsLink = document.createElement("a");
-  viewLogsLink.href = "#";
-  viewLogsLink.textContent = "View logs";
-  viewLogsLink.addEventListener("click", (event) => {
-    event.preventDefault();
-    void openAppLogsDialog(app.id);
-  });
-  linkBar.append(viewLogsLink);
-
-  const editLink = document.createElement("a");
-  editLink.href = "#";
-  editLink.textContent = "Edit";
-  editLink.addEventListener("click", (event) => {
-    event.preventDefault();
-    openAppDialog(app.id);
-  });
-  linkBar.append(editLink);
-
-  const removeLink = document.createElement("a");
-  removeLink.href = "#";
-  removeLink.textContent = "Remove";
-  removeLink.addEventListener("click", (event) => {
-    event.preventDefault();
-    removeApp(app.id);
-  });
-  linkBar.append(removeLink);
-
-  card.append(linkBar);
-
-  return card;
-};
-
 const renderApps = () => {
   const wrapper = document.createElement("div");
   wrapper.className = "wm-apps";
@@ -3411,7 +2507,9 @@ const renderApps = () => {
     mainArea.append(errorBox);
   }
 
-  const apps = Array.isArray(appsStore().items) ? appsStore().items : [];
+  const apps = Array.isArray(appsStore().items)
+    ? appsStore().items.filter((app) => app?.id !== "wingman-core")
+    : [];
   if (appsStore().loading && apps.length === 0) {
     const loading = document.createElement("p");
     loading.className = "wm-apps-empty";
@@ -3618,6 +2716,15 @@ const render = () => {
   }, 50); // 50ms debounce to prevent rapid re-renders
 };
 
+function shouldFullRenderOnSessionUpdate(route) {
+  // Files view should not full re-render on background session updates because
+  // it resets reading position in the spec/file preview.
+  if (route === "files" || route === "live") {
+    return false;
+  }
+  return true;
+}
+
 projectFeature = createProjectFeature({
   onRenderRequested: () => {
     if (currentRoute === "projects") {
@@ -3750,6 +2857,33 @@ const privacyPolicyModule = initPrivacyPolicy({
 });
 renderPrivacyPolicy = privacyPolicyModule.renderPrivacyPolicy;
 
+const appCardsModule = initAppCards({
+  appsStore,
+  APP_STATUS_LABELS,
+  renderLogPreview: (...args) => renderAppLogPreview(...args),
+  launchSession: (...args) => launchSession(...args),
+  fetchAppLogsApi,
+  removeApp: (...args) => removeApp(...args),
+  state,
+  formatAppTimestamp,
+  formatAppActionLabel,
+  formatWebAppUrl,
+  deriveAppWindowName,
+  appendVariableUrlRow,
+  appendVariablePubkeyRow,
+  isAppActionDisabled,
+  triggerAppAction: (...args) => triggerAppAction(...args),
+  triggerWarmRestart: (...args) => triggerWarmRestart(...args),
+  runSystemCleanup: (...args) => runSystemCleanup(...args),
+  openIdentityLoginDialog,
+  buildSessionOrigin,
+  openAppLogsDialog: (...args) => openAppLogsDialog(...args),
+  openDeployDialog: (...args) => openDeployDialog(...args),
+  openAppDialog: (...args) => openAppDialog(...args),
+});
+renderAppCard = appCardsModule.renderAppCard;
+renderWingmanCard = appCardsModule.renderWingmanCard;
+
 const settingsViewModule = initSettingsView({
   state,
   appsStore,
@@ -3777,7 +2911,7 @@ const homeViewModule = initHomeView({
   setCurrentRoute: (r) => { currentRoute = r; },
   render,
   openIdentityLoginDialog,
-  navigateToApps,
+  navigateToApps: (...args) => navigateToApps(...args),
   navigateToChat: (...args) => navigateToChat(...args),
   openDialog,
   openOrchestratorDialog: (...args) => openOrchestratorDialog(...args),
@@ -3805,6 +2939,28 @@ const homeViewModule = initHomeView({
   LIVE_ROUTE_PREFIX,
 });
 renderHome = homeViewModule.renderHome;
+
+// Files API module — must init before dirBrowser and filesView which depend on these
+const filesApiModule = initFilesApi({
+  state,
+  getCurrentRoute: () => currentRoute,
+  render,
+  FILES_ROUTE,
+});
+resetFilesPreview = filesApiModule.resetFilesPreview;
+updateFilesUrl = filesApiModule.updateFilesUrl;
+parseFilesPathFromUrl = filesApiModule.parseFilesPathFromUrl;
+navigateToFilesSlug = filesApiModule.navigateToFilesSlug;
+loadFilesTree = filesApiModule.loadFilesTree;
+loadFilesPreview = filesApiModule.loadFilesPreview;
+showFilesPreviewUnavailable = filesApiModule.showFilesPreviewUnavailable;
+createFilesDirectory = filesApiModule.createFilesDirectory;
+createFilesTextFile = filesApiModule.createFilesTextFile;
+uploadFilesBinary = filesApiModule.uploadFilesBinary;
+deleteFilesEntry = filesApiModule.deleteFilesEntry;
+createDirectoryEntry = filesApiModule.createDirectoryEntry;
+copyFilesEntry = filesApiModule.copyFilesEntry;
+moveFilesEntry = filesApiModule.moveFilesEntry;
 
 const dirBrowserModule = initDirectoryBrowser({
   state,
@@ -3955,7 +3111,7 @@ const identityStateModule = initIdentityStateManager({
   fetchConfig: (...args) => fetchConfig(...args),
   normalisePortList,
   closeIdentityLoginDialog,
-  navigateToHome,
+  navigateToHome: (...args) => navigateToHome(...args),
   getCurrentRoute: () => currentRoute,
   setCurrentRoute: (r) => { currentRoute = r; },
   HOME_ROUTE,
@@ -4127,273 +3283,58 @@ const finishPull = () => {
   }
 };
 
-function navigateToHome({ replaceHistory = false, skipMenuClose = false } = {}) {
-  if (!skipMenuClose) {
-    closeMenu();
-  }
-  closeIdentityLoginDialog();
-  stopConversationPolling();
-  currentRoute = "home";
-  lastLoggedSessionId = null;
-  if (replaceHistory) {
-    window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
-  } else if (window.location.pathname !== HOME_ROUTE) {
-    window.history.pushState({ route: "home" }, "", HOME_ROUTE);
-  }
-  render();
-}
-
-function navigateToApps({ openNewAppDialog = false, skipMenuClose = false, focusAppId = null } = {}) {
-  if (!state.identity.authenticated) {
-    openIdentityLoginDialog();
-    return;
-  }
-  if (!skipMenuClose) {
-    closeMenu();
-  }
-  stopConversationPolling();
-  if (openNewAppDialog) {
-    appsStore().pendingOpenDialog = "create";
-  }
-  if (focusAppId) {
-    appsStore().pendingFocusId = focusAppId;
-  }
-  currentRoute = "apps";
-  lastLoggedSessionId = null;
-  if (window.location.pathname !== APPS_ROUTE) {
-    window.history.pushState({ route: "apps" }, "", APPS_ROUTE);
-  }
-  // void ensureAppsLoaded(); // DISABLED
-  render();
-}
-
-function navigateToProjects({ skipMenuClose = false } = {}) {
-  if (!state.identity.authenticated) {
-    openIdentityLoginDialog();
-    return;
-  }
-  if (!projectsFeatureEnabledForViewer()) {
-    showToast?.("Projects are disabled right now", { variant: "info" });
-    return;
-  }
-  if (!skipMenuClose) {
-    closeMenu();
-  }
-  closeIdentityLoginDialog();
-  stopConversationPolling();
-  currentRoute = "projects";
-  lastLoggedSessionId = null;
-  if (window.location.pathname !== PROJECTS_ROUTE) {
-    window.history.pushState({ route: "projects" }, "", PROJECTS_ROUTE);
-  }
-  if (projectFeature) {
-    void projectFeature.ensureLoaded();
-  }
-  render();
-}
-
-function navigateToNightWatch({ skipMenuClose = false } = {}) {
-  if (!state.identity.authenticated) {
-    openIdentityLoginDialog();
-    return;
-  }
-  if (!state.identity.isAdmin) {
-    showToast?.("Night Watchman is admin-only", { variant: "info" });
-    return;
-  }
-  if (!isFeatureEnabledForViewer("nightwatch_enabled")) {
-    showToast?.("Night Watchman is disabled", { variant: "info" });
-    return;
-  }
-  if (!skipMenuClose) {
-    closeMenu();
-  }
-  closeIdentityLoginDialog();
-  stopConversationPolling();
-  currentRoute = "nightwatch";
-  lastLoggedSessionId = null;
-  if (window.location.pathname !== NIGHTWATCH_ROUTE) {
-    window.history.pushState({ route: "nightwatch" }, "", NIGHTWATCH_ROUTE);
-  }
-  void ensureNightWatchPageLoaded();
-  render();
-}
-
-function navigateToScheduler({ skipMenuClose = false } = {}) {
-  if (!state.identity.authenticated) {
-    openIdentityLoginDialog();
-    return;
-  }
-  if (!state.identity.isAdmin) {
-    showToast?.("Triggers is admin-only", { variant: "info" });
-    return;
-  }
-  if (!skipMenuClose) {
-    closeMenu();
-  }
-  closeIdentityLoginDialog();
-  stopConversationPolling();
-  currentRoute = "scheduler";
-  lastLoggedSessionId = null;
-  if (window.location.pathname !== TRIGGERS_ROUTE && window.location.pathname !== SCHEDULER_ROUTE) {
-    window.history.pushState({ route: "scheduler" }, "", TRIGGERS_ROUTE);
-  }
-  void ensureSchedulerPageLoaded();
-  render();
-}
-
-function navigateToSettings({ skipMenuClose = false } = {}) {
-  if (!skipMenuClose) {
-    closeMenu();
-  }
-  closeIdentityLoginDialog();
-  stopConversationPolling();
-  currentRoute = "settings";
-  lastLoggedSessionId = null;
-  if (window.location.pathname !== SETTINGS_ROUTE) {
-    window.history.pushState({ route: "settings" }, "", SETTINGS_ROUTE);
-  }
-  render();
-}
-
-navLinks.forEach((link) => {
-  link.addEventListener("click", (event) => {
-    event.preventDefault();
-    const targetRoute = link.dataset.route;
-    if (!targetRoute || targetRoute === currentRoute) return;
-    if (!state.identity.authenticated) {
-      openIdentityLoginDialog();
-      return;
-    }
-    closeMenu();
-    if (targetRoute === "live") {
-      currentRoute = "live";
-      const ss = sessionsStore();
-      const navSessions = ss.items;
-      const navActiveId = ss.activeSessionId;
-      const navLastId = ss.lastActiveSessionId;
-      const hasActive = navActiveId && navSessions.some((session) => session.id === navActiveId);
-      const hasLast = navLastId && navSessions.some((session) => session.id === navLastId);
-      const targetSessionId = hasActive ? navActiveId : hasLast ? navLastId : null;
-      if (targetSessionId) {
-        setActiveSession(targetSessionId, { updateHistory: true, forceLog: true });
-      } else {
-        setActiveSession(null, { updateHistory: true });
-      }
-    } else if (targetRoute === "apps") {
-      navigateToApps({ skipMenuClose: true });
-      return;
-    } else if (targetRoute === "projects") {
-      navigateToProjects({ skipMenuClose: true });
-      return;
-    } else if (targetRoute === "nightwatch") {
-      navigateToNightWatch({ skipMenuClose: true });
-      return;
-    } else if (targetRoute === "scheduler") {
-      navigateToScheduler({ skipMenuClose: true });
-      return;
-    } else if (targetRoute === "files") {
-      // If navigating from live page with an active session, start in that session's directory
-      const activeSession = currentRoute === "live" ? getActiveSessionForIndicator() : null;
-      const sessionDir = activeSession?.workingDirectory;
-      stopConversationPolling();
-      currentRoute = "files";
-      lastLoggedSessionId = null;
-      if (!state.files.initialized) {
-        state.files.initialized = true;
-        void loadFilesTree(sessionDir);
-      } else if (sessionDir) {
-        // Already initialized but coming from live with a session directory - navigate there
-        void loadFilesTree(sessionDir);
-      } else {
-        // Already initialized — sync URL to current state
-        updateFilesUrl({ replace: true });
-      }
-    } else if (targetRoute === "settings") {
-      navigateToSettings({ skipMenuClose: true });
-      return;
-    } else {
-      navigateToHome({ skipMenuClose: true });
-      return;
-    }
-    render();
-  });
+// Navigation module — extracted from app.js.
+// All six navigateTo* functions and the nav event listeners live in navigation.js.
+const {
+  navigateToHome,
+  navigateToApps,
+  navigateToProjects,
+  navigateToNightWatch,
+  navigateToScheduler,
+  navigateToSettings,
+  setupNavListeners,
+} = createNavigation({
+  closeMenu,
+  closeIdentityLoginDialog,
+  openIdentityLoginDialog,
+  stopConversationPolling,
+  render,
+  getCurrentRoute: () => currentRoute,
+  setCurrentRoute: (r) => { currentRoute = r; },
+  setLastLoggedSessionId: (id) => { lastLoggedSessionId = id; },
+  appsStore,
+  sessionsStore,
+  setActiveSession,
+  state,
+  showToast,
+  projectsFeatureEnabledForViewer: (...args) => projectsFeatureEnabledForViewer(...args),
+  isFeatureEnabledForViewer: (...args) => isFeatureEnabledForViewer(...args),
+  get projectFeature() { return projectFeature; },
+  ensureNightWatchPageLoaded: (...args) => ensureNightWatchPageLoaded(...args),
+  ensureSchedulerPageLoaded: (...args) => ensureSchedulerPageLoaded(...args),
+  loadFilesTree: (...args) => loadFilesTree(...args),
+  updateFilesUrl: (...args) => updateFilesUrl(...args),
+  getActiveSessionForIndicator,
+  scrollConversationAreaToBottom,
+  HOME_ROUTE,
+  APPS_ROUTE,
+  PROJECTS_ROUTE,
+  NIGHTWATCH_ROUTE,
+  TRIGGERS_ROUTE,
+  SCHEDULER_ROUTE,
+  SETTINGS_ROUTE,
+  PRIVACY_ROUTE,
+  navLinks,
+  menuToggle,
+  menuPanel,
+  desktopSessionIndicatorButton,
+  toggleMenu,
+  getHandleIdentityLogout: () => handleIdentityLogout,
+  getHandleIdentityCopy: () => handleIdentityCopy,
+  getIdentityDomEntryByNode: () => identityDomEntryByNode,
 });
 
-// Handle menu footer links (privacy policy, etc.)
-const menuFooterLinks = Array.from(document.querySelectorAll(".wm-menu-footer a[data-route]"));
-menuFooterLinks.forEach((link) => {
-  link.addEventListener("click", (event) => {
-    event.preventDefault();
-    const targetRoute = link.dataset.route;
-    if (!targetRoute || targetRoute === currentRoute) return;
-    closeMenu();
-    if (targetRoute === "privacy") {
-      currentRoute = "privacy";
-      if (window.location.pathname !== PRIVACY_ROUTE) {
-        window.history.pushState({ route: "privacy" }, "", PRIVACY_ROUTE);
-      }
-      render();
-    }
-  });
-});
-
-if (typeof window !== "undefined") {
-  window.navigateToProjects = navigateToProjects;
-}
-
-menuToggle?.addEventListener("click", (event) => {
-  event.stopPropagation();
-  if (!state.identity.authenticated) {
-    openIdentityLoginDialog();
-    return;
-  }
-  toggleMenu();
-});
-
-desktopSessionIndicatorButton?.addEventListener("click", (event) => {
-  event.preventDefault();
-  if (!state.identity.authenticated) {
-    openIdentityLoginDialog();
-    return;
-  }
-  const session = getActiveSessionForIndicator();
-  if (!session) return;
-  closeMenu();
-  if (currentRoute !== "live") {
-    currentRoute = "live";
-  }
-  setActiveSession(session.id, { updateHistory: true, forceLog: true });
-  render();
-  requestAnimationFrame(() => {
-    scrollConversationAreaToBottom(session.id, { includeWindow: true });
-  });
-});
-
-document.addEventListener("click", (event) => {
-  if (document.body.dataset.menuOpen === "true") {
-    const target = event.target;
-    if (target instanceof Node && !menuToggle?.contains(target) && !menuPanel?.contains(target)) {
-      closeMenu();
-    }
-  }
-
-  const clickTarget = event.target;
-  if (clickTarget instanceof HTMLElement) {
-    if (clickTarget.matches('[data-action="identity-logout"]')) {
-      if (!clickTarget.disabled) {
-        void handleIdentityLogout(event, identityDomEntryByNode.get(clickTarget) ?? null);
-      } else {
-        event.preventDefault();
-      }
-      return;
-    }
-    if (clickTarget.matches('[data-action="copy-active-npub"]')) {
-      void handleIdentityCopy(event, identityDomEntryByNode.get(clickTarget) ?? null);
-      return;
-    }
-  }
-});
+setupNavListeners();
 
 window.addEventListener("resize", () => {
   if (window.innerWidth > 720) {
@@ -4452,13 +3393,7 @@ window.addEventListener("popstate", () => {
   if (currentRoute !== "live") {
     lastLoggedSessionId = null;
   }
-  const redirectHome = applyRouteSessionFromPath({ allowHistoryUpdate: false });
-  if (redirectHome) {
-    currentRoute = "home";
-    if (window.location.pathname !== HOME_ROUTE) {
-      window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
-    }
-  }
+  applyRouteSessionFromPath({ allowHistoryUpdate: false });
   if (currentRoute === "files") {
     if (window.location.pathname.startsWith("/docs")) {
       const newPath = window.location.pathname.replace("/docs", "/files");
@@ -4552,6 +3487,7 @@ dialog.addEventListener("cancel", (event) => {
 (async () => {
   initTheme();
   initTabsVisibility();
+  setupConversationSelectionLock();
   // Initialize live module (Dexie database for SSE updates)
   initLiveModule().catch((err) => console.warn("[app] Live module init failed:", err));
 
@@ -4633,35 +3569,7 @@ dialog.addEventListener("cancel", (event) => {
     }
     state.conversations.set(sessionId, existing);
 
-    // Alpine chat: push conversation state directly to store for instant update.
-    if (isAlpineChatEnabled()) {
-      const chatStore = window.Alpine?.store("chat");
-      if (chatStore && chatStore.sessionId === sessionId) {
-        const conv = state.conversations.get(sessionId) || [];
-        chatStore.messages = conv.map((msg, idx) => ({
-          id: `api-${idx}`,
-          sessionId,
-          role: msg.role || msg.type || "assistant",
-          content: msg.content || msg.message || "",
-          createdAt: msg.createdAt || msg.created_at || "",
-        }));
-      }
-      if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
-        if (!scrollPillIsNearBottom() && !isStreamingUpdate) {
-          scrollPillShow();
-        }
-      }
-      return;
-    }
-
-    // Legacy manual DOM path (non-Alpine)
-    if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
-      const wasNearBottom = scrollPillIsNearBottom();
-      updateConversationDOM(sessionId);
-      if (!wasNearBottom && !isStreamingUpdate) {
-        scrollPillShow();
-      }
-    }
+    renderConversationForSession(sessionId, { isStreamingUpdate });
   });
 
   // Render immediately from Dexie cache so the UI is visible while
@@ -4720,11 +3628,8 @@ dialog.addEventListener("cancel", (event) => {
     startSessionSubscriber(() => {
       fetchSessions().then(() => {
         syncMenuTabs();
-        // Only full-render on pages that need it (home, apps).
-        // On live route the conversation is already updating via SSE
-        // and a full render() nukes the DOM, resets scroll, and breaks
-        // the reading experience — but we still need to refresh indicators.
-        if (currentRoute !== "live") {
+        // Avoid full-render on routes where it disrupts in-progress reading/editing.
+        if (shouldFullRenderOnSessionUpdate(currentRoute)) {
           render();
         } else {
           updateAgentStatusIndicators();

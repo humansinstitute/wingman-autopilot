@@ -56,9 +56,11 @@ Visit `http://localhost:<PORT>/home` for the session dashboard or `/live` for th
 | `HOST_URL_BASE`  | Template for web app links; `<port>` is replaced with the app's assigned port  | `https://host.otherstuff.ai/<port>` |
 | `DIRECTORY_DEF`  | Working directory used when launching agent subprocesses                       | `~/code`                |
 | `FOLDERACCESS`   | Comma-separated directories exposed to file browsers and pickers               | `DIRECTORY_DEF`         |
-| `AGENT_MODE`     | Switch orchestration mode; set to `tmux` to launch via `agentapi-tmux`         | `standard`              |
-| `AGENTAPI_BIN`   | Absolute path to the AgentAPI binary used to host each agent                   | `./out/agentapi` or `./out/agentapi-tmux` when `AGENT_MODE=tmux` |
+| `AGENT_SPAWN_MODE` | Agent process manager: `bun` (direct child process) or `pm2` (persists agent processes across Wingman restarts) | `bun` |
+| `AGENT_MODE`     | Legacy compatibility mode (`pm2` maps to `AGENT_SPAWN_MODE=pm2`; `tmux` selects `agentapi-tmux` binary when `AGENTAPI_BIN` is unset) | unset |
+| `AGENTAPI_BIN`   | Absolute path to the AgentAPI binary used to host each agent                   | `./out/agentapi` (or `./out/agentapi-tmux` when `AGENT_MODE=tmux`) |
 | `CLAUDE_CLI`     | Executable invoked for Claude sessions (override if not simply `claude`)       | `claude`                |
+| `GLOVES`         | Claude approval mode; set `OFF` to add `--dangerously-skip-permissions`         | unset (normal approvals) |
 | `GOOSE_CLI`      | Executable invoked for Goose sessions                                          | `goose`                 |
 | `CODEX_CLI`      | Executable invoked for Codex sessions (Wingman passes `--type=codex` as well)  | `codex`                 |
 | `OPENCODE_CLI`   | Executable invoked for OpenCode sessions                                       | `opencode`              |
@@ -72,3 +74,17 @@ Visit `http://localhost:<PORT>/home` for the session dashboard or `/live` for th
 - All agents launch as subprocesses with dedicated ports allocated from the configured range.
 
 Refer to `docs/architecture.md` for a deeper dive into directory responsibilities and runtime flow.
+
+## Session Persistence (Recommended)
+
+For reliable persistence through Wingman restarts, use PM2-backed agent spawning:
+
+```bash
+AGENT_SPAWN_MODE=pm2 bun start
+```
+
+Legacy fallback also works:
+
+```bash
+AGENT_MODE=pm2 bun start
+```

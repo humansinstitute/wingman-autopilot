@@ -57,6 +57,144 @@ function detectLanguage(filePath) {
 
 const POLL_INTERVAL_MS = 2500;
 
+function getScrollableAncestor(element) {
+  let current = element?.parentElement ?? null;
+  while (current) {
+    const style = window.getComputedStyle(current);
+    const canScrollY = /(auto|scroll)/.test(style.overflowY);
+    if (canScrollY && current.scrollHeight > current.clientHeight) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function resizeTextareaPreserveScroll(editor) {
+  const scrollParent = getScrollableAncestor(editor);
+  const parentScrollTop = scrollParent?.scrollTop ?? 0;
+  const windowScrollY = window.scrollY;
+
+  editor.style.height = "auto";
+  editor.style.height = `${editor.scrollHeight}px`;
+
+  if (scrollParent) {
+    scrollParent.scrollTop = parentScrollTop;
+  }
+  window.scrollTo(window.scrollX, windowScrollY);
+}
+
+function focusEditorWithoutScroll(editor) {
+  try {
+    editor.focus({ preventScroll: true });
+  } catch {
+    editor.focus();
+  }
+}
+
+function getParentDirectory(filePath) {
+  const normalized = String(filePath ?? "").replace(/\\/g, "/");
+  const index = normalized.lastIndexOf("/");
+  return index >= 0 ? normalized.slice(0, index) : normalized;
+}
+
+function guessImageExtension(mimeType) {
+  const mime = String(mimeType ?? "").toLowerCase();
+  if (mime === "image/jpeg") return "jpg";
+  if (mime === "image/png") return "png";
+  if (mime === "image/gif") return "gif";
+  if (mime === "image/webp") return "webp";
+  if (mime === "image/svg+xml") return "svg";
+  if (mime === "image/bmp") return "bmp";
+  if (mime === "image/heic") return "heic";
+  if (mime === "image/heif") return "heif";
+  return "png";
+}
+
+function createPastedImageFilename(file) {
+  const now = new Date();
+  const stamp = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+    "-",
+    String(now.getHours()).padStart(2, "0"),
+    String(now.getMinutes()).padStart(2, "0"),
+    String(now.getSeconds()).padStart(2, "0"),
+  ].join("");
+  const random = Math.random().toString(36).slice(2, 8);
+  const ext = guessImageExtension(file?.type);
+  return `pasted-image-${stamp}-${random}.${ext}`;
+}
+
+function insertTextAtCursor(textarea, text) {
+  const start = textarea.selectionStart ?? 0;
+  const end = textarea.selectionEnd ?? start;
+  const value = textarea.value ?? "";
+  textarea.value = value.slice(0, start) + text + value.slice(end);
+  const next = start + text.length;
+  textarea.selectionStart = next;
+  textarea.selectionEnd = next;
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function createUploadMarkerId() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function buildUploadPlaceholder(markerId) {
+  return `<!--UPL:${markerId}-->[Uploading...]`;
+}
+
+function replaceUploadPlaceholder(textarea, markerId, replacement) {
+  const marker = buildUploadPlaceholder(markerId);
+  const currentValue = textarea.value ?? "";
+  const index = currentValue.indexOf(marker);
+  if (index === -1) return false;
+  textarea.value = currentValue.slice(0, index) + replacement + currentValue.slice(index + marker.length);
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}
+
+function isAbsoluteOrSchemePath(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return false;
+  if (text.startsWith("/") || text.startsWith("#")) return true;
+  return /^[a-z][a-z0-9+.-]*:/i.test(text);
+}
+
+function normalisePosixPath(path) {
+  const input = String(path ?? "").replace(/\\/g, "/");
+  const isAbs = input.startsWith("/");
+  const out = [];
+  for (const part of input.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      if (out.length > 0) out.pop();
+      continue;
+    }
+    out.push(part);
+  }
+  return `${isAbs ? "/" : ""}${out.join("/")}`;
+}
+
+function buildResolvedDocPath(baseDir, relativePath) {
+  return normalisePosixPath(`${baseDir}/${relativePath}`);
+}
+
+function buildDocsDownloadUrl(docPath) {
+  return `/api/docs/file/download?path=${encodeURIComponent(docPath)}`;
+}
+
+function rewriteMarkdownImagePathsForPreview(markdown, baseDir) {
+  return String(markdown ?? "").replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (full, alt, rawUrl) => {
+    if (isAbsoluteOrSchemePath(rawUrl)) return full;
+    const resolved = buildResolvedDocPath(baseDir, rawUrl);
+    const previewUrl = buildDocsDownloadUrl(resolved);
+    return `![${alt}](${previewUrl})`;
+  });
+}
+
 /**
  * Create the pencil icon button that toggles the writer panel.
  * @param {Function} onToggle
@@ -135,6 +273,7 @@ export function createWriterPanel(sessionId, targetFile, deps) {
 
   const mdMode = isMarkdownFile(targetFile);
   const codeLang = mdMode ? null : detectLanguage(targetFile);
+  const fileDirectory = getParentDirectory(targetFile);
 
   let blocks = [];
   let rawContent = "";
@@ -143,6 +282,65 @@ export function createWriterPanel(sessionId, targetFile, deps) {
   let pollTimer = null;
   let destroyed = false;
   let commitInProgress = false;
+
+  async function uploadPastedImageToCurrentDirectory(file) {
+    const parentDirectory = getParentDirectory(targetFile);
+    const uploadName = createPastedImageFilename(file);
+    const base64 = encodeUint8ArrayToBase64(new Uint8Array(await file.arrayBuffer()));
+    const response = await fetch("/api/docs/file", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        directory: parentDirectory,
+        name: uploadName,
+        base64,
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = data?.error ?? response.statusText ?? "Failed to upload pasted image";
+      throw new Error(message);
+    }
+    return data?.name || uploadName;
+  }
+
+  async function handleEditorPaste(event, editor) {
+    if (!mdMode) return;
+    const items = Array.from(event.clipboardData?.items ?? []);
+    const imageFiles = items
+      .filter((item) => item.kind === "file" && String(item.type || "").startsWith("image/"))
+      .map((item) => item.getAsFile())
+      .filter((file) => file instanceof File);
+
+    if (imageFiles.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    const queued = imageFiles.map((file) => ({ file, markerId: createUploadMarkerId() }));
+    const placeholders = queued.map(({ markerId }) => buildUploadPlaceholder(markerId));
+    const prefix = editor.selectionStart > 0 ? "\n" : "";
+    const suffix = editor.value.endsWith("\n") ? "" : "\n";
+    insertTextAtCursor(editor, `${prefix}${placeholders.join("\n")}${suffix}`);
+    focusEditorWithoutScroll(editor);
+
+    let uploadedCount = 0;
+    for (const item of queued) {
+      try {
+        const savedName = await uploadPastedImageToCurrentDirectory(item.file);
+        replaceUploadPlaceholder(editor, item.markerId, `![${savedName}](${savedName})`);
+        uploadedCount += 1;
+      } catch (error) {
+        replaceUploadPlaceholder(editor, item.markerId, "");
+        const message = error instanceof Error ? error.message : "Failed to upload pasted image";
+        showToast?.(message, { variant: "error" });
+      }
+    }
+
+    if (uploadedCount > 0) {
+      showToast?.(`Uploaded ${uploadedCount} image${uploadedCount > 1 ? "s" : ""}`, { duration: 2000 });
+    }
+  }
 
   // ── File operations ──────────────────────────────────────────
 
@@ -267,10 +465,12 @@ export function createWriterPanel(sessionId, targetFile, deps) {
       editor.spellcheck = false;
 
       function autoResize() {
-        editor.style.height = "auto";
-        editor.style.height = editor.scrollHeight + "px";
+        resizeTextareaPreserveScroll(editor);
       }
       editor.addEventListener("input", autoResize);
+      editor.addEventListener("paste", (event) => {
+        void handleEditorPaste(event, editor);
+      });
       editor.addEventListener("keydown", (e) => {
         // Allow Tab to insert a tab character
         if (e.key === "Tab") {
@@ -293,7 +493,7 @@ export function createWriterPanel(sessionId, targetFile, deps) {
       blocksContainer.append(wrapper);
       requestAnimationFrame(() => {
         autoResize();
-        editor.focus();
+        focusEditorWithoutScroll(editor);
       });
       return;
     }
@@ -342,7 +542,8 @@ export function createWriterPanel(sessionId, targetFile, deps) {
     } else if (block.type === "hr") {
       rendered.innerHTML = "<hr />";
     } else {
-      rendered.innerHTML = renderMarkdownToHtml(block.raw);
+      const previewMarkdown = rewriteMarkdownImagePathsForPreview(block.raw, fileDirectory);
+      rendered.innerHTML = renderMarkdownToHtml(previewMarkdown);
     }
 
     rendered.addEventListener("click", () => {
@@ -364,11 +565,13 @@ export function createWriterPanel(sessionId, targetFile, deps) {
 
     // Auto-height
     function autoResize() {
-      editor.style.height = "auto";
-      editor.style.height = editor.scrollHeight + "px";
+      resizeTextareaPreserveScroll(editor);
     }
 
     editor.addEventListener("input", autoResize);
+    editor.addEventListener("paste", (event) => {
+      void handleEditorPaste(event, editor);
+    });
 
     editor.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
@@ -385,7 +588,7 @@ export function createWriterPanel(sessionId, targetFile, deps) {
     // Focus after append
     requestAnimationFrame(() => {
       autoResize();
-      editor.focus();
+      focusEditorWithoutScroll(editor);
     });
   }
 

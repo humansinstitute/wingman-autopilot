@@ -49,7 +49,7 @@ export function startTaskListener(deps: TaskListenerDeps): () => void {
 
   const sub = pool.subscribeMany(
     relays,
-    [{ kinds: [9802], "#p": [pubkeyHex], since }],
+    { kinds: [9802], "#p": [pubkeyHex], since },
     {
       onevent(event) {
         // Dedup across relays

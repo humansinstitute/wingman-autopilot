@@ -6,6 +6,19 @@
 
 import { escapeHtml, escapeAttribute, sanitizeLanguageClass } from "../core/icons.js";
 
+const sanitizeImageSrc = (value) => {
+  if (value === null || value === undefined) return "#";
+  const trimmed = String(value).trim();
+  if (!trimmed || /\s/.test(trimmed)) return "#";
+  const explicitlyAllowed = /^(https?:\/\/|\/|\.{1,2}\/|#)/i.test(trimmed);
+  if (explicitlyAllowed) {
+    return escapeHtml(trimmed).replace(/"/g, "&quot;");
+  }
+  // Relative paths are allowed, but block arbitrary URI schemes like javascript:
+  if (trimmed.includes(":")) return "#";
+  return escapeHtml(trimmed).replace(/"/g, "&quot;");
+};
+
 export const renderInlineMarkdown = (text) => {
   if (!text) return "";
   let working = String(text);
@@ -19,6 +32,12 @@ export const renderInlineMarkdown = (text) => {
   working = working.replace(/`([^`]+)`/g, (_, code) =>
     createPlaceholder(`<code>${escapeHtml(code)}</code>`),
   );
+
+  working = working.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_, alt, url) => {
+    const safeUrl = sanitizeImageSrc(url);
+    const safeAlt = escapeHtml(alt).replace(/"/g, "&quot;");
+    return createPlaceholder(`<img src="${safeUrl}" alt="${safeAlt}" loading="lazy" />`);
+  });
 
   working = working.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, url) => {
     const safeUrl = escapeAttribute(url);
@@ -73,8 +92,7 @@ export const renderMarkdownToHtml = (markdown) => {
   let inCodeBlock = false;
   let codeLanguage = "";
   let codeBuffer = [];
-  let listType = null;
-  let listItems = [];
+  let listStack = [];
   let paragraph = "";
   let inBlockquote = false;
 
@@ -85,12 +103,89 @@ export const renderMarkdownToHtml = (markdown) => {
     }
   };
 
-  const closeList = () => {
-    if (listType && listItems.length > 0) {
-      html += `<${listType}>${listItems.join("")}</${listType}>`;
+  const renderListNode = (node) => `<${node.type}>${node.items.join("")}</${node.type}>`;
+
+  const appendNestedListToParent = (parentNode, nestedHtml) => {
+    if (parentNode.items.length === 0) {
+      parentNode.items.push(`<li>${nestedHtml}</li>`);
+      return;
     }
-    listType = null;
-    listItems = [];
+    const lastIndex = parentNode.items.length - 1;
+    parentNode.items[lastIndex] = parentNode.items[lastIndex].replace(/<\/li>$/, `${nestedHtml}</li>`);
+  };
+
+  const closeListToLevel = (targetLevel = 0) => {
+    while (listStack.length > targetLevel) {
+      const node = listStack.pop();
+      if (!node) break;
+      const rendered = renderListNode(node);
+      const parentNode = listStack[listStack.length - 1];
+      if (parentNode) {
+        appendNestedListToParent(parentNode, rendered);
+      } else {
+        html += rendered;
+      }
+    }
+  };
+
+  const closeList = () => {
+    closeListToLevel(0);
+  };
+
+  const getIndentWidth = (raw) => {
+    let width = 0;
+    for (const ch of raw) {
+      if (ch === " ") width += 1;
+      else if (ch === "\t") width += 4;
+      else break;
+    }
+    return width;
+  };
+
+  const getListLevel = (rawLine) => {
+    // Treat every 3 leading spaces as one nesting level.
+    return Math.floor(getIndentWidth(rawLine) / 3) + 1;
+  };
+
+  const addListItem = (type, rawLine, content) => {
+    let level = getListLevel(rawLine);
+    if (level > listStack.length + 1) {
+      level = listStack.length + 1;
+    }
+
+    if (listStack.length > level) {
+      closeListToLevel(level);
+    }
+
+    if (listStack.length === level) {
+      const current = listStack[level - 1];
+      if (current && current.type !== type) {
+        closeListToLevel(level - 1);
+      }
+    }
+
+    while (listStack.length < level) {
+      const parent = listStack[listStack.length - 1];
+      if (parent && parent.items.length === 0) {
+        parent.items.push("<li></li>");
+      }
+      listStack.push({ type, items: [] });
+    }
+
+    const current = listStack[level - 1];
+    if (current.type !== type) {
+      closeListToLevel(level - 1);
+      while (listStack.length < level) {
+        const parent = listStack[listStack.length - 1];
+        if (parent && parent.items.length === 0) {
+          parent.items.push("<li></li>");
+        }
+        listStack.push({ type, items: [] });
+      }
+    }
+
+    const target = listStack[level - 1];
+    target.items.push(`<li>${content}</li>`);
   };
 
   const closeBlockquote = () => {
@@ -211,27 +306,19 @@ export const renderMarkdownToHtml = (markdown) => {
       continue;
     }
 
-    const orderedMatch = trimmed.match(/^(\d+)\.\s+(.*)$/);
+    const orderedMatch = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
     if (orderedMatch) {
       closeParagraph();
       const content = renderInlineMarkdown(orderedMatch[2]);
-      if (listType !== "ol") {
-        closeList();
-        listType = "ol";
-      }
-      listItems.push(`<li>${content}</li>`);
+      addListItem("ol", rawLine, content);
       continue;
     }
 
-    const unorderedMatch = trimmed.match(/^[-*+]\s+(.*)$/);
+    const unorderedMatch = line.match(/^\s*[-*+]\s+(.*)$/);
     if (unorderedMatch) {
       closeParagraph();
       const content = renderInlineMarkdown(unorderedMatch[1]);
-      if (listType !== "ul") {
-        closeList();
-        listType = "ul";
-      }
-      listItems.push(`<li>${content}</li>`);
+      addListItem("ul", rawLine, content);
       continue;
     }
 
@@ -367,4 +454,3 @@ export const renderCodeToHtml = (content, language = "plaintext") => {
 
   return `<pre><code class="language-${normalizedLanguage}">${working}</code></pre>`;
 };
-

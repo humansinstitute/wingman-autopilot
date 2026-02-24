@@ -40,6 +40,7 @@ import { publishToRelays, queryRelays } from "./relay-publisher";
 import type { SignedEvent } from "./relay-publisher";
 import { getOrCreateRepo, isGiteaConfigured } from "../gitea/gitea-client";
 import type { GiteaConfig } from "../gitea/gitea-client";
+import { parseBody, jsonError } from "../utils/request-utils";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -66,22 +67,6 @@ type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function jsonError(message: string, status: number): Response {
-  return Response.json({ error: message }, { status });
-}
-
-async function parseBody(request: Request): Promise<Record<string, unknown>> {
-  try {
-    const body = await request.json();
-    if (!body || typeof body !== "object") {
-      throw new Error("Expected JSON object");
-    }
-    return body as Record<string, unknown>;
-  } catch {
-    throw new Error("Invalid JSON body");
-  }
-}
 
 /**
  * Request the user's browser to sign an arbitrary Nostr event template.

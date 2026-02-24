@@ -65,6 +65,8 @@ export interface WingmanConfig {
   giteaOwner: string | null;
   /** SuperBased / Flux Adaptor API base URL */
   superbasedUrl: string | null;
+  /** Whether new user registration is allowed (REGISTER env var, default true) */
+  registrationEnabled: boolean;
 }
 
 const DEFAULT_PORT = 3600;
@@ -126,8 +128,16 @@ const parseEnvironmentString = (input: string | undefined, fallback: string): st
   return trimmed;
 };
 
-const defaultAgentApiPath = "../out/agentapi";
-const agentApiBinary = Bun.env.AGENTAPI_BIN ?? new URL(defaultAgentApiPath, import.meta.url).pathname;
+const resolveAgentApiBinary = (): string => {
+  if (Bun.env.AGENTAPI_BIN && Bun.env.AGENTAPI_BIN.trim().length > 0) {
+    return Bun.env.AGENTAPI_BIN;
+  }
+  const legacyMode = Bun.env.AGENT_MODE?.trim().toLowerCase();
+  const defaultAgentApiPath = legacyMode === "tmux" ? "../out/agentapi-tmux" : "../out/agentapi";
+  return new URL(defaultAgentApiPath, import.meta.url).pathname;
+};
+
+const agentApiBinary = resolveAgentApiBinary();
 
 const baseCommand = (ctx: AgentCommandContext) => {
   return [
@@ -161,9 +171,22 @@ const withAgentCommand = (
   },
 });
 
+function resolveClaudeExtraArgs(glovesValue: string | undefined): string[] {
+  const normalized = glovesValue?.trim().toUpperCase();
+  if (!normalized) {
+    return [];
+  }
+  if (["OFF", "FALSE", "0", "NO"].includes(normalized)) {
+    return ["--dangerously-skip-permissions"];
+  }
+  return [];
+}
+
+const claudeExtraArgs = resolveClaudeExtraArgs(Bun.env.GLOVES);
+
 const defaultAgents: Record<AgentType, AgentDefinition> = {
   codex: withAgentCommand("Codex", Bun.env.CODEX_CLI ?? "codex", { type: "codex" }),
-  claude: withAgentCommand("Claude", Bun.env.CLAUDE_CLI ?? "claude"),
+  claude: withAgentCommand("Claude", Bun.env.CLAUDE_CLI ?? "claude", { extraArgs: claudeExtraArgs }),
   goose: withAgentCommand("Goose", Bun.env.GOOSE_CLI ?? "goose"),
   opencode: withAgentCommand("OpenCode", Bun.env.OPENCODE_CLI ?? "opencode"),
   gemini: withAgentCommand("Gemini", Bun.env.GEMINI_CLI ?? "gemini"),
@@ -226,13 +249,24 @@ export const loadConfig = (): WingmanConfig => {
     ? (defaultAgentInput as AgentType)
     : "claude";
   console.log(`[Config] Default agent: ${defaultAgent}${defaultAgentInput && defaultAgentInput !== defaultAgent ? ` (DEFAULT_AGENT="${defaultAgentInput}" was invalid)` : ""}`);
+  if (claudeExtraArgs.includes("--dangerously-skip-permissions")) {
+    console.log("[Config] Claude approvals: disabled (GLOVES=OFF)");
+  }
 
   // Agent spawn mode - "bun" (default) or "pm2" for persistence across restarts
   const validSpawnModes: AgentSpawnMode[] = ["bun", "pm2"];
+  const legacyModeInput = Bun.env.AGENT_MODE?.trim().toLowerCase();
   const spawnModeInput = Bun.env.AGENT_SPAWN_MODE?.trim().toLowerCase();
-  const agentSpawnMode: AgentSpawnMode = spawnModeInput && validSpawnModes.includes(spawnModeInput as AgentSpawnMode)
-    ? (spawnModeInput as AgentSpawnMode)
-    : "bun";
+  let agentSpawnMode: AgentSpawnMode = "bun";
+  if (spawnModeInput && validSpawnModes.includes(spawnModeInput as AgentSpawnMode)) {
+    agentSpawnMode = spawnModeInput as AgentSpawnMode;
+  } else if (legacyModeInput === "pm2") {
+    // Backwards compatibility: AGENT_MODE=pm2 should behave like AGENT_SPAWN_MODE=pm2.
+    agentSpawnMode = "pm2";
+    console.warn("[Config] AGENT_MODE=pm2 is deprecated; use AGENT_SPAWN_MODE=pm2");
+  } else if (legacyModeInput && !["standard", "tmux"].includes(legacyModeInput)) {
+    console.warn(`[Config] Ignoring unrecognized AGENT_MODE="${legacyModeInput}"`);
+  }
   if (agentSpawnMode === "pm2") {
     console.log("[Config] Agent spawn mode: pm2 (sessions persist across restarts)");
   }
@@ -272,6 +306,13 @@ export const loadConfig = (): WingmanConfig => {
     console.warn("[Config] Gitea partially configured — need GITEA_URL, GITEA_API_TOKEN, and GITEA_OWNER");
   }
 
+  // Registration toggle — set REGISTER=FALSE to block new signups
+  const registerInput = (Bun.env.REGISTER ?? "").trim().toUpperCase();
+  const registrationEnabled = registerInput !== "FALSE";
+  if (!registrationEnabled) {
+    console.log("[Config] Registration disabled (REGISTER=FALSE)");
+  }
+
   // SuperBased / Flux Adaptor configuration
   const superbasedUrlInput = Bun.env.SUPERBASED_URL?.trim();
   const superbasedUrl = superbasedUrlInput && superbasedUrlInput.length > 0
@@ -309,6 +350,7 @@ export const loadConfig = (): WingmanConfig => {
     giteaApiToken,
     giteaOwner,
     superbasedUrl,
+    registrationEnabled,
   };
 };
 

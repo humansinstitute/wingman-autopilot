@@ -31,21 +31,6 @@ export function initIdentityPanels(deps) {
     aliasHeading.textContent = "Not signed in";
     summary.append(aliasHeading);
 
-    const guestCta = document.createElement("div");
-    guestCta.className = "wm-identity-guest";
-    guestCta.dataset.role = "identity-register";
-    const registerButton = document.createElement("button");
-    registerButton.type = "button";
-    registerButton.className = "wm-button";
-    registerButton.dataset.action = "identity-register";
-    registerButton.textContent = "Register";
-    const registerHelp = document.createElement("p");
-    registerHelp.className = "wm-dialog-help";
-    registerHelp.dataset.role = "identity-register-help";
-    registerHelp.textContent = "We'll create you a brand new Nostr account and log you in.";
-    guestCta.append(registerButton, registerHelp);
-    summary.append(guestCta);
-
     const details = document.createElement("div");
     details.className = "wm-identity-summary-details";
     details.dataset.role = "identity-details";
@@ -156,16 +141,28 @@ export function initIdentityPanels(deps) {
     botExportLabel.textContent = "Export";
     const botExportValue = document.createElement("dd");
     botExportValue.className = "wm-identity-summary-item";
+    const botActions = document.createElement("div");
+    botActions.className = "wm-identity-button-row";
     const botExportButton = document.createElement("button");
     botExportButton.type = "button";
     botExportButton.className = "wm-button secondary wm-button--small";
     botExportButton.dataset.action = "export-bot-nsec";
     botExportButton.textContent = "Copy bot nsec";
     botExportButton.disabled = true;
+    const botPublishDelegateButton = document.createElement("button");
+    botPublishDelegateButton.type = "button";
+    botPublishDelegateButton.className = "wm-button secondary wm-button--small";
+    botPublishDelegateButton.dataset.action = "publish-bot-delegate-kind";
+    botPublishDelegateButton.textContent = "Publish delegate kind";
+    botPublishDelegateButton.disabled = true;
     const botExportFeedback = document.createElement("span");
     botExportFeedback.className = "wm-identity-copy-feedback";
     botExportFeedback.dataset.role = "identity-bot-export-feedback";
-    botExportValue.append(botExportButton, botExportFeedback);
+    const botPublishDelegateFeedback = document.createElement("span");
+    botPublishDelegateFeedback.className = "wm-identity-copy-feedback";
+    botPublishDelegateFeedback.dataset.role = "identity-bot-delegate-publish-feedback";
+    botActions.append(botExportButton, botPublishDelegateButton);
+    botExportValue.append(botActions, botExportFeedback, botPublishDelegateFeedback);
     list.append(botExportLabel, botExportValue);
 
     details.append(list);
@@ -183,6 +180,32 @@ export function initIdentityPanels(deps) {
     details.append(list, actions);
     summary.append(details);
     return summary;
+  };
+
+  const renderAnonPanel = () => {
+    const section = document.createElement("section");
+    section.className = "wm-identity-option wm-identity-option--primary";
+    section.dataset.role = "identity-register";
+
+    const title = document.createElement("h3");
+    title.className = "wm-identity-option__title";
+    title.textContent = "Anon";
+    section.append(title);
+
+    const description = document.createElement("p");
+    description.className = "wm-identity-panel-description";
+    description.dataset.role = "identity-register-help";
+    description.textContent = "Create a fresh Nostr identity and sign in immediately.";
+    section.append(description);
+
+    const registerButton = document.createElement("button");
+    registerButton.type = "button";
+    registerButton.className = "wm-button";
+    registerButton.dataset.action = "identity-register";
+    registerButton.textContent = "Continue as Anon";
+    section.append(registerButton);
+
+    return section;
   };
 
   // ── Local (BYO Nsec) panel ─────────────────────────────────────
@@ -239,7 +262,7 @@ export function initIdentityPanels(deps) {
     const nsecField = document.createElement("input");
     nsecField.type = "password";
     nsecField.readOnly = true;
-    nsecField.className = "wm-identity-secret-field";
+    nsecField.className = "wm-identity-secret-field wm-identity-input-flat";
     nsecField.dataset.role = "nsec-field";
     nsecField.setAttribute("hidden", "");
     const toggleBtn = document.createElement("button");
@@ -268,6 +291,7 @@ export function initIdentityPanels(deps) {
     importInput.name = "nsec";
     importInput.rows = 2;
     importInput.autocomplete = "off";
+    importInput.className = "wm-identity-input-flat";
     importInput.placeholder = "nsec1...";
     importInput.setAttribute("aria-label", "Import nsec private key");
 
@@ -288,38 +312,34 @@ export function initIdentityPanels(deps) {
   // ── NIP-07 (browser extension) panel ───────────────────────────
 
   const renderNip07Panel = () => {
-    const panel = document.createElement("details");
-    panel.className = "wm-identity-collapsible";
+    const panel = document.createElement("section");
+    panel.className = "wm-identity-option wm-identity-option--primary";
     panel.dataset.identityPanel = "nip07";
-    panel.open = false;
 
-    const heading = document.createElement("summary");
-    heading.textContent = "Browser Extension (NIP-07)";
+    const heading = document.createElement("h3");
+    heading.className = "wm-identity-option__title";
+    heading.textContent = "Browser Extension";
     panel.append(heading);
-
-    const body = document.createElement("div");
-    body.className = "wm-identity-panel";
 
     const description = document.createElement("p");
     description.className = "wm-identity-panel-description";
     description.textContent = "Connect using a Nostr extension such as Alby, nos2x, or Flamingo.";
-    body.append(description);
+    panel.append(description);
 
     const loginButton = document.createElement("button");
     loginButton.type = "button";
     loginButton.className = "wm-button";
     loginButton.dataset.action = "nip07-login";
     loginButton.textContent = "Connect Extension";
-    body.append(loginButton);
+    panel.append(loginButton);
 
     const status = document.createElement("p");
     status.className = "wm-identity-status-line";
     status.dataset.role = "nip07-status";
     status.setAttribute("aria-live", "polite");
     status.hidden = true;
-    body.append(status);
+    panel.append(status);
 
-    panel.append(body);
     return panel;
   };
 
@@ -352,6 +372,7 @@ export function initIdentityPanels(deps) {
     const urlInput = document.createElement("input");
     urlInput.type = "text";
     urlInput.readOnly = true;
+    urlInput.className = "wm-identity-input-flat";
     urlInput.placeholder = "nostrconnect://\u2026";
     urlInput.dataset.role = "nostrconnect-url";
     urlRow.append(urlInput);
@@ -432,6 +453,7 @@ export function initIdentityPanels(deps) {
     const textarea = document.createElement("textarea");
     textarea.name = "bunkerUri";
     textarea.rows = 3;
+    textarea.className = "wm-identity-input-flat";
     textarea.placeholder = "bunker://...";
     form.append(textarea);
 
@@ -529,12 +551,12 @@ export function initIdentityPanels(deps) {
   // ── Key Teleport panel ─────────────────────────────────────────
 
   const renderKeyTeleportPanel = () => {
-    const section = document.createElement("div");
-    section.className = "wm-identity-keyteleport";
+    const section = document.createElement("section");
+    section.className = "wm-identity-option wm-identity-option--primary wm-identity-keyteleport";
     section.dataset.section = "keyteleport";
 
     const title = document.createElement("h3");
-    title.className = "wm-identity-keyteleport__title";
+    title.className = "wm-identity-option__title";
     title.textContent = "Key Teleport";
     section.append(title);
 
@@ -648,8 +670,10 @@ export function initIdentityPanels(deps) {
     const summary = renderIdentitySummary();
     card.append(summary);
 
-    const keyTeleportPanel = renderKeyTeleportPanel();
-    card.append(keyTeleportPanel);
+    const primaryOptions = document.createElement("div");
+    primaryOptions.className = "wm-identity-primary";
+    primaryOptions.append(renderAnonPanel(), renderNip07Panel(), renderKeyTeleportPanel());
+    card.append(primaryOptions);
 
     const advanced = document.createElement("details");
     advanced.className = "wm-identity-advanced";
@@ -668,7 +692,7 @@ export function initIdentityPanels(deps) {
 
     const panels = document.createElement("div");
     panels.className = "wm-identity-panels";
-    panels.append(renderLocalIdentityPanel(), renderNip07Panel(), renderBunkerPanel());
+    panels.append(renderLocalIdentityPanel(), renderBunkerPanel());
     advancedBody.append(panels);
 
     advanced.append(advancedBody);

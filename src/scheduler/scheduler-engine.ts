@@ -42,6 +42,7 @@ export interface SchedulerEngineDeps {
   ) => Promise<SessionSnapshot>;
   addPrompt: (sessionId: string, content: string) => void;
   dispatchPrompt: (session: SessionSnapshot) => void;
+  awaitSessionReadyForPrompt?: (session: SessionSnapshot, agent: AgentType) => Promise<void>;
   onBotKeyUnlocked?: (npub: string, secretKey: Uint8Array, botPubkeyHex: string) => void;
 }
 
@@ -108,6 +109,9 @@ class SchedulerEngine {
     this.unscheduleJob(job.id);
 
     if (job.triggerType === "nostr") {
+      // Nostr triggers need the bot key in memory so the listener can decrypt payloads.
+      // Best-effort unlock here allows triggers to work even with no active user session.
+      void this.ensureNostrTriggerUnlocked(job);
       // Nostr triggers are handled by the trigger listener, not scheduled
       return;
     }
@@ -208,6 +212,38 @@ class SchedulerEngine {
     return this.onJobTriggered(jobId);
   }
 
+  private async ensureNostrTriggerUnlocked(job: ScheduledJob): Promise<void> {
+    if (isBotKeyUnlocked(job.userNpub)) {
+      return;
+    }
+
+    try {
+      const sessionSecretBytes = getSessionSecretBytes();
+      const escrowUuid = unwrapEscrowUuid(
+        { ciphertext: job.wrappedKeyCiphertext, nonce: job.wrappedKeyNonce },
+        sessionSecretBytes,
+      );
+      const botKey = this.deps.botKeyStore.getActiveKeyForUser(job.userNpub);
+      if (!botKey) {
+        console.warn(`[scheduler] No active bot key for nostr job ${job.id}`);
+        return;
+      }
+
+      const secretKey = unlockViaEscrow(
+        botKey.encryptedEscrow,
+        botKey.botPubkeyHex,
+        escrowUuid,
+      );
+      storeBotKeyInMemory(job.userNpub, secretKey, botKey.botPubkeyHex, "escrow");
+      this.deps.onBotKeyUnlocked?.(job.userNpub, secretKey, botKey.botPubkeyHex);
+      console.log(`[scheduler] Nostr trigger listener armed for job "${job.name}" (${job.id})`);
+    } catch (err) {
+      console.warn(
+        `[scheduler] Failed to arm nostr trigger for job "${job.name}" (${job.id}): ${(err as Error).message}`,
+      );
+    }
+  }
+
   /**
    * Trigger a job with an appended message (used by Nostr triggers).
    * Composes the prompt as `initialPrompt + "\n\n" + message`.
@@ -296,18 +332,23 @@ class SchedulerEngine {
         job.userNpub,
       );
 
-      // 4. Inject initial prompt (or override)
+      // 4. Wait for steady runtime readiness before prompt injection
+      if (this.deps.awaitSessionReadyForPrompt) {
+        await this.deps.awaitSessionReadyForPrompt(session, job.agent as AgentType);
+      }
+
+      // 5. Inject initial prompt (or override)
       this.deps.addPrompt(session.id, promptOverride ?? job.initialPrompt);
 
-      // 5. Enable Night Watchman if configured
+      // 6. Enable Night Watchman if configured
       if (job.nightwatchmanEnabled) {
         this.deps.nightWatchStore.enableSession(session.id);
       }
 
-      // 6. Dispatch the prompt
+      // 7. Dispatch the prompt
       this.deps.dispatchPrompt(session);
 
-      // 7. Update job and record success
+      // 8. Update job and record success
       const now = new Date().toISOString();
       const updateFields: Record<string, unknown> = { lastRunAt: now };
       const cron = this.cronJobs.get(jobId);

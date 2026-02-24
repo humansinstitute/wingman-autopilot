@@ -22,6 +22,7 @@ import {
 import { resolveGiteaCredentials } from "./gitea-user-manager";
 import { runPushGuard } from "./push-guard";
 import { browserSubscribers } from "../mcp/browser-subscribers";
+import { parseBody, jsonError } from "../utils/request-utils";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -39,24 +40,8 @@ type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function jsonError(message: string, status: number): Response {
-  return Response.json({ error: message }, { status });
-}
-
 function jsonOk(data: Record<string, unknown>): Response {
   return Response.json(data);
-}
-
-async function parseBody(request: Request): Promise<Record<string, unknown>> {
-  try {
-    const body = await request.json();
-    if (!body || typeof body !== "object") {
-      throw new Error("Expected JSON object");
-    }
-    return body as Record<string, unknown>;
-  } catch {
-    throw new Error("Invalid JSON body");
-  }
 }
 
 /**

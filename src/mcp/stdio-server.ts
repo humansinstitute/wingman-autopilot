@@ -150,6 +150,11 @@ import {
   handleSuperbasedRecordHistory,
 } from "./tools/superbased-record-history";
 import {
+  superbasedStorageDownloadSchema,
+  superbasedStorageDownloadDescription,
+  handleSuperbasedStorageDownload,
+} from "./tools/superbased-storage-download";
+import {
   wingmanIdentitySchema,
   wingmanIdentityDescription,
   handleGetWingmanIdentity,
@@ -444,6 +449,14 @@ server.tool(
   superbasedRecordHistoryDescription,
   superbasedRecordHistorySchema,
   (params) => handleSuperbasedRecordHistory(params, wingmanUrl, sessionId),
+);
+
+// ---- superbased_storage_download_url ----
+server.tool(
+  "superbased_storage_download_url",
+  superbasedStorageDownloadDescription,
+  superbasedStorageDownloadSchema,
+  (params) => handleSuperbasedStorageDownload(params, wingmanUrl, sessionId),
 );
 
 // ---- git_push ----

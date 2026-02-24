@@ -85,10 +85,16 @@ export async function reconcileAppsWithPM2(
   // Get apps from registry
   const apps = await registry.listApps();
   const appsById = new Map(apps.map((app) => [app.id, app]));
+  const runningPm2Names = new Set<string>();
 
   // Build map of APP_ID -> PM2 process for running apps
   const pm2AppProcesses = new Map<string, PM2ProcessDescription>();
   for (const proc of pm2Processes) {
+    const status = proc.pm2_env?.status;
+    const name = typeof proc.name === "string" ? proc.name : null;
+    if (status === "online" && name) {
+      runningPm2Names.add(name);
+    }
     const appId = getAppIdFromPM2(proc);
     if (appId) {
       pm2AppProcesses.set(appId, proc);
@@ -124,7 +130,8 @@ export async function reconcileAppsWithPM2(
         appsReconciled++;
       }
 
-      // Detect runtime port from PID and register it
+      // Register runtime port for running apps.
+      // Prefer detected listening port, then PM2 env PORT, then assigned app.webAppPort.
       if (pid) {
         logRouting(`detecting port for app`, { appId, pid, pm2Port });
         const detectedPort = await getListeningPortForPid(pid);
@@ -136,18 +143,48 @@ export async function reconcileAppsWithPM2(
           // Fallback to PM2 env PORT if detection failed
           runtimePortRegistry.set(appId, pm2Port, pid);
           logRouting(`registered fallback PM2 port`, { appId, port: pm2Port, pid });
+        } else if (app.webApp && app.webAppPort) {
+          runtimePortRegistry.set(appId, app.webAppPort, pid);
+          logRouting(`registered fallback assigned web app port`, { appId, port: app.webAppPort, pid });
         } else {
           logRouting(`WARN: no port detected or in PM2 env`, { appId, pid });
         }
       } else {
-        logRouting(`WARN: no PID for running app`, { appId });
+        if (pm2Port) {
+          runtimePortRegistry.set(appId, pm2Port);
+          logRouting(`registered PM2 env port without PID`, { appId, port: pm2Port });
+        } else if (app.webApp && app.webAppPort) {
+          runtimePortRegistry.set(appId, app.webAppPort);
+          logRouting(`registered assigned web app port without PID`, { appId, port: app.webAppPort });
+        } else {
+          logRouting(`WARN: no PID for running app`, { appId });
+        }
       }
     }
   }
 
-  // Clear pm2Name for apps no longer in PM2
+  // Secondary reconciliation path:
+  // if APP_ID is missing from PM2 env, keep apps attached by matching stored pm2Name.
   for (const app of apps) {
-    if (app.pm2Name && !pm2AppProcesses.has(app.id)) {
+    if (!app.pm2Name || pm2AppProcesses.has(app.id) || !runningPm2Names.has(app.pm2Name)) {
+      continue;
+    }
+    appsReconciled++;
+    if (app.webApp && app.webAppPort) {
+      runtimePortRegistry.set(app.id, app.webAppPort);
+      logRouting(`matched running app by pm2Name and restored web app port`, {
+        appId: app.id,
+        pm2Name: app.pm2Name,
+        port: app.webAppPort,
+      });
+    } else {
+      logRouting(`matched running app by pm2Name`, { appId: app.id, pm2Name: app.pm2Name });
+    }
+  }
+
+  // Clear pm2Name only when we are sure there is no running PM2 process by APP_ID or pm2Name.
+  for (const app of apps) {
+    if (app.pm2Name && !pm2AppProcesses.has(app.id) && !runningPm2Names.has(app.pm2Name)) {
       // This app has a pm2Name but no PM2 process - clear it
       try {
         await registry.updateApp(app.id, { pm2Name: undefined });

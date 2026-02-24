@@ -17,6 +17,7 @@ import { getDecryptedBotKey } from "../identity/bot-key-manager";
 import { nip44Encrypt, nip44Decrypt, encryptToMultipleRecipients } from "./nip44-crypto";
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex } from "@noble/hashes/utils";
+import { parseBody, jsonError } from "../utils/request-utils";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -25,6 +26,8 @@ import { bytesToHex } from "@noble/hashes/utils";
 export interface SuperbasedApiDependencies {
   /** Default base URL from config.superbasedUrl. */
   defaultBaseUrl: string | null;
+  /** Optional session lookup to resolve user npub from session_id. */
+  getSession?: (sessionId: string) => { npub?: string | null } | null;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -34,22 +37,6 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function jsonError(message: string, status: number): Response {
-  return Response.json({ error: message }, { status });
-}
-
-async function parseBody(request: Request): Promise<Record<string, unknown>> {
-  try {
-    const body = await request.json();
-    if (!body || typeof body !== "object") {
-      throw new Error("Expected JSON object");
-    }
-    return body as Record<string, unknown>;
-  } catch {
-    throw new Error("Invalid JSON body");
-  }
-}
 
 function resolveBaseUrl(
   paramUrl: string | undefined,
@@ -61,6 +48,22 @@ function resolveBaseUrl(
   throw new Error(
     "No SuperBased URL configured. Set SUPERBASED_URL or pass base_url parameter.",
   );
+}
+
+function resolveUserNpub(
+  deps: SuperbasedApiDependencies,
+  explicitUserNpub: string | undefined,
+  sessionId: string | undefined,
+): string | undefined {
+  if (explicitUserNpub && explicitUserNpub.trim().length > 0) {
+    return explicitUserNpub;
+  }
+  if (!sessionId || !deps.getSession) {
+    return undefined;
+  }
+  const session = deps.getSession(sessionId);
+  const sessionNpub = session?.npub;
+  return sessionNpub && sessionNpub.length > 0 ? sessionNpub : undefined;
 }
 
 /**
@@ -153,6 +156,16 @@ export function createSuperbasedApiHandler(deps: SuperbasedApiDependencies) {
         return await handleHistory(deps, url);
       }
 
+      // GET /api/superbased/storage/:objectId/download-url
+      if (
+        segments.length === 5 &&
+        segments[2] === "storage" &&
+        segments[4] === "download-url" &&
+        method === "GET"
+      ) {
+        return await handleStorageDownloadUrl(deps, url, segments[3]!);
+      }
+
       return jsonError("Not found", 404);
     } catch (err) {
       console.error("[superbased-api] Error:", err);
@@ -183,10 +196,12 @@ async function handleHealth(
   }
 
   const userNpub = url.searchParams.get("user_npub") ?? undefined;
+  const sessionId = url.searchParams.get("session_id") ?? undefined;
+  const effectiveUserNpub = resolveUserNpub(deps, userNpub, sessionId);
 
   try {
     const healthUrl = `${baseUrl}/health`;
-    const response = await authenticatedGet(healthUrl, userNpub);
+    const response = await authenticatedGet(healthUrl, effectiveUserNpub);
     const data = await response.json();
     return Response.json({ status: response.status, data });
   } catch (err) {
@@ -226,10 +241,12 @@ async function handleFetchRecords(
   }
 
   const userNpub = url.searchParams.get("user_npub") ?? undefined;
+  const sessionId = url.searchParams.get("session_id") ?? undefined;
+  const effectiveUserNpub = resolveUserNpub(deps, userNpub, sessionId);
 
   let signingIdentity: { secretKey: Uint8Array; pubkey: string; source: string };
   try {
-    signingIdentity = resolveSigningIdentity(userNpub);
+    signingIdentity = resolveSigningIdentity(effectiveUserNpub);
   } catch (err) {
     return jsonError((err as Error).message, 500);
   }
@@ -247,7 +264,7 @@ async function handleFetchRecords(
   if (cursor) upstreamUrl.searchParams.set("cursor", cursor);
 
   try {
-    const response = await authenticatedGet(upstreamUrl.toString(), userNpub);
+    const response = await authenticatedGet(upstreamUrl.toString(), effectiveUserNpub);
 
     if (!response.ok) {
       const text = await response.text();
@@ -336,10 +353,12 @@ async function handleSyncRecords(
   }
 
   const userNpub = body.user_npub as string | undefined;
+  const sessionId = body.session_id as string | undefined;
+  const effectiveUserNpub = resolveUserNpub(deps, userNpub, sessionId);
 
   let signingIdentity: { secretKey: Uint8Array; pubkey: string; source: string };
   try {
-    signingIdentity = resolveSigningIdentity(userNpub);
+    signingIdentity = resolveSigningIdentity(effectiveUserNpub);
   } catch (err) {
     return jsonError((err as Error).message, 500);
   }
@@ -396,7 +415,7 @@ async function handleSyncRecords(
   try {
     const response = await authenticatedPost(syncUrl, {
       records: encryptedRecords,
-    }, userNpub);
+    }, effectiveUserNpub);
 
     if (!response.ok) {
       const text = await response.text();
@@ -465,6 +484,8 @@ async function handleHistory(
 
   const includeData = url.searchParams.get("include_data") === "true";
   const userNpub = url.searchParams.get("user_npub") ?? undefined;
+  const sessionId = url.searchParams.get("session_id") ?? undefined;
+  const effectiveUserNpub = resolveUserNpub(deps, userNpub, sessionId);
 
   const upstreamUrl = new URL(
     `${baseUrl}/records/${appNpub}/history/${recordId}`,
@@ -474,7 +495,7 @@ async function handleHistory(
   }
 
   try {
-    const response = await authenticatedGet(upstreamUrl.toString(), userNpub);
+    const response = await authenticatedGet(upstreamUrl.toString(), effectiveUserNpub);
 
     if (!response.ok) {
       const text = await response.text();
@@ -487,7 +508,7 @@ async function handleHistory(
     if (includeData && data.versions && Array.isArray(data.versions)) {
       let signingIdentity: { secretKey: Uint8Array; pubkey: string } | null = null;
       try {
-        signingIdentity = resolveSigningIdentity(userNpub);
+        signingIdentity = resolveSigningIdentity(effectiveUserNpub);
       } catch {
         // Non-fatal: just skip decryption
       }
@@ -515,5 +536,51 @@ async function handleHistory(
   } catch (err) {
     console.warn(`[superbased-api] History fetch failed: ${(err as Error).message}`);
     return jsonError(`History fetch failed: ${(err as Error).message}`, 502);
+  }
+}
+
+/**
+ * GET /api/superbased/storage/:objectId/download-url
+ *
+ * Proxy a presigned download URL request for a storage object.
+ * Signs with the user's bot key (or root fallback) via signForSession.
+ */
+async function handleStorageDownloadUrl(
+  deps: SuperbasedApiDependencies,
+  url: URL,
+  objectId: string,
+): Promise<Response> {
+  let baseUrl: string;
+  try {
+    baseUrl = resolveBaseUrl(
+      url.searchParams.get("base_url") ?? undefined,
+      deps.defaultBaseUrl,
+    );
+  } catch (err) {
+    return jsonError((err as Error).message, 400);
+  }
+
+  const userNpub = url.searchParams.get("user_npub") ?? undefined;
+  const sessionId = url.searchParams.get("session_id") ?? undefined;
+  const effectiveUserNpub = resolveUserNpub(deps, userNpub, sessionId);
+  if (!effectiveUserNpub) {
+    return jsonError("user_npub query parameter is required", 400);
+  }
+
+  const targetUrl = `${baseUrl}/storage/${objectId}/download-url`;
+
+  try {
+    const response = await authenticatedGet(targetUrl, effectiveUserNpub);
+
+    if (!response.ok) {
+      const text = await response.text();
+      return jsonError(`Upstream API error (${response.status}): ${text}`, response.status);
+    }
+
+    const data = await response.json();
+    return Response.json(data);
+  } catch (err) {
+    console.warn(`[superbased-api] Storage download URL failed: ${(err as Error).message}`);
+    return jsonError(`Storage download URL failed: ${(err as Error).message}`, 502);
   }
 }

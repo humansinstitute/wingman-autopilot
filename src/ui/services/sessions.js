@@ -153,6 +153,7 @@ export async function postSessionMessageApi(sessionId, content, type = "user") {
         ? body.error
         : response.statusText || "Agent request failed"
     );
+    error.status = response.status;
     // Attach balance to error for caller to handle
     if (body && typeof body === "object" && typeof body.balance === "number") {
       error.balance = body.balance;

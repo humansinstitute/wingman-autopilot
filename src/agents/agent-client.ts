@@ -27,11 +27,19 @@ export const parseAllowedHosts = (value: string): string[] => {
 };
 
 export const pickAgentHost = (hosts: string[]): string => {
-  const ipv4Hosts = hosts.filter((host) => host === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(host));
+  // Prefer explicit IPv4 loopback first to avoid localhost resolving to ::1
+  // when AgentAPI is only reachable over IPv4.
+  if (hosts.includes("127.0.0.1")) {
+    return "127.0.0.1";
+  }
+  const ipv4Hosts = hosts.filter((host) => /^\d+\.\d+\.\d+\.\d+$/.test(host));
   if (ipv4Hosts.length > 0) {
     return ipv4Hosts[0]!;
   }
-  return "localhost";
+  if (hosts.includes("localhost")) {
+    return "localhost";
+  }
+  return "127.0.0.1";
 };
 
 export const normaliseHostForUrl = (host: string): string => host;

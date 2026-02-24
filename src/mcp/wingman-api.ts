@@ -23,6 +23,8 @@ import type { UserSettingsStore } from "../storage/user-settings-store";
 import type { ArtifactsStore, CreateArtifactInput } from "../storage/artifacts-store";
 import type { NpubProjectRecord } from "../projects/npub-project-store";
 import type { MemoryStore } from "./memory-store";
+import { normaliseNpub } from "../identity/npub-utils";
+import { parseBody, jsonError } from "../utils/request-utils";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -35,6 +37,7 @@ export interface WingmanMcpApiDependencies {
     agent: AgentType,
     workingDirectory?: string,
     name?: string,
+    explicitNpub?: string,
   ) => Promise<SessionSnapshot>;
   stopSession: (sessionId: string) => Promise<SessionSnapshot | null>;
   scheduleArchive: (sessionId: string) => void;
@@ -64,22 +67,6 @@ type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 function jsonOk(data: unknown): Response {
   return Response.json(data);
-}
-
-function jsonError(message: string, status: number): Response {
-  return Response.json({ error: message }, { status });
-}
-
-async function parseBody(request: Request): Promise<Record<string, unknown>> {
-  try {
-    const body = await request.json();
-    if (!body || typeof body !== "object") {
-      throw new Error("Expected JSON object");
-    }
-    return body as Record<string, unknown>;
-  } catch {
-    throw new Error("Invalid JSON body");
-  }
 }
 
 function requireSessionId(
@@ -370,13 +357,17 @@ async function handleCreateSession(
 
   const denied = requireSessionId(deps, sessionId);
   if (denied) return denied;
+  const callerSession = deps.getSession(sessionId!);
+  if (!callerSession) {
+    return jsonError("Caller session not found", 404);
+  }
 
   const validAgents: AgentType[] = ["codex", "claude", "goose", "opencode", "gemini"];
   if (!agent || !validAgents.includes(agent as AgentType)) {
     return jsonError(`agent must be one of: ${validAgents.join(", ")}`, 400);
   }
 
-  const session = await deps.createSession(agent as AgentType, directory, name);
+  const session = await deps.createSession(agent as AgentType, directory, name, callerSession.npub);
   return jsonOk({
     id: session.id,
     agent: session.agent,
@@ -425,8 +416,8 @@ async function handleStopSession(
   }
 
   // Same-owner check: caller's npub must match target's npub
-  const callerNpub = callerSession.npub ?? null;
-  const targetNpub = targetSession.npub ?? null;
+  const callerNpub = normaliseNpub(callerSession.npub ?? null);
+  const targetNpub = normaliseNpub(targetSession.npub ?? null);
   if (!callerNpub || !targetNpub || callerNpub !== targetNpub) {
     return jsonError("Cannot stop sessions belonging to another user", 403);
   }

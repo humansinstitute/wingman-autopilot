@@ -1,6 +1,7 @@
 import { sessionArchiveStore } from "./session-archive-store";
 import { messageStore } from "./message-store";
 import type { ProcessManager } from "../agents/process-manager";
+import type { SessionSnapshot } from "../agents/process-manager";
 
 const ARCHIVE_DELAY_MS = 5000;
 
@@ -39,14 +40,15 @@ const archiveSession = (sessionId: string, manager: ProcessManager): void => {
     const storedSessions = messageStore.listSessions();
     const storedSession = storedSessions.find((s) => s.id === sessionId);
 
-    if (!storedSession) {
-      console.warn(`[archive] Session ${sessionId} not found in store, skipping archive`);
-      return;
-    }
-
     // Check if session is still stopped (not restarted)
     if (session && (session.status === "running" || session.status === "starting")) {
       console.log(`[archive] Session ${sessionId} was restarted, skipping archive`);
+      return;
+    }
+
+    const archiveMetadata = resolveArchiveMetadata(storedSession, session, sessionId);
+    if (!archiveMetadata) {
+      console.warn(`[archive] Session ${sessionId} metadata not found, skipping archive`);
       return;
     }
 
@@ -55,13 +57,13 @@ const archiveSession = (sessionId: string, manager: ProcessManager): void => {
 
     // Archive the session
     sessionArchiveStore.archiveSession({
-      id: storedSession.id,
-      agent: storedSession.agent,
-      name: storedSession.name,
-      npub: storedSession.npub,
-      workingDirectory: storedSession.workingDirectory,
-      startedAt: storedSession.startedAt,
-      origin: storedSession.origin,
+      id: archiveMetadata.id,
+      agent: archiveMetadata.agent,
+      name: archiveMetadata.name,
+      npub: archiveMetadata.npub,
+      workingDirectory: archiveMetadata.workingDirectory,
+      startedAt: archiveMetadata.startedAt,
+      origin: archiveMetadata.origin,
       messages: messages.map((m) => ({
         id: m.id,
         role: m.role,
@@ -76,6 +78,39 @@ const archiveSession = (sessionId: string, manager: ProcessManager): void => {
   } catch (error) {
     console.error(`[archive] Failed to archive session ${sessionId}:`, error);
   }
+};
+
+const resolveArchiveMetadata = (
+  storedSession: ReturnType<typeof messageStore.listSessions>[number] | undefined,
+  liveSession: SessionSnapshot | undefined,
+  sessionId: string,
+) => {
+  if (storedSession) {
+    return {
+      id: storedSession.id,
+      agent: storedSession.agent,
+      name: storedSession.name,
+      npub: storedSession.npub,
+      workingDirectory: storedSession.workingDirectory,
+      startedAt: storedSession.startedAt,
+      origin: storedSession.origin,
+    };
+  }
+
+  if (!liveSession) {
+    return null;
+  }
+
+  console.warn(`[archive] Session ${sessionId} missing store record, using live session metadata`);
+  return {
+    id: liveSession.id,
+    agent: liveSession.agent,
+    name: liveSession.name ?? null,
+    npub: liveSession.npub ?? null,
+    workingDirectory: liveSession.workingDirectory ?? null,
+    startedAt: liveSession.startedAt,
+    origin: liveSession.origin ?? null,
+  };
 };
 
 export const getArchivePendingCount = (): number => {

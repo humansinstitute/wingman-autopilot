@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type Dirent } from "node:fs";
 import { cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -33,12 +33,10 @@ import {
 } from "./apps/app-registry";
 import { appAliasRegistry } from "./apps/app-alias-registry";
 import {
-  AppActionInProgressError,
-  AppScriptMissingError,
   appProcessManager,
   type AppProcessStatus,
 } from "./apps/app-process-manager";
-import { scanDirectoryTree, type TreeNode } from "./apps/app-detector";
+import { scanDirectoryTree } from "./apps/app-detector";
 
 /** Tmux session for the Wingman core process (used by warm restart manager). */
 const WINGMAN_CORE_TMUX_SESSION = "wingman-apps";
@@ -58,7 +56,7 @@ import {
   type FeatureFlagState,
 } from "./storage/feature-flag-store";
 import { FileWatcherRunner } from "./watchers/file-watcher-runner";
-import { identityUserStore, InsufficientBalanceError } from "./storage/identity-user-store";
+import { identityUserStore } from "./storage/identity-user-store";
 import { TodoStore } from "./todos/todo-store";
 import { createTodoApiHandler } from "./todos/todo-api";
 import { ProjectStore } from "./projects/project-store";
@@ -122,13 +120,29 @@ import {
   type AccessRule,
 } from "./auth/access-control";
 import { handleKeyTeleport, handleKeyTeleportRegistration } from "./auth/keyteleport";
+import { secureResolvePath, validatePathSegment, sanitizePath } from "./server/path-security.js";
+import {
+  MAX_DIRECTORY_RESULTS,
+  DIRECTORY_BROWSER_ROOT,
+  expandHomeDirectory,
+  formatHomeRelativePath,
+  formatRootDirectoryName,
+  ensureWithinBase,
+  createPathUtils,
+} from "./server/path-utils";
 import { createStaticAssetService, compressResponse } from "./server/static-assets";
 import { maybeRefreshSessionCookie } from "./server/session-refresh";
 import { handleSubdomainRequest, resolveAliasToPort, proxyRequestToApp, type SubdomainProxyConfig } from "./server/subdomain-proxy";
+import { handleAppsApi } from "./server/apps-api-routes";
 import { isAgentRuntimeStatus } from "./types/agent-status";
+import { scheduleCleanup } from "./uploads/cleanup";
 import { createSessionEventsHandler } from "./server/session-events";
 import { sessionBroadcaster, createSessionSubscribeResponse } from "./server/session-broadcaster";
 import { handleChatApi, type ChatApiContext } from "./server/chat-routes";
+import { handleSessionApi, type SessionApiContext } from "./server/session-api-routes";
+import { handleDocsApi, type DocsApiContext } from "./server/docs-routes";
+import { handleAdminUsersApi, type AdminUsersApiContext } from "./server/admin-users-routes";
+import { performSystemCleanup } from "./server/system-cleanup.js";
 import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import { SchedulerStore } from "./scheduler/scheduler-store";
 import { SchedulerEngine } from "./scheduler/scheduler-engine";
@@ -149,6 +163,9 @@ import { reconcileAppsWithPM2 } from "./server/bootstrap/pm2-reconcile";
 import { connectPM2 } from "./agents/pm2-wrapper";
 import { createUploadHelpers } from "./server/uploads/helpers";
 import { resolveAndCacheNostrProfile } from "./server/nostr-profile";
+import { shouldKeepBotKeyForNostrTriggers } from "./server/botkey-lifecycle";
+import { waitForSessionPromptReadiness } from "./server/session-readiness";
+import { createPromptDispatchEngine, QueueDispatchError } from "./server/prompt-dispatch";
 import {
   validateForkInput,
   getRecentMessages,
@@ -297,9 +314,6 @@ const MESSAGE_COST_SATS = 100;
 const projectStore = new ProjectStore();
 const todoStore = new TodoStore();
 const promptQueueStore = new PromptQueueStore("data/prompt-queue.db");
-const QUEUE_DISPATCH_RETRY_MS = 5000;
-const queueDispatchInFlight = new Set<string>();
-const queueDispatchCooldowns = new Map<string, number>();
 const todoApiHandler = createTodoApiHandler({ store: todoStore, projectStore });
 const projectApiHandler = createProjectApiHandler({
   store: projectStore,
@@ -338,6 +352,19 @@ const schedulerEngine = new SchedulerEngine({
   addPrompt: (sid, content) => promptQueueStore.addPrompt(sid, { content }),
   dispatchPrompt: (session) => {
     void maybeAutoDispatchQueuedPrompt(session);
+  },
+  awaitSessionReadyForPrompt: async (session, agent) => {
+    const timeoutMs = agent === "codex" ? 120000 : 60000;
+    await waitForSessionPromptReadiness({
+      getSession: (sessionId) => manager.getSession(sessionId) ?? null,
+      sessionId: session.id,
+      host: agentHost,
+      timeoutMs,
+      pollIntervalMs: 500,
+      requiredStablePolls: agent === "codex" ? 3 : 2,
+      requestTimeoutMs: 2500,
+    });
+    markPromptStartupReady(session.id);
   },
   onBotKeyUnlocked: onBotKeyUnlockedHook,
 });
@@ -390,11 +417,13 @@ const ngitApiHandler = createNgitApiHandler({
 });
 const superbasedApiHandler = createSuperbasedApiHandler({
   defaultBaseUrl: config.superbasedUrl,
+  getSession: (sid: string) => manager.getSession(sid) ?? null,
 });
 const botKeyApiHandler = createBotKeyApiHandler({
   store: botKeyStore,
   getSession: (sid: string) => manager.getSession(sid),
   onBotKeyUnlocked: onBotKeyUnlockedHook,
+  defaultRelays: config.connectRelays,
 });
 const botCryptoApiHandler = createBotCryptoApiHandler({
   getSession: (sid: string) => manager.getSession(sid),
@@ -865,67 +894,14 @@ const resolveWorkspace = (context?: RequestAuthContext): WorkspaceScope => {
   return resolveWorkspaceScope(config, activeContext, adminNpub, systemDocsRoot, systemDocsRootBoundary);
 };
 
-const secureResolvePath = (base: string, target: string): string => {
-  if (!isAbsolute(base)) {
-    throw new Error("Base path must be absolute");
-  }
-  
-  const normalizedBase = normalize(base);
-  const resolvedTarget = resolvePath(normalizedBase, target);
-  const normalizedTarget = normalize(resolvedTarget);
-  
-  if (!normalizedTarget.startsWith(normalizedBase + sep) && normalizedTarget !== normalizedBase) {
-    throw new Error(`Path traversal detected: ${target} escapes allowed directory`);
-  }
-  
-  return normalizedTarget;
-};
-
-const validatePathSegment = (segment: string): boolean => {
-  const dangerousPatterns = [
-    /\.\./,
-    /[<>:"|?*]/,
-    /^[.]/,
-    /[.]+$/,
-    /\x00/,
-  ];
-  
-  return !dangerousPatterns.some(pattern => pattern.test(segment));
-};
-
-const sanitizePath = (path: string): string => {
-  const wasAbsolute = isAbsolute(path);
-  const sanitized = path
-    .split(sep)
-    .filter(segment => segment.length > 0 && validatePathSegment(segment))
-    .join(sep);
-  return wasAbsolute ? sep + sanitized : sanitized;
-};
-
-const ensureWithinAllowedDirectories = (candidate: string, scope?: WorkspaceScope) => {
-  const activeScope = scope ?? resolveWorkspace();
-  if (activeScope.allowedDirectories.length === 0) {
-    throw new Error("No allowed directories configured");
-  }
-
-  const sanitizedCandidate = sanitizePath(candidate);
-  
-  if (!isAbsolute(sanitizedCandidate)) {
-    throw new Error("Path must be absolute");
-  }
-
-  const normalizedCandidate = normalize(sanitizedCandidate);
-  
-  for (const base of activeScope.allowedDirectories) {
-    const normalizedBase = normalize(base);
-    if (normalizedCandidate === normalizedBase || 
-        normalizedCandidate.startsWith(normalizedBase + sep)) {
-      return normalizedCandidate;
-    }
-  }
-
-  throw new Error(`Directory outside permitted locations: ${normalizedCandidate}`);
-};
+const {
+  ensureWithinAllowedDirectories,
+  toAbsoluteDirectory,
+  ensureDirectory,
+  listRootDirectories,
+  resolveDirectoryParent,
+  toProjectRelativePath,
+} = createPathUtils(resolveWorkspace, projectRoot);
 warmRestartState.marker = warmRestartMarker;
 
 // Initialize PM2 connection
@@ -941,7 +917,7 @@ const manager = new ProcessManager(config);
 const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   getSession: (sid: string) => manager.getSession(sid) ?? null,
   listSessions: () => manager.listSessions(),
-  createSession: (agent, dir, name) => manager.createSession(agent, dir, name),
+  createSession: (agent, dir, name, explicitNpub) => manager.createSession(agent, dir, name, undefined, undefined, explicitNpub),
   stopSession: async (sid) => (await manager.stopSession(sid)) ?? null,
   scheduleArchive: (sid) => scheduleSessionArchive(sid, manager),
   getSessionLogs: (sid) => manager.getLogs(sid),
@@ -1082,10 +1058,6 @@ const orchestratorActiveRootBase = join(userDataRoot, "orchestrator", "active");
 const warmRestartManagerScriptPath = join(projectRoot, "scripts", "warm-restart-manager.ts");
 const maxImageSizeBytes = 10 * 1024 * 1024; // 10MB
 const maxAttachmentSizeBytes = 25 * 1024 * 1024; // 25MB
-const imageTtlMs = 24 * 60 * 60 * 1000;
-const attachmentTtlMs = 24 * 60 * 60 * 1000;
-const imageCleanupIntervalMs = 24 * 60 * 60 * 1000;
-const attachmentCleanupIntervalMs = 24 * 60 * 60 * 1000;
 
 const {
   ensureUserWorkspace,
@@ -1340,80 +1312,6 @@ const buildIdentitySummaries = (
     });
 };
 
-type AdminUserRecord = {
-  npub: string;
-  normalizedNpub: string;
-  alias: string;
-  nickname: string | null;
-  pictureUrl: string | null;
-  onboarded: boolean;
-  onboardedAt: string | null;
-  roles: string[];
-  lastSeenAt: string | null;
-  sessionCount: number;
-  activeSessionCount: number;
-  ports: number[];
-  balance: number;
-};
-
-const buildAdminUserList = (): AdminUserRecord[] => {
-  const activeSessions = manager?.listSessions?.() ?? [];
-  const identitySummaries = buildIdentitySummaries(activeSessions, adminNpub, { includeAll: true });
-  const storedRecords = identityUserStore.listUsers();
-  const storedMap = new Map(storedRecords.map((record) => [record.normalizedNpub, record] as const));
-  const summaryMap = new Map<string, ReturnType<typeof buildIdentitySummaries>[number]>();
-
-  for (const summary of identitySummaries) {
-    if (!summary.normalizedNpub || !summary.npub) {
-      continue;
-    }
-    summaryMap.set(summary.normalizedNpub, summary);
-    const existing = storedMap.get(summary.normalizedNpub);
-    if (!existing) {
-      continue;
-    }
-    try {
-      identityUserStore.touchExisting(summary.npub, {
-        lastSeenAt: summary.lastSeenAt ?? null,
-      });
-    } catch (error) {
-      console.warn(`[admin] failed to sync identity ${summary.npub}:`, error);
-    }
-  }
-
-  const finalRecords = identityUserStore.listUsers();
-  const users: AdminUserRecord[] = finalRecords.map((record) => {
-    const summary = summaryMap.get(record.normalizedNpub ?? "");
-    const sessionCount = summary?.sessionIds.length ?? 0;
-    const activeSessionCount = summary?.activeSessionIds.length ?? 0;
-    const lastSeenAt = summary?.lastSeenAt ?? record.lastSeenAt ?? record.updatedAt ?? null;
-    return {
-      npub: record.npub,
-      normalizedNpub: record.normalizedNpub,
-      alias: record.alias,
-      nickname: record.nickname ?? null,
-      pictureUrl: record.pictureUrl ?? null,
-      onboarded: record.roles.includes("onboard"),
-      onboardedAt: record.onboardedAt,
-      roles: [...record.roles],
-      lastSeenAt,
-      sessionCount,
-      activeSessionCount,
-      ports: record.ports,
-      balance: record.balance,
-    };
-  });
-
-  users.sort((a, b) => {
-    const left = (a.nickname || a.alias || a.npub || "").toLowerCase();
-    const right = (b.nickname || b.alias || b.npub || "").toLowerCase();
-    if (left === right) {
-      return (a.alias || "").localeCompare(b.alias || "");
-    }
-    return left.localeCompare(right);
-  });
-  return users;
-};
 
 const getViewerNormalizedNpub = (authContext: RequestAuthContext): string | null => {
   return normaliseNpub(authContext.npub ?? null);
@@ -1560,148 +1458,10 @@ const resolveTempAttachment = (pathname: string, authContext: RequestAuthContext
   });
 };
 
-const runImageCleanup = async () => {
-  let directories: Dirent[];
-  try {
-    directories = await readdir(imageRoot, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return;
-    }
-    console.error("[uploads] failed to list image directory", error);
-    return;
-  }
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-  const threshold = Date.now() - imageTtlMs;
-
-  await Promise.all(
-    directories
-      .filter((entry) => entry.isDirectory())
-      .map(async (userDir) => {
-        const userPath = join(imageRoot, userDir.name);
-        let agentEntries: Dirent[];
-        try {
-          agentEntries = await readdir(userPath, { withFileTypes: true });
-        } catch (error) {
-          console.error(`[uploads] failed to list user image directory ${userDir.name}`, error);
-          return;
-        }
-
-        await Promise.all(
-          agentEntries
-            .filter((entry) => entry.isDirectory())
-            .map(async (agentDir) => {
-              const agentPath = join(userPath, agentDir.name);
-              let files: Dirent[];
-              try {
-                files = await readdir(agentPath, { withFileTypes: true });
-              } catch (error) {
-                console.error(`[uploads] failed to list agent image directory ${agentDir.name}`, error);
-                return;
-              }
-
-              await Promise.all(
-                files
-                  .filter((entry) => entry.isFile())
-                  .map(async (file) => {
-                    const filePath = join(agentPath, file.name);
-                    try {
-                      const stats = await stat(filePath);
-                      if (stats.mtimeMs < threshold) {
-                        await rm(filePath, { force: true });
-                        console.log(`[uploads] removed expired image ${filePath}`);
-                      }
-                    } catch (error) {
-                      console.error(`[uploads] failed to cleanup ${filePath}`, error);
-                    }
-                  }),
-              );
-            }),
-        );
-      }),
-  );
-};
-
-const scheduleImageCleanup = () => {
-  // Fire-and-forget; best-effort cleanup
-  runImageCleanup().catch((error) => console.error("[uploads] initial cleanup failed", error));
-  setInterval(() => {
-    runImageCleanup().catch((error) => console.error("[uploads] scheduled cleanup failed", error));
-  }, imageCleanupIntervalMs).unref?.();
-};
-
-scheduleImageCleanup();
-
-const runAttachmentCleanup = async () => {
-  let directories: Dirent[];
-  try {
-    directories = await readdir(attachmentRoot, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return;
-    }
-    console.error("[uploads] failed to list attachment directory", error);
-    return;
-  }
-
-  const threshold = Date.now() - attachmentTtlMs;
-
-  await Promise.all(
-    directories
-      .filter((entry) => entry.isDirectory())
-      .map(async (userDir) => {
-        const userPath = join(attachmentRoot, userDir.name);
-        let agentEntries: Dirent[];
-        try {
-          agentEntries = await readdir(userPath, { withFileTypes: true });
-        } catch (error) {
-          console.error(`[uploads] failed to list user attachment directory ${userDir.name}`, error);
-          return;
-        }
-
-        await Promise.all(
-          agentEntries
-            .filter((entry) => entry.isDirectory())
-            .map(async (agentDir) => {
-              const agentPath = join(userPath, agentDir.name);
-              let files: Dirent[];
-              try {
-                files = await readdir(agentPath, { withFileTypes: true });
-              } catch (error) {
-                console.error(`[uploads] failed to list attachment subdirectory ${agentDir.name}`, error);
-                return;
-              }
-
-              await Promise.all(
-                files
-                  .filter((entry) => entry.isFile())
-                  .map(async (file) => {
-                    const filePath = join(agentPath, file.name);
-                    try {
-                      const stats = await stat(filePath);
-                      if (stats.mtimeMs < threshold) {
-                        await rm(filePath, { force: true });
-                        console.log(`[uploads] removed expired attachment ${filePath}`);
-                      }
-                    } catch (error) {
-                      console.error(`[uploads] failed to cleanup attachment ${filePath}`, error);
-                    }
-                  }),
-              );
-            }),
-        );
-      }),
-  );
-};
-
-const scheduleAttachmentCleanup = () => {
-  runAttachmentCleanup().catch((error) => console.error("[uploads] initial attachment cleanup failed", error));
-  setInterval(() => {
-    runAttachmentCleanup().catch((error) => console.error("[uploads] scheduled attachment cleanup failed", error));
-  }, attachmentCleanupIntervalMs).unref?.();
-};
-
-scheduleAttachmentCleanup();
+scheduleCleanup({ root: imageRoot, ttlMs: ONE_DAY_MS, intervalMs: ONE_DAY_MS, label: "image" });
+scheduleCleanup({ root: attachmentRoot, ttlMs: ONE_DAY_MS, intervalMs: ONE_DAY_MS, label: "attachment" });
 
 manager.on((event) => {
   if (event.type === "session-started") {
@@ -1786,6 +1546,7 @@ manager.on((event) => {
     return;
   }
   if (event.type === "session-deleted") {
+    clearPromptStartupReady(event.session.id);
     // Session archived and removed from memory — notify browsers to refresh
     if (event.session.npub) {
       sessionBroadcaster.broadcast(event.session.npub, {
@@ -1809,13 +1570,17 @@ manager.on((event) => {
       }
       // Clear bot key from memory when last session for this user stops
       if (event.type === "session-stopped") {
+        clearPromptStartupReady(event.session.id);
         const userNpub = event.session.npub;
         const otherActive = manager.listSessions().some(
           (s) => s.npub === userNpub && s.id !== event.session.id,
         );
-        if (!otherActive) {
+        const hasEnabledNostrTrigger = shouldKeepBotKeyForNostrTriggers(schedulerStore, userNpub);
+        if (!otherActive && !hasEnabledNostrTrigger) {
           clearBotKey(userNpub);
           triggerListener.unsubscribe(userNpub);
+        } else if (!otherActive && hasEnabledNostrTrigger) {
+          console.log(`[trigger-listener] Keeping bot key unlocked for ${userNpub.slice(0, 20)}… (enabled nostr trigger)`);
         }
       }
     }
@@ -1847,155 +1612,6 @@ manager.on((event) => {
   }
 });
 
-const MAX_DIRECTORY_RESULTS = 50;
-const DIRECTORY_BROWSER_ROOT = "__root__";
-
-const expandHomeDirectory = (input: string): string => {
-  if (!input.startsWith("~")) {
-    return input;
-  }
-  const home = Bun.env.HOME ?? "";
-  return home ? input.replace("~", home) : input;
-};
-
-const toAbsoluteDirectory = (input: string, scope?: WorkspaceScope): string => {
-  const activeScope = scope ?? resolveWorkspace();
-  const expanded = expandHomeDirectory(input);
-  const candidate = isAbsolute(expanded)
-    ? expanded
-    : resolvePath(activeScope.defaultDirectory, expanded);
-  const normalised = normalize(candidate);
-  ensureWithinAllowedDirectories(normalised, activeScope);
-  return normalised;
-};
-
-const formatHomeRelativePath = (absolute: string): string => {
-  try {
-    const home = homedir();
-    if (!home) {
-      return absolute;
-    }
-    const normalisedHome = normalize(home);
-    if (absolute === normalisedHome) {
-      return "~";
-    }
-    const prefix = normalisedHome.endsWith(sep) ? normalisedHome : `${normalisedHome}${sep}`;
-    if (absolute.startsWith(prefix)) {
-      const suffix = absolute.slice(prefix.length);
-      return suffix.length > 0 ? `~${sep}${suffix}` : "~";
-    }
-  } catch {
-    // Ignore homedir resolution errors and fall back to the basename below.
-  }
-  return absolute;
-};
-
-const formatRootDirectoryName = (absolute: string): string => {
-  const homeRelative = formatHomeRelativePath(absolute);
-  if (homeRelative !== absolute) {
-    return homeRelative;
-  }
-  const name = basename(absolute);
-  return name.length > 0 ? name : absolute;
-};
-
-const ensureDirectory = async (
-  input: string | null | undefined,
-  scopeOverride?: WorkspaceScope,
-): Promise<string> => {
-  const activeScope = scopeOverride ?? resolveWorkspace();
-  const source = input?.trim();
-  const candidate = source && source.length > 0 ? source : activeScope.defaultDirectory;
-  const absolute = toAbsoluteDirectory(candidate, activeScope);
-  let resolved = absolute;
-
-  try {
-    resolved = await realpath(absolute);
-  } catch {
-    // realpath fails when the directory does not exist; keep the normalized path.
-    resolved = absolute;
-  } finally {
-    ensureWithinAllowedDirectories(resolved, activeScope);
-  }
-
-  let stats: Awaited<ReturnType<typeof stat>>;
-  try {
-    stats = await stat(resolved);
-  } catch {
-    throw new Error(`Directory not found: ${resolved}`);
-  }
-
-  if (!stats.isDirectory()) {
-    throw new Error(`Path is not a directory: ${resolved}`);
-  }
-
-  return resolved;
-};
-
-const listRootDirectories = async (query?: string, scopeOverride?: WorkspaceScope) => {
-  const activeScope = scopeOverride ?? resolveWorkspace();
-  const term = query?.trim().toLowerCase() ?? "";
-  const seen = new Set<string>();
-  const entries: Array<{ name: string; path: string }> = [];
-
-  for (const absolute of activeScope.allowedDirectories) {
-    if (seen.has(absolute)) {
-      continue;
-    }
-    seen.add(absolute);
-    let stats: Awaited<ReturnType<typeof stat>>;
-    try {
-      stats = await stat(absolute);
-    } catch {
-      continue;
-    }
-    if (!stats.isDirectory()) {
-      continue;
-    }
-    entries.push({
-      name: formatRootDirectoryName(absolute),
-      path: absolute,
-    });
-  }
-
-  entries.sort((a, b) => a.name.localeCompare(b.name));
-
-  const filtered = term.length === 0
-    ? entries
-    : entries.filter((entry) =>
-        entry.name.toLowerCase().includes(term) || entry.path.toLowerCase().includes(term),
-      );
-
-  const limited = term.length === 0 ? filtered : filtered.slice(0, MAX_DIRECTORY_RESULTS);
-
-  return {
-    path: "",
-    parent: null as string | null,
-    entries: limited,
-  };
-};
-
-const resolveDirectoryParent = (directory: string, scopeOverride?: WorkspaceScope): string | null => {
-  const activeScope = scopeOverride ?? resolveWorkspace();
-  for (const allowed of activeScope.allowedDirectories) {
-    if (directory === allowed) {
-      return DIRECTORY_BROWSER_ROOT;
-    }
-  }
-
-  const candidate = dirname(directory);
-  if (candidate === directory) {
-    return null;
-  }
-
-  try {
-    ensureWithinAllowedDirectories(candidate, activeScope);
-    return candidate;
-  } catch {
-    return DIRECTORY_BROWSER_ROOT;
-  }
-};
-
 const DIRECTORY_NAME_MAX_LENGTH = 160;
 
 const normaliseDirectoryEntryName = (value: unknown): string => {
@@ -2018,27 +1634,6 @@ const normaliseDirectoryEntryName = (value: unknown): string => {
   return trimmed;
 };
 
-const FILE_NAME_MAX_LENGTH = 200;
-
-const normaliseDocsFileName = (value: unknown): string => {
-  if (typeof value !== "string") {
-    throw new Error("File name is required");
-  }
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error("File name is required");
-  }
-  if (trimmed.length > FILE_NAME_MAX_LENGTH) {
-    throw new Error("File name is too long");
-  }
-  if (trimmed === "." || trimmed === "..") {
-    throw new Error("File name is not allowed");
-  }
-  if (/[\\/]/.test(trimmed)) {
-    throw new Error("File name cannot contain path separators");
-  }
-  return trimmed;
-};
 
 const createDirectoryEntry = async (parentInput: string | null | undefined, nameInput: unknown) => {
   const parentDirectory = await ensureDirectory(parentInput);
@@ -2065,664 +1660,6 @@ const createDirectoryEntry = async (parentInput: string | null | undefined, name
   };
 };
 
-const isWithinDocsRoot = (target: string, scopeOverride?: WorkspaceScope): boolean => {
-  if (!target) return false;
-  const activeScope = scopeOverride ?? resolveWorkspace();
-  const normalized = normalize(target);
-  return normalized === activeScope.docsRoot || normalized.startsWith(activeScope.docsRootBoundary);
-};
-
-const toDocsRelativePath = (target: string, scopeOverride?: WorkspaceScope): string => {
-  if (!target) return "";
-  const activeScope = scopeOverride ?? resolveWorkspace();
-  if (!isWithinDocsRoot(target, activeScope)) {
-    return "";
-  }
-  const relativePath = relative(activeScope.docsRoot, target);
-  return relativePath && relativePath.length > 0 ? relativePath : "";
-};
-
-const toDocsDisplayPath = (target: string, scopeOverride?: WorkspaceScope): string => {
-  const relativePath = toDocsRelativePath(target, scopeOverride);
-  return relativePath ? `~/${relativePath}` : "~";
-};
-
-const resolveDocsPath = (
-  input: string | null | undefined,
-  scopeOverride?: WorkspaceScope,
-): string => {
-  const activeScope = scopeOverride ?? resolveWorkspace();
-  const value = input?.trim();
-  const candidate = value && value.length > 0 ? value : activeScope.docsRoot;
-  const absolute = isAbsolute(candidate) ? candidate : join(activeScope.docsRoot, candidate);
-  const normalized = normalize(absolute);
-  if (!isWithinDocsRoot(normalized, activeScope)) {
-    throw new Error("Access outside the home directory is not permitted");
-  }
-  return normalized;
-};
-
-const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown"]);
-const MAX_DOCS_ENTRIES = 500;
-const MAX_DOCS_FILE_SIZE = 2 * 1024 * 1024; // 2MB
-const DOCS_NAME_MAX_LENGTH = 160;
-
-interface DocsPreviewType {
-  format: "markdown" | "code";
-  language: string;
-  label: string;
-}
-
-const TEXT_PREVIEW_TYPES = new Map<string, DocsPreviewType>([
-  [".md", { format: "markdown", language: "markdown", label: "Markdown" }],
-  [".markdown", { format: "markdown", language: "markdown", label: "Markdown" }],
-  [".mdx", { format: "markdown", language: "markdown", label: "Markdown" }],
-  [".txt", { format: "code", language: "plaintext", label: "Text" }],
-  [".log", { format: "code", language: "plaintext", label: "Log" }],
-  [".json", { format: "code", language: "json", label: "JSON" }],
-  [".jsonc", { format: "code", language: "json", label: "JSON" }],
-  [".yaml", { format: "code", language: "yaml", label: "YAML" }],
-  [".yml", { format: "code", language: "yaml", label: "YAML" }],
-  [".js", { format: "code", language: "javascript", label: "JavaScript" }],
-  [".mjs", { format: "code", language: "javascript", label: "JavaScript" }],
-  [".cjs", { format: "code", language: "javascript", label: "JavaScript" }],
-  [".ts", { format: "code", language: "typescript", label: "TypeScript" }],
-  [".tsx", { format: "code", language: "typescript", label: "TypeScript" }],
-  [".jsx", { format: "code", language: "javascript", label: "JavaScript" }],
-  [".go", { format: "code", language: "go", label: "Go" }],
-  [".rs", { format: "code", language: "rust", label: "Rust" }],
-  [".py", { format: "code", language: "python", label: "Python" }],
-  [".sh", { format: "code", language: "shell", label: "Shell" }],
-  [".bash", { format: "code", language: "shell", label: "Shell" }],
-  [".zsh", { format: "code", language: "shell", label: "Shell" }],
-  [".ini", { format: "code", language: "ini", label: "Config" }],
-  [".conf", { format: "code", language: "ini", label: "Config" }],
-  [".toml", { format: "code", language: "toml", label: "TOML" }],
-  [".env", { format: "code", language: "ini", label: "Config" }],
-  [".css", { format: "code", language: "css", label: "CSS" }],
-  [".html", { format: "code", language: "html", label: "HTML" }],
-]);
-
-const TEXT_PREVIEW_TYPES_BY_NAME = new Map<string, DocsPreviewType>([
-  [".env", { format: "code", language: "ini", label: "Config" }],
-  [".env.example", { format: "code", language: "ini", label: "Config" }],
-]);
-
-type ListDocsDirectoryOptions = {
-  includeHidden?: boolean;
-};
-
-const listDocsDirectory = async (
-  input: string | null | undefined,
-  options: ListDocsDirectoryOptions = {},
-  scopeOverride?: WorkspaceScope,
-) => {
-  const activeScope = scopeOverride ?? resolveWorkspace();
-  const directory = resolveDocsPath(input, activeScope);
-  let stats: Awaited<ReturnType<typeof stat>>;
-  try {
-    stats = await stat(directory);
-  } catch {
-    throw new Error("Directory not found");
-  }
-
-  if (!stats.isDirectory()) {
-    throw new Error("Requested path is not a directory");
-  }
-
-  const includeHidden = Boolean(options.includeHidden);
-
-  let entries: Awaited<ReturnType<typeof readdir>>;
-  try {
-    entries = await readdir(directory, { withFileTypes: true });
-  } catch (error) {
-    throw new Error(`Failed to read directory: ${(error as Error).message ?? "unknown error"}`);
-  }
-
-  const directories: Array<{
-    name: string;
-    path: string;
-    relativePath: string;
-    displayPath: string;
-    type: "directory";
-  }> = [];
-  const files: Array<{
-    name: string;
-    path: string;
-    relativePath: string;
-    displayPath: string;
-    type: "file";
-    previewable: boolean;
-    previewFormat: DocsPreviewType["format"] | null;
-    previewLanguage: string | null;
-    previewLabel: string | null;
-  }> = [];
-
-  for (const entry of entries) {
-    if (entry.isSymbolicLink()) {
-      continue;
-    }
-
-    if (!includeHidden && entry.name.startsWith(".")) {
-      continue;
-    }
-
-    const entryPath = normalize(join(directory, entry.name));
-    if (!isWithinDocsRoot(entryPath, activeScope)) {
-      continue;
-    }
-
-    if (entry.isDirectory()) {
-      const relativePath = toDocsRelativePath(entryPath, activeScope);
-      directories.push({
-        name: entry.name,
-        path: entryPath,
-        relativePath,
-        displayPath: toDocsDisplayPath(entryPath, activeScope),
-        type: "directory",
-      });
-      continue;
-    }
-
-    if (entry.isFile()) {
-      const relativePath = toDocsRelativePath(entryPath, activeScope);
-      const extension = extname(entry.name).toLowerCase();
-      const lowerName = entry.name.toLowerCase();
-      const preview = TEXT_PREVIEW_TYPES_BY_NAME.get(lowerName) ?? TEXT_PREVIEW_TYPES.get(extension) ?? null;
-      files.push({
-        name: entry.name,
-        path: entryPath,
-        relativePath,
-        displayPath: toDocsDisplayPath(entryPath, activeScope),
-        type: "file",
-        previewable: preview !== null,
-        previewFormat: preview?.format ?? null,
-        previewLanguage: preview?.language ?? null,
-        previewLabel: preview?.label ?? null,
-      });
-    }
-
-    if (directories.length + files.length >= MAX_DOCS_ENTRIES) {
-      break;
-    }
-  }
-
-  directories.sort((a, b) => a.name.localeCompare(b.name));
-  files.sort((a, b) => a.name.localeCompare(b.name));
-
-  const parentPath = (() => {
-    if (directory === activeScope.docsRoot) {
-      return null;
-    }
-    const candidate = dirname(directory);
-    if (!isWithinDocsRoot(candidate, activeScope)) {
-      return null;
-    }
-    return candidate;
-  })();
-
-  let git: GitRepositorySummary | null = null;
-  try {
-    git = await describeGitRepository(directory);
-  } catch {
-    git = null;
-  }
-
-  return {
-    path: directory,
-    relativePath: toDocsRelativePath(directory, activeScope),
-    displayPath: toDocsDisplayPath(directory, activeScope),
-    parent: parentPath
-      ? {
-          path: parentPath,
-          relativePath: toDocsRelativePath(parentPath, activeScope),
-          displayPath: toDocsDisplayPath(parentPath, activeScope),
-        }
-      : null,
-    entries: [...directories, ...files],
-    git,
-  };
-};
-
-const resolvePreviewType = (filePath: string): DocsPreviewType => {
-  const name = basename(filePath).toLowerCase();
-  const extension = extname(name).toLowerCase();
-  const preview = TEXT_PREVIEW_TYPES_BY_NAME.get(name) ?? TEXT_PREVIEW_TYPES.get(extension);
-  if (!preview) {
-    throw new Error("Preview for this file type is not supported");
-  }
-  return preview;
-};
-
-const loadDocsFile = async (input: string | null | undefined) => {
-  if (!input) {
-    throw new Error("File path is required");
-  }
-
-  const filePath = resolveDocsPath(input);
-  let stats: Awaited<ReturnType<typeof stat>>;
-  try {
-    stats = await stat(filePath);
-  } catch {
-    throw new Error("File not found");
-  }
-
-  if (!stats.isFile()) {
-    throw new Error("Requested path is not a file");
-  }
-
-  if (stats.size > MAX_DOCS_FILE_SIZE) {
-    throw new Error("File is too large to preview");
-  }
-
-  const preview = resolvePreviewType(filePath);
-
-  if (preview.format === "markdown" && !MARKDOWN_EXTENSIONS.has(extname(filePath).toLowerCase())) {
-    throw new Error("Unsupported Markdown extension");
-  }
-
-  const extension = extname(filePath).toLowerCase();
-
-  let content: string;
-  try {
-    content = await readFile(filePath, "utf-8");
-  } catch (error) {
-    throw new Error(`Failed to read file: ${(error as Error).message ?? "unknown error"}`);
-  }
-
-  return {
-    path: filePath,
-    relativePath: toDocsRelativePath(filePath),
-    displayPath: toDocsDisplayPath(filePath),
-    name: basename(filePath),
-    content,
-    format: preview.format,
-    language: preview.language,
-    label: preview.label,
-  };
-};
-
-const loadDocsFileRaw = async (input: string | null | undefined) => {
-  if (!input) {
-    throw new Error("File path is required");
-  }
-
-  const filePath = resolveDocsPath(input);
-  let stats: Awaited<ReturnType<typeof stat>>;
-  try {
-    stats = await stat(filePath);
-  } catch {
-    throw new Error("File not found");
-  }
-
-  if (!stats.isFile()) {
-    throw new Error("Requested path is not a file");
-  }
-
-  if (stats.size > MAX_DOCS_FILE_SIZE) {
-    throw new Error("File is too large to load");
-  }
-
-  let data: Uint8Array;
-  try {
-    data = await readFile(filePath);
-  } catch (error) {
-    throw new Error(`Failed to read file: ${(error as Error).message ?? "unknown error"}`);
-  }
-
-  const base64 = Buffer.from(data).toString("base64");
-
-  return {
-    path: filePath,
-    relativePath: toDocsRelativePath(filePath),
-    displayPath: toDocsDisplayPath(filePath),
-    name: basename(filePath),
-    base64,
-    size: stats.size,
-    mtimeMs: stats.mtimeMs,
-  };
-};
-
-const updateDocsFile = async (pathInput: string | null | undefined, base64Input: string | null | undefined, expectedMtime: number | null | undefined) => {
-  if (!pathInput) {
-    throw new Error("File path is required");
-  }
-
-  const filePath = resolveDocsPath(pathInput);
-
-  let stats: Awaited<ReturnType<typeof stat>>;
-  try {
-    stats = await stat(filePath);
-  } catch {
-    throw new Error("File not found");
-  }
-
-  if (!stats.isFile()) {
-    throw new Error("Requested path is not a file");
-  }
-
-  if (typeof expectedMtime === "number" && Math.abs(stats.mtimeMs - expectedMtime) > 1) {
-    throw new Error("File has changed since it was loaded");
-  }
-
-  if (base64Input === null || base64Input === undefined) {
-    throw new Error("File contents are required");
-  }
-
-  let bytes: Buffer;
-  try {
-    bytes = Buffer.from(base64Input, "base64");
-  } catch {
-    throw new Error("Invalid base64 payload");
-  }
-
-  if (bytes.length > MAX_DOCS_FILE_SIZE) {
-    throw new Error("File is too large to save");
-  }
-
-  try {
-    await writeFile(filePath, bytes);
-  } catch (error) {
-    throw new Error(`Failed to write file: ${(error as Error).message ?? "unknown error"}`);
-  }
-
-  const nextStats = await stat(filePath);
-
-  return {
-    path: filePath,
-    relativePath: toDocsRelativePath(filePath),
-    displayPath: toDocsDisplayPath(filePath),
-    name: basename(filePath),
-    size: nextStats.size,
-    mtimeMs: nextStats.mtimeMs,
-  };
-};
-
-const ensureDocsDirectory = async (input: string | null | undefined): Promise<string> => {
-  const directory = resolveDocsPath(input);
-  let stats: Awaited<ReturnType<typeof stat>>;
-  try {
-    stats = await stat(directory);
-  } catch {
-    throw new Error("Parent directory not found");
-  }
-  if (!stats.isDirectory()) {
-    throw new Error("Parent path is not a directory");
-  }
-  return directory;
-};
-
-const normaliseDocsEntryName = (value: unknown): string => {
-  if (typeof value !== "string") {
-    throw new Error("Name is required");
-  }
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error("Name is required");
-  }
-  if (trimmed.length > DOCS_NAME_MAX_LENGTH) {
-    throw new Error("Name is too long");
-  }
-  if (trimmed === "." || trimmed === "..") {
-    throw new Error("Name is not allowed");
-  }
-  if (/[\\/]/.test(trimmed)) {
-    throw new Error("Name cannot contain path separators");
-  }
-  return trimmed;
-};
-
-const createDocsDirectory = async (parentInput: string | null | undefined, nameInput: unknown) => {
-  const parentDirectory = await ensureDocsDirectory(parentInput);
-  const name = normaliseDocsEntryName(nameInput);
-  const target = normalize(join(parentDirectory, name));
-  if (!isWithinDocsRoot(target)) {
-    throw new Error("Invalid directory path");
-  }
-
-  try {
-    await mkdir(target, { recursive: false });
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException)?.code;
-    if (code === "EEXIST") {
-      throw new Error("A file or directory with that name already exists");
-    }
-    throw new Error(`Failed to create directory: ${(error as Error).message ?? "unknown error"}`);
-  }
-
-  return {
-    path: target,
-    relativePath: toDocsRelativePath(target),
-    displayPath: toDocsDisplayPath(target),
-    name,
-  };
-};
-
-interface CreateDocsFilePayload {
-  content?: unknown;
-  base64?: unknown;
-}
-
-const createDocsFile = async (
-  parentInput: string | null | undefined,
-  nameInput: unknown,
-  payloadInput: unknown,
-) => {
-  const parentDirectory = await ensureDocsDirectory(parentInput);
-  const name = normaliseDocsEntryName(nameInput);
-  const target = normalize(join(parentDirectory, name));
-  if (!isWithinDocsRoot(target)) {
-    throw new Error("Invalid file path");
-  }
-
-  const payload =
-    payloadInput && typeof payloadInput === "object" && !Array.isArray(payloadInput)
-      ? (payloadInput as CreateDocsFilePayload)
-      : null;
-
-  let buffer: Buffer;
-  if (payload && Object.prototype.hasOwnProperty.call(payload, "base64")) {
-    const base64Value = payload.base64;
-    if (base64Value !== null && base64Value !== undefined) {
-      if (typeof base64Value !== "string") {
-        throw new Error("Invalid base64 payload");
-      }
-      try {
-        buffer = Buffer.from(base64Value, "base64");
-      } catch {
-        throw new Error("Invalid base64 payload");
-      }
-    } else {
-      buffer = Buffer.from("", "utf-8");
-    }
-  } else {
-    const contentValue = payload ? payload.content : payloadInput;
-    const content =
-      typeof contentValue === "string"
-        ? contentValue
-        : typeof contentValue === "number"
-          ? contentValue.toString()
-          : "";
-    buffer = Buffer.from(content, "utf-8");
-  }
-
-  if (buffer.length > MAX_DOCS_FILE_SIZE) {
-    throw new Error("File is too large to create");
-  }
-
-  try {
-    await writeFile(target, buffer, { flag: "wx" });
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException)?.code;
-    if (code === "EEXIST") {
-      throw new Error("A file or directory with that name already exists");
-    }
-    throw new Error(`Failed to create file: ${(error as Error).message ?? "unknown error"}`);
-  }
-
-  const extension = extname(name).toLowerCase();
-  const preview = TEXT_PREVIEW_TYPES.get(extension) ?? null;
-
-  return {
-    path: target,
-    relativePath: toDocsRelativePath(target),
-    displayPath: toDocsDisplayPath(target),
-    name,
-    previewable: preview !== null,
-    previewFormat: preview?.format ?? null,
-    previewLanguage: preview?.language ?? null,
-    previewLabel: preview?.label ?? null,
-  };
-};
-
-const deleteDocsFile = async (pathInput: string | null | undefined) => {
-  const candidate = pathInput?.trim();
-  if (!candidate) {
-    throw new Error("File path is required");
-  }
-  const filePath = resolveDocsPath(candidate);
-
-  let stats: Awaited<ReturnType<typeof stat>>;
-  try {
-    stats = await stat(filePath);
-  } catch {
-    throw new Error("File not found");
-  }
-
-  if (!stats.isFile()) {
-    throw new Error("Requested path is not a file");
-  }
-
-  try {
-    await rm(filePath, { force: false });
-  } catch (error) {
-    throw new Error(`Failed to delete file: ${(error as Error).message ?? "unknown error"}`);
-  }
-
-  return {
-    path: filePath,
-    relativePath: toDocsRelativePath(filePath),
-    displayPath: toDocsDisplayPath(filePath),
-    name: basename(filePath),
-  };
-};
-
-const copyDocsFile = async (
-  pathInput: string | null | undefined,
-  targetDirectoryInput: string | null | undefined,
-  newNameInput?: string | null | undefined,
-) => {
-  const sourcePath = resolveDocsPath(pathInput);
-  let stats: Awaited<ReturnType<typeof stat>>;
-  try {
-    stats = await stat(sourcePath);
-  } catch {
-    throw new Error("File not found");
-  }
-
-  if (!stats.isFile()) {
-    throw new Error("Requested path is not a file");
-  }
-
-  const targetDirectory = await ensureDocsDirectory(targetDirectoryInput);
-  const destinationName = newNameInput && newNameInput.trim().length > 0
-    ? normaliseDocsFileName(newNameInput)
-    : basename(sourcePath);
-  const destinationPath = normalize(join(targetDirectory, destinationName));
-
-  if (!isWithinDocsRoot(destinationPath)) {
-    throw new Error("Invalid destination path");
-  }
-
-  if (destinationPath === sourcePath) {
-    throw new Error("Destination matches the source file");
-  }
-
-  try {
-    await cp(sourcePath, destinationPath, { errorOnExist: true, force: false });
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException)?.code;
-    if (code === "EEXIST") {
-      throw new Error("A file with the same name already exists in the destination");
-    }
-    throw new Error(`Failed to copy file: ${(error as Error).message ?? "unknown error"}`);
-  }
-
-  const destinationStats = await stat(destinationPath);
-
-  return {
-    path: destinationPath,
-    relativePath: toDocsRelativePath(destinationPath),
-    displayPath: toDocsDisplayPath(destinationPath),
-    name: basename(destinationPath),
-    size: destinationStats.size,
-    mtimeMs: destinationStats.mtimeMs,
-  };
-};
-
-const moveDocsFile = async (
-  pathInput: string | null | undefined,
-  targetDirectoryInput: string | null | undefined,
-  newNameInput?: string | null | undefined,
-) => {
-  const sourcePath = resolveDocsPath(pathInput);
-  let stats: Awaited<ReturnType<typeof stat>>;
-  try {
-    stats = await stat(sourcePath);
-  } catch {
-    throw new Error("File not found");
-  }
-
-  if (!stats.isFile()) {
-    throw new Error("Requested path is not a file");
-  }
-
-  const targetDirectory = await ensureDocsDirectory(targetDirectoryInput);
-  const destinationName = newNameInput && newNameInput.trim().length > 0
-    ? normaliseDocsFileName(newNameInput)
-    : basename(sourcePath);
-  const destinationPath = normalize(join(targetDirectory, destinationName));
-
-  if (!isWithinDocsRoot(destinationPath)) {
-    throw new Error("Invalid destination path");
-  }
-
-  if (destinationPath === sourcePath) {
-    throw new Error("Destination matches the source file");
-  }
-
-  try {
-    await rename(sourcePath, destinationPath);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException)?.code;
-    if (code === "EEXIST") {
-      throw new Error("A file with the same name already exists in the destination");
-    }
-    if (code === "EXDEV") {
-      try {
-        await cp(sourcePath, destinationPath, { errorOnExist: true, force: false });
-        await rm(sourcePath, { force: false });
-      } catch (copyError) {
-        const message = copyError instanceof Error ? copyError.message : "unknown error";
-        throw new Error(`Failed to move file: ${message}`);
-      }
-    } else {
-      const message = (error as Error).message ?? "unknown error";
-      throw new Error(`Failed to move file: ${message}`);
-    }
-  }
-
-  const destinationStats = await stat(destinationPath);
-
-  return {
-    path: destinationPath,
-    relativePath: toDocsRelativePath(destinationPath),
-    displayPath: toDocsDisplayPath(destinationPath),
-    name: basename(destinationPath),
-    size: destinationStats.size,
-    mtimeMs: destinationStats.mtimeMs,
-  };
-};
 
 const directoryExists = async (path: string): Promise<boolean> => {
   try {
@@ -2844,27 +1781,6 @@ const parsePresetInteger = (value: unknown, fallback: number, minimum?: number):
     return fallback;
   }
   return numeric;
-};
-
-const toProjectRelativePath = (absolute: string): string => {
-  const normalized = normalize(absolute);
-  if (!normalized.startsWith(projectRoot)) {
-    return normalized;
-  }
-  if (normalized === projectRoot) {
-    return ".";
-  }
-  const offset = projectRoot.endsWith("/") ? projectRoot.length : projectRoot.length + 1;
-  return normalized.slice(offset);
-};
-
-const ensureWithinBase = (absolute: string, base: string) => {
-  const normalized = normalize(absolute);
-  const normalizedBase = normalize(base);
-  if (!normalized.startsWith(normalizedBase)) {
-    throw new Error("Invalid directory path");
-  }
-  return normalized;
 };
 
 const listOrchestratorDirectories = async (target: "templates" | "active", relativeInput: string | null) => {
@@ -3296,178 +2212,38 @@ const syncSessionMessages = async (sessionId: string, force = false) => {
   return messageStore.listSessionMessages(sessionId);
 };
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 const agentStatusPoller = new AgentRuntimeStatusPoller(manager, {
   host: agentHost,
   intervalMs: config.agentStatusPollIntervalMs,
   maxIntervalMs: config.agentStatusPollMaxIntervalMs,
   timeoutMs: config.agentStatusPollTimeoutMs,
+  initialDelayMs: 3000,
 });
 agentStatusPoller.start();
 
-const waitForMessageUpdate = async (sessionId: string, initialCount: number, timeoutMs = 20000) => {
-  let messages = await syncSessionMessages(sessionId, true);
-  if (messages.length > initialCount) {
-    return messages;
-  }
+const promptDispatchEngine = createPromptDispatchEngine({
+  manager,
+  agentHost,
+  messageStore,
+  identityUserStore,
+  promptQueueStore,
+  MESSAGE_COST_SATS,
+  buildAgentUrl,
+  waitForSessionPromptReadiness,
+  syncSessionMessages,
+  maybeTriggerNightWatch,
+  nightWatchDeps,
+});
+const {
+  dispatchNextQueuedPromptForSession,
+  maybeAutoDispatchQueuedPrompt,
+  markPromptStartupReady,
+  clearPromptStartupReady,
+  markQueueDispatchCooldown,
+  queueDispatchInFlight,
+  waitForMessageUpdate,
+} = promptDispatchEngine;
 
-  const deadline = Date.now() + Math.max(timeoutMs, 1000);
-  while (Date.now() < deadline) {
-    await sleep(750);
-    messages = await syncSessionMessages(sessionId, true);
-    if (messages.length > initialCount) {
-      return messages;
-    }
-  }
-  return messages;
-};
-
-class QueueDispatchError extends Error {
-  constructor(
-    message: string,
-    public status: number,
-    public payload: Record<string, unknown> = {},
-  ) {
-    super(message);
-    this.name = "QueueDispatchError";
-  }
-}
-
-const getQueueDispatchCooldown = (sessionId: string) => queueDispatchCooldowns.get(sessionId) ?? 0;
-
-const shouldAutoDispatchSession = (session: SessionSnapshot | null): boolean => {
-  if (!session) return false;
-  if (session.status !== "running") return false;
-  return session.agentRuntimeStatus === "stable";
-};
-
-const clearQueueDispatchCooldown = (sessionId: string) => {
-  queueDispatchCooldowns.delete(sessionId);
-};
-
-const markQueueDispatchCooldown = (sessionId: string) => {
-  queueDispatchCooldowns.set(sessionId, Date.now() + QUEUE_DISPATCH_RETRY_MS);
-};
-
-async function dispatchNextQueuedPromptForSession(session: SessionSnapshot, userNpub: string | null) {
-  if (!userNpub) {
-    throw new QueueDispatchError("Sign in to send messages", 403, { balance: 0 });
-  }
-
-  const nextPrompt = promptQueueStore.getNextQueuedPrompt(session.id);
-  if (!nextPrompt) {
-    throw new QueueDispatchError("No prompts in queue", 404);
-  }
-
-  let currentBalance = 0;
-  let debitApplied = false;
-  const refundDebit = () => {
-    if (!debitApplied) return;
-    try {
-      currentBalance = identityUserStore.credit(userNpub, MESSAGE_COST_SATS);
-    } catch (creditError) {
-      console.error("[billing] failed to refund queued prompt debit:", creditError);
-    } finally {
-      debitApplied = false;
-    }
-  };
-
-  try {
-    currentBalance = identityUserStore.debit(userNpub, MESSAGE_COST_SATS);
-    debitApplied = true;
-  } catch (error) {
-    if (error instanceof InsufficientBalanceError) {
-      throw new QueueDispatchError("Insufficient balance", 402, {
-        balance: error.currentBalance,
-        required: MESSAGE_COST_SATS,
-      });
-    }
-    console.error("[billing] failed to debit message cost:", error);
-    throw new QueueDispatchError("Failed to debit balance", 500);
-  }
-
-  try {
-    const initialCount = messageStore.listSessionMessages(session.id).length;
-    const agentUrl = buildAgentUrl(agentHost, session.port, "/message");
-    const agentResponse = await fetch(agentUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ type: "user", content: nextPrompt.content }),
-    });
-
-    if (!agentResponse.ok) {
-      const errorPayload = await agentResponse.json().catch(() => ({}));
-      const message = (errorPayload?.error as string) ?? agentResponse.statusText ?? "Agent request failed";
-      refundDebit();
-      throw new QueueDispatchError(message, agentResponse.status, {
-        balance: currentBalance,
-        failedPrompt: nextPrompt,
-      });
-    }
-
-    promptQueueStore.removeNextPrompt(session.id);
-    const messages = await waitForMessageUpdate(session.id, initialCount);
-    clearQueueDispatchCooldown(session.id);
-    return { id: session.id, messages, balance: currentBalance, sentPrompt: nextPrompt };
-  } catch (error) {
-    if (error instanceof QueueDispatchError) {
-      throw error;
-    }
-    refundDebit();
-    throw new QueueDispatchError(`Failed to contact agent: ${(error as Error).message}`, 502, {
-      balance: currentBalance,
-      failedPrompt: nextPrompt,
-    });
-  }
-}
-
-async function maybeAutoDispatchQueuedPrompt(session: SessionSnapshot | null) {
-  if (!session) return;
-  if (queueDispatchInFlight.has(session.id)) return;
-  if (!shouldAutoDispatchSession(session)) return;
-  if (promptQueueStore.getQueueCount(session.id) === 0) {
-    void maybeTriggerNightWatch(session, nightWatchDeps);
-    return;
-  }
-  const userNpub = session.npub ?? null;
-  if (!userNpub) {
-    console.warn(`[queue] cannot auto-dispatch session ${session.id} without owner npub`);
-    return;
-  }
-  const cooldownUntil = getQueueDispatchCooldown(session.id);
-  if (cooldownUntil && cooldownUntil > Date.now()) {
-    return;
-  }
-
-  queueDispatchInFlight.add(session.id);
-  try {
-    await dispatchNextQueuedPromptForSession(session, userNpub);
-  } catch (error) {
-    if (error instanceof QueueDispatchError) {
-      if (error.status === 404) {
-        clearQueueDispatchCooldown(session.id);
-      } else {
-        markQueueDispatchCooldown(session.id);
-        console.warn(`[queue] auto-dispatch failed for session ${session.id}: ${error.message}`);
-      }
-    } else {
-      markQueueDispatchCooldown(session.id);
-      console.error(`[queue] auto-dispatch failed for session ${session.id}:`, error);
-    }
-  } finally {
-    queueDispatchInFlight.delete(session.id);
-  }
-}
-
-const sweepQueuedSessionsForDispatch = () => {
-  for (const session of manager.listSessions()) {
-    void maybeAutoDispatchQueuedPrompt(session);
-  }
-};
-
-sweepQueuedSessionsForDispatch();
-setInterval(sweepQueuedSessionsForDispatch, 5000).unref?.();
 const APP_ACTIONS: AppLifecycleAction[] = ["start", "stop", "restart", "setup", "build"];
 
 const parseAppScripts = (input: unknown): AppLifecycleScripts => {
@@ -3851,6 +2627,10 @@ const isAdminContext = (authContext: RequestAuthContext): boolean => {
  * Returns null if no valid NIP-98 header is present.
  */
 const verifyNip98AuthHeader = (request: Request, url: URL): string | null => {
+  const normalizePathname = (value: string): string => {
+    const normalized = value.replace(/\/+$/, "");
+    return normalized || "/";
+  };
   const authHeader = request.headers.get("authorization");
   if (!authHeader?.startsWith("Nostr ")) return null;
 
@@ -3869,15 +2649,18 @@ const verifyNip98AuthHeader = (request: Request, url: URL): string | null => {
     const uTag = event.tags?.find((t: string[]) => t[0] === "u");
     if (!uTag) return null;
     const eventUrl = new URL(uTag[1]);
-    if (eventUrl.origin !== url.origin || eventUrl.pathname !== url.pathname) return null;
+    if (
+      eventUrl.origin !== url.origin ||
+      normalizePathname(eventUrl.pathname) !== normalizePathname(url.pathname)
+    ) return null;
 
     // Verify the method tag
     const methodTag = event.tags?.find((t: string[]) => t[0] === "method");
     if (!methodTag || methodTag[1] !== request.method) return null;
 
-    // Verify the event is recent (within 60 seconds)
+    // Verify the event is recent (allow clock skew up to 5 minutes)
     const now = Math.floor(Date.now() / 1000);
-    if (Math.abs(now - event.created_at) > 60) return null;
+    if (Math.abs(now - event.created_at) > 300) return null;
 
     // Convert pubkey to npub
     return nip19.npubEncode(event.pubkey);
@@ -3885,183 +2668,6 @@ const verifyNip98AuthHeader = (request: Request, url: URL): string | null => {
     return null;
   }
 };
-
-type SessionCleanupDetail = {
-  id: string;
-  agent: AgentType;
-  name: string;
-  port: number;
-  npub: string | null;
-  stopped: boolean;
-  deleted: boolean;
-  stopError?: string;
-  deleteError?: string;
-};
-
-type AppCleanupDetail = {
-  id: string;
-  label: string;
-  running: boolean;
-  killed: boolean;
-  removed: boolean;
-  killError?: string;
-  removeError?: string;
-};
-
-type SystemCleanupResult = {
-  timestamp: string;
-  preservedCoreApp: boolean;
-  sessions: {
-    total: number;
-    stopped: number;
-    deleted: number;
-    failed: number;
-    details: SessionCleanupDetail[];
-  };
-  apps: {
-    total: number;
-    killed: number;
-    removed: number;
-    failed: number;
-    skipped: number;
-    details: AppCleanupDetail[];
-  };
-};
-
-async function performSystemCleanup(): Promise<SystemCleanupResult> {
-  const snapshotTimestamp = new Date().toISOString();
-  const sessionSnapshots = manager.listSessions();
-  const sessionDetails: SessionCleanupDetail[] = [];
-  let sessionsStopped = 0;
-  let sessionsDeleted = 0;
-  let sessionFailures = 0;
-
-  for (const snapshot of sessionSnapshots) {
-    const detail: SessionCleanupDetail = {
-      id: snapshot.id,
-      agent: snapshot.agent,
-      name: snapshot.name,
-      port: snapshot.port,
-      npub: snapshot.npub ?? null,
-      stopped: false,
-      deleted: false,
-    };
-
-    try {
-      await manager.stopSession(snapshot.id);
-      detail.stopped = true;
-      sessionsStopped += 1;
-    } catch (error) {
-      detail.stopError = error instanceof Error ? error.message : String(error);
-    }
-
-    const current = manager.getSession(snapshot.id);
-    const canDelete =
-      !current ||
-      current.status === "stopped" ||
-      current.status === "error";
-
-    if (canDelete) {
-      try {
-        const removed = manager.deleteSession(snapshot.id);
-        if (removed) {
-          detail.deleted = true;
-          sessionsDeleted += 1;
-          try {
-            messageStore.removeSession(snapshot.id);
-          } catch (error) {
-            detail.deleteError = error instanceof Error ? error.message : String(error);
-            detail.deleted = false;
-            sessionsDeleted -= 1;
-          }
-        }
-      } catch (error) {
-        detail.deleteError = error instanceof Error ? error.message : String(error);
-      }
-    } else if (!detail.stopError) {
-      detail.stopError = "Session still running after stop attempt";
-    }
-
-    if (detail.stopError || detail.deleteError) {
-      sessionFailures += 1;
-    }
-
-    sessionDetails.push(detail);
-  }
-
-  const appDetails: AppCleanupDetail[] = [];
-  const appStatuses = await appProcessManager.listStatuses().catch(() => []);
-  const statusMap = new Map(appStatuses.map((status) => [status.appId, status]));
-  const apps = await appRegistry.listApps();
-  let appsKilled = 0;
-  let appsRemoved = 0;
-  let appFailures = 0;
-  let appSkipped = 0;
-  let preservedCoreApp = false;
-
-  for (const app of apps) {
-    if (app.id === "wingman-core") {
-      preservedCoreApp = true;
-      appSkipped += 1;
-      continue;
-    }
-
-    const status = statusMap.get(app.id);
-    const detail: AppCleanupDetail = {
-      id: app.id,
-      label: app.label,
-      running: Boolean(status?.running),
-      killed: false,
-      removed: false,
-    };
-
-    try {
-      await appProcessManager.kill(app.id);
-      detail.killed = true;
-      appsKilled += 1;
-    } catch (error) {
-      detail.killError = error instanceof Error ? error.message : String(error);
-    }
-
-    try {
-      const removed = await appRegistry.removeApp(app.id);
-      if (removed) {
-        detail.removed = true;
-        appsRemoved += 1;
-      }
-    } catch (error) {
-      detail.removeError = error instanceof Error ? error.message : String(error);
-    } finally {
-      appProcessManager.forget(app.id);
-    }
-
-    if (detail.killError || detail.removeError) {
-      appFailures += 1;
-    }
-
-    appDetails.push(detail);
-  }
-
-  return {
-    timestamp: snapshotTimestamp,
-    preservedCoreApp,
-    sessions: {
-      total: sessionDetails.length,
-      stopped: sessionsStopped,
-      deleted: sessionsDeleted,
-      failed: sessionFailures,
-      details: sessionDetails,
-    },
-    apps: {
-      total: appDetails.length,
-      killed: appsKilled,
-      removed: appsRemoved,
-      failed: appFailures,
-      skipped: appSkipped,
-      details: appDetails,
-    },
-  };
-}
 
 const requireAdminAccess = (): AccessRule => {
   return (context) => {
@@ -4140,13 +2746,77 @@ const resolveFeatureFlagStateForViewer = (
   return { flag, state: baseState, effectiveState };
 };
 
+const sessionApiContext: SessionApiContext = {
+  manager,
+  adminNpub,
+  agentHost,
+  messageStore,
+  sessionArchiveStore,
+  identityUserStore,
+  promptQueueStore,
+  artifactsStore,
+  userIdentityRoot,
+  attachmentRoot,
+  imageRoot,
+  MESSAGE_COST_SATS,
+  ensureApiAccess,
+  ensureViewerHasBalance,
+  serializeSession,
+  sessionBelongsToViewer,
+  getViewerNormalizedNpub,
+  buildIdentitySummaries,
+  createSessionSubscribeResponse,
+  handleSessionEvents,
+  syncSessionMessages,
+  waitForMessageUpdate,
+  scheduleSessionArchive,
+  cancelPendingArchive,
+  isAgentType,
+  normaliseSessionNameInput,
+  parseSessionWorkspaceRequest,
+  resolveSessionWorkingDirectory,
+  parseSessionOriginInput,
+  buildAgentUrl,
+  queueDispatchInFlight,
+  maybeAutoDispatchQueuedPrompt,
+  dispatchNextQueuedPromptForSession,
+  validateForkInput,
+  getRecentMessages,
+  formatMessagesAsContext,
+  createGitWorktree,
+  AccessActions,
+};
+
+const docsApiContext: DocsApiContext = {
+  resolveWorkspace,
+  ensureApiAccess,
+  AccessActions,
+  ensureDirectory,
+  createGitWorktree,
+  executeGitCommand,
+  describeGitRepository,
+};
+
 const handleApi = async (
   request: Request,
   url: URL,
   method: HttpMethod,
   authContext: RequestAuthContext,
-  bunServer: import("bun").Server,
 ): Promise<Response> => {
+  const withProjectApiCors = (response: Response): Response => {
+    const headers = new Headers(response.headers);
+    const origin = request.headers.get("origin");
+    headers.set("Access-Control-Allow-Origin", origin || "*");
+    headers.set("Vary", "Origin");
+    headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  };
+
   const pathname = url.pathname;
   const workspaceScope = resolveWorkspace(authContext);
   const viewerIsAdmin = workspaceScope.isAdmin;
@@ -4169,6 +2839,10 @@ const handleApi = async (
     return browserLogResponse;
   }
   if (pathname.startsWith("/api/npub-projects")) {
+    if (method === "OPTIONS") {
+      return withProjectApiCors(new Response(null, { status: 204 }));
+    }
+
     let effectiveAuth = authContext;
     let effectiveIsAdmin = workspaceScope.isAdmin;
 
@@ -4179,7 +2853,7 @@ const handleApi = async (
         effectiveAuth = { npub: nip98Npub, session: null };
         effectiveIsAdmin = true; // NIP-98 server keys treated as admin for project lookups
       } else {
-        return Response.json({ error: "Authentication required" }, { status: 401 });
+        return withProjectApiCors(Response.json({ error: "Authentication required" }, { status: 401 }));
       }
     }
 
@@ -4191,9 +2865,9 @@ const handleApi = async (
       effectiveIsAdmin,
     );
     if (response) {
-      return response;
+      return withProjectApiCors(response);
     }
-    return Response.json({ error: "Not found" }, { status: 404 });
+    return withProjectApiCors(Response.json({ error: "Not found" }, { status: 404 }));
   }
   if (pathname.startsWith("/api/projects")) {
     const denied = await ensureApiAccess(AccessActions.ProjectsManage, request, url, authContext);
@@ -4437,7 +3111,7 @@ const handleApi = async (
       return denied;
     }
     try {
-      const result = await performSystemCleanup();
+      const result = await performSystemCleanup({ manager, messageStore, appProcessManager, appRegistry });
       return Response.json(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -4469,6 +3143,15 @@ const handleApi = async (
     }
 
     try {
+      // Block new registrations when REGISTER=FALSE
+      if (!config.registrationEnabled) {
+        const normalized = normaliseNpub(trimmedNpub);
+        const existingUser = normalized ? identityUserStore.getByNormalized(normalized) : null;
+        if (!existingUser) {
+          return Response.json({ error: "Registration is currently disabled" }, { status: 403 });
+        }
+      }
+
       const existingSession = authContext.session;
       if (existingSession && existingSession.npub !== trimmedNpub) {
         // Allow overwriting with a new npub, but clear stale signed data by minting a new cookie.
@@ -4581,1066 +3264,58 @@ const handleApi = async (
     }
   }
 
-  if (pathname === "/api/admin/users" && method === "GET") {
-    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const users = buildAdminUserList();
-    return Response.json({ users });
-  }
-
-  if (pathname === "/api/admin/users" && method === "PATCH") {
-    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    const npubInput = normaliseOptionalString((payload as Record<string, unknown>).npub);
-    const onboardedValue = (payload as Record<string, unknown>).onboarded;
-    if (!npubInput) {
-      return Response.json({ error: "npub is required" }, { status: 400 });
-    }
-    if (typeof onboardedValue !== "boolean") {
-      return Response.json({ error: "onboarded flag is required" }, { status: 400 });
-    }
-    try {
-      identityUserStore.setRole(npubInput, "onboard", onboardedValue);
-      const users = buildAdminUserList();
-      const normalizedNpub = normaliseNpub(npubInput);
-      const user = normalizedNpub
-        ? users.find((entry) => entry.normalizedNpub === normalizedNpub) ?? null
-        : null;
-      return Response.json({ user, users });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/admin/users/bulk" && method === "DELETE") {
-    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    const npubsInput = (payload as Record<string, unknown>).npubs;
-    if (!Array.isArray(npubsInput) || npubsInput.length === 0) {
-      return Response.json({ error: "npubs is required" }, { status: 400 });
-    }
-    const targets = new Map<string, string>();
-    for (const entry of npubsInput) {
-      const candidate = normaliseOptionalString(entry);
-      if (!candidate) {
-        continue;
-      }
-      const normalized = normaliseNpub(candidate);
-      if (!normalized) {
-        continue;
-      }
-      targets.set(normalized, candidate);
-    }
-    if (targets.size === 0) {
-      return Response.json({ error: "At least one valid npub is required" }, { status: 400 });
-    }
-    const missing: string[] = [];
-    const skippedAdmin: string[] = [];
-    let deletedCount = 0;
-    for (const [normalized, original] of targets) {
-      if (adminNpub && normalized === adminNpub) {
-        skippedAdmin.push(original);
-        continue;
-      }
-      try {
-        await stopSessionsForUser(normalized);
-        const deleted = identityUserStore.deleteUser(normalized);
-        if (!deleted) {
-          missing.push(original);
-        } else {
-          deletedCount += 1;
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return Response.json({ error: `Failed to delete ${original}: ${message}` }, { status: 400 });
-      }
-    }
-    const users = buildAdminUserList();
-    return Response.json({
-      users,
-      summary: {
-        requested: targets.size,
-        deleted: deletedCount,
-        missing,
-        skippedAdmin,
-      },
-    });
-  }
-
-  if (pathname === "/api/admin/users" && method === "DELETE") {
-    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    const npubInput = normaliseOptionalString((payload as Record<string, unknown>).npub);
-    if (!npubInput) {
-      return Response.json({ error: "npub is required" }, { status: 400 });
-    }
-    try {
-      await stopSessionsForUser(npubInput);
-      const deleted = identityUserStore.deleteUser(npubInput);
-      if (!deleted) {
-        return Response.json({ error: "User not found" }, { status: 404 });
-      }
-      const users = buildAdminUserList();
-      return Response.json({ users });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/admin/users/nickname" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    const record = payload as Record<string, unknown>;
-    const npubInput = normaliseOptionalString(record.npub);
-    if (!npubInput) {
-      return Response.json({ error: "npub is required" }, { status: 400 });
-    }
-    const normalized = normaliseNpub(npubInput);
-    if (!normalized) {
-      return Response.json({ error: "Invalid npub" }, { status: 400 });
-    }
-    const nicknameValue = record.nickname;
-    const nickname =
-      nicknameValue === null
-        ? null
-        : typeof nicknameValue === "string"
-          ? nicknameValue
-          : typeof nicknameValue === "undefined"
-            ? ""
-            : String(nicknameValue);
-
-    try {
-      const updatedRecord = identityUserStore.setNickname(npubInput, nickname);
-      const users = buildAdminUserList();
-      const user = users.find((entry) => entry.normalizedNpub === updatedRecord.normalizedNpub) ?? null;
-      return Response.json({ user, users }, { status: 200 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/admin/users/profile" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    const npubInput = normaliseOptionalString((payload as Record<string, unknown>).npub);
-    const force = (payload as Record<string, unknown>).refresh === true;
-    if (!npubInput) {
-      return Response.json({ error: "npub is required" }, { status: 400 });
-    }
-    const normalized = normaliseNpub(npubInput);
-    if (!normalized) {
-      return Response.json({ error: "Invalid npub" }, { status: 400 });
-    }
-    try {
-      await resolveAndCacheNostrProfile(npubInput, { force, relays: config.connectRelays });
-      const users = buildAdminUserList();
-      const user = users.find((entry) => entry.normalizedNpub === normalized) ?? null;
-      return Response.json({ user, users, pictureUrl: user?.pictureUrl ?? null }, { status: 200 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/admin/users/balance" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    const record = payload as Record<string, unknown>;
-    const npubInput = normaliseOptionalString(record.npub);
-    const aliasInput = normaliseOptionalString(record.alias);
-    const balanceValue = record.balance;
-
-    if (!npubInput && !aliasInput) {
-      return Response.json({ error: "Provide an npub or alias" }, { status: 400 });
-    }
-
-    const parsedBalance =
-      typeof balanceValue === "number"
-        ? balanceValue
-        : typeof balanceValue === "string" && balanceValue.trim().length > 0
-          ? Number.parseInt(balanceValue, 10)
-          : NaN;
-
-    if (!Number.isFinite(parsedBalance) || parsedBalance < 0) {
-      return Response.json({ error: "Balance must be a non-negative number" }, { status: 400 });
-    }
-    const desiredBalance = Math.max(0, Math.trunc(parsedBalance));
-
-    let targetNpub: string | null = null;
-    let targetNormalized: string | null = null;
-
-    if (npubInput) {
-      const normalized = normaliseNpub(npubInput);
-      if (!normalized) {
-        return Response.json({ error: "Invalid npub" }, { status: 400 });
-      }
-      targetNpub = npubInput;
-      targetNormalized = normalized;
-    } else if (aliasInput) {
-      const aliasLookup = aliasInput.toLowerCase();
-      const records = identityUserStore.listUsers();
-      const found = records.find(
-        (entry) => typeof entry.alias === "string" && entry.alias.toLowerCase() === aliasLookup,
-      );
-      if (!found) {
-        return Response.json({ error: `No user found for alias "${aliasInput}"` }, { status: 404 });
-      }
-      targetNpub = found.npub;
-      targetNormalized = found.normalizedNpub;
-    }
-
-    if (!targetNpub || !targetNormalized) {
-      return Response.json({ error: "Unable to resolve user" }, { status: 400 });
-    }
-
-    try {
-      const updatedRecord = identityUserStore.setBalance(targetNpub, desiredBalance);
-      const users = buildAdminUserList();
-      const user =
-        users.find((entry) => entry.normalizedNpub === updatedRecord.normalizedNpub) ?? null;
-      return Response.json(
-        {
-          user,
-          users,
-        },
-        { status: 200 },
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/admin/ports" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const adminNormalizedNpub = authContext.npub ? normaliseNpub(authContext.npub) : null;
-    if (!adminNormalizedNpub) {
-      return Response.json({ error: "Admin npub not found" }, { status: 400 });
-    }
-
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      payload = {};
-    }
-
-    const record = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
-    const countInput = record.count;
-    const count = typeof countInput === "number" && countInput > 0 ? Math.trunc(countInput) : 3;
-
-    try {
-      const updatedRecord = identityUserStore.addPortsToUser(adminNormalizedNpub, count);
-      const users = buildAdminUserList();
-      const user = users.find((entry) => entry.normalizedNpub === updatedRecord.normalizedNpub) ?? null;
-      return Response.json({ user, users, newPorts: updatedRecord.ports.slice(-count) }, { status: 200 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/admin/users/ports" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.AdminUsers, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    const record = payload as Record<string, unknown>;
-    const npubInput = normaliseOptionalString(record.npub);
-    const countInput = record.count;
-
-    if (!npubInput) {
-      return Response.json({ error: "npub is required" }, { status: 400 });
-    }
-
-    const normalized = normaliseNpub(npubInput);
-    if (!normalized) {
-      return Response.json({ error: "Invalid npub" }, { status: 400 });
-    }
-
-    const count = typeof countInput === "number" && countInput > 0 ? Math.trunc(countInput) : 3;
-
-    try {
-      const updatedRecord = identityUserStore.addPortsToUser(npubInput, count);
-      const users = buildAdminUserList();
-      const user = users.find((entry) => entry.normalizedNpub === updatedRecord.normalizedNpub) ?? null;
-      return Response.json({ user, users, newPorts: updatedRecord.ports.slice(-count) }, { status: 200 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/apps/clone" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.AppsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    const repoUrl = normaliseOptionalString((payload as Record<string, unknown>).url);
-    if (!repoUrl) {
-      return Response.json({ error: "Repository URL is required" }, { status: 400 });
-    }
-    const directoryInput = normaliseOptionalString(
-      (payload as Record<string, unknown>).directory ?? (payload as Record<string, unknown>).name,
-    );
-    const fallbackDirectory = deriveDirectoryNameFromUrl(repoUrl);
-    const directoryName = directoryInput ?? fallbackDirectory;
-    if (!directoryName) {
-      return Response.json({ error: "Folder name is required" }, { status: 400 });
-    }
-    try {
-      const result = await cloneRepositoryIntoWorkspace(workspaceScope, repoUrl, directoryName);
-      return Response.json(result, { status: 201 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Workspace Tree - Browse directories and detect importable apps
-  // -------------------------------------------------------------------------
-
-  if (pathname === "/api/workspace/tree" && method === "GET") {
-    const denied = await ensureApiAccess(AccessActions.AppsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-
-    // Determine the root directory to scan
-    const scanRoot = workspaceScope.aliasDirectory ?? workspaceScope.defaultDirectory;
-
-    // Parse depth parameter (default 4, max 6)
-    const depthParam = url.searchParams.get("depth");
-    const depth = depthParam ? Math.min(Math.max(parseInt(depthParam, 10) || 4, 1), 6) : 4;
-
-    try {
-      // Get registered app paths to mark them in the tree
-      const registeredApps = await appRegistry.listApps();
-      const registeredPaths = new Set(
-        registeredApps
-          .filter((app) => canAccessApp(app))
-          .map((app) => app.root),
-      );
-
-      // Scan the directory tree
-      const nodes = await scanDirectoryTree(scanRoot, depth, registeredPaths);
-
-      return Response.json({
-        root: scanRoot,
-        depth,
-        nodes,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 500 });
-    }
-  }
-
-  if (pathname === "/api/apps" && method === "GET") {
-    const denied = await ensureApiAccess(AccessActions.AppsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const viewerNormalizedNpub = normaliseNpub(authContext.npub ?? null);
-    const tailParam = url.searchParams.get("tail") ?? url.searchParams.get("logs");
-    const tail = tailParam ? Number.parseInt(tailParam, 10) : 0;
-    const includeLogs = Number.isFinite(tail) && tail > 0;
-    const tailCount = includeLogs ? Math.min(Math.max(tail, 1), 2000) : 0;
-    const ownerAliasCache = new Map<string, string | null>();
-    const normalizeOwnerFilter = (value: string | null): string | null | "__anonymous__" => {
-      if (!value || value === "all") {
-        return null;
-      }
-      if (value === "__anonymous__") {
-        return "__anonymous__";
-      }
-      const normalized = normaliseNpub(value);
-      return normalized ?? null;
+  // Admin user routes (delegated to admin-users-routes.ts)
+  if (pathname.startsWith("/api/admin/users") || pathname === "/api/admin/ports") {
+    const adminUsersApiContext: AdminUsersApiContext = {
+      adminNpub,
+      config: { connectRelays: config.connectRelays },
+      identityUserStore,
+      manager,
+      ensureApiAccess,
+      AccessActions,
+      normaliseOptionalString,
+      stopSessionsForUser,
+      resolveAndCacheNostrProfile,
+      buildIdentitySummaries,
     };
-    try {
-      const [apps, statuses] = await Promise.all([appRegistry.listApps(), appProcessManager.listStatuses()]);
-      const visibleApps = workspaceScope.isAdmin ? apps : apps.filter((app) => canAccessApp(app));
-      const ownerFilters = workspaceScope.isAdmin ? buildAppOwnerFilters(visibleApps, ownerAliasCache) : [];
-      const hasFilterParam = workspaceScope.isAdmin ? url.searchParams.has("npub") : Boolean(viewerNormalizedNpub);
-      let ownerFilter: string | null | "__anonymous__" =
-        workspaceScope.isAdmin ? normalizeOwnerFilter(url.searchParams.get("npub")) : viewerNormalizedNpub ?? null;
-      if (workspaceScope.isAdmin && !hasFilterParam && viewerNormalizedNpub) {
-        ownerFilter = viewerNormalizedNpub;
-      }
-      const filteredApps =
-        ownerFilter === null
-          ? visibleApps
-          : visibleApps.filter((app) => {
-              const normalizedOwner = normaliseNpub(app.ownerNpub ?? null);
-              if (ownerFilter === "__anonymous__") {
-                return normalizedOwner === null;
-              }
-              return normalizedOwner === ownerFilter;
-            });
-      const statusMap = new Map(statuses.map((status) => [status.appId, status]));
-      const data = await Promise.all(
-        filteredApps.map(async (app) => {
-          const status = statusMap.get(app.id) ?? defaultAppProcessStatus(app.id);
-          const ownerAlias = resolveOwnerAliasCached(app.ownerNpub, ownerAliasCache);
-          const aliasRecord = await appAliasRegistry.getByAppId(app.id);
-          const subdomainAlias = aliasRecord?.alias ?? null;
-          const record = buildAppResponse(app, status, { ownerAlias, subdomainAlias });
-          if (includeLogs) {
-            try {
-              record.logs = await appProcessManager.tailLogs(app.id, tailCount);
-            } catch {
-              record.logs = [];
-            }
-          }
-          return record;
-        }),
-      );
-      return Response.json({
-        apps: data,
-        filters: {
-          npubs: ownerFilters,
-          active: ownerFilter ?? null,
-        },
-      });
-    } catch (error) {
-      return Response.json({ error: (error as Error).message }, { status: 500 });
-    }
+    const adminUsersResponse = await handleAdminUsersApi(request, url, method, authContext, adminUsersApiContext);
+    if (adminUsersResponse) return adminUsersResponse;
   }
 
-  if (pathname === "/api/apps" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.AppsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    const record = payload as Record<string, unknown>;
-    const root = normaliseOptionalString(record.root);
-    if (!root) {
-      return Response.json({ error: "App root path is required" }, { status: 400 });
-    }
-
-    let resolvedRoot: string;
-    try {
-      resolvedRoot = await ensureDirectory(root, workspaceScope);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-
-    const label = normaliseOptionalString(record.label);
-    const tmuxSession = normaliseOptionalString(record.tmuxSession);
-    const notes = normaliseOptionalString(record.notes);
-    const overrides = parseAppScripts(record.scripts);
-    const webAppInput =
-      record.webApp !== undefined ? parseBooleanInput(record.webApp) : parseBooleanInput((record as Record<string, unknown>).isWebApp);
-    const requestedWebApp = webAppInput ?? false;
-    const requestedPort = parsePortInput(record.webAppPort);
-    const ownerNpub =
-      workspaceScope.isAdmin ? normaliseNpub(authContext.npub ?? null) ?? adminNpub : viewerNpub;
-    if (!ownerNpub) {
-      return Response.json({ error: "Unable to resolve app owner" }, { status: 403 });
-    }
-    const discoverOverride =
-      typeof record.discover === "boolean"
-        ? (record.discover as boolean)
-        : typeof record.discoverScripts === "boolean"
-          ? (record.discoverScripts as boolean)
-          : typeof record.autoDiscover === "boolean"
-            ? (record.autoDiscover as boolean)
-            : undefined;
-    const shouldDiscover = discoverOverride ?? true;
-
-    let scripts: AppLifecycleScripts = overrides;
-    if (shouldDiscover) {
-      try {
-        const discovered = await appRegistry.discoverScripts(resolvedRoot);
-        scripts = { ...discovered, ...overrides };
-      } catch (error) {
-        return Response.json({ error: `Failed to discover scripts: ${(error as Error).message}` }, { status: 400 });
-      }
-    }
-
-    try {
-      const app = await appRegistry.registerApp({
-        label: label ?? "",
-        root: resolvedRoot,
-        scripts: Object.keys(scripts).length > 0 ? scripts : undefined,
-        tmuxSession: tmuxSession ?? undefined,
-        notes: notes ?? undefined,
-        ownerNpub,
-        webApp: requestedWebApp,
-        webAppPort: requestedPort ?? undefined,
-      });
-
-      // Link app to npub-project (create project if it doesn't exist)
-      try {
-        let project = npubProjectStore.getByPath(ownerNpub, resolvedRoot);
-        if (project) {
-          npubProjectStore.setAppId(project.id, app.id);
-        } else {
-          project = npubProjectStore.createProject(ownerNpub, resolvedRoot, app.label || undefined);
-          if (project) {
-            npubProjectStore.setAppId(project.id, app.id);
-          }
-        }
-      } catch (linkError) {
-        // Log but don't fail app creation if project linking fails
-        console.warn(`[apps] failed to link app ${app.id} to npub-project: ${(linkError as Error).message}`);
-      }
-
-      const status = await appProcessManager.getStatus(app.id);
-      const aliasRecord = await appAliasRegistry.getByAppId(app.id);
-      const subdomainAlias = aliasRecord?.alias ?? null;
-      return Response.json({ app: buildAppResponse(app, status, { subdomainAlias }) }, { status: 201 });
-    } catch (error) {
-      return Response.json({ error: (error as Error).message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/apps/discover" && method === "GET") {
-    const denied = await ensureApiAccess(AccessActions.AppsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const root = normaliseOptionalString(url.searchParams.get("root"));
-    if (!root) {
-      return Response.json({ error: "Root directory is required" }, { status: 400 });
-    }
-    try {
-      const resolvedRoot = await ensureDirectory(root, workspaceScope);
-      const scripts = await appRegistry.discoverScripts(resolvedRoot);
-      return Response.json({ root: resolvedRoot, scripts });
-    } catch (error) {
-      return Response.json({ error: (error as Error).message }, { status: 400 });
-    }
-  }
-
-  if (pathname.startsWith("/api/apps/")) {
-    const denied = await ensureApiAccess(AccessActions.AppsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const parts = pathname.split("/");
-    const id = parts[3];
-    if (!id) {
-      return Response.json({ error: "App id is required" }, { status: 400 });
-    }
-    if (!workspaceScope.isAdmin && id === "wingman-core") {
-      return Response.json({ error: "Not found" }, { status: 404 });
-    }
-
-    if (method === "GET" && parts.length === 4) {
-      const app = await appRegistry.getApp(id);
-      if (!app) {
-        return Response.json({ error: "Not found" }, { status: 404 });
-      }
-      if (!canAccessApp(app)) {
-        return Response.json({ error: "Not found" }, { status: 404 });
-      }
-      const status = await appProcessManager.getStatus(id);
-      const aliasRecord = await appAliasRegistry.getByAppId(id);
-      const subdomainAlias = aliasRecord?.alias ?? null;
-      return Response.json({ app: buildAppResponse(app, status, { subdomainAlias }) });
-    }
-
-    if (method === "PUT" && parts.length === 4) {
-      const current = await appRegistry.getApp(id);
-      if (!current) {
-        return Response.json({ error: "Not found" }, { status: 404 });
-      }
-      if (!canAccessApp(current)) {
-        return Response.json({ error: "Not found" }, { status: 404 });
-      }
-
-      let payload: unknown;
-      try {
-        payload = await request.json();
-      } catch {
-        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-      }
-
-      if (!payload || typeof payload !== "object") {
-        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-      }
-
-      const record = payload as Record<string, unknown>;
-      const label = normaliseOptionalString(record.label);
-      const root = normaliseOptionalString(record.root);
-      const tmuxSession = normaliseOptionalString(record.tmuxSession);
-      const notesValue = record.notes === null ? null : normaliseOptionalString(record.notes);
-      const overrides = parseAppScripts(record.scripts);
-      const webAppRaw = record.webApp ?? (record as Record<string, unknown>).isWebApp;
-      const webAppInput = parseBooleanInput(webAppRaw);
-      const webAppPortInput = parsePortInput(record.webAppPort);
-      const shouldDiscover =
-        typeof record.discoverScripts === "boolean"
-          ? (record.discoverScripts as boolean)
-            : typeof record.discover === "boolean"
-              ? (record.discover as boolean)
-              : false;
-
-      let resolvedRoot: string | undefined;
-      if (root) {
-        try {
-          resolvedRoot = await ensureDirectory(root, workspaceScope);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          return Response.json({ error: message }, { status: 400 });
-        }
-      }
-
-      let scripts: AppLifecycleScripts | undefined = undefined;
-      if (shouldDiscover || Object.keys(overrides).length > 0) {
-        const discoverRoot = resolvedRoot ?? current.root;
-        if (!workspaceScope.isAdmin) {
-          try {
-            ensureWithinAllowedDirectories(discoverRoot, workspaceScope);
-          } catch {
-            return Response.json({ error: "App root outside allowed directories" }, { status: 403 });
-          }
-        }
-        if (shouldDiscover) {
-          try {
-            const discovered = await appRegistry.discoverScripts(discoverRoot);
-            scripts = { ...discovered, ...overrides };
-          } catch (error) {
-            return Response.json(
-              { error: `Failed to discover scripts: ${(error as Error).message}` },
-              { status: 400 },
-            );
-          }
-        } else {
-          scripts = overrides;
-        }
-      }
-
-      try {
-        const updatePayload = {
-          label: label ?? undefined,
-          root: resolvedRoot ?? undefined,
-          tmuxSession: tmuxSession ?? undefined,
-          notes: notesValue,
-          scripts,
-        };
-        if (webAppInput !== undefined) {
-          updatePayload.webApp = webAppInput;
-        }
-        if (webAppPortInput !== null) {
-          updatePayload.webAppPort = webAppPortInput;
-        }
-        const updated = await appRegistry.updateApp(id, updatePayload);
-        appProcessManager.forget(id);
-        const status = await appProcessManager.getStatus(id);
-        const aliasRecord = await appAliasRegistry.getByAppId(id);
-        const subdomainAlias = aliasRecord?.alias ?? null;
-        return Response.json({ app: buildAppResponse(updated, status, { subdomainAlias }) });
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 400 });
-      }
-    }
-
-    if (method === "DELETE" && parts.length === 4) {
-      const killParam = url.searchParams.get("killSession") ?? url.searchParams.get("killTmux");
-      const killSession = parseBooleanFlag(killParam);
-      const current = await appRegistry.getApp(id);
-      if (!current) {
-        return Response.json({ error: "Not found" }, { status: 404 });
-      }
-      if (!canAccessApp(current)) {
-        return Response.json({ error: "Not found" }, { status: 404 });
-      }
-      try {
-        if (killSession) {
-          await appProcessManager.kill(id);
-        }
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 500 });
-      }
-
-      // Clear app link from any npub-projects before removing the app
-      try {
-        npubProjectStore.clearAppIdByAppId(id);
-      } catch (clearError) {
-        console.warn(`[apps] failed to clear app ${id} from npub-projects: ${(clearError as Error).message}`);
-      }
-
-      const removed = await appRegistry.removeApp(id);
-      if (!removed) {
-        return Response.json({ error: "Not found" }, { status: 404 });
-      }
-      appProcessManager.forget(id);
-      return Response.json({ id, deleted: true, killedSession: killSession });
-    }
-
-    if (method === "GET" && parts[4] === "logs") {
-      const app = await appRegistry.getApp(id);
-      if (!app) {
-        return Response.json({ error: "Not found" }, { status: 404 });
-      }
-      if (!canAccessApp(app)) {
-        return Response.json({ error: "Not found" }, { status: 404 });
-      }
-      const tailParam = url.searchParams.get("tail");
-      const tail = tailParam ? Number.parseInt(tailParam, 10) : 100;
-      const lines = Number.isNaN(tail) || tail <= 0 ? 100 : Math.min(tail, 2000);
-      try {
-        const logs = await appProcessManager.tailLogs(id, lines);
-        return Response.json({ id, logs });
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 400 });
-      }
-    }
-
-    if (method === "POST" && parts[4] === "actions") {
-      const app = await appRegistry.getApp(id);
-      if (!app) {
-        return Response.json({ error: "Not found" }, { status: 404 });
-      }
-      if (!canAccessApp(app)) {
-        return Response.json({ error: "Not found" }, { status: 404 });
-      }
-      let payload: unknown;
-      try {
-        payload = await request.json();
-      } catch {
-        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-      }
-      if (!payload || typeof payload !== "object") {
-        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-      }
-
-      const actionValue = normaliseOptionalString((payload as Record<string, unknown>).action);
-      if (!actionValue) {
-        return Response.json({ error: "Action is required" }, { status: 400 });
-      }
-      const normalizedAction = actionValue.toLowerCase();
-      if (!APP_ACTIONS.includes(normalizedAction as AppLifecycleAction)) {
-        return Response.json({ error: `Unsupported action: ${actionValue}` }, { status: 400 });
-      }
-
-      if (normalizedAction === "start" || normalizedAction === "restart") {
-        const balanceCheck = ensureViewerHasBalance(authContext, {
-          feature: normalizedAction === "start" ? "start this app" : "restart this app",
-          message:
-            normalizedAction === "start"
-              ? "Add sats to your balance to start this app."
-              : "Add sats to your balance to restart this app.",
-        });
-        if (balanceCheck instanceof Response) {
-          return balanceCheck;
-        }
-      }
-
-      try {
-        let status: AppProcessStatus;
-        switch (normalizedAction as AppLifecycleAction) {
-          case "start":
-            status = await appProcessManager.start(id);
-            break;
-          case "stop":
-            status = await appProcessManager.stop(id);
-            break;
-          case "restart":
-            status = await appProcessManager.restart(id);
-            break;
-          case "setup":
-            status = await appProcessManager.setup(id);
-            break;
-          case "build":
-            status = await appProcessManager.build(id);
-            break;
-          default:
-            return Response.json({ error: `Unsupported action: ${actionValue}` }, { status: 400 });
-        }
-        const aliasRecord = await appAliasRegistry.getByAppId(id);
-        const subdomainAlias = aliasRecord?.alias ?? null;
-        return Response.json({ app: buildAppResponse(app, status, { subdomainAlias }) });
-      } catch (error) {
-        if (error instanceof AppActionInProgressError) {
-          return Response.json({ error: error.message }, { status: 409 });
-        }
-        if (error instanceof AppScriptMissingError) {
-          return Response.json({ error: error.message }, { status: 400 });
-        }
-        return Response.json({ error: (error as Error).message }, { status: 500 });
-      }
-    }
-
-    if (method === "POST" && parts[4] === "deploy-to-caprover") {
-      const app = await appRegistry.getApp(id);
-      if (!app) {
-        return Response.json({ error: "Not found" }, { status: 404 });
-      }
-      if (!canAccessApp(app)) {
-        return Response.json({ error: "Not found" }, { status: 404 });
-      }
-      if (!app.webApp) {
-        return Response.json({ error: "Only web apps can be deployed to CapRover" }, { status: 400 });
-      }
-
-      let payload: unknown;
-      try {
-        payload = await request.json();
-      } catch {
-        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-      }
-      if (!payload || typeof payload !== "object") {
-        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-      }
-
-      const record = payload as Record<string, unknown>;
-      const caproverNameRaw = normaliseOptionalString(record.caproverName);
-      if (!caproverNameRaw) {
-        return Response.json({ error: "caproverName is required" }, { status: 400 });
-      }
-
-      // Validate CapRover name format
-      const caproverName = caproverNameRaw.toLowerCase();
-      if (!/^[a-z][a-z0-9-]*$/.test(caproverName)) {
-        return Response.json(
-          { error: "caproverName must be lowercase, start with a letter, and contain only letters, numbers, and hyphens" },
-          { status: 400 },
-        );
-      }
-      if (caproverName.length > 50) {
-        return Response.json({ error: "caproverName must be 50 characters or less" }, { status: 400 });
-      }
-
-      // Read captain-definition.json from app root
-      const captainDefPath = join(app.root, "captain-definition.json");
-      let captainDefContent: string;
-      try {
-        captainDefContent = await readFile(captainDefPath, "utf8");
-      } catch {
-        return Response.json(
-          { error: `captain-definition.json not found in ${app.root}` },
-          { status: 400 },
-        );
-      }
-
-      let captainDef: unknown;
-      try {
-        captainDef = JSON.parse(captainDefContent);
-      } catch {
-        return Response.json({ error: "Invalid captain-definition.json format" }, { status: 400 });
-      }
-
-      // Validate captain-definition structure
-      if (!captainDef || typeof captainDef !== "object") {
-        return Response.json({ error: "captain-definition.json must be a valid object" }, { status: 400 });
-      }
-      const defRecord = captainDef as Record<string, unknown>;
-      if (defRecord.schemaVersion !== 2) {
-        return Response.json({ error: "captain-definition.json must have schemaVersion: 2" }, { status: 400 });
-      }
-
-      // Must have imageName, dockerfileLines, or templateId
-      if (!defRecord.imageName && !defRecord.dockerfileLines && !defRecord.templateId) {
-        // Check if Dockerfile exists (CapRover will look for it if no other method specified)
-        const dockerfilePath = join(app.root, "Dockerfile");
-        try {
-          await stat(dockerfilePath);
-        } catch {
-          return Response.json(
-            {
-              error:
-                "captain-definition.json requires imageName, dockerfileLines, or a Dockerfile in the app root. " +
-                "See https://caprover.com/docs/captain-definition-file.html",
-            },
-            { status: 400 },
-          );
-        }
-      }
-
-      // Get CapRover client
-      const caproverClient = createCaproverClientFromEnv();
-      if (!caproverClient) {
-        return Response.json(
-          { error: "CapRover is not configured. Set CAPROVER_URL and LOGIN_CODE environment variables." },
-          { status: 503 },
-        );
-      }
-
-      try {
-        // Check if already tracked in store
-        let tracked = caproverStore.getAppByLocalAppId(id);
-
-        if (!tracked) {
-          // Check if app exists on CapRover
-          const existingRemote = await caproverClient.getApp(caproverName);
-          if (!existingRemote) {
-            // Create new app on CapRover
-            await caproverClient.createApp(caproverName, false);
-          }
-
-          // Get the live URL
-          const liveUrl = await caproverClient.getAppUrl(caproverName);
-
-          // Track in local store
-          tracked = caproverStore.createApp({
-            caproverName,
-            appId: id,
-            liveUrl,
-          });
-        }
-
-        // Create deployment record
-        const deployment = caproverStore.createDeployment({
-          caproverAppId: tracked.id,
-          deployMethod: "tar_upload",
-        });
-
-        // Create tarball from app directory
-        let tarResult;
-        try {
-          tarResult = await createAppTarball(app.root);
-          console.log(`[caprover] Created tarball with ${tarResult.fileCount} files for ${caproverName}`);
-        } catch (tarError) {
-          const tarMessage = tarError instanceof Error ? tarError.message : String(tarError);
-          caproverStore.updateDeployment(deployment.id, {
-            status: "failed",
-            completedAt: new Date().toISOString(),
-            errorMessage: `Failed to create tarball: ${tarMessage}`,
-          });
-          return Response.json({ error: `Failed to create tarball: ${tarMessage}` }, { status: 400 });
-        }
-
-        // Deploy using tarball upload
-        await caproverClient.deployFromTarball(tracked.caproverName, tarResult.buffer);
-
-        // Get updated app info
-        const remoteApp = await caproverClient.getApp(tracked.caproverName);
-        const version = remoteApp?.deployedVersion ?? null;
-
-        // Update deployment record as success
-        caproverStore.updateDeployment(deployment.id, {
-          status: "success",
-          version,
-          completedAt: new Date().toISOString(),
-        });
-
-        // Update tracked app record
-        const updatedTracked = caproverStore.updateApp(tracked.id, {
-          deployedVersion: version,
-        });
-
-        return Response.json({
-          success: true,
-          liveUrl: updatedTracked.liveUrl,
-          caproverName: updatedTracked.caproverName,
-          deployedVersion: version,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return Response.json({ error: message }, { status: 502 });
-      }
-    }
+  if (pathname === "/api/workspace/tree" || pathname === "/api/apps" || pathname.startsWith("/api/apps/")) {
+    const appsApiResponse = await handleAppsApi(request, url, method, authContext, {
+      adminNpub,
+      workspaceScope,
+      viewerNpub,
+      AccessActions,
+      ensureApiAccess,
+      ensureViewerHasBalance,
+      normaliseOptionalString,
+      normaliseNpub,
+      ensureDirectory,
+      ensureWithinAllowedDirectories,
+      parseAppScripts,
+      parseBooleanInput,
+      parsePortInput,
+      parseBooleanFlag,
+      appActions: APP_ACTIONS,
+      canAccessApp,
+      deriveDirectoryNameFromUrl,
+      cloneRepositoryIntoWorkspace,
+      scanDirectoryTree,
+      buildAppOwnerFilters,
+      defaultAppProcessStatus,
+      resolveOwnerAliasCached,
+      buildAppResponse,
+      appRegistry,
+      appProcessManager,
+      appAliasRegistry,
+      npubProjectStore,
+      createCaproverClientFromEnv,
+      createAppTarball,
+      caproverStore,
+    });
+    if (appsApiResponse) return appsApiResponse;
   }
 
   if (pathname === "/api/config" && method === "GET") {
@@ -5798,403 +3473,10 @@ const handleApi = async (
     return Response.json({ presets });
   }
 
-  if (pathname === "/api/docs/directory" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.FilesRead, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    const parent = normaliseOptionalString((payload as Record<string, unknown>).parent);
-    const name = (payload as Record<string, unknown>).name;
-
-    try {
-      const data = await createDocsDirectory(parent, name);
-      return Response.json(data, { status: 201 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/docs/tree" && method === "GET") {
-    const denied = await ensureApiAccess(AccessActions.FilesRead, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    try {
-      const pathParam = url.searchParams.get("path");
-      const showHiddenParam = url.searchParams.get("showHidden") ?? "";
-      const includeHidden = (() => {
-        const value = showHiddenParam.trim().toLowerCase();
-        return value === "1" || value === "true" || value === "yes" || value === "on";
-      })();
-      const data = await listDocsDirectory(pathParam, { includeHidden }, workspaceScope);
-      return Response.json(data);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/docs/file" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    try {
-      const validatedPayload = validateInput(JsonRequestSchema.extend({
-        name: z.string().min(1).max(255).refine(name => !/[<>:"|?*\x00]/.test(name)),
-        content: z.string().optional(),
-        base64: z.string().optional(),
-        directory: PathSchema.optional()
-      }), payload);
-
-      const data = await createDocsFile(validatedPayload.directory, validatedPayload.name, { 
-        content: validatedPayload.content, 
-        base64: validatedPayload.base64 
-      });
-      return Response.json(data, { status: 201 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/docs/file" && method === "GET") {
-    const denied = await ensureApiAccess(AccessActions.FilesRead, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const pathParam = url.searchParams.get("path");
-    if (!pathParam) {
-      return Response.json({ error: "File path is required" }, { status: 400 });
-    }
-    try {
-      const data = await loadDocsFile(pathParam);
-      return Response.json(data);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/docs/file/raw" && method === "GET") {
-    const denied = await ensureApiAccess(AccessActions.FilesRead, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const pathParam = url.searchParams.get("path");
-    if (!pathParam) {
-      return Response.json({ error: "File path is required" }, { status: 400 });
-    }
-    try {
-      const data = await loadDocsFileRaw(pathParam);
-      return Response.json(data);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/docs/file/download" && method === "GET") {
-    const denied = await ensureApiAccess(AccessActions.FilesRead, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const pathParam = url.searchParams.get("path");
-    if (!pathParam) {
-      return Response.json({ error: "File path is required" }, { status: 400 });
-    }
-    try {
-      const filePath = resolveDocsPath(pathParam);
-      const fileStats = await stat(filePath);
-      if (!fileStats.isFile()) {
-        return Response.json({ error: "Requested path is not a file" }, { status: 400 });
-      }
-      if (fileStats.size > MAX_DOCS_FILE_SIZE) {
-        return Response.json({ error: "File is too large to download" }, { status: 400 });
-      }
-      const data = await readFile(filePath);
-      const fileName = basename(filePath);
-      const bunFile = Bun.file(filePath);
-      return new Response(data, {
-        headers: {
-          "content-disposition": `attachment; filename="${fileName.replace(/"/g, '\\"')}"`,
-          "content-type": bunFile.type || "application/octet-stream",
-          "content-length": String(fileStats.size),
-        },
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/docs/file" && method === "PUT") {
-    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    const pathValue = (payload as Record<string, unknown>).path;
-    const base64Value = (payload as Record<string, unknown>).base64;
-    const expectedMtimeValue = (payload as Record<string, unknown>).expectedMtimeMs;
-
-    const pathParam = typeof pathValue === "string" ? pathValue : null;
-    const base64Param = typeof base64Value === "string" ? base64Value : null;
-    const expectedMtime =
-      typeof expectedMtimeValue === "number" && Number.isFinite(expectedMtimeValue) ? expectedMtimeValue : null;
-
-    try {
-      const data = await updateDocsFile(pathParam, base64Param, expectedMtime);
-      return Response.json(data, { status: 200 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/docs/file" && method === "DELETE") {
-    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    const pathValue = (payload as Record<string, unknown>).path;
-    const pathParam = typeof pathValue === "string" ? pathValue : null;
-
-    try {
-      const data = await deleteDocsFile(pathParam);
-      return Response.json(data, { status: 200 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/docs/file/copy" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    const pathValue = (payload as Record<string, unknown>).path;
-    const targetValue =
-      (payload as Record<string, unknown>).targetDirectory ?? (payload as Record<string, unknown>).directory;
-    const nameValue = (payload as Record<string, unknown>).name;
-
-    const sourcePath = typeof pathValue === "string" ? pathValue : null;
-    const destinationPath = typeof targetValue === "string" ? targetValue : null;
-    const destinationName = typeof nameValue === "string" ? nameValue : null;
-
-    try {
-      const data = await copyDocsFile(sourcePath, destinationPath, destinationName);
-      return Response.json(data, { status: 201 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/docs/file/move" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    const pathValue = (payload as Record<string, unknown>).path;
-    const targetValue =
-      (payload as Record<string, unknown>).targetDirectory ?? (payload as Record<string, unknown>).directory;
-    const nameValue = (payload as Record<string, unknown>).name;
-
-    const sourcePath = typeof pathValue === "string" ? pathValue : null;
-    const destinationPath = typeof targetValue === "string" ? targetValue : null;
-    const destinationName = typeof nameValue === "string" ? nameValue : null;
-
-    try {
-      const data = await moveDocsFile(sourcePath, destinationPath, destinationName);
-      return Response.json(data, { status: 200 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/docs/git" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    const directoryInput =
-      normaliseOptionalString((payload as Record<string, unknown>).directory) ??
-      normaliseOptionalString((payload as Record<string, unknown>).path);
-    const actionInput = normaliseOptionalString((payload as Record<string, unknown>).action);
-    const messageInput = normaliseOptionalString((payload as Record<string, unknown>).message);
-    const remoteInput = normaliseOptionalString((payload as Record<string, unknown>).remote);
-    const branchInput = normaliseOptionalString((payload as Record<string, unknown>).branch);
-
-    if (!directoryInput) {
-      return Response.json({ error: "Directory is required" }, { status: 400 });
-    }
-
-    if (!actionInput) {
-      return Response.json({ error: "Action is required" }, { status: 400 });
-    }
-
-    if (!["init", "addAll", "commit", "push", "pushUpstream", "pull"].includes(actionInput)) {
-      return Response.json({ error: "Unsupported git action" }, { status: 400 });
-    }
-
-    let directory: string;
-    try {
-      directory = resolveDocsPath(directoryInput);
-    } catch (error) {
-      return Response.json({ error: (error as Error).message }, { status: 400 });
-    }
-
-    try {
-      const result = await executeGitCommand({
-        directory,
-        action: actionInput as GitCommandAction,
-        message: messageInput,
-        remote: remoteInput,
-        branch: branchInput,
-      });
-
-      if (result.exitCode !== 0) {
-        const message = result.stderr || result.stdout || `Git command failed with exit code ${result.exitCode}`;
-        return Response.json(
-          { error: message, exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr },
-          { status: 400 },
-        );
-      }
-
-      return Response.json({ exitCode: 0, stdout: result.stdout, stderr: result.stderr }, { status: 200 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/docs/worktrees" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    const directoryInput =
-      normaliseOptionalString((payload as Record<string, unknown>).directory) ??
-      normaliseOptionalString((payload as Record<string, unknown>).path);
-    const branchInput = normaliseOptionalString((payload as Record<string, unknown>).branch);
-    const startPointInput =
-      normaliseOptionalString((payload as Record<string, unknown>).startPoint) ??
-      normaliseOptionalString((payload as Record<string, unknown>).base) ??
-      normaliseOptionalString((payload as Record<string, unknown>).from);
-
-    if (!directoryInput) {
-      return Response.json({ error: "Directory is required" }, { status: 400 });
-    }
-
-    if (!branchInput) {
-      return Response.json({ error: "Branch name is required" }, { status: 400 });
-    }
-
-    let directory: string;
-    try {
-      directory = await ensureDirectory(directoryInput);
-    } catch (error) {
-      return Response.json({ error: (error as Error).message }, { status: 400 });
-    }
-
-    try {
-      const result = await createGitWorktree({
-        directory,
-        branch: branchInput,
-        startPoint: startPointInput,
-      });
-      return Response.json(result, { status: 201 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
+  // Docs/files API routes (delegated to docs-routes.ts)
+  if (pathname.startsWith("/api/docs/")) {
+    const docsApiResponse = await handleDocsApi(request, url, method, authContext, docsApiContext);
+    if (docsApiResponse) return docsApiResponse;
   }
 
   if (pathname === "/api/orchestrators/directories" && method === "GET") {
@@ -6492,164 +3774,10 @@ const handleApi = async (
     return Response.json({ files: results }, { status: 201 });
   }
 
-  // Archive API endpoints
-  if (pathname === "/api/archive" && method === "GET") {
-    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    
-    try {
-      const validatedOptions = validateInput(ArchiveListOptionsSchema, {
-        limit: url.searchParams.get("limit"),
-        offset: url.searchParams.get("offset"),
-        filter: url.searchParams.get("filter")
-      });
-
-      const sessions = sessionArchiveStore.listArchivedSessions(validatedOptions);
-      const total = sessionArchiveStore.getArchiveCount();
-      return Response.json({ sessions, total, limit: validatedOptions.limit, offset: validatedOptions.offset });
-    } catch (error) {
-      logger.warn("Archive list error:", error instanceof Error ? error.message : error);
-      return Response.json({ error: "Invalid request parameters" }, { status: 400 });
-    }
-  }
-
-  if (pathname.startsWith("/api/archive/") && method === "GET") {
-    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const archiveParts = pathname.split("/").filter(Boolean);
-    const sessionId = archiveParts[2];
-    if (!sessionId) {
-      return Response.json({ error: "Session ID required" }, { status: 400 });
-    }
-
-    // GET /api/archive/:id/messages
-    if (archiveParts[3] === "messages") {
-      const messages = sessionArchiveStore.getArchivedMessages(sessionId);
-      return Response.json({ sessionId, messages });
-    }
-
-    // GET /api/archive/:id
-    const session = sessionArchiveStore.getArchivedSession(sessionId);
-    if (!session) {
-      return Response.json({ error: "Archived session not found" }, { status: 404 });
-    }
-    const messages = sessionArchiveStore.getArchivedMessages(sessionId);
-    return Response.json({ session, messages });
-  }
-
-  if (pathname.startsWith("/api/archive/") && method === "DELETE") {
-    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const archiveParts = pathname.split("/").filter(Boolean);
-    const sessionId = archiveParts[2];
-    if (!sessionId) {
-      return Response.json({ error: "Session ID required" }, { status: 400 });
-    }
-    const deleted = sessionArchiveStore.deleteArchivedSession(sessionId);
-    if (!deleted) {
-      return Response.json({ error: "Archived session not found" }, { status: 404 });
-    }
-    return Response.json({ id: sessionId, deleted: true });
-  }
-
-  // SSE stream for live session list updates (scoped to viewer npub)
-  if (pathname === "/api/sessions/subscribe" && method === "GET") {
-    const viewerNpub = getViewerNormalizedNpub(authContext);
-    if (!viewerNpub) {
-      return Response.json({ error: "Not authenticated" }, { status: 401 });
-    }
-    return createSessionSubscribeResponse(viewerNpub);
-  }
-
-  if (pathname === "/api/sessions" && method === "GET") {
-    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const viewerNormalizedNpub = getViewerNormalizedNpub(authContext);
-    const viewerIsAdmin = Boolean(adminNpub && viewerNormalizedNpub && viewerNormalizedNpub === adminNpub);
-    const allSessions = manager.listSessions();
-    const accessibleSessions = viewerIsAdmin
-      ? allSessions
-      : viewerNormalizedNpub
-        ? allSessions.filter((session) => sessionBelongsToViewer(session.npub ?? null, viewerNormalizedNpub, false))
-        : [];
-    const filterParam = url.searchParams.get("npub");
-
-    const normalizeFilterValue = (value: string | null): string | null | "__anonymous__" => {
-      if (!value || value === "all") return null;
-      if (value === "__anonymous__") return "__anonymous__";
-      const normalized = normaliseNpub(value);
-      return normalized ?? null;
-    };
-
-    const filterValue = normalizeFilterValue(filterParam);
-    const filteredSessions = accessibleSessions.filter((session) => {
-      if (filterValue === null) {
-        return true;
-      }
-      const sessionNormalized = normaliseNpub(session.npub ?? null);
-      if (filterValue === "__anonymous__") {
-        return sessionNormalized === null;
-      }
-      return sessionNormalized === filterValue;
-    });
-
-    let identitySummaries = viewerIsAdmin
-      ? buildIdentitySummaries(allSessions, viewerNormalizedNpub, { includeAll: true })
-      : buildIdentitySummaries(accessibleSessions, viewerNormalizedNpub, { includeAll: false });
-
-    if (!viewerIsAdmin && identitySummaries.length === 0 && viewerNormalizedNpub && authContext.npub) {
-      const segment = deriveNpubSegment(authContext.npub);
-      const dataRoot = normalize(join(userIdentityRoot, segment));
-      const logsRoot = normalize(join(dataRoot, "logs"));
-      const attachmentsRoot = normalize(join(attachmentRoot, segment));
-      const imagesRoot = normalize(join(imageRoot, segment));
-      const viewerRecord = identityUserStore.getByNormalized(viewerNormalizedNpub);
-      const ports = viewerRecord?.ports ?? identityUserStore.ensurePortsFor(authContext.npub);
-      const balance = viewerRecord?.balance ?? 0;
-      identitySummaries = [
-        {
-          npub: authContext.npub,
-          normalizedNpub: viewerNormalizedNpub,
-          segment,
-          alias: generateIdentityAlias(authContext.npub),
-          ports,
-          balance,
-          sessionIds: [],
-          activeSessionIds: [],
-          lastSeenAt: null,
-          dataRoot,
-          logsRoot,
-          attachmentsRoot,
-          imagesRoot,
-        },
-      ];
-    }
-
-    const npubFilters = identitySummaries.map((identity) => ({
-      value: identity.normalizedNpub ?? "__anonymous__",
-      npub: identity.npub,
-      alias: identity.alias,
-      label: identity.alias ?? identity.npub ?? "Anonymous",
-      sessionCount: identity.sessionIds.length,
-      activeCount: identity.activeSessionIds.length,
-    }));
-
-    return Response.json({
-      sessions: filteredSessions.map(serializeSession),
-      identities: identitySummaries,
-      filters: {
-        npubs: npubFilters,
-        active: filterValue,
-      },
-    });
+  // Session & archive API routes (delegated to session-api-routes.ts)
+  if (pathname.startsWith("/api/archive") || pathname.startsWith("/api/sessions")) {
+    const sessionApiResponse = await handleSessionApi(request, url, method, authContext, sessionApiContext);
+    if (sessionApiResponse) return sessionApiResponse;
   }
 
   if (pathname.startsWith("/api/orchestrators/")) {
@@ -6704,81 +3832,7 @@ const handleApi = async (
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
-  if (pathname === "/api/sessions" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    try {
-      const payload = await request.json();
-      const agent = typeof payload?.agent === "string" ? payload.agent.toLowerCase() : "";
-      if (!isAgentType(agent)) {
-        return Response.json({ error: "Invalid agent selection" }, { status: 400 });
-      }
-      const balanceCheck = ensureViewerHasBalance(authContext, {
-        feature: "start an agent session",
-        message: "Add sats to your balance to start an agent session.",
-      });
-      if (balanceCheck instanceof Response) {
-        return balanceCheck;
-      }
-      const directoryInput = typeof payload?.directory === "string" ? payload.directory : undefined;
-      const rawName =
-        payload && typeof payload === "object" && payload !== null
-          ? (payload as Record<string, unknown>).name
-          : null;
-      let workspace: SessionWorkspaceRequest = null;
-      try {
-        workspace =
-          payload && typeof payload === "object" && payload !== null
-            ? parseSessionWorkspaceRequest((payload as Record<string, unknown>).workspace)
-            : null;
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 400 });
-      }
-      const sessionName = normaliseSessionNameInput(rawName);
-      let workingDirectory: string;
-      try {
-        workingDirectory = await resolveSessionWorkingDirectory(directoryInput, workspace);
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 400 });
-      }
-      let origin: SessionOrigin | null = null;
-      try {
-        origin = parseSessionOriginInput(payload?.origin ?? null);
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 400 });
-      }
-      // Parse optional target file for writer-mode sessions
-      const rawTargetFile = typeof payload?.targetFile === "string" ? payload.targetFile.trim() : "";
-      let targetFile: string | undefined;
-      if (rawTargetFile.length > 0) {
-        targetFile = rawTargetFile.startsWith("/")
-          ? rawTargetFile
-          : resolvePath(workingDirectory, rawTargetFile);
-      }
-      const session = await manager.createSession(agent, workingDirectory, sessionName ?? undefined, origin, targetFile);
-      messageStore.recordSession({
-        id: session.id,
-        agent: session.agent,
-        startedAt: session.startedAt,
-        name: session.name,
-        npub: session.npub,
-        port: session.port,
-        pid: session.pid,
-        workingDirectory: session.workingDirectory,
-        command: session.command,
-        runtimeStatus: session.agentRuntimeStatus ?? null,
-        origin: session.origin ?? null,
-        pm2Name: session.pm2Name,
-        targetFile: session.targetFile,
-      });
-      await syncSessionMessages(session.id, true);
-      return Response.json(serializeSession(session), { status: 201 });
-    } catch (error) {
-      return Response.json({ error: (error as Error).message }, { status: 500 });
-    }
-  }
+  // POST /api/sessions is handled by sessionApiContext above
 
   // GET /api/artifacts/:id/raw — Serve artifact file content
   if (pathname.startsWith("/api/artifacts/") && method === "GET") {
@@ -6862,497 +3916,7 @@ const handleApi = async (
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
-  if (pathname.startsWith("/api/sessions/")) {
-    const parts = pathname.split("/");
-    const id = parts[3];
-
-    // SSE endpoint - check auth and handle specially
-    if (method === "GET" && parts[4] === "events" && id) {
-      const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-      if (denied) {
-        return denied;
-      }
-      const liveSession = manager.getSession(id);
-      const viewerNormalizedNpub = getViewerNormalizedNpub(authContext);
-      const viewerIsAdmin = Boolean(adminNpub && viewerNormalizedNpub && viewerNormalizedNpub === adminNpub);
-      const ownedSession = liveSession && (viewerIsAdmin || liveSession.ownerNpub === viewerNormalizedNpub) ? liveSession : null;
-      if (!ownedSession) {
-        return Response.json({ error: "Not found" }, { status: 404 });
-      }
-      return handleSessionEvents(id, request);
-    }
-
-    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    if (!id) {
-      return Response.json({ error: "Session id required" }, { status: 400 });
-    }
-
-    const viewerNormalizedNpub = getViewerNormalizedNpub(authContext);
-    const viewerIsAdmin = Boolean(adminNpub && viewerNormalizedNpub && viewerNormalizedNpub === adminNpub);
-    if (!viewerIsAdmin && !viewerNormalizedNpub) {
-      return Response.json({ error: "Not found" }, { status: 404 });
-    }
-
-    const liveSession = manager.getSession(id);
-    const ownedSession =
-      liveSession && sessionBelongsToViewer(liveSession.npub ?? null, viewerNormalizedNpub, viewerIsAdmin)
-        ? liveSession
-        : null;
-
-    if (method === "GET" && parts.length === 4) {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      return Response.json(serializeSession(ownedSession));
-    }
-
-    if (method === "PATCH" && parts.length === 4) {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      let payload: unknown;
-      try {
-        payload = await request.json();
-      } catch {
-        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-      }
-      if (!payload || typeof payload !== "object") {
-        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-      }
-      const record = payload as Record<string, unknown>;
-      const desiredName = typeof record.name === "string" ? record.name : "";
-      const trimmedName = desiredName.trim();
-      if (!trimmedName) {
-        return Response.json({ error: "Session name is required" }, { status: 400 });
-      }
-      const renamed = manager.renameSession(id, trimmedName);
-      if (!renamed) return Response.json({ error: "Not found" }, { status: 404 });
-      return Response.json(serializeSession(renamed));
-    }
-
-    if (method === "DELETE" && parts.length === 4) {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      const session = await manager.stopSession(id);
-      if (!session) return Response.json({ error: "Not found" }, { status: 404 });
-      // Schedule archive after 5 seconds
-      scheduleSessionArchive(id, manager);
-      return Response.json(serializeSession(session));
-    }
-
-    if (method === "DELETE" && parts[4] === "storage") {
-      if (ownedSession && (ownedSession.status === "starting" || ownedSession.status === "running")) {
-        return Response.json({ error: "Stop the session before deleting it" }, { status: 409 });
-      }
-
-      if (!ownedSession) {
-        if (!viewerIsAdmin) {
-          const storedRecord = messageStore
-            .listSessions()
-            .find((record) => record.id === id && sessionBelongsToViewer(record.npub, viewerNormalizedNpub, viewerIsAdmin));
-          if (!storedRecord) {
-            return Response.json({ error: "Not found" }, { status: 404 });
-          }
-        } else if (!messageStore.listSessions().some((record) => record.id === id)) {
-          return Response.json({ error: "Not found" }, { status: 404 });
-        }
-      }
-
-      // Cancel any pending archive since user wants immediate deletion
-      cancelPendingArchive(id);
-
-      try {
-        manager.deleteSession(id);
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 400 });
-      }
-      messageStore.removeSession(id);
-      return Response.json({ id, deleted: true });
-    }
-
-    if (method === "GET" && parts[4] === "logs") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      const logs = await manager.getLogs(id);
-      if (!logs) return Response.json({ error: "Not found" }, { status: 404 });
-      return Response.json({ id, logs });
-    }
-
-    // GET /api/sessions/:id/artifacts
-    if (method === "GET" && parts[4] === "artifacts") {
-      // Allow viewing artifacts for both live and archived sessions
-      const artifacts = artifactsStore.listBySession(id);
-      return Response.json({ artifacts });
-    }
-
-    // Note: SSE endpoint (/events) is handled earlier in the route chain
-
-    if (parts[4] === "messages") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-
-      if (method === "GET") {
-        const refresh = url.searchParams.get("refresh") === "true";
-        const messages = await (refresh ? syncSessionMessages(id, true) : messageStore.listSessionMessages(id));
-        return Response.json({ id, messages });
-      }
-
-      if (method === "POST") {
-        let payload: unknown;
-        try {
-          payload = await request.json();
-        } catch (error) {
-          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-        }
-
-        if (!payload || typeof payload !== "object") {
-          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-        }
-
-        const record = payload as Record<string, unknown>;
-        const requestTypeRaw = typeof record.type === "string" ? record.type.trim().toLowerCase() : "user";
-        const messageType = requestTypeRaw === "raw" ? "raw" : "user";
-        const rawContent = typeof record.content === "string" ? record.content : "";
-        const content = messageType === "raw" ? rawContent : rawContent.trim();
-
-        if (!content) {
-          return Response.json({ error: "Message content is required" }, { status: 400 });
-        }
-
-        const userNpub = authContext.npub ?? null;
-        if (!userNpub) {
-          return Response.json({ error: "Sign in to send messages", balance: 0 }, { status: 403 });
-        }
-
-        if (messageType === "raw") {
-          try {
-            const agentUrl = buildAgentUrl(agentHost, ownedSession.port, "/message");
-            const agentResponse = await fetch(agentUrl, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ type: messageType, content }),
-            });
-            if (!agentResponse.ok) {
-              const errorPayload = await agentResponse.json().catch(() => ({}));
-              const message = (errorPayload?.error as string) ?? agentResponse.statusText ?? "Agent request failed";
-              return Response.json({ error: message }, { status: agentResponse.status });
-            }
-            return Response.json({ id, ok: true });
-          } catch (error) {
-            return Response.json(
-              { error: `Failed to contact agent: ${(error as Error).message ?? "unknown error"}` },
-              { status: 502 },
-            );
-          }
-        }
-
-        let currentBalance: number;
-        try {
-          currentBalance = identityUserStore.debit(userNpub, MESSAGE_COST_SATS);
-        } catch (error) {
-          if (error instanceof InsufficientBalanceError) {
-            return Response.json(
-              {
-                error: "Insufficient balance to send message",
-                balance: error.balance,
-              },
-              { status: 402 },
-            );
-          }
-          console.error("[billing] failed to debit message cost:", error);
-          return Response.json({ error: "Failed to debit balance" }, { status: 500 });
-        }
-
-        try {
-          const initialCount = messageStore.listSessionMessages(id).length;
-          const agentUrl = buildAgentUrl(agentHost, ownedSession.port, "/message");
-          const agentResponse = await fetch(agentUrl, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ type: messageType, content }),
-          });
-          if (!agentResponse.ok) {
-            const errorPayload = await agentResponse.json().catch(() => ({}));
-            const message = (errorPayload?.error as string) ?? agentResponse.statusText ?? "Agent request failed";
-            try {
-              currentBalance = identityUserStore.credit(userNpub, MESSAGE_COST_SATS);
-            } catch (creditError) {
-              console.error("[billing] failed to refund after agent rejection:", creditError);
-            }
-            return Response.json({ error: message, balance: currentBalance }, { status: agentResponse.status });
-          }
-
-          const messages = await waitForMessageUpdate(id, initialCount);
-          return Response.json({ id, messages, balance: currentBalance });
-        } catch (error) {
-          try {
-            currentBalance = identityUserStore.credit(userNpub, MESSAGE_COST_SATS);
-          } catch (creditError) {
-            console.error("[billing] failed to refund after agent error:", creditError);
-          }
-          return Response.json(
-            { error: `Failed to contact agent: ${(error as Error).message}`, balance: currentBalance },
-            { status: 502 },
-          );
-        }
-      }
-    }
-
-    // GET /api/sessions/:id/history - returns session + messages from any source (live, abandoned, or archived)
-    if (method === "GET" && parts[4] === "history") {
-      // Check if session is running first
-      if (ownedSession) {
-        const messages = await syncSessionMessages(id, true);
-        return Response.json({
-          id,
-          status: "live",
-          session: serializeSession(ownedSession),
-          messages,
-        });
-      }
-
-      // Check wingman.db for abandoned session (server restart, etc.)
-      const storedSession = messageStore.getSession(id);
-      if (storedSession) {
-        const isOwned = sessionBelongsToViewer(storedSession.npub, viewerNormalizedNpub, viewerIsAdmin);
-        if (isOwned) {
-          const messages = messageStore.listSessionMessages(id);
-          return Response.json({
-            id,
-            status: "abandoned",
-            session: {
-              id: storedSession.id,
-              agent: storedSession.agent,
-              name: storedSession.name,
-              npub: storedSession.npub,
-              workingDirectory: storedSession.workingDirectory,
-              startedAt: storedSession.startedAt,
-              origin: storedSession.origin,
-            },
-            messages,
-          });
-        }
-      }
-
-      // Check archive store
-      const archivedSession = sessionArchiveStore.getArchivedSession(id);
-      if (archivedSession) {
-        const isOwned = sessionBelongsToViewer(archivedSession.npub, viewerNormalizedNpub, viewerIsAdmin);
-        if (isOwned) {
-          const messages = sessionArchiveStore.getArchivedMessages(id);
-          return Response.json({
-            id,
-            status: "archived",
-            session: {
-              id: archivedSession.id,
-              agent: archivedSession.agent,
-              name: archivedSession.name,
-              npub: archivedSession.npub,
-              workingDirectory: archivedSession.workingDirectory,
-              startedAt: archivedSession.startedAt,
-              archivedAt: archivedSession.archivedAt,
-              origin: archivedSession.origin,
-            },
-            messages,
-          });
-        }
-      }
-
-      return Response.json({ error: "Session not found" }, { status: 404 });
-    }
-
-    if (parts[4] === "queue") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-
-      if (method === "GET") {
-        const prompts = promptQueueStore.getSessionQueue(id);
-        return Response.json({ id, queue: { prompts, maxSize: 21 } });
-      }
-
-      if (method === "POST") {
-        let payload: unknown;
-        try {
-          payload = await request.json();
-        } catch {
-          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-        }
-
-        if (!payload || typeof payload !== "object") {
-          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-        }
-
-        const record = payload as Record<string, unknown>;
-        const content = typeof record.content === "string" ? record.content.trim() : "";
-
-        if (!content) {
-          return Response.json({ error: "Prompt content is required" }, { status: 400 });
-        }
-
-        try {
-          const prompt = promptQueueStore.addPrompt(id, { content });
-          if (!prompt) {
-            return Response.json({ error: "Failed to add prompt to queue" }, { status: 400 });
-          }
-          void maybeAutoDispatchQueuedPrompt(ownedSession);
-          return Response.json({ id, prompt });
-        } catch (error) {
-          return Response.json({ error: (error as Error).message }, { status: 400 });
-        }
-      }
-
-      if (method === "PUT" && parts.length === 6) {
-        const promptId = parts[5];
-        if (!promptId) {
-          return Response.json({ error: "Prompt ID required" }, { status: 400 });
-        }
-
-        let payload: unknown;
-        try {
-          payload = await request.json();
-        } catch {
-          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-        }
-
-        if (!payload || typeof payload !== "object") {
-          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-        }
-
-        const record = payload as Record<string, unknown>;
-        const content = typeof record.content === "string" ? record.content.trim() : "";
-
-        if (!content) {
-          return Response.json({ error: "Prompt content is required" }, { status: 400 });
-        }
-
-        const updated = promptQueueStore.updatePromptContent(id, promptId, content);
-        if (!updated) {
-          return Response.json({ error: "Prompt not found or failed to update" }, { status: 404 });
-        }
-
-        return Response.json({ id, promptId, updated: true });
-      }
-
-      if (method === "DELETE" && parts.length === 6) {
-        const promptId = parts[5];
-        if (!promptId) {
-          return Response.json({ error: "Prompt ID required" }, { status: 400 });
-        }
-
-        const deleted = promptQueueStore.deletePromptById(id, promptId);
-        if (!deleted) {
-          return Response.json({ error: "Prompt not found" }, { status: 404 });
-        }
-
-        return Response.json({ id, promptId, deleted: true });
-      }
-    }
-
-    if (method === "POST" && parts[4] === "queue" && parts[5] === "next") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-
-      if (queueDispatchInFlight.has(id)) {
-        return Response.json({ error: "Prompt dispatch already in progress" }, { status: 409 });
-      }
-
-      queueDispatchInFlight.add(id);
-      try {
-        const result = await dispatchNextQueuedPromptForSession(ownedSession, authContext.npub ?? null);
-        return Response.json(result);
-      } catch (error) {
-        if (error instanceof QueueDispatchError) {
-          return Response.json({ error: error.message, ...(error.payload ?? {}) }, { status: error.status });
-        }
-        console.error("[queue] failed to send queued prompt:", error);
-        return Response.json({ error: "Failed to send queued prompt" }, { status: 500 });
-      } finally {
-        queueDispatchInFlight.delete(id);
-      }
-    }
-
-    // Fork session to a new git worktree
-    if (method === "POST" && parts[4] === "fork-to-worktree") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-
-      const sourceDirectory = ownedSession.workingDirectory;
-      if (!sourceDirectory) {
-        return Response.json({ error: "Source session has no working directory" }, { status: 400 });
-      }
-
-      let payload: unknown;
-      try {
-        payload = await request.json();
-      } catch {
-        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-      }
-
-      let forkInput: ReturnType<typeof validateForkInput>;
-      try {
-        forkInput = validateForkInput(payload);
-        forkInput.sourceSessionId = id;
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 400 });
-      }
-
-      // Get recent messages from source session
-      const contextMessages = getRecentMessages(messageStore, id, forkInput.messageCount ?? 5);
-
-      // Create worktree
-      let worktreeResult: Awaited<ReturnType<typeof createGitWorktree>>;
-      try {
-        worktreeResult = await createGitWorktree({
-          directory: sourceDirectory,
-          branch: forkInput.branch,
-          startPoint: null,
-        });
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 400 });
-      }
-
-      // Create new session in the worktree with the same agent
-      const balanceCheck = ensureViewerHasBalance(authContext, {
-        feature: "start an agent session",
-        message: "Add sats to your balance to fork to a worktree.",
-      });
-      if (balanceCheck instanceof Response) {
-        return balanceCheck;
-      }
-
-      const sessionName = `${ownedSession.name || "session"} (${forkInput.branch})`;
-      let newSession: SessionSnapshot;
-      try {
-        newSession = await manager.createSession(
-          ownedSession.agent,
-          worktreeResult.path,
-          sessionName,
-          { type: "fork", id: id, label: `Forked from ${ownedSession.name || id}` }
-        );
-        messageStore.recordSession({
-          id: newSession.id,
-          agent: newSession.agent,
-          startedAt: newSession.startedAt,
-          name: newSession.name,
-          npub: newSession.npub,
-          port: newSession.port,
-          pid: newSession.pid,
-          workingDirectory: newSession.workingDirectory,
-          command: newSession.command,
-          runtimeStatus: newSession.agentRuntimeStatus ?? null,
-          origin: newSession.origin ?? null,
-          pm2Name: newSession.pm2Name,
-        });
-        await syncSessionMessages(newSession.id, true);
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 500 });
-      }
-
-      // Format context for injection
-      const initialPrompt = formatMessagesAsContext(contextMessages);
-
-      return Response.json({
-        session: serializeSession(newSession),
-        contextMessages,
-        worktreePath: worktreeResult.path,
-        sourceSessionId: id,
-        initialPrompt,
-      }, { status: 201 });
-    }
-  }
+  // /api/sessions/:id/* routes are handled by sessionApiContext above
 
   return Response.json({ error: "Not found" }, { status: 404 });
 };
@@ -7472,7 +4036,7 @@ const server = Bun.serve({
       }
 
       if (pathname.startsWith("/api/")) {
-        return handleApi(request, url, method, authContext, bunServer);
+        return handleApi(request, url, method, authContext);
       }
 
       const tempAttachment = resolveTempAttachment(pathname, authContext);
@@ -7514,8 +4078,9 @@ const server = Bun.serve({
 });
 
 const stopAllSessions = async () => {
-  if (preserveSessionsOnShutdown) {
-    console.log("[shutdown] preserving running agent sessions for warm restart");
+  if (preserveSessionsOnShutdown || config.agentSpawnMode === "pm2") {
+    const reason = preserveSessionsOnShutdown ? "warm restart" : "pm2 agent spawn mode";
+    console.log(`[shutdown] preserving running agent sessions (${reason})`);
     return;
   }
 

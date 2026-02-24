@@ -37,6 +37,9 @@ case "$1" in
 esac
 `;
 
+// Cache: once the helper has been written and chmod'd, skip on subsequent calls.
+let helperVerifiedPath: string | null = null;
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -44,8 +47,11 @@ esac
 /**
  * Ensure the credential helper script exists in the data directory.
  * Returns the absolute path to the script, or null if it couldn't be written.
+ * After the first successful write+chmod, subsequent calls return immediately.
  */
 export function ensureCredentialHelper(dataDir: string): string | null {
+  if (helperVerifiedPath) return helperVerifiedPath;
+
   const helperPath = join(dataDir, HELPER_FILENAME);
 
   try {
@@ -56,6 +62,7 @@ export function ensureCredentialHelper(dataDir: string): string | null {
       // Ensure it's still executable
       chmodSync(helperPath, 0o755);
     }
+    helperVerifiedPath = helperPath;
     return helperPath;
   } catch (err) {
     console.error(`[gitea-cred] Failed to write credential helper: ${(err as Error).message}`);
