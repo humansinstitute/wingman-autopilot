@@ -4,6 +4,7 @@ export function buildClaudeWingmanServer(
   mcpServerPath: string,
   wingmanUrl: string,
   sessionId: string,
+  identityEnv?: Record<string, string>,
 ): JsonObject {
   return {
     type: "stdio",
@@ -12,6 +13,7 @@ export function buildClaudeWingmanServer(
     env: {
       WINGMAN_URL: wingmanUrl,
       SESSION_ID: sessionId,
+      ...identityEnv,
     },
   };
 }
@@ -56,6 +58,7 @@ export function buildGooseWingmanExtension(
   mcpServerPath: string,
   wingmanUrl: string,
   sessionId: string,
+  identityEnv?: Record<string, string>,
 ): JsonObject {
   return {
     args: ["run", mcpServerPath],
@@ -68,6 +71,7 @@ export function buildGooseWingmanExtension(
     envs: {
       WINGMAN_URL: wingmanUrl,
       SESSION_ID: sessionId,
+      ...identityEnv,
     },
     name: "wingman",
     timeout: 300,
@@ -114,6 +118,7 @@ export function buildOpenCodeWingmanMcp(
   mcpServerPath: string,
   wingmanUrl: string,
   sessionId: string,
+  identityEnv?: Record<string, string>,
 ): JsonObject {
   return {
     type: "local",
@@ -122,6 +127,7 @@ export function buildOpenCodeWingmanMcp(
     environment: {
       WINGMAN_URL: wingmanUrl,
       SESSION_ID: sessionId,
+      ...identityEnv,
     },
   };
 }

@@ -1493,6 +1493,7 @@ manager.on((event) => {
               userNpub: event.session.npub,
               botPubkeyHex: generated.botPubkeyHex,
               botNpub: generated.botNpub,
+              displayName: generated.displayName,
               encryptedToUser: generated.encryptedToUser,
               encryptedEscrow: generated.encryptedEscrow,
               escrowUuid: generated.escrowUuid,
@@ -3175,6 +3176,30 @@ const handleApi = async (
         });
       } catch (error) {
         console.warn(`[admin] failed to record identity ${trimmedNpub}:`, error);
+      }
+
+      // Ensure every authenticated user has a bot key at login time.
+      try {
+        const existingBotKey = botKeyStore.getActiveKeyForUser(trimmedNpub);
+        if (!existingBotKey) {
+          const decoded = nip19.decode(trimmedNpub);
+          if (decoded.type === "npub") {
+            const userPubkeyHex = decoded.data as string;
+            const generated = generateBotKey(userPubkeyHex);
+            botKeyStore.createKey({
+              userNpub: trimmedNpub,
+              botPubkeyHex: generated.botPubkeyHex,
+              botNpub: generated.botNpub,
+              displayName: generated.displayName,
+              encryptedToUser: generated.encryptedToUser,
+              encryptedEscrow: generated.encryptedEscrow,
+              escrowUuid: generated.escrowUuid,
+            });
+            console.log(`[bot-key] Generated bot key at login for ${trimmedNpub.slice(0, 20)}…: ${generated.botNpub.slice(0, 20)}…`);
+          }
+        }
+      } catch (error) {
+        console.warn(`[bot-key] Failed login-time bot generation for ${trimmedNpub}:`, error);
       }
 
       // Fire-and-forget Gitea user provisioning

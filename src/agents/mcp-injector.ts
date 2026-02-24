@@ -55,6 +55,21 @@ export interface McpInjectionResult {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const IDENTITY_KEYS = ["BOT_PUBKEY_HEX", "BOT_NPUB", "USER_NPUB"] as const;
+
+/** Extract identity-related env vars from baseEnv (only those that are set). */
+function pickIdentityEnv(env: Record<string, string>): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const key of IDENTITY_KEYS) {
+    if (env[key]) result[key] = env[key];
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -173,10 +188,12 @@ async function injectClaude(
   baseEnv: Record<string, string>,
 ): Promise<McpInjectionResult> {
   const mcpConfigPath = join(ctx.workingDirectory, ".mcp.json");
+  const identityEnv = pickIdentityEnv(baseEnv);
   const wingmanServer = buildClaudeWingmanServer(
     mcpServerPath,
     baseEnv.WINGMAN_URL!,
     ctx.sessionId,
+    identityEnv,
   );
 
   // Merge into existing .mcp.json if present
@@ -209,8 +226,12 @@ function injectCodex(
   baseEnv: Record<string, string>,
 ): McpInjectionResult {
   const escapeTomlString = (value: string) => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const identityEnv = pickIdentityEnv(baseEnv);
+  const identityEntries = Object.entries(identityEnv)
+    .map(([k, v]) => `${k} = "${escapeTomlString(v)}"`)
+    .join(", ");
   const codexEnvInlineTable =
-    `{ WINGMAN_URL = "${escapeTomlString(baseEnv.WINGMAN_URL!)}", SESSION_ID = "${escapeTomlString(ctx.sessionId)}" }`;
+    `{ WINGMAN_URL = "${escapeTomlString(baseEnv.WINGMAN_URL!)}", SESSION_ID = "${escapeTomlString(ctx.sessionId)}"${identityEntries ? `, ${identityEntries}` : ""} }`;
 
   const commandArgs = [
     "-c",
@@ -235,10 +256,12 @@ async function injectGoose(
 ): Promise<McpInjectionResult> {
   const gooseConfigDir = join(homedir(), ".config", "goose");
   const gooseConfigPath = join(gooseConfigDir, "config.yaml");
+  const identityEnv = pickIdentityEnv(baseEnv);
   const wingmanExtension = buildGooseWingmanExtension(
     mcpServerPath,
     baseEnv.WINGMAN_URL!,
     ctx.sessionId,
+    identityEnv,
   );
 
   // Merge into existing config.yaml if present
@@ -286,10 +309,12 @@ async function injectOpenCode(
 ): Promise<McpInjectionResult> {
   const opencodeConfigDir = join(homedir(), ".config", "opencode");
   const opencodeConfigPath = join(opencodeConfigDir, "opencode.json");
+  const identityEnv = pickIdentityEnv(baseEnv);
   const wingmanMcp = buildOpenCodeWingmanMcp(
     mcpServerPath,
     baseEnv.WINGMAN_URL!,
     ctx.sessionId,
+    identityEnv,
   );
 
   let existingConfig: Record<string, unknown> = {

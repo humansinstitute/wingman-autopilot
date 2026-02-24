@@ -155,13 +155,19 @@ export function initIdentityPanels(deps) {
     botPublishDelegateButton.dataset.action = "publish-bot-delegate-kind";
     botPublishDelegateButton.textContent = "Publish delegate kind";
     botPublishDelegateButton.disabled = true;
+    const botForceSetupButton = document.createElement("button");
+    botForceSetupButton.type = "button";
+    botForceSetupButton.className = "wm-button secondary wm-button--small";
+    botForceSetupButton.dataset.action = "force-bot-setup";
+    botForceSetupButton.textContent = "Force Bot Setup";
+    botForceSetupButton.disabled = true;
     const botExportFeedback = document.createElement("span");
     botExportFeedback.className = "wm-identity-copy-feedback";
     botExportFeedback.dataset.role = "identity-bot-export-feedback";
     const botPublishDelegateFeedback = document.createElement("span");
     botPublishDelegateFeedback.className = "wm-identity-copy-feedback";
     botPublishDelegateFeedback.dataset.role = "identity-bot-delegate-publish-feedback";
-    botActions.append(botExportButton, botPublishDelegateButton);
+    botActions.append(botExportButton, botPublishDelegateButton, botForceSetupButton);
     botExportValue.append(botActions, botExportFeedback, botPublishDelegateFeedback);
     list.append(botExportLabel, botExportValue);
 

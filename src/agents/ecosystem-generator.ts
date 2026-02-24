@@ -45,6 +45,10 @@ export interface SessionConfig {
   userAlias: string;
   isAdmin: boolean;
   config: WingmanConfig;
+  /** Fully-resolved command (including MCP-injected args) when available. */
+  commandOverride?: string[];
+  /** Extra env vars (including MCP-injected env) to pass to agentapi process. */
+  envOverride?: Record<string, string>;
 }
 
 const ECOSYSTEM_FILENAME = "ecosystem.config.cjs";
@@ -137,6 +141,14 @@ module.exports = ${JSON.stringify(config, null, 2)};
  * Build the agentapi command for a session.
  */
 function buildAgentCommand(sessionConfig: SessionConfig): { script: string; args: string[] } {
+  if (Array.isArray(sessionConfig.commandOverride) && sessionConfig.commandOverride.length > 0) {
+    const [script, ...args] = sessionConfig.commandOverride;
+    if (!script) {
+      throw new Error("Session command override is empty");
+    }
+    return { script, args };
+  }
+
   const { agent, port, config } = sessionConfig;
   const definition = config.agents[agent];
   const commandParts = definition.command({ port, agent, config });
@@ -180,6 +192,7 @@ export function createAppConfig(sessionConfig: SessionConfig): EcosystemApp {
       SESSION_DIRECTORY: workingDirectory,
       SESSION_AGENT: sessionConfig.agent,
       USER_ALIAS: userAlias,
+      ...(sessionConfig.envOverride ?? {}),
     },
     out_file: join(logsDir, `${processName}-out.log`),
     error_file: join(logsDir, `${processName}-error.log`),

@@ -13,6 +13,7 @@ import { showToast } from "../utils/toast.js";
 import { fetchNpubProjects } from "../npub-projects/index.js";
 import { publishDelegateRegistryForCurrentUser } from "./bot-delegate-publisher.js";
 import { normaliseNpubValue, isFiniteNumber, toFiniteTimestamp } from "./dom.js";
+import * as deviceKeystore from "./device-keystore.js";
 
 export function initIdentityStateManager(deps) {
   const {
@@ -143,6 +144,23 @@ export function initIdentityStateManager(deps) {
     }
   };
 
+  const forceSyncBotLifecycle = async () => {
+    const response = await fetch("/api/bot-keys/force-sync", {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = payload && typeof payload.error === "string"
+        ? payload.error
+        : `Failed to force bot sync (${response.status})`;
+      throw new Error(message);
+    }
+    return payload;
+  };
+
   // ── export bot nsec ──────────────────────────────────────────────
 
   async function handleExportBotNsec(entry) {
@@ -173,13 +191,25 @@ export function initIdentityStateManager(deps) {
         throw new Error("Missing encrypted data or sender pubkey from server");
       }
 
-      // 2. Decrypt via NIP-07
+      // 2. Decrypt using NIP-07 (preferred) or local device keystore (Key Teleport)
       setButtonState(btn, { state: "loading", label: "Decrypting\u2026", disable: true });
 
-      if (!window.nostr?.nip44?.decrypt) {
-        throw new Error("NIP-07 extension with NIP-44 support required to export bot nsec");
+      let nsecHex = null;
+      if (typeof window.nostr?.nip44?.decrypt === "function") {
+        nsecHex = await window.nostr.nip44.decrypt(senderPubkey, encryptedToUser);
+      } else if (deviceKeystore.isAvailable()) {
+        const stored = await deviceKeystore.retrieveNsec();
+        if (!stored?.nsec || !(stored.nsec instanceof Uint8Array) || stored.nsec.length !== 32) {
+          throw new Error("No local key available to decrypt bot nsec export");
+        }
+        const { nip44 } = await import("/vendor/nostr-tools/index.js");
+        let userSecretHex = "";
+        for (const byte of stored.nsec) userSecretHex += byte.toString(16).padStart(2, "0");
+        const conversationKey = nip44.v2.utils.getConversationKey(userSecretHex, senderPubkey);
+        nsecHex = nip44.v2.decrypt(encryptedToUser, conversationKey);
+      } else {
+        throw new Error("No NIP-44 decryption method available to export bot nsec");
       }
-      let nsecHex = await window.nostr.nip44.decrypt(senderPubkey, encryptedToUser);
 
       // NIP-44 decrypt returns a string — trim whitespace and left-pad if a
       // leading zero was dropped (some NIP-07 extensions do this).
@@ -284,6 +314,58 @@ export function initIdentityStateManager(deps) {
       setTimeout(() => {
         resetButtonState(btn);
         if (feedback) {
+          feedback.hidden = true;
+          delete feedback.dataset.state;
+        }
+      }, 5000);
+    }
+  }
+
+  async function handleForceBotSetup(entry, { silent = false } = {}) {
+    const btn = entry?.botForceSetupButton;
+    const feedback = entry?.botPublishDelegateFeedback;
+
+    if (btn) {
+      setButtonState(btn, { state: "loading", label: "Syncing…", disable: true });
+    }
+
+    try {
+      await forceSyncBotLifecycle();
+      await fetchBotIdentity();
+      const result = await publishDelegateRegistryForCurrentUser(state.config);
+      const relayCount = Array.isArray(result?.results) ? result.results.length : 0;
+      const successCount = Number.isFinite(result?.successes) ? Number(result.successes) : 0;
+      if (btn) {
+        setButtonState(btn, { state: "success", label: "Synced", disable: false });
+      }
+      if (feedback) {
+        feedback.textContent = relayCount > 0 ? `${successCount}/${relayCount} relays` : "Synced";
+        feedback.hidden = false;
+        feedback.dataset.state = successCount > 0 ? "success" : "error";
+      }
+      setTimeout(() => {
+        if (btn) resetButtonState(btn);
+        if (feedback) {
+          feedback.hidden = true;
+          delete feedback.dataset.state;
+        }
+      }, 4000);
+    } catch (error) {
+      if (!silent) {
+        console.error("[identity] force bot setup failed:", error);
+      }
+      if (btn) {
+        setButtonState(btn, { state: "error", label: "Failed", disable: false });
+      }
+      if (feedback && !silent) {
+        const message = error instanceof Error ? error.message : "Bot setup failed";
+        feedback.textContent = message;
+        feedback.hidden = false;
+        feedback.dataset.state = "error";
+      }
+      setTimeout(() => {
+        if (btn) resetButtonState(btn);
+        if (feedback && !silent) {
           feedback.hidden = true;
           delete feedback.dataset.state;
         }
@@ -491,6 +573,7 @@ export function initIdentityStateManager(deps) {
         startSigningListener(next.npub);
       }
       fetchBotIdentity();
+      Promise.resolve().then(() => handleForceBotSetup(null, { silent: true }));
     }
     if (becameUnauthenticated) {
       stopSigningListener();
@@ -918,6 +1001,7 @@ export function initIdentityStateManager(deps) {
       botExportButton: root.querySelector('[data-action="export-bot-nsec"]'),
       botExportFeedback: root.querySelector('[data-role="identity-bot-export-feedback"]'),
       botPublishDelegateButton: root.querySelector('[data-action="publish-bot-delegate-kind"]'),
+      botForceSetupButton: root.querySelector('[data-action="force-bot-setup"]'),
       botPublishDelegateFeedback: root.querySelector('[data-role="identity-bot-delegate-publish-feedback"]'),
       copyHandler: null,
       registerHandler: null,
@@ -927,6 +1011,7 @@ export function initIdentityStateManager(deps) {
       botCopyHandler: null,
       botExportHandler: null,
       botPublishDelegateHandler: null,
+      botForceSetupHandler: null,
     };
 
     if (entry.copyButton) {
@@ -1006,6 +1091,15 @@ export function initIdentityStateManager(deps) {
       };
       entry.botPublishDelegateButton.addEventListener("click", entry.botPublishDelegateHandler);
       identityDomEntryByNode.set(entry.botPublishDelegateButton, entry);
+    }
+
+    if (entry.botForceSetupButton) {
+      ensureButtonOriginalLabel(entry.botForceSetupButton);
+      entry.botForceSetupHandler = async () => {
+        await handleForceBotSetup(entry);
+      };
+      entry.botForceSetupButton.addEventListener("click", entry.botForceSetupHandler);
+      identityDomEntryByNode.set(entry.botForceSetupButton, entry);
     }
 
     identityDomEntries.add(entry);

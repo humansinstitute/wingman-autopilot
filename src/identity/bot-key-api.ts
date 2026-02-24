@@ -5,7 +5,7 @@
  * Manages per-user bot keypair lifecycle: query, unlock, rotate, replace.
  */
 
-import { getPublicKey } from "nostr-tools";
+import { getPublicKey, nip19 } from "nostr-tools";
 
 import { readSessionCookie } from "../auth/session-cookie";
 import type { BotKeyStore, BotKeyRecord } from "./bot-key-store";
@@ -105,6 +105,11 @@ export function createBotKeyApiHandler(deps: BotKeyApiDependencies) {
       // POST /api/bot-keys/replace
       if (segments.length === 3 && segments[2] === "replace" && method === "POST") {
         return await handleReplace(deps, request);
+      }
+
+      // POST /api/bot-keys/force-sync
+      if (segments.length === 3 && segments[2] === "force-sync" && method === "POST") {
+        return await handleForceSync(deps, request);
       }
 
       // GET /api/bot-keys/delegate-registry
@@ -490,6 +495,95 @@ async function handleReplace(deps: BotKeyApiDependencies, request: Request): Res
     botPubkeyHex: record.botPubkeyHex,
     displayName: generated.displayName,
     signedProfileEvent: generated.signedProfileEvent,
+  });
+}
+
+/**
+ * POST /api/bot-keys/force-sync
+ *
+ * Ensures an authenticated user has a bot key, unlocks it in memory via escrow,
+ * and ensures bot profile kind 0 is published.
+ */
+async function handleForceSync(deps: BotKeyApiDependencies, request: Request): Promise<Response> {
+  const npub = getNpubFromCookie(request);
+  if (!npub) {
+    return jsonError("Not authenticated — session cookie required", 401);
+  }
+
+  const decode = nip19.decode(npub);
+  if (decode.type !== "npub" || typeof decode.data !== "string") {
+    return jsonError("Invalid npub in session", 400);
+  }
+  const userPubkeyHex = decode.data;
+
+  let record = deps.store.getActiveKeyForUser(npub);
+  let created = false;
+  if (!record) {
+    const generated = generateBotKey(userPubkeyHex);
+    record = deps.store.createKey({
+      userNpub: npub,
+      botPubkeyHex: generated.botPubkeyHex,
+      botNpub: generated.botNpub,
+      displayName: generated.displayName,
+      encryptedToUser: generated.encryptedToUser,
+      encryptedEscrow: generated.encryptedEscrow,
+      escrowUuid: generated.escrowUuid,
+    });
+    created = true;
+  }
+
+  let unlocked = isBotKeyUnlocked(npub);
+  if (!unlocked) {
+    const secretKey = unlockViaEscrow(record.encryptedEscrow, record.botPubkeyHex, record.escrowUuid);
+    storeBotKeyInMemory(npub, secretKey, record.botPubkeyHex, "escrow");
+    deps.onBotKeyUnlocked?.(npub, secretKey, record.botPubkeyHex);
+    unlocked = true;
+  }
+
+  const relays = Array.isArray(deps.defaultRelays) ? deps.defaultRelays : [];
+  let botProfilePublished = false;
+  let botProfileError: string | null = null;
+  if (relays.length > 0) {
+    try {
+      const status = await getBotProfileStatus({
+        botPubkeyHex: record.botPubkeyHex,
+        defaultRelays: relays,
+      });
+      if (!status.exists) {
+        const key = getDecryptedBotKey(npub);
+        if (!key || key.pubkeyHex !== record.botPubkeyHex) {
+          throw new Error("Bot key unavailable in memory for profile signing");
+        }
+        const signedEvent = signBotProfileEvent(key.secretKey, record.displayName || getBotDisplayName(record.botPubkeyHex));
+        await publishBotProfileEvent({
+          botPubkeyHex: record.botPubkeyHex,
+          signedEvent,
+          defaultRelays: relays,
+        });
+        botProfilePublished = true;
+      }
+    } catch (error) {
+      botProfileError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  const delegateTemplate = buildDelegateRegistryTemplate([
+    {
+      pubkey: record.botPubkeyHex,
+      name: record.displayName || getBotDisplayName(record.botPubkeyHex),
+      active: true,
+    },
+  ]);
+
+  return Response.json({
+    ok: true,
+    created,
+    unlocked,
+    botNpub: record.botNpub,
+    botPubkeyHex: record.botPubkeyHex,
+    botProfilePublished,
+    botProfileError,
+    delegateTemplate,
   });
 }
 

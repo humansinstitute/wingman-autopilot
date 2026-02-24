@@ -24,8 +24,52 @@ function resolvePublishRelays(config) {
 
 function ensureNip07SigningAvailable() {
   if (!window.nostr || typeof window.nostr.signEvent !== 'function') {
-    throw new Error('NIP-07 signing is required to publish delegate discovery');
+    throw new Error('No signer available to publish delegate discovery');
   }
+}
+
+async function signWithDeviceKey(eventTemplate) {
+  const identityApi = globalThis.wingmanIdentity;
+  const keystore = identityApi?.deviceKeystore;
+  if (!keystore || typeof keystore.retrieveNsec !== 'function') {
+    return null;
+  }
+  const stored = await keystore.retrieveNsec();
+  if (!stored?.nsec) {
+    return null;
+  }
+  const { finalizeEvent } = await import('/vendor/nostr-tools/index.js');
+  const secretKey = stored.nsec;
+  try {
+    const signed = finalizeEvent(eventTemplate, secretKey);
+    return {
+      id: signed.id,
+      pubkey: signed.pubkey,
+      created_at: signed.created_at,
+      kind: signed.kind,
+      tags: signed.tags,
+      content: signed.content,
+      sig: signed.sig,
+    };
+  } finally {
+    secretKey.fill(0);
+  }
+}
+
+async function signDelegateEvent(eventTemplate) {
+  if (window.nostr && typeof window.nostr.signEvent === 'function') {
+    return await window.nostr.signEvent(eventTemplate);
+  }
+  const bunkerSigner = globalThis.wingmanIdentity?.bunkerSigner;
+  if (bunkerSigner && typeof bunkerSigner.signEvent === 'function') {
+    return await bunkerSigner.signEvent(eventTemplate);
+  }
+  const deviceSigned = await signWithDeviceKey(eventTemplate);
+  if (deviceSigned) {
+    return deviceSigned;
+  }
+  ensureNip07SigningAvailable();
+  return await window.nostr.signEvent(eventTemplate);
 }
 
 async function fetchDelegateRegistryTemplate() {
@@ -98,7 +142,6 @@ async function publishBotProfile(relays) {
 }
 
 export async function publishDelegateRegistryForCurrentUser(config) {
-  ensureNip07SigningAvailable();
   const relays = resolvePublishRelays(config);
   const botProfileStatus = await fetchBotProfileStatus(relays);
   let botProfilePublishResult = null;
@@ -106,7 +149,7 @@ export async function publishDelegateRegistryForCurrentUser(config) {
     botProfilePublishResult = await publishBotProfile(relays);
   }
   const eventTemplate = await fetchDelegateRegistryTemplate();
-  const signedEvent = await window.nostr.signEvent(eventTemplate);
+  const signedEvent = await signDelegateEvent(eventTemplate);
   const publishResult = await publishSignedDelegateRegistry(signedEvent, relays);
   return {
     ...publishResult,

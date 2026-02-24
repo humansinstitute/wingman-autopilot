@@ -412,6 +412,9 @@ export function initIdentityDom(deps) {
     if (entry.botPublishDelegateButton) {
       entry.botPublishDelegateButton.disabled = !hasBotKey;
     }
+    if (entry.botForceSetupButton) {
+      entry.botForceSetupButton.disabled = !authenticated;
+    }
     if (entry.botPublishDelegateFeedback && !hasBotKey) {
       entry.botPublishDelegateFeedback.hidden = true;
       delete entry.botPublishDelegateFeedback.dataset.state;
@@ -464,6 +467,11 @@ export function initIdentityDom(deps) {
       entry.botPublishDelegateButton.removeEventListener("click", entry.botPublishDelegateHandler);
       identityDomEntryByNode.delete(entry.botPublishDelegateButton);
       resetButtonState(entry.botPublishDelegateButton);
+    }
+    if (entry.botForceSetupButton && entry.botForceSetupHandler) {
+      entry.botForceSetupButton.removeEventListener("click", entry.botForceSetupHandler);
+      identityDomEntryByNode.delete(entry.botForceSetupButton);
+      resetButtonState(entry.botForceSetupButton);
     }
     const timeoutId = identityCopyFeedbackTimeouts.get(entry);
     if (timeoutId) {

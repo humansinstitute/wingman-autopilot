@@ -278,6 +278,22 @@ export class ProcessManager {
       if (Array.isArray(mcpResult.commandArgs) && mcpResult.commandArgs.length > 0) {
         session.command = [...session.command, ...mcpResult.commandArgs];
       }
+      this.appendLog(
+        session,
+        `[manager] post-injection command: ${session.command.join(" ")}`,
+      );
+      const injectedEnvKeys = Object.keys(mcpResult.env ?? {}).sort();
+      if (injectedEnvKeys.length > 0) {
+        const envPreview = injectedEnvKeys
+          .map((key) => {
+            const value = mcpResult.env[key];
+            if (typeof value !== "string") return key;
+            if (key === "SESSION_ID") return `${key}=<redacted>`;
+            return `${key}=${value}`;
+          })
+          .join(" ");
+        this.appendLog(session, `[manager] post-injection env: ${envPreview}`);
+      }
       mcpInjectMs = Date.now() - mcpInjectStartedAt;
     } catch (mcpError) {
       this.appendLog(session, `[manager] MCP config injection failed (non-fatal): ${(mcpError as Error).message}`);
@@ -558,6 +574,8 @@ export class ProcessManager {
       userAlias: session.userAlias ?? "anonymous",
       isAdmin: session.isAdmin ?? false,
       config: this.config,
+      commandOverride: session.command,
+      envOverride: session.definition.env ?? {},
     };
 
     // Add to ecosystem config and get process name
