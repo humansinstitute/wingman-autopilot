@@ -1,6 +1,7 @@
 /**
- * Tier 1 NIP-98 signer — signs HTTP auth events using either the user's
- * bot key (preferred) or the shared Wingman server key (fallback).
+ * Tier 1 NIP-98 signer — signs HTTP auth events using the user's
+ * bot key for user-scoped sessions, or the shared Wingman server key
+ * only when no user session identity is provided.
  *
  * Creates kind 27235 events per the NIP-98 spec:
  *   https://github.com/nostr-protocol/nips/blob/master/98.md
@@ -90,7 +91,8 @@ export interface SignForSessionResult extends SignNip98Response {
 
 /**
  * Sign a NIP-98 token for a specific user session.
- * Tries the user's bot key first, falls back to the root key.
+ * For user-scoped sessions, a bot key must be unlocked in memory.
+ * Root-key signing is only used when no user session identity is provided.
  *
  * @param url - Target URL for the NIP-98 token
  * @param method - HTTP method
@@ -103,16 +105,17 @@ export async function signForSession(
   userNpub?: string | null,
   bodyHash?: string,
 ): Promise<SignForSessionResult> {
-  // Try bot key first when user npub is available
+  // User-scoped signing must use the user's unlocked bot key.
   if (userNpub) {
     const botKey = getDecryptedBotKey(userNpub);
     if (botKey) {
       const result = signWithBotKey(url, method, botKey.secretKey, botKey.npub, bodyHash);
       return { ...result, signerType: "bot" };
     }
+    throw new Error(`Bot key not unlocked for session user ${userNpub}`);
   }
 
-  // Fall back to root key
+  // Root key is only for non-user-scoped signing.
   const result = await signWithWingmanKey(url, method, bodyHash);
   return { ...result, signerType: "root" };
 }

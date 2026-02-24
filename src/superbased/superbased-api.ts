@@ -8,7 +8,7 @@
  * v3: Append-only versioned records, UUID record IDs, no metadata column.
  *
  * When a per-user bot key is unlocked, uses it for signing and crypto.
- * Falls back to root key (KEYTELEPORT_PRIVKEY) when bot key unavailable.
+ * For user-scoped requests, bot key unlock is required (no root-key fallback).
  */
 
 import { signForSession } from "../mcp/wingman-signer";
@@ -67,7 +67,9 @@ function resolveUserNpub(
 }
 
 /**
- * Resolve the signing key identity — bot key preferred, root fallback.
+ * Resolve the signing key identity.
+ * For user-scoped requests, the user's bot key must be unlocked.
+ * Root-key signing is only used when no user session identity is provided.
  */
 function resolveSigningIdentity(userNpub?: string | null): {
   secretKey: Uint8Array;
@@ -79,6 +81,7 @@ function resolveSigningIdentity(userNpub?: string | null): {
     if (botKey) {
       return { secretKey: botKey.secretKey, pubkey: botKey.pubkeyHex, source: "bot" };
     }
+    throw new Error(`Bot key not unlocked for session user ${userNpub}`);
   }
   const identity = getKeyTeleportIdentity();
   if (!identity) {

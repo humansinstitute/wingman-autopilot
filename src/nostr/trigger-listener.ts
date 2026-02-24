@@ -200,6 +200,16 @@ function createTriggerListener(deps: TriggerListenerDeps) {
             `[trigger-listener] EOSE — connected to relays for bot ${botPubkeyHex.slice(0, 12)}…, listening for new events`,
           );
         },
+        onclose(reason) {
+          if (!reason) return;
+          const text = String(reason);
+          if (text.includes("auth-required")) {
+            console.warn(`[trigger-listener] Relay requested auth for bot ${botPubkeyHex.slice(0, 12)}…: ${text}`);
+            return;
+          }
+          if (text.includes("closed by caller")) return;
+          console.warn(`[trigger-listener] Relay subscription closed for bot ${botPubkeyHex.slice(0, 12)}…: ${text}`);
+        },
       },
     );
 
