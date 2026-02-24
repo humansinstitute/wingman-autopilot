@@ -430,6 +430,33 @@
         </footer>
       </form>
     </dialog>
+    <dialog id="app-new-mode-dialog">
+      <form method="dialog">
+        <h2>Start a New App</h2>
+        <p class="wm-dialog-help">Choose how you want to create a new app in your workspace.</p>
+        <div class="wm-starter-mode-actions">
+          <button type="button" class="wm-button" id="app-new-mode-quick">Quick Starters</button>
+          <button type="button" class="wm-button secondary" id="app-new-mode-manual">Manual</button>
+        </div>
+        <menu>
+          <button type="button" id="app-new-mode-cancel">Cancel</button>
+        </menu>
+      </form>
+    </dialog>
+    <dialog id="app-starter-dialog">
+      <form method="dialog">
+        <h2>Quick Starters</h2>
+        <p class="wm-dialog-help">Pick a starter project, enter a name, and Wingman will clone and prepare it automatically.</p>
+        <div id="app-starter-list" class="wm-starter-grid"></div>
+        <label for="app-starter-name">App Name</label>
+        <input id="app-starter-name" type="text" autocomplete="off" placeholder="My Starter App" required />
+        <p id="app-starter-notes" class="wm-field-note">Select a starter project to continue.</p>
+        <menu>
+          <button type="button" id="app-starter-cancel">Cancel</button>
+          <button type="submit" id="app-starter-confirm" disabled>Create App</button>
+        </menu>
+      </form>
+    </dialog>
     <dialog id="app-dialog">
       <form method="dialog">
         <h2 id="app-dialog-title">Add App</h2>

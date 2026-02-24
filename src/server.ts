@@ -55,6 +55,7 @@ import {
   type FeatureFlagRecord,
   type FeatureFlagState,
 } from "./storage/feature-flag-store";
+import { starterProjectStore } from "./storage/starter-project-store";
 import { FileWatcherRunner } from "./watchers/file-watcher-runner";
 import { identityUserStore } from "./storage/identity-user-store";
 import { TodoStore } from "./todos/todo-store";
@@ -134,6 +135,7 @@ import { createStaticAssetService, compressResponse } from "./server/static-asse
 import { maybeRefreshSessionCookie } from "./server/session-refresh";
 import { handleSubdomainRequest, resolveAliasToPort, proxyRequestToApp, type SubdomainProxyConfig } from "./server/subdomain-proxy";
 import { handleAppsApi } from "./server/apps-api-routes";
+import { handleStarterProjectsApi } from "./server/starter-projects-routes";
 import { isAgentRuntimeStatus } from "./types/agent-status";
 import { scheduleCleanup } from "./uploads/cleanup";
 import { createSessionEventsHandler } from "./server/session-events";
@@ -3284,6 +3286,31 @@ const handleApi = async (
     };
     const adminUsersResponse = await handleAdminUsersApi(request, url, method, authContext, adminUsersApiContext);
     if (adminUsersResponse) return adminUsersResponse;
+  }
+
+  if (
+    pathname === "/api/apps/starter-projects" ||
+    pathname === "/api/apps/starter-projects/launch" ||
+    pathname === "/api/admin/starter-projects" ||
+    pathname.startsWith("/api/admin/starter-projects/")
+  ) {
+    const starterProjectsResponse = await handleStarterProjectsApi(request, url, method, authContext, {
+      adminNpub,
+      workspaceScope,
+      viewerNpub,
+      AccessActions,
+      ensureApiAccess,
+      normaliseOptionalString,
+      normaliseNpub,
+      cloneRepositoryIntoWorkspace,
+      buildAppResponse,
+      appRegistry,
+      appProcessManager,
+      appAliasRegistry,
+      starterProjectStore,
+      npubProjectStore,
+    });
+    if (starterProjectsResponse) return starterProjectsResponse;
   }
 
   if (pathname === "/api/workspace/tree" || pathname === "/api/apps" || pathname.startsWith("/api/apps/")) {

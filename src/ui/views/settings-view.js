@@ -20,6 +20,8 @@ export function initSettingsView(deps) {
     renderAdminUsersPanel,
     fetchAdminUsers,
     renderWingmanCard,
+    ensureStarterProjectsLoaded,
+    renderStarterProjectsPanel,
     npubProjectsState,
     fetchNpubProjects,
     renderNpubProjectsPanel,
@@ -370,6 +372,8 @@ export function initSettingsView(deps) {
     const fragment = document.createDocumentFragment();
     ensureFeatureFlagsLoaded();
     fragment.append(renderFeatureFlagsPanel());
+    ensureStarterProjectsLoaded();
+    fragment.append(renderStarterProjectsPanel());
 
     const coreApp = appsStore().items.find((item) => item?.id === 'wingman-core');
     if (coreApp) {

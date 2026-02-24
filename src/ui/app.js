@@ -121,6 +121,7 @@ import { initIdentityPanels } from "./identity/panels.js";
 import { initAdminUsersPanels } from "./api/admin-users-panels.js";
 import { initPrivacyPolicy } from "./views/privacy-policy.js";
 import { initSettingsView } from "./views/settings-view.js";
+import { initStarterProjectsPanel } from "./views/starter-projects-panel.js";
 import { initHomeView } from "./views/home-view.js";
 import { initFilesView } from "./views/files-view.js";
 import { initFilesApi } from "./files/api.js";
@@ -191,6 +192,8 @@ let renderAppCard = () => document.createElement("section");
 let renderWingmanCard = () => document.createElement("section");
 let renderFeatureFlagsPanel = () => document.createDocumentFragment();
 let ensureFeatureFlagsLoaded = () => {};
+let renderStarterProjectsPanel = () => document.createDocumentFragment();
+let ensureStarterProjectsLoaded = () => {};
 let resolveFeatureFlagForViewer = () => ({ state: "off", effectiveState: "off" });
 let isFeatureEnabledForViewer = () => false;
 let renderNightWatchSettingsPanel = () => document.createDocumentFragment();
@@ -2884,6 +2887,15 @@ const appCardsModule = initAppCards({
 renderAppCard = appCardsModule.renderAppCard;
 renderWingmanCard = appCardsModule.renderWingmanCard;
 
+const starterProjectsPanelModule = initStarterProjectsPanel({
+  state,
+  getCurrentRoute: () => currentRoute,
+  render,
+  showToast,
+});
+ensureStarterProjectsLoaded = starterProjectsPanelModule.ensureStarterProjectsLoaded;
+renderStarterProjectsPanel = starterProjectsPanelModule.renderStarterProjectsPanel;
+
 const settingsViewModule = initSettingsView({
   state,
   appsStore,
@@ -2897,6 +2909,8 @@ const settingsViewModule = initSettingsView({
   renderAdminUsersPanel: (...args) => renderAdminUsersPanel(...args),
   fetchAdminUsers: (...args) => fetchAdminUsers(...args),
   renderWingmanCard: (...args) => renderWingmanCard(...args),
+  ensureStarterProjectsLoaded: (...args) => ensureStarterProjectsLoaded(...args),
+  renderStarterProjectsPanel: (...args) => renderStarterProjectsPanel(...args),
   npubProjectsState,
   fetchNpubProjects,
   renderNpubProjectsPanel,

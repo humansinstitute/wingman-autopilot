@@ -1,3 +1,5 @@
+import { fetchStarterProjectsApi, launchStarterProjectApi } from "../services/starter-projects.js";
+
 export const initAppDialogs = ({
   state,
   getCurrentRoute,
@@ -48,6 +50,17 @@ export const initAppDialogs = ({
   const appCloneNameInput = document.getElementById("app-clone-name");
   const appCloneCancelButton = document.getElementById("app-clone-cancel");
   const appCloneConfirmButton = document.getElementById("app-clone-confirm");
+  const appNewModeDialog = document.getElementById("app-new-mode-dialog");
+  const appNewModeQuickButton = document.getElementById("app-new-mode-quick");
+  const appNewModeManualButton = document.getElementById("app-new-mode-manual");
+  const appNewModeCancelButton = document.getElementById("app-new-mode-cancel");
+  const appStarterDialog = document.getElementById("app-starter-dialog");
+  const appStarterForm = appStarterDialog?.querySelector("form") ?? null;
+  const appStarterList = document.getElementById("app-starter-list");
+  const appStarterNameInput = document.getElementById("app-starter-name");
+  const appStarterNotes = document.getElementById("app-starter-notes");
+  const appStarterCancelButton = document.getElementById("app-starter-cancel");
+  const appStarterConfirmButton = document.getElementById("app-starter-confirm");
 
   const appDialogState = {
     mode: "create",
@@ -55,6 +68,12 @@ export const initAppDialogs = ({
     webAppEnabled: false,
     webAppPort: null,
     projectContext: null,
+  };
+  const starterDialogState = {
+    loading: false,
+    launching: false,
+    projects: [],
+    selectedId: null,
   };
 
   const shouldShowAdvancedSection = () => Boolean(state.identity.isAdmin) || appDialogState.mode === "edit";
@@ -102,6 +121,103 @@ export const initAppDialogs = ({
     const spaced = value.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
     if (!spaced) return "";
     return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+  };
+
+  const getSelectedStarterProject = () => {
+    if (!starterDialogState.selectedId) return null;
+    return starterDialogState.projects.find((item) => item?.id === starterDialogState.selectedId) ?? null;
+  };
+
+  const setStarterDialogSubmitting = (submitting) => {
+    starterDialogState.launching = submitting;
+    if (appStarterConfirmButton) {
+      appStarterConfirmButton.disabled = submitting || !starterDialogState.selectedId;
+      appStarterConfirmButton.textContent = submitting ? "Creating..." : "Create App";
+    }
+    if (appStarterNameInput) {
+      appStarterNameInput.disabled = submitting;
+    }
+  };
+
+  const renderStarterProjectButtons = () => {
+    if (!appStarterList) return;
+    while (appStarterList.firstChild) {
+      appStarterList.firstChild.remove();
+    }
+    if (starterDialogState.loading) {
+      const loading = document.createElement("p");
+      loading.className = "wm-field-note";
+      loading.textContent = "Loading starter projects...";
+      appStarterList.append(loading);
+      return;
+    }
+    if (!Array.isArray(starterDialogState.projects) || starterDialogState.projects.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "wm-field-note";
+      empty.textContent = "No quick starters are configured yet.";
+      appStarterList.append(empty);
+      return;
+    }
+    starterDialogState.projects.forEach((project) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "wm-button secondary wm-starter-grid__item";
+      if (project?.id === starterDialogState.selectedId) {
+        button.classList.add("is-active");
+      }
+      button.textContent = project?.name ?? "Starter";
+      button.addEventListener("click", () => {
+        starterDialogState.selectedId = project?.id ?? null;
+        const selected = getSelectedStarterProject();
+        if (appStarterNotes) {
+          appStarterNotes.textContent =
+            typeof selected?.notes === "string" && selected.notes.trim().length > 0
+              ? selected.notes
+              : "Starter selected. Enter an app name to continue.";
+        }
+        if (appStarterConfirmButton) {
+          appStarterConfirmButton.disabled = starterDialogState.launching || !starterDialogState.selectedId;
+        }
+        renderStarterProjectButtons();
+      });
+      appStarterList.append(button);
+    });
+  };
+
+  const loadStarterProjects = async () => {
+    starterDialogState.loading = true;
+    renderStarterProjectButtons();
+    try {
+      const projects = await fetchStarterProjectsApi();
+      starterDialogState.projects = Array.isArray(projects) ? projects : [];
+      if (!starterDialogState.projects.some((item) => item?.id === starterDialogState.selectedId)) {
+        starterDialogState.selectedId = starterDialogState.projects[0]?.id ?? null;
+      }
+      const selected = getSelectedStarterProject();
+      if (appStarterNotes) {
+        appStarterNotes.textContent =
+          typeof selected?.notes === "string" && selected.notes.trim().length > 0
+            ? selected.notes
+            : starterDialogState.selectedId
+              ? "Starter selected. Enter an app name to continue."
+              : "Select a starter project to continue.";
+      }
+      if (appStarterConfirmButton) {
+        appStarterConfirmButton.disabled = starterDialogState.launching || !starterDialogState.selectedId;
+      }
+    } catch (error) {
+      starterDialogState.projects = [];
+      starterDialogState.selectedId = null;
+      if (appStarterNotes) {
+        appStarterNotes.textContent = error instanceof Error ? error.message : "Failed to load starter projects";
+      }
+      if (appStarterConfirmButton) {
+        appStarterConfirmButton.disabled = true;
+      }
+    } finally {
+      starterDialogState.loading = false;
+      renderStarterProjectButtons();
+    }
   };
 
   const updateAppWindowPreview = () => {
@@ -356,8 +472,74 @@ export const initAppDialogs = ({
     }
   };
 
-  const openAppDialog = (appId = null, options = {}) => {
+  const closeAppDialog = () => {
+    closeAppNewModeDialog();
+    closeAppStarterDialog();
     if (!appDialog) return;
+    if (appDialog.open) {
+      appDialog.close();
+    }
+    resetAppDialog();
+  };
+
+  const closeAppNewModeDialog = () => {
+    if (!appNewModeDialog) return;
+    if (appNewModeDialog.open) {
+      appNewModeDialog.close();
+    }
+  };
+
+  const openAppNewModeDialog = () => {
+    if (!appNewModeDialog) {
+      openManualAppDialog();
+      return;
+    }
+    if (appNewModeDialog.open) {
+      appNewModeDialog.close();
+    }
+    appNewModeDialog.showModal();
+  };
+
+  const closeAppStarterDialog = () => {
+    if (!appStarterDialog) return;
+    if (appStarterDialog.open) {
+      appStarterDialog.close();
+    }
+    appStarterForm?.reset();
+    starterDialogState.selectedId = null;
+    starterDialogState.projects = [];
+    starterDialogState.loading = false;
+    starterDialogState.launching = false;
+    if (appStarterNotes) {
+      appStarterNotes.textContent = "Select a starter project to continue.";
+    }
+  };
+
+  const openAppStarterDialog = async () => {
+    closeAppNewModeDialog();
+    if (!appStarterDialog) {
+      openManualAppDialog();
+      return;
+    }
+    appStarterForm?.reset();
+    if (appStarterNameInput && appLabelInput && appLabelInput.value.trim().length > 0) {
+      appStarterNameInput.value = appLabelInput.value.trim();
+    }
+    if (appStarterNotes) {
+      appStarterNotes.textContent = "Loading starter projects...";
+    }
+    if (appStarterDialog.open) {
+      appStarterDialog.close();
+    }
+    appStarterDialog.showModal();
+    appStarterNameInput?.focus();
+    await loadStarterProjects();
+  };
+
+  const openManualAppDialog = (appId = null, options = {}) => {
+    if (!appDialog) return;
+    closeAppNewModeDialog();
+    closeAppStarterDialog();
     resetAppDialog();
     if (options?.projectContext) {
       appDialogState.projectContext = options.projectContext;
@@ -388,12 +570,16 @@ export const initAppDialogs = ({
     (appLabelInput ?? appRootInput)?.focus();
   };
 
-  const closeAppDialog = () => {
-    if (!appDialog) return;
-    if (appDialog.open) {
-      appDialog.close();
+  const openAppDialog = (appId = null, options = {}) => {
+    if (appId) {
+      openManualAppDialog(appId, options);
+      return;
     }
-    resetAppDialog();
+    if (options?.manual === true || options?.projectContext) {
+      openManualAppDialog(null, options);
+      return;
+    }
+    openAppNewModeDialog();
   };
 
   const applyDiscoveredScripts = (scripts, { revealAdvanced = true } = {}) => {
@@ -577,6 +763,48 @@ export const initAppDialogs = ({
     }
   };
 
+  const handleStarterSubmit = async (event) => {
+    event.preventDefault();
+    if (starterDialogState.launching) return;
+    const selected = getSelectedStarterProject();
+    if (!selected?.id) {
+      window.alert("Select a starter project.");
+      return;
+    }
+    const name = appStarterNameInput?.value?.trim() ?? "";
+    if (!name) {
+      window.alert("Provide a name for the starter app.");
+      appStarterNameInput?.focus();
+      return;
+    }
+    setStarterDialogSubmitting(true);
+    try {
+      const payload = await launchStarterProjectApi({
+        starterId: selected.id,
+        name,
+      });
+      closeAppStarterDialog();
+      await refreshApps({ skipRender: false });
+      const setupStatus = payload?.setup?.status;
+      const setupAttempted = Boolean(payload?.setup?.attempted);
+      if (setupAttempted) {
+        const exitCode = typeof setupStatus?.lastExitCode === "number" ? setupStatus.lastExitCode : null;
+        if (exitCode === 0) {
+          showToast("Starter project created and setup completed", { type: "success" });
+        } else {
+          showToast("Starter project created, but setup command reported an issue", { type: "error" });
+        }
+      } else {
+        showToast("Starter project created", { type: "success" });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to launch starter project";
+      window.alert(message);
+    } finally {
+      setStarterDialogSubmitting(false);
+    }
+  };
+
   const openAppLogsDialog = async (appId) => {
     if (!appLogsDialog) return;
     const app = getAppById(appId);
@@ -688,6 +916,45 @@ export const initAppDialogs = ({
 
   appCloneDialog?.addEventListener("close", () => {
     appCloneForm?.reset();
+  });
+
+  appNewModeQuickButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    void openAppStarterDialog();
+  });
+
+  appNewModeManualButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    closeAppNewModeDialog();
+    openManualAppDialog();
+  });
+
+  appNewModeCancelButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    closeAppNewModeDialog();
+  });
+
+  appNewModeDialog?.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeAppNewModeDialog();
+  });
+
+  appStarterCancelButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    closeAppStarterDialog();
+  });
+
+  appStarterDialog?.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeAppStarterDialog();
+  });
+
+  appStarterDialog?.addEventListener("close", () => {
+    appStarterForm?.reset();
+  });
+
+  appStarterForm?.addEventListener("submit", (event) => {
+    void handleStarterSubmit(event);
   });
 
   appCloneButton?.addEventListener("click", (event) => {
