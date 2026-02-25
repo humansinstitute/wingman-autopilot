@@ -18,9 +18,12 @@ interface PollState {
   nextIntervalMs: number;
   consecutiveFailures: number;
   errorLogged: boolean;
+  unknownStaleCheckLogged: boolean;
 }
 
 const MAX_CONSECUTIVE_FAILURES_BEFORE_STALE_STOP = 8;
+
+type DeadSessionVerdict = "alive" | "dead" | "unknown";
 
 const isPidAlive = (pid: number | null | undefined): boolean => {
   if (!pid || pid <= 0) {
@@ -91,6 +94,7 @@ export class AgentRuntimeStatusPoller {
       nextIntervalMs: this.options.intervalMs,
       consecutiveFailures: 0,
       errorLogged: false,
+      unknownStaleCheckLogged: false,
     };
 
     this.watchers.set(session.id, state);
@@ -127,6 +131,7 @@ export class AgentRuntimeStatusPoller {
       this.manager.setAgentRuntimeStatus(sessionId, status);
       state.consecutiveFailures = 0;
       state.errorLogged = false;
+      state.unknownStaleCheckLogged = false;
       state.nextIntervalMs = this.options.intervalMs;
     } catch (error) {
       state.consecutiveFailures += 1;
@@ -145,12 +150,21 @@ export class AgentRuntimeStatusPoller {
       }
 
       if (state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES_BEFORE_STALE_STOP) {
-        const shouldStop = await this.shouldStopDeadSession(sessionId);
-        if (shouldStop) {
+        const verdict = await this.classifyDeadSession(sessionId);
+        if (verdict === "dead") {
           console.warn(`[agent-status] stopping stale session ${sessionId} after repeated status failures`);
           await this.manager.stopSession(sessionId);
           this.stopWatcher(sessionId);
           return;
+        }
+        if (verdict === "unknown" && !state.unknownStaleCheckLogged) {
+          console.warn(
+            `[agent-status] stale-session check inconclusive for ${sessionId}; leaving session running`,
+          );
+          state.unknownStaleCheckLogged = true;
+        }
+        if (verdict === "alive") {
+          state.unknownStaleCheckLogged = false;
         }
       }
     } finally {
@@ -160,19 +174,38 @@ export class AgentRuntimeStatusPoller {
     }
   }
 
-  private async shouldStopDeadSession(sessionId: string): Promise<boolean> {
+  private async classifyDeadSession(sessionId: string): Promise<DeadSessionVerdict> {
     const session = this.manager.getSession(sessionId);
     if (!session || session.status !== "running") {
-      return true;
+      return "dead";
     }
 
     if (session.pm2Name) {
-      const proc = await getProcessByName(session.pm2Name).catch(() => null);
+      let proc: Awaited<ReturnType<typeof getProcessByName>> = null;
+      try {
+        proc = await getProcessByName(session.pm2Name);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        console.warn(`[agent-status] PM2 lookup failed for ${sessionId}: ${reason}`);
+        return "unknown";
+      }
+      if (!proc) {
+        return "dead";
+      }
       const pm2Status = proc?.pm2_env?.status;
-      return pm2Status !== "online";
+      if (typeof pm2Status !== "string") {
+        return "unknown";
+      }
+      if (pm2Status === "online" || pm2Status === "launching") {
+        return "alive";
+      }
+      return "dead";
     }
 
-    return !isPidAlive(session.pid);
+    if (typeof session.pid !== "number" || session.pid <= 0) {
+      return "unknown";
+    }
+    return isPidAlive(session.pid) ? "alive" : "dead";
   }
 
   private async fetchAgentStatus(port: number): Promise<AgentRuntimeStatus | null> {

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { type Dirent } from "node:fs";
 import { cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from "node:path";
@@ -2075,9 +2075,69 @@ const stopSessionsForUser = async (npub: string | null | undefined) => {
   }
 };
 
-const handleWebhookRequest = async (request: Request, url: URL): Promise<Response | null> => {
+const WEBHOOK_TOKEN_HEADER = "x-wingman-webhook-token";
+
+const readWebhookBearerToken = (request: Request): string | null => {
+  const authHeader = request.headers.get("authorization");
+  if (!authHeader) return null;
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!match) return null;
+  const token = match[1]?.trim();
+  return token && token.length > 0 ? token : null;
+};
+
+const getWebhookTokenFromRequest = (request: Request): string | null => {
+  const headerToken = request.headers.get(WEBHOOK_TOKEN_HEADER)?.trim();
+  if (headerToken && headerToken.length > 0) {
+    return headerToken;
+  }
+  return readWebhookBearerToken(request);
+};
+
+const constantTimeTokenMatch = (expected: string, provided: string): boolean => {
+  const expectedBuffer = Buffer.from(expected, "utf8");
+  const providedBuffer = Buffer.from(provided, "utf8");
+  if (expectedBuffer.length !== providedBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(expectedBuffer, providedBuffer);
+};
+
+const isValidWebhookToken = (request: Request): boolean => {
+  const configured = Bun.env.WEBHOOK_OFF_TOKEN?.trim();
+  if (!configured) {
+    return false;
+  }
+  const provided = getWebhookTokenFromRequest(request);
+  if (!provided) {
+    return false;
+  }
+  return constantTimeTokenMatch(configured, provided);
+};
+
+const handleWebhookRequest = async (
+  request: Request,
+  url: URL,
+  authContext: RequestAuthContext,
+): Promise<Response | null> => {
   const pathname = url.pathname;
   if (pathname === "/v1/api/webhook/off" && request.method === "POST") {
+    if (!authContext.session && !isValidWebhookToken(request)) {
+      return Response.json(
+        {
+          error: "Authentication required. Provide a valid session cookie or webhook token.",
+        },
+        { status: 401 },
+      );
+    }
+
+    if (authContext.session) {
+      const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
+      if (denied) {
+        return denied;
+      }
+    }
+
     let payload: unknown;
     try {
       payload = await request.json();
@@ -4023,7 +4083,7 @@ const server = Bun.serve({
 
       const pathname = url.pathname;
 
-      const webhookResponse = await handleWebhookRequest(request, url);
+      const webhookResponse = await handleWebhookRequest(request, url, authContext);
       if (webhookResponse) {
         return webhookResponse;
       }
