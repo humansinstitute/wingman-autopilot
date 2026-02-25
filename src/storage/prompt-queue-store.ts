@@ -31,6 +31,8 @@ export class PromptQueueStore {
     mkdirSync(directory, { recursive: true });
     
     this.db = new Database(databasePath);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA busy_timeout = 5000");
     this.initialise();
     
     this.insertPrompt = this.db.prepare(`

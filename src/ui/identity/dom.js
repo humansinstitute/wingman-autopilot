@@ -249,6 +249,7 @@ export function initIdentityDom(deps) {
           ports: Array.isArray(identity.ports) ? [...identity.ports] : [],
           balance: typeof identity.balance === "number" ? identity.balance : 0,
           botNpub: identity.botNpub ?? null,
+          botDisplayName: identity.botDisplayName ?? null,
           botPubkeyHex: identity.botPubkeyHex ?? null,
           botUnlocked: identity.botUnlocked ?? false,
         };
@@ -353,7 +354,7 @@ export function initIdentityDom(deps) {
       }
     }
     // ── Bot identity display ──────────────────────────────────────
-    const { botNpub, botPubkeyHex, botUnlocked } = state.identity;
+    const { botNpub, botDisplayName, botPubkeyHex, botUnlocked } = state.identity;
     const hasBotKey = Boolean(botNpub);
     if (entry.botHeader) {
       entry.botHeader.hidden = !authenticated;
@@ -368,6 +369,15 @@ export function initIdentityDom(deps) {
       } else {
         entry.botNpub.textContent = authenticated ? "Not generated" : "\u2014";
         entry.botNpub.removeAttribute("title");
+      }
+    }
+    if (entry.botName) {
+      if (hasBotKey && botDisplayName) {
+        entry.botName.textContent = botDisplayName;
+        entry.botName.title = botDisplayName;
+      } else {
+        entry.botName.textContent = authenticated ? "Not generated" : "\u2014";
+        entry.botName.removeAttribute("title");
       }
     }
     if (entry.botPubkey) {

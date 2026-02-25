@@ -106,6 +106,12 @@ export const rehydrateWarmSessions = async (
     return;
   }
 
+  // If the marker explicitly lists session IDs, only restore those.
+  // An empty array means nothing to restore (e.g. failed restart with no live sessions).
+  if (marker.sessionIds && marker.sessionIds.length === 0) {
+    await clearWarmRestartMarker(markerPath);
+    return;
+  }
   const targetIds = marker.sessionIds && marker.sessionIds.length > 0 ? new Set(marker.sessionIds) : null;
   const storedSessions = store.listSessions();
   let restored = 0;
@@ -132,6 +138,13 @@ export const rehydrateWarmSessions = async (
       continue;
     }
 
+    const storedPid = typeof record.pid === "number" ? record.pid : null;
+    if (storedPid && !isProcessAlive(storedPid)) {
+      console.warn(`[restart] stored pid ${storedPid} for session ${record.id} is not running; skipping rehydration`);
+      failed.push(record.id);
+      continue;
+    }
+
     try {
       await waitForAgentReadyCore(agentHost, port, agentName as AgentType, {
         timeoutMs: 5000,
@@ -140,13 +153,6 @@ export const rehydrateWarmSessions = async (
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`[restart] agent for session ${record.id} not reachable: ${message}`);
-      failed.push(record.id);
-      continue;
-    }
-
-    const storedPid = typeof record.pid === "number" ? record.pid : null;
-    if (storedPid && !isProcessAlive(storedPid)) {
-      console.warn(`[restart] stored pid ${storedPid} for session ${record.id} is not running; skipping rehydration`);
       failed.push(record.id);
       continue;
     }

@@ -120,6 +120,14 @@ export function initIdentityPanels(deps) {
     botNpubValue.append(botNpubText, botCopyButton, botCopyFeedback);
     list.append(botNpubLabel, botNpubValue);
 
+    const botNameLabel = document.createElement("dt");
+    botNameLabel.textContent = "Bot name";
+    const botNameValue = document.createElement("dd");
+    botNameValue.className = "wm-identity-summary-item";
+    botNameValue.dataset.role = "identity-bot-name";
+    botNameValue.textContent = "-";
+    list.append(botNameLabel, botNameValue);
+
     const botPubkeyLabel = document.createElement("dt");
     botPubkeyLabel.textContent = "Bot hexpub";
     const botPubkeyValue = document.createElement("dd");

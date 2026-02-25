@@ -20,6 +20,7 @@
  * @param {object} deps.sseManager                         - SSE connection manager (.connect/.disconnect)
  * @param {Function} deps.startConversationPolling         - starts conversation polling for a session
  * @param {Function} deps.stopConversationPolling          - stops conversation polling
+ * @param {Function} deps.isConversationPolling            - checks whether polling is active for a session
  * @param {Function} deps.isAlpineChatEnabled              - returns whether Alpine chat is enabled
  * @param {Function} deps.scheduleLiveScroll               - schedules a live scroll for a session
  * @param {Function} deps.scrollConversationAreaToBottom   - scrolls the conversation area to bottom
@@ -39,6 +40,7 @@ export function createSessionRouting(deps) {
     sseManager,
     startConversationPolling,
     stopConversationPolling,
+    isConversationPolling,
     isAlpineChatEnabled,
     scheduleLiveScroll,
   } = deps;
@@ -90,9 +92,12 @@ export function createSessionRouting(deps) {
         const alreadyConnected = typeof sseManager.isConnected === "function"
           ? sseManager.isConnected(sessionId)
           : false;
+        const pollingActive = typeof isConversationPolling === "function"
+          ? isConversationPolling(sessionId)
+          : false;
 
         // Only churn live transport when switching sessions or recovering a dead connection.
-        if (switchedSessions || !alreadyConnected) {
+        if (switchedSessions || !alreadyConnected || !pollingActive) {
           if (previousSessionId && switchedSessions) {
             sseManager.disconnect(previousSessionId);
           }
@@ -163,7 +168,8 @@ export function createSessionRouting(deps) {
 
     if (routeSessionId) {
       if (allSessions.some((session) => session.id === routeSessionId)) {
-        if (activeId !== routeSessionId) {
+        const shouldEnsureLiveTransport = getCurrentRoute() === "live" && activeId === routeSessionId;
+        if (activeId !== routeSessionId || shouldEnsureLiveTransport) {
           setActiveSession(routeSessionId, { updateHistory: false, logPort });
         }
         return;

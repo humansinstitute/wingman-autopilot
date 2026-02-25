@@ -230,6 +230,10 @@ export const state = {
     isAdmin: false,
     ports: [],
     balance: 0,
+    botNpub: null,
+    botDisplayName: null,
+    botPubkeyHex: null,
+    botUnlocked: false,
   },
   // Private chat state
   chats: {

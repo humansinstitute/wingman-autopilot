@@ -154,6 +154,7 @@ const sessionsStore = () => window.Alpine?.store("sessions");
 const appsStore = () => window.Alpine?.store("apps");
 let conversationPollIntervalId = null;
 let conversationPollInFlight = false;
+let conversationPollingSessionId = null;
 const sessionMessageSendInFlight = new Set();
 let sessionDialogController = null;
 let loadChats = async () => {};
@@ -534,6 +535,7 @@ const {
   sseManager,
   startConversationPolling: (...args) => startConversationPolling(...args),
   stopConversationPolling: (...args) => stopConversationPolling(...args),
+  isConversationPolling: (...args) => isConversationPolling(...args),
   isAlpineChatEnabled,
   scheduleLiveScroll: (...args) => scheduleLiveScroll(...args),
 });
@@ -1704,11 +1706,18 @@ const CONVERSATION_POLL_INTERVAL = 100;
 const STATUS_POLL_INTERVAL = 1000;
 
 const startConversationPolling = (sessionId) => {
-  stopConversationPolling();
   if (!sessionId) return;
 
   const alpineActive = isAlpineChatEnabled();
   const interval = alpineActive ? STATUS_POLL_INTERVAL : CONVERSATION_POLL_INTERVAL;
+
+  if (conversationPollIntervalId !== null && conversationPollingSessionId === sessionId) {
+    return;
+  }
+
+  stopConversationPolling();
+
+  conversationPollingSessionId = sessionId;
 
   console.log(`[poll] Starting ${alpineActive ? "status" : "conversation"} polling for ${sessionId} (${interval}ms)`);
 
@@ -1766,7 +1775,15 @@ const stopConversationPolling = () => {
     window.clearInterval(conversationPollIntervalId);
     conversationPollIntervalId = null;
   }
+  conversationPollingSessionId = null;
   conversationPollInFlight = false;
+};
+
+const isConversationPolling = (sessionId) => {
+  if (!sessionId) {
+    return conversationPollIntervalId !== null;
+  }
+  return conversationPollIntervalId !== null && conversationPollingSessionId === sessionId;
 };
 
 const getSessionFallbackDirectory = () => {

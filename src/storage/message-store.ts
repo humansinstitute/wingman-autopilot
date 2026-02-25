@@ -111,6 +111,8 @@ export class MessageStore {
   constructor(filePath: string) {
     mkdirSync(dirname(filePath), { recursive: true });
     this.db = new Database(filePath);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA busy_timeout = 5000");
     this.initialise();
     this.insertSession = this.prepareInsertSession();
     this.deleteSession = this.prepareDeleteSession();

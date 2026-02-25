@@ -96,6 +96,8 @@ class IdentityUserStore {
   constructor(filePath: string = DEFAULT_DB_PATH) {
     mkdirSync(dirname(filePath), { recursive: true });
     this.db = new Database(filePath);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA busy_timeout = 5000");
     this.initialise();
     this.ensurePortsColumn();
     this.ensureBalanceColumn();

@@ -17,6 +17,8 @@ const SETUP_DB_PATH = new URL("../../data/setup.db", import.meta.url).pathname;
 const getSetupDb = (): Database => {
   mkdirSync(dirname(SETUP_DB_PATH), { recursive: true });
   const db = new Database(SETUP_DB_PATH);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA busy_timeout = 5000");
   db.exec(`
     CREATE TABLE IF NOT EXISTS setup_state (
       key TEXT PRIMARY KEY,
