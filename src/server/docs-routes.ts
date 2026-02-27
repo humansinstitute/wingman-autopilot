@@ -73,6 +73,7 @@ export interface DocsApiContext {
     message?: string | null;
     remote?: string | null;
     branch?: string | null;
+    viewerNpub?: string | null;
   }) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
   describeGitRepository: (directory: string) => Promise<Record<string, unknown> | null>;
 }
@@ -1110,6 +1111,7 @@ export async function handleDocsApi(
         message: messageInput,
         remote: remoteInput,
         branch: branchInput,
+        viewerNpub: authContext.npub ?? null,
       });
 
       if (result.exitCode !== 0) {

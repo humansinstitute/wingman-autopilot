@@ -89,6 +89,7 @@ import { browserSubscribers } from "./mcp/browser-subscribers";
 import { MemoryStore } from "./mcp/memory-store";
 import { userSettingsStore } from "./storage/user-settings-store";
 import { artifactsStore } from "./storage/artifacts-store";
+import { getGitHubGitEnvForUser } from "./git/github-credential-helper";
 import {
   buildAgentUrl,
   fetchAgentMessages,
@@ -455,15 +456,16 @@ const botKeyApiHandler = createBotKeyApiHandler({
 const botCryptoApiHandler = createBotCryptoApiHandler({
   getSession: (sid: string) => manager.getSession(sid),
 });
+const wingmanDataDir = new URL("../data", import.meta.url).pathname;
 const giteaApiHandler = createGiteaApiHandler({
   getSession: (sid: string) => manager.getSession(sid),
   config,
-  dataDir: new URL("../data", import.meta.url).pathname,
+  dataDir: wingmanDataDir,
 });
 const gitWorkflowApiHandler = createGitWorkflowApiHandler({
   getSession: (sid: string) => manager.getSession(sid),
   config,
-  dataDir: new URL("../data", import.meta.url).pathname,
+  dataDir: wingmanDataDir,
 });
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());
@@ -495,13 +497,18 @@ type CommandResult = {
   stderr: string;
 };
 
-const runCommand = async (command: string, args: string[], options: { cwd?: string } = {}): Promise<CommandResult> => {
+const runCommand = async (
+  command: string,
+  args: string[],
+  options: { cwd?: string; env?: Record<string, string> } = {},
+): Promise<CommandResult> => {
   let subprocess: ReturnType<typeof Bun.spawn>;
   try {
     subprocess = Bun.spawn([command, ...args], {
       stdout: "pipe",
       stderr: "pipe",
       cwd: options.cwd,
+      env: options.env ? { ...process.env, ...options.env } : undefined,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -567,6 +574,7 @@ const executeGitCommand = async (options: {
   message?: string | null;
   remote?: string | null;
   branch?: string | null;
+  viewerNpub?: string | null;
 }): Promise<CommandResult> => {
   const directory = options.directory;
   const action = options.action;
@@ -593,7 +601,8 @@ const executeGitCommand = async (options: {
           args.push(branch);
         }
       }
-      return runCommand("git", args, { cwd: directory });
+      const gitEnv = getGitHubGitEnvForUser(options.viewerNpub, wingmanDataDir);
+      return runCommand("git", args, { cwd: directory, env: gitEnv ?? undefined });
     }
     case "pushUpstream": {
       const remote = options.remote?.trim() || "origin";
@@ -601,7 +610,8 @@ const executeGitCommand = async (options: {
       if (!branch) {
         throw new Error("Branch name is required to set upstream");
       }
-      return runCommand("git", ["push", "-u", remote, branch], { cwd: directory });
+      const gitEnv = getGitHubGitEnvForUser(options.viewerNpub, wingmanDataDir);
+      return runCommand("git", ["push", "-u", remote, branch], { cwd: directory, env: gitEnv ?? undefined });
     }
     case "pull": {
       const remote = options.remote?.trim();
@@ -613,7 +623,8 @@ const executeGitCommand = async (options: {
           args.push(branch);
         }
       }
-      return runCommand("git", args, { cwd: directory });
+      const gitEnv = getGitHubGitEnvForUser(options.viewerNpub, wingmanDataDir);
+      return runCommand("git", args, { cwd: directory, env: gitEnv ?? undefined });
     }
     default:
       throw new Error("Unsupported git command");
@@ -4029,7 +4040,13 @@ const handleApi = async (
       // Mask sensitive keys
       const masked: Record<string, string> = {};
       for (const [k, v] of Object.entries(settings)) {
-        masked[k] = k.includes("key") || k.includes("secret")
+        const lowerKey = k.toLowerCase();
+        const isSensitive =
+          lowerKey.includes("key") ||
+          lowerKey.includes("secret") ||
+          lowerKey.includes("token") ||
+          lowerKey.includes("password");
+        masked[k] = isSensitive
           ? (v.length > 8 ? `${v.slice(0, 4)}..${v.slice(-4)}` : "****")
           : v;
       }
