@@ -1,4 +1,5 @@
 const DEFAULT_LIVE_ROUTE_PREFIX = "/live";
+const MOBILE_SESSION_LAUNCH_MEDIA_QUERY = "(max-width: 720px)";
 
 const normalizeString = (value) => {
   if (typeof value === "string") {
@@ -8,6 +9,17 @@ const normalizeString = (value) => {
     return String(value);
   }
   return "";
+};
+
+const shouldLaunchSessionInCurrentTab = () => {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return false;
+  }
+  try {
+    return window.matchMedia(MOBILE_SESSION_LAUNCH_MEDIA_QUERY).matches;
+  } catch {
+    return false;
+  }
 };
 
 export const buildSessionOrigin = ({ type, id, url, label }) => {
@@ -79,8 +91,9 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = 
     }
 
     const session = await response.json();
-    if (openInNewTab && session?.id) {
-      // Store initial prompt in localStorage for the new tab to pick up
+    let openedInNewTab = false;
+    if (session?.id) {
+      // Keep the draft in localStorage so either tab mode can hydrate the composer.
       if (typeof initialPrompt === "string" && initialPrompt.trim().length > 0) {
         try {
           localStorage.setItem(`session-draft-${session.id}`, initialPrompt.trim());
@@ -88,9 +101,14 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = 
           // Ignore localStorage errors
         }
       }
-      const sessionUrl = `${routePrefix}/${session.id}`;
-      window.open(sessionUrl, "_blank", "noopener");
+
+      const canAttemptNewTab = openInNewTab && !shouldLaunchSessionInCurrentTab();
+      if (canAttemptNewTab) {
+        const sessionUrl = `${routePrefix}/${session.id}`;
+        const launchedTab = window.open(sessionUrl, "_blank", "noopener");
+        openedInNewTab = Boolean(launchedTab);
+      }
     }
-    await handleSessionStart(session, { suppressRouteChange: openInNewTab });
+    await handleSessionStart(session, { suppressRouteChange: openedInNewTab });
   };
 };
