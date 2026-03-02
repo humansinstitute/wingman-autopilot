@@ -300,13 +300,15 @@ export function initIdentityPanels(deps) {
     importForm.className = "wm-identity-import";
     importForm.dataset.form = "import-nsec";
 
-    const importInput = document.createElement("textarea");
+    const importInput = document.createElement("input");
     importInput.id = "identity-import-nsec";
     importInput.name = "nsec";
-    importInput.rows = 2;
-    importInput.autocomplete = "off";
-    importInput.className = "wm-identity-input-flat";
+    importInput.type = "password";
+    importInput.autocomplete = "current-password";
+    importInput.className = "wm-identity-input-flat wm-identity-import-nsec-input";
     importInput.placeholder = "nsec1...";
+    importInput.spellcheck = false;
+    importInput.setAttribute("autocapitalize", "off");
     importInput.setAttribute("aria-label", "Import nsec private key");
 
     const importSubmit = document.createElement("button");

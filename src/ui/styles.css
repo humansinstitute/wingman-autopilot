@@ -4777,10 +4777,8 @@ dialog textarea {
   gap: 0.75rem;
 }
 
-.wm-identity-import textarea {
+.wm-identity-import-nsec-input {
   width: 100%;
-  min-height: 4.5rem;
-  resize: vertical;
 }
 
 .wm-identity-import .wm-button {
