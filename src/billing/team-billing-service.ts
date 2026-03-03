@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
+import { resolve } from "node:path";
 
 import type { AgentType } from "../config";
 import { getSessionSecretBytes } from "../auth/session-secret";
@@ -39,6 +40,11 @@ const OPENROUTER_DEFAULT_BASE = "https://openrouter.ai/api/v1";
 const CREDITS_SUPPORTED_AGENTS = new Set<AgentType>(["codex", "claude", "goose"]);
 
 const TOKEN_SIGNATURE_ALGO = "sha256";
+
+const resolveCodexHomeForSession = (sessionId: string): string => {
+  const safeSessionId = sessionId.trim().replace(/[^a-zA-Z0-9-]/g, "") || "session";
+  return resolve(process.cwd(), "data", "codex-home", safeSessionId);
+};
 
 const toBase64Url = (value: string): string =>
   Buffer.from(value, "utf8")
@@ -518,6 +524,8 @@ export class TeamBillingService {
           OPENAI_BASE_URL: `${launchBaseUrl}/api/provider/openai`,
           OPENAI_API_KEY: proxyToken,
           CODEX_API_KEY: proxyToken,
+          // Isolate Codex from persisted ChatGPT auth in ~/.codex for credits sessions.
+          CODEX_HOME: resolveCodexHomeForSession(input.sessionId),
         },
         // Codex interactive mode can prefer persisted ChatGPT auth unless we
         // force API auth for this process.

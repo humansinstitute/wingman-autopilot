@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, normalize, resolve } from "node:path";
 
@@ -147,6 +147,22 @@ interface AgentSession {
   mcpCleanupFiles?: string[];
   /** Protocol adapter for communicating with this agent */
   adapter?: AgentAdapter;
+}
+
+async function prepareCodexApiAuthHome(env: Record<string, string>): Promise<void> {
+  const codexHome = typeof env.CODEX_HOME === "string" ? env.CODEX_HOME.trim() : "";
+  if (!codexHome) return;
+
+  const apiKeyCandidate =
+    (typeof env.CODEX_API_KEY === "string" ? env.CODEX_API_KEY : "") ||
+    (typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY : "");
+  const apiKey = apiKeyCandidate.trim();
+  if (!apiKey) return;
+
+  await mkdir(codexHome, { recursive: true });
+  const authPath = join(codexHome, "auth.json");
+  const authPayload = JSON.stringify({ OPENAI_API_KEY: apiKey }, null, 2) + "\n";
+  await writeFile(authPath, authPayload, { encoding: "utf8", mode: 0o600 });
 }
 
 export class ProcessManager {
@@ -374,6 +390,7 @@ export class ProcessManager {
         });
         const billingEnv = launchConfig.env ?? {};
         const billingEnvKeys = Object.keys(billingEnv).sort();
+        await prepareCodexApiAuthHome(billingEnv);
         if (billingEnvKeys.length > 0) {
           session.definition = {
             ...session.definition,
