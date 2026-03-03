@@ -62,7 +62,7 @@ export interface AuthApiContext {
 
   handleKeyTeleport: (request: Request) => Response | Promise<Response>;
   handleKeyTeleportRegistration: (request: Request) => Response | Promise<Response>;
-  ensureGiteaUser: (config: unknown, npub: string, alias: string) => Promise<unknown>;
+  ensureGiteaUser: (config: any, npub: string, alias: string) => Promise<any>;
 
   ensureApiAccess: (action: AccessAction, request: Request, url: URL, authContext: RequestAuthContext) => Promise<Response | null>;
   AccessActions: { UiRestricted: AccessAction };
