@@ -44,8 +44,6 @@ import { messageStore } from "./storage/message-store";
 import { scheduleSessionArchive, cancelPendingArchive } from "./storage/session-archiver";
 import { sessionArchiveStore } from "./storage/session-archive-store";
 import { PromptQueueStore } from "./storage/prompt-queue-store";
-import { orchestratorPresetStore } from "./storage/orchestrator-presets";
-import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 import { fileWatcherStore } from "./storage/file-watcher-store";
 import {
   featureFlagStore,
@@ -94,8 +92,6 @@ import {
   normaliseHostForUrl,
   parseAllowedHosts,
   pickAgentHost,
-  sendAgentMessage,
-  waitForAgentReady as waitForAgentReadyCore,
 } from "./agents/agent-client";
 import { AgentRuntimeStatusPoller } from "./agents/agent-status-poller";
 import { mintSessionCookie, SessionCookieError, SESSION_COOKIE_NAME } from "./auth/session-cookie";
@@ -275,7 +271,6 @@ const handlePathBasedAppRequest = async (
 
   return proxyRequestToApp(rewrittenRequest, resolved.port);
 };
-const ORCHESTRATOR_FLAG_KEY = "orchestrator_visibility";
 const PROJECTS_FLAG_KEY = "projects_visibility";
 const FEATURE_FLAG_DEFAULTS: Array<{
   key: string;
@@ -283,12 +278,6 @@ const FEATURE_FLAG_DEFAULTS: Array<{
   description: string;
   state: FeatureFlagState;
 }> = [
-  {
-    key: ORCHESTRATOR_FLAG_KEY,
-    label: "Orchestrator visibility",
-    description: "Controls whether orchestrator presets are visible in the UI.",
-    state: "on_admin",
-  },
   {
     key: PROJECTS_FLAG_KEY,
     label: "Projects visibility",
@@ -1099,12 +1088,7 @@ if (taskListenerIdentity && config.connectRelays.length > 0 && taskListenerFlag?
 }
 
 const wingmenRoot = join(projectRoot, ".wingmen");
-const orchestratorTriggersRoot = join(wingmenRoot, "orchestrator", "triggers");
 await mkdir(wingmenRoot, { recursive: true }).catch(() => undefined);
-await mkdir(orchestratorTriggersRoot, { recursive: true }).catch(() => undefined);
-const orchestratorRoot = join(projectRoot, "orchestrator");
-const orchestratorTemplatesRoot = join(orchestratorRoot, "templates");
-const orchestratorActiveRootBase = join(userDataRoot, "orchestrator", "active");
 const warmRestartManagerScriptPath = join(projectRoot, "scripts", "warm-restart-manager.ts");
 const maxImageSizeBytes = 10 * 1024 * 1024; // 10MB
 const maxAttachmentSizeBytes = 25 * 1024 * 1024; // 25MB
@@ -1131,12 +1115,6 @@ const shouldUseSecureCookies = () => {
   return Bun.env.NODE_ENV === "production";
 };
 
-const defaultSecurityReviewIntro =
-  "Pleaese review the 01_process.md for your instructions.\n\nYou will read the process instructions in: <active_dir>\nThe sessionID you are operating in is: <sessionID>";
-
-const defaultHighlightReportIntro =
-  "Pleaese review the 01_process.md for your instructions.\n\nYou will read the process instructions in: <active_dir>\nThe sessionID you are operating in is: <sessionID>";
-
 fileWatcherStore.ensureStopSessionWatcher();
 fileWatcherStore.ensureStartSessionWatcher();
 
@@ -1154,34 +1132,6 @@ try {
 
 process.on("beforeExit", () => {
   fileWatcherRunner.stop();
-});
-
-orchestratorPresetStore.ensurePreset({
-  id: "security-review",
-  label: "Security Review",
-  agent: "codex",
-  templateDir: "orchestrator/templates/0001_Review_Code",
-  activeRoot: orchestratorActiveRootBase,
-  directoryPrefix: "Security_Review",
-  introMessage: defaultSecurityReviewIntro,
-  pollTimeoutMs: 30000,
-  pollIntervalMs: 250,
-  retryAttempts: 10,
-  retryDelayMs: 1000,
-});
-
-orchestratorPresetStore.ensurePreset({
-  id: "highlight-report",
-  label: "Highlight Report",
-  agent: "codex",
-  templateDir: "orchestrator/templates/0002_Highglight_Report",
-  activeRoot: orchestratorActiveRootBase,
-  directoryPrefix: "Highlight_Report",
-  introMessage: defaultHighlightReportIntro,
-  pollTimeoutMs: 60000,
-  pollIntervalMs: 250,
-  retryAttempts: 10,
-  retryDelayMs: 1000,
 });
 
 const serializeSession = (session: SessionSnapshot) => ({
@@ -1728,38 +1678,6 @@ const directoryExists = async (path: string): Promise<boolean> => {
   }
 };
 
-const formatDateYYMMDD = (date: Date): string => {
-  const year = date.getFullYear() % 100;
-  const month = date.getMonth() + 1;
-  const day = date.getDate();
-  return `${year.toString().padStart(2, "0")}${month.toString().padStart(2, "0")}${day
-    .toString()
-    .padStart(2, "0")}`;
-};
-
-const resolveProjectPath = (input: string | null | undefined): string | null => {
-  const value = input?.trim();
-  if (!value) {
-    return null;
-  }
-  if (isAbsolute(value)) {
-    return normalize(value);
-  }
-  return normalize(join(projectRoot, value));
-};
-
-const sanitiseDirectoryPrefix = (value: string | null | undefined): string => {
-  const candidate = value?.trim();
-  if (!candidate) {
-    return "Preset";
-  }
-  return candidate
-    .replace(/[^a-zA-Z0-9/_-]+/g, "_")
-    .replace(/\s+/g, "_")
-    .replace(/_{2,}/g, "_")
-    .replace(/^_+|_+$/g, "") || "Preset";
-};
-
 const normaliseOptionalString = (value: unknown): string | null => {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -1821,234 +1739,6 @@ const resolveSessionWorkingDirectory = async (
   }
 
   return baseDirectory;
-};
-
-const parsePresetInteger = (value: unknown, fallback: number, minimum?: number): number => {
-  const numeric =
-    typeof value === "number"
-      ? Number.isFinite(value)
-        ? Math.trunc(value)
-        : NaN
-      : typeof value === "string" && value.trim().length > 0
-        ? Number.parseInt(value, 10)
-        : NaN;
-  if (!Number.isFinite(numeric)) {
-    return fallback;
-  }
-  if (typeof minimum === "number" && numeric < minimum) {
-    return fallback;
-  }
-  return numeric;
-};
-
-const listOrchestratorDirectories = async (target: "templates" | "active", relativeInput: string | null) => {
-  const base = target === "templates" ? orchestratorTemplatesRoot : orchestratorActiveRootBase;
-  await mkdir(base, { recursive: true });
-
-  let resolved = base;
-  if (relativeInput) {
-    const candidate = join(projectRoot, relativeInput);
-    resolved = ensureWithinBase(candidate, base);
-  }
-
-  let stats: Awaited<ReturnType<typeof stat>>;
-  try {
-    stats = await stat(resolved);
-  } catch (error) {
-    throw new Error(`Directory not found: ${toProjectRelativePath(resolved)}`);
-  }
-
-  if (!stats.isDirectory()) {
-    throw new Error(`Path is not a directory: ${toProjectRelativePath(resolved)}`);
-  }
-
-  const entriesRaw = await readdir(resolved, { withFileTypes: true });
-  const entries = entriesRaw
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => {
-      const absolutePath = join(resolved, entry.name);
-      return {
-        name: entry.name,
-        path: toProjectRelativePath(absolutePath),
-      };
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
-
-  const parent = resolved === base ? null : toProjectRelativePath(dirname(resolved));
-
-  return {
-    target,
-    path: toProjectRelativePath(resolved),
-    parent,
-    entries,
-  };
-};
-
-const generatePresetDirectory = async (preset: OrchestratorPresetRecord): Promise<string> => {
-  const templateDir = resolveProjectPath(preset.templateDir);
-  if (!templateDir) {
-    throw new Error(`Template directory not configured for preset ${preset.id}`);
-  }
-
-  const templateStats = await stat(templateDir).catch(() => null);
-  if (!templateStats || !templateStats.isDirectory()) {
-    throw new Error(`Template directory not found for preset ${preset.id}: ${templateDir}`);
-  }
-
-  const activeRoot = resolveProjectPath(preset.activeRoot);
-  if (!activeRoot) {
-    throw new Error(`Active root not configured for preset ${preset.id}`);
-  }
-
-  await mkdir(activeRoot, { recursive: true });
-
-  const now = new Date();
-  const dateSegment = formatDateYYMMDD(now);
-  const prefix = sanitiseDirectoryPrefix(preset.directoryPrefix);
-
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const idSegment = Math.floor(Math.random() * 100_000_000)
-      .toString()
-      .padStart(8, "0");
-    const directoryName = `${dateSegment}_${prefix}_${idSegment}`;
-    const target = join(activeRoot, directoryName);
-    if (await directoryExists(target)) {
-      continue;
-    }
-    await cp(templateDir, target, { recursive: true, force: false });
-    return target;
-  }
-
-  throw new Error(`Unable to allocate unique directory for preset ${preset.id}`);
-};
-
-const preparePresetWorkingDirectory = async (preset: OrchestratorPresetRecord): Promise<string> => {
-  if (preset.templateDir) {
-    return generatePresetDirectory(preset);
-  }
-
-  const directoryInput = preset.workingDirectory ?? null;
-  return ensureDirectory(directoryInput);
-};
-
-const waitForAgentReady = async (
-  session: SessionSnapshot,
-  timeoutMs: number | null | undefined,
-  pollIntervalMs: number | null | undefined,
-) => {
-  await waitForAgentReadyCore(agentHost, session.port, session.agent, {
-    timeoutMs,
-    pollIntervalMs,
-  });
-};
-
-const renderPresetMessage = (template: string, session: SessionSnapshot): string => {
-  const replacements: Array<{ regex: RegExp; value: string }> = [
-    { regex: /<working_dir>/gi, value: session.workingDirectory },
-    { regex: /{{\s*working_dir\s*}}/gi, value: session.workingDirectory },
-    { regex: /<active_dir>/gi, value: session.workingDirectory },
-    { regex: /{{\s*active_dir\s*}}/gi, value: session.workingDirectory },
-    { regex: /<session[_]?id>/gi, value: session.id },
-    { regex: /{{\s*session[_]?id\s*}}/gi, value: session.id },
-  ];
-
-  return replacements.reduce((content, { regex, value }) => content.replace(regex, value), template);
-};
-
-const sendPresetIntroMessage = async (
-  session: SessionSnapshot,
-  message: string | null | undefined,
-  retryAttempts: number | null | undefined,
-  retryDelayMs: number | null | undefined,
-) => {
-  const contentTemplate = message?.trim();
-  if (!contentTemplate) {
-    return false;
-  }
-
-  const content = renderPresetMessage(contentTemplate, session);
-  const attempts = typeof retryAttempts === "number" && retryAttempts > 0 ? retryAttempts : 10;
-  const delay = typeof retryDelayMs === "number" && retryDelayMs >= 0 ? retryDelayMs : 1000;
-
-  try {
-    await sendAgentMessage(agentHost, session.port, content, {
-      attempts,
-      delayMs: delay,
-      type: "user",
-    });
-    await syncSessionMessages(session.id, true);
-    return true;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to deliver introductory message: ${message}`);
-  }
-};
-
-const initialisePresetSession = async (preset: OrchestratorPresetRecord, session: SessionSnapshot) => {
-  try {
-    await waitForAgentReady(session, preset.pollTimeoutMs, preset.pollIntervalMs);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[orchestrator] failed to wait for agent readiness for preset ${preset.id}: ${message}`);
-    return;
-  }
-
-  try {
-    const sent = await sendPresetIntroMessage(
-      session,
-      preset.introMessage,
-      preset.retryAttempts,
-      preset.retryDelayMs,
-    );
-    if (!sent) {
-      await syncSessionMessages(session.id, true);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[orchestrator] failed to deliver intro message for preset ${preset.id}: ${message}`);
-    await syncSessionMessages(session.id, true).catch(() => undefined);
-  }
-};
-
-const launchOrchestratorPreset = async (presetId: string) => {
-  const preset = orchestratorPresetStore.getPreset(presetId);
-  if (!preset) {
-    throw new Error(`Preset not found: ${presetId}`);
-  }
-
-  if (!isAgentType(preset.agent)) {
-    throw new Error(`Invalid agent configured for preset ${preset.id}: ${preset.agent}`);
-  }
-
-  const workingDirectory = await preparePresetWorkingDirectory(preset);
-  const sessionName = normaliseSessionNameInput(preset.label);
-  const session = await manager.createSession(
-    preset.agent as AgentType,
-    workingDirectory,
-    sessionName ?? undefined,
-    undefined,
-    undefined,
-    undefined,
-    { AGENT: false },
-  );
-  ensureUserWorkspace(session.npub ?? null);
-  messageStore.recordSession({
-    id: session.id,
-    agent: session.agent,
-    startedAt: session.startedAt,
-    name: session.name,
-    npub: session.npub,
-    port: session.port,
-    pid: session.pid,
-    workingDirectory: session.workingDirectory,
-    command: session.command,
-    runtimeStatus: session.agentRuntimeStatus ?? null,
-    origin: session.origin ?? null,
-    pm2Name: session.pm2Name,
-    metadata: session.metadata,
-  });
-  void initialisePresetSession(preset, session);
-  return { directory: workingDirectory, session };
 };
 
 const stopAndRemoveSession = async (sessionId: string) => {
@@ -2716,7 +2406,7 @@ const ensureWingmanCoreRegistration = async () => {
           root: expectedRoot,
           scripts: { restart: restartCommand },
           tmuxSession: tmuxWindow,
-          notes: existing.notes ?? "Controls the Wingman orchestrator process.",
+          notes: existing.notes ?? "Controls the Wingman server process.",
           ownerNpub: adminNpub ?? existing.ownerNpub ?? null,
         });
       }
@@ -2728,7 +2418,7 @@ const ensureWingmanCoreRegistration = async () => {
       root: expectedRoot,
       scripts: { restart: restartCommand },
       tmuxSession: tmuxWindow,
-      notes: "Controls the Wingman orchestrator process.",
+      notes: "Controls the Wingman server process.",
       ownerNpub: adminNpub,
     });
     console.log("[apps] registered Wingman core app entry");
@@ -2931,8 +2621,6 @@ const handleApi = async (
   const pathname = url.pathname;
   const workspaceScope = resolveWorkspace(authContext);
   const viewerIsAdmin = workspaceScope.isAdmin;
-  const orchestratorFlag = resolveFeatureFlagStateForViewer(ORCHESTRATOR_FLAG_KEY, viewerIsAdmin, "on_admin");
-  const orchestratorEnabled = orchestratorFlag.effectiveState === "on";
   const projectsFlag = resolveFeatureFlagStateForViewer(PROJECTS_FLAG_KEY, viewerIsAdmin, "on_admin");
   const projectsEnabled = projectsFlag.effectiveState === "on";
   const viewerNpub = normaliseNpub(authContext.npub ?? null);
@@ -3394,117 +3082,10 @@ const handleApi = async (
     if (ffResult) return ffResult;
   }
 
-  if (pathname === "/api/orchestrators" && method === "GET") {
-    if (!orchestratorEnabled) {
-      return Response.json({ error: "orchestrator-disabled" }, { status: 403 });
-    }
-    const presets = orchestratorPresetStore.listPresets();
-    return Response.json({ presets });
-  }
-
   // Docs/files API routes (delegated to docs-routes.ts)
   if (pathname.startsWith("/api/docs/")) {
     const docsApiResponse = await handleDocsApi(request, url, method, authContext, docsApiContext);
     if (docsApiResponse) return docsApiResponse;
-  }
-
-  if (pathname === "/api/orchestrators/directories" && method === "GET") {
-    if (!orchestratorEnabled) {
-      return Response.json({ error: "orchestrator-disabled" }, { status: 403 });
-    }
-    const targetParam = url.searchParams.get("target") ?? "";
-    const target = targetParam === "templates" ? "templates" : targetParam === "active" ? "active" : null;
-    if (!target) {
-      return Response.json({ error: "Invalid target" }, { status: 400 });
-    }
-    const pathParam = url.searchParams.get("path");
-    try {
-      const data = await listOrchestratorDirectories(target, pathParam);
-      return Response.json(data);
-    } catch (error) {
-      return Response.json({ error: (error as Error).message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/orchestrators" && method === "POST") {
-    if (!orchestratorEnabled) {
-      return Response.json({ error: "orchestrator-disabled" }, { status: 403 });
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    const label = normaliseOptionalString((payload as Record<string, unknown>).label);
-    if (!label) {
-      return Response.json({ error: "Preset label is required" }, { status: 400 });
-    }
-
-    const agentInput = normaliseOptionalString((payload as Record<string, unknown>).agent);
-    const agent = agentInput?.toLowerCase() ?? "";
-    if (!isAgentType(agent)) {
-      return Response.json({ error: "Invalid agent selection" }, { status: 400 });
-    }
-
-    const templateDir = normaliseOptionalString(
-      (payload as Record<string, unknown>).templateDir ?? (payload as Record<string, unknown>).template,
-    );
-    const workingDirectory = normaliseOptionalString(
-      (payload as Record<string, unknown>).workingDirectory ?? (payload as Record<string, unknown>).directory,
-    );
-
-    if (templateDir && workingDirectory) {
-      return Response.json({ error: "Specify either a template directory or a working directory, not both" }, { status: 400 });
-    }
-
-    if (!templateDir && !workingDirectory) {
-      return Response.json({ error: "Provide either a template directory or a working directory" }, { status: 400 });
-    }
-
-    const activeRoot = templateDir
-      ? normaliseOptionalString(
-          (payload as Record<string, unknown>).activeRoot ?? (payload as Record<string, unknown>).activeDirectory,
-        ) ?? "orchestrator/active"
-      : null;
-
-    const directoryPrefixInput = normaliseOptionalString(
-      (payload as Record<string, unknown>).directoryPrefix ?? (payload as Record<string, unknown>).prefix,
-    );
-    const directoryPrefix = templateDir
-      ? directoryPrefixInput ?? sanitiseDirectoryPrefix(label)
-      : directoryPrefixInput ?? null;
-
-    const introMessage = normaliseOptionalString((payload as Record<string, unknown>).introMessage);
-
-    const pollTimeoutMs = parsePresetInteger((payload as Record<string, unknown>).pollTimeoutMs, 30000, 1000);
-    const pollIntervalMs = parsePresetInteger((payload as Record<string, unknown>).pollIntervalMs, 250, 50);
-    const retryAttempts = parsePresetInteger((payload as Record<string, unknown>).retryAttempts, 10, 1);
-    const retryDelayMs = parsePresetInteger((payload as Record<string, unknown>).retryDelayMs, 1000, 0);
-
-    try {
-      const preset = orchestratorPresetStore.createPreset({
-        label,
-        agent,
-        templateDir,
-        activeRoot,
-        directoryPrefix,
-        workingDirectory: templateDir ? null : workingDirectory,
-        introMessage,
-        pollTimeoutMs,
-        pollIntervalMs,
-        retryAttempts,
-        retryDelayMs,
-      });
-      return Response.json({ preset }, { status: 201 });
-    } catch (error) {
-      return Response.json({ error: (error as Error).message }, { status: 500 });
-    }
   }
 
   if (pathname === "/api/directories" && method === "GET") {
@@ -3709,58 +3290,6 @@ const handleApi = async (
     if (sessionApiResponse) return sessionApiResponse;
   }
 
-  if (pathname.startsWith("/api/orchestrators/")) {
-    if (!orchestratorEnabled) {
-      return Response.json({ error: "orchestrator-disabled" }, { status: 403 });
-    }
-    const parts = pathname.split("/");
-    const id = parts[3];
-    if (!id) {
-      return Response.json({ error: "Preset id required" }, { status: 400 });
-    }
-
-    if (method === "GET" && parts.length === 4) {
-      const preset = orchestratorPresetStore.getPreset(id);
-      if (!preset) {
-        return Response.json({ error: "Not found" }, { status: 404 });
-      }
-      return Response.json({
-        preset: {
-          id: preset.id,
-          label: preset.label,
-          agent: preset.agent,
-          templateDir: preset.templateDir,
-          activeRoot: preset.activeRoot,
-          directoryPrefix: preset.directoryPrefix,
-          workingDirectory: preset.workingDirectory,
-          introMessage: preset.introMessage,
-          pollTimeoutMs: preset.pollTimeoutMs,
-          pollIntervalMs: preset.pollIntervalMs,
-          retryAttempts: preset.retryAttempts,
-          retryDelayMs: preset.retryDelayMs,
-        },
-      });
-    }
-
-    if (method === "POST" && parts[4] === "launch") {
-      const balanceCheck = ensureViewerHasBalance(authContext, {
-        feature: "launch this orchestrator preset",
-        message: "Add sats to your balance to launch this orchestrator preset.",
-      });
-      if (balanceCheck instanceof Response) {
-        return balanceCheck;
-      }
-      try {
-        const { directory, session } = await launchOrchestratorPreset(id);
-        return Response.json({ directory, session }, { status: 201 });
-      } catch (error) {
-        return Response.json({ error: (error as Error).message }, { status: 500 });
-      }
-    }
-
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-
   // POST /api/sessions is handled by sessionApiContext above
 
   // GET /api/artifacts/:id/raw — Serve artifact file content
@@ -3907,7 +3436,6 @@ const server = Bun.serve({
         pathname.startsWith("/nightwatch") ||
         pathname.startsWith("/scheduler") ||
         pathname.startsWith("/triggers") ||
-        pathname.startsWith("/orchestrator") ||
         pathname.startsWith("/auth") ||
         pathname === "/" ||
         pathname === "/favicon.ico";
@@ -4075,7 +3603,7 @@ const registerShutdownHandlers = () => {
 registerShutdownHandlers();
 
 console.log(
-  `Wingman V2 orchestrator listening on http://localhost:${config.port} (agents ${config.agentPortStart} - ${config.agentPortStart + config.agentPortMax - 1})`,
+  `Wingman V2 listening on http://localhost:${config.port} (agents ${config.agentPortStart} - ${config.agentPortStart + config.agentPortMax - 1})`,
 );
 
 // Start scheduler engine (loads enabled jobs from DB)

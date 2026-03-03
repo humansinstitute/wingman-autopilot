@@ -19,7 +19,6 @@ import {
 } from "./writer/writer-panel.js";
 import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
 import { createSessionDialogController } from "./common/session-dialog.js";
-import { initOrchestratorUI } from "./orchestrator/index.js";
 import { initAppDialogs } from "./apps/dialog.js";
 import { initWorkspaceTree } from "./apps/tree.js";
 import { initAppCards } from "./apps/cards.js";
@@ -177,11 +176,6 @@ let renderTabs = () => document.createElement("div");
 let updateLivePanelsForSession = () => {};
 let captureFocusSnapshot = () => null;
 let restoreFocusFromSnapshot = () => {};
-let renderOrchestratorPresetButtons = () => {};
-let ensureOrchestratorPresetsLoaded = () => {};
-let refreshOrchestratorPresets = async () => {};
-let openOrchestratorDialog = () => {};
-let syncOrchestratorAgents = () => {};
 let openAppDialog = () => {};
 let closeAppDialog = () => {};
 let openAppLogsDialog = () => {};
@@ -203,7 +197,6 @@ let renderNightWatchPage = () => document.createDocumentFragment();
 let ensureNightWatchPageLoaded = () => {};
 let renderSchedulerPage = () => document.createDocumentFragment();
 let ensureSchedulerPageLoaded = () => {};
-let orchestratorFeatureEnabledForViewer = () => false;
 let projectsFeatureEnabledForViewer = () => true;
 let syncFeatureFlagsFromConfig = () => {};
 let scheduleDirectorySuggestions = () => {};
@@ -1315,7 +1308,6 @@ const fetchConfig = async () => {
   if (state.config.agents.some((a) => a.id === defaultAgentId)) {
     agentSelect.value = defaultAgentId;
   }
-  syncOrchestratorAgents();
   if (directoryInput) {
     const initial =
       state.lastWorkingDirectory ??
@@ -2745,6 +2737,16 @@ function shouldFullRenderOnSessionUpdate(route) {
   return true;
 }
 
+function handleSessionsStoreItemsChanged() {
+  syncMenuTabs();
+  syncDesktopSessionIndicator();
+  if (shouldFullRenderOnSessionUpdate(currentRoute)) {
+    render();
+  } else {
+    updateAgentStatusIndicators();
+  }
+}
+
 projectFeature = createProjectFeature({
   onRenderRequested: () => {
     if (currentRoute === "projects") {
@@ -2945,10 +2947,6 @@ const homeViewModule = initHomeView({
   navigateToApps: (...args) => navigateToApps(...args),
   navigateToChat: (...args) => navigateToChat(...args),
   openDialog,
-  openOrchestratorDialog: (...args) => openOrchestratorDialog(...args),
-  renderOrchestratorPresetButtons: (...args) => renderOrchestratorPresetButtons(...args),
-  ensureOrchestratorPresetsLoaded: (...args) => ensureOrchestratorPresetsLoaded(...args),
-  orchestratorFeatureEnabledForViewer: (...args) => orchestratorFeatureEnabledForViewer(...args),
   ensureFeatureFlagsLoaded: (...args) => ensureFeatureFlagsLoaded(...args),
   isFeatureEnabledForViewer: (...args) => isFeatureEnabledForViewer(...args),
   isSessionActive,
@@ -3211,22 +3209,6 @@ const workspaceTree = initWorkspaceTree({
 
 createWorkspaceTreeSidebar = workspaceTree.createSidebar;
 
-const orchestratorUI = initOrchestratorUI({
-  state,
-  getCurrentRoute: () => currentRoute,
-  setCurrentRoute: (route) => {
-    currentRoute = route;
-  },
-  render,
-  handleSessionStart,
-});
-
-renderOrchestratorPresetButtons = orchestratorUI.renderPresetButtons;
-ensureOrchestratorPresetsLoaded = orchestratorUI.ensurePresetsLoaded;
-refreshOrchestratorPresets = orchestratorUI.refreshPresets;
-openOrchestratorDialog = orchestratorUI.openDialog;
-syncOrchestratorAgents = orchestratorUI.syncAgents;
-
 const featureFlagsUI = initFeatureFlagsUI({
   state,
   render,
@@ -3238,7 +3220,6 @@ renderFeatureFlagsPanel = featureFlagsUI.renderPanel;
 syncFeatureFlagsFromConfig = featureFlagsUI.syncFromConfig;
 resolveFeatureFlagForViewer = featureFlagsUI.resolveFlag;
 isFeatureEnabledForViewer = featureFlagsUI.isEnabled;
-orchestratorFeatureEnabledForViewer = featureFlagsUI.orchestratorEnabled;
 projectsFeatureEnabledForViewer = featureFlagsUI.projectsEnabled;
 
 const nightWatchUI = initNightWatchSettingsPanel({ state, render, showToast, createCollapsibleCard });
@@ -3537,6 +3518,9 @@ dialog.addEventListener("cancel", (event) => {
       }
       updateIdentityState(update, { persist: true, emit: true });
     },
+    onItemsChanged: () => {
+      handleSessionsStoreItemsChanged();
+    },
   });
 
   // Initialize Apps Alpine store (Dexie-backed, must register before Alpine.start)
@@ -3638,9 +3622,6 @@ dialog.addEventListener("cancel", (event) => {
 
   // ── Parallel data fetches (independent of each other) ──
   const dataFetches = [fetchSessions()];
-  if (orchestratorFeatureEnabledForViewer()) {
-    dataFetches.push(refreshOrchestratorPresets());
-  }
   if (state.identity.authenticated) {
     dataFetches.push(fetchApps({ tail: APP_LOG_PREVIEW_LINES }));
     dataFetches.push(fetchNpubProjects().catch(() => {}));
@@ -3657,15 +3638,7 @@ dialog.addEventListener("cancel", (event) => {
   // Live-refresh sessions via SSE so home page / nav update without reload
   if (state.identity.authenticated) {
     startSessionSubscriber(() => {
-      fetchSessions().then(() => {
-        syncMenuTabs();
-        // Avoid full-render on routes where it disrupts in-progress reading/editing.
-        if (shouldFullRenderOnSessionUpdate(currentRoute)) {
-          render();
-        } else {
-          updateAgentStatusIndicators();
-        }
-      });
+      void fetchSessions();
     });
     window.addEventListener("wingman:identity-logout", () => stopSessionSubscriber(), { once: true });
   }

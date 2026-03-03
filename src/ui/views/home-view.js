@@ -1,5 +1,5 @@
 /**
- * Home view renderer — guest landing, orchestrator card, running apps table,
+ * Home view renderer — guest landing, running apps table,
  * live agents session list, and archive component.
  *
  * Depends on: state, identity, session/app helpers, navigation (via DI).
@@ -54,11 +54,6 @@ export function initHomeView(deps) {
     navigateToApps,
     navigateToChat,
     openDialog,
-    openOrchestratorDialog,
-    // Orchestrator
-    renderOrchestratorPresetButtons,
-    ensureOrchestratorPresetsLoaded,
-    orchestratorFeatureEnabledForViewer,
     ensureFeatureFlagsLoaded,
     isFeatureEnabledForViewer,
     // Session helpers
@@ -206,67 +201,6 @@ export function initHomeView(deps) {
 
     if (!appsStore().initialized && !appsStore().loading) {
       // void ensureAppsLoaded(); // DISABLED
-    }
-
-    let orchestratorCard = null;
-    if (orchestratorFeatureEnabledForViewer()) {
-      orchestratorCard = document.createElement("section");
-      orchestratorCard.className = "wm-card wm-home-orchestrator";
-
-      const orchestratorHeader = document.createElement("div");
-      orchestratorHeader.className = "wm-home-section-header";
-
-      const orchestratorTitle = document.createElement("h2");
-      orchestratorTitle.textContent = "Orchestrator";
-
-      const orchestratorContent = document.createElement("div");
-      orchestratorContent.className = "wm-home-orchestrator-content";
-      orchestratorContent.id = "orchestrator-content";
-
-      const setOrchestratorCollapsed = (collapsed) => {
-        if (collapsed) {
-          orchestratorCard.dataset.collapsed = "true";
-          orchestratorContent.hidden = true;
-          orchestratorHeader.setAttribute("aria-expanded", "false");
-        } else {
-          delete orchestratorCard.dataset.collapsed;
-          orchestratorContent.hidden = false;
-          orchestratorHeader.setAttribute("aria-expanded", "true");
-        }
-      };
-
-      const orchestratorCreateButton = document.createElement("button");
-      orchestratorCreateButton.type = "button";
-      orchestratorCreateButton.className = "wm-button secondary wm-button-icon";
-      orchestratorCreateButton.setAttribute("aria-label", "Add orchestrator preset");
-      orchestratorCreateButton.innerHTML = '<span aria-hidden="true">+</span>';
-      orchestratorCreateButton.addEventListener("click", (event) => {
-        event.stopPropagation();
-        openOrchestratorDialog();
-      });
-
-      const orchestratorHeaderActions = document.createElement("div");
-      orchestratorHeaderActions.className = "wm-home-section-actions";
-      orchestratorHeaderActions.append(orchestratorCreateButton);
-
-      const orchestratorActions = document.createElement("div");
-      orchestratorActions.className = "wm-home-orchestrator-actions";
-      renderOrchestratorPresetButtons(orchestratorActions);
-
-      if (!state.orchestratorPresetsLoaded && !state.orchestratorPresetsLoading) {
-        ensureOrchestratorPresetsLoaded();
-      }
-
-      orchestratorHeader.addEventListener("click", (event) => {
-        if (orchestratorCreateButton.contains(event.target)) return;
-        const currentlyCollapsed = orchestratorCard.dataset.collapsed === "true";
-        setOrchestratorCollapsed(!currentlyCollapsed);
-      });
-
-      orchestratorHeader.append(orchestratorTitle, orchestratorHeaderActions);
-      orchestratorContent.append(orchestratorActions);
-      orchestratorCard.append(orchestratorHeader, orchestratorContent);
-      setOrchestratorCollapsed(false);
     }
 
     const appsCard = document.createElement("section");
@@ -686,9 +620,6 @@ export function initHomeView(deps) {
     setCollapsed(false);
     wrapper.append(appsCard);
     wrapper.append(liveCard);
-    if (orchestratorCard) {
-      wrapper.append(orchestratorCard);
-    }
 
     archiveComponent = createArchiveComponent({
       onViewSession: (session) => {

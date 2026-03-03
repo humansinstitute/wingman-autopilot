@@ -81,10 +81,6 @@ export function createAdminUsersState() {
  */
 export const state = {
   config: null,
-  orchestratorPresets: [],
-  orchestratorPresetsLoading: false,
-  orchestratorPresetsLoaded: false,
-  orchestratorPresetsError: null,
   logs: new Map(),
   conversations: new Map(),
   messageDrafts: new Map(),

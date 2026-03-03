@@ -297,110 +297,6 @@
         </menu>
       </form>
     </dialog>
-    <dialog id="orchestrator-dialog">
-      <form method="dialog">
-        <h2>Create Orchestrator Preset</h2>
-        <p class="wm-dialog-help">
-          Configure a reusable orchestrator button. Provide either a template directory to copy or a working directory to launch directly.
-        </p>
-        <label for="orchestrator-label">Button Label</label>
-        <input id="orchestrator-label" type="text" autocomplete="off" required />
-
-        <label for="orchestrator-agent">Agent</label>
-        <select id="orchestrator-agent"></select>
-
-        <label for="orchestrator-template">Template Directory (optional)</label>
-        <div class="working-directory-field">
-          <input
-            id="orchestrator-template"
-            type="text"
-            placeholder="orchestrator/templates/0001_Review_Code"
-            autocomplete="off"
-            readonly
-          />
-          <div class="working-directory-actions">
-            <button type="button" class="wm-button secondary" id="orchestrator-template-browse">Browse...</button>
-          </div>
-        </div>
-
-        <label for="orchestrator-active-root">Active Root (for template copy)</label>
-        <div class="working-directory-field">
-          <input
-            id="orchestrator-active-root"
-            type="text"
-            placeholder="orchestrator/active"
-            autocomplete="off"
-            readonly
-          />
-          <div class="working-directory-actions">
-            <button type="button" class="wm-button secondary" id="orchestrator-active-root-browse">Browse...</button>
-          </div>
-        </div>
-
-        <label for="orchestrator-directory-prefix">Generated Directory Prefix</label>
-        <input
-          id="orchestrator-directory-prefix"
-          type="text"
-          placeholder="Security_Review"
-          autocomplete="off"
-        />
-
-        <label for="orchestrator-working-directory">Working Directory (when not copying template)</label>
-        <input
-          id="orchestrator-working-directory"
-          type="text"
-          placeholder="~/code/project"
-          autocomplete="off"
-        />
-
-        <label for="orchestrator-intro">Intro Message (optional)</label>
-        <textarea
-          id="orchestrator-intro"
-          rows="4"
-          placeholder="Provide instructions for the agent. Use &lt;working_dir&gt; to reference the launch directory."
-        ></textarea>
-
-        <div class="wm-field-grid">
-          <div>
-            <label for="orchestrator-timeout">Poll Timeout (ms)</label>
-            <input id="orchestrator-timeout" type="number" min="1000" step="500" />
-          </div>
-          <div>
-            <label for="orchestrator-interval">Poll Interval (ms)</label>
-            <input id="orchestrator-interval" type="number" min="50" step="50" />
-          </div>
-          <div>
-            <label for="orchestrator-retries">Retry Attempts</label>
-            <input id="orchestrator-retries" type="number" min="1" step="1" />
-          </div>
-          <div>
-            <label for="orchestrator-retry-delay">Retry Delay (ms)</label>
-            <input id="orchestrator-retry-delay" type="number" min="0" step="100" />
-          </div>
-        </div>
-
-        <menu>
-          <button type="button" id="orchestrator-cancel">Cancel</button>
-          <button type="submit" id="orchestrator-save">Save</button>
-        </menu>
-      </form>
-    </dialog>
-    <dialog id="orchestrator-directory-dialog" class="wm-directory-dialog">
-      <form method="dialog" class="wm-directory-dialog__form">
-        <h2>Select Orchestrator Directory</h2>
-        <div class="directory-browser">
-          <div class="directory-browser__header">
-            <button type="button" class="wm-button secondary" id="orchestrator-directory-up">Up</button>
-            <span id="orchestrator-directory-current" class="directory-browser__path"></span>
-          </div>
-          <ul id="orchestrator-directory-list" class="directory-browser__list"></ul>
-        </div>
-        <menu>
-          <button type="button" class="wm-button" id="orchestrator-directory-use">Use This Directory</button>
-          <button value="cancel">Cancel</button>
-        </menu>
-      </form>
-    </dialog>
     <dialog id="feature-flags-dialog" class="wm-dialog">
       <form method="dialog" class="wm-dialog__form">
         <header class="wm-dialog__header">
@@ -412,7 +308,7 @@
         <section class="wm-dialog__body">
           <label class="wm-dialog__field">
             <span>Flag key</span>
-            <input name="flag-key" type="text" autocomplete="off" placeholder="orchestrator_visibility" required />
+            <input name="flag-key" type="text" autocomplete="off" placeholder="feature_key" required />
           </label>
           <label class="wm-dialog__field">
             <span>Label</span>
