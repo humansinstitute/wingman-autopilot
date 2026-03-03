@@ -68,6 +68,9 @@ const pickOpenRouterManagementKey = (): string | null => {
   const candidates = [
     Bun.env.OPENROUTER_PROVISIONING_KEY,
     Bun.env.OPENROUTER_MANAGEMENT_KEY,
+    Bun.env.OPENROUTER_API,
+    Bun.env.OPENROUTER_API_KEY,
+    Bun.env.OPENROUTER_KEY,
   ];
   for (const candidate of candidates) {
     const value = typeof candidate === "string" ? candidate.trim() : "";
@@ -256,7 +259,9 @@ export class TeamBillingService {
   private async provisionOpenRouterKey(limitUsd: number): Promise<{ key: string; hash: string | null }> {
     const managementKey = pickOpenRouterManagementKey();
     if (!managementKey) {
-      throw new Error("OPENROUTER_PROVISIONING_KEY (or OPENROUTER_MANAGEMENT_KEY) is required to generate team keys");
+      throw new Error(
+        "Missing OpenRouter management key. Set OPENROUTER_PROVISIONING_KEY, OPENROUTER_MANAGEMENT_KEY, or OPENROUTER_API with /keys permissions.",
+      );
     }
     const config = teamBillingStore.getConfig();
     const url = `${normalizeOpenRouterApiBase()}/keys`;
@@ -276,7 +281,9 @@ export class TeamBillingService {
     });
     if (!response.ok) {
       const message = await response.text().catch(() => response.statusText);
-      throw new Error(`OpenRouter key creation failed (${response.status}): ${message.slice(0, 300)}`);
+      throw new Error(
+        `OpenRouter key creation failed (${response.status}). Ensure this key has /keys management access. Provider response: ${message.slice(0, 300)}`,
+      );
     }
     const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
     const data = payload?.data && typeof payload.data === "object"

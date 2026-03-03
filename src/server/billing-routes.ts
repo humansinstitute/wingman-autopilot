@@ -44,54 +44,59 @@ export async function handleBillingApi(
   }
 
   if (pathname === "/api/billing/team" && (method === "PATCH" || method === "PUT")) {
-    let payload: unknown;
     try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    const record = payload as Record<string, unknown>;
+      let payload: unknown;
+      try {
+        payload = await request.json();
+      } catch {
+        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+      }
+      if (!payload || typeof payload !== "object") {
+        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+      }
+      const record = payload as Record<string, unknown>;
 
-    const configPatch: Partial<{
-      externalTeamId: string | null;
-      baseAllocationUsdCents: number;
-      perMemberUsdCents: number;
-      markupBps: number;
-    }> = {};
-    if (typeof record.externalTeamId === "string") {
-      configPatch.externalTeamId = record.externalTeamId.trim() || null;
-    } else if (record.externalTeamId === null) {
-      configPatch.externalTeamId = null;
-    }
+      const configPatch: Partial<{
+        externalTeamId: string | null;
+        baseAllocationUsdCents: number;
+        perMemberUsdCents: number;
+        markupBps: number;
+      }> = {};
+      if (typeof record.externalTeamId === "string") {
+        configPatch.externalTeamId = record.externalTeamId.trim() || null;
+      } else if (record.externalTeamId === null) {
+        configPatch.externalTeamId = null;
+      }
 
-    const baseAllocationUsdCents = parseOptionalInt(record.baseAllocationUsdCents);
-    if (typeof baseAllocationUsdCents === "number") {
-      configPatch.baseAllocationUsdCents = Math.max(0, baseAllocationUsdCents);
-    }
-    const perMemberUsdCents = parseOptionalInt(record.perMemberUsdCents);
-    if (typeof perMemberUsdCents === "number") {
-      configPatch.perMemberUsdCents = Math.max(0, perMemberUsdCents);
-    }
-    const markupBps = parseOptionalInt(record.markupBps);
-    if (typeof markupBps === "number") {
-      configPatch.markupBps = Math.max(0, markupBps);
-    }
+      const baseAllocationUsdCents = parseOptionalInt(record.baseAllocationUsdCents);
+      if (typeof baseAllocationUsdCents === "number") {
+        configPatch.baseAllocationUsdCents = Math.max(0, baseAllocationUsdCents);
+      }
+      const perMemberUsdCents = parseOptionalInt(record.perMemberUsdCents);
+      if (typeof perMemberUsdCents === "number") {
+        configPatch.perMemberUsdCents = Math.max(0, perMemberUsdCents);
+      }
+      const markupBps = parseOptionalInt(record.markupBps);
+      if (typeof markupBps === "number") {
+        configPatch.markupBps = Math.max(0, markupBps);
+      }
 
-    const changedBudgetInputs = Object.keys(configPatch).length > 0;
-    if (changedBudgetInputs) {
-      ctx.billingService.updateTeamConfig(configPatch);
-    }
+      const changedBudgetInputs = Object.keys(configPatch).length > 0;
+      if (changedBudgetInputs) {
+        ctx.billingService.updateTeamConfig(configPatch);
+      }
 
-    if (typeof record.useCredits === "boolean") {
-      await ctx.billingService.setUseCredits(record.useCredits);
-    } else if (changedBudgetInputs && ctx.billingService.isCreditsEnabled()) {
-      await ctx.billingService.ensureProviderKeyForCredits();
-    }
+      if (typeof record.useCredits === "boolean") {
+        await ctx.billingService.setUseCredits(record.useCredits);
+      } else if (changedBudgetInputs && ctx.billingService.isCreditsEnabled()) {
+        await ctx.billingService.ensureProviderKeyForCredits();
+      }
 
-    return Response.json(ctx.billingService.getTeamConfigWithSummary());
+      return Response.json(ctx.billingService.getTeamConfigWithSummary());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
   }
 
   if (pathname === "/api/billing/usage" && method === "GET") {
@@ -102,4 +107,3 @@ export async function handleBillingApi(
 
   return null;
 }
-
