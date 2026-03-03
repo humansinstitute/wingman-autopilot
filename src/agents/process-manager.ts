@@ -515,19 +515,50 @@ export class ProcessManager {
 
     // Stop via PM2 if this is a PM2-managed session
     if (session.pm2Name) {
+      const pm2Name = session.pm2Name;
+      let deletedFromPm2 = false;
+
+      // Stop failures should not prevent delete; we still want the PM2 entry removed.
       try {
-        await stopProcess(session.pm2Name);
-        await deleteProcess(session.pm2Name);
-        // Clean up ecosystem config
-        await removeAppFromEcosystem(
-          session.workingDirectory,
-          session.isAdmin ?? false,
-          session.pm2Name,
-        );
+        await stopProcess(pm2Name);
       } catch (error) {
         this.appendLog(session, `[manager] PM2 stop error: ${(error as Error).message}`);
       }
-      session.pm2Name = undefined;
+
+      try {
+        await deleteProcess(pm2Name);
+        deletedFromPm2 = true;
+      } catch (error) {
+        this.appendLog(session, `[manager] PM2 delete error: ${(error as Error).message}`);
+      }
+
+      // Best-effort cleanup of ecosystem config.
+      try {
+        await removeAppFromEcosystem(
+          session.workingDirectory,
+          session.isAdmin ?? false,
+          pm2Name,
+        );
+      } catch (error) {
+        this.appendLog(session, `[manager] PM2 ecosystem cleanup error: ${(error as Error).message}`);
+      }
+
+      if (!deletedFromPm2) {
+        try {
+          const proc = await getProcessByName(pm2Name);
+          if (!proc) {
+            deletedFromPm2 = true;
+          } else {
+            this.appendLog(session, `[manager] PM2 process ${pm2Name} still present after stop`);
+          }
+        } catch (error) {
+          this.appendLog(session, `[manager] PM2 cleanup verify error: ${(error as Error).message}`);
+        }
+      }
+
+      if (deletedFromPm2) {
+        session.pm2Name = undefined;
+      }
       session.detachedPid = undefined;
     } else if (session.process) {
       session.process.kill("SIGTERM");
