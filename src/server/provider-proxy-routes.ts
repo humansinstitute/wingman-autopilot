@@ -26,15 +26,28 @@ const sensitiveRequestHeaders = new Set([
   "host",
 ]);
 
-const extractProxyToken = (request: Request): string | null => {
-  const auth = request.headers.get("authorization");
-  if (auth?.toLowerCase().startsWith("bearer ")) {
-    const token = auth.slice("bearer ".length).trim();
-    if (token) return token;
+const normaliseTokenCandidate = (value: string | null): string | null => {
+  if (!value) return null;
+  let token = value.trim();
+  if (!token) return null;
+  if (token.toLowerCase().startsWith("bearer ")) {
+    token = token.slice("bearer ".length).trim();
   }
-  const apiKey = request.headers.get("x-api-key");
-  if (apiKey && apiKey.trim().length > 0) return apiKey.trim();
-  return null;
+  if (
+    (token.startsWith("\"") && token.endsWith("\"")) ||
+    (token.startsWith("'") && token.endsWith("'"))
+  ) {
+    token = token.slice(1, -1).trim();
+  }
+  return token || null;
+};
+
+const extractProxyTokenCandidates = (request: Request): string[] => {
+  const candidates = [
+    normaliseTokenCandidate(request.headers.get("authorization")),
+    normaliseTokenCandidate(request.headers.get("x-api-key")),
+  ].filter((value): value is string => Boolean(value));
+  return Array.from(new Set(candidates));
 };
 
 const parseProviderKindAndPath = (pathname: string): { provider: ProviderKind; restPath: string } | null => {
@@ -105,11 +118,15 @@ export async function handleProviderProxyApi(
     return Response.json({ error: "credits-disabled" }, { status: 403 });
   }
 
-  const proxyToken = extractProxyToken(request);
-  if (!proxyToken) {
+  const tokenCandidates = extractProxyTokenCandidates(request);
+  if (tokenCandidates.length === 0) {
     return Response.json({ error: "missing-proxy-token" }, { status: 401 });
   }
-  const payload = ctx.billingService.verifySessionProxyToken(proxyToken);
+  let payload: ReturnType<TeamBillingService["verifySessionProxyToken"]> = null;
+  for (const candidate of tokenCandidates) {
+    payload = ctx.billingService.verifySessionProxyToken(candidate);
+    if (payload) break;
+  }
   if (!payload) {
     return Response.json({ error: "invalid-proxy-token" }, { status: 401 });
   }
