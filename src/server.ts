@@ -49,10 +49,8 @@ import type { OrchestratorPresetRecord } from "./storage/orchestrator-presets";
 import { fileWatcherStore } from "./storage/file-watcher-store";
 import {
   featureFlagStore,
-  isFeatureFlagState,
   normaliseFeatureFlagKey,
   resolveFeatureFlagEffectiveState,
-  type FeatureFlagRecord,
   type FeatureFlagState,
 } from "./storage/feature-flag-store";
 import { starterProjectStore } from "./storage/starter-project-store";
@@ -146,6 +144,12 @@ import { handleSessionApi, type SessionApiContext } from "./server/session-api-r
 import { handleDocsApi, type DocsApiContext } from "./server/docs-routes";
 import { handleAdminUsersApi, type AdminUsersApiContext } from "./server/admin-users-routes";
 import { handleAuthApi, type AuthApiContext } from "./server/auth-routes";
+import {
+  handleFeatureFlagsApi,
+  type FeatureFlagsApiContext,
+  serialiseFeatureFlag,
+  serialiseFeatureFlagsForViewer,
+} from "./server/feature-flags-routes";
 import { performSystemCleanup } from "./server/system-cleanup.js";
 import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import { SchedulerStore } from "./scheduler/scheduler-store";
@@ -2839,19 +2843,7 @@ const ensurePageAccess = async (
   return null;
 };
 
-const serialiseFeatureFlag = (flag: FeatureFlagRecord, viewerIsAdmin: boolean) => ({
-  key: flag.key,
-  label: flag.label,
-  description: flag.description,
-  state: flag.state,
-  effectiveState: resolveFeatureFlagEffectiveState(flag.state, viewerIsAdmin),
-  updatedAt: flag.updatedAt,
-  updatedBy: flag.updatedBy ?? null,
-});
-
-const serialiseFeatureFlagsForViewer = (viewerIsAdmin: boolean) => {
-  return featureFlagStore.listFlags().map((flag) => serialiseFeatureFlag(flag, viewerIsAdmin));
-};
+// serialiseFeatureFlag and serialiseFeatureFlagsForViewer moved to ./server/feature-flags-routes.ts
 
 const resolveFeatureFlagStateForViewer = (
   key: string,
@@ -3385,136 +3377,21 @@ const handleApi = async (
         label: definition.label,
       })),
       defaultAgent: config.defaultAgent,
-      featureFlags: serialiseFeatureFlagsForViewer(workspaceScope.isAdmin),
+      featureFlags: serialiseFeatureFlagsForViewer(featureFlagStore, workspaceScope.isAdmin),
       giteaUrl: config.giteaUrl ?? null,
     });
   }
 
-  if (pathname === "/api/feature-flags" && method === "GET") {
-    const flags = serialiseFeatureFlagsForViewer(viewerIsAdmin);
-    return Response.json({ flags });
-  }
-
-  if (pathname === "/api/feature-flags" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.FeatureFlagsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    const record = payload as Record<string, unknown>;
-    const key = normaliseFeatureFlagKey(typeof record.key === "string" ? record.key : "");
-    const label = typeof record.label === "string" ? record.label.trim() : "";
-    const description =
-      typeof record.description === "string"
-        ? record.description.trim()
-        : record.description === null
-          ? null
-          : undefined;
-    const stateInput = typeof record.state === "string" ? record.state.trim().toLowerCase() : "";
-    const state: FeatureFlagState = isFeatureFlagState(stateInput) ? stateInput : "off";
-
-    if (!key) {
-      return Response.json({ error: "Feature flag key is required" }, { status: 400 });
-    }
-    if (!label) {
-      return Response.json({ error: "Feature flag label is required" }, { status: 400 });
-    }
-
-    try {
-      const created = featureFlagStore.createFlag({
-        key,
-        label,
-        description: description === undefined ? null : description,
-        state,
-        updatedBy: normaliseNpub(authContext.npub ?? null),
-      });
-      const flags = serialiseFeatureFlagsForViewer(viewerIsAdmin);
-      return Response.json({ flag: serialiseFeatureFlag(created, viewerIsAdmin), flags }, { status: 201 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname.startsWith("/api/feature-flags/") && method === "PATCH") {
-    const denied = await ensureApiAccess(AccessActions.FeatureFlagsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-
-    const parts = pathname.split("/").filter(Boolean);
-    if (parts.length !== 3 || !parts[2]) {
-      return Response.json({ error: "Feature flag key is required" }, { status: 400 });
-    }
-    const key = normaliseFeatureFlagKey(parts[2]);
-    if (!key) {
-      return Response.json({ error: "Invalid feature flag key" }, { status: 400 });
-    }
-
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    const record = payload as Record<string, unknown>;
-    const updates: Record<string, unknown> = {};
-    if (Object.prototype.hasOwnProperty.call(record, "label")) {
-      const label = typeof record.label === "string" ? record.label.trim() : "";
-      if (!label) {
-        return Response.json({ error: "Feature flag label is required" }, { status: 400 });
-      }
-      updates.label = label;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(record, "description")) {
-      const description =
-        typeof record.description === "string"
-          ? record.description.trim()
-          : record.description === null
-            ? null
-            : undefined;
-      updates.description = description;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(record, "state")) {
-      const stateInput = typeof record.state === "string" ? record.state.trim().toLowerCase() : "";
-      if (!isFeatureFlagState(stateInput)) {
-        return Response.json({ error: "Invalid feature flag state" }, { status: 400 });
-      }
-      updates.state = stateInput;
-    }
-
-    if (Object.keys(updates).length === 0) {
-      return Response.json({ error: "No updates provided" }, { status: 400 });
-    }
-
-    try {
-      const updated = featureFlagStore.updateFlag(key, {
-        label: updates.label as string | undefined,
-        description: updates.description as string | null | undefined,
-        state: updates.state as FeatureFlagState | undefined,
-        updatedBy: normaliseNpub(authContext.npub ?? null),
-      });
-      const flags = serialiseFeatureFlagsForViewer(viewerIsAdmin);
-      return Response.json({ flag: serialiseFeatureFlag(updated, viewerIsAdmin), flags });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
+  // Feature flag routes (delegated to feature-flags-routes.ts)
+  if (pathname.startsWith("/api/feature-flags")) {
+    const featureFlagsCtx: FeatureFlagsApiContext = {
+      featureFlagStore,
+      viewerIsAdmin: workspaceScope.isAdmin,
+      ensureApiAccess,
+      AccessActions,
+    };
+    const ffResult = await handleFeatureFlagsApi(request, url, method, authContext, featureFlagsCtx);
+    if (ffResult) return ffResult;
   }
 
   if (pathname === "/api/orchestrators" && method === "GET") {
