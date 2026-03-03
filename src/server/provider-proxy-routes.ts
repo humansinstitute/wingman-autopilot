@@ -82,6 +82,80 @@ const isSseResponse = (headers: Headers): boolean => {
   return contentType.includes("text/event-stream");
 };
 
+const parseSseDataPayload = (rawEvent: string): unknown | null => {
+  const lines = rawEvent.split(/\r?\n/);
+  const dataLines: string[] = [];
+  for (const line of lines) {
+    if (!line.startsWith("data:")) continue;
+    dataLines.push(line.slice("data:".length).trimStart());
+  }
+  if (dataLines.length === 0) return null;
+  const payloadText = dataLines.join("\n").trim();
+  if (!payloadText || payloadText === "[DONE]") return null;
+  try {
+    return JSON.parse(payloadText);
+  } catch {
+    return null;
+  }
+};
+
+const createSseCostMonitor = (
+  stream: ReadableStream<Uint8Array>,
+  parseCost: (headers: Headers, body: unknown) => number,
+  initialCostUsd: number,
+): { clientStream: ReadableStream<Uint8Array>; done: Promise<number> } => {
+  const [clientStream, monitorStream] = stream.tee();
+  const done = (async () => {
+    const reader = monitorStream.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let latestCostUsd = initialCostUsd;
+
+    const processBuffer = (flush = false) => {
+      while (true) {
+        const splitIndex = buffer.indexOf("\n\n");
+        if (splitIndex < 0) break;
+        const rawEvent = buffer.slice(0, splitIndex);
+        buffer = buffer.slice(splitIndex + 2);
+        const payload = parseSseDataPayload(rawEvent);
+        if (!payload) continue;
+        const parsed = parseCost(new Headers(), payload);
+        if (parsed > 0) {
+          latestCostUsd = parsed;
+        }
+      }
+      if (flush && buffer.trim().length > 0) {
+        const payload = parseSseDataPayload(buffer);
+        if (payload) {
+          const parsed = parseCost(new Headers(), payload);
+          if (parsed > 0) {
+            latestCostUsd = parsed;
+          }
+        }
+        buffer = "";
+      }
+    };
+
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        buffer += decoder.decode(value, { stream: true });
+        processBuffer(false);
+      }
+      buffer += decoder.decode();
+      processBuffer(true);
+    } catch {
+      // Ignore parse/stream errors; caller falls back to initial/header cost.
+    }
+
+    return latestCostUsd;
+  })();
+
+  return { clientStream, done };
+};
+
 const cloneProxyRequestHeaders = (request: Request, teamApiKey: string, provider: ProviderKind): Headers => {
   const outgoing = new Headers();
   for (const [key, value] of request.headers.entries()) {
@@ -168,12 +242,58 @@ export async function handleProviderProxyApi(
   upstreamHeaders.delete("content-length");
 
   const providerRequestId = pickProviderRequestId(upstreamResponse.headers);
+  const headerCostUsd = ctx.billingService.parseProxyCost(upstreamResponse.headers, null);
+
+  if (isSseResponse(upstreamResponse.headers)) {
+    const sourceBody = upstreamResponse.body;
+    if (!sourceBody) {
+      void ctx.billingService.recordProxyUsage({
+        sessionId: session.id,
+        npub: session.npub ?? null,
+        agent: session.agent,
+        endpoint: parsed.restPath,
+        method,
+        statusCode: upstreamResponse.status,
+        providerRequestId,
+        costUsd: headerCostUsd,
+      });
+      return new Response(null, {
+        status: upstreamResponse.status,
+        statusText: upstreamResponse.statusText,
+        headers: upstreamHeaders,
+      });
+    }
+
+    const monitor = createSseCostMonitor(
+      sourceBody,
+      (headers, body) => ctx.billingService.parseProxyCost(headers, body),
+      headerCostUsd,
+    );
+    void monitor.done.then((finalCostUsd) =>
+      ctx.billingService.recordProxyUsage({
+        sessionId: session.id,
+        npub: session.npub ?? null,
+        agent: session.agent,
+        endpoint: parsed.restPath,
+        method,
+        statusCode: upstreamResponse.status,
+        providerRequestId,
+        costUsd: finalCostUsd,
+      }),
+    );
+
+    return new Response(monitor.clientStream, {
+      status: upstreamResponse.status,
+      statusText: upstreamResponse.statusText,
+      headers: upstreamHeaders,
+    });
+  }
+
   let parsedBodyForCost: unknown = null;
   if (isJsonResponse(upstreamResponse.headers)) {
     parsedBodyForCost = await upstreamResponse.clone().json().catch(() => null);
   }
   const parsedCostUsd = ctx.billingService.parseProxyCost(upstreamResponse.headers, parsedBodyForCost);
-
   void ctx.billingService.recordProxyUsage({
     sessionId: session.id,
     npub: session.npub ?? null,
@@ -182,16 +302,8 @@ export async function handleProviderProxyApi(
     method,
     statusCode: upstreamResponse.status,
     providerRequestId,
-    costUsd: parsedCostUsd,
+    costUsd: parsedCostUsd > 0 ? parsedCostUsd : headerCostUsd,
   });
-
-  if (isSseResponse(upstreamResponse.headers)) {
-    return new Response(upstreamResponse.body, {
-      status: upstreamResponse.status,
-      statusText: upstreamResponse.statusText,
-      headers: upstreamHeaders,
-    });
-  }
 
   const responseBuffer = Buffer.from(await upstreamResponse.arrayBuffer());
   return new Response(responseBuffer, {
