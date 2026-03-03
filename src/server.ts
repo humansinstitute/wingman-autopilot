@@ -137,6 +137,8 @@ import { createSessionEventsHandler } from "./server/session-events";
 import { sessionBroadcaster, createSessionSubscribeResponse } from "./server/session-broadcaster";
 import { handleChatApi, type ChatApiContext } from "./server/chat-routes";
 import { handleSessionApi, type SessionApiContext } from "./server/session-api-routes";
+import { handleProviderProxyApi, type ProviderProxyApiContext } from "./server/provider-proxy-routes";
+import { handleBillingApi, type BillingApiContext } from "./server/billing-routes";
 import { handleDocsApi, type DocsApiContext } from "./server/docs-routes";
 import { handleAdminUsersApi, type AdminUsersApiContext } from "./server/admin-users-routes";
 import { handleAuthApi, type AuthApiContext } from "./server/auth-routes";
@@ -146,6 +148,12 @@ import {
   serialiseFeatureFlag,
   serialiseFeatureFlagsForViewer,
 } from "./server/feature-flags-routes";
+import {
+  handleUploadsApi,
+  resolveTempImage,
+  resolveTempAttachment,
+  type UploadApiContext,
+} from "./server/upload-routes";
 import { performSystemCleanup } from "./server/system-cleanup.js";
 import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import { SchedulerStore } from "./scheduler/scheduler-store";
@@ -170,6 +178,7 @@ import { resolveAndCacheNostrProfile } from "./server/nostr-profile";
 import { shouldKeepBotKeyForNostrTriggers } from "./server/botkey-lifecycle";
 import { waitForSessionPromptReadiness } from "./server/session-readiness";
 import { createPromptDispatchEngine, QueueDispatchError } from "./server/prompt-dispatch";
+import { TeamBillingService } from "./billing/team-billing-service";
 import {
   validateForkInput,
   getRecentMessages,
@@ -945,7 +954,25 @@ try {
   console.warn(`[pm2] failed to connect to PM2: ${(error as Error).message}`);
 }
 
-const manager = new ProcessManager(config);
+const teamBillingService = new TeamBillingService({
+  listIdentityMembers: () =>
+    identityUserStore.listUsers().map((user) => ({
+      normalizedNpub: user.normalizedNpub,
+      npub: user.npub,
+    })),
+  serverPort: config.port,
+  baseUrl: config.baseUrl,
+});
+teamBillingService.syncTeamMembers();
+if (teamBillingService.isCreditsEnabled()) {
+  void teamBillingService.primeProviderKeyCache().catch((error) => {
+    console.warn(`[billing] failed to prime provider key cache on startup: ${(error as Error).message}`);
+  });
+}
+
+const manager = new ProcessManager(config, {
+  resolveBillingLaunchConfig: (input) => teamBillingService.resolveLaunchConfig(input),
+});
 
 const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   getSession: (sid: string) => manager.getSession(sid) ?? null,
@@ -1090,9 +1117,6 @@ if (taskListenerIdentity && config.connectRelays.length > 0 && taskListenerFlag?
 const wingmenRoot = join(projectRoot, ".wingmen");
 await mkdir(wingmenRoot, { recursive: true }).catch(() => undefined);
 const warmRestartManagerScriptPath = join(projectRoot, "scripts", "warm-restart-manager.ts");
-const maxImageSizeBytes = 10 * 1024 * 1024; // 10MB
-const maxAttachmentSizeBytes = 25 * 1024 * 1024; // 25MB
-
 const {
   ensureUserWorkspace,
   ensureImageDirectory,
@@ -1390,72 +1414,6 @@ const sessionBelongsToViewer = (
     return false;
   }
   return normalized === viewerNormalizedNpub;
-};
-
-const resolveScopedUpload = (pathname: string, authContext: RequestAuthContext, prefix: string, root: string) => {
-  if (!pathname.startsWith(prefix)) return undefined;
-  const relative = pathname.slice(prefix.length);
-  if (!relative) return undefined;
-  if (!authContext.session) return undefined;
-  
-  const parts = relative.split("/").filter((segment) => segment.length > 0);
-  if (parts.length < 2) return undefined;
-
-  const [segment, ...rest] = parts;
-  
-  if (!validatePathSegment(segment)) {
-    return undefined;
-  }
-  
-  for (const part of rest) {
-    if (!validatePathSegment(part)) {
-      return undefined;
-    }
-  }
-
-  const expectedSegment = deriveNpubSegment(authContext.npub ?? null);
-  if (!isAdminContext(authContext) && segment !== expectedSegment) {
-    return undefined;
-  }
-
-  try {
-    const userRoot = secureResolvePath(root, segment);
-    const relativePath = rest.join(sep);
-    const sanitizedRelative = sanitizePath(relativePath);
-    const fullPath = secureResolvePath(userRoot, sanitizedRelative);
-
-    const file = Bun.file(fullPath);
-    if (file.size === 0) return undefined;
-
-    return { file, fullPath };
-  } catch (error) {
-    console.warn("[security] Path traversal attempt in upload:", error);
-    return undefined;
-  }
-};
-
-const resolveTempImage = (pathname: string, authContext: RequestAuthContext) => {
-  const resolved = resolveScopedUpload(pathname, authContext, "/uploads/images/", imageRoot);
-  if (!resolved) return undefined;
-  const { file } = resolved;
-  return new Response(file, {
-    headers: {
-      ...(file.type ? { "content-type": file.type } : {}),
-      "cache-control": "no-store",
-    },
-  });
-};
-
-const resolveTempAttachment = (pathname: string, authContext: RequestAuthContext) => {
-  const resolved = resolveScopedUpload(pathname, authContext, "/uploads/files/", attachmentRoot);
-  if (!resolved) return undefined;
-  const { file } = resolved;
-  return new Response(file, {
-    headers: {
-      ...(file.type ? { "content-type": file.type } : {}),
-      "cache-control": "no-store",
-    },
-  });
 };
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -2562,6 +2520,7 @@ const sessionApiContext: SessionApiContext = {
   MESSAGE_COST_SATS,
   ensureApiAccess,
   ensureViewerHasBalance,
+  shouldRequireBalanceForAgent: async (agent) => !(await teamBillingService.canUseCreditsForAgent(agent)),
   serializeSession,
   sessionBelongsToViewer,
   getViewerNormalizedNpub,
@@ -2596,6 +2555,18 @@ const docsApiContext: DocsApiContext = {
   createGitWorktree,
   executeGitCommand,
   describeGitRepository,
+};
+
+const providerProxyApiContext: ProviderProxyApiContext = {
+  billingService: teamBillingService,
+  getSession: (sessionId) => manager.getSession(sessionId) ?? null,
+  ensureProviderApiKey: () => teamBillingService.getProviderApiKey(),
+};
+
+const billingApiContext: BillingApiContext = {
+  billingService: teamBillingService,
+  ensureApiAccess,
+  AccessActions,
 };
 
 const handleApi = async (
@@ -2637,6 +2608,17 @@ const handleApi = async (
   if (browserLogResponse) {
     return browserLogResponse;
   }
+
+  const providerProxyResponse = await handleProviderProxyApi(request, url, method, providerProxyApiContext);
+  if (providerProxyResponse) {
+    return providerProxyResponse;
+  }
+
+  const billingApiResponse = await handleBillingApi(request, url, method, authContext, billingApiContext);
+  if (billingApiResponse) {
+    return billingApiResponse;
+  }
+
   if (pathname.startsWith("/api/npub-projects")) {
     if (method === "OPTIONS") {
       return withProjectApiCors(new Response(null, { status: 204 }));
@@ -2946,6 +2928,19 @@ const handleApi = async (
       getViewerNormalizedNpub,
       normaliseOptionalString,
       resolveAndCacheNostrProfile,
+      onSessionAuthenticated: (npub: string) => {
+        try {
+          identityUserStore.touch(npub);
+          teamBillingService.syncTeamMembers();
+          if (teamBillingService.isCreditsEnabled()) {
+            void teamBillingService.primeProviderKeyCache().catch((error) => {
+              console.warn(`[billing] failed to prime provider key cache at login: ${(error as Error).message}`);
+            });
+          }
+        } catch (error) {
+          console.warn(`[billing] failed to update team members for ${npub}: ${(error as Error).message}`);
+        }
+      },
     };
     const authResult = await handleAuthApi(request, url, method, authContext, authApiContext);
     if (authResult) return authResult;
@@ -3135,153 +3130,24 @@ const handleApi = async (
     }
   }
 
-  if (pathname === "/api/uploads/images" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let form: FormData;
-    try {
-      // Read body as blob first to work around cloudflared streaming issues
-      const contentType = request.headers.get("content-type") ?? "";
-      const bodyBlob = await request.blob();
-      const bufferedRequest = new Request(request.url, {
-        method: request.method,
-        headers: { "content-type": contentType },
-        body: bodyBlob,
-      });
-      form = await bufferedRequest.formData();
-    } catch {
-      return Response.json({ error: "Invalid form data" }, { status: 400 });
-    }
-
-    const agentInput = form.get("agent");
-    const agent = typeof agentInput === "string" ? agentInput.toLowerCase() : "";
-    if (!isAgentType(agent)) {
-      return Response.json({ error: "Unsupported agent target" }, { status: 400 });
-    }
-
-    const fileEntry = form.get("image");
-    if (!fileEntry || typeof (fileEntry as Blob).arrayBuffer !== "function") {
-      return Response.json({ error: "Image file is required" }, { status: 400 });
-    }
-
-    const file = fileEntry as Blob & { name?: string; size: number; type?: string };
-
-    if (file.size === 0) {
-      return Response.json({ error: "Empty files are not allowed" }, { status: 400 });
-    }
-
-    if (file.size > maxImageSizeBytes) {
-      return Response.json({ error: "Image exceeds 10MB limit" }, { status: 413 });
-    }
-
-    if (!file.type?.startsWith("image/")) {
-      return Response.json({ error: "Only image uploads are supported" }, { status: 400 });
-    }
-
-    const userNpub = authContext.npub ?? null;
-    const imageSegment = deriveNpubSegment(userNpub);
-    let directory: string;
-    try {
-      directory = await ensureImageDirectory(agent, userNpub);
-    } catch (error) {
-      console.error("[uploads] failed to ensure directory", error);
-      return Response.json({ error: "Failed to prepare image storage" }, { status: 500 });
-    }
-
-    const filename = createImageFilename(file.name ?? "upload", file.type ?? "");
-    const diskPath = join(directory, filename);
-    try {
-      const buffer = Buffer.from(await file.arrayBuffer());
-      await writeFile(diskPath, buffer);
-    } catch (error) {
-      console.error("[uploads] failed to persist image", error);
-      return Response.json({ error: "Failed to store image" }, { status: 500 });
-    }
-
-      const relativePath = normalize(join(imageSegment, agent, filename)).replace(/\\/g, "/");
-      const publicPath = `/uploads/images/${relativePath}`;
-    const placeholder = buildAgentImagePlaceholder(agent, diskPath, `${publicPath}`);
-
-    return Response.json({
-      agent,
-      name: file.name,
-      publicPath,
-      relativePath,
-      placeholder,
-    });
-  }
-
-  if (pathname === "/api/uploads/files" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let form: FormData;
-    try {
-      form = await request.formData();
-    } catch {
-      return Response.json({ error: "Invalid form data" }, { status: 400 });
-    }
-
-    const agentInput = form.get("agent");
-    const agent = typeof agentInput === "string" ? agentInput.toLowerCase() : "";
-    if (!isAgentType(agent)) {
-      return Response.json({ error: "Unsupported agent target" }, { status: 400 });
-    }
-
-    const fileEntries = form.getAll("file").filter((entry) => entry && typeof (entry as Blob).arrayBuffer === "function");
-    if (fileEntries.length === 0) {
-      return Response.json({ error: "File upload payload is required" }, { status: 400 });
-    }
-
-    const userNpub = authContext.npub ?? null;
-    const attachmentSegment = deriveNpubSegment(userNpub);
-    let directory: string;
-    try {
-      directory = await ensureAttachmentDirectory(agent, userNpub);
-    } catch (error) {
-      console.error("[uploads] failed to ensure attachment directory", error);
-      return Response.json({ error: "Failed to prepare file storage" }, { status: 500 });
-    }
-
-    const results = [];
-    for (const entry of fileEntries) {
-      const file = entry as Blob & { name?: string; size: number; type?: string };
-      if (file.size === 0) {
-        return Response.json({ error: "Empty files are not allowed" }, { status: 400 });
-      }
-      if (file.size > maxAttachmentSizeBytes) {
-        return Response.json({ error: "File exceeds 25MB limit" }, { status: 413 });
-      }
-
-      const filename = createAttachmentFilename(file.name ?? "upload", file.type ?? "");
-      const diskPath = join(directory, filename);
-      try {
-        const buffer = Buffer.from(await file.arrayBuffer());
-        await writeFile(diskPath, buffer);
-      } catch (error) {
-        console.error("[uploads] failed to persist attachment", error);
-        return Response.json({ error: "Failed to store file" }, { status: 500 });
-      }
-
-      const relativePath = normalize(join(attachmentSegment, agent, filename)).replace(/\\/g, "/");
-      const publicPath = `/uploads/files/${relativePath}`;
-      const placeholder = buildAgentFilePlaceholder(agent, diskPath, publicPath, file.name);
-      results.push({
-        agent,
-        name: file.name ?? filename,
-        size: file.size,
-        mime: file.type ?? null,
-        publicPath,
-        relativePath,
-        absolutePath: diskPath,
-        placeholder,
-      });
-    }
-
-    return Response.json({ files: results }, { status: 201 });
+  // Upload API routes (delegated to upload-routes.ts)
+  if (pathname.startsWith("/api/uploads/")) {
+    const uploadApiCtx: UploadApiContext = {
+      imageRoot,
+      attachmentRoot,
+      isAdminContext,
+      isAgentType,
+      ensureImageDirectory,
+      ensureAttachmentDirectory,
+      createImageFilename,
+      createAttachmentFilename,
+      buildAgentImagePlaceholder,
+      buildAgentFilePlaceholder,
+      ensureApiAccess,
+      AccessActions,
+    };
+    const uploadResult = await handleUploadsApi(request, url, method, authContext, uploadApiCtx);
+    if (uploadResult) return uploadResult;
   }
 
   // Session & archive API routes (delegated to session-api-routes.ts)
@@ -3502,12 +3368,12 @@ const server = Bun.serve({
         return handleApi(request, url, method, authContext);
       }
 
-      const tempAttachment = resolveTempAttachment(pathname, authContext);
+      const tempAttachment = resolveTempAttachment(pathname, authContext, { attachmentRoot, isAdminContext });
       if (tempAttachment) {
         return tempAttachment;
       }
 
-      const tempImage = resolveTempImage(pathname, authContext);
+      const tempImage = resolveTempImage(pathname, authContext, { imageRoot, isAdminContext });
       if (tempImage) {
         return tempImage;
       }
