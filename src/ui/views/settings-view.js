@@ -10,6 +10,7 @@ import {
   createGitHubSection,
   createGiteaSection,
 } from './settings/workspace-sections.js';
+import { createTeamBillingSection } from './settings/admin-billing-section.js';
 
 export function initSettingsView(deps) {
   const {
@@ -172,6 +173,7 @@ export function initSettingsView(deps) {
 
   function renderAdminTab() {
     const fragment = document.createDocumentFragment();
+    fragment.append(createTeamBillingSection());
     ensureFeatureFlagsLoaded();
     fragment.append(renderFeatureFlagsPanel());
     ensureStarterProjectsLoaded();

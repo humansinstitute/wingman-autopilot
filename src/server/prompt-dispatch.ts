@@ -6,6 +6,7 @@
 import type { AgentType } from "../config";
 import type { SessionSnapshot } from "../agents/process-manager";
 import { InsufficientBalanceError } from "../storage/identity-user-store";
+import { isCreditsBillingSession } from "../sessions/session-metadata";
 
 // ---------- Context supplied by server.ts ----------
 
@@ -66,7 +67,7 @@ export interface PromptDispatchEngine {
   dispatchNextQueuedPromptForSession: (session: SessionSnapshot, userNpub: string | null) => Promise<{
     id: string;
     messages: unknown[];
-    balance: number;
+    balance: number | null;
     sentPrompt: { content: string };
   }>;
   maybeAutoDispatchQueuedPrompt: (session: SessionSnapshot | null) => Promise<void>;
@@ -174,7 +175,8 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
       throw new QueueDispatchError("No prompts in queue", 404);
     }
 
-    let currentBalance = 0;
+    const creditsBilling = isCreditsBillingSession(session.metadata);
+    let currentBalance: number | null = null;
     let debitApplied = false;
     const refundDebit = () => {
       if (!debitApplied) return;
@@ -187,18 +189,20 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
       }
     };
 
-    try {
-      currentBalance = ctx.identityUserStore.debit(userNpub, ctx.MESSAGE_COST_SATS);
-      debitApplied = true;
-    } catch (error) {
-      if (error instanceof InsufficientBalanceError) {
-        throw new QueueDispatchError("Insufficient balance", 402, {
-          balance: error.balance,
-          required: ctx.MESSAGE_COST_SATS,
-        });
+    if (!creditsBilling) {
+      try {
+        currentBalance = ctx.identityUserStore.debit(userNpub, ctx.MESSAGE_COST_SATS);
+        debitApplied = true;
+      } catch (error) {
+        if (error instanceof InsufficientBalanceError) {
+          throw new QueueDispatchError("Insufficient balance", 402, {
+            balance: error.balance,
+            required: ctx.MESSAGE_COST_SATS,
+          });
+        }
+        console.error("[billing] failed to debit message cost:", error);
+        throw new QueueDispatchError("Failed to debit balance", 500);
       }
-      console.error("[billing] failed to debit message cost:", error);
-      throw new QueueDispatchError("Failed to debit balance", 500);
     }
 
     try {

@@ -102,8 +102,9 @@ const parseStoredOrigin = (value: string | null): SessionOrigin | null => {
   }
 };
 
-const parseStoredMetadata = (agentFlag: unknown): SessionMetadata => ({
+const parseStoredMetadata = (agentFlag: unknown, billingMode: unknown): SessionMetadata => ({
   AGENT: agentFlag === 1 || agentFlag === true || agentFlag === "1" || agentFlag === "true",
+  billingMode: billingMode === "credits" ? "credits" : "subscription",
 });
 
 export class MessageStore {
@@ -150,6 +151,7 @@ export class MessageStore {
       session.model ?? null,
       session.targetFile ?? null,
       session.metadata?.AGENT ? 1 : 0,
+      session.metadata?.billingMode === "credits" ? "credits" : "subscription",
     );
   }
 
@@ -201,12 +203,14 @@ export class MessageStore {
         origin,
         model,
         target_file as targetFile,
-        agent_flag as agentFlag
+        agent_flag as agentFlag,
+        billing_mode as billingMode
       FROM sessions
       WHERE id = ?1
     `).get(sessionId) as (Omit<StoredSessionRecord, "origin" | "metadata"> & {
       origin: string | null;
       agentFlag: number | null;
+      billingMode: string | null;
     }) | null;
 
     if (!row) return null;
@@ -214,7 +218,7 @@ export class MessageStore {
     return {
       ...row,
       origin: parseStoredOrigin(row.origin),
-      metadata: parseStoredMetadata(row.agentFlag),
+      metadata: parseStoredMetadata(row.agentFlag, row.billingMode),
     };
   }
 
@@ -223,12 +227,13 @@ export class MessageStore {
       Omit<StoredSessionRecord, "origin" | "metadata"> & {
         origin: string | null;
         agentFlag: number | null;
+        billingMode: string | null;
       }
     >;
     return rows.map((row) => ({
       ...row,
       origin: parseStoredOrigin(row.origin),
-      metadata: parseStoredMetadata(row.agentFlag),
+      metadata: parseStoredMetadata(row.agentFlag, row.billingMode),
     }));
   }
 
@@ -255,7 +260,8 @@ export class MessageStore {
         origin,
         model,
         target_file as targetFile,
-        agent_flag as agentFlag
+        agent_flag as agentFlag,
+        billing_mode as billingMode
       FROM sessions
       WHERE port IS NOT NULL
         AND pid IS NOT NULL
@@ -266,12 +272,13 @@ export class MessageStore {
       Omit<StoredSessionRecord, "origin" | "metadata"> & {
         origin: string | null;
         agentFlag: number | null;
+        billingMode: string | null;
       }
     >;
     return rows.map((row) => ({
       ...row,
       origin: parseStoredOrigin(row.origin),
-      metadata: parseStoredMetadata(row.agentFlag),
+      metadata: parseStoredMetadata(row.agentFlag, row.billingMode),
     }));
   }
 
@@ -290,7 +297,8 @@ export class MessageStore {
         command TEXT,
         runtime_status TEXT,
         origin TEXT,
-        agent_flag INTEGER NOT NULL DEFAULT 0
+        agent_flag INTEGER NOT NULL DEFAULT 0,
+        billing_mode TEXT NOT NULL DEFAULT 'subscription'
       );
 
       CREATE TABLE IF NOT EXISTS messages (
@@ -326,12 +334,13 @@ export class MessageStore {
     ensureColumn("model", "TEXT");
     ensureColumn("target_file", "TEXT");
     ensureColumn("agent_flag", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn("billing_mode", "TEXT NOT NULL DEFAULT 'subscription'");
   }
 
   private prepareInsertSession() {
     return this.db.prepare(
-      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, pm2_name, logs_dir, working_directory, command, runtime_status, origin, model, target_file, agent_flag)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, pm2_name, logs_dir, working_directory, command, runtime_status, origin, model, target_file, agent_flag, billing_mode)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
        ON CONFLICT(id) DO UPDATE SET
          agent = excluded.agent,
          started_at = excluded.started_at,
@@ -347,7 +356,8 @@ export class MessageStore {
          origin = excluded.origin,
          model = excluded.model,
          target_file = excluded.target_file,
-         agent_flag = excluded.agent_flag`,
+         agent_flag = excluded.agent_flag,
+         billing_mode = excluded.billing_mode`,
     );
   }
 
@@ -373,7 +383,8 @@ export class MessageStore {
          origin,
          model,
          target_file as targetFile,
-         agent_flag as agentFlag
+         agent_flag as agentFlag,
+         billing_mode as billingMode
        FROM sessions`,
     );
   }

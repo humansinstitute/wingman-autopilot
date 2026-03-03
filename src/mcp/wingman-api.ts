@@ -356,7 +356,7 @@ function handleListSessions(
     workingDirectory: s.workingDirectory,
     port: s.port,
     pid: s.pid ?? null,
-    metadata: s.metadata ?? { AGENT: false },
+    metadata: s.metadata ?? { AGENT: false, billingMode: "subscription" },
   }));
 
   return jsonOk({ sessions });

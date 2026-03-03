@@ -69,6 +69,7 @@ export interface AuthApiContext {
   getViewerNormalizedNpub: (authContext: RequestAuthContext) => string | null;
   normaliseOptionalString: (value: unknown) => string | null;
   resolveAndCacheNostrProfile: (npub: string, opts: { force?: boolean; relays?: string[] }) => Promise<{ pictureUrl: string | null }>;
+  onSessionAuthenticated?: (npub: string) => void | Promise<void>;
 }
 
 // ---------- Main handler ----------
@@ -133,6 +134,7 @@ export async function handleAuthApi(
       } catch (error) {
         console.warn(`[admin] failed to record identity ${trimmedNpub}:`, error);
       }
+      void ctx.onSessionAuthenticated?.(trimmedNpub);
 
       // Ensure every authenticated user has a bot key at login time.
       try {

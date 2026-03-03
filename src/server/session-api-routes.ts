@@ -16,7 +16,7 @@ import type { messageStore as MessageStoreInstance, StoredMessage } from "../sto
 import type { sessionArchiveStore as SessionArchiveStoreInstance } from "../storage/session-archive-store";
 import type { ForkToWorktreeInput } from "../sessions/fork-to-worktree";
 import { deliverSessionAgentMessage } from "./session-agent-message";
-import { isAgentManagedByMetadataOrOrigin } from "../sessions/session-metadata";
+import { isAgentManagedByMetadataOrOrigin, isCreditsBillingSession } from "../sessions/session-metadata";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
@@ -91,6 +91,7 @@ export interface SessionApiContext {
   // Auth helpers
   ensureApiAccess: (action: AccessAction, request: Request, url: URL, authContext: RequestAuthContext) => Promise<Response | null>;
   ensureViewerHasBalance: (authContext: RequestAuthContext, options: BalanceRequirementOptions) => Response | { balance: number };
+  shouldRequireBalanceForAgent: (agent: AgentType) => Promise<boolean>;
 
   // Session helpers
   serializeSession: (session: SessionSnapshot) => Record<string, unknown>;
@@ -314,11 +315,14 @@ export async function handleSessionApi(
       if (!ctx.isAgentType(agent)) {
         return Response.json({ error: "Invalid agent selection" }, { status: 400 });
       }
-      const balanceCheck = ctx.ensureViewerHasBalance(authContext, {
-        feature: "start an agent session",
-        message: "Add sats to your balance to start an agent session.",
-      });
-      if (balanceCheck instanceof Response) return balanceCheck;
+      const requiresBalance = await ctx.shouldRequireBalanceForAgent(agent);
+      if (requiresBalance) {
+        const balanceCheck = ctx.ensureViewerHasBalance(authContext, {
+          feature: "start an agent session",
+          message: "Add sats to your balance to start an agent session.",
+        });
+        if (balanceCheck instanceof Response) return balanceCheck;
+      }
 
       const directoryInput = typeof payload?.directory === "string" ? payload.directory : undefined;
       const rawName =
@@ -604,21 +608,24 @@ async function handlePostMessage(
     return Response.json({ id, ok: true });
   }
 
-  let currentBalance: number;
-  try {
-    currentBalance = ctx.identityUserStore.debit(userNpub, ctx.MESSAGE_COST_SATS);
-  } catch (error) {
-    if (error instanceof InsufficientBalanceError) {
-      return Response.json(
-        {
-          error: "Insufficient balance to send message",
-          balance: error.balance,
-        },
-        { status: 402 },
-      );
+  const isCreditsBilling = isCreditsBillingSession(ownedSession.metadata);
+  let currentBalance: number | null = null;
+  if (!isCreditsBilling) {
+    try {
+      currentBalance = ctx.identityUserStore.debit(userNpub, ctx.MESSAGE_COST_SATS);
+    } catch (error) {
+      if (error instanceof InsufficientBalanceError) {
+        return Response.json(
+          {
+            error: "Insufficient balance to send message",
+            balance: error.balance,
+          },
+          { status: 402 },
+        );
+      }
+      console.error("[billing] failed to debit message cost:", error);
+      return Response.json({ error: "Failed to debit balance" }, { status: 500 });
     }
-    console.error("[billing] failed to debit message cost:", error);
-    return Response.json({ error: "Failed to debit balance" }, { status: 500 });
   }
 
   try {
@@ -633,10 +640,12 @@ async function handlePostMessage(
       pm2Name: ownedSession.pm2Name,
     });
     if (!result.ok) {
-      try {
-        currentBalance = ctx.identityUserStore.credit(userNpub, ctx.MESSAGE_COST_SATS);
-      } catch (creditError) {
-        console.error("[billing] failed to refund after agent rejection:", creditError);
+      if (!isCreditsBilling) {
+        try {
+          currentBalance = ctx.identityUserStore.credit(userNpub, ctx.MESSAGE_COST_SATS);
+        } catch (creditError) {
+          console.error("[billing] failed to refund after agent rejection:", creditError);
+        }
       }
       return Response.json({ error: result.message, balance: currentBalance }, { status: result.status });
     }
@@ -644,10 +653,12 @@ async function handlePostMessage(
     const messages = await ctx.waitForMessageUpdate(id, initialCount);
     return Response.json({ id, messages, balance: currentBalance });
   } catch (error) {
-    try {
-      currentBalance = ctx.identityUserStore.credit(userNpub, ctx.MESSAGE_COST_SATS);
-    } catch (creditError) {
-      console.error("[billing] failed to refund after agent error:", creditError);
+    if (!isCreditsBilling) {
+      try {
+        currentBalance = ctx.identityUserStore.credit(userNpub, ctx.MESSAGE_COST_SATS);
+      } catch (creditError) {
+        console.error("[billing] failed to refund after agent error:", creditError);
+      }
     }
     return Response.json(
       { error: `Failed to contact agent: ${(error as Error).message}`, balance: currentBalance },
@@ -889,11 +900,14 @@ async function handleForkToWorktree(
   }
 
   // Create new session in the worktree with the same agent
-  const balanceCheck = ctx.ensureViewerHasBalance(authContext, {
-    feature: "start an agent session",
-    message: "Add sats to your balance to fork to a worktree.",
-  });
-  if (balanceCheck instanceof Response) return balanceCheck;
+  const requiresBalance = await ctx.shouldRequireBalanceForAgent(ownedSession.agent);
+  if (requiresBalance) {
+    const balanceCheck = ctx.ensureViewerHasBalance(authContext, {
+      feature: "start an agent session",
+      message: "Add sats to your balance to fork to a worktree.",
+    });
+    if (balanceCheck instanceof Response) return balanceCheck;
+  }
 
   const sessionName = `${ownedSession.name || "session"} (${forkInput.branch})`;
   let newSession: SessionSnapshot;

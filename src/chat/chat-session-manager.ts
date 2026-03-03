@@ -52,7 +52,7 @@ export function createChatSession(
     name,
     npub: npub ?? undefined,
     model,
-    metadata: { AGENT: false },
+    metadata: { AGENT: false, billingMode: "subscription" },
   });
 
   return {

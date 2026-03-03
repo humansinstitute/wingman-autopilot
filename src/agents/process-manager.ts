@@ -100,6 +100,22 @@ export interface RehydrateSessionInput {
   metadata?: SessionMetadataInput;
 }
 
+export interface BillingLaunchInput {
+  sessionId: string;
+  agent: AgentType;
+  npub: string | null;
+}
+
+export interface BillingLaunchResult {
+  billingMode: "credits" | "subscription";
+  env: Record<string, string>;
+  fallbackReason: string | null;
+}
+
+export interface ProcessManagerOptions {
+  resolveBillingLaunchConfig?: (input: BillingLaunchInput) => Promise<BillingLaunchResult>;
+}
+
 interface AgentSession {
   id: string;
   agent: AgentType;
@@ -134,6 +150,7 @@ interface AgentSession {
 
 export class ProcessManager {
   private readonly config: WingmanConfig;
+  private readonly resolveBillingLaunchConfig?: (input: BillingLaunchInput) => Promise<BillingLaunchResult>;
   private readonly sessions = new Map<string, AgentSession>();
   private readonly allocatedPorts = new Set<number>();
   private readonly listeners = new Set<(event: SessionEvent) => void>();
@@ -142,8 +159,9 @@ export class ProcessManager {
   /** Debounce timers for log-driven session-updated events */
   private readonly logUpdateDebounce = new Map<string, ReturnType<typeof setTimeout>>();
 
-  constructor(config: WingmanConfig) {
+  constructor(config: WingmanConfig, options: ProcessManagerOptions = {}) {
     this.config = config;
+    this.resolveBillingLaunchConfig = options.resolveBillingLaunchConfig;
   }
 
   private getBotKeyStore(): BotKeyStore | null {
@@ -254,6 +272,7 @@ export class ProcessManager {
     let botKeyLookupMs = 0;
     let mcpInjectMs = 0;
     let giteaInjectMs = 0;
+    let billingInjectMs = 0;
     let spawnMs = 0;
 
     // Inject MCP config so the agent discovers the Wingman MCP server
@@ -300,15 +319,7 @@ export class ProcessManager {
       );
       const injectedEnvKeys = Object.keys(mcpResult.env ?? {}).sort();
       if (injectedEnvKeys.length > 0) {
-        const envPreview = injectedEnvKeys
-          .map((key) => {
-            const value = mcpResult.env[key];
-            if (typeof value !== "string") return key;
-            if (key === "SESSION_ID") return `${key}=<redacted>`;
-            return `${key}=${value}`;
-          })
-          .join(" ");
-        this.appendLog(session, `[manager] post-injection env: ${envPreview}`);
+        this.appendLog(session, `[manager] post-injection env keys: ${injectedEnvKeys.join(", ")}`);
       }
       mcpInjectMs = Date.now() - mcpInjectStartedAt;
     } catch (mcpError) {
@@ -347,6 +358,49 @@ export class ProcessManager {
       }
     }
 
+    // Inject billing proxy env for supported providers when credits billing is enabled.
+    try {
+      const billingInjectStartedAt = Date.now();
+      if (this.resolveBillingLaunchConfig) {
+        const launchConfig = await this.resolveBillingLaunchConfig({
+          sessionId: id,
+          agent,
+          npub: npub ?? null,
+        });
+        session.metadata = normaliseSessionMetadata({
+          ...session.metadata,
+          billingMode: launchConfig.billingMode,
+        });
+        const billingEnv = launchConfig.env ?? {};
+        const billingEnvKeys = Object.keys(billingEnv).sort();
+        if (billingEnvKeys.length > 0) {
+          session.definition = {
+            ...session.definition,
+            env: { ...session.definition.env, ...billingEnv },
+          };
+          this.appendLog(session, `[manager] billing env keys: ${billingEnvKeys.join(", ")}`);
+        }
+        if (launchConfig.fallbackReason) {
+          this.appendLog(
+            session,
+            `[manager] billing mode ${launchConfig.billingMode} (${launchConfig.fallbackReason})`,
+          );
+        } else {
+          this.appendLog(session, `[manager] billing mode ${launchConfig.billingMode}`);
+        }
+      }
+      billingInjectMs = Date.now() - billingInjectStartedAt;
+    } catch (billingError) {
+      session.metadata = normaliseSessionMetadata({
+        ...session.metadata,
+        billingMode: "subscription",
+      });
+      this.appendLog(
+        session,
+        `[manager] billing launch setup failed (fallback subscription): ${(billingError as Error).message}`,
+      );
+    }
+
     try {
       const spawnStartedAt = Date.now();
       if (this.config.agentSpawnMode === "pm2") {
@@ -372,7 +426,7 @@ export class ProcessManager {
       const totalLaunchMs = Date.now() - launchStartedAt;
       console.log(
         `[manager] session ${id} (${agent}:${port}) launch timings total=${totalLaunchMs}ms ` +
-          `botKey=${botKeyLookupMs}ms mcp=${mcpInjectMs}ms gitea=${giteaInjectMs}ms spawn=${spawnMs}ms`,
+          `botKey=${botKeyLookupMs}ms mcp=${mcpInjectMs}ms gitea=${giteaInjectMs}ms billing=${billingInjectMs}ms spawn=${spawnMs}ms`,
       );
     } catch (error) {
       session.status = "error";

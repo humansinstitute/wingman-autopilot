@@ -86,8 +86,9 @@ const parseStoredOrigin = (value: string | null): SessionOrigin | null => {
   }
 };
 
-const parseStoredMetadata = (agentFlag: unknown): SessionMetadata => ({
+const parseStoredMetadata = (agentFlag: unknown, billingMode: unknown): SessionMetadata => ({
   AGENT: agentFlag === 1 || agentFlag === true || agentFlag === "1" || agentFlag === "true",
+  billingMode: billingMode === "credits" ? "credits" : "subscription",
 });
 
 const wildcardToSqlLike = (pattern: string): string => {
@@ -123,7 +124,8 @@ class SessionArchiveStore {
         started_at TEXT NOT NULL,
         archived_at TEXT NOT NULL,
         origin TEXT,
-        agent_flag INTEGER NOT NULL DEFAULT 0
+        agent_flag INTEGER NOT NULL DEFAULT 0,
+        billing_mode TEXT NOT NULL DEFAULT 'subscription'
       );
 
       CREATE TABLE IF NOT EXISTS archived_messages (
@@ -143,6 +145,10 @@ class SessionArchiveStore {
     if (!hasAgentFlag) {
       this.db.exec("ALTER TABLE archived_sessions ADD COLUMN agent_flag INTEGER NOT NULL DEFAULT 0");
     }
+    const hasBillingMode = sessionColumns.some((column) => column.name === "billing_mode");
+    if (!hasBillingMode) {
+      this.db.exec("ALTER TABLE archived_sessions ADD COLUMN billing_mode TEXT NOT NULL DEFAULT 'subscription'");
+    }
   }
 
   archiveSession(input: ArchiveSessionInput): void {
@@ -152,8 +158,8 @@ class SessionArchiveStore {
       // Insert archived session
       this.db.run(
         `INSERT OR REPLACE INTO archived_sessions
-         (id, agent, name, npub, working_directory, started_at, archived_at, origin, agent_flag)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+         (id, agent, name, npub, working_directory, started_at, archived_at, origin, agent_flag, billing_mode)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
         [
           input.id,
           input.agent,
@@ -164,6 +170,7 @@ class SessionArchiveStore {
           archivedAt,
           input.origin ? JSON.stringify(input.origin) : null,
           input.metadata.AGENT ? 1 : 0,
+          input.metadata.billingMode === "credits" ? "credits" : "subscription",
         ]
       );
 
@@ -200,6 +207,7 @@ class SessionArchiveStore {
         s.archived_at as archivedAt,
         s.origin,
         s.agent_flag as agentFlag,
+        s.billing_mode as billingMode,
         (SELECT COUNT(1) FROM archived_messages m WHERE m.session_id = s.id) as messageCount
       FROM archived_sessions s
     `;
@@ -219,13 +227,14 @@ class SessionArchiveStore {
         Omit<ArchivedSession, "origin" | "metadata"> & {
           origin: string | null;
           agentFlag: number | null;
+          billingMode: string | null;
         }
       >;
 
       return rows.map((row) => ({
         ...row,
         origin: parseStoredOrigin(row.origin),
-        metadata: parseStoredMetadata(row.agentFlag),
+        metadata: parseStoredMetadata(row.agentFlag, row.billingMode),
       }));
     }
 
@@ -239,13 +248,14 @@ class SessionArchiveStore {
       Omit<ArchivedSession, "origin" | "metadata"> & {
         origin: string | null;
         agentFlag: number | null;
+        billingMode: string | null;
       }
     >;
 
     return rows.map((row) => ({
       ...row,
       origin: parseStoredOrigin(row.origin),
-      metadata: parseStoredMetadata(row.agentFlag),
+      metadata: parseStoredMetadata(row.agentFlag, row.billingMode),
     }));
   }
 
@@ -261,12 +271,14 @@ class SessionArchiveStore {
         s.archived_at as archivedAt,
         s.origin,
         s.agent_flag as agentFlag,
+        s.billing_mode as billingMode,
         (SELECT COUNT(1) FROM archived_messages m WHERE m.session_id = s.id) as messageCount
       FROM archived_sessions s
       WHERE s.id = ?1
     `).get(sessionId) as (Omit<ArchivedSession, "origin" | "metadata"> & {
       origin: string | null;
       agentFlag: number | null;
+      billingMode: string | null;
     }) | null;
 
     if (!row) return null;
@@ -274,7 +286,7 @@ class SessionArchiveStore {
     return {
       ...row,
       origin: parseStoredOrigin(row.origin),
-      metadata: parseStoredMetadata(row.agentFlag),
+      metadata: parseStoredMetadata(row.agentFlag, row.billingMode),
     };
   }
 
