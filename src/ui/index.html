@@ -130,6 +130,16 @@
                 aria-describedby="working-directory-help"
               />
               <div class="working-directory-actions">
+                <label class="wm-session-favourite-picker" for="working-directory-favourites">
+                  <span class="wm-session-favourite-picker__label">Quick Picks</span>
+                  <select
+                    id="working-directory-favourites"
+                    class="wm-session-favourite-picker__select"
+                    aria-label="Choose a favourite folder"
+                  >
+                    <option value="">No file favourites yet</option>
+                  </select>
+                </label>
                 <button type="button" class="wm-button secondary" id="browse-directory">Browse...</button>
               </div>
             </div>

@@ -11,12 +11,15 @@ const buildWorktreePathPreview = (root, name) => {
   return `${safeRoot}/.worktrees/${suffix}`;
 };
 
+const FILES_FAVORITES_STORAGE_KEY = "wingman-files-favorites";
+
 export const createSessionDialogController = (options) => {
   const {
     dialog,
     agentSelect,
     sessionNameInput,
-    directoryInput,
+    directoryInput: providedDirectoryInput,
+    directoryFavoritesSelect: providedDirectoryFavoritesSelect,
     advancedToggle,
     advancedPanel,
     workspaceSelect,
@@ -28,11 +31,26 @@ export const createSessionDialogController = (options) => {
     targetFileField,
     isAuthenticated,
     getConfig,
+    getFavouriteDirectories,
     getFallbackDirectory,
     onRequireAuth,
     onDirectoryPrefill,
     onSubmit,
   } = options;
+  const directoryInput = providedDirectoryInput ?? document.getElementById("working-directory");
+  const directoryFavoritesSelect =
+    providedDirectoryFavoritesSelect ?? document.getElementById("working-directory-favourites");
+
+  const readFavouriteDirectoriesFromStorage = () => {
+    try {
+      const raw = localStorage.getItem(FILES_FAVORITES_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
 
   const setAdvancedOpen = (open) => {
     if (advancedToggle) {
@@ -48,6 +66,77 @@ export const createSessionDialogController = (options) => {
     const root = directoryInput?.value ?? "";
     const branch = worktreeNameInput?.value ?? "";
     worktreeHint.textContent = `New worktree path: ${buildWorktreePathPreview(root, branch)}`;
+  };
+
+  const deriveFavouriteLabel = (entry) => {
+    const label = typeof entry?.name === "string" ? entry.name.trim() : "";
+    const path = typeof entry?.path === "string" ? entry.path.trim() : "";
+    if (label.length > 0) return label;
+    if (!path) return "Untitled";
+    const normalized = path.replace(/[\\/]+$/, "");
+    const separators = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+    if (separators >= 0 && separators < normalized.length - 1) {
+      return normalized.slice(separators + 1);
+    }
+    return normalized || path;
+  };
+
+  const getFavouriteDirectoryEntries = () => {
+    let raw = typeof getFavouriteDirectories === "function" ? getFavouriteDirectories() : null;
+    if (!Array.isArray(raw)) {
+      raw = readFavouriteDirectoriesFromStorage();
+    }
+    if (!Array.isArray(raw)) return [];
+    const uniquePaths = new Set();
+    const favourites = [];
+    raw.forEach((entry) => {
+      const path = typeof entry?.path === "string" ? entry.path.trim() : "";
+      if (!path || uniquePaths.has(path)) return;
+      uniquePaths.add(path);
+      favourites.push({ path, name: deriveFavouriteLabel(entry) });
+    });
+    return favourites;
+  };
+
+  const syncFavouriteDirectorySelection = () => {
+    if (!directoryFavoritesSelect || !directoryInput) return;
+    const currentPath = directoryInput.value.trim();
+    if (!currentPath) {
+      directoryFavoritesSelect.value = "";
+      return;
+    }
+    const hasExactMatch = Array.from(directoryFavoritesSelect.options).some((option) => option.value === currentPath);
+    directoryFavoritesSelect.value = hasExactMatch ? currentPath : "";
+  };
+
+  const renderFavouriteDirectoryOptions = () => {
+    if (!directoryFavoritesSelect) return;
+    const favourites = getFavouriteDirectoryEntries();
+    const emptyLabel = "No file favourites yet";
+    const promptLabel = "Select a favourite folder";
+    directoryFavoritesSelect.innerHTML = "";
+
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = favourites.length > 0 ? promptLabel : emptyLabel;
+    directoryFavoritesSelect.append(placeholder);
+
+    favourites.forEach((favourite) => {
+      const option = document.createElement("option");
+      option.value = favourite.path;
+      option.textContent = `${favourite.name} — ${favourite.path}`;
+      directoryFavoritesSelect.append(option);
+    });
+
+    directoryFavoritesSelect.disabled = favourites.length === 0;
+    if (directoryFavoritesSelect.parentElement) {
+      if (favourites.length === 0) {
+        directoryFavoritesSelect.parentElement.dataset.empty = "true";
+      } else {
+        delete directoryFavoritesSelect.parentElement.dataset.empty;
+      }
+    }
+    syncFavouriteDirectorySelection();
   };
 
   const syncWorkspaceFields = () => {
@@ -79,6 +168,9 @@ export const createSessionDialogController = (options) => {
     }
     if (targetFileField) {
       targetFileField.hidden = true;
+    }
+    if (directoryFavoritesSelect) {
+      directoryFavoritesSelect.value = "";
     }
     syncWorkspaceFields();
   };
@@ -136,6 +228,7 @@ export const createSessionDialogController = (options) => {
       directoryInput.value = fallbackDirectory;
       onDirectoryPrefill?.(fallbackDirectory);
     }
+    renderFavouriteDirectoryOptions();
     if (sessionNameInput) {
       sessionNameInput.value = "";
     }
@@ -189,8 +282,22 @@ export const createSessionDialogController = (options) => {
     syncWorktreeHint();
   });
 
+  directoryFavoritesSelect?.addEventListener("focus", () => {
+    renderFavouriteDirectoryOptions();
+  });
+
+  directoryFavoritesSelect?.addEventListener("change", () => {
+    const selectedPath = directoryFavoritesSelect.value;
+    if (!selectedPath || !directoryInput) return;
+    directoryInput.value = selectedPath;
+    onDirectoryPrefill?.(selectedPath);
+    syncWorktreeHint();
+    directoryInput.focus();
+  });
+
   directoryInput?.addEventListener("input", () => {
     syncWorktreeHint();
+    syncFavouriteDirectorySelection();
   });
 
   return {
