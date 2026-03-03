@@ -22,6 +22,7 @@ export interface TeamBillingServiceDependencies {
 export interface BillingLaunchConfig {
   billingMode: "credits" | "subscription";
   env: Record<string, string>;
+  commandArgs?: string[];
   fallbackReason: string | null;
 }
 
@@ -518,6 +519,9 @@ export class TeamBillingService {
           OPENAI_API_KEY: proxyToken,
           CODEX_API_KEY: proxyToken,
         },
+        // Codex interactive mode can prefer persisted ChatGPT auth unless we
+        // force API auth for this process.
+        commandArgs: ["-c", 'forced_login_method="api"'],
         fallbackReason: null,
       };
     }

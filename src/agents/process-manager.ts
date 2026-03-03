@@ -109,6 +109,7 @@ export interface BillingLaunchInput {
 export interface BillingLaunchResult {
   billingMode: "credits" | "subscription";
   env: Record<string, string>;
+  commandArgs?: string[];
   fallbackReason: string | null;
 }
 
@@ -379,6 +380,10 @@ export class ProcessManager {
             env: { ...session.definition.env, ...billingEnv },
           };
           this.appendLog(session, `[manager] billing env keys: ${billingEnvKeys.join(", ")}`);
+        }
+        if (Array.isArray(launchConfig.commandArgs) && launchConfig.commandArgs.length > 0) {
+          session.command = [...session.command, ...launchConfig.commandArgs];
+          this.appendLog(session, `[manager] billing command args: ${launchConfig.commandArgs.join(" ")}`);
         }
         if (launchConfig.fallbackReason) {
           this.appendLog(
