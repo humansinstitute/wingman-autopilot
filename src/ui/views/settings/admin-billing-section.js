@@ -27,7 +27,7 @@ export function createTeamBillingSection({ onUpdated } = {}) {
   description.textContent = 'Enable team-level OpenRouter billing with pooled limits and a Wingman markup.';
   const envHint = document.createElement('p');
   envHint.className = 'wm-settings__port-note';
-  envHint.textContent = 'Requires an OpenRouter management key in OPENROUTER_PROVISIONING_KEY, OPENROUTER_MANAGEMENT_KEY, or OPENROUTER_API.';
+  envHint.textContent = 'Requires an OpenRouter management key in OPENROUTER_PROVISIONING_KEY or OPENROUTER_MANAGEMENT_KEY.';
 
   const status = document.createElement('p');
   status.className = 'wm-settings__port-note';

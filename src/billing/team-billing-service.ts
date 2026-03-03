@@ -68,9 +68,6 @@ const pickOpenRouterManagementKey = (): string | null => {
   const candidates = [
     Bun.env.OPENROUTER_PROVISIONING_KEY,
     Bun.env.OPENROUTER_MANAGEMENT_KEY,
-    Bun.env.OPENROUTER_API,
-    Bun.env.OPENROUTER_API_KEY,
-    Bun.env.OPENROUTER_KEY,
   ];
   for (const candidate of candidates) {
     const value = typeof candidate === "string" ? candidate.trim() : "";
@@ -85,11 +82,8 @@ const hasOpenRouterManagementKey = (): boolean => Boolean(pickOpenRouterManageme
 
 const pickOpenRouterRuntimeKey = (): string | null => {
   const candidates = [
-    Bun.env.OPENROUTER_API,
-    Bun.env.OPENROUTER_API_KEY,
-    Bun.env.OPENROUTER_KEY,
-    Bun.env.OPENROUTER_PROVISIONING_KEY,
-    Bun.env.OPENROUTER_MANAGEMENT_KEY,
+    Bun.env.OPENROUTER_TEAM_RUNTIME_KEY,
+    Bun.env.OPENROUTER_BILLING_RUNTIME_KEY,
   ];
   for (const candidate of candidates) {
     const value = typeof candidate === "string" ? candidate.trim() : "";
@@ -280,7 +274,7 @@ export class TeamBillingService {
     const managementKey = pickOpenRouterManagementKey();
     if (!managementKey) {
       throw new Error(
-        "Missing OpenRouter management key. Set OPENROUTER_PROVISIONING_KEY, OPENROUTER_MANAGEMENT_KEY, or OPENROUTER_API with /keys permissions.",
+        "Missing OpenRouter management key. Set OPENROUTER_PROVISIONING_KEY or OPENROUTER_MANAGEMENT_KEY with /keys permissions.",
       );
     }
     const config = teamBillingStore.getConfig();
@@ -370,7 +364,7 @@ export class TeamBillingService {
           throw error;
         }
         console.warn(
-          `[billing] OpenRouter key provisioning failed; falling back to configured runtime key: ${(error as Error).message}`,
+          `[billing] OpenRouter key provisioning failed; falling back to explicit billing runtime key: ${(error as Error).message}`,
         );
         const encrypted = encryptTeamProviderKey(runtimeKey);
         teamBillingStore.setActiveProviderKey({
