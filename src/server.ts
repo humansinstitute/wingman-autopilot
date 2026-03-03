@@ -145,6 +145,7 @@ import { handleChatApi, type ChatApiContext } from "./server/chat-routes";
 import { handleSessionApi, type SessionApiContext } from "./server/session-api-routes";
 import { handleDocsApi, type DocsApiContext } from "./server/docs-routes";
 import { handleAdminUsersApi, type AdminUsersApiContext } from "./server/admin-users-routes";
+import { handleAuthApi, type AuthApiContext } from "./server/auth-routes";
 import { performSystemCleanup } from "./server/system-cleanup.js";
 import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import { SchedulerStore } from "./scheduler/scheduler-store";
@@ -470,7 +471,7 @@ const gitWorkflowApiHandler = createGitWorkflowApiHandler({
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());
 registerAccessRule(AccessActions.FilesWrite, requireAuthentication());
-registerAccessRule(AccessActions.AppsManage, requireAuthentication());
+registerAccessRule(AccessActions.AppsManage, requireAuthentication({ allowNip98: true }));
 registerAccessRule(AccessActions.UiRestricted, requireAuthentication());
 registerAccessRule(AccessActions.TodosManage, requireAuthentication());
 registerAccessRule(AccessActions.ProjectsManage, requireAuthentication());
@@ -3228,172 +3229,36 @@ const handleApi = async (
     }
   }
 
-  if (pathname === "/api/auth/session" && method === "POST") {
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    const { npub, encryptedNsec } = payload as Record<string, unknown>;
-    if (typeof npub !== "string" || npub.trim().length === 0) {
-      return Response.json({ error: "npub is required" }, { status: 400 });
-    }
-
-    const trimmedNpub = npub.trim();
-    if (typeof encryptedNsec !== "undefined" && encryptedNsec !== null && typeof encryptedNsec !== "string") {
-      return Response.json({ error: "encryptedNsec must be a string" }, { status: 400 });
-    }
-
-    try {
-      // Block new registrations when REGISTER=FALSE
-      if (!config.registrationEnabled) {
-        const normalized = normaliseNpub(trimmedNpub);
-        const existingUser = normalized ? identityUserStore.getByNormalized(normalized) : null;
-        if (!existingUser) {
-          return Response.json({ error: "Registration is currently disabled" }, { status: 403 });
-        }
-      }
-
-      const existingSession = authContext.session;
-      if (existingSession && existingSession.npub !== trimmedNpub) {
-        // Allow overwriting with a new npub, but clear stale signed data by minting a new cookie.
-      }
-
-      const { cookie, expiresAt, payload } = mintSessionCookie(trimmedNpub);
-      authContext.npub = payload.npub;
-      authContext.session = payload;
-      delete authContext.error;
-      const alias = generateIdentityAlias(trimmedNpub);
-      try {
-        identityUserStore.touch(trimmedNpub, {
-          alias,
-          lastSeenAt: new Date().toISOString(),
-        });
-      } catch (error) {
-        console.warn(`[admin] failed to record identity ${trimmedNpub}:`, error);
-      }
-
-      // Ensure every authenticated user has a bot key at login time.
-      try {
-        const existingBotKey = botKeyStore.getActiveKeyForUser(trimmedNpub);
-        if (!existingBotKey) {
-          const decoded = nip19.decode(trimmedNpub);
-          if (decoded.type === "npub") {
-            const userPubkeyHex = decoded.data as string;
-            const generated = generateBotKey(userPubkeyHex);
-            botKeyStore.createKey({
-              userNpub: trimmedNpub,
-              botPubkeyHex: generated.botPubkeyHex,
-              botNpub: generated.botNpub,
-              displayName: generated.displayName,
-              encryptedToUser: generated.encryptedToUser,
-              encryptedEscrow: generated.encryptedEscrow,
-              escrowUuid: generated.escrowUuid,
-            });
-            console.log(`[bot-key] Generated bot key at login for ${trimmedNpub.slice(0, 20)}…: ${generated.botNpub.slice(0, 20)}…`);
-          }
-        }
-      } catch (error) {
-        console.warn(`[bot-key] Failed login-time bot generation for ${trimmedNpub}:`, error);
-      }
-
-      // Fire-and-forget Gitea user provisioning
-      if (config.giteaUrl && config.giteaApiToken && config.giteaOwner) {
-        ensureGiteaUser(config, trimmedNpub, alias).catch((err) => {
-          console.warn(`[gitea] user provisioning failed for ${trimmedNpub}:`, err);
-        });
-      }
-
-      const headers = new Headers({
-        "cache-control": "no-store",
-      });
-      headers.append("set-cookie", cookie);
-      return Response.json({ expiresAt }, { headers });
-    } catch (error) {
-      if (error instanceof SessionCookieError) {
-        return Response.json({ error: error.message }, { status: 400 });
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: `Failed to mint session cookie: ${message}` }, { status: 500 });
-    }
-  }
-
-  if (pathname === "/api/auth/session" && method === "DELETE") {
-    const headers = new Headers({
-      "cache-control": "no-store",
-    });
-    const secureFlag = shouldUseSecureCookies() ? "; Secure" : "";
-    headers.append(
-      "set-cookie",
-      `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT${secureFlag}`,
-    );
-    authContext.npub = null;
-    authContext.session = null;
-    delete authContext.error;
-    return new Response(null, { status: 204, headers });
-  }
-
-  // Key Teleport: receive encrypted key blob from Welcome
-  if (pathname === "/api/auth/keyteleport" && method === "POST") {
-    return handleKeyTeleport(request);
-  }
-
-  // Key Teleport: get configuration for frontend
-  if (pathname === "/api/auth/keyteleport/config" && method === "GET") {
-    const { getKeyTeleportIdentity, KEYTELEPORT_WELCOME_URL } = await import("./config");
-    const identity = getKeyTeleportIdentity();
-    const isConfigured = Boolean(identity);
-    return Response.json({
-      enabled: isConfigured,
-      welcomeUrl: isConfigured ? KEYTELEPORT_WELCOME_URL : null,
-      appNpub: identity?.npub ?? null,
-    });
-  }
-
-  // Key Teleport: get registration blob for Welcome setup
-  if (pathname === "/api/auth/keyteleport/registration" && method === "GET") {
-    return handleKeyTeleportRegistration(request);
-  }
-
-  if (pathname === "/api/identity/profile" && method === "GET") {
-    const denied = await ensureApiAccess(AccessActions.UiRestricted, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const viewerNormalized = getViewerNormalizedNpub(authContext);
-    const viewerIsAdmin = Boolean(adminNpub && viewerNormalized && adminNpub === viewerNormalized);
-    const targetInput = normaliseOptionalString(url.searchParams.get("npub")) ?? authContext.npub;
-    const refresh = url.searchParams.get("refresh") === "1" || url.searchParams.get("force") === "1";
-    if (!targetInput) {
-      return Response.json({ error: "npub is required" }, { status: 400 });
-    }
-    const normalizedTarget = normaliseNpub(targetInput);
-    if (!normalizedTarget) {
-      return Response.json({ error: "Invalid npub" }, { status: 400 });
-    }
-    if (!viewerIsAdmin && normalizedTarget !== viewerNormalized) {
-      return Response.json({ error: "forbidden" }, { status: 403 });
-    }
-    try {
-      const profile = await resolveAndCacheNostrProfile(targetInput, {
-        force: refresh,
-        relays: config.connectRelays,
-      });
-      const record = identityUserStore.getByNormalized(normalizedTarget);
-      return Response.json({
-        npub: record?.npub ?? targetInput,
-        pictureUrl: profile.pictureUrl ?? record?.pictureUrl ?? null,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
+  // Auth routes (delegated to auth-routes.ts)
+  if (pathname.startsWith("/api/auth/") || pathname === "/api/identity/profile") {
+    const authApiContext: AuthApiContext = {
+      config: {
+        registrationEnabled: config.registrationEnabled,
+        connectRelays: config.connectRelays,
+        giteaUrl: config.giteaUrl,
+        giteaApiToken: config.giteaApiToken,
+        giteaOwner: config.giteaOwner,
+      },
+      adminNpub,
+      identityUserStore,
+      botKeyStore,
+      mintSessionCookie,
+      SessionCookieError,
+      SESSION_COOKIE_NAME,
+      shouldUseSecureCookies,
+      generateIdentityAlias,
+      generateBotKey,
+      handleKeyTeleport,
+      handleKeyTeleportRegistration,
+      ensureGiteaUser,
+      ensureApiAccess,
+      AccessActions,
+      getViewerNormalizedNpub,
+      normaliseOptionalString,
+      resolveAndCacheNostrProfile,
+    };
+    const authResult = await handleAuthApi(request, url, method, authContext, authApiContext);
+    if (authResult) return authResult;
   }
 
   // Admin user routes (delegated to admin-users-routes.ts)
@@ -3440,10 +3305,30 @@ const handleApi = async (
   }
 
   if (pathname === "/api/workspace/tree" || pathname === "/api/apps" || pathname.startsWith("/api/apps/")) {
-    const appsApiResponse = await handleAppsApi(request, url, method, authContext, {
+    let appsAuthContext = authContext;
+    if (!appsAuthContext.session) {
+      const nip98Npub = verifyNip98AuthHeader(request, url);
+      if (nip98Npub) {
+        appsAuthContext = { npub: nip98Npub, session: null };
+      }
+    }
+
+    const appsWorkspaceScope = resolveWorkspace(appsAuthContext);
+    const appsViewerNpub = normaliseNpub(appsAuthContext.npub ?? null);
+    const canAccessAppForRequest = (app: AppRecord): boolean => {
+      if (appsWorkspaceScope.isAdmin) {
+        return true;
+      }
+      if (!appsViewerNpub) {
+        return false;
+      }
+      return app.ownerNpub === appsViewerNpub;
+    };
+
+    const appsApiResponse = await handleAppsApi(request, url, method, appsAuthContext, {
       adminNpub,
-      workspaceScope,
-      viewerNpub,
+      workspaceScope: appsWorkspaceScope,
+      viewerNpub: appsViewerNpub,
       AccessActions,
       ensureApiAccess,
       ensureViewerHasBalance,
@@ -3456,7 +3341,7 @@ const handleApi = async (
       parsePortInput,
       parseBooleanFlag,
       appActions: APP_ACTIONS,
-      canAccessApp,
+      canAccessApp: canAccessAppForRequest,
       deriveDirectoryNameFromUrl,
       cloneRepositoryIntoWorkspace,
       scanDirectoryTree,
