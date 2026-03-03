@@ -4,6 +4,7 @@ export const FEATURE_FLAG_STATE_LABELS = {
   on_admin: "Admin only",
   on: "On for everyone",
 };
+export const ORCHESTRATOR_FLAG_KEY = "orchestrator_visibility";
 export const PROJECTS_FLAG_KEY = "projects_visibility";
 
 export const createFeatureFlagsState = () => ({
