@@ -11,7 +11,8 @@ import { sanitizeLogEntry } from "../logging/log-sanitizer";
 import { trackProjectForSession } from "../projects/npub-project-tracker";
 import type { AgentRuntimeStatus } from "../types/agent-status";
 import type { AgentAdapter } from "./agent-adapter";
-import { resolveAdapterFactory } from "./agent-adapter";
+import { resolveAdapterFactory, OPENCODE_NATIVE_SDK_FLAG } from "./agent-adapter";
+import { featureFlagStore, resolveFeatureFlagEffectiveState } from "../storage/feature-flag-store";
 import {
   type SessionMetadata,
   type SessionMetadataInput,
@@ -165,6 +166,23 @@ async function prepareCodexApiAuthHome(env: Record<string, string>): Promise<voi
   await writeFile(authPath, authPayload, { encoding: "utf8", mode: 0o600 });
 }
 
+/**
+ * Build a direct opencode command from the agentapi-wrapped command.
+ * Extracts the CLI binary and any args after the `--` separator, then
+ * prepends `--port PORT` so OpenCode serves on the allocated port.
+ */
+function resolveNativeOpenCodeCommand(agentapiCommand: string[], port: number): string[] {
+  const separatorIndex = agentapiCommand.indexOf("--");
+  if (separatorIndex === -1) {
+    // Fallback: just use `opencode` with a port flag
+    return ["opencode", "--port", String(port)];
+  }
+  const cliArgs = agentapiCommand.slice(separatorIndex + 1);
+  // Insert --port PORT after the binary name
+  const [binary, ...rest] = cliArgs;
+  return [binary ?? "opencode", "--port", String(port), ...rest];
+}
+
 export class ProcessManager {
   private readonly config: WingmanConfig;
   private readonly resolveBillingLaunchConfig?: (input: BillingLaunchInput) => Promise<BillingLaunchResult>;
@@ -244,7 +262,18 @@ export class ProcessManager {
     const port = this.allocatePort();
     const id = crypto.randomUUID();
     const sessionName = this.normaliseSessionName(name, agent, port);
-    const command = definition.command({ port, agent, config: this.config });
+    let command = definition.command({ port, agent, config: this.config });
+
+    // When the OpenCode native SDK flag is on, spawn opencode directly
+    // instead of wrapping it with agentapi.  The OpenCodeAdapter SDK client
+    // connects to OpenCode's own HTTP server on the allocated port.
+    if (agent === "opencode") {
+      const ocFlag = featureFlagStore.getFlag(OPENCODE_NATIVE_SDK_FLAG);
+      if (ocFlag && resolveFeatureFlagEffectiveState(ocFlag.state, true) === "on") {
+        command = resolveNativeOpenCodeCommand(command, port);
+      }
+    }
+
     const sessionMetadata = normaliseSessionMetadata(metadata);
     const rawWorkingDirectory =
       typeof workingDirectory === "string" && workingDirectory.length > 0

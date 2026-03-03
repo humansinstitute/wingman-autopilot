@@ -23,6 +23,8 @@ export interface AdapterSessionContext {
   env?: Record<string, string>;
   /** Codex thread ID for session resume (used by CodexAdapter) */
   codexThreadId?: string;
+  /** OpenCode session ID for session resume (used by OpenCodeAdapter) */
+  opencodeSdkSessionId?: string;
 }
 
 export interface AgentAdapter {
@@ -52,6 +54,7 @@ export interface AgentAdapter {
 export type AgentAdapterFactory = (context: AdapterSessionContext) => AgentAdapter;
 
 export const CODEX_NATIVE_SDK_FLAG = "codex-use-native-sdk";
+export const OPENCODE_NATIVE_SDK_FLAG = "opencode-use-native-sdk";
 
 /**
  * Returns the appropriate adapter factory for the given agent type.
@@ -65,6 +68,16 @@ export function resolveAdapterFactory(agent: AgentType): AgentAdapterFactory {
       return (context: AdapterSessionContext) => {
         const { CodexAdapter } = require("./codex-adapter") as typeof import("./codex-adapter");
         return new CodexAdapter(context);
+      };
+    }
+  }
+
+  if (agent === "opencode") {
+    const flag = featureFlagStore.getFlag(OPENCODE_NATIVE_SDK_FLAG);
+    if (flag && resolveFeatureFlagEffectiveState(flag.state, true) === "on") {
+      return (context: AdapterSessionContext) => {
+        const { OpenCodeAdapter } = require("./opencode-adapter") as typeof import("./opencode-adapter");
+        return new OpenCodeAdapter(context);
       };
     }
   }

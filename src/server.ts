@@ -63,7 +63,7 @@ import { npubProjectStore } from "./projects/npub-project-store";
 import { CaproverStore, createCaproverApiHandler, createCaproverClientFromEnv, createAppTarball } from "./caprover";
 import { NightWatchStore } from "./nightwatch/nightwatch-store";
 import { maybeTriggerNightWatch, NIGHTWATCH_FEATURE_FLAG_KEY } from "./nightwatch/nightwatch-engine";
-import { CODEX_NATIVE_SDK_FLAG } from "./agents/agent-adapter";
+import { CODEX_NATIVE_SDK_FLAG, OPENCODE_NATIVE_SDK_FLAG } from "./agents/agent-adapter";
 import { createNightWatchApiHandler } from "./nightwatch/nightwatch-api";
 import { nip19, verifyEvent } from "nostr-tools";
 import { startTaskListener } from "./nostr/task-listener";
@@ -331,6 +331,12 @@ const FEATURE_FLAG_DEFAULTS: Array<{
     key: CODEX_NATIVE_SDK_FLAG,
     label: "Codex Native SDK",
     description: "Use @openai/codex-sdk directly instead of agentapi for Codex sessions.",
+    state: "off",
+  },
+  {
+    key: OPENCODE_NATIVE_SDK_FLAG,
+    label: "OpenCode Native SDK",
+    description: "Use @opencode-ai/sdk directly instead of agentapi for OpenCode sessions.",
     state: "off",
   },
 ];
