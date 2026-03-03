@@ -9,6 +9,14 @@ const formatUsd = (value) => {
   return `$${numeric.toFixed(2)}`;
 };
 
+const formatUsageUsd = (value) => {
+  const numeric = typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  if (numeric <= 0) return '$0.00';
+  if (numeric < 0.01) return `$${numeric.toFixed(6)}`;
+  if (numeric < 1) return `$${numeric.toFixed(4)}`;
+  return `$${numeric.toFixed(2)}`;
+};
+
 const formatIso = (value) => {
   if (typeof value !== 'string' || value.trim().length === 0) return 'Never';
   const date = new Date(value);
@@ -123,7 +131,7 @@ export function createTeamBillingSection({ onUpdated } = {}) {
         const endpoint = typeof item.endpoint === 'string' ? item.endpoint : '-';
         const wingmanCostUsd = typeof item.wingmanCostUsd === 'number' ? item.wingmanCostUsd : 0;
         const createdAt = formatIso(item.createdAt);
-        return `${createdAt} • ${endpoint} • ${formatUsd(wingmanCostUsd)}`;
+        return `${createdAt} • ${endpoint} • ${formatUsageUsd(wingmanCostUsd)}`;
       });
       usage.innerHTML = `<strong>Recent usage:</strong><br>${rows.map((line) => line.replace(/</g, '&lt;')).join('<br>')}`;
     } catch (error) {

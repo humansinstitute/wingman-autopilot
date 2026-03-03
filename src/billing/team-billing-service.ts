@@ -118,36 +118,90 @@ function parseUsdCostFromUnknown(input: unknown): number | null {
   return null;
 }
 
-function parseUsdCostFromResponseBody(body: unknown): number | null {
-  if (!body || typeof body !== "object") return null;
-  const record = body as Record<string, unknown>;
+const COST_LIKE_KEYS = new Set([
+  "cost",
+  "total_cost",
+  "estimated_cost",
+  "prompt_cost",
+  "completion_cost",
+  "input_cost",
+  "output_cost",
+  "upstream_inference_cost",
+  "upstream_inference_input_cost",
+  "upstream_inference_output_cost",
+]);
 
-  const directCandidates = [
+const COST_WRAPPER_KEYS = new Set(["usage", "response", "data", "result", "message"]);
+
+function parseUsageCostRecord(record: Record<string, unknown>): number | null {
+  const totalCandidates = [
     record.cost,
     record.total_cost,
     record.estimated_cost,
+    record.upstream_inference_cost,
   ];
-  for (const candidate of directCandidates) {
+  for (const candidate of totalCandidates) {
     const parsed = parseUsdCostFromUnknown(candidate);
     if (parsed !== null) return parsed;
   }
 
+  const inputCost = parseUsdCostFromUnknown(record.prompt_cost ?? record.input_cost ?? null);
+  const outputCost = parseUsdCostFromUnknown(record.completion_cost ?? record.output_cost ?? null);
+  if (inputCost !== null || outputCost !== null) {
+    return (inputCost ?? 0) + (outputCost ?? 0);
+  }
+  return null;
+}
+
+function parseUsdCostDeep(value: unknown, depth = 0): number | null {
+  if (!value || typeof value !== "object") return null;
+  if (depth > 6) return null;
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const parsed = parseUsdCostDeep(item, depth + 1);
+      if (parsed !== null) return parsed;
+    }
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  // Prefer direct or usage-based totals first to avoid partial fields.
+  const direct = parseUsageCostRecord(record);
+  if (direct !== null) return direct;
+
   const usage = record.usage;
   if (usage && typeof usage === "object") {
-    const usageRecord = usage as Record<string, unknown>;
-    const usageCandidates = [
-      usageRecord.cost,
-      usageRecord.total_cost,
-      usageRecord.prompt_cost,
-      usageRecord.completion_cost,
-    ];
-    for (const candidate of usageCandidates) {
-      const parsed = parseUsdCostFromUnknown(candidate);
+    const usageParsed = parseUsageCostRecord(usage as Record<string, unknown>);
+    if (usageParsed !== null) return usageParsed;
+  }
+
+  // Traverse wrapper objects that often contain the real response payload.
+  for (const key of COST_WRAPPER_KEYS) {
+    const child = record[key];
+    if (!child || typeof child !== "object") continue;
+    const nested = parseUsdCostDeep(child, depth + 1);
+    if (nested !== null) return nested;
+  }
+
+  // Fallback: scan all children for cost-like keys.
+  for (const [key, child] of Object.entries(record)) {
+    if (COST_LIKE_KEYS.has(key.toLowerCase())) {
+      const parsed = parseUsdCostFromUnknown(child);
       if (parsed !== null) return parsed;
+    }
+    if (child && typeof child === "object") {
+      const nested = parseUsdCostDeep(child, depth + 1);
+      if (nested !== null) return nested;
     }
   }
 
   return null;
+}
+
+function parseUsdCostFromResponseBody(body: unknown): number | null {
+  return parseUsdCostDeep(body, 0);
 }
 
 function parseUsdCostFromHeaders(headers: Headers): number | null {
