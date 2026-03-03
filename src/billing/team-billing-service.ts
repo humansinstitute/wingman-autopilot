@@ -81,6 +81,23 @@ const pickOpenRouterManagementKey = (): string | null => {
   return null;
 };
 
+const pickOpenRouterRuntimeKey = (): string | null => {
+  const candidates = [
+    Bun.env.OPENROUTER_API,
+    Bun.env.OPENROUTER_API_KEY,
+    Bun.env.OPENROUTER_KEY,
+    Bun.env.OPENROUTER_PROVISIONING_KEY,
+    Bun.env.OPENROUTER_MANAGEMENT_KEY,
+  ];
+  for (const candidate of candidates) {
+    const value = typeof candidate === "string" ? candidate.trim() : "";
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+};
+
 const normalizeOpenRouterApiBase = (): string => {
   const raw = typeof Bun.env.OPENROUTER_API_BASE === "string" ? Bun.env.OPENROUTER_API_BASE.trim() : "";
   if (!raw) return OPENROUTER_DEFAULT_BASE;
@@ -328,21 +345,45 @@ export class TeamBillingService {
 
     const existing = this.readActiveProviderKeyRecord();
     if (!existing) {
-      const provisioned = await this.provisionOpenRouterKey(providerLimitUsd);
-      const encrypted = encryptTeamProviderKey(provisioned.key);
-      teamBillingStore.setActiveProviderKey({
-        provider: OPENROUTER_PROVIDER,
-        keyHash: provisioned.hash ?? null,
-        encryptedValue: encrypted.ciphertext,
-        iv: encrypted.iv,
-        authTag: encrypted.authTag,
-      });
-      this.cachedProviderKey = {
-        value: provisioned.key,
-        hash: provisioned.hash ?? null,
-        cachedAt: Date.now(),
-      };
-      return;
+      try {
+        const provisioned = await this.provisionOpenRouterKey(providerLimitUsd);
+        const encrypted = encryptTeamProviderKey(provisioned.key);
+        teamBillingStore.setActiveProviderKey({
+          provider: OPENROUTER_PROVIDER,
+          keyHash: provisioned.hash ?? null,
+          encryptedValue: encrypted.ciphertext,
+          iv: encrypted.iv,
+          authTag: encrypted.authTag,
+        });
+        this.cachedProviderKey = {
+          value: provisioned.key,
+          hash: provisioned.hash ?? null,
+          cachedAt: Date.now(),
+        };
+        return;
+      } catch (error) {
+        const runtimeKey = pickOpenRouterRuntimeKey();
+        if (!runtimeKey) {
+          throw error;
+        }
+        console.warn(
+          `[billing] OpenRouter key provisioning failed; falling back to configured runtime key: ${(error as Error).message}`,
+        );
+        const encrypted = encryptTeamProviderKey(runtimeKey);
+        teamBillingStore.setActiveProviderKey({
+          provider: OPENROUTER_PROVIDER,
+          keyHash: null,
+          encryptedValue: encrypted.ciphertext,
+          iv: encrypted.iv,
+          authTag: encrypted.authTag,
+        });
+        this.cachedProviderKey = {
+          value: runtimeKey,
+          hash: null,
+          cachedAt: Date.now(),
+        };
+        return;
+      }
     }
 
     const existingKey = this.decryptProviderKey(existing);
