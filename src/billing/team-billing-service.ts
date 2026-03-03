@@ -81,6 +81,8 @@ const pickOpenRouterManagementKey = (): string | null => {
   return null;
 };
 
+const hasOpenRouterManagementKey = (): boolean => Boolean(pickOpenRouterManagementKey());
+
 const pickOpenRouterRuntimeKey = (): string | null => {
   const candidates = [
     Bun.env.OPENROUTER_API,
@@ -235,6 +237,7 @@ export class TeamBillingService {
       providerKeyHash: providerKey?.keyHash ?? null,
       providerKeyUpdatedAt: providerKey?.updatedAt ?? null,
       creditsSupportedAgents: Array.from(CREDITS_SUPPORTED_AGENTS),
+      hasManagementKeyConfigured: hasOpenRouterManagementKey(),
     };
   }
 
@@ -306,8 +309,8 @@ export class TeamBillingService {
     const data = payload?.data && typeof payload.data === "object"
       ? payload.data as Record<string, unknown>
       : payload;
-    const keyCandidate = data?.key ?? data?.api_key ?? data?.value;
-    const hashCandidate = data?.hash ?? data?.key_hash ?? data?.id;
+    const keyCandidate = payload?.key ?? data?.key ?? data?.api_key ?? data?.value;
+    const hashCandidate = payload?.hash ?? data?.hash ?? data?.key_hash ?? data?.id;
     const key = typeof keyCandidate === "string" ? keyCandidate.trim() : "";
     const hash = typeof hashCandidate === "string" ? hashCandidate.trim() : null;
     if (!key) {
@@ -383,6 +386,32 @@ export class TeamBillingService {
           cachedAt: Date.now(),
         };
         return;
+      }
+    }
+
+    // If current active key was from runtime fallback (no hash) and a management key
+    // is now configured, rotate to a managed team key so limits can be controlled.
+    if (!existing.keyHash && hasOpenRouterManagementKey()) {
+      try {
+        const provisioned = await this.provisionOpenRouterKey(providerLimitUsd);
+        const encrypted = encryptTeamProviderKey(provisioned.key);
+        teamBillingStore.setActiveProviderKey({
+          provider: OPENROUTER_PROVIDER,
+          keyHash: provisioned.hash ?? null,
+          encryptedValue: encrypted.ciphertext,
+          iv: encrypted.iv,
+          authTag: encrypted.authTag,
+        });
+        this.cachedProviderKey = {
+          value: provisioned.key,
+          hash: provisioned.hash ?? null,
+          cachedAt: Date.now(),
+        };
+        return;
+      } catch (error) {
+        console.warn(
+          `[billing] Failed to rotate fallback runtime key to managed key: ${(error as Error).message}`,
+        );
       }
     }
 
