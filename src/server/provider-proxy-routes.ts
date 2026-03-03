@@ -50,6 +50,12 @@ const extractProxyTokenCandidates = (request: Request): string[] => {
   return Array.from(new Set(candidates));
 };
 
+const describeTokenCandidate = (candidate: string): string => {
+  const segmentCount = candidate.split(".").length;
+  const prefix = candidate.slice(0, 10);
+  return `len=${candidate.length},segments=${segmentCount},prefix=${prefix}`;
+};
+
 const parseProviderKindAndPath = (pathname: string): { provider: ProviderKind; restPath: string } | null => {
   if (!pathname.startsWith(PROVIDER_PREFIX)) return null;
   const remainder = pathname.slice(PROVIDER_PREFIX.length);
@@ -202,6 +208,11 @@ export async function handleProviderProxyApi(
     if (payload) break;
   }
   if (!payload) {
+    console.warn(
+      `[billing-proxy] invalid token for ${parsed.provider}${parsed.restPath}: ${
+        tokenCandidates.map(describeTokenCandidate).join(" | ")
+      }`,
+    );
     return Response.json({ error: "invalid-proxy-token" }, { status: 401 });
   }
 

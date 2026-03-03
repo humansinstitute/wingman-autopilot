@@ -708,6 +708,7 @@ export class ProcessManager {
       userAlias: session.userAlias ?? "anonymous",
       isAdmin: session.isAdmin ?? false,
       config: this.config,
+      billingMode: session.metadata.billingMode,
       commandOverride: session.command,
       envOverride: session.definition.env ?? {},
     };

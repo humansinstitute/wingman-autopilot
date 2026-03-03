@@ -45,6 +45,7 @@ export interface SessionConfig {
   userAlias: string;
   isAdmin: boolean;
   config: WingmanConfig;
+  billingMode?: "credits" | "subscription";
   /** Fully-resolved command (including MCP-injected args) when available. */
   commandOverride?: string[];
   /** Extra env vars (including MCP-injected env) to pass to agentapi process. */
@@ -53,6 +54,18 @@ export interface SessionConfig {
 
 const ECOSYSTEM_FILENAME = "ecosystem.config.cjs";
 const ADMIN_DATA_DIR = "./data/admin";
+const BILLING_COMPATIBLE_AGENTS = new Set<AgentType>(["codex", "claude", "goose"]);
+const PROVIDER_AUTH_ENV_KEYS = [
+  "OPENAI_BASE_URL",
+  "OPENAI_API_KEY",
+  "CODEX_API_KEY",
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_API_KEY",
+  "OPENROUTER_HOST",
+  "OPENROUTER_API_KEY",
+  "GOOSE_PROVIDER",
+] as const;
+type ProviderAuthEnvKey = (typeof PROVIDER_AUTH_ENV_KEYS)[number];
 
 /**
  * Get the ecosystem config file path for a user.
@@ -166,6 +179,36 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }
 
+function toLockedProviderEnvVarName(key: ProviderAuthEnvKey): string {
+  return `WINGMAN_LOCKED_${key}`;
+}
+
+function buildProviderEnvBootstrap(
+  sessionConfig: SessionConfig,
+  runtimeEnv: Record<string, string>,
+): string {
+  const snippets: string[] = [];
+  const billingMode = sessionConfig.billingMode ?? "subscription";
+  const shouldSanitizeProviderEnv = BILLING_COMPATIBLE_AGENTS.has(sessionConfig.agent);
+
+  if (shouldSanitizeProviderEnv && billingMode === "subscription") {
+    snippets.push(`unset ${PROVIDER_AUTH_ENV_KEYS.join(" ")}`);
+  }
+
+  for (const envKey of PROVIDER_AUTH_ENV_KEYS) {
+    const value = runtimeEnv[envKey];
+    if (!value) continue;
+    const lockedVarName = toLockedProviderEnvVarName(envKey);
+    runtimeEnv[lockedVarName] = value;
+    snippets.push(`if [ -n "\${${lockedVarName}:-}" ]; then export ${envKey}="$${lockedVarName}"; fi`);
+  }
+
+  if (snippets.length === 0) {
+    return "";
+  }
+  return `${snippets.join("; ")}; `;
+}
+
 /**
  * Create an ecosystem app entry for a session.
  */
@@ -176,6 +219,16 @@ export function createAppConfig(sessionConfig: SessionConfig): EcosystemApp {
   const { script, args } = buildAgentCommand(sessionConfig);
 
   const command = [script, ...args].map(shellQuote).join(" ");
+  const runtimeEnv: Record<string, string> = {
+    SESSION_ID: sessionId,
+    SESSION_NAME: sessionName,
+    SESSION_PORT: String(port),
+    SESSION_DIRECTORY: workingDirectory,
+    SESSION_AGENT: sessionConfig.agent,
+    USER_ALIAS: userAlias,
+    ...(sessionConfig.envOverride ?? {}),
+  };
+  const providerEnvBootstrap = buildProviderEnvBootstrap(sessionConfig, runtimeEnv);
 
   return {
     name: processName,
@@ -183,17 +236,9 @@ export function createAppConfig(sessionConfig: SessionConfig): EcosystemApp {
     // AgentAPI blocks on stdin in PM2 unless stdin is closed.
     // Run via bash and redirect stdin from /dev/null so the server can start.
     script: "bash",
-    args: ["-lc", `exec ${command} < /dev/null`],
+    args: ["-lc", `${providerEnvBootstrap}exec ${command} < /dev/null`],
     cwd: workingDirectory,
-    env: {
-      SESSION_ID: sessionId,
-      SESSION_NAME: sessionName,
-      SESSION_PORT: String(port),
-      SESSION_DIRECTORY: workingDirectory,
-      SESSION_AGENT: sessionConfig.agent,
-      USER_ALIAS: userAlias,
-      ...(sessionConfig.envOverride ?? {}),
-    },
+    env: runtimeEnv,
     out_file: join(logsDir, `${processName}-out.log`),
     error_file: join(logsDir, `${processName}-error.log`),
     log_date_format: "YYYY-MM-DD HH:mm:ss",
