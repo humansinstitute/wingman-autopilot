@@ -1,6 +1,5 @@
-import { buildAgentUrl } from "./agent-client";
 import type { ProcessManager, SessionSnapshot } from "./process-manager";
-import { isAgentRuntimeStatus, type AgentRuntimeStatus } from "../types/agent-status";
+import type { AgentRuntimeStatus } from "../types/agent-status";
 import { getProcessByName } from "./pm2-wrapper";
 
 interface AgentStatusPollerOptions {
@@ -127,7 +126,7 @@ export class AgentRuntimeStatusPoller {
 
   private async executePoll(sessionId: string, state: PollState) {
     try {
-      const status = await this.fetchAgentStatus(state.port);
+      const status = await this.fetchAgentStatus(sessionId, state.port);
       this.manager.setAgentRuntimeStatus(sessionId, status);
       state.consecutiveFailures = 0;
       state.errorLogged = false;
@@ -208,29 +207,11 @@ export class AgentRuntimeStatusPoller {
     return isPidAlive(session.pid) ? "alive" : "dead";
   }
 
-  private async fetchAgentStatus(port: number): Promise<AgentRuntimeStatus | null> {
-    const url = buildAgentUrl(this.options.host, port, "/status");
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.options.timeoutMs);
-    try {
-      const response = await fetch(url, { signal: controller.signal });
-      if (!response.ok) {
-        throw new Error(`status request failed (${response.status})`);
-      }
-      const payload = await response.json().catch(() => null);
-      if (!payload || typeof payload !== "object") {
-        return null;
-      }
-      const data = payload as Record<string, unknown>;
-      const statusValue = data.status;
-      return isAgentRuntimeStatus(statusValue) ? statusValue : null;
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new Error("status request timed out");
-      }
-      throw error instanceof Error ? error : new Error(String(error));
-    } finally {
-      clearTimeout(timeoutId);
+  private async fetchAgentStatus(sessionId: string, _port: number): Promise<AgentRuntimeStatus | null> {
+    const adapter = this.manager.getAdapter(sessionId);
+    if (!adapter) {
+      throw new Error(`No adapter for session ${sessionId}`);
     }
+    return adapter.fetchStatus(this.options.timeoutMs);
   }
 }

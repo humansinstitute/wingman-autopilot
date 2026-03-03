@@ -385,6 +385,7 @@ const schedulerEngine = new SchedulerEngine({
     const timeoutMs = agent === "codex" ? 120000 : 60000;
     await waitForSessionPromptReadiness({
       getSession: (sessionId) => manager.getSession(sessionId) ?? null,
+      getAdapter: (sessionId) => manager.getAdapter(sessionId),
       sessionId: session.id,
       host: agentHost,
       timeoutMs,

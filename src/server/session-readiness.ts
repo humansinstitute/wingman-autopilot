@@ -1,8 +1,9 @@
-import { buildAgentUrl } from "../agents/agent-client";
+import type { AgentAdapter } from "../agents/agent-adapter";
 import type { SessionSnapshot } from "../agents/process-manager";
 
 export interface WaitForSessionPromptReadinessOptions {
   getSession: (sessionId: string) => SessionSnapshot | null;
+  getAdapter: (sessionId: string) => AgentAdapter | null;
   sessionId: string;
   host: string;
   timeoutMs?: number;
@@ -12,35 +13,6 @@ export interface WaitForSessionPromptReadinessOptions {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function fetchRuntimeStatus(
-  host: string,
-  port: number,
-  timeoutMs: number,
-): Promise<string | null> {
-  const url = buildAgentUrl(host, port, "/status");
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) {
-      return null;
-    }
-
-    const payload = await response.json().catch(() => null);
-    if (!payload || typeof payload !== "object") {
-      return null;
-    }
-
-    const status = (payload as Record<string, unknown>).status;
-    return typeof status === "string" ? status : null;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
 
 export async function waitForSessionPromptReadiness(
   options: WaitForSessionPromptReadinessOptions,
@@ -64,7 +36,16 @@ export async function waitForSessionPromptReadiness(
       throw new Error(`Session ${options.sessionId} is not running`);
     }
 
-    const runtimeStatus = await fetchRuntimeStatus(options.host, session.port, requestTimeoutMs);
+    const adapter = options.getAdapter(options.sessionId);
+    let runtimeStatus: string | null = null;
+    if (adapter) {
+      try {
+        runtimeStatus = await adapter.fetchStatus(requestTimeoutMs);
+      } catch {
+        runtimeStatus = null;
+      }
+    }
+
     if (runtimeStatus === "stable") {
       stablePolls += 1;
       if (stablePolls >= requiredStablePolls) {

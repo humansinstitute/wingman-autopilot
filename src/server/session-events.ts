@@ -3,7 +3,6 @@
  * Proxies /api/sessions/:id/events to the agent's /events endpoint.
  */
 
-import { buildAgentUrl } from "../agents/agent-client";
 import type { ProcessManager } from "../agents/process-manager";
 
 export interface SessionEventsOptions {
@@ -35,7 +34,11 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
       return Response.json({ error: "Session not running" }, { status: 400 });
     }
 
-    const agentEventsUrl = buildAgentUrl(agentHost, session.port, "/events");
+    const adapter = manager.getAdapter(sessionId);
+    const agentEventsUrl = adapter?.getEventsUrl();
+    if (!agentEventsUrl) {
+      return Response.json({ error: "No event stream available for this session" }, { status: 400 });
+    }
 
     // Abort controller for cleanup
     const abortController = new AbortController();

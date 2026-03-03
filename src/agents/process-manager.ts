@@ -10,6 +10,8 @@ import { isPortAvailable } from "../utils/port-utils.js";
 import { sanitizeLogEntry } from "../logging/log-sanitizer";
 import { trackProjectForSession } from "../projects/npub-project-tracker";
 import type { AgentRuntimeStatus } from "../types/agent-status";
+import type { AgentAdapter } from "./agent-adapter";
+import { resolveAdapterFactory } from "./agent-adapter";
 import {
   addAppToEcosystem,
   removeAppFromEcosystem,
@@ -23,6 +25,7 @@ import {
   waitForStatus,
 } from "./pm2-wrapper";
 import { injectMcpConfig, cleanupMcpConfig } from "./mcp-injector";
+import { parseAllowedHosts, pickAgentHost, normaliseHostForUrl } from "./agent-client";
 import { BotKeyStore } from "../identity/bot-key-store";
 import { ensureCredentialHelper, getGiteaGitEnv } from "../gitea/credential-helper";
 import { resolveGiteaCredentials } from "../gitea/gitea-user-manager";
@@ -117,6 +120,8 @@ interface AgentSession {
   pinnedFile?: string;
   /** Files created by MCP config injection to clean up on session stop. */
   mcpCleanupFiles?: string[];
+  /** Protocol adapter for communicating with this agent */
+  adapter?: AgentAdapter;
 }
 
 export class ProcessManager {
@@ -341,6 +346,17 @@ export class ProcessManager {
       }
       spawnMs = Date.now() - spawnStartedAt;
       session.status = "running";
+
+      // Create protocol adapter for agent communication
+      const adapterFactory = resolveAdapterFactory(agent);
+      session.adapter = adapterFactory({
+        id: session.id,
+        port: session.port,
+        agent: session.agent,
+        host: normaliseHostForUrl(pickAgentHost(parseAllowedHosts(this.config.allowedHosts))),
+        pm2Name: session.pm2Name,
+      });
+
       this.emit({ type: "session-updated", session: this.toSnapshot(session) });
       const totalLaunchMs = Date.now() - launchStartedAt;
       console.log(
@@ -412,6 +428,16 @@ export class ProcessManager {
       pinnedFile: input.pinnedFile,
     };
 
+    // Create protocol adapter for rehydrated session
+    const adapterFactory = resolveAdapterFactory(input.agent);
+    session.adapter = adapterFactory({
+      id: session.id,
+      port: session.port,
+      agent: session.agent,
+      host: normaliseHostForUrl(pickAgentHost(parseAllowedHosts(this.config.allowedHosts))),
+      pm2Name: session.pm2Name,
+    });
+
     this.sessions.set(session.id, session);
     this.allocatedPorts.add(session.port);
     return this.toSnapshot(session);
@@ -448,6 +474,12 @@ export class ProcessManager {
         // ignore failures when the process already exited or cannot be signalled
       }
       session.detachedPid = undefined;
+    }
+
+    // Dispose protocol adapter
+    if (session.adapter) {
+      session.adapter.dispose().catch(() => {});
+      session.adapter = undefined;
     }
 
     // Clean up MCP config files created during injection
@@ -502,6 +534,11 @@ export class ProcessManager {
     const snapshot = this.toSnapshot(session);
     this.emit({ type: "session-updated", session: snapshot });
     return snapshot;
+  }
+
+  getAdapter(id: string): AgentAdapter | null {
+    const session = this.sessions.get(id);
+    return session?.adapter ?? null;
   }
 
   setPinnedFile(id: string, filePath: string | null): SessionSnapshot | null {

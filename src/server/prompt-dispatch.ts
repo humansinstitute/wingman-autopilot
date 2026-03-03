@@ -13,6 +13,7 @@ export interface PromptDispatchContext {
   manager: {
     getSession: (id: string) => SessionSnapshot | undefined;
     listSessions: () => SessionSnapshot[];
+    getAdapter: (id: string) => import("../agents/agent-adapter").AgentAdapter | null;
   };
   agentHost: string;
   messageStore: {
@@ -31,6 +32,7 @@ export interface PromptDispatchContext {
   buildAgentUrl: (host: string, port: number, path: string) => string | URL;
   waitForSessionPromptReadiness: (opts: {
     getSession: (id: string) => SessionSnapshot | null;
+    getAdapter: (id: string) => import("../agents/agent-adapter").AgentAdapter | null;
     sessionId: string;
     host: string;
     timeoutMs: number;
@@ -142,6 +144,7 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
     const timeoutMs = getPromptStartupTimeoutMs(session.agent);
     await ctx.waitForSessionPromptReadiness({
       getSession: (sessionId) => ctx.manager.getSession(sessionId) ?? null,
+      getAdapter: (sessionId) => ctx.manager.getAdapter(sessionId),
       sessionId: session.id,
       host: ctx.agentHost,
       timeoutMs,
