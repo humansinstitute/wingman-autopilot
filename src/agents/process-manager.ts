@@ -13,6 +13,11 @@ import type { AgentRuntimeStatus } from "../types/agent-status";
 import type { AgentAdapter } from "./agent-adapter";
 import { resolveAdapterFactory } from "./agent-adapter";
 import {
+  type SessionMetadata,
+  type SessionMetadataInput,
+  normaliseSessionMetadata,
+} from "../sessions/session-metadata";
+import {
   addAppToEcosystem,
   removeAppFromEcosystem,
   type SessionConfig,
@@ -64,6 +69,7 @@ export interface SessionSnapshot {
   targetFile?: string;
   /** File pinned as artifact in the UI right-hand panel */
   pinnedFile?: string;
+  metadata?: SessionMetadata;
 }
 
 type SessionEvent =
@@ -91,6 +97,7 @@ export interface RehydrateSessionInput {
   targetFile?: string;
   /** File pinned as artifact in the UI right-hand panel */
   pinnedFile?: string;
+  metadata?: SessionMetadataInput;
 }
 
 interface AgentSession {
@@ -118,6 +125,7 @@ interface AgentSession {
   targetFile?: string;
   /** File pinned as artifact in the UI right-hand panel */
   pinnedFile?: string;
+  metadata: SessionMetadata;
   /** Files created by MCP config injection to clean up on session stop. */
   mcpCleanupFiles?: string[];
   /** Protocol adapter for communicating with this agent */
@@ -189,6 +197,7 @@ export class ProcessManager {
     origin?: SessionOrigin | null,
     targetFile?: string,
     explicitNpub?: string,
+    metadata?: SessionMetadataInput,
   ): Promise<SessionSnapshot> {
     const launchStartedAt = Date.now();
     const requestNpub = explicitNpub ?? getAuthenticatedNpub() ?? undefined;
@@ -201,6 +210,7 @@ export class ProcessManager {
     const id = crypto.randomUUID();
     const sessionName = this.normaliseSessionName(name, agent, port);
     const command = definition.command({ port, agent, config: this.config });
+    const sessionMetadata = normaliseSessionMetadata(metadata);
     const rawWorkingDirectory =
       typeof workingDirectory === "string" && workingDirectory.length > 0
         ? workingDirectory
@@ -235,6 +245,7 @@ export class ProcessManager {
       userAlias,
       isAdmin,
       targetFile: targetFile ?? undefined,
+      metadata: sessionMetadata,
     };
 
     this.sessions.set(id, session);
@@ -426,6 +437,7 @@ export class ProcessManager {
       pm2Name: input.pm2Name,
       targetFile: input.targetFile,
       pinnedFile: input.pinnedFile,
+      metadata: normaliseSessionMetadata(input.metadata),
     };
 
     // Create protocol adapter for rehydrated session
@@ -780,6 +792,7 @@ export class ProcessManager {
       pm2Name: session.pm2Name,
       targetFile: session.targetFile,
       pinnedFile: session.pinnedFile,
+      metadata: session.metadata,
     };
   }
 

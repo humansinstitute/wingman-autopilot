@@ -6,6 +6,7 @@ import { Database } from "bun:sqlite";
 
 import type { AgentRuntimeStatus } from "../types/agent-status";
 import type { SessionOrigin } from "../agents/process-manager";
+import type { SessionMetadata } from "../sessions/session-metadata";
 
 export interface StoredMessage {
   id: string;
@@ -39,6 +40,8 @@ export interface SessionRecordInput {
   model?: string;
   /** Target file for writer-mode sessions */
   targetFile?: string;
+  /** Session metadata flags */
+  metadata?: SessionMetadata | null;
 }
 
 export interface StoredSessionRecord {
@@ -59,6 +62,8 @@ export interface StoredSessionRecord {
   model: string | null;
   /** Target file for writer-mode sessions */
   targetFile: string | null;
+  /** Session metadata flags */
+  metadata: SessionMetadata;
 }
 
 export const databaseFile = new URL("../../data/wingman.db", import.meta.url).pathname;
@@ -96,6 +101,10 @@ const parseStoredOrigin = (value: string | null): SessionOrigin | null => {
     return null;
   }
 };
+
+const parseStoredMetadata = (agentFlag: unknown): SessionMetadata => ({
+  AGENT: agentFlag === 1 || agentFlag === true || agentFlag === "1" || agentFlag === "true",
+});
 
 export class MessageStore {
   private readonly db: Database;
@@ -140,6 +149,7 @@ export class MessageStore {
       session.origin ? JSON.stringify(session.origin) : null,
       session.model ?? null,
       session.targetFile ?? null,
+      session.metadata?.AGENT ? 1 : 0,
     );
   }
 
@@ -190,26 +200,35 @@ export class MessageStore {
         runtime_status as runtimeStatus,
         origin,
         model,
-        target_file as targetFile
+        target_file as targetFile,
+        agent_flag as agentFlag
       FROM sessions
       WHERE id = ?1
-    `).get(sessionId) as (Omit<StoredSessionRecord, "origin"> & { origin: string | null }) | null;
+    `).get(sessionId) as (Omit<StoredSessionRecord, "origin" | "metadata"> & {
+      origin: string | null;
+      agentFlag: number | null;
+    }) | null;
 
     if (!row) return null;
 
     return {
       ...row,
       origin: parseStoredOrigin(row.origin),
+      metadata: parseStoredMetadata(row.agentFlag),
     };
   }
 
   listSessions(): StoredSessionRecord[] {
     const rows = this.listSessionsStmt.all() as Array<
-      Omit<StoredSessionRecord, "origin"> & { origin: string | null }
+      Omit<StoredSessionRecord, "origin" | "metadata"> & {
+        origin: string | null;
+        agentFlag: number | null;
+      }
     >;
     return rows.map((row) => ({
       ...row,
       origin: parseStoredOrigin(row.origin),
+      metadata: parseStoredMetadata(row.agentFlag),
     }));
   }
 
@@ -235,7 +254,8 @@ export class MessageStore {
         runtime_status as runtimeStatus,
         origin,
         model,
-        target_file as targetFile
+        target_file as targetFile,
+        agent_flag as agentFlag
       FROM sessions
       WHERE port IS NOT NULL
         AND pid IS NOT NULL
@@ -243,11 +263,15 @@ export class MessageStore {
       ORDER BY started_at DESC
     `);
     const rows = stmt.all(cutoff) as Array<
-      Omit<StoredSessionRecord, "origin"> & { origin: string | null }
+      Omit<StoredSessionRecord, "origin" | "metadata"> & {
+        origin: string | null;
+        agentFlag: number | null;
+      }
     >;
     return rows.map((row) => ({
       ...row,
       origin: parseStoredOrigin(row.origin),
+      metadata: parseStoredMetadata(row.agentFlag),
     }));
   }
 
@@ -265,7 +289,8 @@ export class MessageStore {
         working_directory TEXT,
         command TEXT,
         runtime_status TEXT,
-        origin TEXT
+        origin TEXT,
+        agent_flag INTEGER NOT NULL DEFAULT 0
       );
 
       CREATE TABLE IF NOT EXISTS messages (
@@ -300,12 +325,13 @@ export class MessageStore {
     ensureColumn("origin", "TEXT");
     ensureColumn("model", "TEXT");
     ensureColumn("target_file", "TEXT");
+    ensureColumn("agent_flag", "INTEGER NOT NULL DEFAULT 0");
   }
 
   private prepareInsertSession() {
     return this.db.prepare(
-      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, pm2_name, logs_dir, working_directory, command, runtime_status, origin, model, target_file)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, pm2_name, logs_dir, working_directory, command, runtime_status, origin, model, target_file, agent_flag)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
        ON CONFLICT(id) DO UPDATE SET
          agent = excluded.agent,
          started_at = excluded.started_at,
@@ -320,7 +346,8 @@ export class MessageStore {
          runtime_status = excluded.runtime_status,
          origin = excluded.origin,
          model = excluded.model,
-         target_file = excluded.target_file`,
+         target_file = excluded.target_file,
+         agent_flag = excluded.agent_flag`,
     );
   }
 
@@ -345,7 +372,8 @@ export class MessageStore {
          runtime_status as runtimeStatus,
          origin,
          model,
-         target_file as targetFile
+         target_file as targetFile,
+         agent_flag as agentFlag
        FROM sessions`,
     );
   }

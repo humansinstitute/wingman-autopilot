@@ -15,8 +15,8 @@ export const stopSessionSchema = {
 
 export const stopSessionDescription =
   "Stop a running agent session by its ID. The target session must belong " +
-  "to the same owner as the calling session. Cannot stop the calling " +
-  "session itself. Returns the stopped session details.";
+  "to the same owner as the calling session, and must have metadata.AGENT=true. " +
+  "Cannot stop the calling session itself. Returns the stopped session details.";
 
 interface StopSessionParams {
   target_session_id: string;

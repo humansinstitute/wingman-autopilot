@@ -16,6 +16,7 @@ import type { messageStore as MessageStoreInstance, StoredMessage } from "../sto
 import type { sessionArchiveStore as SessionArchiveStoreInstance } from "../storage/session-archive-store";
 import type { ForkToWorktreeInput } from "../sessions/fork-to-worktree";
 import { deliverSessionAgentMessage } from "./session-agent-message";
+import { isAgentManagedByMetadataOrOrigin } from "../sessions/session-metadata";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
@@ -354,7 +355,15 @@ export async function handleSessionApi(
           ? rawTargetFile
           : resolvePath(workingDirectory, rawTargetFile);
       }
-      const session = await ctx.manager.createSession(agent, workingDirectory, sessionName ?? undefined, origin, targetFile);
+      const session = await ctx.manager.createSession(
+        agent,
+        workingDirectory,
+        sessionName ?? undefined,
+        origin,
+        targetFile,
+        undefined,
+        { AGENT: false },
+      );
       ctx.messageStore.recordSession({
         id: session.id,
         agent: session.agent,
@@ -369,6 +378,7 @@ export async function handleSessionApi(
         origin: session.origin ?? null,
         pm2Name: session.pm2Name,
         targetFile: session.targetFile,
+        metadata: session.metadata,
       });
       await ctx.syncSessionMessages(session.id, true);
       return Response.json(ctx.serializeSession(session), { status: 201 });
@@ -451,6 +461,9 @@ export async function handleSessionApi(
 
     if (method === "DELETE" && parts.length === 4) {
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      if (!authContext.session && !isAgentManagedByMetadataOrOrigin(ownedSession.metadata, ownedSession.origin)) {
+        return Response.json({ error: "Agents can only stop sessions with metadata.AGENT=true" }, { status: 403 });
+      }
       const session = await ctx.manager.stopSession(id);
       if (!session) return Response.json({ error: "Not found" }, { status: 404 });
       ctx.scheduleSessionArchive(id, ctx.manager);
@@ -678,6 +691,7 @@ async function handleSessionHistory(
           workingDirectory: storedSession.workingDirectory,
           startedAt: storedSession.startedAt,
           origin: storedSession.origin,
+          metadata: storedSession.metadata,
         },
         messages,
       });
@@ -702,6 +716,7 @@ async function handleSessionHistory(
           startedAt: archivedSession.startedAt,
           archivedAt: archivedSession.archivedAt,
           origin: archivedSession.origin,
+          metadata: archivedSession.metadata,
         },
         messages,
       });
@@ -888,6 +903,9 @@ async function handleForkToWorktree(
       worktreeResult.path,
       sessionName,
       { type: "fork", id: id, label: `Forked from ${ownedSession.name || id}` },
+      undefined,
+      undefined,
+      { AGENT: false },
     );
     ctx.messageStore.recordSession({
       id: newSession.id,
@@ -902,6 +920,7 @@ async function handleForkToWorktree(
       runtimeStatus: newSession.agentRuntimeStatus ?? null,
       origin: newSession.origin ?? null,
       pm2Name: newSession.pm2Name,
+      metadata: newSession.metadata,
     });
     await ctx.syncSessionMessages(newSession.id, true);
   } catch (error) {

@@ -2,6 +2,7 @@ import { sessionArchiveStore } from "./session-archive-store";
 import { messageStore } from "./message-store";
 import type { ProcessManager } from "../agents/process-manager";
 import type { SessionSnapshot } from "../agents/process-manager";
+import { normaliseSessionMetadata } from "../sessions/session-metadata";
 
 const ARCHIVE_DELAY_MS = 5000;
 
@@ -64,6 +65,7 @@ const archiveSession = (sessionId: string, manager: ProcessManager): void => {
       workingDirectory: archiveMetadata.workingDirectory,
       startedAt: archiveMetadata.startedAt,
       origin: archiveMetadata.origin,
+      metadata: archiveMetadata.metadata,
       messages: messages.map((m) => ({
         id: m.id,
         role: m.role,
@@ -94,6 +96,7 @@ const resolveArchiveMetadata = (
       workingDirectory: storedSession.workingDirectory,
       startedAt: storedSession.startedAt,
       origin: storedSession.origin,
+      metadata: normaliseSessionMetadata(storedSession.metadata),
     };
   }
 
@@ -110,6 +113,7 @@ const resolveArchiveMetadata = (
     workingDirectory: liveSession.workingDirectory ?? null,
     startedAt: liveSession.startedAt,
     origin: liveSession.origin ?? null,
+    metadata: normaliseSessionMetadata(liveSession.metadata),
   };
 };
 

@@ -10,7 +10,7 @@
  * Validated by sessionId (no cookie auth).
  */
 
-import type { SessionSnapshot } from "../agents/process-manager";
+import type { SessionOrigin, SessionSnapshot } from "../agents/process-manager";
 import type { AgentType } from "../config";
 import type { AppRecord, AppLifecycleAction } from "../apps/app-registry";
 import type { AppProcessStatus } from "../apps/app-process-manager";
@@ -25,6 +25,10 @@ import type { NpubProjectRecord } from "../projects/npub-project-store";
 import type { MemoryStore } from "./memory-store";
 import { normaliseNpub } from "../identity/npub-utils";
 import { parseBody, jsonError } from "../utils/request-utils";
+import {
+  type SessionMetadataInput,
+  isAgentManagedByMetadataOrOrigin,
+} from "../sessions/session-metadata";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -38,6 +42,8 @@ export interface WingmanMcpApiDependencies {
     workingDirectory?: string,
     name?: string,
     explicitNpub?: string,
+    origin?: SessionOrigin | null,
+    metadata?: SessionMetadataInput,
   ) => Promise<SessionSnapshot>;
   stopSession: (sessionId: string) => Promise<SessionSnapshot | null>;
   scheduleArchive: (sessionId: string) => void;
@@ -350,6 +356,7 @@ function handleListSessions(
     workingDirectory: s.workingDirectory,
     port: s.port,
     pid: s.pid ?? null,
+    metadata: s.metadata ?? { AGENT: false },
   }));
 
   return jsonOk({ sessions });
@@ -381,7 +388,19 @@ async function handleCreateSession(
     return jsonError(`agent must be one of: ${validAgents.join(", ")}`, 400);
   }
 
-  const session = await deps.createSession(agent as AgentType, directory, name, callerSession.npub);
+  const origin: SessionOrigin = {
+    type: "agent-session",
+    id: callerSession.id,
+    label: callerSession.name || callerSession.id,
+  };
+  const session = await deps.createSession(
+    agent as AgentType,
+    directory,
+    name,
+    callerSession.npub,
+    origin,
+    { AGENT: true },
+  );
   return jsonOk({
     id: session.id,
     agent: session.agent,
@@ -434,6 +453,10 @@ async function handleStopSession(
   const targetNpub = normaliseNpub(targetSession.npub ?? null);
   if (!callerNpub || !targetNpub || callerNpub !== targetNpub) {
     return jsonError("Cannot stop sessions belonging to another user", 403);
+  }
+
+  if (!isAgentManagedByMetadataOrOrigin(targetSession.metadata, targetSession.origin)) {
+    return jsonError("Agents can only stop sessions with metadata.AGENT=true", 403);
   }
 
   console.log(

@@ -3,7 +3,7 @@ import { mkdir, readFile, rm, stat, realpath } from "node:fs/promises";
 import { basename, join, normalize, relative, resolve, sep, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 
-import type { ProcessManager } from "../agents/process-manager";
+import type { ProcessManager, SessionOrigin } from "../agents/process-manager";
 import type { AgentType, WingmanConfig } from "../config";
 import type { FileWatcherRecord, JsonValue } from "../storage/file-watcher-store";
 import { fileWatcherStore } from "../storage/file-watcher-store";
@@ -442,7 +442,20 @@ export class FileWatcherRunner {
     const sessionName =
       typeof nameCandidate === "string" && nameCandidate.trim().length > 0 ? nameCandidate.trim() : undefined;
 
-    const session = await this.manager.createSession(agent, workingDirectory, sessionName);
+    const origin: SessionOrigin = {
+      type: "file-watcher",
+      id: record.id,
+      label: "file-watcher trigger",
+    };
+    const session = await this.manager.createSession(
+      agent,
+      workingDirectory,
+      sessionName,
+      origin,
+      undefined,
+      undefined,
+      { AGENT: true },
+    );
     messageStore.recordSession({
       id: session.id,
       agent: session.agent,
@@ -454,6 +467,7 @@ export class FileWatcherRunner {
       workingDirectory: session.workingDirectory,
       command: session.command,
       origin: session.origin ?? null,
+      metadata: session.metadata,
     });
 
     try {

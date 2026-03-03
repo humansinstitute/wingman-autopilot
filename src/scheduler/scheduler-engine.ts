@@ -23,6 +23,7 @@ import type { NightWatchStore } from "../nightwatch/nightwatch-store";
 import type { AgentType } from "../config";
 import type { SessionSnapshot, SessionOrigin } from "../agents/process-manager";
 import { getSessionSecretBytes } from "../auth/session-secret";
+import type { SessionMetadataInput } from "../sessions/session-metadata";
 
 // ============================================================
 // Types
@@ -39,6 +40,7 @@ export interface SchedulerEngineDeps {
     origin: SessionOrigin,
     targetFile: string | undefined,
     explicitNpub: string,
+    metadata?: SessionMetadataInput,
   ) => Promise<SessionSnapshot>;
   addPrompt: (sessionId: string, content: string) => void;
   dispatchPrompt: (session: SessionSnapshot) => void;
@@ -330,6 +332,7 @@ class SchedulerEngine {
         origin,
         undefined,
         job.userNpub,
+        { AGENT: true },
       );
 
       // 4. Wait for steady runtime readiness before prompt injection

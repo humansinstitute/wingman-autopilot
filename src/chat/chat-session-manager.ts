@@ -52,6 +52,7 @@ export function createChatSession(
     name,
     npub: npub ?? undefined,
     model,
+    metadata: { AGENT: false },
   });
 
   return {
@@ -142,6 +143,7 @@ export function updateChatSessionName(sessionId: string, name: string): boolean 
     logsDir: stored.logsDir ?? undefined,
     runtimeStatus: stored.runtimeStatus,
     origin: stored.origin,
+    metadata: stored.metadata,
   });
 
   return true;

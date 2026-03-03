@@ -11,6 +11,7 @@
 
 import type { AgentType } from "../config";
 import type { SessionSnapshot, SessionOrigin } from "../agents/process-manager";
+import type { SessionMetadataInput } from "../sessions/session-metadata";
 import type { TaskAssignment } from "./task-listener";
 
 // ============================================================
@@ -19,7 +20,13 @@ import type { TaskAssignment } from "./task-listener";
 
 export interface TaskExecutorDeps {
   signNip98: (url: string, method: string, bodyHash?: string) => Promise<string>;
-  createSession: (agent: AgentType, dir: string, name: string, origin?: SessionOrigin) => Promise<SessionSnapshot>;
+  createSession: (
+    agent: AgentType,
+    dir: string,
+    name: string,
+    origin?: SessionOrigin,
+    metadata?: SessionMetadataInput,
+  ) => Promise<SessionSnapshot>;
   enableNightwatch: (sessionId: string) => void;
   addPrompt: (sessionId: string, content: string) => void;
   dispatchPrompt: (session: SessionSnapshot) => void;
@@ -114,6 +121,7 @@ export function createTaskExecutor(deps: TaskExecutorDeps): (task: TaskAssignmen
       workDir,
       `Task: ${task.title.slice(0, 60)}`,
       origin,
+      { AGENT: true },
     );
 
     console.log(`[task-executor] Created session ${session.id} for task ${task.taskId}`);

@@ -3,8 +3,8 @@ import { dirname } from "node:path";
 
 import { Database } from "bun:sqlite";
 
-import type { AgentRuntimeStatus } from "../types/agent-status";
 import type { SessionOrigin } from "../agents/process-manager";
+import type { SessionMetadata } from "../sessions/session-metadata";
 
 export interface ArchivedSession {
   id: string;
@@ -16,6 +16,7 @@ export interface ArchivedSession {
   archivedAt: string;
   messageCount: number;
   origin: SessionOrigin | null;
+  metadata: SessionMetadata;
 }
 
 export interface ArchivedMessage {
@@ -34,6 +35,7 @@ export interface ArchiveSessionInput {
   workingDirectory: string | null;
   startedAt: string;
   origin: SessionOrigin | null;
+  metadata: SessionMetadata;
   messages: Array<{
     id: string;
     role: string;
@@ -84,6 +86,10 @@ const parseStoredOrigin = (value: string | null): SessionOrigin | null => {
   }
 };
 
+const parseStoredMetadata = (agentFlag: unknown): SessionMetadata => ({
+  AGENT: agentFlag === 1 || agentFlag === true || agentFlag === "1" || agentFlag === "true",
+});
+
 const wildcardToSqlLike = (pattern: string): string => {
   // Convert wildcard pattern to SQL LIKE pattern
   // * -> % (match any characters)
@@ -116,7 +122,8 @@ class SessionArchiveStore {
         working_directory TEXT,
         started_at TEXT NOT NULL,
         archived_at TEXT NOT NULL,
-        origin TEXT
+        origin TEXT,
+        agent_flag INTEGER NOT NULL DEFAULT 0
       );
 
       CREATE TABLE IF NOT EXISTS archived_messages (
@@ -131,6 +138,11 @@ class SessionArchiveStore {
       CREATE INDEX IF NOT EXISTS idx_archived_sessions_date ON archived_sessions(archived_at DESC);
       CREATE INDEX IF NOT EXISTS idx_archived_messages_session ON archived_messages(session_id, created_at);
     `);
+    const sessionColumns = this.db.query("PRAGMA table_info(archived_sessions)").all() as { name: string }[];
+    const hasAgentFlag = sessionColumns.some((column) => column.name === "agent_flag");
+    if (!hasAgentFlag) {
+      this.db.exec("ALTER TABLE archived_sessions ADD COLUMN agent_flag INTEGER NOT NULL DEFAULT 0");
+    }
   }
 
   archiveSession(input: ArchiveSessionInput): void {
@@ -140,8 +152,8 @@ class SessionArchiveStore {
       // Insert archived session
       this.db.run(
         `INSERT OR REPLACE INTO archived_sessions
-         (id, agent, name, npub, working_directory, started_at, archived_at, origin)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+         (id, agent, name, npub, working_directory, started_at, archived_at, origin, agent_flag)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
         [
           input.id,
           input.agent,
@@ -151,6 +163,7 @@ class SessionArchiveStore {
           input.startedAt,
           archivedAt,
           input.origin ? JSON.stringify(input.origin) : null,
+          input.metadata.AGENT ? 1 : 0,
         ]
       );
 
@@ -186,6 +199,7 @@ class SessionArchiveStore {
         s.started_at as startedAt,
         s.archived_at as archivedAt,
         s.origin,
+        s.agent_flag as agentFlag,
         (SELECT COUNT(1) FROM archived_messages m WHERE m.session_id = s.id) as messageCount
       FROM archived_sessions s
     `;
@@ -202,12 +216,16 @@ class SessionArchiveStore {
       `);
       
       const rows = filteredQuery.all(safeLikePattern, limit, offset) as Array<
-        Omit<ArchivedSession, "origin"> & { origin: string | null }
+        Omit<ArchivedSession, "origin" | "metadata"> & {
+          origin: string | null;
+          agentFlag: number | null;
+        }
       >;
 
       return rows.map((row) => ({
         ...row,
         origin: parseStoredOrigin(row.origin),
+        metadata: parseStoredMetadata(row.agentFlag),
       }));
     }
 
@@ -218,12 +236,16 @@ class SessionArchiveStore {
     `);
     
     const rows = unfilteredQuery.all(limit, offset) as Array<
-      Omit<ArchivedSession, "origin"> & { origin: string | null }
+      Omit<ArchivedSession, "origin" | "metadata"> & {
+        origin: string | null;
+        agentFlag: number | null;
+      }
     >;
 
     return rows.map((row) => ({
       ...row,
       origin: parseStoredOrigin(row.origin),
+      metadata: parseStoredMetadata(row.agentFlag),
     }));
   }
 
@@ -238,16 +260,21 @@ class SessionArchiveStore {
         s.started_at as startedAt,
         s.archived_at as archivedAt,
         s.origin,
+        s.agent_flag as agentFlag,
         (SELECT COUNT(1) FROM archived_messages m WHERE m.session_id = s.id) as messageCount
       FROM archived_sessions s
       WHERE s.id = ?1
-    `).get(sessionId) as (Omit<ArchivedSession, "origin"> & { origin: string | null }) | null;
+    `).get(sessionId) as (Omit<ArchivedSession, "origin" | "metadata"> & {
+      origin: string | null;
+      agentFlag: number | null;
+    }) | null;
 
     if (!row) return null;
 
     return {
       ...row,
       origin: parseStoredOrigin(row.origin),
+      metadata: parseStoredMetadata(row.agentFlag),
     };
   }
 

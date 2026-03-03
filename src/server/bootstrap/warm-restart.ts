@@ -173,6 +173,7 @@ export const rehydrateWarmSessions = async (
       origin: record.origin ?? null,
       pm2Name: record.pm2Name ?? undefined,
       targetFile: record.targetFile ?? undefined,
+      metadata: record.metadata,
     });
 
     if (!snapshot) {
@@ -197,6 +198,7 @@ export const rehydrateWarmSessions = async (
       runtimeStatus: snapshot.agentRuntimeStatus ?? null,
       origin: snapshot.origin ?? null,
       pm2Name: record.pm2Name ?? undefined,
+      metadata: snapshot.metadata,
     });
     restored += 1;
   }
@@ -311,6 +313,7 @@ export const rehydrateOrphanedSessions = async (
       origin: record.origin ?? null,
       pm2Name: record.pm2Name ?? undefined,
       targetFile: record.targetFile ?? undefined,
+      metadata: record.metadata,
     });
 
     if (!snapshot) {
@@ -333,6 +336,7 @@ export const rehydrateOrphanedSessions = async (
       command: snapshot.command,
       runtimeStatus: snapshot.agentRuntimeStatus ?? null,
       origin: snapshot.origin ?? null,
+      metadata: snapshot.metadata,
     });
 
     console.log(`[orphan] reconnected to session ${record.id} (${agentName} on port ${port})`);

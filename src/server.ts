@@ -375,8 +375,8 @@ const schedulerEngine = new SchedulerEngine({
   store: schedulerStore,
   botKeyStore,
   nightWatchStore,
-  createSession: (agent, dir, name, origin, targetFile, explicitNpub) =>
-    manager.createSession(agent, dir, name, origin, targetFile, explicitNpub),
+  createSession: (agent, dir, name, origin, targetFile, explicitNpub, metadata) =>
+    manager.createSession(agent, dir, name, origin, targetFile, explicitNpub, metadata),
   addPrompt: (sid, content) => promptQueueStore.addPrompt(sid, { content }),
   dispatchPrompt: (session) => {
     void maybeAutoDispatchQueuedPrompt(session);
@@ -957,7 +957,8 @@ const manager = new ProcessManager(config);
 const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   getSession: (sid: string) => manager.getSession(sid) ?? null,
   listSessions: () => manager.listSessions(),
-  createSession: (agent, dir, name, explicitNpub) => manager.createSession(agent, dir, name, undefined, undefined, explicitNpub),
+  createSession: (agent, dir, name, explicitNpub, origin, metadata) =>
+    manager.createSession(agent, dir, name, origin, undefined, explicitNpub, metadata),
   stopSession: async (sid) => (await manager.stopSession(sid)) ?? null,
   scheduleArchive: (sid) => scheduleSessionArchive(sid, manager),
   getSessionLogs: (sid) => manager.getLogs(sid),
@@ -1066,7 +1067,8 @@ if (taskListenerIdentity && config.connectRelays.length > 0 && taskListenerFlag?
       const { token } = await signWithWingmanKey(url, method, bodyHash);
       return token;
     },
-    createSession: (agent, dir, name, origin) => manager.createSession(agent, dir, name, origin),
+    createSession: (agent, dir, name, origin, metadata) =>
+      manager.createSession(agent, dir, name, origin, undefined, undefined, metadata),
     enableNightwatch: (sid) => nightWatchStore.enableSession(sid),
     addPrompt: (sid, content) => promptQueueStore.addPrompt(sid, { content }),
     dispatchPrompt: (session) => {
@@ -1581,6 +1583,7 @@ manager.on((event) => {
       runtimeStatus: event.session.agentRuntimeStatus ?? null,
       origin: event.session.origin ?? null,
       pm2Name: event.session.pm2Name,
+      metadata: event.session.metadata,
     });
     messageStore.replaceMessages(event.session.id, []);
     void maybeAutoDispatchQueuedPrompt(event.session);
@@ -1647,6 +1650,7 @@ manager.on((event) => {
       runtimeStatus: event.session.agentRuntimeStatus ?? null,
       origin: event.session.origin ?? null,
       pm2Name: event.session.pm2Name,
+      metadata: event.session.metadata,
     });
     void maybeAutoDispatchQueuedPrompt(event.session);
     // Broadcast to browser so home page / nav live-refresh
@@ -2018,6 +2022,10 @@ const launchOrchestratorPreset = async (presetId: string) => {
     preset.agent as AgentType,
     workingDirectory,
     sessionName ?? undefined,
+    undefined,
+    undefined,
+    undefined,
+    { AGENT: false },
   );
   ensureUserWorkspace(session.npub ?? null);
   messageStore.recordSession({
@@ -2033,6 +2041,7 @@ const launchOrchestratorPreset = async (presetId: string) => {
     runtimeStatus: session.agentRuntimeStatus ?? null,
     origin: session.origin ?? null,
     pm2Name: session.pm2Name,
+    metadata: session.metadata,
   });
   void initialisePresetSession(preset, session);
   return { directory: workingDirectory, session };
