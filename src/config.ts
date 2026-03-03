@@ -182,13 +182,23 @@ function resolveClaudeExtraArgs(glovesValue: string | undefined): string[] {
   return [];
 }
 
+function resolveOpenCodeExtraArgs(modelValue: string | undefined): string[] {
+  const model = modelValue?.trim();
+  const effectiveModel = model && model.length > 0 ? model : "opencode/gpt-5-nano";
+  return ["--model", effectiveModel];
+}
+
 const claudeExtraArgs = resolveClaudeExtraArgs(Bun.env.GLOVES);
+const openCodeExtraArgs = resolveOpenCodeExtraArgs(Bun.env.OPENCODE_MODEL);
 
 const defaultAgents: Record<AgentType, AgentDefinition> = {
   codex: withAgentCommand("Codex", Bun.env.CODEX_CLI ?? "codex", { type: "codex" }),
   claude: withAgentCommand("Claude", Bun.env.CLAUDE_CLI ?? "claude", { extraArgs: claudeExtraArgs }),
   goose: withAgentCommand("Goose", Bun.env.GOOSE_CLI ?? "goose"),
-  opencode: withAgentCommand("OpenCode", Bun.env.OPENCODE_CLI ?? "opencode"),
+  opencode: withAgentCommand("OpenCode", Bun.env.OPENCODE_CLI ?? "opencode", {
+    type: "opencode",
+    extraArgs: openCodeExtraArgs,
+  }),
   gemini: withAgentCommand("Gemini", Bun.env.GEMINI_CLI ?? "gemini"),
 };
 
