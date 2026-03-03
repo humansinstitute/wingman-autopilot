@@ -80,6 +80,48 @@ export function initHomeView(deps) {
   } = deps;
 
   let archiveComponent = null;
+  const sessionActionPending = new Map();
+
+  function getSessionPendingAction(sessionId) {
+    if (!sessionId || typeof sessionId !== "string") {
+      return null;
+    }
+    return sessionActionPending.get(sessionId) ?? null;
+  }
+
+  function isSessionActionPending(sessionId) {
+    return Boolean(getSessionPendingAction(sessionId));
+  }
+
+  function rerenderHomeIfVisible() {
+    if (getCurrentRoute() === "home") {
+      render();
+    }
+  }
+
+  function setSessionActionPending(sessionId, action) {
+    if (!sessionId || typeof sessionId !== "string") {
+      return;
+    }
+    if (!action) {
+      sessionActionPending.delete(sessionId);
+    } else {
+      sessionActionPending.set(sessionId, action);
+    }
+    rerenderHomeIfVisible();
+  }
+
+  async function withPendingSessionAction(sessionId, action, callback) {
+    if (isSessionActionPending(sessionId)) {
+      return;
+    }
+    setSessionActionPending(sessionId, action);
+    try {
+      await callback();
+    } finally {
+      setSessionActionPending(sessionId, null);
+    }
+  }
 
   // ── Guest helpers ──────────────────────────────────────────────
 
@@ -364,23 +406,49 @@ export function initHomeView(deps) {
     liveCard.append(liveHeader);
 
     const renderSessionActions = (target, session) => {
+      const pendingAction = getSessionPendingAction(session.id);
+      const pending = Boolean(pendingAction);
+
       const resumeBtn = document.createElement("button");
       resumeBtn.className = "wm-button";
       resumeBtn.textContent = "Resume";
+      resumeBtn.disabled = pending;
       resumeBtn.addEventListener("click", () => resumeSession(session.id));
       target.append(resumeBtn);
 
       if (isSessionActive(session)) {
         const stopBtn = document.createElement("button");
         stopBtn.className = "wm-button secondary";
-        stopBtn.textContent = "Stop";
-        stopBtn.addEventListener("click", () => stopSession(session.id));
+        if (pendingAction) {
+          stopBtn.textContent = "Stopping…";
+          stopBtn.dataset.state = "loading";
+          stopBtn.setAttribute("aria-busy", "true");
+        } else {
+          stopBtn.textContent = "Stop";
+        }
+        stopBtn.disabled = pending;
+        stopBtn.addEventListener("click", () => {
+          void withPendingSessionAction(session.id, "stop", async () => {
+            await stopSession(session.id);
+          });
+        });
         target.append(stopBtn);
       } else {
         const deleteBtn = document.createElement("button");
         deleteBtn.className = "wm-button secondary";
-        deleteBtn.textContent = "Delete";
-        deleteBtn.addEventListener("click", () => deleteSession(session.id));
+        if (pendingAction) {
+          deleteBtn.textContent = pendingAction === "stop" ? "Stopping…" : "Deleting…";
+          deleteBtn.dataset.state = "loading";
+          deleteBtn.setAttribute("aria-busy", "true");
+        } else {
+          deleteBtn.textContent = "Delete";
+        }
+        deleteBtn.disabled = pending;
+        deleteBtn.addEventListener("click", () => {
+          void withPendingSessionAction(session.id, "delete", async () => {
+            await deleteSession(session.id);
+          });
+        });
         target.append(deleteBtn);
       }
     };
@@ -521,6 +589,7 @@ export function initHomeView(deps) {
         }
         const renameButton = row.querySelector('[data-action="rename-session"]');
         if (renameButton instanceof HTMLButtonElement) {
+          renameButton.disabled = isSessionActionPending(session.id);
           renameButton.addEventListener("click", (event) => {
             event.preventDefault();
             promptRenameSession(session);
@@ -572,6 +641,7 @@ export function initHomeView(deps) {
         editLink.type = "button";
         editLink.className = "wm-link-button session-card-edit";
         editLink.textContent = "Edit name";
+        editLink.disabled = isSessionActionPending(session.id);
         editLink.addEventListener("click", (event) => {
           event.preventDefault();
           promptRenameSession(session);
