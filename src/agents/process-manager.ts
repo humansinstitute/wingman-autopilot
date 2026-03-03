@@ -442,6 +442,8 @@ export class ProcessManager {
         agent: session.agent,
         host: normaliseHostForUrl(pickAgentHost(parseAllowedHosts(this.config.allowedHosts))),
         pm2Name: session.pm2Name,
+        workingDirectory: session.workingDirectory,
+        env: session.definition.env as Record<string, string> | undefined,
       });
 
       this.emit({ type: "session-updated", session: this.toSnapshot(session) });
@@ -524,6 +526,8 @@ export class ProcessManager {
       agent: session.agent,
       host: normaliseHostForUrl(pickAgentHost(parseAllowedHosts(this.config.allowedHosts))),
       pm2Name: session.pm2Name,
+      workingDirectory: session.workingDirectory,
+      env: session.definition.env as Record<string, string> | undefined,
     });
 
     this.sessions.set(session.id, session);

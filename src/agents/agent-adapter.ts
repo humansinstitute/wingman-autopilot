@@ -8,6 +8,7 @@
 import type { AgentType } from "../config";
 import type { AgentRuntimeStatus } from "../types/agent-status";
 import type { AgentMessage, AgentReadyOptions } from "./agent-client";
+import { featureFlagStore, resolveFeatureFlagEffectiveState } from "../storage/feature-flag-store";
 
 /** Minimal session context needed by adapters */
 export interface AdapterSessionContext {
@@ -16,6 +17,12 @@ export interface AdapterSessionContext {
   agent: AgentType;
   host: string;
   pm2Name?: string;
+  /** Working directory for the agent session (used by native SDK adapters) */
+  workingDirectory?: string;
+  /** Environment variables for the agent process (used by native SDK adapters) */
+  env?: Record<string, string>;
+  /** Codex thread ID for session resume (used by CodexAdapter) */
+  codexThreadId?: string;
 }
 
 export interface AgentAdapter {
@@ -44,17 +51,26 @@ export interface AgentAdapter {
 
 export type AgentAdapterFactory = (context: AdapterSessionContext) => AgentAdapter;
 
+export const CODEX_NATIVE_SDK_FLAG = "codex-use-native-sdk";
+
 /**
  * Returns the appropriate adapter factory for the given agent type.
- * Currently all agents use AgentApiAdapter. Future phases add:
- * - opencode → OpenCodeAdapter (Phase 2)
- * - codex → CodexAdapter (Phase 3)
+ * - codex + CODEX_USE_NATIVE_SDK flag → CodexAdapter (Phase 3)
+ * - all other agents → AgentApiAdapter
  */
-export function resolveAdapterFactory(_agent: AgentType): AgentAdapterFactory {
-  // Phase 1: all agents use agentapi
-  // Phase 2/3 will check feature flags + agent type here
+export function resolveAdapterFactory(agent: AgentType): AgentAdapterFactory {
+  if (agent === "codex") {
+    const flag = featureFlagStore.getFlag(CODEX_NATIVE_SDK_FLAG);
+    if (flag && resolveFeatureFlagEffectiveState(flag.state, true) === "on") {
+      return (context: AdapterSessionContext) => {
+        const { CodexAdapter } = require("./codex-adapter") as typeof import("./codex-adapter");
+        return new CodexAdapter(context);
+      };
+    }
+  }
+
+  // Default: all agents use agentapi
   return (context: AdapterSessionContext) => {
-    // Lazy import to avoid circular dependency issues
     const { AgentApiAdapter } = require("./agentapi-adapter") as typeof import("./agentapi-adapter");
     return new AgentApiAdapter(context);
   };

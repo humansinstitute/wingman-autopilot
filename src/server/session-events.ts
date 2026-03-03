@@ -36,8 +36,11 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
 
     const adapter = manager.getAdapter(sessionId);
     const agentEventsUrl = adapter?.getEventsUrl();
+
+    // Native SDK adapters (e.g. CodexAdapter) handle streaming internally.
+    // Return a heartbeat-only SSE stream so the browser stays connected.
     if (!agentEventsUrl) {
-      return Response.json({ error: "No event stream available for this session" }, { status: 400 });
+      return createHeartbeatOnlyStream(sessionId, request, manager, sseKeepaliveIntervalMs);
     }
 
     // Abort controller for cleanup
@@ -192,4 +195,73 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
       },
     );
   };
+}
+
+/**
+ * Returns a heartbeat-only SSE stream for sessions using native SDK adapters.
+ * The adapter handles streaming internally; this keeps the browser SSE
+ * connection alive and signals when the session stops.
+ */
+function createHeartbeatOnlyStream(
+  sessionId: string,
+  request: Request,
+  manager: ProcessManager,
+  keepaliveMs: number,
+): Response {
+  const encoder = new TextEncoder();
+  let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+  let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+  const cleanup = () => {
+    if (keepaliveTimer) { clearInterval(keepaliveTimer); keepaliveTimer = null; }
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (controller) { try { controller.close(); } catch {} controller = null; }
+  };
+
+  return new Response(
+    new ReadableStream({
+      start(ctrl) {
+        controller = ctrl;
+        ctrl.enqueue(encoder.encode(`: connected (native-sdk)\n\n`));
+
+        // Heartbeat
+        keepaliveTimer = setInterval(() => {
+          try {
+            ctrl.enqueue(
+              encoder.encode(`event: heartbeat\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`),
+            );
+          } catch {
+            cleanup();
+          }
+        }, keepaliveMs);
+
+        // Poll session status — close stream if session stops
+        pollTimer = setInterval(() => {
+          const s = manager.getSession(sessionId);
+          if (!s || s.status !== "running") {
+            try {
+              ctrl.enqueue(
+                encoder.encode(
+                  `event: status\ndata: ${JSON.stringify({ type: "session_stopped", sessionId })}\n\n`,
+                ),
+              );
+            } catch {}
+            cleanup();
+          }
+        }, 2000);
+      },
+      cancel() {
+        cleanup();
+      },
+    }),
+    {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
+    },
+  );
 }
