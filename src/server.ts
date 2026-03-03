@@ -155,6 +155,7 @@ import {
   type UploadApiContext,
 } from "./server/upload-routes";
 import { performSystemCleanup } from "./server/system-cleanup.js";
+import { handleSystemRoutes, type SystemRoutesContext } from "./server/system-routes";
 import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import { SchedulerStore } from "./scheduler/scheduler-store";
 import { SchedulerEngine } from "./scheduler/scheduler-engine";
@@ -2798,106 +2799,27 @@ const handleApi = async (
     }
     return Response.json({ error: "Not found" }, { status: 404 });
   }
-  if (pathname === "/api/system/restart/status" && method === "GET") {
-    const denied = await ensureApiAccess(AccessActions.SystemManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    return Response.json({
-      inProgress: warmRestartState.inProgress,
-      marker: warmRestartState.marker,
-      outcome: warmRestartOutcome.current,
-    });
-  }
-
-  if (pathname === "/api/system/restart" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.SystemManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    if (warmRestartState.inProgress) {
-      return Response.json({ error: "Restart already in progress" }, { status: 409 });
-    }
-
-    const activeSessions = manager
-      .listSessions()
-      .filter((session) => session.status === "starting" || session.status === "running");
-
-    const marker: WarmRestartMarker = {
-      createdAt: new Date().toISOString(),
-      sessionIds: activeSessions.map((session) => session.id),
-      reason: "ui-restart",
-      version: 1,
+  // System routes (delegated to system-routes.ts)
+  if (pathname.startsWith("/api/system/")) {
+    const systemCtx: SystemRoutesContext = {
+      restartMarkerPath,
+      warmRestartManagerScriptPath,
+      projectRoot,
+      configPort: config.port,
+      wingmanCoreTmuxSession: WINGMAN_CORE_TMUX_SESSION,
+      manager,
+      ensureApiAccess,
+      AccessActions,
+      setPreserveSessionsOnShutdown: (v) => { preserveSessionsOnShutdown = v; },
+      initiateShutdown,
+      performSystemCleanup,
+      messageStore,
+      appProcessManager,
+      appRegistry,
     };
-
-    try {
-      await writeWarmRestartMarker(restartMarkerPath, marker);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: `Failed to write restart marker: ${message}` }, { status: 500 });
-    }
-
-    warmRestartState.inProgress = true;
-    warmRestartState.marker = marker;
-    warmRestartOutcome.current = null;
-    preserveSessionsOnShutdown = true;
-
-    try {
-      await stat(warmRestartManagerScriptPath);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      warmRestartState.inProgress = false;
-      preserveSessionsOnShutdown = false;
-      return Response.json({ error: `Restart script missing: ${message}` }, { status: 500 });
-    }
-
-    try {
-      Bun.spawn([
-        Bun.env.WINGMAN_MANAGER_COMMAND?.trim() || "bun",
-        "run",
-        warmRestartManagerScriptPath,
-        process.pid.toString(),
-        projectRoot,
-        String(config.port),
-        restartMarkerPath,
-        WINGMAN_CORE_TMUX_SESSION,
-        "wingman-core",
-      ], {
-        cwd: projectRoot,
-        stdout: "ignore",
-        stderr: "ignore",
-        stdin: "ignore",
-        detached: true,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      warmRestartState.inProgress = false;
-      preserveSessionsOnShutdown = false;
-      return Response.json({ error: `Failed to launch restart script: ${message}` }, { status: 500 });
-    }
-
-    setTimeout(() => {
-      void initiateShutdown("warm-restart");
-    }, 250).unref?.();
-
-    return Response.json({
-      status: "scheduled",
-      sessions: marker.sessionIds ?? [],
-    }, { status: 202 });
-  }
-
-  if (pathname === "/api/system/cleanup" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.SystemManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    try {
-      const result = await performSystemCleanup({ manager, messageStore, appProcessManager, appRegistry });
-      return Response.json(result);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`[system] cleanup failure: ${message}`);
-      return Response.json({ error: `System cleanup failed: ${message}` }, { status: 500 });
+    const systemResponse = await handleSystemRoutes(request, url, method, authContext, systemCtx);
+    if (systemResponse) {
+      return systemResponse;
     }
   }
 
