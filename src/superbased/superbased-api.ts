@@ -43,12 +43,19 @@ function resolveBaseUrl(
   paramUrl: string | undefined,
   defaultUrl: string | null,
 ): string {
-  const url = paramUrl?.trim();
-  if (url && url.length > 0) return url.replace(/\/+$/, "");
-  if (defaultUrl) return defaultUrl;
-  throw new Error(
-    "No SuperBased URL configured. Set SUPERBASED_URL or pass base_url parameter.",
-  );
+  const raw = paramUrl?.trim();
+  const url = raw && raw.length > 0 ? raw : defaultUrl;
+  if (!url) {
+    throw new Error(
+      "No SuperBased URL configured. Set SUPERBASED_URL or pass base_url parameter.",
+    );
+  }
+  // Validate URL scheme to prevent SSRF via protocol smuggling (e.g. file://, javascript://)
+  const parsed = URL.parse(url);
+  if (!parsed || (parsed.protocol !== "http:" && parsed.protocol !== "https:")) {
+    throw new Error("base_url must use http or https scheme");
+  }
+  return url.replace(/\/+$/, "");
 }
 
 function resolveNamespaceMode(raw: unknown): NamespaceMode {

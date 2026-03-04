@@ -73,7 +73,7 @@ export function createBotCryptoApiHandler(deps: BotCryptoApiDependencies) {
       return jsonError("Not found", 404);
     } catch (err) {
       console.error("[bot-crypto-api] Error:", err);
-      return jsonError((err as Error).message, 500);
+      return jsonError("Internal server error", 500);
     }
   };
 }
@@ -117,6 +117,28 @@ async function withRateLimit(
 }
 
 // ---------------------------------------------------------------------------
+// Session validation helper
+// ---------------------------------------------------------------------------
+
+function validateSession(
+  deps: BotCryptoApiDependencies,
+  sessionId: string,
+): { error: Response } | { session: NonNullable<ReturnType<BotCryptoApiDependencies["getSession"]>> } {
+  const session = deps.getSession(sessionId);
+  if (!session) {
+    return { error: jsonError("Unknown session", 404) };
+  }
+  // Only allow active sessions — reject stopped/errored sessions
+  if (session.status === "stopped" || session.status === "error") {
+    return { error: jsonError("Session is not active", 403) };
+  }
+  if (!session.npub) {
+    return { error: jsonError("Session has no associated user", 403) };
+  }
+  return { session };
+}
+
+// ---------------------------------------------------------------------------
 // Route handlers
 // ---------------------------------------------------------------------------
 
@@ -143,15 +165,11 @@ async function handleEncrypt(
     return jsonError("recipientPubkey must be a 64-character hex string", 400);
   }
 
-  const session = deps.getSession(sessionId);
-  if (!session) {
-    return jsonError("Unknown session", 404);
-  }
-  if (!session.npub) {
-    return jsonError("Session has no associated user", 403);
-  }
+  const result = validateSession(deps, sessionId);
+  if ("error" in result) return result.error;
+  const session = result.session;
 
-  const botKey = getDecryptedBotKey(session.npub);
+  const botKey = getDecryptedBotKey(session.npub!);
   if (!botKey) {
     return jsonError("Bot key not unlocked for this user", 503);
   }
@@ -183,15 +201,11 @@ async function handleDecrypt(
     return jsonError("senderPubkey must be a 64-character hex string", 400);
   }
 
-  const session = deps.getSession(sessionId);
-  if (!session) {
-    return jsonError("Unknown session", 404);
-  }
-  if (!session.npub) {
-    return jsonError("Session has no associated user", 403);
-  }
+  const result = validateSession(deps, sessionId);
+  if ("error" in result) return result.error;
+  const session = result.session;
 
-  const botKey = getDecryptedBotKey(session.npub);
+  const botKey = getDecryptedBotKey(session.npub!);
   if (!botKey) {
     return jsonError("Bot key not unlocked for this user", 503);
   }
@@ -200,7 +214,8 @@ async function handleDecrypt(
     const plaintext = nip44Decrypt(ciphertext, botKey.secretKey, senderPubkey);
     return Response.json({ plaintext, decryptedBy: botKey.pubkeyHex });
   } catch (err) {
-    return jsonError(`Decryption failed: ${(err as Error).message}`, 400);
+    console.error("[bot-crypto-api] Decryption failed:", (err as Error).message);
+    return jsonError("Decryption failed", 400);
   }
 }
 
@@ -239,15 +254,11 @@ async function handleSignEvent(
     return jsonError("event.tags must be an array", 400);
   }
 
-  const session = deps.getSession(sessionId);
-  if (!session) {
-    return jsonError("Unknown session", 404);
-  }
-  if (!session.npub) {
-    return jsonError("Session has no associated user", 403);
-  }
+  const result = validateSession(deps, sessionId);
+  if ("error" in result) return result.error;
+  const session = result.session;
 
-  const botKey = getDecryptedBotKey(session.npub);
+  const botKey = getDecryptedBotKey(session.npub!);
   if (!botKey) {
     return jsonError("Bot key not unlocked for this user", 503);
   }
@@ -264,7 +275,7 @@ async function handleSignEvent(
     signedEvent = finalizeEvent(template, botKey.secretKey);
   } catch (err) {
     console.error("[bot-crypto-api] finalizeEvent failed:", err);
-    return jsonError(`Event signing failed: ${(err as Error).message}`, 500);
+    return jsonError("Event signing failed", 500);
   }
 
   // Serialize to plain object — finalizeEvent returns a branded type

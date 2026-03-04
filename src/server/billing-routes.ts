@@ -94,8 +94,9 @@ export async function handleBillingApi(
 
       return Response.json(ctx.billingService.getTeamConfigWithSummary());
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error("[billing-routes] PATCH /api/billing/team error:", detail);
+      return Response.json({ error: "Failed to update team configuration" }, { status: 400 });
     }
   }
 
