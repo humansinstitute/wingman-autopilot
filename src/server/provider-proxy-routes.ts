@@ -55,6 +55,25 @@ const describeTokenCandidate = (candidate: string): string => {
   return `len=${candidate.length},segments=${segmentCount}`;
 };
 
+/** Permitted upstream API path prefixes. Requests outside this set are rejected. */
+const ALLOWED_PATH_PREFIXES = [
+  "/v1/chat/completions",
+  "/v1/completions",
+  "/v1/responses",
+  "/v1/embeddings",
+  "/v1/models",
+  "/v1/messages",
+  "/api/v1/chat/completions",
+  "/api/v1/completions",
+  "/api/v1/responses",
+  "/api/v1/embeddings",
+  "/api/v1/models",
+  "/api/v1/messages",
+];
+
+const isAllowedPath = (restPath: string): boolean =>
+  ALLOWED_PATH_PREFIXES.some((prefix) => restPath === prefix || restPath.startsWith(prefix + "/") || restPath.startsWith(prefix + "?"));
+
 const parseProviderKindAndPath = (pathname: string): { provider: ProviderKind; restPath: string } | null => {
   if (!pathname.startsWith(PROVIDER_PREFIX)) return null;
   const remainder = pathname.slice(PROVIDER_PREFIX.length);
@@ -62,7 +81,9 @@ const parseProviderKindAndPath = (pathname: string): { provider: ProviderKind; r
   const providerRaw = (slashIndex >= 0 ? remainder.slice(0, slashIndex) : remainder).trim().toLowerCase();
   const rest = slashIndex >= 0 ? remainder.slice(slashIndex) : "/";
   if (providerRaw !== "openai" && providerRaw !== "anthropic" && providerRaw !== "openrouter") return null;
-  return { provider: providerRaw, restPath: rest || "/" };
+  const restPath = rest || "/";
+  if (!isAllowedPath(restPath)) return null;
+  return { provider: providerRaw, restPath };
 };
 
 const buildUpstreamUrl = (provider: ProviderKind, restPath: string, search: string): string => {
@@ -245,7 +266,8 @@ export async function handleProviderProxyApi(
       redirect: "manual",
     });
   } catch (error) {
-    return Response.json({ error: `provider-request-failed: ${(error as Error).message}` }, { status: 502 });
+    console.error(`[billing-proxy] provider request failed for ${parsed.provider}${parsed.restPath}:`, (error as Error).message);
+    return Response.json({ error: "provider-request-failed" }, { status: 502 });
   }
 
   const upstreamHeaders = new Headers(upstreamResponse.headers);
