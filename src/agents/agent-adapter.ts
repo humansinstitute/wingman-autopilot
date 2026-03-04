@@ -25,6 +25,14 @@ export interface AdapterSessionContext {
   codexThreadId?: string;
   /** OpenCode session ID for session resume (used by OpenCodeAdapter) */
   opencodeSdkSessionId?: string;
+  /** Optional billing callback for native SDK adapters that bypass the proxy */
+  recordUsage?: (data: {
+    sessionId: string;
+    endpoint: string;
+    costUsd?: number | null;
+    inputTokens?: number;
+    outputTokens?: number;
+  }) => Promise<void>;
 }
 
 export interface AgentAdapter {

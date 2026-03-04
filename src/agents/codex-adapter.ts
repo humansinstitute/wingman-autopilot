@@ -159,6 +159,18 @@ export class CodexAdapter implements AgentAdapter {
         }
       }
 
+      // Report usage to billing ledger
+      if (usage && this.context.recordUsage) {
+        this.context.recordUsage({
+          sessionId: this.context.id,
+          endpoint: '/v1/responses',
+          inputTokens: usage.input_tokens ?? 0,
+          outputTokens: usage.output_tokens ?? 0,
+        }).catch(err =>
+          console.error(`[codex-adapter] billing error: ${(err as Error).message}`),
+        );
+      }
+
       // Record the assistant response
       if (finalText) {
         this.messages.push({

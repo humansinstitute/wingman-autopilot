@@ -634,6 +634,17 @@ if (teamBillingService.isCreditsEnabled()) {
 
 const manager = new ProcessManager(config, {
   resolveBillingLaunchConfig: (input) => teamBillingService.resolveLaunchConfig(input),
+  recordAdapterUsage: async (data) => {
+    await teamBillingService.recordProxyUsage({
+      sessionId: data.sessionId,
+      npub: data.npub,
+      agent: data.agent,
+      endpoint: data.endpoint,
+      method: 'POST',
+      statusCode: 200,
+      costUsd: data.costUsd ?? null,
+    });
+  },
 });
 
 const wingmanMcpApiHandler = createWingmanMcpApiHandler({

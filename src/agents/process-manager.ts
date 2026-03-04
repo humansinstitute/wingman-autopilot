@@ -10,7 +10,7 @@ import { isPortAvailable } from "../utils/port-utils.js";
 import { sanitizeLogEntry } from "../logging/log-sanitizer";
 import { trackProjectForSession } from "../projects/npub-project-tracker";
 import type { AgentRuntimeStatus } from "../types/agent-status";
-import type { AgentAdapter } from "./agent-adapter";
+import type { AgentAdapter, AdapterSessionContext } from "./agent-adapter";
 import { resolveAdapterFactory, OPENCODE_NATIVE_SDK_FLAG } from "./agent-adapter";
 import { featureFlagStore, resolveFeatureFlagEffectiveState } from "../storage/feature-flag-store";
 import {
@@ -114,8 +114,20 @@ export interface BillingLaunchResult {
   fallbackReason: string | null;
 }
 
+/** Callback for native SDK adapters to report usage to the billing ledger */
+export type RecordAdapterUsage = (data: {
+  sessionId: string;
+  npub: string | null;
+  agent: string;
+  endpoint: string;
+  costUsd?: number | null;
+  inputTokens?: number;
+  outputTokens?: number;
+}) => Promise<void>;
+
 export interface ProcessManagerOptions {
   resolveBillingLaunchConfig?: (input: BillingLaunchInput) => Promise<BillingLaunchResult>;
+  recordAdapterUsage?: RecordAdapterUsage;
 }
 
 interface AgentSession {
@@ -186,6 +198,7 @@ function resolveNativeOpenCodeCommand(agentapiCommand: string[], port: number): 
 export class ProcessManager {
   private readonly config: WingmanConfig;
   private readonly resolveBillingLaunchConfig?: (input: BillingLaunchInput) => Promise<BillingLaunchResult>;
+  private readonly recordAdapterUsage?: RecordAdapterUsage;
   private readonly sessions = new Map<string, AgentSession>();
   private readonly allocatedPorts = new Set<number>();
   private readonly listeners = new Set<(event: SessionEvent) => void>();
@@ -197,6 +210,7 @@ export class ProcessManager {
   constructor(config: WingmanConfig, options: ProcessManagerOptions = {}) {
     this.config = config;
     this.resolveBillingLaunchConfig = options.resolveBillingLaunchConfig;
+    this.recordAdapterUsage = options.recordAdapterUsage;
   }
 
   private getBotKeyStore(): BotKeyStore | null {
@@ -473,6 +487,7 @@ export class ProcessManager {
         pm2Name: session.pm2Name,
         workingDirectory: session.workingDirectory,
         env: session.definition.env as Record<string, string> | undefined,
+        recordUsage: this.buildRecordUsageCallback(session),
       });
 
       this.emit({ type: "session-updated", session: this.toSnapshot(session) });
@@ -557,6 +572,7 @@ export class ProcessManager {
       pm2Name: session.pm2Name,
       workingDirectory: session.workingDirectory,
       env: session.definition.env as Record<string, string> | undefined,
+      recordUsage: this.buildRecordUsageCallback(session),
     });
 
     this.sessions.set(session.id, session);
@@ -872,6 +888,23 @@ export class ProcessManager {
       console.warn(`[manager] failed to ensure alias directory ${aliasDirectory}: ${message}`);
     }
     return aliasDirectory;
+  }
+
+  /**
+   * Build a recordUsage callback bound to a session's identity, for native SDK adapters.
+   */
+  private buildRecordUsageCallback(
+    session: AgentSession,
+  ): AdapterSessionContext['recordUsage'] {
+    if (!this.recordAdapterUsage) return undefined;
+    const recordFn = this.recordAdapterUsage;
+    return async (data) => {
+      await recordFn({
+        ...data,
+        npub: session.npub ?? null,
+        agent: session.agent,
+      });
+    };
   }
 
   private isAdminUser(npub: string | undefined): boolean {
