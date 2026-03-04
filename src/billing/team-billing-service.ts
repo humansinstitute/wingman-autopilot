@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { resolve } from "node:path";
 
 import type { AgentType } from "../config";
@@ -522,7 +522,9 @@ export class TeamBillingService {
     if (!prefix || !payloadEncoded || !signature) return null;
     if (prefix !== TOKEN_PREFIX) return null;
     const expected = this.signToken(payloadEncoded);
-    if (signature !== expected) return null;
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expected);
+    if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) return null;
     try {
       const decoded = fromBase64Url(payloadEncoded);
       const parsed = JSON.parse(decoded) as ProxyTokenPayload;

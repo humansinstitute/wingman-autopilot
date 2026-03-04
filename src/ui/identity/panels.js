@@ -304,7 +304,7 @@ export function initIdentityPanels(deps) {
     importInput.id = "identity-import-nsec";
     importInput.name = "nsec";
     importInput.type = "password";
-    importInput.autocomplete = "current-password";
+    importInput.autocomplete = "off";
     importInput.className = "wm-identity-input-flat wm-identity-import-nsec-input";
     importInput.placeholder = "nsec1...";
     importInput.spellcheck = false;

@@ -52,8 +52,7 @@ const extractProxyTokenCandidates = (request: Request): string[] => {
 
 const describeTokenCandidate = (candidate: string): string => {
   const segmentCount = candidate.split(".").length;
-  const prefix = candidate.slice(0, 10);
-  return `len=${candidate.length},segments=${segmentCount},prefix=${prefix}`;
+  return `len=${candidate.length},segments=${segmentCount}`;
 };
 
 const parseProviderKindAndPath = (pathname: string): { provider: ProviderKind; restPath: string } | null => {
