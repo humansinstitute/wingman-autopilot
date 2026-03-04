@@ -129,33 +129,28 @@ import {
 import { createStaticAssetService, compressResponse } from "./server/static-assets";
 import { maybeRefreshSessionCookie } from "./server/session-refresh";
 import { handleSubdomainRequest, resolveAliasToPort, proxyRequestToApp, type SubdomainProxyConfig } from "./server/subdomain-proxy";
-import { handleAppsApi } from "./server/apps-api-routes";
-import { handleStarterProjectsApi } from "./server/starter-projects-routes";
 import { isAgentRuntimeStatus } from "./types/agent-status";
 import { scheduleCleanup } from "./uploads/cleanup";
 import { createSessionEventsHandler } from "./server/session-events";
 import { sessionBroadcaster, createSessionSubscribeResponse } from "./server/session-broadcaster";
-import { handleChatApi, type ChatApiContext } from "./server/chat-routes";
-import { handleSessionApi, type SessionApiContext } from "./server/session-api-routes";
-import { handleProviderProxyApi, type ProviderProxyApiContext } from "./server/provider-proxy-routes";
-import { handleBillingApi, type BillingApiContext } from "./server/billing-routes";
-import { handleDocsApi, type DocsApiContext } from "./server/docs-routes";
-import { handleAdminUsersApi, type AdminUsersApiContext } from "./server/admin-users-routes";
-import { handleAuthApi, type AuthApiContext } from "./server/auth-routes";
+import { type ChatApiContext } from "./server/chat-routes";
+import { type SessionApiContext } from "./server/session-api-routes";
+import { type ProviderProxyApiContext } from "./server/provider-proxy-routes";
+import { type BillingApiContext } from "./server/billing-routes";
+import { type DocsApiContext } from "./server/docs-routes";
+import { type AdminUsersApiContext } from "./server/admin-users-routes";
+import { type AuthApiContext } from "./server/auth-routes";
 import {
-  handleFeatureFlagsApi,
-  type FeatureFlagsApiContext,
-  serialiseFeatureFlag,
   serialiseFeatureFlagsForViewer,
 } from "./server/feature-flags-routes";
 import {
-  handleUploadsApi,
   resolveTempImage,
   resolveTempAttachment,
   type UploadApiContext,
 } from "./server/upload-routes";
 import { performSystemCleanup } from "./server/system-cleanup.js";
-import { handleSystemRoutes, type SystemRoutesContext } from "./server/system-routes";
+import { type SystemRoutesContext } from "./server/system-routes";
+import { createApiRouteHandler } from "./server/api-routes";
 import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import { SchedulerStore } from "./scheduler/scheduler-store";
 import { SchedulerEngine } from "./scheduler/scheduler-engine";
@@ -2242,369 +2237,168 @@ const billingApiContext: BillingApiContext = {
   AccessActions,
 };
 
-const handleApi = async (
-  request: Request,
-  url: URL,
-  method: HttpMethod,
-  authContext: RequestAuthContext,
-): Promise<Response> => {
-  const withProjectApiCors = (response: Response): Response => {
-    const headers = new Headers(response.headers);
-    const origin = request.headers.get("origin");
-    headers.set("Access-Control-Allow-Origin", origin || "*");
-    headers.set("Vary", "Origin");
-    headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
-    headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    });
-  };
+const handleApi = createApiRouteHandler({
+  config: {
+    port: config.port,
+    agentPortStart: config.agentPortStart,
+    agentPortMax: config.agentPortMax,
+    hostUrlBase: config.hostUrlBase,
+    connectRelays: config.connectRelays,
+    agents: config.agents,
+    defaultAgent: config.defaultAgent,
+    giteaUrl: config.giteaUrl,
+  },
+  adminNpub,
 
-  const pathname = url.pathname;
-  const workspaceScope = resolveWorkspace(authContext);
-  const viewerIsAdmin = workspaceScope.isAdmin;
-  const projectsFlag = resolveFeatureFlagStateForViewer(PROJECTS_FLAG_KEY, viewerIsAdmin, "on_admin");
-  const projectsEnabled = projectsFlag.effectiveState === "on";
-  const viewerNpub = normaliseNpub(authContext.npub ?? null);
-  const canAccessApp = (app: AppRecord): boolean => {
-    if (workspaceScope.isAdmin) {
-      return true;
-    }
-    if (!viewerNpub) {
-      return false;
-    }
-    return app.ownerNpub === viewerNpub;
-  };
-  const browserLogResponse = await browserLogHandler(request, url, method, authContext);
-  if (browserLogResponse) {
-    return browserLogResponse;
-  }
+  // Pre-instantiated API handlers
+  todoApiHandler,
+  projectApiHandler,
+  npubProjectApiHandler,
+  browserLogHandler,
+  caproverApiHandler,
+  nightWatchApiHandler,
+  nip98ApiHandler,
+  botCryptoApiHandler,
+  botKeyApiHandler,
+  giteaApiHandler,
+  gitWorkflowApiHandler,
+  ngitApiHandler,
+  superbasedApiHandler,
+  wingmanMcpApiHandler,
+  schedulerApiHandler,
 
-  const providerProxyResponse = await handleProviderProxyApi(request, url, method, providerProxyApiContext);
-  if (providerProxyResponse) {
-    return providerProxyResponse;
-  }
-
-  const billingApiResponse = await handleBillingApi(request, url, method, authContext, billingApiContext);
-  if (billingApiResponse) {
-    return billingApiResponse;
-  }
-
-  if (pathname.startsWith("/api/npub-projects")) {
-    if (method === "OPTIONS") {
-      return withProjectApiCors(new Response(null, { status: 204 }));
-    }
-
-    let effectiveAuth = authContext;
-    let effectiveIsAdmin = workspaceScope.isAdmin;
-
-    // Allow NIP-98 auth as fallback when no session cookie
-    if (!authContext.session) {
-      const nip98Npub = verifyNip98AuthHeader(request, url);
-      if (nip98Npub) {
-        effectiveAuth = { npub: nip98Npub, session: null };
-        effectiveIsAdmin = true; // NIP-98 server keys treated as admin for project lookups
-      } else {
-        return withProjectApiCors(Response.json({ error: "Authentication required" }, { status: 401 }));
-      }
-    }
-
-    const response = await npubProjectApiHandler(
-      request,
-      url,
-      method,
-      effectiveAuth,
-      effectiveIsAdmin,
-    );
-    if (response) {
-      return withProjectApiCors(response);
-    }
-    return withProjectApiCors(Response.json({ error: "Not found" }, { status: 404 }));
-  }
-  if (pathname.startsWith("/api/projects")) {
-    const denied = await ensureApiAccess(AccessActions.ProjectsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    if (!projectsEnabled) {
-      return Response.json({ error: "projects-disabled" }, { status: 403 });
-    }
-    const response = await projectApiHandler(request, url, method, authContext, {
-      isAdmin: workspaceScope.isAdmin,
-    });
-    if (response) {
-      return response;
-    }
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-  if (pathname.startsWith("/api/todos")) {
-    const denied = await ensureApiAccess(AccessActions.TodosManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const response = await todoApiHandler(request, url, method, authContext);
-    if (response) {
-      return response;
-    }
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-  if (pathname.startsWith("/api/nightwatch")) {
-    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const response = await nightWatchApiHandler(request, url, method);
-    if (response) {
-      return response;
-    }
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-  if (pathname.startsWith("/api/scheduler")) {
-    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const response = await schedulerApiHandler(request, url, method);
-    if (response) {
-      return response;
-    }
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-  // Bot key API — per-user bot identity management.
-  // Auth: cookie-based for browser routes, session ID for escrow unlock.
-  if (pathname.startsWith("/api/bot-keys")) {
-    const response = await botKeyApiHandler(request, url, method);
-    if (response) {
-      return response;
-    }
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-  // Bot crypto API — NIP-44 encrypt/decrypt using user's bot key.
-  // No auth gate: validated by session ID in the handler.
-  if (pathname.startsWith("/api/mcp/bot-crypto")) {
-    const response = await botCryptoApiHandler(request, url, method);
-    if (response) {
-      return response;
-    }
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-  // MCP NIP-98 API — called by the MCP stdio server running inside agents.
-  // No auth gate: requests are validated by session ID in the handler.
-  if (pathname.startsWith("/api/mcp/nip98")) {
-    const response = await nip98ApiHandler(request, url, method);
-    if (response) {
-      return response;
-    }
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-  // Git workflow API — branch, worktree, merge, and status operations.
-  // No auth gate: validated by session ID in the handler.
-  if (pathname.startsWith("/api/git/")) {
-    const response = await gitWorkflowApiHandler(request, url, method);
-    if (response) {
-      return response;
-    }
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-  // Gitea API — programmatic git operations scoped to the Gitea remote.
-  // No auth gate: validated by session ID in the handler.
-  if (pathname.startsWith("/api/gitea")) {
-    const response = await giteaApiHandler(request, url, method);
-    if (response) {
-      return response;
-    }
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-  // ngit API — NIP-34 git repository operations (publish, push state, list).
-  // No auth gate: requests are validated by session ID and grants in the handler.
-  if (pathname.startsWith("/api/ngit")) {
-    const response = await ngitApiHandler(request, url, method);
-    if (response) {
-      return response;
-    }
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-  // SuperBased API — encrypted record CRUD via Flux Adaptor.
-  // No auth gate: uses Tier 1 NIP-98 signing internally.
-  if (pathname.startsWith("/api/superbased")) {
-    const response = await superbasedApiHandler(request, url, method);
-    if (response) {
-      return response;
-    }
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-  // MCP Wingman Action API — called by the MCP stdio server running inside agents.
-  // No auth gate: requests are validated by session ID in the handler.
-  if (pathname.startsWith("/api/mcp/wingman")) {
-    const response = await wingmanMcpApiHandler(request, url, method);
-    if (response) {
-      return response;
-    }
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-  if (pathname.startsWith("/api/caprover")) {
-    const denied = await ensureApiAccess(AccessActions.DeploymentsManage, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    const response = await caproverApiHandler(request, url, method, authContext);
-    if (response) {
-      return response;
-    }
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-  // Private chat API routes
-  if (pathname.startsWith("/api/chats") || pathname === "/api/maple/models") {
-    if (!authContext.session) {
-      return Response.json({ error: "Authentication required" }, { status: 401 });
-    }
-    const chatContext: ChatApiContext = {
-      config,
-      npub: viewerNpub,
-      isAdmin: viewerIsAdmin,
-    };
-    const response = await handleChatApi(request, url, method, chatContext);
-    if (response) {
-      return response;
-    }
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-  // System routes (delegated to system-routes.ts)
-  if (pathname.startsWith("/api/system/")) {
-    const systemCtx: SystemRoutesContext = {
-      restartMarkerPath,
-      warmRestartManagerScriptPath,
-      projectRoot,
-      configPort: config.port,
-      wingmanCoreTmuxSession: WINGMAN_CORE_TMUX_SESSION,
-      manager,
-      ensureApiAccess,
-      AccessActions,
-      setPreserveSessionsOnShutdown: (v) => { preserveSessionsOnShutdown = v; },
-      initiateShutdown,
-      performSystemCleanup,
-      messageStore,
-      appProcessManager,
-      appRegistry,
-    };
-    const systemResponse = await handleSystemRoutes(request, url, method, authContext, systemCtx);
-    if (systemResponse) {
-      return systemResponse;
-    }
-  }
-
-  // Auth routes (delegated to auth-routes.ts)
-  if (pathname.startsWith("/api/auth/") || pathname === "/api/identity/profile") {
-    const authApiContext: AuthApiContext = {
-      config: {
-        registrationEnabled: config.registrationEnabled,
-        connectRelays: config.connectRelays,
-        giteaUrl: config.giteaUrl,
-        giteaApiToken: config.giteaApiToken,
-        giteaOwner: config.giteaOwner,
-      },
-      adminNpub,
-      identityUserStore,
-      botKeyStore,
-      mintSessionCookie,
-      SessionCookieError,
-      SESSION_COOKIE_NAME,
-      shouldUseSecureCookies,
-      generateIdentityAlias,
-      generateBotKey,
-      handleKeyTeleport,
-      handleKeyTeleportRegistration,
-      ensureGiteaUser,
-      ensureApiAccess,
-      AccessActions,
-      getViewerNormalizedNpub,
-      normaliseOptionalString,
-      resolveAndCacheNostrProfile,
-      onSessionAuthenticated: (npub: string) => {
-        try {
-          identityUserStore.touch(npub);
-          teamBillingService.syncTeamMembers();
-          if (teamBillingService.isCreditsEnabled()) {
-            void teamBillingService.primeProviderKeyCache().catch((error) => {
-              console.warn(`[billing] failed to prime provider key cache at login: ${(error as Error).message}`);
-            });
-          }
-        } catch (error) {
-          console.warn(`[billing] failed to update team members for ${npub}: ${(error as Error).message}`);
+  // Pre-built route contexts (request-independent)
+  sessionApiContext,
+  docsApiContext,
+  providerProxyApiContext,
+  billingApiContext,
+  systemRoutesContext: {
+    restartMarkerPath,
+    warmRestartManagerScriptPath,
+    projectRoot,
+    configPort: config.port,
+    wingmanCoreTmuxSession: WINGMAN_CORE_TMUX_SESSION,
+    manager,
+    ensureApiAccess,
+    AccessActions,
+    setPreserveSessionsOnShutdown: (v) => { preserveSessionsOnShutdown = v; },
+    initiateShutdown: (reason: string) => initiateShutdown(reason),
+    performSystemCleanup: (deps: Parameters<typeof performSystemCleanup>[0]) => performSystemCleanup(deps),
+    messageStore,
+    appProcessManager,
+    appRegistry,
+  },
+  authApiContext: {
+    config: {
+      registrationEnabled: config.registrationEnabled,
+      connectRelays: config.connectRelays,
+      giteaUrl: config.giteaUrl,
+      giteaApiToken: config.giteaApiToken,
+      giteaOwner: config.giteaOwner,
+    },
+    adminNpub,
+    identityUserStore,
+    botKeyStore,
+    mintSessionCookie,
+    SessionCookieError,
+    SESSION_COOKIE_NAME,
+    shouldUseSecureCookies,
+    generateIdentityAlias,
+    generateBotKey,
+    handleKeyTeleport,
+    handleKeyTeleportRegistration,
+    ensureGiteaUser,
+    ensureApiAccess,
+    AccessActions,
+    getViewerNormalizedNpub,
+    normaliseOptionalString,
+    resolveAndCacheNostrProfile,
+    onSessionAuthenticated: (npub: string) => {
+      try {
+        identityUserStore.touch(npub);
+        teamBillingService.syncTeamMembers();
+        if (teamBillingService.isCreditsEnabled()) {
+          void teamBillingService.primeProviderKeyCache().catch((error) => {
+            console.warn(`[billing] failed to prime provider key cache at login: ${(error as Error).message}`);
+          });
         }
-      },
-    };
-    const authResult = await handleAuthApi(request, url, method, authContext, authApiContext);
-    if (authResult) return authResult;
-  }
-
-  // Admin user routes (delegated to admin-users-routes.ts)
-  if (pathname.startsWith("/api/admin/users") || pathname === "/api/admin/ports") {
-    const adminUsersApiContext: AdminUsersApiContext = {
-      adminNpub,
-      config: { connectRelays: config.connectRelays },
-      identityUserStore,
-      manager,
-      ensureApiAccess,
-      AccessActions,
-      normaliseOptionalString,
-      stopSessionsForUser,
-      resolveAndCacheNostrProfile,
-      buildIdentitySummaries,
-    };
-    const adminUsersResponse = await handleAdminUsersApi(request, url, method, authContext, adminUsersApiContext);
-    if (adminUsersResponse) return adminUsersResponse;
-  }
-
-  if (
-    pathname === "/api/apps/starter-projects" ||
-    pathname === "/api/apps/starter-projects/launch" ||
-    pathname === "/api/admin/starter-projects" ||
-    pathname.startsWith("/api/admin/starter-projects/")
-  ) {
-    const starterProjectsResponse = await handleStarterProjectsApi(request, url, method, authContext, {
-      adminNpub,
-      workspaceScope,
-      viewerNpub,
-      AccessActions,
-      ensureApiAccess,
-      normaliseOptionalString,
-      normaliseNpub,
-      cloneRepositoryIntoWorkspace,
-      buildAppResponse,
-      appRegistry,
-      appProcessManager,
-      appAliasRegistry,
-      starterProjectStore,
-      npubProjectStore,
-    });
-    if (starterProjectsResponse) return starterProjectsResponse;
-  }
-
-  if (pathname === "/api/workspace/tree" || pathname === "/api/apps" || pathname.startsWith("/api/apps/")) {
-    let appsAuthContext = authContext;
-    if (!appsAuthContext.session) {
-      const nip98Npub = verifyNip98AuthHeader(request, url);
-      if (nip98Npub) {
-        appsAuthContext = { npub: nip98Npub, session: null };
+      } catch (error) {
+        console.warn(`[billing] failed to update team members for ${npub}: ${(error as Error).message}`);
       }
-    }
+    },
+  },
+  adminUsersApiContext: {
+    adminNpub,
+    config: { connectRelays: config.connectRelays },
+    identityUserStore,
+    manager,
+    ensureApiAccess,
+    AccessActions,
+    normaliseOptionalString,
+    stopSessionsForUser,
+    resolveAndCacheNostrProfile,
+    buildIdentitySummaries,
+  },
+  uploadApiContext: {
+    imageRoot,
+    attachmentRoot,
+    isAdminContext,
+    isAgentType,
+    ensureImageDirectory,
+    ensureAttachmentDirectory,
+    createImageFilename,
+    createAttachmentFilename,
+    buildAgentImagePlaceholder,
+    buildAgentFilePlaceholder,
+    ensureApiAccess,
+    AccessActions,
+  },
 
+  // Stores accessed directly
+  featureFlagStore,
+  userSettingsStore,
+  artifactsStore,
+
+  // Constants
+  PROJECTS_FLAG_KEY,
+
+  // Core helpers
+  resolveWorkspace,
+  verifyNip98AuthHeader,
+  resolveFeatureFlagStateForViewer,
+  ensureApiAccess,
+  serialiseFeatureFlagsForViewer: (isAdmin: boolean) =>
+    serialiseFeatureFlagsForViewer(featureFlagStore, isAdmin),
+  listDirectories,
+  createDirectoryEntry,
+  AccessActions,
+
+  // Per-request context builders
+  buildStarterProjectsContext: (workspaceScope, viewerNpub) => ({
+    adminNpub,
+    workspaceScope,
+    viewerNpub,
+    AccessActions,
+    ensureApiAccess,
+    normaliseOptionalString,
+    normaliseNpub,
+    cloneRepositoryIntoWorkspace,
+    buildAppResponse,
+    appRegistry,
+    appProcessManager,
+    appAliasRegistry,
+    starterProjectStore,
+    npubProjectStore,
+  }),
+  buildAppsContext: (appsAuthContext) => {
     const appsWorkspaceScope = resolveWorkspace(appsAuthContext);
     const appsViewerNpub = normaliseNpub(appsAuthContext.npub ?? null);
     const canAccessAppForRequest = (app: AppRecord): boolean => {
-      if (appsWorkspaceScope.isAdmin) {
-        return true;
-      }
-      if (!appsViewerNpub) {
-        return false;
-      }
+      if (appsWorkspaceScope.isAdmin) return true;
+      if (!appsViewerNpub) return false;
       return app.ownerNpub === appsViewerNpub;
     };
-
-    const appsApiResponse = await handleAppsApi(request, url, method, appsAuthContext, {
+    return {
       adminNpub,
       workspaceScope: appsWorkspaceScope,
       viewerNpub: appsViewerNpub,
@@ -2635,215 +2429,20 @@ const handleApi = async (
       createCaproverClientFromEnv,
       createAppTarball,
       caproverStore,
-    });
-    if (appsApiResponse) return appsApiResponse;
-  }
-
-  if (pathname === "/api/config" && method === "GET") {
-    return Response.json({
-      port: config.port,
-      agentPortStart: config.agentPortStart,
-      agentPortMax: config.agentPortMax,
-      hostUrlBase: config.hostUrlBase,
-      defaultDirectory: workspaceScope.defaultDirectory,
-      allowedDirectories: workspaceScope.allowedDirectories,
-      connectRelays: config.connectRelays,
-      adminNpub,
-      agents: Object.entries(config.agents).map(([key, definition]) => ({
-        id: key,
-        label: definition.label,
-      })),
-      defaultAgent: config.defaultAgent,
-      featureFlags: serialiseFeatureFlagsForViewer(featureFlagStore, workspaceScope.isAdmin),
-      giteaUrl: config.giteaUrl ?? null,
-    });
-  }
-
-  // Feature flag routes (delegated to feature-flags-routes.ts)
-  if (pathname.startsWith("/api/feature-flags")) {
-    const featureFlagsCtx: FeatureFlagsApiContext = {
-      featureFlagStore,
-      viewerIsAdmin: workspaceScope.isAdmin,
-      ensureApiAccess,
-      AccessActions,
     };
-    const ffResult = await handleFeatureFlagsApi(request, url, method, authContext, featureFlagsCtx);
-    if (ffResult) return ffResult;
-  }
-
-  // Docs/files API routes (delegated to docs-routes.ts)
-  if (pathname.startsWith("/api/docs/")) {
-    const docsApiResponse = await handleDocsApi(request, url, method, authContext, docsApiContext);
-    if (docsApiResponse) return docsApiResponse;
-  }
-
-  if (pathname === "/api/directories" && method === "GET") {
-    const denied = await ensureApiAccess(AccessActions.FilesRead, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    try {
-      const data = await listDirectories(
-        url.searchParams.get("path"),
-        url.searchParams.get("query") ?? undefined,
-        workspaceScope,
-      );
-      return Response.json(data);
-    } catch (error) {
-      return Response.json({ error: (error as Error).message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/directories" && method === "POST") {
-    const denied = await ensureApiAccess(AccessActions.FilesWrite, request, url, authContext);
-    if (denied) {
-      return denied;
-    }
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    const parentInput = (payload as Record<string, unknown>).parent;
-    const nameInput = (payload as Record<string, unknown>).name;
-
-    try {
-      const data = await createDirectoryEntry(
-        typeof parentInput === "string" ? parentInput : null,
-        nameInput,
-      );
-      return Response.json(data, { status: 201 });
-    } catch (error) {
-      return Response.json({ error: (error as Error).message }, { status: 400 });
-    }
-  }
-
-  // Upload API routes (delegated to upload-routes.ts)
-  if (pathname.startsWith("/api/uploads/")) {
-    const uploadApiCtx: UploadApiContext = {
-      imageRoot,
-      attachmentRoot,
-      isAdminContext,
-      isAgentType,
-      ensureImageDirectory,
-      ensureAttachmentDirectory,
-      createImageFilename,
-      createAttachmentFilename,
-      buildAgentImagePlaceholder,
-      buildAgentFilePlaceholder,
-      ensureApiAccess,
-      AccessActions,
-    };
-    const uploadResult = await handleUploadsApi(request, url, method, authContext, uploadApiCtx);
-    if (uploadResult) return uploadResult;
-  }
-
-  // Session & archive API routes (delegated to session-api-routes.ts)
-  if (pathname.startsWith("/api/archive") || pathname.startsWith("/api/sessions")) {
-    const sessionApiResponse = await handleSessionApi(request, url, method, authContext, sessionApiContext);
-    if (sessionApiResponse) return sessionApiResponse;
-  }
-
-  // POST /api/sessions is handled by sessionApiContext above
-
-  // GET /api/artifacts/:id/raw — Serve artifact file content
-  if (pathname.startsWith("/api/artifacts/") && method === "GET") {
-    const artParts = pathname.split("/");
-    const artifactId = artParts[3];
-    if (artifactId && artParts[4] === "raw") {
-      const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-      if (denied) return denied;
-
-      const artifact = artifactsStore.get(artifactId);
-      if (!artifact) {
-        return Response.json({ error: "Artifact not found" }, { status: 404 });
-      }
-
-      try {
-        const file = Bun.file(artifact.filePath);
-        if (!(await file.exists())) {
-          return Response.json({ error: "Artifact file not found on disk" }, { status: 404 });
-        }
-        return new Response(file, {
-          headers: {
-            "Content-Type": artifact.mimeType || "application/octet-stream",
-            "Cache-Control": "private, max-age=3600",
-          },
-        });
-      } catch {
-        return Response.json({ error: "Failed to read artifact file" }, { status: 500 });
-      }
-    }
-  }
-
-  // User settings API
-  if (pathname.startsWith("/api/user/settings")) {
-    const denied = await ensureApiAccess(AccessActions.SessionsManage, request, url, authContext);
-    if (denied) return denied;
-
-    const viewerNpub = authContext.npub;
-    if (!viewerNpub) {
-      return Response.json({ error: "Authentication required" }, { status: 401 });
-    }
-
-    const settingsParts = pathname.split("/");
-    const settingKey = settingsParts[4]; // /api/user/settings/:key
-
-    if (method === "GET" && !settingKey) {
-      // GET /api/user/settings — list all settings for user
-      const settings = userSettingsStore.getAll(viewerNpub);
-      // Mask sensitive keys
-      const masked: Record<string, string> = {};
-      for (const [k, v] of Object.entries(settings)) {
-        const lowerKey = k.toLowerCase();
-        const isSensitive =
-          lowerKey.includes("key") ||
-          lowerKey.includes("secret") ||
-          lowerKey.includes("token") ||
-          lowerKey.includes("password");
-        masked[k] = isSensitive
-          ? (v.length > 8 ? `${v.slice(0, 4)}..${v.slice(-4)}` : "****")
-          : v;
-      }
-      return Response.json({ settings: masked });
-    }
-
-    if (method === "PUT" && settingKey) {
-      // PUT /api/user/settings/:key — set a setting
-      let payload: unknown;
-      try {
-        payload = await request.json();
-      } catch {
-        return Response.json({ error: "Invalid JSON" }, { status: 400 });
-      }
-      const record = payload as Record<string, unknown>;
-      const value = typeof record.value === "string" ? record.value.trim() : "";
-      if (!value) {
-        return Response.json({ error: "value is required" }, { status: 400 });
-      }
-      userSettingsStore.set(viewerNpub, settingKey, value);
-      return Response.json({ success: true, key: settingKey });
-    }
-
-    if (method === "DELETE" && settingKey) {
-      // DELETE /api/user/settings/:key — remove a setting
-      userSettingsStore.delete(viewerNpub, settingKey);
-      return Response.json({ success: true, key: settingKey, deleted: true });
-    }
-
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-
-  // /api/sessions/:id/* routes are handled by sessionApiContext above
-
-  return Response.json({ error: "Not found" }, { status: 404 });
-};
+  },
+  buildFeatureFlagsContext: (viewerIsAdmin) => ({
+    featureFlagStore,
+    viewerIsAdmin,
+    ensureApiAccess,
+    AccessActions,
+  }),
+  buildChatContext: (npub, isAdmin) => ({
+    config,
+    npub,
+    isAdmin,
+  }),
+});
 
 const server = Bun.serve({
   port: config.port,
