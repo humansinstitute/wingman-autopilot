@@ -482,7 +482,7 @@ function minuteOptions() {
 function getPageTemplate() {
   return `
   <!-- Header -->
-  <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+  <div class="wm-scheduler-header">
     <h2 style="margin: 0; flex: 1;">Triggers</h2>
     <button type="button" class="wm-btn wm-btn--sm" @click="refresh()">Refresh</button>
     <button type="button" class="wm-btn wm-btn--sm wm-btn--primary" @click="showForm = !showForm">
@@ -508,7 +508,7 @@ function getPageTemplate() {
       </div>
 
       <!-- Row 1: Name + Agent -->
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+      <div class="wm-scheduler-grid-two">
         <div class="wm-form-group">
           <label>Trigger Name</label>
           <input type="text" class="wm-input" x-model="form.name" placeholder="e.g. Daily code review">
@@ -587,7 +587,7 @@ function getPageTemplate() {
       <!-- Row 3b: File Watcher fields -->
       <template x-if="isFileWatcher">
         <div style="margin-top: 0.75rem;">
-          <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 0.75rem;">
+          <div class="wm-scheduler-grid-split">
             <div class="wm-form-group">
               <label>Watch Directory</label>
               <input type="text" class="wm-input" x-model="form.watchDirectory" placeholder="/path/to/watch"
@@ -625,9 +625,9 @@ function getPageTemplate() {
           <span style="font-weight: 600;">Enable Night Watchman</span>
         </label>
         <template x-if="isCron">
-          <div style="margin-left: auto; display: flex; align-items: center; gap: 0.4rem;">
+          <div class="wm-scheduler-timezone">
             <span style="font-size: 0.8rem; color: var(--text-secondary);">TZ:</span>
-            <input type="text" class="wm-input" style="width: 10rem;" x-model="form.timezone">
+            <input type="text" class="wm-input wm-scheduler-timezone-input" x-model="form.timezone">
           </div>
         </template>
       </div>
@@ -657,7 +657,7 @@ function getPageTemplate() {
   <div style="display: flex; flex-direction: column; gap: 0.5rem;">
     <template x-for="job in $store.scheduler.jobs" :key="job.id">
       <div style="background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 8px; padding: 0.75rem;">
-        <div style="display: flex; align-items: center; gap: 0.75rem;">
+        <div class="wm-scheduler-job-row">
           <!-- Enable toggle -->
           <button
             type="button"
@@ -669,7 +669,7 @@ function getPageTemplate() {
           ></button>
 
           <!-- Job info -->
-          <div style="flex: 1; min-width: 0;">
+          <div class="wm-scheduler-job-info">
             <div style="display: flex; align-items: baseline; gap: 0.5rem;">
               <strong x-text="job.name" style="font-size: 0.95rem;"></strong>
               <span x-text="job.agent" style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;"></span>
@@ -751,7 +751,7 @@ function getPageTemplate() {
             </div>
 
             <!-- Row 1: Name + Agent -->
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+            <div class="wm-scheduler-grid-two">
               <div class="wm-form-group">
                 <label>Trigger Name</label>
                 <input type="text" class="wm-input" x-model="editForm.name">
@@ -830,7 +830,7 @@ function getPageTemplate() {
             <!-- Row 3b: File Watcher fields -->
             <template x-if="editIsFileWatcher">
               <div style="margin-top: 0.75rem;">
-                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 0.75rem;">
+                <div class="wm-scheduler-grid-split">
                   <div class="wm-form-group">
                     <label>Watch Directory</label>
                     <input type="text" class="wm-input" x-model="editForm.watchDirectory"
@@ -867,9 +867,9 @@ function getPageTemplate() {
                 <span style="font-weight: 600;">Enable Night Watchman</span>
               </label>
               <template x-if="editIsCron">
-                <div style="margin-left: auto; display: flex; align-items: center; gap: 0.4rem;">
+                <div class="wm-scheduler-timezone">
                   <span style="font-size: 0.8rem; color: var(--text-secondary);">TZ:</span>
-                  <input type="text" class="wm-input" style="width: 10rem;" x-model="editForm.timezone">
+                  <input type="text" class="wm-input wm-scheduler-timezone-input" x-model="editForm.timezone">
                 </div>
               </template>
             </div>
