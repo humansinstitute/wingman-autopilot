@@ -114,9 +114,10 @@ export class OpenCodeAdapter implements AgentAdapter {
         },
       });
 
-      // Extract assistant text from response parts
+      // Extract assistant text and usage from response
       if (result.data) {
-        const responseParts = (result.data as any).parts ?? [];
+        const data = result.data as Record<string, unknown>;
+        const responseParts = (data.parts as any[]) ?? [];
         let responseText = "";
         for (const part of responseParts) {
           if (part.type === "text" && typeof part.text === "string") {
@@ -129,6 +130,19 @@ export class OpenCodeAdapter implements AgentAdapter {
             content: responseText,
             createdAt: new Date().toISOString(),
           });
+        }
+
+        // Report usage to billing ledger (mirrors CodexAdapter pattern)
+        const usage = data.usage as Record<string, number> | undefined;
+        if (this.context.recordUsage) {
+          this.context.recordUsage({
+            sessionId: this.context.id,
+            endpoint: "/opencode/session/prompt",
+            inputTokens: usage?.input_tokens ?? 0,
+            outputTokens: usage?.output_tokens ?? 0,
+          }).catch((err) =>
+            console.error(`[opencode-adapter] billing error: ${(err as Error).message}`),
+          );
         }
       }
     } finally {
