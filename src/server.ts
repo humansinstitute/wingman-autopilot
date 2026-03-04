@@ -2237,7 +2237,13 @@ const billingApiContext: BillingApiContext = {
   AccessActions,
 };
 
+// Mutable reference filled in after Bun.serve() returns its server object.
+// Used to provide request IP resolution to the API route handler without a
+// forward-reference issue (the server const is defined after handleApi).
+const serverRef: { current: { requestIP: (req: Request) => { address: string } | null } | null } = { current: null };
+
 const handleApi = createApiRouteHandler({
+  getRequestIP: (req) => serverRef.current?.requestIP(req) ?? null,
   config: {
     port: config.port,
     agentPortStart: config.agentPortStart,
@@ -2598,6 +2604,9 @@ const server = Bun.serve({
     return maybeRefreshSessionCookie(response, authContext);
   },
 });
+
+// Wire up the request-IP resolver now that the server object exists.
+serverRef.current = server;
 
 const stopAllSessions = async () => {
   if (preserveSessionsOnShutdown || config.agentSpawnMode === "pm2") {

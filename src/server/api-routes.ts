@@ -54,6 +54,10 @@ export interface ApiRoutesContext {
   };
   adminNpub: string | null;
 
+  // Callback to retrieve the remote IP for a request.
+  // Optional — if omitted, localhost checks are skipped (e.g. in tests).
+  getRequestIP?: (request: Request) => { address: string } | null;
+
   // Pre-instantiated API handlers
   todoApiHandler: AuthedApiHandler;
   projectApiHandler: ProjectApiHandler;
@@ -152,6 +156,18 @@ export interface ApiRoutesContext {
 }
 
 // ---------- Factory ----------
+
+// Localhost addresses accepted for internal-only API routes.
+const LOCALHOST_ADDRESSES = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+
+function isLocalhostRequest(request: Request, ctx: ApiRoutesContext): boolean {
+  if (!ctx.getRequestIP) {
+    // No IP resolver provided (e.g. unit tests) — allow by default.
+    return true;
+  }
+  const ip = ctx.getRequestIP(request);
+  return ip !== null && LOCALHOST_ADDRESSES.has(ip.address);
+}
 
 export function createApiRouteHandler(ctx: ApiRoutesContext) {
   return async (
@@ -286,8 +302,11 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
     // Bot crypto API — NIP-44 encrypt/decrypt using user's bot key.
-    // No auth gate: validated by session ID in the handler.
+    // Restricted to localhost: only MCP stdio servers (running on the same host) call this.
     if (pathname.startsWith("/api/mcp/bot-crypto")) {
+      if (!isLocalhostRequest(request, ctx)) {
+        return Response.json({ error: "Forbidden" }, { status: 403 });
+      }
       const response = await ctx.botCryptoApiHandler(request, url, method);
       if (response) {
         return response;
@@ -295,8 +314,11 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
     // MCP NIP-98 API — called by the MCP stdio server running inside agents.
-    // No auth gate: requests are validated by session ID in the handler.
+    // Restricted to localhost: only MCP stdio servers (running on the same host) call this.
     if (pathname.startsWith("/api/mcp/nip98")) {
+      if (!isLocalhostRequest(request, ctx)) {
+        return Response.json({ error: "Forbidden" }, { status: 403 });
+      }
       const response = await ctx.nip98ApiHandler(request, url, method);
       if (response) {
         return response;
@@ -304,8 +326,11 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
     // Git workflow API — branch, worktree, merge, and status operations.
-    // No auth gate: validated by session ID in the handler.
+    // Restricted to localhost: only MCP stdio servers (running on the same host) call this.
     if (pathname.startsWith("/api/git/")) {
+      if (!isLocalhostRequest(request, ctx)) {
+        return Response.json({ error: "Forbidden" }, { status: 403 });
+      }
       const response = await ctx.gitWorkflowApiHandler(request, url, method);
       if (response) {
         return response;
