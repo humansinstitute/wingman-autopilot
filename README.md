@@ -46,6 +46,26 @@ bun start
 
 Visit `http://localhost:<PORT>/home` for the session dashboard or `/live` for the tabbed, real-time view.
 
+## App Lifecycle CLI (NIP-98)
+
+Use `scripts/wingman-appctl.ts` to control registered apps over HTTP with NIP-98 auth headers.
+
+```bash
+# Uses WINGMAN_NIP98_NSEC (or KEYTELEPORT_PRIVKEY) for signing
+export WINGMAN_NIP98_NSEC=nsec1...
+
+bun run appctl list
+bun run appctl status <app-id>
+bun run appctl start <app-id>
+bun run appctl stop <app-id>
+bun run appctl setup <app-id>
+```
+
+Options:
+- `--base-url <url>` target Wingman base URL (default: `http://127.0.0.1:$PORT`)
+- `--key <nsec|hex>` override signing key for this invocation
+- `--json` print raw API responses
+
 ## Environment
 
 | Variable         | Description                                                                    | Default                 |
