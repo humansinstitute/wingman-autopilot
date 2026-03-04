@@ -16,6 +16,7 @@ function buildSession(input: Partial<SessionSnapshot> & { id: string }): Session
     workingDirectory: input.workingDirectory ?? "/tmp",
     logs: input.logs ?? [],
     npub: input.npub,
+    metadata: input.metadata ?? {},
   };
 }
 
@@ -29,6 +30,7 @@ function makeDeps(sessions: Map<string, SessionSnapshot>): WingmanMcpApiDependen
         agent,
         name: name ?? "worker-1",
         npub: explicitNpub,
+        metadata: { AGENT: true },
       });
       sessions.set(created.id, created);
       return created;
