@@ -18,9 +18,9 @@ export const generateImageSchema = {
     .string()
     .optional()
     .describe(
-      "OpenRouter model ID (default: google/gemini-2.5-flash-preview). " +
-      "Supported: google/gemini-2.5-flash-preview, google/gemini-2.5-pro-preview, " +
-      "black-forest-labs/flux-1.1-pro, black-forest-labs/flux-pro",
+      "OpenRouter model ID (default: google/gemini-2.5-flash-image). " +
+      "Supported: google/gemini-2.5-flash-image, google/gemini-3.1-flash-image-preview, " +
+      "google/gemini-3-pro-image-preview, openai/gpt-5-image, openai/gpt-5-image-mini",
     ),
 };
 

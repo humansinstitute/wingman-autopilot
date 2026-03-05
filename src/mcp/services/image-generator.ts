@@ -15,13 +15,14 @@ import { randomUUID } from "node:crypto";
 
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-const DEFAULT_MODEL = "google/gemini-2.5-flash-preview";
+const DEFAULT_MODEL = "google/gemini-2.5-flash-image";
 
 export const IMAGE_MODELS = new Set([
-  "google/gemini-2.5-flash-preview",
-  "google/gemini-2.5-pro-preview",
-  "black-forest-labs/flux-1.1-pro",
-  "black-forest-labs/flux-pro",
+  "google/gemini-2.5-flash-image",
+  "google/gemini-3.1-flash-image-preview",
+  "google/gemini-3-pro-image-preview",
+  "openai/gpt-5-image",
+  "openai/gpt-5-image-mini",
 ]);
 
 // ============================================================
