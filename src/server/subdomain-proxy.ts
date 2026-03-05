@@ -165,10 +165,15 @@ export const proxyRequestToApp = async (
       duplex: "half",
     });
 
-    // Clone response headers, removing hop-by-hop
+    // Clone response headers, removing hop-by-hop and content-length.
+    // Content-Length must be removed because Bun.serve() may auto-compress
+    // the response body (brotli/gzip), changing its size. If the original
+    // Content-Length is forwarded, the mismatch causes reverse proxies
+    // (nginx/CapRover) to drop the body.
     const responseHeaders = new Headers();
     for (const [key, value] of proxyResponse.headers) {
-      if (!hopByHopHeaders.has(key.toLowerCase())) {
+      const lower = key.toLowerCase();
+      if (!hopByHopHeaders.has(lower) && lower !== "content-length") {
         responseHeaders.set(key, value);
       }
     }
