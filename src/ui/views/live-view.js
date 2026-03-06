@@ -17,6 +17,7 @@ import { findAppForSession, findWebAppForSession, createWebviewPanel, createLayo
 import { createWriterPanel, createWriterToolbar } from "../writer/writer-panel.js";
 import { createMobileTabBar, attachSwipeGesture } from "../writer/mobile-tabs.js";
 import { fetchSessionArtifacts, createArtifactsPanel, createArtifactsToolbar } from "../live/artifacts-panel.js";
+import { createAppControlsPanel, createAppControlsToolbar } from "../live/app-controls-panel.js";
 import { addNightWatchToggle } from "../nightwatch/cmd-toggle.js";
 import { openFilePicker } from "../modals/file-picker.js";
 import { npubProjectsState } from "../npub-projects/index.js";
@@ -791,6 +792,21 @@ export function initLiveView(deps) {
     if (matchingApp) {
       const appItems = [];
 
+      appItems.push({
+        label: state.appCardLayout.open ? "Hide app card" : "App card",
+        handler: () => {
+          const shouldOpen = !state.appCardLayout.open;
+          state.appCardLayout.open = shouldOpen;
+          if (shouldOpen) {
+            state.appCardLayout.mobileTab = "app";
+            state.writerLayout.open = false;
+            state.artifactsLayout.open = false;
+            state.webviewLayout.open = false;
+          }
+          render();
+        },
+      });
+
       if (matchingApp.subdomainUrl) {
         appItems.push({
           label: "Go to site",
@@ -829,7 +845,7 @@ export function initLiveView(deps) {
       }
 
       if (appItems.length > 0) {
-        addSubmenu(`App: ${matchingApp.label}`, appItems);
+        addSubmenu("App", appItems);
       }
     }
 
@@ -838,7 +854,14 @@ export function initLiveView(deps) {
     const cmdWebApp = findWebAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
     if (cmdWebApp) {
       addCommand(state.webviewLayout.open ? "Close Web View" : "Open Web View", () => {
-        state.webviewLayout.open = !state.webviewLayout.open;
+        const shouldOpen = !state.webviewLayout.open;
+        state.webviewLayout.open = shouldOpen;
+        if (shouldOpen) {
+          state.appCardLayout.open = false;
+          state.writerLayout.open = false;
+          state.artifactsLayout.open = false;
+          state.webviewLayout.mobileTab = "app";
+        }
         render();
       });
     }
@@ -856,6 +879,9 @@ export function initLiveView(deps) {
           if (filePath) {
             state.pinnedFiles.set(sessionId, filePath);
             state.writerLayout.open = true;
+            state.appCardLayout.open = false;
+            state.artifactsLayout.open = false;
+            state.webviewLayout.open = false;
             render();
           }
         });
@@ -1251,7 +1277,11 @@ export function initLiveView(deps) {
       state.writerLayout.open = true;
     }
 
-    const webApp = findWebAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
+    const matchingApp = findAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
+    if (!matchingApp && state.appCardLayout.open) {
+      state.appCardLayout.open = false;
+    }
+    const webApp = matchingApp?.webApp ? matchingApp : null;
     syncHeaderWebviewToggle(webApp);
     syncHeaderWriterToggle(effectiveFile);
 
@@ -1395,6 +1425,92 @@ export function initLiveView(deps) {
         onSwipeRight: () => {
           if (state.artifactsLayout.mobileTab !== "chat") {
             state.artifactsLayout.mobileTab = "chat";
+            render();
+          }
+        },
+      });
+    } else if (matchingApp && state.appCardLayout.open) {
+      appRoot.dataset.webviewOpen = "true";
+
+      const appMobileTab = state.appCardLayout.mobileTab || "chat";
+      const split = document.createElement("div");
+      split.className = `wm-live-split wm-live-split--${state.appCardLayout.mode} wm-live-split--mobile-${appMobileTab}`;
+
+      const appMobileTabBar = createMobileTabBar(
+        appMobileTab,
+        (tab) => {
+          state.appCardLayout.mobileTab = tab;
+          render();
+        },
+        [
+          { key: "chat", label: "Chat" },
+          { key: "app", label: "App" },
+        ],
+      );
+      split.prepend(appMobileTabBar);
+
+      const chatCol = document.createElement("div");
+      chatCol.className = "wm-live-chat-col";
+      main.append(scrollRegion);
+      chatCol.append(main);
+
+      const appCol = document.createElement("div");
+      appCol.className = "wm-webview-col";
+
+      const appToolbar = createAppControlsToolbar(
+        state.appCardLayout.mode,
+        (newMode) => {
+          state.appCardLayout.mode = newMode;
+          render();
+        },
+        () => {
+          state.appCardLayout.open = false;
+          render();
+        },
+      );
+      appCol.append(appToolbar);
+
+      const actionLabelById = {
+        start: "Start",
+        stop: "Stop",
+        restart: "Restart",
+        setup: "Setup",
+        build: "Build",
+      };
+      const appPanel = createAppControlsPanel(matchingApp, {
+        onTriggerAction: async (appId, action) => {
+          const result = await triggerAppActionApi(appId, action);
+          if (result?.success) {
+            const actionLabel = actionLabelById[action] ?? action;
+            showToast(`${actionLabel} requested for ${matchingApp.label ?? matchingApp.id}`, { type: "success" });
+            return true;
+          }
+          showToast(result?.error || `Failed to ${action} ${matchingApp.label ?? matchingApp.id}`, { type: "error" });
+          return false;
+        },
+      });
+      appCol.append(appPanel);
+
+      split.append(chatCol, appCol);
+      wrapper.append(split);
+
+      const appComposerEl = renderComposer(sessionId);
+      chatCol.append(appComposerEl);
+      requestAnimationFrame(() => {
+        const splitScroll = chatCol.querySelector(".wm-live-scroll");
+        scrollPill.attachScrollPill(appComposerEl, splitScroll || scrollRegion);
+      });
+
+      attachSwipeGesture(split, {
+        onSwipeLeft: () => {
+          if (state.appCardLayout.mobileTab !== "app") {
+            state.appCardLayout.mobileTab = "app";
+            render();
+          }
+        },
+        onSwipeRight: () => {
+          if (state.appCardLayout.mobileTab !== "chat") {
+            state.appCardLayout.mobileTab = "chat";
             render();
           }
         },
