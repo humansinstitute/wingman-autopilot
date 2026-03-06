@@ -154,3 +154,7 @@ Confirm agent binaries (`out/agentapi`, `codex`, `claude`, `goose`, `opencode`) 
 - Follow the existing patterns for authentication and session management
 - Use the existing logging infrastructure rather than console.log
 - Respect the Nostr identity system when implementing user features
+
+## UI Accessibility for Agent Testing
+
+All UI work must follow the **[Peekaboo-Friendly Design Guide](~/code/docs/peekaboo-friendly-design.md)**. AI agents use Peekaboo screen automation to visually test and QA apps via the accessibility tree. Key requirements: semantic HTML landmarks, `aria-label` on all interactive elements, `data-testid` on key interaction points, `aria-live` for status feedback. See the guide for full patterns and checklist.

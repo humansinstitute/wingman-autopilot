@@ -26,6 +26,8 @@ export interface ChatApiContext {
   config: WingmanConfig;
   npub: string | null;
   isAdmin: boolean;
+  /** Optional callback to record token usage for billing/analytics */
+  recordUsage?: (data: { sessionId: string; model: string; inputTokens: number; outputTokens: number }) => Promise<void>;
 }
 
 /**
@@ -322,6 +324,7 @@ async function handlePostMessage(
   const handler = createChatMessageStreamHandler({
     config,
     sseKeepaliveIntervalMs: config.sseKeepaliveIntervalMs,
+    recordUsage: context.recordUsage,
   });
 
   return handler(chatId, content.trim(), npub, isAdmin, request);

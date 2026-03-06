@@ -14,6 +14,8 @@ export interface ChatEventsOptions {
   config: WingmanConfig;
   /** Interval in ms for sending SSE keepalive comments (default: 30000) */
   sseKeepaliveIntervalMs?: number;
+  /** Optional callback to record token usage for billing/analytics */
+  recordUsage?: (data: { sessionId: string; model: string; inputTokens: number; outputTokens: number }) => Promise<void>;
 }
 
 const DEFAULT_KEEPALIVE_INTERVAL_MS = 30000;
@@ -22,7 +24,7 @@ const DEFAULT_KEEPALIVE_INTERVAL_MS = 30000;
  * Creates a handler for streaming chat message responses.
  */
 export function createChatMessageStreamHandler(options: ChatEventsOptions) {
-  const { config, sseKeepaliveIntervalMs = DEFAULT_KEEPALIVE_INTERVAL_MS } = options;
+  const { config, sseKeepaliveIntervalMs = DEFAULT_KEEPALIVE_INTERVAL_MS, recordUsage } = options;
 
   return async function handleChatMessageStream(
     chatId: string,
@@ -61,7 +63,8 @@ export function createChatMessageStreamHandler(options: ChatEventsOptions) {
           config,
           chatId,
           userContent,
-          abortController.signal
+          abortController.signal,
+          recordUsage
         );
 
         for await (const event of generator) {

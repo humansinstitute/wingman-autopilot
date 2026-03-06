@@ -237,7 +237,8 @@ export async function* sendChatMessage(
   config: WingmanConfig,
   sessionId: string,
   userContent: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  recordUsage?: (data: { sessionId: string; model: string; inputTokens: number; outputTokens: number }) => Promise<void>
 ): AsyncGenerator<{ type: "chunk" | "done" | "error"; content: string; messageId?: string }, void, unknown> {
   const session = getChatSession(sessionId);
   if (!session) {
@@ -272,6 +273,20 @@ export async function* sendChatMessage(
 
     // Store the complete assistant response
     const assistantMessage = addAssistantMessage(sessionId, fullResponse);
+
+    // Estimate tokens (~4 chars per token) and record usage for billing
+    if (recordUsage) {
+      const inputChars = chatMessages.reduce((sum, m) => sum + m.content.length, 0);
+      const estimatedInputTokens = Math.ceil(inputChars / 4);
+      const estimatedOutputTokens = Math.ceil(fullResponse.length / 4);
+      recordUsage({
+        sessionId,
+        model: session.model,
+        inputTokens: estimatedInputTokens,
+        outputTokens: estimatedOutputTokens,
+      }).catch(err => console.error(`[chat] billing error: ${(err as Error).message}`));
+    }
+
     yield {
       type: "done",
       content: fullResponse,

@@ -2447,6 +2447,17 @@ const handleApi = createApiRouteHandler({
     config,
     npub,
     isAdmin,
+    recordUsage: async (data) => {
+      await teamBillingService.recordProxyUsage({
+        sessionId: data.sessionId,
+        npub: npub ?? null,
+        agent: 'chat',
+        endpoint: '/v1/chat/completions',
+        method: 'POST',
+        statusCode: 200,
+        costUsd: null,
+      });
+    },
   }),
 });
 

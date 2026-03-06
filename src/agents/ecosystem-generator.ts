@@ -411,7 +411,7 @@ export async function createUserAppEcosystemConfig(config: UserAppConfig): Promi
   const hasRedshift = await Bun.file(join(app.root, "redshift.yaml")).exists();
   const command = hasRedshift
     ? `${meta.join(" ")} redshift run -- ${startScript}`
-    : `set -a; [ -f .env ] && . ./.env; set +a; ${meta.join(" ")} ${startScript}`;
+    : `set -a; [ -f .env ] && . ./.env; set +a; export ${meta.join(" ")}; ${startScript}`;
 
   return {
     name: processName,
