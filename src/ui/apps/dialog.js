@@ -41,6 +41,7 @@ export const initAppDialogs = ({
   const appLogsTitle = document.getElementById("app-logs-title");
   const appLogsContent = document.getElementById("app-logs-content");
   const appLogsRefreshButton = document.getElementById("app-logs-refresh");
+  const appLogsClearButton = document.getElementById("app-logs-clear");
   const appLogsCloseButton = document.getElementById("app-logs-close");
   const appCancelButton = document.getElementById("app-cancel");
   const appCloneButton = document.getElementById("app-clone");
@@ -857,6 +858,49 @@ export const initAppDialogs = ({
     }
   };
 
+  const clearAppLogs = async (appId) => {
+    const targetId = appId ?? state.appLogViewer.appId;
+    if (!targetId) return;
+    const app = getAppById(targetId);
+    const appName = app?.label ?? targetId;
+    const confirmed = window.confirm(`Clear logs for "${appName}"?`);
+    if (!confirmed) return;
+
+    if (appLogsClearButton) {
+      appLogsClearButton.disabled = true;
+      appLogsClearButton.textContent = "Clearing…";
+    }
+    try {
+      const response = await fetch(`/api/apps/${encodeURIComponent(targetId)}/actions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "clear-logs" }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message =
+          payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+            ? payload.error
+            : response.statusText || "Failed to clear logs";
+        throw new Error(message);
+      }
+      state.appLogViewer.lines = [];
+      if (appLogsContent) {
+        appLogsContent.textContent = "No log output yet.";
+      }
+      showToast("Logs cleared", { type: "success" });
+      await refreshAppLogs(targetId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to clear logs";
+      showToast(message, { type: "error" });
+    } finally {
+      if (appLogsClearButton) {
+        appLogsClearButton.disabled = false;
+        appLogsClearButton.textContent = "Clear logs";
+      }
+    }
+  };
+
   const closeAppLogsDialog = () => {
     if (!appLogsDialog) return;
     if (appLogsDialog.open) {
@@ -1011,6 +1055,11 @@ export const initAppDialogs = ({
   appLogsRefreshButton?.addEventListener("click", (event) => {
     event.preventDefault();
     void refreshAppLogs();
+  });
+
+  appLogsClearButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    void clearAppLogs();
   });
 
   appLogsCloseButton?.addEventListener("click", (event) => {

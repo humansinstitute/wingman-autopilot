@@ -454,9 +454,11 @@
     <dialog id="app-logs-dialog">
       <form method="dialog">
         <h2 id="app-logs-title">App Logs</h2>
+        <p id="app-logs-order-note" class="wm-dialog-help">Newest log entries are shown at the bottom.</p>
         <pre id="app-logs-content" class="wm-app-log"></pre>
         <menu>
           <button type="button" class="wm-button secondary" id="app-logs-refresh">Refresh</button>
+          <button type="button" class="wm-button secondary" id="app-logs-clear" aria-label="Clear app logs" data-testid="app-logs-clear">Clear logs</button>
           <button value="close" id="app-logs-close">Close</button>
         </menu>
       </form>
