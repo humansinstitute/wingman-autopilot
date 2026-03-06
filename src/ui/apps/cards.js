@@ -19,7 +19,7 @@
  * @param {Function} deps.appendVariableUrlRow       - appends a URL meta row
  * @param {Function} deps.appendVariablePubkeyRow    - appends a pubkey meta row
  * @param {Function} deps.isAppActionDisabled        - checks whether an app action is disabled
- * @param {Function} deps.triggerAppAction           - triggers a start/stop/restart/setup action
+ * @param {Function} deps.triggerAppAction           - triggers app actions (start/stop/restart/setup/clear-logs)
  * @param {Function} deps.triggerWarmRestart         - triggers a warm restart of Wingman
  * @param {Function} deps.runSystemCleanup           - triggers system cleanup
  * @param {Function} deps.openIdentityLoginDialog    - opens the identity login dialog
@@ -586,6 +586,32 @@ export function initAppCards(deps) {
       void openAppLogsDialog(app.id);
     });
     linkBar.append(viewLogsLink);
+
+    const clearLogsLink = document.createElement("a");
+    clearLogsLink.href = "#";
+    clearLogsLink.textContent = "Clear logs";
+    clearLogsLink.setAttribute("aria-label", `Clear logs for ${app.label ?? app.id}`);
+    clearLogsLink.dataset.testid = "app-card-clear-logs";
+    let clearingLogs = false;
+    clearLogsLink.addEventListener("click", async (event) => {
+      event.preventDefault();
+      if (clearingLogs) {
+        return;
+      }
+      const appName = app.label ?? app.id;
+      const confirmed = window.confirm(`Clear logs for "${appName}"?`);
+      if (!confirmed) {
+        return;
+      }
+      clearingLogs = true;
+      clearLogsLink.setAttribute("aria-disabled", "true");
+      const success = await triggerAppAction(app.id, "clear-logs");
+      if (!success && clearLogsLink.isConnected) {
+        clearingLogs = false;
+        clearLogsLink.removeAttribute("aria-disabled");
+      }
+    });
+    linkBar.append(clearLogsLink);
 
     const editLink = document.createElement("a");
     editLink.href = "#";

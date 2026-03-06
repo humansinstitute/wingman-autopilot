@@ -91,6 +91,7 @@ export interface AppsApiContext {
     listStatuses: () => Promise<AppProcessStatus[]>;
     getStatus: (id: string) => Promise<AppProcessStatus>;
     tailLogs: (id: string, lines: number) => Promise<string[]>;
+    clearLogs: (id: string) => Promise<void>;
     forget: (id: string) => void;
     kill: (id: string) => Promise<void>;
     start: (id: string) => Promise<AppProcessStatus>;
@@ -585,6 +586,18 @@ export async function handleAppsApi(
         return Response.json({ error: 'Action is required' }, { status: 400 });
       }
       const normalizedAction = actionValue.toLowerCase();
+      if (normalizedAction === 'clear-logs') {
+        try {
+          await ctx.appProcessManager.clearLogs(id);
+          const status = await ctx.appProcessManager.getStatus(id);
+          const aliasRecord = await ctx.appAliasRegistry.getByAppId(id);
+          const subdomainAlias = aliasRecord?.alias ?? null;
+          return Response.json({ app: ctx.buildAppResponse(app, status, { subdomainAlias }) });
+        } catch (error) {
+          return Response.json({ error: (error as Error).message }, { status: 500 });
+        }
+      }
+
       if (!ctx.appActions.includes(normalizedAction as AppLifecycleAction)) {
         return Response.json({ error: `Unsupported action: ${actionValue}` }, { status: 400 });
       }

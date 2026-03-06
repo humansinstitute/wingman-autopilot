@@ -2,9 +2,9 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { loadConfig } from "../config";
-import { sanitizeLogEntry } from "../logging/log-sanitizer";
 import { appRegistry } from "./app-registry";
 import type { AppLifecycleAction, AppRecord, AppRegistry } from "./app-registry";
+import { clearAppLogFiles } from "./app-log-files";
 import { generateIdentityAlias } from "../identity/identity-alias";
 import { normaliseNpub } from "../identity/npub-utils";
 import {
@@ -289,6 +289,22 @@ export class AppProcessManager {
     }
 
     return [];
+  }
+
+  async clearLogs(appId: string): Promise<void> {
+    const app = await this.registry.getApp(appId);
+    if (!app) {
+      throw new Error(`Unknown app: ${appId}`);
+    }
+    if (!app.logsDir) {
+      return;
+    }
+
+    await clearAppLogFiles({
+      logsDir: app.logsDir,
+      appId: app.id,
+      processName: app.pm2Name ?? null,
+    });
   }
 
   async listStatuses(): Promise<AppProcessStatus[]> {
