@@ -71,6 +71,14 @@ function matchesTerm(name, term) {
   return name.toLowerCase().includes(term.toLowerCase());
 }
 
+function getLastPathSegment(pathValue) {
+  if (!pathValue || typeof pathValue !== "string") return "";
+  const normalized = pathValue.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (!normalized) return "";
+  const parts = normalized.split("/").filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : "";
+}
+
 async function fetchDirectorySuggestions(path, term) {
   const params = new URLSearchParams();
   if (path) params.set("path", path);
@@ -217,7 +225,7 @@ export function attachPathMentionAutocomplete({
     close();
   };
 
-  const buildSuggestions = (lookup, directoryPayload, docsPayload) => {
+  const buildSuggestions = (lookup, directoryPayload, docsPayload, parentDocsPayload) => {
     const next = [];
     const seen = new Set();
     const basePath = lookup.basePath;
@@ -242,6 +250,35 @@ export function attachPathMentionAutocomplete({
       push(`${basePath}${entry.name}`, "file");
     });
 
+    if (!basePath && term) {
+      const currentDisplayPath =
+        typeof docsPayload?.displayPath === "string" ? docsPayload.displayPath : "";
+      const currentName = getLastPathSegment(currentDisplayPath);
+      if (
+        currentDisplayPath &&
+        currentDisplayPath !== "~" &&
+        matchesTerm(currentName, term)
+      ) {
+        push(`${currentDisplayPath}/`, "directory");
+      }
+
+      const parentEntries = Array.isArray(parentDocsPayload?.entries) ? parentDocsPayload.entries : [];
+      parentEntries.forEach((entry) => {
+        if (!entry || typeof entry.name !== "string" || !matchesTerm(entry.name, term)) {
+          return;
+        }
+        const displayPath = typeof entry.displayPath === "string" ? entry.displayPath : "";
+        if (!displayPath) return;
+        if (entry.type === "directory") {
+          push(`${displayPath}/`, "directory");
+          return;
+        }
+        if (entry.type === "file") {
+          push(displayPath, "file");
+        }
+      });
+    }
+
     return next.slice(0, MAX_SUGGESTIONS);
   };
 
@@ -264,7 +301,16 @@ export function attachPathMentionAutocomplete({
       return;
     }
 
-    currentItems = buildSuggestions(lookup, directoryPayload, docsPayload);
+    let parentDocsPayload = null;
+    const parentPath = typeof docsPayload?.parent?.path === "string" ? docsPayload.parent.path : "";
+    if (!lookup.basePath && lookup.term && parentPath) {
+      parentDocsPayload = await fetchDocsTree(parentPath);
+      if (requestId !== tokenRequestId) {
+        return;
+      }
+    }
+
+    currentItems = buildSuggestions(lookup, directoryPayload, docsPayload, parentDocsPayload);
     activeIndex = currentItems.length > 0 ? 0 : -1;
     renderMenu();
   };
