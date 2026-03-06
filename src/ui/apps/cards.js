@@ -315,6 +315,24 @@ export function initAppCards(deps) {
         subdomainRow.append(subdomainLabel, subdomainValue);
         meta.append(subdomainRow);
       }
+
+      if (typeof app.caproverLiveUrl === "string" && app.caproverLiveUrl.length > 0) {
+        const deployRow = document.createElement("div");
+        deployRow.className = "wm-app-meta-row";
+        const deployLabel = document.createElement("span");
+        deployLabel.className = "wm-app-meta-label";
+        deployLabel.textContent = "Deploy URL";
+        const deployValue = document.createElement("span");
+        deployValue.className = "wm-app-meta-value";
+        const deployLink = document.createElement("a");
+        deployLink.href = app.caproverLiveUrl;
+        deployLink.target = "_blank";
+        deployLink.rel = "noopener noreferrer";
+        deployLink.textContent = app.caproverLiveUrl;
+        deployValue.append(deployLink);
+        deployRow.append(deployLabel, deployValue);
+        meta.append(deployRow);
+      }
     }
 
     const windowRow = document.createElement("div");

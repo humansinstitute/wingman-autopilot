@@ -117,6 +117,20 @@ export interface AppsApiContext {
   caproverStore: CaproverStore;
 }
 
+function withCaproverDeploymentInfo(
+  appResponse: Record<string, unknown>,
+  appId: string,
+  caproverStore: CaproverStore,
+): Record<string, unknown> {
+  const trackedApp = caproverStore.getAppByLocalAppId(appId);
+  return {
+    ...appResponse,
+    caproverName: trackedApp?.caproverName ?? null,
+    caproverLiveUrl: trackedApp?.liveUrl ?? null,
+    caproverDeployedVersion: trackedApp?.deployedVersion ?? null,
+  };
+}
+
 export async function handleAppsApi(
   request: Request,
   url: URL,
@@ -241,7 +255,11 @@ export async function handleAppsApi(
           const ownerAlias = ctx.resolveOwnerAliasCached(app.ownerNpub, ownerAliasCache);
           const aliasRecord = await ctx.appAliasRegistry.getByAppId(app.id);
           const subdomainAlias = aliasRecord?.alias ?? null;
-          const record = ctx.buildAppResponse(app, status, { ownerAlias, subdomainAlias });
+          const record = withCaproverDeploymentInfo(
+            ctx.buildAppResponse(app, status, { ownerAlias, subdomainAlias }),
+            app.id,
+            ctx.caproverStore,
+          );
           if (includeLogs) {
             try {
               record.logs = await ctx.appProcessManager.tailLogs(app.id, tailCount);
@@ -356,7 +374,16 @@ export async function handleAppsApi(
       const status = await ctx.appProcessManager.getStatus(app.id);
       const aliasRecord = await ctx.appAliasRegistry.getByAppId(app.id);
       const subdomainAlias = aliasRecord?.alias ?? null;
-      return Response.json({ app: ctx.buildAppResponse(app, status, { subdomainAlias }) }, { status: 201 });
+      return Response.json(
+        {
+          app: withCaproverDeploymentInfo(
+            ctx.buildAppResponse(app, status, { subdomainAlias }),
+            app.id,
+            ctx.caproverStore,
+          ),
+        },
+        { status: 201 },
+      );
     } catch (error) {
       return Response.json({ error: (error as Error).message }, { status: 400 });
     }
@@ -405,7 +432,14 @@ export async function handleAppsApi(
       const status = await ctx.appProcessManager.getStatus(id);
       const aliasRecord = await ctx.appAliasRegistry.getByAppId(id);
       const subdomainAlias = aliasRecord?.alias ?? null;
-      return Response.json({ app: ctx.buildAppResponse(app, status, { subdomainAlias }) });
+      const appResponse = withCaproverDeploymentInfo(
+        ctx.buildAppResponse(app, status, { subdomainAlias }),
+        app.id,
+        ctx.caproverStore,
+      );
+      return Response.json({
+        app: appResponse,
+      });
     }
 
     if (method === 'PUT' && parts.length === 4) {
@@ -506,7 +540,13 @@ export async function handleAppsApi(
         const status = await ctx.appProcessManager.getStatus(id);
         const aliasRecord = await ctx.appAliasRegistry.getByAppId(id);
         const subdomainAlias = aliasRecord?.alias ?? null;
-        return Response.json({ app: ctx.buildAppResponse(updated, status, { subdomainAlias }) });
+        return Response.json({
+          app: withCaproverDeploymentInfo(
+            ctx.buildAppResponse(updated, status, { subdomainAlias }),
+            updated.id,
+            ctx.caproverStore,
+          ),
+        });
       } catch (error) {
         return Response.json({ error: (error as Error).message }, { status: 400 });
       }
@@ -592,7 +632,14 @@ export async function handleAppsApi(
           const status = await ctx.appProcessManager.getStatus(id);
           const aliasRecord = await ctx.appAliasRegistry.getByAppId(id);
           const subdomainAlias = aliasRecord?.alias ?? null;
-          return Response.json({ app: ctx.buildAppResponse(app, status, { subdomainAlias }) });
+          const appResponse = withCaproverDeploymentInfo(
+            ctx.buildAppResponse(app, status, { subdomainAlias }),
+            app.id,
+            ctx.caproverStore,
+          );
+          return Response.json({
+            app: appResponse,
+          });
         } catch (error) {
           return Response.json({ error: (error as Error).message }, { status: 500 });
         }
@@ -638,7 +685,14 @@ export async function handleAppsApi(
         }
         const aliasRecord = await ctx.appAliasRegistry.getByAppId(id);
         const subdomainAlias = aliasRecord?.alias ?? null;
-        return Response.json({ app: ctx.buildAppResponse(app, status, { subdomainAlias }) });
+        const appResponse = withCaproverDeploymentInfo(
+          ctx.buildAppResponse(app, status, { subdomainAlias }),
+          app.id,
+          ctx.caproverStore,
+        );
+        return Response.json({
+          app: appResponse,
+        });
       } catch (error) {
         if (error instanceof AppActionInProgressError) {
           return Response.json({ error: error.message }, { status: 409 });
