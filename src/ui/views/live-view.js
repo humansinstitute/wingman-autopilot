@@ -12,6 +12,7 @@ import { showToast } from "../utils/toast.js";
 import { fetchSessionHistoryApi, forkSessionToWorktreeApi } from "../services/sessions.js";
 import { triggerAppActionApi } from "../services/apps.js";
 import { isAlpineChatEnabled, getChatTemplate, Alpine } from "../live/index.js";
+import { attachPathMentionAutocomplete } from "../live/path-mention-autocomplete.js";
 import { findAppForSession, findWebAppForSession, createWebviewPanel, createLayoutToolbar } from "../live/webview-panel.js";
 import { createWriterPanel, createWriterToolbar } from "../writer/writer-panel.js";
 import { createMobileTabBar, attachSwipeGesture } from "../writer/mobile-tabs.js";
@@ -418,6 +419,7 @@ export function initLiveView(deps) {
       textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
     };
 
+    let mentionAutocomplete = null;
     let submit;
     let commandButton;
     const defaultPlaceholder = "Ask the agent something...";
@@ -442,8 +444,12 @@ export function initLiveView(deps) {
       state.messageDrafts.set(sessionId, newText);
       resizeTextarea();
       cleanupOrphanedMarkers(sessionId, newText);
+      mentionAutocomplete?.handleInput();
     });
     textarea.addEventListener("keydown", (event) => {
+      if (mentionAutocomplete?.handleKeydown(event)) {
+        return;
+      }
       if (textarea.value === "") {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -954,6 +960,20 @@ export function initLiveView(deps) {
     knightRider.className = "wm-knight-rider";
     knightRider.dataset.sessionId = sessionId;
     textareaWrapper.append(knightRider, textarea);
+    mentionAutocomplete = attachPathMentionAutocomplete({
+      sessionId,
+      textarea,
+      parentElement: textareaWrapper,
+      getWorkingDirectory: () => {
+        const session = sessionsStore().items.find((item) => item.id === sessionId);
+        return session?.workingDirectory ?? "";
+      },
+      onDraftChange: (nextValue) => {
+        state.messageDrafts.set(sessionId, nextValue);
+        cleanupOrphanedMarkers(sessionId, nextValue);
+      },
+      onResize: resizeTextarea,
+    });
 
     composer.append(fileInput, attachmentInput, textareaWrapper, buttonGroup);
 
