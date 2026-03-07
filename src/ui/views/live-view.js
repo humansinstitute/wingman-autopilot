@@ -18,6 +18,7 @@ import { createWriterPanel, createWriterToolbar } from "../writer/writer-panel.j
 import { createMobileTabBar, attachSwipeGesture } from "../writer/mobile-tabs.js";
 import { fetchSessionArtifacts, createArtifactsPanel, createArtifactsToolbar } from "../live/artifacts-panel.js";
 import { createAppControlsPanel, createAppControlsToolbar } from "../live/app-controls-panel.js";
+import { createCommandMenuController } from "../live/command-menu-positioning.js";
 import { addNightWatchToggle } from "../nightwatch/cmd-toggle.js";
 import { openFilePicker } from "../modals/file-picker.js";
 import { npubProjectsState } from "../npub-projects/index.js";
@@ -574,6 +575,8 @@ export function initLiveView(deps) {
     commandMenu.className = "wm-command-menu";
     commandMenu.setAttribute("role", "menu");
 
+    const commandMenuController = createCommandMenuController({ commandButton, commandMenu });
+
     const addCommand = (label, handler) => {
       const item = document.createElement("button");
       item.type = "button";
@@ -582,8 +585,7 @@ export function initLiveView(deps) {
       item.setAttribute("role", "menuitem");
       item.addEventListener("click", () => {
         handler();
-        commandMenu.classList.remove("is-open");
-        commandButton.setAttribute("aria-expanded", "false");
+        commandMenuController.close();
       });
       commandMenu.append(item);
       return item;
@@ -619,8 +621,7 @@ export function initLiveView(deps) {
         item.setAttribute("role", "menuitem");
         item.addEventListener("click", () => {
           handler();
-          commandMenu.classList.remove("is-open");
-          commandButton.setAttribute("aria-expanded", "false");
+          commandMenuController.close();
         });
         panel.append(item);
       });
@@ -945,26 +946,9 @@ export function initLiveView(deps) {
       }
     });
 
-    const toggleCommandMenu = () => {
-      const isOpen = commandMenu.classList.toggle("is-open");
-      commandButton.setAttribute("aria-expanded", String(isOpen));
-      if (isOpen) {
-        const closeMenu = (event) => {
-          if (!commandMenu.contains(event.target) && event.target !== commandButton) {
-            commandMenu.classList.remove("is-open");
-            commandButton.setAttribute("aria-expanded", "false");
-            document.removeEventListener("mousedown", closeMenu);
-            document.removeEventListener("touchstart", closeMenu);
-          }
-        };
-        document.addEventListener("mousedown", closeMenu);
-        document.addEventListener("touchstart", closeMenu, { passive: true });
-      }
-    };
-
     commandButton.addEventListener("click", () => {
       if (commandButton.disabled) return;
-      toggleCommandMenu();
+      commandMenuController.toggle();
     });
 
     submit = document.createElement("button");

@@ -3136,6 +3136,9 @@ body[data-menu-open="true"] .wm-menu-panel {
   box-shadow: 0 14px 30px rgba(15, 118, 110, 0.25);
   z-index: 80;
   transform-origin: top right;
+  max-height: min(28rem, calc(100vh - 1rem));
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .wm-command-menu.is-open {
@@ -3188,7 +3191,8 @@ body[data-menu-open="true"] .wm-menu-panel {
 
 .wm-command-submenu-panel {
   position: absolute;
-  bottom: 0;
+  top: 0;
+  bottom: auto;
   right: calc(100% + 0.35rem);
   display: none;
   flex-direction: column;
@@ -3200,6 +3204,9 @@ body[data-menu-open="true"] .wm-menu-panel {
   border: 1px solid rgba(16, 185, 129, 0.25);
   box-shadow: 0 14px 30px rgba(15, 118, 110, 0.25);
   z-index: 81;
+  max-height: min(24rem, calc(100vh - 1rem));
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .wm-command-submenu:hover > .wm-command-submenu-panel,
