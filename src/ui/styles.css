@@ -3136,9 +3136,6 @@ body[data-menu-open="true"] .wm-menu-panel {
   box-shadow: 0 14px 30px rgba(15, 118, 110, 0.25);
   z-index: 80;
   transform-origin: top right;
-  max-height: min(28rem, calc(100vh - 1rem));
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
 .wm-command-menu.is-open {
