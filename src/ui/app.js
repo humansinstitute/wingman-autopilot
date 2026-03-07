@@ -3093,6 +3093,7 @@ const liveViewModule = initLiveView({
   openDialog,
   isFeatureEnabledForViewer: (...args) => isFeatureEnabledForViewer(...args),
   showToast,
+  renderAppCard: (...args) => renderAppCard(...args),
 });
 renderLive = liveViewModule.renderLive;
 renderSessionTabs = liveViewModule.renderSessionTabs;

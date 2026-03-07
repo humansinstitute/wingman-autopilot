@@ -62,6 +62,7 @@ export function initLiveView(deps) {
     openDialog,
     isFeatureEnabledForViewer,
     showToast,
+    renderAppCard,
   } = deps;
 
   // Track active writer panel cleanup function
@@ -1470,24 +1471,8 @@ export function initLiveView(deps) {
       );
       appCol.append(appToolbar);
 
-      const actionLabelById = {
-        start: "Start",
-        stop: "Stop",
-        restart: "Restart",
-        setup: "Setup",
-        build: "Build",
-      };
       const appPanel = createAppControlsPanel(matchingApp, {
-        onTriggerAction: async (appId, action) => {
-          const result = await triggerAppActionApi(appId, action);
-          if (result?.success) {
-            const actionLabel = actionLabelById[action] ?? action;
-            showToast(`${actionLabel} requested for ${matchingApp.label ?? matchingApp.id}`, { type: "success" });
-            return true;
-          }
-          showToast(result?.error || `Failed to ${action} ${matchingApp.label ?? matchingApp.id}`, { type: "error" });
-          return false;
-        },
+        renderAppCard,
       });
       appCol.append(appPanel);
 

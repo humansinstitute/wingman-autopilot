@@ -1,17 +1,7 @@
 /**
  * App controls side panel for live sessions.
- * Renders app-card-style controls in the split sidebar.
+ * Renders the same app card used on the Apps page.
  */
-
-const APP_BUSY_STATUSES = new Set(["stopping", "restarting", "building", "setting-up"]);
-
-const APP_ACTION_LABELS = {
-  start: "Start",
-  stop: "Stop",
-  restart: "Restart",
-  setup: "Setup",
-  build: "Build",
-};
 
 function createModeButton(mode, currentMode, title, icon, onModeChange) {
   const button = document.createElement("button");
@@ -22,65 +12,6 @@ function createModeButton(mode, currentMode, title, icon, onModeChange) {
   button.innerHTML = icon;
   button.addEventListener("click", () => onModeChange(mode));
   return button;
-}
-
-function isActionDisabled(app, action) {
-  const status = app?.status;
-  if (!status) return true;
-  const available = Boolean(app?.availableScripts?.[action]);
-  if (!available) return true;
-
-  if (status.inProgressAction && status.inProgressAction !== action) {
-    return true;
-  }
-  if (status.inProgressAction === action) {
-    return true;
-  }
-
-  const statusValue = status.status;
-  if (APP_BUSY_STATUSES.has(statusValue)) {
-    return true;
-  }
-
-  if (action === "start") {
-    return statusValue === "running";
-  }
-  if (action === "stop") {
-    return statusValue !== "running";
-  }
-  if (action === "restart") {
-    return false;
-  }
-  if (action === "setup" || action === "build") {
-    return statusValue === "running";
-  }
-
-  return true;
-}
-
-function createStatusBadge(app) {
-  const statusBadge = document.createElement("span");
-  statusBadge.className = "wm-app-status";
-  const statusValue = app?.status?.status ?? "idle";
-  statusBadge.dataset.state = statusValue;
-  statusBadge.textContent = statusValue;
-  return statusBadge;
-}
-
-function createMetaRow(label, value) {
-  const row = document.createElement("div");
-  row.className = "wm-app-meta-row";
-
-  const rowLabel = document.createElement("span");
-  rowLabel.className = "wm-app-meta-label";
-  rowLabel.textContent = label;
-
-  const rowValue = document.createElement("span");
-  rowValue.className = "wm-app-meta-value";
-  rowValue.textContent = value;
-
-  row.append(rowLabel, rowValue);
-  return row;
 }
 
 export function createAppControlsToolbar(currentMode, onModeChange, onClose) {
@@ -131,100 +62,37 @@ export function createAppControlsToolbar(currentMode, onModeChange, onClose) {
   return toolbar;
 }
 
+function createFallbackPanel(app) {
+  const wrapper = document.createElement("section");
+  wrapper.className = "wm-card wm-app-card wm-app-controls-card";
+
+  const title = document.createElement("h3");
+  title.textContent = app?.label ?? app?.id ?? "App";
+
+  const note = document.createElement("p");
+  note.className = "wm-apps-empty";
+  note.textContent = "App card renderer unavailable.";
+
+  wrapper.append(title, note);
+  return wrapper;
+}
+
 export function createAppControlsPanel(app, options = {}) {
-  const { onTriggerAction } = options;
+  const { renderAppCard } = options;
 
   const panel = document.createElement("div");
   panel.className = "wm-app-controls-panel";
   panel.dataset.testid = "app-card-panel";
 
-  const card = document.createElement("section");
-  card.className = "wm-card wm-app-card wm-app-controls-card";
-
-  const header = document.createElement("div");
-  header.className = "wm-app-card__header";
-
-  const title = document.createElement("h3");
-  title.textContent = app.label ?? app.id;
-  header.append(title, createStatusBadge(app));
-
-  const meta = document.createElement("div");
-  meta.className = "wm-app-meta";
-  meta.append(createMetaRow("App ID", app.id ?? "Unknown"));
-  meta.append(createMetaRow("Root", app.root ?? "Unknown"));
-
-  if (typeof app.status?.message === "string" && app.status.message.trim().length > 0) {
-    meta.append(createMetaRow("Message", app.status.message.trim()));
-  }
-
-  const actions = document.createElement("div");
-  actions.className = "wm-app-controls-actions";
-  let linkRow = null;
-
-  const actionDefs = ["start", "stop", "restart", "setup", "build"];
-
-  for (const action of actionDefs) {
-    if (!app.availableScripts?.[action]) {
-      continue;
+  if (typeof renderAppCard === "function") {
+    const card = renderAppCard(app);
+    if (card instanceof HTMLElement) {
+      card.classList.add("wm-app-controls-card");
+      panel.append(card);
+      return panel;
     }
-
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = action === "stop" ? "wm-button secondary" : "wm-button";
-    button.textContent = APP_ACTION_LABELS[action] ?? action;
-    button.setAttribute("aria-label", `${APP_ACTION_LABELS[action] ?? action} ${app.label ?? app.id}`);
-    button.dataset.testid = `app-card-action-${action}`;
-    button.disabled = isActionDisabled(app, action);
-
-    button.addEventListener("click", async () => {
-      if (button.disabled || typeof onTriggerAction !== "function") {
-        return;
-      }
-
-      const defaultLabel = APP_ACTION_LABELS[action] ?? action;
-      button.disabled = true;
-      button.textContent = `${defaultLabel}…`;
-      const success = await onTriggerAction(app.id, action);
-      if (!success && button.isConnected) {
-        button.disabled = false;
-        button.textContent = defaultLabel;
-      }
-    });
-
-    actions.append(button);
   }
 
-  if (app.subdomainUrl) {
-    linkRow = document.createElement("div");
-    linkRow.className = "wm-app-links wm-app-controls-links";
-
-    const openSiteLink = document.createElement("a");
-    openSiteLink.href = app.subdomainUrl;
-    openSiteLink.target = "_blank";
-    openSiteLink.rel = "noopener noreferrer";
-    openSiteLink.textContent = "Open site";
-    openSiteLink.setAttribute("aria-label", `Open ${app.label ?? app.id} site`);
-    openSiteLink.dataset.testid = "app-card-open-site";
-    linkRow.append(openSiteLink);
-
-  }
-
-  if (actions.children.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "wm-apps-empty";
-    empty.textContent = "No app actions are currently available for this app.";
-    card.append(header, meta, empty);
-    if (linkRow) {
-      card.append(linkRow);
-    }
-    panel.append(card);
-    return panel;
-  }
-
-  card.append(header, meta, actions);
-  if (linkRow) {
-    card.append(linkRow);
-  }
-  panel.append(card);
+  panel.append(createFallbackPanel(app));
   return panel;
 }

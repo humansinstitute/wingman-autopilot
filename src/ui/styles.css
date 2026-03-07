@@ -8265,16 +8265,6 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   margin-right: 8px;
 }
 
-.wm-app-controls-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.wm-app-controls-links {
-  margin-top: 0.1rem;
-}
-
 .wm-webview-iframe {
   width: 100%;
   height: 100%;
