@@ -4,8 +4,12 @@
  * Depends on: state, queue helpers, clipboard/text utilities (via DI).
  */
 
-import { collapseNewlines } from "../utils/text.js";
-import { attachCopyButton } from "../utils/clipboard.js";
+import {
+  createConversationElement,
+  expandConversationWindow,
+  capturePrependedScrollState,
+  schedulePrependedScrollRestore,
+} from "../live/conversation-window.js";
 
 export function initAgentIndicators(deps) {
   const {
@@ -149,65 +153,37 @@ export function initAgentIndicators(deps) {
   // ── Conversation DOM ────────────────────────────────────────────
 
   const updateConversationDOM = (sessionId) => {
+    const conversation = state.conversations.get(sessionId) ?? [];
     let container = state.conversationContainers.get(sessionId);
 
     if (!container || !document.contains(container)) {
       const conversationWrapper = document.querySelector('.wm-live-conversation .wm-conversation');
-      if (conversationWrapper) {
-        container = conversationWrapper;
-        state.conversationContainers.set(sessionId, container);
-        const existingMessages = container.querySelectorAll('.wm-message');
-        existingMessages.forEach((node) => attachCopyButton(node));
-        state.lastMessageCount.set(sessionId, existingMessages.length);
-      } else {
+      if (!conversationWrapper) {
         return;
       }
+      container = conversationWrapper;
+      state.conversationContainers.set(sessionId, container);
     }
 
-    const conversation = state.conversations.get(sessionId) ?? [];
-    const lastCount = state.lastMessageCount.get(sessionId) ?? 0;
+    const next = createConversationElement({
+      sessionId,
+      conversation,
+      windowStore: state.liveMessageWindows,
+      onRevealOlder: (scrollElement) => {
+        const currentConversation = state.conversations.get(sessionId) ?? [];
+        const snapshot = capturePrependedScrollState(scrollElement);
+        expandConversationWindow(state.liveMessageWindows, sessionId, currentConversation.length);
+        updateConversationDOM(sessionId);
+        schedulePrependedScrollRestore(snapshot);
+      },
+    });
 
-    if (conversation.length > lastCount) {
-      const newMessages = conversation.slice(lastCount);
-
-      newMessages.forEach((message) => {
-        const bubble = document.createElement("article");
-        bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
-        const body = document.createElement("pre");
-        body.textContent = collapseNewlines(message.content ?? message.message ?? "");
-        bubble.append(body);
-        attachCopyButton(bubble);
-        container.append(bubble);
-      });
-
-      state.lastMessageCount.set(sessionId, conversation.length);
+    if (container.parentNode) {
+      container.replaceWith(next);
     }
 
-    if (conversation.length === lastCount && conversation.length > 0) {
-      const domMessages = container.querySelectorAll('.wm-message');
-      let contentChanged = false;
-
-      conversation.forEach((message, idx) => {
-        const domMessage = domMessages[idx];
-        if (domMessage) {
-          attachCopyButton(domMessage);
-          const body = domMessage.querySelector('pre');
-          const currentContent = body?.textContent || '';
-          const newContent = collapseNewlines(message.content ?? message.message ?? '');
-
-          if (currentContent !== newContent) {
-            contentChanged = true;
-            if (body) {
-              body.textContent = newContent;
-            }
-          }
-        }
-      });
-
-      if (contentChanged) {
-        state.lastMessageCount.set(sessionId, conversation.length);
-      }
-    }
+    state.conversationContainers.set(sessionId, next);
+    state.lastMessageCount.set(sessionId, conversation.length);
   };
 
   // ── Logs DOM ────────────────────────────────────────────────────

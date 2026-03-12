@@ -1363,6 +1363,9 @@ const fetchSessions = async () => {
   for (const key of Array.from(state.lastMessageCount.keys())) {
     if (!sessionIds.has(key)) state.lastMessageCount.delete(key);
   }
+  for (const key of Array.from(state.liveMessageWindows.keys())) {
+    if (!sessionIds.has(key)) state.liveMessageWindows.delete(key);
+  }
   for (const key of Array.from(state.lastLogLength.keys())) {
     if (!sessionIds.has(key)) state.lastLogLength.delete(key);
   }
@@ -1491,13 +1494,13 @@ function pushConversationToAlpineStore(sessionId) {
     return;
   }
   const conv = state.conversations.get(sessionId) || [];
-  chatStore.messages = conv.map((msg, idx) => ({
+  chatStore.replaceMessages(conv.map((msg, idx) => ({
     id: `api-${idx}`,
     sessionId,
     role: msg.role || msg.type || "assistant",
     content: msg.content || msg.message || "",
     createdAt: msg.createdAt || msg.created_at || "",
-  }));
+  })));
 }
 
 function renderConversationForSession(sessionId, options = {}) {
@@ -2013,13 +2016,13 @@ const sendMessage = async (sessionId, content) => {
       if (isAlpineChatEnabled()) {
         const chatStore = window.Alpine?.store("chat");
         if (chatStore && chatStore.sessionId === sessionId) {
-          chatStore.messages = [...chatStore.messages, {
+          chatStore.appendMessage({
             id: `raw-${Date.now()}`,
             sessionId,
             role: "user",
             content: trimmed,
             createdAt: new Date().toISOString(),
-          }];
+          });
         }
       }
       await Promise.all([fetchConversation(sessionId), fetchLogs(sessionId)]);

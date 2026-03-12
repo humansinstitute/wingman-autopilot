@@ -122,6 +122,8 @@ export const state = {
   pinnedFiles: new Map(),
   // Cached artifact counts per session
   artifactCounts: new Map(),
+  // Per-session visible message windows for the live conversation view
+  liveMessageWindows: new Map(),
   // DOM references for incremental updates
   conversationContainers: new Map(), // sessionId -> DOM element
   logContainers: new Map(), // sessionId -> DOM element

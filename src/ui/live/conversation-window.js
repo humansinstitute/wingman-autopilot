@@ -1,0 +1,182 @@
+import { attachCopyButton } from "../utils/clipboard.js";
+import { collapseNewlines } from "../utils/text.js";
+
+export const LIVE_MESSAGE_WINDOW_DEFAULT = 80;
+export const LIVE_MESSAGE_PAGE_SIZE = 80;
+
+function clampVisibleCount(totalCount, visibleCount) {
+  const safeTotal = Math.max(0, totalCount);
+  const safeVisible = Math.max(0, Math.trunc(visibleCount));
+  return Math.min(safeTotal, safeVisible);
+}
+
+export function createWindowRecord(totalCount, visibleCount = LIVE_MESSAGE_WINDOW_DEFAULT) {
+  return {
+    visibleCount: clampVisibleCount(totalCount, visibleCount),
+    lastTotal: Math.max(0, totalCount),
+  };
+}
+
+export function syncConversationWindow(windowStore, sessionId, totalCount) {
+  const safeTotal = Math.max(0, totalCount);
+  const current = windowStore.get(sessionId);
+  if (!current) {
+    const initial = createWindowRecord(safeTotal, LIVE_MESSAGE_WINDOW_DEFAULT);
+    windowStore.set(sessionId, initial);
+    return initial;
+  }
+
+  const previousTotal = Math.max(0, current.lastTotal ?? 0);
+  const next = {
+    visibleCount: clampVisibleCount(safeTotal, current.visibleCount ?? LIVE_MESSAGE_WINDOW_DEFAULT),
+    lastTotal: safeTotal,
+  };
+
+  if (safeTotal <= LIVE_MESSAGE_WINDOW_DEFAULT) {
+    next.visibleCount = safeTotal;
+  } else if (next.visibleCount === 0) {
+    next.visibleCount = Math.min(safeTotal, LIVE_MESSAGE_WINDOW_DEFAULT);
+  } else if (next.visibleCount >= previousTotal) {
+    next.visibleCount = safeTotal;
+  }
+
+  windowStore.set(sessionId, next);
+  return next;
+}
+
+export function expandConversationWindow(windowStore, sessionId, totalCount, step = LIVE_MESSAGE_PAGE_SIZE) {
+  const current = syncConversationWindow(windowStore, sessionId, totalCount);
+  const next = {
+    visibleCount: clampVisibleCount(totalCount, current.visibleCount + Math.max(1, Math.trunc(step))),
+    lastTotal: Math.max(0, totalCount),
+  };
+  windowStore.set(sessionId, next);
+  return next;
+}
+
+export function resetConversationWindow(windowStore, sessionId) {
+  windowStore.delete(sessionId);
+}
+
+export function getConversationWindowSnapshot(windowStore, sessionId, conversation) {
+  const items = Array.isArray(conversation) ? conversation : [];
+  const totalCount = items.length;
+  const windowRecord = syncConversationWindow(windowStore, sessionId, totalCount);
+  const visibleCount = clampVisibleCount(totalCount, windowRecord.visibleCount);
+  const hiddenCount = Math.max(0, totalCount - visibleCount);
+  const visibleMessages = hiddenCount > 0 ? items.slice(-visibleCount) : items;
+
+  return {
+    totalCount,
+    visibleCount,
+    hiddenCount,
+    visibleMessages,
+  };
+}
+
+export function capturePrependedScrollState(scrollElement) {
+  if (!(scrollElement instanceof HTMLElement)) {
+    return null;
+  }
+  return {
+    element: scrollElement,
+    scrollHeight: scrollElement.scrollHeight,
+    scrollTop: scrollElement.scrollTop,
+  };
+}
+
+export function schedulePrependedScrollRestore(snapshot) {
+  if (!snapshot?.element) {
+    return;
+  }
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const { element, scrollHeight, scrollTop } = snapshot;
+      if (!(element instanceof HTMLElement) || !element.isConnected) {
+        return;
+      }
+      const delta = element.scrollHeight - scrollHeight;
+      if (delta > 0) {
+        element.scrollTop = scrollTop + delta;
+      }
+    });
+  });
+}
+
+function buildRevealOlderLabel(hiddenCount) {
+  const nextStep = Math.min(LIVE_MESSAGE_PAGE_SIZE, hiddenCount);
+  return `Show ${nextStep} older message${nextStep === 1 ? "" : "s"}`;
+}
+
+function buildWindowSummary(hiddenCount, totalCount, visibleCount) {
+  if (hiddenCount <= 0) {
+    return "";
+  }
+  return `Showing the latest ${visibleCount} of ${totalCount} messages to keep long sessions responsive on mobile.`;
+}
+
+function createMessageBubble(message) {
+  const bubble = document.createElement("article");
+  bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
+  const body = document.createElement("pre");
+  body.textContent = collapseNewlines(message.content ?? message.message ?? "");
+  bubble.append(body);
+  attachCopyButton(bubble);
+  return bubble;
+}
+
+function createWindowNotice(snapshot, onRevealOlder) {
+  const notice = document.createElement("div");
+  notice.className = "wm-conversation-window-notice";
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "wm-conversation-window-button";
+  button.textContent = buildRevealOlderLabel(snapshot.hiddenCount);
+  button.setAttribute("aria-label", `${buildRevealOlderLabel(snapshot.hiddenCount)} in this session`);
+  button.dataset.testid = "conversation-show-older";
+  button.addEventListener("click", () => {
+    const scrollElement = button.closest(".wm-live-conversation");
+    onRevealOlder?.(scrollElement);
+  });
+
+  const summary = document.createElement("p");
+  summary.className = "wm-conversation-window-summary";
+  summary.textContent = buildWindowSummary(snapshot.hiddenCount, snapshot.totalCount, snapshot.visibleCount);
+
+  notice.append(button, summary);
+  return notice;
+}
+
+export function createConversationElement(options) {
+  const {
+    sessionId,
+    conversation,
+    windowStore,
+    onRevealOlder,
+  } = options;
+  const snapshot = getConversationWindowSnapshot(windowStore, sessionId, conversation);
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "wm-conversation";
+  wrapper.dataset.sessionId = sessionId;
+  wrapper.dataset.totalMessages = String(snapshot.totalCount);
+  wrapper.dataset.visibleMessages = String(snapshot.visibleCount);
+
+  if (snapshot.totalCount === 0) {
+    const empty = document.createElement("p");
+    empty.textContent = "Conversation has no messages yet.";
+    wrapper.append(empty);
+    return wrapper;
+  }
+
+  if (snapshot.hiddenCount > 0) {
+    wrapper.append(createWindowNotice(snapshot, onRevealOlder));
+  }
+
+  snapshot.visibleMessages.forEach((message) => {
+    wrapper.append(createMessageBubble(message));
+  });
+
+  return wrapper;
+}

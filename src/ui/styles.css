@@ -2422,6 +2422,44 @@ body[data-menu-open="true"] .wm-menu-panel {
   gap: 1rem;
 }
 
+.wm-conversation-window-notice {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.85rem 1rem;
+  border-radius: 0.85rem;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.wm-conversation-window-button {
+  justify-self: start;
+  appearance: none;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--text-primary);
+  border-radius: 999px;
+  padding: 0.45rem 0.85rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+
+.wm-conversation-window-button:hover,
+.wm-conversation-window-button:focus-visible {
+  background: rgba(16, 185, 129, 0.2);
+  border-color: rgba(16, 185, 129, 0.5);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.wm-conversation-window-summary {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
 .wm-message {
   border-radius: 0.75rem;
   padding: 1rem 1.25rem;

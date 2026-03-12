@@ -24,6 +24,12 @@ import { openFilePicker } from "../modals/file-picker.js";
 import { npubProjectsState } from "../npub-projects/index.js";
 import { state, TERMINAL_CONTROL_ACTIONS } from "../state/index.js";
 import * as scrollPill from "../live/scroll-pill.js";
+import {
+  createConversationElement,
+  expandConversationWindow,
+  capturePrependedScrollState,
+  schedulePrependedScrollRestore,
+} from "../live/conversation-window.js";
 
 export function initLiveView(deps) {
   const {
@@ -331,31 +337,38 @@ export function initLiveView(deps) {
 
   // ── Conversation ────────────────────────────────────────────────
 
-  const renderConversation = (sessionId) => {
+  const rerenderConversation = (sessionId, options = {}) => {
+    const { prependedScrollState = null } = options;
+    const current = state.conversationContainers.get(sessionId);
     const conversation = state.conversations.get(sessionId) ?? [];
-    const wrapper = document.createElement("div");
-    wrapper.className = "wm-conversation";
+    const next = createConversationElement({
+      sessionId,
+      conversation,
+      windowStore: state.liveMessageWindows,
+      onRevealOlder: (scrollElement) => {
+        const currentConversation = state.conversations.get(sessionId) ?? [];
+        const snapshot = capturePrependedScrollState(scrollElement);
+        expandConversationWindow(state.liveMessageWindows, sessionId, currentConversation.length);
+        rerenderConversation(sessionId, { prependedScrollState: snapshot });
+      },
+    });
 
-    if (conversation.length === 0) {
-      const empty = document.createElement("p");
-      empty.textContent = "Conversation has no messages yet.";
-      wrapper.append(empty);
-    } else {
-      conversation.forEach((message) => {
-        const bubble = document.createElement("article");
-        bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
-        const body = document.createElement("pre");
-        body.textContent = collapseNewlines(message.content ?? message.message ?? "");
-        bubble.append(body);
-        attachCopyButton(bubble);
-        wrapper.append(bubble);
-      });
+    if (current?.parentNode) {
+      current.replaceWith(next);
     }
 
-    state.conversationContainers.set(sessionId, wrapper);
+    state.conversationContainers.set(sessionId, next);
     state.lastMessageCount.set(sessionId, conversation.length);
 
-    return wrapper;
+    if (prependedScrollState) {
+      schedulePrependedScrollRestore(prependedScrollState);
+    }
+
+    return next;
+  };
+
+  const renderConversation = (sessionId) => {
+    return rerenderConversation(sessionId);
   };
 
   // ── Composer ────────────────────────────────────────────────────

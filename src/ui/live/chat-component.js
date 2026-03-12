@@ -6,6 +6,15 @@
 import Alpine from "/vendor/alpinejs/module.esm.js";
 import { sseManager } from "./sse-manager.js";
 import { show as scrollPillShow, isNearBottom as scrollPillIsNearBottom } from "./scroll-pill.js";
+import {
+  LIVE_MESSAGE_WINDOW_DEFAULT,
+  LIVE_MESSAGE_PAGE_SIZE,
+  createWindowRecord,
+  syncConversationWindow,
+  expandConversationWindow,
+  capturePrependedScrollState,
+  schedulePrependedScrollRestore,
+} from "./conversation-window.js";
 
 /**
  * Check if Alpine chat is enabled via feature flag.
@@ -88,6 +97,7 @@ export function registerChatComponent() {
   Alpine.store("chat", {
     sessionId: null,
     messages: [],
+    messageWindow: createWindowRecord(0, LIVE_MESSAGE_WINDOW_DEFAULT),
     status: "disconnected",
     connectionState: "disconnected",
     isLoading: false,
@@ -107,6 +117,7 @@ export function registerChatComponent() {
       if (this.sessionId === sessionId) return;
       this.cleanup();
       this.sessionId = sessionId;
+      this.messageWindow = createWindowRecord(0, LIVE_MESSAGE_WINDOW_DEFAULT);
       this.isLoading = true;
       this.error = null;
 
@@ -161,6 +172,31 @@ export function registerChatComponent() {
       }
     },
 
+    _syncMessageWindow() {
+      this.messageWindow = syncConversationWindow(
+        new Map([["active", this.messageWindow]]),
+        "active",
+        this.messages.length,
+      );
+    },
+
+    replaceMessages(messages) {
+      this.messages = Array.isArray(messages) ? messages : [];
+      this._syncMessageWindow();
+    },
+
+    appendMessage(message) {
+      this.messages = [...this.messages, message];
+      this._syncMessageWindow();
+    },
+
+    revealOlderMessages(scrollElement) {
+      const tempStore = new Map([["active", this.messageWindow]]);
+      const snapshot = capturePrependedScrollState(scrollElement);
+      this.messageWindow = expandConversationWindow(tempStore, "active", this.messages.length, LIVE_MESSAGE_PAGE_SIZE);
+      schedulePrependedScrollRestore(snapshot);
+    },
+
     /**
      * Clean up subscriptions and connections.
      */
@@ -172,6 +208,7 @@ export function registerChatComponent() {
       }
       this.sessionId = null;
       this.messages = [];
+      this.messageWindow = createWindowRecord(0, LIVE_MESSAGE_WINDOW_DEFAULT);
       this.status = "disconnected";
       this.connectionState = "disconnected";
     },
@@ -198,6 +235,32 @@ export function registerChatComponent() {
      */
     get isBusy() {
       return this.status === "running";
+    },
+
+    get visibleMessages() {
+      const visibleCount = Math.min(this.messages.length, this.messageWindow?.visibleCount ?? LIVE_MESSAGE_WINDOW_DEFAULT);
+      if (visibleCount <= 0 || visibleCount >= this.messages.length) {
+        return this.messages;
+      }
+      return this.messages.slice(-visibleCount);
+    },
+
+    get hiddenMessageCount() {
+      const visibleCount = Math.min(this.messages.length, this.messageWindow?.visibleCount ?? LIVE_MESSAGE_WINDOW_DEFAULT);
+      return Math.max(0, this.messages.length - visibleCount);
+    },
+
+    get revealOlderLabel() {
+      const nextStep = Math.min(LIVE_MESSAGE_PAGE_SIZE, this.hiddenMessageCount);
+      return `Show ${nextStep} older message${nextStep === 1 ? "" : "s"}`;
+    },
+
+    get windowSummary() {
+      if (this.hiddenMessageCount <= 0) {
+        return "";
+      }
+      const visibleCount = Math.min(this.messages.length, this.messageWindow?.visibleCount ?? LIVE_MESSAGE_WINDOW_DEFAULT);
+      return `Showing the latest ${visibleCount} of ${this.messages.length} messages to keep long sessions responsive on mobile.`;
     },
 
     /**
@@ -288,7 +351,21 @@ export function getChatTemplate(sessionId) {
 
   <!-- Messages container -->
   <div x-ref="chatContainer" class="wm-conversation" :class="{ 'loading': $store.chat.isLoading }">
-    <template x-for="message in $store.chat.messages" :key="message.id">
+    <template x-if="$store.chat.hiddenMessageCount > 0">
+      <div class="wm-conversation-window-notice">
+        <button
+          type="button"
+          class="wm-conversation-window-button"
+          data-testid="conversation-show-older"
+          :aria-label="$store.chat.revealOlderLabel + ' in this session'"
+          x-text="$store.chat.revealOlderLabel"
+          @click="$store.chat.revealOlderMessages($el.closest('.wm-live-conversation'))">
+        </button>
+        <p class="wm-conversation-window-summary" x-text="$store.chat.windowSummary"></p>
+      </div>
+    </template>
+
+    <template x-for="message in $store.chat.visibleMessages" :key="message.id">
       <article class="wm-message"
                :class="message.role === 'user' ? 'user' : (message.role === 'assistant' || message.role === 'agent' ? 'assistant' : 'system')">
         <pre x-text="message.content"></pre>
