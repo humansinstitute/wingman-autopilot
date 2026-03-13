@@ -18,6 +18,7 @@
   --code-bg: #000000;
   --inline-code-bg: #292524;
   --nav-height: 72px;
+  --wm-viewport-height: 100vh;
 }
 
 body[data-theme="light"] {
@@ -46,7 +47,7 @@ body[data-theme="dark"] {
 
 body {
   margin: 0;
-  min-height: 100vh;
+  min-height: var(--wm-viewport-height);
   display: flex;
   flex-direction: column;
   color: var(--text-secondary);
@@ -710,7 +711,7 @@ body[data-menu-open="true"] .wm-menu-panel {
   padding-top: 0;
   padding-bottom: 0;
   flex: 0 0 auto;
-  height: calc(100vh - var(--nav-height));
+  height: calc(var(--wm-viewport-height) - var(--nav-height));
   overflow: hidden;
 }
 
@@ -2378,7 +2379,7 @@ body[data-menu-open="true"] .wm-menu-panel {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  min-height: calc(100vh - var(--nav-height) - 1rem);
+  min-height: calc(var(--wm-viewport-height) - var(--nav-height) - 1rem);
 }
 
 .wm-tabs-bar {
@@ -3396,6 +3397,11 @@ body[data-menu-open="true"] .wm-menu-panel {
   backface-visibility: hidden;
 }
 
+body[data-keyboard-open="true"] .wm-composer-shell {
+  position: relative;
+  bottom: auto;
+}
+
 /* Floating scroll-to-bottom pill */
 .wm-scroll-pill {
   position: absolute;
@@ -3927,7 +3933,7 @@ body[data-menu-open="true"] .wm-menu-panel {
 
   .wm-live {
     gap: 0.9rem;
-    min-height: calc(100vh - var(--nav-height) - 1.6rem);
+    min-height: calc(var(--wm-viewport-height) - var(--nav-height) - 1.6rem);
   }
 
   .wm-tabs-bar {

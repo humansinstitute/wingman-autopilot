@@ -12,6 +12,12 @@ import {
   initAlpineChat,
 } from "./live/index.js";
 import {
+  initLiveMobileRuntime,
+  isComposerInteractionActive,
+  isMobileKeyboardOpen,
+  focusComposerTextarea,
+} from "./live/mobile-runtime.js";
+import {
   createWebviewIcon,
 } from "./live/webview-panel.js";
 import {
@@ -1699,6 +1705,8 @@ const CONVERSATION_POLL_INTERVAL = 100;
 // When Alpine handles messages via SSE, we still need to poll session status
 // and queue data, but at a slower cadence (1s) to avoid hammering the API.
 const STATUS_POLL_INTERVAL = 1000;
+const MOBILE_COMPOSER_POLL_INTERVAL = 3000;
+let lastComposerAwarePollAt = 0;
 
 const startConversationPolling = (sessionId) => {
   if (!sessionId) return;
@@ -1726,11 +1734,34 @@ const startConversationPolling = (sessionId) => {
 
     conversationPollInFlight = true;
     try {
+      const composerActive = isComposerInteractionActive() || isMobileKeyboardOpen();
+      const now = Date.now();
+      const composerPollDue = now - lastComposerAwarePollAt >= MOBILE_COMPOSER_POLL_INTERVAL;
+      const shouldThrottleForComposer = composerActive && !composerPollDue;
+      if (composerActive && composerPollDue) {
+        lastComposerAwarePollAt = now;
+      }
+
       // Fetch conversation, session status, and queue in parallel.
       // Alpine mode: fetchConversation syncs to Dexie (no manual DOM).
-      const fetches = [fetchConversation(sessionId), fetchSessionApi(sessionId), fetchSessionQueueApi(sessionId)];
+      const fetchConversationPromise =
+        shouldThrottleForComposer
+          ? Promise.resolve(null)
+          : fetchConversation(sessionId);
+      const fetchSessionPromise =
+        shouldThrottleForComposer
+          ? Promise.resolve(null)
+          : fetchSessionApi(sessionId);
+      const fetchQueuePromise =
+        shouldThrottleForComposer
+          ? Promise.resolve(null)
+          : fetchSessionQueueApi(sessionId);
 
-      const [, sessionData, queueData] = await Promise.all(fetches);
+      const [, sessionData, queueData] = await Promise.all([
+        fetchConversationPromise,
+        fetchSessionPromise,
+        fetchQueuePromise,
+      ]);
 
       // Update session status if we got data
       if (sessionData) {
@@ -1772,6 +1803,7 @@ const stopConversationPolling = () => {
   }
   conversationPollingSessionId = null;
   conversationPollInFlight = false;
+  lastComposerAwarePollAt = 0;
 };
 
 const isConversationPolling = (sessionId) => {
@@ -2010,7 +2042,7 @@ const sendMessage = async (sessionId, content) => {
       if (textarea) {
         textarea.value = "";
         textarea.style.height = "auto";
-        requestAnimationFrame(() => textarea.focus({ preventScroll: true }));
+        focusComposerTextarea(textarea, "send");
       }
       // Show the raw input in the chat and refresh conversation
       if (isAlpineChatEnabled()) {
@@ -2043,9 +2075,7 @@ const sendMessage = async (sessionId, content) => {
       if (textarea) {
         textarea.value = "";
         textarea.style.height = "auto";
-        requestAnimationFrame(() => {
-          textarea.focus({ preventScroll: true });
-        });
+        focusComposerTextarea(textarea, "queue");
       }
       // Update status indicators to show queue count
       updateAgentStatusIndicators();
@@ -2077,9 +2107,7 @@ const sendMessage = async (sessionId, content) => {
     if (textarea) {
       textarea.value = "";
       textarea.style.height = "auto";
-      requestAnimationFrame(() => {
-        textarea.focus({ preventScroll: true });
-      });
+      focusComposerTextarea(textarea, "send");
     }
   } catch (error) {
     const message = error instanceof Error && error.message ? error.message : "Failed to send message to agent.";
@@ -2710,9 +2738,7 @@ const render = () => {
       // If on live route and no element was focused, focus the composer textarea
       if (currentRoute === "live" && (!document.activeElement || document.activeElement === document.body)) {
         const textarea = document.querySelector('.wm-composer textarea');
-        if (textarea) {
-          textarea.focus({ preventScroll: true });
-        }
+        focusComposerTextarea(textarea, "restore");
       }
       setActiveNav();
       syncMenuTabs();
@@ -3504,6 +3530,7 @@ dialog.addEventListener("cancel", (event) => {
   initTheme();
   initTabsVisibility();
   setupConversationSelectionLock();
+  initLiveMobileRuntime();
   // Initialize live module (Dexie database for SSE updates)
   initLiveModule().catch((err) => console.warn("[app] Live module init failed:", err));
 

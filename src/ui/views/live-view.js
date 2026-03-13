@@ -30,6 +30,7 @@ import {
   capturePrependedScrollState,
   schedulePrependedScrollRestore,
 } from "../live/conversation-window.js";
+import { focusComposerTextarea } from "../live/mobile-runtime.js";
 
 export function initLiveView(deps) {
   const {
@@ -413,6 +414,7 @@ export function initLiveView(deps) {
     textarea.placeholder = "Ask the agent something...";
     textarea.value = initialDraft;
     textarea.setAttribute("rows", "1");
+    textarea.dataset.focusKey = `live-composer-${sessionId}`;
 
     const fileInput = document.createElement("input");
     fileInput.type = "file";
@@ -570,7 +572,7 @@ export function initLiveView(deps) {
           requestAnimationFrame(() => {
             const newTextarea = document.querySelector('.wm-composer textarea');
             if (newTextarea) {
-              newTextarea.focus({ preventScroll: true });
+              focusComposerTextarea(newTextarea, "send");
             }
           });
         });
@@ -1011,7 +1013,7 @@ export function initLiveView(deps) {
 
     requestAnimationFrame(() => {
       if (!document.contains(textarea)) return;
-      textarea.focus({ preventScroll: true });
+      focusComposerTextarea(textarea, "mount");
       resizeTextarea();
 
       if (shouldAutoSubmit && textarea.value.trim()) {
@@ -1068,7 +1070,7 @@ export function initLiveView(deps) {
     requestAnimationFrame(() => {
       const textarea = document.querySelector('.wm-composer textarea');
       if (textarea) {
-        textarea.focus({ preventScroll: true });
+        focusComposerTextarea(textarea, "mount");
       }
     });
   };
