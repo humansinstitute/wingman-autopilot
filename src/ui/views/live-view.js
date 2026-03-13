@@ -76,6 +76,30 @@ export function initLiveView(deps) {
   // Track active writer panel cleanup function
   let activeWriterCleanup = null;
 
+  function resolveCurrentLiveSessionId() {
+    const liveSessions = sessionsStore().items;
+    const routeSessionId =
+      getCurrentRoute() === "live"
+        ? getSessionIdFromPath(window.location.pathname)
+        : null;
+
+    if (routeSessionId && liveSessions.some((session) => session.id === routeSessionId)) {
+      return routeSessionId;
+    }
+
+    const activeId = sessionsStore().activeSessionId;
+    if (activeId && liveSessions.some((session) => session.id === activeId)) {
+      return activeId;
+    }
+
+    const lastId = sessionsStore().lastActiveSessionId;
+    if (lastId && liveSessions.some((session) => session.id === lastId)) {
+      return lastId;
+    }
+
+    return null;
+  }
+
   // ── Session tabs ────────────────────────────────────────────────
 
   const renderSessionTabs = (options = {}) => {
@@ -87,7 +111,7 @@ export function initLiveView(deps) {
     activeSessions.forEach((session) => {
       const tab = document.createElement("div");
       tab.className = "wm-tab";
-      const tabActiveId = sessionsStore().activeSessionId;
+      const tabActiveId = resolveCurrentLiveSessionId();
       if (session.id === tabActiveId) {
         tab.classList.add("active");
       }
@@ -102,7 +126,7 @@ export function initLiveView(deps) {
 
       tab.addEventListener("click", () => {
         const wasLiveRoute = getCurrentRoute() === "live";
-        const clickActiveId = sessionsStore().activeSessionId;
+        const clickActiveId = resolveCurrentLiveSessionId();
         if (clickActiveId === session.id && wasLiveRoute) {
           onSelect?.();
           return;
@@ -152,7 +176,7 @@ export function initLiveView(deps) {
     activeSessions.forEach((session) => {
       const tab = document.createElement("div");
       tab.className = "wm-tab";
-      const menuTabActiveId = sessionsStore().activeSessionId;
+      const menuTabActiveId = resolveCurrentLiveSessionId();
       if (session.id === menuTabActiveId) {
         tab.classList.add("active");
       }
@@ -166,7 +190,7 @@ export function initLiveView(deps) {
       tab.title = `${displayName} - ${session.agent}:${session.port}`;
 
       tab.addEventListener("click", () => {
-        const menuClickActiveId = sessionsStore().activeSessionId;
+        const menuClickActiveId = resolveCurrentLiveSessionId();
         if (menuClickActiveId === session.id && getCurrentRoute() === "live") {
           onSelect?.();
           return;
@@ -1205,14 +1229,15 @@ export function initLiveView(deps) {
       return wrapper;
     }
 
-    const liveActiveId = sessionsStore().activeSessionId;
-    const liveSessions = sessionsStore().items;
-    if (!liveActiveId || !liveSessions.some((session) => session.id === liveActiveId)) {
-      ensureActiveSession();
+    let sessionId = resolveCurrentLiveSessionId();
+    if (sessionId && sessionsStore().activeSessionId !== sessionId) {
+      setActiveSession(sessionId, { updateHistory: false, logPort: false });
     }
-
-    const resolvedActiveId = sessionsStore().activeSessionId;
-    if (!resolvedActiveId) {
+    if (!sessionId) {
+      ensureActiveSession();
+      sessionId = resolveCurrentLiveSessionId();
+    }
+    if (!sessionId) {
       const container = document.createElement("section");
       container.className = "wm-card wm-live-main";
       const empty = document.createElement("p");
@@ -1221,8 +1246,6 @@ export function initLiveView(deps) {
       wrapper.append(container);
       return wrapper;
     }
-
-    const sessionId = resolvedActiveId;
 
     const main = document.createElement("section");
     main.className = "wm-card wm-live-main";

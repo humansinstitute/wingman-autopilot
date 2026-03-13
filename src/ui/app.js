@@ -488,6 +488,30 @@ const getSessionIdFromPath = (pathname) => {
   return segments[0] ?? null;
 };
 
+function resolveCurrentLiveSessionId() {
+  const allSessions = sessionsStore().items;
+  const routeSessionId =
+    currentRoute === "live"
+      ? getSessionIdFromPath(window.location.pathname)
+      : null;
+
+  if (routeSessionId && allSessions.some((session) => session.id === routeSessionId)) {
+    return routeSessionId;
+  }
+
+  const activeId = sessionsStore().activeSessionId;
+  if (activeId && allSessions.some((session) => session.id === activeId)) {
+    return activeId;
+  }
+
+  const lastId = sessionsStore().lastActiveSessionId;
+  if (lastId && allSessions.some((session) => session.id === lastId)) {
+    return lastId;
+  }
+
+  return null;
+}
+
 let currentRoute = getRouteFromPath(window.location.pathname);
 let currentTheme = "dark";
 let tabsVisible = true;
@@ -942,9 +966,9 @@ const applyTheme = (theme, persist = true) => {
 };
 
 const getActiveSessionForIndicator = () => {
-  const activeId = sessionsStore().activeSessionId;
-  if (!activeId) return null;
-  return sessionsStore().items.find((session) => session.id === activeId) ?? null;
+  const sessionId = resolveCurrentLiveSessionId();
+  if (!sessionId) return null;
+  return sessionsStore().items.find((session) => session.id === sessionId) ?? null;
 };
 
 const shouldShowDesktopIndicator = () => currentRoute === "live" && window.innerWidth >= 900;
@@ -1138,9 +1162,9 @@ const setActiveNav = () => {
 const updateDocumentTitle = () => {
   let title = "Wingman";
   if (currentRoute === "live") {
-    const titleActiveId = sessionsStore().activeSessionId;
-    const session = titleActiveId
-      ? sessionsStore().items.find((s) => s.id === titleActiveId)
+    const currentSessionId = resolveCurrentLiveSessionId();
+    const session = currentSessionId
+      ? sessionsStore().items.find((s) => s.id === currentSessionId)
       : null;
     if (session) {
       const sessionName = getSessionDisplayName(session);
