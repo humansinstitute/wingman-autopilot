@@ -1,8 +1,11 @@
 const MOBILE_WIDTH_PX = 820;
 const KEYBOARD_DELTA_THRESHOLD_PX = 120;
+const VIEWPORT_SETTLE_DELAY_MS = 300;
 
 let initialized = false;
 let animationFrameId = null;
+let settleTimerId = null;
+let lastAppliedHeight = null;
 
 function getViewportHeight() {
   const visualViewportHeight = window.visualViewport?.height;
@@ -42,15 +45,32 @@ function applyViewportState() {
     return;
   }
 
-  root.style.setProperty("--wm-viewport-height", `${Math.round(getViewportHeight())}px`);
-  body.dataset.keyboardOpen = detectKeyboardOpen() ? "true" : "false";
+  const keyboardOpen = detectKeyboardOpen();
+  body.dataset.keyboardOpen = keyboardOpen ? "true" : "false";
+
+  const newHeight = Math.round(getViewportHeight());
+  if (lastAppliedHeight !== null && lastAppliedHeight === newHeight) {
+    return;
+  }
+  lastAppliedHeight = newHeight;
+  root.style.setProperty("--wm-viewport-height", `${newHeight}px`);
 }
 
 function scheduleViewportStateSync() {
   if (animationFrameId !== null) {
-    return;
+    cancelAnimationFrame(animationFrameId);
   }
   animationFrameId = requestAnimationFrame(applyViewportState);
+}
+
+function debouncedViewportSync() {
+  if (settleTimerId !== null) {
+    clearTimeout(settleTimerId);
+  }
+  settleTimerId = setTimeout(() => {
+    settleTimerId = null;
+    scheduleViewportStateSync();
+  }, VIEWPORT_SETTLE_DELAY_MS);
 }
 
 export function initLiveMobileRuntime() {
@@ -66,11 +86,11 @@ export function initLiveMobileRuntime() {
   window.addEventListener("resize", scheduleViewportStateSync, { passive: true });
   window.addEventListener("orientationchange", scheduleViewportStateSync, { passive: true });
   if (visualViewport) {
-    visualViewport.addEventListener("resize", scheduleViewportStateSync, { passive: true });
-    visualViewport.addEventListener("scroll", scheduleViewportStateSync, { passive: true });
+    visualViewport.addEventListener("resize", debouncedViewportSync, { passive: true });
+    visualViewport.addEventListener("scroll", debouncedViewportSync, { passive: true });
   }
-  document.addEventListener("focusin", scheduleViewportStateSync, true);
-  document.addEventListener("focusout", scheduleViewportStateSync, true);
+  document.addEventListener("focusin", debouncedViewportSync, true);
+  document.addEventListener("focusout", debouncedViewportSync, true);
 }
 
 export function isMobileViewport() {

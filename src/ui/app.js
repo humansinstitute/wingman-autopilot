@@ -3431,6 +3431,9 @@ const scrollLiveViewIfVisible = () => {
   if (currentRoute !== "live") {
     return;
   }
+  if (isComposerInteractionActive() || isMobileKeyboardOpen()) {
+    return;
+  }
   const scrollActiveId = sessionsStore().activeSessionId;
   if (!scrollActiveId) {
     return;
