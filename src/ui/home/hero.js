@@ -101,14 +101,14 @@ const createHeroBrand = () => {
 
   const logoDark = document.createElement("img");
   logoDark.src = "/path/Wingman_Goose_Logo_Dark.png";
-  logoDark.alt = "Wingman logo";
+  logoDark.alt = "Wingman: Harness logo";
   logoDark.width = 40;
   logoDark.height = 40;
   logoDark.className = "wm-logo dark";
 
   const logoLight = document.createElement("img");
   logoLight.src = "/path/Wingman_Goose_Logo_Light.png";
-  logoLight.alt = "Wingman logo";
+  logoLight.alt = "Wingman: Harness logo";
   logoLight.width = 40;
   logoLight.height = 40;
   logoLight.className = "wm-logo light";
@@ -120,7 +120,7 @@ const createHeroBrand = () => {
 
   const brandName = document.createElement("span");
   brandName.className = "wm-home-guest-hero-brand-name";
-  brandName.textContent = "Wingman";
+  brandName.textContent = "Wingman: Harness";
 
   const brandTagline = document.createElement("span");
   brandTagline.className = "wm-home-guest-hero-brand-tagline";
