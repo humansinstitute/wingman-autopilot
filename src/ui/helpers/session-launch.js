@@ -22,6 +22,54 @@ const shouldLaunchSessionInCurrentTab = () => {
   }
 };
 
+function openPendingSessionWindow() {
+  try {
+    const pendingWindow = window.open("about:blank", "_blank");
+    if (!pendingWindow) {
+      return null;
+    }
+    try {
+      pendingWindow.document.title = "Launching session";
+      if (pendingWindow.document.body) {
+        pendingWindow.document.body.textContent = "Launching session...";
+      }
+    } catch {
+      // Ignore DOM access failures for the placeholder window.
+    }
+    return pendingWindow;
+  } catch {
+    return null;
+  }
+}
+
+function closePendingSessionWindow(pendingWindow) {
+  if (!pendingWindow || pendingWindow.closed) {
+    return;
+  }
+  try {
+    pendingWindow.close();
+  } catch {
+    // Ignore close failures.
+  }
+}
+
+function navigatePendingSessionWindow(pendingWindow, sessionUrl) {
+  if (!pendingWindow || pendingWindow.closed) {
+    return false;
+  }
+  try {
+    pendingWindow.opener = null;
+  } catch {
+    // Ignore opener isolation failures.
+  }
+  try {
+    pendingWindow.location.replace(sessionUrl);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const buildSessionOrigin = ({ type, id, url, label }) => {
   const normalizedType = normalizeString(type);
   const normalizedId = normalizeString(id);
@@ -78,6 +126,9 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = 
       payload.targetFile = targetFile.trim();
     }
 
+    const canAttemptNewTab = openInNewTab && !shouldLaunchSessionInCurrentTab();
+    const pendingWindow = canAttemptNewTab ? openPendingSessionWindow() : null;
+
     const response = await fetch("/api/sessions", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -85,6 +136,7 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = 
     });
 
     if (!response.ok) {
+      closePendingSessionWindow(pendingWindow);
       const data = await response.json().catch(() => ({}));
       window.alert(`Failed to start session: ${data.error ?? response.statusText}`);
       return;
@@ -102,12 +154,15 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = 
         }
       }
 
-      const canAttemptNewTab = openInNewTab && !shouldLaunchSessionInCurrentTab();
       if (canAttemptNewTab) {
         const sessionUrl = `${routePrefix}/${session.id}`;
-        const launchedTab = window.open(sessionUrl, "_blank", "noopener");
-        openedInNewTab = Boolean(launchedTab);
+        openedInNewTab = navigatePendingSessionWindow(pendingWindow, sessionUrl);
+        if (!openedInNewTab) {
+          closePendingSessionWindow(pendingWindow);
+        }
       }
+    } else {
+      closePendingSessionWindow(pendingWindow);
     }
     await handleSessionStart(session, {
       suppressRouteChange: openedInNewTab,
