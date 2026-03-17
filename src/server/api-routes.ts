@@ -3,7 +3,7 @@
  * Extracted from server.ts to reduce file size.
  */
 
-import type { RequestAuthContext } from "../auth/request-context";
+import { runWithRequestContext, type RequestAuthContext } from "../auth/request-context";
 import type { AccessAction } from "../auth/access-control";
 import type { WorkspaceScope } from "../workspaces/workspace-scope";
 import type { AppRecord } from "../apps/app-registry";
@@ -104,6 +104,11 @@ export interface ApiRoutesContext {
   // Core helper functions
   resolveWorkspace: (context?: RequestAuthContext) => WorkspaceScope;
   verifyNip98AuthHeader: (request: Request, url: URL) => string | null;
+  resolveNip98AuthContext: (
+    request: Request,
+    url: URL,
+    authContext: RequestAuthContext,
+  ) => RequestAuthContext;
   resolveFeatureFlagStateForViewer: (
     key: string,
     isAdmin: boolean,
@@ -222,9 +227,8 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
 
       // Allow NIP-98 auth as fallback when no session cookie
       if (!authContext.session) {
-        const nip98Npub = ctx.verifyNip98AuthHeader(request, url);
-        if (nip98Npub) {
-          effectiveAuth = { npub: nip98Npub, session: null };
+        effectiveAuth = ctx.resolveNip98AuthContext(request, url, authContext);
+        if (effectiveAuth.npub) {
           effectiveIsAdmin = true; // NIP-98 server keys treated as admin for project lookups
         } else {
           return withProjectApiCors(Response.json({ error: "Authentication required" }, { status: 401 }));
@@ -428,16 +432,13 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
     }
 
     if (pathname === "/api/workspace/tree" || pathname === "/api/apps" || pathname.startsWith("/api/apps/")) {
-      let appsAuthContext = authContext;
-      if (!appsAuthContext.session) {
-        const nip98Npub = ctx.verifyNip98AuthHeader(request, url);
-        if (nip98Npub) {
-          appsAuthContext = { npub: nip98Npub, session: null };
-        }
-      }
+      const appsAuthContext = ctx.resolveNip98AuthContext(request, url, authContext);
 
       const appsCtx = ctx.buildAppsContext(appsAuthContext);
-      const appsApiResponse = await handleAppsApi(request, url, method, appsAuthContext, appsCtx);
+      const appsApiResponse = await runWithRequestContext(
+        appsAuthContext,
+        () => handleAppsApi(request, url, method, appsAuthContext, appsCtx),
+      );
       if (appsApiResponse) return appsApiResponse;
     }
 
@@ -529,7 +530,11 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
 
     // Session & archive API routes (delegated to session-api-routes.ts)
     if (pathname.startsWith("/api/archive") || pathname.startsWith("/api/sessions")) {
-      const sessionApiResponse = await handleSessionApi(request, url, method, authContext, ctx.sessionApiContext);
+      const sessionAuthContext = ctx.resolveNip98AuthContext(request, url, authContext);
+      const sessionApiResponse = await runWithRequestContext(
+        sessionAuthContext,
+        () => handleSessionApi(request, url, method, sessionAuthContext, ctx.sessionApiContext),
+      );
       if (sessionApiResponse) return sessionApiResponse;
     }
 

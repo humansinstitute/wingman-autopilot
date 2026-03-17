@@ -107,6 +107,7 @@ export const evaluateAccess = async (
 export interface RequireAuthenticationOptions {
   reason?: string;
   status?: number;
+  allowNip98?: boolean;
 }
 
 export const requireAuthentication = (options: RequireAuthenticationOptions = {}): AccessRule => {
@@ -114,6 +115,9 @@ export const requireAuthentication = (options: RequireAuthenticationOptions = {}
   const status = options.status ?? 401;
   return (context) => {
     if (context.auth.session) {
+      return allow();
+    }
+    if (options.allowNip98 && context.auth.npub) {
       return allow();
     }
     return deny(reason, status);

@@ -365,7 +365,7 @@ export async function handleSessionApi(
         sessionName ?? undefined,
         origin,
         targetFile,
-        undefined,
+        authContext.npub ?? undefined,
         { AGENT: false },
       );
       ctx.messageStore.recordSession({
@@ -918,7 +918,7 @@ async function handleForkToWorktree(
       sessionName,
       { type: "fork", id: id, label: `Forked from ${ownedSession.name || id}` },
       undefined,
-      undefined,
+      authContext.npub ?? undefined,
       { AGENT: false },
     );
     ctx.messageStore.recordSession({

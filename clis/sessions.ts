@@ -7,7 +7,7 @@
  *           queue-next, archive, archive-info, archive-logs, archive-delete
  */
 
-import { parseCommonFlags, buildConfig, requestJson } from "./lib/auth";
+import { parseCommonFlags, buildConfig, requestJson, requestJsonBotCrypto, resolveBaseUrl } from "./lib/auth";
 
 const USAGE = `Wingman session management CLI (NIP-98)
 
@@ -39,6 +39,7 @@ Options:
   --limit <n>          Pagination limit (for archive, default: 50)
   --offset <n>         Pagination offset (for archive)
   --filter <text>      Filter archived sessions
+  --bot-crypto         Sign via bot-crypto API (for agent sessions)
   --json               Print raw JSON response
   -h, --help           Show help
 
@@ -92,7 +93,7 @@ function printMessages(messages: Array<Record<string, unknown>>) {
 }
 
 async function run() {
-  const { args, urlInput, keyInput, asJson, help } = parseCommonFlags(Bun.argv.slice(2));
+  const { args, urlInput, keyInput, asJson, help, botCrypto } = parseCommonFlags(Bun.argv.slice(2));
 
   // Extract session-specific flags
   let name: string | undefined;
@@ -135,13 +136,19 @@ async function run() {
     return;
   }
 
-  const { baseUrl, secretKey } = buildConfig(urlInput, keyInput);
+  const baseUrl = resolveBaseUrl(urlInput);
+
+  async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
+    if (botCrypto) {
+      return requestJsonBotCrypto<T>(baseUrl, method, path, body);
+    }
+    const { secretKey } = buildConfig(urlInput, keyInput);
+    return requestJson<T>(baseUrl, secretKey, method, path, body);
+  }
 
   switch (command) {
     case "list": {
-      const payload = await requestJson<{ sessions?: Session[] }>(
-        baseUrl, secretKey, "GET", "/api/sessions",
-      );
+      const payload = await req<{ sessions?: Session[] }>("GET", "/api/sessions");
       const sessions = Array.isArray(payload.sessions)
         ? payload.sessions
         : Array.isArray(payload) ? (payload as Session[]) : [];
@@ -160,9 +167,7 @@ async function run() {
       if (name) body.name = name;
       if (directory) body.directory = directory;
       if (model) body.model = model;
-      const payload = await requestJson<Record<string, unknown>>(
-        baseUrl, secretKey, "POST", "/api/sessions", body,
-      );
+      const payload = await req<Record<string, unknown>>("POST", "/api/sessions", body);
       if (asJson) {
         console.log(JSON.stringify(payload, null, 2));
       } else {
@@ -175,7 +180,7 @@ async function run() {
     case "stop": {
       const id = positional[1];
       if (!id) throw new Error("stop requires <id>");
-      await requestJson(baseUrl, secretKey, "DELETE", `/api/sessions/${encodeURIComponent(id)}`);
+      await req("DELETE", `/api/sessions/${encodeURIComponent(id)}`);
       console.log(`Stopped: ${id}`);
       break;
     }
@@ -183,9 +188,7 @@ async function run() {
     case "info": {
       const id = positional[1];
       if (!id) throw new Error("info requires <id>");
-      const payload = await requestJson<Record<string, unknown>>(
-        baseUrl, secretKey, "GET", `/api/sessions/${encodeURIComponent(id)}`,
-      );
+      const payload = await req<Record<string, unknown>>("GET", `/api/sessions/${encodeURIComponent(id)}`);
       console.log(JSON.stringify(payload, null, 2));
       break;
     }
@@ -193,8 +196,8 @@ async function run() {
     case "logs": {
       const id = positional[1];
       if (!id) throw new Error("logs requires <id>");
-      const payload = await requestJson<{ messages?: Array<Record<string, unknown>> }>(
-        baseUrl, secretKey, "GET", `/api/sessions/${encodeURIComponent(id)}/messages`,
+      const payload = await req<{ messages?: Array<Record<string, unknown>> }>(
+        "GET", `/api/sessions/${encodeURIComponent(id)}/messages`,
       );
       const messages = Array.isArray(payload.messages)
         ? payload.messages
@@ -212,10 +215,8 @@ async function run() {
       const message = positional.slice(2).join(" ");
       if (!id) throw new Error("send requires <id> <message>");
       if (!message) throw new Error("send requires a message after the session id");
-      const payload = await requestJson<Record<string, unknown>>(
-        baseUrl, secretKey, "POST",
-        `/api/sessions/${encodeURIComponent(id)}/messages`,
-        { content: message },
+      const payload = await req<Record<string, unknown>>(
+        "POST", `/api/sessions/${encodeURIComponent(id)}/messages`, { content: message },
       );
       if (asJson) {
         console.log(JSON.stringify(payload, null, 2));
@@ -228,9 +229,8 @@ async function run() {
     case "artifacts": {
       const id = positional[1];
       if (!id) throw new Error("artifacts requires <id>");
-      const payload = await requestJson<{ artifacts?: Array<Record<string, unknown>> }>(
-        baseUrl, secretKey, "GET",
-        `/api/sessions/${encodeURIComponent(id)}/artifacts`,
+      const payload = await req<{ artifacts?: Array<Record<string, unknown>> }>(
+        "GET", `/api/sessions/${encodeURIComponent(id)}/artifacts`,
       );
       const artifacts = Array.isArray(payload.artifacts)
         ? payload.artifacts
@@ -254,9 +254,8 @@ async function run() {
     case "queue": {
       const id = positional[1];
       if (!id) throw new Error("queue requires <id>");
-      const payload = await requestJson<{ queue?: Array<Record<string, unknown>> }>(
-        baseUrl, secretKey, "GET",
-        `/api/sessions/${encodeURIComponent(id)}/queue`,
+      const payload = await req<{ queue?: Array<Record<string, unknown>> }>(
+        "GET", `/api/sessions/${encodeURIComponent(id)}/queue`,
       );
       const queue = Array.isArray(payload.queue)
         ? payload.queue
@@ -283,10 +282,8 @@ async function run() {
       const prompt = positional.slice(2).join(" ");
       if (!id) throw new Error("queue-add requires <id> <prompt>");
       if (!prompt) throw new Error("queue-add requires a prompt after the session id");
-      const payload = await requestJson<Record<string, unknown>>(
-        baseUrl, secretKey, "POST",
-        `/api/sessions/${encodeURIComponent(id)}/queue`,
-        { content: prompt },
+      const payload = await req<Record<string, unknown>>(
+        "POST", `/api/sessions/${encodeURIComponent(id)}/queue`, { content: prompt },
       );
       if (asJson) {
         console.log(JSON.stringify(payload, null, 2));
@@ -299,9 +296,8 @@ async function run() {
     case "queue-next": {
       const id = positional[1];
       if (!id) throw new Error("queue-next requires <id>");
-      const payload = await requestJson<Record<string, unknown>>(
-        baseUrl, secretKey, "POST",
-        `/api/sessions/${encodeURIComponent(id)}/queue/next`,
+      const payload = await req<Record<string, unknown>>(
+        "POST", `/api/sessions/${encodeURIComponent(id)}/queue/next`,
       );
       if (asJson) {
         console.log(JSON.stringify(payload, null, 2));
@@ -318,9 +314,7 @@ async function run() {
       if (filter) params.set("filter", filter);
       const qs = params.toString();
       const path = `/api/archive${qs ? `?${qs}` : ""}`;
-      const payload = await requestJson<{ sessions?: Session[]; archives?: Session[] }>(
-        baseUrl, secretKey, "GET", path,
-      );
+      const payload = await req<{ sessions?: Session[]; archives?: Session[] }>("GET", path);
       const archives = Array.isArray(payload.sessions)
         ? payload.sessions
         : Array.isArray(payload.archives)
@@ -345,9 +339,7 @@ async function run() {
     case "archive-info": {
       const id = positional[1];
       if (!id) throw new Error("archive-info requires <id>");
-      const payload = await requestJson<Record<string, unknown>>(
-        baseUrl, secretKey, "GET", `/api/archive/${encodeURIComponent(id)}`,
-      );
+      const payload = await req<Record<string, unknown>>("GET", `/api/archive/${encodeURIComponent(id)}`);
       console.log(JSON.stringify(payload, null, 2));
       break;
     }
@@ -355,9 +347,8 @@ async function run() {
     case "archive-logs": {
       const id = positional[1];
       if (!id) throw new Error("archive-logs requires <id>");
-      const payload = await requestJson<{ messages?: Array<Record<string, unknown>> }>(
-        baseUrl, secretKey, "GET",
-        `/api/archive/${encodeURIComponent(id)}/messages`,
+      const payload = await req<{ messages?: Array<Record<string, unknown>> }>(
+        "GET", `/api/archive/${encodeURIComponent(id)}/messages`,
       );
       const messages = Array.isArray(payload.messages)
         ? payload.messages
@@ -373,7 +364,7 @@ async function run() {
     case "archive-delete": {
       const id = positional[1];
       if (!id) throw new Error("archive-delete requires <id>");
-      await requestJson(baseUrl, secretKey, "DELETE", `/api/archive/${encodeURIComponent(id)}`);
+      await req("DELETE", `/api/archive/${encodeURIComponent(id)}`);
       console.log(`Deleted archive: ${id}`);
       break;
     }

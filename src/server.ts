@@ -101,6 +101,7 @@ import {
   getRequestContext,
   type RequestAuthContext,
 } from "./auth/request-context";
+import { resolveNip98AuthContext } from "./auth/nip98-auth";
 import { deriveNpubSegment, normaliseNpub } from "./identity/npub-utils";
 import { generateIdentityAlias } from "./identity/identity-alias";
 import { resolveWorkspaceScope, type WorkspaceScope } from "./workspaces/workspace-scope";
@@ -494,7 +495,7 @@ const gitWorkflowApiHandler = createGitWorkflowApiHandler({
   config,
   dataDir: wingmanDataDir,
 });
-registerAccessRule(AccessActions.SessionsManage, requireAuthentication());
+registerAccessRule(AccessActions.SessionsManage, requireAuthentication({ allowNip98: true }));
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());
 registerAccessRule(AccessActions.FilesWrite, requireAuthentication());
 registerAccessRule(AccessActions.AppsManage, requireAuthentication({ allowNip98: true }));
@@ -2108,6 +2109,16 @@ const verifyNip98AuthHeader = (request: Request, url: URL): string | null => {
   }
 };
 
+const resolveInternalNip98AuthContext = (
+  request: Request,
+  url: URL,
+  authContext: RequestAuthContext,
+): RequestAuthContext =>
+  resolveNip98AuthContext(request, url, authContext, {
+    verifyNip98AuthHeader,
+    lookupBotOwnerNpub: (botNpub) => botKeyStore.getActiveKeyForBotNpub(botNpub)?.userNpub ?? null,
+  });
+
 const requireAdminAccess = (): AccessRule => {
   return (context) => {
     if (!adminNpub) {
@@ -2371,6 +2382,7 @@ const handleApi = createApiRouteHandler({
   // Core helpers
   resolveWorkspace,
   verifyNip98AuthHeader,
+  resolveNip98AuthContext: resolveInternalNip98AuthContext,
   resolveFeatureFlagStateForViewer,
   ensureApiAccess,
   serialiseFeatureFlagsForViewer: (isAdmin: boolean) =>

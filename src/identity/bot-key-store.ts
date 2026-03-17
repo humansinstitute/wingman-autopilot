@@ -83,6 +83,28 @@ class BotKeyStore {
     return result ?? null;
   }
 
+  getActiveKeyForBotNpub(botNpub: string): BotKeyRecord | null {
+    const result = this.db
+      .query<BotKeyRecord, [string]>(
+        `SELECT
+           id,
+           user_npub AS userNpub,
+           bot_pubkey_hex AS botPubkeyHex,
+           bot_npub AS botNpub,
+           COALESCE(display_name, '') AS displayName,
+           encrypted_to_user AS encryptedToUser,
+           encrypted_escrow AS encryptedEscrow,
+           escrow_uuid AS escrowUuid,
+           is_active AS isActive,
+           created_at AS createdAt,
+           updated_at AS updatedAt
+         FROM bot_keys
+         WHERE bot_npub = ?1 AND is_active = 1`,
+      )
+      .get(botNpub);
+    return result ?? null;
+  }
+
   createKey(input: CreateBotKeyInput): BotKeyRecord {
     const now = new Date().toISOString();
     const id = randomUUID();

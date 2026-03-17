@@ -162,6 +162,33 @@ interface AgentSession {
   adapter?: AgentAdapter;
 }
 
+type McpCleanupSessionLike = Pick<AgentSession, "id" | "status" | "mcpCleanupFiles">;
+
+export function shouldCleanupMcpFiles(
+  sessions: Iterable<McpCleanupSessionLike>,
+  sessionId: string,
+  cleanupFiles: string[],
+): boolean {
+  if (cleanupFiles.length === 0) {
+    return false;
+  }
+
+  const targetFiles = new Set(cleanupFiles);
+  for (const candidate of sessions) {
+    if (candidate.id === sessionId) continue;
+    if (candidate.status !== "starting" && candidate.status !== "running") continue;
+    if (!candidate.mcpCleanupFiles || candidate.mcpCleanupFiles.length === 0) continue;
+
+    for (const filePath of candidate.mcpCleanupFiles) {
+      if (targetFiles.has(filePath)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 async function prepareCodexApiAuthHome(env: Record<string, string>): Promise<void> {
   const codexHome = typeof env.CODEX_HOME === "string" ? env.CODEX_HOME.trim() : "";
   if (!codexHome) return;
@@ -650,8 +677,12 @@ export class ProcessManager {
       session.adapter = undefined;
     }
 
-    // Clean up MCP config files created during injection
-    if (session.mcpCleanupFiles && session.mcpCleanupFiles.length > 0) {
+    // Clean up MCP config files only when no other active session still
+    // references the same shared config path (for example Claude .mcp.json).
+    if (
+      session.mcpCleanupFiles &&
+      shouldCleanupMcpFiles(this.sessions.values(), session.id, session.mcpCleanupFiles)
+    ) {
       cleanupMcpConfig(session.mcpCleanupFiles).catch(() => {});
       session.mcpCleanupFiles = undefined;
     }

@@ -5,7 +5,10 @@ import { readSessionCookie, SessionCookieError } from "./session-cookie";
 
 export interface RequestAuthContext {
   npub: string | null;
+  actorNpub?: string | null;
   session: SessionCookiePayload | null;
+  authMethod?: "session" | "nip98";
+  delegatedByBot?: boolean;
   error?: string;
 }
 
@@ -13,6 +16,7 @@ const requestContextStorage = new AsyncLocalStorage<RequestAuthContext>();
 
 const defaultContext: RequestAuthContext = {
   npub: null,
+  actorNpub: null,
   session: null,
 };
 
@@ -29,7 +33,9 @@ export const resolveRequestAuthContext = (request: Request): RequestAuthContext 
     }
     return {
       npub: session.npub,
+      actorNpub: session.npub,
       session,
+      authMethod: "session",
     };
   } catch (error) {
     if (error instanceof SessionCookieError) {
