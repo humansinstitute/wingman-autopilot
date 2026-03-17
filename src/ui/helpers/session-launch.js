@@ -109,6 +109,9 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = 
         openedInNewTab = Boolean(launchedTab);
       }
     }
-    await handleSessionStart(session, { suppressRouteChange: openedInNewTab });
+    await handleSessionStart(session, {
+      suppressRouteChange: openedInNewTab,
+      activateSessionInOriginWindow: !openedInNewTab,
+    });
   };
 };

@@ -42,6 +42,7 @@ import { initAppsStore } from "./apps/store.js";
 import { startSigningListener, stopSigningListener } from "./nip98/signing-listener.js";
 import { startSessionSubscriber, stopSessionSubscriber } from "./sessions/subscriber.js";
 import { buildSessionOrigin, createSessionLauncher } from "./helpers/session-launch.js";
+import { createSessionStartHandler } from "./helpers/session-post-start.js";
 import {
   state,
   createAdminUsersState,
@@ -1900,33 +1901,28 @@ const closeDialog = () => {
   }
 };
 
-const handleSessionStart = async (session, options = {}) => {
-  const { suppressRouteChange = false } = options;
-  if (!session || !session.id) {
-    return;
-  }
-
-  const switchingToLive = currentRoute !== "live";
-  if (switchingToLive && !suppressRouteChange) {
-    currentRoute = "live";
-  }
-  setActiveSession(session.id, {
-    allowPending: true,
-    logPort: false,
-    updateHistory: !suppressRouteChange,
-  });
-  if (typeof session.workingDirectory === "string" && session.workingDirectory.length > 0) {
+const handleSessionStart = createSessionStartHandler({
+  getCurrentRoute: () => currentRoute,
+  setCurrentRoute: (route) => {
+    currentRoute = route;
+  },
+  setActiveSession: (...args) => setActiveSession(...args),
+  updateWorkingDirectory: (session) => {
+    if (typeof session?.workingDirectory !== "string" || session.workingDirectory.length === 0) {
+      return;
+    }
     state.lastWorkingDirectory = session.workingDirectory;
     if (directoryInput) {
       directoryInput.value = session.workingDirectory;
       scheduleDirectorySuggestions(session.workingDirectory);
     }
     sessionDialogController?.syncWorktreeHint?.();
-  }
-  await fetchSessions();
-  await Promise.all([fetchConversation(session.id), fetchLogs(session.id)]);
-  render();
-};
+  },
+  fetchSessions: (...args) => fetchSessions(...args),
+  fetchConversation: (...args) => fetchConversation(...args),
+  fetchLogs: (...args) => fetchLogs(...args),
+  render: () => render(),
+});
 
 const launchSession = createSessionLauncher({
   handleSessionStart,
