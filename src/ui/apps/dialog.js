@@ -1093,6 +1093,50 @@ export const initAppDialogs = ({
   const deployDialogState = {
     appId: null,
     deploying: false,
+    completed: false,
+  };
+
+  const setDeployConfirmButtonState = (label, disabled) => {
+    if (!appDeployConfirmButton) return;
+    appDeployConfirmButton.disabled = disabled;
+    appDeployConfirmButton.textContent = label;
+  };
+
+  const setDeployDialogCompletionState = (completed) => {
+    deployDialogState.completed = completed;
+    if (appDeployNameInput) {
+      appDeployNameInput.disabled = completed;
+    }
+    if (appDeployCancelButton) {
+      appDeployCancelButton.hidden = completed;
+    }
+  };
+
+  const resolveInitialCaproverName = (app) => {
+    if (typeof app?.caproverName === "string" && app.caproverName.trim().length > 0) {
+      return app.caproverName.trim();
+    }
+    if (typeof app?.subdomainAlias === "string" && app.subdomainAlias.trim().length > 0) {
+      return app.subdomainAlias.trim();
+    }
+    if (typeof app?.label === "string") {
+      return deriveCaproverNameFromLabel(app.label);
+    }
+    return "";
+  };
+
+  const syncDeployedAppDetails = (appId, deployment) => {
+    const app = getAppById(appId);
+    if (!app || !deployment || typeof deployment !== "object") return;
+    if (typeof deployment.caproverName === "string" && deployment.caproverName.length > 0) {
+      app.caproverName = deployment.caproverName;
+    }
+    if (typeof deployment.liveUrl === "string" && deployment.liveUrl.length > 0) {
+      app.caproverLiveUrl = deployment.liveUrl;
+    }
+    if (typeof deployment.deployedVersion === "number") {
+      app.caproverDeployedVersion = deployment.deployedVersion;
+    }
   };
 
   const resetDeployDialog = () => {
@@ -1113,12 +1157,10 @@ export const initAppDialogs = ({
       appDeployUrl.hidden = true;
       appDeployUrl.href = "#";
     }
-    if (appDeployConfirmButton) {
-      appDeployConfirmButton.disabled = false;
-      appDeployConfirmButton.textContent = "Deploy";
-    }
+    setDeployConfirmButtonState("Deploy", false);
     deployDialogState.appId = null;
     deployDialogState.deploying = false;
+    setDeployDialogCompletionState(false);
   };
 
   const closeDeployDialog = () => {
@@ -1152,14 +1194,8 @@ export const initAppDialogs = ({
       appDeployTitle.textContent = `Deploy ${appName}`;
     }
 
-    // Pre-fill CapRover name from existing subdomain alias (three-word alias)
-    // Fall back to deriving from label if no alias exists
     if (appDeployNameInput) {
-      if (app.subdomainAlias) {
-        appDeployNameInput.value = app.subdomainAlias;
-      } else if (app.label) {
-        appDeployNameInput.value = deriveCaproverNameFromLabel(app.label);
-      }
+      appDeployNameInput.value = resolveInitialCaproverName(app);
     }
 
     if (appDeployDialog.open) {
@@ -1184,6 +1220,10 @@ export const initAppDialogs = ({
   const handleDeploySubmit = async (event) => {
     event.preventDefault();
     if (deployDialogState.deploying) return;
+    if (deployDialogState.completed) {
+      closeDeployDialog();
+      return;
+    }
 
     const appId = deployDialogState.appId;
     if (!appId) {
@@ -1206,10 +1246,7 @@ export const initAppDialogs = ({
     }
 
     deployDialogState.deploying = true;
-    if (appDeployConfirmButton) {
-      appDeployConfirmButton.disabled = true;
-      appDeployConfirmButton.textContent = "Deploying…";
-    }
+    setDeployConfirmButtonState("Deploying…", true);
     if (appDeployStatus) {
       appDeployStatus.hidden = false;
     }
@@ -1241,6 +1278,8 @@ export const initAppDialogs = ({
       }
 
       // Success
+      syncDeployedAppDetails(appId, data);
+      void refreshApps({ skipRender: true });
       if (appDeployMessage) {
         appDeployMessage.textContent = "Deployment successful!";
         appDeployMessage.className = "wm-deploy-success";
@@ -1250,10 +1289,8 @@ export const initAppDialogs = ({
         appDeployUrl.textContent = data.liveUrl;
         appDeployUrl.hidden = false;
       }
-      if (appDeployConfirmButton) {
-        appDeployConfirmButton.textContent = "Done";
-        appDeployConfirmButton.disabled = false;
-      }
+      setDeployDialogCompletionState(true);
+      setDeployConfirmButtonState("Close", false);
       showToast("Deployed to CapRover", { type: "success" });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Deployment failed";
@@ -1261,10 +1298,7 @@ export const initAppDialogs = ({
         appDeployMessage.textContent = message;
         appDeployMessage.className = "wm-deploy-error";
       }
-      if (appDeployConfirmButton) {
-        appDeployConfirmButton.textContent = "Retry";
-        appDeployConfirmButton.disabled = false;
-      }
+      setDeployConfirmButtonState("Retry", false);
       showToast(message, { type: "error" });
     } finally {
       deployDialogState.deploying = false;
