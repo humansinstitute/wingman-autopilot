@@ -48,6 +48,24 @@ export interface UpdateJobInput {
   enabled?: boolean;
 }
 
+export interface JobRun {
+  id: string;
+  job_id: string;
+  goal: string | null;
+  manager_goal: string | null;
+  worker_session_id: string | null;
+  manager_session_id: string | null;
+  worker_prompt: string | null;
+  manager_context: string | null;
+  worker_dir: string | null;
+  manager_dir: string | null;
+  refs_json: string | null;
+  status: string;
+  output_summary: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // ============================================================
 // Store
 // ============================================================
@@ -70,6 +88,25 @@ function openDb(): Database {
       enabled         INTEGER NOT NULL DEFAULT 1,
       created_at      TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS job_runs (
+      id                  TEXT PRIMARY KEY,
+      job_id              TEXT NOT NULL,
+      goal                TEXT,
+      manager_goal        TEXT,
+      worker_session_id   TEXT,
+      manager_session_id  TEXT,
+      worker_prompt       TEXT,
+      manager_context     TEXT,
+      worker_dir          TEXT,
+      manager_dir         TEXT,
+      refs_json           TEXT,
+      status              TEXT NOT NULL DEFAULT 'new',
+      output_summary      TEXT,
+      created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
   return db;
@@ -153,5 +190,44 @@ export function deleteJob(id: string): boolean {
   const result = db()
     .query("DELETE FROM job_definitions WHERE id = ?")
     .run(id);
+  return result.changes > 0;
+}
+
+// ============================================================
+// Job Runs
+// ============================================================
+
+export function listRuns(jobId?: string, status?: string): JobRun[] {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+
+  if (jobId) { clauses.push("job_id = ?"); params.push(jobId); }
+  if (status) { clauses.push("status = ?"); params.push(status); }
+
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  return db()
+    .query(`SELECT * FROM job_runs ${where} ORDER BY created_at DESC`)
+    .all(...params) as JobRun[];
+}
+
+export function getRun(id: string): JobRun | undefined {
+  return (
+    db()
+      .query("SELECT * FROM job_runs WHERE id = ?")
+      .get(id) as JobRun | null
+  ) ?? undefined;
+}
+
+export function updateRunStatus(id: string, status: string, outputSummary?: string): boolean {
+  const sets = ["status = ?", "updated_at = datetime('now')"];
+  const vals: unknown[] = [status];
+  if (outputSummary !== undefined) {
+    sets.push("output_summary = ?");
+    vals.push(outputSummary);
+  }
+  vals.push(id);
+  const result = db()
+    .query(`UPDATE job_runs SET ${sets.join(", ")} WHERE id = ?`)
+    .run(...vals);
   return result.changes > 0;
 }
