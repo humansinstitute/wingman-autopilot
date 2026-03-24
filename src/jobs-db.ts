@@ -218,6 +218,67 @@ export function getRun(id: string): JobRun | undefined {
   ) ?? undefined;
 }
 
+export interface CreateRunInput {
+  id?: string;
+  job_id: string;
+  goal?: string;
+  manager_goal?: string;
+  worker_session_id?: string;
+  manager_session_id?: string;
+  worker_prompt?: string;
+  manager_context?: string;
+  worker_dir?: string;
+  manager_dir?: string;
+  refs_json?: string;
+  status?: string;
+  output_summary?: string;
+}
+
+export function createRun(input: CreateRunInput): JobRun {
+  const id = input.id ?? crypto.randomUUID();
+  const now = new Date().toISOString();
+  db()
+    .query(
+      `INSERT INTO job_runs (id, job_id, goal, manager_goal, worker_session_id, manager_session_id, worker_prompt, manager_context, worker_dir, manager_dir, refs_json, status, output_summary, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.job_id,
+      input.goal ?? null,
+      input.manager_goal ?? null,
+      input.worker_session_id ?? null,
+      input.manager_session_id ?? null,
+      input.worker_prompt ?? null,
+      input.manager_context ?? null,
+      input.worker_dir ?? null,
+      input.manager_dir ?? null,
+      input.refs_json ?? null,
+      input.status ?? "new",
+      input.output_summary ?? null,
+      now,
+      now,
+    );
+  return getRun(id)!;
+}
+
+export function updateRun(id: string, fields: Partial<Omit<JobRun, "id" | "created_at">>): boolean {
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  for (const [k, v] of Object.entries(fields)) {
+    if (k === "id" || k === "created_at") continue;
+    sets.push(`${k} = ?`);
+    vals.push(v);
+  }
+  if (sets.length === 0) return false;
+  sets.push("updated_at = datetime('now')");
+  vals.push(id);
+  const result = db()
+    .query(`UPDATE job_runs SET ${sets.join(", ")} WHERE id = ?`)
+    .run(...vals);
+  return result.changes > 0;
+}
+
 export function updateRunStatus(id: string, status: string, outputSummary?: string): boolean {
   const sets = ["status = ?", "updated_at = datetime('now')"];
   const vals: unknown[] = [status];
