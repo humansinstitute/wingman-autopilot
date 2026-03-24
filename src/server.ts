@@ -94,6 +94,7 @@ import {
   pickAgentHost,
 } from "./agents/agent-client";
 import { AgentRuntimeStatusPoller } from "./agents/agent-status-poller";
+import { LiveMessagePersistenceLoop } from "./server/live-message-persistence";
 import { mintSessionCookie, SessionCookieError, SESSION_COOKIE_NAME } from "./auth/session-cookie";
 import {
   resolveRequestAuthContext,
@@ -156,6 +157,7 @@ import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import { SchedulerStore } from "./scheduler/scheduler-store";
 import { SchedulerEngine } from "./scheduler/scheduler-engine";
 import { createSchedulerApiHandler } from "./scheduler/scheduler-api";
+import { createAutopilotJobsApiHandler } from "./jobs-api";
 import { createTriggerListener, type TriggerListener } from "./nostr/trigger-listener";
 import {
   clearWarmRestartMarker,
@@ -432,6 +434,7 @@ const schedulerApiHandler = createSchedulerApiHandler({
     return ctx?.npub ?? null;
   },
 });
+const autopilotJobsApiHandler = createAutopilotJobsApiHandler();
 const nip98GrantsStore = new Nip98GrantStore();
 const memoryStore = new MemoryStore();
 const nip98ApiHandler = createNip98ApiHandler({
@@ -1643,8 +1646,11 @@ const syncSessionMessages = async (sessionId: string, force = false) => {
   }
 
   try {
+    const hadMessages = messageStore.hasMessages(sessionId);
     const messages = await fetchAgentMessages(agentHost, session.port);
-    messageStore.replaceMessages(sessionId, messages);
+    if (messages.length > 0 || !hadMessages) {
+      messageStore.replaceMessages(sessionId, messages);
+    }
   } catch (error) {
     console.error(`Failed to synchronise messages for session ${sessionId}:`, error);
   }
@@ -1660,6 +1666,14 @@ const agentStatusPoller = new AgentRuntimeStatusPoller(manager, {
   initialDelayMs: 3000,
 });
 agentStatusPoller.start();
+
+const liveMessagePersistence = new LiveMessagePersistenceLoop({
+  manager,
+  syncSessionMessages,
+  intervalMs: Math.max(5000, config.agentStatusPollIntervalMs),
+  initialDelayMs: 2000,
+});
+liveMessagePersistence.start();
 
 const promptDispatchEngine = createPromptDispatchEngine({
   manager,
@@ -2283,6 +2297,7 @@ const handleApi = createApiRouteHandler({
   superbasedApiHandler,
   wingmanMcpApiHandler,
   schedulerApiHandler,
+  autopilotJobsApiHandler,
 
   // Pre-built route contexts (request-independent)
   sessionApiContext,

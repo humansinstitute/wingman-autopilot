@@ -37,6 +37,8 @@ import { initNightWatchPage } from "./nightwatch/page.js";
 import { initNightWatchStore } from "./nightwatch/store.js";
 import { initSchedulerStore } from "./scheduler/store.js";
 import { initSchedulerPage } from "./scheduler/page.js";
+import { initJobsStore } from "./jobs/store.js";
+import { initJobsPage } from "./jobs/page.js";
 import { initSessionsStore } from "./sessions/store.js";
 import { initAppsStore } from "./apps/store.js";
 import { startSigningListener, stopSigningListener } from "./nip98/signing-listener.js";
@@ -204,6 +206,8 @@ let renderNightWatchPage = () => document.createDocumentFragment();
 let ensureNightWatchPageLoaded = () => {};
 let renderSchedulerPage = () => document.createDocumentFragment();
 let ensureSchedulerPageLoaded = () => {};
+let renderJobsPage = () => document.createDocumentFragment();
+let ensureJobsPageLoaded = () => {};
 let projectsFeatureEnabledForViewer = () => true;
 let syncFeatureFlagsFromConfig = () => {};
 let scheduleDirectorySuggestions = () => {};
@@ -439,6 +443,7 @@ const PROJECTS_ROUTE = "/projects";
 const NIGHTWATCH_ROUTE = "/nightwatch";
 const SCHEDULER_ROUTE = "/scheduler";
 const TRIGGERS_ROUTE = "/triggers";
+const JOBS_ROUTE = "/jobs";
 const HOME_ROUTE = "/home";
 const PRIVACY_ROUTE = "/privacy";
 
@@ -465,6 +470,9 @@ const getRouteFromPath = (pathname) => {
   }
   if (pathname === SCHEDULER_ROUTE || pathname === TRIGGERS_ROUTE) {
     return "scheduler";
+  }
+  if (pathname === JOBS_ROUTE) {
+    return "jobs";
   }
   if (pathname === LIVE_ROUTE_PREFIX || pathname.startsWith(`${LIVE_ROUTE_PREFIX}/`)) {
     return "live";
@@ -1185,6 +1193,8 @@ const updateDocumentTitle = () => {
     title = "Night Watchman - Wingman";
   } else if (currentRoute === "scheduler") {
     title = "Triggers - Wingman";
+  } else if (currentRoute === "jobs") {
+    title = "Jobs - Wingman";
   } else if (currentRoute === "home") {
     title = "Home - Wingman";
   }
@@ -2717,7 +2727,7 @@ const render = () => {
 
       // Skip full DOM rebuild for pages that manage their own Alpine state
       // to avoid destroying in-progress form edits
-      const stablePages = ["scheduler"];
+      const stablePages = ["scheduler", "jobs"];
       if (!routeChanged && stablePages.includes(currentRoute)) {
         setActiveNav();
         syncMenuTabs();
@@ -2739,6 +2749,8 @@ const render = () => {
         view = renderNightWatchPage();
       } else if (currentRoute === "scheduler") {
         view = renderSchedulerPage();
+      } else if (currentRoute === "jobs") {
+        view = renderJobsPage();
       } else if (currentRoute === "files") {
         view = renderFiles();
       } else if (currentRoute === "settings") {
@@ -3284,6 +3296,10 @@ const schedulerPageUI = initSchedulerPage({ showToast });
 renderSchedulerPage = schedulerPageUI.renderPage;
 ensureSchedulerPageLoaded = schedulerPageUI.ensureLoaded;
 
+const jobsPageUI = initJobsPage({ showToast });
+renderJobsPage = jobsPageUI.renderPage;
+ensureJobsPageLoaded = jobsPageUI.ensureLoaded;
+
 renderMenuIdentitySection();
 
 const handleTouchStart = (event) => {
@@ -3353,6 +3369,7 @@ const {
   navigateToProjects,
   navigateToNightWatch,
   navigateToScheduler,
+  navigateToJobs,
   navigateToSettings,
   setupNavListeners,
 } = createNavigation({
@@ -3374,6 +3391,7 @@ const {
   get projectFeature() { return projectFeature; },
   ensureNightWatchPageLoaded: (...args) => ensureNightWatchPageLoaded(...args),
   ensureSchedulerPageLoaded: (...args) => ensureSchedulerPageLoaded(...args),
+  ensureJobsPageLoaded: (...args) => ensureJobsPageLoaded(...args),
   loadFilesTree: (...args) => loadFilesTree(...args),
   updateFilesUrl: (...args) => updateFilesUrl(...args),
   getActiveSessionForIndicator,
@@ -3384,6 +3402,7 @@ const {
   NIGHTWATCH_ROUTE,
   TRIGGERS_ROUTE,
   SCHEDULER_ROUTE,
+  JOBS_ROUTE,
   SETTINGS_ROUTE,
   PRIVACY_ROUTE,
   navLinks,
@@ -3506,6 +3525,15 @@ window.addEventListener("popstate", () => {
     } else {
       void ensureSchedulerPageLoaded();
     }
+  } else if (currentRoute === "jobs") {
+    if (!state.identity.isAdmin) {
+      currentRoute = "home";
+      if (window.location.pathname !== HOME_ROUTE) {
+        window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
+      }
+    } else {
+      void ensureJobsPageLoaded();
+    }
   }
   render();
 });
@@ -3560,6 +3588,7 @@ dialog.addEventListener("cancel", (event) => {
   // Initialize Night Watch Alpine store (Dexie-backed, must register before Alpine.start)
   initNightWatchStore({ showToast });
   initSchedulerStore({ showToast });
+  initJobsStore({ showToast });
 
   // Initialize Sessions Alpine store (Dexie-backed, must register before Alpine.start)
   initSessionsStore({

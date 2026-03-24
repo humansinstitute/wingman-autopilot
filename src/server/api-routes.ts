@@ -74,6 +74,7 @@ export interface ApiRoutesContext {
   superbasedApiHandler: SimpleApiHandler;
   wingmanMcpApiHandler: SimpleApiHandler;
   schedulerApiHandler: SimpleApiHandler;
+  autopilotJobsApiHandler: SimpleApiHandler;
 
   // Pre-built route contexts (request-independent)
   sessionApiContext: SessionApiContext;
@@ -291,6 +292,18 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
         return denied;
       }
       const response = await ctx.schedulerApiHandler(request, url, method);
+      if (response) {
+        return response;
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }
+    // Autopilot Jobs API — job definitions and runs management.
+    if (pathname.startsWith("/api/autopilot-jobs")) {
+      const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, authContext);
+      if (denied) {
+        return denied;
+      }
+      const response = await ctx.autopilotJobsApiHandler(request, url, method);
       if (response) {
         return response;
       }
@@ -528,8 +541,12 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
       if (uploadResult) return uploadResult;
     }
 
-    // Session & archive API routes (delegated to session-api-routes.ts)
-    if (pathname.startsWith("/api/archive") || pathname.startsWith("/api/sessions")) {
+    // Session, delegate-session, and archive API routes (delegated to session-api-routes.ts)
+    if (
+      pathname.startsWith("/api/archive") ||
+      pathname.startsWith("/api/sessions") ||
+      pathname.startsWith("/api/delegate-sessions")
+    ) {
       const sessionAuthContext = ctx.resolveNip98AuthContext(request, url, authContext);
       const sessionApiResponse = await runWithRequestContext(
         sessionAuthContext,
