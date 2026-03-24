@@ -150,7 +150,7 @@ async function createSession(
   prompt: string,
 ): Promise<string> {
   const body = {
-    agent: "claude-code",
+    agent: "claude",
     name,
     directory,
     prompt,
