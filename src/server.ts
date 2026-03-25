@@ -2213,7 +2213,7 @@ const sessionApiContext: SessionApiContext = {
   MESSAGE_COST_SATS,
   ensureApiAccess,
   ensureViewerHasBalance,
-  shouldRequireBalanceForAgent: async (agent) => !(await teamBillingService.canUseCreditsForAgent(agent)),
+  shouldRequireBalanceForAgent: async () => false,
   serializeSession,
   sessionBelongsToViewer,
   getViewerNormalizedNpub,

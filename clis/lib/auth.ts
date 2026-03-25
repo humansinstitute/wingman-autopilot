@@ -28,15 +28,13 @@ export interface BotCryptoConfig {
 export function resolveSecretKey(keyInput?: string): Uint8Array {
   const raw = (
     keyInput ??
-    Bun.env.WINGMAN_NSEC ??
     Bun.env.WINGMAN_NIP98_NSEC ??
-    Bun.env.KEYTELEPORT_PRIVKEY ??
     ""
   ).trim();
 
   if (!raw) {
     throw new Error(
-      "Missing signing key. Provide --key or set WINGMAN_NSEC / WINGMAN_NIP98_NSEC / KEYTELEPORT_PRIVKEY.",
+      "Missing signing key. Provide --key or set WINGMAN_NIP98_NSEC.",
     );
   }
 
