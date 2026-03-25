@@ -128,6 +128,98 @@ export interface SessionApiContext {
   AccessActions: { SessionsManage: AccessAction };
 }
 
+const isDelegatedBotAuth = (authContext: RequestAuthContext): boolean => {
+  return Boolean(
+    authContext.authMethod === "nip98" &&
+    authContext.delegatedByBot &&
+    normaliseNpub(authContext.npub ?? null) &&
+    normaliseNpub(authContext.actorNpub ?? null),
+  );
+};
+
+const isProgrammaticCaller = (authContext: RequestAuthContext): boolean => {
+  return authContext.authMethod === "nip98" && !!authContext.npub;
+};
+
+const isAuthorizedCaller = (authContext: RequestAuthContext): boolean => {
+  if (authContext.session) return true;
+  if (isProgrammaticCaller(authContext)) return true;
+  return false;
+};
+
+const buildProgrammaticOrigin = (authContext: RequestAuthContext): SessionOrigin => {
+  if (authContext.delegatedByBot) {
+    const actorNpub = normaliseNpub(authContext.actorNpub ?? null) ?? "unknown-bot";
+    return { type: "delegate-bot", id: actorNpub, label: actorNpub };
+  }
+  const callerNpub = normaliseNpub(authContext.npub ?? null) ?? "unknown-cli";
+  return { type: "cli", id: callerNpub, label: callerNpub };
+};
+
+const recordLiveSession = async (
+  ctx: SessionApiContext,
+  session: SessionSnapshot,
+): Promise<void> => {
+  ctx.messageStore.recordSession({
+    id: session.id,
+    agent: session.agent,
+    startedAt: session.startedAt,
+    name: session.name,
+    npub: session.npub,
+    port: session.port,
+    pid: session.pid,
+    workingDirectory: session.workingDirectory,
+    command: session.command,
+    runtimeStatus: session.agentRuntimeStatus ?? null,
+    origin: session.origin ?? null,
+    pm2Name: session.pm2Name,
+    targetFile: session.targetFile,
+    metadata: session.metadata,
+  });
+  await ctx.syncSessionMessages(session.id, true);
+};
+
+const resolveOwnedLiveSession = (
+  requestedId: string,
+  sessions: SessionSnapshot[],
+  viewerNormalizedNpub: string | null,
+  viewerIsAdmin: boolean,
+  ctx: SessionApiContext,
+): { session: SessionSnapshot | null; resolvedId: string; error: Response | null } => {
+  const ownedSessions = sessions.filter((session) =>
+    ctx.sessionBelongsToViewer(session.npub ?? null, viewerNormalizedNpub, viewerIsAdmin),
+  );
+  const exactMatch = ownedSessions.find((session) => session.id === requestedId);
+  if (exactMatch) {
+    return { session: exactMatch, resolvedId: exactMatch.id, error: null };
+  }
+
+  const prefixMatches = ownedSessions.filter((session) => session.id.startsWith(requestedId));
+  if (prefixMatches.length === 1) {
+    const match = prefixMatches[0]!;
+    return { session: match, resolvedId: match.id, error: null };
+  }
+
+  if (prefixMatches.length > 1) {
+    return {
+      session: null,
+      resolvedId: requestedId,
+      error: Response.json(
+        {
+          error: "Ambiguous session id",
+          matches: prefixMatches.map((session) => ({
+            id: session.id,
+            name: session.name ?? null,
+          })),
+        },
+        { status: 409 },
+      ),
+    };
+  }
+
+  return { session: null, resolvedId: requestedId, error: null };
+};
+
 /**
  * Main handler for /api/sessions/* and /api/archive/* routes.
  * Returns null if the route doesn't match, otherwise returns a Response.
@@ -215,6 +307,156 @@ export async function handleSessionApi(
       return Response.json({ error: "Not authenticated" }, { status: 401 });
     }
     return ctx.createSessionSubscribeResponse(viewerNpub);
+  }
+
+  // ──────────────────────────────────────────────
+  //  Delegate session API for owner-linked bot identities
+  // ──────────────────────────────────────────────
+
+  if (pathname === "/api/delegate-sessions" && method === "GET") {
+    const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, authContext);
+    if (denied) return denied;
+    if (!isProgrammaticCaller(authContext)) {
+      return Response.json({ error: "nip98-auth-required" }, { status: 403 });
+    }
+    const viewerNormalizedNpub = ctx.getViewerNormalizedNpub(authContext);
+    if (!viewerNormalizedNpub) {
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }
+    const sessions = ctx.manager
+      .listSessions()
+      .filter((session) => ctx.sessionBelongsToViewer(session.npub ?? null, viewerNormalizedNpub, false))
+      .map(ctx.serializeSession);
+    return Response.json({ sessions });
+  }
+
+  if (pathname === "/api/delegate-sessions" && method === "POST") {
+    const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, authContext);
+    if (denied) return denied;
+    if (!isProgrammaticCaller(authContext)) {
+      return Response.json({ error: "nip98-auth-required" }, { status: 403 });
+    }
+
+    try {
+      const payload = (await request.json()) as Record<string, unknown> | null;
+      const agent = typeof payload?.agent === "string" ? payload.agent.toLowerCase() : "";
+      if (!ctx.isAgentType(agent)) {
+        return Response.json({ error: "Invalid agent selection" }, { status: 400 });
+      }
+      const requiresBalance = await ctx.shouldRequireBalanceForAgent(agent);
+      if (requiresBalance) {
+        const balanceCheck = ctx.ensureViewerHasBalance(authContext, {
+          feature: "start an agent session",
+          message: "Add sats to your balance to start an agent session.",
+        });
+        if (balanceCheck instanceof Response) return balanceCheck;
+      }
+
+      const directoryInput = typeof payload?.directory === "string" ? payload.directory : undefined;
+      const rawName =
+        payload && typeof payload === "object" && payload !== null
+          ? payload.name
+          : null;
+      let workspace: SessionWorkspaceRequest = null;
+      try {
+        workspace =
+          payload && typeof payload === "object" && payload !== null
+            ? ctx.parseSessionWorkspaceRequest(payload.workspace)
+            : null;
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
+      const sessionName = ctx.normaliseSessionNameInput(rawName);
+      let workingDirectory: string;
+      try {
+        workingDirectory = await ctx.resolveSessionWorkingDirectory(directoryInput, workspace);
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
+      const rawTargetFile = typeof payload?.targetFile === "string" ? payload.targetFile.trim() : "";
+      let targetFile: string | undefined;
+      if (rawTargetFile.length > 0) {
+        targetFile = rawTargetFile.startsWith("/")
+          ? rawTargetFile
+          : resolvePath(workingDirectory, rawTargetFile);
+      }
+      const delegatedMetadata =
+        payload?.metadata && typeof payload.metadata === "object" && !Array.isArray(payload.metadata)
+          ? payload.metadata as Record<string, unknown>
+          : null;
+      const session = await ctx.manager.createSession(
+        agent,
+        workingDirectory,
+        sessionName ?? undefined,
+        buildProgrammaticOrigin(authContext),
+        targetFile,
+        authContext.npub ?? undefined,
+        { ...(delegatedMetadata ?? {}), AGENT: true },
+      );
+      await recordLiveSession(ctx, session);
+      return Response.json(ctx.serializeSession(session), { status: 201 });
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 500 });
+    }
+  }
+
+  if (pathname.startsWith("/api/delegate-sessions/")) {
+    const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, authContext);
+    if (denied) return denied;
+    if (!isProgrammaticCaller(authContext)) {
+      return Response.json({ error: "nip98-auth-required" }, { status: 403 });
+    }
+
+    const parts = pathname.split("/");
+    const id = parts[3];
+    if (!id) {
+      return Response.json({ error: "Session id required" }, { status: 400 });
+    }
+
+    const viewerNormalizedNpub = ctx.getViewerNormalizedNpub(authContext);
+    if (!viewerNormalizedNpub) {
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }
+
+    const delegatedResolution = resolveOwnedLiveSession(
+      id,
+      ctx.manager.listSessions(),
+      viewerNormalizedNpub,
+      false,
+      ctx,
+    );
+    if (delegatedResolution.error) return delegatedResolution.error;
+    const ownedSession = delegatedResolution.session;
+    const resolvedId = delegatedResolution.resolvedId;
+
+    if (method === "GET" && parts.length === 4) {
+      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      return Response.json(ctx.serializeSession(ownedSession));
+    }
+
+    if (method === "DELETE" && parts.length === 4) {
+      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      const session = await ctx.manager.stopSession(resolvedId);
+      if (!session) return Response.json({ error: "Not found" }, { status: 404 });
+      ctx.scheduleSessionArchive(resolvedId, ctx.manager);
+      return Response.json(ctx.serializeSession(session));
+    }
+
+    if (parts[4] === "messages") {
+      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+
+      if (method === "GET") {
+        const refresh = url.searchParams.get("refresh") === "true";
+        const messages = await (
+          refresh ? ctx.syncSessionMessages(resolvedId, true) : ctx.messageStore.listSessionMessages(resolvedId)
+        );
+        return Response.json({ id: resolvedId, messages });
+      }
+
+      if (method === "POST") {
+        return handleDelegatedQueuedMessage(request, resolvedId, ownedSession, authContext, ctx);
+      }
+    }
   }
 
   // ──────────────────────────────────────────────
@@ -359,6 +601,7 @@ export async function handleSessionApi(
           ? rawTargetFile
           : resolvePath(workingDirectory, rawTargetFile);
       }
+      const callerRequestedAgent = payload?.metadata && typeof payload.metadata === "object" && !Array.isArray(payload.metadata) && (payload.metadata as Record<string, unknown>).AGENT === true;
       const session = await ctx.manager.createSession(
         agent,
         workingDirectory,
@@ -366,25 +609,9 @@ export async function handleSessionApi(
         origin,
         targetFile,
         authContext.npub ?? undefined,
-        { AGENT: false },
+        { AGENT: callerRequestedAgent || isDelegatedBotAuth(authContext) },
       );
-      ctx.messageStore.recordSession({
-        id: session.id,
-        agent: session.agent,
-        startedAt: session.startedAt,
-        name: session.name,
-        npub: session.npub,
-        port: session.port,
-        pid: session.pid,
-        workingDirectory: session.workingDirectory,
-        command: session.command,
-        runtimeStatus: session.agentRuntimeStatus ?? null,
-        origin: session.origin ?? null,
-        pm2Name: session.pm2Name,
-        targetFile: session.targetFile,
-        metadata: session.metadata,
-      });
-      await ctx.syncSessionMessages(session.id, true);
+      await recordLiveSession(ctx, session);
       return Response.json(ctx.serializeSession(session), { status: 201 });
     } catch (error) {
       return Response.json({ error: (error as Error).message }, { status: 500 });
@@ -430,11 +657,16 @@ export async function handleSessionApi(
       return Response.json({ error: "Not found" }, { status: 404 });
     }
 
-    const liveSession = ctx.manager.getSession(id);
-    const ownedSession =
-      liveSession && ctx.sessionBelongsToViewer(liveSession.npub ?? null, viewerNormalizedNpub, viewerIsAdmin)
-        ? liveSession
-        : null;
+    const sessionResolution = resolveOwnedLiveSession(
+      id,
+      ctx.manager.listSessions(),
+      viewerNormalizedNpub,
+      viewerIsAdmin,
+      ctx,
+    );
+    if (sessionResolution.error) return sessionResolution.error;
+    const ownedSession = sessionResolution.session;
+    const resolvedId = sessionResolution.resolvedId;
 
     if (method === "GET" && parts.length === 4) {
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
@@ -458,19 +690,19 @@ export async function handleSessionApi(
       if (!trimmedName) {
         return Response.json({ error: "Session name is required" }, { status: 400 });
       }
-      const renamed = ctx.manager.renameSession(id, trimmedName);
+      const renamed = ctx.manager.renameSession(resolvedId, trimmedName);
       if (!renamed) return Response.json({ error: "Not found" }, { status: 404 });
       return Response.json(ctx.serializeSession(renamed));
     }
 
     if (method === "DELETE" && parts.length === 4) {
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      if (!authContext.session && !isAgentManagedByMetadataOrOrigin(ownedSession.metadata, ownedSession.origin)) {
+      if (!isAuthorizedCaller(authContext) && !isAgentManagedByMetadataOrOrigin(ownedSession.metadata, ownedSession.origin)) {
         return Response.json({ error: "Agents can only stop sessions with metadata.AGENT=true" }, { status: 403 });
       }
-      const session = await ctx.manager.stopSession(id);
+      const session = await ctx.manager.stopSession(resolvedId);
       if (!session) return Response.json({ error: "Not found" }, { status: 404 });
-      ctx.scheduleSessionArchive(id, ctx.manager);
+      ctx.scheduleSessionArchive(resolvedId, ctx.manager);
       return Response.json(ctx.serializeSession(session));
     }
 
@@ -483,36 +715,36 @@ export async function handleSessionApi(
         if (!viewerIsAdmin) {
           const storedRecord = ctx.messageStore
             .listSessions()
-            .find((record) => record.id === id && ctx.sessionBelongsToViewer(record.npub, viewerNormalizedNpub, viewerIsAdmin));
+            .find((record) => record.id === resolvedId && ctx.sessionBelongsToViewer(record.npub, viewerNormalizedNpub, viewerIsAdmin));
           if (!storedRecord) {
             return Response.json({ error: "Not found" }, { status: 404 });
           }
-        } else if (!ctx.messageStore.listSessions().some((record) => record.id === id)) {
+        } else if (!ctx.messageStore.listSessions().some((record) => record.id === resolvedId)) {
           return Response.json({ error: "Not found" }, { status: 404 });
         }
       }
 
-      ctx.cancelPendingArchive(id);
+      ctx.cancelPendingArchive(resolvedId);
 
       try {
-        ctx.manager.deleteSession(id);
+        ctx.manager.deleteSession(resolvedId);
       } catch (error) {
         return Response.json({ error: (error as Error).message }, { status: 400 });
       }
-      ctx.messageStore.removeSession(id);
-      return Response.json({ id, deleted: true });
+      ctx.messageStore.removeSession(resolvedId);
+      return Response.json({ id: resolvedId, deleted: true });
     }
 
     if (method === "GET" && parts[4] === "logs") {
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      const logs = await ctx.manager.getLogs(id);
+      const logs = await ctx.manager.getLogs(resolvedId);
       if (!logs) return Response.json({ error: "Not found" }, { status: 404 });
-      return Response.json({ id, logs });
+      return Response.json({ id: resolvedId, logs });
     }
 
     // GET /api/sessions/:id/artifacts
     if (method === "GET" && parts[4] === "artifacts") {
-      const artifacts = ctx.artifactsStore.listBySession(id);
+      const artifacts = ctx.artifactsStore.listBySession(resolvedId);
       return Response.json({ artifacts });
     }
 
@@ -523,34 +755,36 @@ export async function handleSessionApi(
 
       if (method === "GET") {
         const refresh = url.searchParams.get("refresh") === "true";
-        const messages = await (refresh ? ctx.syncSessionMessages(id, true) : ctx.messageStore.listSessionMessages(id));
-        return Response.json({ id, messages });
+        const messages = await (
+          refresh ? ctx.syncSessionMessages(resolvedId, true) : ctx.messageStore.listSessionMessages(resolvedId)
+        );
+        return Response.json({ id: resolvedId, messages });
       }
 
       if (method === "POST") {
-        return handlePostMessage(request, id, ownedSession, authContext, ctx);
+        return handlePostMessage(request, resolvedId, ownedSession, authContext, ctx);
       }
     }
 
     // GET /api/sessions/:id/history
     if (method === "GET" && parts[4] === "history") {
-      return handleSessionHistory(id, ownedSession, viewerNormalizedNpub, viewerIsAdmin, ctx);
+      return handleSessionHistory(resolvedId, ownedSession, viewerNormalizedNpub, viewerIsAdmin, ctx);
+    }
+
+    if (method === "POST" && parts[4] === "queue" && (parts[5] === "next" || parts[5] === "dispatch")) {
+      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      return handleQueueNext(resolvedId, ownedSession, authContext, ctx);
     }
 
     if (parts[4] === "queue") {
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      return handleQueueRoutes(request, method, parts, id, ownedSession, authContext, ctx);
-    }
-
-    if (method === "POST" && parts[4] === "queue" && parts[5] === "next") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      return handleQueueNext(id, ownedSession, authContext, ctx);
+      return handleQueueRoutes(request, method, parts, resolvedId, ownedSession, authContext, ctx);
     }
 
     // Fork session to a new git worktree
     if (method === "POST" && parts[4] === "fork-to-worktree") {
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      return handleForkToWorktree(request, id, ownedSession, authContext, ctx);
+      return handleForkToWorktree(request, resolvedId, ownedSession, authContext, ctx);
     }
   }
 
@@ -665,6 +899,69 @@ async function handlePostMessage(
       { status: 502 },
     );
   }
+}
+
+async function handleDelegatedQueuedMessage(
+  request: Request,
+  id: string,
+  ownedSession: SessionSnapshot,
+  authContext: RequestAuthContext,
+  ctx: SessionApiContext,
+): Promise<Response> {
+  let payload: unknown;
+  try {
+    payload = await request.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+  }
+
+  if (!payload || typeof payload !== "object") {
+    return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+  }
+
+  const record = payload as Record<string, unknown>;
+  const requestTypeRaw = typeof record.type === "string" ? record.type.trim().toLowerCase() : "user";
+  const messageType = requestTypeRaw === "raw" ? "raw" : "user";
+  if (messageType === "raw") {
+    return handlePostMessage(request, id, ownedSession, authContext, ctx);
+  }
+
+  const content = typeof record.content === "string" ? record.content.trim() : "";
+  if (!content) {
+    return Response.json({ error: "Message content is required" }, { status: 400 });
+  }
+
+  const userNpub = authContext.npub ?? null;
+  if (!userNpub) {
+    return Response.json({ error: "Sign in to send messages", balance: 0 }, { status: 403 });
+  }
+
+  let prompt: unknown;
+  try {
+    prompt = ctx.promptQueueStore.addPrompt(id, { content });
+  } catch (error) {
+    return Response.json({ error: (error as Error).message }, { status: 400 });
+  }
+
+  const liveSession = ctx.manager.getSession(id) ?? ownedSession;
+  if (liveSession.status === "running" && liveSession.agentRuntimeStatus === "stable") {
+    try {
+      const result = await ctx.dispatchNextQueuedPromptForSession(liveSession, userNpub);
+      return Response.json({ id, queued: false, prompt, ...result });
+    } catch (error) {
+      const queueError = error as Error & { name?: string; status?: number; payload?: Record<string, unknown> };
+      if (queueError.name === "QueueDispatchError") {
+        void ctx.maybeAutoDispatchQueuedPrompt(liveSession);
+        if (queueError.status === 402 || queueError.status === 403) {
+          return Response.json({ error: queueError.message, ...(queueError.payload ?? {}) }, { status: queueError.status });
+        }
+      }
+    }
+  } else {
+    void ctx.maybeAutoDispatchQueuedPrompt(liveSession);
+  }
+
+  return Response.json({ id, queued: true, prompt }, { status: 202 });
 }
 
 async function handleSessionHistory(
