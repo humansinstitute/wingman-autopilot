@@ -19,6 +19,17 @@ export interface AgentMessageOptions {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const createTimeoutSignal = (timeoutMs: number): AbortSignal => {
+  if (typeof AbortSignal.timeout === "function") {
+    return AbortSignal.timeout(timeoutMs);
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  controller.signal.addEventListener("abort", () => clearTimeout(timeout), { once: true });
+  return controller.signal;
+};
+
 export const parseAllowedHosts = (value: string): string[] => {
   return value
     .split(/[,\s]+/)
@@ -63,7 +74,14 @@ export const waitForAgentReady = async (
 
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(statusUrl);
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        break;
+      }
+      const requestTimeoutMs = Math.min(remainingMs, Math.max(interval * 2, 1000));
+      const response = await fetch(statusUrl, {
+        signal: createTimeoutSignal(requestTimeoutMs),
+      });
       if (response.ok) {
         const payload = await response.json().catch(() => null);
         const data = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : null;
