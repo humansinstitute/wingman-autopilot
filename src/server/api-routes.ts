@@ -303,7 +303,7 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
       if (denied) {
         return denied;
       }
-      const response = await ctx.autopilotJobsApiHandler(request, url, method);
+      const response = await ctx.autopilotJobsApiHandler(request, url, method, authContext);
       if (response) {
         return response;
       }

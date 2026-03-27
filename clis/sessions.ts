@@ -3,8 +3,8 @@
 /**
  * Wingman session management CLI (NIP-98 authenticated).
  *
- * Commands: list, create, stop, info, logs, send, artifacts, queue, queue-add,
- *           queue-next, archive, archive-info, archive-logs, archive-delete
+ * Commands: list, create, stop, stop-self, info, logs, send, artifacts, queue,
+ *           queue-add, queue-next, archive, archive-info, archive-logs, archive-delete
  */
 
 import { parseCommonFlags, buildConfig, requestJson, requestJsonBotCrypto, resolveBaseUrl } from "./lib/auth";
@@ -18,6 +18,7 @@ Commands:
   list                 List active sessions
   create <agent-type>  Create a new session
   stop <id>            Stop and archive a session
+  stop-self            Stop the current session using SESSION_ID
   info <id>            Show session details
   logs <id>            Show session messages
   send <id> <message>  Send a message to a session
@@ -50,6 +51,7 @@ Examples:
   bun clis/sessions.ts artifacts abc123
   bun clis/sessions.ts queue abc123
   bun clis/sessions.ts queue-add abc123 "run the tests"
+  bun clis/sessions.ts stop-self --bot-crypto
   bun clis/sessions.ts archive --limit 20
   bun clis/sessions.ts stop abc123`;
 
@@ -146,6 +148,25 @@ async function run() {
     return requestJson<T>(baseUrl, secretKey, method, path, body);
   }
 
+  async function resolveActiveSessionId(requestedId: string): Promise<string> {
+    const payload = await req<{ sessions?: Session[] }>("GET", "/api/sessions");
+    const sessions = Array.isArray(payload.sessions)
+      ? payload.sessions
+      : Array.isArray(payload) ? (payload as Session[]) : [];
+    const exactMatch = sessions.find((session) => String(session.id ?? "") === requestedId);
+    if (exactMatch?.id) return String(exactMatch.id);
+
+    const prefixMatches = sessions.filter((session) => String(session.id ?? "").startsWith(requestedId));
+    if (prefixMatches.length === 1 && prefixMatches[0]?.id) {
+      return String(prefixMatches[0].id);
+    }
+    if (prefixMatches.length > 1) {
+      const ids = prefixMatches.map((session) => String(session.id ?? "")).join(", ");
+      throw new Error(`Ambiguous session id '${requestedId}'. Matches: ${ids}`);
+    }
+    return requestedId;
+  }
+
   switch (command) {
     case "list": {
       const payload = await req<{ sessions?: Session[] }>("GET", "/api/sessions");
@@ -180,15 +201,25 @@ async function run() {
     case "stop": {
       const id = positional[1];
       if (!id) throw new Error("stop requires <id>");
-      await req("DELETE", `/api/sessions/${encodeURIComponent(id)}`);
-      console.log(`Stopped: ${id}`);
+      const resolvedId = await resolveActiveSessionId(id);
+      await req("DELETE", `/api/sessions/${encodeURIComponent(resolvedId)}`);
+      console.log(`Stopped: ${resolvedId}`);
+      break;
+    }
+
+    case "stop-self": {
+      const sessionId = process.env.SESSION_ID || Bun.env.SESSION_ID;
+      if (!sessionId) throw new Error("stop-self requires SESSION_ID in the environment");
+      await req("DELETE", `/api/sessions/${encodeURIComponent(sessionId)}`);
+      console.log(`Stopped: ${sessionId}`);
       break;
     }
 
     case "info": {
       const id = positional[1];
       if (!id) throw new Error("info requires <id>");
-      const payload = await req<Record<string, unknown>>("GET", `/api/sessions/${encodeURIComponent(id)}`);
+      const resolvedId = await resolveActiveSessionId(id);
+      const payload = await req<Record<string, unknown>>("GET", `/api/sessions/${encodeURIComponent(resolvedId)}`);
       console.log(JSON.stringify(payload, null, 2));
       break;
     }
@@ -196,8 +227,9 @@ async function run() {
     case "logs": {
       const id = positional[1];
       if (!id) throw new Error("logs requires <id>");
+      const resolvedId = await resolveActiveSessionId(id);
       const payload = await req<{ messages?: Array<Record<string, unknown>> }>(
-        "GET", `/api/sessions/${encodeURIComponent(id)}/messages`,
+        "GET", `/api/sessions/${encodeURIComponent(resolvedId)}/messages`,
       );
       const messages = Array.isArray(payload.messages)
         ? payload.messages
@@ -215,13 +247,14 @@ async function run() {
       const message = positional.slice(2).join(" ");
       if (!id) throw new Error("send requires <id> <message>");
       if (!message) throw new Error("send requires a message after the session id");
+      const resolvedId = await resolveActiveSessionId(id);
       const payload = await req<Record<string, unknown>>(
-        "POST", `/api/sessions/${encodeURIComponent(id)}/messages`, { content: message },
+        "POST", `/api/sessions/${encodeURIComponent(resolvedId)}/messages`, { content: message },
       );
       if (asJson) {
         console.log(JSON.stringify(payload, null, 2));
       } else {
-        console.log(`Sent to ${id}`);
+        console.log(`Sent to ${resolvedId}`);
       }
       break;
     }
@@ -229,8 +262,9 @@ async function run() {
     case "artifacts": {
       const id = positional[1];
       if (!id) throw new Error("artifacts requires <id>");
+      const resolvedId = await resolveActiveSessionId(id);
       const payload = await req<{ artifacts?: Array<Record<string, unknown>> }>(
-        "GET", `/api/sessions/${encodeURIComponent(id)}/artifacts`,
+        "GET", `/api/sessions/${encodeURIComponent(resolvedId)}/artifacts`,
       );
       const artifacts = Array.isArray(payload.artifacts)
         ? payload.artifacts
@@ -254,8 +288,9 @@ async function run() {
     case "queue": {
       const id = positional[1];
       if (!id) throw new Error("queue requires <id>");
+      const resolvedId = await resolveActiveSessionId(id);
       const payload = await req<{ queue?: Array<Record<string, unknown>> }>(
-        "GET", `/api/sessions/${encodeURIComponent(id)}/queue`,
+        "GET", `/api/sessions/${encodeURIComponent(resolvedId)}/queue`,
       );
       const queue = Array.isArray(payload.queue)
         ? payload.queue
@@ -282,13 +317,14 @@ async function run() {
       const prompt = positional.slice(2).join(" ");
       if (!id) throw new Error("queue-add requires <id> <prompt>");
       if (!prompt) throw new Error("queue-add requires a prompt after the session id");
+      const resolvedId = await resolveActiveSessionId(id);
       const payload = await req<Record<string, unknown>>(
-        "POST", `/api/sessions/${encodeURIComponent(id)}/queue`, { content: prompt },
+        "POST", `/api/sessions/${encodeURIComponent(resolvedId)}/queue`, { content: prompt },
       );
       if (asJson) {
         console.log(JSON.stringify(payload, null, 2));
       } else {
-        console.log(`Queued prompt for ${id}`);
+        console.log(`Queued prompt for ${resolvedId}`);
       }
       break;
     }
@@ -296,13 +332,14 @@ async function run() {
     case "queue-next": {
       const id = positional[1];
       if (!id) throw new Error("queue-next requires <id>");
+      const resolvedId = await resolveActiveSessionId(id);
       const payload = await req<Record<string, unknown>>(
-        "POST", `/api/sessions/${encodeURIComponent(id)}/queue/next`,
+        "POST", `/api/sessions/${encodeURIComponent(resolvedId)}/queue/next`,
       );
       if (asJson) {
         console.log(JSON.stringify(payload, null, 2));
       } else {
-        console.log(`Executing next prompt for ${id}`);
+        console.log(`Executing next prompt for ${resolvedId}`);
       }
       break;
     }

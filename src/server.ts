@@ -434,7 +434,12 @@ const schedulerApiHandler = createSchedulerApiHandler({
     return ctx?.npub ?? null;
   },
 });
-const autopilotJobsApiHandler = createAutopilotJobsApiHandler();
+const autopilotJobsApiHandler = (
+  request: Request,
+  url: URL,
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+  authContext: RequestAuthContext,
+) => createAutopilotJobsApiHandler({ sessionApiContext })(request, url, method, authContext);
 const nip98GrantsStore = new Nip98GrantStore();
 const memoryStore = new MemoryStore();
 const nip98ApiHandler = createNip98ApiHandler({

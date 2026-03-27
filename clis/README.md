@@ -42,6 +42,7 @@ bun clis/sessions.ts info <session-id>
 bun clis/sessions.ts logs <session-id>
 bun clis/sessions.ts send <session-id> "do the thing"
 bun clis/sessions.ts stop <session-id>
+bun clis/sessions.ts stop-self --bot-crypto
 bun clis/sessions.ts artifacts <session-id>
 bun clis/sessions.ts queue <session-id>
 bun clis/sessions.ts queue-add <session-id> "run the tests"
@@ -50,6 +51,22 @@ bun clis/sessions.ts archive [--limit 20] [--filter text]
 bun clis/sessions.ts archive-info <archive-id>
 bun clis/sessions.ts archive-logs <archive-id>
 bun clis/sessions.ts archive-delete <archive-id>
+```
+
+### delegate-sessions — Bot-delegated session management
+
+Use this when you are operating as a user's Wingman bot and want the server
+to authorize based on the bot->owner relationship rather than a browser session
+or agent `SESSION_ID`.
+
+```bash
+bun clis/delegate-sessions.ts list --key $WINGMAN_NSEC
+bun clis/delegate-sessions.ts create codex --name "worker" --directory /tmp/project
+bun clis/delegate-sessions.ts info <session-id>
+bun clis/delegate-sessions.ts read <session-id>
+bun clis/delegate-sessions.ts send <session-id> "do the thing"
+bun clis/delegate-sessions.ts stop <session-id>
+bun clis/delegate-sessions.ts create codex --name "worker" --metadata '{"role":"heartbeat-worker"}'
 ```
 
 ### status — System overview

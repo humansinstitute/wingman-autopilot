@@ -70,6 +70,19 @@ export async function fetchJobRuns(jobId, status) {
   return res.json();
 }
 
+export async function dispatchJobRun(data) {
+  const res = await fetch("/api/autopilot-jobs/runs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to launch job: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function fetchJobRun(id) {
   const res = await fetch(`/api/autopilot-jobs/runs/${encodeURIComponent(id)}`);
   if (!res.ok) throw new Error(`Failed to fetch run: ${res.status}`);

@@ -25,6 +25,7 @@ import {
 } from "./writer/writer-panel.js";
 import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
 import { createSessionDialogController } from "./common/session-dialog.js";
+import { createJobDialogController } from "./common/job-dialog.js";
 import { initAppDialogs } from "./apps/dialog.js";
 import { initWorkspaceTree } from "./apps/tree.js";
 import { initAppCards } from "./apps/cards.js";
@@ -39,6 +40,7 @@ import { initSchedulerStore } from "./scheduler/store.js";
 import { initSchedulerPage } from "./scheduler/page.js";
 import { initJobsStore } from "./jobs/store.js";
 import { initJobsPage } from "./jobs/page.js";
+import { dispatchJobRun, fetchJobDefinitions } from "./jobs/api.js";
 import { initSessionsStore } from "./sessions/store.js";
 import { initAppsStore } from "./apps/store.js";
 import { startSigningListener, stopSigningListener } from "./nip98/signing-listener.js";
@@ -165,6 +167,7 @@ let conversationPollInFlight = false;
 let conversationPollingSessionId = null;
 const sessionMessageSendInFlight = new Set();
 let sessionDialogController = null;
+let jobDialogController = null;
 let loadChats = async () => {};
 let loadChatMessages = async () => {};
 let navigateToChat = () => {};
@@ -577,6 +580,23 @@ const agentSelect = document.getElementById("agent-select");
 const confirmButton = document.getElementById("confirm-session");
 const cancelButton = document.getElementById("cancel-session");
 const sessionForm = dialog?.querySelector("form");
+const jobDialog = document.getElementById("job-dialog");
+const jobForm = jobDialog?.querySelector("form");
+const jobSelect = document.getElementById("job-select");
+const jobWorkerDirectoryInput = document.getElementById("job-worker-directory");
+const jobManagerDirectoryInput = document.getElementById("job-manager-directory");
+const jobGoalInput = document.getElementById("job-goal");
+const jobWorkerGoalInput = document.getElementById("job-worker-goal");
+const jobManagerGoalInput = document.getElementById("job-manager-goal");
+const jobExtraPromptInput = document.getElementById("job-extra-prompt");
+const jobRefsInput = document.getElementById("job-refs");
+const confirmJobButton = document.getElementById("confirm-job-launch");
+const cancelJobButton = document.getElementById("cancel-job-launch");
+const jobDefaultManagerDir = document.getElementById("job-default-manager-dir");
+const jobCheckInterval = document.getElementById("job-check-interval");
+const jobDefaultManagerGoal = document.getElementById("job-default-manager-goal");
+const jobDefaultWorkerPrompt = document.getElementById("job-default-worker-prompt");
+const jobDefaultManagerPrompt = document.getElementById("job-default-manager-prompt");
 const appRoot = document.getElementById("app");
 const navLinks = Array.from(document.querySelectorAll("nav a[data-route]"));
 const projectsNavLink = navLinks.find((link) => link.dataset.route === "projects");
@@ -1911,6 +1931,28 @@ const closeDialog = () => {
   }
 };
 
+const openJobDialog = async () => {
+  if (!jobDialogController) {
+    return;
+  }
+  try {
+    await jobDialogController.open();
+  } catch (error) {
+    console.error("Failed to open job dialog", error);
+    window.alert(`Failed to load jobs: ${(error instanceof Error ? error.message : String(error))}`);
+  }
+};
+
+const closeJobDialog = () => {
+  if (jobDialogController) {
+    jobDialogController.close();
+    return;
+  }
+  if (jobDialog?.open) {
+    jobDialog.close();
+  }
+};
+
 const handleSessionStart = createSessionStartHandler({
   getCurrentRoute: () => currentRoute,
   setCurrentRoute: (route) => {
@@ -1939,6 +1981,36 @@ const launchSession = createSessionLauncher({
   liveRoutePrefix: LIVE_ROUTE_PREFIX,
 });
 
+const launchJob = async ({
+  jobId,
+  workerDir,
+  managerDir,
+  goal,
+  workerGoal,
+  managerGoal,
+  prompt,
+  refs,
+}) => {
+  const payload = {
+    job_id: jobId,
+    worker_dir: workerDir,
+    manager_dir: managerDir,
+    goal,
+    worker_goal: workerGoal,
+    manager_goal: managerGoal,
+    prompt,
+    refs,
+  };
+  const result = await dispatchJobRun(payload);
+  if (result?.manager_session) {
+    await handleSessionStart(result.manager_session);
+    return;
+  }
+  await fetchSessions();
+  render();
+  showToast(`Launched ${jobId}`);
+};
+
 sessionDialogController = createSessionDialogController({
   dialog,
   agentSelect,
@@ -1964,6 +2036,39 @@ sessionDialogController = createSessionDialogController({
   },
 });
 sessionDialogController.resetFormState();
+
+jobDialogController = createJobDialogController({
+  dialog: jobDialog,
+  jobSelect,
+  workerDirInput: jobWorkerDirectoryInput,
+  managerDirInput: jobManagerDirectoryInput,
+  goalInput: jobGoalInput,
+  workerGoalInput: jobWorkerGoalInput,
+  managerGoalInput: jobManagerGoalInput,
+  extraPromptInput: jobExtraPromptInput,
+  refsInput: jobRefsInput,
+  confirmButton: confirmJobButton,
+  isAuthenticated: () => Boolean(state.identity.authenticated),
+  onRequireAuth: openIdentityLoginDialog,
+  loadJobDefinitions: () => fetchJobDefinitions(),
+  onSubmit: (values) =>
+    launchJob({
+      jobId: values.jobId,
+      workerDir: values.workerDir,
+      managerDir: values.managerDir,
+      goal: values.goal,
+      workerGoal: values.workerGoal,
+      managerGoal: values.managerGoal,
+      prompt: values.prompt,
+      refs: values.refs,
+    }),
+  onDirectoryInput: (...args) => scheduleDirectorySuggestions(...args),
+  defaultManagerDirOutput: jobDefaultManagerDir,
+  checkIntervalOutput: jobCheckInterval,
+  managerGoalOutput: jobDefaultManagerGoal,
+  workerPromptOutput: jobDefaultWorkerPrompt,
+  managerPromptOutput: jobDefaultManagerPrompt,
+});
 
 const stopSession = async (sessionId) => {
   const result = await stopSessionApi(sessionId);
@@ -3008,6 +3113,7 @@ const homeViewModule = initHomeView({
   navigateToApps: (...args) => navigateToApps(...args),
   navigateToChat: (...args) => navigateToChat(...args),
   openDialog,
+  openJobDialog,
   ensureFeatureFlagsLoaded: (...args) => ensureFeatureFlagsLoaded(...args),
   isFeatureEnabledForViewer: (...args) => isFeatureEnabledForViewer(...args),
   isSessionActive,
@@ -3562,9 +3668,19 @@ sessionForm?.addEventListener("submit", (event) => {
   handleSessionLaunchRequest();
 });
 
+jobForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void jobDialogController?.handleSubmit();
+});
+
 confirmButton.addEventListener("click", (event) => {
   event.preventDefault();
   handleSessionLaunchRequest();
+});
+
+confirmJobButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  void jobDialogController?.handleSubmit();
 });
 
 cancelButton.addEventListener("click", (event) => {
@@ -3572,9 +3688,19 @@ cancelButton.addEventListener("click", (event) => {
   closeDialog();
 });
 
+cancelJobButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  closeJobDialog();
+});
+
 dialog.addEventListener("cancel", (event) => {
   event.preventDefault();
   closeDialog();
+});
+
+jobDialog?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeJobDialog();
 });
 
 (async () => {

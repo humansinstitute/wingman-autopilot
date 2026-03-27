@@ -28,7 +28,9 @@ Commands:
   start <job-id>       Start a new job run
 
 Options:
-  --goal <text>        Goal for this run (passed to worker + manager)
+  --goal <text>        Shared goal for this run (used when no role-specific goal is set)
+  --worker-goal <text> Goal passed only to the worker
+  --manager-goal <text> Goal passed only to the manager
   --prompt <text>      Additional worker prompt (appended to job default)
   --ref <ref>          Attach a reference ID (repeatable)
   --dir <path>         Worker directory override (default: job definition default)
@@ -39,7 +41,7 @@ Options:
 
 Examples:
   bun clis/jobs-dispatch.ts start my-job --goal "Ship the feature" --prompt "Focus on tests"
-  bun clis/jobs-dispatch.ts start my-job --goal "Fix bug" --ref task-abc --ref pr-123 --dir /tmp/project
+  bun clis/jobs-dispatch.ts start my-job --worker-goal "Write the design doc" --manager-goal "Review and update the task" --ref task-abc --dir /tmp/project
   bun clis/jobs-dispatch.ts start my-job --goal "Deploy" --json`;
 
 // ============================================================
@@ -49,6 +51,8 @@ Examples:
 interface DispatchFlags {
   positional: string[];
   goal?: string;
+  workerGoal?: string;
+  managerGoal?: string;
   prompt?: string;
   refs: string[];
   dir?: string;
@@ -77,6 +81,18 @@ function parseDispatchFlags(argv: string[]): DispatchFlags {
         const v = args[++i];
         if (!v) throw new Error("--goal requires a value");
         parsed.goal = v;
+        break;
+      }
+      case "--worker-goal": {
+        const v = args[++i];
+        if (!v) throw new Error("--worker-goal requires a value");
+        parsed.workerGoal = v;
+        break;
+      }
+      case "--manager-goal": {
+        const v = args[++i];
+        if (!v) throw new Error("--manager-goal requires a value");
+        parsed.managerGoal = v;
         break;
       }
       case "--prompt": {
@@ -119,16 +135,50 @@ function buildWorkerPrompt(job: JobDefinition, goal?: string, extraPrompt?: stri
 
 function buildManagerContext(
   job: JobDefinition,
+  runId: string,
+  wingmanUrl: string,
   goal?: string,
   refs: string[] = [],
   workerSessionId?: string,
 ): string {
   const parts: string[] = [];
+  const hasTaskRef = refs.some((ref) => ref.startsWith("task:"));
   if (job.manager_prompt) parts.push(job.manager_prompt);
   if (goal) parts.push(`## Goal\n${goal}`);
   if (job.manager_goal) parts.push(`## Manager Goal\n${job.manager_goal}`);
+  parts.push(
+    [
+      "## Run Context",
+      `Run ID: ${runId}`,
+      `Check Interval: ${job.check_interval}s`,
+      `Wingman URL: ${wingmanUrl}`,
+      workerSessionId ? `Worker Session ID: ${workerSessionId}` : null,
+    ].filter(Boolean).join("\n"),
+  );
   if (refs.length > 0) parts.push(`## References\n${refs.map((r) => `- ${r}`).join("\n")}`);
-  if (workerSessionId) parts.push(`## Worker Session\nSession ID: ${workerSessionId}`);
+  if (!hasTaskRef) {
+    parts.push(`## Task Context
+No task reference was provided for this run. If your operating instructions require task tracking, create a new task before proceeding and keep that new task updated.`);
+  }
+  parts.push(`## Operating Contract
+You are responsible for actively managing this run until it is complete.
+
+Required behavior:
+1. Review the worker output regularly.
+2. If you have feedback or revision requests, send them to the worker using the jobs manager CLI.
+3. Wait for the configured interval before checking again. Use a bash sleep command for this loop.
+4. If this run is attached to a task reference, keep the task updated in the workspace tool available in your environment.
+5. When the deliverable is approved, update the task with the result and mark the run complete.
+
+Use these commands:
+\`\`\`bash
+bun /Users/mini/code/wingmen/clis/jobs-manager.ts read-worker ${runId} --url ${wingmanUrl} --bot-crypto --lines 120
+bun /Users/mini/code/wingmen/clis/jobs-manager.ts message ${runId} "<feedback for worker>" --url ${wingmanUrl} --bot-crypto
+sleep ${job.check_interval}
+bun /Users/mini/code/wingmen/clis/jobs-manager.ts complete ${runId} --summary "<summary>" --url ${wingmanUrl} --bot-crypto
+\`\`\`
+
+Do not keep feedback only in your own session history. Send actionable feedback to the worker session.`);
   return parts.join("\n\n");
 }
 
@@ -139,6 +189,8 @@ function buildManagerContext(
 interface SessionResponse {
   id?: string;
   sessionId?: string;
+  status?: string;
+  agentRuntimeStatus?: string | null;
   [key: string]: unknown;
 }
 
@@ -147,13 +199,11 @@ async function createSession(
   secretKey: Uint8Array,
   name: string,
   directory: string,
-  prompt: string,
 ): Promise<string> {
   const body = {
     agent: "claude",
     name,
     directory,
-    prompt,
   };
   const payload = await requestJson<SessionResponse>(
     baseUrl,
@@ -167,6 +217,55 @@ async function createSession(
     throw new Error("Session creation returned no ID");
   }
   return sessionId;
+}
+
+async function sendInitialPrompt(
+  baseUrl: string,
+  secretKey: Uint8Array,
+  sessionId: string,
+  content: string,
+): Promise<void> {
+  await requestJson<Record<string, unknown>>(
+    baseUrl,
+    secretKey,
+    "POST",
+    `/api/sessions/${encodeURIComponent(sessionId)}/messages`,
+    { content },
+  );
+}
+
+async function waitForSessionReady(
+  baseUrl: string,
+  secretKey: Uint8Array,
+  sessionId: string,
+  timeoutMs = 60_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let stablePolls = 0;
+
+  while (Date.now() < deadline) {
+    const session = await requestJson<SessionResponse>(
+      baseUrl,
+      secretKey,
+      "GET",
+      `/api/sessions/${encodeURIComponent(sessionId)}`,
+    );
+
+    if (session.status !== "running") {
+      throw new Error(`Session ${sessionId} is not running`);
+    }
+
+    if (session.agentRuntimeStatus === "stable") {
+      stablePolls += 1;
+      if (stablePolls >= 2) return;
+    } else {
+      stablePolls = 0;
+    }
+
+    await Bun.sleep(500);
+  }
+
+  throw new Error(`Timed out waiting for session ${sessionId} to become ready`);
 }
 
 // ============================================================
@@ -187,7 +286,9 @@ async function handleStart(flags: DispatchFlags): Promise<void> {
   const managerDir = job.manager_dir;
 
   // 1. Create the job_run row
-  const workerPrompt = buildWorkerPrompt(job, flags.goal, flags.prompt);
+  const workerGoal = flags.workerGoal ?? flags.goal;
+  const managerGoal = flags.managerGoal ?? flags.goal;
+  const workerPrompt = buildWorkerPrompt(job, workerGoal, flags.prompt);
   const refsJson = flags.refs.length > 0 ? JSON.stringify(flags.refs) : null;
 
   const jobRun = createRun({
@@ -212,12 +313,14 @@ async function handleStart(flags: DispatchFlags): Promise<void> {
       secretKey,
       `job:${jobId}:worker:${runId.slice(0, 8)}`,
       workerDir,
-      workerPrompt,
     );
     console.error(`Worker session: ${workerSessionId}`);
+    await waitForSessionReady(baseUrl, secretKey, workerSessionId);
+    await sendInitialPrompt(baseUrl, secretKey, workerSessionId, workerPrompt);
+    console.error(`Worker prompt queued`);
 
     // 3. Build manager context with worker session ID
-    const managerContext = buildManagerContext(job, flags.goal, flags.refs, workerSessionId);
+    const managerContext = buildManagerContext(job, runId, baseUrl, managerGoal, flags.refs, workerSessionId);
 
     // 4. Start manager session
     console.error(`Starting manager session in ${managerDir}...`);
@@ -226,9 +329,11 @@ async function handleStart(flags: DispatchFlags): Promise<void> {
       secretKey,
       `job:${jobId}:manager:${runId.slice(0, 8)}`,
       managerDir,
-      managerContext,
     );
     console.error(`Manager session: ${managerSessionId}`);
+    await waitForSessionReady(baseUrl, secretKey, managerSessionId);
+    await sendInitialPrompt(baseUrl, secretKey, managerSessionId, managerContext);
+    console.error(`Manager prompt queued`);
 
     // 5. Update run with session IDs and status
     updateRun(runId, {

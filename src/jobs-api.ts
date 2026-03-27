@@ -2,11 +2,70 @@
  * Autopilot Jobs API Handler
  *
  * HTTP handler for /api/autopilot-jobs/* routes.
- * Wraps the jobs-db SQLite store for UI consumption.
- * Provides CRUD for job definitions and read/stop for job runs.
+ * Exposes job definition CRUD, run listing, manual dispatch,
+ * and stop controls for the Flight Deck UI.
  */
 
+import type { SessionSnapshot } from "./agents/process-manager";
+import { waitForAgentReady } from "./agents/agent-client";
+import type { RequestAuthContext } from "./auth/request-context";
 import {
+  createJob,
+  createRun,
+  deleteJob,
+  getJob,
+  getRun,
+  listJobs,
+  listRuns,
+  updateJob,
+  updateRun,
+  updateRunStatus,
+  type CreateJobInput,
+  type JobDefinition,
+  type JobRun,
+  type UpdateJobInput,
+} from "./jobs-db";
+import { dispatchJobRun } from "./jobs-dispatch";
+import { deliverSessionAgentMessage } from "./server/session-agent-message";
+import type { SessionApiContext } from "./server/session-api-routes";
+
+type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+interface JobsStore {
+  listJobs: typeof listJobs;
+  getJob: typeof getJob;
+  createJob: (input: CreateJobInput) => JobDefinition;
+  updateJob: (id: string, input: UpdateJobInput) => JobDefinition | undefined;
+  deleteJob: typeof deleteJob;
+  listRuns: typeof listRuns;
+  getRun: typeof getRun;
+  createRun: typeof createRun;
+  updateRun: typeof updateRun;
+  updateRunStatus: typeof updateRunStatus;
+}
+
+interface AutopilotJobsApiContext {
+  store?: Partial<JobsStore>;
+  sessionApiContext?: SessionApiContext;
+  dispatchRun?: (input: {
+    authContext: RequestAuthContext;
+    wingmanUrl: string;
+    job: JobDefinition;
+    goal?: string | null;
+    workerGoal?: string | null;
+    managerGoal?: string | null;
+    prompt?: string | null;
+    refs?: string[];
+    workerDir?: string | null;
+    managerDir?: string | null;
+  }) => Promise<{
+    run: JobRun;
+    workerSession?: SessionSnapshot | null;
+    managerSession?: SessionSnapshot | null;
+  }>;
+}
+
+const defaultStore: JobsStore = {
   listJobs,
   getJob,
   createJob,
@@ -14,12 +73,10 @@ import {
   deleteJob,
   listRuns,
   getRun,
+  createRun,
+  updateRun,
   updateRunStatus,
-  type JobDefinition,
-  type JobRun,
-} from "./jobs-db";
-
-type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+};
 
 /** Normalize SQLite integer booleans to actual booleans for JSON responses. */
 function normalizeJob(job: JobDefinition): Record<string, unknown> {
@@ -32,144 +89,307 @@ function parseJsonBody(request: Request): Promise<Record<string, unknown>> {
   }) as Promise<Record<string, unknown>>;
 }
 
-// ============================================================
-// Job Definition Handlers
-// ============================================================
+const normalizeText = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
 
-/** GET /api/autopilot-jobs/definitions */
-function handleListDefinitions(): Response {
-  const jobs = listJobs().map(normalizeJob);
-  return Response.json({ jobs });
-}
+const normalizeRefs = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter((entry, index, array) => entry.length > 0 && array.indexOf(entry) === index);
+};
 
-/** GET /api/autopilot-jobs/definitions/:id */
-function handleGetDefinition(id: string): Response {
-  const job = getJob(id);
-  if (!job) return Response.json({ error: "Job not found" }, { status: 404 });
-  return Response.json({ job: normalizeJob(job) });
-}
-
-/** POST /api/autopilot-jobs/definitions */
-async function handleCreateDefinition(request: Request): Promise<Response> {
-  const body = await parseJsonBody(request);
-
-  const id = typeof body.id === "string" ? body.id.trim() : "";
-  const name = typeof body.name === "string" ? body.name.trim() : "";
-  const worker_prompt = typeof body.worker_prompt === "string" ? body.worker_prompt.trim() : "";
-  const manager_prompt = typeof body.manager_prompt === "string" ? body.manager_prompt.trim() : "";
-  const manager_goal = typeof body.manager_goal === "string" ? body.manager_goal.trim() : "";
-  const manager_dir = typeof body.manager_dir === "string" ? body.manager_dir.trim() : "";
-  const check_interval = typeof body.check_interval === "number" ? body.check_interval : undefined;
-  const enabled = typeof body.enabled === "boolean" ? body.enabled : undefined;
-
-  if (!id) return Response.json({ error: "id is required" }, { status: 400 });
-  if (!name) return Response.json({ error: "name is required" }, { status: 400 });
-  if (!manager_dir) return Response.json({ error: "manager_dir is required" }, { status: 400 });
-
-  const existing = getJob(id);
-  if (existing) return Response.json({ error: `Job already exists: ${id}` }, { status: 409 });
-
-  const job = createJob({
-    id,
-    name,
-    worker_prompt,
-    manager_prompt,
-    manager_goal,
-    manager_dir,
-    check_interval,
-    enabled,
+const recordLiveSession = async (
+  ctx: SessionApiContext,
+  session: SessionSnapshot,
+): Promise<void> => {
+  ctx.messageStore.recordSession({
+    id: session.id,
+    agent: session.agent,
+    startedAt: session.startedAt,
+    name: session.name,
+    npub: session.npub,
+    port: session.port,
+    pid: session.pid,
+    workingDirectory: session.workingDirectory,
+    command: session.command,
+    runtimeStatus: session.agentRuntimeStatus ?? null,
+    origin: session.origin ?? null,
+    pm2Name: session.pm2Name,
+    targetFile: session.targetFile,
+    metadata: session.metadata,
   });
+  await ctx.syncSessionMessages(session.id, true);
+};
 
-  return Response.json({ job: normalizeJob(job) }, { status: 201 });
-}
+const createDefaultDispatchRun = (
+  store: JobsStore,
+  sessionCtx?: SessionApiContext,
+) => {
+  return async (input: {
+    authContext: RequestAuthContext;
+    wingmanUrl: string;
+    job: JobDefinition;
+    goal?: string | null;
+    workerGoal?: string | null;
+    managerGoal?: string | null;
+    prompt?: string | null;
+    refs?: string[];
+    workerDir?: string | null;
+    managerDir?: string | null;
+  }) => {
+    if (!sessionCtx) {
+      throw new Error("Jobs dispatch is not configured");
+    }
+    if (!input.authContext.npub) {
+      throw new Error("Sign in to launch a job");
+    }
 
-/** PATCH /api/autopilot-jobs/definitions/:id */
-async function handleUpdateDefinition(id: string, request: Request): Promise<Response> {
-  const existing = getJob(id);
-  if (!existing) return Response.json({ error: "Job not found" }, { status: 404 });
+    const requiresBalance = await sessionCtx.shouldRequireBalanceForAgent("claude");
+    if (requiresBalance) {
+      const balanceCheck = sessionCtx.ensureViewerHasBalance(input.authContext, {
+        feature: "launch a manual job",
+        message: "Add sats to your balance to launch a job.",
+      });
+      if (balanceCheck instanceof Response) {
+        throw new Error("Insufficient balance to launch a job");
+      }
+    }
 
-  const body = await parseJsonBody(request);
-  const updates: Record<string, unknown> = {};
-
-  if (typeof body.name === "string") updates.name = body.name.trim();
-  if (typeof body.worker_prompt === "string") updates.worker_prompt = body.worker_prompt.trim();
-  if (typeof body.manager_prompt === "string") updates.manager_prompt = body.manager_prompt.trim();
-  if (typeof body.manager_goal === "string") updates.manager_goal = body.manager_goal.trim();
-  if (typeof body.manager_dir === "string") updates.manager_dir = body.manager_dir.trim();
-  if (typeof body.check_interval === "number") updates.check_interval = body.check_interval;
-  if (typeof body.enabled === "boolean") updates.enabled = body.enabled;
-
-  if (Object.keys(updates).length === 0) {
-    return Response.json({ error: "No fields to update" }, { status: 400 });
-  }
-
-  const job = updateJob(id, updates);
-  if (!job) return Response.json({ error: "Job not found" }, { status: 404 });
-
-  return Response.json({ job: normalizeJob(job) });
-}
-
-/** DELETE /api/autopilot-jobs/definitions/:id */
-function handleDeleteDefinition(id: string): Response {
-  const deleted = deleteJob(id);
-  if (!deleted) return Response.json({ error: "Job not found" }, { status: 404 });
-  return new Response(null, { status: 204 });
-}
-
-// ============================================================
-// Job Run Handlers
-// ============================================================
-
-/** GET /api/autopilot-jobs/runs */
-function handleListRuns(url: URL): Response {
-  const jobId = url.searchParams.get("job_id") ?? undefined;
-  const status = url.searchParams.get("status") ?? undefined;
-  const runs = listRuns(jobId, status);
-  return Response.json({ runs });
-}
-
-/** GET /api/autopilot-jobs/runs/:id */
-function handleGetRun(id: string): Response {
-  const run = getRun(id);
-  if (!run) return Response.json({ error: "Run not found" }, { status: 404 });
-  return Response.json({ run });
-}
-
-/** POST /api/autopilot-jobs/runs/:id/stop */
-function handleStopRun(id: string): Response {
-  const run = getRun(id);
-  if (!run) return Response.json({ error: "Run not found" }, { status: 404 });
-
-  if (run.status === "stopped" || run.status === "complete" || run.status === "failed") {
-    return Response.json({ message: `Run already ${run.status}` });
-  }
-
-  updateRunStatus(id, "stopped");
-  const updated = getRun(id);
-  return Response.json({ run: updated });
-}
+    return dispatchJobRun(
+      {
+        runStore: {
+          createRun: store.createRun,
+          updateRun: store.updateRun,
+          getRun: store.getRun,
+        },
+        createSession: async (name, directory) => {
+          const session = await sessionCtx.manager.createSession(
+            "claude",
+            directory,
+            name,
+            null,
+            undefined,
+            input.authContext.npub ?? undefined,
+          );
+          await recordLiveSession(sessionCtx, session);
+          return session;
+        },
+        waitForSessionReady: async (session) => {
+          await waitForAgentReady(sessionCtx.agentHost, session.port, session.agent, {
+            timeoutMs: session.agent === "codex" ? 120_000 : 60_000,
+            pollIntervalMs: 500,
+          });
+        },
+        seedSession: async (session, content) => {
+          const result = await deliverSessionAgentMessage({
+            agentHost: sessionCtx.agentHost,
+            buildAgentUrl: sessionCtx.buildAgentUrl,
+            agent: session.agent,
+            port: session.port,
+            content,
+            type: "user",
+            pm2Name: session.pm2Name,
+          });
+          if (!result.ok) {
+            throw new Error(result.message);
+          }
+          await sessionCtx.syncSessionMessages(session.id, true);
+        },
+      },
+      {
+        job: input.job,
+        wingmanUrl: input.wingmanUrl,
+        goal: input.goal,
+        workerGoal: input.workerGoal,
+        managerGoal: input.managerGoal,
+        prompt: input.prompt,
+        refs: input.refs,
+        workerDir: input.workerDir,
+        managerDir: input.managerDir,
+      },
+    );
+  };
+};
 
 // ============================================================
 // Main Handler Factory
 // ============================================================
 
-export function createAutopilotJobsApiHandler() {
+export function createAutopilotJobsApiHandler(context: AutopilotJobsApiContext = {}) {
+  const store: JobsStore = {
+    ...defaultStore,
+    ...context.store,
+  };
+  const dispatchRun =
+    context.dispatchRun ?? createDefaultDispatchRun(store, context.sessionApiContext);
+
+  const handleListDefinitions = (): Response => {
+    const jobs = store.listJobs().map(normalizeJob);
+    return Response.json({ jobs });
+  };
+
+  const handleGetDefinition = (id: string): Response => {
+    const job = store.getJob(id);
+    if (!job) return Response.json({ error: "Job not found" }, { status: 404 });
+    return Response.json({ job: normalizeJob(job) });
+  };
+
+  const handleCreateDefinition = async (request: Request): Promise<Response> => {
+    const body = await parseJsonBody(request);
+
+    const id = typeof body.id === "string" ? body.id.trim() : "";
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const worker_prompt = typeof body.worker_prompt === "string" ? body.worker_prompt.trim() : "";
+    const manager_prompt = typeof body.manager_prompt === "string" ? body.manager_prompt.trim() : "";
+    const manager_goal = typeof body.manager_goal === "string" ? body.manager_goal.trim() : "";
+    const manager_dir = typeof body.manager_dir === "string" ? body.manager_dir.trim() : "";
+    const check_interval = typeof body.check_interval === "number" ? body.check_interval : undefined;
+    const enabled = typeof body.enabled === "boolean" ? body.enabled : undefined;
+
+    if (!id) return Response.json({ error: "id is required" }, { status: 400 });
+    if (!name) return Response.json({ error: "name is required" }, { status: 400 });
+    if (!manager_dir) return Response.json({ error: "manager_dir is required" }, { status: 400 });
+
+    const existing = store.getJob(id);
+    if (existing) return Response.json({ error: `Job already exists: ${id}` }, { status: 409 });
+
+    const job = store.createJob({
+      id,
+      name,
+      worker_prompt,
+      manager_prompt,
+      manager_goal,
+      manager_dir,
+      check_interval,
+      enabled,
+    });
+
+    return Response.json({ job: normalizeJob(job) }, { status: 201 });
+  };
+
+  const handleUpdateDefinition = async (id: string, request: Request): Promise<Response> => {
+    const existing = store.getJob(id);
+    if (!existing) return Response.json({ error: "Job not found" }, { status: 404 });
+
+    const body = await parseJsonBody(request);
+    const updates: Record<string, unknown> = {};
+
+    if (typeof body.name === "string") updates.name = body.name.trim();
+    if (typeof body.worker_prompt === "string") updates.worker_prompt = body.worker_prompt.trim();
+    if (typeof body.manager_prompt === "string") updates.manager_prompt = body.manager_prompt.trim();
+    if (typeof body.manager_goal === "string") updates.manager_goal = body.manager_goal.trim();
+    if (typeof body.manager_dir === "string") updates.manager_dir = body.manager_dir.trim();
+    if (typeof body.check_interval === "number") updates.check_interval = body.check_interval;
+    if (typeof body.enabled === "boolean") updates.enabled = body.enabled;
+
+    if (Object.keys(updates).length === 0) {
+      return Response.json({ error: "No fields to update" }, { status: 400 });
+    }
+
+    const job = store.updateJob(id, updates);
+    if (!job) return Response.json({ error: "Job not found" }, { status: 404 });
+
+    return Response.json({ job: normalizeJob(job) });
+  };
+
+  const handleDeleteDefinition = (id: string): Response => {
+    const deleted = store.deleteJob(id);
+    if (!deleted) return Response.json({ error: "Job not found" }, { status: 404 });
+    return new Response(null, { status: 204 });
+  };
+
+  const handleListRuns = (url: URL): Response => {
+    const jobId = url.searchParams.get("job_id") ?? undefined;
+    const status = url.searchParams.get("status") ?? undefined;
+    const runs = store.listRuns(jobId, status);
+    return Response.json({ runs });
+  };
+
+  const handleCreateRun = async (
+    request: Request,
+    url: URL,
+    authContext: RequestAuthContext,
+  ): Promise<Response> => {
+    const body = await parseJsonBody(request);
+    const jobId = normalizeText(body.job_id);
+    if (!jobId) {
+      return Response.json({ error: "job_id is required" }, { status: 400 });
+    }
+
+    const job = store.getJob(jobId);
+    if (!job) {
+      return Response.json({ error: "Job not found" }, { status: 404 });
+    }
+    if (!job.enabled) {
+      return Response.json({ error: "Job is disabled" }, { status: 400 });
+    }
+
+    try {
+      const result = await dispatchRun({
+        authContext,
+        wingmanUrl: url.origin,
+        job,
+        goal: normalizeText(body.goal),
+        workerGoal: normalizeText(body.worker_goal),
+        managerGoal: normalizeText(body.manager_goal),
+        prompt: normalizeText(body.prompt),
+        refs: normalizeRefs(body.refs),
+        workerDir: normalizeText(body.worker_dir),
+        managerDir: normalizeText(body.manager_dir),
+      });
+
+      const responsePayload: Record<string, unknown> = { run: result.run };
+      if (result.workerSession && context.sessionApiContext) {
+        responsePayload.worker_session = context.sessionApiContext.serializeSession(result.workerSession);
+      }
+      if (result.managerSession && context.sessionApiContext) {
+        responsePayload.manager_session = context.sessionApiContext.serializeSession(result.managerSession);
+      }
+      return Response.json(responsePayload, { status: 201 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to launch job";
+      const status = /sign in/i.test(message) ? 403 : /balance/i.test(message) ? 402 : 500;
+      return Response.json({ error: message }, { status });
+    }
+  };
+
+  const handleGetRun = (id: string): Response => {
+    const run = store.getRun(id);
+    if (!run) return Response.json({ error: "Run not found" }, { status: 404 });
+    return Response.json({ run });
+  };
+
+  const handleStopRun = (id: string): Response => {
+    const run = store.getRun(id);
+    if (!run) return Response.json({ error: "Run not found" }, { status: 404 });
+
+    if (run.status === "stopped" || run.status === "complete" || run.status === "failed") {
+      return Response.json({ message: `Run already ${run.status}` });
+    }
+
+    store.updateRunStatus(id, "stopped");
+    const updated = store.getRun(id);
+    return Response.json({ run: updated });
+  };
+
   return async (
     request: Request,
     url: URL,
     method: HttpMethod,
+    authContext: RequestAuthContext,
   ): Promise<Response | null> => {
     const segments = url.pathname.split("/").filter(Boolean);
-    // segments[0] = "api", segments[1] = "autopilot-jobs"
 
-    // /api/autopilot-jobs/definitions
     if (segments.length === 3 && segments[2] === "definitions") {
       if (method === "GET") return handleListDefinitions();
       if (method === "POST") return handleCreateDefinition(request);
       return Response.json({ error: "Method not allowed" }, { status: 405 });
     }
 
-    // /api/autopilot-jobs/definitions/:id
     if (segments.length === 4 && segments[2] === "definitions") {
       const id = decodeURIComponent(segments[3]!);
       if (method === "GET") return handleGetDefinition(id);
@@ -178,20 +398,18 @@ export function createAutopilotJobsApiHandler() {
       return Response.json({ error: "Method not allowed" }, { status: 405 });
     }
 
-    // /api/autopilot-jobs/runs
     if (segments.length === 3 && segments[2] === "runs") {
       if (method === "GET") return handleListRuns(url);
+      if (method === "POST") return handleCreateRun(request, url, authContext);
       return Response.json({ error: "Method not allowed" }, { status: 405 });
     }
 
-    // /api/autopilot-jobs/runs/:id
     if (segments.length === 4 && segments[2] === "runs") {
       const id = decodeURIComponent(segments[3]!);
       if (method === "GET") return handleGetRun(id);
       return Response.json({ error: "Method not allowed" }, { status: 405 });
     }
 
-    // /api/autopilot-jobs/runs/:id/stop
     if (segments.length === 5 && segments[2] === "runs" && segments[4] === "stop") {
       const id = decodeURIComponent(segments[3]!);
       if (method === "POST") return handleStopRun(id);
