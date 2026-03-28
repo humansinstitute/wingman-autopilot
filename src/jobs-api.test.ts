@@ -128,6 +128,83 @@ describe("createAutopilotJobsApiHandler", () => {
     await expect(response!.json()).resolves.toEqual({ error: "Job is disabled" });
   });
 
+  test("POST /api/autopilot-jobs/runs/:id/stop stops linked sessions before marking stopped", async () => {
+    const stoppedSessions: string[] = [];
+    let runStatusUpdates: Array<{ id: string; status: string }> = [];
+
+    const store = {
+      ...createStore(),
+      getRun: (id: string) => (id === baseRun.id ? { ...baseRun, status: "running" } : undefined),
+      updateRunStatus: (id: string, status: string) => {
+        runStatusUpdates.push({ id, status });
+        return true;
+      },
+    };
+
+    const handler = createAutopilotJobsApiHandler({
+      store,
+      sessionApiContext: {
+        manager: {
+          stopSession: async (sessionId: string) => {
+            stoppedSessions.push(sessionId);
+            return { id: sessionId, status: "stopped" };
+          },
+        },
+        serializeSession: (s: any) => s,
+      } as any,
+    });
+
+    const url = new URL("http://localhost:3000/api/autopilot-jobs/runs/run-1/stop");
+    const request = new Request(url.toString(), { method: "POST" });
+
+    const response = await handler(request, url, "POST", makeAuth());
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+
+    // Both linked sessions should have been stopped
+    expect(stoppedSessions).toContain("worker-1");
+    expect(stoppedSessions).toContain("manager-1");
+
+    // Run should be marked as stopped
+    expect(runStatusUpdates.some(u => u.status === "stopped")).toBe(true);
+  });
+
+  test("POST /api/autopilot-jobs/runs/:id/stop does not mark stopped when session stop fails", async () => {
+    let runStatusUpdates: Array<{ id: string; status: string }> = [];
+
+    const store = {
+      ...createStore(),
+      getRun: (id: string) => (id === baseRun.id ? { ...baseRun, status: "running" } : undefined),
+      updateRunStatus: (id: string, status: string) => {
+        runStatusUpdates.push({ id, status });
+        return true;
+      },
+    };
+
+    const handler = createAutopilotJobsApiHandler({
+      store,
+      sessionApiContext: {
+        manager: {
+          stopSession: async (_sessionId: string) => {
+            throw new Error("PM2 process still alive");
+          },
+        },
+        serializeSession: (s: any) => s,
+      } as any,
+    });
+
+    const url = new URL("http://localhost:3000/api/autopilot-jobs/runs/run-1/stop");
+    const request = new Request(url.toString(), { method: "POST" });
+
+    const response = await handler(request, url, "POST", makeAuth());
+    expect(response).not.toBeNull();
+    // Should indicate failure
+    expect(response!.status).toBe(500);
+
+    // Run should NOT be marked as stopped
+    expect(runStatusUpdates.some(u => u.status === "stopped")).toBe(false);
+  });
+
   test("GET /api/autopilot-jobs/definitions normalizes enabled flags", async () => {
     const handler = createAutopilotJobsApiHandler({
       store: createStore({ ...baseJob, enabled: 0 as unknown as boolean }),

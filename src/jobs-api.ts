@@ -363,12 +363,33 @@ export function createAutopilotJobsApiHandler(context: AutopilotJobsApiContext =
     return Response.json({ run });
   };
 
-  const handleStopRun = (id: string): Response => {
+  const handleStopRun = async (id: string): Promise<Response> => {
     const run = store.getRun(id);
     if (!run) return Response.json({ error: "Run not found" }, { status: 404 });
 
     if (run.status === "stopped" || run.status === "complete" || run.status === "failed") {
       return Response.json({ message: `Run already ${run.status}` });
+    }
+
+    // Stop linked sessions server-side before marking the run as stopped
+    const sessionIds = [run.worker_session_id, run.manager_session_id].filter(Boolean) as string[];
+    const errors: string[] = [];
+
+    if (context.sessionApiContext?.manager) {
+      for (const sessionId of sessionIds) {
+        try {
+          await context.sessionApiContext.manager.stopSession(sessionId);
+        } catch (error) {
+          errors.push(`${sessionId.slice(0, 8)}: ${(error as Error).message}`);
+        }
+      }
+    }
+
+    if (errors.length > 0) {
+      return Response.json(
+        { error: `Failed to stop sessions: ${errors.join("; ")}` },
+        { status: 500 },
+      );
     }
 
     store.updateRunStatus(id, "stopped");
