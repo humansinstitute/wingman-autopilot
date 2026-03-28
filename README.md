@@ -51,8 +51,8 @@ Visit `http://localhost:<PORT>/home` for the session dashboard or `/live` for th
 Use `scripts/wingman-appctl.ts` to control registered apps over HTTP with NIP-98 auth headers.
 
 ```bash
-# Uses WINGMAN_NIP98_NSEC (or KEYTELEPORT_PRIVKEY) for signing
-export WINGMAN_NIP98_NSEC=nsec1...
+# Uses WINGMAN_NSEC for signing
+export WINGMAN_NSEC=nsec1...
 
 bun run appctl list
 bun run appctl status <app-id>

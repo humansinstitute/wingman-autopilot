@@ -8,8 +8,6 @@ All CLIs authenticate using NIP-98 (Nostr HTTP Auth). Provide a signing key via:
 
 1. `--key <nsec|hex>` flag
 2. `WINGMAN_NSEC` environment variable
-3. `WINGMAN_NIP98_NSEC` environment variable (legacy)
-4. `KEYTELEPORT_PRIVKEY` environment variable (legacy)
 
 Set the server URL via `--url` flag or `WINGMAN_URL` env (default: `http://localhost:3000`).
 

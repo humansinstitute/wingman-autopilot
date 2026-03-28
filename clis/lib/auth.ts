@@ -23,18 +23,18 @@ export interface BotCryptoConfig {
 
 /**
  * Resolve a signing key from CLI flag, env vars, or throw.
- * Priority: keyInput arg → WINGMAN_NSEC → WINGMAN_NIP98_NSEC → KEYTELEPORT_PRIVKEY
+ * Priority: keyInput arg → WINGMAN_NSEC
  */
 export function resolveSecretKey(keyInput?: string): Uint8Array {
   const raw = (
     keyInput ??
-    Bun.env.WINGMAN_NIP98_NSEC ??
+    Bun.env.WINGMAN_NSEC ??
     ""
   ).trim();
 
   if (!raw) {
     throw new Error(
-      "Missing signing key. Provide --key or set WINGMAN_NIP98_NSEC.",
+      "Missing signing key. Provide --key or set WINGMAN_NSEC.",
     );
   }
 
