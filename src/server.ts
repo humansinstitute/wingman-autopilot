@@ -170,6 +170,7 @@ import {
 } from "./server/bootstrap/warm-restart";
 import type { WarmRestartMarker } from "./server/bootstrap/warm-restart";
 import { reconcileAppsWithPM2 } from "./server/bootstrap/pm2-reconcile";
+import { cleanupOrphanedAgentProcesses } from "./server/bootstrap/pm2-agent-cleanup";
 import { connectPM2 } from "./agents/pm2-wrapper";
 import { createUploadHelpers } from "./server/uploads/helpers";
 import { resolveAndCacheNostrProfile } from "./server/nostr-profile";
@@ -1628,6 +1629,18 @@ await rehydrateOrphanedSessions(
   SUPPORTED_AGENT_TYPES,
   24, // Look for sessions started in the last 24 hours
 );
+
+// Clean up any PM2 agent processes not reclaimed by rehydration
+try {
+  const agentCleanup = await cleanupOrphanedAgentProcesses(manager);
+  if (agentCleanup.cleaned > 0 || agentCleanup.failed > 0) {
+    console.log(
+      `[pm2] agent cleanup: ${agentCleanup.cleaned} removed, ${agentCleanup.failed} failed (of ${agentCleanup.checked} checked)`,
+    );
+  }
+} catch (error) {
+  console.warn(`[pm2] agent cleanup failed: ${(error as Error).message}`);
+}
 
 // SSE handler for session events
 const handleSessionEvents = createSessionEventsHandler({
