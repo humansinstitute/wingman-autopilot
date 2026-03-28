@@ -827,6 +827,22 @@ export class ProcessManager {
     // Wait for process to come online
     const proc = await waitForStatus(processName, "online", 15000);
     if (!proc) {
+      // Clean up the orphaned PM2 entry so it doesn't accumulate
+      try {
+        await deleteProcess(processName);
+      } catch {
+        // best-effort cleanup
+      }
+      try {
+        await removeAppFromEcosystem(
+          session.workingDirectory,
+          session.isAdmin ?? false,
+          processName,
+        );
+      } catch {
+        // best-effort cleanup
+      }
+      session.pm2Name = undefined;
       throw new Error(`PM2 process ${processName} failed to start within timeout`);
     }
 
