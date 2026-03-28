@@ -199,15 +199,22 @@ async function run(): Promise<void> {
       }
 
       console.log(`Stopping run ${id.slice(0, 8)}...`);
+      let anyFailed = false;
 
       if (jobRun.worker_session_id) {
         console.log(`  Stopping worker session ${jobRun.worker_session_id.slice(0, 8)}...`);
-        await stopSession(jobRun.worker_session_id);
+        const ok = await stopSession(jobRun.worker_session_id);
+        if (!ok) anyFailed = true;
       }
 
       if (jobRun.manager_session_id) {
         console.log(`  Stopping manager session ${jobRun.manager_session_id.slice(0, 8)}...`);
-        await stopSession(jobRun.manager_session_id);
+        const ok = await stopSession(jobRun.manager_session_id);
+        if (!ok) anyFailed = true;
+      }
+
+      if (anyFailed) {
+        throw new Error(`Failed to stop one or more sessions for run ${id.slice(0, 8)}. Run NOT marked as stopped.`);
       }
 
       updateRunStatus(id, 'stopped');
