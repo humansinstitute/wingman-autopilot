@@ -164,6 +164,14 @@ interface AgentSession {
 
 type McpCleanupSessionLike = Pick<AgentSession, "id" | "status" | "mcpCleanupFiles">;
 
+/**
+ * Determines whether a PM2-managed session should be marked as stopped
+ * based on whether the PM2 entry was successfully removed.
+ */
+export function pm2StopShouldMarkStopped(result: { deletedFromPm2: boolean }): boolean {
+  return result.deletedFromPm2;
+}
+
 export function shouldCleanupMcpFiles(
   sessions: Iterable<McpCleanupSessionLike>,
   sessionId: string,
@@ -656,6 +664,11 @@ export class ProcessManager {
 
       if (deletedFromPm2) {
         session.pm2Name = undefined;
+      } else {
+        // PM2 process is still alive — do NOT mark stopped or release the port.
+        // The session stays in its current state so the operator can investigate.
+        this.appendLog(session, `[manager] PM2 cleanup failed — session NOT marked stopped, port NOT released`);
+        throw new Error(`PM2 process ${pm2Name} still present after stop/delete — session ${session.id} not marked stopped`);
       }
       session.detachedPid = undefined;
     } else if (session.process) {

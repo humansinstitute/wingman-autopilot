@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test";
 
-import { shouldCleanupMcpFiles } from "./process-manager";
+import { shouldCleanupMcpFiles, pm2StopShouldMarkStopped } from "./process-manager";
+
+describe("pm2StopShouldMarkStopped", () => {
+  test("returns true when PM2 process was successfully deleted", () => {
+    expect(pm2StopShouldMarkStopped({ deletedFromPm2: true })).toBe(true);
+  });
+
+  test("returns false when PM2 delete failed and process is still present", () => {
+    expect(pm2StopShouldMarkStopped({ deletedFromPm2: false })).toBe(false);
+  });
+});
 
 describe("shouldCleanupMcpFiles", () => {
   test("skips cleanup while another active session shares the same file", () => {
