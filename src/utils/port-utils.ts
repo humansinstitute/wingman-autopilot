@@ -4,31 +4,36 @@
 
 /**
  * Check if a port is available by attempting to bind to it.
- * Returns true if the port is free, false if it's in use.
+ * Probes both IPv4 (127.0.0.1) and IPv6 (::1) to catch processes
+ * listening on wildcard addresses (0.0.0.0 / [::]).
+ * Returns true if the port is free on both, false if either is in use.
  */
 export function isPortAvailable(port: number): boolean {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let server: any = null;
-  try {
-    server = Bun.listen({
-      hostname: "127.0.0.1",
-      port,
-      socket: {
-        data() {},
-        close() {},
-        open() {},
-      },
-    });
-    return true;
-  } catch (error) {
-    const nodeError = error as NodeJS.ErrnoException;
-    if (nodeError?.code !== "EADDRINUSE") {
-      console.warn(`[port-utils] failed to probe port ${port}: ${nodeError?.message ?? error}`);
+  const hostnames = ["127.0.0.1", "::1"];
+  for (const hostname of hostnames) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let server: any = null;
+    try {
+      server = Bun.listen({
+        hostname,
+        port,
+        socket: {
+          data() {},
+          close() {},
+          open() {},
+        },
+      });
+    } catch (error) {
+      const nodeError = error as NodeJS.ErrnoException;
+      if (nodeError?.code !== "EADDRINUSE") {
+        console.warn(`[port-utils] failed to probe port ${port} on ${hostname}: ${nodeError?.message ?? error}`);
+      }
+      return false;
+    } finally {
+      server?.stop(true);
     }
-    return false;
-  } finally {
-    server?.stop(true);
   }
+  return true;
 }
 
 /**
