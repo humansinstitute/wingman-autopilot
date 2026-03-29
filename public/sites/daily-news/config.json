@@ -1,0 +1,12 @@
+{
+  "superbased_url": "",
+  "public_group_key": "",
+  "public_group_id": "",
+  "collection": "daily_news",
+  "app_namespace": "wingman-fd",
+  "schema_version": 1,
+  "owner_pubkey": "",
+  "refresh_interval_ms": 300000,
+  "site_title": "Daily News",
+  "site_description": "Latest news powered by Wingman"
+}
