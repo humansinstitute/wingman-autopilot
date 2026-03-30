@@ -1,6 +1,6 @@
 # Per-User GitHub Credential Management
 
-**Status:** Draft — awaiting review
+**Status:** Review-ready
 **Scope:** Multi-user GitHub operations from Wingman UI
 **Date:** 2026-03-30
 
@@ -98,6 +98,8 @@ case "clone": {
   const args = ["clone", repoUrl];
   if (targetDir) args.push(targetDir);
   if (options.branch) args.push("--branch", options.branch);
+  // viewerNpub is always resolved from session.npub by the API route
+  // handler — never passed directly from the request body.
   const gitEnv = getGitHubGitEnvForUser(options.viewerNpub, wingmanDataDir);
   return runCommand("git", args, { cwd: directory, env: gitEnv ?? undefined });
 }
@@ -109,20 +111,39 @@ case "fetch": {
 }
 ```
 
-#### 2. GitHub Credential Resolution Function
+#### 2. GitHub Credential Resolution Functions
 
-New export in `github-credential-helper.ts` (mirrors `resolveGiteaCredentials`):
+New exports in `github-credential-helper.ts` (mirrors `resolveGiteaCredentials`):
 
 ```typescript
+/**
+ * Resolve raw credentials for a given npub.
+ * Used by callers that need the token value directly (e.g. validation,
+ * API calls, MCP tools that don't spawn git).
+ */
 export function resolveGitHubCredentials(
   npub: string | null | undefined,
 ): { username: string; token: string } | null {
   // Delegates to existing getUserGitHubCredentials
   // Returns null if no creds configured → caller decides behavior
 }
+
+/**
+ * Build the full git subprocess env (credential helper path + env vars).
+ * Used by any code that spawns `git` and needs GitHub auth.
+ * Requires dataDir because the credential helper script lives on disk.
+ *
+ * Signature intentionally takes (npub, dataDir) — dataDir is needed to
+ * locate/create the shell helper script. resolveGitHubCredentials() above
+ * takes only npub because it returns raw values without disk I/O.
+ */
+export function getGitHubGitEnvForUser(
+  npub: string | null | undefined,
+  dataDir: string,
+): Record<string, string> | null { /* existing implementation */ }
 ```
 
-This keeps the resolution logic centralized for both HTTP routes and MCP tools.
+Two-tier API: `resolveGitHubCredentials(npub)` for raw credential lookup (no disk I/O), `getGitHubGitEnvForUser(npub, dataDir)` for git subprocess env injection (needs disk path for the helper script). The asymmetry is intentional — callers pick the tier they need.
 
 #### 3. API Routes for Git Operations
 
@@ -219,6 +240,8 @@ Display a warning if the validation endpoint returns a classic token with broad 
 - Env vars are per-process — no cross-session leakage
 - Credential helper script is shared but parameterized by env vars per invocation
 
+**Concurrent sessions for the same npub**: Multiple sessions owned by the same npub may run git operations simultaneously. This is safe because each `Bun.spawn` / `runCommand` call gets its own process with its own env vars. There is no shared mutable state — `userSettingsStore.get()` is a read-only SQLite query, and the credential helper script is stateless (reads env vars set by its parent process). Two sessions for the same npub will resolve the same credentials, which is correct behavior.
+
 ### Revocation
 
 1. **User-initiated**: Clear button in Settings UI → `DELETE /api/user/settings/github_token` + `DELETE /api/user/settings/github_username`
@@ -228,6 +251,47 @@ Display a warning if the validation endpoint returns a classic token with broad 
 ### Rotation
 
 No automatic rotation. Users manage their own PAT lifecycle on GitHub. The validation endpoint helps them verify new tokens work before saving.
+
+---
+
+## Logging & Audit
+
+On a shared multi-user server, credential usage must be observable for security review and incident response.
+
+### What to Log
+
+Every git operation that resolves GitHub credentials should emit a structured log line:
+
+```
+[github-git] <operation> npub=<npub_prefix>... session=<sessionId> remote=<remote> dir=<workingDir> result=<ok|error> exit=<code>
+```
+
+| Field | Source | Example |
+|-------|--------|---------|
+| operation | The `GitCommandAction` value | `push`, `clone`, `pull` |
+| npub | Truncated `session.npub` (first 16 chars) | `npub1abc123...` |
+| sessionId | From request body | `sess_7f3a...` |
+| remote | Resolved remote name | `origin` |
+| dir | `session.workingDirectory` | `/home/user/project` |
+| result | `ok` if exitCode 0, `error` otherwise | `ok` |
+| exit | Process exit code | `0`, `128` |
+
+### Where to Log
+
+- **Credential resolution**: Log when `getGitHubGitEnvForUser` is called and whether creds were found (not the token value — never log secrets)
+- **Operation result**: Log after each git subprocess completes, matching the existing `[gitea-api]` log pattern
+- **Credential lifecycle**: Log when credentials are saved, cleared, or validated (which npub, when, success/failure)
+- **Auth failures**: Log at `warn` level when git exits with auth-related errors (exit 128, "Authentication failed" in stderr)
+
+### What NOT to Log
+
+- Token values, even partially — no `ghp_ab...` prefixes
+- Passwords or credential helper output
+- Full npub values — truncate to 16 chars for correlation without full identity exposure
+
+### Implementation
+
+Use the existing `console.log` / `console.warn` pattern (consistent with `[gitea-api]` logging). The `/api/git/*` route handler should log at entry (operation + npub) and exit (result + exit code). No new logging infrastructure needed — this rides on the existing `src/logging/` system.
 
 ---
 
