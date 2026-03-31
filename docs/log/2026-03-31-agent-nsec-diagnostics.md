@@ -1,57 +1,81 @@
-# Decision: AGENT_NSEC Injection Diagnostics & PM2 Security Fix
+# Decision: AGENT_NSEC Injection — Root Cause & Fixes
 
 **Date:** 2026-03-31
 **Context:** Pete reported AGENT_NSEC/session-memory export fix appeared unresolved after cache clearing
 
 ## Problem
 
-The prior AGENT_NSEC injection implementation (commit `0b82d07`) wired the correct code paths but had **zero diagnostic visibility** when resolution failed at runtime. All error paths used empty `catch {}` blocks, making it impossible to determine why AGENT_NSEC wasn't being injected in production.
+The prior AGENT_NSEC injection implementation (commit `0b82d07`) wired the correct code paths but had **zero diagnostic visibility** when resolution failed at runtime and a **concrete bug** in the task executor path.
 
-## Investigation
+## Root Cause Analysis
 
-Traced the full runtime path:
+### Timing (confirmed correct)
 
-1. `session-started` event fires synchronously (process-manager.ts:366)
-2. Server.ts handler auto-generates bot key + auto-unlocks via escrow
-3. Process-manager resolves AGENT_NSEC via `resolveBotNsecHex`
-4. Value flows to subprocess env and .mcp.json
+The `session-started` event fires **synchronously** at process-manager.ts:366, BEFORE the bot key lookup at line 388. Since `emit()` iterates listeners synchronously, the server.ts handler runs to completion (auto-generating and unlocking the bot key) before control returns to the process-manager's bot key lookup. There is no timing issue in the synchronous escrow path.
 
-The code logic is correct, but multiple failure modes were silently swallowed:
-- `getBotKeyStore()` returning null (DB init failure)
-- `getActiveKeyForUser()` finding no key
-- Escrow unlock failing (KEYTELEPORT_PRIVKEY missing/invalid)
-- In-memory key pubkey mismatch
-- Wiped key (all zeros) being passed as valid
+However: when escrow fails, the fallback is an **async** browser SSE decrypt request (line 1148). This fires-and-forgets — the agent process is spawned before the browser can respond, so AGENT_NSEC is permanently missing for that session.
 
-Additionally: PM2 mode was NOT stripping `KEYTELEPORT_PRIVKEY` from child agent env, while direct spawn mode did (line 773). This was a security inconsistency.
+### Bug 1: Task executor sessions had no npub
+
+`server.ts:769` passed `undefined` for the `explicitNpub` parameter:
+```typescript
+createSession: (agent, dir, name, origin, metadata) =>
+    manager.createSession(agent, dir, name, origin, undefined, undefined, metadata),
+```
+
+With no npub, the entire bot key lookup block (line 382) is skipped because `if (npub)` is false. This means all Nostr-triggered task sessions could never get AGENT_NSEC.
+
+**Fix:** Pass `adminNpub` as the explicit npub for task executor sessions.
+
+### Bug 2: Silent error swallowing
+
+All error paths in bot key resolution used empty `catch {}` blocks, making runtime failures invisible.
+
+### Bug 3: PM2 KEYTELEPORT_PRIVKEY leak
+
+PM2-mode agent subprocesses inherited `KEYTELEPORT_PRIVKEY` from the parent env. Direct-spawn mode stripped it at line 773, but PM2 mode didn't.
+
+## npub Matching Verification
+
+All main session creation paths resolve npubs consistently:
+
+| Path | npub Source | Format |
+|------|-----------|--------|
+| Session API (browser) | `authContext.npub` (cookie) | `npub1...` |
+| Session API (bot NIP-98) | `resolveNip98AuthContext` → `ownerNpub` | `npub1...` |
+| MCP create_session | `callerSession.npub` | `npub1...` |
+| Scheduler engine | `job.userNpub` | `npub1...` |
+| Autopilot jobs | `input.authContext.npub` | `npub1...` |
+| Task executor | Was `undefined`, now `adminNpub` | `npub1...` |
+
+The `activeKeys` Map in `bot-key-manager.ts` is keyed by user npub (bech32). Both `storeBotKeyInMemory(npub, ...)` and `getDecryptedBotKey(npub)` use the same format. No mismatch.
 
 ## Changes
 
-1. **Diagnostic logging** in process-manager bot key resolution:
-   - Logs when bot key store is unavailable
-   - Logs when no active key exists for user
-   - Logs when AGENT_NSEC resolution fails (with reason)
-   - Logs successful AGENT_NSEC resolution
+### Round 1 (commit 2be7e53)
+- Diagnostic logging in process-manager and bot-key-export
+- Wiped-key validation (all-zeros detection)
+- PM2 KEYTELEPORT_PRIVKEY stripping
+- 16 injection flow tests
 
-2. **Error detail logging** in `resolveBotNsecHex`:
-   - Logs specific escrow unlock error message
-   - Logs pubkey mismatch between in-memory and DB record
-
-3. **Wiped key validation**: Detects all-zeros hex (from `secretKey.fill(0)`) and rejects it
-
-4. **PM2 security fix**: `KEYTELEPORT_PRIVKEY` now stripped from PM2 agent subprocesses via:
-   - `unset KEYTELEPORT_PRIVKEY` in bash bootstrap prefix
-   - Destructuring-strip from `envOverride` in `createAppConfig`
-
-5. **Test suite**: 16 tests covering resolution, propagation, validation, PM2 env
+### Round 2 (commit 7532365)
+- **Fix task executor: pass adminNpub** instead of undefined
+- Log npub value and `isBotKeyUnlocked` state at lookup time
+- Log when session has no npub
+- 4 additional npub matching tests (20 total)
 
 ## Files Changed
 
-- `src/agents/process-manager.ts` — diagnostic logging + validation
+- `src/server.ts` — task executor passes adminNpub
+- `src/agents/process-manager.ts` — diagnostic logging + isBotKeyUnlocked import
 - `src/identity/bot-key-export.ts` — error detail logging
 - `src/agents/ecosystem-generator.ts` — PM2 KEYTELEPORT_PRIVKEY stripping
-- `src/agents/agent-nsec-injection.test.ts` — new test suite
+- `src/agents/agent-nsec-injection.test.ts` — 20 tests
 
-## Outcome
+## How to Verify
 
-With these diagnostics, any future AGENT_NSEC resolution failure will produce specific log messages that pinpoint the root cause (DB unavailable, no key, escrow failure, wiped key, pubkey mismatch). The PM2 security fix ensures consistent KEYTELEPORT_PRIVKEY isolation across both spawn modes.
+After deploy, start a new session and check logs for:
+- `[manager] bot key lookup for npub=npub1... (in-memory=true)` — key was pre-unlocked
+- `[manager] AGENT_NSEC resolved for npub1...` — success
+- `[manager] session has no npub` — would indicate missing npub (now fixed for task executor)
+- `[bot-key-export] escrow unlock failed` — would indicate KEYTELEPORT_PRIVKEY issue
