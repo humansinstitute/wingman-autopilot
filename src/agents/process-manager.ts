@@ -32,6 +32,7 @@ import {
 } from "./pm2-wrapper";
 import { injectMcpConfig, cleanupMcpConfig } from "./mcp-injector";
 import { resolveBotNsecHex } from "../identity/bot-key-export";
+import { isBotKeyUnlocked } from "../identity/bot-key-manager";
 import { parseAllowedHosts, pickAgentHost, normaliseHostForUrl } from "./agent-client";
 import { BotKeyStore } from "../identity/bot-key-store";
 import { ensureCredentialHelper, getGiteaGitEnv } from "../gitea/credential-helper";
@@ -384,6 +385,7 @@ export class ProcessManager {
           if (!botKeyStore) {
             this.appendLog(session, `[manager] bot key store unavailable — AGENT_NSEC will not be injected`);
           }
+          this.appendLog(session, `[manager] bot key lookup for npub=${npub.slice(0, 20)}… (in-memory=${isBotKeyUnlocked(npub)})`);
           const botKey = botKeyStore?.getActiveKeyForUser(npub) ?? null;
           if (botKey) {
             botPubkeyHex = botKey.botPubkeyHex;
@@ -407,6 +409,8 @@ export class ProcessManager {
         } catch (botKeyError) {
           this.appendLog(session, `[manager] bot key lookup failed: ${(botKeyError as Error).message}`);
         }
+      } else {
+        this.appendLog(session, `[manager] session has no npub — skipping AGENT_NSEC injection`);
       }
       botKeyLookupMs = Date.now() - botKeyLookupStartedAt;
       const mcpInjectStartedAt = Date.now();

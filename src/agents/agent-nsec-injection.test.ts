@@ -12,6 +12,7 @@ import { bytesToHex } from "@noble/hashes/utils";
 import {
   storeBotKeyInMemory,
   clearBotKey,
+  getDecryptedBotKey,
 } from "../identity/bot-key-manager";
 import { resolveBotNsecHex, exportBotKeyForUser } from "../identity/bot-key-export";
 import type { BotKeyRecord } from "../identity/bot-key-store";
@@ -286,6 +287,59 @@ describe("AGENT_NSEC injection flow", () => {
       const allZerosHex = bytesToHex(wipedSecret);
       expect(allZerosHex).toBe("0".repeat(64));
       // A proper AGENT_NSEC should NOT be all zeros
+    });
+  });
+
+  describe("npub matching — activeKeys map vs process-manager lookup", () => {
+    test("storeBotKeyInMemory key matches getDecryptedBotKey lookup with same npub", () => {
+      // Simulate session-started handler storing the key
+      storeBotKeyInMemory(userNpub, botSecret, botRecord.botPubkeyHex, "escrow");
+
+      // Simulate process-manager looking up with the SAME npub
+      const unlocked = getDecryptedBotKey(userNpub);
+      expect(unlocked).not.toBeNull();
+      expect(unlocked!.pubkeyHex).toBe(botRecord.botPubkeyHex);
+      expect(bytesToHex(unlocked!.secretKey)).toBe(bytesToHex(botSecret));
+    });
+
+    test("getDecryptedBotKey returns null for a different npub", () => {
+      // Store key under the user's npub
+      storeBotKeyInMemory(userNpub, botSecret, botRecord.botPubkeyHex, "escrow");
+
+      // Lookup with the BOT's npub (wrong key in the map)
+      const botNpub = botRecord.botNpub;
+      const unlocked = getDecryptedBotKey(botNpub);
+      expect(unlocked).toBeNull();
+    });
+
+    test("session-started handler npub format matches process-manager npub format", () => {
+      // Both paths use npub1... bech32 format
+      expect(userNpub.startsWith("npub1")).toBe(true);
+      expect(userNpub.length).toBeGreaterThan(10);
+
+      // Simulate event.session.npub = requestNpub (they're the same value)
+      const eventSessionNpub = userNpub;
+      const requestNpub = userNpub;
+      expect(eventSessionNpub).toBe(requestNpub);
+
+      // Store with event handler's npub, lookup with process-manager's npub
+      storeBotKeyInMemory(eventSessionNpub, botSecret, botRecord.botPubkeyHex, "escrow");
+      const unlocked = getDecryptedBotKey(requestNpub);
+      expect(unlocked).not.toBeNull();
+    });
+
+    test("undefined npub causes bot key lookup to be skipped entirely", () => {
+      // This is the task-executor bug: no npub means no AGENT_NSEC
+      storeBotKeyInMemory(userNpub, botSecret, botRecord.botPubkeyHex, "escrow");
+
+      const npub: string | undefined = undefined;
+      if (npub) {
+        // This block would never execute
+        const unlocked = getDecryptedBotKey(npub);
+        expect(unlocked).not.toBeNull();
+      }
+      // With undefined npub, bot key lookup is completely skipped
+      expect(npub).toBeUndefined();
     });
   });
 });

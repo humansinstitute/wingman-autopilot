@@ -766,7 +766,7 @@ if (taskListenerIdentity && config.connectRelays.length > 0 && taskListenerFlag?
       return token;
     },
     createSession: (agent, dir, name, origin, metadata) =>
-      manager.createSession(agent, dir, name, origin, undefined, undefined, metadata),
+      manager.createSession(agent, dir, name, origin, undefined, adminNpub ?? undefined, metadata),
     enableNightwatch: (sid) => nightWatchStore.enableSession(sid),
     addPrompt: (sid, content) => promptQueueStore.addPrompt(sid, { content }),
     dispatchPrompt: (session) => {
