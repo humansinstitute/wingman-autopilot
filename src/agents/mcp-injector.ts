@@ -43,6 +43,8 @@ export interface McpInjectionContext {
   botNpub?: string;
   /** User's npub (for bot key signing in superbased tools). */
   userNpub?: string;
+  /** Bot key nsec hex — injected as AGENT_NSEC for downstream tools. */
+  agentNsec?: string;
 }
 
 export interface McpInjectionResult {
@@ -58,7 +60,7 @@ export interface McpInjectionResult {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const IDENTITY_KEYS = ["BOT_PUBKEY_HEX", "BOT_NPUB", "USER_NPUB"] as const;
+const IDENTITY_KEYS = ["BOT_PUBKEY_HEX", "BOT_NPUB", "USER_NPUB", "AGENT_NSEC"] as const;
 
 /** Extract identity-related env vars from baseEnv (only those that are set). */
 function pickIdentityEnv(env: Record<string, string>): Record<string, string> {
@@ -99,6 +101,9 @@ export async function injectMcpConfig(
   }
   if (ctx.userNpub) {
     baseEnv.USER_NPUB = ctx.userNpub;
+  }
+  if (ctx.agentNsec) {
+    baseEnv.AGENT_NSEC = ctx.agentNsec;
   }
 
   switch (ctx.agent) {

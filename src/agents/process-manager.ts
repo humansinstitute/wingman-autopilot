@@ -31,6 +31,7 @@ import {
   waitForStatus,
 } from "./pm2-wrapper";
 import { injectMcpConfig, cleanupMcpConfig } from "./mcp-injector";
+import { resolveBotNsecHex } from "../identity/bot-key-export";
 import { parseAllowedHosts, pickAgentHost, normaliseHostForUrl } from "./agent-client";
 import { BotKeyStore } from "../identity/bot-key-store";
 import { ensureCredentialHelper, getGiteaGitEnv } from "../gitea/credential-helper";
@@ -376,6 +377,7 @@ export class ProcessManager {
       // Look up bot identity for this user's session
       let botPubkeyHex: string | undefined;
       let botNpub: string | undefined;
+      let agentNsec: string | undefined;
       if (npub) {
         try {
           const botKeyStore = this.getBotKeyStore();
@@ -383,6 +385,8 @@ export class ProcessManager {
           if (botKey) {
             botPubkeyHex = botKey.botPubkeyHex;
             botNpub = botKey.botNpub;
+            // Resolve nsec hex for AGENT_NSEC env var injection
+            agentNsec = resolveBotNsecHex(npub, botKey) ?? undefined;
           }
         } catch {
           // Non-fatal: bot key lookup may fail if DB not initialized
@@ -398,6 +402,7 @@ export class ProcessManager {
         botPubkeyHex,
         botNpub,
         userNpub: npub,
+        agentNsec,
       });
       session.mcpCleanupFiles = mcpResult.cleanupFiles;
       // Merge MCP env vars into the agent definition for spawning

@@ -17,6 +17,7 @@ import {
   getDecryptedBotKey,
   isBotKeyUnlocked,
 } from "./bot-key-manager";
+import { exportBotKeyForUser } from "./bot-key-export";
 import { buildDelegateRegistryTemplate, getBotDisplayName, signBotProfileEvent } from "./bot-identity-publisher";
 import { publishDelegateRegistryEvent } from "./delegate-registry-publisher";
 import { getBotProfileStatus, publishBotProfileEvent } from "./bot-profile-publisher";
@@ -105,6 +106,11 @@ export function createBotKeyApiHandler(deps: BotKeyApiDependencies) {
       // POST /api/bot-keys/replace
       if (segments.length === 3 && segments[2] === "replace" && method === "POST") {
         return await handleReplace(deps, request);
+      }
+
+      // POST /api/bot-keys/export-nsec
+      if (segments.length === 3 && segments[2] === "export-nsec" && method === "POST") {
+        return await handleExportNsec(deps, request);
       }
 
       // POST /api/bot-keys/force-sync
@@ -411,6 +417,48 @@ async function handleUnlockEscrow(deps: BotKeyApiDependencies, request: Request)
   } catch (err) {
     return jsonError(`Escrow unlock failed: ${(err as Error).message}`, 403);
   }
+}
+
+/**
+ * POST /api/bot-keys/export-nsec
+ *
+ * Returns the bot key nsec for the calling session's user.
+ * Used by CLIs and downstream tools to obtain AGENT_NSEC.
+ * Body: { sessionId }
+ */
+async function handleExportNsec(deps: BotKeyApiDependencies, request: Request): Promise<Response> {
+  const body = await parseBody(request);
+  const sessionId = body.sessionId as string | undefined;
+
+  if (!sessionId) {
+    return jsonError("sessionId is required", 400);
+  }
+
+  const session = deps.getSession(sessionId);
+  if (!session) {
+    return jsonError("Unknown session", 404);
+  }
+  if (!session.npub) {
+    return jsonError("Session has no associated user", 403);
+  }
+
+  const record = deps.store.getActiveKeyForUser(session.npub);
+  if (!record) {
+    return jsonError("No active bot key for this user", 404);
+  }
+
+  const exported = exportBotKeyForUser(session.npub, record);
+  if (!exported) {
+    return jsonError("Could not resolve bot key — escrow unlock failed", 503);
+  }
+
+  return Response.json({
+    nsec: exported.nsec,
+    nsecHex: exported.nsecHex,
+    botPubkeyHex: exported.botPubkeyHex,
+    botNpub: exported.botNpub,
+    source: exported.source,
+  });
 }
 
 /**
