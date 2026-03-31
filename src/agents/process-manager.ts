@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, normalize, resolve } from "node:path";
 
@@ -20,6 +20,7 @@ import {
 } from "../sessions/session-metadata";
 import {
   addAppToEcosystem,
+  getLogsDirectory,
   removeAppFromEcosystem,
   type SessionConfig,
 } from "./ecosystem-generator";
@@ -854,7 +855,7 @@ export class ProcessManager {
     };
 
     // Add to ecosystem config and get process name
-    const { ecosystemPath, processName } = await addAppToEcosystem(sessionConfig);
+    const { ecosystemPath, processName, logsDir } = await addAppToEcosystem(sessionConfig);
     session.pm2Name = processName;
 
     this.appendLog(session, `[manager] starting via PM2 as ${processName}`);
@@ -864,7 +865,9 @@ export class ProcessManager {
 
     // Wait for process to come online
     const proc = await waitForStatus(processName, "online", 15000);
-    if (!proc) {
+    const pm2Status = proc?.pm2_env?.status;
+    if (!proc || pm2Status !== "online") {
+      const startupDetail = await this.readPm2StartupFailure(logsDir, processName);
       // Clean up the orphaned PM2 entry so it doesn't accumulate
       try {
         await deleteProcess(processName);
@@ -881,7 +884,18 @@ export class ProcessManager {
         // best-effort cleanup
       }
       session.pm2Name = undefined;
-      throw new Error(`PM2 process ${processName} failed to start within timeout`);
+      if (pm2Status && pm2Status !== "online") {
+        throw new Error(
+          startupDetail
+            ? `PM2 process ${processName} failed during startup (${pm2Status}): ${startupDetail}`
+            : `PM2 process ${processName} failed during startup (${pm2Status})`,
+        );
+      }
+      throw new Error(
+        startupDetail
+          ? `PM2 process ${processName} failed to start within timeout: ${startupDetail}`
+          : `PM2 process ${processName} failed to start within timeout`,
+      );
     }
 
     // Store the PID for rehydration
@@ -890,6 +904,21 @@ export class ProcessManager {
     }
 
     this.appendLog(session, `[manager] PM2 process ${processName} online (pid: ${proc.pid})`);
+  }
+
+  private async readPm2StartupFailure(logsDir: string, processName: string): Promise<string | null> {
+    const errorLogPath = resolve(join(logsDir, `${processName}-error.log`));
+    try {
+      const content = await readFile(errorLogPath, "utf8");
+      const lastMeaningfulLine = content
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .at(-1);
+      return lastMeaningfulLine ?? null;
+    } catch {
+      return null;
+    }
   }
 
   private async monitorSession(session: AgentSession): Promise<void> {

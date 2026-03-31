@@ -252,7 +252,11 @@ export async function waitForStatus(
 
   while (Date.now() - startTime < timeoutMs) {
     const proc = await getProcessByName(name);
-    if (proc?.pm2_env?.status === targetStatus) {
+    const status = proc?.pm2_env?.status;
+    if (status === targetStatus) {
+      return proc;
+    }
+    if (targetStatus === "online" && proc && (status === "errored" || status === "stopped")) {
       return proc;
     }
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));

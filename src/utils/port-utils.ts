@@ -4,12 +4,14 @@
 
 /**
  * Check if a port is available by attempting to bind to it.
- * Probes both IPv4 (127.0.0.1) and IPv6 (::1) to catch processes
- * listening on wildcard addresses (0.0.0.0 / [::]).
- * Returns true if the port is free on both, false if either is in use.
+ * Probe the wildcard IPv4/IPv6 sockets so we detect listeners bound to
+ * wildcard or loopback addresses. On macOS, probing 127.0.0.1/::1 can
+ * incorrectly report a wildcard listener as "free".
+ * Returns true if the port is free on every supported probe target,
+ * false if any target is already in use.
  */
 export function isPortAvailable(port: number): boolean {
-  const hostnames = ["127.0.0.1", "::1"];
+  const hostnames = ["0.0.0.0", "::"];
   for (const hostname of hostnames) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let server: any = null;
@@ -25,6 +27,9 @@ export function isPortAvailable(port: number): boolean {
       });
     } catch (error) {
       const nodeError = error as NodeJS.ErrnoException;
+      if (nodeError?.code === "EAFNOSUPPORT") {
+        continue;
+      }
       if (nodeError?.code !== "EADDRINUSE") {
         console.warn(`[port-utils] failed to probe port ${port} on ${hostname}: ${nodeError?.message ?? error}`);
       }
