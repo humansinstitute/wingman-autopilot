@@ -187,7 +187,9 @@ function buildProviderEnvBootstrap(
   sessionConfig: SessionConfig,
   runtimeEnv: Record<string, string>,
 ): string {
-  const snippets: string[] = [];
+  // Always strip the root server key from agent subprocesses — agents must
+  // use their per-user bot key via AGENT_NSEC, never the root server key.
+  const snippets: string[] = ["unset KEYTELEPORT_PRIVKEY"];
   const billingMode = sessionConfig.billingMode ?? "subscription";
   const shouldSanitizeProviderEnv = BILLING_COMPATIBLE_AGENTS.has(sessionConfig.agent);
 
@@ -219,6 +221,9 @@ export function createAppConfig(sessionConfig: SessionConfig): EcosystemApp {
   const { script, args } = buildAgentCommand(sessionConfig);
 
   const command = [script, ...args].map(shellQuote).join(" ");
+  // Build runtime env from session + injected vars. Strip KEYTELEPORT_PRIVKEY
+  // if it leaked through envOverride (agents use AGENT_NSEC instead).
+  const { KEYTELEPORT_PRIVKEY: _stripped, ...cleanEnvOverride } = sessionConfig.envOverride ?? {} as Record<string, string>;
   const runtimeEnv: Record<string, string> = {
     SESSION_ID: sessionId,
     SESSION_NAME: sessionName,
@@ -226,7 +231,7 @@ export function createAppConfig(sessionConfig: SessionConfig): EcosystemApp {
     SESSION_DIRECTORY: workingDirectory,
     SESSION_AGENT: sessionConfig.agent,
     USER_ALIAS: userAlias,
-    ...(sessionConfig.envOverride ?? {}),
+    ...cleanEnvOverride,
   };
   const providerEnvBootstrap = buildProviderEnvBootstrap(sessionConfig, runtimeEnv);
 

@@ -381,15 +381,31 @@ export class ProcessManager {
       if (npub) {
         try {
           const botKeyStore = this.getBotKeyStore();
+          if (!botKeyStore) {
+            this.appendLog(session, `[manager] bot key store unavailable — AGENT_NSEC will not be injected`);
+          }
           const botKey = botKeyStore?.getActiveKeyForUser(npub) ?? null;
           if (botKey) {
             botPubkeyHex = botKey.botPubkeyHex;
             botNpub = botKey.botNpub;
             // Resolve nsec hex for AGENT_NSEC env var injection
             agentNsec = resolveBotNsecHex(npub, botKey) ?? undefined;
+            if (agentNsec) {
+              // Validate: resolved nsec should not be all zeros (wiped key)
+              if (/^0+$/.test(agentNsec)) {
+                this.appendLog(session, `[manager] AGENT_NSEC resolved to all zeros — bot key may have been wiped from memory`);
+                agentNsec = undefined;
+              } else {
+                this.appendLog(session, `[manager] AGENT_NSEC resolved for ${npub.slice(0, 20)}…`);
+              }
+            } else {
+              this.appendLog(session, `[manager] AGENT_NSEC resolution failed for ${npub.slice(0, 20)}… — bot key exists but could not be unlocked (escrow or memory)`);
+            }
+          } else {
+            this.appendLog(session, `[manager] no active bot key for ${npub.slice(0, 20)}… — AGENT_NSEC will not be injected`);
           }
-        } catch {
-          // Non-fatal: bot key lookup may fail if DB not initialized
+        } catch (botKeyError) {
+          this.appendLog(session, `[manager] bot key lookup failed: ${(botKeyError as Error).message}`);
         }
       }
       botKeyLookupMs = Date.now() - botKeyLookupStartedAt;

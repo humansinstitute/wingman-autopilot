@@ -86,6 +86,12 @@ export function resolveBotNsecHex(
   if (unlocked && unlocked.pubkeyHex === record.botPubkeyHex) {
     return bytesToHex(unlocked.secretKey);
   }
+  if (unlocked && unlocked.pubkeyHex !== record.botPubkeyHex) {
+    console.warn(
+      `[bot-key-export] in-memory key pubkey mismatch for ${npub.slice(0, 20)}…: ` +
+      `memory=${unlocked.pubkeyHex.slice(0, 12)}… record=${record.botPubkeyHex.slice(0, 12)}…`,
+    );
+  }
 
   // 2. Try escrow unlock
   try {
@@ -96,7 +102,10 @@ export function resolveBotNsecHex(
     );
     storeBotKeyInMemory(npub, secretKey, record.botPubkeyHex, "escrow");
     return bytesToHex(secretKey);
-  } catch {
+  } catch (error) {
+    console.warn(
+      `[bot-key-export] escrow unlock failed for ${npub.slice(0, 20)}…: ${(error as Error).message}`,
+    );
     return null;
   }
 }
