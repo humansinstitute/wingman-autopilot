@@ -111,6 +111,8 @@ function printRunDetail(run: JobRun): void {
   console.log(`Status:             ${run.status}`);
   console.log(`Goal:               ${run.goal ?? '-'}`);
   console.log(`Manager Goal:       ${run.manager_goal ?? '-'}`);
+  console.log(`Worker Agent:       ${run.worker_agent ?? '-'}`);
+  console.log(`Manager Agent:      ${run.manager_agent ?? '-'}`);
   console.log(`Worker Session:     ${run.worker_session_id ?? '-'}`);
   console.log(`Manager Session:    ${run.manager_session_id ?? '-'}`);
   console.log(`Worker Dir:         ${run.worker_dir ?? '-'}`);

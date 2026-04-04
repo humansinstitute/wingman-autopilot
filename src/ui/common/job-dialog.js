@@ -1,3 +1,5 @@
+import { DEFAULT_AGENT, getAgentLabel, populateAgentSelect } from "./agent-options.js";
+
 const emptyText = "--";
 
 const normalizeText = (value) => {
@@ -35,6 +37,8 @@ export const createJobDialogController = (options) => {
   const {
     dialog,
     jobSelect,
+    workerAgentSelect,
+    managerAgentSelect,
     workerDirInput,
     managerDirInput,
     goalInput,
@@ -49,6 +53,8 @@ export const createJobDialogController = (options) => {
     onSubmit,
     onDirectoryInput,
     defaultManagerDirOutput,
+    defaultWorkerAgentOutput,
+    defaultManagerAgentOutput,
     checkIntervalOutput,
     managerGoalOutput,
     workerPromptOutput,
@@ -67,6 +73,8 @@ export const createJobDialogController = (options) => {
     const job = getSelectedJob();
     if (!job) {
       if (defaultManagerDirOutput) defaultManagerDirOutput.textContent = emptyText;
+      if (defaultWorkerAgentOutput) defaultWorkerAgentOutput.textContent = emptyText;
+      if (defaultManagerAgentOutput) defaultManagerAgentOutput.textContent = emptyText;
       if (checkIntervalOutput) checkIntervalOutput.textContent = emptyText;
       if (managerGoalOutput) managerGoalOutput.textContent = "No enabled jobs available.";
       if (workerPromptOutput) workerPromptOutput.textContent = emptyText;
@@ -75,6 +83,12 @@ export const createJobDialogController = (options) => {
     }
     if (defaultManagerDirOutput) {
       defaultManagerDirOutput.textContent = normalizeText(job.manager_dir) || emptyText;
+    }
+    if (defaultWorkerAgentOutput) {
+      defaultWorkerAgentOutput.textContent = getAgentLabel(job.worker_agent);
+    }
+    if (defaultManagerAgentOutput) {
+      defaultManagerAgentOutput.textContent = getAgentLabel(job.manager_agent);
     }
     if (checkIntervalOutput) {
       checkIntervalOutput.textContent = `${job.check_interval || 300}s`;
@@ -93,6 +107,10 @@ export const createJobDialogController = (options) => {
   const resetFormState = () => {
     const job = getSelectedJob();
     const defaultDir = normalizeText(job?.manager_dir);
+    const workerAgent = normalizeText(job?.worker_agent) || DEFAULT_AGENT;
+    const managerAgent = normalizeText(job?.manager_agent) || DEFAULT_AGENT;
+    populateAgentSelect(workerAgentSelect, workerAgent);
+    populateAgentSelect(managerAgentSelect, managerAgent);
     if (workerDirInput) {
       workerDirInput.value = defaultDir;
       onDirectoryInput?.(defaultDir);
@@ -146,6 +164,8 @@ export const createJobDialogController = (options) => {
 
   const collectValues = () => ({
     jobId: normalizeText(jobSelect?.value),
+    workerAgent: normalizeText(workerAgentSelect?.value) || DEFAULT_AGENT,
+    managerAgent: normalizeText(managerAgentSelect?.value) || DEFAULT_AGENT,
     workerDir: normalizeText(workerDirInput?.value),
     managerDir: normalizeText(managerDirInput?.value),
     goal: normalizeText(goalInput?.value),

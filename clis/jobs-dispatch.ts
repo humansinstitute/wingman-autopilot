@@ -3,21 +3,21 @@
 /**
  * Wingman job dispatch CLI.
  *
- * Dispatches a job run by creating worker + manager sessions
- * and tracking them via the jobs-db SQLite store.
+ * Launches a saved job definition through the Wingman jobs API.
+ * The server handles run creation, session startup, prompt seeding,
+ * and default naming so the CLI stays thin.
  *
  * Commands: start
  */
 
-import { parseCommonFlags, buildConfig, requestJson, resolveBaseUrl } from "./lib/auth";
 import {
-  getJob,
-  getRun,
-  createRun,
-  updateRun,
-  type JobDefinition,
-  type JobRun,
-} from "../src/jobs-db";
+  parseCommonFlags,
+  buildConfig,
+  requestJson,
+  requestJsonBotCrypto,
+  resolveBaseUrl,
+} from "./lib/auth";
+import { isJobAgentType } from "../src/jobs/agent-config";
 
 const USAGE = `Wingman job dispatch CLI
 
@@ -25,45 +25,65 @@ Usage:
   bun clis/jobs-dispatch.ts start <job-id> [options]
 
 Commands:
-  start <job-id>       Start a new job run
+  start <job-id>             Start a new job run
 
 Options:
-  --goal <text>        Shared goal for this run (used when no role-specific goal is set)
-  --worker-goal <text> Goal passed only to the worker
-  --manager-goal <text> Goal passed only to the manager
-  --prompt <text>      Additional worker prompt (appended to job default)
-  --ref <ref>          Attach a reference ID (repeatable)
-  --dir <path>         Worker directory override (default: job definition default)
-  --url <url>          Wingman URL (env: WINGMAN_URL, default: http://localhost:3000)
-  --key <nsec|hex>     Nostr private key (env: WINGMAN_NSEC)
-  --json               Print raw JSON response
-  -h, --help           Show help
+  --goal <text>              Shared goal for this run (used when no role-specific goal is set)
+  --worker-goal <text>       Goal passed only to the worker
+  --manager-goal <text>      Goal passed only to the manager
+  --worker-agent <agent>     Worker agent override: codex|claude|goose|opencode|gemini
+  --manager-agent <agent>    Manager agent override: codex|claude|goose|opencode|gemini
+  --prompt <text>            Additional worker prompt (appended to job default)
+  --ref <ref>                Attach a reference ID (repeatable)
+  --dir <path>               Worker directory override (alias for --worker-dir)
+  --worker-dir <path>        Worker directory override
+  --manager-dir <path>       Manager directory override
+  --url <url>                Wingman URL (env: WINGMAN_URL, default: http://localhost:3000)
+  --key <nsec|hex>           Nostr private key (env: WINGMAN_NSEC)
+  --bot-crypto               Sign via bot-crypto API (for agent sessions)
+  --json                     Print raw JSON response
+  -h, --help                 Show help
 
 Examples:
-  bun clis/jobs-dispatch.ts start my-job --goal "Ship the feature" --prompt "Focus on tests"
-  bun clis/jobs-dispatch.ts start my-job --worker-goal "Write the design doc" --manager-goal "Review and update the task" --ref task-abc --dir /tmp/project
-  bun clis/jobs-dispatch.ts start my-job --goal "Deploy" --json`;
-
-// ============================================================
-// Flag parsing
-// ============================================================
+  bun clis/jobs-dispatch.ts start movie-research --goal "Find 1990s neo-noir films"
+  bun clis/jobs-dispatch.ts start my-job --worker-agent codex --manager-agent claude --worker-dir /tmp/project --manager-dir /tmp/review
+  bun clis/jobs-dispatch.ts start my-job --worker-goal "Write the design doc" --manager-goal "Review and update the task" --ref task-abc`;
 
 interface DispatchFlags {
   positional: string[];
   goal?: string;
   workerGoal?: string;
   managerGoal?: string;
+  workerAgent?: string;
+  managerAgent?: string;
   prompt?: string;
   refs: string[];
-  dir?: string;
+  workerDir?: string;
+  managerDir?: string;
   urlInput?: string;
   keyInput?: string;
   asJson: boolean;
   help: boolean;
+  botCrypto: boolean;
+}
+
+interface JobRunResponse {
+  run?: Record<string, unknown>;
+  worker_session?: Record<string, unknown>;
+  manager_session?: Record<string, unknown>;
+}
+
+function parseAgentFlag(value: string | undefined, flagName: string): string {
+  if (!value) throw new Error(`${flagName} requires a value`);
+  const normalized = value.trim().toLowerCase();
+  if (!isJobAgentType(normalized)) {
+    throw new Error(`${flagName} must be one of: codex, claude, goose, opencode, gemini`);
+  }
+  return normalized;
 }
 
 function parseDispatchFlags(argv: string[]): DispatchFlags {
-  const { args, urlInput, keyInput, asJson, help } = parseCommonFlags(argv);
+  const { args, urlInput, keyInput, asJson, help, botCrypto } = parseCommonFlags(argv);
 
   const parsed: DispatchFlags = {
     positional: [],
@@ -72,45 +92,61 @@ function parseDispatchFlags(argv: string[]): DispatchFlags {
     keyInput,
     asJson,
     help,
+    botCrypto,
   };
 
   for (let i = 0; i < args.length; i++) {
     const token = args[i]!;
     switch (token) {
       case "--goal": {
-        const v = args[++i];
-        if (!v) throw new Error("--goal requires a value");
-        parsed.goal = v;
+        const value = args[++i];
+        if (!value) throw new Error("--goal requires a value");
+        parsed.goal = value;
         break;
       }
       case "--worker-goal": {
-        const v = args[++i];
-        if (!v) throw new Error("--worker-goal requires a value");
-        parsed.workerGoal = v;
+        const value = args[++i];
+        if (!value) throw new Error("--worker-goal requires a value");
+        parsed.workerGoal = value;
         break;
       }
       case "--manager-goal": {
-        const v = args[++i];
-        if (!v) throw new Error("--manager-goal requires a value");
-        parsed.managerGoal = v;
+        const value = args[++i];
+        if (!value) throw new Error("--manager-goal requires a value");
+        parsed.managerGoal = value;
+        break;
+      }
+      case "--worker-agent": {
+        parsed.workerAgent = parseAgentFlag(args[++i], "--worker-agent");
+        break;
+      }
+      case "--manager-agent": {
+        parsed.managerAgent = parseAgentFlag(args[++i], "--manager-agent");
         break;
       }
       case "--prompt": {
-        const v = args[++i];
-        if (!v) throw new Error("--prompt requires a value");
-        parsed.prompt = v;
+        const value = args[++i];
+        if (!value) throw new Error("--prompt requires a value");
+        parsed.prompt = value;
         break;
       }
       case "--ref": {
-        const v = args[++i];
-        if (!v) throw new Error("--ref requires a value");
-        parsed.refs.push(v);
+        const value = args[++i];
+        if (!value) throw new Error("--ref requires a value");
+        parsed.refs.push(value);
         break;
       }
-      case "--dir": {
-        const v = args[++i];
-        if (!v) throw new Error("--dir requires a value");
-        parsed.dir = v;
+      case "--dir":
+      case "--worker-dir": {
+        const value = args[++i];
+        if (!value) throw new Error(`${token} requires a value`);
+        parsed.workerDir = value;
+        break;
+      }
+      case "--manager-dir": {
+        const value = args[++i];
+        if (!value) throw new Error("--manager-dir requires a value");
+        parsed.managerDir = value;
         break;
       }
       default:
@@ -121,254 +157,55 @@ function parseDispatchFlags(argv: string[]): DispatchFlags {
   return parsed;
 }
 
-// ============================================================
-// Prompt assembly
-// ============================================================
-
-function buildWorkerPrompt(job: JobDefinition, goal?: string, extraPrompt?: string): string {
-  const parts: string[] = [];
-  if (job.worker_prompt) parts.push(job.worker_prompt);
-  if (extraPrompt) parts.push(extraPrompt);
-  if (goal) parts.push(`\n## Goal\n${goal}`);
-  return parts.join("\n\n");
+function printResult(result: JobRunResponse): void {
+  const run = result.run ?? {};
+  console.log(`Run ID:           ${String(run.id ?? "-")}`);
+  console.log(`Job ID:           ${String(run.job_id ?? "-")}`);
+  console.log(`Status:           ${String(run.status ?? "-")}`);
+  console.log(`Worker Agent:     ${String(run.worker_agent ?? "-")}`);
+  console.log(`Manager Agent:    ${String(run.manager_agent ?? "-")}`);
+  console.log(`Worker Session:   ${String(run.worker_session_id ?? "-")}`);
+  console.log(`Manager Session:  ${String(run.manager_session_id ?? "-")}`);
+  console.log(`Worker Dir:       ${String(run.worker_dir ?? "-")}`);
+  console.log(`Manager Dir:      ${String(run.manager_dir ?? "-")}`);
 }
-
-function buildManagerContext(
-  job: JobDefinition,
-  runId: string,
-  wingmanUrl: string,
-  goal?: string,
-  refs: string[] = [],
-  workerSessionId?: string,
-): string {
-  const parts: string[] = [];
-  const hasTaskRef = refs.some((ref) => ref.startsWith("task:"));
-  if (job.manager_prompt) parts.push(job.manager_prompt);
-  if (goal) parts.push(`## Goal\n${goal}`);
-  if (job.manager_goal) parts.push(`## Manager Goal\n${job.manager_goal}`);
-  parts.push(
-    [
-      "## Run Context",
-      `Run ID: ${runId}`,
-      `Check Interval: ${job.check_interval}s`,
-      `Wingman URL: ${wingmanUrl}`,
-      workerSessionId ? `Worker Session ID: ${workerSessionId}` : null,
-    ].filter(Boolean).join("\n"),
-  );
-  if (refs.length > 0) parts.push(`## References\n${refs.map((r) => `- ${r}`).join("\n")}`);
-  if (!hasTaskRef) {
-    parts.push(`## Task Context
-No task reference was provided for this run. If your operating instructions require task tracking, create a new task before proceeding and keep that new task updated.`);
-  }
-  parts.push(`## Operating Contract
-You are responsible for actively managing this run until it is complete.
-
-Required behavior:
-1. Review the worker output regularly.
-2. If you have feedback or revision requests, send them to the worker using the jobs manager CLI.
-3. Wait for the configured interval before checking again. Use a bash sleep command for this loop.
-4. If this run is attached to a task reference, keep the task updated in the workspace tool available in your environment.
-5. When the deliverable is approved, update the task with the result and mark the run complete.
-
-Use these commands:
-\`\`\`bash
-bun /Users/mini/code/wingmen/clis/jobs-manager.ts read-worker ${runId} --url ${wingmanUrl} --bot-crypto --lines 120
-bun /Users/mini/code/wingmen/clis/jobs-manager.ts message ${runId} "<feedback for worker>" --url ${wingmanUrl} --bot-crypto
-sleep ${job.check_interval}
-bun /Users/mini/code/wingmen/clis/jobs-manager.ts complete ${runId} --summary "<summary>" --url ${wingmanUrl} --bot-crypto
-\`\`\`
-
-Do not keep feedback only in your own session history. Send actionable feedback to the worker session.`);
-  return parts.join("\n\n");
-}
-
-// ============================================================
-// Session creation via Wingman API
-// ============================================================
-
-interface SessionResponse {
-  id?: string;
-  sessionId?: string;
-  status?: string;
-  agentRuntimeStatus?: string | null;
-  [key: string]: unknown;
-}
-
-async function createSession(
-  baseUrl: string,
-  secretKey: Uint8Array,
-  name: string,
-  directory: string,
-): Promise<string> {
-  const body = {
-    agent: "claude",
-    name,
-    directory,
-  };
-  const payload = await requestJson<SessionResponse>(
-    baseUrl,
-    secretKey,
-    "POST",
-    "/api/sessions",
-    body,
-  );
-  const sessionId = String(payload.id ?? payload.sessionId ?? "");
-  if (!sessionId) {
-    throw new Error("Session creation returned no ID");
-  }
-  return sessionId;
-}
-
-async function sendInitialPrompt(
-  baseUrl: string,
-  secretKey: Uint8Array,
-  sessionId: string,
-  content: string,
-): Promise<void> {
-  await requestJson<Record<string, unknown>>(
-    baseUrl,
-    secretKey,
-    "POST",
-    `/api/sessions/${encodeURIComponent(sessionId)}/messages`,
-    { content },
-  );
-}
-
-async function waitForSessionReady(
-  baseUrl: string,
-  secretKey: Uint8Array,
-  sessionId: string,
-  timeoutMs = 60_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let stablePolls = 0;
-
-  while (Date.now() < deadline) {
-    const session = await requestJson<SessionResponse>(
-      baseUrl,
-      secretKey,
-      "GET",
-      `/api/sessions/${encodeURIComponent(sessionId)}`,
-    );
-
-    if (session.status !== "running") {
-      throw new Error(`Session ${sessionId} is not running`);
-    }
-
-    if (session.agentRuntimeStatus === "stable") {
-      stablePolls += 1;
-      if (stablePolls >= 2) return;
-    } else {
-      stablePolls = 0;
-    }
-
-    await Bun.sleep(500);
-  }
-
-  throw new Error(`Timed out waiting for session ${sessionId} to become ready`);
-}
-
-// ============================================================
-// start command
-// ============================================================
 
 async function handleStart(flags: DispatchFlags): Promise<void> {
   const jobId = flags.positional[1];
   if (!jobId) throw new Error("start requires <job-id>");
 
-  const job = getJob(jobId);
-  if (!job) throw new Error(`Job definition not found: ${jobId}`);
-
-  const { secretKey } = buildConfig(flags.urlInput, flags.keyInput);
   const baseUrl = resolveBaseUrl(flags.urlInput);
-
-  const workerDir = flags.dir ?? job.manager_dir;
-  const managerDir = job.manager_dir;
-
-  // 1. Create the job_run row
-  const workerGoal = flags.workerGoal ?? flags.goal;
-  const managerGoal = flags.managerGoal ?? flags.goal;
-  const workerPrompt = buildWorkerPrompt(job, workerGoal, flags.prompt);
-  const refsJson = flags.refs.length > 0 ? JSON.stringify(flags.refs) : null;
-
-  const jobRun = createRun({
+  const body: Record<string, unknown> = {
     job_id: jobId,
-    goal: flags.goal ?? null,
-    manager_goal: job.manager_goal ?? null,
-    worker_prompt: workerPrompt,
-    worker_dir: workerDir,
-    manager_dir: managerDir,
-    refs_json: refsJson,
-    status: "starting",
-  });
+  };
 
-  const runId = jobRun.id;
-  console.error(`Created run ${runId.slice(0, 8)} for job ${jobId}`);
+  if (flags.goal) body.goal = flags.goal;
+  if (flags.workerGoal) body.worker_goal = flags.workerGoal;
+  if (flags.managerGoal) body.manager_goal = flags.managerGoal;
+  if (flags.workerAgent) body.worker_agent = flags.workerAgent;
+  if (flags.managerAgent) body.manager_agent = flags.managerAgent;
+  if (flags.prompt) body.prompt = flags.prompt;
+  if (flags.refs.length > 0) body.refs = flags.refs;
+  if (flags.workerDir) body.worker_dir = flags.workerDir;
+  if (flags.managerDir) body.manager_dir = flags.managerDir;
 
-  try {
-    // 2. Start worker session
-    console.error(`Starting worker session in ${workerDir}...`);
-    const workerSessionId = await createSession(
-      baseUrl,
-      secretKey,
-      `job:${jobId}:worker:${runId.slice(0, 8)}`,
-      workerDir,
-    );
-    console.error(`Worker session: ${workerSessionId}`);
-    await waitForSessionReady(baseUrl, secretKey, workerSessionId);
-    await sendInitialPrompt(baseUrl, secretKey, workerSessionId, workerPrompt);
-    console.error(`Worker prompt queued`);
+  const result = flags.botCrypto
+    ? await requestJsonBotCrypto<JobRunResponse>(baseUrl, "POST", "/api/autopilot-jobs/runs", body)
+    : await requestJson<JobRunResponse>(
+        baseUrl,
+        buildConfig(flags.urlInput, flags.keyInput).secretKey,
+        "POST",
+        "/api/autopilot-jobs/runs",
+        body,
+      );
 
-    // 3. Build manager context with worker session ID
-    const managerContext = buildManagerContext(job, runId, baseUrl, managerGoal, flags.refs, workerSessionId);
-
-    // 4. Start manager session
-    console.error(`Starting manager session in ${managerDir}...`);
-    const managerSessionId = await createSession(
-      baseUrl,
-      secretKey,
-      `job:${jobId}:manager:${runId.slice(0, 8)}`,
-      managerDir,
-    );
-    console.error(`Manager session: ${managerSessionId}`);
-    await waitForSessionReady(baseUrl, secretKey, managerSessionId);
-    await sendInitialPrompt(baseUrl, secretKey, managerSessionId, managerContext);
-    console.error(`Manager prompt queued`);
-
-    // 5. Update run with session IDs and status
-    updateRun(runId, {
-      worker_session_id: workerSessionId,
-      manager_session_id: managerSessionId,
-      manager_context: managerContext,
-      status: "running",
-    });
-
-    // 6. Output
-    const result = getRun(runId)!;
-    if (flags.asJson) {
-      console.log(JSON.stringify(result, null, 2));
-    } else {
-      console.log(`Run ID:           ${result.id}`);
-      console.log(`Job ID:           ${result.job_id}`);
-      console.log(`Status:           ${result.status}`);
-      console.log(`Worker Session:   ${result.worker_session_id}`);
-      console.log(`Manager Session:  ${result.manager_session_id}`);
-      console.log(`Worker Dir:       ${result.worker_dir}`);
-      console.log(`Manager Dir:      ${result.manager_dir}`);
-      if (flags.refs.length > 0) {
-        console.log(`Refs:             ${flags.refs.join(", ")}`);
-      }
-    }
-  } catch (err) {
-    // Mark run as failed if session creation fails
-    updateRun(runId, { status: "failed" });
-    throw err;
+  if (flags.asJson) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
   }
-}
 
-// ============================================================
-// Main
-// ============================================================
+  printResult(result);
+}
 
 async function run(): Promise<void> {
   const flags = parseDispatchFlags(Bun.argv.slice(2));
@@ -383,7 +220,6 @@ async function run(): Promise<void> {
     case "start":
       await handleStart(flags);
       break;
-
     default:
       throw new Error(`Unknown command: ${command}. Run with --help for usage.`);
   }

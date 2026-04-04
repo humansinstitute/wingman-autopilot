@@ -24,6 +24,7 @@ import {
   createWriterIcon,
 } from "./writer/writer-panel.js";
 import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
+import { populateAgentSelect } from "./common/agent-options.js";
 import { createSessionDialogController } from "./common/session-dialog.js";
 import { createJobDialogController } from "./common/job-dialog.js";
 import { initAppDialogs } from "./apps/dialog.js";
@@ -583,6 +584,8 @@ const sessionForm = dialog?.querySelector("form");
 const jobDialog = document.getElementById("job-dialog");
 const jobForm = jobDialog?.querySelector("form");
 const jobSelect = document.getElementById("job-select");
+const jobWorkerAgentSelect = document.getElementById("job-worker-agent");
+const jobManagerAgentSelect = document.getElementById("job-manager-agent");
 const jobWorkerDirectoryInput = document.getElementById("job-worker-directory");
 const jobManagerDirectoryInput = document.getElementById("job-manager-directory");
 const jobGoalInput = document.getElementById("job-goal");
@@ -593,6 +596,8 @@ const jobRefsInput = document.getElementById("job-refs");
 const confirmJobButton = document.getElementById("confirm-job-launch");
 const cancelJobButton = document.getElementById("cancel-job-launch");
 const jobDefaultManagerDir = document.getElementById("job-default-manager-dir");
+const jobDefaultWorkerAgent = document.getElementById("job-default-worker-agent");
+const jobDefaultManagerAgent = document.getElementById("job-default-manager-agent");
 const jobCheckInterval = document.getElementById("job-check-interval");
 const jobDefaultManagerGoal = document.getElementById("job-default-manager-goal");
 const jobDefaultWorkerPrompt = document.getElementById("job-default-worker-prompt");
@@ -1983,6 +1988,8 @@ const launchSession = createSessionLauncher({
 
 const launchJob = async ({
   jobId,
+  workerAgent,
+  managerAgent,
   workerDir,
   managerDir,
   goal,
@@ -1993,6 +2000,8 @@ const launchJob = async ({
 }) => {
   const payload = {
     job_id: jobId,
+    worker_agent: workerAgent,
+    manager_agent: managerAgent,
     worker_dir: workerDir,
     manager_dir: managerDir,
     goal,
@@ -2010,6 +2019,9 @@ const launchJob = async ({
   render();
   showToast(`Launched ${jobId}`);
 };
+
+populateAgentSelect(jobWorkerAgentSelect);
+populateAgentSelect(jobManagerAgentSelect);
 
 sessionDialogController = createSessionDialogController({
   dialog,
@@ -2040,6 +2052,8 @@ sessionDialogController.resetFormState();
 jobDialogController = createJobDialogController({
   dialog: jobDialog,
   jobSelect,
+  workerAgentSelect: jobWorkerAgentSelect,
+  managerAgentSelect: jobManagerAgentSelect,
   workerDirInput: jobWorkerDirectoryInput,
   managerDirInput: jobManagerDirectoryInput,
   goalInput: jobGoalInput,
@@ -2064,6 +2078,8 @@ jobDialogController = createJobDialogController({
     }),
   onDirectoryInput: (...args) => scheduleDirectorySuggestions(...args),
   defaultManagerDirOutput: jobDefaultManagerDir,
+  defaultWorkerAgentOutput: jobDefaultWorkerAgent,
+  defaultManagerAgentOutput: jobDefaultManagerAgent,
   checkIntervalOutput: jobCheckInterval,
   managerGoalOutput: jobDefaultManagerGoal,
   workerPromptOutput: jobDefaultWorkerPrompt,

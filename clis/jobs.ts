@@ -16,6 +16,7 @@ import {
   deleteJob,
   type JobDefinition,
 } from "../src/jobs-db";
+import { isJobAgentType } from "../src/jobs/agent-config";
 
 const USAGE = `Wingman job definition CLI
 
@@ -35,6 +36,8 @@ Create options (all required unless noted):
   --worker-prompt <prompt>     Worker agent prompt
   --manager-prompt <prompt>    Manager agent prompt
   --manager-goal <goal>        Manager goal description
+  --worker-agent <agent>       Worker agent: codex|claude|goose|opencode|gemini
+  --manager-agent <agent>      Manager agent: codex|claude|goose|opencode|gemini
   --manager-dir <dir>          Manager working directory
   --check-interval <secs>     Check interval in seconds (default: 300)
   --enabled <true|false>       Enable/disable (default: true)
@@ -44,6 +47,8 @@ Update options (provide one or more):
   --worker-prompt <prompt>
   --manager-prompt <prompt>
   --manager-goal <goal>
+  --worker-agent <agent>
+  --manager-agent <agent>
   --manager-dir <dir>
   --check-interval <secs>
   --enabled <true|false>
@@ -70,6 +75,8 @@ interface ParsedFlags {
   workerPrompt?: string;
   managerPrompt?: string;
   managerGoal?: string;
+  workerAgent?: string;
+  managerAgent?: string;
   managerDir?: string;
   checkInterval?: number;
   enabled?: boolean;
@@ -111,6 +118,24 @@ function parseFlags(argv: string[]): ParsedFlags {
         const v = argv[++i];
         if (!v) throw new Error('--manager-goal requires a value');
         parsed.managerGoal = v;
+        break;
+      }
+      case '--worker-agent': {
+        const v = argv[++i];
+        if (!v) throw new Error('--worker-agent requires a value');
+        if (!isJobAgentType(v.trim().toLowerCase())) {
+          throw new Error('--worker-agent must be one of: codex, claude, goose, opencode, gemini');
+        }
+        parsed.workerAgent = v.trim().toLowerCase();
+        break;
+      }
+      case '--manager-agent': {
+        const v = argv[++i];
+        if (!v) throw new Error('--manager-agent requires a value');
+        if (!isJobAgentType(v.trim().toLowerCase())) {
+          throw new Error('--manager-agent must be one of: codex, claude, goose, opencode, gemini');
+        }
+        parsed.managerAgent = v.trim().toLowerCase();
         break;
       }
       case '--manager-dir': {
@@ -158,10 +183,10 @@ function printJobList(jobs: JobDefinition[]): void {
     console.log('No job definitions found.');
     return;
   }
-  console.log('ID\tNAME\tINTERVAL\tENABLED\tDIRECTORY');
+  console.log('ID\tNAME\tWORKER\tMANAGER\tINTERVAL\tENABLED\tDIRECTORY');
   for (const job of jobs) {
     const enabled = job.enabled ? 'yes' : 'no';
-    console.log(`${job.id}\t${job.name}\t${job.check_interval}s\t${enabled}\t${job.manager_dir}`);
+    console.log(`${job.id}\t${job.name}\t${job.worker_agent}\t${job.manager_agent}\t${job.check_interval}s\t${enabled}\t${job.manager_dir}`);
   }
 }
 
@@ -170,6 +195,8 @@ function printJobDetail(job: JobDefinition): void {
   console.log(`Name:            ${job.name}`);
   console.log(`Enabled:         ${job.enabled ? 'yes' : 'no'}`);
   console.log(`Check Interval:  ${job.check_interval}s`);
+  console.log(`Worker Agent:    ${job.worker_agent}`);
+  console.log(`Manager Agent:   ${job.manager_agent}`);
   console.log(`Manager Dir:     ${job.manager_dir}`);
   console.log(`Manager Goal:    ${job.manager_goal}`);
   console.log(`Manager Prompt:  ${job.manager_prompt}`);
@@ -234,6 +261,8 @@ function run(): void {
         worker_prompt: flags.workerPrompt,
         manager_prompt: flags.managerPrompt,
         manager_goal: flags.managerGoal,
+        worker_agent: flags.workerAgent as JobDefinition['worker_agent'] | undefined,
+        manager_agent: flags.managerAgent as JobDefinition['manager_agent'] | undefined,
         manager_dir: flags.managerDir,
         check_interval: flags.checkInterval,
         enabled: flags.enabled,
@@ -256,6 +285,8 @@ function run(): void {
       if (flags.workerPrompt !== undefined) updates.worker_prompt = flags.workerPrompt;
       if (flags.managerPrompt !== undefined) updates.manager_prompt = flags.managerPrompt;
       if (flags.managerGoal !== undefined) updates.manager_goal = flags.managerGoal;
+      if (flags.workerAgent !== undefined) updates.worker_agent = flags.workerAgent as JobDefinition['worker_agent'];
+      if (flags.managerAgent !== undefined) updates.manager_agent = flags.managerAgent as JobDefinition['manager_agent'];
       if (flags.managerDir !== undefined) updates.manager_dir = flags.managerDir;
       if (flags.checkInterval !== undefined) updates.check_interval = flags.checkInterval;
       if (flags.enabled !== undefined) updates.enabled = flags.enabled;

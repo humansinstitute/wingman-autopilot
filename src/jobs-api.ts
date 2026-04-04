@@ -7,6 +7,7 @@
  */
 
 import type { SessionSnapshot } from "./agents/process-manager";
+import type { AgentType } from "./config";
 import { waitForAgentReady } from "./agents/agent-client";
 import type { RequestAuthContext } from "./auth/request-context";
 import {
@@ -26,6 +27,7 @@ import {
   type UpdateJobInput,
 } from "./jobs-db";
 import { dispatchJobRun } from "./jobs-dispatch";
+import { isJobAgentType, listUniqueJobAgents, resolveJobAgent, resolveJobAgents } from "./jobs/agent-config";
 import { deliverSessionAgentMessage } from "./server/session-agent-message";
 import type { SessionApiContext } from "./server/session-api-routes";
 
@@ -54,6 +56,8 @@ interface AutopilotJobsApiContext {
     goal?: string | null;
     workerGoal?: string | null;
     managerGoal?: string | null;
+    workerAgent?: AgentType | null;
+    managerAgent?: AgentType | null;
     prompt?: string | null;
     refs?: string[];
     workerDir?: string | null;
@@ -80,7 +84,12 @@ const defaultStore: JobsStore = {
 
 /** Normalize SQLite integer booleans to actual booleans for JSON responses. */
 function normalizeJob(job: JobDefinition): Record<string, unknown> {
-  return { ...job, enabled: !!job.enabled };
+  return {
+    ...job,
+    worker_agent: resolveJobAgent(job.worker_agent),
+    manager_agent: resolveJobAgent(job.manager_agent),
+    enabled: !!job.enabled,
+  };
 }
 
 function parseJsonBody(request: Request): Promise<Record<string, unknown>> {
@@ -93,6 +102,12 @@ const normalizeText = (value: unknown): string | null => {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+};
+
+const normalizeAgent = (value: unknown): AgentType | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().toLowerCase();
+  return isJobAgentType(trimmed) ? trimmed : null;
 };
 
 const normalizeRefs = (value: unknown): string[] => {
@@ -136,6 +151,8 @@ const createDefaultDispatchRun = (
     goal?: string | null;
     workerGoal?: string | null;
     managerGoal?: string | null;
+    workerAgent?: AgentType | null;
+    managerAgent?: AgentType | null;
     prompt?: string | null;
     refs?: string[];
     workerDir?: string | null;
@@ -148,7 +165,20 @@ const createDefaultDispatchRun = (
       throw new Error("Sign in to launch a job");
     }
 
-    const requiresBalance = await sessionCtx.shouldRequireBalanceForAgent("claude");
+    const requestedAgents = listUniqueJobAgents(
+      resolveJobAgents(input.job, {
+        workerAgent: input.workerAgent,
+        managerAgent: input.managerAgent,
+      }),
+    );
+    let requiresBalance = false;
+    for (const agent of requestedAgents) {
+      if (await sessionCtx.shouldRequireBalanceForAgent(agent)) {
+        requiresBalance = true;
+        break;
+      }
+    }
+
     if (requiresBalance) {
       const balanceCheck = sessionCtx.ensureViewerHasBalance(input.authContext, {
         feature: "launch a manual job",
@@ -166,9 +196,9 @@ const createDefaultDispatchRun = (
           updateRun: store.updateRun,
           getRun: store.getRun,
         },
-        createSession: async (name, directory) => {
+        createSession: async (name, directory, agent) => {
           const session = await sessionCtx.manager.createSession(
-            "claude",
+            agent,
             directory,
             name,
             null,
@@ -206,6 +236,8 @@ const createDefaultDispatchRun = (
         goal: input.goal,
         workerGoal: input.workerGoal,
         managerGoal: input.managerGoal,
+        workerAgent: input.workerAgent,
+        managerAgent: input.managerAgent,
         prompt: input.prompt,
         refs: input.refs,
         workerDir: input.workerDir,
@@ -246,6 +278,8 @@ export function createAutopilotJobsApiHandler(context: AutopilotJobsApiContext =
     const worker_prompt = typeof body.worker_prompt === "string" ? body.worker_prompt.trim() : "";
     const manager_prompt = typeof body.manager_prompt === "string" ? body.manager_prompt.trim() : "";
     const manager_goal = typeof body.manager_goal === "string" ? body.manager_goal.trim() : "";
+    const worker_agent = normalizeAgent(body.worker_agent);
+    const manager_agent = normalizeAgent(body.manager_agent);
     const manager_dir = typeof body.manager_dir === "string" ? body.manager_dir.trim() : "";
     const check_interval = typeof body.check_interval === "number" ? body.check_interval : undefined;
     const enabled = typeof body.enabled === "boolean" ? body.enabled : undefined;
@@ -253,6 +287,12 @@ export function createAutopilotJobsApiHandler(context: AutopilotJobsApiContext =
     if (!id) return Response.json({ error: "id is required" }, { status: 400 });
     if (!name) return Response.json({ error: "name is required" }, { status: 400 });
     if (!manager_dir) return Response.json({ error: "manager_dir is required" }, { status: 400 });
+    if (body.worker_agent !== undefined && !worker_agent) {
+      return Response.json({ error: "worker_agent must be one of: codex, claude, goose, opencode, gemini" }, { status: 400 });
+    }
+    if (body.manager_agent !== undefined && !manager_agent) {
+      return Response.json({ error: "manager_agent must be one of: codex, claude, goose, opencode, gemini" }, { status: 400 });
+    }
 
     const existing = store.getJob(id);
     if (existing) return Response.json({ error: `Job already exists: ${id}` }, { status: 409 });
@@ -263,6 +303,8 @@ export function createAutopilotJobsApiHandler(context: AutopilotJobsApiContext =
       worker_prompt,
       manager_prompt,
       manager_goal,
+      worker_agent: worker_agent ?? undefined,
+      manager_agent: manager_agent ?? undefined,
       manager_dir,
       check_interval,
       enabled,
@@ -282,6 +324,20 @@ export function createAutopilotJobsApiHandler(context: AutopilotJobsApiContext =
     if (typeof body.worker_prompt === "string") updates.worker_prompt = body.worker_prompt.trim();
     if (typeof body.manager_prompt === "string") updates.manager_prompt = body.manager_prompt.trim();
     if (typeof body.manager_goal === "string") updates.manager_goal = body.manager_goal.trim();
+    if (body.worker_agent !== undefined) {
+      const workerAgent = normalizeAgent(body.worker_agent);
+      if (!workerAgent) {
+        return Response.json({ error: "worker_agent must be one of: codex, claude, goose, opencode, gemini" }, { status: 400 });
+      }
+      updates.worker_agent = workerAgent;
+    }
+    if (body.manager_agent !== undefined) {
+      const managerAgent = normalizeAgent(body.manager_agent);
+      if (!managerAgent) {
+        return Response.json({ error: "manager_agent must be one of: codex, claude, goose, opencode, gemini" }, { status: 400 });
+      }
+      updates.manager_agent = managerAgent;
+    }
     if (typeof body.manager_dir === "string") updates.manager_dir = body.manager_dir.trim();
     if (typeof body.check_interval === "number") updates.check_interval = body.check_interval;
     if (typeof body.enabled === "boolean") updates.enabled = body.enabled;
@@ -316,8 +372,16 @@ export function createAutopilotJobsApiHandler(context: AutopilotJobsApiContext =
   ): Promise<Response> => {
     const body = await parseJsonBody(request);
     const jobId = normalizeText(body.job_id);
+    const workerAgent = normalizeAgent(body.worker_agent);
+    const managerAgent = normalizeAgent(body.manager_agent);
     if (!jobId) {
       return Response.json({ error: "job_id is required" }, { status: 400 });
+    }
+    if (body.worker_agent !== undefined && !workerAgent) {
+      return Response.json({ error: "worker_agent must be one of: codex, claude, goose, opencode, gemini" }, { status: 400 });
+    }
+    if (body.manager_agent !== undefined && !managerAgent) {
+      return Response.json({ error: "manager_agent must be one of: codex, claude, goose, opencode, gemini" }, { status: 400 });
     }
 
     const job = store.getJob(jobId);
@@ -336,6 +400,8 @@ export function createAutopilotJobsApiHandler(context: AutopilotJobsApiContext =
         goal: normalizeText(body.goal),
         workerGoal: normalizeText(body.worker_goal),
         managerGoal: normalizeText(body.manager_goal),
+        workerAgent,
+        managerAgent,
         prompt: normalizeText(body.prompt),
         refs: normalizeRefs(body.refs),
         workerDir: normalizeText(body.worker_dir),

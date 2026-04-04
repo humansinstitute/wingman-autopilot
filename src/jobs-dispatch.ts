@@ -5,8 +5,10 @@
  * seeds each session with its initial prompt, and updates the run.
  */
 
+import type { AgentType } from "./config";
 import type { SessionSnapshot } from "./agents/process-manager";
 import type { CreateRunInput, JobDefinition, JobRun } from "./jobs-db";
+import { buildDefaultJobSessionName, resolveJobAgents } from "./jobs/agent-config";
 
 export interface JobRunStore {
   createRun: (input: CreateRunInput) => JobRun;
@@ -20,6 +22,8 @@ export interface DispatchJobRunInput {
   goal?: string | null;
   workerGoal?: string | null;
   managerGoal?: string | null;
+  workerAgent?: AgentType | null;
+  managerAgent?: AgentType | null;
   prompt?: string | null;
   refs?: string[];
   workerDir?: string | null;
@@ -28,7 +32,7 @@ export interface DispatchJobRunInput {
 
 export interface DispatchJobRunDeps {
   runStore: JobRunStore;
-  createSession: (name: string, directory: string) => Promise<SessionSnapshot>;
+  createSession: (name: string, directory: string, agent: AgentType) => Promise<SessionSnapshot>;
   waitForSessionReady: (session: SessionSnapshot) => Promise<void>;
   seedSession: (session: SessionSnapshot, content: string) => Promise<void>;
 }
@@ -76,6 +80,8 @@ export function buildManagerContext(
   wingmanUrl: string,
   goal?: string | null,
   refs: string[] = [],
+  workerAgent?: AgentType,
+  managerAgent?: AgentType,
   workerSessionId?: string,
 ): string {
   const parts: string[] = [];
@@ -93,6 +99,8 @@ export function buildManagerContext(
       `Run ID: ${runId}`,
       `Check Interval: ${job.check_interval}s`,
       `Wingman URL: ${wingmanUrl}`,
+      workerAgent ? `Worker Agent: ${workerAgent}` : null,
+      managerAgent ? `Manager Agent: ${managerAgent}` : null,
       workerSessionId ? `Worker Session ID: ${workerSessionId}` : null,
     ]
       .filter(Boolean)
@@ -139,6 +147,10 @@ export async function dispatchJobRun(
   const workerDir = normalizeText(input.workerDir) ?? managerDir;
   const refs = normalizeRefs(input.refs);
   const workerPrompt = buildWorkerPrompt(input.job, workerGoal, input.prompt);
+  const { workerAgent, managerAgent } = resolveJobAgents(input.job, {
+    workerAgent: input.workerAgent,
+    managerAgent: input.managerAgent,
+  });
 
   if (!managerDir) {
     throw new Error("Job definition is missing a manager directory");
@@ -149,12 +161,14 @@ export async function dispatchJobRun(
 
   const run = deps.runStore.createRun({
     job_id: input.job.id,
-    goal,
-    manager_goal: managerGoal ?? normalizeText(input.job.manager_goal),
+    goal: goal ?? undefined,
+    manager_goal: managerGoal ?? normalizeText(input.job.manager_goal) ?? undefined,
+    worker_agent: workerAgent,
+    manager_agent: managerAgent,
     worker_prompt: workerPrompt,
     worker_dir: workerDir,
     manager_dir: managerDir,
-    refs_json: refs.length > 0 ? JSON.stringify(refs) : null,
+    refs_json: refs.length > 0 ? JSON.stringify(refs) : undefined,
     status: "starting",
   });
 
@@ -162,8 +176,9 @@ export async function dispatchJobRun(
 
   try {
     const workerSession = await deps.createSession(
-      `job:${input.job.id}:worker:${runId.slice(0, 8)}`,
+      buildDefaultJobSessionName(input.job.id, "worker", workerAgent, runId),
       workerDir,
+      workerAgent,
     );
     await deps.waitForSessionReady(workerSession);
     await deps.seedSession(workerSession, workerPrompt);
@@ -174,12 +189,15 @@ export async function dispatchJobRun(
       input.wingmanUrl,
       managerGoal,
       refs,
+      workerAgent,
+      managerAgent,
       workerSession.id,
     );
 
     const managerSession = await deps.createSession(
-      `job:${input.job.id}:manager:${runId.slice(0, 8)}`,
+      buildDefaultJobSessionName(input.job.id, "manager", managerAgent, runId),
       managerDir,
+      managerAgent,
     );
     await deps.waitForSessionReady(managerSession);
     await deps.seedSession(managerSession, managerContext);

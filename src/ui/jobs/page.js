@@ -9,6 +9,7 @@
  */
 
 import Alpine from "/vendor/alpinejs/module.esm.js";
+import { DEFAULT_AGENT, renderAgentOptions } from "../common/agent-options.js";
 
 // ============================================================
 // Page Module
@@ -42,6 +43,8 @@ export function initJobsPage({ showToast }) {
       worker_prompt: "",
       manager_prompt: "",
       manager_goal: "",
+      worker_agent: DEFAULT_AGENT,
+      manager_agent: DEFAULT_AGENT,
       manager_dir: "",
       check_interval: 300,
       enabled: true,
@@ -68,6 +71,8 @@ export function initJobsPage({ showToast }) {
         worker_prompt: "",
         manager_prompt: "",
         manager_goal: "",
+        worker_agent: DEFAULT_AGENT,
+        manager_agent: DEFAULT_AGENT,
         manager_dir: "",
         check_interval: 300,
         enabled: true,
@@ -84,6 +89,8 @@ export function initJobsPage({ showToast }) {
           worker_prompt: this.form.worker_prompt,
           manager_prompt: this.form.manager_prompt,
           manager_goal: this.form.manager_goal,
+          worker_agent: this.form.worker_agent,
+          manager_agent: this.form.manager_agent,
           manager_dir: this.form.manager_dir,
           check_interval: parseInt(this.form.check_interval, 10) || 300,
           enabled: this.form.enabled,
@@ -101,6 +108,8 @@ export function initJobsPage({ showToast }) {
         worker_prompt: job.worker_prompt,
         manager_prompt: job.manager_prompt,
         manager_goal: job.manager_goal,
+        worker_agent: job.worker_agent || DEFAULT_AGENT,
+        manager_agent: job.manager_agent || DEFAULT_AGENT,
         manager_dir: job.manager_dir,
         check_interval: job.check_interval,
         enabled: !!job.enabled,
@@ -121,6 +130,8 @@ export function initJobsPage({ showToast }) {
           worker_prompt: this.editForm.worker_prompt,
           manager_prompt: this.editForm.manager_prompt,
           manager_goal: this.editForm.manager_goal,
+          worker_agent: this.editForm.worker_agent,
+          manager_agent: this.editForm.manager_agent,
           manager_dir: this.editForm.manager_dir,
           check_interval: parseInt(this.editForm.check_interval, 10) || 300,
           enabled: this.editForm.enabled,
@@ -250,6 +261,22 @@ function getPageTemplate() {
           <!-- Row 2: Manager Dir + Check Interval -->
           <div class="wm-scheduler-grid-two" style="margin-top: 0.75rem;">
             <div class="wm-form-group">
+              <label>Worker Agent</label>
+              <select class="wm-select" x-model="form.worker_agent" aria-label="Worker agent" data-testid="jobs-create-worker-agent">
+                ${renderAgentOptions(DEFAULT_AGENT)}
+              </select>
+            </div>
+            <div class="wm-form-group">
+              <label>Manager Agent</label>
+              <select class="wm-select" x-model="form.manager_agent" aria-label="Manager agent" data-testid="jobs-create-manager-agent">
+                ${renderAgentOptions(DEFAULT_AGENT)}
+              </select>
+            </div>
+          </div>
+
+          <!-- Row 3: Manager Dir + Check Interval -->
+          <div class="wm-scheduler-grid-two" style="margin-top: 0.75rem;">
+            <div class="wm-form-group">
               <label>Manager Directory</label>
               <input type="text" class="wm-input" x-model="form.manager_dir" placeholder="/path/to/project">
             </div>
@@ -259,25 +286,25 @@ function getPageTemplate() {
             </div>
           </div>
 
-          <!-- Row 3: Manager Goal -->
+          <!-- Row 4: Manager Goal -->
           <div class="wm-form-group" style="margin-top: 0.75rem;">
             <label>Manager Goal</label>
             <input type="text" class="wm-input" x-model="form.manager_goal" placeholder="High-level goal for the manager agent">
           </div>
 
-          <!-- Row 4: Worker Prompt -->
+          <!-- Row 5: Worker Prompt -->
           <div class="wm-form-group" style="margin-top: 0.75rem;">
             <label>Worker Prompt</label>
             <textarea class="wm-input" x-model="form.worker_prompt" rows="3" placeholder="Prompt for the worker agent session"></textarea>
           </div>
 
-          <!-- Row 5: Manager Prompt -->
+          <!-- Row 6: Manager Prompt -->
           <div class="wm-form-group" style="margin-top: 0.75rem;">
             <label>Manager Prompt</label>
             <textarea class="wm-input" x-model="form.manager_prompt" rows="3" placeholder="Prompt for the manager agent session"></textarea>
           </div>
 
-          <!-- Row 6: Enabled + Submit -->
+          <!-- Row 7: Enabled + Submit -->
           <div style="display: flex; align-items: center; gap: 1rem; margin-top: 0.75rem;">
             <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
               <input type="checkbox" x-model="form.enabled"> Enabled
@@ -320,6 +347,8 @@ function getPageTemplate() {
               </div>
 
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 1rem; font-size: 0.85rem; color: var(--text-secondary);">
+                <div><strong>Worker Agent:</strong> <span x-text="job.worker_agent || 'claude'"></span></div>
+                <div><strong>Manager Agent:</strong> <span x-text="job.manager_agent || 'claude'"></span></div>
                 <div><strong>Manager Dir:</strong> <span x-text="job.manager_dir || '--'"></span></div>
                 <div><strong>Check Interval:</strong> <span x-text="(job.check_interval || 300) + 's'"></span></div>
                 <div style="grid-column: 1 / -1;"><strong>Manager Goal:</strong> <span x-text="snippet(job.manager_goal)"></span></div>
@@ -341,6 +370,20 @@ function getPageTemplate() {
                 <div class="wm-form-group">
                   <label>Name</label>
                   <input type="text" class="wm-input" x-model="editForm.name">
+                </div>
+                <div class="wm-form-group">
+                  <label>Worker Agent</label>
+                  <select class="wm-select" x-model="editForm.worker_agent" aria-label="Edit worker agent" data-testid="jobs-edit-worker-agent">
+                    ${renderAgentOptions(DEFAULT_AGENT)}
+                  </select>
+                </div>
+              </div>
+              <div class="wm-scheduler-grid-two" style="margin-top: 0.75rem;">
+                <div class="wm-form-group">
+                  <label>Manager Agent</label>
+                  <select class="wm-select" x-model="editForm.manager_agent" aria-label="Edit manager agent" data-testid="jobs-edit-manager-agent">
+                    ${renderAgentOptions(DEFAULT_AGENT)}
+                  </select>
                 </div>
                 <div class="wm-form-group">
                   <label>Manager Directory</label>
@@ -437,6 +480,8 @@ function getPageTemplate() {
               <div><strong>Goal:</strong> <span x-text="snippet(run.goal, 100)"></span></div>
             </template>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 1rem; margin-top: 0.25rem;">
+              <div><strong>Worker Agent:</strong> <span x-text="run.worker_agent || '--'"></span></div>
+              <div><strong>Manager Agent:</strong> <span x-text="run.manager_agent || '--'"></span></div>
               <div><strong>Worker Session:</strong>
                 <template x-if="run.worker_session_id">
                   <a :href="'/live/' + run.worker_session_id" style="color: var(--accent);"
