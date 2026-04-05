@@ -67,6 +67,7 @@ export function initLiveView(deps) {
     handleAttachmentUploads,
     cleanupOrphanedMarkers,
     clearImagePreviews,
+    openVoiceNoteRecorder,
     openDialog,
     isFeatureEnabledForViewer,
     showToast,
@@ -966,6 +967,10 @@ export function initLiveView(deps) {
 
     addCommand("Upload file", () => {
       attachmentInput.click();
+    });
+
+    addCommand("Record voice note", () => {
+      openVoiceNoteRecorder(sessionId);
     });
 
     addCommandDivider();

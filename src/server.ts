@@ -2403,6 +2403,20 @@ const handleApi = createApiRouteHandler({
     ensureApiAccess,
     AccessActions,
   },
+  voiceNoteUploadApiContext: {
+    imageRoot,
+    attachmentRoot,
+    isAdminContext,
+    isAgentType,
+    ensureImageDirectory,
+    ensureAttachmentDirectory,
+    createImageFilename,
+    createAttachmentFilename,
+    buildAgentImagePlaceholder,
+    buildAgentFilePlaceholder,
+    ensureApiAccess,
+    AccessActions,
+  },
 
   // Stores accessed directly
   featureFlagStore,

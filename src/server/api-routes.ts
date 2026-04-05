@@ -25,6 +25,7 @@ import {
   handleUploadsApi,
   type UploadApiContext,
 } from "./upload-routes";
+import { handleVoiceNoteUploadsApi, type VoiceNoteUploadApiContext } from "./voice-note-routes";
 import { handleSystemRoutes, type SystemRoutesContext } from "./system-routes";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
@@ -85,6 +86,7 @@ export interface ApiRoutesContext {
   authApiContext: AuthApiContext;
   adminUsersApiContext: AdminUsersApiContext;
   uploadApiContext: UploadApiContext;
+  voiceNoteUploadApiContext: VoiceNoteUploadApiContext;
 
   // Stores accessed directly by handleApi
   featureFlagStore: {
@@ -537,6 +539,15 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
 
     // Upload API routes (delegated to upload-routes.ts)
     if (pathname.startsWith("/api/uploads/")) {
+      const voiceNoteResult = await handleVoiceNoteUploadsApi(
+        request,
+        url,
+        method,
+        authContext,
+        ctx.voiceNoteUploadApiContext,
+      );
+      if (voiceNoteResult) return voiceNoteResult;
+
       const uploadResult = await handleUploadsApi(request, url, method, authContext, ctx.uploadApiContext);
       if (uploadResult) return uploadResult;
     }

@@ -88,6 +88,7 @@ import { initFileEditor } from "./modals/file-editor.js";
 import { initQueueModule } from "./sessions/queue-modal.js";
 import { initQuickLauncher } from "./core/quick-launcher.js";
 import { initImageAttachments } from "./core/image-attachments.js";
+import { initVoiceNotes } from "./core/voice-notes.js";
 import { initAgentIndicators } from "./status/agent-indicators.js";
 import { show as scrollPillShow, hide as scrollPillHide, isNearBottom as scrollPillIsNearBottom } from "./live/scroll-pill.js";
 import { areConversationMessagesEqual } from "./live/conversation-sync.js";
@@ -411,6 +412,7 @@ let extractAttachmentFiles = () => [];
 let handleImageUploads = async () => {};
 let handleAttachmentUploads = async () => {};
 let cleanupOrphanedMarkers = () => {};
+let openVoiceNoteRecorder = async () => {};
 
 // -- Agent indicators initialized via initAgentIndicators (see bootstrap) --
 let resolveAgentRuntimeStatus = () => null;
@@ -2185,7 +2187,7 @@ const sendMessage = async (sessionId, content) => {
 
   if (sessionMessageSendInFlight.has(sessionId)) {
     showToast("Agent working", { variant: "info", duration: 2200 });
-    return;
+    return { sent: false, queued: false, busy: true };
   }
 
   // Single alphanumeric character: send as raw terminal input for TUI interaction
@@ -2214,9 +2216,11 @@ const sendMessage = async (sessionId, content) => {
         }
       }
       await Promise.all([fetchConversation(sessionId), fetchLogs(sessionId)]);
+      return { sent: true, queued: false, type: "raw" };
     } catch (error) {
       console.error("Failed to send raw input", error);
       showToast(`Failed to send ${trimmed}`, { variant: "error" });
+      return { sent: false, queued: false, error };
     }
     return;
   }
@@ -2235,8 +2239,9 @@ const sendMessage = async (sessionId, content) => {
       }
       // Update status indicators to show queue count
       updateAgentStatusIndicators();
+      return { sent: false, queued: true };
     }
-    return;
+    return { sent: false, queued: false };
   }
 
   // Agent is not busy - send message immediately
@@ -2265,6 +2270,7 @@ const sendMessage = async (sessionId, content) => {
       textarea.style.height = "auto";
       focusComposerTextarea(textarea, "send");
     }
+    return { sent: true, queued: false };
   } catch (error) {
     const message = error instanceof Error && error.message ? error.message : "Failed to send message to agent.";
     const status = Number(error?.status ?? 0);
@@ -2279,10 +2285,11 @@ const sendMessage = async (sessionId, content) => {
       normalized.includes("not ready for prompt dispatch");
     if (isWorkingState) {
       showToast("Agent working", { variant: "info", duration: 2600 });
-      return;
+      return { sent: false, queued: false, busy: true };
     }
     console.error("Failed to send agent message", error);
     showToast(`Failed to send message: ${message}`, { variant: "error" });
+    return { sent: false, queued: false, error };
   } finally {
     sessionMessageSendInFlight.delete(sessionId);
   }
@@ -2992,6 +2999,13 @@ handleImageUploads = imageAttachmentsModule.handleImageUploads;
 handleAttachmentUploads = imageAttachmentsModule.handleAttachmentUploads;
 cleanupOrphanedMarkers = imageAttachmentsModule.cleanupOrphanedMarkers;
 
+const voiceNotesModule = initVoiceNotes({
+  getSessionById,
+  sendMessage,
+  showToast,
+});
+openVoiceNoteRecorder = voiceNotesModule.openVoiceNoteRecorder;
+
 const agentIndicatorsModule = initAgentIndicators({
   state,
   sessionsStore,
@@ -3278,6 +3292,7 @@ const liveViewModule = initLiveView({
   handleAttachmentUploads,
   cleanupOrphanedMarkers,
   clearImagePreviews,
+  openVoiceNoteRecorder,
   openDialog,
   isFeatureEnabledForViewer: (...args) => isFeatureEnabledForViewer(...args),
   showToast,
