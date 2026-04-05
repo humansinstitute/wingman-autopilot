@@ -1,5 +1,5 @@
 import { attachCopyButton } from "../utils/clipboard.js";
-import { renderMarkdownToHtml } from "../rendering/markdown.js";
+import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
 
 export const LIVE_MESSAGE_WINDOW_DEFAULT = 80;
 export const LIVE_MESSAGE_PAGE_SIZE = 80;
@@ -119,8 +119,8 @@ function createMessageBubble(message) {
   const bubble = document.createElement("article");
   bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
   const body = document.createElement("div");
-  body.className = "wm-message-body wm-rich-content";
-  body.innerHTML = renderMarkdownToHtml(message.content ?? message.message ?? "");
+  body.className = "wm-message-body";
+  body.innerHTML = renderChatMessageHtml(message.content ?? message.message ?? "");
   bubble.append(body);
   attachCopyButton(bubble);
   return bubble;

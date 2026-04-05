@@ -6,7 +6,7 @@
 import Alpine from "/vendor/alpinejs/module.esm.js";
 import { sseManager } from "./sse-manager.js";
 import { show as scrollPillShow, isNearBottom as scrollPillIsNearBottom } from "./scroll-pill.js";
-import { renderMarkdownToHtml } from "../rendering/markdown.js";
+import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
 import {
   LIVE_MESSAGE_WINDOW_DEFAULT,
   LIVE_MESSAGE_PAGE_SIZE,
@@ -179,7 +179,7 @@ export function registerChatComponent() {
     },
 
     renderMessageContent(message) {
-      return renderMarkdownToHtml(message?.content ?? "");
+      return renderChatMessageHtml(message?.content ?? "");
     },
 
     /**
@@ -321,7 +321,7 @@ export function getChatTemplate(sessionId) {
     <template x-for="message in $store.chat.visibleMessages" :key="message.id">
       <article class="wm-message"
                :class="message.role === 'user' ? 'user' : (message.role === 'assistant' || message.role === 'agent' ? 'assistant' : 'system')">
-        <div class="wm-message-body wm-rich-content" x-html="$store.chat.renderMessageContent(message)"></div>
+        <div class="wm-message-body" x-html="$store.chat.renderMessageContent(message)"></div>
         <button type="button" class="wm-message-copy" aria-label="Copy message"
                 @click.stop="
                   const text = message.content || '';

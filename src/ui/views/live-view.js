@@ -8,7 +8,7 @@
 import { escapeHtml, getSessionDisplayName } from "../core/icons.js";
 import { attachCopyButton, copyConversationToClipboard } from "../utils/clipboard.js";
 import { showToast } from "../utils/toast.js";
-import { renderMarkdownToHtml } from "../rendering/markdown.js";
+import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
 import { fetchSessionHistoryApi, forkSessionToWorktreeApi } from "../services/sessions.js";
 import { triggerAppActionApi } from "../services/apps.js";
 import { isAlpineChatEnabled, getChatTemplate, Alpine } from "../live/index.js";
@@ -333,8 +333,8 @@ export function initLiveView(deps) {
         const bubble = document.createElement("article");
         bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
         const body = document.createElement("div");
-        body.className = "wm-message-body wm-rich-content";
-        body.innerHTML = renderMarkdownToHtml(message.content ?? message.message ?? "");
+        body.className = "wm-message-body";
+        body.innerHTML = renderChatMessageHtml(message.content ?? message.message ?? "");
         bubble.append(body);
         attachCopyButton(bubble);
         wrapper.append(bubble);

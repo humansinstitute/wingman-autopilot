@@ -3,7 +3,7 @@
  * Displays a collapsible list of archived sessions with filtering capability.
  */
 
-import { renderMarkdownToHtml } from "../rendering/markdown.js";
+import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
 
 const ARCHIVE_STORAGE_KEY = "wingman-archive-collapsed";
 
@@ -428,8 +428,8 @@ export function createArchiveViewDialog() {
       roleEl.textContent = msg.role === "user" ? "User" : "Assistant";
 
       const contentEl = document.createElement("div");
-      contentEl.className = "wm-archive-dialog-message-content wm-rich-content";
-      contentEl.innerHTML = renderMarkdownToHtml(msg.content);
+      contentEl.className = "wm-archive-dialog-message-content";
+      contentEl.innerHTML = renderChatMessageHtml(msg.content);
 
       const timeEl = document.createElement("div");
       timeEl.className = "wm-archive-dialog-message-time";
