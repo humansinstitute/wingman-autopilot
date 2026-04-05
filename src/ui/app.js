@@ -90,6 +90,7 @@ import { initQuickLauncher } from "./core/quick-launcher.js";
 import { initImageAttachments } from "./core/image-attachments.js";
 import { initAgentIndicators } from "./status/agent-indicators.js";
 import { show as scrollPillShow, hide as scrollPillHide, isNearBottom as scrollPillIsNearBottom } from "./live/scroll-pill.js";
+import { areConversationMessagesEqual } from "./live/conversation-sync.js";
 import { initAdminUsersApi } from "./api/admin-users.js";
 import { showToast } from "./utils/toast.js";
 import { collapseNewlines } from "./utils/text.js";
@@ -1631,6 +1632,10 @@ const fetchConversation = async (sessionId) => {
     const data = await fetchSessionMessagesApi(sessionId);
     if (!data) return;
     const items = Array.isArray(data?.messages) ? data.messages : [];
+    const existingItems = state.conversations.get(sessionId) ?? [];
+    if (areConversationMessagesEqual(existingItems, items)) {
+      return;
+    }
     state.conversations.set(sessionId, items);
     renderConversationForSession(sessionId);
   } catch (error) {
