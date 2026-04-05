@@ -2472,12 +2472,71 @@ body[data-menu-open="true"] .wm-menu-panel {
   position: relative;
 }
 
-.wm-message pre {
+.wm-message > pre,
+.wm-message-body {
   margin: 0;
+}
+
+.wm-message > pre {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 0.95rem;
   line-height: 1.55;
+}
+
+.wm-rich-content {
+  font-size: 0.95rem;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.wm-rich-content > :first-child {
+  margin-top: 0;
+}
+
+.wm-rich-content > :last-child {
+  margin-bottom: 0;
+}
+
+.wm-rich-content p,
+.wm-rich-content ul,
+.wm-rich-content ol,
+.wm-rich-content blockquote,
+.wm-rich-content table,
+.wm-rich-content pre {
+  margin: 0 0 0.8rem;
+}
+
+.wm-rich-content ul,
+.wm-rich-content ol {
+  padding-left: 1.25rem;
+}
+
+.wm-rich-content a {
+  color: var(--accent-primary);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+
+.wm-rich-content .wm-inline-image-link {
+  display: inline-block;
+  max-width: 100%;
+}
+
+.wm-rich-content .wm-inline-image {
+  display: block;
+  width: auto;
+  max-width: min(220px, 100%);
+  max-height: 160px;
+  border-radius: 0.85rem;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(148, 163, 184, 0.08);
+  object-fit: cover;
+}
+
+.wm-rich-content pre {
+  white-space: pre-wrap;
+  overflow-x: auto;
 }
 
 .wm-message.user {
@@ -7662,8 +7721,6 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 }
 
 .wm-archive-dialog-message-content {
-  white-space: pre-wrap;
-  word-break: break-word;
   line-height: 1.5;
 }
 
@@ -8161,8 +8218,6 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 }
 
 .wm-chat-message-content {
-  white-space: pre-wrap;
-  word-break: break-word;
   line-height: 1.5;
 }
 

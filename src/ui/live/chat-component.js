@@ -6,6 +6,7 @@
 import Alpine from "/vendor/alpinejs/module.esm.js";
 import { sseManager } from "./sse-manager.js";
 import { show as scrollPillShow, isNearBottom as scrollPillIsNearBottom } from "./scroll-pill.js";
+import { renderMarkdownToHtml } from "../rendering/markdown.js";
 import {
   LIVE_MESSAGE_WINDOW_DEFAULT,
   LIVE_MESSAGE_PAGE_SIZE,
@@ -50,42 +51,6 @@ export function disableAlpineChat() {
   } catch {
     // Storage not available
   }
-}
-
-/**
- * Format message content for display.
- * Handles markdown-like formatting and code blocks.
- * @param {string} content
- * @returns {string}
- */
-function formatMessageContent(content) {
-  if (!content) return "";
-  // Escape HTML first
-  let escaped = content
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-
-  // Handle code blocks (triple backticks)
-  escaped = escaped.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    return `<pre class="code-block${lang ? ` language-${lang}` : ""}"><code>${code.trim()}</code></pre>`;
-  });
-
-  // Handle inline code (single backticks)
-  escaped = escaped.replace(/`([^`]+)`/g, "<code>$1</code>");
-
-  // Handle bold (**text**)
-  escaped = escaped.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-
-  // Collapse multiple consecutive blank lines (3+ becomes 2 max for paragraph breaks)
-  // Handles lines with only whitespace or whitespace + TUI box-drawing characters
-  escaped = escaped.replace(/\n([ \t]*[┃│║]?[ \t]*\n){2,}/g, "\n\n");
-  escaped = escaped.replace(/\n{3,}/g, "\n\n");
-
-  // Handle newlines
-  escaped = escaped.replace(/\n/g, "<br>");
-
-  return escaped;
 }
 
 /**
@@ -213,20 +178,8 @@ export function registerChatComponent() {
       this.connectionState = "disconnected";
     },
 
-    /**
-     * Format a message for display.
-     * @param {Object} message
-     * @returns {Object}
-     */
-    formatMessage(message) {
-      return {
-        ...message,
-        formattedContent: formatMessageContent(message.content),
-        isUser: message.role === "user",
-        isAssistant: message.role === "assistant" || message.role === "agent",
-        isSystem: message.role === "system",
-        time: message.createdAt ? new Date(message.createdAt).toLocaleTimeString() : "",
-      };
+    renderMessageContent(message) {
+      return renderMarkdownToHtml(message?.content ?? "");
     },
 
     /**
@@ -368,7 +321,7 @@ export function getChatTemplate(sessionId) {
     <template x-for="message in $store.chat.visibleMessages" :key="message.id">
       <article class="wm-message"
                :class="message.role === 'user' ? 'user' : (message.role === 'assistant' || message.role === 'agent' ? 'assistant' : 'system')">
-        <pre x-text="message.content"></pre>
+        <div class="wm-message-body wm-rich-content" x-html="$store.chat.renderMessageContent(message)"></div>
         <button type="button" class="wm-message-copy" aria-label="Copy message"
                 @click.stop="
                   const text = message.content || '';

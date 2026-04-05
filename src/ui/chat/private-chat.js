@@ -4,7 +4,7 @@
  * Depends on: state, chat API helpers, render, showToast (via DI).
  */
 
-import { collapseNewlines } from "../utils/text.js";
+import { renderMarkdownToHtml } from "../rendering/markdown.js";
 import {
   CHAT_ROUTE_PREFIX,
   getChatIdFromPath,
@@ -185,8 +185,8 @@ export function initPrivateChat(deps) {
     roleLabel.textContent = message.role === "user" ? "You" : "Assistant";
 
     const contentEl = document.createElement("div");
-    contentEl.className = "wm-chat-message-content";
-    contentEl.textContent = collapseNewlines(message.content);
+    contentEl.className = "wm-chat-message-content wm-rich-content";
+    contentEl.innerHTML = renderMarkdownToHtml(message.content);
 
     container.append(roleLabel, contentEl);
     return container;

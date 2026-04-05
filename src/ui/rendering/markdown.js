@@ -6,9 +6,51 @@
 
 import { escapeHtml, escapeAttribute, sanitizeLanguageClass } from "../core/icons.js";
 
-const sanitizeImageSrc = (value) => {
-  if (value === null || value === undefined) return "#";
+function normaliseMarkdownForDisplay(value) {
+  if (value === null || value === undefined) return "";
+  return String(value).replace(/\\(!\[[^\]]*\]\([^)]+\))/g, "$1");
+}
+
+function rewriteUploadedAssetUrl(value) {
+  if (value === null || value === undefined) return "";
   const trimmed = String(value).trim();
+  if (!trimmed) return "";
+  if (!/^file:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "file:") {
+      return trimmed;
+    }
+    const decodedPath = decodeURIComponent(parsed.pathname);
+    const uploadMatch = decodedPath.match(/(?:^|\/)tmp\/uploads\/(images|files)\/(.+)$/);
+    if (!uploadMatch) {
+      return trimmed;
+    }
+    return `/uploads/${uploadMatch[1]}/${encodeURI(uploadMatch[2])}`;
+  } catch {
+    return trimmed;
+  }
+}
+
+function sanitizeLinkHref(value) {
+  const rewritten = rewriteUploadedAssetUrl(value);
+  if (!rewritten) return "#";
+  const trimmed = String(rewritten).trim();
+  if (!trimmed || /\s/.test(trimmed)) return "#";
+  const explicitlyAllowed = /^(https?:\/\/|mailto:|tel:|\/|\.{1,2}\/|#)/i.test(trimmed);
+  if (explicitlyAllowed) {
+    return escapeAttribute(trimmed);
+  }
+  if (trimmed.includes(":")) return "#";
+  return escapeAttribute(trimmed);
+}
+
+const sanitizeImageSrc = (value) => {
+  const rewritten = rewriteUploadedAssetUrl(value);
+  if (!rewritten) return "#";
+  const trimmed = String(rewritten).trim();
   if (!trimmed || /\s/.test(trimmed)) return "#";
   const explicitlyAllowed = /^(https?:\/\/|\/|\.{1,2}\/|#)/i.test(trimmed);
   if (explicitlyAllowed) {
@@ -21,7 +63,7 @@ const sanitizeImageSrc = (value) => {
 
 export const renderInlineMarkdown = (text) => {
   if (!text) return "";
-  let working = String(text);
+  let working = normaliseMarkdownForDisplay(text);
   const placeholders = [];
   const createPlaceholder = (html) => {
     const token = `@@MD${placeholders.length}@@`;
@@ -35,13 +77,23 @@ export const renderInlineMarkdown = (text) => {
 
   working = working.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_, alt, url) => {
     const safeUrl = sanitizeImageSrc(url);
+    const safeHref = sanitizeLinkHref(url);
     const safeAlt = escapeHtml(alt).replace(/"/g, "&quot;");
-    return createPlaceholder(`<img src="${safeUrl}" alt="${safeAlt}" loading="lazy" />`);
+    const imageHtml = `<img class="wm-inline-image" src="${safeUrl}" alt="${safeAlt}" loading="lazy" />`;
+    if (safeHref === "#") {
+      return createPlaceholder(imageHtml);
+    }
+    return createPlaceholder(
+      `<a class="wm-inline-image-link" href="${safeHref}" target="_blank" rel="noopener noreferrer" aria-label="Open image">${imageHtml}</a>`,
+    );
   });
 
   working = working.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, url) => {
-    const safeUrl = escapeAttribute(url);
     const safeLabel = escapeHtml(label);
+    const safeUrl = sanitizeLinkHref(url);
+    if (safeUrl === "#") {
+      return createPlaceholder(safeLabel);
+    }
     return createPlaceholder(
       `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeLabel}</a>`,
     );
@@ -87,7 +139,7 @@ function parseTableAlignments(sepLine) {
 
 export const renderMarkdownToHtml = (markdown) => {
   if (!markdown) return "";
-  const lines = String(markdown).replace(/\r\n?/g, "\n").split("\n");
+  const lines = normaliseMarkdownForDisplay(markdown).replace(/\r\n?/g, "\n").split("\n");
   let html = "";
   let inCodeBlock = false;
   let codeLanguage = "";

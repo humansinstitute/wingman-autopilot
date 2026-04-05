@@ -3,6 +3,8 @@
  * Displays a collapsible list of archived sessions with filtering capability.
  */
 
+import { renderMarkdownToHtml } from "../rendering/markdown.js";
+
 const ARCHIVE_STORAGE_KEY = "wingman-archive-collapsed";
 
 const escapeHtml = (text) => {
@@ -426,8 +428,8 @@ export function createArchiveViewDialog() {
       roleEl.textContent = msg.role === "user" ? "User" : "Assistant";
 
       const contentEl = document.createElement("div");
-      contentEl.className = "wm-archive-dialog-message-content";
-      contentEl.textContent = msg.content;
+      contentEl.className = "wm-archive-dialog-message-content wm-rich-content";
+      contentEl.innerHTML = renderMarkdownToHtml(msg.content);
 
       const timeEl = document.createElement("div");
       timeEl.className = "wm-archive-dialog-message-time";
