@@ -44,6 +44,18 @@ function resolveAudioExtension(mimeType: string | undefined): string {
   return ".webm";
 }
 
+function isAcceptedVoiceNoteMimeType(mimeType: string | undefined): boolean {
+  const normalized = (mimeType ?? "").trim().toLowerCase().split(";")[0] ?? "";
+  if (!normalized) {
+    return true;
+  }
+  if (normalized.startsWith("audio/")) {
+    return true;
+  }
+  // Some browsers emit audio-only MediaRecorder blobs in a video container.
+  return normalized === "video/webm" || normalized === "video/mp4";
+}
+
 type RequestFormData = Awaited<ReturnType<Request["formData"]>>;
 
 async function parseMultipartFormData(request: Request): Promise<RequestFormData | null> {
@@ -100,7 +112,7 @@ export async function handleVoiceNoteUploadsApi(
     return Response.json({ error: "Voice note exceeds 25MB limit" }, { status: 413 });
   }
 
-  if (audioEntry.type && !audioEntry.type.startsWith("audio/")) {
+  if (!isAcceptedVoiceNoteMimeType(audioEntry.type ?? undefined)) {
     return Response.json({ error: "Only audio uploads are supported" }, { status: 400 });
   }
 
