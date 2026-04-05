@@ -36,6 +36,10 @@ Trigger options:
   --watch-directory <path>   Watch directory (required for file_watcher create)
   --file-pattern <glob>      File pattern for file_watcher (default: *)
 
+Active window options:
+  --active-start <HH:MM>     Start of active window (e.g. 22:00)
+  --active-end <HH:MM>       End of active window (e.g. 05:00)
+
 Update options:
   --enabled <true|false>     Enable/disable trigger
   --nightwatchman <true|false> Enable/disable Nightwatchman
@@ -86,6 +90,8 @@ interface ParsedOptions {
   timezone?: string;
   watchDirectory?: string;
   filePattern?: string;
+  activeStartTime?: string;
+  activeEndTime?: string;
   enabled?: boolean;
   nightwatchmanEnabled?: boolean;
   positional: string[];
@@ -166,6 +172,18 @@ function parseSchedulerOptions(args: string[]): ParsedOptions {
         const value = args[++i];
         if (!value) throw new Error('--file-pattern requires a value');
         parsed.filePattern = value;
+        break;
+      }
+      case '--active-start': {
+        const value = args[++i];
+        if (!value) throw new Error('--active-start requires a value (HH:MM)');
+        parsed.activeStartTime = value;
+        break;
+      }
+      case '--active-end': {
+        const value = args[++i];
+        if (!value) throw new Error('--active-end requires a value (HH:MM)');
+        parsed.activeEndTime = value;
         break;
       }
       case '--enabled': {
@@ -259,6 +277,8 @@ function buildCreatePayload(options: ParsedOptions): Record<string, unknown> {
   if (options.timezone) payload.timezone = options.timezone;
   if (options.watchDirectory) payload.watchDirectory = options.watchDirectory;
   if (options.filePattern) payload.filePattern = options.filePattern;
+  if (options.activeStartTime) payload.activeStartTime = options.activeStartTime;
+  if (options.activeEndTime) payload.activeEndTime = options.activeEndTime;
   if (options.enabled !== undefined) payload.enabled = options.enabled;
   if (options.nightwatchmanEnabled !== undefined) {
     payload.nightwatchmanEnabled = options.nightwatchmanEnabled;
@@ -279,6 +299,8 @@ function buildUpdatePayload(options: ParsedOptions): Record<string, unknown> {
   if (options.timezone !== undefined) payload.timezone = options.timezone;
   if (options.watchDirectory !== undefined) payload.watchDirectory = options.watchDirectory;
   if (options.filePattern !== undefined) payload.filePattern = options.filePattern;
+  if (options.activeStartTime !== undefined) payload.activeStartTime = options.activeStartTime;
+  if (options.activeEndTime !== undefined) payload.activeEndTime = options.activeEndTime;
   if (options.enabled !== undefined) payload.enabled = options.enabled;
   if (options.nightwatchmanEnabled !== undefined) {
     payload.nightwatchmanEnabled = options.nightwatchmanEnabled;

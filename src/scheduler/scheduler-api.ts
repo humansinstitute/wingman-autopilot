@@ -89,6 +89,8 @@ async function handleCreateJob(
   const watchDirectory = typeof body.watchDirectory === "string" ? body.watchDirectory.trim() : "";
   const filePattern = typeof body.filePattern === "string" ? body.filePattern.trim() : "*";
   const nightwatchmanEnabled = body.nightwatchmanEnabled !== false;
+  const activeStartTime = typeof body.activeStartTime === "string" ? body.activeStartTime.trim() : null;
+  const activeEndTime = typeof body.activeEndTime === "string" ? body.activeEndTime.trim() : null;
 
   if (!name) return Response.json({ error: "name is required" }, { status: 400 });
   if (!VALID_AGENTS.includes(agent)) {
@@ -100,6 +102,18 @@ async function handleCreateJob(
     return Response.json({ error: wdResult.error.issues[0]?.message ?? "Invalid workingDirectory" }, { status: 400 });
   }
   if (!initialPrompt) return Response.json({ error: "initialPrompt is required" }, { status: 400 });
+
+  // Validate active window times (HH:MM format)
+  const timeRe = /^\d{2}:\d{2}$/;
+  if (activeStartTime && !timeRe.test(activeStartTime)) {
+    return Response.json({ error: "activeStartTime must be HH:MM format" }, { status: 400 });
+  }
+  if (activeEndTime && !timeRe.test(activeEndTime)) {
+    return Response.json({ error: "activeEndTime must be HH:MM format" }, { status: 400 });
+  }
+  if ((activeStartTime && !activeEndTime) || (!activeStartTime && activeEndTime)) {
+    return Response.json({ error: "Both activeStartTime and activeEndTime are required when setting an active window" }, { status: 400 });
+  }
 
   if (triggerType === "cron") {
     if (!cronExpression) return Response.json({ error: "cronExpression is required for schedule triggers" }, { status: 400 });
@@ -143,6 +157,8 @@ async function handleCreateJob(
     timezone,
     watchDirectory: triggerType === "file_watcher" ? watchDirectory : undefined,
     filePattern: triggerType === "file_watcher" ? filePattern : undefined,
+    activeStartTime: activeStartTime || undefined,
+    activeEndTime: activeEndTime || undefined,
   });
 
   // Schedule it
@@ -202,6 +218,28 @@ async function handleUpdateJob(
     update.watchDirectory = body.watchDirectory.trim();
   }
   if (typeof body.filePattern === "string") update.filePattern = body.filePattern.trim();
+  if (body.activeStartTime !== undefined) {
+    if (body.activeStartTime === null || body.activeStartTime === "") {
+      update.activeStartTime = null;
+    } else if (typeof body.activeStartTime === "string") {
+      const timeRe = /^\d{2}:\d{2}$/;
+      if (!timeRe.test(body.activeStartTime.trim())) {
+        return Response.json({ error: "activeStartTime must be HH:MM format" }, { status: 400 });
+      }
+      update.activeStartTime = body.activeStartTime.trim();
+    }
+  }
+  if (body.activeEndTime !== undefined) {
+    if (body.activeEndTime === null || body.activeEndTime === "") {
+      update.activeEndTime = null;
+    } else if (typeof body.activeEndTime === "string") {
+      const timeRe = /^\d{2}:\d{2}$/;
+      if (!timeRe.test(body.activeEndTime.trim())) {
+        return Response.json({ error: "activeEndTime must be HH:MM format" }, { status: 400 });
+      }
+      update.activeEndTime = body.activeEndTime.trim();
+    }
+  }
   if (typeof body.enabled === "boolean") update.enabled = body.enabled;
 
   const job = deps.store.updateJob(jobId, update);

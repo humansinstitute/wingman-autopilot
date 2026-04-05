@@ -35,6 +35,8 @@ export interface ScheduledJob {
   timezone: string;
   watchDirectory: string | null;
   filePattern: string;
+  activeStartTime: string | null;
+  activeEndTime: string | null;
   enabled: boolean;
   lastRunAt: string | null;
   nextRunAt: string | null;
@@ -66,6 +68,8 @@ export interface CreateJobInput {
   timezone?: string;
   watchDirectory?: string;
   filePattern?: string;
+  activeStartTime?: string;
+  activeEndTime?: string;
 }
 
 export interface UpdateJobInput {
@@ -79,6 +83,8 @@ export interface UpdateJobInput {
   timezone?: string;
   watchDirectory?: string;
   filePattern?: string;
+  activeStartTime?: string | null;
+  activeEndTime?: string | null;
   enabled?: boolean;
   lastRunAt?: string;
   nextRunAt?: string;
@@ -104,6 +110,8 @@ interface RawJobRow {
   timezone: string;
   watchDirectory: string | null;
   filePattern: string;
+  activeStartTime: string | null;
+  activeEndTime: string | null;
   enabled: number;
   lastRunAt: string | null;
   nextRunAt: string | null;
@@ -141,6 +149,8 @@ const JOB_SELECT_COLS = `
   timezone,
   watch_directory AS watchDirectory,
   file_pattern AS filePattern,
+  active_start_time AS activeStartTime,
+  active_end_time AS activeEndTime,
   enabled,
   last_run_at AS lastRunAt,
   next_run_at AS nextRunAt,
@@ -174,9 +184,10 @@ class SchedulerStore {
            agent, working_directory, initial_prompt,
            nightwatchman_enabled, trigger_type, cron_expression, timezone,
            watch_directory, file_pattern,
+           active_start_time, active_end_time,
            enabled, last_run_at, next_run_at,
            created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 1, NULL, NULL, ?16, ?17)`,
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, 1, NULL, NULL, ?18, ?19)`,
       )
       .run(
         id,
@@ -194,6 +205,8 @@ class SchedulerStore {
         input.timezone ?? "UTC",
         input.watchDirectory ?? null,
         input.filePattern ?? "*",
+        input.activeStartTime ?? null,
+        input.activeEndTime ?? null,
         now,
         now,
       );
@@ -281,6 +294,14 @@ class SchedulerStore {
     if (input.filePattern !== undefined) {
       sets.push(`file_pattern = ?${paramIndex++}`);
       values.push(input.filePattern);
+    }
+    if (input.activeStartTime !== undefined) {
+      sets.push(`active_start_time = ?${paramIndex++}`);
+      values.push(input.activeStartTime);
+    }
+    if (input.activeEndTime !== undefined) {
+      sets.push(`active_end_time = ?${paramIndex++}`);
+      values.push(input.activeEndTime);
     }
     if (input.enabled !== undefined) {
       sets.push(`enabled = ?${paramIndex++}`);
@@ -418,6 +439,8 @@ class SchedulerStore {
       "ALTER TABLE scheduled_jobs ADD COLUMN trigger_type TEXT NOT NULL DEFAULT 'cron'",
       "ALTER TABLE scheduled_jobs ADD COLUMN watch_directory TEXT",
       "ALTER TABLE scheduled_jobs ADD COLUMN file_pattern TEXT DEFAULT '*'",
+      "ALTER TABLE scheduled_jobs ADD COLUMN active_start_time TEXT",
+      "ALTER TABLE scheduled_jobs ADD COLUMN active_end_time TEXT",
     ];
     for (const sql of migrations) {
       try { this.db.exec(sql); } catch { /* column already exists */ }

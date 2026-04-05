@@ -133,6 +133,8 @@ export function initSchedulerPage({ showToast }) {
       nightwatchmanEnabled: true,
       watchDirectory: "",
       filePattern: "*",
+      activeStartTime: "",
+      activeEndTime: "",
     },
     // Schedule picker state (separate from form to keep API payload clean)
     sched: {
@@ -297,6 +299,8 @@ export function initSchedulerPage({ showToast }) {
         nightwatchmanEnabled: !!job.nightwatchmanEnabled,
         watchDirectory: job.watchDirectory || "",
         filePattern: job.filePattern || "*",
+        activeStartTime: job.activeStartTime || "",
+        activeEndTime: job.activeEndTime || "",
       };
       this.editSched = parseCron(job.cronExpression);
     },
@@ -326,6 +330,14 @@ export function initSchedulerPage({ showToast }) {
           payload.watchDirectory = this.editForm.watchDirectory;
           payload.filePattern = this.editForm.filePattern;
         }
+        // Active window
+        if (this.editForm.activeStartTime && this.editForm.activeEndTime) {
+          payload.activeStartTime = this.editForm.activeStartTime;
+          payload.activeEndTime = this.editForm.activeEndTime;
+        } else {
+          payload.activeStartTime = null;
+          payload.activeEndTime = null;
+        }
         await this.$store.scheduler.update(this.editingJobId, payload);
         this.editingJobId = null;
         this.editForm = {};
@@ -350,6 +362,8 @@ export function initSchedulerPage({ showToast }) {
         nightwatchmanEnabled: true,
         watchDirectory: "",
         filePattern: "*",
+        activeStartTime: "",
+        activeEndTime: "",
       };
       this.sched = { frequency: "daily", hour: 9, minute: 0, weekday: "1" };
       this._detachAC();
@@ -373,6 +387,11 @@ export function initSchedulerPage({ showToast }) {
         } else if (this.triggerType === "file_watcher") {
           payload.watchDirectory = this.form.watchDirectory;
           payload.filePattern = this.form.filePattern;
+        }
+        // Active window (applies to cron and file_watcher)
+        if (this.form.activeStartTime && this.form.activeEndTime) {
+          payload.activeStartTime = this.form.activeStartTime;
+          payload.activeEndTime = this.form.activeEndTime;
         }
         // nostr triggers need no extra fields
         await this.$store.scheduler.create(payload);
@@ -431,7 +450,11 @@ export function initSchedulerPage({ showToast }) {
         const pat = job.filePattern && job.filePattern !== "*" ? ` (${job.filePattern})` : "";
         return `Watching: ${job.watchDirectory}${pat}`;
       }
-      return describeCron(job.cronExpression);
+      let desc = describeCron(job.cronExpression);
+      if (job.activeStartTime && job.activeEndTime) {
+        desc += ` (${job.activeStartTime}\u2013${job.activeEndTime})`;
+      }
+      return desc;
     },
 
     async copyToClipboard(text, label) {
@@ -609,6 +632,26 @@ function getPageTemplate() {
             Nostr triggers are activated by publishing a <strong>kind 9256</strong> event encrypted to your bot's pubkey.
             After creating this trigger, you'll see the Trigger ID and Bot Pubkey needed to fire it remotely.
           </p>
+        </div>
+      </template>
+
+      <!-- Active Window (cron and file_watcher only) -->
+      <template x-if="!isNostr">
+        <div style="margin-top: 0.75rem;">
+          <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Active Window <span style="font-weight: 400; color: var(--text-secondary);">(optional)</span></label>
+          <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+            <input type="time" class="wm-input" style="width: 8rem;" x-model="form.activeStartTime" placeholder="HH:MM">
+            <span style="font-size: 0.85rem; color: var(--text-secondary);">to</span>
+            <input type="time" class="wm-input" style="width: 8rem;" x-model="form.activeEndTime" placeholder="HH:MM">
+          </div>
+          <small style="color: var(--text-secondary); margin-top: 4px; display: block;">
+            <template x-if="form.activeStartTime && form.activeEndTime">
+              <span x-text="'Only fires between ' + form.activeStartTime + ' and ' + form.activeEndTime + ' (' + form.timezone + ')'"></span>
+            </template>
+            <template x-if="!form.activeStartTime || !form.activeEndTime">
+              <span>Leave empty to run at any time. Set to restrict when the trigger fires.</span>
+            </template>
+          </small>
         </div>
       </template>
 
@@ -851,6 +894,26 @@ function getPageTemplate() {
                 <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0;">
                   Nostr triggers are activated by publishing a <strong>kind 9256</strong> event encrypted to your bot's pubkey.
                 </p>
+              </div>
+            </template>
+
+            <!-- Active Window (cron and file_watcher only) -->
+            <template x-if="!editIsNostr">
+              <div style="margin-top: 0.75rem;">
+                <label style="font-weight: 600; font-size: 0.85rem; display: block; margin-bottom: 0.25rem;">Active Window <span style="font-weight: 400; color: var(--text-secondary);">(optional)</span></label>
+                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                  <input type="time" class="wm-input" style="width: 8rem;" x-model="editForm.activeStartTime" placeholder="HH:MM">
+                  <span style="font-size: 0.85rem; color: var(--text-secondary);">to</span>
+                  <input type="time" class="wm-input" style="width: 8rem;" x-model="editForm.activeEndTime" placeholder="HH:MM">
+                </div>
+                <small style="color: var(--text-secondary); margin-top: 4px; display: block;">
+                  <template x-if="editForm.activeStartTime && editForm.activeEndTime">
+                    <span x-text="'Only fires between ' + editForm.activeStartTime + ' and ' + editForm.activeEndTime + ' (' + editForm.timezone + ')'"></span>
+                  </template>
+                  <template x-if="!editForm.activeStartTime || !editForm.activeEndTime">
+                    <span>Leave empty to run at any time.</span>
+                  </template>
+                </small>
               </div>
             </template>
 
