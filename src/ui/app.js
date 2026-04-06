@@ -2864,6 +2864,13 @@ liveRefreshController = createLiveRefreshController({
   sseManager,
   getCurrentRoute: () => currentRoute,
   getActiveSessionId: () => sessionsStore().activeSessionId,
+  getSessionRuntimeStatus: (sessionId) => {
+    const session = sessionsStore().items.find((item) => item.id === sessionId);
+    if (!session) {
+      return null;
+    }
+    return session.agentRuntimeStatus ?? session.status ?? null;
+  },
   fetchConversation: (...args) => fetchConversation(...args),
   fetchLogs: (...args) => fetchLogs(...args),
   fetchSessionQueue: (...args) => fetchSessionQueue(...args),

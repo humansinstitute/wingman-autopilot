@@ -73,6 +73,7 @@ describe("createLiveRefreshController", () => {
       sseManager,
       getCurrentRoute: () => "live",
       getActiveSessionId: () => "session-1",
+      getSessionRuntimeStatus: () => "stable",
       fetchConversation: async (sessionId) => calls.push(["conversation", sessionId]),
       fetchLogs: async (sessionId) => calls.push(["logs", sessionId]),
       fetchSessionQueue: async (sessionId) => calls.push(["queue", sessionId]),
@@ -107,6 +108,7 @@ describe("createLiveRefreshController", () => {
       sseManager,
       getCurrentRoute: () => "live",
       getActiveSessionId: () => "session-2",
+      getSessionRuntimeStatus: () => "stable",
       fetchConversation: async () => {},
       fetchLogs: async () => {},
       fetchSessionQueue: async () => {},
@@ -134,6 +136,7 @@ describe("createLiveRefreshController", () => {
       sseManager,
       getCurrentRoute: () => "live",
       getActiveSessionId: () => "session-3",
+      getSessionRuntimeStatus: () => "running",
       fetchConversation: async () => {},
       fetchLogs: async () => {},
       fetchSessionQueue: async () => {},
@@ -156,5 +159,33 @@ describe("createLiveRefreshController", () => {
     await Promise.resolve();
     expect(controller.getPollMode()).toBe(LIVE_POLL_MODE.off);
     expect(intervals[0]?.cleared).toBe(true);
+  });
+
+  test("keeps a 1s compatibility poll running while the active session is busy", async () => {
+    const intervals = createTimerHarness();
+    const sseManager = createFakeSseManager();
+
+    const controller = createLiveRefreshController({
+      sseManager,
+      getCurrentRoute: () => "live",
+      getActiveSessionId: () => "session-4",
+      getSessionRuntimeStatus: () => "running",
+      fetchConversation: async () => {},
+      fetchLogs: async () => {},
+      fetchSessionQueue: async () => {},
+      fetchSessionDetails: async () => ({ agentRuntimeStatus: "running" }),
+      applySessionDetails: () => {},
+      isComposerInteractionActive: () => false,
+      isMobileKeyboardOpen: () => false,
+    });
+
+    controller.activateSession("session-4");
+    sseManager.emitConnection("session-4", "connected");
+    sseManager.emitStreamMode("session-4", LIVE_STREAM_MODE.eventStream);
+    await Promise.resolve();
+
+    expect(controller.getPollMode()).toBe(LIVE_POLL_MODE.compatibility);
+    expect(intervals).toHaveLength(1);
+    expect(intervals[0]?.ms).toBe(1000);
   });
 });

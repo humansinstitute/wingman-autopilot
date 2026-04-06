@@ -26,6 +26,7 @@ export function createLiveRefreshController(deps) {
     sseManager,
     getCurrentRoute,
     getActiveSessionId,
+    getSessionRuntimeStatus,
     fetchConversation,
     fetchLogs,
     fetchSessionQueue,
@@ -158,16 +159,26 @@ export function createLiveRefreshController(deps) {
     const streamMode = typeof sseManager.getStreamMode === "function"
       ? sseManager.getStreamMode(sessionId)
       : LIVE_STREAM_MODE.unknown;
-
-    if (streamMode === LIVE_STREAM_MODE.heartbeatOnly) {
-      return LIVE_POLL_MODE.compatibility;
-    }
+    const runtimeStatus = typeof getSessionRuntimeStatus === "function"
+      ? getSessionRuntimeStatus(sessionId)
+      : null;
 
     if (
       streamMode === LIVE_STREAM_MODE.degraded ||
       connectionState === "disconnected"
     ) {
       return LIVE_POLL_MODE.recovery;
+    }
+
+    // Keep the active live session on a lightweight 1s refresh loop while the
+    // agent is actively working. This covers heartbeat-only adapters and
+    // event-stream sessions whose upstream transport goes quiet between sparse
+    // progress updates.
+    if (
+      streamMode === LIVE_STREAM_MODE.heartbeatOnly ||
+      runtimeStatus === "running"
+    ) {
+      return LIVE_POLL_MODE.compatibility;
     }
 
     return LIVE_POLL_MODE.off;
