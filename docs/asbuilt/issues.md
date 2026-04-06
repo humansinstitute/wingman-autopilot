@@ -55,22 +55,23 @@ Practical follow-up:
 - Keep new live-message consumers on the `MessageStore` contract rather than reintroducing transient mirrors.
 - Maintain targeted tests around message normalization/equality so legacy payload shapes keep mapping cleanly into the canonical store.
 
-### 3. `AGENT_MODE` is still overloaded and partially deprecated
+### 3. Historical note: `AGENT_MODE` used to be overloaded
 
 Evidence:
 
-- `src/config.ts:133-139` still uses `AGENT_MODE` to choose the agent API binary path.
-- `src/config.ts:268-280` also treats `AGENT_MODE=pm2` as a deprecated alias for `AGENT_SPAWN_MODE=pm2`.
+- Older builds used `AGENT_MODE` for both binary selection and spawn-mode compatibility.
+- The live contract now splits those concerns: `AGENTAPI_BIN` is the primary binary-path setting, `AGENT_SPAWN_MODE` is the primary spawn-mode setting, and `AGENT_MODE` is compatibility-only input.
 
 Why this matters:
 
-- One environment variable now carries two different historical meanings.
-- That makes startup behavior harder to reason about and leaves room for confusing operator overrides.
+- Operators still encounter legacy examples and old local env files.
+- The compatibility bridge remains supported, so the precedence rules need to stay explicit in code and docs.
 
-Practical follow-up:
+Current contract:
 
-- Collapse the launch semantics to one primary variable and keep the legacy alias only as a compatibility bridge with explicit deprecation warnings.
-- Document the binary-selection and spawn-mode split in one place for operators.
+- `AGENT_SPAWN_MODE` wins over `AGENT_MODE=pm2`.
+- `AGENTAPI_BIN` wins over `AGENT_MODE=tmux`.
+- `AGENT_MODE=standard` is deprecated and has no effect.
 
 ### 4. Startup still mutates the app registry to remove legacy entries
 

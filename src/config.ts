@@ -88,6 +88,22 @@ const DEFAULT_STATUS_POLL_INTERVAL_MS = 100;
 const DEFAULT_STATUS_POLL_MAX_INTERVAL_MS = 30000;
 const DEFAULT_STATUS_POLL_TIMEOUT_MS = 5000;
 const DEFAULT_SSE_KEEPALIVE_INTERVAL_MS = 30000;
+const DEFAULT_AGENTAPI_RELATIVE_PATH = "../out/agentapi";
+const DEFAULT_AGENTAPI_TMUX_RELATIVE_PATH = "../out/agentapi-tmux";
+
+type ConfigEnvironment = Record<string, string | undefined>;
+
+type AgentApiBinarySource = "default" | "agentapi_bin" | "legacy_agent_mode_tmux";
+
+type AgentSpawnModeSource = "default" | "agent_spawn_mode" | "legacy_agent_mode_pm2";
+
+export interface AgentLaunchConfigResolution {
+  agentApiBinary: string;
+  agentApiBinarySource: AgentApiBinarySource;
+  agentSpawnMode: AgentSpawnMode;
+  agentSpawnModeSource: AgentSpawnModeSource;
+  warnings: string[];
+}
 
 const sanitizeInteger = (value: string | undefined, fallback: number): number => {
   if (!value) return fallback;
@@ -130,18 +146,100 @@ const parseEnvironmentString = (input: string | undefined, fallback: string): st
   return trimmed;
 };
 
-const resolveAgentApiBinary = (): string => {
-  if (Bun.env.AGENTAPI_BIN && Bun.env.AGENTAPI_BIN.trim().length > 0) {
-    return Bun.env.AGENTAPI_BIN;
+function readEnvValue(env: ConfigEnvironment, key: string): string | undefined {
+  return env[key];
+}
+
+function readTrimmedEnvValue(env: ConfigEnvironment, key: string): string | null {
+  const value = readEnvValue(env, key);
+  if (!value) {
+    return null;
   }
-  const legacyMode = Bun.env.AGENT_MODE?.trim().toLowerCase();
-  const defaultAgentApiPath = legacyMode === "tmux" ? "../out/agentapi-tmux" : "../out/agentapi";
-  return new URL(defaultAgentApiPath, import.meta.url).pathname;
-};
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
 
-const agentApiBinary = resolveAgentApiBinary();
+function readLowerCaseEnvValue(env: ConfigEnvironment, key: string): string | null {
+  const trimmed = readTrimmedEnvValue(env, key);
+  return trimmed ? trimmed.toLowerCase() : null;
+}
 
-const baseCommand = (ctx: AgentCommandContext) => {
+function resolveDefaultAgentApiPath(relativePath: string): string {
+  return new URL(relativePath, import.meta.url).pathname;
+}
+
+export function resolveAgentLaunchConfig(env: ConfigEnvironment = Bun.env): AgentLaunchConfigResolution {
+  const warnings: string[] = [];
+  const legacyModeInput = readLowerCaseEnvValue(env, "AGENT_MODE");
+  const spawnModeInput = readLowerCaseEnvValue(env, "AGENT_SPAWN_MODE");
+  const agentApiBinInput = readTrimmedEnvValue(env, "AGENTAPI_BIN");
+
+  let agentApiBinarySource: AgentApiBinarySource = "default";
+  let agentApiBinary = resolveDefaultAgentApiPath(DEFAULT_AGENTAPI_RELATIVE_PATH);
+  if (agentApiBinInput) {
+    agentApiBinarySource = "agentapi_bin";
+    agentApiBinary = agentApiBinInput;
+    if (legacyModeInput === "tmux") {
+      warnings.push(
+        "AGENT_MODE=tmux is deprecated and ignored because AGENTAPI_BIN is set; configure the binary path with AGENTAPI_BIN only.",
+      );
+    }
+  } else if (legacyModeInput === "tmux") {
+    agentApiBinarySource = "legacy_agent_mode_tmux";
+    agentApiBinary = resolveDefaultAgentApiPath(DEFAULT_AGENTAPI_TMUX_RELATIVE_PATH);
+    warnings.push(
+      "AGENT_MODE=tmux is deprecated; set AGENTAPI_BIN to the tmux agentapi binary path instead.",
+    );
+  }
+
+  let agentSpawnModeSource: AgentSpawnModeSource = "default";
+  let agentSpawnMode: AgentSpawnMode = "bun";
+  const validSpawnModes: AgentSpawnMode[] = ["bun", "pm2"];
+  if (spawnModeInput && validSpawnModes.includes(spawnModeInput as AgentSpawnMode)) {
+    agentSpawnModeSource = "agent_spawn_mode";
+    agentSpawnMode = spawnModeInput as AgentSpawnMode;
+    if (legacyModeInput === "pm2") {
+      if (agentSpawnMode === "pm2") {
+        warnings.push("AGENT_MODE=pm2 is deprecated; use AGENT_SPAWN_MODE=pm2.");
+      } else {
+        warnings.push(
+          `AGENT_MODE=pm2 is deprecated and ignored because AGENT_SPAWN_MODE=${agentSpawnMode}.`,
+        );
+      }
+    }
+  } else if (spawnModeInput) {
+    warnings.push(
+      `Ignoring unrecognized AGENT_SPAWN_MODE="${spawnModeInput}"; expected "bun" or "pm2".`,
+    );
+    if (legacyModeInput === "pm2") {
+      agentSpawnModeSource = "legacy_agent_mode_pm2";
+      agentSpawnMode = "pm2";
+      warnings.push("AGENT_MODE=pm2 is deprecated; use AGENT_SPAWN_MODE=pm2.");
+    }
+  } else if (legacyModeInput === "pm2") {
+    agentSpawnModeSource = "legacy_agent_mode_pm2";
+    agentSpawnMode = "pm2";
+    warnings.push("AGENT_MODE=pm2 is deprecated; use AGENT_SPAWN_MODE=pm2.");
+  }
+
+  if (legacyModeInput === "standard") {
+    warnings.push(
+      "AGENT_MODE=standard is deprecated and has no effect; use AGENT_SPAWN_MODE and AGENTAPI_BIN for active configuration.",
+    );
+  } else if (legacyModeInput && !["pm2", "standard", "tmux"].includes(legacyModeInput)) {
+    warnings.push(`Ignoring unrecognized AGENT_MODE="${legacyModeInput}".`);
+  }
+
+  return {
+    agentApiBinary,
+    agentApiBinarySource,
+    agentSpawnMode,
+    agentSpawnModeSource,
+    warnings,
+  };
+}
+
+function baseCommand(agentApiBinary: string, ctx: AgentCommandContext): string[] {
   return [
     agentApiBinary,
     "server",
@@ -152,26 +250,29 @@ const baseCommand = (ctx: AgentCommandContext) => {
     "--allowed-hosts",
     ctx.config.allowedHosts,
   ];
-};
+}
 
-const withAgentCommand = (
+function withAgentCommand(
+  agentApiBinary: string,
   label: string,
   agentCli: string,
   options?: { type?: string; extraArgs?: string[] },
-): AgentDefinition => ({
-  label,
-  command: (ctx) => {
-    const args = baseCommand(ctx);
-    if (options?.type) {
-      args.push(`--type=${options.type}`);
-    }
-    args.push("--", agentCli);
-    if (options?.extraArgs) {
-      args.push(...options.extraArgs);
-    }
-    return args;
-  },
-});
+): AgentDefinition {
+  return {
+    label,
+    command: (ctx) => {
+      const args = baseCommand(agentApiBinary, ctx);
+      if (options?.type) {
+        args.push(`--type=${options.type}`);
+      }
+      args.push("--", agentCli);
+      if (options?.extraArgs) {
+        args.push(...options.extraArgs);
+      }
+      return args;
+    },
+  };
+}
 
 function resolveClaudeExtraArgs(glovesValue: string | undefined): string[] {
   const normalized = glovesValue?.trim().toUpperCase();
@@ -190,21 +291,29 @@ function resolveOpenCodeExtraArgs(modelValue: string | undefined): string[] {
   return ["--model", effectiveModel];
 }
 
-const claudeExtraArgs = resolveClaudeExtraArgs(Bun.env.GLOVES);
-const openCodeExtraArgs = resolveOpenCodeExtraArgs(Bun.env.OPENCODE_MODEL);
+function createDefaultAgents(
+  env: ConfigEnvironment,
+  agentApiBinary: string,
+): Record<AgentType, AgentDefinition> {
+  const claudeExtraArgs = resolveClaudeExtraArgs(readEnvValue(env, "GLOVES"));
+  const openCodeExtraArgs = resolveOpenCodeExtraArgs(readEnvValue(env, "OPENCODE_MODEL"));
 
-const defaultAgents: Record<AgentType, AgentDefinition> = {
-  codex: withAgentCommand("Codex", Bun.env.CODEX_CLI ?? "codex", { type: "codex" }),
-  claude: withAgentCommand("Claude", Bun.env.CLAUDE_CLI ?? "claude", { extraArgs: claudeExtraArgs }),
-  goose: withAgentCommand("Goose", Bun.env.GOOSE_CLI ?? "goose"),
-  opencode: withAgentCommand("OpenCode", Bun.env.OPENCODE_CLI ?? "opencode", {
-    type: "opencode",
-    extraArgs: openCodeExtraArgs,
-  }),
-  gemini: withAgentCommand("Gemini", Bun.env.GEMINI_CLI ?? "gemini"),
-};
+  return {
+    codex: withAgentCommand(agentApiBinary, "Codex", readEnvValue(env, "CODEX_CLI") ?? "codex", { type: "codex" }),
+    claude: withAgentCommand(agentApiBinary, "Claude", readEnvValue(env, "CLAUDE_CLI") ?? "claude", {
+      extraArgs: claudeExtraArgs,
+    }),
+    goose: withAgentCommand(agentApiBinary, "Goose", readEnvValue(env, "GOOSE_CLI") ?? "goose"),
+    opencode: withAgentCommand(agentApiBinary, "OpenCode", readEnvValue(env, "OPENCODE_CLI") ?? "opencode", {
+      type: "opencode",
+      extraArgs: openCodeExtraArgs,
+    }),
+    gemini: withAgentCommand(agentApiBinary, "Gemini", readEnvValue(env, "GEMINI_CLI") ?? "gemini"),
+  };
+}
 
 export const loadConfig = (): WingmanConfig => {
+  const agentLaunchConfig = resolveAgentLaunchConfig();
   const port = sanitizeInteger(Bun.env.PORT, DEFAULT_PORT);
   const agentPortStart = sanitizeInteger(Bun.env.AGENT_PORTS, DEFAULT_AGENT_PORTS);
   const agentPortMax = sanitizeInteger(Bun.env.AGENT_MAX, DEFAULT_AGENT_MAX);
@@ -261,25 +370,16 @@ export const loadConfig = (): WingmanConfig => {
     ? (defaultAgentInput as AgentType)
     : "claude";
   console.log(`[Config] Default agent: ${defaultAgent}${defaultAgentInput && defaultAgentInput !== defaultAgent ? ` (DEFAULT_AGENT="${defaultAgentInput}" was invalid)` : ""}`);
+  const claudeExtraArgs = resolveClaudeExtraArgs(Bun.env.GLOVES);
+  const agents = createDefaultAgents(Bun.env, agentLaunchConfig.agentApiBinary);
   if (claudeExtraArgs.includes("--dangerously-skip-permissions")) {
     console.log("[Config] Claude approvals: disabled (GLOVES=OFF)");
   }
 
-  // Agent spawn mode - "bun" (default) or "pm2" for persistence across restarts
-  const validSpawnModes: AgentSpawnMode[] = ["bun", "pm2"];
-  const legacyModeInput = Bun.env.AGENT_MODE?.trim().toLowerCase();
-  const spawnModeInput = Bun.env.AGENT_SPAWN_MODE?.trim().toLowerCase();
-  let agentSpawnMode: AgentSpawnMode = "bun";
-  if (spawnModeInput && validSpawnModes.includes(spawnModeInput as AgentSpawnMode)) {
-    agentSpawnMode = spawnModeInput as AgentSpawnMode;
-  } else if (legacyModeInput === "pm2") {
-    // Backwards compatibility: AGENT_MODE=pm2 should behave like AGENT_SPAWN_MODE=pm2.
-    agentSpawnMode = "pm2";
-    console.warn("[Config] AGENT_MODE=pm2 is deprecated; use AGENT_SPAWN_MODE=pm2");
-  } else if (legacyModeInput && !["standard", "tmux"].includes(legacyModeInput)) {
-    console.warn(`[Config] Ignoring unrecognized AGENT_MODE="${legacyModeInput}"`);
+  for (const warning of agentLaunchConfig.warnings) {
+    console.warn(`[Config] ${warning}`);
   }
-  if (agentSpawnMode === "pm2") {
+  if (agentLaunchConfig.agentSpawnMode === "pm2") {
     console.log("[Config] Agent spawn mode: pm2 (sessions persist across restarts)");
   }
 
@@ -345,7 +445,7 @@ export const loadConfig = (): WingmanConfig => {
     allowedDirectories,
     allowedOrigins,
     allowedHosts,
-    agents: defaultAgents,
+    agents,
     defaultAgent,
     agentStatusPollIntervalMs,
     agentStatusPollMaxIntervalMs,
@@ -353,7 +453,7 @@ export const loadConfig = (): WingmanConfig => {
     subdomainBaseDomain,
     subdomainProxyEnabled,
     sseKeepaliveIntervalMs,
-    agentSpawnMode,
+    agentSpawnMode: agentLaunchConfig.agentSpawnMode,
     appRoutingMode,
     mapleProxyUrl,
     mapleDefaultModel,

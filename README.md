@@ -76,9 +76,9 @@ Options:
 | `HOST_URL_BASE`  | Template for web app links; `<port>` is replaced with the app's assigned port  | `https://host.otherstuff.ai/<port>` |
 | `DIRECTORY_DEF`  | Working directory used when launching agent subprocesses                       | `~/code`                |
 | `FOLDERACCESS`   | Comma-separated directories exposed to file browsers and pickers               | `DIRECTORY_DEF`         |
-| `AGENT_SPAWN_MODE` | Agent process manager: `bun` (direct child process) or `pm2` (persists agent processes across Wingman restarts) | `bun` |
-| `AGENT_MODE`     | Legacy compatibility mode (`pm2` maps to `AGENT_SPAWN_MODE=pm2`; `tmux` selects `agentapi-tmux` binary when `AGENTAPI_BIN` is unset) | unset |
-| `AGENTAPI_BIN`   | Absolute path to the AgentAPI binary used to host each agent                   | `./out/agentapi` (or `./out/agentapi-tmux` when `AGENT_MODE=tmux`) |
+| `AGENT_SPAWN_MODE` | Primary spawn-mode setting: `bun` (direct child process) or `pm2` (persists agent processes across Wingman restarts) | `bun` |
+| `AGENT_MODE`     | Deprecated compatibility input only: `pm2` falls back to `AGENT_SPAWN_MODE=pm2` when `AGENT_SPAWN_MODE` is unset, `tmux` falls back to `agentapi-tmux` only when `AGENTAPI_BIN` is unset, `standard` has no effect | unset |
+| `AGENTAPI_BIN`   | Primary binary-path setting for the AgentAPI executable used to host each agent | `./out/agentapi` |
 | `CLAUDE_CLI`     | Executable invoked for Claude sessions (override if not simply `claude`)       | `claude`                |
 | `GLOVES`         | Claude approval mode; set `OFF` to add `--dangerously-skip-permissions`         | unset (normal approvals) |
 | `GOOSE_CLI`      | Executable invoked for Goose sessions                                          | `goose`                 |
@@ -108,3 +108,9 @@ Legacy fallback also works:
 ```bash
 AGENT_MODE=pm2 bun start
 ```
+
+Active contract:
+
+- Use `AGENT_SPAWN_MODE` to choose `bun` or `pm2`.
+- Use `AGENTAPI_BIN` to choose which `agentapi` binary Wingman launches.
+- `AGENT_MODE` is deprecated compatibility only. `AGENT_SPAWN_MODE` always wins over `AGENT_MODE=pm2`, and `AGENTAPI_BIN` always wins over `AGENT_MODE=tmux`.

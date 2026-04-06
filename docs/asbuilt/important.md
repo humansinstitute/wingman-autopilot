@@ -38,11 +38,15 @@ Primary source of truth for this review:
 - `src/server/bootstrap/agentapi.ts` treats `downloads.json` as the release manifest for `agentapi`. It verifies SHA-256, writes `out/agentapi`, and writes a sibling `.version` file. Deleting the version file makes the next boot behave like an upgrade path even if the binary already exists.
 - `src/index.ts` globally swallows a specific class of Nostr relay rejections (`Event rejected`, `AUTH required`, `rate-limited`, `blocked`) so those do not crash the whole process. Other uncaught exceptions still terminate the server.
 
-## `AGENT_MODE` is overloaded
+## Agent launch env contract
 
-- `AGENT_MODE=tmux` still changes the default `agentapi` binary path from `out/agentapi` to `out/agentapi-tmux`.
-- Agent persistence is now controlled by `AGENT_SPAWN_MODE=pm2`. `AGENT_MODE=pm2` is only a deprecated compatibility alias for that setting.
-- Do not assume `AGENT_MODE` means one thing. In the live code it still carries legacy meaning for both agentapi binary selection and spawn behavior.
+- `AGENT_SPAWN_MODE` is the primary spawn-mode setting. Use it for `bun` or `pm2`.
+- `AGENTAPI_BIN` is the primary binary-path setting. Use it to point Wingman at a specific `agentapi` executable.
+- `AGENT_MODE` is now compatibility-only input:
+- `AGENT_MODE=pm2` still maps to spawn mode `pm2`, but only when `AGENT_SPAWN_MODE` is not set to a valid value.
+- `AGENT_MODE=tmux` still maps to the legacy `out/agentapi-tmux` fallback, but only when `AGENTAPI_BIN` is unset.
+- `AGENT_MODE=standard` is accepted as a deprecated no-op.
+- Precedence is explicit: `AGENT_SPAWN_MODE` wins over `AGENT_MODE=pm2`, and `AGENTAPI_BIN` wins over `AGENT_MODE=tmux`.
 
 ## Session launch is intentionally layered and partially degradable
 
