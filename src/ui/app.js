@@ -407,6 +407,7 @@ let handleImageUploads = async () => {};
 let handleAttachmentUploads = async () => {};
 let cleanupOrphanedMarkers = () => {};
 let openVoiceNoteRecorder = async () => {};
+let prepareVoiceNoteDraftForSend = async (_sessionId, draft) => draft;
 
 // -- Agent indicators initialized via initAgentIndicators (see bootstrap) --
 let resolveAgentRuntimeStatus = () => null;
@@ -2082,12 +2083,26 @@ const sendMessage = async (sessionId, content) => {
       showToast(`Failed to send ${trimmed}`, { variant: "error" });
       return { sent: false, queued: false, error };
     }
-    return;
+  }
+
+  let preparedContent = trimmed;
+  try {
+    preparedContent = await prepareVoiceNoteDraftForSend(sessionId, trimmed);
+  } catch (error) {
+    const message = error instanceof Error && error.message ? error.message : "Failed to prepare voice note transcript.";
+    showToast(`Failed to send message: ${message}`, { variant: "error" });
+    return { sent: false, queued: false, error };
+  }
+
+  const finalContent = typeof preparedContent === "string" ? preparedContent.trim() : "";
+  if (!finalContent) {
+    window.alert("Enter a message before sending.");
+    return { sent: false, queued: false };
   }
 
   // Check if agent is busy - if so, queue the message
   if (isSessionBusy(session)) {
-    const queued = await addToPromptQueue(sessionId, trimmed);
+    const queued = await addToPromptQueue(sessionId, finalContent);
     if (queued) {
       state.messageDrafts.set(sessionId, "");
       // Clear the textarea
@@ -2107,7 +2122,7 @@ const sendMessage = async (sessionId, content) => {
   // Agent is not busy - send message immediately
   try {
     sessionMessageSendInFlight.add(sessionId);
-    const payload = await postSessionMessage(sessionId, trimmed, "user");
+    const payload = await postSessionMessage(sessionId, finalContent, "user");
     const messages = Array.isArray(payload?.messages) ? payload.messages : [];
     await MessageStore.syncFromServer(sessionId, messages);
     state.messageDrafts.set(sessionId, "");
@@ -2884,10 +2899,11 @@ cleanupOrphanedMarkers = imageAttachmentsModule.cleanupOrphanedMarkers;
 
 const voiceNotesModule = initVoiceNotes({
   getSessionById,
-  sendMessage,
+  insertTextAtCursor,
   showToast,
 });
 openVoiceNoteRecorder = voiceNotesModule.openVoiceNoteRecorder;
+prepareVoiceNoteDraftForSend = voiceNotesModule.prepareDraftForSend;
 
 const agentIndicatorsModule = initAgentIndicators({
   state,
