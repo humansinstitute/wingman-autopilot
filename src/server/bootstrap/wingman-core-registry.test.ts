@@ -94,6 +94,28 @@ class InMemoryAppRegistry {
   async removeApp(id: string): Promise<boolean> {
     return this.records.delete(id);
   }
+
+  async reassignAppId(currentId: string, nextId: string): Promise<AppRecord> {
+    const existing = this.records.get(currentId);
+    if (!existing) {
+      throw new Error(`Unknown app: ${currentId}`);
+    }
+    if (currentId === nextId) {
+      return { ...existing };
+    }
+    if (this.records.has(nextId)) {
+      throw new Error(`App with id "${nextId}" already exists`);
+    }
+
+    const next: AppRecord = {
+      ...existing,
+      id: nextId,
+      updatedAt: new Date().toISOString(),
+    };
+    this.records.delete(currentId);
+    this.records.set(nextId, next);
+    return { ...next };
+  }
 }
 
 function buildApp(overrides: Partial<AppRecord> & Pick<AppRecord, "id" | "label" | "root">): AppRecord {
@@ -184,12 +206,19 @@ describe("wingman-core registry bootstrap", () => {
     expect(logger.warn[0]).toContain("preserving 1 legacy Wingman app entry during startup");
   });
 
-  test("startup surfaces a legacy root conflict instead of deleting records when wingman-core is missing", async () => {
+  test("startup adopts a legacy same-root record into wingman-core when the canonical entry is missing", async () => {
     const registry = new InMemoryAppRegistry([
       buildApp({
-        id: "legacy-wingman",
+        id: "legacy-wingman-oldest",
         label: "Wingman Server Legacy",
         root: PROJECT_ROOT,
+        createdAt: "2025-01-01T00:00:00.000Z",
+      }),
+      buildApp({
+        id: "legacy-wingman-newer",
+        label: "Wingman Server Legacy Copy",
+        root: PROJECT_ROOT,
+        createdAt: "2025-02-01T00:00:00.000Z",
       }),
       buildApp({
         id: "valid-app",
@@ -204,13 +233,20 @@ describe("wingman-core registry bootstrap", () => {
       logger: logger.sink,
     });
 
-    expect(result.action).toBe("blocked");
-    expect(result.legacyConflictIds).toEqual(["legacy-wingman"]);
+    expect(result.action).toBe("adopted");
+    expect(result.legacyConflictIds).toEqual(["legacy-wingman-newer"]);
+    expect(result.app?.id).toBe(WINGMAN_CORE_APP_ID);
+    expect(result.app?.createdAt).toBe("2025-01-01T00:00:00.000Z");
+    expect(result.app?.label).toBe("Wingman Server");
+    expect(result.app?.tmuxSession).toBe("wingman-core");
+    expect(result.app?.scripts.restart).toBe("bun run scripts/restart-wingman.ts");
     expect((await registry.listApps()).map((app) => app.id).sort()).toEqual([
-      "legacy-wingman",
+      "legacy-wingman-newer",
       "valid-app",
+      WINGMAN_CORE_APP_ID,
     ]);
-    expect(logger.warn[0]).toContain("wingman-core registration is blocked");
+    expect(logger.warn[0]).toContain("adopted legacy Wingman app entry (legacy-wingman-oldest)");
+    expect(logger.warn[1]).toContain("preserving 1 additional legacy Wingman app entry during startup");
   });
 
   test("explicit cleanup removes only legacy same-root records and stays idempotent", async () => {

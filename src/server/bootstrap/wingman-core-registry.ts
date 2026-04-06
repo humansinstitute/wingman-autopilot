@@ -9,13 +9,14 @@ import type {
 
 export const WINGMAN_CORE_APP_ID = "wingman-core";
 
+const DEFAULT_LABEL = "Wingman Server";
 const DEFAULT_RESTART_COMMAND = "bun run scripts/restart-wingman.ts";
 const DEFAULT_TMUX_SESSION = "wingman-core";
 const DEFAULT_NOTES = "Controls the Wingman server process.";
 
 type AppRegistryLike = Pick<
   AppRegistry,
-  "listApps" | "getApp" | "registerApp" | "updateApp" | "removeApp"
+  "listApps" | "getApp" | "registerApp" | "updateApp" | "removeApp" | "reassignAppId"
 >;
 
 type LoggerLike = Pick<Console, "log" | "warn" | "error">;
@@ -35,7 +36,7 @@ export interface CleanupLegacyWingmanRootAppsOptions {
 }
 
 export interface WingmanCoreRegistrationResult {
-  action: "registered" | "updated" | "unchanged" | "blocked" | "error";
+  action: "registered" | "updated" | "unchanged" | "adopted" | "error";
   app: AppRecord | null;
   legacyConflictIds: string[];
 }
@@ -65,6 +66,7 @@ export async function ensureWingmanCoreRegistration(
       const updateInput = buildWingmanCoreUpdateInput(
         existing,
         expectedRoot,
+        DEFAULT_LABEL,
         restartCommand,
         tmuxSession,
         notes,
@@ -87,18 +89,45 @@ export async function ensureWingmanCoreRegistration(
     }
 
     if (legacyApps.length > 0) {
-      logger.warn(
-        `[apps] wingman-core registration is blocked by ${legacyApps.length} legacy same-root app entr${legacyApps.length === 1 ? "y" : "ies"}; run cleanupLegacyWingmanRootApps() before retrying registration`,
+      const seed = selectLegacyWingmanSeed(legacyApps);
+      const adopted = await registry.reassignAppId(seed.id, WINGMAN_CORE_APP_ID);
+      const updateInput = buildWingmanCoreUpdateInput(
+        adopted,
+        expectedRoot,
+        DEFAULT_LABEL,
+        restartCommand,
+        tmuxSession,
+        notes,
+        options.adminNpub ?? null,
       );
+      const app = updateInput ? await registry.updateApp(WINGMAN_CORE_APP_ID, updateInput) : adopted;
+      logger.warn(
+        `[apps] adopted legacy Wingman app entry (${seed.id}) as ${WINGMAN_CORE_APP_ID} during startup to preserve core registration`,
+      );
+      const remainingLegacyConflictIds = legacyApps
+        .filter((appRecord) => appRecord.id !== seed.id)
+        .map((appRecord) => appRecord.id);
+      if (remainingLegacyConflictIds.length > 0) {
+        logger.warn(
+          `[apps] preserving ${remainingLegacyConflictIds.length} additional legacy Wingman app entr${remainingLegacyConflictIds.length === 1 ? "y" : "ies"} during startup; run cleanupLegacyWingmanRootApps() to remove them explicitly`,
+        );
+      }
       return {
-        action: "blocked",
-        app: null,
-        legacyConflictIds: legacyApps.map((appRecord) => appRecord.id),
+        action: "adopted",
+        app,
+        legacyConflictIds: remainingLegacyConflictIds,
       };
     }
 
     const app = await registry.registerApp(
-      buildWingmanCoreRegistrationInput(expectedRoot, restartCommand, tmuxSession, notes, options.adminNpub ?? null),
+      buildWingmanCoreRegistrationInput(
+        expectedRoot,
+        DEFAULT_LABEL,
+        restartCommand,
+        tmuxSession,
+        notes,
+        options.adminNpub ?? null,
+      ),
     );
     logger.log("[apps] registered Wingman core app entry");
     return { action: "registered", app, legacyConflictIds: [] };
@@ -162,6 +191,7 @@ function findLegacyWingmanRootApps(apps: AppRecord[], projectRoot: string): AppR
 
 function buildWingmanCoreRegistrationInput(
   projectRoot: string,
+  label: string,
   restartCommand: string,
   tmuxSession: string,
   notes: string,
@@ -169,7 +199,7 @@ function buildWingmanCoreRegistrationInput(
 ): RegisterAppInput {
   return {
     id: WINGMAN_CORE_APP_ID,
-    label: "Wingman Server",
+    label,
     root: projectRoot,
     scripts: { restart: restartCommand },
     tmuxSession,
@@ -181,15 +211,18 @@ function buildWingmanCoreRegistrationInput(
 function buildWingmanCoreUpdateInput(
   existing: AppRecord,
   projectRoot: string,
+  label: string,
   restartCommand: string,
   tmuxSession: string,
   notes: string,
   adminNpub: string | null,
 ): UpdateAppInput | null {
   const needsUpdate =
+    existing.label !== label ||
     existing.scripts.restart !== restartCommand ||
     existing.tmuxSession !== tmuxSession ||
     normalize(existing.root) !== projectRoot ||
+    !existing.notes ||
     (!existing.ownerNpub && Boolean(adminNpub));
 
   if (!needsUpdate) {
@@ -197,10 +230,21 @@ function buildWingmanCoreUpdateInput(
   }
 
   return {
+    label,
     root: projectRoot,
     scripts: { restart: restartCommand },
     tmuxSession,
     notes: existing.notes ?? notes,
     ownerNpub: adminNpub ?? existing.ownerNpub ?? null,
   };
+}
+
+function selectLegacyWingmanSeed(apps: AppRecord[]): AppRecord {
+  return [...apps].sort((left, right) => {
+    const createdAtOrder = left.createdAt.localeCompare(right.createdAt);
+    if (createdAtOrder !== 0) {
+      return createdAtOrder;
+    }
+    return left.id.localeCompare(right.id);
+  })[0]!;
 }

@@ -265,6 +265,37 @@ export class AppRegistry {
     return next;
   }
 
+  async reassignAppId(currentId: string, nextId: string): Promise<AppRecord> {
+    await this.ensureLoaded();
+    const existing = this.apps.get(currentId);
+    if (!existing) {
+      throw new Error(`Unknown app: ${currentId}`);
+    }
+    if (currentId === nextId) {
+      return existing;
+    }
+    if (this.apps.has(nextId)) {
+      throw new Error(`App with id "${nextId}" already exists`);
+    }
+
+    const next: AppRecord = {
+      ...existing,
+      id: nextId,
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.apps.delete(currentId);
+    this.apps.set(nextId, next);
+    await this.persist();
+
+    await appAliasRegistry.removeAlias(currentId);
+    if (next.ownerNpub) {
+      await appAliasRegistry.registerAlias(nextId, next.ownerNpub, next.root);
+    }
+
+    return next;
+  }
+
   async removeApp(id: string): Promise<boolean> {
     await this.ensureLoaded();
     const existed = this.apps.delete(id);
