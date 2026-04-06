@@ -10,7 +10,7 @@
  * @param {Function} deps.closeMenu                       - closes the hamburger menu
  * @param {Function} deps.closeIdentityLoginDialog        - closes the identity login dialog
  * @param {Function} deps.openIdentityLoginDialog         - opens the identity login dialog
- * @param {Function} deps.stopConversationPolling         - stops conversation polling
+ * @param {Function} deps.deactivateLiveSessionRefresh    - tears down live session refresh when leaving /live
  * @param {Function} deps.render                          - re-renders the page
  * @param {() => string} deps.getCurrentRoute             - returns the current route string
  * @param {(route: string) => void} deps.setCurrentRoute  - sets the current route string
@@ -55,7 +55,7 @@ export function createNavigation(deps) {
     closeMenu,
     closeIdentityLoginDialog,
     openIdentityLoginDialog,
-    stopConversationPolling,
+    deactivateLiveSessionRefresh,
     render,
     getCurrentRoute,
     setCurrentRoute,
@@ -99,7 +99,7 @@ export function createNavigation(deps) {
       closeMenu();
     }
     closeIdentityLoginDialog();
-    stopConversationPolling();
+    deactivateLiveSessionRefresh();
     setCurrentRoute("home");
     setLastLoggedSessionId(null);
     if (replaceHistory) {
@@ -118,7 +118,7 @@ export function createNavigation(deps) {
     if (!skipMenuClose) {
       closeMenu();
     }
-    stopConversationPolling();
+    deactivateLiveSessionRefresh();
     if (openNewAppDialog) {
       appsStore().pendingOpenDialog = "create";
     }
@@ -147,7 +147,7 @@ export function createNavigation(deps) {
       closeMenu();
     }
     closeIdentityLoginDialog();
-    stopConversationPolling();
+    deactivateLiveSessionRefresh();
     setCurrentRoute("projects");
     setLastLoggedSessionId(null);
     if (window.location.pathname !== PROJECTS_ROUTE) {
@@ -176,7 +176,7 @@ export function createNavigation(deps) {
       closeMenu();
     }
     closeIdentityLoginDialog();
-    stopConversationPolling();
+    deactivateLiveSessionRefresh();
     setCurrentRoute("nightwatch");
     setLastLoggedSessionId(null);
     if (window.location.pathname !== NIGHTWATCH_ROUTE) {
@@ -199,7 +199,7 @@ export function createNavigation(deps) {
       closeMenu();
     }
     closeIdentityLoginDialog();
-    stopConversationPolling();
+    deactivateLiveSessionRefresh();
     setCurrentRoute("scheduler");
     setLastLoggedSessionId(null);
     if (window.location.pathname !== TRIGGERS_ROUTE && window.location.pathname !== SCHEDULER_ROUTE) {
@@ -222,7 +222,7 @@ export function createNavigation(deps) {
       closeMenu();
     }
     closeIdentityLoginDialog();
-    stopConversationPolling();
+    deactivateLiveSessionRefresh();
     setCurrentRoute("jobs");
     setLastLoggedSessionId(null);
     if (window.location.pathname !== JOBS_ROUTE) {
@@ -237,7 +237,7 @@ export function createNavigation(deps) {
       closeMenu();
     }
     closeIdentityLoginDialog();
-    stopConversationPolling();
+    deactivateLiveSessionRefresh();
     setCurrentRoute("settings");
     setLastLoggedSessionId(null);
     if (window.location.pathname !== SETTINGS_ROUTE) {
@@ -290,7 +290,7 @@ export function createNavigation(deps) {
           // If navigating from live page with an active session, start in that session's directory
           const activeSession = getCurrentRoute() === "live" ? getActiveSessionForIndicator() : null;
           const sessionDir = activeSession?.workingDirectory;
-          stopConversationPolling();
+          deactivateLiveSessionRefresh();
           setCurrentRoute("files");
           setLastLoggedSessionId(null);
           if (!state.files.initialized) {

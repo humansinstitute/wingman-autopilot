@@ -151,6 +151,7 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
         start(controller) {
           streamController = controller;
           writeSseComment("connected");
+          writeSseEvent("transport", { mode: "event-stream" });
           keepaliveTimer = setInterval(() => {
             try {
               // Use a real SSE event (not a comment) so browser JS can observe
@@ -224,6 +225,9 @@ function createHeartbeatOnlyStream(
       start(ctrl) {
         controller = ctrl;
         ctrl.enqueue(encoder.encode(`: connected (native-sdk)\n\n`));
+        ctrl.enqueue(
+          encoder.encode(`event: transport\ndata: ${JSON.stringify({ mode: "heartbeat-only" })}\n\n`),
+        );
 
         // Heartbeat
         keepaliveTimer = setInterval(() => {

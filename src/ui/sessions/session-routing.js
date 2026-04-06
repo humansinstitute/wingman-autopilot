@@ -17,10 +17,9 @@
  * @param {Function} deps.getSessionIdFromPath             - extracts session id from a URL pathname
  * @param {Function} deps.syncDesktopSessionIndicator      - syncs the desktop session indicator UI
  * @param {Function} deps.updateDocumentTitle              - updates the document title
- * @param {object} deps.sseManager                         - SSE connection manager (.connect/.disconnect)
- * @param {Function} deps.startConversationPolling         - starts conversation polling for a session
- * @param {Function} deps.stopConversationPolling          - stops conversation polling
- * @param {Function} deps.isConversationPolling            - checks whether polling is active for a session
+ * @param {Function} deps.activateLiveSessionRefresh       - boots live refresh for a session
+ * @param {Function} deps.deactivateLiveSessionRefresh     - tears down live refresh for a session
+ * @param {Function} deps.getLiveRefreshSessionId          - returns the session currently owned by live refresh
  * @param {Function} deps.isAlpineChatEnabled              - returns whether Alpine chat is enabled
  * @param {Function} deps.scheduleLiveScroll               - schedules a live scroll for a session
  * @param {Function} deps.scrollConversationAreaToBottom   - scrolls the conversation area to bottom
@@ -37,10 +36,9 @@ export function createSessionRouting(deps) {
     getSessionIdFromPath,
     syncDesktopSessionIndicator,
     updateDocumentTitle,
-    sseManager,
-    startConversationPolling,
-    stopConversationPolling,
-    isConversationPolling,
+    activateLiveSessionRefresh,
+    deactivateLiveSessionRefresh,
+    getLiveRefreshSessionId,
     isAlpineChatEnabled,
     scheduleLiveScroll,
   } = deps;
@@ -86,23 +84,19 @@ export function createSessionRouting(deps) {
       syncDesktopSessionIndicator();
       updateDocumentTitle();
 
-      // Manage SSE connections and polling for live view
+      // Manage live refresh for the active live session.
       if (getCurrentRoute() === "live" && sessionExists) {
         const switchedSessions = previousSessionId !== sessionId;
-        const alreadyConnected = typeof sseManager.isConnected === "function"
-          ? sseManager.isConnected(sessionId)
-          : false;
-        const pollingActive = typeof isConversationPolling === "function"
-          ? isConversationPolling(sessionId)
-          : false;
+        const refreshOwnedSessionId = typeof getLiveRefreshSessionId === "function"
+          ? getLiveRefreshSessionId()
+          : null;
+        const alreadyOwnedByRefresh = refreshOwnedSessionId === sessionId;
 
-        // Only churn live transport when switching sessions or recovering a dead connection.
-        if (switchedSessions || !alreadyConnected || !pollingActive) {
-          if (previousSessionId && switchedSessions) {
-            sseManager.disconnect(previousSessionId);
-          }
-          sseManager.connect(sessionId);
-          startConversationPolling(sessionId);
+        if (previousSessionId && switchedSessions) {
+          deactivateLiveSessionRefresh(previousSessionId);
+        }
+        if (switchedSessions || !alreadyOwnedByRefresh) {
+          activateLiveSessionRefresh(sessionId, { refresh: switchedSessions || !alreadyOwnedByRefresh });
         }
 
         // Dispatch session-change event for Alpine.js chat component
@@ -121,10 +115,10 @@ export function createSessionRouting(deps) {
       return true;
     }
 
-    // No session selected - stop polling
+    // No session selected - stop live refresh
     ss.activeSessionId = null;
     setLastLoggedSessionId(null);
-    stopConversationPolling();
+    deactivateLiveSessionRefresh(previousSessionId);
     if (updateHistory && getCurrentRoute() === "live" && window.location.pathname !== LIVE_ROUTE_PREFIX) {
       window.history.pushState({ route: "live" }, "", LIVE_ROUTE_PREFIX);
     }

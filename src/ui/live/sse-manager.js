@@ -9,6 +9,10 @@ const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 /** No-event threshold for considering connection unhealthy (90s) */
 const HEALTH_CHECK_STALE_MS = 90000;
+const STREAM_MODE_UNKNOWN = "unknown";
+const STREAM_MODE_EVENT_STREAM = "event-stream";
+const STREAM_MODE_HEARTBEAT_ONLY = "heartbeat-only";
+const STREAM_MODE_DEGRADED = "degraded";
 
 /**
  * Manages SSE connections to session event streams.
@@ -29,6 +33,10 @@ class SSEManager {
     this.messageListeners = new Set();
     /** @type {Set<Function>} Connection state listeners */
     this.connectionListeners = new Set();
+    /** @type {Map<string, string>} Stream mode by sessionId */
+    this.streamModes = new Map();
+    /** @type {Set<Function>} Stream mode listeners */
+    this.streamModeListeners = new Set();
   }
 
   /**
@@ -46,6 +54,7 @@ class SSEManager {
 
     // Clear any pending reconnect
     this.clearReconnectTimer(sessionId);
+    this.setStreamMode(sessionId, STREAM_MODE_UNKNOWN);
 
     const url = `/api/sessions/${sessionId}/events`;
 
@@ -83,6 +92,7 @@ class SSEManager {
           console.log(`[sse] message event for ${sessionId}:`, event.data?.slice(0, 100));
           const data = JSON.parse(event.data);
           if (data.type === "message" || data.role) {
+            this.setStreamMode(sessionId, STREAM_MODE_EVENT_STREAM);
             await MessageStore.upsertMessage(sessionId, data);
             this.notifyMessageListeners(sessionId, data);
           }
@@ -95,11 +105,26 @@ class SSEManager {
         try {
           this.lastEventTime.set(sessionId, Date.now());
           const data = JSON.parse(event.data);
+          if (data.type === "upstream_unavailable" || data.type === "upstream_error") {
+            this.setStreamMode(sessionId, STREAM_MODE_DEGRADED);
+          } else if (data.status || data.agent_status) {
+            this.setStreamMode(sessionId, STREAM_MODE_EVENT_STREAM);
+          }
           const status = data.status || data.agent_status || "stable";
           await SessionStore.updateStatus(sessionId, status, status);
           this.notifyStatusListeners(sessionId, status);
         } catch (err) {
           console.warn("[sse] Failed to process status event:", err);
+        }
+      });
+
+      source.addEventListener("transport", (event) => {
+        try {
+          this.lastEventTime.set(sessionId, Date.now());
+          const data = JSON.parse(event.data);
+          this.setStreamMode(sessionId, this.normalizeStreamMode(data.mode));
+        } catch (err) {
+          console.warn("[sse] Failed to process transport event:", err);
         }
       });
 
@@ -131,12 +156,14 @@ class SSEManager {
   async handleEventData(sessionId, data) {
     // Handle message events
     if (data.type === "message" || data.role || data.content) {
+      this.setStreamMode(sessionId, STREAM_MODE_EVENT_STREAM);
       await MessageStore.upsertMessage(sessionId, data);
       this.notifyMessageListeners(sessionId, data);
     }
 
     // Handle status events
     if (data.status || data.agent_status) {
+      this.setStreamMode(sessionId, STREAM_MODE_EVENT_STREAM);
       const status = data.status || data.agent_status;
       await SessionStore.updateStatus(sessionId, status, status);
       this.notifyStatusListeners(sessionId, status);
@@ -157,6 +184,7 @@ class SSEManager {
     this.clearReconnectTimer(sessionId);
     this.reconnectAttempts.delete(sessionId);
     this.lastEventTime.delete(sessionId);
+    this.streamModes.delete(sessionId);
   }
 
   /**
@@ -178,6 +206,7 @@ class SSEManager {
       source.close();
       this.connections.delete(sessionId);
     }
+    this.setStreamMode(sessionId, STREAM_MODE_DEGRADED);
     this.notifyConnectionListeners(sessionId, "error");
     this.scheduleReconnect(sessionId);
   }
@@ -239,6 +268,33 @@ class SSEManager {
       default:
         return "disconnected";
     }
+  }
+
+  normalizeStreamMode(mode) {
+    switch (mode) {
+      case STREAM_MODE_EVENT_STREAM:
+        return STREAM_MODE_EVENT_STREAM;
+      case STREAM_MODE_HEARTBEAT_ONLY:
+        return STREAM_MODE_HEARTBEAT_ONLY;
+      case STREAM_MODE_DEGRADED:
+        return STREAM_MODE_DEGRADED;
+      default:
+        return STREAM_MODE_UNKNOWN;
+    }
+  }
+
+  setStreamMode(sessionId, mode) {
+    const normalized = this.normalizeStreamMode(mode);
+    const previous = this.streamModes.get(sessionId) || STREAM_MODE_UNKNOWN;
+    if (previous === normalized) {
+      return;
+    }
+    this.streamModes.set(sessionId, normalized);
+    this.notifyStreamModeListeners(sessionId, normalized);
+  }
+
+  getStreamMode(sessionId) {
+    return this.streamModes.get(sessionId) || STREAM_MODE_UNKNOWN;
   }
 
   /**
@@ -303,6 +359,11 @@ class SSEManager {
     return () => this.connectionListeners.delete(callback);
   }
 
+  onStreamModeChange(callback) {
+    this.streamModeListeners.add(callback);
+    return () => this.streamModeListeners.delete(callback);
+  }
+
   /**
    * Notify status listeners.
    * @param {string} sessionId
@@ -344,6 +405,16 @@ class SSEManager {
         listener(sessionId, state);
       } catch (err) {
         console.warn("[sse] Connection listener error:", err);
+      }
+    }
+  }
+
+  notifyStreamModeListeners(sessionId, mode) {
+    for (const listener of this.streamModeListeners) {
+      try {
+        listener(sessionId, mode);
+      } catch (err) {
+        console.warn("[sse] Stream mode listener error:", err);
       }
     }
   }

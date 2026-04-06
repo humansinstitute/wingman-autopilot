@@ -1,6 +1,6 @@
 /**
  * Alpine.js reactive chat component for live session view.
- * Messages are pushed to the store directly by app.js (poll + SSE).
+ * Messages are pushed to the store directly by app.js, with SSE as the steady-state path.
  */
 
 import Alpine from "/vendor/alpinejs/module.esm.js";
@@ -65,6 +65,7 @@ export function registerChatComponent() {
     messageWindow: createWindowRecord(0, LIVE_MESSAGE_WINDOW_DEFAULT),
     status: "disconnected",
     connectionState: "disconnected",
+    streamMode: "unknown",
     isLoading: false,
     error: null,
     _sseUnsubscribers: [],
@@ -93,6 +94,9 @@ export function registerChatComponent() {
         // Connect SSE
         sseManager.connect(sessionId);
         this.connectionState = sseManager.getConnectionState(sessionId);
+        this.streamMode = typeof sseManager.getStreamMode === "function"
+          ? sseManager.getStreamMode(sessionId)
+          : "unknown";
 
         this.isLoading = false;
         console.log("[chat] Loaded session", sessionId);
@@ -122,6 +126,14 @@ export function registerChatComponent() {
         sseManager.onConnectionChange((sid, state) => {
           if (sid === sessionId) {
             this.connectionState = state;
+          }
+        })
+      );
+
+      this._sseUnsubscribers.push(
+        sseManager.onStreamModeChange((sid, mode) => {
+          if (sid === sessionId) {
+            this.streamMode = mode;
           }
         })
       );
@@ -176,6 +188,7 @@ export function registerChatComponent() {
       this.messageWindow = createWindowRecord(0, LIVE_MESSAGE_WINDOW_DEFAULT);
       this.status = "disconnected";
       this.connectionState = "disconnected";
+      this.streamMode = "unknown";
     },
 
     renderMessageContent(message) {
@@ -223,6 +236,12 @@ export function registerChatComponent() {
     get connectionLabel() {
       switch (this.connectionState) {
         case "connected":
+          if (this.streamMode === "heartbeat-only") {
+            return "Heartbeat";
+          }
+          if (this.streamMode === "degraded") {
+            return "Recovering";
+          }
           return "Live";
         case "connecting":
           return "Connecting...";

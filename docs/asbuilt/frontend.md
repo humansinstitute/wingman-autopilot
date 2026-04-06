@@ -128,21 +128,20 @@ This keeps the home page, nav tabs, and session indicators fresh without reloadi
 
 ### Live session refresh
 
-Live session pages use a hybrid model:
+Live session pages now use an SSE-first contract:
 
 - `src/ui/live/sse-manager.js` opens `EventSource` connections to `/api/sessions/:id/events`
+- `src/server/session-events.ts` sends an initial `transport` event so the browser knows whether the stream is full `event-stream` mode or `heartbeat-only`
+- `src/ui/live/refresh-controller.js` performs the initial catch-up fetch, owns reconnect handling, and decides whether fallback polling is allowed
 - incoming SSE messages are written into Dexie through `MessageStore.upsertMessage()`
 - incoming SSE status events are written into Dexie through `SessionStore.updateStatus()`
-- `app.js` also mirrors message data into `state.conversations` for legacy render paths
+- `app.js` still mirrors message data into `state.conversations` for legacy render paths
 
-There is still polling as a fallback/companion path for the active live session:
+Steady-state behavior by mode:
 
-- legacy conversation mode polls every 100 ms
-- Alpine chat mode slows that to 1000 ms
-- active mobile composer interaction can throttle polling further
-- polling still fetches conversation, session status, and prompt queue data in parallel
-
-So the live view is not SSE-only. It is SSE plus polling.
+- normal proxied agent streams: bootstrap fetch once, then SSE-only refresh
+- native heartbeat-only streams: bootstrap fetch, then 1s compatibility polling for conversation/status/queue while SSE provides liveness
+- degraded SSE windows: temporary 2s recovery polling until the stream reconnects and reports a healthy transport again
 
 ### Live connection health
 
@@ -151,6 +150,7 @@ The live SSE manager provides:
 - per-session connection tracking
 - exponential backoff reconnects
 - heartbeat freshness checks
+- transport-mode tracking so the UI can distinguish full event streams from heartbeat-only compatibility mode
 
 `src/ui/live/visibility-manager.js` is used to reconnect stale live streams when the tab becomes visible again.
 

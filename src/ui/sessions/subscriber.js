@@ -13,6 +13,8 @@ let eventSource = null;
 let reconnectTimer = null;
 let reconnectAttempts = 0;
 let onSessionEvent = null;
+let onConnect = null;
+let onConnectionStateChange = null;
 
 /**
  * Start listening for session lifecycle events.
@@ -20,14 +22,19 @@ let onSessionEvent = null;
  * @param {Function} callback — called with the event payload on each
  *   session-started / session-stopped / session-updated event.
  */
-export function startSessionSubscriber(callback) {
-  onSessionEvent = callback;
+export function startSessionSubscriber(callbackOrOptions) {
+  const options = normalizeOptions(callbackOrOptions);
+  onSessionEvent = options.onEvent;
+  onConnect = options.onConnect;
+  onConnectionStateChange = options.onConnectionStateChange;
   connect();
 }
 
 /** Stop the subscriber and clean up. */
 export function stopSessionSubscriber() {
   onSessionEvent = null;
+  onConnect = null;
+  onConnectionStateChange = null;
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -50,6 +57,8 @@ function connect() {
   source.onopen = () => {
     console.log("[session-sub] Connected");
     reconnectAttempts = 0;
+    onConnectionStateChange?.("connected");
+    onConnect?.();
   };
 
   source.onmessage = (evt) => {
@@ -67,6 +76,7 @@ function connect() {
     console.warn("[session-sub] Connection lost, scheduling reconnect");
     source.close();
     eventSource = null;
+    onConnectionStateChange?.("disconnected");
     scheduleReconnect();
   };
 
@@ -79,6 +89,35 @@ function scheduleReconnect() {
   reconnectAttempts++;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    if (onSessionEvent) connect();
+    if (onSessionEvent || onConnect || onConnectionStateChange) {
+      connect();
+    }
   }, delay);
+}
+
+function normalizeOptions(callbackOrOptions) {
+  if (typeof callbackOrOptions === "function") {
+    return {
+      onEvent: callbackOrOptions,
+      onConnect: null,
+      onConnectionStateChange: null,
+    };
+  }
+
+  if (callbackOrOptions && typeof callbackOrOptions === "object") {
+    return {
+      onEvent: typeof callbackOrOptions.onEvent === "function" ? callbackOrOptions.onEvent : null,
+      onConnect: typeof callbackOrOptions.onConnect === "function" ? callbackOrOptions.onConnect : null,
+      onConnectionStateChange:
+        typeof callbackOrOptions.onConnectionStateChange === "function"
+          ? callbackOrOptions.onConnectionStateChange
+          : null,
+    };
+  }
+
+  return {
+    onEvent: null,
+    onConnect: null,
+    onConnectionStateChange: null,
+  };
 }

@@ -11,6 +11,7 @@ import {
   isAlpineChatEnabled,
   initAlpineChat,
 } from "./live/index.js";
+import { createLiveRefreshController } from "./live/refresh-controller.js";
 import {
   initLiveMobileRuntime,
   isComposerInteractionActive,
@@ -117,10 +118,6 @@ import {
   deleteSessionApi,
   updateSessionNameApi,
   postSessionMessageApi,
-  fetchSessionQueueApi,
-  addToSessionQueueApi,
-  removeFromSessionQueueApi,
-  updateSessionQueuePromptApi,
 } from "./services/sessions.js";
 import {
   fetchAppsApi,
@@ -165,12 +162,10 @@ async function loadAceEditor() {
 const sessionsStore = () => window.Alpine?.store("sessions");
 /** Lazy accessor for the Dexie-backed apps Alpine store. */
 const appsStore = () => window.Alpine?.store("apps");
-let conversationPollIntervalId = null;
-let conversationPollInFlight = false;
-let conversationPollingSessionId = null;
 const sessionMessageSendInFlight = new Set();
 let sessionDialogController = null;
 let jobDialogController = null;
+let liveRefreshController = null;
 let loadChats = async () => {};
 let loadChatMessages = async () => {};
 let navigateToChat = () => {};
@@ -571,10 +566,9 @@ const {
   getSessionIdFromPath,
   syncDesktopSessionIndicator: (...args) => syncDesktopSessionIndicator(...args),
   updateDocumentTitle: (...args) => updateDocumentTitle(...args),
-  sseManager,
-  startConversationPolling: (...args) => startConversationPolling(...args),
-  stopConversationPolling: (...args) => stopConversationPolling(...args),
-  isConversationPolling: (...args) => isConversationPolling(...args),
+  activateLiveSessionRefresh: (...args) => liveRefreshController?.activateSession(...args),
+  deactivateLiveSessionRefresh: (...args) => liveRefreshController?.deactivateSession(...args),
+  getLiveRefreshSessionId: () => liveRefreshController?.getActiveSessionId?.() ?? null,
   isAlpineChatEnabled,
   scheduleLiveScroll: (...args) => scheduleLiveScroll(...args),
 });
@@ -1767,119 +1761,6 @@ const startSessionPolling = () => {};
 const stopSessionPolling = () => {};
 const syncSessionPolling = () => {};
 
-// Conversation polling for live view - polls every 100ms for responsiveness
-const CONVERSATION_POLL_INTERVAL = 100;
-// When Alpine handles messages via SSE, we still need to poll session status
-// and queue data, but at a slower cadence (1s) to avoid hammering the API.
-const STATUS_POLL_INTERVAL = 1000;
-const MOBILE_COMPOSER_POLL_INTERVAL = 3000;
-let lastComposerAwarePollAt = 0;
-
-const startConversationPolling = (sessionId) => {
-  if (!sessionId) return;
-
-  const alpineActive = isAlpineChatEnabled();
-  const interval = alpineActive ? STATUS_POLL_INTERVAL : CONVERSATION_POLL_INTERVAL;
-
-  if (conversationPollIntervalId !== null && conversationPollingSessionId === sessionId) {
-    return;
-  }
-
-  stopConversationPolling();
-
-  conversationPollingSessionId = sessionId;
-
-  console.log(`[poll] Starting ${alpineActive ? "status" : "conversation"} polling for ${sessionId} (${interval}ms)`);
-
-  conversationPollIntervalId = window.setInterval(async () => {
-    if (conversationPollInFlight) return;
-    const pollingActiveId = sessionsStore().activeSessionId;
-    if (currentRoute !== "live" || pollingActiveId !== sessionId) {
-      stopConversationPolling();
-      return;
-    }
-
-    conversationPollInFlight = true;
-    try {
-      const composerActive = isComposerInteractionActive() || isMobileKeyboardOpen();
-      const now = Date.now();
-      const composerPollDue = now - lastComposerAwarePollAt >= MOBILE_COMPOSER_POLL_INTERVAL;
-      const shouldThrottleForComposer = composerActive && !composerPollDue;
-      if (composerActive && composerPollDue) {
-        lastComposerAwarePollAt = now;
-      }
-
-      // Fetch conversation, session status, and queue in parallel.
-      // Alpine mode: fetchConversation syncs to Dexie (no manual DOM).
-      const fetchConversationPromise =
-        shouldThrottleForComposer
-          ? Promise.resolve(null)
-          : fetchConversation(sessionId);
-      const fetchSessionPromise =
-        shouldThrottleForComposer
-          ? Promise.resolve(null)
-          : fetchSessionApi(sessionId);
-      const fetchQueuePromise =
-        shouldThrottleForComposer
-          ? Promise.resolve(null)
-          : fetchSessionQueueApi(sessionId);
-
-      const [, sessionData, queueData] = await Promise.all([
-        fetchConversationPromise,
-        fetchSessionPromise,
-        fetchQueuePromise,
-      ]);
-
-      // Update session status if we got data
-      if (sessionData) {
-        const session = sessionsStore().items.find((s) => s.id === sessionId);
-        if (session) {
-          const oldStatus = session.agentRuntimeStatus;
-          session.agentRuntimeStatus = sessionData.agentRuntimeStatus ?? null;
-          // Update UI if status changed
-          if (oldStatus !== session.agentRuntimeStatus) {
-            updateAgentStatusIndicators();
-          }
-        }
-      }
-
-      // Sync queue from server (response is { id, queue: { prompts, maxSize } })
-      if (queueData?.queue) {
-        const queue = getSessionQueue(sessionId);
-        const oldCount = queue.prompts.length;
-        queue.prompts = queueData.queue.prompts ?? [];
-        queue.maxSize = queueData.queue.maxSize ?? 21;
-        // Update UI if queue count changed
-        if (oldCount !== queue.prompts.length) {
-          updateAgentStatusIndicators();
-        }
-      }
-    } catch (err) {
-      console.warn("[poll] Poll failed:", err);
-    } finally {
-      conversationPollInFlight = false;
-    }
-  }, interval);
-};
-
-const stopConversationPolling = () => {
-  if (conversationPollIntervalId !== null) {
-    console.log("[poll] Stopping conversation polling");
-    window.clearInterval(conversationPollIntervalId);
-    conversationPollIntervalId = null;
-  }
-  conversationPollingSessionId = null;
-  conversationPollInFlight = false;
-  lastComposerAwarePollAt = 0;
-};
-
-const isConversationPolling = (sessionId) => {
-  if (!sessionId) {
-    return conversationPollIntervalId !== null;
-  }
-  return conversationPollIntervalId !== null && conversationPollingSessionId === sessionId;
-};
-
 const getSessionFallbackDirectory = () => {
   return (
     directoryInput?.value?.trim() ||
@@ -2988,6 +2869,29 @@ sendNextQueuedPrompt = queueModule.sendNextQueuedPrompt;
 openPromptQueueModal = queueModule.openPromptQueueModal;
 closePromptQueueModal = queueModule.closePromptQueueModal;
 
+liveRefreshController = createLiveRefreshController({
+  sseManager,
+  getCurrentRoute: () => currentRoute,
+  getActiveSessionId: () => sessionsStore().activeSessionId,
+  fetchConversation: (...args) => fetchConversation(...args),
+  fetchLogs: (...args) => fetchLogs(...args),
+  fetchSessionQueue: (...args) => fetchSessionQueue(...args),
+  fetchSessionDetails: (...args) => fetchSessionApi(...args),
+  applySessionDetails: (sessionId, sessionData) => {
+    const session = sessionsStore().items.find((item) => item.id === sessionId);
+    if (!session) {
+      return;
+    }
+    const oldStatus = session.agentRuntimeStatus;
+    session.agentRuntimeStatus = sessionData.agentRuntimeStatus ?? null;
+    if (oldStatus !== session.agentRuntimeStatus) {
+      updateAgentStatusIndicators();
+    }
+  },
+  isComposerInteractionActive,
+  isMobileKeyboardOpen,
+});
+
 initQuickLauncher({ state, launchSession, showToast });
 
 const imageAttachmentsModule = initImageAttachments({ state, getSessionById });
@@ -3518,7 +3422,7 @@ const {
   closeMenu,
   closeIdentityLoginDialog,
   openIdentityLoginDialog,
-  stopConversationPolling,
+  deactivateLiveSessionRefresh: (...args) => liveRefreshController?.deactivateSession(...args),
   render,
   getCurrentRoute: () => currentRoute,
   setCurrentRoute: (r) => { currentRoute = r; },
@@ -3882,8 +3786,13 @@ jobDialog?.addEventListener("cancel", (event) => {
 
   // Live-refresh sessions via SSE so home page / nav update without reload
   if (state.identity.authenticated) {
-    startSessionSubscriber(() => {
-      void fetchSessions();
+    startSessionSubscriber({
+      onConnect: () => {
+        void fetchSessions();
+      },
+      onEvent: () => {
+        void fetchSessions();
+      },
     });
     window.addEventListener("wingman:identity-logout", () => stopSessionSubscriber(), { once: true });
   }
