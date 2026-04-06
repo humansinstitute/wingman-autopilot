@@ -62,7 +62,7 @@ Notably, todo modules exist under `src/ui/todos/`, but they are not currently mo
 `src/ui/state/index.js` exports a mutable singleton `state` that still owns most cross-page shell state, including:
 
 - fetched config
-- session logs and legacy in-memory conversations
+- session logs and live-view DOM bookkeeping
 - message drafts and prompt queues
 - file browser, preview, transfer, and editor state
 - archived session viewer state
@@ -148,9 +148,10 @@ The caller split that previously depended on `state.conversations` now looks lik
 
 Steady-state behavior by mode:
 
-- normal proxied agent streams: bootstrap fetch once, then SSE-only refresh
+- stable proxied agent streams: bootstrap fetch once, then SSE-driven refresh with polling off
+- active sessions whose runtime status is `running`: 1s compatibility polling for conversation/status/queue can stay active even when the stream mode is `event-stream`
 - native heartbeat-only streams: bootstrap fetch, then 1s compatibility polling for conversation/status/queue while SSE provides liveness
-- degraded SSE windows: temporary 2s recovery polling until the stream reconnects and reports a healthy transport again
+- degraded or disconnected SSE windows: temporary 2s recovery polling until the stream reconnects and reports a healthy transport again
 
 ### Live connection health
 
