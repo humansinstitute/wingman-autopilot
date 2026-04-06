@@ -82,7 +82,7 @@ Primary source of truth for this review:
 - The frontend is not Dexie-first end to end. Sessions, apps, scheduler, and Night Watch use Dexie-backed Alpine stores, but projects, files, private chat, and much of the shell still rely on the mutable singleton in `src/ui/state/index.js`.
 - Live sessions are now SSE-first, but not SSE-only in every adapter mode. `src/ui/live/refresh-controller.js` does a bootstrap catch-up fetch, then only enables polling for heartbeat-only native adapters or explicit degraded recovery windows.
 - `src/server/session-events.ts` emits a `transport` event at stream start. If live updates look wrong, verify whether the browser thinks the session is `event-stream`, `heartbeat-only`, or `degraded` before changing refresh logic.
-- SSE still writes to Dexie while legacy render paths still mirror data into `state.conversations`. Fixes to live rendering often need to consider both data paths.
+- Live message reads no longer use a `state.conversations` mirror. If live rendering, copy/export, or queue-send behavior looks wrong, inspect `MessageStore` and the Dexie-backed consumers first.
 - `scheduler` and `jobs` are treated as stable pages in the shell so Alpine-owned DOM is not torn down on routine rerenders.
 
 ## Static asset serving is manual and easy to break

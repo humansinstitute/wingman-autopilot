@@ -2,6 +2,7 @@
  * Clipboard utilities for copying text and creating copy buttons.
  */
 
+import { MessageStore } from "../live/index.js";
 import { state } from "../state/index.js";
 
 // SVG icons for copy button states
@@ -79,7 +80,7 @@ export function attachCopyButton(bubble) {
  * @returns {Promise<boolean>} True if copy succeeded
  */
 export async function copyConversationToClipboard(sessionId) {
-  const conversation = state.conversations.get(sessionId) ?? [];
+  const conversation = await MessageStore.getSessionMessages(sessionId);
   let textBlocks = conversation;
   if (textBlocks.length === 0) {
     const container = state.conversationContainers.get(sessionId);

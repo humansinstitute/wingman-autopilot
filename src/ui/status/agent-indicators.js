@@ -10,6 +10,7 @@ import {
   capturePrependedScrollState,
   schedulePrependedScrollRestore,
 } from "../live/conversation-window.js";
+import { MessageStore } from "../live/index.js";
 
 export function initAgentIndicators(deps) {
   const {
@@ -152,8 +153,8 @@ export function initAgentIndicators(deps) {
 
   // ── Conversation DOM ────────────────────────────────────────────
 
-  const updateConversationDOM = (sessionId) => {
-    const conversation = state.conversations.get(sessionId) ?? [];
+  const updateConversationDOM = async (sessionId) => {
+    const conversation = await MessageStore.getSessionMessages(sessionId);
     let container = state.conversationContainers.get(sessionId);
 
     if (!container || !document.contains(container)) {
@@ -170,10 +171,9 @@ export function initAgentIndicators(deps) {
       conversation,
       windowStore: state.liveMessageWindows,
       onRevealOlder: (scrollElement) => {
-        const currentConversation = state.conversations.get(sessionId) ?? [];
         const snapshot = capturePrependedScrollState(scrollElement);
-        expandConversationWindow(state.liveMessageWindows, sessionId, currentConversation.length);
-        updateConversationDOM(sessionId);
+        expandConversationWindow(state.liveMessageWindows, sessionId, conversation.length);
+        void updateConversationDOM(sessionId);
         schedulePrependedScrollRestore(snapshot);
       },
     });

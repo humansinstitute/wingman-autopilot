@@ -93,8 +93,8 @@ class SSEManager {
           const data = JSON.parse(event.data);
           if (data.type === "message" || data.role) {
             this.setStreamMode(sessionId, STREAM_MODE_EVENT_STREAM);
-            await MessageStore.upsertMessage(sessionId, data);
-            this.notifyMessageListeners(sessionId, data);
+            const result = await MessageStore.upsertMessage(sessionId, data);
+            this.notifyMessageListeners(sessionId, data, result);
           }
         } catch (err) {
           console.warn("[sse] Failed to process message event:", err);
@@ -157,8 +157,8 @@ class SSEManager {
     // Handle message events
     if (data.type === "message" || data.role || data.content) {
       this.setStreamMode(sessionId, STREAM_MODE_EVENT_STREAM);
-      await MessageStore.upsertMessage(sessionId, data);
-      this.notifyMessageListeners(sessionId, data);
+      const result = await MessageStore.upsertMessage(sessionId, data);
+      this.notifyMessageListeners(sessionId, data, result);
     }
 
     // Handle status events
@@ -341,7 +341,7 @@ class SSEManager {
 
   /**
    * Subscribe to message events.
-   * @param {Function} callback - Called with (sessionId, message)
+   * @param {Function} callback - Called with (sessionId, message, meta)
    * @returns {Function} Unsubscribe function
    */
   onMessage(callback) {
@@ -383,11 +383,12 @@ class SSEManager {
    * Notify message listeners.
    * @param {string} sessionId
    * @param {Object} message
+   * @param {Object} meta
    */
-  notifyMessageListeners(sessionId, message) {
+  notifyMessageListeners(sessionId, message, meta = {}) {
     for (const listener of this.messageListeners) {
       try {
-        listener(sessionId, message);
+        listener(sessionId, message, meta);
       } catch (err) {
         console.warn("[sse] Message listener error:", err);
       }

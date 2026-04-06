@@ -8,6 +8,28 @@ function readMessageField(message, ...keys) {
   return "";
 }
 
+export function normalizeConversationMessage(message, fallbackCreatedAt = new Date().toISOString()) {
+  const role = readMessageField(message, "role", "type") || "assistant";
+  const content = readMessageField(message, "content", "message");
+  const createdAt = readMessageField(message, "createdAt", "created_at") || fallbackCreatedAt;
+  const normalized = {
+    role,
+    content,
+    createdAt,
+  };
+
+  if (message && Object.prototype.hasOwnProperty.call(message, "id")) {
+    normalized.id = message.id;
+  }
+
+  return normalized;
+}
+
+export function normalizeConversationMessages(messages, fallbackCreatedAt = new Date().toISOString()) {
+  const items = Array.isArray(messages) ? messages : [];
+  return items.map((message) => normalizeConversationMessage(message, fallbackCreatedAt));
+}
+
 export function areConversationMessagesEqual(previousMessages, nextMessages) {
   const previous = Array.isArray(previousMessages) ? previousMessages : [];
   const next = Array.isArray(nextMessages) ? nextMessages : [];

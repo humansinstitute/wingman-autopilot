@@ -12,7 +12,7 @@ const ACTIVE_SESSION_STATUSES = new Set(["starting", "running"]);
 
 /**
  * @param {object} deps
- * @param {object}   deps.state                     - global UI state (.promptQueues, .conversations, .sessions)
+ * @param {object}   deps.state                     - global UI state (.promptQueues, .sessions)
  * @param {function} deps.sessionsStore              - lazy accessor for Alpine sessions store
  * @param {function} deps.showToast                  - toast notification helper
  * @param {function} deps.updateAgentStatusIndicators - refreshes agent status badges
@@ -198,11 +198,9 @@ export function initQueueModule(deps) {
       const result = await response.json();
 
       if (result.messages) {
-        state.conversations.set(sessionId, result.messages);
-        if (isAlpineChatEnabled()) {
-          MessageStore.syncFromServer(sessionId, result.messages);
-        } else {
-          updateConversationDOM(sessionId);
+        await MessageStore.syncFromServer(sessionId, result.messages);
+        if (!isAlpineChatEnabled()) {
+          await updateConversationDOM(sessionId);
         }
         // Show pill instead of force-scrolling — user may be reading history
         scrollPillShow();

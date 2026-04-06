@@ -82,7 +82,6 @@ export function createAdminUsersState() {
 export const state = {
   config: null,
   logs: new Map(),
-  conversations: new Map(),
   messageDrafts: new Map(),
   logPanelOpen: new Map(),
   promptQueues: new Map(), // sessionId -> {prompts: [], maxSize: 21}

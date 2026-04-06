@@ -4,6 +4,11 @@
  */
 
 import Dexie from "/vendor/dexie/dexie.mjs";
+import {
+  areConversationMessagesEqual,
+  normalizeConversationMessage,
+  normalizeConversationMessages,
+} from "./conversation-sync.js";
 
 // Create database instance
 export const db = new Dexie("WingmanLive");
@@ -46,9 +51,10 @@ export const MessageStore = {
    * when the new content is a longer version of the existing content.
    */
   async upsertMessage(sessionId, message) {
-    const role = message.role || message.type || "assistant";
-    const content = message.content || message.message || "";
-    const createdAt = message.createdAt || message.created_at || new Date().toISOString();
+    const normalized = normalizeConversationMessage(message);
+    const role = normalized.role;
+    const content = normalized.content;
+    const createdAt = normalized.createdAt;
 
     // Find the last message for this session
     const existing = await db.messages
@@ -63,12 +69,12 @@ export const MessageStore = {
           content,
           updatedAt: new Date().toISOString(),
         });
-        return existing.id;
+        return { id: existing.id, isStreamingUpdate: true };
       }
     }
 
     // New message
-    return db.messages.add({
+    const id = await db.messages.add({
       sessionId,
       role,
       content,
@@ -76,6 +82,7 @@ export const MessageStore = {
       updatedAt: new Date().toISOString(),
       messageHash: `${sessionId}:${role}:${Date.now()}`,
     });
+    return { id, isStreamingUpdate: false };
   },
 
   /**
@@ -117,11 +124,7 @@ export const MessageStore = {
         .toArray();
 
       const now = new Date().toISOString();
-      const incoming = messages.map((msg) => ({
-        role: msg.role || msg.type || "assistant",
-        content: msg.content || msg.message || "",
-        createdAt: msg.createdAt || msg.created_at || now,
-      }));
+      const incoming = normalizeConversationMessages(messages, now);
 
       // Update existing rows in-place where content changed
       const updates = [];
@@ -161,6 +164,29 @@ export const MessageStore = {
 
       await Promise.all(updates);
     });
+  },
+
+  /**
+   * Sync a full conversation only when the canonical message rows changed.
+   * Returns the canonical messages plus a changed flag so callers can skip
+   * redundant DOM work after no-op refreshes.
+   */
+  async syncFromServerIfChanged(sessionId, messages) {
+    const normalized = normalizeConversationMessages(messages);
+    const existing = await this.getSessionMessages(sessionId);
+
+    if (areConversationMessagesEqual(existing, normalized)) {
+      return {
+        changed: false,
+        messages: existing,
+      };
+    }
+
+    await this.syncFromServer(sessionId, normalized);
+    return {
+      changed: true,
+      messages: normalized,
+    };
   },
 
   /**

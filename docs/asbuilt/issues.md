@@ -37,22 +37,23 @@ Runtime contract:
 - Heartbeat-only streams keep a 1s compatibility poll because the adapter does not expose message events to proxy.
 - SSE failure windows fall back to a 2s recovery poll until the stream reconnects and reports a healthy transport again.
 
-### 2. Conversation state is mirrored in two places
+### 2. Legacy conversation mirror was retired in favor of Dexie
 
 Evidence:
 
-- `src/ui/app.js:3810-3833` writes incoming SSE messages to Dexie and also keeps `state.conversations` updated for “legacy callers.”
-- `src/ui/app.js:3811-3813` explicitly documents that Dexie is now the reactive source, but the in-memory map still exists.
+- `src/ui/live/db.js` now owns the canonical message contract through `MessageStore.upsertMessage()`, `MessageStore.getSessionMessages()`, and `MessageStore.syncFromServer()`.
+- `src/ui/live/chat-component.js` subscribes to that store with `Dexie.liveQuery(...)`.
+- `src/ui/views/live-view.js`, `src/ui/status/agent-indicators.js`, and `src/ui/utils/clipboard.js` read conversation data back from Dexie instead of an in-memory mirror.
 
 Why this matters:
 
-- Two state paths make it easy for one UI path to drift while the other still looks correct.
-- Debugging live chat issues becomes harder because the visible DOM can be backed by either Dexie or the legacy in-memory map depending on the route and timing.
+- Live messages now have one browser-side source of truth instead of a silent compatibility layer.
+- Debugging live chat issues is simpler because SSE, catch-up fetches, prompt sends, copy/export, and both render paths all converge on the same store.
 
 Practical follow-up:
 
-- Remove the legacy in-memory mirror once the remaining callers are updated, or document the fallback contract more explicitly.
-- Add a test that proves the chosen state source stays in sync across message updates.
+- Keep new live-message consumers on the `MessageStore` contract rather than reintroducing transient mirrors.
+- Maintain targeted tests around message normalization/equality so legacy payload shapes keep mapping cleanly into the canonical store.
 
 ### 3. `AGENT_MODE` is still overloaded and partially deprecated
 

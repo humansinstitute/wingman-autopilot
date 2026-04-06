@@ -92,7 +92,6 @@ import { initImageAttachments } from "./core/image-attachments.js";
 import { initVoiceNotes } from "./core/voice-notes.js";
 import { initAgentIndicators } from "./status/agent-indicators.js";
 import { show as scrollPillShow, hide as scrollPillHide, isNearBottom as scrollPillIsNearBottom } from "./live/scroll-pill.js";
-import { areConversationMessagesEqual } from "./live/conversation-sync.js";
 import { initAdminUsersApi } from "./api/admin-users.js";
 import { showToast } from "./utils/toast.js";
 import { collapseNewlines } from "./utils/text.js";
@@ -1411,9 +1410,6 @@ const fetchSessions = async () => {
   for (const key of Array.from(state.logs.keys())) {
     if (!sessionIds.has(key)) state.logs.delete(key);
   }
-  for (const key of Array.from(state.conversations.keys())) {
-    if (!sessionIds.has(key)) state.conversations.delete(key);
-  }
   for (const key of Array.from(state.messageDrafts.keys())) {
     if (!sessionIds.has(key)) state.messageDrafts.delete(key);
   }
@@ -1551,28 +1547,12 @@ function isConversationRenderLocked(sessionId) {
     sessionId === sessionsStore().activeSessionId;
 }
 
-function pushConversationToAlpineStore(sessionId) {
-  const chatStore = window.Alpine?.store("chat");
-  if (!chatStore || chatStore.sessionId !== sessionId) {
-    return;
-  }
-  const conv = state.conversations.get(sessionId) || [];
-  chatStore.replaceMessages(conv.map((msg, idx) => ({
-    id: `api-${idx}`,
-    sessionId,
-    role: msg.role || msg.type || "assistant",
-    content: msg.content || msg.message || "",
-    createdAt: msg.createdAt || msg.created_at || "",
-  })));
-}
-
-function renderConversationForSession(sessionId, options = {}) {
+async function renderConversationForSession(sessionId, options = {}) {
   const { isStreamingUpdate = false } = options;
   if (isConversationRenderLocked(sessionId)) {
     return;
   }
   if (isAlpineChatEnabled()) {
-    pushConversationToAlpineStore(sessionId);
     if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
       if (!scrollPillIsNearBottom() && !isStreamingUpdate) {
         scrollPillShow();
@@ -1582,7 +1562,7 @@ function renderConversationForSession(sessionId, options = {}) {
   }
   if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
     const wasNearBottom = scrollPillIsNearBottom();
-    updateConversationDOM(sessionId);
+    await updateConversationDOM(sessionId);
     if (!wasNearBottom && !isStreamingUpdate) {
       scrollPillShow();
     }
@@ -1594,7 +1574,7 @@ function flushConversationRenderLock() {
   if (!activeSessionId) {
     return;
   }
-  renderConversationForSession(activeSessionId);
+  void renderConversationForSession(activeSessionId);
 }
 
 function setupConversationSelectionLock() {
@@ -1628,12 +1608,11 @@ const fetchConversation = async (sessionId) => {
     const data = await fetchSessionMessagesApi(sessionId);
     if (!data) return;
     const items = Array.isArray(data?.messages) ? data.messages : [];
-    const existingItems = state.conversations.get(sessionId) ?? [];
-    if (areConversationMessagesEqual(existingItems, items)) {
+    const { changed } = await MessageStore.syncFromServerIfChanged(sessionId, items);
+    if (!changed) {
       return;
     }
-    state.conversations.set(sessionId, items);
-    renderConversationForSession(sessionId);
+    await renderConversationForSession(sessionId);
   } catch (error) {
     console.error("Failed to load conversation", error);
   }
@@ -2130,7 +2109,7 @@ const sendMessage = async (sessionId, content) => {
     sessionMessageSendInFlight.add(sessionId);
     const payload = await postSessionMessage(sessionId, trimmed, "user");
     const messages = Array.isArray(payload?.messages) ? payload.messages : [];
-    state.conversations.set(sessionId, messages);
+    await MessageStore.syncFromServer(sessionId, messages);
     state.messageDrafts.set(sessionId, "");
 
     // Activate knight rider effect immediately after sending
@@ -2138,7 +2117,7 @@ const sendMessage = async (sessionId, content) => {
     if (knightRider) knightRider.classList.add("active");
 
     // After sending, update conversation display
-    renderConversationForSession(sessionId);
+    await renderConversationForSession(sessionId);
     scrollPillHide();
     requestAnimationFrame(() => {
       scrollConversationAreaToBottom(sessionId, { includeWindow: true });
@@ -3711,29 +3690,10 @@ jobDialog?.addEventListener("cancel", (event) => {
     }
   });
 
-  // Wire SSE message events to update conversation state.
-  // SSE manager already writes each message to Dexie (MessageStore).
-  // When Alpine chat is enabled, Dexie liveQuery drives the DOM reactively
-  // so we only need to keep state.conversations in sync for legacy callers.
-  sseManager.onMessage((sessionId, message) => {
-    const existing = state.conversations.get(sessionId) || [];
-    const lastMessage = existing[existing.length - 1];
-    const isStreamingUpdate = lastMessage &&
-      lastMessage.role === (message.role || message.type) &&
-      message.content?.startsWith(lastMessage.content?.slice(0, 50));
-
-    if (isStreamingUpdate) {
-      lastMessage.content = message.content || message.message || "";
-    } else {
-      existing.push({
-        role: message.role || message.type || "assistant",
-        content: message.content || message.message || "",
-        createdAt: message.createdAt || new Date().toISOString(),
-      });
-    }
-    state.conversations.set(sessionId, existing);
-
-    renderConversationForSession(sessionId, { isStreamingUpdate });
+  // SSE manager writes incoming messages into Dexie. The DOM then hydrates from
+  // the canonical MessageStore path instead of maintaining a legacy mirror.
+  sseManager.onMessage((sessionId, _message, meta = {}) => {
+    void renderConversationForSession(sessionId, { isStreamingUpdate: meta.isStreamingUpdate });
   });
 
   // Render immediately from Dexie cache so the UI is visible while

@@ -1,10 +1,12 @@
 /**
  * Alpine.js reactive chat component for live session view.
- * Messages are pushed to the store directly by app.js, with SSE as the steady-state path.
+ * Messages are read reactively from Dexie, with SSE as the steady-state write path.
  */
 
 import Alpine from "/vendor/alpinejs/module.esm.js";
+import Dexie from "/vendor/dexie/dexie.mjs";
 import { sseManager } from "./sse-manager.js";
+import { MessageStore } from "./db.js";
 import { show as scrollPillShow, isNearBottom as scrollPillIsNearBottom } from "./scroll-pill.js";
 import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
 import {
@@ -69,6 +71,7 @@ export function registerChatComponent() {
     isLoading: false,
     error: null,
     _sseUnsubscribers: [],
+    _messageSubscription: null,
 
     /** Alpine auto-calls init() on store registration — nothing to do yet. */
     init() {},
@@ -88,6 +91,8 @@ export function registerChatComponent() {
       this.error = null;
 
       try {
+        this._subscribeToMessages(sessionId);
+
         // Subscribe to SSE status/connection events
         this._setupSSEListeners(sessionId);
 
@@ -139,6 +144,28 @@ export function registerChatComponent() {
       );
     },
 
+    _subscribeToMessages(sessionId) {
+      this._messageSubscription?.unsubscribe?.();
+      this._messageSubscription = Dexie.liveQuery(() => MessageStore.getSessionMessages(sessionId))
+        .subscribe({
+          next: (messages) => {
+            if (this.sessionId !== sessionId) {
+              return;
+            }
+            this.replaceMessages(messages);
+            this.isLoading = false;
+          },
+          error: (error) => {
+            if (this.sessionId !== sessionId) {
+              return;
+            }
+            console.error("[chat] Failed to read messages:", error);
+            this.error = error instanceof Error ? error.message : String(error);
+            this.isLoading = false;
+          },
+        });
+    },
+
     /**
      * Show the scroll pill if user is scrolled up, otherwise do nothing
      * (the user is already at the bottom and will see new content naturally).
@@ -178,6 +205,8 @@ export function registerChatComponent() {
      * Clean up subscriptions and connections.
      */
     cleanup() {
+      this._messageSubscription?.unsubscribe?.();
+      this._messageSubscription = null;
       this._sseUnsubscribers.forEach((unsub) => unsub());
       this._sseUnsubscribers = [];
       if (this.sessionId) {

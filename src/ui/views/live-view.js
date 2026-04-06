@@ -11,7 +11,7 @@ import { showToast } from "../utils/toast.js";
 import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
 import { fetchSessionHistoryApi, forkSessionToWorktreeApi } from "../services/sessions.js";
 import { triggerAppActionApi } from "../services/apps.js";
-import { isAlpineChatEnabled, getChatTemplate, Alpine } from "../live/index.js";
+import { isAlpineChatEnabled, getChatTemplate, Alpine, MessageStore } from "../live/index.js";
 import { attachPathMentionAutocomplete } from "../live/path-mention-autocomplete.js";
 import { findAppForSession, findWebAppForSession, createWebviewPanel, createLayoutToolbar } from "../live/webview-panel.js";
 import { createWriterPanel, createWriterToolbar } from "../writer/writer-panel.js";
@@ -364,19 +364,18 @@ export function initLiveView(deps) {
 
   // ── Conversation ────────────────────────────────────────────────
 
-  const rerenderConversation = (sessionId, options = {}) => {
+  const rerenderConversation = async (sessionId, options = {}) => {
     const { prependedScrollState = null } = options;
     const current = state.conversationContainers.get(sessionId);
-    const conversation = state.conversations.get(sessionId) ?? [];
+    const conversation = await MessageStore.getSessionMessages(sessionId);
     const next = createConversationElement({
       sessionId,
       conversation,
       windowStore: state.liveMessageWindows,
       onRevealOlder: (scrollElement) => {
-        const currentConversation = state.conversations.get(sessionId) ?? [];
         const snapshot = capturePrependedScrollState(scrollElement);
-        expandConversationWindow(state.liveMessageWindows, sessionId, currentConversation.length);
-        rerenderConversation(sessionId, { prependedScrollState: snapshot });
+        expandConversationWindow(state.liveMessageWindows, sessionId, conversation.length);
+        void rerenderConversation(sessionId, { prependedScrollState: snapshot });
       },
     });
 
@@ -395,7 +394,17 @@ export function initLiveView(deps) {
   };
 
   const renderConversation = (sessionId) => {
-    return rerenderConversation(sessionId);
+    const placeholder = document.createElement("div");
+    placeholder.className = "wm-conversation";
+    placeholder.dataset.sessionId = sessionId;
+    const loading = document.createElement("p");
+    loading.textContent = "Loading conversation...";
+    placeholder.append(loading);
+    state.conversationContainers.set(sessionId, placeholder);
+    queueMicrotask(() => {
+      void rerenderConversation(sessionId);
+    });
+    return placeholder;
   };
 
   // ── Composer ────────────────────────────────────────────────────

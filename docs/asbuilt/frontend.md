@@ -80,7 +80,7 @@ This is the main non-Dexie state container. Most imperative views read it direct
 | Config | `state.config` in `app.js` | in-memory only | Loaded from `/api/config`; also seeds agent list and feature flags |
 | Identity | `state.identity` via `src/ui/identity/state-manager.js` | `localStorage` + cross-tab `storage` sync | Also emits browser events and refreshes related filters |
 | Session catalog | Alpine store `sessions` in `src/ui/sessions/store.js` | Dexie `WingmanLive.apiSessions` | Used for home, nav, tabs, and active-session selection |
-| Live message cache | `MessageStore` in `src/ui/live/db.js` | Dexie `WingmanLive.messages` | SSE writes here first; legacy code still mirrors messages into `state.conversations` |
+| Live message cache | `MessageStore` in `src/ui/live/db.js` | Dexie `WingmanLive.messages` | The canonical live conversation read/write path for SSE, bootstrap fetches, queue sends, copy-to-clipboard, and both chat renderers |
 | Live session status cache | `SessionStore` in `src/ui/live/db.js` | Dexie `WingmanLive.sessions` | Stores per-session runtime status used by live indicators |
 | Apps catalog | Alpine store `apps` in `src/ui/apps/store.js` | Dexie `WingmanLive.apps` | App cards still render imperatively from store data |
 | Night Watch | Alpine store `nightwatch` | Dexie `WingmanNightWatch.reports` and `.config` | Page itself is Alpine-templated |
@@ -135,7 +135,16 @@ Live session pages now use an SSE-first contract:
 - `src/ui/live/refresh-controller.js` performs the initial catch-up fetch, owns reconnect handling, and decides whether fallback polling is allowed
 - incoming SSE messages are written into Dexie through `MessageStore.upsertMessage()`
 - incoming SSE status events are written into Dexie through `SessionStore.updateStatus()`
-- `app.js` still mirrors message data into `state.conversations` for legacy render paths
+- bootstrap fetches and immediate POST responses sync full conversations into Dexie through `MessageStore.syncFromServer(...)`
+- the Alpine chat store subscribes to Dexie with `Dexie.liveQuery(...)`
+- the non-Alpine live renderer hydrates its conversation DOM from Dexie on demand; there is no in-memory `state.conversations` mirror anymore
+
+The caller split that previously depended on `state.conversations` now looks like this:
+
+- active UI dependencies moved to Dexie reads:
+  `src/ui/status/agent-indicators.js`, `src/ui/utils/clipboard.js`, `src/ui/sessions/queue-modal.js`, `src/ui/views/live-view.js`, and the live-session paths in `src/ui/app.js`
+- compatibility callers retired:
+  the `state.conversations` field in `src/ui/state/index.js` and the SSE mirror/update code in `src/ui/app.js`
 
 Steady-state behavior by mode:
 
