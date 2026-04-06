@@ -171,6 +171,7 @@ import {
 import type { WarmRestartMarker } from "./server/bootstrap/warm-restart";
 import { reconcileAppsWithPM2 } from "./server/bootstrap/pm2-reconcile";
 import { cleanupOrphanedAgentProcesses } from "./server/bootstrap/pm2-agent-cleanup";
+import { ensureWingmanCoreRegistration } from "./server/bootstrap/wingman-core-registry";
 import { connectPM2 } from "./agents/pm2-wrapper";
 import { createUploadHelpers } from "./server/uploads/helpers";
 import { resolveAndCacheNostrProfile } from "./server/nostr-profile";
@@ -2037,56 +2038,10 @@ const cloneRepositoryIntoWorkspace = async (
   return { root: resolvedRoot, label, scripts };
 };
 
-const ensureWingmanCoreRegistration = async () => {
-  try {
-    const apps = await appRegistry.listApps();
-    const expectedRoot = projectRootPath;
-    const legacyApps = apps.filter((app) => app.id !== "wingman-core" && normalize(app.root) === expectedRoot);
-    for (const legacy of legacyApps) {
-      try {
-        await appRegistry.removeApp(legacy.id);
-        console.log(`[apps] removed legacy Wingman app entry (${legacy.id})`);
-      } catch (error) {
-        console.warn(`[apps] failed to remove legacy Wingman app ${legacy.id}: ${(error as Error).message}`);
-      }
-    }
-
-    const existing = await appRegistry.getApp("wingman-core");
-    const restartCommand = "bun run scripts/restart-wingman.ts";
-    const tmuxWindow = "wingman-core";
-    if (existing) {
-      const needsUpdate =
-        existing.scripts.restart !== restartCommand ||
-        existing.tmuxSession !== tmuxWindow ||
-        existing.root !== expectedRoot ||
-        (!existing.ownerNpub && Boolean(adminNpub));
-      if (needsUpdate) {
-        await appRegistry.updateApp("wingman-core", {
-          root: expectedRoot,
-          scripts: { restart: restartCommand },
-          tmuxSession: tmuxWindow,
-          notes: existing.notes ?? "Controls the Wingman server process.",
-          ownerNpub: adminNpub ?? existing.ownerNpub ?? null,
-        });
-      }
-      return;
-    }
-    await appRegistry.registerApp({
-      id: "wingman-core",
-      label: "Wingman Server",
-      root: expectedRoot,
-      scripts: { restart: restartCommand },
-      tmuxSession: tmuxWindow,
-      notes: "Controls the Wingman server process.",
-      ownerNpub: adminNpub,
-    });
-    console.log("[apps] registered Wingman core app entry");
-  } catch (error) {
-    console.error("[apps] Failed to ensure Wingman core registration:", error);
-  }
-};
-
-void ensureWingmanCoreRegistration();
+void ensureWingmanCoreRegistration(appRegistry, {
+  projectRoot: projectRootPath,
+  adminNpub,
+});
 
 const isAdminContext = (authContext: RequestAuthContext): boolean => {
   if (!adminNpub) return false;

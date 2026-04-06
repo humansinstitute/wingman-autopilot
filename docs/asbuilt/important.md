@@ -35,6 +35,7 @@ Primary source of truth for this review:
 
 - `bun start` runs `src/index.ts`, which runs the setup wizard before it imports `src/server.ts`. A failed or cancelled wizard exits the process before the server is even loaded.
 - Server startup mutates local state. It creates directories under `~/Documents/Wingman`, `~/Documents/Wingman/users`, `tmp/uploads`, and `~/.wingmen`, and it can also create or update `out/agentapi`.
+- Ordinary startup still reconciles the `wingman-core` app record, but it no longer removes legacy same-root app entries from `data/apps.json` as a hidden side effect. That destructive reconciliation now lives in `src/server/bootstrap/wingman-core-registry.ts` and should only run through the explicit cleanup helper.
 - `src/server/bootstrap/agentapi.ts` treats `downloads.json` as the release manifest for `agentapi`. It verifies SHA-256, writes `out/agentapi`, and writes a sibling `.version` file. Deleting the version file makes the next boot behave like an upgrade path even if the binary already exists.
 - `src/index.ts` globally swallows a specific class of Nostr relay rejections (`Event rejected`, `AUTH required`, `rate-limited`, `blocked`) so those do not crash the whole process. Other uncaught exceptions still terminate the server.
 
