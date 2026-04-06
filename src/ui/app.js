@@ -12,6 +12,7 @@ import {
   initAlpineChat,
 } from "./live/index.js";
 import { createLiveRefreshController } from "./live/refresh-controller.js";
+import { syncLiveRouteTransport } from "./live/route-transport.js";
 import {
   initLiveMobileRuntime,
   isComposerInteractionActive,
@@ -2704,19 +2705,14 @@ const render = () => {
   renderDebounceTimer = setTimeout(() => {
     isRendering = true;
     try {
-      // Manage SSE connections based on route changes
       const routeChanged = previousRenderRoute !== currentRoute;
-      if (routeChanged) {
-        // Leaving live view - disconnect all SSE
-        if (previousRenderRoute === "live" && currentRoute !== "live") {
-          sseManager.disconnectAll();
-        }
-        // Entering live view - connect to active session
-        if (currentRoute === "live" && sessionsStore().activeSessionId) {
-          sseManager.connect(sessionsStore().activeSessionId);
-        }
-        previousRenderRoute = currentRoute;
-      }
+      previousRenderRoute = syncLiveRouteTransport({
+        previousRoute: previousRenderRoute,
+        currentRoute,
+        activeSessionId: sessionsStore().activeSessionId,
+        sseManager,
+        liveRefreshController,
+      });
 
       const projectsEnabled = syncProjectsNavigationVisibility();
       if (!projectsEnabled && currentRoute === "projects") {
