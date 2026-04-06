@@ -5,7 +5,8 @@
  * 1. Record audio in-browser.
  * 2. Upload/save it immediately on stop.
  * 3. Insert the saved link into the composer.
- * 4. Transcribe that saved link only when the user sends the message.
+ * 4. Start transcription in the background and update the draft when ready.
+ * 5. If the user sends while transcription is still pending, wait for it first.
  */
 
 import { transcribeVoiceNoteApi, uploadVoiceNoteApi } from "../services/voice-notes.js";
@@ -45,6 +46,35 @@ function sanitizeTranscriptLabel(value) {
   return cleaned || "voice note";
 }
 
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getVoiceNoteMarkers(markerId) {
+  return {
+    start: `<!--VOICE_NOTE:${markerId}:START-->`,
+    transcript: `<!--VOICE_NOTE:${markerId}:TRANSCRIPT_PENDING-->`,
+    end: `<!--VOICE_NOTE:${markerId}:END-->`,
+  };
+}
+
+function buildVoiceNoteDraftBlock(markerId, label, publicPath) {
+  const markers = getVoiceNoteMarkers(markerId);
+  return `${markers.start}[${label}](${publicPath})\n${markers.transcript}\n${markers.end}`;
+}
+
+function buildVoiceNoteBlockPattern(markerId) {
+  const markers = getVoiceNoteMarkers(markerId);
+  return new RegExp(`${escapeRegExp(markers.start)}[\\s\\S]*?${escapeRegExp(markers.end)}`, "g");
+}
+
+function removeVoiceNoteComments(text) {
+  return String(text ?? "")
+    .replace(/<!--VOICE_NOTE:[^>]+-->/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function createDialogShell() {
   const dialog = document.createElement("dialog");
   dialog.className = "wm-voice-note-dialog";
@@ -54,7 +84,7 @@ function createDialogShell() {
       <div class="wm-voice-note-dialog__header">
         <div>
           <h2 class="wm-voice-note-dialog__title">Record voice note</h2>
-          <p class="wm-voice-note-dialog__subtitle">Records from your microphone, uploads immediately, inserts a saved link into the composer, and waits until Send to transcribe.</p>
+          <p class="wm-voice-note-dialog__subtitle">Records from your microphone, uploads immediately, inserts a saved note into the composer, and starts transcription in the background.</p>
         </div>
         <button type="button" class="wm-voice-note-dialog__close" aria-label="Close voice note recorder" data-action="close">&times;</button>
       </div>
@@ -101,12 +131,14 @@ function findVoiceNoteLinks(draft) {
 
 export function initVoiceNotes(deps) {
   const {
+    state,
     getSessionById,
     insertTextAtCursor,
     showToast,
   } = deps;
 
   let activeDialog = null;
+  const voiceNoteTracker = new Map();
 
   function setDialogStatus(dialog, message, tone = "neutral") {
     const status = dialog.querySelector(".wm-voice-note-dialog__status");
@@ -135,6 +167,129 @@ export function initVoiceNotes(deps) {
     if (preview) {
       preview.value = value ?? "";
     }
+  }
+
+  function getSessionVoiceNotes(sessionId) {
+    if (!voiceNoteTracker.has(sessionId)) {
+      voiceNoteTracker.set(sessionId, new Map());
+    }
+    return voiceNoteTracker.get(sessionId);
+  }
+
+  function getPreviewContainer(sessionId) {
+    return document
+      .querySelector(`.wm-composer-shell[data-session-id="${sessionId}"]`)
+      ?.querySelector(".wm-image-preview-container");
+  }
+
+  function updatePreviewContainerVisibility(sessionId) {
+    const container = getPreviewContainer(sessionId);
+    if (!container) return;
+    container.style.display = container.children.length > 0 ? "flex" : "none";
+  }
+
+  function createVoiceNoteTile(sessionId, markerId, label) {
+    const container = getPreviewContainer(sessionId);
+    if (!container) return null;
+
+    const tile = document.createElement("div");
+    tile.className = "wm-voice-note-chip";
+    tile.dataset.markerId = markerId;
+    tile.dataset.testid = "voice-note-chip";
+    tile.innerHTML = `
+      <div class="wm-voice-note-chip__icon" aria-hidden="true">Mic</div>
+      <div class="wm-voice-note-chip__body">
+        <div class="wm-voice-note-chip__title">${sanitizeTranscriptLabel(label)}</div>
+        <div class="wm-voice-note-chip__meta">
+          <span class="wm-voice-note-chip__status" data-part="status">Uploading…</span>
+        </div>
+        <div class="wm-voice-note-chip__transcript" data-part="transcript" hidden></div>
+      </div>
+      <button type="button" class="wm-voice-note-chip__remove" aria-label="Remove voice note" data-part="remove">&times;</button>
+    `;
+
+    container.append(tile);
+    updatePreviewContainerVisibility(sessionId);
+    return tile;
+  }
+
+  function setTileStatus(tile, status, tone = "neutral") {
+    const statusEl = tile?.querySelector('[data-part="status"]');
+    if (statusEl) {
+      statusEl.textContent = status;
+      statusEl.dataset.state = tone;
+    }
+  }
+
+  function setTileTranscript(tile, transcript) {
+    const transcriptEl = tile?.querySelector('[data-part="transcript"]');
+    if (transcriptEl) {
+      transcriptEl.textContent = transcript ?? "";
+      transcriptEl.hidden = !transcript;
+    }
+  }
+
+  function getTextarea(sessionId) {
+    const composerShell = document.querySelector(`.wm-composer-shell[data-session-id="${sessionId}"]`);
+    const textarea = composerShell?.querySelector("textarea");
+    return textarea instanceof HTMLTextAreaElement ? textarea : null;
+  }
+
+  function syncDraftToComposer(sessionId, nextDraft, options = {}) {
+    const { notifyInput = false } = options;
+    state.messageDrafts.set(sessionId, nextDraft);
+    const textarea = getTextarea(sessionId);
+    if (!textarea) return;
+    textarea.value = nextDraft;
+    if (notifyInput) {
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+
+  function removeVoiceNoteBlockFromDraft(text, markerId) {
+    return String(text ?? "")
+      .replace(buildVoiceNoteBlockPattern(markerId), "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  function removeVoiceNote(sessionId, markerId) {
+    const sessionMap = voiceNoteTracker.get(sessionId);
+    const entry = sessionMap?.get(markerId);
+    entry?.controller?.abort();
+    entry?.tile?.remove();
+    sessionMap?.delete(markerId);
+
+    const currentDraft = state.messageDrafts.get(sessionId) ?? "";
+    const nextDraft = removeVoiceNoteBlockFromDraft(currentDraft, markerId);
+    syncDraftToComposer(sessionId, nextDraft, { notifyInput: true });
+    updatePreviewContainerVisibility(sessionId);
+  }
+
+  function registerVoiceNote(sessionId, entry) {
+    const sessionMap = getSessionVoiceNotes(sessionId);
+    sessionMap.set(entry.markerId, entry);
+    const removeButton = entry.tile?.querySelector('[data-part="remove"]');
+    removeButton?.addEventListener("click", () => {
+      removeVoiceNote(sessionId, entry.markerId);
+    });
+  }
+
+  function replacePendingTranscriptMarker(text, markerId, replacement) {
+    const markers = getVoiceNoteMarkers(markerId);
+    return String(text ?? "").replace(markers.transcript, replacement);
+  }
+
+  function updateDraftWithTranscript(sessionId, markerId, label, transcript) {
+    const currentDraft = state.messageDrafts.get(sessionId) ?? "";
+    const markers = getVoiceNoteMarkers(markerId);
+    if (!currentDraft.includes(markers.start)) {
+      return false;
+    }
+    const replacement = buildTranscriptReplacement(label, transcript);
+    const nextDraft = replacePendingTranscriptMarker(currentDraft, markerId, replacement);
+    syncDraftToComposer(sessionId, nextDraft, { notifyInput: true });
+    return true;
   }
 
   function setButtonState(dialog, state) {
@@ -182,17 +337,48 @@ export function initVoiceNotes(deps) {
     return document.querySelector(`.wm-composer-shell[data-session-id="${sessionId}"] textarea`);
   }
 
-  function insertVoiceNoteReference(sessionId, reference) {
+  function insertVoiceNoteReference(sessionId, markerId, reference) {
     const textarea = findComposerTextarea(sessionId);
     if (!(textarea instanceof HTMLTextAreaElement)) {
       throw new Error("Unable to find the live composer for this session");
     }
 
+    const draftBlock = buildVoiceNoteDraftBlock(markerId, reference.label, reference.publicPath);
     const needsPrefix = textarea.value.length > 0 && !textarea.value.endsWith("\n");
-    const textToInsert = needsPrefix ? `\n${reference}\n` : `${reference}\n`;
+    const textToInsert = needsPrefix ? `\n${draftBlock}\n` : `${draftBlock}\n`;
     insertTextAtCursor(textarea, textToInsert, sessionId);
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
     textarea.focus({ preventScroll: true });
+  }
+
+  async function startBackgroundTranscription(sessionId, entry) {
+    try {
+      setTileStatus(entry.tile, "Transcribing…", "processing");
+      const response = await transcribeVoiceNoteApi({
+        publicPath: entry.publicPath,
+        signal: entry.controller.signal,
+      });
+      const transcript = typeof response?.transcript === "string" ? response.transcript.trim() : "";
+      if (!transcript) {
+        throw new Error("Voice note transcription returned no text");
+      }
+      entry.transcript = transcript;
+      entry.status = "ready";
+      updateDraftWithTranscript(sessionId, entry.markerId, entry.label, transcript);
+      setTileStatus(entry.tile, "Transcript ready", "success");
+      setTileTranscript(entry.tile, transcript);
+      showToast?.("Voice note transcript ready", { duration: 2200 });
+      return transcript;
+    } catch (error) {
+      if (entry.controller.signal.aborted) {
+        return "";
+      }
+      entry.status = "error";
+      entry.error = error instanceof Error ? error.message : String(error);
+      setTileStatus(entry.tile, "Transcript failed", "error");
+      setTileTranscript(entry.tile, entry.error);
+      throw error;
+    }
   }
 
   async function uploadRecording(dialog, sessionId, recordingBlob, fileName, mimeType, signal) {
@@ -216,51 +402,104 @@ export function initVoiceNotes(deps) {
     });
 
     const reference =
-      typeof response?.placeholder === "string" && response.placeholder.trim().length > 0
-        ? response.placeholder.trim()
-        : typeof response?.publicPath === "string" && response.publicPath.trim().length > 0
-          ? `[${fileName}](${response.publicPath.trim()})`
-          : "";
+      typeof response?.publicPath === "string" && response.publicPath.trim().length > 0
+        ? {
+            label: sanitizeTranscriptLabel(response?.name ?? fileName),
+            publicPath: response.publicPath.trim(),
+          }
+        : null;
 
-    if (!reference) {
+    if (!reference?.publicPath) {
       throw new Error("Voice note upload succeeded without a usable link");
     }
 
-    insertVoiceNoteReference(sessionId, reference);
-    setPreviewValue(dialog, reference);
-    setDialogStatus(dialog, "Voice note saved to the composer. It will transcribe when you send.", "success");
+    const markerId = `voice_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const tile = createVoiceNoteTile(sessionId, markerId, reference.label);
+    const entry = {
+      markerId,
+      label: reference.label,
+      publicPath: reference.publicPath,
+      tile,
+      status: "pending",
+      transcript: "",
+      error: null,
+      controller: new AbortController(),
+      promise: null,
+    };
+    registerVoiceNote(sessionId, entry);
+    setTileStatus(tile, "Saved. Starting transcription…", "processing");
+    insertVoiceNoteReference(sessionId, markerId, reference);
+    entry.promise = startBackgroundTranscription(sessionId, entry);
+
+    setPreviewValue(dialog, `[${reference.label}](${reference.publicPath})`);
+    setDialogStatus(dialog, "Voice note saved to the composer. Transcription is running in the background.", "success");
     setMeterState(dialog, "Saved");
     showToast?.("Voice note saved to composer", { duration: 2200 });
   }
 
-  async function prepareDraftForSend(_sessionId, draft) {
+  function cleanupOrphanedVoiceNotes(sessionId, text) {
+    const sessionMap = voiceNoteTracker.get(sessionId);
+    if (!sessionMap || sessionMap.size === 0) {
+      return;
+    }
+    const currentText = String(text ?? "");
+    const markerIdsToRemove = [];
+    for (const [markerId] of sessionMap.entries()) {
+      const markers = getVoiceNoteMarkers(markerId);
+      if (!currentText.includes(markers.start)) {
+        markerIdsToRemove.push(markerId);
+      }
+    }
+    markerIdsToRemove.forEach((markerId) => {
+      const entry = sessionMap.get(markerId);
+      entry?.controller?.abort();
+      entry?.tile?.remove();
+      sessionMap.delete(markerId);
+    });
+    updatePreviewContainerVisibility(sessionId);
+  }
+
+  async function prepareDraftForSend(sessionId, draft) {
     const matches = findVoiceNoteLinks(draft);
     if (matches.length === 0) {
-      return draft;
+      return removeVoiceNoteComments(draft);
     }
 
     let nextDraft = draft;
-    const transcriptCache = new Map();
+    const sessionMap = getSessionVoiceNotes(sessionId);
     showToast?.(
       `Transcribing ${matches.length} voice note${matches.length === 1 ? "" : "s"} before send`,
       { variant: "info", duration: 2200 },
     );
 
     for (const match of matches) {
-      let transcript = transcriptCache.get(match.publicPath);
+      let transcript = "";
+      const liveEntry = Array.from(sessionMap.values()).find((entry) => entry.publicPath === match.publicPath);
+      if (liveEntry) {
+        if (liveEntry.status === "pending" && liveEntry.promise) {
+          transcript = await liveEntry.promise;
+        } else if (liveEntry.status === "ready") {
+          transcript = liveEntry.transcript;
+        } else if (liveEntry.status === "error") {
+          throw new Error(liveEntry.error || `Voice note transcription failed for ${match.label}`);
+        }
+      } else {
+        const response = await transcribeVoiceNoteApi({ publicPath: match.publicPath });
+        transcript = typeof response?.transcript === "string" ? response.transcript.trim() : "";
+      }
+
       if (!transcript) {
         const response = await transcribeVoiceNoteApi({ publicPath: match.publicPath });
         transcript = typeof response?.transcript === "string" ? response.transcript.trim() : "";
         if (!transcript) {
           throw new Error(`Voice note transcription returned no text for ${match.label}`);
         }
-        transcriptCache.set(match.publicPath, transcript);
       }
 
       nextDraft = nextDraft.replace(match.raw, buildTranscriptReplacement(match.label, transcript));
     }
 
-    return nextDraft;
+    return removeVoiceNoteComments(nextDraft);
   }
 
   async function openVoiceNoteRecorder(sessionId) {
@@ -509,6 +748,7 @@ export function initVoiceNotes(deps) {
 
   return {
     openVoiceNoteRecorder,
+    cleanupOrphanedVoiceNotes,
     prepareDraftForSend,
   };
 }

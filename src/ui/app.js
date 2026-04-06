@@ -407,6 +407,7 @@ let handleImageUploads = async () => {};
 let handleAttachmentUploads = async () => {};
 let cleanupOrphanedMarkers = () => {};
 let openVoiceNoteRecorder = async () => {};
+let cleanupVoiceNoteDraftState = () => {};
 let prepareVoiceNoteDraftForSend = async (_sessionId, draft) => draft;
 
 // -- Agent indicators initialized via initAgentIndicators (see bootstrap) --
@@ -2898,12 +2899,20 @@ handleAttachmentUploads = imageAttachmentsModule.handleAttachmentUploads;
 cleanupOrphanedMarkers = imageAttachmentsModule.cleanupOrphanedMarkers;
 
 const voiceNotesModule = initVoiceNotes({
+  state,
   getSessionById,
   insertTextAtCursor,
   showToast,
 });
 openVoiceNoteRecorder = voiceNotesModule.openVoiceNoteRecorder;
+cleanupVoiceNoteDraftState = voiceNotesModule.cleanupOrphanedVoiceNotes;
 prepareVoiceNoteDraftForSend = voiceNotesModule.prepareDraftForSend;
+
+const imageMarkerCleanup = cleanupOrphanedMarkers;
+cleanupOrphanedMarkers = (sessionId, text) => {
+  imageMarkerCleanup(sessionId, text);
+  cleanupVoiceNoteDraftState(sessionId, text);
+};
 
 const agentIndicatorsModule = initAgentIndicators({
   state,

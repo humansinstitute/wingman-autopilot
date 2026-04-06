@@ -5004,6 +5004,113 @@ dialog textarea {
   min-width: 7.5rem;
 }
 
+.wm-voice-note-chip {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  min-width: min(100%, 320px);
+  max-width: 360px;
+  padding: 0.85rem 2.5rem 0.85rem 0.9rem;
+  border-radius: 0.9rem;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: linear-gradient(135deg, rgba(17, 24, 39, 0.94), rgba(15, 23, 42, 0.94));
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.22);
+}
+
+.wm-voice-note-chip__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: radial-gradient(circle at 35% 35%, rgba(248, 113, 113, 0.92), rgba(220, 38, 38, 0.86));
+  color: rgba(255, 255, 255, 0.96);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.wm-voice-note-chip__body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.wm-voice-note-chip__title {
+  color: rgba(248, 250, 252, 0.98);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.wm-voice-note-chip__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.wm-voice-note-chip__status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.35rem;
+  padding: 0.12rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.16);
+  color: rgba(226, 232, 240, 0.92);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.wm-voice-note-chip__status[data-state="processing"] {
+  background: rgba(245, 158, 11, 0.18);
+  color: rgba(254, 240, 138, 0.98);
+}
+
+.wm-voice-note-chip__status[data-state="success"] {
+  background: rgba(16, 185, 129, 0.18);
+  color: rgba(167, 243, 208, 0.98);
+}
+
+.wm-voice-note-chip__status[data-state="error"] {
+  background: rgba(239, 68, 68, 0.18);
+  color: rgba(254, 202, 202, 0.98);
+}
+
+.wm-voice-note-chip__transcript {
+  color: rgba(191, 219, 254, 0.95);
+  font-size: 0.8rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  max-height: 4.6rem;
+  overflow: hidden;
+}
+
+.wm-voice-note-chip__remove {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  width: 1.7rem;
+  height: 1.7rem;
+  border: none;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.58);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.wm-voice-note-chip__remove:hover,
+.wm-voice-note-chip__remove:focus-visible {
+  background: rgba(248, 250, 252, 0.18);
+  outline: none;
+}
+
 @keyframes wm-voice-note-pulse {
   0% {
     transform: scale(1);
