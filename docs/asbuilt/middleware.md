@@ -1,6 +1,6 @@
 # Wingman middleware and boundary layer (as built)
 
-Last reviewed against the live repository on 2026-04-05.
+Last reviewed against the live repository on 2026-04-07.
 
 ## Scope
 
@@ -19,10 +19,10 @@ At startup it:
 
 - loads config and feature flags
 - instantiates stores and service objects
-- creates extracted route handlers for sessions, auth, docs, uploads, scheduler, jobs, Gitea, SuperBased, MCP, billing, admin, apps, and system operations
+- creates extracted route handlers for sessions, auth, docs, uploads, scheduler, jobs, Gitea, SuperBased, MCP, billing, admin, apps, agent-chat, and system operations
 - registers access-control rules
 - starts Bun’s HTTP server via `Bun.serve(...)`
-- starts long-running boundary-adjacent loops such as scheduler execution, session status polling, live message persistence, upload cleanup, Nostr listeners, and file watcher runners
+- starts long-running boundary-adjacent loops such as scheduler execution, session status polling, live message persistence, upload cleanup, Nostr listeners, file watcher runners, and workspace subscription reconnects
 
 ## Request pipeline
 
@@ -47,6 +47,7 @@ Important non-API boundary behavior:
 - `createStaticAssetService(...)` is responsible for MIME-aware static serving, including ES module assets under `src/ui`.
 - `compressResponse(...)` is applied to most UI/static responses.
 - Uploaded files are never public in the generic sense; serving checks the caller’s session and per-user path segment before returning a file.
+- App proxying is HTTP-only today; both `/host/<alias>` routing and subdomain routing reject WebSocket upgrades with `501`.
 
 ## Auth and middleware layers
 
@@ -72,6 +73,7 @@ As built, that is used for:
 
 - `/api/npub-projects*`
 - `/api/apps*` and `/api/workspace/tree`
+- `/api/autopilot-jobs*`
 - `/api/archive*`
 - `/api/sessions*`
 - `/api/delegate-sessions*`
@@ -171,7 +173,8 @@ Boundary behavior worth calling out:
 
 - session IDs can resolve by unique prefix, not only exact match
 - non-admin users only see sessions whose normalized `npub` matches their own
-- `DELETE /api/sessions/:id` blocks agent callers from stopping sessions unless metadata/origin marks them as agent-managed
+- cookie-authenticated viewers and owner-linked NIP-98 callers can stop owned sessions through `/api/sessions/:id`
+- the stricter `metadata.AGENT` stop rule is enforced on the MCP-only `/api/mcp/wingman/sessions/stop` endpoint, not on `/api/sessions/:id`
 - message sending debits sats for non-credit-billing sessions and returns `402` on insufficient balance
 
 ### Auth and identity routes
@@ -268,6 +271,23 @@ Scheduler and jobs are separate models at the HTTP layer too:
 
 - scheduler routes manage durable recurring triggers
 - autopilot-jobs routes manage reusable manager/worker definitions and ad hoc runs
+- autopilot-jobs is also one of the API families that accepts NIP-98 fallback auth before handler dispatch
+
+### Agent-chat subscriptions
+
+Implemented in `src/server/agent-chat-routes.ts` with runtime state in `src/agent-chat/subscription-runtime.ts`.
+
+| Route | Method(s) | Notes |
+| --- | --- | --- |
+| `/api/agent-chat/subscriptions` | `GET`, `POST` | Lists current workspace subscriptions or creates/updates one |
+| `/api/agent-chat/subscriptions/:id` | `GET`, `DELETE` | Reads or removes a specific subscription |
+
+Boundary behavior:
+
+- this surface is browser-session oriented and gated by `ui:restricted`
+- the HTTP handler itself is CRUD-only; the live work happens in `WorkspaceSubscriptionManager`
+- creating a subscription provisions or reloads a workspace key, then opens an outbound SSE client connection to the remote workspace stream
+- matching `record-changed` events trigger an authenticated record-history pull plus decrypt attempt inside the runtime, not inside the request/response path
 
 ### Gitea, git workflow, and SuperBased
 
@@ -341,6 +361,7 @@ These are live parts of the current boundary even though they are not the focus 
 
 - `/api/apps*` and `/api/workspace/tree`
 - `/api/apps/starter-projects*`
+- `/api/agent-chat/subscriptions*`
 - `/api/caprover*`
 - `/api/bot-keys*`
 - `/api/provider/<openai|anthropic|openrouter>/*`
@@ -377,7 +398,7 @@ Special shaping worth noting:
 
 ## SSE and live-update paths
 
-There are four important live-update channels in the current middleware layer:
+There are five important live-update channels in the current middleware layer:
 
 1. `GET /api/sessions/:id/events`
    - proxies the agent `/events` stream when the adapter exposes one
@@ -389,12 +410,19 @@ There are four important live-update channels in the current middleware layer:
    - scoped per viewer `npub`
    - receives `session-started`, `session-updated`, `session-stopped`, and `session-deleted`
 
-3. `GET /api/chats/:id/events`
-   - chat-specific SSE for private chat sessions
+3. `POST /api/chats/:id/messages`
+   - returns a streamed SSE response while Maple chat completion events are arriving
+   - ends with `data: [DONE]`
 
-4. `GET /api/mcp/nip98/subscribe`
+4. `GET /api/chats/:id/events`
+   - chat-specific SSE for private chat sessions
+   - currently mostly an init plus keepalive channel rather than a second full message stream
+
+5. `GET /api/mcp/nip98/subscribe`
    - browser-side SSE channel for interactive Tier 2 NIP-98 signing
    - also used as a hook point to trigger pending bot-key unlock behavior
+
+Separate from those browser-facing channels, `WorkspaceSubscriptionManager` also maintains outbound SSE client connections to remote workspace backends. That stream is initiated from the agent-chat runtime rather than exposed as a Wingman browser endpoint, but it is now part of the live middleware boundary.
 
 All of these use keepalive comments or heartbeat events to survive browser/proxy idle timeouts.
 
@@ -406,6 +434,7 @@ The following startup jobs are part of the effective middleware story because th
 - `rehydrateOrphanedSessions(...)` reclaims surviving agent sessions after restart/crash
 - `cleanupOrphanedAgentProcesses(...)` removes stale PM2-managed agent processes
 - `reconcileAppsWithPM2(...)` reconciles app runtime state with the app registry
+- `workspaceSubscriptionManager.startupReload()` restores persisted agent-chat subscriptions and reconnects workspace SSE clients
 - `schedulerEngine.start()` loads enabled scheduler jobs and begins executing triggers
 - `AgentRuntimeStatusPoller.start()` updates live session runtime state used by API reads
 - `LiveMessagePersistenceLoop.start()` keeps persisted message history synchronized for session/chat reads
@@ -418,6 +447,7 @@ The following startup jobs are part of the effective middleware story because th
 ## Important boundary-layer quirks
 
 - `src/server.ts` remains the main router and dependency wiring file even after route extraction.
+- `/api` dispatch still has an internal precedence order: browser logs first, then provider proxy and billing handlers, then the family-specific route tables in `api-routes.ts`.
 - The API layer mixes three caller identities: browser session cookie, NIP-98 programmatic identity, and sessionId-based MCP/internal identity.
 - Some route families are intentionally machine-local, while others are open to programmatic remote use if they can establish NIP-98 or session-linked identity.
 - Session ownership is enforced at the normalized-`npub` layer rather than by opaque tenancy IDs.
