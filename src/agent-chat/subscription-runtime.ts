@@ -425,37 +425,64 @@ export class WorkspaceSubscriptionManager {
       if (!latest) {
         throw Object.assign(new Error(`Record ${recordId} not found.`), { detailCode: 'record_pull_not_found' });
       }
+      record.lastRecordPullResult = buildSuccessDiagnostic('Chat message advisory pulled.', {
+        record_id: recordId,
+        version: typeof latest.version === 'number' ? latest.version : Number(latest.version ?? 0),
+        record_state: typeof latest.record_state === 'string' ? latest.record_state : null,
+      });
       const helpers = await loadYokeBotHelpers();
       if (!runtime.groupKeys && runtime.wrappedKeyRows.length > 0) {
         runtime.groupKeys = helpers.loadBotGroupKeys({ wsSession: runtime.wsSession, keyRows: runtime.wrappedKeyRows });
       }
-      const chatMessage = helpers.decryptChatRecord({
-        record: latest,
-        wsSession: runtime.wsSession,
-        groupKeys: runtime.groupKeys,
-      });
-      const threadId = typeof helpers.normalizeThreadId === 'function'
-        ? helpers.normalizeThreadId(chatMessage)
-        : null;
-      record.lastDecryptResult = buildSuccessDiagnostic('Chat message pulled and decrypted.', {
-        record_id: recordId,
-        channel_id: chatMessage.channel_id ?? null,
-        thread_id: threadId,
-      });
-      record.lastErrorCode = null;
-      record.lastErrorAt = null;
+      try {
+        const chatMessage = helpers.decryptChatRecord({
+          record: latest,
+          wsSession: runtime.wsSession,
+          groupKeys: runtime.groupKeys,
+        });
+        const threadId = typeof helpers.normalizeThreadId === 'function'
+          ? helpers.normalizeThreadId(chatMessage)
+          : null;
+        record.lastDecryptResult = buildSuccessDiagnostic('Chat message pulled and decrypted.', {
+          record_id: recordId,
+          channel_id: chatMessage.channel_id ?? null,
+          thread_id: threadId,
+        });
+        record.lastErrorCode = null;
+        record.lastErrorAt = null;
+      } catch (error) {
+        record.groupKeyStatus = 'refresh_required';
+        record.lastErrorCode = 'decrypt_failed';
+        record.lastErrorAt = new Date().toISOString();
+        record.lastDecryptResult = buildFailureDiagnostic(
+          'decrypt_failed',
+          error instanceof Error ? error.message : 'Decrypt failed.',
+          typeof (error as { code?: string; detailCode?: string })?.code === 'string'
+            ? (error as { code: string }).code
+            : typeof (error as { detailCode?: string })?.detailCode === 'string'
+              ? (error as { detailCode: string }).detailCode
+              : 'record_decrypt_failed',
+          { record_id: recordId },
+        );
+      }
     } catch (error) {
       record.groupKeyStatus = 'refresh_required';
       record.lastErrorCode = 'decrypt_failed';
       record.lastErrorAt = new Date().toISOString();
+      record.lastRecordPullResult = buildFailureDiagnostic(
+        'record_pull_failed',
+        error instanceof Error ? error.message : 'Record pull failed.',
+        typeof (error as { detailCode?: string })?.detailCode === 'string'
+          ? (error as { detailCode: string }).detailCode
+          : 'record_pull_failed',
+        { record_id: recordId },
+      );
       record.lastDecryptResult = buildFailureDiagnostic(
         'decrypt_failed',
-        error instanceof Error ? error.message : 'Decrypt failed.',
-        typeof (error as { code?: string; detailCode?: string })?.code === 'string'
-          ? (error as { code: string }).code
-          : typeof (error as { detailCode?: string })?.detailCode === 'string'
-            ? (error as { detailCode: string }).detailCode
-            : 'record_decrypt_failed',
+        'Decrypt skipped because record pull failed.',
+        typeof (error as { detailCode?: string })?.detailCode === 'string'
+          ? (error as { detailCode: string }).detailCode
+          : 'record_pull_failed',
         { record_id: recordId },
       );
     }

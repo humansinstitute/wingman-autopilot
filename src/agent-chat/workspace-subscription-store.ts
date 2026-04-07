@@ -25,6 +25,11 @@ function serialiseJsonValue(value: unknown): string | null {
   return value == null ? null : JSON.stringify(value);
 }
 
+function hasColumn(db: Database, tableName: string, columnName: string): boolean {
+  const rows = db.query(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: string }>;
+  return rows.some((row) => row.name === columnName);
+}
+
 class WorkspaceSubscriptionStore {
   private readonly db: Database;
 
@@ -66,7 +71,7 @@ class WorkspaceSubscriptionStore {
          trigger_config_record_id, last_sse_event_id, last_auth_ok_at, last_group_refresh_at,
          last_error_code, last_error_at, created_at, updated_at, managed_by_npub,
          ws_key_blob_json, wrapped_group_keys_json, last_auth_result_json,
-         last_group_refresh_result_json, last_decrypt_result_json, last_sse_event_json,
+         last_group_refresh_result_json, last_record_pull_result_json, last_decrypt_result_json, last_sse_event_json,
          last_successful_startup_reload_at
        ) VALUES (
          ?1, ?2, ?3, ?4, ?5,
@@ -74,8 +79,8 @@ class WorkspaceSubscriptionStore {
          ?11, ?12, ?13, ?14,
          ?15, ?16, ?17, ?18, ?19,
          ?20, ?21, ?22,
-         ?23, ?24, ?25,
-         ?26
+         ?23, ?24, ?25, ?26,
+         ?27
        )
        ON CONFLICT(subscription_id) DO UPDATE SET
          workspace_owner_npub = excluded.workspace_owner_npub,
@@ -99,6 +104,7 @@ class WorkspaceSubscriptionStore {
          wrapped_group_keys_json = excluded.wrapped_group_keys_json,
          last_auth_result_json = excluded.last_auth_result_json,
          last_group_refresh_result_json = excluded.last_group_refresh_result_json,
+         last_record_pull_result_json = excluded.last_record_pull_result_json,
          last_decrypt_result_json = excluded.last_decrypt_result_json,
          last_sse_event_json = excluded.last_sse_event_json,
          last_successful_startup_reload_at = excluded.last_successful_startup_reload_at`,
@@ -126,6 +132,7 @@ class WorkspaceSubscriptionStore {
       record.wrappedGroupKeysJson,
       serialiseJsonValue(record.lastAuthResult),
       serialiseJsonValue(record.lastGroupRefreshResult),
+      serialiseJsonValue(record.lastRecordPullResult),
       serialiseJsonValue(record.lastDecryptResult),
       serialiseJsonValue(record.lastSseEvent),
       record.lastSuccessfulStartupReloadAt,
@@ -167,6 +174,7 @@ class WorkspaceSubscriptionStore {
       wrappedGroupKeysJson: null,
       lastAuthResult: null,
       lastGroupRefreshResult: null,
+      lastRecordPullResult: null,
       lastDecryptResult: null,
       lastSseEvent: null,
       lastSuccessfulStartupReloadAt: null,
@@ -207,6 +215,7 @@ class WorkspaceSubscriptionStore {
            wrapped_group_keys_json,
            last_auth_result_json,
            last_group_refresh_result_json,
+           last_record_pull_result_json,
            last_decrypt_result_json,
            last_sse_event_json,
            last_successful_startup_reload_at
@@ -245,6 +254,7 @@ class WorkspaceSubscriptionStore {
            wrapped_group_keys_json,
            last_auth_result_json,
            last_group_refresh_result_json,
+           last_record_pull_result_json,
            last_decrypt_result_json,
            last_sse_event_json,
            last_successful_startup_reload_at
@@ -281,6 +291,7 @@ class WorkspaceSubscriptionStore {
       wrappedGroupKeysJson: row.wrapped_group_keys_json ?? null,
       lastAuthResult: parseJsonValue(row.last_auth_result_json ?? null),
       lastGroupRefreshResult: parseJsonValue(row.last_group_refresh_result_json ?? null),
+      lastRecordPullResult: parseJsonValue(row.last_record_pull_result_json ?? null),
       lastDecryptResult: parseJsonValue(row.last_decrypt_result_json ?? null),
       lastSseEvent: parseJsonValue(row.last_sse_event_json ?? null),
       lastSuccessfulStartupReloadAt: row.last_successful_startup_reload_at ?? null,
@@ -313,6 +324,7 @@ class WorkspaceSubscriptionStore {
         wrapped_group_keys_json TEXT,
         last_auth_result_json TEXT,
         last_group_refresh_result_json TEXT,
+        last_record_pull_result_json TEXT,
         last_decrypt_result_json TEXT,
         last_sse_event_json TEXT,
         last_successful_startup_reload_at TEXT
@@ -327,6 +339,13 @@ class WorkspaceSubscriptionStore {
       CREATE INDEX IF NOT EXISTS idx_workspace_subscriptions_health
         ON workspace_subscriptions(health_status, sse_status);
     `);
+
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'last_record_pull_result_json')) {
+      this.db.exec(`
+        ALTER TABLE workspace_subscriptions
+          ADD COLUMN last_record_pull_result_json TEXT
+      `);
+    }
   }
 }
 

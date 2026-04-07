@@ -1,10 +1,70 @@
 import type { RequestAuthContext } from '../auth/request-context';
 import type { WorkspaceSubscriptionManager } from '../agent-chat/subscription-runtime';
+import type {
+  AgentChatDiagnostic,
+  AgentChatSseEventDiagnostic,
+  WorkspaceSubscriptionRecord,
+} from '../agent-chat/types';
 
 type HttpMethod = 'GET' | 'POST' | 'DELETE';
 
 export interface AgentChatApiContext {
   manager: WorkspaceSubscriptionManager;
+}
+
+function getDetailString(
+  diagnostic: AgentChatDiagnostic | null | undefined,
+  key: string,
+): string | null {
+  const value = diagnostic?.details?.[key];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function getPayloadString(
+  diagnostic: AgentChatSseEventDiagnostic | null | undefined,
+  key: string,
+): string | null {
+  const value = diagnostic?.payload?.[key];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function serialiseSubscription(record: WorkspaceSubscriptionRecord) {
+  return {
+    ...record,
+    diagnostics: {
+      lastSseEventId: record.lastSseEventId,
+      lastSseEvent: record.lastSseEvent,
+      advisory: {
+        eventId: record.lastSseEventId ?? record.lastSseEvent?.eventId ?? null,
+        eventType: record.lastSseEvent?.eventType ?? null,
+        at: record.lastSseEvent?.at ?? null,
+        familyHash: getPayloadString(record.lastSseEvent, 'family_hash'),
+        recordId: getPayloadString(record.lastSseEvent, 'record_id'),
+      },
+      recordPull: record.lastRecordPullResult,
+      decrypt: record.lastDecryptResult,
+      trail: {
+        advisory: {
+          seen: Boolean(record.lastSseEventId || record.lastSseEvent),
+          eventId: record.lastSseEventId ?? record.lastSseEvent?.eventId ?? null,
+          at: record.lastSseEvent?.at ?? null,
+          recordId: getPayloadString(record.lastSseEvent, 'record_id'),
+        },
+        recordPull: {
+          ok: record.lastRecordPullResult?.ok ?? null,
+          code: record.lastRecordPullResult?.code ?? null,
+          at: record.lastRecordPullResult?.at ?? null,
+          recordId: getDetailString(record.lastRecordPullResult, 'record_id'),
+        },
+        decrypt: {
+          ok: record.lastDecryptResult?.ok ?? null,
+          code: record.lastDecryptResult?.code ?? null,
+          at: record.lastDecryptResult?.at ?? null,
+          recordId: getDetailString(record.lastDecryptResult, 'record_id'),
+        },
+      },
+    },
+  };
 }
 
 export async function handleAgentChatApi(
@@ -24,7 +84,7 @@ export async function handleAgentChatApi(
   }
 
   if (url.pathname === '/api/agent-chat/subscriptions' && method === 'GET') {
-    return Response.json({ subscriptions: ctx.manager.listForManager(viewerNpub) });
+    return Response.json({ subscriptions: ctx.manager.listForManager(viewerNpub).map(serialiseSubscription) });
   }
 
   if (url.pathname === '/api/agent-chat/subscriptions' && method === 'POST') {
@@ -57,7 +117,7 @@ export async function handleAgentChatApi(
         sourceAppNpub,
         triggerConfigRecordId,
       });
-      return Response.json({ subscription });
+      return Response.json({ subscription: serialiseSubscription(subscription) });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Agent Chat bootstrap failed.';
       return Response.json({ error: message }, { status: 500 });
@@ -80,7 +140,7 @@ export async function handleAgentChatApi(
     if (!subscription) {
       return Response.json({ error: 'Subscription not found' }, { status: 404 });
     }
-    return Response.json({ subscription });
+    return Response.json({ subscription: serialiseSubscription(subscription) });
   }
 
   return Response.json({ error: 'Not found' }, { status: 404 });

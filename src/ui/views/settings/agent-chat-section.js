@@ -32,6 +32,51 @@ function formatDiagnostic(diagnostic) {
   return `${status} at ${diagnostic.at}`;
 }
 
+function formatKeyValueDetails(details) {
+  if (!details || typeof details !== 'object') {
+    return 'None';
+  }
+
+  const entries = Object.entries(details)
+    .filter(([, value]) => value != null && value !== '')
+    .map(([key, value]) => `${key}=${String(value)}`);
+  return entries.length > 0 ? entries.join(', ') : 'None';
+}
+
+function formatAdvisory(subscription) {
+  const advisory = subscription.diagnostics?.advisory;
+  if (!advisory || !advisory.at) {
+    return 'None';
+  }
+  const parts = [
+    advisory.eventType || 'unknown',
+    advisory.eventId ? `event_id=${advisory.eventId}` : null,
+    advisory.recordId ? `record_id=${advisory.recordId}` : null,
+    advisory.familyHash ? `family_hash=${advisory.familyHash}` : null,
+    `at ${advisory.at}`,
+  ].filter(Boolean);
+  return parts.join(', ');
+}
+
+function formatTrail(subscription) {
+  const trail = subscription.diagnostics?.trail;
+  if (!trail) {
+    return 'No advisory trail yet.';
+  }
+
+  const advisoryStep = trail.advisory?.seen
+    ? `advisory seen${trail.advisory.recordId ? ` for ${trail.advisory.recordId}` : ''}${trail.advisory.eventId ? ` (${trail.advisory.eventId})` : ''}`
+    : 'advisory pending';
+  const pullStep = trail.recordPull?.at
+    ? `pull ${trail.recordPull.ok ? 'ok' : (trail.recordPull.code || 'failed')}`
+    : 'pull pending';
+  const decryptStep = trail.decrypt?.at
+    ? `decrypt ${trail.decrypt.ok ? 'ok' : (trail.decrypt.code || 'failed')}`
+    : 'decrypt pending';
+
+  return `${advisoryStep} -> ${pullStep} -> ${decryptStep}`;
+}
+
 function createSubscriptionCard(subscription, onRemove) {
   const card = document.createElement('article');
   card.className = 'wm-card';
@@ -53,8 +98,14 @@ function createSubscriptionCard(subscription, onRemove) {
     ['Backend', subscription.backendBaseUrl],
     ['Source App', subscription.sourceAppNpub],
     ['ws_key_npub', subscription.wsKeyNpub || 'pending'],
-    ['Last SSE Event', subscription.lastSseEvent?.eventType ? `${subscription.lastSseEvent.eventType} @ ${subscription.lastSseEvent.at}` : 'None'],
+    ['Latest Chat Trail', formatTrail(subscription)],
+    ['Last SSE Event ID', subscription.diagnostics?.lastSseEventId || 'None'],
+    ['Last Advisory', formatAdvisory(subscription)],
+    ['Advisory Payload', formatKeyValueDetails(subscription.lastSseEvent?.payload)],
+    ['Last Record Pull', formatDiagnostic(subscription.lastRecordPullResult)],
+    ['Record Pull Details', formatKeyValueDetails(subscription.lastRecordPullResult?.details)],
     ['Last Decrypt', formatDiagnostic(subscription.lastDecryptResult)],
+    ['Decrypt Details', formatKeyValueDetails(subscription.lastDecryptResult?.details)],
     ['Last Auth', formatDiagnostic(subscription.lastAuthResult)],
     ['Group Refresh', formatDiagnostic(subscription.lastGroupRefreshResult)],
     ['Startup Reload', subscription.lastSuccessfulStartupReloadAt || 'None'],
@@ -66,6 +117,18 @@ function createSubscriptionCard(subscription, onRemove) {
     const value = document.createElement('dd');
     value.textContent = valueText;
     value.style.margin = '0';
+    if (termText === 'Last SSE Event ID') {
+      value.setAttribute('data-testid', `agent-chat-last-sse-event-id-${subscription.subscriptionId}`);
+    }
+    if (termText === 'Latest Chat Trail') {
+      value.setAttribute('data-testid', `agent-chat-latest-trail-${subscription.subscriptionId}`);
+    }
+    if (termText === 'Last Record Pull') {
+      value.setAttribute('data-testid', `agent-chat-last-record-pull-${subscription.subscriptionId}`);
+    }
+    if (termText === 'Last Decrypt') {
+      value.setAttribute('data-testid', `agent-chat-last-decrypt-${subscription.subscriptionId}`);
+    }
     details.append(term, value);
   });
   card.append(details);

@@ -42,6 +42,7 @@ export interface WorkspaceSubscriptionRecord {
   wrappedGroupKeysJson: string | null;
   lastAuthResult: AgentChatDiagnostic | null;
   lastGroupRefreshResult: AgentChatDiagnostic | null;
+  lastRecordPullResult: AgentChatDiagnostic | null;
   lastDecryptResult: AgentChatDiagnostic | null;
   lastSseEvent: AgentChatSseEventDiagnostic | null;
   lastSuccessfulStartupReloadAt: string | null;
