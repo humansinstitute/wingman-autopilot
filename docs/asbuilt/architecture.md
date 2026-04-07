@@ -1,425 +1,411 @@
 # Wingman architecture (as built)
 
-Last reviewed against the live repository on 2026-04-05.
+Last reviewed against the live repository on 2026-04-07.
 
 ## App purpose
 
-Wingman is a Bun-based orchestration server and browser UI for running and supervising AI agent sessions from one control plane. In the current codebase it does five things at once:
+Wingman is a Bun-based orchestration server and browser control plane for running, supervising, and tooling AI agent sessions from one local service.
 
-- launches and tracks agent runtimes such as Codex, Claude, Goose, OpenCode, and Gemini
-- serves the browser UI for `/home`, `/live`, `/apps`, `/projects`, `/todos`, `/chat`, `/settings`, `/nightwatch`, `/scheduler`, and `/triggers`
-- brokers agent-side MCP tooling back into Wingman over HTTP
-- manages user identity, bot keys, NIP-98 grants, and Nostr-triggered automation
-- stores local operational state for sessions, apps, projects, todos, jobs, billing, and related metadata
-- EDIT it also does url producing for registering and running apps
+In the live repository it currently does all of the following:
+
+- launches and tracks agent runtimes for `codex`, `claude`, `goose`, `opencode`, and `gemini`
+- serves the browser SPA for `/home`, `/live`, `/apps`, `/projects`, `/todos`, `/chat`, `/settings`, `/privacy`, `/nightwatch`, `/scheduler`, `/triggers`, `/jobs`, and `/files`/`/docs`
+- exposes a large local HTTP API for sessions, apps, auth, docs/files, MCP callbacks, jobs, scheduler, billing, Git/Gitea, Nostr, and SuperBased
+- brokers per-agent MCP tool calls back into Wingman over HTTP
+- manages browser auth, bot keys, delegated NIP-98 auth, and bot-key export/signing flows
+- stores local operational state for sessions, archives, apps, aliases, projects, todos, jobs, billing, memory, feature flags, user settings, and artifacts
+- proxies user-managed web apps through `/host/<alias>` or optional subdomain routing
 
 ## Local repo / root path
 
 - Local repository root during this review: `/Users/mini/code/wingmen`
-- Main runtime entry from `package.json`: `src/index.ts`
-- Main HTTP composition root: `src/server.ts`
+- Bun module entry from [`package.json`](/Users/mini/code/wingmen/package.json): `src/index.ts`
+- Main runtime composition root: [`src/server.ts`](/Users/mini/code/wingmen/src/server.ts)
+
+## Role in the wider stack
+
+The repository-level architecture note in [`docs/architecture.md`](/Users/mini/code/wingmen/docs/architecture.md) positions `wingmen` as the runtime harness beside Tower, Flight Deck, Yoke, and related services.
+
+That suite relationship is documented in-repo, but the code in this repository is still self-contained enough to run as a standalone local control plane. I did not find a hard runtime dependency on Tower or Flight Deck for Wingman core boot.
 
 ## Runtime boundaries
 
 ### 1. Wingman server process
 
-The main application process is Bun running `src/index.ts`, which first runs the setup wizard (`src/setup/wizard.ts`) and then dynamically imports `src/server.ts`.
+The main process starts in [`src/index.ts`](/Users/mini/code/wingmen/src/index.ts).
 
-`src/server.ts` is the operational composition root. It:
+As built, boot currently works like this:
 
-- loads environment/config from `src/config.ts`
-- ensures the `out/agentapi` binary exists via `src/server/bootstrap/agentapi.ts`
-- instantiates stores and service objects
-- wires route handlers and access rules
-- starts `Bun.serve(...)`
-- starts background loops such as agent status polling, live message persistence, warm-session rehydration, scheduler execution, Nostr listeners, and cleanup tasks
+1. `src/index.ts` installs process-level rejection/exception handlers.
+2. It runs the setup wizard in [`src/setup/wizard.ts`](/Users/mini/code/wingmen/src/setup/wizard.ts).
+3. After setup, it dynamically imports [`src/server.ts`](/Users/mini/code/wingmen/src/server.ts).
+4. `src/server.ts` loads config, constructs stores/services, installs access rules, starts background loops, and calls `Bun.serve(...)`.
+
+`src/server.ts` is still the dominant composition hotspot. Route handlers have been extracted into `src/server/*.ts`, but `src/server.ts` still owns a large amount of startup and wiring logic.
 
 ### 2. Agent runtime processes
 
-Agent sessions are separate runtimes managed by `ProcessManager` in `src/agents/process-manager.ts`.
+Session runtimes are managed by [`ProcessManager`](/Users/mini/code/wingmen/src/agents/process-manager.ts).
 
-As built, there are two execution modes:
+Current execution modes:
 
-- `bun` spawn mode: Wingman starts the agent command directly with `Bun.spawn(...)`
-- `pm2` spawn mode: Wingman writes PM2 ecosystem entries and starts sessions through PM2 helpers in `src/agents/pm2-wrapper.ts`
+- direct child-process spawn (`agentSpawnMode: "bun"`)
+- PM2-managed spawn (`agentSpawnMode: "pm2"`)
 
-Most agents still run behind the external `agentapi` binary. Wingman talks to them through adapter abstractions in `src/agents/agent-adapter.ts`.
+Current transport/runtime split:
 
-There is already a seam for native adapters:
+- default path: agents run behind the external `agentapi` binary and Wingman talks to them through [`AgentApiAdapter`](/Users/mini/code/wingmen/src/agents/agentapi-adapter.ts)
+- native seams already exist for [`CodexAdapter`](/Users/mini/code/wingmen/src/agents/codex-adapter.ts) and [`OpenCodeAdapter`](/Users/mini/code/wingmen/src/agents/opencode-adapter.ts)
 
-- default: `AgentApiAdapter`
-- feature-flagged: `CodexAdapter` and `OpenCodeAdapter`
-
-That means the agent protocol boundary is no longer identical to the process boundary.
+That means the agent process boundary and the agent protocol boundary are no longer identical.
 
 ### 3. Browser runtime
 
-The browser UI is served directly by Wingman from `src/ui/`, `public/`, and selected `node_modules` packages via `src/server/static-assets.ts`.
+The browser app is served directly by Wingman from [`src/ui/`](/Users/mini/code/wingmen/src/ui), [`public/`](/Users/mini/code/wingmen/public), and selected vendor modules exposed by [`src/server/static-assets.ts`](/Users/mini/code/wingmen/src/server/static-assets.ts).
 
-The frontend is not a fully migrated single pattern yet. The current state is mixed:
+The browser entry is [`src/ui/index.html`](/Users/mini/code/wingmen/src/ui/index.html), which loads `/app.js`.
 
-- `src/ui/app.js` is still the main bootstrap/orchestration file for the SPA shell
-- several newer areas use Dexie + Alpine stores with IndexedDB-backed caching
-- older areas still use imperative DOM rendering and module-local state
+The frontend is mixed-mode today:
 
-Real-time browser updates primarily use SSE, not WebSockets. Session event streaming is proxied by `src/server/session-events.ts`.
+- [`src/ui/app.js`](/Users/mini/code/wingmen/src/ui/app.js) is still the SPA shell and major orchestration file
+- newer areas use Dexie + Alpine stores backed by IndexedDB
+- older areas still use imperative rendering and module-local state
 
-### 4. External services
+This migration is real but incomplete. It would be inaccurate to describe the frontend as fully Dexie/Alpine already.
 
-Wingman depends on several external or semi-external systems at runtime:
+### 4. External services and binaries
 
-- `agentapi` binary in `out/agentapi`
-- agent CLIs on `$PATH`
+The live code expects or optionally integrates with:
+
+- `agentapi` in `out/agentapi`
+- local agent CLIs on `$PATH` unless overridden by env vars
 - PM2 when PM2 mode is enabled
-- Nostr relays for identity, triggers, and task events
+- Nostr relays
 - optional Gitea
 - optional CapRover
 - optional SuperBased / Flux Adaptor API
-- Maple proxy for private chats
+- Maple proxy for private chat
 - OpenRouter-backed provider proxy for team billing mode
 
 ## Major subsystems
 
-### Boot and configuration
+### Boot and config
 
-- `src/index.ts` is the process entrypoint
-- `src/setup/wizard.ts` gates first-run configuration and writes `.env` values when needed
-- `src/config.ts` centralises runtime config, defaults, agent command templates, and integration env vars
-- `src/server/bootstrap/*` handles startup concerns such as `agentapi` installation, warm restart markers, and PM2 reconciliation/cleanup
+- [`src/index.ts`](/Users/mini/code/wingmen/src/index.ts): process entrypoint
+- [`src/setup/wizard.ts`](/Users/mini/code/wingmen/src/setup/wizard.ts): first-run setup gate
+- [`src/config.ts`](/Users/mini/code/wingmen/src/config.ts): env parsing, defaults, agent definitions, routing mode, relay config, and integration URLs
+- [`src/server/bootstrap/`](/Users/mini/code/wingmen/src/server/bootstrap): `agentapi` installation, warm restart, PM2 reconciliation/cleanup, and Wingman core registration
+
+Notable current config behavior:
+
+- agent types are `codex`, `claude`, `goose`, `opencode`, and `gemini`
+- app routing mode can be path-based or subdomain-based
+- session transport remains SSE-first
+- some legacy env names such as `AGENT_MODE` are still supported with deprecation warnings
 
 ### HTTP server and route composition
 
-`src/server.ts` still owns top-level routing and dependency wiring, even though route logic has been increasingly extracted into `src/server/*.ts`.
+Top-level request routing still happens in [`src/server.ts`](/Users/mini/code/wingmen/src/server.ts), with `/api/*` dispatch centralized through [`createApiRouteHandler`](/Users/mini/code/wingmen/src/server/api-routes.ts).
 
-Current route families include:
+Important implemented route families include:
 
-- `src/server/api-routes.ts` for `/api/*` dispatch
-- `src/server/session-api-routes.ts` for live sessions and archives
-- `src/server/auth-routes.ts` for login, logout, keyteleport, and identity profile lookups
-- `src/server/chat-routes.ts` for private chat sessions
-- `src/server/docs-routes.ts` for docs/file operations inside the viewer workspace
-- `src/server/apps-api-routes.ts`, `src/server/starter-projects-routes.ts`, `src/server/admin-users-routes.ts`, `src/server/system-routes.ts`, and related route modules
-- `src/server/subdomain-proxy.ts` plus inline path-based handling for app routing
+- sessions and archives: [`src/server/session-api-routes.ts`](/Users/mini/code/wingmen/src/server/session-api-routes.ts)
+- auth and identity profile: [`src/server/auth-routes.ts`](/Users/mini/code/wingmen/src/server/auth-routes.ts)
+- apps and workspace tree: [`src/server/apps-api-routes.ts`](/Users/mini/code/wingmen/src/server/apps-api-routes.ts)
+- starter projects: [`src/server/starter-projects-routes.ts`](/Users/mini/code/wingmen/src/server/starter-projects-routes.ts)
+- private chat and chat events: [`src/server/chat-routes.ts`](/Users/mini/code/wingmen/src/server/chat-routes.ts), [`src/server/chat-events.ts`](/Users/mini/code/wingmen/src/server/chat-events.ts)
+- docs/files/git actions inside the workspace surface: [`src/server/docs-routes.ts`](/Users/mini/code/wingmen/src/server/docs-routes.ts)
+- provider proxy and billing: [`src/server/provider-proxy-routes.ts`](/Users/mini/code/wingmen/src/server/provider-proxy-routes.ts), [`src/server/billing-routes.ts`](/Users/mini/code/wingmen/src/server/billing-routes.ts)
+- uploads and voice notes: [`src/server/upload-routes.ts`](/Users/mini/code/wingmen/src/server/upload-routes.ts), [`src/server/voice-note-routes.ts`](/Users/mini/code/wingmen/src/server/voice-note-routes.ts)
+- feature flags: [`src/server/feature-flags-routes.ts`](/Users/mini/code/wingmen/src/server/feature-flags-routes.ts)
+- system and restart operations: [`src/server/system-routes.ts`](/Users/mini/code/wingmen/src/server/system-routes.ts)
+- admin users and port assignment: [`src/server/admin-users-routes.ts`](/Users/mini/code/wingmen/src/server/admin-users-routes.ts)
+- agent-chat subscriptions: [`src/server/agent-chat-routes.ts`](/Users/mini/code/wingmen/src/server/agent-chat-routes.ts)
 
-The codebase has partially refactored route logic out of `src/server.ts`, but `src/server.ts` still remains the dominant composition file.
+The `/api` surface currently includes, at minimum:
+
+- `/api/sessions*`, `/api/delegate-sessions*`, `/api/archive*`
+- `/api/apps*`, `/api/workspace/tree`
+- `/api/projects*`, `/api/npub-projects*`
+- `/api/todos*`
+- `/api/nightwatch*`
+- `/api/scheduler*`
+- `/api/autopilot-jobs*`
+- `/api/chats*`, `/api/maple/models`
+- `/api/auth*`, `/api/identity/profile`
+- `/api/admin/users*`, `/api/admin/ports`
+- `/api/docs*`, `/api/directories`, `/api/uploads*`
+- `/api/feature-flags*`, `/api/system*`, `/api/user/settings*`
+- `/api/mcp/*`, `/api/bot-keys*`, `/api/mcp/bot-crypto*`
+- `/api/git/*`, `/api/gitea*`, `/api/ngit*`
+- `/api/superbased*`
+- `/api/provider/*`
+- `/api/caprover*`
 
 ### Agent orchestration
 
-`src/agents/process-manager.ts` is the core runtime manager. It is responsible for:
+[`src/agents/process-manager.ts`](/Users/mini/code/wingmen/src/agents/process-manager.ts) is the main orchestration seam.
 
-- allocating agent ports
-- creating/stopping/deleting sessions
-- injecting MCP config and agent env
-- injecting Gitea git credentials
-- injecting billing proxy config
-- creating adapter instances
-- emitting lifecycle events for browser subscribers
-- rehydrating sessions after restart
+It currently handles:
 
-Supporting agent pieces live under `src/agents/`:
+- session creation, stop, delete, and rehydration
+- port allocation
+- launch command resolution
+- MCP config injection via [`src/agents/mcp-injector.ts`](/Users/mini/code/wingmen/src/agents/mcp-injector.ts)
+- billing launch config injection
+- Gitea credential helper injection
+- adapter creation and session adapter lookup
+- session lifecycle event emission for browser subscribers
 
-- adapter layer and agent client helpers
-- PM2 wrapper and ecosystem generation
-- log reading
-- status polling
-- MCP config injection
+Related modules under [`src/agents/`](/Users/mini/code/wingmen/src/agents):
+
+- adapter selection: [`src/agents/agent-adapter.ts`](/Users/mini/code/wingmen/src/agents/agent-adapter.ts)
+- PM2 helpers: [`src/agents/pm2-wrapper.ts`](/Users/mini/code/wingmen/src/agents/pm2-wrapper.ts)
+- ecosystem generation: [`src/agents/ecosystem-generator.ts`](/Users/mini/code/wingmen/src/agents/ecosystem-generator.ts)
+- runtime polling: [`src/agents/agent-status-poller.ts`](/Users/mini/code/wingmen/src/agents/agent-status-poller.ts)
+- agent HTTP client helpers: [`src/agents/agent-client.ts`](/Users/mini/code/wingmen/src/agents/agent-client.ts)
 
 ### Auth, identity, and access control
 
-The implemented auth model has three layers:
+The implemented auth model has multiple layers:
 
-- browser session cookies via `src/auth/session-cookie.ts`
-- request-scoped auth context via `src/auth/request-context.ts`
-- access policy checks via `src/auth/access-control.ts`
+- cookie-backed browser auth in [`src/auth/session-cookie.ts`](/Users/mini/code/wingmen/src/auth/session-cookie.ts)
+- request-scoped auth context in [`src/auth/request-context.ts`](/Users/mini/code/wingmen/src/auth/request-context.ts)
+- access policy evaluation in [`src/auth/access-control.ts`](/Users/mini/code/wingmen/src/auth/access-control.ts)
+- delegated NIP-98 resolution in [`src/auth/nip98-auth.ts`](/Users/mini/code/wingmen/src/auth/nip98-auth.ts)
 
-NIP-98 is also a first-class path for programmatic callers:
+Important current behavior:
 
-- `src/auth/nip98-auth.ts` resolves verified signers into effective request identity
-- bot-signed requests can act on behalf of the mapped owner npub
+- a verified NIP-98 signer can become the effective request identity
+- bot-signed NIP-98 requests are mapped back to the owning user when that mapping exists
+- login/bootstrap flows provision and manage per-user bot-key material through `src/identity/*`
 
-Identity and bot-key concerns live under `src/identity/` and `src/auth/keyteleport.ts`. Login time also provisions per-user bot keys when absent.
+Identity and bot-key concerns are split across:
+
+- [`src/identity/`](/Users/mini/code/wingmen/src/identity)
+- [`src/auth/keyteleport.ts`](/Users/mini/code/wingmen/src/auth/keyteleport.ts)
+- [`src/mcp/nip98-api.ts`](/Users/mini/code/wingmen/src/mcp/nip98-api.ts)
 
 ### Persistence
 
-Persistence is local and mostly file-backed. The dominant pattern is Bun SQLite databases under `data/`, with a few JSON registries.
+Persistence is local and mostly file-backed SQLite, with a smaller number of JSON registries.
 
-Examples visible in the live code:
+Examples confirmed in code:
 
-- `data/wingman.db` for sessions/messages and related tables
-- `data/identity-users.db`
-- `data/todos.db`
-- `data/npub-projects.db`
-- `data/setup.db`
-- shared or adjacent SQLite files for scheduler, CapRover tracking, Night Watch, memory, starter projects, and feature flags
-- JSON registries such as `data/apps.json`, `data/app-aliases.json`, and `data/identity-roles.json`
+- main live session/message store: [`data/wingman.db`](/Users/mini/code/wingmen/data/wingman.db) via [`src/storage/message-store.ts`](/Users/mini/code/wingmen/src/storage/message-store.ts)
+- session archive store: [`data/session-archive.db`](/Users/mini/code/wingmen/data/session-archive.db)
+- identity users: [`data/identity-users.db`](/Users/mini/code/wingmen/data/identity-users.db)
+- todos: [`data/todos.db`](/Users/mini/code/wingmen/data/todos.db)
+- per-user project tracking: [`data/npub-projects.db`](/Users/mini/code/wingmen/data/npub-projects.db)
+- team billing: [`data/team-billing.db`](/Users/mini/code/wingmen/data/team-billing.db)
+- jobs: [`data/jobs.db`](/Users/mini/code/wingmen/data/jobs.db)
+- prompt queue: [`data/prompt-queue.db`](/Users/mini/code/wingmen/data/prompt-queue.db)
 
-This is an embedded single-node persistence model. I did not find a repository-level Postgres, Redis, or external DB dependency for core Wingman state.
+Additional SQLite-backed stores also exist for feature flags, artifacts, grants, memory, starter projects, file watchers, scheduler state, and user settings.
+
+JSON-backed registries confirmed in code:
+
+- [`data/apps.json`](/Users/mini/code/wingmen/data/apps.json)
+- [`data/app-aliases.json`](/Users/mini/code/wingmen/data/app-aliases.json)
+- [`data/identity-roles.json`](/Users/mini/code/wingmen/data/identity-roles.json)
+
+This is an embedded single-node persistence model. I did not find Postgres, Redis, or another external database used as the source of truth for Wingman core state.
 
 ### Browser UI
 
-The browser entry is `src/ui/index.html`, which loads `/app.js`.
+The browser app is still centered on [`src/ui/app.js`](/Users/mini/code/wingmen/src/ui/app.js), but several data-heavy surfaces now use Dexie-backed Alpine stores.
 
-As built, the frontend has two architectural styles running side by side:
+Confirmed Dexie-backed areas:
 
-- legacy imperative rendering concentrated in `src/ui/app.js` and many view/helper modules
-- newer Dexie + Alpine stores for live sessions, apps, scheduler, jobs, and Night Watch
+- live session/message cache: [`src/ui/live/db.js`](/Users/mini/code/wingmen/src/ui/live/db.js)
+- sessions store: [`src/ui/sessions/store.js`](/Users/mini/code/wingmen/src/ui/sessions/store.js)
+- apps store: [`src/ui/apps/store.js`](/Users/mini/code/wingmen/src/ui/apps/store.js)
+- scheduler store: [`src/ui/scheduler/db.js`](/Users/mini/code/wingmen/src/ui/scheduler/db.js), [`src/ui/scheduler/store.js`](/Users/mini/code/wingmen/src/ui/scheduler/store.js)
+- Night Watch store: [`src/ui/nightwatch/db.js`](/Users/mini/code/wingmen/src/ui/nightwatch/db.js), [`src/ui/nightwatch/store.js`](/Users/mini/code/wingmen/src/ui/nightwatch/store.js)
+- chat component store: [`src/ui/live/chat-component.js`](/Users/mini/code/wingmen/src/ui/live/chat-component.js)
 
-Dexie-backed areas currently include:
+Still-true architectural seam:
 
-- `src/ui/live/db.js`
-- `src/ui/sessions/store.js`
-- `src/ui/apps/store.js`
-- `src/ui/scheduler/db.js` and `src/ui/scheduler/store.js`
-- `src/ui/nightwatch/db.js` and `src/ui/nightwatch/store.js`
+- old path: imperative UI orchestration in `src/ui/app.js`
+- newer path: Dexie + Alpine islands
 
-This means "Dexie + Alpine migration target" is partially implemented, not complete.
+### Real-time transport
+
+The browser-facing real-time model is primarily SSE, not WebSockets.
+
+Confirmed SSE paths:
+
+- per-session event streaming: [`src/server/session-events.ts`](/Users/mini/code/wingmen/src/server/session-events.ts)
+- session lifecycle broadcast: [`src/server/session-broadcaster.ts`](/Users/mini/code/wingmen/src/server/session-broadcaster.ts)
+- chat streaming/events: [`src/server/chat-events.ts`](/Users/mini/code/wingmen/src/server/chat-events.ts)
+- NIP-98 browser signing subscription: [`src/ui/nip98/signing-listener.js`](/Users/mini/code/wingmen/src/ui/nip98/signing-listener.js)
+
+Important current limitation:
+
+- subdomain app proxying explicitly does not fully support WebSocket proxying yet; [`src/server/subdomain-proxy.ts`](/Users/mini/code/wingmen/src/server/subdomain-proxy.ts) returns an error for WebSocket upgrade attempts
 
 ### MCP control plane
 
-Each agent gets a stdio MCP server from `src/mcp/stdio-server.ts`.
+Each agent gets a stdio MCP server from [`src/mcp/stdio-server.ts`](/Users/mini/code/wingmen/src/mcp/stdio-server.ts).
 
-That MCP server does not directly mutate Wingman state in-process. Instead it calls back into Wingman over HTTP routes under `/api/mcp/wingman/*` and related MCP HTTP endpoints.
+That stdio server is agent-side, but the stateful authority remains the Wingman HTTP server. MCP tools generally call back into Wingman APIs rather than mutating state locally inside the MCP process.
 
-This split matters:
+The MCP surface currently includes tool modules for:
 
-- stdio MCP server runs in the agent-side process context
-- Wingman remains the stateful authority on sessions, apps, memories, grants, artifacts, and integrations
+- sessions and apps
+- Git/Gitea/worktree operations
+- CapRover deployment
+- NIP-98 signing and access grants
+- Nostr read/sign/publish flows
+- memory save/search/delete
+- image generation
+- SuperBased fetch/sync/history/storage operations
+- artifact pinning and project lookup
 
-### Apps, projects, and deploy operations
+### Apps, projects, and hosted web apps
 
-App registration and lifecycle are separate from agent sessions.
+App lifecycle is separate from agent session lifecycle.
 
-- app registry: `src/apps/app-registry.ts`
-- app process control: `src/apps/app-process-manager.ts`
-- alias routing and runtime port registry: `src/apps/*`
-- project linking: `src/projects/project-store.ts` and `src/projects/project-api.ts`
-- per-user project tracking by directory: `src/projects/npub-project-store.ts`
+Core pieces:
 
-Deploy-related support exists for tracked apps through CapRover, not for the Wingman server itself:
+- app registry: [`src/apps/app-registry.ts`](/Users/mini/code/wingmen/src/apps/app-registry.ts)
+- app process manager: [`src/apps/app-process-manager.ts`](/Users/mini/code/wingmen/src/apps/app-process-manager.ts)
+- alias registry: [`src/apps/app-alias-registry.ts`](/Users/mini/code/wingmen/src/apps/app-alias-registry.ts)
+- runtime port registry: [`src/apps/runtime-port-registry.ts`](/Users/mini/code/wingmen/src/apps/runtime-port-registry.ts)
+- app discovery: [`src/apps/app-detector.ts`](/Users/mini/code/wingmen/src/apps/app-detector.ts)
 
-- `src/caprover/*`
-- app deployment endpoints exposed through the API
-- CLI wrappers under `clis/deploy.ts` and related commands
+Current routing behavior:
 
-### Scheduling, automation, and night operations
+- path mode proxies web apps under `/host/<alias>`
+- optional subdomain mode proxies `<alias>.<base-domain>`
+- Wingman chooses the public app URL based on configured routing mode
 
-There are three related automation subsystems:
+### Projects, todos, jobs, scheduler, and Night Watch
 
-- scheduler: `src/scheduler/*`
-- autopilot jobs: `src/jobs-api.ts`, `src/jobs-db.ts`, `src/jobs-dispatch.ts`
-- Night Watch: `src/nightwatch/*`
+These are related operator features, but they are implemented as separate subsystems:
 
-They overlap but are not the same subsystem:
+- projects: [`src/projects/`](/Users/mini/code/wingmen/src/projects)
+- todos: [`src/todos/`](/Users/mini/code/wingmen/src/todos)
+- scheduler: [`src/scheduler/`](/Users/mini/code/wingmen/src/scheduler)
+- jobs: [`src/jobs-api.ts`](/Users/mini/code/wingmen/src/jobs-api.ts), [`src/jobs-db.ts`](/Users/mini/code/wingmen/src/jobs-db.ts), [`src/jobs-dispatch.ts`](/Users/mini/code/wingmen/src/jobs-dispatch.ts)
+- Night Watch: [`src/nightwatch/`](/Users/mini/code/wingmen/src/nightwatch)
 
-- scheduler manages recurring or trigger-based jobs
-- jobs manage manual/structured manager-worker execution runs
-- Night Watch is the overnight or autonomous review/report path tied into session state
+Current terminology drift worth preserving in documentation:
 
-### Nostr, git, and external collaboration
+- the product/UI surface says "Jobs"
+- the implementation still uses the older internal/API name `autopilot-jobs` in routes and store names
 
-Nostr is not just auth glue here. It also drives automation and collaboration features:
+That is a compatibility seam, not a separate product.
 
-- NIP-98 grant and signing flows: `src/mcp/nip98-api.ts`, `src/mcp/browser-subscribers.ts`
-- bot identity and delegated signing: `src/identity/*`, `src/mcp/wingman-signer.ts`
-- task listener and trigger listener: `src/nostr/*`
-- ngit/NIP-34 collaboration: `src/ngit/*`
-- Gitea integration and git workflow support: `src/gitea/*`
+### Nostr, git, Gitea, and SuperBased
+
+Nostr is not just auth glue in this repository. It is part of automation, signing, delegation, and collaboration behavior.
+
+Key areas:
+
+- Nostr listeners/executors: [`src/nostr/`](/Users/mini/code/wingmen/src/nostr)
+- bot identity and delegated signing: [`src/identity/`](/Users/mini/code/wingmen/src/identity), [`src/mcp/wingman-signer.ts`](/Users/mini/code/wingmen/src/mcp/wingman-signer.ts)
+- ngit/NIP-34 collaboration: [`src/ngit/`](/Users/mini/code/wingmen/src/ngit)
+- Gitea and workflow helpers: [`src/gitea/`](/Users/mini/code/wingmen/src/gitea), [`src/git/`](/Users/mini/code/wingmen/src/git)
+- SuperBased adaptor integration: [`src/superbased/`](/Users/mini/code/wingmen/src/superbased)
 
 ## Entry points
 
-Implemented entry points I found in the repo:
+Implemented entry points confirmed in the repo:
 
-- server process: `bun start` or `bun run src/index.ts`
-- browser UI: `src/ui/index.html` served by the Wingman server
-- per-agent MCP server: `src/mcp/stdio-server.ts`
-- CLI utilities under `clis/`, including sessions, apps, deploy, scheduler, and jobs helpers
+- Bun server entry: `bun start` or `bun run src/index.ts`
+- browser SPA: [`src/ui/index.html`](/Users/mini/code/wingmen/src/ui/index.html)
+- agent-side stdio MCP server: [`src/mcp/stdio-server.ts`](/Users/mini/code/wingmen/src/mcp/stdio-server.ts)
+- CLI utilities under [`clis/`](/Users/mini/code/wingmen/clis) for sessions, delegate sessions, apps, deploy, scheduler, jobs, and bot-key export
+- operational scripts under [`scripts/`](/Users/mini/code/wingmen/scripts), including warm restart helpers
 
-Within the HTTP surface, the important operational entry families are:
-
-- `/api/sessions*`
-- `/api/apps*`
-- `/api/auth*`
-- `/api/chats*`
-- `/api/docs*`
-- `/api/todos*`
-- `/api/projects*`
-- `/api/feature-flags*`
-- `/api/system*`
-- `/api/mcp/*`
-- `/api/ngit/*`
-- `/api/gitea/*`
-- `/api/git-workflow/*`
-- `/api/superbased/*`
-- `/api/provider/*`
-- `/api/caprover/*`
-
-## Build / deploy shape
+## Build and deployment shape
 
 ### Build shape
 
-As built, Wingman itself is mostly "run from source":
+As built, Wingman mostly runs from source:
 
-- backend runtime is Bun with TypeScript ESM
-- frontend modules are served directly from `src/ui/`
-- selected browser dependencies are served straight from `node_modules` through the static asset service
+- backend runtime: Bun + TypeScript ESM
+- frontend modules: served directly from `src/ui/`
+- vendor browser modules: served from `node_modules` through the static asset service
 
-The one explicit frontend prebuild I found is:
+One explicit frontend prebuild is present:
 
 - `bun run build:bunker-client`
-  - builds `src/ui/identity/bunker-client.ts`
-  - outputs `public/vendor/bunker-client.js`
+- input: [`src/ui/identity/bunker-client.ts`](/Users/mini/code/wingmen/src/ui/identity/bunker-client.ts)
+- output: [`public/vendor/bunker-client.js`](/Users/mini/code/wingmen/public/vendor/bunker-client.js)
 
-The one explicit runtime binary bootstrap I found is:
+One explicit runtime binary bootstrap is present:
 
-- `src/server/bootstrap/agentapi.ts`
-  - reads `downloads.json`
-  - downloads the correct `agentapi` release for the current platform
-  - installs it into `out/agentapi`
+- [`src/server/bootstrap/agentapi.ts`](/Users/mini/code/wingmen/src/server/bootstrap/agentapi.ts)
+- installs the platform-correct `agentapi` binary into `out/agentapi`
 
-### Deploy shape
+### Deployment shape
 
-What is implemented clearly:
+What is clearly implemented in this repository:
 
 - Wingman can deploy tracked apps to CapRover
-- Wingman can run its managed apps and, optionally, agent sessions through PM2
-- warm restart support exists through `scripts/warm-restart-manager.ts` and the warm restart marker flow
+- Wingman can run registered apps and, optionally, agent sessions through PM2
+- warm restart support exists through [`scripts/warm-restart-manager.ts`](/Users/mini/code/wingmen/scripts/warm-restart-manager.ts) and [`src/server/bootstrap/warm-restart.ts`](/Users/mini/code/wingmen/src/server/bootstrap/warm-restart.ts)
 
-What is not clearly defined in this repository:
+What remains uncertain from repo code alone:
 
-- I did not find a Dockerfile, `captain-definition`, compose file, or repository-owned production manifest for deploying the Wingman server itself
-- because of that, the production deployment mechanism for Wingman core is uncertain from repo code alone
+- I did not find a repository-owned production manifest for deploying Wingman core itself
+- because of that, the exact production deployment mechanism for the Wingman server is not clear from this repository alone
 
-## Integration points
-
-### Local OS / filesystem
-
-- user workspaces are derived from `DIRECTORY_DEF` and `FOLDERACCESS`
-- non-admin users are scoped into alias-specific workspace directories by `src/workspaces/workspace-scope.ts`
-- docs/file APIs are restricted to the resolved workspace/doc roots
-- temp uploads live under `tmp/uploads`
-- user operational data is created under `~/Documents/Wingman/users` and `~/.wingmen`
-
-### Agent toolchain
-
-- external agent CLIs are expected on `$PATH` unless overridden by env vars
-- `agentapi` is an external binary managed at startup
-- PM2 is used when app or session lifecycle is delegated to PM2
-
-### Nostr
-
-- connect relays come from config
-- browser signing and grant approval flows bridge agent requests back to the user
-- Nostr-triggered tasks and scheduling are first-class runtime behaviours, not add-ons
-
-### Git / repo hosting
-
-- Gitea integration handles user provisioning, credential helpers, repo operations, and git workflow APIs
-- ngit support publishes git collaboration metadata to Nostr
-
-### Billing / provider proxy
-
-- team billing is handled by `src/billing/team-billing-service.ts`
-- provider proxy routes forward to OpenRouter-backed upstreams while enforcing Wingman-issued session proxy tokens
-- session launch config can inject provider credentials into agent sessions
-
-### Chat / LLM completion
-
-- private chat uses Maple proxy via `src/chat/maple-client.ts`
-- provider proxy routes support OpenAI-compatible and Anthropic-compatible upstream shapes through OpenRouter
-
-### Data sync / external data plane
-
-- SuperBased integration provides authenticated fetch/sync/history/storage URL operations
-- NIP-44 encryption and decryption is performed inside Wingman before syncing delegated records
-
-## Architectural seams that matter for maintenance
+## Operational seams that matter
 
 ### 1. `src/server.ts` is still the main composition hotspot
 
-Route handlers are being extracted, but `src/server.ts` still owns too many responsibilities:
+Even after route extraction, `src/server.ts` still owns:
 
 - startup/bootstrap
-- store construction
-- background jobs
+- store and service construction
 - access rule registration
-- route wiring
-- SPA/static asset decisions
-- app proxy behaviour
-
-When changing server behaviour, expect cross-cutting edits unless more composition is pulled out first.
+- background loop startup
+- SPA/static asset routing
+- app proxy behavior
+- final `Bun.serve(...)` request handling
 
 ### 2. `ProcessManager` is the critical orchestration seam
 
-`src/agents/process-manager.ts` is where session launch behaviour actually converges:
+Session launch behavior converges in [`src/agents/process-manager.ts`](/Users/mini/code/wingmen/src/agents/process-manager.ts).
 
-- command construction from config
-- MCP injection
-- Gitea env injection
-- billing env injection
-- spawn mode choice
-- adapter creation
-- lifecycle event emission
+Changes to session semantics will usually belong there or in helpers called from there, not in the HTTP route layer.
 
-Changes to session semantics should usually land here or in a new helper called from here, not in route handlers.
+### 3. Agent transport and agent process are now separate abstractions
 
-### 3. Agent transport and agent process are no longer the same abstraction
+This matters because:
 
-The adapter layer means "how Wingman talks to an agent" is separate from "how the agent process was started."
+- native adapters bypass some `agentapi` assumptions
+- browser event streaming falls back to heartbeat-only SSE for native adapters
+- readiness, billing, and event behavior can differ by adapter type
 
-That matters because:
+### 4. Frontend migration is active, not finished
 
-- SSE proxying depends on whether an adapter exposes an upstream events URL
-- native SDK adapters bypass some `agentapi` assumptions
-- billing and readiness behaviour can differ by adapter type
+Any UI change still has to choose between:
 
-### 4. Frontend architecture is intentionally in transition
+- the large imperative shell in `src/ui/app.js`
+- the newer Dexie + Alpine store-based path
 
-The current frontend is mixed-mode:
+### 5. Workspace scoping is the main isolation seam
 
-- old path: imperative rendering through `src/ui/app.js`
-- new path: Dexie + Alpine islands
-
-Any UI work needs to decide which side of that seam it belongs on. Treating the migration as complete would be inaccurate.
-
-### 5. Workspace scoping is the main per-user isolation seam
-
-User isolation is primarily enforced by:
+User isolation is enforced primarily through:
 
 - request auth context
 - workspace scope resolution
-- access policy checks
-- file/docs path guards
-- ownership checks in app/project/todo routes
+- access-control checks
+- path safety utilities
+- ownership checks in app/project/todo/session routes
 
-This is the boundary to review first when touching anything that reads or writes local files.
+### 6. Store migrations are distributed
 
-### 6. Local stores own their own schema drift
+Many SQLite-backed stores self-migrate on startup with local schema checks and `ALTER TABLE` logic. There is no single central migration framework.
 
-Many stores self-migrate on startup by checking columns/tables and applying `ALTER TABLE` logic. There is no single central migration framework.
+### 7. Warm restart is a real operational feature
 
-That keeps the app self-contained, but it also means schema changes are distributed across many modules.
-
-### 7. Warm restart and rehydration are operationally important
-
-Warm restart is not theoretical. The code actively:
-
-- writes restart markers
-- preserves sessions during restart
-- rehydrates known sessions from stored state
-- cleans up PM2 orphans
-
-Operational bugs around session persistence, PM2 state, or stored session metadata can surface as restart bugs rather than request bugs.
+Warm restart is not just planned. The live code writes restart markers, tracks restart state, rehydrates sessions, and cleans up orphaned PM2/session state.
 
 ### 8. App management and agent management are adjacent but distinct
 
-The codebase manages both:
-
-- ephemeral or semi-ephemeral agent sessions
-- longer-lived registered apps
-
-They share PM2 helpers and some routing ideas, but they have different stores, lifecycle rules, and UI concepts. Mixing these concerns tends to make maintenance harder.
-
-## Uncertainties noted during this review
-
-- The repository clearly supports deploying user-managed apps through CapRover, but I could not confirm a single canonical production deployment method for the Wingman server itself from repo files alone.
-- The docs mention a Dexie + Alpine migration target, but the live implementation is still hybrid rather than fully migrated.
+The codebase manages both long-lived registered apps and shorter-lived agent sessions. They share some process and routing machinery, but they are separate concepts with separate stores and route families.
