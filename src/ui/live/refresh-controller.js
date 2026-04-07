@@ -21,6 +21,26 @@ const COMPATIBILITY_POLL_INTERVAL_MS = 1000;
 const RECOVERY_POLL_INTERVAL_MS = 2000;
 const MOBILE_COMPOSER_POLL_INTERVAL_MS = 3000;
 
+function supportsStreamModeTracking(sseManager) {
+  return typeof sseManager.getStreamMode === "function";
+}
+
+function shouldUseCompatibilityPolling({ streamMode, runtimeStatus, streamModeTracked }) {
+  if (streamMode === LIVE_STREAM_MODE.heartbeatOnly) {
+    return true;
+  }
+
+  if (runtimeStatus !== "running") {
+    return false;
+  }
+
+  if (!streamModeTracked) {
+    return true;
+  }
+
+  return streamMode === LIVE_STREAM_MODE.eventStream;
+}
+
 export function createLiveRefreshController(deps) {
   const {
     sseManager,
@@ -156,7 +176,8 @@ export function createLiveRefreshController(deps) {
     }
 
     const connectionState = sseManager.getConnectionState(sessionId);
-    const streamMode = typeof sseManager.getStreamMode === "function"
+    const streamModeTracked = supportsStreamModeTracking(sseManager);
+    const streamMode = streamModeTracked
       ? sseManager.getStreamMode(sessionId)
       : LIVE_STREAM_MODE.unknown;
     const runtimeStatus = typeof getSessionRuntimeStatus === "function"
@@ -171,13 +192,10 @@ export function createLiveRefreshController(deps) {
     }
 
     // Keep the active live session on a lightweight 1s refresh loop while the
-    // agent is actively working. This covers heartbeat-only adapters and
-    // event-stream sessions whose upstream transport goes quiet between sparse
-    // progress updates.
-    if (
-      streamMode === LIVE_STREAM_MODE.heartbeatOnly ||
-      runtimeStatus === "running"
-    ) {
+    // agent is actively working, but only once transport mode is known. This
+    // avoids briefly entering compatibility polling during bootstrap before a
+    // degraded stream has identified itself.
+    if (shouldUseCompatibilityPolling({ streamMode, runtimeStatus, streamModeTracked })) {
       return LIVE_POLL_MODE.compatibility;
     }
 

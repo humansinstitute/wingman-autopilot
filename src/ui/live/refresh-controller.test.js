@@ -148,6 +148,9 @@ describe("createLiveRefreshController", () => {
 
     controller.activateSession("session-3");
     sseManager.emitConnection("session-3", "connected");
+    expect(controller.getPollMode()).toBe(LIVE_POLL_MODE.off);
+    expect(intervals).toHaveLength(0);
+
     sseManager.emitStreamMode("session-3", LIVE_STREAM_MODE.degraded);
     await Promise.resolve();
 
@@ -157,11 +160,13 @@ describe("createLiveRefreshController", () => {
 
     sseManager.emitStreamMode("session-3", LIVE_STREAM_MODE.eventStream);
     await Promise.resolve();
-    expect(controller.getPollMode()).toBe(LIVE_POLL_MODE.off);
+    expect(controller.getPollMode()).toBe(LIVE_POLL_MODE.compatibility);
     expect(intervals[0]?.cleared).toBe(true);
+    expect(intervals).toHaveLength(2);
+    expect(intervals[1]?.ms).toBe(1000);
   });
 
-  test("keeps a 1s compatibility poll running while the active session is busy", async () => {
+  test("waits for a known transport mode before enabling busy-session compatibility polling", async () => {
     const intervals = createTimerHarness();
     const sseManager = createFakeSseManager();
 
@@ -181,7 +186,40 @@ describe("createLiveRefreshController", () => {
 
     controller.activateSession("session-4");
     sseManager.emitConnection("session-4", "connected");
+    await Promise.resolve();
+
+    expect(controller.getPollMode()).toBe(LIVE_POLL_MODE.off);
+    expect(intervals).toHaveLength(0);
+
     sseManager.emitStreamMode("session-4", LIVE_STREAM_MODE.eventStream);
+    await Promise.resolve();
+
+    expect(controller.getPollMode()).toBe(LIVE_POLL_MODE.compatibility);
+    expect(intervals).toHaveLength(1);
+    expect(intervals[0]?.ms).toBe(1000);
+  });
+
+  test("keeps a 1s compatibility poll running while the active session is busy", async () => {
+    const intervals = createTimerHarness();
+    const sseManager = createFakeSseManager();
+
+    const controller = createLiveRefreshController({
+      sseManager,
+      getCurrentRoute: () => "live",
+      getActiveSessionId: () => "session-5",
+      getSessionRuntimeStatus: () => "running",
+      fetchConversation: async () => {},
+      fetchLogs: async () => {},
+      fetchSessionQueue: async () => {},
+      fetchSessionDetails: async () => ({ agentRuntimeStatus: "running" }),
+      applySessionDetails: () => {},
+      isComposerInteractionActive: () => false,
+      isMobileKeyboardOpen: () => false,
+    });
+
+    controller.activateSession("session-5");
+    sseManager.emitConnection("session-5", "connected");
+    sseManager.emitStreamMode("session-5", LIVE_STREAM_MODE.eventStream);
     await Promise.resolve();
 
     expect(controller.getPollMode()).toBe(LIVE_POLL_MODE.compatibility);
