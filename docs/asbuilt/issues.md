@@ -1,8 +1,7 @@
 # Wingmen As-Built Issues
 
-Status: as-built working note  
-Reviewed against live code on 2026-04-06  
-Companion docs:
+Status: updated during step 7 on 2026-04-08  
+Reviewed against the live repository and the refreshed step 1-6 as-built docs:
 
 - `docs/asbuilt/architecture.md`
 - `docs/asbuilt/data model.md`
@@ -13,101 +12,104 @@ Companion docs:
 
 ## Scope
 
-This note captures concrete follow-up issues surfaced by the as-built review. The list is limited to problems that are visible in the live code or the maintained as-built docs today.
+This note captures only current, evidence-based follow-up issues visible in the live repository. Resolved historical notes from the earlier as-built pass were removed from this issue list.
 
 ## Issues
 
-### 1. Live session refresh is SSE-first, but bounded polling still remains
+### 1. Session background refreshes do not reliably propagate into the imperative shell
+
+Problem:
+
+- The browser now keeps the session catalog in the Dexie-backed Alpine store in `src/ui/sessions/store.js`, but the rest of the shell still depends on imperative rerenders.
 
 Evidence:
 
-- `src/ui/live/refresh-controller.js` now owns the live refresh contract instead of `src/ui/app.js`.
-- `src/server/session-events.ts` emits an initial `transport` SSE event so the browser can distinguish `event-stream` sessions from `heartbeat-only` native-adapter sessions.
-- `src/ui/sessions/session-routing.js` activates live refresh through the controller, and no longer starts a co-equal steady-state polling loop for every live session.
+- `initSessionsStore(...)` in `src/ui/sessions/store.js` only accepts `showToast`, `getIdentity`, `onUnauthorized`, and `onIdentityUpdate`, and `_setupLiveQuery()` only assigns `this.items`.
+- `src/ui/app.js` still passes an `onItemsChanged` callback when it initializes the store, but that callback is not consumed by the store.
+- `startSessionSubscriber(...)` in `src/ui/app.js` only calls `fetchSessions()` on connect/event.
+- `fetchSessions()` updates store-backed data and some per-session caches, but it does not call `render()` or `syncMenuTabs()`.
+- The home page remains imperative in `src/ui/views/home-view.js` and reads `sessionsStore().items` during render rather than through Alpine bindings.
 
-Why this matters:
+Impact:
 
-- Stable live sessions no longer keep the older unconditional always-on poll loop beside the stream.
-- Compatibility polling still exists, but it is bounded to heartbeat-only adapters, active `running` sessions, and degraded or disconnected recovery windows.
+- Session create/stop/status changes received through `/api/sessions/subscribe` can leave the home page, menu tabs, and other imperative shell surfaces stale until another render happens for some unrelated reason.
 
-Runtime contract:
+Relevant areas:
 
-- Bootstrap still does an initial catch-up fetch for conversation, logs, queue, and status.
-- Stable full event streams run SSE-first with polling off.
-- Active sessions whose runtime status is `running` keep a 1s compatibility poll even when the stream mode is `event-stream`, to cover sparse upstream progress windows.
-- Heartbeat-only streams keep a 1s compatibility poll because the adapter does not expose message events to proxy.
-- SSE failure or disconnect windows fall back to a 2s recovery poll until the stream reconnects and reports a healthy transport again.
+- `src/ui/sessions/store.js`
+- `src/ui/app.js`
+- `src/ui/views/home-view.js`
+- `src/ui/sessions/subscriber.js`
 
-### 2. Legacy conversation mirror was retired in favor of Dexie
+### 2. `/todos` is still advertised by the server, but the browser route is effectively absent
 
-Evidence:
+Problem:
 
-- `src/ui/live/db.js` now owns the canonical message contract through `MessageStore.upsertMessage()`, `MessageStore.getSessionMessages()`, and `MessageStore.syncFromServer()`.
-- `src/ui/live/chat-component.js` subscribes to that store with `Dexie.liveQuery(...)`.
-- `src/ui/views/live-view.js`, `src/ui/status/agent-indicators.js`, and `src/ui/utils/clipboard.js` read conversation data back from Dexie instead of an in-memory mirror.
-
-Why this matters:
-
-- Live messages now have one browser-side source of truth instead of a silent compatibility layer.
-- Debugging live chat issues is simpler because SSE, catch-up fetches, prompt sends, copy/export, and both render paths all converge on the same store.
-
-Practical follow-up:
-
-- Keep new live-message consumers on the `MessageStore` contract rather than reintroducing transient mirrors.
-- Maintain targeted tests around message normalization/equality so legacy payload shapes keep mapping cleanly into the canonical store.
-
-### 3. Historical note: `AGENT_MODE` used to be overloaded
+- Todo APIs and UI modules still exist, but the current shell does not mount a todos page.
 
 Evidence:
 
-- Older builds used `AGENT_MODE` for both binary selection and spawn-mode compatibility.
-- The live contract now splits those concerns: `AGENTAPI_BIN` is the primary binary-path setting, `AGENT_SPAWN_MODE` is the primary spawn-mode setting, and `AGENT_MODE` is compatibility-only input.
+- `src/server.ts` still treats `/todos` and `/todos/*` as SPA shell routes.
+- `getRouteFromPath(...)` in `src/ui/app.js` has no `/todos` branch, so `/todos` falls back to `home`.
+- The render switch in `src/ui/app.js` has no todos branch.
+- `src/ui/todos/state.js` has `ensureLoaded()` explicitly disabled with `// DISABLED - Never auto-load todos`.
+- `src/ui/todos/view.js` still expects `window.navigateToTodos`, but no current app wiring exports that navigation helper.
 
-Why this matters:
+Impact:
 
-- Operators still encounter legacy examples and old local env files.
-- The compatibility bridge remains supported, so the precedence rules need to stay explicit in code and docs.
+- The repo still carries a todo backend and a partially maintained frontend feature, but the main browser shell does not expose a working todos route. That is both product drift and a maintenance burden because the code still looks live at first glance.
 
-Current contract:
+Relevant areas:
 
-- `AGENT_SPAWN_MODE` wins over `AGENT_MODE=pm2`.
-- `AGENTAPI_BIN` wins over `AGENT_MODE=tmux`.
-- `AGENT_MODE=standard` is deprecated and has no effect.
+- `src/server.ts`
+- `src/ui/app.js`
+- `src/ui/todos/state.js`
+- `src/ui/todos/view.js`
 
-### 4. Wingman core startup now preserves legacy same-root app records
+### 3. Legacy same-root Wingman app cleanup has no operator-facing execution path
 
-Evidence:
+Problem:
 
-- `src/server/bootstrap/wingman-core-registry.ts` reconciles `wingman-core`, adopts one legacy same-root record when needed, and returns the remaining conflicts without deleting them during ordinary startup.
-- `cleanupLegacyWingmanRootApps(...)` is now the explicit destructive path when an operator wants to remove same-root legacy entries.
-
-Why this matters:
-
-- Ordinary startup is no longer the destructive cleanup point, so migration history survives boot and core registration is preserved more safely.
-- Operators still need to know the explicit cleanup helper exists, because that is now the only path that removes same-root legacy app records.
-
-Practical follow-up:
-
-- Keep startup and explicit cleanup behavior documented separately so operators do not assume boot will prune legacy entries.
-- If automatic cleanup is ever reintroduced, it should come with targeted tests and much more explicit logging.
-
-### 5. The jobs UI/store swallows refresh failures too quietly
+- Startup now preserves legacy same-root Wingman app records and tells operators to run `cleanupLegacyWingmanRootApps(...)`, but that cleanup path is not wired into an actual admin/API/CLI flow in this repo.
 
 Evidence:
 
-- `src/ui/jobs/store.js:33-65` catches and only logs failures during `init`, `syncDefinitions`, and `syncRuns`.
-- `src/ui/jobs/store.js:99-128` does the same for delete and stop actions after showing a toast.
+- `ensureWingmanCoreRegistration(...)` in `src/server/bootstrap/wingman-core-registry.ts` logs warnings that preserved legacy entries should be removed by explicitly running `cleanupLegacyWingmanRootApps()`.
+- Repository search during this review found `cleanupLegacyWingmanRootApps(...)` referenced only in `src/server/bootstrap/wingman-core-registry.ts` and its test file.
+- `src/server/system-routes.ts` exposes generic system cleanup and restart operations, but not targeted legacy Wingman app cleanup.
 
-Why this matters:
+Impact:
 
-- A backend or auth failure can look like an empty or stale jobs page instead of a real error state.
-- The UI has limited observability into why data did not load, which makes production support and regression debugging harder.
+- Same-root duplicate app records can accumulate indefinitely in `apps.json` after startup reconciliation, while the codebase implies an explicit cleanup operation exists for operators even though no supported entrypoint was found.
 
-Practical follow-up:
+Relevant areas:
 
-- Surface a visible error state when the jobs data cannot be loaded, not just console warnings.
-- Add tests for failed-load behavior so empty-state and error-state are not conflated.
+- `src/server/bootstrap/wingman-core-registry.ts`
+- `src/server/system-routes.ts`
+- `src/server/system-cleanup.ts`
+
+### 4. Jobs load failures are still collapsed into empty-state behavior
+
+Problem:
+
+- The jobs UI does not surface a first-class load error state for definitions or runs.
+
+Evidence:
+
+- `src/ui/jobs/store.js` catches and only logs failures in `init()`, `syncDefinitions()`, and `syncRuns()`.
+- The same store keeps no persistent `error` field for the page to render.
+- `src/ui/jobs/page.js` renders loading and empty states (`No job definitions yet`, `No runs found`) but does not render a failed-load state.
+
+Impact:
+
+- Backend, auth, or transport failures can look like an empty jobs system instead of a broken one, which makes operator diagnosis harder and increases the chance of acting on stale data.
+
+Relevant areas:
+
+- `src/ui/jobs/store.js`
+- `src/ui/jobs/page.js`
+- `src/ui/jobs/api.js`
 
 ## Summary
 
-The largest remaining maintenance risks in the current Wingmen implementation are hybrid frontend state ownership, legacy environment semantics, explicit same-root app cleanup semantics, and quietly swallowed jobs refresh failures. The live-refresh contract is now SSE-first, but the browser still uses bounded polling for active `running` sessions, heartbeat-only adapters, and degraded or disconnected recovery windows.
+The most obvious current follow-up issues from this as-built pass are frontend state-propagation gaps, an effectively removed-but-still-present todos feature, an unreachable legacy Wingman app cleanup path, and the jobs page's missing error-state handling.
