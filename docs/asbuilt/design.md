@@ -1,491 +1,642 @@
 # Wingman design system and UI conventions (as built)
 
-Last reviewed against the live repository on 2026-04-06.
+Last reviewed against the live repository on 2026-04-08.
 
 ## Scope and source of truth
 
 This document describes the UI design language that is implemented today in the browser app under `src/ui/`.
 
-Source of truth for this review:
+Primary review inputs for this refresh:
 
+- `docs/asbuilt/architecture.md`
+- `docs/asbuilt/data model.md`
+- `docs/asbuilt/middleware.md`
+- `docs/asbuilt/frontend.md`
 - `src/ui/index.html`
 - `src/ui/styles.css`
 - `src/ui/app.js`
 - `src/ui/navigation/navigation.js`
-- `src/ui/views/home-view.js`
-- `src/ui/views/live-view.js`
-- `src/ui/views/files-view.js`
-- `src/ui/views/settings-view.js`
-- `src/ui/views/settings-tabs.js`
-- `src/ui/apps/cards.js`
-- `src/ui/nightwatch/page.js`
-- `src/ui/scheduler/page.js`
-- `src/ui/jobs/page.js`
-- the earlier as-built documents in `docs/asbuilt/architecture.md`, `docs/asbuilt/data model.md`, `docs/asbuilt/middleware.md`, and `docs/asbuilt/frontend.md`
+- routed views and reusable UI modules under `src/ui/views/`, `src/ui/live/`, `src/ui/chat/`, `src/ui/common/`, `src/ui/core/`, `src/ui/modals/`, `src/ui/projects/`, `src/ui/apps/`, and `src/ui/writer/`
+- design-impacting state modules under `src/ui/sessions/store.js`, `src/ui/jobs/store.js`, `src/ui/scheduler/store.js`, `src/ui/nightwatch/store.js`, `src/ui/apps/store.js`, `src/ui/projects/state.js`, `src/ui/todos/state.js`, and `src/ui/identity/state-manager.js`
 
-The current design system is real but not fully uniform. The shell, cards, buttons, dialogs, live view, files view, and app pages share a fairly consistent token set. Settings, Night Watchman, Scheduler, and Jobs also reuse some shared primitives, but those newer areas mix in a second naming vocabulary and some inline styles.
+The live UI is coherent enough to describe as a design system, but it is still only partially consolidated. The shell, cards, buttons, split panels, session dialogs, files UI, and app cards share a real visual language. Newer Alpine-backed pages and some side panels still mix in a second token vocabulary and inline styling.
 
 ## Design posture
 
-Wingman currently presents itself as a dark-first operational control plane with an optional light theme.
+Wingman currently presents as an operations-oriented local control plane with two distinct moods:
 
-The visual character in the live code is:
+- guest home: loud, slogan-led, minimal chrome, almost poster-like
+- authenticated app: compact, card-based, utility-first orchestration UI
 
-- dark, earthy surfaces with green as the dominant action color
-- rounded cards and pill-like controls rather than sharp enterprise tables
-- soft shadows and translucent green overlays instead of hard flat separators
-- a compact, utility-oriented shell for authenticated users
-- a deliberately louder guest landing treatment on `/home` with oversized slogan text and brand-led presentation
+The dominant visual traits in the authenticated product are:
 
-In practice there are really two design moods:
+- green-led accents and feedback surfaces
+- rounded cards, pills, and soft-cornered inputs
+- tokenized dark/light surfaces rather than pure black or pure white
+- soft shadows and translucent fills instead of hard separators
+- route-specific width and density choices instead of one universal grid
 
-- guest home: bold, sparse, slogan-driven landing layout
-- authenticated app: restrained, card-based admin/orchestration interface
+Important implementation correction from the earlier doc:
+
+- the CSS token defaults are dark-derived
+- but `app.js` currently boots to light theme on first visit when there is no saved preference
+- this means the product is dark-capable and dark-styled at the token level, but not dark-by-default in actual runtime behavior
 
 ## Theme tokens in use today
 
-The main token set is declared in `src/ui/styles.css` under `:root` and overridden by `body[data-theme="light"]`.
+The canonical top-level token set is declared in `src/ui/styles.css` under `:root` and overridden by `body[data-theme="light"]`.
 
-Canonical tokens actually used across the shell:
+Stable shell tokens used repeatedly:
 
-- accent: `--accent-primary #10b981`, `--accent-secondary #059669`, `--accent-tertiary #065f46`
+- accent: `--accent-primary`, `--accent-secondary`, `--accent-tertiary`
 - backgrounds: `--bg-gradient-start`, `--bg-gradient-end`, `--bg-primary`, `--bg-secondary`, `--bg-tertiary`
 - text: `--text-primary`, `--text-secondary`, `--text-tertiary`
-- borders/shadows: `--border-primary`, `--shadow-sm`, `--shadow-md`
-- code surfaces: `--code-bg`, `--inline-code-bg`
-- layout constants: `--nav-height`, `--wm-viewport-height`
+- border/shadow: `--border-primary`, `--shadow-sm`, `--shadow-md`
+- code: `--code-bg`, `--inline-code-bg`
+- layout: `--nav-height`, `--wm-viewport-height`
 
-Dark mode is the default because `:root` sets `color-scheme: dark` and the default palette is dark. Light mode is an override on `body[data-theme="light"]`, not a separate stylesheet.
+Two token vocabularies are still in play:
 
-Important implementation note:
+- the shell and older shared surfaces mostly use the `--bg-*`, `--text-*`, `--accent-*`, `--border-primary` family
+- some newer or partially extracted UI still references names like `--border`, `--bg`, `--text-muted`, `--surface-secondary`, or `--accent-color`
 
-- some newer CSS also references `--surface-secondary`, `--surface-tertiary`, `--accent-color`, and `--border`
-- those names are not the main top-level token set used by the shell
-- as built, the stable token vocabulary for new work should be considered the `--bg-*`, `--text-*`, `--accent-*`, and `--border-primary` family
+That second vocabulary is not consistently declared at the top of the stylesheet. It appears in side panels and inline-styled widgets, so it should be treated as drift rather than the canonical design token system.
 
 ## Typography
 
-Global typography is system-first:
+Global typography remains system-first:
 
-- base font stack: `-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif`
-- monospace usage: `SFMono-Regular`, Menlo, Consolas, Liberation Mono, and similar stacks for paths, logs, code, and previews
+- base stack: `-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif`
+- monospace stack for paths, logs, code, and previews: `SFMono-Regular`, Menlo, Consolas, `Liberation Mono`, and similar fallbacks
 
-Common text treatments in the live UI:
+Implemented type patterns:
 
-- product title: `1.5rem`, semibold, slight negative tracking in the header
-- route/page headings: usually `1.75rem` to `1.35rem`
-- card section headings: around `1.25rem`
-- helper labels and metadata: `0.7rem` to `0.85rem`, often uppercase with added letter spacing
-- code/log/path values: monospace, usually `0.85rem` to `0.95rem`
+- header product title: `1.5rem`, semibold, slightly tightened tracking
+- route headings: generally `1.75rem` to `1.25rem`
+- metadata and small labels: `0.7rem` to `0.85rem`, often uppercase with added letter spacing
+- chat/file body text: larger line-height than table/list UI
+- guest landing headline: oversized block lines such as `YOU / CAN JUST / DO THINGS!`
 
-Typography usage patterns:
-
-- uppercase + tracking is used for metadata, chips, and supporting labels
-- body copy remains fairly plain and utilitarian
-- live conversation and file preview text use larger line-height than table/list UI
-- the guest home page is the main exception, with oversized slogan lines such as `YOU / CAN JUST / DO THINGS!`
+The product does not use a custom brand typeface. Contrast between surfaces, spacing, case, and layout carries more of the design identity than typography alone.
 
 ## Color usage
 
-Green is the dominant semantic and interactive color. It is used for:
+Green remains the dominant interactive and status color. It is used for:
 
-- primary buttons
-- active tabs and route pills
-- hover states
-- selected rows and pills
+- primary actions
+- active pills and tabs
+- selected rows
 - focus outlines
-- positive emphasis in status surfaces
+- positive runtime emphasis
+- translucent hover and selection fills
 
-Secondary accent colors appear by component rather than by a global semantic scale:
+Other colors are component-scoped rather than globally semantic:
 
-- blue is used for assistant chat/message surfaces and some “starting/running” states
-- red is used for destructive actions, failures, and some runtime badges
-- gray is used for archived, inactive, or placeholder treatments
+- blue shows up in some assistant/chat and status contexts
+- red is used for destructive actions, failures, and warnings
+- gray/brown neutrals handle most background and metadata surfaces
 
-Implemented color rules that show up repeatedly:
+Recurring color rules in the implementation:
 
-- primary surfaces stay low-contrast and dark/light-theme aware through tokens
-- interactive overlays use translucent accent fills rather than opaque blocks
-- code and logs use nearly black backgrounds even in light theme
-- selected state is typically shown by both border-color and fill-color, not color alone
+- selected states usually combine border, fill, and label changes rather than color alone
+- code and terminal surfaces stay very dark in both themes
+- the guest landing uses broader visual contrast than the authenticated shell
+- some Night Watchman and artifacts UI still hard-codes status colors or inline fills instead of using the shared token set
 
-## Page shell and navigation
+## Page shell and modal chrome
 
 ### Global shell
 
-The browser shell is fixed around three persistent elements from `src/ui/index.html`:
+The persistent shell from `src/ui/index.html` is built around:
 
 - sticky header: `.wm-header`
-- pull-to-refresh status bar: `#pull-refresh`
+- pull-to-refresh status strip: `#pull-refresh`
 - route mount point: `main#app`
 
-The header is sticky at the top with a fixed height token (`--nav-height`) and a card-like treatment:
+The header is fixed by `--nav-height` and styled as a card-like top bar with:
 
-- background uses `--bg-primary`
-- bottom border uses `--border-primary`
-- shadow uses `--shadow-sm`
+- `--bg-primary` background
+- `--border-primary` bottom border
+- `--shadow-sm` shadow
 
 ### Header contents
 
-The header includes:
+The live header composition currently includes:
 
-- brand link with logo, title, and tagline
-- quick-launch session button for authenticated users
-- optional live-view webview/writer toggles
-- current-session indicator pill on wider screens
-- login button for guests
-- hamburger menu toggle for authenticated users
+- brand link with dual light/dark logo assets, title, and Latin tagline
+- authenticated quick-launch button with a small dropdown menu
+- route-conditional live toggles for webview and writer panels
+- desktop current-session indicator pill on wider screens
+- guest login button
+- authenticated hamburger menu
 
-### Navigation pattern
+Theme and tabs toggles are not permanently visible in the header row. They live inside the opened menu panel.
 
-Navigation is menu-panel based, not a permanently visible sidebar.
+### Shared modal families
 
-Implemented route links in the menu:
+The shell ships a large amount of shared chrome before any page route renders. Current modal/dialog families in `index.html` include:
 
-- Agents (`/live`)
-- Night Watchman (`/nightwatch`) when enabled
-- Triggers (`/triggers`) for admins
-- Jobs (`/jobs`) for admins
-- Apps (`/apps`)
-- Files (`/files`)
-- Privacy Policy (`/privacy`)
+- session launch
+- job launch
+- identity unlock
+- identity login
+- directory browser
+- file transfer / copy / move
+- feature flag creation
+- app creation mode picker
+- starter project picker
+- app create/edit
+- app clone
+- app logs
+- app deploy
+- project creation
 
-Navigation behavior in the current code:
+The modal system is visually related but not fully singular. There are several chrome families:
 
-- route changes are handled imperatively in `src/ui/navigation/navigation.js`
-- the menu is the primary global navigator once authenticated
-- menu links open login first when auth is required
-- the active route is reflected by an `.active` class on menu items
-- live session tabs are a second navigation layer for active sessions
-- tabs can be globally hidden with `body[data-tabs-visible="false"]`
+- generic `dialog` defaults
+- `.wm-session-dialog` for the agent/job launch flow
+- `.wm-directory-dialog` for chooser-style modals
+- `.wm-project-dialog` for centered form flow
+- `.wm-dialog` for feature flags
+- file-editor overlay chrome rendered outside native `<dialog>`
 
-### Route container sizing
+Shared modal conventions that are actually implemented:
 
-`#app` is the main width governor and changes by route:
+- rounded corners around `1rem`
+- dimmed backdrop
+- vertically stacked form bodies
+- right-aligned or wrapped footer actions
+- mobile width reduction through media queries
+- `16px` dialog input font sizing on smaller screens to avoid iOS zoom
 
-- default routes: max width `1080px`
+## Navigation and routed composition
+
+### Route composition
+
+There is still no router framework. `src/ui/app.js` and `src/ui/navigation/navigation.js` perform string-based route resolution and imperative history updates.
+
+Implemented shell routes during this review:
+
+- `/home`
+- `/live` and `/live/:sessionId`
+- `/apps`
+- `/projects`
+- `/files/*` and legacy `/docs/*`
+- `/settings`
+- `/chat` and `/chat/:id`
+- `/privacy`
+- `/nightwatch`
+- `/scheduler` and `/triggers`
+- `/jobs`
+
+### Menu navigation pattern
+
+Global navigation is menu-panel based, not sidebar based.
+
+Menu links currently expose:
+
+- Agents
+- Night Watchman when feature-enabled
+- Triggers for admins
+- Jobs for admins
+- Apps
+- Files
+- Privacy Policy in the footer
+
+Important as-built nuance:
+
+- some routed pages exist without first-class menu links
+- `Projects` is reachable through other UI flows and `window.navigateToProjects`, but is not listed in the current menu panel
+- `Settings` is also routed and rendered, but not present as a top-level menu link
+- `Chat` exists as a route and full-page design surface, but it is not exposed in the menu either
+
+### Navigation behavior
+
+Current navigation behavior in code:
+
+- route changes are handled with `pushState`/`replaceState`
+- auth-gated routes open the identity login dialog instead of navigating
+- active menu links receive an `.active` class
+- live session tabs act as a second navigation layer
+- session tabs can be globally hidden with `body[data-tabs-visible="false"]`
+- leaving live routes explicitly tears down live refresh wiring
+
+## Layout system and route sizing
+
+Wingman does not use a single universal content container. Width and height are route-driven.
+
+### `#app` route sizing
+
+Current `#app` constraints in CSS:
+
+- default routes: `max-width: 1080px`
 - `/apps`: `1200px`
 - `/projects`: `1100px`
 - `/files`: `1440px`
-- `/live`: reduced top padding and, when a webview is open, full-height edge-to-edge layout with independent column scrolling
+- `/live`: reduced top padding and no bottom padding
+- `/live` with webview/writer/app side panel open: full-height edge-to-edge layout with independent column scrolling
 
-This means page layout width is route-driven rather than based on one universal content container.
+Important shell overrides:
 
-## Layout system
+- `#app:has(.wm-home-guest-landing)` removes the normal width cap for the guest landing
+- private chat does not change `#app` width directly, but `.wm-chat` applies its own `max-width: 1400px`
 
-Wingman’s layout system is simple but consistent:
+### Core layout primitives
 
-- shell-level max-width containers by route
-- card-based vertical stacks for most pages
-- flex and grid layouts inside cards
-- sticky subregions for live tabs and live composer
+Repeated structural patterns:
 
-### Core structural patterns
+- `.wm-card` for most authenticated sections
+- `.wm-home-section-header` for titled card headers
+- `.wm-table-container` for horizontally scrollable tables
+- `.wm-tabs` and `.wm-tab` for pill-style selection
+- `.wm-actions`, `.wm-app-actions`, `.session-card-actions` for button clusters
+- `.wm-form-group`, `.wm-scheduler-grid-two`, `.wm-scheduler-grid-split` for Alpine-page forms
 
-Common layout primitives that show up repeatedly:
+### Route-specific layout notes
 
-- `.wm-card`: rounded bordered panel with padding and shadow
-- `.wm-home-section-header`: title row with optional actions
-- `.wm-table-container`: horizontal overflow wrapper for tables
-- `.wm-tabs` / `.wm-tab`: pill navigation rows
-- `.wm-actions`, `.wm-app-actions`, `.session-card-actions`: clustered action rows
-- `.wm-form-group`, `.wm-scheduler-grid-two`, `.wm-scheduler-grid-split`: small form layout helpers in Alpine pages
+Home:
 
-### Live view layout
+- guest route is full-bleed and slogan-led
+- authenticated route is a card stack
 
-The live route is the most specialized layout in the product:
+Live:
 
-- sticky tabs bar directly below the header
-- scrollable conversation region
-- sticky composer at the bottom with a gradient fade
-- optional split-panel layout through `.wm-live-split`
+- sticky tabs bar below the header
+- scrollable main conversation region
+- sticky composer with fade treatment
+- optional split layout through `.wm-live-split`
 
-The split layout supports:
+Files:
 
-- chat + webview
-- chat + writer
-- chat + app controls
-- chat + artifacts
+- two-pane browser/preview layout on desktop
+- collapsible “shelved” browser behavior
+- single-column fallback on smaller screens
 
-Desktop split variants use proportional columns such as:
+Apps:
 
-- normal split
-- chat narrow / app wide
-- app narrow / chat wide
+- split view with collapsible workspace tree sidebar and card column
 
-### Files layout
+Projects:
 
-The files route uses a two-pane layout when space permits:
+- simple page header plus project card grid
+- each project card nests an app list with status chips and action rows
 
-- left column: file browser
-- right column: preview/editor surface
+Chat:
 
-The default desktop grid is:
+- wide centered conversation shell
+- left-side list of chats or a full conversation view depending on route state
+- reuses the shared `.wm-composer` form class for the message composer
 
-- `minmax(260px, 360px)` sidebar
-- `minmax(0, 2fr)` preview area
+Settings:
 
-The browser pane can also be “shelved”, collapsing the layout to a single column.
-
-### Apps layout
-
-The apps page uses a split layout:
-
-- collapsible workspace tree sidebar
-- main app card column
-
-At narrower widths it collapses to a vertical stack.
+- top page title plus segmented settings tabs
+- each tab mostly renders `.wm-card` sections
 
 ## Spacing and shape
 
-The current design language favors medium-to-large spacing and rounded corners.
+The design language still favors medium-to-large spacing and softened corners.
 
 Repeated values visible across the CSS:
 
+- page padding: `1.5rem` to `2rem` at desktop, reduced on smaller screens
 - card padding: usually `1.5rem` to `1.75rem`
-- major page gaps: `1rem` to `1.75rem`
-- small control gaps: `0.25rem` to `0.75rem`
-- pill/button radii: from `0.5rem` to `999px`
-- card radii: around `0.75rem` to `0.85rem`
+- major layout gaps: `0.75rem` to `1.75rem`
+- control gaps: `0.25rem` to `0.75rem`
+- pill radii: `999px`
+- standard control radii: roughly `0.4rem` to `0.75rem`
+- modal/card radii: roughly `0.85rem` to `1rem`
 
-Practical spacing rules visible in the code:
+Practical spacing rules in the code:
 
-- cards are allowed to breathe; dense data is usually grouped inside them, not packed edge-to-edge
-- headers and action rows use wrap-friendly gaps so controls can fold on smaller screens
-- interactive surfaces nearly always reserve visible padding around text and icons
-- mobile styles reduce card/page padding but keep targets comfortably tappable
+- most data is grouped inside cards rather than packed edge-to-edge
+- headers and action rows wrap intentionally on smaller screens
+- touch targets are enlarged in smaller breakpoints
+- mobile layouts tend to preserve comfort before density
 
-## Common controls
+## Common controls and reusable patterns
 
 ### Buttons
 
-There are two active button families.
+Two button families remain active.
 
 Primary shell family:
 
 - `.wm-button`
-- variants: default, `.secondary`, `.danger`, `.wm-button--small`
-- used throughout shell pages, dialogs, files, apps, and live composer
+- variants: default, `.secondary`, `.danger`, `--small`
+- used across home, apps, files, dialogs, projects, and live work
 
-Shared Alpine page family:
+Shared Alpine/admin family:
 
 - `.wm-btn`
 - variants: `--sm`, `--primary`, `--danger`
-- used on Jobs, Scheduler, and Night Watchman pages
+- used by scheduler, Night Watchman, and jobs surfaces
 
-Button behavior implemented in CSS:
+Implemented button behavior:
 
-- raised hover state with slight upward motion
-- disabled state removes lift and lowers opacity
-- some buttons support `data-state="loading" | "success" | "error"` with inline spinner/check/error feedback
-- mobile rules often make action buttons full-width
+- hover lift or background shift on many shell buttons
+- disabled state lowers opacity and removes lift
+- some identity/admin buttons use `data-state="loading" | "success" | "error"` feedback
+- mobile rules often expand important action buttons to full width or taller tap targets
 
-### Tabs and pills
+### Tabs, pills, and status chips
 
-The app uses pill-based selection patterns heavily:
+Wingman heavily favors pill-based selection and badge treatment:
 
-- session tabs in live view
+- live session tabs
 - menu session tabs
 - settings tabs
 - session indicator pill
-- status chips for sessions and apps
+- app and project status chips
+- admin filter selectors and section toggles
 
-Session tabs are rounded pills with active-state border and fill. Settings tabs are flatter segmented buttons, though that area uses the newer mixed token vocabulary.
+Settings tabs are visually flatter than the live tabs, but still rounded and tokenized. They also implement `role="tablist"`, `role="tab"`, and `role="tabpanel"`.
 
-### Inputs and selects
+### Inputs and form helpers
 
-Forms are built from:
+Input styling is broadly consistent:
 
-- raw dialog inputs and selects in `index.html`
-- shared `.wm-input`
-- shared `.wm-select`
-- `.wm-form-group`
-
-Input styling today:
-
-- filled surface using `--bg-secondary`
+- filled surface using `--bg-secondary` or `--bg-tertiary`
 - `1px` border
-- rounded corners around `0.4rem` to `0.75rem`
-- focus shown by a strong outline rather than subtle shadow
-- text inputs in dialogs keep `16px` font size on mobile to avoid iOS zoom
+- rounded corners
+- focus shown through a visible outline or border-color change
+- dialog inputs on mobile are explicitly kept at readable/touch-safe sizing
 
-### Dialogs and overlays
+Shared helpers include:
 
-Dialogs are a major control family:
-
-- session launch
-- job launch
-- identity and key dialogs
-- file picker and directory dialogs
-- file editor overlay
-- archive dialog
-- voice note dialog
-
-Shared dialog conventions:
-
-- dark/light tokenized panel background
-- rounded corners around `1rem`
-- shadow-heavy modal presentation
-- dimmed backdrop
-- vertical form flow with footer actions aligned right on desktop and stacked on mobile
+- `.wm-input`
+- `.wm-select`
+- `.wm-form-group`
+- `.working-directory-field`
+- `.wm-checkbox`
 
 ### Cards
 
-`.wm-card` is the main building block for authenticated UI. It is used for:
+`.wm-card` remains the core authenticated container. It is used for:
 
 - home sections
 - app cards
+- project cards
 - files panes
 - settings sections
-- many modal-like subpanels
+- many empty/error/loading placeholders
 
-Cards generally provide:
+App cards are the most reused compound pattern. The same card treatment appears:
 
-- surface separation
-- internal spacing
-- local headings and action groups
-- a place to mix lists, tables, forms, and secondary metadata
+- on the Apps page
+- in the Projects page’s linked-app rows
+- inside the live app-controls side panel
+- for the Wingman core app/system card
 
-### Status and feedback controls
+### Reused live-side panel chrome
 
-Current status patterns include:
+The live route now has a stronger reusable side-panel pattern than the earlier doc captured.
 
-- app status badges
-- session status pills
-- agent status indicators and pills
-- toast notifications
-- pull-to-refresh banner
-- live chat connection bar
-- empty, loading, and error placeholders
+Shared panel treatment across webview, writer, app controls, and artifacts:
 
-Runtime feedback is often color-coded but usually also changes label text or iconography.
+- `.wm-webview-toolbar`
+- layout mode toggle buttons
+- a shared close button style
+- narrow/wide split modes
+- mobile tab switching via `writer/mobile-tabs.js`
+
+This side-panel family is visually coherent, but not fully normalized. Notable drift:
+
+- writer and app-controls mostly reuse the shared toolbar cleanly
+- artifacts still injects substantial inline style and references token names like `--border`, `--bg`, and `--text-muted`
+
+### Files and editor patterns
+
+Files UI uses several reusable secondary patterns:
+
+- hover-reveal affordances for favourites/delete actions
+- compact toolbar icon buttons
+- directory-browser chooser lists
+- full-screen file editor overlay with Ace
+- optional paired writer workflow for docs/markdown editing
+
+The file editor is not a native `<dialog>`; it is an overlay surface with its own header, status row, editor region, and footer.
 
 ## Route-specific design notes
 
 ### Home
 
-Authenticated `/home` is a card stack with:
+Authenticated `/home` is a practical dashboard made of card stacks for:
 
 - running apps
-- live sessions
+- live agent sessions
 - archive access
 
 Guest `/home` is intentionally different:
 
-- full-height landing treatment
-- oversized slogan text
-- minimal login CTA
-- reduced chrome
-- a stronger brand/marketing tone than the rest of the app
+- full-bleed landing treatment
+- giant stacked slogan lines
+- minimal CTA
+- privacy link and external footer link rather than full authenticated shell affordances
 
 ### Live
 
-The live screen is optimized for active session work:
+The live route is still the densest and most specialized design surface:
 
 - sticky tabs
-- chat bubbles with different user/assistant treatments
-- monospace raw logs inside collapsible details
-- sticky composer with command menu, attachment flows, and mention autocomplete
-- optional mobile tab bar for split views
+- scrollable conversation region
+- sticky composer
+- collapsible raw terminal output
+- chat/webview, chat/writer, chat/app-card, and chat/artifacts panel combinations
+- mobile one-pane-at-a-time tab behavior when the split collapses
 
 ### Files
 
-The files view is closer to an IDE/browser hybrid:
+The files route feels closest to an IDE/workspace browser hybrid:
 
-- collapsible browser header
-- hover-reveal star and delete affordances
-- compact icon toolbar buttons
-- markdown/code preview styling
-- optional writer integration
+- browser + preview split
+- compact toolbars
+- markdown/code preview
+- writer handoff
+- file move/copy modal flows
 
 ### Apps
 
-The apps page uses operational cards:
+The apps route uses operational cards with:
 
-- strong status chip in the header
-- metadata rows using label/value format
-- log previews inside cards
+- strong status chips
+- label/value metadata rows
+- log preview blocks
 - grouped lifecycle actions
+
+### Projects
+
+The projects page reuses card chrome but presents a simpler hierarchy:
+
+- page header with refresh/create actions
+- project cards
+- nested app rows with status chips, code paths, and action buttons
 
 ### Settings, Scheduler, Jobs, Night Watchman
 
-These pages are visually close to the rest of the app but are less fully unified:
+These pages visually align with the main shell, but they are the least normalized part of the authenticated UI:
 
-- they use shared shell spacing and cards
-- they also introduce `.wm-btn`, `.wm-input`, `.wm-form-group`, and some inline styles
-- Night Watchman report cards especially still mix CSS classes with hard-coded inline colors and spacing
+- they reuse shell spacing and `.wm-card`
+- they use the newer `.wm-btn`, `.wm-input`, `.wm-form-group` helpers
+- Night Watchman and some admin surfaces still mix tokenized classes with inline style decisions
+
+### Private chat
+
+Private chat is its own design surface, separate from live agent sessions:
+
+- centered wide chat shell
+- list/detail composition
+- user and assistant bubbles
+- streaming indicator on assistant output
+- shared composer styling
+
+It is visually close to live chat, but it is implemented separately and does not share the full live split-panel shell.
+
+## Design-impacting state behavior
+
+The current UI design is materially affected by browser-side state choices, not just CSS.
+
+### Body dataset flags
+
+`app.js` drives shell presentation through body data attributes:
+
+- `data-theme`
+- `data-tabs-visible`
+- `data-authenticated`
+- `data-admin`
+- `data-menu-open`
+
+Those flags directly control visibility, logo swapping, tab bar visibility, guest/authenticated chrome, and admin-only surfaces.
+
+### Identity transitions
+
+`src/ui/identity/state-manager.js` is one of the strongest design-affecting modules in the browser:
+
+- login opens/closes modal-driven flows
+- successful authentication can force the shell back to `/home`
+- auth state flips guest/authenticated/admin chrome
+- identity changes reset session/app owner filters
+- signing listeners and post-auth fetches are started/stopped from here
+- identity state is persisted and cross-tab synchronized
+
+### Session and app filtering
+
+`src/ui/sessions/store.js` and `src/ui/apps/store.js` change what the user sees based on identity:
+
+- non-admin viewers are effectively pinned to their own `npub`
+- admin viewers get owner filter options
+- identity summaries can update alias, balance, and assigned ports shown elsewhere in the shell
+- apps store also carries `pendingOpenDialog` and `pendingFocusId`, which changes post-navigation UI behavior on the Apps page
+
+### Dexie-backed instant render
+
+Sessions, apps, scheduler, and Night Watchman all prefer:
+
+1. instant render from Dexie
+2. liveQuery subscription
+3. background server sync
+
+Design consequence:
+
+- pages can paint immediately from cached data
+- visible card/table content can update after first render without route reload
+
+### Night Watchman and scheduler presentation filters
+
+State behavior directly shapes those pages:
+
+- Night Watchman keeps `filterProject` and `filterStatus` in the Alpine store
+- scheduler and Night Watchman replace their Dexie caches wholesale on sync, so the visible lists are full server snapshots rather than partial patches
+
+### Projects and todos
+
+Projects and todos are still visually and architecturally less mature:
+
+- `projects/state.js` is in-memory only and fetch-driven
+- todo state is also in-memory only
+- `todos/state.js` explicitly disables `ensureLoaded()`
+- todo UI code exists, but it is not currently part of the routed shell, so it does not define the live app’s visible design language today
+
+### Settings tab persistence and files preferences
+
+Some view state persists locally and changes the visual shell on revisit:
+
+- settings active tab is stored in `state.ui.settingsActiveTabId`
+- file-browser preferences such as hidden files, shelved browser state, and favourites are read from local storage during bootstrap
+- theme and tab visibility are persisted locally
 
 ## Responsiveness
 
-The UI is actively responsive, but route by route rather than through one global grid system.
+The UI is actively responsive, but mostly route by route rather than from one central layout system.
 
-Important breakpoints present in `src/ui/styles.css`:
+Important breakpoints present in the stylesheet:
 
 - `1000px`: apps split collapses vertically
-- `980px`: files two-pane layout collapses to single column
-- `900px`: global page padding tightens and desktop session indicator is hidden
-- `768px`: header/menu adjustments, dialogs shrink, live split becomes stacked/mobile-tab driven
-- `720px`: settings tabs become horizontally scrollable, many layouts collapse to one column, files controls compact further
-- `640px`: Night Watchman stacks vertically, voice/dialog controls tighten
-- `600px` and `480px`: smallest dialog/home/mobile adjustments
+- `980px`: files layout collapses
+- `900px`: page padding tightens and desktop session indicator hides
+- `768px`: header/menu/dialog/live split adjustments
+- `720px`: settings tabs scroll horizontally and many dense layouts collapse
+- `640px`: Night Watchman/dialog controls tighten
+- `600px` and `480px`: smallest mobile refinements
 
-Mobile-specific implemented behavior includes:
+Mobile-specific behavior currently implemented:
 
-- sticky header retained
-- hamburger menu remains the primary nav affordance
-- live split can show only one pane at a time through mobile tabs
-- composer remains reachable at the bottom
-- dialogs become wider relative to viewport and action buttons become taller
-- files layout introduces mobile section toggles and single-column behavior
+- sticky header is retained
+- hamburger menu remains the main nav affordance
+- live split becomes mobile-tab-driven
+- composer stays anchored and reachable
+- dialogs widen relative to viewport and controls get taller
+- files and chat layouts simplify rather than preserve desktop density
 
 ## Accessibility and interaction details visible in the UI code
 
-The current implementation includes several practical accessibility conventions:
+The current shell includes several practical accessibility conventions:
 
-- semantic shell elements: `header`, `nav`, `main`, `dialog`
-- `aria-label` on icon-only and navigation controls
-- `aria-live="polite"` on the session indicator and pull-to-refresh status
-- `role="tablist"` / `role="tab"` / `role="tabpanel"` for settings tabs
-- `focus-visible` outlines on major interactive controls
-- authenticated/admin-only visibility handled via body data attributes plus CSS classes
+- semantic `header`, `nav`, `main`, and `dialog`
+- `aria-label` on many icon-only and navigation controls
+- `aria-live="polite"` on pull-to-refresh and session indicator regions
+- `role="status"` on the desktop session indicator
+- tab semantics on settings navigation
+- `focus-visible` styles on major interactive controls
+- `data-testid` attributes on some testing-critical controls, especially in job/app/live panels
 
-This is not fully systematized in one accessibility layer, but the shell-level patterns are present and intentional.
-
-## Practical style-guide rules that match the current implementation
-
-If a new page or component needs to match Wingman as it exists today, the safest as-built rules are:
-
-- use `.wm-card` as the default section container instead of inventing custom panel chrome
-- use the main token set: `--bg-*`, `--text-*`, `--accent-*`, `--border-primary`
-- default to green as the primary action/accent color
-- keep corners rounded; most controls and surfaces are visibly softened
-- prefer pill or rounded-tab selection controls over square segmented navigation
-- keep tables inside `.wm-table-container` and provide a mobile card fallback when the content is dense
-- use monospace only for code, paths, logs, ports, and identifiers
-- keep forms vertically grouped with clear labels and compact helper text
-- treat dialogs as first-class UI, with consistent spacing and a clear confirm/cancel footer
-- on mobile, favor stacked layouts, full-width action buttons, and 44px minimum tap targets
-- for live/session work, preserve sticky tabs and sticky composer behavior rather than letting those controls scroll away
+This is still not centralized in one accessibility system, but the shell-level intent is clear and visible in the live code.
 
 ## Known design inconsistencies in the live implementation
 
-These are part of the as-built state and matter when documenting or extending the UI:
+These are real parts of the as-built state:
 
-- there are two button families: `.wm-button` and `.wm-btn`
-- there are two token vocabularies in play, but only one is clearly defined at the top level
-- some newer Alpine pages still rely on inline styles for spacing and status colors
-- the guest home page intentionally breaks from the authenticated control-plane look
-- not every page is using the same state/rendering pattern, so some controls are visually shared but structurally duplicated
+- there are still two button families: `.wm-button` and `.wm-btn`
+- there are still two token vocabularies in use, but only one is well defined globally
+- some newer pages and side panels still rely on inline styles
+- the artifacts panel is the clearest example of inline-style drift
+- guest home intentionally breaks from the authenticated control-plane look
+- routed pages exist that are not exposed through the global menu
+- the visible theme default comes from JS preference boot logic and does not match the dark-first impression of the raw CSS token declarations
+
+## Practical style-guide rules that match the current implementation
+
+If a new page or component needs to match Wingman as built today, the safest rules are:
+
+- use `.wm-card` as the default section container
+- prefer the `--bg-*`, `--text-*`, `--accent-*`, `--border-primary` token family
+- use green as the default accent/action color
+- keep corners visibly rounded
+- prefer pills or rounded segmented controls over square tabs
+- preserve route-specific width choices instead of forcing one global layout width
+- reuse the webview/writer toolbar pattern for new live-side panels
+- keep forms vertically grouped with clear labels and helper text
+- treat dialogs as first-class surfaces with consistent spacing and clear footers
+- on mobile, favor stacked layouts and larger tap targets over dense desktop parity
 
 ## Summary
 
 Wingman today has a recognizable implemented design language:
 
-- dark-first, green-accented, rounded operational UI
-- sticky top shell with menu-driven navigation
-- route-sized content containers
-- card-based content organization
-- specialized high-density live and files layouts
-- responsive behavior tuned per page
+- rounded, green-led operational UI
+- sticky shell with menu-panel navigation
+- route-specific width and density
+- card-based organization for most authenticated work
+- specialized live, files, chat, and app surfaces
+- state-driven visibility and personalization at the shell level
 
-It is best described as a partially consolidated design system rather than a fully unified one. The shell and major operational views are visually coherent; the newer Alpine-backed admin pages are moving in the same direction but are not fully normalized yet.
+It is best described as a partially consolidated design system. The shell and major operational routes are coherent. The newer Alpine/admin areas and some side panels are aligned in direction, but are not fully normalized yet.
