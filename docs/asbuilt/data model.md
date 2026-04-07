@@ -1,374 +1,453 @@
 # Wingman data model (as built)
 
-Last reviewed against the live repository on 2026-04-05.
+Last reviewed against the live repository on 2026-04-07.
 
 ## Scope and source of truth
 
-This document describes the persisted and cached data model that exists in the current Wingman repo at `/Users/mini/code/wingmen`.
+This document describes the persisted and cached data model that exists in the current Wingmen repo at `/Users/mini/code/wingmen`.
 
-Source of truth for this review:
+Review inputs for this refresh:
 
-- live store implementations under `src/storage/`, `src/projects/`, `src/todos/`, `src/identity/`, `src/mcp/`, `src/scheduler/`, and `src/nightwatch/`
-- the step-1 baseline in `docs/asbuilt/architecture.md`
-- the currently materialized SQLite schemas under `data/*.db`
-- the JSON registries currently used by the server under `data/*.json`
+- live store implementations under `src/storage/`, `src/projects/`, `src/todos/`, `src/identity/`, `src/mcp/`, `src/nightwatch/`, `src/scheduler/`, `src/caprover/`, `src/agent-chat/`, and `src/ui/`
+- the current SQLite schemas materialized under `data/*.db`
+- the current JSON registries under `data/*.json`
+- the architecture baseline in `docs/architecture.md`
 
-The model is intentionally split across multiple embedded SQLite databases plus a few JSON registries and browser-side IndexedDB caches. There is no central relational schema shared across every concern.
+Wingmen is not backed by one normalized relational schema. The live model is split across:
+
+- one main SQLite database: `data/wingman.db`
+- several sidecar SQLite databases by concern
+- a few JSON-backed registries
+- browser-side Dexie / IndexedDB caches
 
 ## Storage boundaries
 
-### 1. `data/wingman.db`
+### 1. Main operational database: `data/wingman.db`
 
-This is the main operational database shared by the server runtime. It currently contains:
+This is the center of gravity for runtime state. Live tables observed on 2026-04-07:
 
-- `sessions`
-- `messages`
-- `projects`
-- `project_apps`
-- `artifacts`
-- `feature_flags`
-- `scheduled_jobs`
-- `scheduled_job_runs`
-- `nightwatch_sessions`
-- `nightwatch_reports`
-- `nightwatch_config`
-- `task_sessions`
-- `memories`
-- `nip98_grants`
-- `starter_projects`
-- `user_settings`
+- `sessions` (`495` rows)
+- `messages` (`19807` rows)
+- `projects` (`2` rows)
+- `project_apps` (`2` rows)
+- `artifacts` (`0` rows)
+- `feature_flags` (`8` rows)
+- `file_watchers` (`2` rows)
+- `caprover_apps` (`9` rows)
+- `caprover_deployments` (`110` rows)
+- `nightwatch_sessions` (`305` rows)
+- `nightwatch_reports` (`2889` rows)
+- `nightwatch_config` (`3` rows)
+- `task_sessions` (`0` rows)
+- `memories` (`23` rows)
+- `nip98_grants` (`25` rows)
+- `scheduled_jobs` (`10` rows)
+- `scheduled_job_runs` (`904` rows)
+- `starter_projects` (`2` rows)
+- `user_settings` (`9` rows)
+- `workspace_subscriptions` (`0` rows)
+- `orchestrator_presets` (`2` rows)
 
-This file is the center of gravity for session orchestration, project metadata, runtime artifacts, scheduler state, Night Watch, memory, grants, feature flags, and per-user settings.
+This file currently holds session runtime state, conversation transcripts, project metadata, feature flags, file watchers, CapRover deployment tracking, Night Watch state, grants, memory, scheduler state, starter-project templates, and some legacy/compatibility data.
 
-### 2. Separate SQLite files by concern
+### 2. Sidecar SQLite databases
 
-Several domains are intentionally isolated into their own files:
+These domains are intentionally isolated into separate files:
 
-- `data/todos.db`: encrypted todo records
-- `data/identity-users.db`: per-user identity/profile/role/port/balance state
-- `data/npub-projects.db`: per-user project tracking by directory
-- `data/bot-keys.db`: per-user bot keypairs and escrow material
-- `data/team-billing.db`: team billing config, provider keys, and usage ledger
-- `data/jobs.db`: job definitions and manager/worker job runs
-- `data/session-archive.db`: archived sessions and archived messages
-- `data/setup.db`: setup wizard state
-- `data/prompt-queue.db`: queued prompts per session
+- `data/todos.db`
+  - `todos` (`3` rows)
+- `data/identity-users.db`
+  - `identity_users` (`8` rows)
+- `data/npub-projects.db`
+  - `npub_projects` (`28` rows)
+- `data/bot-keys.db`
+  - `bot_keys` (`3` rows)
+- `data/team-billing.db`
+  - `team_billing_config` (`1` row)
+  - `team_members` (`8` rows)
+  - `team_provider_keys` (`2` rows)
+  - `usage_ledger` (`208` rows)
+- `data/jobs.db`
+  - `job_definitions` (`7` rows)
+  - `job_runs` (`139` rows)
+- `data/session-archive.db`
+  - `archived_sessions` (`1869` rows)
+  - `archived_messages` (`12601` rows)
+- `data/setup.db`
+  - `setup_state` (`1` row)
+- `data/prompt-queue.db`
+  - `prompt_queue` (`40` rows)
 
 ### 3. JSON-backed registries
 
-Some mutable state is still file-backed rather than table-backed:
+Current JSON-backed authorities:
 
-- `data/apps.json`: registered apps and runtime metadata
-- `data/app-aliases.json`: alias and routing registry for apps
-- `data/identity-roles.json`: role assignments and onboarding markers
-
-These are authoritative for their domains even though related operational data may also exist in SQLite.
+- `data/apps.json`
+  - source of truth for registered runnable apps
+  - current top-level shape: `{ "apps": AppRecord[] }`
+- `data/app-aliases.json`
+  - source of truth for generated app routing aliases
+  - current top-level shape: `{ "aliases": AliasRecord[] }`
+- `data/identity-roles.json`
+  - role/onboarding registry managed by `src/storage/identity-role-store.ts`
+  - this file was missing on disk during review; the store will create it on first write
 
 ### 4. Browser-side IndexedDB caches
 
-The frontend persists read models in Dexie/IndexedDB:
+The frontend uses Dexie as a local projection layer:
 
-- `WingmanLive`: `messages`, `sessions`, `apiSessions`, `apps`
-- `WingmanScheduler`: `jobs`
-- `WingmanNightWatch`: `reports`, `config`
+- `WingmanLive`
+  - `messages`
+  - `sessions`
+  - `apiSessions`
+  - `apps`
+- `WingmanScheduler`
+  - `jobs`
+- `WingmanNightWatch`
+  - `reports`
+  - `config`
 
-These are caches and local projections of server state, not the primary write authority.
+These are caches for UI responsiveness, not the primary write authority.
 
-## Core server entities
+### 5. Files present but not part of the active model
+
+These SQLite files exist under `data/` but had no tables during review:
+
+- `data/identity.db`
+- `data/message-store.db`
+- `data/messages.db`
+
+No active owner store was found for them in the reviewed code, so they look like leftovers or abandoned paths rather than current storage boundaries.
+
+## Core entities and relationships
 
 ### Session and conversation model
 
-Primary tables:
+Primary stores:
 
-- `sessions`
-- `messages`
-- `artifacts`
-- `nightwatch_sessions`
-- `nightwatch_reports`
-- `task_sessions`
-- `prompt_queue` in `prompt-queue.db`
-- `archived_sessions` and `archived_messages` in `session-archive.db`
+- `wingman.db.sessions`
+- `wingman.db.messages`
+- `wingman.db.artifacts`
+- `prompt-queue.db.prompt_queue`
+- `session-archive.db.archived_sessions`
+- `session-archive.db.archived_messages`
 
 Key fields and relationships:
 
-- `sessions.id` is the root identifier for a live agent/chat session.
-- `messages.session_id -> sessions.id` is one-to-many and stores ordered conversation history.
-- `artifacts.session_id -> sessions.id` is one-to-many and tracks files, images, documents, and webviews produced by a session.
-- `nightwatch_sessions.session_id -> sessions.id` is effectively one-to-one and stores autonomous monitoring state for a live session.
-- `nightwatch_reports.session_id -> sessions.id` is one-to-many and records review/report cycles for Night Watch.
-- `task_sessions.session_id -> sessions.id` links a Wingman session to an external task-management record.
-- `prompt_queue.session_id -> sessions.id` stores deferred prompts waiting to be delivered to a running session.
-- `archived_sessions.id` preserves a stopped session snapshot; `archived_messages.session_id -> archived_sessions.id` stores its final transcript copy.
+- `sessions.id` is the root identifier for a live session.
+- `messages.session_id -> sessions.id` is the canonical live transcript relationship.
+- `artifacts.session_id` is a soft one-to-many link from session to generated files/web assets.
+- `prompt_queue.session_id` queues deferred prompts for a session.
+- `archived_sessions.id` is the archived copy of a completed session.
+- `archived_messages.session_id -> archived_sessions.id` stores archived transcript rows.
 
-Important attributes:
+Important session attributes:
 
-- `sessions` stores runtime details such as `agent`, `port`, `pid`, `working_directory`, `command`, `npub`, `runtime_status`, `origin`, `pm2_name`, `logs_dir`, `model`, `target_file`, `agent_flag`, and `billing_mode`.
-- `messages` stores `role`, `content`, and `created_at`; it is the canonical persisted transcript for live sessions.
-- `artifacts` adds typed outputs without embedding binary data in the DB itself; it stores metadata and file paths/URLs.
+- `sessions` stores runtime metadata such as `agent`, `name`, `port`, `pid`, `pm2_name`, `logs_dir`, `working_directory`, `command`, `npub`, `runtime_status`, `origin`, `model`, `target_file`, `agent_flag`, and `billing_mode`
+- `origin` is persisted as JSON text rather than normalized columns
+- `command` is persisted as JSON text rather than a child table
+- `agent_flag` and `billing_mode` together back the session metadata contract in code
 
 ### Project and app model
 
 Primary stores:
 
-- `projects`
-- `project_apps`
-- `npub_projects` in `data/npub-projects.db`
+- `wingman.db.projects`
+- `wingman.db.project_apps`
+- `npub-projects.db.npub_projects`
 - `apps.json`
 - `app-aliases.json`
-- `starter_projects`
+- `wingman.db.starter_projects`
 
 Relationships:
 
-- `projects.id` is the shared project root record inside `wingman.db`.
-- `project_apps.project_id -> projects.id` is one-to-many and models app folders under a project.
-- `project_apps.app_id` can point at a registered runtime app held in `apps.json`, but that link is soft rather than a DB-enforced foreign key.
-- `npub_projects` is a separate per-user projection keyed by `(npub, directory_path)`; it tracks the same physical directories from the point of view of a specific user.
-- `npub_projects.app_id` and `task_board_url` enrich the per-user view with app and board linkage.
-- `apps.json` is the source of truth for registered runnable apps, including `id`, `label`, `root`, lifecycle scripts, `ownerNpub`, PM2 metadata, and optional `webAppPort`.
-- `app-aliases.json` derives subdomain/path routing aliases from registered apps.
-- `starter_projects` is a catalog of templates, not live runtime state.
+- `projects.id` is the shared project root record in the main DB.
+- `project_apps.project_id -> projects.id` is the normalized shared project-to-app-folder relationship.
+- `project_apps.app_id` is a soft link to an `apps.json` app record.
+- `npub_projects` is a separate user-scoped projection keyed by `(npub, directory_path)`.
+- `npub_projects.app_id` is another soft link to `apps.json`.
+- `npub_projects.task_board_url` stores task-board linkage at the per-user project layer.
+- `app-aliases.json` maps deterministic alias strings back to `appId`.
+- `starter_projects` is a catalog of templates, not an instance/runtime table.
 
 Design consequence:
 
-- Wingman keeps both a shared project graph (`projects`/`project_apps`) and a user-scoped directory usage graph (`npub_projects`), so "what exists" and "who has been using it" are related but distinct.
+- Wingmen keeps both a shared project graph (`projects`, `project_apps`) and a user-scoped directory-usage graph (`npub_projects`)
+- runnable app registration is not normalized into SQLite; it still lives primarily in `apps.json`
 
 ### Todo model
 
 Primary store:
 
-- `todos` in `data/todos.db`
+- `todos.db.todos`
 
-Relationships and rules:
+Key fields:
 
-- `todos.owner_npub` is the tenancy boundary.
-- `todos.app_id` optionally associates a todo with an app.
-- `todos.project_id` optionally associates a todo with a project.
-- `todos.parent_id` creates hierarchy between items.
-- `category` encodes the rock/pebble/sand model.
+- `owner_npub` is the tenancy boundary.
+- `app_id` and `project_id` are optional soft links.
+- `category` is one of `rock`, `pebble`, or `sand`.
+- `parent_id` models hierarchy between todos.
+- `starred` is stored as an integer boolean.
 
-Confidential fields:
+Encrypted payload fields:
 
-- user-facing todo content is not stored in plaintext columns
-- title, description, and due date are encrypted into `payload_ciphertext` with `payload_iv` and `payload_tag`
+- `payload_iv`
+- `payload_tag`
+- `payload_ciphertext`
 
-Behavioral rule:
+As built, plaintext title/description/due date are not separate columns. They are encrypted into the payload blob and decrypted in the store layer.
 
-- top-level `rock` items cannot retain a parent reference; parent linkage is only meaningful for child categories
+Behavioral rule enforced in code:
 
-### Identity and access model
+- `rock` items cannot keep a `parent_id`
+
+### Identity, roles, and delegated auth
 
 Primary stores:
 
-- `identity_users` in `data/identity-users.db`
+- `identity-users.db.identity_users`
+- `bot-keys.db.bot_keys`
+- `wingman.db.nip98_grants`
+- `wingman.db.user_settings`
 - `identity-roles.json`
-- `bot_keys` in `data/bot-keys.db`
-- `nip98_grants`
-- `user_settings`
-- `team_members` and `team_provider_keys` in `data/team-billing.db`
+- `team-billing.db.team_members`
+- `team-billing.db.team_provider_keys`
 
-Relationships and ownership:
+Relationships and boundaries:
 
-- `identity_users.normalized_npub` is the primary identity key for a person in Wingman.
-- `identity_users` tracks alias, optional nickname/picture, roles JSON, onboarding timestamps, last-seen timestamps, assigned port ranges, and sat balance.
-- `identity-roles.json` is a parallel JSON role registry keyed by normalized npub; it overlaps with `identity_users.roles`, so code must treat the implementation layer, not one abstract "role table", as the truth.
-- `bot_keys.user_npub` is effectively one active bot identity per user, enforced by a unique index on active rows.
-- each bot key record stores the bot pubkey/npub plus two encrypted copies of the private material: one encrypted to the user and one encrypted to escrow
-- `nip98_grants.user_npub` records time-bounded delegated signing grants by domain and optional session
-- `user_settings` is a per-`(npub, key)` settings bag for API keys and other user-scoped values
-- `team_members.normalized_npub` defines who is in the billed team context
-- `team_provider_keys` stores encrypted provider credentials for shared billing mode
+- `identity_users.normalized_npub` is the primary identity key in the SQL store.
+- `identity_users.roles` is JSON text, not a join table.
+- `identity_users.ports` is also JSON text and stores assigned per-user port ranges.
+- `bot_keys.user_npub` is effectively one active bot identity per user, enforced by a partial unique index on active rows.
+- `nip98_grants.user_npub` stores delegated signing grants by domain, optional session, expiry, reason, and optional endpoint patterns.
+- `user_settings` is keyed by `(npub, key)` and stores opaque string values.
+- `team_members` defines the billing membership set.
+- `team_provider_keys` stores encrypted upstream provider credentials.
 
-### Scheduler, jobs, and automation model
+Important overlap:
+
+- role state exists in both `identity_users.roles` and `identity-roles.json`
+- the codebase still supports both, so there is no single normalized role authority to point to without qualification
+
+### Scheduler, file triggers, and jobs
 
 Primary stores:
 
-- `scheduled_jobs`
-- `scheduled_job_runs`
-- `file_watchers`
-- `job_definitions` in `data/jobs.db`
-- `job_runs` in `data/jobs.db`
+- `wingman.db.scheduled_jobs`
+- `wingman.db.scheduled_job_runs`
+- `wingman.db.file_watchers`
+- `jobs.db.job_definitions`
+- `jobs.db.job_runs`
 
 Relationships:
 
 - `scheduled_job_runs.job_id -> scheduled_jobs.id`
+- `scheduled_job_runs.session_id` is a soft link to `sessions.id`
 - `job_runs.job_id -> job_definitions.id`
-- `job_runs.worker_session_id` and `job_runs.manager_session_id` refer to live session IDs, but as soft references
+- `job_runs.worker_session_id` and `job_runs.manager_session_id` are soft links to live sessions
 
-Important fields:
+Important scheduler attributes:
 
-- `scheduled_jobs` stores both the encrypted trigger authority (`wrapped_key_ciphertext`, `wrapped_key_nonce`) and the execution configuration (`agent`, `working_directory`, `initial_prompt`)
-- trigger mode is polymorphic: cron metadata lives beside file-watcher metadata such as `trigger_type`, `watch_directory`, and `file_pattern`
-- `file_watchers` stores reusable file-trigger definitions, expected payload matching, and action options
-- `job_definitions` are reusable manager/worker templates
-- `job_runs` materialize executions with prompts, working directories, refs, linked sessions, status, and summaries
+- `scheduled_jobs` stores `user_npub` and `bot_npub`
+- delegated trigger authority is stored as `wrapped_key_ciphertext` and `wrapped_key_nonce`
+- execution config lives in `agent`, `working_directory`, and `initial_prompt`
+- `trigger_type` is polymorphic and currently supports `cron`, `file_watcher`, and `nostr`
+- cron jobs use `cron_expression` and `timezone`
+- file-trigger jobs use `watch_directory` and `file_pattern`
+- jobs can also define `active_start_time` and `active_end_time`
+
+Important file-watcher attributes:
+
+- `file_watchers.expected_payload` and `file_watchers.options` are JSON text with `json_valid(...)` checks
+- the built-in seeded watchers target `orchestrator/triggers` and support `start-session` / `stop-session`
 
 Design consequence:
 
-- scheduler state and manager/worker orchestration state are separate models; they can point at the same sessions, but they are not the same abstraction
+- recurring automation (`scheduled_jobs`) and manager/worker job execution (`job_definitions`, `job_runs`) are separate models
+- both can point at the session subsystem, but they are not one unified job graph
 
-### Billing and usage model
-
-Primary store:
-
-- `team-billing.db`
-
-Entities:
-
-- `team_billing_config`: singleton team-level pricing configuration
-- `team_members`: membership set
-- `team_provider_keys`: encrypted upstream provider credentials
-- `usage_ledger`: append-only-ish cost records per request/session/provider
-
-Relationships:
-
-- `usage_ledger.session_id` can associate spend with a Wingman session
-- `usage_ledger.npub` can associate spend with a user identity
-
-### Memory and derived knowledge model
+### Night Watch and external task links
 
 Primary stores:
 
-- `memories`
-- optional graph- or prompt-related files are present in the repo ecosystem, but in the live Wingman server state reviewed here the materialized long-lived note store is `memories`
+- `wingman.db.nightwatch_sessions`
+- `wingman.db.nightwatch_reports`
+- `wingman.db.nightwatch_config`
+- `wingman.db.task_sessions`
+
+Relationships:
+
+- `nightwatch_sessions.session_id` is a one-row-per-session monitoring state record.
+- `nightwatch_reports.session_id` is an append-only-ish report stream per session.
+- `task_sessions.session_id` links a session to an MG task record.
+
+Important attributes:
+
+- `nightwatch_sessions` stores enablement, cycle counters, model, and update time
+- `nightwatch_reports` stores `status`, `summary`, `cycle_count`, and migrated fields `working_directory`, `reasoning`, `input_mode`, and `input_raw`
+- `nightwatch_config` is a generic key/value store; current live keys include `default_model`, `default_max_cycles`, and `custom_prompt`
+- `task_sessions` stores `task_id`, `team_slug`, `task_url`, `mg_base_url`, `status`, and `created_at`
+
+### CapRover deployment tracking
+
+Primary stores:
+
+- `wingman.db.caprover_apps`
+- `wingman.db.caprover_deployments`
+
+Relationships:
+
+- `caprover_deployments.caprover_app_id -> caprover_apps.id`
+- `caprover_apps.app_id` is a soft link to `apps.json`
+- `caprover_apps.project_id` is a soft link to `projects.id`
+
+Important attributes:
+
+- `caprover_apps` stores CapRover naming and live routing metadata such as `caprover_name`, `live_url`, `custom_domain`, `has_ssl`, `deployed_version`, and `notes`
+- `env_vars_encrypted` exists on the table but the current store code initializes it to `null`
+- `caprover_deployments` tracks method, Docker image, git hash, version, status, timestamps, error, and encrypted logs
+
+### Memory and billing model
+
+Primary stores:
+
+- `wingman.db.memories`
+- `team-billing.db.team_billing_config`
+- `team-billing.db.usage_ledger`
 
 Relationships:
 
 - memories are scoped by both `wingman_npub` and `user_npub`
-- optional `project` and `working_dir` fields bind a memory to a concrete repo context
-- `project_metadata` is JSON carried inside the row, not normalized into child tables
+- optional `project` and `working_dir` bind a memory row to a repo context
+- `project_metadata` is stored as JSON text inside the row
+- `usage_ledger.session_id` is a soft link to a Wingman session
+- `usage_ledger.npub` links usage back to a user when present
+
+### Workspace subscription model
+
+Primary store:
+
+- `wingman.db.workspace_subscriptions`
+
+This table tracks bot-owned workspace subscriptions for the agent-chat / workspace integration layer.
+
+Important attributes:
+
+- `subscription_id` is the primary key
+- `(workspace_owner_npub, bot_npub)` is unique
+- state is split across several status fields: `ws_key_status`, `group_key_status`, `sse_status`, and `health_status`
+- several diagnostic/result payloads are stored as JSON text columns:
+  - `last_auth_result_json`
+  - `last_group_refresh_result_json`
+  - `last_record_pull_result_json`
+  - `last_decrypt_result_json`
+  - `last_sse_event_json`
+
+As reviewed, the table exists and has code-backed ownership in `src/agent-chat/workspace-subscription-store.ts`, but it currently had `0` rows.
 
 ## Ownership and tenancy rules
 
-The main tenancy key across the system is the user Nostr public key (`npub`).
+The dominant partition key is the user Nostr public key.
 
 Current patterns:
 
-- session ownership is soft and stored on `sessions.npub`
-- project usage ownership is explicit in `npub_projects.npub`
-- todo ownership is explicit in `todos.owner_npub`
-- identity ownership is explicit in `identity_users.npub` and `identity_users.normalized_npub`
-- bot identities are one-to-one with a user via `bot_keys.user_npub`
-- NIP-98 delegation is scoped by `nip98_grants.user_npub`
-- scheduler ownership is explicit in `scheduled_jobs.user_npub` and `scheduled_jobs.bot_npub`
-- memories are dual-scoped by `wingman_npub` and `user_npub`
+- `sessions.npub` is a soft ownership field for live sessions
+- `identity_users.normalized_npub` is the main normalized identity key
+- `todos.owner_npub` is the todo tenancy boundary
+- `npub_projects.npub` is the per-user project-usage boundary
+- `bot_keys.user_npub` links one active bot identity to a user
+- `scheduled_jobs.user_npub` and `scheduled_jobs.bot_npub` tie automation to both user and bot identity
+- `nip98_grants.user_npub` scopes delegated auth
+- `memories` are dual-scoped by `wingman_npub` and `user_npub`
 
 Practical effect:
 
-- there is no single global tenant table with foreign keys everywhere
-- tenancy is encoded per store, sometimes with normalized npubs and sometimes raw npubs
-- some domains use JSON files rather than relational ownership constraints, so authorization depends on service-layer rules as much as table design
+- there is no single tenant table with enforced foreign keys across the whole system
+- tenancy is encoded separately in each store
+- many cross-domain links are soft references across databases or JSON registries
 
-## Schema and migration sources
+## Browser caches and derived read models
 
-There is no standalone migration framework in this repo. Schema evolution is code-driven.
+### `WingmanLive`
+
+`src/ui/live/db.js` defines:
+
+- `messages: "++id, sessionId, [sessionId+createdAt], messageHash"`
+- `sessions: "id, status, updatedAt"`
+- `apiSessions: "id, status, agentType, npub, updatedAt, targetFile"`
+- `apps: "id, label, updatedAt"`
+
+This DB caches live chat content, lightweight session status, full `/api/sessions` payloads, and app lists.
+
+### `WingmanScheduler`
+
+`src/ui/scheduler/db.js` defines:
+
+- `jobs: "id, userNpub, enabled, triggerType, createdAt"`
+
+This is a cache of scheduler API results.
+
+### `WingmanNightWatch`
+
+`src/ui/nightwatch/db.js` defines:
+
+- `reports: "id, sessionId, status, createdAt"`
+- `config: "key"`
+
+This is a cache of Night Watch reports and the current config blob.
+
+### Derived server-side projections
+
+A few server stores also behave like projections instead of hard business authority:
+
+- `npub_projects` is a user/project activity view
+- `task_sessions` is a link table between Wingman sessions and external MG tasks
+- `archived_sessions` / `archived_messages` are historical projections of completed live sessions
+- `nightwatch_reports` is a monitoring/report stream
+
+## Schema evolution
+
+There is no standalone migration framework in this repo. The schema is evolved by store initialization code.
 
 Current migration patterns:
 
-- stores create tables on startup with `CREATE TABLE IF NOT EXISTS`
-- additive migrations run inline with `ALTER TABLE` guards or `try/catch`
-- indexes are created in store initialization code
-- some stores also infer migration need with `PRAGMA table_info(...)`
+- `CREATE TABLE IF NOT EXISTS` on startup
+- additive `ALTER TABLE` calls guarded by `PRAGMA table_info(...)` or `try/catch`
+- index creation during store initialization
 
-Examples:
+Examples from the reviewed code:
 
-- `src/storage/message-store.ts` backfills new session columns into `sessions`
-- `src/storage/identity-user-store.ts` adds `ports`, `balance`, `nickname`, and `picture_url`
-- `src/projects/npub-project-store.ts` adds `app_id` and `task_board_url`
-- `src/todos/todo-store.ts` adds `category`, `parent_id`, and `project_id`
-- `src/scheduler/scheduler-store.ts` adds file-trigger columns to `scheduled_jobs`
-- `src/nightwatch/nightwatch-store.ts` adds `working_directory`, `reasoning`, `input_mode`, and `input_raw`
+- `src/storage/message-store.ts` backfills `sessions` columns such as `npub`, `origin`, `model`, `target_file`, `agent_flag`, and `billing_mode`
+- `src/storage/identity-user-store.ts` backfills `ports`, `balance`, `nickname`, and `picture_url`
+- `src/projects/npub-project-store.ts` backfills `app_id` and `task_board_url`
+- `src/todos/todo-store.ts` backfills `category`, `parent_id`, and `project_id`
+- `src/scheduler/scheduler-store.ts` backfills `trigger_type`, `watch_directory`, `file_pattern`, `active_start_time`, and `active_end_time`
+- `src/nightwatch/nightwatch-store.ts` backfills `working_directory`, `reasoning`, `input_mode`, and `input_raw`
+- `src/agent-chat/workspace-subscription-store.ts` backfills `last_record_pull_result_json`
 
-The authoritative schema for a domain is therefore the initialization code in the owning store module, not a separate migrations directory.
+The owning store modules are therefore part of the data model contract.
 
-## Derived caches and read models
+## Ambiguities and stale edges
 
-### Browser caches
+These points were visible in the live repo and should be treated as real ambiguity, not documentation gaps:
 
-Dexie stores are the main derived read models in the browser:
-
-- `WingmanLive.messages` mirrors conversation state for instant live-session rendering
-- `WingmanLive.sessions` mirrors lightweight session runtime status
-- `WingmanLive.apiSessions` mirrors full `/api/sessions` payloads
-- `WingmanLive.apps` mirrors `/api/apps` payloads
-- `WingmanScheduler.jobs` mirrors scheduler API responses
-- `WingmanNightWatch.reports` and `WingmanNightWatch.config` mirror Night Watch server state
-
-These caches are disposable projections. The normal flow is:
-
-1. fetch from server API
-2. write cache in Dexie
-3. let `liveQuery` update Alpine state
-
-### Server-side projections
-
-A few stores also behave as read-optimized projections over runtime activity:
-
-- `npub_projects` is a usage/read model over project directories by user
-- `task_sessions` is a linking projection between Wingman sessions and external task records
-- `archived_sessions` and `archived_messages` are historical projections of completed live sessions
-- `nightwatch_reports` is an append-only review/report stream derived from monitoring cycles
-
-## Important data flows
-
-### 1. Session launch and live conversation
-
-1. a session is created and written to `sessions`
-2. live conversation turns are written to `messages`
-3. optional outputs are written to `artifacts`
-4. browser clients fetch `/api/sessions` and message data
-5. browser caches persist the latest session/message projections in `WingmanLive`
-6. on archive/cleanup, the transcript can be copied to `archived_sessions` and `archived_messages`
-
-### 2. User login, identity, and delegated signing
-
-1. a user identity is normalized and touched in `identity_users`
-2. onboarding/roles are tracked in `identity_users` and `identity-roles.json`
-3. if needed, a per-user bot identity is materialized in `bot_keys`
-4. session-scoped or user-wide NIP-98 delegation grants are recorded in `nip98_grants`
-5. per-user secrets and settings are stored in `user_settings`
-
-### 3. Project and app lifecycle
-
-1. project roots and app folders are recorded in `projects` and `project_apps`
-2. user-specific usage of working directories is recorded in `npub_projects`
-3. registered runnable apps are written to `apps.json`
-4. routing aliases are derived into `app-aliases.json`
-5. browser app lists are cached in `WingmanLive.apps`
-
-### 4. Todo lifecycle
-
-1. todo metadata row is created in `todos`
-2. title/description/due date are encrypted into the payload columns
-3. optional links to app/project and hierarchy are stored as foreign-key-like scalar values
-4. todo lists are read back by owner npub and decrypted in the service layer
-
-### 5. Scheduled automation and manager/worker jobs
-
-1. a reusable job template is stored in `job_definitions`
-2. an execution creates a `job_runs` row and links manager/worker session IDs as they are spawned
-3. scheduled automation stores recurring triggers in `scheduled_jobs`
-4. each scheduler execution appends a `scheduled_job_runs` row
-5. file-trigger automation uses `file_watchers` plus file-pattern metadata on `scheduled_jobs`
-6. Night Watch overlays session monitoring through `nightwatch_sessions` and `nightwatch_reports`
-
-### 6. Memory and billing
-
-1. agents persist notes into `memories` with both user and wingman identity context
-2. team billing configuration and provider credentials live in `team-billing.db`
-3. request/session usage events append cost records into `usage_ledger`
+- `wingman.db.orchestrator_presets` exists and contains two rows, but no active owner store or source module was found under `src/` during this review. It looks like compatibility / legacy preset data that still survives in the DB.
+- `identity-roles.json` is part of the implemented role store contract but was missing on disk at review time.
+- `data/identity.db`, `data/message-store.db`, and `data/messages.db` exist but had no tables and no clear active code owner.
+- role state is duplicated across `identity_users.roles` and `identity-roles.json`.
+- app registration still uses JSON registries instead of a normalized SQL table, so references from SQL tables to apps are soft links only.
 
 ## Current structural characteristics
 
-The live data model has a few important traits:
+The live data model is:
 
-- it is embedded and single-node by default
-- it is intentionally poly-store rather than normalized into one database
-- user identity is the dominant partition key, but not every store enforces it the same way
-- several soft references cross storage boundaries without foreign keys
-- JSON files are still first-class authoritative stores for apps, aliases, and some role metadata
-- browser IndexedDB is used heavily for responsiveness, but only as a cache layer
-- schema drift is managed in application code, so store initialization modules are part of the data model contract
+- embedded and single-node by default
+- poly-store by design
+- dominated by user `npub` tenancy, but not enforced uniformly
+- reliant on soft references across DBs and JSON files
+- intentionally cache-heavy in the browser via Dexie
+- migrated in application code rather than a dedicated migration system
 
 ## File status for this step
 
-`docs/asbuilt/data model.md` was created in this step. It did not exist in the repo at the start of review.
+`docs/asbuilt/data model.md` existed before this review and was updated in place.
