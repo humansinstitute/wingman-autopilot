@@ -11,6 +11,7 @@ import {
   createGiteaSection,
 } from './settings/workspace-sections.js';
 import { createTeamBillingSection } from './settings/admin-billing-section.js';
+import { createAgentChatSection } from './settings/agent-chat-section.js';
 
 export function initSettingsView(deps) {
   const {
@@ -47,6 +48,7 @@ export function initSettingsView(deps) {
     if (state.identity.authenticated) {
       wingmanCard.append(createApiKeysSection());
       wingmanCard.append(createGitHubSection());
+      wingmanCard.append(createAgentChatSection());
       const giteaPlaceholder = document.createElement('div');
       wingmanCard.append(giteaPlaceholder);
       fetch('/api/config')

@@ -1,0 +1,519 @@
+import { unlockViaEscrow } from '../identity/bot-key-manager';
+import { workspaceSubscriptionStore, type WorkspaceSubscriptionStore } from './workspace-subscription-store';
+import { requestBrowserNip98Token } from './browser-nip98';
+import { parseSseEvents } from './sse-events';
+import {
+  buildChatMessageFamilyHash,
+  buildFailureDiagnostic,
+  buildStreamUrl,
+  buildSuccessDiagnostic,
+  fetchRecordHistory,
+  normaliseBackendBaseUrl,
+  parseTowerError,
+  registerWorkspaceKeyWithTower,
+} from './tower-client';
+import { loadYokeBotHelpers } from './yoke-bot-helpers';
+import type {
+  BotKeyStoreRecord,
+  CreateWorkspaceSubscriptionInput,
+  RuntimeBotIdentity,
+  WorkspaceSubscriptionRecord,
+  YokeWorkspaceSession,
+} from './types';
+
+interface RuntimeContext {
+  abortController: AbortController | null;
+  reconnectTimer: ReturnType<typeof setTimeout> | null;
+  reconnectAttempts: number;
+  botIdentity: RuntimeBotIdentity;
+  wsSession: YokeWorkspaceSession;
+  groupKeys: unknown | null;
+  wrappedKeyRows: unknown[];
+  removed: boolean;
+}
+
+export interface WorkspaceSubscriptionManagerDependencies {
+  store?: WorkspaceSubscriptionStore;
+  botKeyStore: {
+    getActiveKeyForUser: (npub: string) => BotKeyStoreRecord | null;
+    getActiveKeyForBotNpub: (botNpub: string) => BotKeyStoreRecord | null;
+  };
+}
+
+export class WorkspaceSubscriptionManager {
+  private readonly store: WorkspaceSubscriptionStore;
+  private readonly botKeyStore: WorkspaceSubscriptionManagerDependencies['botKeyStore'];
+  private readonly runtimes = new Map<string, RuntimeContext>();
+
+  constructor(deps: WorkspaceSubscriptionManagerDependencies) {
+    this.store = deps.store ?? workspaceSubscriptionStore;
+    this.botKeyStore = deps.botKeyStore;
+  }
+
+  listForManager(npub: string): WorkspaceSubscriptionRecord[] {
+    return this.store.listForManagerNpub(npub);
+  }
+
+  getForManager(subscriptionId: string, npub: string): WorkspaceSubscriptionRecord | null {
+    const record = this.store.getBySubscriptionId(subscriptionId);
+    return record?.managedByNpub === npub ? record : null;
+  }
+
+  async createOrUpdate(input: CreateWorkspaceSubscriptionInput): Promise<WorkspaceSubscriptionRecord> {
+    const backendBaseUrl = normaliseBackendBaseUrl(input.backendBaseUrl);
+    const botRecord = this.botKeyStore.getActiveKeyForUser(input.managedByNpub);
+    if (!botRecord) {
+      throw new Error('No active bot key exists for this user.');
+    }
+
+    const botIdentity = this.unlockBotIdentity(botRecord);
+    let record = this.store.getByWorkspaceAndBot(input.workspaceOwnerNpub, botIdentity.botNpub)
+      ?? this.store.createDefault({
+        managedByNpub: input.managedByNpub,
+        workspaceOwnerNpub: input.workspaceOwnerNpub,
+        backendBaseUrl,
+        botNpub: botIdentity.botNpub,
+        sourceAppNpub: input.sourceAppNpub,
+        triggerConfigRecordId: input.triggerConfigRecordId ?? null,
+      });
+
+    record.backendBaseUrl = backendBaseUrl;
+    record.sourceAppNpub = input.sourceAppNpub;
+    record.triggerConfigRecordId = input.triggerConfigRecordId ?? null;
+    record.managedByNpub = input.managedByNpub;
+    record = await this.prepareWorkspaceSession(record, botIdentity);
+
+    try {
+      const authUrl = new URL('/api/v4/user/workspace-keys', record.backendBaseUrl).toString();
+      const humanAuthorization = await requestBrowserNip98Token({
+        npub: input.managedByNpub,
+        url: authUrl,
+        method: 'POST',
+        body: {
+          workspace_owner_npub: record.workspaceOwnerNpub,
+          ws_key_npub: record.wsKeyNpub,
+        },
+      });
+      await registerWorkspaceKeyWithTower({
+        backendBaseUrl: record.backendBaseUrl,
+        workspaceOwnerNpub: record.workspaceOwnerNpub,
+        wsKeyNpub: record.wsKeyNpub!,
+        humanAuthorization,
+      });
+      record.wsKeyStatus = 'active';
+      record.lastAuthOkAt = new Date().toISOString();
+      record.lastAuthResult = buildSuccessDiagnostic('Workspace key registered.', {
+        workspace_owner_npub: record.workspaceOwnerNpub,
+        ws_key_npub: record.wsKeyNpub,
+      });
+      record.lastErrorCode = null;
+      record.lastErrorAt = null;
+    } catch (error) {
+      record.wsKeyStatus = 'failed';
+      record.sseStatus = 'disconnected';
+      record.healthStatus = 'unhealthy';
+      record.lastErrorCode = 'workspace_key_register_failed';
+      record.lastErrorAt = new Date().toISOString();
+      record.lastAuthResult = buildFailureDiagnostic(
+        'workspace_key_register_failed',
+        error instanceof Error ? error.message : 'Workspace key registration failed.',
+        typeof (error as { detailCode?: string })?.detailCode === 'string' ? (error as { detailCode: string }).detailCode : null,
+      );
+      return this.saveRecord(record);
+    }
+
+    record = await this.refreshGroupKeys(record, botIdentity, true);
+    await this.ensureConnected(record, botIdentity, false);
+    return this.store.getBySubscriptionId(record.subscriptionId) ?? record;
+  }
+
+  async startupReload(): Promise<void> {
+    const records = this.store.listStartupCandidates();
+    for (const record of records) {
+      try {
+        const botRecord = this.botKeyStore.getActiveKeyForBotNpub(record.botNpub);
+        if (!botRecord) {
+          const failed = {
+            ...record,
+            wsKeyStatus: 'failed' as const,
+            healthStatus: 'unhealthy' as const,
+            lastErrorCode: 'workspace_key_register_failed',
+            lastErrorAt: new Date().toISOString(),
+            lastAuthResult: buildFailureDiagnostic(
+              'workspace_key_register_failed',
+              `Bot key record not found for ${record.botNpub}.`,
+              'workspace_key_missing',
+            ),
+          };
+          this.saveRecord(failed);
+          continue;
+        }
+
+        const botIdentity = this.unlockBotIdentity(botRecord);
+        const prepared = await this.prepareWorkspaceSession(record, botIdentity);
+        const refreshed = await this.refreshGroupKeys(prepared, botIdentity, false);
+        refreshed.lastSuccessfulStartupReloadAt = new Date().toISOString();
+        this.saveRecord(refreshed);
+        await this.ensureConnected(refreshed, botIdentity, true);
+      } catch (error) {
+        const failed = {
+          ...record,
+          healthStatus: 'unhealthy' as const,
+          lastErrorCode: 'workspace_key_register_failed',
+          lastErrorAt: new Date().toISOString(),
+          lastAuthResult: buildFailureDiagnostic(
+            'workspace_key_register_failed',
+            error instanceof Error ? error.message : 'Startup reload failed.',
+            'workspace_auth_failed',
+          ),
+        };
+        this.saveRecord(failed);
+      }
+    }
+  }
+
+  removeForManager(subscriptionId: string, npub: string): boolean {
+    const record = this.getForManager(subscriptionId, npub);
+    if (!record) {
+      return false;
+    }
+    this.stopRuntime(subscriptionId, true);
+    return this.store.delete(subscriptionId);
+  }
+
+  shutdown(): void {
+    for (const subscriptionId of this.runtimes.keys()) {
+      this.stopRuntime(subscriptionId, true);
+    }
+  }
+
+  private async prepareWorkspaceSession(
+    record: WorkspaceSubscriptionRecord,
+    botIdentity: RuntimeBotIdentity,
+  ): Promise<WorkspaceSubscriptionRecord> {
+    const helpers = await loadYokeBotHelpers();
+    const blob = record.wsKeyBlobJson ? JSON.parse(record.wsKeyBlobJson) as Record<string, unknown> : null;
+    const loaded = blob
+      ? { blob, ...helpers.loadBotWorkspaceKey({ blob, botSecret: botIdentity.botSecret, botNpub: botIdentity.botNpub }) }
+      : helpers.createBotWorkspaceKey({
+        botSecret: botIdentity.botSecret,
+        botNpub: botIdentity.botNpub,
+        workspaceOwnerNpub: record.workspaceOwnerNpub,
+      });
+
+    const nextRecord = { ...record };
+    nextRecord.wsKeyNpub = loaded.wsSession.npub;
+    nextRecord.wsKeyBlobJson = JSON.stringify(loaded.blob);
+
+    const existingRuntime = this.runtimes.get(record.subscriptionId);
+    if (existingRuntime?.botIdentity?.botSecret && existingRuntime.botIdentity.botSecret !== botIdentity.botSecret) {
+      existingRuntime.botIdentity.botSecret.fill(0);
+    }
+    this.runtimes.set(record.subscriptionId, {
+      abortController: existingRuntime?.abortController ?? null,
+      reconnectTimer: existingRuntime?.reconnectTimer ?? null,
+      reconnectAttempts: existingRuntime?.reconnectAttempts ?? 0,
+      botIdentity,
+      wsSession: loaded.wsSession,
+      groupKeys: existingRuntime?.groupKeys ?? null,
+      wrappedKeyRows: existingRuntime?.wrappedKeyRows ?? (record.wrappedGroupKeysJson ? JSON.parse(record.wrappedGroupKeysJson) as unknown[] : []),
+      removed: false,
+    });
+    return this.saveRecord(nextRecord);
+  }
+
+  private async refreshGroupKeys(
+    record: WorkspaceSubscriptionRecord,
+    botIdentity: RuntimeBotIdentity,
+    allowFailure: boolean,
+  ): Promise<WorkspaceSubscriptionRecord> {
+    const runtime = this.getRuntime(record.subscriptionId);
+    const helpers = await loadYokeBotHelpers();
+    try {
+      const keyRows = await helpers.fetchBotGroupKeys({
+        wsSession: runtime.wsSession,
+        backendBaseUrl: record.backendBaseUrl,
+      });
+      runtime.wrappedKeyRows = keyRows;
+      runtime.groupKeys = helpers.loadBotGroupKeys({
+        wsSession: runtime.wsSession,
+        keyRows,
+      });
+      record.groupKeyStatus = 'active';
+      record.lastGroupRefreshAt = new Date().toISOString();
+      record.wrappedGroupKeysJson = JSON.stringify(keyRows);
+      record.lastGroupRefreshResult = buildSuccessDiagnostic('Wrapped group keys refreshed.', {
+        key_count: keyRows.length,
+        bot_npub: botIdentity.botNpub,
+      });
+      record.lastErrorCode = null;
+      record.lastErrorAt = null;
+    } catch (error) {
+      record.groupKeyStatus = record.wrappedGroupKeysJson ? 'refresh_required' : 'failed';
+      record.lastErrorCode = 'group_key_fetch_failed';
+      record.lastErrorAt = new Date().toISOString();
+      record.lastGroupRefreshResult = buildFailureDiagnostic(
+        'group_key_fetch_failed',
+        error instanceof Error ? error.message : 'Group key refresh failed.',
+        typeof (error as { detailCode?: string })?.detailCode === 'string' ? (error as { detailCode: string }).detailCode : null,
+      );
+      if (runtime.wrappedKeyRows.length > 0) {
+        try {
+          runtime.groupKeys = helpers.loadBotGroupKeys({
+            wsSession: runtime.wsSession,
+            keyRows: runtime.wrappedKeyRows,
+          });
+        } catch {
+          runtime.groupKeys = null;
+        }
+      }
+      if (!allowFailure) {
+        record.healthStatus = 'degraded';
+      }
+    }
+    return this.saveRecord(this.recomputeHealth(record));
+  }
+
+  private async ensureConnected(
+    record: WorkspaceSubscriptionRecord,
+    botIdentity: RuntimeBotIdentity,
+    isStartupReload: boolean,
+  ): Promise<void> {
+    const runtime = this.getRuntime(record.subscriptionId);
+    runtime.botIdentity = botIdentity;
+    runtime.removed = false;
+    if (runtime.reconnectTimer) {
+      clearTimeout(runtime.reconnectTimer);
+      runtime.reconnectTimer = null;
+    }
+    if (runtime.abortController) {
+      runtime.abortController.abort();
+    }
+    const controller = new AbortController();
+    runtime.abortController = controller;
+    record.sseStatus = 'connecting';
+    this.saveRecord(this.recomputeHealth(record));
+    void this.runSseLoop(record.subscriptionId, controller.signal, isStartupReload);
+  }
+
+  private async runSseLoop(subscriptionId: string, signal: AbortSignal, isStartupReload: boolean): Promise<void> {
+    const runtime = this.getRuntime(subscriptionId);
+    let record = this.store.getBySubscriptionId(subscriptionId);
+    if (!record) {
+      return;
+    }
+    try {
+      const streamUrl = await buildStreamUrl(
+        record.backendBaseUrl,
+        record.workspaceOwnerNpub,
+        runtime.wsSession,
+        record.lastSseEventId,
+      );
+      const response = await fetch(streamUrl, {
+        headers: {
+          Accept: 'text/event-stream',
+        },
+        signal,
+      });
+      if (!response.ok || !response.body) {
+        const error = await parseTowerError(response, 'stream_connect');
+        throw Object.assign(new Error(error.message), error);
+      }
+
+      runtime.reconnectAttempts = 0;
+      record.sseStatus = 'connected';
+      if (isStartupReload) {
+        record.lastSuccessfulStartupReloadAt = new Date().toISOString();
+      }
+      record = this.saveRecord(this.recomputeHealth(record));
+
+      for await (const event of parseSseEvents(response.body)) {
+        if (signal.aborted) {
+          return;
+        }
+        record = await this.handleSseEvent(record, event.id, event.event, event.data);
+      }
+
+      throw Object.assign(new Error('SSE stream closed.'), { detailCode: 'sse_stream_lost' });
+    } catch (error) {
+      if (signal.aborted || runtime.removed) {
+        return;
+      }
+      record = this.store.getBySubscriptionId(subscriptionId);
+      if (!record) {
+        return;
+      }
+      record.sseStatus = 'backoff';
+      record.lastErrorCode = 'sse_connect_failed';
+      record.lastErrorAt = new Date().toISOString();
+      const message = error instanceof Error ? error.message : 'SSE connection failed.';
+      const detailCode = typeof (error as { detailCode?: string })?.detailCode === 'string'
+        ? (error as { detailCode: string }).detailCode
+        : null;
+      record.lastSseEvent = {
+        eventId: record.lastSseEventId,
+        eventType: 'error',
+        at: new Date().toISOString(),
+        payload: { message, detailCode },
+      };
+      this.saveRecord(this.recomputeHealth(record));
+
+      const delay = Math.min(1_000 * Math.pow(2, runtime.reconnectAttempts), 60_000);
+      runtime.reconnectAttempts += 1;
+      runtime.reconnectTimer = setTimeout(() => {
+        runtime.reconnectTimer = null;
+        const latest = this.store.getBySubscriptionId(subscriptionId);
+        if (!latest || runtime.removed) {
+          return;
+        }
+        void this.ensureConnected(latest, runtime.botIdentity, false);
+      }, delay);
+    }
+  }
+
+  private async handleSseEvent(
+    record: WorkspaceSubscriptionRecord,
+    eventId: string | null,
+    eventType: string,
+    eventData: string,
+  ): Promise<WorkspaceSubscriptionRecord> {
+    let payload: Record<string, unknown> | null = null;
+    try {
+      payload = eventData ? JSON.parse(eventData) as Record<string, unknown> : null;
+    } catch {
+      payload = { raw: eventData };
+    }
+    record.lastSseEventId = eventId ?? record.lastSseEventId;
+    record.lastSseEvent = {
+      eventId,
+      eventType,
+      at: new Date().toISOString(),
+      payload,
+    };
+    record = this.saveRecord(record);
+
+    if (eventType === 'connected') {
+      record.sseStatus = 'connected';
+      return this.saveRecord(this.recomputeHealth(record));
+    }
+
+    if (eventType === 'record-changed' && payload?.family_hash === buildChatMessageFamilyHash(record.sourceAppNpub)) {
+      return await this.handleChatMessageRecordChanged(record, payload);
+    }
+
+    return record;
+  }
+
+  private async handleChatMessageRecordChanged(
+    record: WorkspaceSubscriptionRecord,
+    payload: Record<string, unknown>,
+  ): Promise<WorkspaceSubscriptionRecord> {
+    const recordId = typeof payload.record_id === 'string' ? payload.record_id : '';
+    if (!recordId) {
+      return record;
+    }
+
+    const runtime = this.getRuntime(record.subscriptionId);
+    try {
+      const versions = await fetchRecordHistory(
+        record.backendBaseUrl,
+        record.workspaceOwnerNpub,
+        recordId,
+        runtime.wsSession,
+      );
+      const latest = versions.sort((left, right) => Number(right.version ?? 0) - Number(left.version ?? 0))[0];
+      if (!latest) {
+        throw Object.assign(new Error(`Record ${recordId} not found.`), { detailCode: 'record_pull_not_found' });
+      }
+      const helpers = await loadYokeBotHelpers();
+      if (!runtime.groupKeys && runtime.wrappedKeyRows.length > 0) {
+        runtime.groupKeys = helpers.loadBotGroupKeys({ wsSession: runtime.wsSession, keyRows: runtime.wrappedKeyRows });
+      }
+      const chatMessage = helpers.decryptChatRecord({
+        record: latest,
+        wsSession: runtime.wsSession,
+        groupKeys: runtime.groupKeys,
+      });
+      const threadId = typeof helpers.normalizeThreadId === 'function'
+        ? helpers.normalizeThreadId(chatMessage)
+        : null;
+      record.lastDecryptResult = buildSuccessDiagnostic('Chat message pulled and decrypted.', {
+        record_id: recordId,
+        channel_id: chatMessage.channel_id ?? null,
+        thread_id: threadId,
+      });
+      record.lastErrorCode = null;
+      record.lastErrorAt = null;
+    } catch (error) {
+      record.groupKeyStatus = 'refresh_required';
+      record.lastErrorCode = 'decrypt_failed';
+      record.lastErrorAt = new Date().toISOString();
+      record.lastDecryptResult = buildFailureDiagnostic(
+        'decrypt_failed',
+        error instanceof Error ? error.message : 'Decrypt failed.',
+        typeof (error as { code?: string; detailCode?: string })?.code === 'string'
+          ? (error as { code: string }).code
+          : typeof (error as { detailCode?: string })?.detailCode === 'string'
+            ? (error as { detailCode: string }).detailCode
+            : 'record_decrypt_failed',
+        { record_id: recordId },
+      );
+    }
+    return this.saveRecord(this.recomputeHealth(record));
+  }
+
+  private stopRuntime(subscriptionId: string, removed: boolean): void {
+    const runtime = this.runtimes.get(subscriptionId);
+    if (!runtime) {
+      return;
+    }
+    runtime.removed = removed;
+    runtime.abortController?.abort();
+    runtime.abortController = null;
+    if (runtime.reconnectTimer) {
+      clearTimeout(runtime.reconnectTimer);
+      runtime.reconnectTimer = null;
+    }
+    if (removed) {
+      runtime.botIdentity.botSecret.fill(0);
+    }
+  }
+
+  private getRuntime(subscriptionId: string): RuntimeContext {
+    const runtime = this.runtimes.get(subscriptionId);
+    if (!runtime) {
+      throw new Error(`Missing runtime for subscription ${subscriptionId}`);
+    }
+    return runtime;
+  }
+
+  private unlockBotIdentity(botRecord: BotKeyStoreRecord): RuntimeBotIdentity {
+    return {
+      botNpub: botRecord.botNpub,
+      botPubkeyHex: botRecord.botPubkeyHex,
+      botSecret: unlockViaEscrow(botRecord.encryptedEscrow, botRecord.botPubkeyHex, botRecord.escrowUuid),
+    };
+  }
+
+  private saveRecord(record: WorkspaceSubscriptionRecord): WorkspaceSubscriptionRecord {
+    record.updatedAt = new Date().toISOString();
+    return this.store.save(record);
+  }
+
+  private recomputeHealth(record: WorkspaceSubscriptionRecord): WorkspaceSubscriptionRecord {
+    if (record.wsKeyStatus === 'revoked' || record.wsKeyStatus === 'failed') {
+      record.healthStatus = 'unhealthy';
+      return record;
+    }
+    if (record.groupKeyStatus === 'failed' || record.sseStatus === 'backoff' || record.groupKeyStatus === 'refresh_required') {
+      record.healthStatus = 'degraded';
+      return record;
+    }
+    if (record.sseStatus === 'connected' && record.wsKeyStatus === 'active' && record.groupKeyStatus === 'active') {
+      record.healthStatus = 'healthy';
+      return record;
+    }
+    record.healthStatus = 'degraded';
+    return record;
+  }
+}

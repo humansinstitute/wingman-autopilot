@@ -27,6 +27,7 @@ import {
 } from "./upload-routes";
 import { handleVoiceNoteUploadsApi, type VoiceNoteUploadApiContext } from "./voice-note-routes";
 import { handleSystemRoutes, type SystemRoutesContext } from "./system-routes";
+import { handleAgentChatApi, type AgentChatApiContext } from './agent-chat-routes';
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
@@ -87,6 +88,7 @@ export interface ApiRoutesContext {
   adminUsersApiContext: AdminUsersApiContext;
   uploadApiContext: UploadApiContext;
   voiceNoteUploadApiContext: VoiceNoteUploadApiContext;
+  agentChatApiContext?: AgentChatApiContext;
 
   // Stores accessed directly by handleApi
   featureFlagStore: {
@@ -142,6 +144,7 @@ export interface ApiRoutesContext {
     TodosManage: AccessAction;
     SessionsManage: AccessAction;
     DeploymentsManage: AccessAction;
+    UiRestricted?: AccessAction;
     FilesRead: AccessAction;
     FilesWrite: AccessAction;
   };
@@ -386,6 +389,21 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
         return response;
       }
       return Response.json({ error: "Not found" }, { status: 404 });
+    }
+    if (pathname.startsWith('/api/agent-chat/subscriptions')) {
+      const uiRestrictedAction = ctx.AccessActions.UiRestricted ?? ctx.AccessActions.SessionsManage;
+      const denied = await ctx.ensureApiAccess(uiRestrictedAction, request, url, authContext);
+      if (denied) {
+        return denied;
+      }
+      if (!ctx.agentChatApiContext) {
+        return Response.json({ error: 'agent-chat-unavailable' }, { status: 503 });
+      }
+      const response = await handleAgentChatApi(request, url, method === 'GET' || method === 'POST' || method === 'DELETE' ? method : 'GET', authContext, ctx.agentChatApiContext);
+      if (response) {
+        return response;
+      }
+      return Response.json({ error: 'Not found' }, { status: 404 });
     }
     // MCP Wingman Action API — called by the MCP stdio server running inside agents.
     // No auth gate: requests are validated by session ID in the handler.

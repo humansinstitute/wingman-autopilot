@@ -82,6 +82,7 @@ import { BotKeyStore } from "./identity/bot-key-store";
 import { createBotKeyApiHandler } from "./identity/bot-key-api";
 import { createBotCryptoApiHandler } from "./identity/bot-crypto-api";
 import { generateBotKey, clearBotKey, isBotKeyUnlocked, storeBotKeyInMemory, unlockViaEscrow } from "./identity/bot-key-manager";
+import { WorkspaceSubscriptionManager } from './agent-chat/subscription-runtime';
 import { browserSubscribers } from "./mcp/browser-subscribers";
 import { MemoryStore } from "./mcp/memory-store";
 import { userSettingsStore } from "./storage/user-settings-store";
@@ -505,6 +506,9 @@ const gitWorkflowApiHandler = createGitWorkflowApiHandler({
   config,
   dataDir: wingmanDataDir,
 });
+const workspaceSubscriptionManager = new WorkspaceSubscriptionManager({
+  botKeyStore,
+});
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication({ allowNip98: true }));
 registerAccessRule(AccessActions.FilesRead, requireAuthentication());
 registerAccessRule(AccessActions.FilesWrite, requireAuthentication());
@@ -835,6 +839,7 @@ try {
 
 process.on("beforeExit", () => {
   fileWatcherRunner.stop();
+  workspaceSubscriptionManager.shutdown();
 });
 
 const serializeSession = (session: SessionSnapshot) => ({
@@ -1580,7 +1585,7 @@ const assetService = createStaticAssetService({
 });
 
 // Asset version — increment to bust browser caches after deploys.
-const ASSET_VERSION = "11";
+const ASSET_VERSION = "12";
 
 const serveIndex = async () => {
   const url = new URL("./ui/index.html", import.meta.url);
@@ -1630,6 +1635,8 @@ await rehydrateOrphanedSessions(
   SUPPORTED_AGENT_TYPES,
   24, // Look for sessions started in the last 24 hours
 );
+
+await workspaceSubscriptionManager.startupReload();
 
 // Clean up any PM2 agent processes not reclaimed by rehydration
 try {
@@ -2357,6 +2364,9 @@ const handleApi = createApiRouteHandler({
     buildAgentFilePlaceholder,
     ensureApiAccess,
     AccessActions,
+  },
+  agentChatApiContext: {
+    manager: workspaceSubscriptionManager,
   },
   voiceNoteUploadApiContext: {
     imageRoot,
