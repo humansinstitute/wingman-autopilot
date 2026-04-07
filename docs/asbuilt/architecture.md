@@ -11,6 +11,7 @@ Wingman is a Bun-based orchestration server and browser UI for running and super
 - brokers agent-side MCP tooling back into Wingman over HTTP
 - manages user identity, bot keys, NIP-98 grants, and Nostr-triggered automation
 - stores local operational state for sessions, apps, projects, todos, jobs, billing, and related metadata
+- EDIT it also does url producing for registering and running apps
 
 ## Local repo / root path
 

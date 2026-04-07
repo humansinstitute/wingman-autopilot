@@ -301,11 +301,15 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
     }
     // Autopilot Jobs API — job definitions and runs management.
     if (pathname.startsWith("/api/autopilot-jobs")) {
-      const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, authContext);
+      const jobsAuthContext = ctx.resolveNip98AuthContext(request, url, authContext);
+      const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, jobsAuthContext);
       if (denied) {
         return denied;
       }
-      const response = await ctx.autopilotJobsApiHandler(request, url, method, authContext);
+      const response = await runWithRequestContext(
+        jobsAuthContext,
+        () => ctx.autopilotJobsApiHandler(request, url, method, jobsAuthContext),
+      );
       if (response) {
         return response;
       }
