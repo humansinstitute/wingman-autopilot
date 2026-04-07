@@ -1,19 +1,15 @@
-# Wingmen As-Built Summary Report
+# Wingmen As-Built Summary Report — 2026-04-08
 
-Status: revised approval summary  
-Reviewed against the live repository on 2026-04-06
+Status: current summary rollup  
+Reviewed against the live repository on 2026-04-08
 
 ## Scope
 
-This summary is the approval-package rollup for the current `docs/asbuilt/` set and the live repository under `/Users/mini/code/wingmen`.
+This report rolls up the current `docs/asbuilt/` set against the live repository under `/Users/mini/code/wingmen`.
 
-It is intended to replace the stale Flight Deck summary that still described:
+The manager prompt for this step did not supply a concrete goal or task ID, so this file uses the requested summary title and the current live-repo review date as the step anchor.
 
-- live refresh as a co-equal SSE plus polling model
-- live conversation state as mirrored in both Dexie and `state.conversations`
-- `AGENT_MODE` as an active overloaded runtime contract
-
-## Repo docs reviewed for this revision
+## As-built docs reviewed
 
 - `docs/asbuilt/architecture.md`
 - `docs/asbuilt/data model.md`
@@ -23,51 +19,61 @@ It is intended to replace the stale Flight Deck summary that still described:
 - `docs/asbuilt/important.md`
 - `docs/asbuilt/issues.md`
 
-## Repo markdown changed in this revision
+## Live code reviewed for this rollup
 
-- updated `docs/asbuilt/frontend.md`
-- updated `docs/asbuilt/important.md`
-- updated `docs/asbuilt/issues.md`
-- created `docs/asbuilt/summary-report.md`
+- `docs/architecture.md`
+- `src/index.ts`
+- `src/server.ts`
+- `src/config.ts`
+- `src/server/session-events.ts`
+- `src/server/bootstrap/wingman-core-registry.ts`
+- `src/ui/app.js`
+- `src/ui/sessions/store.js`
+- `src/ui/live/refresh-controller.js`
+- `src/ui/todos/state.js`
 
 ## Executive summary
 
-Wingman is a Bun-based control plane for AI-agent sessions, local app/runtime orchestration, browser-based operations, and Nostr-linked identity tooling. The server composition root is still `src/server.ts`, and the browser shell is still largely composed through `src/ui/app.js`, even though route and feature logic have been partially extracted into smaller modules.
+Wingmen is still a Bun-based local control plane for agent-session orchestration, browser-based operations, Nostr-linked identity flows, app/runtime management, and MCP-backed tooling. The runtime composition root is still `src/server.ts`, and the browser composition root is still `src/ui/app.js`, even though both areas have ongoing extraction into smaller modules.
 
-The frontend remains a hybrid architecture rather than a completed Dexie-first migration. Live messages and live session status now flow through Dexie-backed stores in `src/ui/live/db.js`; sessions, apps, scheduler, and Night Watch also have Dexie-backed browser caches. Projects, files, private chat, and much of the shell still rely on imperative rendering and the mutable singleton from `src/ui/state/index.js`.
+The frontend remains a hybrid architecture rather than a completed Dexie-first migration. Live transcripts, live session status, session catalog, apps, scheduler, and Night Watch now have real Dexie-backed browser projections. Projects, files, private chat, and much of the shell still depend on imperative rendering plus the mutable singleton in `src/ui/state/index.js`.
 
-For live sessions, the current browser contract is SSE-first, not polling-first. The browser bootstraps with catch-up fetches, then connects `EventSource` to `/api/sessions/:id/events`. `src/server/session-events.ts` emits an initial `transport` event so the browser can distinguish full `event-stream` sessions from `heartbeat-only` streams. The retired `state.conversations` mirror is no longer part of the live-session path; Dexie `MessageStore` is the browser-side source of truth for live transcripts, and current consumers such as the live view, status indicators, queue modal, and clipboard/export paths read from Dexie instead of an in-memory conversation mirror.
+Live session refresh is SSE-first, but not strictly SSE-only in all healthy states. The current browser flow is bootstrap fetch plus `/api/sessions/:id/events`, with server-emitted `transport` events distinguishing `event-stream` from `heartbeat-only`. `state.conversations` is no longer part of the active live-session path; Dexie `MessageStore` is the effective browser-side transcript authority.
 
-The polling nuance matters. The repo docs previously simplified this too far. The current implementation in `src/ui/live/refresh-controller.js` and its tests is:
+The current polling behavior is narrower than older summaries implied, but it still exists:
 
-- stable `event-stream` sessions: bootstrap fetch, then SSE with polling off
-- active sessions whose runtime status is `running`: 1s compatibility polling can remain active even when stream mode is `event-stream`
-- `heartbeat-only` sessions: 1s compatibility polling while SSE provides liveness/transport state
-- degraded or disconnected sessions: 2s recovery polling until reconnect and healthy transport resume
+- stable `event-stream` sessions can run with polling off
+- sessions whose runtime status is `running` can keep lightweight 1 second compatibility polling even when transport mode is `event-stream`
+- `heartbeat-only` sessions keep 1 second compatibility polling while SSE provides liveness
+- degraded or disconnected sessions use 2 second recovery polling until transport recovers
 
-That means the stale Flight Deck summary was wrong to describe live refresh as a permanent co-equal SSE plus polling model, but the live repo is also not strictly "SSE only after bootstrap" in every active runtime state.
+The environment contract has narrowed. `AGENT_SPAWN_MODE` and `AGENTAPI_BIN` are the active configuration knobs. `AGENT_MODE` is compatibility-only input: `pm2` is a fallback spawn-mode hint, `tmux` is only a legacy binary-path fallback when `AGENTAPI_BIN` is unset, and `standard` is an accepted deprecated no-op.
 
-The environment contract has also narrowed. `AGENT_SPAWN_MODE` is the primary spawn-mode setting and `AGENTAPI_BIN` is the primary binary-path setting. `AGENT_MODE` is now compatibility-only input: `AGENT_MODE=pm2` maps to spawn mode only when `AGENT_SPAWN_MODE` is not set to a valid value, `AGENT_MODE=tmux` maps to the legacy tmux binary only when `AGENTAPI_BIN` is unset, and `AGENT_MODE=standard` is a deprecated no-op.
+Startup now preserves legacy same-root Wingman app records instead of deleting them during ordinary boot. `ensureWingmanCoreRegistration(...)` reconciles or adopts `wingman-core` and leaves remaining same-root legacy entries in place. Explicit cleanup exists as `cleanupLegacyWingmanRootApps(...)`, but during this review I did not find a supported admin/API/CLI entrypoint that actually exposes that cleanup helper to operators.
 
-Startup handling for the Wingman core app record is also different from the stale summary. Ordinary startup no longer deletes same-root legacy app entries. `src/server/bootstrap/wingman-core-registry.ts` reconciles or adopts `wingman-core` and preserves remaining same-root legacy entries. Deletion is now an explicit operator action through `cleanupLegacyWingmanRootApps(...)`, not normal boot behavior.
+## Current approval conclusions
 
-## Validation notes
-
-This revision was validated by direct source inspection of:
-
-- `src/ui/live/refresh-controller.js`
-- `src/ui/live/refresh-controller.test.js`
-- `src/ui/live/db.js`
-- `src/ui/state/index.js`
-- `src/config.ts`
-- `src/server/bootstrap/wingman-core-registry.ts`
-- the current `docs/asbuilt/` markdown set listed above
-
-## Bottom line for approval
-
-The approval-package summary should now state:
+The current as-built package supports these conclusions:
 
 - live refresh is SSE-first with bounded polling windows, not a permanent co-equal SSE plus polling loop
 - the live `state.conversations` mirror is retired and Dexie `MessageStore` is the browser-side live transcript authority
 - `AGENT_MODE` is compatibility-only input, not the primary active contract
-- ordinary startup preserves same-root legacy Wingman app records; explicit cleanup is separate
+- ordinary startup preserves same-root legacy Wingman app records; explicit cleanup is separate from normal boot
+- the frontend migration is real but incomplete; describing the product as fully Dexie + Alpine would still be inaccurate
+
+## Current unresolved follow-up issues
+
+The live repository still shows these evidence-backed issues from `docs/asbuilt/issues.md`:
+
+- session background refreshes do not reliably propagate into the imperative shell, because the Dexie-backed sessions store updates `items` but the remaining imperative surfaces are not consistently re-rendered
+- `/todos` is still treated as a valid SPA route server-side, but `src/ui/app.js` no longer resolves it into a browser page and `src/ui/todos/state.js` has auto-load disabled
+- legacy same-root Wingman app cleanup is described in code but no operator-facing execution path was found in the reviewed repo
+- jobs load failures still collapse into loading/empty-state behavior instead of a first-class error state
+
+If an operator-facing cleanup path exists outside this repository or is generated dynamically, that was not discoverable from the live code reviewed here.
+
+## Validation notes
+
+This step was validated by direct source inspection of the as-built docs listed above plus the live files listed in the review inputs section.
+
+No automated tests were run for this step, per repository instruction. No app source, config, or test files were changed in this update.
