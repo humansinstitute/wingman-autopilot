@@ -34,6 +34,7 @@ Primary source of truth for this review:
 ## Startup is not read-only
 
 - `bun start` runs `src/index.ts`, which runs the setup wizard before it imports `src/server.ts`. A failed or cancelled wizard exits the process before the server is even loaded.
+- First-run setup is itself stateful. `src/setup/wizard.ts` creates `data/setup.db`, may write `.env` from `.env.example`, and records `wizard_complete` so later boots skip the interactive path.
 - Server startup mutates local state. It creates directories under `~/Documents/Wingman`, `~/Documents/Wingman/users`, `tmp/uploads`, and `~/.wingmen`, and it can also create or update `out/agentapi`.
 - Ordinary startup still reconciles the `wingman-core` app record. If the canonical entry is missing but a legacy same-root Wingman record exists, startup now promotes one legacy record into `wingman-core` instead of deleting records. Any extra same-root legacy entries are preserved until the explicit cleanup helper in `src/server/bootstrap/wingman-core-registry.ts` is run.
 - `ensureWingmanCoreRegistration(...)` is launched with `void` near the end of `src/server.ts`. Wingman tries to self-register on ordinary boot, but that reconciliation is no longer startup-blocking.
@@ -59,6 +60,7 @@ Primary source of truth for this review:
 - billing proxy injection
 - Most of these steps are best-effort. Failures are logged as non-fatal and the session may still launch in a degraded state.
 - When billing injects `CODEX_HOME` plus an API key, `prepareCodexApiAuthHome()` writes `auth.json` into that directory with mode `0600`. That side effect happens during launch, not during a separate provisioning step.
+- Child-process env is intentionally filtered. `spawnAgentProcess()` strips `KEYTELEPORT_PRIVKEY` before launching agents, so agent-side integrations must use bot-key/NIP-98 flows instead of assuming the root Wingman key is present in subprocess env.
 - Project tracking is fire-and-forget after launch. Missing project linkage is not necessarily a launch failure.
 
 ## Agent transport and browser streaming are no longer 1:1
@@ -87,6 +89,7 @@ Primary source of truth for this review:
 
 - `src/ui/app.js` is still the real composition root. Even when features are extracted into smaller modules, new top-level behavior usually still needs `app.js` wiring.
 - The frontend is not Dexie-first end to end. Sessions, apps, scheduler, and Night Watch use Dexie-backed Alpine stores, but projects, files, private chat, and much of the shell still rely on the mutable singleton in `src/ui/state/index.js`.
+- Session list freshness is a separate pipeline from live-session chat freshness. Home/nav session state comes from the Dexie-backed `apiSessions` cache plus `/api/sessions/subscribe`, so a stale session list is not automatically the same bug as a stale `/api/sessions/:id/events` stream.
 - Live sessions are now SSE-first, but not SSE-only in every runtime state. `src/ui/live/refresh-controller.js` does a bootstrap catch-up fetch, then enables bounded polling for heartbeat-only native adapters, active sessions whose runtime status is `running`, and degraded or disconnected recovery windows.
 - `src/server/session-events.ts` emits a `transport` event at stream start. If live updates look wrong, verify whether the browser thinks the session is `event-stream`, `heartbeat-only`, or `degraded` before changing refresh logic.
 - Live message reads no longer use a `state.conversations` mirror. If live rendering, copy/export, or queue-send behavior looks wrong, inspect `MessageStore` and the Dexie-backed consumers first.
@@ -132,6 +135,7 @@ Primary source of truth for this review:
 ## Local CLIs and scripts have a few traps
 
 - `package.json` still exposes useful operational entry points: `cli:*`, `appctl`, `build:bunker-client`, and `cleanports`.
+- `bun run dev` is not a watch mode. In `package.json` it runs the same `src/index.ts` entry as `bun start`, so it still executes the setup wizard and full startup side effects.
 - `scripts/wingman-appctl.ts` is only a deprecated shim. The maintained entry point is `clis/appctl.ts`.
 - The shared CLI auth helper defaults to `http://127.0.0.1:3000` when `WINGMAN_URL` and `PORT` are absent, but the server config defaults to port `3600`. Local CLI calls often need an explicit `WINGMAN_URL` or `PORT`.
 - `bun run cleanports` uses `lsof` and kills listeners across the configured agent port range. It is a recovery tool, but it is not Wingman-specific once pointed at those ports.
