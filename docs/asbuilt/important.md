@@ -1,6 +1,6 @@
 # Wingman important maintenance caveats (as built)
 
-Last reviewed against the live repository on 2026-04-06.
+Last reviewed against the live repository on 2026-04-08.
 
 ## Scope and source of truth
 
@@ -36,6 +36,7 @@ Primary source of truth for this review:
 - `bun start` runs `src/index.ts`, which runs the setup wizard before it imports `src/server.ts`. A failed or cancelled wizard exits the process before the server is even loaded.
 - Server startup mutates local state. It creates directories under `~/Documents/Wingman`, `~/Documents/Wingman/users`, `tmp/uploads`, and `~/.wingmen`, and it can also create or update `out/agentapi`.
 - Ordinary startup still reconciles the `wingman-core` app record. If the canonical entry is missing but a legacy same-root Wingman record exists, startup now promotes one legacy record into `wingman-core` instead of deleting records. Any extra same-root legacy entries are preserved until the explicit cleanup helper in `src/server/bootstrap/wingman-core-registry.ts` is run.
+- `ensureWingmanCoreRegistration(...)` is launched with `void` near the end of `src/server.ts`. Wingman tries to self-register on ordinary boot, but that reconciliation is no longer startup-blocking.
 - `src/server/bootstrap/agentapi.ts` treats `downloads.json` as the release manifest for `agentapi`. It verifies SHA-256, writes `out/agentapi`, and writes a sibling `.version` file. Deleting the version file makes the next boot behave like an upgrade path even if the binary already exists.
 - `src/index.ts` globally swallows a specific class of Nostr relay rejections (`Event rejected`, `AUTH required`, `rate-limited`, `blocked`) so those do not crash the whole process. Other uncaught exceptions still terminate the server.
 
@@ -65,6 +66,7 @@ Primary source of truth for this review:
 - Most agents still run behind the external `agentapi` binary, but Codex and OpenCode already have native SDK adapters behind feature flags.
 - The stdio MCP server in `src/mcp/stdio-server.ts` is not the state authority. It runs inside the agent context and calls back into Wingman over HTTP.
 - Native SDK adapters do not expose an upstream `/events` URL. In those cases `src/server/session-events.ts` serves a heartbeat-only SSE stream and the browser depends on the rest of the live sync path to stay current.
+- `degraded` is a browser-inferred transport mode, not a server-advertised one. `src/server/session-events.ts` only emits `transport: event-stream` or `transport: heartbeat-only`; `src/ui/live/sse-manager.js` promotes the stream to `degraded` when upstream status events fail or the EventSource itself errors.
 - If live updates look inconsistent for Codex/OpenCode native sessions, treat it as a hybrid transport problem, not just an SSE bug.
 
 ## Stop and restart behavior is conservative on purpose
@@ -88,12 +90,15 @@ Primary source of truth for this review:
 - Live sessions are now SSE-first, but not SSE-only in every runtime state. `src/ui/live/refresh-controller.js` does a bootstrap catch-up fetch, then enables bounded polling for heartbeat-only native adapters, active sessions whose runtime status is `running`, and degraded or disconnected recovery windows.
 - `src/server/session-events.ts` emits a `transport` event at stream start. If live updates look wrong, verify whether the browser thinks the session is `event-stream`, `heartbeat-only`, or `degraded` before changing refresh logic.
 - Live message reads no longer use a `state.conversations` mirror. If live rendering, copy/export, or queue-send behavior looks wrong, inspect `MessageStore` and the Dexie-backed consumers first.
+- Private chat is a separate stack. `src/ui/chat/private-chat.js` still keeps chat lists, message history, drafts, and streaming output in the shared in-memory singleton (`state.chats`, `state.chatConversations`, `state.chatStreaming`) and uses streamed fetch responses rather than the live-session SSE/Dexie path.
+- The server still treats `/todos` as a SPA shell route, but `src/ui/app.js` no longer resolves `/todos` into a routed page. In the current browser shell that path falls back to `home`, and `src/ui/todos/state.js` has auto-load explicitly disabled.
 - `scheduler` and `jobs` are treated as stable pages in the shell so Alpine-owned DOM is not torn down on routine rerenders.
 
 ## Static asset serving is manual and easy to break
 
 - `src/server/static-assets.ts` is a custom asset server. Browser ESM loading depends on it returning the correct MIME type.
 - Dynamic UI asset serving only derives explicit MIME overrides for `.js`, `.css`, `.json`, and `.map`. When adding files under `src/ui`, keep that constraint in mind.
+- That override list still does not include `.mjs`. A moved or newly introduced browser module with a non-`.js` extension will fall back to Bun’s detected type, which is exactly the class of change that has previously produced browser module-blocking MIME errors here.
 - Top-level shortcuts like `/app.js` and a few other paths are hardcoded in `uiAssetMap`.
 - Bare-module browser imports only work for vendor packages that are explicitly registered in `src/server.ts` with `registerVendorPackage(...)`.
 - Adding a new client-side dependency can fail at runtime even if Bun installs it correctly, because the browser can only load packages the static asset service knows how to rewrite and serve.
@@ -102,6 +107,7 @@ Primary source of truth for this review:
 
 - App metadata is persisted in `data/apps.json` and aliases are persisted in `data/app-aliases.json`, but the port used for reverse proxying lives in the in-memory `runtimePortRegistry`.
 - On startup, PM2 reconciliation tries to rebuild that runtime port map from PM2 metadata and port detection. If that reconstruction fails, a running app can still be treated as unavailable.
+- On ordinary app start/restart, runtime routing is rebuilt the same way: web apps with an assigned `webAppPort` are registered immediately, while everything else depends on short-window listening-port detection in `AppProcessManager.registerRuntimePort()`. A process can be up and still be unroutable if that detection misses.
 - Path and subdomain routing both depend on the same runtime port registry. Alias resolution only succeeds when all three are true:
 - the alias exists
 - the app is considered running
