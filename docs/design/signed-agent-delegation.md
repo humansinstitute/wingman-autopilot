@@ -617,6 +617,275 @@ Update session and app ownership records to preserve owner and actor distinctly.
 
 Deprecate rewrite-based delegated bot behavior.
 
+## Implementation Checklist
+
+This section converts the design into a concrete implementation sequence.
+
+### 1. Add Delegation Storage
+
+Create a new store module, for example:
+
+- `src/storage/workspace-delegation-store.ts`
+
+Responsibilities:
+
+- persist owner-signed delegation records
+- look up active delegations by owner and delegate
+- revoke delegations
+- filter delegations by scope and expiry
+
+Suggested methods:
+
+- `createDelegation`
+- `getDelegationById`
+- `listDelegationsForOwner`
+- `listDelegationsForDelegate`
+- `findActiveDelegation`
+- `revokeDelegation`
+
+### 2. Add Delegation Payload Validation
+
+Create a small validation module, for example:
+
+- `src/auth/delegation-payload.ts`
+
+Responsibilities:
+
+- validate canonical delegation payload structure
+- validate scope names
+- validate `resourceFilters`
+- verify owner signature
+
+### 3. Refactor Request Auth Context
+
+Update:
+
+- [`src/auth/request-context.ts`](/Users/mini/code/wingmen/src/auth/request-context.ts)
+- [`src/auth/nip98-auth.ts`](/Users/mini/code/wingmen/src/auth/nip98-auth.ts)
+- [`src/server.ts`](/Users/mini/code/wingmen/src/server.ts)
+
+Add or normalize fields for:
+
+- `signerNpub`
+- `subjectNpub`
+- `targetOwnerNpub`
+- `delegateRelationshipId`
+- `delegateScopes`
+
+Important change:
+
+- stop rewriting the signer into the owner for internal Wingman APIs
+
+### 4. Add Shared Delegation Authorization Helpers
+
+Create a helper module, for example:
+
+- `src/auth/delegation-access.ts`
+
+Suggested helpers:
+
+- `isSelfSpace(auth, ownerNpub)`
+- `requireDelegationScope(auth, ownerNpub, scope)`
+- `requireDelegatedPathAccess(auth, ownerNpub, path, scope)`
+- `requireDelegatedAppAccess(auth, ownerNpub, appId, appRoot, scope)`
+- `requireDelegatedProjectAccess(auth, ownerNpub, projectRoot, scope)`
+- `resolveChargeTarget(auth, ownerNpub, delegation)`
+
+These helpers should keep route files thin and consistent.
+
+### 5. Add Resource Filter Matching Helpers
+
+Create a helper module, for example:
+
+- `src/auth/resource-filters.ts`
+
+Responsibilities:
+
+- normalize absolute paths
+- match `pathPrefixes`
+- match `projectRoots`
+- match `appIds`
+- match `appRoots`
+
+This should be reused by delegated docs, directories, app, and project routes.
+
+### 6. Add Explicit Owner-Space Session Routes
+
+Update:
+
+- [`src/server/api-routes.ts`](/Users/mini/code/wingmen/src/server/api-routes.ts)
+- [`src/server/session-api-routes.ts`](/Users/mini/code/wingmen/src/server/session-api-routes.ts)
+
+Add explicit owner-space routes:
+
+- `GET /api/owners/:ownerNpub/sessions`
+- `POST /api/owners/:ownerNpub/sessions`
+- `GET /api/owners/:ownerNpub/sessions/:id`
+- `DELETE /api/owners/:ownerNpub/sessions/:id`
+- `POST /api/owners/:ownerNpub/sessions/:id/messages`
+- `GET /api/owners/:ownerNpub/sessions/:id/history`
+- `GET /api/owners/:ownerNpub/sessions/:id/events`
+
+Recommended refactor:
+
+- extract common session handlers so self-space and owner-space routes share the same lower-level logic
+
+### 7. Add Explicit Owner-Space App Routes
+
+Update app routing and handlers to support:
+
+- `GET /api/owners/:ownerNpub/apps`
+- `POST /api/owners/:ownerNpub/apps`
+- `GET /api/owners/:ownerNpub/apps/:id`
+- `POST /api/owners/:ownerNpub/apps/:id/actions`
+
+Delegated app access must enforce both:
+
+- `apps:*` scope
+- `appIds` or `appRoots` resource filters
+
+### 8. Add Explicit Owner-Space Directory and File Routes
+
+Update directory/docs route families to support owner-space forms such as:
+
+- `GET /api/owners/:ownerNpub/directories`
+- `POST /api/owners/:ownerNpub/directories`
+- `GET /api/owners/:ownerNpub/docs/*`
+- `PUT /api/owners/:ownerNpub/docs/*`
+- `POST /api/owners/:ownerNpub/docs/*`
+- `DELETE /api/owners/:ownerNpub/docs/*`
+
+Delegated file access must enforce:
+
+- `files:read` or `files:write`
+- path prefix matching against `resourceFilters`
+
+### 9. Add Explicit Owner-Space Project Routes
+
+Update project route handling to support delegated owner-space access:
+
+- `GET /api/owners/:ownerNpub/projects`
+- `GET /api/owners/:ownerNpub/projects/:projectId`
+- project-aware app creation or linking routes when applicable
+
+Delegated project access must enforce:
+
+- `projects:*` scope
+- project root matching against `resourceFilters`
+
+### 10. Expand Ownership Metadata
+
+Sessions, apps, and projects should preserve both owner and actor.
+
+Recommended fields:
+
+- `ownerNpub`
+- `createdByNpub`
+- `lastManagedByNpub`
+
+Main areas likely to need updates:
+
+- session serialization and storage
+- app registry records and serialization
+- project storage and serialization
+
+### 11. Update Billing Logic
+
+Update message and prompt dispatch billing paths to support:
+
+- self-space charges actor balance
+- delegated owner-space charges delegate balance by default
+- delegated owner-space charges owner balance only when allowed by `billingMode`
+
+Main areas:
+
+- [`src/server/session-api-routes.ts`](/Users/mini/code/wingmen/src/server/session-api-routes.ts)
+- prompt dispatch paths
+- any app/project actions that consume owner-paid resources
+
+### 12. Add Delegation Management APIs
+
+Add a new route module, for example:
+
+- `src/server/delegation-routes.ts`
+
+Suggested routes:
+
+- `POST /api/delegations`
+- `GET /api/delegations`
+- `GET /api/owners/:ownerNpub/delegations`
+- `DELETE /api/delegations/:id`
+
+`POST /api/delegations` should:
+
+- parse signed payload
+- verify signature
+- validate scopes and resource filters
+- persist the delegation record
+
+### 13. Update Tooling
+
+Update:
+
+- [`tmp/testsrepl.ts`](/Users/mini/code/wingmen/tmp/testsrepl.ts)
+- existing session/app CLIs after server routes stabilize
+
+Suggested additions for the REPL:
+
+- `owner-sessions list <ownerNpub>`
+- `owner-sessions create <ownerNpub> <agent>`
+- `owner-apps list <ownerNpub>`
+- `owner-files read <ownerNpub> <path>`
+- `owner-files write <ownerNpub> <path>`
+
+### 14. Deprecate Rewrite-Based Delegation
+
+After explicit owner-space routes and signed delegations are in place:
+
+- deprecate the current bot-to-owner rewrite path
+- keep compatibility temporarily if needed
+- remove `delegate-bot` semantics that rely on identity rewriting
+
+## Suggested Commit Sequence
+
+1. Add workspace delegation store and signed payload verification.
+2. Refactor auth context to preserve signer identity.
+3. Add shared delegation authorization and resource filter helpers.
+4. Add owner-space session routes.
+5. Add owner-space app and project routes.
+6. Add owner-space file and directory routes.
+7. Add billing-mode and spend-limit enforcement.
+8. Add delegation management APIs.
+9. Update REPL and CLI tooling.
+10. Deprecate the old rewrite-based delegated bot path.
+
+## Manual Verification Checklist
+
+### Self-Space
+
+- a bot signing as itself can create and manage its own sessions through `/api/sessions`
+- a bot signing as itself can manage only its own apps through `/api/apps`
+
+### Delegated Owner-Space
+
+- without a delegation, a bot cannot access `/api/owners/:ownerNpub/...`
+- with a valid delegation, the bot can access only the scopes granted
+- file access outside allowed `pathPrefixes` is denied
+- app access outside allowed `appIds` or `appRoots` is denied
+- project access outside allowed `projectRoots` is denied
+
+### Billing
+
+- self-space actions charge the actor
+- delegated actions charge the delegate by default
+- delegated actions charge the owner only when `billingMode=owner`
+
+### Audit and Ownership
+
+- session responses expose both owner and actor metadata
+- app responses expose both owner and actor metadata
+- project responses expose both owner and actor metadata
+
 ## Recommended Defaults
 
 1. Self-space uses `/api/sessions`.
