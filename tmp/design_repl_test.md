@@ -13,6 +13,8 @@ The purpose is:
 
 This is intentionally a direct HTTP client, not a wrapper around the existing `clis/*.ts` commands.
 
+Note: the main session CLI now supports delegated owner-space session and archive control through `clis/sessions.ts --owner <npub>`. The REPL remains useful for raw route testing, SSE inspection, and debugging edge cases.
+
 ## Why Direct HTTP Instead Of Shelling Out
 
 The existing CLIs already prove that the HTTP routes work, but they hide some of the behavior behind command-specific formatting.
@@ -205,6 +207,25 @@ This is intended for short inspection sessions, not a full terminal UI replaceme
 6. `sessions list`
 
 This makes route and access differences obvious.
+
+## Relationship To The Main CLI
+
+Common delegated control no longer requires the REPL.
+
+Use `clis/sessions.ts --owner <npub>` for:
+
+- create delegated sessions
+- read full delegated transcripts
+- send delegated messages
+- stop delegated sessions
+- list and inspect delegated archived sessions
+
+Use the REPL when you need:
+
+- raw HTTP request/response visibility
+- ad hoc route testing
+- legacy `/api/delegate-sessions` debugging
+- SSE event inspection
 
 ### In-session debugging
 
