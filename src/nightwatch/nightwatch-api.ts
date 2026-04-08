@@ -7,12 +7,14 @@
 
 import type { NightWatchStore } from "./nightwatch-store";
 import {
-  NIGHTWATCH_CHECK_IN_INTERVAL_MS,
   NIGHTWATCH_CHECK_IN_PROMPT,
+  NIGHTWATCH_DEFAULT_INTERVAL_MINUTES,
   NIGHTWATCH_MODELS,
   NIGHTWATCH_MAX_CYCLE_OPTIONS,
   NIGHTWATCH_DEFAULT_MODEL,
   NIGHTWATCH_DEFAULT_PROMPT,
+  NIGHTWATCH_MAX_INTERVAL_MINUTES,
+  NIGHTWATCH_MIN_INTERVAL_MINUTES,
 } from "./nightwatch-engine";
 
 // ============================================================
@@ -46,7 +48,9 @@ function parseJsonBody(request: Request): Promise<Record<string, unknown>> {
 function handleGetConfig(deps: NightWatchApiDependencies): Response {
   const allConfig = deps.store.getAllConfig();
   return Response.json({
-    intervalMinutes: Math.round(NIGHTWATCH_CHECK_IN_INTERVAL_MS / 60000),
+    intervalMinutes: NIGHTWATCH_DEFAULT_INTERVAL_MINUTES,
+    minIntervalMinutes: NIGHTWATCH_MIN_INTERVAL_MINUTES,
+    maxIntervalMinutes: NIGHTWATCH_MAX_INTERVAL_MINUTES,
     prompt: NIGHTWATCH_CHECK_IN_PROMPT,
     maxCycles: Number(allConfig.default_max_cycles ?? "21"),
     maxCycleOptions: [...NIGHTWATCH_MAX_CYCLE_OPTIONS],
@@ -90,6 +94,8 @@ function handleGetSession(
       cycleCount: 0,
       maxCycles: 21,
       model: NIGHTWATCH_DEFAULT_MODEL,
+      prompt: NIGHTWATCH_CHECK_IN_PROMPT,
+      intervalMinutes: NIGHTWATCH_DEFAULT_INTERVAL_MINUTES,
       promptAt: null,
     });
   }
@@ -102,7 +108,7 @@ async function handleEnableSession(
   sessionId: string,
   request: Request,
 ): Promise<Response> {
-  let opts: { model?: string; maxCycles?: number } | undefined;
+  let opts: { model?: string; maxCycles?: number; prompt?: string; intervalMinutes?: number } | undefined;
 
   try {
     const body = await parseJsonBody(request);
@@ -114,6 +120,15 @@ async function handleEnableSession(
       const maxCycles = Number(body.maxCycles);
       if (Number.isFinite(maxCycles) && maxCycles > 0) {
         opts.maxCycles = Math.trunc(maxCycles);
+      }
+    }
+    if (typeof body.prompt === "string" && body.prompt.trim()) {
+      opts.prompt = body.prompt.trim();
+    }
+    if (body.intervalMinutes !== undefined) {
+      const intervalMinutes = Number(body.intervalMinutes);
+      if (Number.isFinite(intervalMinutes)) {
+        opts.intervalMinutes = Math.trunc(intervalMinutes);
       }
     }
   } catch {

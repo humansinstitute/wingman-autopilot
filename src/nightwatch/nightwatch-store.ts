@@ -12,7 +12,11 @@ import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 
 import { databaseFile } from "../storage/message-store";
-import { getNextNightWatchPromptAt } from "./nightwatch-constants";
+import {
+  getNextNightWatchPromptAt,
+  normalizeNightWatchIntervalMinutes,
+  normalizeNightWatchPrompt,
+} from "./nightwatch-constants";
 
 // ============================================================
 // Types
@@ -24,6 +28,8 @@ export interface NightWatchSessionState {
   cycleCount: number;
   maxCycles: number;
   model: string;
+  prompt: string;
+  intervalMinutes: number;
   promptAt: string | null;
   updatedAt: string;
 }
@@ -72,6 +78,8 @@ class NightWatchStore {
            cycle_count AS cycleCount,
            max_cycles AS maxCycles,
            model,
+           prompt_text AS prompt,
+           interval_minutes AS intervalMinutes,
            prompt_at AS promptAt,
            updated_at AS updatedAt
          FROM nightwatch_sessions
@@ -79,7 +87,12 @@ class NightWatchStore {
       )
       .get(sessionId);
     if (!row) return null;
-    return { ...row, enabled: Boolean(row.enabled) };
+    return {
+      ...row,
+      enabled: Boolean(row.enabled),
+      prompt: normalizeNightWatchPrompt(row.prompt),
+      intervalMinutes: normalizeNightWatchIntervalMinutes(row.intervalMinutes),
+    };
   }
 
   isEnabled(sessionId: string): boolean {
@@ -93,28 +106,32 @@ class NightWatchStore {
 
   enableSession(
     sessionId: string,
-    opts?: { model?: string; maxCycles?: number },
+    opts?: { model?: string; maxCycles?: number; prompt?: string; intervalMinutes?: number },
   ): NightWatchSessionState {
     const now = new Date().toISOString();
     const defaultModel = this.getConfig("default_model") ?? "google/gemini-3-flash-preview";
     const defaultMaxCycles = Number(this.getConfig("default_max_cycles") ?? "21");
     const model = opts?.model ?? defaultModel;
     const maxCycles = opts?.maxCycles ?? defaultMaxCycles;
-    const promptAt = getNextNightWatchPromptAt();
+    const prompt = normalizeNightWatchPrompt(opts?.prompt);
+    const intervalMinutes = normalizeNightWatchIntervalMinutes(opts?.intervalMinutes);
+    const promptAt = getNextNightWatchPromptAt(intervalMinutes);
 
     this.db
       .query(
-        `INSERT INTO nightwatch_sessions (session_id, enabled, cycle_count, max_cycles, model, prompt_at, updated_at)
-         VALUES (?1, 1, 0, ?2, ?3, ?4, ?5)
+        `INSERT INTO nightwatch_sessions (session_id, enabled, cycle_count, max_cycles, model, prompt_text, interval_minutes, prompt_at, updated_at)
+         VALUES (?1, 1, 0, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(session_id) DO UPDATE SET
            enabled = 1,
            cycle_count = 0,
            max_cycles = excluded.max_cycles,
            model = excluded.model,
+           prompt_text = excluded.prompt_text,
+           interval_minutes = excluded.interval_minutes,
            prompt_at = excluded.prompt_at,
            updated_at = excluded.updated_at`,
       )
-      .run(sessionId, maxCycles, model, promptAt, now);
+      .run(sessionId, maxCycles, model, prompt, intervalMinutes, promptAt, now);
 
     return this.getSessionState(sessionId)!;
   }
@@ -132,7 +149,9 @@ class NightWatchStore {
 
   scheduleNextPrompt(sessionId: string, baseMs = Date.now()): void {
     const now = new Date().toISOString();
-    const promptAt = getNextNightWatchPromptAt(baseMs);
+    const sessionState = this.getSessionState(sessionId);
+    if (!sessionState?.enabled) return;
+    const promptAt = getNextNightWatchPromptAt(sessionState.intervalMinutes, baseMs);
     this.db
       .query(
         `UPDATE nightwatch_sessions
@@ -154,8 +173,13 @@ class NightWatchStore {
   }
 
   recordPromptSent(sessionId: string, continueTimer = true, baseMs = Date.now()): number {
+    const sessionState = this.getSessionState(sessionId);
+    const intervalMinutes = sessionState?.intervalMinutes;
     const now = new Date().toISOString();
-    const promptAt = continueTimer ? getNextNightWatchPromptAt(baseMs) : null;
+    const promptAt =
+      continueTimer && intervalMinutes != null
+        ? getNextNightWatchPromptAt(intervalMinutes, baseMs)
+        : null;
     this.db
       .query(
         `UPDATE nightwatch_sessions
@@ -301,6 +325,8 @@ class NightWatchStore {
         cycle_count INTEGER NOT NULL DEFAULT 0,
         max_cycles INTEGER NOT NULL DEFAULT 21,
         model TEXT NOT NULL DEFAULT 'google/gemini-3-flash-preview',
+        prompt_text TEXT NOT NULL DEFAULT 'Any progress?',
+        interval_minutes INTEGER NOT NULL DEFAULT 5,
         prompt_at TEXT,
         updated_at TEXT NOT NULL
       );
@@ -357,6 +383,18 @@ class NightWatchStore {
     // Migration: add prompt_at column if missing
     try {
       this.db.exec(`ALTER TABLE nightwatch_sessions ADD COLUMN prompt_at TEXT`);
+    } catch {
+      // Column already exists — ignore
+    }
+
+    try {
+      this.db.exec(`ALTER TABLE nightwatch_sessions ADD COLUMN prompt_text TEXT NOT NULL DEFAULT 'Any progress?'`);
+    } catch {
+      // Column already exists — ignore
+    }
+
+    try {
+      this.db.exec(`ALTER TABLE nightwatch_sessions ADD COLUMN interval_minutes INTEGER NOT NULL DEFAULT 5`);
     } catch {
       // Column already exists — ignore
     }

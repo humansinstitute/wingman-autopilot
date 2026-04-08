@@ -5,13 +5,26 @@
  * The button text updates live after toggling and after the initial fetch.
  */
 
-import { fetchNightWatchSessionState, enableNightWatch, disableNightWatch } from "./api.js";
+import {
+  fetchNightWatchConfig,
+  fetchNightWatchSessionState,
+  enableNightWatch,
+  disableNightWatch,
+} from "./api.js";
+import { openNightWatchEnableModal } from "./enable-modal.js";
 
 function labelFor(enabled) {
   return enabled ? "Night Watch: On" : "Night Watch: Off";
 }
 
-export function addNightWatchToggle({ sessionId, addCommand, state, showToast, isFeatureEnabled }) {
+export function addNightWatchToggle({
+  sessionId,
+  sessionName,
+  addCommand,
+  state,
+  showToast,
+  isFeatureEnabled,
+}) {
   if (!isFeatureEnabled("nightwatch_enabled")) return;
 
   const toggleMap = state.nightwatch.sessionToggles;
@@ -27,7 +40,23 @@ export function addNightWatchToggle({ sessionId, addCommand, state, showToast, i
         btn.textContent = labelFor(false);
         showToast("Night Watch disabled");
       } else {
-        const result = await enableNightWatch(sessionId);
+        const [config, sessionState] = await Promise.all([
+          fetchNightWatchConfig(),
+          fetchNightWatchSessionState(sessionId).catch(() => null),
+        ]);
+        const nextSettings = await openNightWatchEnableModal({
+          sessionName,
+          prompt: sessionState?.prompt || config.prompt || "Any progress?",
+          intervalMinutes:
+            Number(sessionState?.intervalMinutes) || Number(config.intervalMinutes) || 5,
+          minIntervalMinutes: Number(config.minIntervalMinutes) || 2,
+          maxIntervalMinutes: Number(config.maxIntervalMinutes) || 60,
+        });
+        if (!nextSettings) {
+          return;
+        }
+
+        const result = await enableNightWatch(sessionId, nextSettings);
         toggleMap.set(sessionId, { enabled: true, ...result });
         btn.textContent = labelFor(true);
         showToast("Night Watch enabled");

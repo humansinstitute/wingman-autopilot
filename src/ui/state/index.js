@@ -107,7 +107,14 @@ export const state = {
     reports: [],
     reportsLoading: false,
     reportsInitialized: false,
-    config: { intervalMinutes: 5, prompt: "Any progress?", maxCycles: 21, maxCycleOptions: [6, 21, 256] },
+    config: {
+      intervalMinutes: 5,
+      minIntervalMinutes: 2,
+      maxIntervalMinutes: 60,
+      prompt: "Any progress?",
+      maxCycles: 21,
+      maxCycleOptions: [6, 21, 256],
+    },
   },
   // Webview split-panel layout state
   webviewLayout: { open: false, mode: "chat-narrow", mobileTab: "chat" },

@@ -12,23 +12,27 @@ import type { FeatureFlagRecord } from "../storage/feature-flag-store";
 import { deliverSessionAgentMessage } from "../server/session-agent-message";
 import type { NightWatchStore } from "./nightwatch-store";
 import {
-  NIGHTWATCH_CHECK_IN_INTERVAL_MS,
   NIGHTWATCH_CHECK_IN_PROMPT,
+  NIGHTWATCH_DEFAULT_INTERVAL_MINUTES,
   NIGHTWATCH_DEFAULT_MODEL,
   NIGHTWATCH_DEFAULT_PROMPT,
   NIGHTWATCH_FEATURE_FLAG_KEY,
+  NIGHTWATCH_MAX_INTERVAL_MINUTES,
   NIGHTWATCH_MAX_CYCLE_OPTIONS,
+  NIGHTWATCH_MIN_INTERVAL_MINUTES,
   NIGHTWATCH_MODELS,
   getNightWatchRetryPromptAt,
 } from "./nightwatch-constants";
 
 export {
-  NIGHTWATCH_CHECK_IN_INTERVAL_MS,
   NIGHTWATCH_CHECK_IN_PROMPT,
+  NIGHTWATCH_DEFAULT_INTERVAL_MINUTES,
   NIGHTWATCH_DEFAULT_MODEL,
   NIGHTWATCH_DEFAULT_PROMPT,
   NIGHTWATCH_FEATURE_FLAG_KEY,
+  NIGHTWATCH_MAX_INTERVAL_MINUTES,
   NIGHTWATCH_MAX_CYCLE_OPTIONS,
+  NIGHTWATCH_MIN_INTERVAL_MINUTES,
   NIGHTWATCH_MODELS,
 };
 
@@ -56,13 +60,17 @@ function getPromptAtMs(promptAt: string | null): number | null {
   return Number.isFinite(promptAtMs) ? promptAtMs : null;
 }
 
-function buildCheckInSummary(sessionName: string | null, cycleCount: number): string {
+function buildCheckInSummary(sessionName: string | null, cycleCount: number, prompt: string): string {
   const label = sessionName ?? "session";
-  return `Sent "${NIGHTWATCH_CHECK_IN_PROMPT}" to ${label} (${cycleCount} check-ins).`;
+  const compactPrompt = prompt.replace(/\s+/g, " ").trim();
+  const preview =
+    compactPrompt.length > 80 ? `${compactPrompt.slice(0, 77)}...` : compactPrompt;
+  return `Sent "${preview}" to ${label} (${cycleCount} check-ins).`;
 }
 
 async function sendNightWatchPrompt(
   session: SessionSnapshot,
+  prompt: string,
   deps: NightWatchDeps,
 ): Promise<{ ok: boolean; message: string }> {
   return deliverSessionAgentMessage({
@@ -71,7 +79,7 @@ async function sendNightWatchPrompt(
     buildAgentUrl,
     agent: session.agent,
     port: session.port,
-    content: NIGHTWATCH_CHECK_IN_PROMPT,
+    content: prompt,
     type: "user",
     pm2Name: session.pm2Name,
   });
@@ -108,7 +116,7 @@ export async function maybeTriggerNightWatch(
   try {
     const currentSession = deps.getSession(session.id) ?? session;
     const willContinue = sessionState.cycleCount + 1 < sessionState.maxCycles;
-    const result = await sendNightWatchPrompt(currentSession, deps);
+    const result = await sendNightWatchPrompt(currentSession, sessionState.prompt, deps);
 
     if (!result.ok) {
       deps.store.postponePrompt(session.id, getNightWatchRetryPromptAt());
@@ -124,10 +132,10 @@ export async function maybeTriggerNightWatch(
       sessionName: currentSession.name ?? null,
       workingDirectory: currentSession.workingDirectory ?? null,
       status: willContinue ? "continue" : "complete",
-      summary: buildCheckInSummary(currentSession.name ?? null, cycleCount),
-      reasoning: `Night Watch timer fired after ${Math.round(
-        NIGHTWATCH_CHECK_IN_INTERVAL_MS / 60000,
-      )} minutes.`,
+      summary: buildCheckInSummary(currentSession.name ?? null, cycleCount, sessionState.prompt),
+      reasoning:
+        `Night Watch timer fired after ${sessionState.intervalMinutes} minute` +
+        `${sessionState.intervalMinutes === 1 ? "" : "s"}.`,
       cycleCount,
     });
   } finally {

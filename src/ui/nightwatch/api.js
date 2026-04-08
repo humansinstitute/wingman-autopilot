@@ -34,6 +34,8 @@ export async function enableNightWatch(sessionId, opts = {}) {
   const body = {};
   if (opts.model) body.model = opts.model;
   if (opts.maxCycles) body.maxCycles = opts.maxCycles;
+  if (opts.prompt) body.prompt = opts.prompt;
+  if (opts.intervalMinutes !== undefined) body.intervalMinutes = opts.intervalMinutes;
   const res = await fetch(`/api/nightwatch/sessions/${encodeURIComponent(sessionId)}/enable`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

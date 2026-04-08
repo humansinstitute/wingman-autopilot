@@ -91,6 +91,8 @@ export function initNightWatchStore({ showToast }) {
         // Update config cache
         const config = {
           intervalMinutes: Number(configData.intervalMinutes) || 5,
+          minIntervalMinutes: Number(configData.minIntervalMinutes) || 2,
+          maxIntervalMinutes: Number(configData.maxIntervalMinutes) || 60,
           prompt: configData.prompt || "Any progress?",
           maxCycles: configData.maxCycles || 21,
           maxCycleOptions: configData.maxCycleOptions || [6, 21, 256],
@@ -135,6 +137,8 @@ export function initNightWatchStore({ showToast }) {
         const updated = {
           ...current,
           intervalMinutes: data.intervalMinutes ?? current.intervalMinutes,
+          minIntervalMinutes: data.minIntervalMinutes ?? current.minIntervalMinutes,
+          maxIntervalMinutes: data.maxIntervalMinutes ?? current.maxIntervalMinutes,
           prompt: data.prompt ?? current.prompt,
           maxCycles: data.maxCycles ?? current.maxCycles,
           maxCycleOptions: data.maxCycleOptions ?? current.maxCycleOptions,

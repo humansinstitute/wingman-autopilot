@@ -901,7 +901,16 @@ export function initLiveView(deps) {
       }
     }
 
-    addNightWatchToggle({ sessionId, addCommand, state, showToast, isFeatureEnabled: isFeatureEnabledForViewer });
+    const currentSession = sessionsStore().items.find((s) => s.id === sessionId);
+
+    addNightWatchToggle({
+      sessionId,
+      sessionName: currentSession?.name ?? null,
+      addCommand,
+      state,
+      showToast,
+      isFeatureEnabled: isFeatureEnabledForViewer,
+    });
 
     const cmdWebApp = findWebAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
     if (cmdWebApp) {
