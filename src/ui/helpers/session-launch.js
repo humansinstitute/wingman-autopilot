@@ -104,7 +104,13 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = 
       return;
     }
 
-    const { openInNewTab = false, origin = null, initialPrompt = null, targetFile = null } = options ?? {};
+    const {
+      openInNewTab = false,
+      origin = null,
+      initialPrompt = null,
+      targetFile = null,
+      nightwatch = null,
+    } = options ?? {};
     const payload = { agent: normalizedAgent };
     const trimmedName = typeof name === "string" ? name.trim() : "";
     if (trimmedName.length > 0) {
@@ -124,6 +130,9 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = 
     }
     if (typeof targetFile === "string" && targetFile.trim().length > 0) {
       payload.targetFile = targetFile.trim();
+    }
+    if (nightwatch && typeof nightwatch === "object") {
+      payload.nightwatch = nightwatch;
     }
 
     const canAttemptNewTab = openInNewTab && !shouldLaunchSessionInCurrentTab();

@@ -30,6 +30,7 @@ import {
   resolveOwnerAccess,
 } from "../auth/delegation-access";
 import type { WorkspaceDelegationStore } from "../storage/workspace-delegation-store";
+import type { NightWatchStartOptions } from "../nightwatch/nightwatch-start-config";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
@@ -129,7 +130,9 @@ export interface SessionApiContext {
     workspaceScopeOverride?: WorkspaceScope,
   ) => Promise<string>;
   parseSessionOriginInput: (value: unknown) => SessionOrigin | null;
+  parseNightWatchStartOptions: (value: unknown) => NightWatchStartOptions | null;
   buildAgentUrl: (host: string, port: number, path: string) => string | URL;
+  enableNightWatch: (sessionId: string, options?: Omit<NightWatchStartOptions, "enabled">) => unknown;
 
   // Queue helpers
   queueDispatchInFlight: Set<string>;
@@ -1018,6 +1021,12 @@ export async function handleSessionApi(
       } catch (error) {
         return Response.json({ error: (error as Error).message }, { status: 400 });
       }
+      let nightWatch: NightWatchStartOptions | null = null;
+      try {
+        nightWatch = ctx.parseNightWatchStartOptions(payload?.nightwatch ?? null);
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
       // Parse optional target file for writer-mode sessions
       const rawTargetFile = typeof payload?.targetFile === "string" ? payload.targetFile.trim() : "";
       let targetFile: string | undefined;
@@ -1048,6 +1057,13 @@ export async function handleSessionApi(
           chargeToNpub: authContext.npub ?? undefined,
         },
       );
+      if (nightWatch?.enabled) {
+        ctx.enableNightWatch(session.id, {
+          prompt: nightWatch.prompt,
+          intervalMinutes: nightWatch.intervalMinutes,
+          maxCycles: nightWatch.maxCycles,
+        });
+      }
       await recordLiveSession(ctx, session);
       return Response.json(ctx.serializeSession(session), { status: 201 });
     } catch (error) {

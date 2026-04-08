@@ -25,6 +25,8 @@ import type { NpubProjectRecord } from "../projects/npub-project-store";
 import type { MemoryStore } from "./memory-store";
 import { normaliseNpub } from "../identity/npub-utils";
 import { parseBody, jsonError } from "../utils/request-utils";
+import type { NightWatchStartOptions } from "../nightwatch/nightwatch-start-config";
+import { parseNightWatchStartOptions } from "../nightwatch/nightwatch-start-config";
 import {
   type SessionMetadataInput,
   isAgentManagedByMetadataOrOrigin,
@@ -45,6 +47,7 @@ export interface WingmanMcpApiDependencies {
     origin?: SessionOrigin | null,
     metadata?: SessionMetadataInput,
   ) => Promise<SessionSnapshot>;
+  enableNightWatch: (sessionId: string, options?: Omit<NightWatchStartOptions, "enabled">) => unknown;
   stopSession: (sessionId: string) => Promise<SessionSnapshot | null>;
   scheduleArchive: (sessionId: string) => void;
   getSessionLogs: (sessionId: string) => Promise<string[] | undefined>;
@@ -364,7 +367,7 @@ function handleListSessions(
 
 /**
  * POST /api/mcp/wingman/sessions
- * Body: { sessionId, agent, directory?, name? }
+ * Body: { sessionId, agent, directory?, name?, nightwatch? }
  */
 async function handleCreateSession(
   deps: WingmanMcpApiDependencies,
@@ -375,6 +378,7 @@ async function handleCreateSession(
   const agent = body.agent as string | undefined;
   const directory = body.directory as string | undefined;
   const name = body.name as string | undefined;
+  let nightWatch: NightWatchStartOptions | null = null;
 
   const denied = requireSessionId(deps, sessionId);
   if (denied) return denied;
@@ -386,6 +390,12 @@ async function handleCreateSession(
   const validAgents: AgentType[] = ["codex", "claude", "goose", "opencode", "gemini"];
   if (!agent || !validAgents.includes(agent as AgentType)) {
     return jsonError(`agent must be one of: ${validAgents.join(", ")}`, 400);
+  }
+
+  try {
+    nightWatch = parseNightWatchStartOptions(body.nightwatch ?? null);
+  } catch (error) {
+    return jsonError((error as Error).message, 400);
   }
 
   const origin: SessionOrigin = {
@@ -401,6 +411,13 @@ async function handleCreateSession(
     origin,
     { AGENT: true },
   );
+  if (nightWatch?.enabled) {
+    deps.enableNightWatch(session.id, {
+      prompt: nightWatch.prompt,
+      intervalMinutes: nightWatch.intervalMinutes,
+      maxCycles: nightWatch.maxCycles,
+    });
+  }
   return jsonOk({
     id: session.id,
     agent: session.agent,
@@ -409,6 +426,14 @@ async function handleCreateSession(
     port: session.port,
     workingDirectory: session.workingDirectory,
     startedAt: session.startedAt,
+    nightwatch: nightWatch?.enabled
+      ? {
+          enabled: true,
+          prompt: nightWatch.prompt ?? null,
+          intervalMinutes: nightWatch.intervalMinutes ?? null,
+          maxCycles: nightWatch.maxCycles ?? null,
+        }
+      : null,
   });
 }
 

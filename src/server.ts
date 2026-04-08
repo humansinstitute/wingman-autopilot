@@ -140,6 +140,7 @@ import { createSessionEventsHandler } from "./server/session-events";
 import { sessionBroadcaster, createSessionSubscribeResponse } from "./server/session-broadcaster";
 import { type ChatApiContext } from "./server/chat-routes";
 import { type SessionApiContext } from "./server/session-api-routes";
+import { parseNightWatchStartOptions } from "./nightwatch/nightwatch-start-config";
 import { type ProviderProxyApiContext } from "./server/provider-proxy-routes";
 import { type BillingApiContext } from "./server/billing-routes";
 import { type DocsApiContext } from "./server/docs-routes";
@@ -665,6 +666,12 @@ const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   listSessions: () => manager.listSessions(),
   createSession: (agent, dir, name, explicitNpub, origin, metadata) =>
     manager.createSession(agent, dir, name, origin, undefined, explicitNpub, metadata),
+  enableNightWatch: (sessionId, options) =>
+    nightWatchStore.enableSession(sessionId, {
+      prompt: options?.prompt,
+      intervalMinutes: options?.intervalMinutes,
+      maxCycles: options?.maxCycles,
+    }),
   stopSession: async (sid) => (await manager.stopSession(sid)) ?? null,
   scheduleArchive: (sid) => scheduleSessionArchive(sid, manager),
   getSessionLogs: (sid) => manager.getLogs(sid),
@@ -2226,7 +2233,15 @@ const sessionApiContext: SessionApiContext = {
   parseSessionWorkspaceRequest,
   resolveSessionWorkingDirectory,
   parseSessionOriginInput,
+  parseNightWatchStartOptions,
   buildAgentUrl,
+  enableNightWatch: (sessionId, options) => {
+    nightWatchStore.enableSession(sessionId, {
+      prompt: options?.prompt,
+      intervalMinutes: options?.intervalMinutes,
+      maxCycles: options?.maxCycles,
+    });
+  },
   queueDispatchInFlight,
   maybeAutoDispatchQueuedPrompt,
   dispatchNextQueuedPromptForSession,

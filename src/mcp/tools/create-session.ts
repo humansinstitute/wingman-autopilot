@@ -18,17 +18,43 @@ export const createSessionSchema = {
     .string()
     .optional()
     .describe("Human-readable name for the session"),
+  nightwatch: z
+    .object({
+      enabled: z.boolean().optional().describe("Enable Night Watch on session start"),
+      prompt: z.string().optional().describe("Prompt/instructions sent on each Night Watch check-in"),
+      intervalMinutes: z
+        .number()
+        .int()
+        .min(2)
+        .max(60)
+        .optional()
+        .describe("Minutes between Night Watch check-ins"),
+      maxCycles: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Maximum number of Night Watch check-ins before auto-stop"),
+    })
+    .optional()
+    .describe("Optional Night Watch configuration to apply when the session starts"),
 };
 
 export const createSessionDescription =
   "Spawn a new agent session. Choose the agent type (codex, claude, " +
   "goose, opencode, gemini) and optionally set a working directory " +
-  "and name. Returns the new session details including ID and port.";
+  "and name. Optionally enable Night Watch with a custom prompt and interval. Returns the new session details including ID and port.";
 
 interface CreateSessionParams {
   agent: string;
   directory?: string;
   name?: string;
+  nightwatch?: {
+    enabled?: boolean;
+    prompt?: string;
+    intervalMinutes?: number;
+    maxCycles?: number;
+  };
 }
 
 export async function handleCreateSession(
@@ -36,7 +62,7 @@ export async function handleCreateSession(
   wingmanUrl: string,
   sessionId: string,
 ) {
-  const { agent, directory, name } = params;
+  const { agent, directory, name, nightwatch } = params;
 
   try {
     const response = await fetch(
@@ -49,6 +75,7 @@ export async function handleCreateSession(
           agent,
           directory,
           name,
+          nightwatch,
         }),
       },
     );
@@ -79,6 +106,17 @@ export async function handleCreateSession(
             `  Port: ${result.port}`,
             `  Dir: ${result.workingDirectory}`,
             `  Status: ${result.status}`,
+            ...(result.nightwatch?.enabled
+              ? [
+                  `  Night Watch: enabled`,
+                  result.nightwatch.intervalMinutes
+                    ? `  Night Watch Interval: ${result.nightwatch.intervalMinutes} min`
+                    : null,
+                  result.nightwatch.prompt
+                    ? `  Night Watch Prompt: ${result.nightwatch.prompt}`
+                    : null,
+                ].filter(Boolean)
+              : []),
           ].join("\n"),
         },
       ],

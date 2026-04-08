@@ -35,6 +35,7 @@ function makeDeps(sessions: Map<string, SessionSnapshot>): WingmanMcpApiDependen
       sessions.set(created.id, created);
       return created;
     },
+    enableNightWatch: () => undefined,
     stopSession: async (sessionId) => {
       const existing = sessions.get(sessionId) ?? null;
       if (!existing) return null;
