@@ -14,6 +14,11 @@ import {
 import { createLiveRefreshController } from "./live/refresh-controller.js";
 import { syncLiveRouteTransport } from "./live/route-transport.js";
 import {
+  normalizeRuntimeStatus,
+  normalizeSessionStatus,
+  syncSessionStatusCaches,
+} from "./live/session-status-cache.js";
+import {
   initLiveMobileRuntime,
   isComposerInteractionActive,
   isMobileKeyboardOpen,
@@ -2876,15 +2881,20 @@ liveRefreshController = createLiveRefreshController({
   fetchSessionQueue: (...args) => fetchSessionQueue(...args),
   fetchSessionDetails: (...args) => fetchSessionApi(...args),
   applySessionDetails: (sessionId, sessionData) => {
+    const nextSessionStatus = normalizeSessionStatus(sessionData?.status ?? null);
+    const nextRuntimeStatus = normalizeRuntimeStatus(sessionData?.agentRuntimeStatus ?? null);
     const session = sessionsStore().items.find((item) => item.id === sessionId);
-    if (!session) {
-      return;
+    if (session) {
+      if (nextSessionStatus !== null) {
+        session.status = nextSessionStatus;
+      }
+      session.agentRuntimeStatus = nextRuntimeStatus;
     }
-    const oldStatus = session.agentRuntimeStatus;
-    session.agentRuntimeStatus = sessionData.agentRuntimeStatus ?? null;
-    if (oldStatus !== session.agentRuntimeStatus) {
-      updateAgentStatusIndicators();
-    }
+    void syncSessionStatusCaches(sessionId, {
+      status: nextSessionStatus,
+      agentRuntimeStatus: nextRuntimeStatus,
+    });
+    updateAgentStatusIndicators();
   },
   isComposerInteractionActive,
   isMobileKeyboardOpen,
@@ -3711,11 +3721,13 @@ jobDialog?.addEventListener("cancel", (event) => {
 
   // Wire SSE status events to knight rider and status indicators
   sseManager.onStatusChange((sessionId, status) => {
+    const nextRuntimeStatus = normalizeRuntimeStatus(status);
     const session = sessionsStore().items.find((s) => s.id === sessionId);
     if (session) {
-      session.agentRuntimeStatus = status;
-      updateAgentStatusIndicators();
+      session.agentRuntimeStatus = nextRuntimeStatus;
     }
+    void syncSessionStatusCaches(sessionId, { agentRuntimeStatus: nextRuntimeStatus });
+    updateAgentStatusIndicators();
   });
 
   // SSE manager writes incoming messages into Dexie. The DOM then hydrates from

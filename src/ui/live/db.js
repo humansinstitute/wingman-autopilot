@@ -215,10 +215,35 @@ export const SessionStore = {
   },
 
   /**
+   * Patch a cached session status record in-place.
+   */
+  async patchSession(sessionId, updates) {
+    if (!sessionId || !updates || typeof updates !== "object") {
+      return null;
+    }
+
+    const existing = await db.sessions.get(sessionId);
+    const next = {
+      ...(existing ?? { id: sessionId }),
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    await db.sessions.put(next);
+    return next;
+  },
+
+  /**
    * Get session status.
    */
   async getSession(sessionId) {
     return db.sessions.get(sessionId);
+  },
+
+  /**
+   * Subscribe to a single session status record.
+   */
+  liveQuery(sessionId) {
+    return () => this.getSession(sessionId);
   },
 
   /**
@@ -263,6 +288,28 @@ export const ApiSessionStore = {
   /** Get a single session by id. */
   async getById(id) {
     return db.apiSessions.get(id);
+  },
+
+  /**
+   * Patch a cached API session in-place without replacing the full table.
+   */
+  async patchSession(id, updates) {
+    if (!id || !updates || typeof updates !== "object") {
+      return null;
+    }
+
+    const existing = await db.apiSessions.get(id);
+    if (!existing) {
+      return null;
+    }
+
+    const next = {
+      ...existing,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    await db.apiSessions.put(next);
+    return next;
   },
 
   /** Remove a single session by id. */

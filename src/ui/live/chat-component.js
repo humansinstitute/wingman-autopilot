@@ -6,9 +6,10 @@
 import Alpine from "/vendor/alpinejs/module.esm.js";
 import Dexie from "/vendor/dexie/dexie.mjs";
 import { sseManager } from "./sse-manager.js";
-import { MessageStore } from "./db.js";
+import { MessageStore, SessionStore } from "./db.js";
 import { show as scrollPillShow, isNearBottom as scrollPillIsNearBottom } from "./scroll-pill.js";
 import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
+import { normalizeRuntimeStatus } from "./session-status-cache.js";
 import {
   LIVE_MESSAGE_WINDOW_DEFAULT,
   LIVE_MESSAGE_PAGE_SIZE,
@@ -72,6 +73,7 @@ export function registerChatComponent() {
     error: null,
     _sseUnsubscribers: [],
     _messageSubscription: null,
+    _statusSubscription: null,
 
     /** Alpine auto-calls init() on store registration — nothing to do yet. */
     init() {},
@@ -92,6 +94,7 @@ export function registerChatComponent() {
 
       try {
         this._subscribeToMessages(sessionId);
+        this._subscribeToSessionStatus(sessionId);
 
         // Subscribe to SSE status/connection events
         this._setupSSEListeners(sessionId);
@@ -166,6 +169,25 @@ export function registerChatComponent() {
         });
     },
 
+    _subscribeToSessionStatus(sessionId) {
+      this._statusSubscription?.unsubscribe?.();
+      this._statusSubscription = Dexie.liveQuery(SessionStore.liveQuery(sessionId))
+        .subscribe({
+          next: (session) => {
+            if (this.sessionId !== sessionId) {
+              return;
+            }
+            this.status = normalizeRuntimeStatus(session?.agentRuntimeStatus) ?? "stable";
+          },
+          error: (error) => {
+            if (this.sessionId !== sessionId) {
+              return;
+            }
+            console.warn("[chat] Failed to read session status:", error);
+          },
+        });
+    },
+
     /**
      * Show the scroll pill if user is scrolled up, otherwise do nothing
      * (the user is already at the bottom and will see new content naturally).
@@ -207,6 +229,8 @@ export function registerChatComponent() {
     cleanup() {
       this._messageSubscription?.unsubscribe?.();
       this._messageSubscription = null;
+      this._statusSubscription?.unsubscribe?.();
+      this._statusSubscription = null;
       this._sseUnsubscribers.forEach((unsub) => unsub());
       this._sseUnsubscribers = [];
       if (this.sessionId) {

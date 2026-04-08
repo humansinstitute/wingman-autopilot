@@ -4,6 +4,7 @@
  */
 
 import { MessageStore, SessionStore } from "./db.js";
+import { normalizeRuntimeStatus } from "./session-status-cache.js";
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
@@ -107,12 +108,24 @@ class SSEManager {
           const data = JSON.parse(event.data);
           if (data.type === "upstream_unavailable" || data.type === "upstream_error") {
             this.setStreamMode(sessionId, STREAM_MODE_DEGRADED);
-          } else if (data.status || data.agent_status) {
-            this.setStreamMode(sessionId, STREAM_MODE_EVENT_STREAM);
+            return;
           }
-          const status = data.status || data.agent_status || "stable";
-          await SessionStore.updateStatus(sessionId, status, status);
-          this.notifyStatusListeners(sessionId, status);
+
+          if (data.type === "session_stopped") {
+            await SessionStore.patchSession(sessionId, {
+              status: "stopped",
+              agentRuntimeStatus: null,
+            });
+            this.notifyStatusListeners(sessionId, null);
+            return;
+          }
+
+          const status = normalizeRuntimeStatus(data.agent_status ?? data.status);
+          if (status) {
+            this.setStreamMode(sessionId, STREAM_MODE_EVENT_STREAM);
+            await SessionStore.updateStatus(sessionId, status, status);
+            this.notifyStatusListeners(sessionId, status);
+          }
         } catch (err) {
           console.warn("[sse] Failed to process status event:", err);
         }
@@ -162,9 +175,9 @@ class SSEManager {
     }
 
     // Handle status events
-    if (data.status || data.agent_status) {
+    const status = normalizeRuntimeStatus(data.agent_status ?? data.status);
+    if (status) {
       this.setStreamMode(sessionId, STREAM_MODE_EVENT_STREAM);
-      const status = data.status || data.agent_status;
       await SessionStore.updateStatus(sessionId, status, status);
       this.notifyStatusListeners(sessionId, status);
     }
