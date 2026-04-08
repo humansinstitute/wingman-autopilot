@@ -1,20 +1,20 @@
 import type { AgentType } from '../config';
-import type { ProcessManager, SessionOrigin, SessionSnapshot } from '../agents/process-manager';
-import { scheduleSessionArchive } from '../storage/session-archiver';
+import type { ProcessManager, SessionSnapshot } from '../agents/process-manager';
 import { chatInterceptStateStore, type ChatInterceptStateStore } from './chat-intercept-state-store';
-import type { ChatInterceptStateRecord, RuntimeBotIdentity, WorkspaceSubscriptionRecord } from './types';
+import { archiveChatSession, archiveExpiredSessionIfNeeded, consumePendingMessages, createAgentChatSession, hasExpiredRetention, logSession, resolveRecoveryState, resolveReusableSession, saveIntercept, sendPromptAndAwaitAssistantReply } from './session-runtime-session-ops';
+import { buildBootstrapPrompt, buildMergedTurnPrompt } from './session-runtime-prompts';
 import {
-  buildAgentChatYokeCommands,
-  handoffAgentChatReply,
-  prepareAgentChatYokeRuntime,
-  type AgentChatYokeContext,
-} from './yoke-runtime';
+  enqueueTurn,
+  FORCE_INTERRUPT_FAILURE_ENV,
+  getRoutingState,
+  isForcedInterruptFailure,
+  isInterruptedTurnError,
+  type RoutingRuntimeState,
+} from './session-runtime-turns';
+import type { ChatInterceptStateRecord, RuntimeBotIdentity, WorkspaceSubscriptionRecord } from './types';
+import { handoffAgentChatReply, prepareAgentChatYokeRuntime } from './yoke-runtime';
 
 const DEFAULT_IDLE_RETENTION_MINUTES = 60;
-const SESSION_READY_TIMEOUT_MS = 120_000;
-const ASSISTANT_REPLY_TIMEOUT_MS = 300_000;
-const ASSISTANT_REPLY_POLL_INTERVAL_MS = 1_000;
-const ASSISTANT_REPLY_STABLE_POLLS = 2;
 
 interface AgentChatSessionRuntimeDependencies {
   defaultAgent: AgentType;
@@ -30,379 +30,325 @@ export interface AgentChatSessionRuntimeInput {
   chatMessage: Record<string, unknown>;
 }
 
-interface AssistantReplyResult {
-  content: string;
-  createdAt: string;
-}
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function getMessageBody(chatMessage: Record<string, unknown>): string {
-  const body = typeof chatMessage.body === 'string' ? chatMessage.body.trim() : '';
-  return body;
-}
-
-function getSenderNpub(chatMessage: Record<string, unknown>): string | null {
-  const sender = typeof chatMessage.sender_npub === 'string' ? chatMessage.sender_npub.trim() : '';
-  return sender || null;
-}
-
-function truncateText(value: string, maxLength = 120): string {
-  const compact = value.replace(/\s+/g, ' ').trim();
-  if (!compact) {
-    return '';
-  }
-  return compact.length > maxLength ? `${compact.slice(0, maxLength - 3)}...` : compact;
-}
-
-function formatRecentTurns(context: AgentChatYokeContext | null, fallbackBody: string, fallbackSender: string | null): string {
-  const recentMessages = context?.recent_messages ?? [];
-  if (recentMessages.length > 0) {
-    return recentMessages
-      .map((message, index) => {
-        const sender = message.sender_npub ?? 'unknown';
-        return `${index + 1}. ${sender}: ${truncateText(message.body, 240) || '[empty]'}`;
-      })
-      .join('\n');
-  }
-
-  const sender = fallbackSender ?? 'unknown';
-  const body = truncateText(fallbackBody, 240) || '[empty]';
-  return `1. ${sender}: ${body}`;
-}
-
-function formatParticipants(context: AgentChatYokeContext | null, fallbackParticipants: string[]): string {
-  const participants = context?.participants?.length ? context.participants : fallbackParticipants;
-  return participants.filter((value) => value.length > 0).join(', ') || 'unknown';
-}
-
-function buildBootstrapPrompt(params: {
-  isNewSession: boolean;
-  subscription: WorkspaceSubscriptionRecord;
-  intercept: ChatInterceptStateRecord;
-  session: SessionSnapshot;
-  yokeStateDir: string;
-  context: AgentChatYokeContext | null;
-  contextError: string | null;
-  chatMessage: Record<string, unknown>;
-}): string {
-  const latestBody = getMessageBody(params.chatMessage);
-  const latestSender = getSenderNpub(params.chatMessage);
-  const fallbackParticipants = [params.subscription.botNpub, latestSender ?? ''].filter((value) => value.length > 0);
-  const commands = buildAgentChatYokeCommands(
-    params.yokeStateDir,
-    params.intercept.channelId,
-    params.intercept.threadId,
-  );
-  const recentTurns = formatRecentTurns(params.context, latestBody, latestSender);
-  const participants = formatParticipants(params.context, fallbackParticipants);
-  const bootstrapMode = params.isNewSession ? 'new_session' : 'reused_session';
-
-  return [
-    `Agent Chat runtime event: ${bootstrapMode}.`,
-    '',
-    'Thread package:',
-    `- workspace_owner_npub: ${params.subscription.workspaceOwnerNpub}`,
-    `- channel_id: ${params.intercept.channelId}`,
-    `- thread_id: ${params.intercept.threadId}`,
-    `- target_bot_npub: ${params.subscription.botNpub}`,
-    `- managed_by_npub: ${params.subscription.managedByNpub ?? 'unknown'}`,
-    `- session_id: ${params.session.id}`,
-    `- recent_turn_count: ${params.context?.recent_messages?.length ?? 1}`,
-    `- participants: ${participants}`,
-    '',
-    'Recent turns:',
-    recentTurns,
-    '',
-    'Yoke runtime commands:',
-    `- Prime current context: ${commands.context}`,
-    `- More thread history: ${commands.history}`,
-    `- Search active channel: ${commands.search}`,
-    `- Related threads: ${commands.related}`,
-    `- Reply handoff used by Wingmen after your answer: ${commands.replyCurrent}`,
-    '',
-    params.contextError
-      ? `Yoke context warning: ${params.contextError}`
-      : 'Yoke context is ready in the session state dir shown above.',
-    '',
-    'Instructions:',
-    '- You are replying as the target bot for the current thread only.',
-    '- Use the Yoke commands above if you need more context before answering.',
-    '- Produce one assistant reply for the current thread.',
-    '- Do not tell the human to run commands.',
-    '- Do not include tool transcripts in your final answer.',
-    '- Wingmen will relay your final assistant reply back into the thread.',
-  ].join('\n');
-}
-
 export class AgentChatSessionRuntime {
   private readonly defaultAgent: AgentType;
   private readonly manager: ProcessManager;
   private readonly interceptStore: ChatInterceptStateStore;
   private readonly idleRetentionMs: number;
   private readonly idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly routingQueues = new Map<string, Promise<void>>();
+  private readonly routingStates = new Map<string, RoutingRuntimeState>();
 
   constructor(deps: AgentChatSessionRuntimeDependencies) {
     this.defaultAgent = deps.defaultAgent;
     this.manager = deps.processManager;
     this.interceptStore = deps.interceptStore ?? chatInterceptStateStore;
-    this.idleRetentionMs = Math.max(
-      1,
-      deps.idleRetentionMinutes ?? DEFAULT_IDLE_RETENTION_MINUTES,
-    ) * 60_000;
-    this.restoreIdleTimers();
+    this.idleRetentionMs = Math.max(1, deps.idleRetentionMinutes ?? DEFAULT_IDLE_RETENTION_MINUTES) * 60_000;
+    this.restorePersistedStates();
   }
 
   async handleRoutedChat(input: AgentChatSessionRuntimeInput): Promise<void> {
-    const routingKey = input.intercept.routingKey;
-    const existing = this.routingQueues.get(routingKey) ?? Promise.resolve();
-    const next = existing
-      .catch(() => undefined)
-      .then(async () => {
-        await this.processRoutedChat(input);
-      });
-    this.routingQueues.set(routingKey, next);
-    try {
-      await next;
-    } finally {
-      if (this.routingQueues.get(routingKey) === next) {
-        this.routingQueues.delete(routingKey);
-      }
-    }
-  }
-
-  private async processRoutedChat(input: AgentChatSessionRuntimeInput): Promise<void> {
     let intercept = this.interceptStore.getByRoutingKey(input.intercept.routingKey) ?? input.intercept;
-    intercept = await this.archiveExpiredSessionIfNeeded(intercept);
-    if (intercept.pendingMessageCount < 1 && intercept.state !== 'pending') {
+    intercept = await archiveExpiredSessionIfNeeded({
+      manager: this.manager,
+      interceptStore: this.interceptStore,
+      intercept,
+      idleRetentionMs: this.idleRetentionMs,
+      clearIdleTimer: this.clearIdleTimer.bind(this),
+    });
+
+    const state = getRoutingState(this.routingStates, intercept.routingKey);
+    state.latestInput = { ...input, intercept };
+    enqueueTurn(state, input.chatMessage);
+
+    if (intercept.state === 'blocked_auth' || intercept.state === 'blocked_decrypt') {
+      state.blockedState = intercept.state;
       return;
     }
 
-    let session: SessionSnapshot | null = null;
-    let isNewSession = false;
-    try {
-      const reusable = this.resolveReusableSession(intercept);
-      if (reusable) {
-        session = reusable;
-      } else {
-        session = await this.createAgentChatSession(intercept, input.subscription);
-        isNewSession = true;
+    if (state.processing) {
+      await this.requestInterrupt(intercept.routingKey);
+      return;
+    }
+
+    void this.runRoutingLoop(intercept.routingKey).catch(() => undefined);
+  }
+
+  markSubscriptionBlocked(subscriptionId: string, state: 'blocked_auth' | 'blocked_decrypt', reason: string): void {
+    const now = new Date().toISOString();
+    for (const intercept of this.interceptStore.listBySubscriptionId(subscriptionId)) {
+      this.clearIdleTimer(intercept.routingKey);
+      const latest = saveIntercept(this.interceptStore, intercept, {
+        state,
+        lastActivityAt: now,
+      });
+      const runtime = this.routingStates.get(intercept.routingKey);
+      if (runtime) {
+        runtime.blockedState = state;
       }
+      if (latest.sessionId) void logSession(this.manager, latest.sessionId, `[agent-chat] ${state} (${reason})`);
+    }
+  }
+
+  clearSubscriptionBlocked(subscriptionId: string, reason: string): void {
+    for (const intercept of this.interceptStore.listBySubscriptionId(subscriptionId)) {
+      if (intercept.state !== 'blocked_auth' && intercept.state !== 'blocked_decrypt') {
+        continue;
+      }
+
+      const next = resolveRecoveryState({
+        manager: this.manager,
+        intercept,
+        idleRetentionMs: this.idleRetentionMs,
+      });
+      const recovered = saveIntercept(this.interceptStore, intercept, next);
+      const runtime = this.routingStates.get(intercept.routingKey);
+      if (runtime) {
+        runtime.blockedState = null;
+      }
+      if (recovered.state === 'idle') {
+        this.scheduleIdleTimer(recovered);
+      }
+      if (recovered.sessionId) void logSession(this.manager, recovered.sessionId, `[agent-chat] recovered from blocked state (${reason})`);
+      if (runtime && runtime.queuedTurns.length > 0 && !runtime.processing) {
+        void this.runRoutingLoop(intercept.routingKey).catch(() => undefined);
+      }
+    }
+  }
+
+  private async runRoutingLoop(routingKey: string): Promise<void> {
+    const runtime = getRoutingState(this.routingStates, routingKey);
+    if (runtime.processing) {
+      return;
+    }
+    runtime.processing = true;
+
+    try {
+      while (true) {
+        const latestInput = runtime.latestInput;
+        if (!latestInput || runtime.queuedTurns.length === 0) {
+          break;
+        }
+
+        let intercept = this.interceptStore.getByRoutingKey(routingKey) ?? latestInput.intercept;
+        intercept = await archiveExpiredSessionIfNeeded({
+          manager: this.manager,
+          interceptStore: this.interceptStore,
+          intercept,
+          idleRetentionMs: this.idleRetentionMs,
+          clearIdleTimer: this.clearIdleTimer.bind(this),
+        });
+        if (intercept.state === 'blocked_auth' || intercept.state === 'blocked_decrypt') {
+          runtime.blockedState = intercept.state;
+          break;
+        }
+
+        let session: SessionSnapshot;
+        let isNewSession = false;
+        try {
+          const reusable = resolveReusableSession(this.manager, intercept, this.idleRetentionMs);
+          if (reusable) {
+            session = reusable;
+          } else {
+            session = await createAgentChatSession({
+              defaultAgent: this.defaultAgent,
+              manager: this.manager,
+              intercept,
+              subscription: latestInput.subscription,
+            });
+            isNewSession = true;
+          }
+        } catch (error) {
+          saveIntercept(this.interceptStore, intercept, {
+            state: 'pending',
+            sessionId: null,
+            lastActivityAt: new Date().toISOString(),
+          });
+          throw error;
+        }
+
+        const cycleTurns = runtime.queuedTurns.splice(0);
+        const promptMode = runtime.needsMergedFollowUp || cycleTurns.length > 1
+          ? (intercept.state === 'interrupt_failed' ? 'interrupt_failed_follow_up' : 'interrupt_resumed')
+          : null;
+        runtime.currentSessionId = session.id;
+        runtime.interruptRequested = false;
+        runtime.needsMergedFollowUp = false;
+        this.clearIdleTimer(routingKey);
+
+        intercept = saveIntercept(this.interceptStore, intercept, {
+          sessionId: session.id,
+          state: 'active',
+          pendingMessageCount: consumePendingMessages(this.interceptStore, routingKey, cycleTurns.length),
+          lastActivityAt: new Date().toISOString(),
+        });
+
+        const yokeRuntime = await prepareAgentChatYokeRuntime({
+          sessionId: session.id,
+          workingDirectory: session.workingDirectory,
+          subscription: latestInput.subscription,
+          botIdentity: latestInput.botIdentity,
+          channelId: intercept.channelId,
+          threadId: intercept.threadId,
+        });
+
+        await logSession(
+          this.manager,
+          session.id,
+          `[agent-chat] ${isNewSession ? 'created' : 'reused'} routing_key=${intercept.routingKey} channel=${intercept.channelId} thread=${intercept.threadId}`,
+        );
+        if (yokeRuntime.contextError) await logSession(this.manager, session.id, `[agent-chat] yoke context warning: ${yokeRuntime.contextError}`);
+
+        const prompt = promptMode
+          ? buildMergedTurnPrompt({
+              intercept,
+              yokeStateDir: yokeRuntime.stateDir,
+              contextError: yokeRuntime.contextError,
+              turns: cycleTurns,
+              followUpMode: promptMode,
+            })
+          : buildBootstrapPrompt({
+              isNewSession,
+              subscription: latestInput.subscription,
+              intercept,
+              session,
+              yokeStateDir: yokeRuntime.stateDir,
+              context: yokeRuntime.context,
+              contextError: yokeRuntime.contextError,
+              latestTurn: cycleTurns[cycleTurns.length - 1]!,
+            });
+
+        try {
+          const reply = await sendPromptAndAwaitAssistantReply(this.manager, session.id, prompt);
+          const handoff = await handoffAgentChatReply({
+            workingDirectory: session.workingDirectory,
+            stateDir: yokeRuntime.stateDir,
+            botIdentity: latestInput.botIdentity,
+            channelId: intercept.channelId,
+            threadId: intercept.threadId,
+            body: reply.content,
+          });
+          await logSession(
+            this.manager,
+            session.id,
+            `[agent-chat] reply-current status=${handoff.status} message_id=${handoff.message_id}`,
+          );
+        } catch (error) {
+          if (isInterruptedTurnError(error)) {
+            await logSession(this.manager, session.id, '[agent-chat] turn interrupted for merged follow-up');
+            intercept = saveIntercept(this.interceptStore, intercept, {
+              state: 'active',
+              pendingMessageCount: runtime.queuedTurns.length,
+              lastActivityAt: new Date().toISOString(),
+            });
+            continue;
+          }
+          await logSession(
+            this.manager,
+            session.id,
+            `[agent-chat] turn failed: ${error instanceof Error ? error.message : 'Unknown error.'}`,
+          );
+        }
+
+        const latestIntercept = this.interceptStore.getByRoutingKey(routingKey);
+        if (latestIntercept && (latestIntercept.state === 'blocked_auth' || latestIntercept.state === 'blocked_decrypt')) {
+          runtime.blockedState = latestIntercept.state;
+          break;
+        }
+
+        if (runtime.queuedTurns.length > 0) {
+          intercept = saveIntercept(this.interceptStore, intercept, {
+            state: 'active',
+            pendingMessageCount: runtime.queuedTurns.length,
+            lastActivityAt: new Date().toISOString(),
+          });
+          continue;
+        }
+
+        intercept = saveIntercept(this.interceptStore, intercept, {
+          sessionId: session.id,
+          state: 'idle',
+          pendingMessageCount: 0,
+          lastActivityAt: new Date().toISOString(),
+        });
+        this.scheduleIdleTimer(intercept);
+      }
+    } finally {
+      runtime.processing = false;
+      runtime.currentSessionId = null;
+      runtime.interruptRequested = false;
+      runtime.interruptAttemptInFlight = false;
+    }
+  }
+
+  private async requestInterrupt(routingKey: string): Promise<void> {
+    const runtime = this.routingStates.get(routingKey);
+    const intercept = this.interceptStore.getByRoutingKey(routingKey);
+    if (!runtime || !intercept || !runtime.processing || !runtime.currentSessionId) {
+      return;
+    }
+    if (runtime.interruptRequested || runtime.interruptAttemptInFlight) {
+      runtime.needsMergedFollowUp = true;
+      return;
+    }
+
+    runtime.interruptRequested = true;
+    runtime.interruptAttemptInFlight = true;
+    runtime.needsMergedFollowUp = true;
+    saveIntercept(this.interceptStore, intercept, {
+      state: 'interrupting',
+      pendingMessageCount: runtime.queuedTurns.length,
+      lastActivityAt: new Date().toISOString(),
+    });
+
+    try {
+      if (isForcedInterruptFailure()) {
+        throw new Error(`Forced by ${FORCE_INTERRUPT_FAILURE_ENV}`);
+      }
+      const adapter = this.manager.getAdapter(runtime.currentSessionId);
+      const interrupted = adapter ? await adapter.interruptCurrentTurn() : false;
+      if (!interrupted) {
+        throw new Error('Adapter could not interrupt the current turn.');
+      }
+      await logSession(this.manager, runtime.currentSessionId, '[agent-chat] interrupt requested');
     } catch (error) {
-      this.saveIntercept(intercept, {
-        state: 'pending',
-        sessionId: null,
+      runtime.interruptRequested = false;
+      saveIntercept(this.interceptStore, intercept, {
+        state: 'interrupt_failed',
+        pendingMessageCount: runtime.queuedTurns.length,
         lastActivityAt: new Date().toISOString(),
       });
-      throw error;
-    }
-
-    intercept = this.saveIntercept(intercept, {
-      sessionId: session.id,
-      state: 'active',
-      pendingMessageCount: 0,
-      lastActivityAt: new Date().toISOString(),
-    });
-    this.clearIdleTimer(intercept.routingKey);
-
-    const yokeRuntime = await prepareAgentChatYokeRuntime({
-      sessionId: session.id,
-      workingDirectory: session.workingDirectory,
-      subscription: input.subscription,
-      botIdentity: input.botIdentity,
-      channelId: intercept.channelId,
-      threadId: intercept.threadId,
-    });
-
-    await this.logSession(
-      session.id,
-      `[agent-chat] ${isNewSession ? 'created' : 'reused'} routing_key=${intercept.routingKey} channel=${intercept.channelId} thread=${intercept.threadId}`,
-    );
-    if (yokeRuntime.contextError) {
-      await this.logSession(session.id, `[agent-chat] yoke context warning: ${yokeRuntime.contextError}`);
-    }
-
-    try {
-      const prompt = buildBootstrapPrompt({
-        isNewSession,
-        subscription: input.subscription,
-        intercept,
-        session,
-        yokeStateDir: yokeRuntime.stateDir,
-        context: yokeRuntime.context,
-        contextError: yokeRuntime.contextError,
-        chatMessage: input.chatMessage,
-      });
-      const reply = await this.sendPromptAndAwaitAssistantReply(session.id, prompt);
-      const handoff = await handoffAgentChatReply({
-        workingDirectory: session.workingDirectory,
-        stateDir: yokeRuntime.stateDir,
-        botIdentity: input.botIdentity,
-        channelId: intercept.channelId,
-        threadId: intercept.threadId,
-        body: reply.content,
-      });
-      await this.logSession(
-        session.id,
-        `[agent-chat] reply-current status=${handoff.status} message_id=${handoff.message_id}`,
+      if (runtime.currentSessionId) await logSession(
+        this.manager,
+        runtime.currentSessionId,
+        `[agent-chat] interrupt failed; queued follow-up prompt: ${error instanceof Error ? error.message : 'Unknown error.'}`,
       );
-    } catch (error) {
-      await this.logSession(
-        session.id,
-        `[agent-chat] turn failed: ${error instanceof Error ? error.message : 'Unknown error.'}`,
-      );
+    } finally {
+      runtime.interruptAttemptInFlight = false;
     }
-
-    intercept = this.saveIntercept(intercept, {
-      sessionId: session.id,
-      state: 'idle',
-      lastActivityAt: new Date().toISOString(),
-    });
-    this.scheduleIdleTimer(intercept);
   }
 
-  private resolveReusableSession(intercept: ChatInterceptStateRecord): SessionSnapshot | null {
-    if (!intercept.sessionId) {
-      return null;
-    }
-    const session = this.manager.getSession(intercept.sessionId);
-    if (!session) {
-      return null;
-    }
-    if (session.status !== 'running' && session.status !== 'starting') {
-      return null;
-    }
-    if (this.hasExpiredRetention(intercept)) {
-      return null;
-    }
-    return session;
-  }
-
-  private async createAgentChatSession(
-    intercept: ChatInterceptStateRecord,
-    subscription: WorkspaceSubscriptionRecord,
-  ): Promise<SessionSnapshot> {
-    const sessionName = `Agent Chat ${truncateText(intercept.threadId, 24)}`;
-    const origin: SessionOrigin = {
-      type: 'agent-chat',
-      id: intercept.routingKey,
-      label: `Agent Chat ${truncateText(intercept.channelId, 12)}:${truncateText(intercept.threadId, 12)}`,
-    };
-    return await this.manager.createSession(
-      this.defaultAgent,
-      undefined,
-      sessionName,
-      origin,
-      undefined,
-      subscription.managedByNpub ?? undefined,
-      {
-        AGENT: true,
-        role: 'agent-chat',
-        routedBy: 'agent-chat',
-        createdByNpub: subscription.managedByNpub ?? undefined,
-        lastManagedByNpub: subscription.managedByNpub ?? undefined,
-        chargeToNpub: subscription.managedByNpub ?? undefined,
-      },
-    );
-  }
-
-  private async sendPromptAndAwaitAssistantReply(sessionId: string, prompt: string): Promise<AssistantReplyResult> {
-    const adapter = this.manager.getAdapter(sessionId);
-    if (!adapter) {
-      throw new Error(`No adapter available for session ${sessionId}.`);
-    }
-    await adapter.waitForReady({
-      timeoutMs: SESSION_READY_TIMEOUT_MS,
-      pollIntervalMs: 500,
-    });
-    const initialMessages = await adapter.fetchMessages().catch(() => []);
-    await adapter.sendMessage(prompt, 'user');
-    return await this.awaitAssistantReply(sessionId, initialMessages.length);
-  }
-
-  private async awaitAssistantReply(sessionId: string, initialMessageCount: number): Promise<AssistantReplyResult> {
-    const deadline = Date.now() + ASSISTANT_REPLY_TIMEOUT_MS;
-    let lastSeenContent = '';
-    let stablePolls = 0;
-
-    while (Date.now() < deadline) {
-      await sleep(ASSISTANT_REPLY_POLL_INTERVAL_MS);
-
-      const session = this.manager.getSession(sessionId);
-      if (!session || (session.status !== 'running' && session.status !== 'starting')) {
-        throw new Error(`Session ${sessionId} stopped before producing a reply.`);
-      }
-
-      const adapter = this.manager.getAdapter(sessionId);
-      if (!adapter) {
-        throw new Error(`Session ${sessionId} no longer has an adapter.`);
-      }
-
-      let messages: Array<{ role: string; content: string; createdAt: string }>;
-      try {
-        messages = await adapter.fetchMessages();
-      } catch {
-        continue;
-      }
-
-      const newAssistantMessage = messages
-        .slice(initialMessageCount)
-        .filter((message) => message.role === 'assistant' && message.content.trim().length > 0)
-        .at(-1);
-
-      if (!newAssistantMessage) {
-        continue;
-      }
-
-      const readyForHandoff = session.agentRuntimeStatus === 'stable' || session.agentRuntimeStatus == null;
-      if (newAssistantMessage.content === lastSeenContent && readyForHandoff) {
-        stablePolls += 1;
-      } else {
-        lastSeenContent = newAssistantMessage.content;
-        stablePolls = readyForHandoff ? 1 : 0;
-      }
-
-      if (stablePolls >= ASSISTANT_REPLY_STABLE_POLLS) {
-        return {
-          content: newAssistantMessage.content.trim(),
-          createdAt: newAssistantMessage.createdAt,
-        };
-      }
-    }
-
-    throw new Error(`Timed out waiting for an assistant reply from session ${sessionId}.`);
-  }
-
-  private restoreIdleTimers(): void {
+  private restorePersistedStates(): void {
     for (const intercept of this.interceptStore.listAll()) {
-      if (intercept.state !== 'idle' || !intercept.sessionId) {
-        continue;
+      let next = intercept;
+      if (intercept.state === 'active' || intercept.state === 'interrupting' || intercept.state === 'interrupt_failed') {
+        next = saveIntercept(
+          this.interceptStore,
+          intercept,
+          resolveRecoveryState({
+            manager: this.manager,
+            intercept,
+            idleRetentionMs: this.idleRetentionMs,
+          }),
+        );
       }
-      if (this.hasExpiredRetention(intercept)) {
-        void this.archiveChatSession(intercept, 'retention-expired-startup');
-        continue;
+      if (next.state === 'idle' && next.sessionId) {
+        if (hasExpiredRetention(next, this.idleRetentionMs)) {
+          void archiveChatSession({ manager: this.manager, interceptStore: this.interceptStore, intercept: next, reason: 'retention-expired-startup' });
+          continue;
+        }
+        this.scheduleIdleTimer(next);
       }
-      this.scheduleIdleTimer(intercept);
     }
-  }
-
-  private async archiveExpiredSessionIfNeeded(intercept: ChatInterceptStateRecord): Promise<ChatInterceptStateRecord> {
-    if (intercept.state !== 'idle' || !intercept.sessionId) {
-      return intercept;
-    }
-    if (!this.hasExpiredRetention(intercept)) {
-      return intercept;
-    }
-    return await this.archiveChatSession(intercept, 'retention-expired');
-  }
-
-  private hasExpiredRetention(intercept: ChatInterceptStateRecord): boolean {
-    const lastActivityAt = Date.parse(intercept.lastActivityAt);
-    if (!Number.isFinite(lastActivityAt)) {
-      return false;
-    }
-    return Date.now() - lastActivityAt >= this.idleRetentionMs;
   }
 
   private scheduleIdleTimer(intercept: ChatInterceptStateRecord): void {
@@ -419,7 +365,7 @@ export class AgentChatSessionRuntime {
       if (!latest || latest.state !== 'idle' || !latest.sessionId) {
         return;
       }
-      void this.archiveChatSession(latest, 'retention-expired');
+      void archiveChatSession({ manager: this.manager, interceptStore: this.interceptStore, intercept: latest, reason: 'retention-expired' });
     }, delayMs);
     timer.unref?.();
     this.idleTimers.set(intercept.routingKey, timer);
@@ -432,50 +378,5 @@ export class AgentChatSessionRuntime {
     }
     clearTimeout(timer);
     this.idleTimers.delete(routingKey);
-  }
-
-  private async archiveChatSession(
-    intercept: ChatInterceptStateRecord,
-    reason: string,
-  ): Promise<ChatInterceptStateRecord> {
-    this.clearIdleTimer(intercept.routingKey);
-    if (intercept.sessionId) {
-      try {
-        const stopped = await this.manager.stopSession(intercept.sessionId);
-        if (stopped) {
-          scheduleSessionArchive(intercept.sessionId, this.manager);
-          await this.logSession(stopped.id, `[agent-chat] session archived (${reason})`);
-        } else if (!this.manager.getSession(intercept.sessionId)) {
-          scheduleSessionArchive(intercept.sessionId, this.manager);
-        }
-      } catch (error) {
-        await this.logSession(
-          intercept.sessionId,
-          `[agent-chat] archive stop failed (${reason}): ${error instanceof Error ? error.message : 'Unknown error.'}`,
-        );
-      }
-    }
-    return this.saveIntercept(intercept, {
-      sessionId: null,
-      state: 'archived',
-      pendingMessageCount: 0,
-      lastActivityAt: new Date().toISOString(),
-    });
-  }
-
-  private saveIntercept(
-    intercept: ChatInterceptStateRecord,
-    patch: Partial<ChatInterceptStateRecord>,
-  ): ChatInterceptStateRecord {
-    const latest = this.interceptStore.getByRoutingKey(intercept.routingKey) ?? intercept;
-    return this.interceptStore.save({
-      ...latest,
-      ...patch,
-      updatedAt: new Date().toISOString(),
-    });
-  }
-
-  private async logSession(sessionId: string, entry: string): Promise<void> {
-    this.manager.appendSessionLog(sessionId, entry);
   }
 }

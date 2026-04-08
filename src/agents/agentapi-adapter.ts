@@ -63,6 +63,10 @@ export class AgentApiAdapter implements AgentAdapter {
     return fetchAgentMessages(this.host, this.port);
   }
 
+  async interruptCurrentTurn(): Promise<boolean> {
+    return false;
+  }
+
   getEventsUrl(): URL | null {
     return buildAgentUrl(this.host, this.port, "/events");
   }

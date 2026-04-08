@@ -6,6 +6,7 @@ export type ChatInterceptStateStatus =
   | 'pending'
   | 'active'
   | 'interrupting'
+  | 'interrupt_failed'
   | 'idle'
   | 'archived'
   | 'blocked_auth'

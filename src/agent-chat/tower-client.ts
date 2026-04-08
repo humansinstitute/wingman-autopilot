@@ -177,6 +177,7 @@ function inferDetailCode(stage: string, status: number, message: string): string
   }
   if (stage === 'group_key_fetch') {
     if (status === 403) return 'group_membership_revoked';
+    if (lowered.includes('epoch')) return 'group_key_epoch_stale';
     if (lowered.includes('missing wrapped group keys')) return 'group_key_missing';
   }
   if (stage === 'stream_connect') {
@@ -184,11 +185,13 @@ function inferDetailCode(stage: string, status: number, message: string): string
     if (status === 401) return 'workspace_key_invalid';
   }
   if (stage === 'record_history') {
-    if (status === 403) return 'record_pull_forbidden';
+    if (status === 403) return 'group_membership_revoked';
     if (status === 404) return 'record_pull_not_found';
+    if (lowered.includes('epoch')) return 'group_key_epoch_stale';
   }
   if (lowered.includes('workspace key revoked')) return 'workspace_key_revoked';
   if (lowered.includes('workspace key invalid')) return 'workspace_key_invalid';
+  if (lowered.includes('epoch')) return 'group_key_epoch_stale';
   if (lowered.includes('group key')) return 'group_key_missing';
   return null;
 }

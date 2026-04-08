@@ -26,6 +26,7 @@ function normaliseState(value: unknown): ChatInterceptStateStatus {
   switch (value) {
     case 'active':
     case 'interrupting':
+    case 'interrupt_failed':
     case 'idle':
     case 'archived':
     case 'blocked_auth':

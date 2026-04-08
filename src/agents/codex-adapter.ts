@@ -115,11 +115,12 @@ export class CodexAdapter implements AgentAdapter {
     }
 
     this.state = "busy";
-    this.currentAbort = new AbortController();
+    const abortController = new AbortController();
+    this.currentAbort = abortController;
 
     try {
       const { events } = await this.thread.runStreamed(content, {
-        signal: this.currentAbort.signal,
+        signal: abortController.signal,
       });
 
       // Capture the thread ID after the first turn if not yet stored
@@ -179,8 +180,20 @@ export class CodexAdapter implements AgentAdapter {
           createdAt: new Date().toISOString(),
         });
       }
+    } catch (error) {
+      if (
+        abortController.signal.aborted ||
+        (error instanceof Error && error.name === "AbortError")
+      ) {
+        const interrupted = new Error("Agent turn interrupted.");
+        (interrupted as Error & { code?: string }).code = "agent_turn_interrupted";
+        throw interrupted;
+      }
+      throw error;
     } finally {
-      this.currentAbort = null;
+      if (this.currentAbort === abortController) {
+        this.currentAbort = null;
+      }
       this.state = "ready";
     }
   }
@@ -191,6 +204,14 @@ export class CodexAdapter implements AgentAdapter {
       content: m.content,
       createdAt: m.createdAt,
     }));
+  }
+
+  async interruptCurrentTurn(): Promise<boolean> {
+    if (!this.currentAbort) {
+      return false;
+    }
+    this.currentAbort.abort();
+    return true;
   }
 
   getEventsUrl(): URL | null {

@@ -45,6 +45,9 @@ export interface AgentAdapter {
   /** Fetch conversation message history */
   fetchMessages(): Promise<AgentMessage[]>;
 
+  /** Interrupt the current turn when the adapter supports it */
+  interruptCurrentTurn(): Promise<boolean>;
+
   /**
    * Get the URL for the agent's SSE event stream.
    * Returns null if the adapter handles streaming through a different mechanism.

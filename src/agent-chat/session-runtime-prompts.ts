@@ -1,0 +1,163 @@
+import type { SessionSnapshot } from '../agents/process-manager';
+import type { ChatInterceptStateRecord, WorkspaceSubscriptionRecord } from './types';
+import { buildAgentChatYokeCommands, type AgentChatYokeContext } from './yoke-runtime';
+
+export interface QueuedChatTurn {
+  messageId: string | null;
+  senderNpub: string | null;
+  sentAt: string;
+  content: string;
+}
+
+function truncateText(value: string, maxLength = 120): string {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  if (!compact) {
+    return '';
+  }
+  return compact.length > maxLength ? `${compact.slice(0, maxLength - 3)}...` : compact;
+}
+
+function formatRecentTurns(context: AgentChatYokeContext | null, fallbackTurn: QueuedChatTurn): string {
+  const recentMessages = context?.recent_messages ?? [];
+  if (recentMessages.length > 0) {
+    return recentMessages
+      .map((message, index) => {
+        const sender = message.sender_npub ?? 'unknown';
+        return `${index + 1}. ${sender}: ${truncateText(message.body, 240) || '[empty]'}`;
+      })
+      .join('\n');
+  }
+
+  const sender = fallbackTurn.senderNpub ?? 'unknown';
+  const body = truncateText(fallbackTurn.content, 240) || '[empty]';
+  return `1. ${sender}: ${body}`;
+}
+
+function formatParticipants(context: AgentChatYokeContext | null, fallbackParticipants: string[]): string {
+  const participants = context?.participants?.length ? context.participants : fallbackParticipants;
+  return participants.filter((value) => value.length > 0).join(', ') || 'unknown';
+}
+
+function buildMergePackage(
+  intercept: ChatInterceptStateRecord,
+  turns: QueuedChatTurn[],
+): string {
+  return JSON.stringify(
+    {
+      type: 'chat_turn_merge_v1',
+      routing_key: intercept.routingKey,
+      thread_id: intercept.threadId,
+      messages: turns.map((turn) => ({
+        message_id: turn.messageId,
+        sender_npub: turn.senderNpub,
+        sent_at: turn.sentAt,
+        content: turn.content,
+      })),
+    },
+    null,
+    2,
+  );
+}
+
+export function buildBootstrapPrompt(params: {
+  isNewSession: boolean;
+  subscription: WorkspaceSubscriptionRecord;
+  intercept: ChatInterceptStateRecord;
+  session: SessionSnapshot;
+  yokeStateDir: string;
+  context: AgentChatYokeContext | null;
+  contextError: string | null;
+  latestTurn: QueuedChatTurn;
+}): string {
+  const fallbackParticipants = [params.subscription.botNpub, params.latestTurn.senderNpub ?? ''].filter(
+    (value) => value.length > 0,
+  );
+  const commands = buildAgentChatYokeCommands(
+    params.yokeStateDir,
+    params.intercept.channelId,
+    params.intercept.threadId,
+  );
+  const recentTurns = formatRecentTurns(params.context, params.latestTurn);
+  const participants = formatParticipants(params.context, fallbackParticipants);
+  const bootstrapMode = params.isNewSession ? 'new_session' : 'reused_session';
+
+  return [
+    `Agent Chat runtime event: ${bootstrapMode}.`,
+    '',
+    'Thread package:',
+    `- workspace_owner_npub: ${params.subscription.workspaceOwnerNpub}`,
+    `- channel_id: ${params.intercept.channelId}`,
+    `- thread_id: ${params.intercept.threadId}`,
+    `- target_bot_npub: ${params.subscription.botNpub}`,
+    `- managed_by_npub: ${params.subscription.managedByNpub ?? 'unknown'}`,
+    `- session_id: ${params.session.id}`,
+    `- recent_turn_count: ${params.context?.recent_messages?.length ?? 1}`,
+    `- participants: ${participants}`,
+    '',
+    'Recent turns:',
+    recentTurns,
+    '',
+    'Yoke runtime commands:',
+    `- Prime current context: ${commands.context}`,
+    `- More thread history: ${commands.history}`,
+    `- Search active channel: ${commands.search}`,
+    `- Related threads: ${commands.related}`,
+    `- Reply handoff used by Wingmen after your answer: ${commands.replyCurrent}`,
+    '',
+    params.contextError
+      ? `Yoke context warning: ${params.contextError}`
+      : 'Yoke context is ready in the session state dir shown above.',
+    '',
+    'Instructions:',
+    '- You are replying as the target bot for the current thread only.',
+    '- Use the Yoke commands above if you need more context before answering.',
+    '- Produce one assistant reply for the current thread.',
+    '- Do not tell the human to run commands.',
+    '- Do not include tool transcripts in your final answer.',
+    '- Wingmen will relay your final assistant reply back into the thread.',
+  ].join('\n');
+}
+
+export function buildMergedTurnPrompt(params: {
+  intercept: ChatInterceptStateRecord;
+  yokeStateDir: string;
+  contextError: string | null;
+  turns: QueuedChatTurn[];
+  followUpMode: 'interrupt_resumed' | 'interrupt_failed_follow_up';
+}): string {
+  const commands = buildAgentChatYokeCommands(
+    params.yokeStateDir,
+    params.intercept.channelId,
+    params.intercept.threadId,
+  );
+  const mergePackage = buildMergePackage(params.intercept, params.turns);
+
+  return [
+    `Agent Chat runtime event: ${params.followUpMode}.`,
+    '',
+    'A busy thread received additional user turns. Process the merged update package below in arrival order and continue on the same thread.',
+    '',
+    'Merge package JSON:',
+    '```json',
+    mergePackage,
+    '```',
+    '',
+    'Yoke runtime commands:',
+    `- Prime current context: ${commands.context}`,
+    `- More thread history: ${commands.history}`,
+    `- Search active channel: ${commands.search}`,
+    `- Related threads: ${commands.related}`,
+    `- Reply handoff used by Wingmen after your answer: ${commands.replyCurrent}`,
+    '',
+    params.contextError
+      ? `Yoke context warning: ${params.contextError}`
+      : 'Yoke context is ready in the session state dir shown above.',
+    '',
+    'Instructions:',
+    '- Stay on the current session and current routing key.',
+    '- Treat the JSON package as authoritative for the newly arrived user turns.',
+    '- Preserve the arrival order of the merged user turns when reasoning about the reply.',
+    '- Produce one assistant reply that addresses the current merged thread state.',
+    '- Do not include the JSON package verbatim in the final answer.',
+  ].join('\n');
+}

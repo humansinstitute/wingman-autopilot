@@ -33,6 +33,8 @@ interface RuntimeContext {
   removed: boolean;
 }
 
+type RuntimeFailureState = 'blocked_auth' | 'blocked_decrypt' | null;
+
 export interface WorkspaceSubscriptionManagerDependencies {
   store?: WorkspaceSubscriptionStore;
   routingEvaluator?: AgentChatRoutingEvaluator;
@@ -41,6 +43,35 @@ export interface WorkspaceSubscriptionManagerDependencies {
     getActiveKeyForUser: (npub: string) => BotKeyStoreRecord | null;
     getActiveKeyForBotNpub: (botNpub: string) => BotKeyStoreRecord | null;
   };
+}
+
+function getErrorDetailCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
+  const detailCode = (error as { detailCode?: unknown }).detailCode;
+  return typeof detailCode === 'string' && detailCode.trim().length > 0 ? detailCode.trim() : null;
+}
+
+function mapFailureState(detailCode: string | null): RuntimeFailureState {
+  switch (detailCode) {
+    case 'workspace_key_register_failed':
+    case 'workspace_auth_failed':
+    case 'workspace_key_missing':
+    case 'workspace_access_denied':
+    case 'workspace_key_revoked':
+    case 'workspace_key_invalid':
+    case 'sse_stream_forbidden':
+      return 'blocked_auth';
+    case 'record_pull_forbidden':
+    case 'group_membership_revoked':
+    case 'group_key_epoch_stale':
+    case 'group_key_missing':
+    case 'record_decrypt_failed':
+      return 'blocked_decrypt';
+    default:
+      return null;
+  }
 }
 
 export class WorkspaceSubscriptionManager {
@@ -104,6 +135,7 @@ export class WorkspaceSubscriptionManager {
 
     try {
       record = await this.registerWorkspaceKey(record, botIdentity);
+      this.clearRuntimeFailure(record.subscriptionId, 'workspace_key_registered');
     } catch (error) {
       record.wsKeyStatus = 'failed';
       record.sseStatus = 'disconnected';
@@ -115,7 +147,13 @@ export class WorkspaceSubscriptionManager {
         error instanceof Error ? error.message : 'Workspace key registration failed.',
         typeof (error as { detailCode?: string })?.detailCode === 'string' ? (error as { detailCode: string }).detailCode : null,
       );
-      return this.saveRecord(record);
+      const saved = this.saveRecord(record);
+      this.markRuntimeFailure(
+        saved.subscriptionId,
+        getErrorDetailCode(error) ?? 'workspace_key_register_failed',
+        'workspace_key_register_failed',
+      );
+      return saved;
     }
 
     record = await this.refreshGroupKeys(record, botIdentity, true);
@@ -141,7 +179,8 @@ export class WorkspaceSubscriptionManager {
               'workspace_key_missing',
             ),
           };
-          this.saveRecord(failed);
+          const saved = this.saveRecord(failed);
+          this.markRuntimeFailure(saved.subscriptionId, 'workspace_key_register_failed', 'startup_reload_failed');
           continue;
         }
 
@@ -150,6 +189,7 @@ export class WorkspaceSubscriptionManager {
         const refreshed = await this.refreshGroupKeys(prepared, botIdentity, false);
         refreshed.lastSuccessfulStartupReloadAt = new Date().toISOString();
         this.saveRecord(refreshed);
+        this.clearRuntimeFailure(refreshed.subscriptionId, 'startup_reload_recovered');
         await this.ensureConnected(refreshed, botIdentity, true);
       } catch (error) {
         const failed = {
@@ -163,7 +203,12 @@ export class WorkspaceSubscriptionManager {
             'workspace_auth_failed',
           ),
         };
-        this.saveRecord(failed);
+        const saved = this.saveRecord(failed);
+        this.markRuntimeFailure(
+          saved.subscriptionId,
+          getErrorDetailCode(error) ?? 'workspace_auth_failed',
+          'startup_reload_failed',
+        );
       }
     }
   }
@@ -303,6 +348,7 @@ export class WorkspaceSubscriptionManager {
       });
       record.lastErrorCode = null;
       record.lastErrorAt = null;
+      this.clearRuntimeFailure(record.subscriptionId, 'group_keys_refreshed');
     } catch (error) {
       record.groupKeyStatus = record.wrappedGroupKeysJson ? 'refresh_required' : 'failed';
       record.lastErrorCode = 'group_key_fetch_failed';
@@ -327,6 +373,11 @@ export class WorkspaceSubscriptionManager {
       if (!allowFailure) {
         record.healthStatus = 'degraded';
       }
+      this.markRuntimeFailure(
+        record.subscriptionId,
+        getErrorDetailCode(error) ?? 'group_key_fetch_failed',
+        'group_key_refresh_required',
+      );
     }
     return this.saveRecord(this.recomputeHealth(record));
   }
@@ -383,6 +434,7 @@ export class WorkspaceSubscriptionManager {
         record.lastSuccessfulStartupReloadAt = new Date().toISOString();
       }
       record = this.saveRecord(this.recomputeHealth(record));
+      this.clearRuntimeFailure(record.subscriptionId, 'sse_connected');
 
       for await (const event of parseSseEvents(response.body)) {
         if (signal.aborted) {
@@ -414,6 +466,7 @@ export class WorkspaceSubscriptionManager {
         payload: { message, detailCode },
       };
       this.saveRecord(this.recomputeHealth(record));
+      this.markRuntimeFailure(subscriptionId, detailCode, 'sse_connect_failed');
 
       const delay = Math.min(1_000 * Math.pow(2, runtime.reconnectAttempts), 60_000);
       runtime.reconnectAttempts += 1;
@@ -451,7 +504,9 @@ export class WorkspaceSubscriptionManager {
 
     if (eventType === 'connected') {
       record.sseStatus = 'connected';
-      return this.saveRecord(this.recomputeHealth(record));
+      const saved = this.saveRecord(this.recomputeHealth(record));
+      this.clearRuntimeFailure(saved.subscriptionId, 'sse_connected_event');
+      return saved;
     }
 
     if (eventType === 'record-changed' && payload?.family_hash === buildChatMessageFamilyHash(record.sourceAppNpub)) {
@@ -516,6 +571,7 @@ export class WorkspaceSubscriptionManager {
         record.lastRoutingResult = routingResult.diagnostic;
         record.lastErrorCode = null;
         record.lastErrorAt = null;
+        this.clearRuntimeFailure(record.subscriptionId, 'chat_record_decrypted');
         if (routingResult.intercept && this.chatRuntime) {
           void this.chatRuntime.handleRoutedChat({
             subscription: record,
@@ -531,64 +587,60 @@ export class WorkspaceSubscriptionManager {
           });
         }
       } catch (error) {
+        const detailCode = typeof (error as { code?: string; detailCode?: string })?.code === 'string'
+          ? (error as { code: string }).code
+          : typeof (error as { detailCode?: string })?.detailCode === 'string'
+            ? (error as { detailCode: string }).detailCode
+            : 'record_decrypt_failed';
         record.groupKeyStatus = 'refresh_required';
         record.lastErrorCode = 'decrypt_failed';
         record.lastErrorAt = new Date().toISOString();
         record.lastDecryptResult = buildFailureDiagnostic(
           'decrypt_failed',
           error instanceof Error ? error.message : 'Decrypt failed.',
-          typeof (error as { code?: string; detailCode?: string })?.code === 'string'
-            ? (error as { code: string }).code
-            : typeof (error as { detailCode?: string })?.detailCode === 'string'
-              ? (error as { detailCode: string }).detailCode
-              : 'record_decrypt_failed',
+          detailCode,
           { record_id: recordId },
         );
         record.lastRoutingResult = buildFailureDiagnostic(
           'target_bot_not_decrypt_capable',
           error instanceof Error ? error.message : 'Routing skipped because the chat record could not be decrypted.',
-          typeof (error as { code?: string; detailCode?: string })?.code === 'string'
-            ? (error as { code: string }).code
-            : typeof (error as { detailCode?: string })?.detailCode === 'string'
-              ? (error as { detailCode: string }).detailCode
-              : 'record_decrypt_failed',
+          detailCode,
           {
             record_id: recordId,
             target_bot_npub: record.botNpub,
           },
         );
+        this.markRuntimeFailure(record.subscriptionId, detailCode, 'record_decrypt_failed');
       }
     } catch (error) {
+      const detailCode = typeof (error as { detailCode?: string })?.detailCode === 'string'
+        ? (error as { detailCode: string }).detailCode
+        : 'record_pull_failed';
       record.groupKeyStatus = 'refresh_required';
       record.lastErrorCode = 'decrypt_failed';
       record.lastErrorAt = new Date().toISOString();
       record.lastRecordPullResult = buildFailureDiagnostic(
         'record_pull_failed',
         error instanceof Error ? error.message : 'Record pull failed.',
-        typeof (error as { detailCode?: string })?.detailCode === 'string'
-          ? (error as { detailCode: string }).detailCode
-          : 'record_pull_failed',
+        detailCode,
         { record_id: recordId },
       );
       record.lastDecryptResult = buildFailureDiagnostic(
         'decrypt_failed',
         'Decrypt skipped because record pull failed.',
-        typeof (error as { detailCode?: string })?.detailCode === 'string'
-          ? (error as { detailCode: string }).detailCode
-          : 'record_pull_failed',
+        detailCode,
         { record_id: recordId },
       );
       record.lastRoutingResult = buildFailureDiagnostic(
         'target_bot_not_decrypt_capable',
         'Routing skipped because the chat record could not be pulled.',
-        typeof (error as { detailCode?: string })?.detailCode === 'string'
-          ? (error as { detailCode: string }).detailCode
-          : 'record_pull_failed',
+        detailCode,
         {
           record_id: recordId,
           target_bot_npub: record.botNpub,
         },
       );
+      this.markRuntimeFailure(record.subscriptionId, detailCode, 'record_pull_failed');
     }
     return this.saveRecord(this.recomputeHealth(record));
   }
@@ -629,6 +681,21 @@ export class WorkspaceSubscriptionManager {
   private saveRecord(record: WorkspaceSubscriptionRecord): WorkspaceSubscriptionRecord {
     record.updatedAt = new Date().toISOString();
     return this.store.save(record);
+  }
+
+  private markRuntimeFailure(subscriptionId: string, detailCode: string | null, reason: string): void {
+    const state = mapFailureState(detailCode);
+    if (!state || !this.chatRuntime) {
+      return;
+    }
+    this.chatRuntime.markSubscriptionBlocked(subscriptionId, state, reason);
+  }
+
+  private clearRuntimeFailure(subscriptionId: string, reason: string): void {
+    if (!this.chatRuntime) {
+      return;
+    }
+    this.chatRuntime.clearSubscriptionBlocked(subscriptionId, reason);
   }
 
   private recomputeHealth(record: WorkspaceSubscriptionRecord): WorkspaceSubscriptionRecord {

@@ -160,6 +160,10 @@ export class OpenCodeAdapter implements AgentAdapter {
     }));
   }
 
+  async interruptCurrentTurn(): Promise<boolean> {
+    return false;
+  }
+
   getEventsUrl(): URL | null {
     // OpenCode has its own SSE endpoint — return it so session-events.ts can proxy
     try {
