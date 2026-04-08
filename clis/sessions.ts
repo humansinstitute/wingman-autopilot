@@ -37,7 +37,7 @@ Options:
   --name <name>        Session name (for create)
   --directory <path>   Working directory (for create)
   --model <model>      Model override (for create)
-  --owner <npub>       Use delegated owner-space routes for live session commands
+  --owner <npub>       Use delegated owner-space routes for live session and archive commands
   --limit <n>          Pagination limit (for archive, default: 50)
   --offset <n>         Pagination offset (for archive)
   --filter <text>      Filter archived sessions
@@ -50,6 +50,7 @@ Examples:
   bun clis/sessions.ts create claude-code --name "my-task" --directory /tmp/project
   bun clis/sessions.ts list --owner npub1owner...
   bun clis/sessions.ts create codex --owner npub1owner... --name "worker" --directory /Users/mini/code/wingmen
+  bun clis/sessions.ts archive --owner npub1owner... --limit 20
   bun clis/sessions.ts logs abc123
   bun clis/sessions.ts artifacts abc123
   bun clis/sessions.ts queue abc123
@@ -153,6 +154,21 @@ async function run() {
       return `/api/owners/${encodeURIComponent(ownerTarget)}/sessions`;
     }
     return "/api/sessions";
+  }
+
+  function archiveCollectionPath(): string {
+    if (ownerTarget) {
+      return `/api/owners/${encodeURIComponent(ownerTarget)}/archive`;
+    }
+    return "/api/archive";
+  }
+
+  function archivePath(id: string): string {
+    return `${archiveCollectionPath()}/${encodeURIComponent(id)}`;
+  }
+
+  function archiveMessagesPath(id: string): string {
+    return `${archivePath(id)}/messages`;
   }
 
   function sessionPath(id: string): string {
@@ -389,13 +405,12 @@ async function run() {
     }
 
     case "archive": {
-      ensureSelfSpaceOnly("archive");
       const params = new URLSearchParams();
       if (limit) params.set("limit", limit);
       if (offset) params.set("offset", offset);
       if (filter) params.set("filter", filter);
       const qs = params.toString();
-      const path = `/api/archive${qs ? `?${qs}` : ""}`;
+      const path = `${archiveCollectionPath()}${qs ? `?${qs}` : ""}`;
       const payload = await req<{ sessions?: Session[]; archives?: Session[] }>("GET", path);
       const archives = Array.isArray(payload.sessions)
         ? payload.sessions
@@ -419,20 +434,18 @@ async function run() {
     }
 
     case "archive-info": {
-      ensureSelfSpaceOnly("archive-info");
       const id = positional[1];
       if (!id) throw new Error("archive-info requires <id>");
-      const payload = await req<Record<string, unknown>>("GET", `/api/archive/${encodeURIComponent(id)}`);
+      const payload = await req<Record<string, unknown>>("GET", archivePath(id));
       console.log(JSON.stringify(payload, null, 2));
       break;
     }
 
     case "archive-logs": {
-      ensureSelfSpaceOnly("archive-logs");
       const id = positional[1];
       if (!id) throw new Error("archive-logs requires <id>");
       const payload = await req<{ messages?: Array<Record<string, unknown>> }>(
-        "GET", `/api/archive/${encodeURIComponent(id)}/messages`,
+        "GET", archiveMessagesPath(id),
       );
       const messages = Array.isArray(payload.messages)
         ? payload.messages
@@ -446,10 +459,9 @@ async function run() {
     }
 
     case "archive-delete": {
-      ensureSelfSpaceOnly("archive-delete");
       const id = positional[1];
       if (!id) throw new Error("archive-delete requires <id>");
-      await req("DELETE", `/api/archive/${encodeURIComponent(id)}`);
+      await req("DELETE", archivePath(id));
       console.log(`Deleted archive: ${id}`);
       break;
     }

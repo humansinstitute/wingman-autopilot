@@ -8,6 +8,7 @@ import type { AgentType } from "../config";
 import type { ProcessManager, SessionOrigin, SessionSnapshot } from "../agents/process-manager";
 import type { RequestAuthContext } from "../auth/request-context";
 import type { AccessAction } from "../auth/access-control";
+import type { WorkspaceScope } from "../workspaces/workspace-scope";
 import { normaliseNpub, deriveNpubSegment } from "../identity/npub-utils";
 import { generateIdentityAlias } from "../identity/identity-alias";
 import { validateInput, ArchiveListOptionsSchema } from "../utils/validation";
@@ -21,7 +22,13 @@ import {
   isCreditsBillingSession,
   resolveSessionChargeNpub,
 } from "../sessions/session-metadata";
-import { DelegationScopes, getDelegatedBillingNpub, resolveOwnerAccess } from "../auth/delegation-access";
+import {
+  buildDelegatedWorkspaceScope,
+  createOwnerScopedAuthContext,
+  DelegationScopes,
+  getDelegatedBillingNpub,
+  resolveOwnerAccess,
+} from "../auth/delegation-access";
 import type { WorkspaceDelegationStore } from "../storage/workspace-delegation-store";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
@@ -98,6 +105,7 @@ export interface SessionApiContext {
   ensureApiAccess: (action: AccessAction, request: Request, url: URL, authContext: RequestAuthContext) => Promise<Response | null>;
   ensureViewerHasBalance: (authContext: RequestAuthContext, options: BalanceRequirementOptions) => Response | { balance: number };
   shouldRequireBalanceForAgent: (agent: AgentType) => Promise<boolean>;
+  resolveWorkspace: (context?: RequestAuthContext) => WorkspaceScope;
 
   // Session helpers
   serializeSession: (session: SessionSnapshot) => Record<string, unknown>;
@@ -115,7 +123,11 @@ export interface SessionApiContext {
   isAgentType: (value: string) => value is AgentType;
   normaliseSessionNameInput: (value: unknown) => string | null;
   parseSessionWorkspaceRequest: (input: unknown) => SessionWorkspaceRequest;
-  resolveSessionWorkingDirectory: (directoryInput: string | undefined, workspace: SessionWorkspaceRequest) => Promise<string>;
+  resolveSessionWorkingDirectory: (
+    directoryInput: string | undefined,
+    workspace: SessionWorkspaceRequest,
+    workspaceScopeOverride?: WorkspaceScope,
+  ) => Promise<string>;
   parseSessionOriginInput: (value: unknown) => SessionOrigin | null;
   buildAgentUrl: (host: string, port: number, path: string) => string | URL;
 
@@ -232,6 +244,11 @@ type OwnerSessionRouteMatch = {
   remainder: string[];
 };
 
+type OwnerArchiveRouteMatch = {
+  ownerNpub: string;
+  remainder: string[];
+};
+
 const matchOwnerSessionRoute = (pathname: string): OwnerSessionRouteMatch | null => {
   const parts = pathname.split("/").filter(Boolean);
   if (parts.length < 4 || parts[0] !== "api" || parts[1] !== "owners") {
@@ -239,6 +256,21 @@ const matchOwnerSessionRoute = (pathname: string): OwnerSessionRouteMatch | null
   }
   const ownerNpub = normaliseNpub(parts[2] ?? null);
   if (!ownerNpub || parts[3] !== "sessions") {
+    return null;
+  }
+  return {
+    ownerNpub,
+    remainder: parts.slice(4),
+  };
+};
+
+const matchOwnerArchiveRoute = (pathname: string): OwnerArchiveRouteMatch | null => {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length < 4 || parts[0] !== "api" || parts[1] !== "owners") {
+    return null;
+  }
+  const ownerNpub = normaliseNpub(parts[2] ?? null);
+  if (!ownerNpub || parts[3] !== "archive") {
     return null;
   }
   return {
@@ -292,6 +324,23 @@ const resolveOwnerSessionScope = (method: HttpMethod, remainder: string[]): stri
   return DelegationScopes.SessionsManage;
 };
 
+const archivedSessionBelongsToOwner = (
+  archivedSession: { npub: string | null; metadata?: { ownerNpub?: unknown } | null },
+  ownerNpub: string,
+  ctx: SessionApiContext,
+): boolean => {
+  const metadataOwnerNpub =
+    archivedSession.metadata &&
+    typeof archivedSession.metadata === "object" &&
+    typeof archivedSession.metadata.ownerNpub === "string"
+      ? normaliseNpub(archivedSession.metadata.ownerNpub)
+      : null;
+  if (metadataOwnerNpub) {
+    return metadataOwnerNpub === ownerNpub;
+  }
+  return ctx.sessionBelongsToViewer(archivedSession.npub, ownerNpub, false);
+};
+
 /**
  * Main handler for /api/sessions/* and /api/archive/* routes.
  * Returns null if the route doesn't match, otherwise returns a Response.
@@ -304,6 +353,79 @@ export async function handleSessionApi(
   ctx: SessionApiContext,
 ): Promise<Response | null> {
   const pathname = url.pathname;
+
+  const ownerArchiveRoute = matchOwnerArchiveRoute(pathname);
+  if (ownerArchiveRoute) {
+    const requiredScope = method === "DELETE" ? DelegationScopes.SessionsManage : DelegationScopes.SessionsRead;
+    const ownerArchiveAccess = resolveOwnerSessionAccess(
+      authContext,
+      ownerArchiveRoute.ownerNpub,
+      requiredScope,
+      ctx,
+    );
+    if (!ownerArchiveAccess) {
+      return Response.json({ error: "Delegation required" }, { status: 403 });
+    }
+    const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, authContext);
+    if (denied) return denied;
+
+    if (ownerArchiveRoute.remainder.length === 0 && method === "GET") {
+      try {
+        const validatedOptions = validateInput(ArchiveListOptionsSchema, {
+          limit: url.searchParams.get("limit"),
+          offset: url.searchParams.get("offset"),
+          filter: url.searchParams.get("filter"),
+        });
+        const allArchivedSessions = ctx.sessionArchiveStore.listArchivedSessions({
+          limit: ctx.sessionArchiveStore.getArchiveCount(),
+          offset: 0,
+          filter: typeof validatedOptions.filter === "string" ? validatedOptions.filter : undefined,
+        });
+        const ownerArchivedSessions = allArchivedSessions.filter((session) =>
+          archivedSessionBelongsToOwner(session, ownerArchiveRoute.ownerNpub, ctx),
+        );
+        const offset = typeof validatedOptions.offset === "number" ? validatedOptions.offset : 0;
+        const limit = typeof validatedOptions.limit === "number" ? validatedOptions.limit : 50;
+        const archivedSessions = ownerArchivedSessions.slice(offset, offset + limit);
+        return Response.json({
+          ownerNpub: ownerArchiveRoute.ownerNpub,
+          sessions: archivedSessions,
+          total: ownerArchivedSessions.length,
+          limit,
+          offset,
+        });
+      } catch {
+        return Response.json({ error: "Invalid request parameters" }, { status: 400 });
+      }
+    }
+
+    const archiveId = ownerArchiveRoute.remainder[0];
+    if (!archiveId) {
+      return Response.json({ error: "Session ID required" }, { status: 400 });
+    }
+    const archivedSession = ctx.sessionArchiveStore.getArchivedSession(archiveId);
+    if (!archivedSession || !archivedSessionBelongsToOwner(archivedSession, ownerArchiveRoute.ownerNpub, ctx)) {
+      return Response.json({ error: "Archived session not found" }, { status: 404 });
+    }
+
+    if (ownerArchiveRoute.remainder[1] === "messages" && method === "GET") {
+      const messages = ctx.sessionArchiveStore.getArchivedMessages(archiveId);
+      return Response.json({ ownerNpub: ownerArchiveRoute.ownerNpub, sessionId: archiveId, messages });
+    }
+
+    if (ownerArchiveRoute.remainder.length === 1 && method === "GET") {
+      const messages = ctx.sessionArchiveStore.getArchivedMessages(archiveId);
+      return Response.json({ ownerNpub: ownerArchiveRoute.ownerNpub, session: archivedSession, messages });
+    }
+
+    if (ownerArchiveRoute.remainder.length === 1 && method === "DELETE") {
+      const deleted = ctx.sessionArchiveStore.deleteArchivedSession(archiveId);
+      if (!deleted) {
+        return Response.json({ error: "Archived session not found" }, { status: 404 });
+      }
+      return Response.json({ ownerNpub: ownerArchiveRoute.ownerNpub, id: archiveId, deleted: true });
+    }
+  }
 
   // ──────────────────────────────────────────────
   //  Archive API endpoints
@@ -602,9 +724,18 @@ export async function handleSessionApi(
           return Response.json({ error: (error as Error).message }, { status: 400 });
         }
         const sessionName = ctx.normaliseSessionNameInput(rawName);
+        const ownerAuthContext = createOwnerScopedAuthContext(authContext, targetOwnerNpub);
+        const delegatedWorkspace = buildDelegatedWorkspaceScope(
+          ctx.resolveWorkspace(ownerAuthContext),
+          ownerSessionsAccess.delegation,
+        );
         let workingDirectory: string;
         try {
-          workingDirectory = await ctx.resolveSessionWorkingDirectory(directoryInput, workspace);
+          workingDirectory = await ctx.resolveSessionWorkingDirectory(
+            directoryInput,
+            workspace,
+            delegatedWorkspace,
+          );
         } catch (error) {
           return Response.json({ error: (error as Error).message }, { status: 400 });
         }
