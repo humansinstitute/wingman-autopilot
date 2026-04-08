@@ -43,14 +43,15 @@ Use this to test:
 
 ### `delegate-bot`
 
-Signs NIP-98 with a bot nsec that Wingman maps back to the owning user.
+Signs NIP-98 with a bot nsec while preserving the bot as the signer.
 
 Use this to test the main AI agent pattern:
 
 - bot-signed requests
-- delegated owner resolution
-- `/api/delegate-sessions`
-- same-owner access restrictions
+- self-space bot access
+- explicit owner-space delegation
+- `/api/owners/:ownerNpub/...`
+- delegation registration and owner-space restrictions
 
 This is the most important mode for agent debugging.
 
@@ -68,12 +69,16 @@ This mode does not require the raw nsec in the REPL, but it does require `SESSIO
 
 ## Route Strategy
 
-The REPL follows the route conventions already present in the server:
+The REPL now separates signer mode from route targeting:
 
-- `owner-cli` convenience session commands use `/api/sessions`
-- `delegate-bot` convenience session commands use `/api/delegate-sessions` for list, create, info, read, send, and stop
-- queue, history, and SSE event testing use `/api/sessions` because those routes only exist there
-- app commands always use `/api/apps`
+- auth mode answers "who signs the request?"
+- `set owner <npub>` answers "which owner space do convenience commands target?"
+
+That means:
+
+- no owner target set => convenience commands use self-space routes like `/api/sessions` and `/api/apps`
+- owner target set => convenience commands use explicit owner-space routes like `/api/owners/:ownerNpub/sessions`
+- `req` is still available for any legacy or edge route, including `/api/delegate-sessions`
 
 The generic `req` command is always available so you can hit any route manually, even if there is no convenience wrapper.
 
@@ -97,6 +102,7 @@ These are for transport and auth debugging.
 ### 2. Convenience commands
 
 - `sessions ...`
+- `delegations ...`
 - `apps ...`
 
 These mirror the most common workflows while still exposing the underlying HTTP result.
@@ -128,7 +134,7 @@ The REPL preserves the server’s actual semantics:
 - `sessions send` uses the normal message path
 - `sessions send-raw` sets `type: "raw"` and bypasses normal user-message semantics
 
-In delegated mode this is especially important because delegated message posts may queue first and only dispatch immediately when the runtime is stable.
+In owner-space delegated mode this is especially important because delegated message posts may queue first and only dispatch immediately when the runtime is stable.
 
 That means:
 
@@ -155,17 +161,22 @@ This is intended for short inspection sessions, not a full terminal UI replaceme
 1. `mode delegate-bot`
 2. `set key <bot-nsec>`
 3. `sessions list`
-4. `sessions create codex --name worker --directory /Users/mini/code`
-5. `sessions send "inspect the repo"`
-6. `sessions read`
-7. `sessions events --seconds 10`
+4. `set owner <owner-npub>`
+5. `delegations list`
+6. `sessions list`
+7. `sessions create codex --name worker --directory /Users/mini/code`
+8. `sessions send "inspect the repo"`
+9. `sessions read`
+10. `sessions events --seconds 10`
 
 ### Owner access comparison
 
 1. `mode owner-cli`
 2. `set key <owner-nsec>`
 3. `req GET /api/sessions`
-4. `req GET /api/delegate-sessions`
+4. `req GET /api/delegations`
+5. `set owner <owner-npub>`
+6. `sessions list`
 
 This makes route and access differences obvious.
 

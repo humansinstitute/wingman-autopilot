@@ -35,6 +35,7 @@ type ReplState = {
   verbose: boolean;
   keyInput?: string;
   sessionId?: string;
+  ownerTargetNpub?: string;
   currentSessionId?: string;
   currentAppId?: string;
   lastResponse?: ResponseSnapshot;
@@ -53,12 +54,14 @@ Core commands:
   set url <url>
   set key <nsec|hex>
   set session-id <id>
+  set owner <npub>
   set output <pretty|json|raw>
   set verbose <on|off>
   use-session <id>
   use-app <id>
   clear-session
   clear-app
+  clear-owner
   req <METHOD> <PATH> [JSON-or-text-body]
   quit
 
@@ -76,6 +79,12 @@ Session commands:
   sessions events [id] [--seconds <n>]
   sessions stop [id]
 
+Delegation commands:
+  delegations list
+  delegations owner-list [owner-npub]
+  delegations create <signed-event-json>
+  delegations revoke <id>
+
 App commands:
   apps list
   apps status [id]
@@ -86,16 +95,20 @@ App commands:
 
 Examples:
   mode delegate-bot
+  set owner npub1owner...
   sessions create codex --name worker --directory /Users/mini/code
   sessions send "inspect the repo and summarize auth bugs"
-  req GET /api/delegate-sessions
+  delegations list
+  req GET /api/owners/npub1owner.../sessions
   req POST /api/sessions {"agent":"codex","metadata":{"AGENT":true}}
 
 Notes:
-  - owner-cli uses /api/sessions for the main session convenience commands.
-  - delegate-bot uses /api/delegate-sessions for list/create/info/read/send/stop.
+  - auth mode controls who signs, not which route family is used.
+  - self-space convenience commands use /api/sessions and /api/apps.
+  - if set owner <npub> is active, convenience commands switch to /api/owners/:ownerNpub/... routes.
+  - delegate-bot no longer assumes /api/delegate-sessions; use req for legacy route debugging.
   - in-session-agent signs through /api/mcp/bot-crypto/sign-event using SESSION_ID.
-  - queue/history/events always use /api/sessions because those routes only exist there.`;
+  - queue/history/events now follow the owner-space route when owner targeting is active.`;
 
 const APP_ACTIONS = new Set(["start", "stop", "restart", "build", "setup"]);
 
@@ -300,6 +313,7 @@ class WingmanTestRepl {
       verbose: true,
       keyInput: Bun.env.WINGMAN_NSEC,
       sessionId: Bun.env.SESSION_ID,
+      ownerTargetNpub: Bun.env.WINGMAN_OWNER_NPUB,
     };
   }
 
@@ -330,12 +344,15 @@ class WingmanTestRepl {
 
   private prompt(): string {
     const sessionPart = this.state.currentSessionId ? ` s:${this.state.currentSessionId.slice(0, 8)}` : "";
-    return `wingman:${this.state.authMode}${sessionPart}> `;
+    const ownerPart = this.state.ownerTargetNpub ? ` o:${this.state.ownerTargetNpub.slice(0, 10)}` : "";
+    return `wingman:${this.state.authMode}${ownerPart}${sessionPart}> `;
   }
 
   private printBanner(): void {
     this.printLine("Wingman API test REPL");
-    this.printLine(`baseUrl=${this.state.baseUrl} authMode=${this.state.authMode} output=${this.state.outputMode}`);
+    this.printLine(
+      `baseUrl=${this.state.baseUrl} authMode=${this.state.authMode} owner=${this.state.ownerTargetNpub ?? "self"} output=${this.state.outputMode}`,
+    );
     this.printLine('Type "help" for commands.');
   }
 
@@ -380,11 +397,18 @@ class WingmanTestRepl {
           this.state.currentAppId = undefined;
           this.printLine("Cleared current app.");
           return false;
+        case "clear-owner":
+          this.state.ownerTargetNpub = undefined;
+          this.printLine("Cleared owner target. Convenience commands now use self-space routes.");
+          return false;
         case "req":
           await this.handleReq(parsed.tokens);
           return false;
         case "sessions":
           await this.handleSessions(parsed);
+          return false;
+        case "delegations":
+          await this.handleDelegations(parsed);
           return false;
         case "apps":
           await this.handleApps(parsed);
@@ -407,6 +431,7 @@ class WingmanTestRepl {
       verbose: this.state.verbose,
       hasKey: Boolean(this.state.keyInput || Bun.env.WINGMAN_NSEC),
       sessionId: this.state.sessionId ?? null,
+      ownerTargetNpub: this.state.ownerTargetNpub ?? null,
       currentSessionId: this.state.currentSessionId ?? null,
       currentAppId: this.state.currentAppId ?? null,
       lastResponse: this.state.lastResponse
@@ -451,6 +476,10 @@ class WingmanTestRepl {
       case "session-id":
         this.state.sessionId = ensureString(value, "Session ID is required");
         this.printLine(`sessionId=${this.state.sessionId}`);
+        return;
+      case "owner":
+        this.state.ownerTargetNpub = ensureString(value, "Owner npub is required");
+        this.printLine(`ownerTargetNpub=${this.state.ownerTargetNpub}`);
         return;
       case "output":
         if (value !== "pretty" && value !== "json" && value !== "raw") {
@@ -555,7 +584,7 @@ class WingmanTestRepl {
       }
       case "history": {
         const id = this.resolveSessionId(args[0]);
-        await this.performRequest("GET", `/api/sessions/${encodeURIComponent(id)}/history`, undefined);
+        await this.performRequest("GET", this.sessionHistoryPath(id), undefined);
         return;
       }
       case "send":
@@ -577,7 +606,7 @@ class WingmanTestRepl {
       }
       case "queue": {
         const id = this.resolveSessionId(args[0]);
-        await this.performRequest("GET", `/api/sessions/${encodeURIComponent(id)}/queue`, undefined);
+        await this.performRequest("GET", this.sessionQueuePath(id), undefined);
         return;
       }
       case "queue-add": {
@@ -589,12 +618,12 @@ class WingmanTestRepl {
         if (!content) {
           throw new Error("sessions queue-add requires a prompt");
         }
-        await this.performRequest("POST", `/api/sessions/${encodeURIComponent(id)}/queue`, { content });
+        await this.performRequest("POST", this.sessionQueuePath(id), { content });
         return;
       }
       case "queue-next": {
         const id = this.resolveSessionId(args[0]);
-        await this.performRequest("POST", `/api/sessions/${encodeURIComponent(id)}/queue/next`, undefined);
+        await this.performRequest("POST", `${this.sessionQueuePath(id)}/next`, undefined);
         return;
       }
       case "events": {
@@ -621,17 +650,58 @@ class WingmanTestRepl {
     }
   }
 
+  private async handleDelegations(parsed: ParsedCommand): Promise<void> {
+    const [, subcommand, ...restTokens] = parsed.tokens;
+    const args = [...restTokens];
+
+    switch (subcommand) {
+      case "list":
+        await this.performRequest("GET", "/api/delegations", undefined);
+        return;
+      case "owner-list": {
+        const ownerNpub = args[0] ?? this.state.ownerTargetNpub;
+        if (!ownerNpub) {
+          throw new Error("delegations owner-list requires <owner-npub> or set owner <npub>");
+        }
+        await this.performRequest("GET", `/api/owners/${encodeURIComponent(ownerNpub)}/delegations`, undefined);
+        return;
+      }
+      case "create": {
+        const signedEventInput = args.join(" ").trim();
+        if (!signedEventInput) {
+          throw new Error("delegations create requires <signed-event-json>");
+        }
+        const signedEvent = parseJsonOrText(signedEventInput);
+        if (!isJsonRecord(signedEvent)) {
+          throw new Error("delegations create expects a JSON object for signedEvent");
+        }
+        await this.performRequest("POST", "/api/delegations", { signedEvent });
+        return;
+      }
+      case "revoke": {
+        const id = args[0];
+        if (!id) {
+          throw new Error("delegations revoke requires <id>");
+        }
+        await this.performRequest("DELETE", `/api/delegations/${encodeURIComponent(id)}`, undefined);
+        return;
+      }
+      default:
+        throw new Error(`Unknown delegations subcommand "${subcommand ?? ""}"`);
+    }
+  }
+
   private async handleApps(parsed: ParsedCommand): Promise<void> {
     const [, subcommand, ...restTokens] = parsed.tokens;
     const args = [...restTokens];
 
     switch (subcommand) {
       case "list":
-        await this.performRequest("GET", "/api/apps", undefined);
+        await this.performRequest("GET", this.appsCollectionPath(), undefined);
         return;
       case "status": {
         const id = this.resolveAppId(args[0]);
-        await this.performRequest("GET", `/api/apps/${encodeURIComponent(id)}`, undefined);
+        await this.performRequest("GET", `${this.appsCollectionPath()}/${encodeURIComponent(id)}`, undefined);
         return;
       }
       case "action": {
@@ -640,7 +710,7 @@ class WingmanTestRepl {
           throw new Error("apps action requires start|stop|restart|build|setup");
         }
         const id = this.resolveAppId(args[0]);
-        await this.performRequest("POST", `/api/apps/${encodeURIComponent(id)}/actions`, { action });
+        await this.performRequest("POST", `${this.appsCollectionPath()}/${encodeURIComponent(id)}/actions`, { action });
         return;
       }
       case "register": {
@@ -652,7 +722,7 @@ class WingmanTestRepl {
         if (args.length > 0) {
           throw new Error(`Unknown arguments: ${args.join(" ")}`);
         }
-        const response = await this.performRequest("POST", "/api/apps", {
+        const response = await this.performRequest("POST", this.appsCollectionPath(), {
           label,
           root: directory,
           ...(webApp ? { webApp: true } : {}),
@@ -669,7 +739,7 @@ class WingmanTestRepl {
       }
       case "unregister": {
         const id = this.resolveAppId(args[0]);
-        await this.performRequest("DELETE", `/api/apps/${encodeURIComponent(id)}`, undefined);
+        await this.performRequest("DELETE", `${this.appsCollectionPath()}/${encodeURIComponent(id)}`, undefined);
         return;
       }
       case "clone": {
@@ -679,7 +749,7 @@ class WingmanTestRepl {
         if (args.length > 0) {
           throw new Error(`Unknown arguments: ${args.join(" ")}`);
         }
-        await this.performRequest("POST", "/api/apps/clone", {
+        await this.performRequest("POST", `${this.appsCollectionPath()}/clone`, {
           url: repoUrl,
           ...(directory ? { directory } : {}),
         });
@@ -691,25 +761,45 @@ class WingmanTestRepl {
   }
 
   private sessionCollectionPath(): string {
-    return this.state.authMode === "delegate-bot" ? "/api/delegate-sessions" : "/api/sessions";
+    if (this.state.ownerTargetNpub) {
+      return `/api/owners/${encodeURIComponent(this.state.ownerTargetNpub)}/sessions`;
+    }
+    return "/api/sessions";
   }
 
   private sessionResourceBasePath(_id: string): string {
-    return this.state.authMode === "delegate-bot" ? "/api/delegate-sessions" : "/api/sessions";
+    return this.sessionCollectionPath();
   }
 
   private sessionMessagesPath(id: string): string {
-    if (this.state.authMode === "delegate-bot") {
-      return `/api/delegate-sessions/${encodeURIComponent(id)}/messages`;
-    }
-    return `/api/sessions/${encodeURIComponent(id)}/messages`;
+    return `${this.sessionCollectionPath()}/${encodeURIComponent(id)}/messages`;
   }
 
   private sessionDeletePath(id: string): string {
-    if (this.state.authMode === "delegate-bot") {
-      return `/api/delegate-sessions/${encodeURIComponent(id)}`;
+    return `${this.sessionCollectionPath()}/${encodeURIComponent(id)}`;
+  }
+
+  private sessionHistoryPath(id: string): string {
+    return `${this.sessionCollectionPath()}/${encodeURIComponent(id)}/history`;
+  }
+
+  private sessionQueuePath(id: string): string {
+    return `${this.sessionCollectionPath()}/${encodeURIComponent(id)}/queue`;
+  }
+
+  private sessionEventsPath(id: string): string {
+    return `${this.sessionCollectionPath()}/${encodeURIComponent(id)}/events`;
+  }
+
+  private appsCollectionPath(): string {
+    if (this.state.ownerTargetNpub) {
+      return `/api/owners/${encodeURIComponent(this.state.ownerTargetNpub)}/apps`;
     }
-    return `/api/sessions/${encodeURIComponent(id)}`;
+    return "/api/apps";
+  }
+
+  private usingOwnerSpace(): boolean {
+    return Boolean(this.state.ownerTargetNpub);
   }
 
   private resolveSessionId(explicitId?: string): string {
@@ -771,6 +861,7 @@ class WingmanTestRepl {
     if (this.state.verbose) {
       this.printLine(`> ${method.toUpperCase()} ${url}`);
       this.printLine(`> auth-mode=${this.state.authMode}`);
+      this.printLine(`> route-scope=${this.usingOwnerSpace() ? `owner:${this.state.ownerTargetNpub}` : "self"}`);
       if (serializedBody) {
         this.printLine(`> body=${serializedBody}`);
       }
@@ -824,7 +915,7 @@ class WingmanTestRepl {
   }
 
   private async streamEvents(sessionId: string, seconds: number): Promise<void> {
-    const path = `/api/sessions/${encodeURIComponent(sessionId)}/events`;
+    const path = this.sessionEventsPath(sessionId);
     const url = new URL(path, this.state.baseUrl).toString();
     const authorization = await this.buildAuthorizationHeader("GET", url, undefined);
     const controller = new AbortController();
