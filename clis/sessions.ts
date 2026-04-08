@@ -37,6 +37,7 @@ Options:
   --name <name>        Session name (for create)
   --directory <path>   Working directory (for create)
   --model <model>      Model override (for create)
+  --owner <npub>       Use delegated owner-space routes for live session commands
   --limit <n>          Pagination limit (for archive, default: 50)
   --offset <n>         Pagination offset (for archive)
   --filter <text>      Filter archived sessions
@@ -47,6 +48,8 @@ Options:
 Examples:
   bun clis/sessions.ts list
   bun clis/sessions.ts create claude-code --name "my-task" --directory /tmp/project
+  bun clis/sessions.ts list --owner npub1owner...
+  bun clis/sessions.ts create codex --owner npub1owner... --name "worker" --directory /Users/mini/code/wingmen
   bun clis/sessions.ts logs abc123
   bun clis/sessions.ts artifacts abc123
   bun clis/sessions.ts queue abc123
@@ -101,6 +104,7 @@ async function run() {
   let name: string | undefined;
   let directory: string | undefined;
   let model: string | undefined;
+  let owner: string | undefined;
   let limit: string | undefined;
   let offset: string | undefined;
   let filter: string | undefined;
@@ -117,6 +121,9 @@ async function run() {
     } else if (flag === "--model") {
       model = args[++i];
       if (!model) throw new Error("--model requires a value");
+    } else if (flag === "--owner") {
+      owner = args[++i];
+      if (!owner) throw new Error("--owner requires a value");
     } else if (flag === "--limit") {
       limit = args[++i];
       if (!limit) throw new Error("--limit requires a value");
@@ -139,6 +146,41 @@ async function run() {
   }
 
   const baseUrl = resolveBaseUrl(urlInput);
+  const ownerTarget = owner?.trim();
+
+  function sessionCollectionPath(): string {
+    if (ownerTarget) {
+      return `/api/owners/${encodeURIComponent(ownerTarget)}/sessions`;
+    }
+    return "/api/sessions";
+  }
+
+  function sessionPath(id: string): string {
+    return `${sessionCollectionPath()}/${encodeURIComponent(id)}`;
+  }
+
+  function sessionMessagesPath(id: string, options?: { refresh?: boolean }): string {
+    const basePath = `${sessionPath(id)}/messages`;
+    return options?.refresh ? `${basePath}?refresh=true` : basePath;
+  }
+
+  function sessionArtifactsPath(id: string): string {
+    return `${sessionPath(id)}/artifacts`;
+  }
+
+  function sessionQueuePath(id: string): string {
+    return `${sessionPath(id)}/queue`;
+  }
+
+  function sessionQueueNextPath(id: string): string {
+    return `${sessionQueuePath(id)}/next`;
+  }
+
+  function ensureSelfSpaceOnly(commandName: string): void {
+    if (ownerTarget) {
+      throw new Error(`${commandName} does not support --owner yet`);
+    }
+  }
 
   async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
     if (botCrypto) {
@@ -149,7 +191,7 @@ async function run() {
   }
 
   async function resolveActiveSessionId(requestedId: string): Promise<string> {
-    const payload = await req<{ sessions?: Session[] }>("GET", "/api/sessions");
+    const payload = await req<{ sessions?: Session[] }>("GET", sessionCollectionPath());
     const sessions = Array.isArray(payload.sessions)
       ? payload.sessions
       : Array.isArray(payload) ? (payload as Session[]) : [];
@@ -169,7 +211,7 @@ async function run() {
 
   switch (command) {
     case "list": {
-      const payload = await req<{ sessions?: Session[] }>("GET", "/api/sessions");
+      const payload = await req<{ sessions?: Session[] }>("GET", sessionCollectionPath());
       const sessions = Array.isArray(payload.sessions)
         ? payload.sessions
         : Array.isArray(payload) ? (payload as Session[]) : [];
@@ -188,7 +230,7 @@ async function run() {
       if (name) body.name = name;
       if (directory) body.directory = directory;
       if (model) body.model = model;
-      const payload = await req<Record<string, unknown>>("POST", "/api/sessions", body);
+      const payload = await req<Record<string, unknown>>("POST", sessionCollectionPath(), body);
       if (asJson) {
         console.log(JSON.stringify(payload, null, 2));
       } else {
@@ -202,15 +244,16 @@ async function run() {
       const id = positional[1];
       if (!id) throw new Error("stop requires <id>");
       const resolvedId = await resolveActiveSessionId(id);
-      await req("DELETE", `/api/sessions/${encodeURIComponent(resolvedId)}`);
+      await req("DELETE", sessionPath(resolvedId));
       console.log(`Stopped: ${resolvedId}`);
       break;
     }
 
     case "stop-self": {
+      ensureSelfSpaceOnly("stop-self");
       const sessionId = process.env.SESSION_ID || Bun.env.SESSION_ID;
       if (!sessionId) throw new Error("stop-self requires SESSION_ID in the environment");
-      await req("DELETE", `/api/sessions/${encodeURIComponent(sessionId)}`);
+      await req("DELETE", sessionPath(sessionId));
       console.log(`Stopped: ${sessionId}`);
       break;
     }
@@ -219,7 +262,7 @@ async function run() {
       const id = positional[1];
       if (!id) throw new Error("info requires <id>");
       const resolvedId = await resolveActiveSessionId(id);
-      const payload = await req<Record<string, unknown>>("GET", `/api/sessions/${encodeURIComponent(resolvedId)}`);
+      const payload = await req<Record<string, unknown>>("GET", sessionPath(resolvedId));
       console.log(JSON.stringify(payload, null, 2));
       break;
     }
@@ -229,7 +272,7 @@ async function run() {
       if (!id) throw new Error("logs requires <id>");
       const resolvedId = await resolveActiveSessionId(id);
       const payload = await req<{ messages?: Array<Record<string, unknown>> }>(
-        "GET", `/api/sessions/${encodeURIComponent(resolvedId)}/messages`,
+        "GET", sessionMessagesPath(resolvedId, { refresh: true }),
       );
       const messages = Array.isArray(payload.messages)
         ? payload.messages
@@ -249,7 +292,7 @@ async function run() {
       if (!message) throw new Error("send requires a message after the session id");
       const resolvedId = await resolveActiveSessionId(id);
       const payload = await req<Record<string, unknown>>(
-        "POST", `/api/sessions/${encodeURIComponent(resolvedId)}/messages`, { content: message },
+        "POST", sessionMessagesPath(resolvedId), { content: message },
       );
       if (asJson) {
         console.log(JSON.stringify(payload, null, 2));
@@ -260,11 +303,12 @@ async function run() {
     }
 
     case "artifacts": {
+      ensureSelfSpaceOnly("artifacts");
       const id = positional[1];
       if (!id) throw new Error("artifacts requires <id>");
       const resolvedId = await resolveActiveSessionId(id);
       const payload = await req<{ artifacts?: Array<Record<string, unknown>> }>(
-        "GET", `/api/sessions/${encodeURIComponent(resolvedId)}/artifacts`,
+        "GET", sessionArtifactsPath(resolvedId),
       );
       const artifacts = Array.isArray(payload.artifacts)
         ? payload.artifacts
@@ -290,7 +334,7 @@ async function run() {
       if (!id) throw new Error("queue requires <id>");
       const resolvedId = await resolveActiveSessionId(id);
       const payload = await req<{ queue?: Array<Record<string, unknown>> }>(
-        "GET", `/api/sessions/${encodeURIComponent(resolvedId)}/queue`,
+        "GET", sessionQueuePath(resolvedId),
       );
       const queue = Array.isArray(payload.queue)
         ? payload.queue
@@ -319,7 +363,7 @@ async function run() {
       if (!prompt) throw new Error("queue-add requires a prompt after the session id");
       const resolvedId = await resolveActiveSessionId(id);
       const payload = await req<Record<string, unknown>>(
-        "POST", `/api/sessions/${encodeURIComponent(resolvedId)}/queue`, { content: prompt },
+        "POST", sessionQueuePath(resolvedId), { content: prompt },
       );
       if (asJson) {
         console.log(JSON.stringify(payload, null, 2));
@@ -334,7 +378,7 @@ async function run() {
       if (!id) throw new Error("queue-next requires <id>");
       const resolvedId = await resolveActiveSessionId(id);
       const payload = await req<Record<string, unknown>>(
-        "POST", `/api/sessions/${encodeURIComponent(resolvedId)}/queue/next`,
+        "POST", sessionQueueNextPath(resolvedId),
       );
       if (asJson) {
         console.log(JSON.stringify(payload, null, 2));
@@ -345,6 +389,7 @@ async function run() {
     }
 
     case "archive": {
+      ensureSelfSpaceOnly("archive");
       const params = new URLSearchParams();
       if (limit) params.set("limit", limit);
       if (offset) params.set("offset", offset);
@@ -374,6 +419,7 @@ async function run() {
     }
 
     case "archive-info": {
+      ensureSelfSpaceOnly("archive-info");
       const id = positional[1];
       if (!id) throw new Error("archive-info requires <id>");
       const payload = await req<Record<string, unknown>>("GET", `/api/archive/${encodeURIComponent(id)}`);
@@ -382,6 +428,7 @@ async function run() {
     }
 
     case "archive-logs": {
+      ensureSelfSpaceOnly("archive-logs");
       const id = positional[1];
       if (!id) throw new Error("archive-logs requires <id>");
       const payload = await req<{ messages?: Array<Record<string, unknown>> }>(
@@ -399,6 +446,7 @@ async function run() {
     }
 
     case "archive-delete": {
+      ensureSelfSpaceOnly("archive-delete");
       const id = positional[1];
       if (!id) throw new Error("archive-delete requires <id>");
       await req("DELETE", `/api/archive/${encodeURIComponent(id)}`);
