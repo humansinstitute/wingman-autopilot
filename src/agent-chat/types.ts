@@ -2,6 +2,14 @@ export type WorkspaceKeyStatus = 'pending' | 'active' | 'refresh_required' | 're
 export type GroupKeyStatus = 'pending' | 'active' | 'refresh_required' | 'revoked' | 'failed';
 export type SseStatus = 'disconnected' | 'connecting' | 'connected' | 'backoff' | 'disabled';
 export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy';
+export type ChatInterceptStateStatus =
+  | 'pending'
+  | 'active'
+  | 'interrupting'
+  | 'idle'
+  | 'archived'
+  | 'blocked_auth'
+  | 'blocked_decrypt';
 
 export interface AgentChatDiagnostic {
   ok: boolean;
@@ -44,8 +52,27 @@ export interface WorkspaceSubscriptionRecord {
   lastGroupRefreshResult: AgentChatDiagnostic | null;
   lastRecordPullResult: AgentChatDiagnostic | null;
   lastDecryptResult: AgentChatDiagnostic | null;
+  lastRoutingResult: AgentChatDiagnostic | null;
   lastSseEvent: AgentChatSseEventDiagnostic | null;
   lastSuccessfulStartupReloadAt: string | null;
+}
+
+export interface ChatInterceptStateRecord {
+  routingKey: string;
+  subscriptionId: string;
+  sessionId: string | null;
+  sessionClass: 'chat';
+  workspaceOwnerNpub: string;
+  sourceAppNpub: string;
+  channelId: string;
+  threadId: string;
+  targetBotNpub: string;
+  lastMessageIdSeen: string | null;
+  pendingMessageCount: number;
+  state: ChatInterceptStateStatus;
+  lastActivityAt: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface CreateWorkspaceSubscriptionInput {
@@ -96,6 +123,13 @@ export interface YokeBotHelpersModule {
     botNpub: string;
     workspaceOwnerNpub: string;
   }) => { blob: Record<string, unknown>; wsSession: YokeWorkspaceSession };
+  signBotRequest: (params: {
+    botSecret: Uint8Array;
+    botNpub: string;
+    url: string;
+    method: string;
+    body?: unknown;
+  }) => string;
   loadBotWorkspaceKey: (params: {
     blob: Record<string, unknown>;
     botSecret: Uint8Array;
@@ -114,6 +148,8 @@ export interface YokeBotHelpersModule {
   }) => Promise<unknown[]>;
   loadBotGroupKeys: (params: {
     wsSession: YokeWorkspaceSession;
+    botSecret: Uint8Array;
+    botNpub: string;
     keyRows: unknown[];
   }) => unknown;
   decryptChatRecord: (params: {
@@ -121,7 +157,18 @@ export interface YokeBotHelpersModule {
     wsSession: YokeWorkspaceSession;
     groupKeys: unknown;
   }) => Record<string, unknown>;
-  normalizeThreadId?: (chatMessage: Record<string, unknown>, context?: Record<string, unknown>) => string;
+  normalizeThreadId: (chatMessage: Record<string, unknown>, context?: Record<string, unknown>) => string;
+  normalizeChannelParticipants: (input: Record<string, unknown>) => string[];
+  normalizeChatRoutingContext: (
+    input: { chatMessage: Record<string, unknown>; channel: Record<string, unknown> },
+    context?: Record<string, unknown>,
+  ) => {
+    record_id: string;
+    channel_id: string;
+    parent_message_id: string | null;
+    thread_id: string;
+    participant_npubs: string[];
+  };
 }
 
 export interface BrowserSignedNip98TokenRequest {

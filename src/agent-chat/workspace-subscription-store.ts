@@ -71,8 +71,8 @@ class WorkspaceSubscriptionStore {
          trigger_config_record_id, last_sse_event_id, last_auth_ok_at, last_group_refresh_at,
          last_error_code, last_error_at, created_at, updated_at, managed_by_npub,
          ws_key_blob_json, wrapped_group_keys_json, last_auth_result_json,
-         last_group_refresh_result_json, last_record_pull_result_json, last_decrypt_result_json, last_sse_event_json,
-         last_successful_startup_reload_at
+         last_group_refresh_result_json, last_record_pull_result_json, last_decrypt_result_json, last_routing_result_json,
+         last_sse_event_json, last_successful_startup_reload_at
        ) VALUES (
          ?1, ?2, ?3, ?4, ?5,
          ?6, ?7, ?8, ?9, ?10,
@@ -80,7 +80,7 @@ class WorkspaceSubscriptionStore {
          ?15, ?16, ?17, ?18, ?19,
          ?20, ?21, ?22,
          ?23, ?24, ?25, ?26,
-         ?27
+         ?27, ?28
        )
        ON CONFLICT(subscription_id) DO UPDATE SET
          workspace_owner_npub = excluded.workspace_owner_npub,
@@ -106,6 +106,7 @@ class WorkspaceSubscriptionStore {
          last_group_refresh_result_json = excluded.last_group_refresh_result_json,
          last_record_pull_result_json = excluded.last_record_pull_result_json,
          last_decrypt_result_json = excluded.last_decrypt_result_json,
+         last_routing_result_json = excluded.last_routing_result_json,
          last_sse_event_json = excluded.last_sse_event_json,
          last_successful_startup_reload_at = excluded.last_successful_startup_reload_at`,
     ).run(
@@ -134,6 +135,7 @@ class WorkspaceSubscriptionStore {
       serialiseJsonValue(record.lastGroupRefreshResult),
       serialiseJsonValue(record.lastRecordPullResult),
       serialiseJsonValue(record.lastDecryptResult),
+      serialiseJsonValue(record.lastRoutingResult),
       serialiseJsonValue(record.lastSseEvent),
       record.lastSuccessfulStartupReloadAt,
     );
@@ -176,6 +178,7 @@ class WorkspaceSubscriptionStore {
       lastGroupRefreshResult: null,
       lastRecordPullResult: null,
       lastDecryptResult: null,
+      lastRoutingResult: null,
       lastSseEvent: null,
       lastSuccessfulStartupReloadAt: null,
     };
@@ -217,6 +220,7 @@ class WorkspaceSubscriptionStore {
            last_group_refresh_result_json,
            last_record_pull_result_json,
            last_decrypt_result_json,
+           last_routing_result_json,
            last_sse_event_json,
            last_successful_startup_reload_at
          FROM workspace_subscriptions
@@ -256,6 +260,7 @@ class WorkspaceSubscriptionStore {
            last_group_refresh_result_json,
            last_record_pull_result_json,
            last_decrypt_result_json,
+           last_routing_result_json,
            last_sse_event_json,
            last_successful_startup_reload_at
          FROM workspace_subscriptions
@@ -293,6 +298,7 @@ class WorkspaceSubscriptionStore {
       lastGroupRefreshResult: parseJsonValue(row.last_group_refresh_result_json ?? null),
       lastRecordPullResult: parseJsonValue(row.last_record_pull_result_json ?? null),
       lastDecryptResult: parseJsonValue(row.last_decrypt_result_json ?? null),
+      lastRoutingResult: parseJsonValue(row.last_routing_result_json ?? null),
       lastSseEvent: parseJsonValue(row.last_sse_event_json ?? null),
       lastSuccessfulStartupReloadAt: row.last_successful_startup_reload_at ?? null,
     };
@@ -326,6 +332,7 @@ class WorkspaceSubscriptionStore {
         last_group_refresh_result_json TEXT,
         last_record_pull_result_json TEXT,
         last_decrypt_result_json TEXT,
+        last_routing_result_json TEXT,
         last_sse_event_json TEXT,
         last_successful_startup_reload_at TEXT
       );
@@ -344,6 +351,12 @@ class WorkspaceSubscriptionStore {
       this.db.exec(`
         ALTER TABLE workspace_subscriptions
           ADD COLUMN last_record_pull_result_json TEXT
+      `);
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'last_routing_result_json')) {
+      this.db.exec(`
+        ALTER TABLE workspace_subscriptions
+          ADD COLUMN last_routing_result_json TEXT
       `);
     }
   }

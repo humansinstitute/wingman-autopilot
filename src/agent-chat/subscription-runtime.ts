@@ -1,6 +1,6 @@
 import { unlockViaEscrow } from '../identity/bot-key-manager';
+import { AgentChatRoutingEvaluator } from './routing-evaluator';
 import { workspaceSubscriptionStore, type WorkspaceSubscriptionStore } from './workspace-subscription-store';
-import { requestBrowserNip98Token } from './browser-nip98';
 import { parseSseEvents } from './sse-events';
 import {
   buildChatMessageFamilyHash,
@@ -34,6 +34,7 @@ interface RuntimeContext {
 
 export interface WorkspaceSubscriptionManagerDependencies {
   store?: WorkspaceSubscriptionStore;
+  routingEvaluator?: AgentChatRoutingEvaluator;
   botKeyStore: {
     getActiveKeyForUser: (npub: string) => BotKeyStoreRecord | null;
     getActiveKeyForBotNpub: (botNpub: string) => BotKeyStoreRecord | null;
@@ -42,11 +43,13 @@ export interface WorkspaceSubscriptionManagerDependencies {
 
 export class WorkspaceSubscriptionManager {
   private readonly store: WorkspaceSubscriptionStore;
+  private readonly routingEvaluator: AgentChatRoutingEvaluator;
   private readonly botKeyStore: WorkspaceSubscriptionManagerDependencies['botKeyStore'];
   private readonly runtimes = new Map<string, RuntimeContext>();
 
   constructor(deps: WorkspaceSubscriptionManagerDependencies) {
     this.store = deps.store ?? workspaceSubscriptionStore;
+    this.routingEvaluator = deps.routingEvaluator ?? new AgentChatRoutingEvaluator();
     this.botKeyStore = deps.botKeyStore;
   }
 
@@ -57,6 +60,14 @@ export class WorkspaceSubscriptionManager {
   getForManager(subscriptionId: string, npub: string): WorkspaceSubscriptionRecord | null {
     const record = this.store.getBySubscriptionId(subscriptionId);
     return record?.managedByNpub === npub ? record : null;
+  }
+
+  listInterceptsForSubscription(subscriptionId: string, npub: string) {
+    const record = this.getForManager(subscriptionId, npub);
+    if (!record) {
+      return [];
+    }
+    return this.routingEvaluator.listInterceptsForSubscription(subscriptionId);
   }
 
   async createOrUpdate(input: CreateWorkspaceSubscriptionInput): Promise<WorkspaceSubscriptionRecord> {
@@ -84,30 +95,7 @@ export class WorkspaceSubscriptionManager {
     record = await this.prepareWorkspaceSession(record, botIdentity);
 
     try {
-      const authUrl = new URL('/api/v4/user/workspace-keys', record.backendBaseUrl).toString();
-      const humanAuthorization = await requestBrowserNip98Token({
-        npub: input.managedByNpub,
-        url: authUrl,
-        method: 'POST',
-        body: {
-          workspace_owner_npub: record.workspaceOwnerNpub,
-          ws_key_npub: record.wsKeyNpub,
-        },
-      });
-      await registerWorkspaceKeyWithTower({
-        backendBaseUrl: record.backendBaseUrl,
-        workspaceOwnerNpub: record.workspaceOwnerNpub,
-        wsKeyNpub: record.wsKeyNpub!,
-        humanAuthorization,
-      });
-      record.wsKeyStatus = 'active';
-      record.lastAuthOkAt = new Date().toISOString();
-      record.lastAuthResult = buildSuccessDiagnostic('Workspace key registered.', {
-        workspace_owner_npub: record.workspaceOwnerNpub,
-        ws_key_npub: record.wsKeyNpub,
-      });
-      record.lastErrorCode = null;
-      record.lastErrorAt = null;
+      record = await this.registerWorkspaceKey(record, botIdentity);
     } catch (error) {
       record.wsKeyStatus = 'failed';
       record.sseStatus = 'disconnected';
@@ -190,9 +178,12 @@ export class WorkspaceSubscriptionManager {
   private async prepareWorkspaceSession(
     record: WorkspaceSubscriptionRecord,
     botIdentity: RuntimeBotIdentity,
+    options: { forceNew?: boolean } = {},
   ): Promise<WorkspaceSubscriptionRecord> {
     const helpers = await loadYokeBotHelpers();
-    const blob = record.wsKeyBlobJson ? JSON.parse(record.wsKeyBlobJson) as Record<string, unknown> : null;
+    const blob = !options.forceNew && record.wsKeyBlobJson
+      ? JSON.parse(record.wsKeyBlobJson) as Record<string, unknown>
+      : null;
     const loaded = blob
       ? { blob, ...helpers.loadBotWorkspaceKey({ blob, botSecret: botIdentity.botSecret, botNpub: botIdentity.botNpub }) }
       : helpers.createBotWorkspaceKey({
@@ -222,6 +213,60 @@ export class WorkspaceSubscriptionManager {
     return this.saveRecord(nextRecord);
   }
 
+  private async registerWorkspaceKey(
+    record: WorkspaceSubscriptionRecord,
+    botIdentity: RuntimeBotIdentity,
+  ): Promise<WorkspaceSubscriptionRecord> {
+    const helpers = await loadYokeBotHelpers();
+    const attempt = async (current: WorkspaceSubscriptionRecord) => {
+      const authorization = helpers.signBotRequest({
+        botSecret: botIdentity.botSecret,
+        botNpub: botIdentity.botNpub,
+        url: new URL('/api/v4/user/workspace-keys', current.backendBaseUrl).toString(),
+        method: 'POST',
+        body: {
+          workspace_owner_npub: current.workspaceOwnerNpub,
+          ws_key_npub: current.wsKeyNpub,
+        },
+      });
+      await registerWorkspaceKeyWithTower({
+        backendBaseUrl: current.backendBaseUrl,
+        workspaceOwnerNpub: current.workspaceOwnerNpub,
+        wsKeyNpub: current.wsKeyNpub!,
+        authorization,
+      });
+      current.wsKeyStatus = 'active';
+      current.lastAuthOkAt = new Date().toISOString();
+      current.lastAuthResult = buildSuccessDiagnostic('Workspace key registered.', {
+        workspace_owner_npub: current.workspaceOwnerNpub,
+        ws_key_npub: current.wsKeyNpub,
+      });
+      current.lastErrorCode = null;
+      current.lastErrorAt = null;
+      return current;
+    };
+
+    try {
+      return await attempt(record);
+    } catch (error) {
+      const status = typeof (error as { status?: unknown })?.status === 'number'
+        ? (error as { status: number }).status
+        : null;
+      if (status !== 409) {
+        throw error;
+      }
+
+      const refreshed = await this.prepareWorkspaceSession(record, botIdentity, { forceNew: true });
+      const retried = await attempt(refreshed);
+      retried.lastAuthResult = buildSuccessDiagnostic('Workspace key registered.', {
+        workspace_owner_npub: retried.workspaceOwnerNpub,
+        ws_key_npub: retried.wsKeyNpub,
+        regenerated_after_conflict: true,
+      });
+      return retried;
+    }
+  }
+
   private async refreshGroupKeys(
     record: WorkspaceSubscriptionRecord,
     botIdentity: RuntimeBotIdentity,
@@ -237,6 +282,8 @@ export class WorkspaceSubscriptionManager {
       runtime.wrappedKeyRows = keyRows;
       runtime.groupKeys = helpers.loadBotGroupKeys({
         wsSession: runtime.wsSession,
+        botSecret: botIdentity.botSecret,
+        botNpub: botIdentity.botNpub,
         keyRows,
       });
       record.groupKeyStatus = 'active';
@@ -261,6 +308,8 @@ export class WorkspaceSubscriptionManager {
         try {
           runtime.groupKeys = helpers.loadBotGroupKeys({
             wsSession: runtime.wsSession,
+            botSecret: botIdentity.botSecret,
+            botNpub: botIdentity.botNpub,
             keyRows: runtime.wrappedKeyRows,
           });
         } catch {
@@ -432,7 +481,12 @@ export class WorkspaceSubscriptionManager {
       });
       const helpers = await loadYokeBotHelpers();
       if (!runtime.groupKeys && runtime.wrappedKeyRows.length > 0) {
-        runtime.groupKeys = helpers.loadBotGroupKeys({ wsSession: runtime.wsSession, keyRows: runtime.wrappedKeyRows });
+        runtime.groupKeys = helpers.loadBotGroupKeys({
+          wsSession: runtime.wsSession,
+          botSecret: runtime.botIdentity.botSecret,
+          botNpub: runtime.botIdentity.botNpub,
+          keyRows: runtime.wrappedKeyRows,
+        });
       }
       try {
         const chatMessage = helpers.decryptChatRecord({
@@ -440,14 +494,18 @@ export class WorkspaceSubscriptionManager {
           wsSession: runtime.wsSession,
           groupKeys: runtime.groupKeys,
         });
-        const threadId = typeof helpers.normalizeThreadId === 'function'
-          ? helpers.normalizeThreadId(chatMessage)
-          : null;
         record.lastDecryptResult = buildSuccessDiagnostic('Chat message pulled and decrypted.', {
           record_id: recordId,
           channel_id: chatMessage.channel_id ?? null,
-          thread_id: threadId,
         });
+        const routingResult = await this.routingEvaluator.evaluate({
+          subscription: record,
+          wsSession: runtime.wsSession,
+          groupKeys: runtime.groupKeys,
+          chatRecordId: recordId,
+          chatMessage,
+        });
+        record.lastRoutingResult = routingResult.diagnostic;
         record.lastErrorCode = null;
         record.lastErrorAt = null;
       } catch (error) {
@@ -463,6 +521,19 @@ export class WorkspaceSubscriptionManager {
               ? (error as { detailCode: string }).detailCode
               : 'record_decrypt_failed',
           { record_id: recordId },
+        );
+        record.lastRoutingResult = buildFailureDiagnostic(
+          'target_bot_not_decrypt_capable',
+          error instanceof Error ? error.message : 'Routing skipped because the chat record could not be decrypted.',
+          typeof (error as { code?: string; detailCode?: string })?.code === 'string'
+            ? (error as { code: string }).code
+            : typeof (error as { detailCode?: string })?.detailCode === 'string'
+              ? (error as { detailCode: string }).detailCode
+              : 'record_decrypt_failed',
+          {
+            record_id: recordId,
+            target_bot_npub: record.botNpub,
+          },
         );
       }
     } catch (error) {
@@ -484,6 +555,17 @@ export class WorkspaceSubscriptionManager {
           ? (error as { detailCode: string }).detailCode
           : 'record_pull_failed',
         { record_id: recordId },
+      );
+      record.lastRoutingResult = buildFailureDiagnostic(
+        'target_bot_not_decrypt_capable',
+        'Routing skipped because the chat record could not be pulled.',
+        typeof (error as { detailCode?: string })?.detailCode === 'string'
+          ? (error as { detailCode: string }).detailCode
+          : 'record_pull_failed',
+        {
+          record_id: recordId,
+          target_bot_npub: record.botNpub,
+        },
       );
     }
     return this.saveRecord(this.recomputeHealth(record));

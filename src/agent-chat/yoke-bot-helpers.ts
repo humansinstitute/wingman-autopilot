@@ -18,10 +18,14 @@ export async function loadYokeBotHelpers(): Promise<YokeBotHelpersModule> {
       const required = [
         'createBotWorkspaceKey',
         'loadBotWorkspaceKey',
+        'signBotRequest',
         'signWorkspaceRequest',
         'fetchBotGroupKeys',
         'loadBotGroupKeys',
         'decryptChatRecord',
+        'normalizeThreadId',
+        'normalizeChannelParticipants',
+        'normalizeChatRoutingContext',
       ] as const;
       for (const key of required) {
         if (typeof module[key] !== 'function') {

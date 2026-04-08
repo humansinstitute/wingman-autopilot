@@ -73,8 +73,26 @@ function formatTrail(subscription) {
   const decryptStep = trail.decrypt?.at
     ? `decrypt ${trail.decrypt.ok ? 'ok' : (trail.decrypt.code || 'failed')}`
     : 'decrypt pending';
+  const routingStep = trail.routing?.at
+    ? `routing ${trail.routing.ok ? 'ok' : (trail.routing.code || 'failed')}`
+    : 'routing pending';
 
-  return `${advisoryStep} -> ${pullStep} -> ${decryptStep}`;
+  return `${advisoryStep} -> ${pullStep} -> ${decryptStep} -> ${routingStep}`;
+}
+
+function formatIntercepts(subscription) {
+  const intercepts = Array.isArray(subscription.intercepts) ? subscription.intercepts : [];
+  if (intercepts.length === 0) {
+    return 'None';
+  }
+  return intercepts
+    .map((intercept) => [
+      intercept.state,
+      intercept.targetBotNpub ? `bot=${intercept.targetBotNpub}` : null,
+      intercept.threadId ? `thread=${intercept.threadId}` : null,
+      intercept.pendingMessageCount != null ? `pending=${intercept.pendingMessageCount}` : null,
+    ].filter(Boolean).join(', '))
+    .join(' | ');
 }
 
 function createSubscriptionCard(subscription, onRemove) {
@@ -106,6 +124,9 @@ function createSubscriptionCard(subscription, onRemove) {
     ['Record Pull Details', formatKeyValueDetails(subscription.lastRecordPullResult?.details)],
     ['Last Decrypt', formatDiagnostic(subscription.lastDecryptResult)],
     ['Decrypt Details', formatKeyValueDetails(subscription.lastDecryptResult?.details)],
+    ['Last Routing', formatDiagnostic(subscription.lastRoutingResult)],
+    ['Routing Details', formatKeyValueDetails(subscription.lastRoutingResult?.details)],
+    ['Intercepts', formatIntercepts(subscription)],
     ['Last Auth', formatDiagnostic(subscription.lastAuthResult)],
     ['Group Refresh', formatDiagnostic(subscription.lastGroupRefreshResult)],
     ['Startup Reload', subscription.lastSuccessfulStartupReloadAt || 'None'],
@@ -157,7 +178,7 @@ export function createAgentChatSection() {
 
   const description = document.createElement('p');
   description.className = 'wm-settings__port-note';
-  description.textContent = 'Bootstraps a bot-owned workspace subscription, registers its workspace key through the browser signer, refreshes wrapped group keys, and exposes restart-safe diagnostics.';
+  description.textContent = 'Bootstraps a bot-owned workspace subscription, registers its workspace key, refreshes wrapped group keys, and exposes restart-safe diagnostics for pull, decrypt, trigger evaluation, and chat intercept routing.';
   container.append(description);
 
   const workspaceOwnerField = createInput('Workspace Owner npub', 'npub1workspace...', 'agent-chat-workspace-owner');

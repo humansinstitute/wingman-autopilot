@@ -20,6 +20,10 @@ export function buildChatMessageFamilyHash(sourceAppNpub: string): string {
   return `${sourceAppNpub}:chat_message`;
 }
 
+export function buildRecordFamilyHash(appNpub: string, collectionSpace: string): string {
+  return `${appNpub}:${collectionSpace}`;
+}
+
 export function stripNostrAuthPrefix(value: string): string {
   return value.replace(/^Nostr\s+/i, '').trim();
 }
@@ -86,11 +90,33 @@ export async function fetchRecordHistory(
   return Array.isArray(payload?.versions) ? payload.versions : [];
 }
 
+export async function fetchGroupsForViewer(
+  backendBaseUrl: string,
+  viewerNpub: string,
+  wsSession: YokeWorkspaceSession,
+): Promise<Record<string, unknown>[]> {
+  const helpers = await loadYokeBotHelpers();
+  const path = `/api/v4/groups?npub=${encodeURIComponent(viewerNpub)}`;
+  const url = new URL(path, backendBaseUrl).toString();
+  const authorization = helpers.signWorkspaceRequest({ wsSession, url, method: 'GET' });
+  const response = await fetch(url, {
+    headers: {
+      Authorization: authorization,
+    },
+  });
+  if (!response.ok) {
+    const error = await parseTowerError(response, 'group_list');
+    throw Object.assign(new Error(error.message), error);
+  }
+  const payload = await response.json() as { groups?: Record<string, unknown>[] };
+  return Array.isArray(payload?.groups) ? payload.groups : [];
+}
+
 export async function registerWorkspaceKeyWithTower(params: {
   backendBaseUrl: string;
   workspaceOwnerNpub: string;
   wsKeyNpub: string;
-  humanAuthorization: string;
+  authorization: string;
 }): Promise<Record<string, unknown>> {
   const url = new URL('/api/v4/user/workspace-keys', params.backendBaseUrl).toString();
   const body = {
@@ -100,7 +126,7 @@ export async function registerWorkspaceKeyWithTower(params: {
   const response = await fetch(url, {
     method: 'POST',
     headers: {
-      Authorization: params.humanAuthorization,
+      Authorization: params.authorization,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),

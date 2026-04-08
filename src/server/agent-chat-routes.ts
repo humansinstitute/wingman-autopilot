@@ -3,6 +3,7 @@ import type { WorkspaceSubscriptionManager } from '../agent-chat/subscription-ru
 import type {
   AgentChatDiagnostic,
   AgentChatSseEventDiagnostic,
+  ChatInterceptStateRecord,
   WorkspaceSubscriptionRecord,
 } from '../agent-chat/types';
 
@@ -28,9 +29,10 @@ function getPayloadString(
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-function serialiseSubscription(record: WorkspaceSubscriptionRecord) {
+function serialiseSubscription(record: WorkspaceSubscriptionRecord, intercepts: ChatInterceptStateRecord[]) {
   return {
     ...record,
+    intercepts,
     diagnostics: {
       lastSseEventId: record.lastSseEventId,
       lastSseEvent: record.lastSseEvent,
@@ -43,6 +45,7 @@ function serialiseSubscription(record: WorkspaceSubscriptionRecord) {
       },
       recordPull: record.lastRecordPullResult,
       decrypt: record.lastDecryptResult,
+      routing: record.lastRoutingResult,
       trail: {
         advisory: {
           seen: Boolean(record.lastSseEventId || record.lastSseEvent),
@@ -61,6 +64,12 @@ function serialiseSubscription(record: WorkspaceSubscriptionRecord) {
           code: record.lastDecryptResult?.code ?? null,
           at: record.lastDecryptResult?.at ?? null,
           recordId: getDetailString(record.lastDecryptResult, 'record_id'),
+        },
+        routing: {
+          ok: record.lastRoutingResult?.ok ?? null,
+          code: record.lastRoutingResult?.code ?? null,
+          at: record.lastRoutingResult?.at ?? null,
+          recordId: getDetailString(record.lastRoutingResult, 'record_id'),
         },
       },
     },
@@ -84,7 +93,11 @@ export async function handleAgentChatApi(
   }
 
   if (url.pathname === '/api/agent-chat/subscriptions' && method === 'GET') {
-    return Response.json({ subscriptions: ctx.manager.listForManager(viewerNpub).map(serialiseSubscription) });
+    return Response.json({
+      subscriptions: ctx.manager.listForManager(viewerNpub).map((record) => (
+        serialiseSubscription(record, ctx.manager.listInterceptsForSubscription(record.subscriptionId, viewerNpub))
+      )),
+    });
   }
 
   if (url.pathname === '/api/agent-chat/subscriptions' && method === 'POST') {
@@ -117,7 +130,12 @@ export async function handleAgentChatApi(
         sourceAppNpub,
         triggerConfigRecordId,
       });
-      return Response.json({ subscription: serialiseSubscription(subscription) });
+      return Response.json({
+        subscription: serialiseSubscription(
+          subscription,
+          ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, viewerNpub),
+        ),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Agent Chat bootstrap failed.';
       return Response.json({ error: message }, { status: 500 });
@@ -140,7 +158,12 @@ export async function handleAgentChatApi(
     if (!subscription) {
       return Response.json({ error: 'Subscription not found' }, { status: 404 });
     }
-    return Response.json({ subscription: serialiseSubscription(subscription) });
+    return Response.json({
+      subscription: serialiseSubscription(
+        subscription,
+        ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, viewerNpub),
+      ),
+    });
   }
 
   return Response.json({ error: 'Not found' }, { status: 404 });
