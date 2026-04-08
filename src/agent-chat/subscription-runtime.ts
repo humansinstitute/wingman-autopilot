@@ -222,6 +222,65 @@ export class WorkspaceSubscriptionManager {
     return this.store.delete(subscriptionId);
   }
 
+  async reconnectForManager(subscriptionId: string, npub: string): Promise<WorkspaceSubscriptionRecord | null> {
+    const record = this.getForManager(subscriptionId, npub);
+    if (!record) {
+      return null;
+    }
+    if (record.sseStatus === 'disabled') {
+      throw new Error('Subscription is disabled. Re-enable it before reconnecting.');
+    }
+    return await this.repairSubscription(record, {
+      refreshWorkspaceKey: false,
+      reconnect: true,
+      allowRegisterWhenInactive: false,
+      reason: 'operator_reconnect',
+    });
+  }
+
+  async refreshKeysForManager(subscriptionId: string, npub: string): Promise<WorkspaceSubscriptionRecord | null> {
+    const record = this.getForManager(subscriptionId, npub);
+    if (!record) {
+      return null;
+    }
+    return await this.repairSubscription(record, {
+      refreshWorkspaceKey: true,
+      reconnect: record.sseStatus !== 'disabled',
+      allowRegisterWhenInactive: true,
+      reason: 'operator_refresh_keys',
+    });
+  }
+
+  async setEnabledForManager(
+    subscriptionId: string,
+    npub: string,
+    enabled: boolean,
+  ): Promise<WorkspaceSubscriptionRecord | null> {
+    const record = this.getForManager(subscriptionId, npub);
+    if (!record) {
+      return null;
+    }
+    if (!enabled) {
+      this.stopRuntime(subscriptionId, false);
+      const disabled = this.saveRecord(this.recomputeHealth({
+        ...record,
+        sseStatus: 'disabled',
+      }));
+      return disabled;
+    }
+
+    const reenabled = this.saveRecord(this.recomputeHealth({
+      ...record,
+      sseStatus: 'disconnected',
+    }));
+    return await this.repairSubscription(reenabled, {
+      refreshWorkspaceKey: false,
+      reconnect: true,
+      allowRegisterWhenInactive: true,
+      reason: 'operator_enable',
+    });
+  }
+
   shutdown(): void {
     for (const subscriptionId of this.runtimes.keys()) {
       this.stopRuntime(subscriptionId, true);
@@ -660,6 +719,41 @@ export class WorkspaceSubscriptionManager {
     if (removed) {
       runtime.botIdentity.botSecret.fill(0);
     }
+  }
+
+  private async repairSubscription(
+    record: WorkspaceSubscriptionRecord,
+    options: {
+      refreshWorkspaceKey: boolean;
+      reconnect: boolean;
+      allowRegisterWhenInactive: boolean;
+      reason: string;
+    },
+  ): Promise<WorkspaceSubscriptionRecord> {
+    const botRecord = this.botKeyStore.getActiveKeyForBotNpub(record.botNpub);
+    if (!botRecord) {
+      throw new Error(`Bot key record not found for ${record.botNpub}.`);
+    }
+
+    const botIdentity = this.unlockBotIdentity(botRecord);
+    const prepared = await this.prepareWorkspaceSession(record, botIdentity, {
+      forceNew: options.refreshWorkspaceKey,
+    });
+
+    let next = prepared;
+    if (options.refreshWorkspaceKey || (options.allowRegisterWhenInactive && prepared.wsKeyStatus !== 'active')) {
+      next = await this.registerWorkspaceKey(prepared, botIdentity);
+      this.clearRuntimeFailure(next.subscriptionId, `${options.reason}_workspace_key_registered`);
+    }
+
+    next = await this.refreshGroupKeys(next, botIdentity, false);
+    if (options.reconnect) {
+      await this.ensureConnected(next, botIdentity, false);
+    }
+
+    const latest = this.store.getBySubscriptionId(record.subscriptionId) ?? next;
+    this.clearRuntimeFailure(latest.subscriptionId, options.reason);
+    return latest;
   }
 
   private getRuntime(subscriptionId: string): RuntimeContext {

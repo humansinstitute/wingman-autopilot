@@ -29,10 +29,50 @@ function getPayloadString(
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+function buildOperatorRecommendations(record: WorkspaceSubscriptionRecord, intercepts: ChatInterceptStateRecord[]) {
+  const recommendations = new Map<string, { action: string; label: string; reason: string }>();
+  const addRecommendation = (action: string, label: string, reason: string) => {
+    const key = `${action}:${label}`;
+    if (!recommendations.has(key)) {
+      recommendations.set(key, { action, label, reason });
+    }
+  };
+  const hasBlockedAuth = intercepts.some((intercept) => intercept.state === 'blocked_auth');
+  const hasBlockedDecrypt = intercepts.some((intercept) => intercept.state === 'blocked_decrypt');
+  const hasInterruptFailure = intercepts.some((intercept) => intercept.state === 'interrupt_failed');
+
+  if (record.sseStatus === 'disabled') {
+    addRecommendation('enable', 'Re-enable subscription', 'SSE is disabled, so Agent Chat will not receive workspace advisories.');
+  }
+  if (record.sseStatus === 'backoff' || record.sseStatus === 'disconnected') {
+    addRecommendation('reconnect', 'Reconnect subscription', 'The workspace SSE stream is not currently connected.');
+  }
+  if (record.wsKeyStatus !== 'active' || hasBlockedAuth) {
+    addRecommendation('refresh-keys', 'Refresh workspace key', 'Workspace auth is stale, revoked, or otherwise blocked.');
+  }
+  if (record.groupKeyStatus === 'refresh_required' || record.groupKeyStatus === 'failed' || hasBlockedDecrypt) {
+    addRecommendation('refresh-keys', 'Refresh wrapped group keys', 'Decrypt or group membership state needs to be refreshed.');
+  }
+  if (hasInterruptFailure) {
+    addRecommendation('reconnect', 'Reconnect session runtime', 'An interrupt failed and the runtime is running queued same-session follow-up prompts.');
+  }
+
+  return Array.from(recommendations.values());
+}
+
 function serialiseSubscription(record: WorkspaceSubscriptionRecord, intercepts: ChatInterceptStateRecord[]) {
+  const recommendations = buildOperatorRecommendations(record, intercepts);
   return {
     ...record,
     intercepts,
+    operator: {
+      enabled: record.sseStatus !== 'disabled',
+      blockedInterceptCount: intercepts.filter((intercept) => (
+        intercept.state === 'blocked_auth' || intercept.state === 'blocked_decrypt'
+      )).length,
+      activeInterceptCount: intercepts.filter((intercept) => intercept.state === 'active').length,
+      recommendations,
+    },
     diagnostics: {
       lastSseEventId: record.lastSseEventId,
       lastSseEvent: record.lastSseEvent,
@@ -143,6 +183,40 @@ export async function handleAgentChatApi(
   }
 
   const match = url.pathname.match(/^\/api\/agent-chat\/subscriptions\/([^/]+)$/);
+  const actionMatch = url.pathname.match(/^\/api\/agent-chat\/subscriptions\/([^/]+)\/actions\/([^/]+)$/);
+  if (actionMatch && method === 'POST') {
+    const subscriptionId = decodeURIComponent(actionMatch[1]!);
+    const action = decodeURIComponent(actionMatch[2]!);
+    try {
+      let subscription: WorkspaceSubscriptionRecord | null = null;
+      if (action === 'reconnect') {
+        subscription = await ctx.manager.reconnectForManager(subscriptionId, viewerNpub);
+      } else if (action === 'refresh-keys') {
+        subscription = await ctx.manager.refreshKeysForManager(subscriptionId, viewerNpub);
+      } else if (action === 'disable') {
+        subscription = await ctx.manager.setEnabledForManager(subscriptionId, viewerNpub, false);
+      } else if (action === 'enable') {
+        subscription = await ctx.manager.setEnabledForManager(subscriptionId, viewerNpub, true);
+      } else {
+        return Response.json({ error: 'Unknown Agent Chat action' }, { status: 404 });
+      }
+
+      if (!subscription) {
+        return Response.json({ error: 'Subscription not found' }, { status: 404 });
+      }
+
+      return Response.json({
+        subscription: serialiseSubscription(
+          subscription,
+          ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, viewerNpub),
+        ),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Agent Chat repair action failed.';
+      return Response.json({ error: message }, { status: 500 });
+    }
+  }
+
   if (match && method === 'DELETE') {
     const subscriptionId = decodeURIComponent(match[1]!);
     const removed = ctx.manager.removeForManager(subscriptionId, viewerNpub);

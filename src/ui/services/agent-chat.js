@@ -31,3 +31,18 @@ export async function deleteAgentChatSubscription(subscriptionId) {
     throw new Error(payload.error || 'Failed to delete Agent Chat subscription');
   }
 }
+
+export async function runAgentChatSubscriptionAction(subscriptionId, action) {
+  const response = await fetch(
+    `/api/agent-chat/subscriptions/${encodeURIComponent(subscriptionId)}/actions/${encodeURIComponent(action)}`,
+    {
+      method: 'POST',
+      credentials: 'include',
+    },
+  );
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || 'Failed to run Agent Chat action');
+  }
+  return payload.subscription ?? null;
+}
