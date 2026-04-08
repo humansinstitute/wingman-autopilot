@@ -67,6 +67,9 @@ Core commands:
 
 Session commands:
   sessions list
+  sessions active
+  sessions my-active
+  sessions delegated-active [owner-npub]
   sessions create <agent> [--name <name>] [--directory <path>] [--model <model>] [--metadata <json>] [--target-file <path>]
   sessions info [id]
   sessions read [id] [--refresh true|false]
@@ -96,6 +99,8 @@ App commands:
 Examples:
   mode delegate-bot
   set owner npub1owner...
+  sessions my-active
+  sessions delegated-active
   sessions create codex --name worker --directory /Users/mini/code
   sessions send "inspect the repo and summarize auth bugs"
   delegations list
@@ -201,6 +206,10 @@ function parseJsonOrText(value: string): unknown {
 
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isJsonArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
 }
 
 function ensureString(value: unknown, message: string): string {
@@ -531,6 +540,29 @@ class WingmanTestRepl {
       case "list":
         await this.performRequest("GET", this.sessionCollectionPath(), undefined);
         return;
+      case "active":
+        await this.showActiveSessions(this.sessionCollectionPath(), {
+          label: this.usingOwnerSpace()
+            ? `Active sessions for owner ${this.state.ownerTargetNpub}`
+            : "Active sessions",
+        });
+        return;
+      case "my-active":
+        await this.showActiveSessions("/api/sessions", {
+          label: "My active sessions",
+        });
+        return;
+      case "delegated-active": {
+        const ownerNpub = args[0] ?? this.state.ownerTargetNpub;
+        if (ownerNpub) {
+          await this.showActiveSessions(`/api/owners/${encodeURIComponent(ownerNpub)}/sessions`, {
+            label: `Delegated active sessions for ${ownerNpub}`,
+          });
+          return;
+        }
+        await this.showDelegatedActiveSessions();
+        return;
+      }
       case "create": {
         const agent = args.shift();
         if (!agent) throw new Error("sessions create requires <agent>");
@@ -818,6 +850,88 @@ class WingmanTestRepl {
     return id;
   }
 
+  private extractSessionsFromSnapshot(snapshot: ResponseSnapshot): unknown[] {
+    if (!isJsonRecord(snapshot.parsedBody)) {
+      return [];
+    }
+    const sessions = snapshot.parsedBody.sessions;
+    return isJsonArray(sessions) ? sessions : [];
+  }
+
+  private buildActiveSummary(label: string, sessions: unknown[]): Record<string, unknown> {
+    const normalized = sessions
+      .filter(isJsonRecord)
+      .map((session) => ({
+        id: typeof session.id === "string" ? session.id : null,
+        name: typeof session.name === "string" ? session.name : null,
+        agent: typeof session.agent === "string" ? session.agent : null,
+        status: typeof session.status === "string" ? session.status : null,
+        runtimeStatus: typeof session.agentRuntimeStatus === "string" ? session.agentRuntimeStatus : null,
+        npub: typeof session.npub === "string" ? session.npub : null,
+        startedAt: typeof session.startedAt === "string" ? session.startedAt : null,
+        workingDirectory: typeof session.workingDirectory === "string" ? session.workingDirectory : null,
+      }));
+
+    return {
+      label,
+      activeCount: normalized.length,
+      sessions: normalized,
+    };
+  }
+
+  private printStructuredResult(value: unknown): void {
+    switch (this.state.outputMode) {
+      case "json":
+      case "pretty":
+        this.printLine(prettyPrintJson(value));
+        return;
+      case "raw":
+      default:
+        this.printLine(typeof value === "string" ? value : JSON.stringify(value));
+    }
+  }
+
+  private async showActiveSessions(path: string, options: { label: string }): Promise<void> {
+    const snapshot = await this.performRequest("GET", path, undefined, { display: false });
+    if (this.state.verbose) {
+      this.printLine(`< ${snapshot.status} ${snapshot.statusText}`);
+    }
+    const summary = this.buildActiveSummary(options.label, this.extractSessionsFromSnapshot(snapshot));
+    this.printStructuredResult(summary);
+  }
+
+  private async showDelegatedActiveSessions(): Promise<void> {
+    const delegationsSnapshot = await this.performRequest("GET", "/api/delegations", undefined, { display: false });
+    if (!isJsonRecord(delegationsSnapshot.parsedBody)) {
+      throw new Error("Delegations response was not a JSON object");
+    }
+    const delegations = isJsonArray(delegationsSnapshot.parsedBody.delegations)
+      ? delegationsSnapshot.parsedBody.delegations.filter(isJsonRecord)
+      : [];
+    const ownerNpubs = Array.from(
+      new Set(
+        delegations
+          .map((delegation) => (typeof delegation.ownerNpub === "string" ? delegation.ownerNpub : ""))
+          .filter((ownerNpub) => ownerNpub.length > 0),
+      ),
+    );
+    const results: Array<Record<string, unknown>> = [];
+    for (const ownerNpub of ownerNpubs) {
+      const snapshot = await this.performRequest(
+        "GET",
+        `/api/owners/${encodeURIComponent(ownerNpub)}/sessions`,
+        undefined,
+        { display: false },
+      );
+      results.push(this.buildActiveSummary(ownerNpub, this.extractSessionsFromSnapshot(snapshot)));
+    }
+    this.printStructuredResult({
+      label: "Delegated active sessions",
+      ownerCount: results.length,
+      owners: results,
+    });
+  }
+
   private async buildAuthorizationHeader(
     method: string,
     url: string,
@@ -840,6 +954,7 @@ class WingmanTestRepl {
     method: string,
     path: string,
     body: RequestBody,
+    options: { display?: boolean } = {},
   ): Promise<ResponseSnapshot> {
     const url = new URL(path, this.state.baseUrl).toString();
     const authorization = await this.buildAuthorizationHeader(method, url, body);
@@ -885,7 +1000,9 @@ class WingmanTestRepl {
     };
     this.state.lastResponse = snapshot;
 
-    this.printResponse(snapshot);
+    if (options.display !== false) {
+      this.printResponse(snapshot);
+    }
     return snapshot;
   }
 

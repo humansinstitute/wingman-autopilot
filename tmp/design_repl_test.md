@@ -105,6 +105,17 @@ These are for transport and auth debugging.
 - `delegations ...`
 - `apps ...`
 
+Notable session views:
+
+- `sessions list`
+  - raw route response, including mixed metadata where applicable
+- `sessions active`
+  - active sessions for the current route scope
+- `sessions my-active`
+  - active sessions in self-space
+- `sessions delegated-active [owner-npub]`
+  - active sessions in one delegated owner space, or all delegated owner spaces when omitted
+
 These mirror the most common workflows while still exposing the underlying HTTP result.
 
 ## Output Model
@@ -141,6 +152,21 @@ That means:
 - `200` can mean queued and dispatched immediately
 - `202` can mean accepted into the queue but not dispatched yet
 - `402` or `403` usually means an auth or balance gate blocked dispatch
+
+## Active Session Views
+
+One confusing part of Wingman is that some session endpoints mix live session data with historical or stored identity summaries.
+
+To make that easier to inspect, the REPL now has explicit active-session views:
+
+- `sessions active`
+  - shows only the live `sessions` array for the current route scope
+- `sessions my-active`
+  - forces self-space and shows only live sessions there
+- `sessions delegated-active`
+  - fetches `/api/delegations`, then loads live owner-space sessions for each delegated owner
+
+This is useful when the UI shows a small number of running sessions but the raw list payload includes much larger historical counts in identity summaries.
 
 ## SSE Support
 
