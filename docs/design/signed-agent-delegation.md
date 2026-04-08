@@ -20,6 +20,7 @@ This replaces the current pattern where a bot signer is internally rewritten int
 4. Allow delegates to act in an owner's space only when a valid delegation exists.
 5. Support owner-signed delegation approvals with expiry and scoped permissions.
 6. Make route intent explicit so authorization decisions are easy to reason about and debug.
+7. Support delegated folder, project, and app access without requiring full-workspace access.
 
 ## Non-Goals
 
@@ -116,6 +117,14 @@ These operate on another owner's space and therefore require explicit delegation
 - `GET /api/owners/:ownerNpub/sessions/:id/history`
 - `GET /api/owners/:ownerNpub/apps`
 - `POST /api/owners/:ownerNpub/apps`
+- `GET /api/owners/:ownerNpub/directories`
+- `POST /api/owners/:ownerNpub/directories`
+- `GET /api/owners/:ownerNpub/files/*`
+- `PUT /api/owners/:ownerNpub/files/*`
+- `DELETE /api/owners/:ownerNpub/files/*`
+- `GET /api/owners/:ownerNpub/projects`
+- `GET /api/owners/:ownerNpub/projects/:projectId`
+- `POST /api/owners/:ownerNpub/projects/:projectId/apps`
 
 Behavior:
 
@@ -131,6 +140,51 @@ This is preferable to implicit owner targeting in the body because:
 2. it makes authorization simpler
 3. it avoids accidental cross-space operations
 4. it makes agent tooling easier to implement correctly
+
+## Delegated Folder, Project, and App Access
+
+Delegation needs to cover more than session creation. If a bot or another person is meant to work on projects on the owner's behalf, the model must also support:
+
+- browsing allowed project roots
+- reading and editing files within allowed roots
+- listing, registering, and managing apps within allowed projects
+- associating app actions with a specific owner workspace
+
+The important requirement is that this access should be scoped, not all-or-nothing.
+
+### Recommended Route Families
+
+For delegated workspace access, add explicit owner-space routes for files and projects:
+
+- `GET /api/owners/:ownerNpub/directories`
+- `POST /api/owners/:ownerNpub/directories`
+- `GET /api/owners/:ownerNpub/docs/*`
+- `PUT /api/owners/:ownerNpub/docs/*`
+- `POST /api/owners/:ownerNpub/docs/*`
+- `DELETE /api/owners/:ownerNpub/docs/*`
+- `GET /api/owners/:ownerNpub/projects`
+- `GET /api/owners/:ownerNpub/projects/:projectId`
+- `GET /api/owners/:ownerNpub/apps`
+- `POST /api/owners/:ownerNpub/apps`
+- `POST /api/owners/:ownerNpub/apps/:appId/actions`
+
+This should mirror the self-space model:
+
+- self-space routes mean "my own resources"
+- owner-space routes mean "delegated access to another owner's resources"
+
+### Why Folder And App Access Need Extra Controls
+
+Session delegation is broad but understandable. File and app delegation are riskier because they expose the owner's actual projects.
+
+That means the delegation model should support resource filters such as:
+
+- project roots
+- path prefixes
+- specific app ids
+- app root directories
+
+Without those filters, granting `files:write` or `apps:manage` would usually be too broad.
 
 ## Delegation Data Model
 
@@ -149,6 +203,7 @@ Columns:
 - `revoked_at INTEGER NULL`
 - `billing_mode TEXT NOT NULL`
 - `spend_limit_sats INTEGER NULL`
+- `resource_filters TEXT NULL`
 - `signed_payload TEXT NOT NULL`
 - `signature TEXT NOT NULL`
 - `created_by TEXT NOT NULL`
@@ -176,8 +231,24 @@ Example payload:
     "sessions:read",
     "sessions:create",
     "sessions:manage",
-    "apps:read"
+    "apps:read",
+    "files:read",
+    "files:write"
   ],
+  "resourceFilters": {
+    "projectRoots": [
+      "/Users/mini/code/project-a",
+      "/Users/mini/code/project-b"
+    ],
+    "pathPrefixes": [
+      "/Users/mini/code/project-a",
+      "/Users/mini/code/project-b/apps/web"
+    ],
+    "appIds": [
+      "project-a-web",
+      "project-b-worker"
+    ]
+  },
   "billingMode": "delegate",
   "spendLimitSats": 50000,
   "createdAt": 1771000000000,
@@ -195,6 +266,7 @@ Example payload:
    - `revoked_at` is null
    - `expires_at` is null or in the future
    - requested scope is included
+   - requested resource matches `resourceFilters` when filters are present
 
 ### Benefits
 
@@ -215,6 +287,8 @@ Recommended initial scopes:
 - `apps:manage`
 - `files:read`
 - `files:write`
+- `projects:read`
+- `projects:manage`
 - `jobs:read`
 - `jobs:manage`
 
@@ -224,6 +298,41 @@ Optional future scopes:
 - `admin:none`
 
 `billing:sponsor` should be separate from session management. A delegate being allowed to manage sessions does not automatically mean the owner should pay for the delegate's work.
+
+## Resource Filter Model
+
+Scopes determine what kind of operation is allowed.
+Resource filters determine where that operation is allowed.
+
+Recommended filter fields:
+
+- `projectRoots`
+- `pathPrefixes`
+- `appIds`
+- `appRoots`
+
+### Recommended Matching Rules
+
+#### Files and directories
+
+- `files:*` and delegated directory routes should require the requested path to fall under one of the allowed `pathPrefixes`
+- normalized absolute paths should be used before comparison
+
+#### Projects
+
+- `projects:*` should require the project root to match an allowed `projectRoots` entry
+
+#### Apps
+
+- `apps:*` should require either:
+  - the app id to be in `appIds`, or
+  - the app root to fall under an allowed `appRoots` or `projectRoots` entry
+
+This gives owners a way to say:
+
+- this bot may work only on project A
+- this contractor may manage only app B
+- this helper may read all files under folder X but cannot touch folder Y
 
 ## Billing Model
 
@@ -289,6 +398,7 @@ Then:
 
 - require an active delegation from `targetOwnerNpub` to `subjectNpub`
 - require matching scope
+- require matching resource filter when the operation targets a path, project, or app
 - apply delegation billing rules
 
 ### Admin
@@ -322,6 +432,28 @@ Examples:
    - `createdByNpub = bot`
 
 This preserves both the resource owner and the actor.
+
+## App and Project Ownership Model
+
+Apps and projects should follow the same explicit owner/actor split.
+
+Recommended app fields:
+
+- `ownerNpub`
+- `createdByNpub`
+- `lastManagedByNpub`
+
+Recommended project fields:
+
+- `ownerNpub`
+- `createdByNpub`
+- `lastManagedByNpub`
+
+This matters because an app may:
+
+- belong to the owner's workspace
+- be created or updated by a delegate
+- still need owner-scoped visibility and billing behavior
 
 ## Compatibility With Existing Modes
 
@@ -391,6 +523,44 @@ Result:
 - session belongs to owner account space
 - audit records still preserve bot as actor
 
+### Delegated owner-space file update
+
+```http
+PUT /api/owners/npub1owner.../docs/Users/mini/code/project-a/src/index.ts
+Authorization: Nostr <signed-by-bot>
+Content-Type: application/json
+
+{
+  "content": "updated file contents"
+}
+```
+
+Result:
+
+- allowed only if owner delegated `files:write`
+- requested path must match one of the allowed `pathPrefixes`
+- owner remains the resource owner
+- bot remains the actor
+
+### Delegated owner-space app action
+
+```http
+POST /api/owners/npub1owner.../apps/project-a-web/actions
+Authorization: Nostr <signed-by-bot>
+Content-Type: application/json
+
+{
+  "action": "restart"
+}
+```
+
+Result:
+
+- allowed only if owner delegated `apps:manage`
+- app must match allowed `appIds` or its root must fall inside allowed filters
+- owner remains the app owner
+- bot remains the actor
+
 ## Delegation Management API
 
 Suggested routes:
@@ -427,7 +597,13 @@ Add new delegation store and verification logic.
 
 ### Phase 2
 
-Add explicit owner-space routes alongside existing routes.
+Add explicit owner-space routes alongside existing routes for:
+
+- sessions
+- apps
+- directories
+- docs/files
+- projects
 
 ### Phase 3
 
@@ -449,6 +625,7 @@ Deprecate rewrite-based delegated bot behavior.
 4. Delegations require explicit scopes.
 5. Delegations may be unlimited or time-bounded.
 6. Delegations are always owner-signed.
+7. File and app delegation should default to scoped resource filters rather than unrestricted workspace-wide access.
 
 ## Why This Is More Reasonable
 
