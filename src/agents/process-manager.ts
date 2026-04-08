@@ -793,6 +793,15 @@ export class ProcessManager {
     return session?.adapter ?? null;
   }
 
+  appendSessionLog(id: string, entry: string): SessionSnapshot | null {
+    const session = this.sessions.get(id);
+    if (!session) {
+      return null;
+    }
+    this.appendLog(session, entry);
+    return this.toSnapshot(session);
+  }
+
   setPinnedFile(id: string, filePath: string | null): SessionSnapshot | null {
     const session = this.sessions.get(id);
     if (!session) return null;

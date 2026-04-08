@@ -84,6 +84,7 @@ import { createBotKeyApiHandler } from "./identity/bot-key-api";
 import { createBotCryptoApiHandler } from "./identity/bot-crypto-api";
 import { generateBotKey, clearBotKey, isBotKeyUnlocked, storeBotKeyInMemory, unlockViaEscrow } from "./identity/bot-key-manager";
 import { WorkspaceSubscriptionManager } from './agent-chat/subscription-runtime';
+import { AgentChatSessionRuntime } from './agent-chat/session-runtime';
 import { browserSubscribers } from "./mcp/browser-subscribers";
 import { MemoryStore } from "./mcp/memory-store";
 import { userSettingsStore } from "./storage/user-settings-store";
@@ -1371,8 +1372,9 @@ const parseSessionWorkspaceRequest = (input: unknown): SessionWorkspaceRequest =
 const resolveSessionWorkingDirectory = async (
   directoryInput: string | undefined,
   workspace: SessionWorkspaceRequest,
+  workspaceScopeOverride?: WorkspaceScope,
 ): Promise<string> => {
-  const baseDirectory = await ensureDirectory(directoryInput);
+  const baseDirectory = await ensureDirectory(directoryInput, workspaceScopeOverride);
   if (!workspace) {
     return baseDirectory;
   }
@@ -1641,6 +1643,13 @@ await rehydrateOrphanedSessions(
   SUPPORTED_AGENT_TYPES,
   24, // Look for sessions started in the last 24 hours
 );
+
+const agentChatSessionRuntime = new AgentChatSessionRuntime({
+  defaultAgent: config.defaultAgent,
+  processManager: manager,
+  idleRetentionMinutes: 60,
+});
+workspaceSubscriptionManager.setChatRuntime(agentChatSessionRuntime);
 
 await workspaceSubscriptionManager.startupReload();
 
@@ -2200,6 +2209,7 @@ const sessionApiContext: SessionApiContext = {
   ensureApiAccess,
   ensureViewerHasBalance,
   shouldRequireBalanceForAgent: async () => false,
+  resolveWorkspace,
   serializeSession,
   sessionBelongsToViewer,
   getViewerNormalizedNpub,

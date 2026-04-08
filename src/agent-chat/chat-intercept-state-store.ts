@@ -51,6 +51,10 @@ class ChatInterceptStateStore {
     return this.listWhere('subscription_id = ?1', [subscriptionId]);
   }
 
+  listAll(): ChatInterceptStateRecord[] {
+    return this.listWhere('1 = 1', []);
+  }
+
   getByRoutingKey(routingKey: string): ChatInterceptStateRecord | null {
     return this.getWhere('routing_key = ?1', [routingKey]);
   }

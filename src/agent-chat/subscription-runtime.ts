@@ -1,5 +1,6 @@
 import { unlockViaEscrow } from '../identity/bot-key-manager';
 import { AgentChatRoutingEvaluator } from './routing-evaluator';
+import type { AgentChatSessionRuntime } from './session-runtime';
 import { workspaceSubscriptionStore, type WorkspaceSubscriptionStore } from './workspace-subscription-store';
 import { parseSseEvents } from './sse-events';
 import {
@@ -35,6 +36,7 @@ interface RuntimeContext {
 export interface WorkspaceSubscriptionManagerDependencies {
   store?: WorkspaceSubscriptionStore;
   routingEvaluator?: AgentChatRoutingEvaluator;
+  chatRuntime?: AgentChatSessionRuntime | null;
   botKeyStore: {
     getActiveKeyForUser: (npub: string) => BotKeyStoreRecord | null;
     getActiveKeyForBotNpub: (botNpub: string) => BotKeyStoreRecord | null;
@@ -45,12 +47,18 @@ export class WorkspaceSubscriptionManager {
   private readonly store: WorkspaceSubscriptionStore;
   private readonly routingEvaluator: AgentChatRoutingEvaluator;
   private readonly botKeyStore: WorkspaceSubscriptionManagerDependencies['botKeyStore'];
+  private chatRuntime: AgentChatSessionRuntime | null;
   private readonly runtimes = new Map<string, RuntimeContext>();
 
   constructor(deps: WorkspaceSubscriptionManagerDependencies) {
     this.store = deps.store ?? workspaceSubscriptionStore;
     this.routingEvaluator = deps.routingEvaluator ?? new AgentChatRoutingEvaluator();
     this.botKeyStore = deps.botKeyStore;
+    this.chatRuntime = deps.chatRuntime ?? null;
+  }
+
+  setChatRuntime(chatRuntime: AgentChatSessionRuntime | null): void {
+    this.chatRuntime = chatRuntime;
   }
 
   listForManager(npub: string): WorkspaceSubscriptionRecord[] {
@@ -508,6 +516,20 @@ export class WorkspaceSubscriptionManager {
         record.lastRoutingResult = routingResult.diagnostic;
         record.lastErrorCode = null;
         record.lastErrorAt = null;
+        if (routingResult.intercept && this.chatRuntime) {
+          void this.chatRuntime.handleRoutedChat({
+            subscription: record,
+            intercept: routingResult.intercept,
+            botIdentity: runtime.botIdentity,
+            chatMessage,
+          }).catch((runtimeError) => {
+            console.warn(
+              `[agent-chat] runtime dispatch failed for ${routingResult.intercept?.routingKey}: ${
+                runtimeError instanceof Error ? runtimeError.message : String(runtimeError)
+              }`,
+            );
+          });
+        }
       } catch (error) {
         record.groupKeyStatus = 'refresh_required';
         record.lastErrorCode = 'decrypt_failed';
