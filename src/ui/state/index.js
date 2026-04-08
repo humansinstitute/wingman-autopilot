@@ -107,7 +107,7 @@ export const state = {
     reports: [],
     reportsLoading: false,
     reportsInitialized: false,
-    config: { model: "google/gemini-3-flash-preview", maxCycles: 21, models: [], maxCycleOptions: [6, 21, 256], prompt: "", defaultPrompt: "" },
+    config: { intervalMinutes: 5, prompt: "Any progress?", maxCycles: 21, maxCycleOptions: [6, 21, 256] },
   },
   // Webview split-panel layout state
   webviewLayout: { open: false, mode: "chat-narrow", mobileTab: "chat" },

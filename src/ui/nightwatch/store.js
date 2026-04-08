@@ -90,12 +90,10 @@ export function initNightWatchStore({ showToast }) {
 
         // Update config cache
         const config = {
-          models: configData.models || [],
-          model: configData.model || "google/gemini-3-flash-preview",
+          intervalMinutes: Number(configData.intervalMinutes) || 5,
+          prompt: configData.prompt || "Any progress?",
           maxCycles: configData.maxCycles || 21,
           maxCycleOptions: configData.maxCycleOptions || [6, 21, 256],
-          prompt: configData.prompt || "",
-          defaultPrompt: configData.defaultPrompt || "",
         };
         this.config = config;
         await ConfigStore.put(config);
@@ -136,10 +134,10 @@ export function initNightWatchStore({ showToast }) {
         const current = JSON.parse(JSON.stringify(this.config || {}));
         const updated = {
           ...current,
-          model: data.model ?? current.model,
-          maxCycles: data.maxCycles ?? current.maxCycles,
+          intervalMinutes: data.intervalMinutes ?? current.intervalMinutes,
           prompt: data.prompt ?? current.prompt,
-          defaultPrompt: data.defaultPrompt ?? current.defaultPrompt,
+          maxCycles: data.maxCycles ?? current.maxCycles,
+          maxCycleOptions: data.maxCycleOptions ?? current.maxCycleOptions,
         };
         this.config = updated;
         await ConfigStore.put(updated);

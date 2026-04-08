@@ -7,6 +7,8 @@
 
 import type { NightWatchStore } from "./nightwatch-store";
 import {
+  NIGHTWATCH_CHECK_IN_INTERVAL_MS,
+  NIGHTWATCH_CHECK_IN_PROMPT,
   NIGHTWATCH_MODELS,
   NIGHTWATCH_MAX_CYCLE_OPTIONS,
   NIGHTWATCH_DEFAULT_MODEL,
@@ -44,11 +46,13 @@ function parseJsonBody(request: Request): Promise<Record<string, unknown>> {
 function handleGetConfig(deps: NightWatchApiDependencies): Response {
   const allConfig = deps.store.getAllConfig();
   return Response.json({
-    models: [...NIGHTWATCH_MODELS],
-    maxCycleOptions: [...NIGHTWATCH_MAX_CYCLE_OPTIONS],
-    model: allConfig.default_model ?? NIGHTWATCH_DEFAULT_MODEL,
+    intervalMinutes: Math.round(NIGHTWATCH_CHECK_IN_INTERVAL_MS / 60000),
+    prompt: NIGHTWATCH_CHECK_IN_PROMPT,
     maxCycles: Number(allConfig.default_max_cycles ?? "21"),
-    prompt: allConfig.custom_prompt ?? "",
+    maxCycleOptions: [...NIGHTWATCH_MAX_CYCLE_OPTIONS],
+    // Legacy fields kept for compatibility with any stale clients.
+    models: [...NIGHTWATCH_MODELS],
+    model: allConfig.default_model ?? NIGHTWATCH_DEFAULT_MODEL,
     defaultPrompt: NIGHTWATCH_DEFAULT_PROMPT,
   });
 }
@@ -69,15 +73,6 @@ async function handleUpdateConfig(
       deps.store.setConfig("default_max_cycles", String(Math.trunc(maxCycles)));
     }
   }
-  if (typeof body.prompt === "string") {
-    const trimmed = body.prompt.trim();
-    if (trimmed && trimmed !== NIGHTWATCH_DEFAULT_PROMPT) {
-      deps.store.setConfig("custom_prompt", trimmed);
-    } else {
-      // Empty or matches default — remove custom prompt
-      deps.store.setConfig("custom_prompt", "");
-    }
-  }
 
   return handleGetConfig(deps);
 }
@@ -95,6 +90,7 @@ function handleGetSession(
       cycleCount: 0,
       maxCycles: 21,
       model: NIGHTWATCH_DEFAULT_MODEL,
+      promptAt: null,
     });
   }
   return Response.json(sessionState);

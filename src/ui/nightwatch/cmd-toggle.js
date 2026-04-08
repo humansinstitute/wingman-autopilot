@@ -8,7 +8,7 @@
 import { fetchNightWatchSessionState, enableNightWatch, disableNightWatch } from "./api.js";
 
 function labelFor(enabled) {
-  return enabled ? "Night Watch: ON" : "Night Watch: OFF";
+  return enabled ? "Night Watch: On" : "Night Watch: Off";
 }
 
 export function addNightWatchToggle({ sessionId, addCommand, state, showToast, isFeatureEnabled }) {

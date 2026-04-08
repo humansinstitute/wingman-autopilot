@@ -1,8 +1,8 @@
 /**
  * Night Watch Settings Panel
  *
- * Admin settings panel for configuring Night Watchman model, max cycles,
- * and viewing/dismissing report cards.
+ * Admin panel for viewing the fixed Night Watch timer configuration
+ * and recent report cards.
  */
 
 import {
@@ -13,20 +13,14 @@ import {
 } from "./api.js";
 import { createStatusBadge, formatTimestamp } from "./helpers.js";
 
-// ============================================================
-// Panel Init
-// ============================================================
-
 export function initNightWatchSettingsPanel({ state, render, showToast, createCollapsibleCard }) {
   async function loadConfig() {
     try {
       const data = await fetchNightWatchConfig();
-      state.nightwatch.config.models = data.models || [];
-      state.nightwatch.config.model = data.model || "google/gemini-3-flash-preview";
+      state.nightwatch.config.intervalMinutes = Number(data.intervalMinutes) || 5;
+      state.nightwatch.config.prompt = data.prompt || "Any progress?";
       state.nightwatch.config.maxCycles = data.maxCycles || 21;
       state.nightwatch.config.maxCycleOptions = data.maxCycleOptions || [6, 21, 256];
-      state.nightwatch.config.prompt = data.prompt || "";
-      state.nightwatch.config.defaultPrompt = data.defaultPrompt || "";
     } catch (err) {
       console.warn("[nightwatch] Failed to load config:", err);
     }
@@ -64,67 +58,43 @@ export function initNightWatchSettingsPanel({ state, render, showToast, createCo
       },
     });
 
-    // Model selector
-    const modelGroup = document.createElement("div");
-    modelGroup.className = "wm-form-group";
-    const modelLabel = document.createElement("label");
-    modelLabel.textContent = "Default Model";
-    modelLabel.style.fontWeight = "600";
-    const modelSelect = document.createElement("select");
-    modelSelect.className = "wm-select";
-    for (const m of nw.config.models) {
-      const opt = document.createElement("option");
-      opt.value = m;
-      opt.textContent = m;
-      if (m === nw.config.model) opt.selected = true;
-      modelSelect.append(opt);
-    }
-    modelSelect.addEventListener("change", async () => {
-      try {
-        const data = await updateNightWatchConfig({ model: modelSelect.value });
-        nw.config.model = data.model;
-        showToast(`Model set to ${data.model}`);
-      } catch (err) {
-        showToast(`Failed to update model: ${err.message}`, { type: "error" });
-      }
-    });
-    modelGroup.append(modelLabel, modelSelect);
+    const info = document.createElement("div");
+    info.style.cssText =
+      "display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 1rem; opacity: 0.85;";
 
-    // Max cycles selector
-    const cyclesGroup = document.createElement("div");
-    cyclesGroup.className = "wm-form-group";
-    const cyclesLabel = document.createElement("label");
-    cyclesLabel.textContent = "Max Cycles";
-    cyclesLabel.style.fontWeight = "600";
-    const cyclesSelect = document.createElement("select");
-    cyclesSelect.className = "wm-select";
-    const options = nw.config.maxCycleOptions || [6, 21, 256];
-    for (const c of options) {
+    const cadence = document.createElement("p");
+    cadence.textContent = `When enabled, Night Watch sends "${nw.config.prompt}" every ${nw.config.intervalMinutes} minutes.`;
+    cadence.style.margin = "0";
+
+    const limitGroup = document.createElement("div");
+    limitGroup.className = "wm-form-group";
+    const limitLabel = document.createElement("label");
+    limitLabel.textContent = "Max Check-ins";
+    limitLabel.style.fontWeight = "600";
+    const limitSelect = document.createElement("select");
+    limitSelect.className = "wm-select";
+    for (const count of nw.config.maxCycleOptions || [6, 21, 256]) {
       const opt = document.createElement("option");
-      opt.value = String(c);
-      opt.textContent = String(c);
-      if (c === nw.config.maxCycles) opt.selected = true;
-      cyclesSelect.append(opt);
+      opt.value = String(count);
+      opt.textContent = String(count);
+      if (count === nw.config.maxCycles) opt.selected = true;
+      limitSelect.append(opt);
     }
-    cyclesSelect.addEventListener("change", async () => {
+    limitSelect.addEventListener("change", async () => {
       try {
-        const data = await updateNightWatchConfig({ maxCycles: Number(cyclesSelect.value) });
+        const data = await updateNightWatchConfig({ maxCycles: Number(limitSelect.value) });
         nw.config.maxCycles = data.maxCycles;
-        showToast(`Max cycles set to ${data.maxCycles}`);
+        render();
+        showToast(`Max check-ins set to ${data.maxCycles}`);
       } catch (err) {
-        showToast(`Failed to update max cycles: ${err.message}`, { type: "error" });
+        showToast(`Failed to update max check-ins: ${err.message}`, { type: "error" });
       }
     });
-    cyclesGroup.append(cyclesLabel, cyclesSelect);
+    limitGroup.append(limitLabel, limitSelect);
 
-    const configRow = document.createElement("div");
-    configRow.style.cssText = "display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap;";
-    modelGroup.style.flex = "1";
-    cyclesGroup.style.flex = "0 0 auto";
-    configRow.append(modelGroup, cyclesGroup);
-    body.append(configRow);
+    info.append(cadence, limitGroup);
+    body.append(info);
 
-    // Reports section
     const reportsTitle = document.createElement("h3");
     reportsTitle.textContent = "Report Cards";
     reportsTitle.style.cssText = "margin: 0.75rem 0 0.5rem; font-size: 0.9rem;";
@@ -163,7 +133,6 @@ export function initNightWatchSettingsPanel({ state, render, showToast, createCo
       gap: 0.35rem;
     `;
 
-    // Header row: badge + session name + timestamp
     const header = document.createElement("div");
     header.style.cssText = "display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;";
     header.append(createStatusBadge(report.status));
@@ -171,7 +140,8 @@ export function initNightWatchSettingsPanel({ state, render, showToast, createCo
     if (report.inputMode === "raw") {
       const rawTag = document.createElement("span");
       rawTag.textContent = "RAW";
-      rawTag.style.cssText = "display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; font-weight: 700; color: #fff; background: #8b5cf6; letter-spacing: 0.05em;";
+      rawTag.style.cssText =
+        "display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; font-weight: 700; color: #fff; background: #8b5cf6; letter-spacing: 0.05em;";
       header.append(rawTag);
     }
 
@@ -179,7 +149,8 @@ export function initNightWatchSettingsPanel({ state, render, showToast, createCo
       const link = document.createElement("a");
       link.href = `/live/${report.sessionId}`;
       link.textContent = report.sessionName;
-      link.style.cssText = "font-weight: 600; text-decoration: none; color: var(--accent-color, #7dd3fc);";
+      link.style.cssText =
+        "font-weight: 600; text-decoration: none; color: var(--accent-color, #7dd3fc);";
       header.append(link);
     } else {
       const idSpan = document.createElement("span");
@@ -195,21 +166,19 @@ export function initNightWatchSettingsPanel({ state, render, showToast, createCo
 
     item.append(header);
 
-    // Summary
     const summary = document.createElement("p");
     summary.textContent = report.summary;
     summary.style.cssText = "margin: 0; font-size: 0.85rem; line-height: 1.4;";
     item.append(summary);
 
-    // Reasoning (if present)
     if (report.reasoning) {
       const reasoning = document.createElement("p");
       reasoning.textContent = report.reasoning;
-      reasoning.style.cssText = "margin: 0.25rem 0 0; font-size: 0.8rem; line-height: 1.3; opacity: 0.7; font-style: italic; border-left: 2px solid rgba(255,255,255,0.15); padding-left: 0.5rem;";
+      reasoning.style.cssText =
+        "margin: 0.25rem 0 0; font-size: 0.8rem; line-height: 1.3; opacity: 0.7; font-style: italic; border-left: 2px solid rgba(255,255,255,0.15); padding-left: 0.5rem;";
       item.append(reasoning);
     }
 
-    // Dismiss button
     const actions = document.createElement("div");
     actions.style.cssText = "display: flex; justify-content: flex-end;";
     const dismissBtn = document.createElement("button");

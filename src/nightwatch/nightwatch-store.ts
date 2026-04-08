@@ -12,6 +12,7 @@ import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 
 import { databaseFile } from "../storage/message-store";
+import { getNextNightWatchPromptAt } from "./nightwatch-constants";
 
 // ============================================================
 // Types
@@ -23,6 +24,7 @@ export interface NightWatchSessionState {
   cycleCount: number;
   maxCycles: number;
   model: string;
+  promptAt: string | null;
   updatedAt: string;
 }
 
@@ -70,6 +72,7 @@ class NightWatchStore {
            cycle_count AS cycleCount,
            max_cycles AS maxCycles,
            model,
+           prompt_at AS promptAt,
            updated_at AS updatedAt
          FROM nightwatch_sessions
          WHERE session_id = ?1`,
@@ -97,19 +100,21 @@ class NightWatchStore {
     const defaultMaxCycles = Number(this.getConfig("default_max_cycles") ?? "21");
     const model = opts?.model ?? defaultModel;
     const maxCycles = opts?.maxCycles ?? defaultMaxCycles;
+    const promptAt = getNextNightWatchPromptAt();
 
     this.db
       .query(
-        `INSERT INTO nightwatch_sessions (session_id, enabled, cycle_count, max_cycles, model, updated_at)
-         VALUES (?1, 1, 0, ?2, ?3, ?4)
+        `INSERT INTO nightwatch_sessions (session_id, enabled, cycle_count, max_cycles, model, prompt_at, updated_at)
+         VALUES (?1, 1, 0, ?2, ?3, ?4, ?5)
          ON CONFLICT(session_id) DO UPDATE SET
            enabled = 1,
            cycle_count = 0,
            max_cycles = excluded.max_cycles,
            model = excluded.model,
+           prompt_at = excluded.prompt_at,
            updated_at = excluded.updated_at`,
       )
-      .run(sessionId, maxCycles, model, now);
+      .run(sessionId, maxCycles, model, promptAt, now);
 
     return this.getSessionState(sessionId)!;
   }
@@ -118,18 +123,49 @@ class NightWatchStore {
     const now = new Date().toISOString();
     this.db
       .query(
-        `UPDATE nightwatch_sessions SET enabled = 0, updated_at = ?2 WHERE session_id = ?1`,
+        `UPDATE nightwatch_sessions
+         SET enabled = 0, prompt_at = NULL, updated_at = ?2
+         WHERE session_id = ?1`,
       )
       .run(sessionId, now);
   }
 
-  incrementCycle(sessionId: string): number {
+  scheduleNextPrompt(sessionId: string, baseMs = Date.now()): void {
+    const now = new Date().toISOString();
+    const promptAt = getNextNightWatchPromptAt(baseMs);
+    this.db
+      .query(
+        `UPDATE nightwatch_sessions
+         SET prompt_at = ?2, updated_at = ?3
+         WHERE session_id = ?1 AND enabled = 1`,
+      )
+      .run(sessionId, promptAt, now);
+  }
+
+  postponePrompt(sessionId: string, promptAt: string): void {
     const now = new Date().toISOString();
     this.db
       .query(
-        `UPDATE nightwatch_sessions SET cycle_count = cycle_count + 1, updated_at = ?2 WHERE session_id = ?1`,
+        `UPDATE nightwatch_sessions
+         SET prompt_at = ?2, updated_at = ?3
+         WHERE session_id = ?1 AND enabled = 1`,
       )
-      .run(sessionId, now);
+      .run(sessionId, promptAt, now);
+  }
+
+  recordPromptSent(sessionId: string, continueTimer = true, baseMs = Date.now()): number {
+    const now = new Date().toISOString();
+    const promptAt = continueTimer ? getNextNightWatchPromptAt(baseMs) : null;
+    this.db
+      .query(
+        `UPDATE nightwatch_sessions
+         SET enabled = ?2,
+             cycle_count = cycle_count + 1,
+             prompt_at = ?3,
+             updated_at = ?4
+         WHERE session_id = ?1`,
+      )
+      .run(sessionId, continueTimer ? 1 : 0, promptAt, now);
     const row = this.db
       .query<{ cycleCount: number }, [string]>(
         `SELECT cycle_count AS cycleCount FROM nightwatch_sessions WHERE session_id = ?1`,
@@ -265,6 +301,7 @@ class NightWatchStore {
         cycle_count INTEGER NOT NULL DEFAULT 0,
         max_cycles INTEGER NOT NULL DEFAULT 21,
         model TEXT NOT NULL DEFAULT 'google/gemini-3-flash-preview',
+        prompt_at TEXT,
         updated_at TEXT NOT NULL
       );
 
@@ -313,6 +350,13 @@ class NightWatchStore {
     // Migration: add input_raw column if missing
     try {
       this.db.exec(`ALTER TABLE nightwatch_reports ADD COLUMN input_raw TEXT`);
+    } catch {
+      // Column already exists — ignore
+    }
+
+    // Migration: add prompt_at column if missing
+    try {
+      this.db.exec(`ALTER TABLE nightwatch_sessions ADD COLUMN prompt_at TEXT`);
     } catch {
       // Column already exists — ignore
     }

@@ -701,6 +701,7 @@ try {
 const nightWatchDeps = {
   store: nightWatchStore,
   featureFlagStore,
+  agentHost,
   messageStore,
   promptQueueStore,
   openRouterApiKey: Bun.env.OPENROUTER_API?.trim() || null,
