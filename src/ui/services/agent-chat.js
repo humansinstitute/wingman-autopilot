@@ -7,6 +7,15 @@ export async function listAgentChatSubscriptions() {
   return Array.isArray(payload.subscriptions) ? payload.subscriptions : [];
 }
 
+export async function listAgentChatAgents() {
+  const response = await fetch('/api/agent-chat/agents', { credentials: 'include' });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || 'Failed to load Agent Chat agents');
+  }
+  return Array.isArray(payload.agents) ? payload.agents : [];
+}
+
 export async function saveAgentChatSubscription(input) {
   const response = await fetch('/api/agent-chat/subscriptions', {
     method: 'POST',
@@ -21,6 +30,20 @@ export async function saveAgentChatSubscription(input) {
   return payload.subscription;
 }
 
+export async function saveAgentChatAgent(input) {
+  const response = await fetch('/api/agent-chat/agents', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(input),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || 'Failed to save Agent Chat agent');
+  }
+  return payload.agent;
+}
+
 export async function deleteAgentChatSubscription(subscriptionId) {
   const response = await fetch(`/api/agent-chat/subscriptions/${encodeURIComponent(subscriptionId)}`, {
     method: 'DELETE',
@@ -29,6 +52,17 @@ export async function deleteAgentChatSubscription(subscriptionId) {
   if (!response.ok && response.status !== 204) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.error || 'Failed to delete Agent Chat subscription');
+  }
+}
+
+export async function deleteAgentChatAgent(agentId) {
+  const response = await fetch(`/api/agent-chat/agents/${encodeURIComponent(agentId)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!response.ok && response.status !== 204) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || 'Failed to delete Agent Chat agent');
   }
 }
 

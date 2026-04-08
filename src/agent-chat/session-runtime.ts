@@ -3,6 +3,7 @@ import type { ProcessManager, SessionSnapshot } from '../agents/process-manager'
 import { chatInterceptStateStore, type ChatInterceptStateStore } from './chat-intercept-state-store';
 import { archiveChatSession, archiveExpiredSessionIfNeeded, consumePendingMessages, createAgentChatSession, hasExpiredRetention, logSession, resolveRecoveryState, resolveReusableSession, saveIntercept, sendPromptAndAwaitAssistantReply } from './session-runtime-session-ops';
 import { buildBootstrapPrompt, buildMergedTurnPrompt } from './session-runtime-prompts';
+import { parseAgentChatReply } from './session-runtime-decision';
 import {
   enqueueTurn,
   FORCE_INTERRUPT_FAILURE_ENV,
@@ -11,7 +12,12 @@ import {
   isInterruptedTurnError,
   type RoutingRuntimeState,
 } from './session-runtime-turns';
-import type { ChatInterceptStateRecord, RuntimeBotIdentity, WorkspaceSubscriptionRecord } from './types';
+import type {
+  AgentDefinitionRecord,
+  ChatInterceptStateRecord,
+  RuntimeBotIdentity,
+  WorkspaceSubscriptionRecord,
+} from './types';
 import { handoffAgentChatReply, prepareAgentChatYokeRuntime } from './yoke-runtime';
 
 const DEFAULT_IDLE_RETENTION_MINUTES = 60;
@@ -24,6 +30,7 @@ interface AgentChatSessionRuntimeDependencies {
 }
 
 export interface AgentChatSessionRuntimeInput {
+  agent: AgentDefinitionRecord;
   subscription: WorkspaceSubscriptionRecord;
   intercept: ChatInterceptStateRecord;
   botIdentity: RuntimeBotIdentity;
@@ -152,6 +159,7 @@ export class AgentChatSessionRuntime {
             session = await createAgentChatSession({
               defaultAgent: this.defaultAgent,
               manager: this.manager,
+              agent: latestInput.agent,
               intercept,
               subscription: latestInput.subscription,
             });
@@ -207,6 +215,7 @@ export class AgentChatSessionRuntime {
               followUpMode: promptMode,
             })
           : buildBootstrapPrompt({
+              agent: latestInput.agent,
               isNewSession,
               subscription: latestInput.subscription,
               intercept,
@@ -219,19 +228,46 @@ export class AgentChatSessionRuntime {
 
         try {
           const reply = await sendPromptAndAwaitAssistantReply(this.manager, session.id, prompt);
-          const handoff = await handoffAgentChatReply({
-            workingDirectory: session.workingDirectory,
-            stateDir: yokeRuntime.stateDir,
-            botIdentity: latestInput.botIdentity,
-            channelId: intercept.channelId,
-            threadId: intercept.threadId,
-            body: reply.content,
-          });
-          await logSession(
-            this.manager,
-            session.id,
-            `[agent-chat] reply-current status=${handoff.status} message_id=${handoff.message_id}`,
-          );
+          const parsedReply = parseAgentChatReply(reply.content);
+          if (parsedReply.decision === 'respond') {
+            if (!parsedReply.replyBody) {
+              intercept = saveIntercept(this.interceptStore, intercept, {
+                lastDecision: 'failed',
+                lastActivityAt: new Date().toISOString(),
+              });
+              await logSession(this.manager, session.id, '[agent-chat] decision failed: empty respond body');
+            } else {
+              const handoff = await handoffAgentChatReply({
+                workingDirectory: session.workingDirectory,
+                stateDir: yokeRuntime.stateDir,
+                botIdentity: latestInput.botIdentity,
+                channelId: intercept.channelId,
+                threadId: intercept.threadId,
+                body: parsedReply.replyBody,
+              });
+              intercept = saveIntercept(this.interceptStore, intercept, {
+                lastDecision: 'respond',
+                lastActivityAt: new Date().toISOString(),
+              });
+              await logSession(
+                this.manager,
+                session.id,
+                `[agent-chat] reply-current status=${handoff.status} message_id=${handoff.message_id} decision=respond`,
+              );
+            }
+          } else if (parsedReply.decision === 'ignore') {
+            intercept = saveIntercept(this.interceptStore, intercept, {
+              lastDecision: 'ignore',
+              lastActivityAt: new Date().toISOString(),
+            });
+            await logSession(this.manager, session.id, '[agent-chat] decision=ignore');
+          } else {
+            intercept = saveIntercept(this.interceptStore, intercept, {
+              lastDecision: 'failed',
+              lastActivityAt: new Date().toISOString(),
+            });
+            await logSession(this.manager, session.id, '[agent-chat] decision failed: missing AGENT_CHAT_DECISION header');
+          }
         } catch (error) {
           if (isInterruptedTurnError(error)) {
             await logSession(this.manager, session.id, '[agent-chat] turn interrupted for merged follow-up');
@@ -242,6 +278,10 @@ export class AgentChatSessionRuntime {
             });
             continue;
           }
+          intercept = saveIntercept(this.interceptStore, intercept, {
+            lastDecision: 'failed',
+            lastActivityAt: new Date().toISOString(),
+          });
           await logSession(
             this.manager,
             session.id,

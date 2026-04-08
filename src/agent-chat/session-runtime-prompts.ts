@@ -1,5 +1,5 @@
 import type { SessionSnapshot } from '../agents/process-manager';
-import type { ChatInterceptStateRecord, WorkspaceSubscriptionRecord } from './types';
+import type { AgentDefinitionRecord, ChatInterceptStateRecord, WorkspaceSubscriptionRecord } from './types';
 import { buildAgentChatYokeCommands, type AgentChatYokeContext } from './yoke-runtime';
 
 export interface QueuedChatTurn {
@@ -60,6 +60,7 @@ function buildMergePackage(
 }
 
 export function buildBootstrapPrompt(params: {
+  agent: AgentDefinitionRecord;
   isNewSession: boolean;
   subscription: WorkspaceSubscriptionRecord;
   intercept: ChatInterceptStateRecord;
@@ -85,10 +86,12 @@ export function buildBootstrapPrompt(params: {
     `Agent Chat runtime event: ${bootstrapMode}.`,
     '',
     'Thread package:',
+    `- agent_id: ${params.agent.agentId}`,
+    `- agent_label: ${params.agent.label}`,
     `- workspace_owner_npub: ${params.subscription.workspaceOwnerNpub}`,
     `- channel_id: ${params.intercept.channelId}`,
     `- thread_id: ${params.intercept.threadId}`,
-    `- target_bot_npub: ${params.subscription.botNpub}`,
+    `- bot_npub: ${params.agent.botNpub}`,
     `- managed_by_npub: ${params.subscription.managedByNpub ?? 'unknown'}`,
     `- session_id: ${params.session.id}`,
     `- recent_turn_count: ${params.context?.recent_messages?.length ?? 1}`,
@@ -109,12 +112,14 @@ export function buildBootstrapPrompt(params: {
       : 'Yoke context is ready in the session state dir shown above.',
     '',
     'Instructions:',
-    '- You are replying as the target bot for the current thread only.',
+    '- You are inspecting the current thread for the registered local agent only.',
+    '- Start your answer with exactly one line: AGENT_CHAT_DECISION: respond or AGENT_CHAT_DECISION: ignore',
     '- Use the Yoke commands above if you need more context before answering.',
-    '- Produce one assistant reply for the current thread.',
+    '- If you choose respond, put the human-visible thread reply after the decision line.',
+    '- If you choose ignore, do not add any extra text after the decision line.',
     '- Do not tell the human to run commands.',
     '- Do not include tool transcripts in your final answer.',
-    '- Wingmen will relay your final assistant reply back into the thread.',
+    '- Wingmen only relays replies when the decision is respond.',
   ].join('\n');
 }
 
@@ -155,9 +160,11 @@ export function buildMergedTurnPrompt(params: {
     '',
     'Instructions:',
     '- Stay on the current session and current routing key.',
+    '- Start your answer with exactly one line: AGENT_CHAT_DECISION: respond or AGENT_CHAT_DECISION: ignore',
     '- Treat the JSON package as authoritative for the newly arrived user turns.',
     '- Preserve the arrival order of the merged user turns when reasoning about the reply.',
-    '- Produce one assistant reply that addresses the current merged thread state.',
+    '- If you choose respond, put the human-visible thread reply after the decision line.',
+    '- If you choose ignore, do not add any extra text after the decision line.',
     '- Do not include the JSON package verbatim in the final answer.',
   ].join('\n');
 }

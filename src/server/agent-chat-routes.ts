@@ -1,6 +1,7 @@
 import type { RequestAuthContext } from '../auth/request-context';
 import type { WorkspaceSubscriptionManager } from '../agent-chat/subscription-runtime';
 import type {
+  AgentDefinitionRecord,
   AgentChatDiagnostic,
   AgentChatSseEventDiagnostic,
   ChatInterceptStateRecord,
@@ -60,17 +61,34 @@ function buildOperatorRecommendations(record: WorkspaceSubscriptionRecord, inter
   return Array.from(recommendations.values());
 }
 
-function serialiseSubscription(record: WorkspaceSubscriptionRecord, intercepts: ChatInterceptStateRecord[]) {
+function serialiseAgent(record: AgentDefinitionRecord) {
+  return {
+    ...record,
+    operator: {
+      enabled: record.enabled,
+      groupCount: record.groupNpubs.length,
+      capabilityCount: record.capabilities.length,
+    },
+  };
+}
+
+function serialiseSubscription(
+  record: WorkspaceSubscriptionRecord,
+  intercepts: ChatInterceptStateRecord[],
+  candidateAgents: AgentDefinitionRecord[],
+) {
   const recommendations = buildOperatorRecommendations(record, intercepts);
   return {
     ...record,
     intercepts,
+    candidateAgents: candidateAgents.map(serialiseAgent),
     operator: {
       enabled: record.sseStatus !== 'disabled',
       blockedInterceptCount: intercepts.filter((intercept) => (
         intercept.state === 'blocked_auth' || intercept.state === 'blocked_decrypt'
       )).length,
       activeInterceptCount: intercepts.filter((intercept) => intercept.state === 'active').length,
+      candidateAgentCount: candidateAgents.length,
       recommendations,
     },
     diagnostics: {
@@ -123,7 +141,7 @@ export async function handleAgentChatApi(
   authContext: RequestAuthContext,
   ctx: AgentChatApiContext,
 ): Promise<Response | null> {
-  if (!url.pathname.startsWith('/api/agent-chat/subscriptions')) {
+  if (!url.pathname.startsWith('/api/agent-chat/subscriptions') && !url.pathname.startsWith('/api/agent-chat/agents')) {
     return null;
   }
 
@@ -135,8 +153,18 @@ export async function handleAgentChatApi(
   if (url.pathname === '/api/agent-chat/subscriptions' && method === 'GET') {
     return Response.json({
       subscriptions: ctx.manager.listForManager(viewerNpub).map((record) => (
-        serialiseSubscription(record, ctx.manager.listInterceptsForSubscription(record.subscriptionId, viewerNpub))
+        serialiseSubscription(
+          record,
+          ctx.manager.listInterceptsForSubscription(record.subscriptionId, viewerNpub),
+          ctx.manager.listAgentsForWorkspaceBot(record.workspaceOwnerNpub, record.botNpub, viewerNpub),
+        )
       )),
+    });
+  }
+
+  if (url.pathname === '/api/agent-chat/agents' && method === 'GET') {
+    return Response.json({
+      agents: ctx.manager.listAgentsForManager(viewerNpub).map(serialiseAgent),
     });
   }
 
@@ -174,6 +202,7 @@ export async function handleAgentChatApi(
         subscription: serialiseSubscription(
           subscription,
           ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, viewerNpub),
+          ctx.manager.listAgentsForWorkspaceBot(subscription.workspaceOwnerNpub, subscription.botNpub, viewerNpub),
         ),
       });
     } catch (error) {
@@ -182,7 +211,55 @@ export async function handleAgentChatApi(
     }
   }
 
+  if (url.pathname === '/api/agent-chat/agents' && method === 'POST') {
+    let body: Record<string, unknown>;
+    try {
+      body = await request.json() as Record<string, unknown>;
+    } catch {
+      return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+    }
+
+    const agentId = typeof body.agentId === 'string' ? body.agentId.trim() : '';
+    const label = typeof body.label === 'string' ? body.label.trim() : '';
+    const botNpub = typeof body.botNpub === 'string' ? body.botNpub.trim() : '';
+    const workspaceOwnerNpub = typeof body.workspaceOwnerNpub === 'string' ? body.workspaceOwnerNpub.trim() : '';
+    const workingDirectory = typeof body.workingDirectory === 'string' ? body.workingDirectory.trim() : '';
+    const enabled = body.enabled !== false;
+    const groupNpubs = Array.isArray(body.groupNpubs)
+      ? body.groupNpubs.filter((value): value is string => typeof value === 'string').map((value) => value.trim()).filter(Boolean)
+      : [];
+    const capabilities = Array.isArray(body.capabilities) && body.capabilities.includes('chat_intercept')
+      ? ['chat_intercept'] as const
+      : ['chat_intercept'] as const;
+
+    if (!agentId || !botNpub || !workspaceOwnerNpub || !workingDirectory) {
+      return Response.json(
+        { error: 'agentId, botNpub, workspaceOwnerNpub, and workingDirectory are required.' },
+        { status: 400 },
+      );
+    }
+
+    try {
+      const agent = ctx.manager.saveAgentForManager({
+        managedByNpub: viewerNpub,
+        agentId,
+        label,
+        botNpub,
+        workspaceOwnerNpub,
+        groupNpubs,
+        workingDirectory,
+        capabilities: [...capabilities],
+        enabled,
+      });
+      return Response.json({ agent: serialiseAgent(agent) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save Agent Chat agent.';
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
   const match = url.pathname.match(/^\/api\/agent-chat\/subscriptions\/([^/]+)$/);
+  const agentMatch = url.pathname.match(/^\/api\/agent-chat\/agents\/([^/]+)$/);
   const actionMatch = url.pathname.match(/^\/api\/agent-chat\/subscriptions\/([^/]+)\/actions\/([^/]+)$/);
   if (actionMatch && method === 'POST') {
     const subscriptionId = decodeURIComponent(actionMatch[1]!);
@@ -209,6 +286,7 @@ export async function handleAgentChatApi(
         subscription: serialiseSubscription(
           subscription,
           ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, viewerNpub),
+          ctx.manager.listAgentsForWorkspaceBot(subscription.workspaceOwnerNpub, subscription.botNpub, viewerNpub),
         ),
       });
     } catch (error) {
@@ -236,8 +314,18 @@ export async function handleAgentChatApi(
       subscription: serialiseSubscription(
         subscription,
         ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, viewerNpub),
+        ctx.manager.listAgentsForWorkspaceBot(subscription.workspaceOwnerNpub, subscription.botNpub, viewerNpub),
       ),
     });
+  }
+
+  if (agentMatch && method === 'DELETE') {
+    const agentId = decodeURIComponent(agentMatch[1]!);
+    const removed = ctx.manager.removeAgentForManager(agentId, viewerNpub);
+    if (!removed) {
+      return Response.json({ error: 'Agent not found' }, { status: 404 });
+    }
+    return new Response(null, { status: 204 });
   }
 
   return Response.json({ error: 'Not found' }, { status: 404 });

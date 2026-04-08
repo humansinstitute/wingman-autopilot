@@ -2,7 +2,7 @@ import type { AgentType } from '../config';
 import type { ProcessManager, SessionOrigin, SessionSnapshot } from '../agents/process-manager';
 import { scheduleSessionArchive } from '../storage/session-archiver';
 import type { ChatInterceptStateStore } from './chat-intercept-state-store';
-import type { ChatInterceptStateRecord, WorkspaceSubscriptionRecord } from './types';
+import type { AgentDefinitionRecord, ChatInterceptStateRecord, WorkspaceSubscriptionRecord } from './types';
 
 const SESSION_READY_TIMEOUT_MS = 120_000;
 const ASSISTANT_REPLY_TIMEOUT_MS = 300_000;
@@ -50,18 +50,19 @@ export function resolveReusableSession(
 export async function createAgentChatSession(params: {
   defaultAgent: AgentType;
   manager: ProcessManager;
+  agent: AgentDefinitionRecord;
   intercept: ChatInterceptStateRecord;
   subscription: WorkspaceSubscriptionRecord;
 }): Promise<SessionSnapshot> {
-  const sessionName = `Agent Chat ${truncateText(params.intercept.threadId, 24)}`;
+  const sessionName = `${params.agent.label || params.agent.agentId} Chat ${truncateText(params.intercept.threadId, 20)}`;
   const origin: SessionOrigin = {
     type: 'agent-chat',
     id: params.intercept.routingKey,
-    label: `Agent Chat ${truncateText(params.intercept.channelId, 12)}:${truncateText(params.intercept.threadId, 12)}`,
+    label: `${params.agent.agentId} ${truncateText(params.intercept.channelId, 12)}:${truncateText(params.intercept.threadId, 12)}`,
   };
   return await params.manager.createSession(
     params.defaultAgent,
-    undefined,
+    params.agent.workingDirectory,
     sessionName,
     origin,
     undefined,
@@ -70,6 +71,8 @@ export async function createAgentChatSession(params: {
       AGENT: true,
       role: 'agent-chat',
       routedBy: 'agent-chat',
+      agentChatAgentId: params.agent.agentId,
+      agentChatBotNpub: params.agent.botNpub,
       createdByNpub: params.subscription.managedByNpub ?? undefined,
       lastManagedByNpub: params.subscription.managedByNpub ?? undefined,
       chargeToNpub: params.subscription.managedByNpub ?? undefined,

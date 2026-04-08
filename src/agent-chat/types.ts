@@ -2,6 +2,8 @@ export type WorkspaceKeyStatus = 'pending' | 'active' | 'refresh_required' | 're
 export type GroupKeyStatus = 'pending' | 'active' | 'refresh_required' | 'revoked' | 'failed';
 export type SseStatus = 'disconnected' | 'connecting' | 'connected' | 'backoff' | 'disabled';
 export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy';
+export type AgentCapability = 'chat_intercept';
+export type AgentInterceptDecision = 'respond' | 'ignore' | 'pending' | 'failed';
 export type ChatInterceptStateStatus =
   | 'pending'
   | 'active'
@@ -38,6 +40,7 @@ export interface WorkspaceSubscriptionRecord {
   groupKeyStatus: GroupKeyStatus;
   sseStatus: SseStatus;
   healthStatus: HealthStatus;
+  // Legacy migration field retained for operator visibility only.
   triggerConfigRecordId: string | null;
   lastSseEventId: string | null;
   lastAuthOkAt: string | null;
@@ -58,19 +61,35 @@ export interface WorkspaceSubscriptionRecord {
   lastSuccessfulStartupReloadAt: string | null;
 }
 
+export interface AgentDefinitionRecord {
+  agentId: string;
+  label: string;
+  botNpub: string;
+  workspaceOwnerNpub: string;
+  groupNpubs: string[];
+  workingDirectory: string;
+  capabilities: AgentCapability[];
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  managedByNpub: string | null;
+}
+
 export interface ChatInterceptStateRecord {
   routingKey: string;
   subscriptionId: string;
+  agentId: string;
   sessionId: string | null;
   sessionClass: 'chat';
   workspaceOwnerNpub: string;
   sourceAppNpub: string;
   channelId: string;
   threadId: string;
-  targetBotNpub: string;
+  botNpub: string;
   lastMessageIdSeen: string | null;
   pendingMessageCount: number;
   state: ChatInterceptStateStatus;
+  lastDecision: AgentInterceptDecision;
   lastActivityAt: string;
   createdAt: string;
   updatedAt: string;
@@ -85,6 +104,18 @@ export interface CreateWorkspaceSubscriptionInput {
 }
 
 export interface UpdateWorkspaceSubscriptionInput extends WorkspaceSubscriptionRecord {}
+
+export interface CreateAgentDefinitionInput {
+  managedByNpub: string;
+  agentId: string;
+  label: string;
+  botNpub: string;
+  workspaceOwnerNpub: string;
+  groupNpubs: string[];
+  workingDirectory: string;
+  capabilities?: AgentCapability[];
+  enabled?: boolean;
+}
 
 export interface BotKeyStoreRecord {
   id: string;

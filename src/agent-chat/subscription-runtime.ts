@@ -1,4 +1,5 @@
 import { unlockViaEscrow } from '../identity/bot-key-manager';
+import { agentDefinitionStore, type AgentDefinitionStore } from './agent-definition-store';
 import { AgentChatRoutingEvaluator } from './routing-evaluator';
 import type { AgentChatSessionRuntime } from './session-runtime';
 import { workspaceSubscriptionStore, type WorkspaceSubscriptionStore } from './workspace-subscription-store';
@@ -15,7 +16,9 @@ import {
 } from './tower-client';
 import { loadYokeBotHelpers } from './yoke-bot-helpers';
 import type {
+  AgentDefinitionRecord,
   BotKeyStoreRecord,
+  CreateAgentDefinitionInput,
   CreateWorkspaceSubscriptionInput,
   RuntimeBotIdentity,
   WorkspaceSubscriptionRecord,
@@ -37,6 +40,7 @@ type RuntimeFailureState = 'blocked_auth' | 'blocked_decrypt' | null;
 
 export interface WorkspaceSubscriptionManagerDependencies {
   store?: WorkspaceSubscriptionStore;
+  agentStore?: AgentDefinitionStore;
   routingEvaluator?: AgentChatRoutingEvaluator;
   chatRuntime?: AgentChatSessionRuntime | null;
   botKeyStore: {
@@ -76,6 +80,7 @@ function mapFailureState(detailCode: string | null): RuntimeFailureState {
 
 export class WorkspaceSubscriptionManager {
   private readonly store: WorkspaceSubscriptionStore;
+  private readonly agentStore: AgentDefinitionStore;
   private readonly routingEvaluator: AgentChatRoutingEvaluator;
   private readonly botKeyStore: WorkspaceSubscriptionManagerDependencies['botKeyStore'];
   private chatRuntime: AgentChatSessionRuntime | null;
@@ -83,7 +88,8 @@ export class WorkspaceSubscriptionManager {
 
   constructor(deps: WorkspaceSubscriptionManagerDependencies) {
     this.store = deps.store ?? workspaceSubscriptionStore;
-    this.routingEvaluator = deps.routingEvaluator ?? new AgentChatRoutingEvaluator();
+    this.agentStore = deps.agentStore ?? agentDefinitionStore;
+    this.routingEvaluator = deps.routingEvaluator ?? new AgentChatRoutingEvaluator({ agentStore: this.agentStore });
     this.botKeyStore = deps.botKeyStore;
     this.chatRuntime = deps.chatRuntime ?? null;
   }
@@ -101,12 +107,72 @@ export class WorkspaceSubscriptionManager {
     return record?.managedByNpub === npub ? record : null;
   }
 
+  listAgentsForManager(npub: string): AgentDefinitionRecord[] {
+    return this.agentStore.listForManagerNpub(npub);
+  }
+
+  getAgentForManager(agentId: string, npub: string): AgentDefinitionRecord | null {
+    const record = this.agentStore.getByAgentId(agentId);
+    return record?.managedByNpub === npub ? record : null;
+  }
+
+  listAgentsForWorkspaceBot(workspaceOwnerNpub: string, botNpub: string, npub: string): AgentDefinitionRecord[] {
+    return this.agentStore
+      .listByWorkspaceAndBot(workspaceOwnerNpub, botNpub)
+      .filter((record) => record.managedByNpub === npub);
+  }
+
   listInterceptsForSubscription(subscriptionId: string, npub: string) {
     const record = this.getForManager(subscriptionId, npub);
     if (!record) {
       return [];
     }
     return this.routingEvaluator.listInterceptsForSubscription(subscriptionId);
+  }
+
+  saveAgentForManager(input: CreateAgentDefinitionInput): AgentDefinitionRecord {
+    const agentId = input.agentId.trim();
+    const label = input.label.trim() || agentId;
+    const botNpub = input.botNpub.trim();
+    const workspaceOwnerNpub = input.workspaceOwnerNpub.trim();
+    const workingDirectory = input.workingDirectory.trim();
+    const groupNpubs = [...new Set(input.groupNpubs.map((value) => value.trim()).filter((value) => value.length > 0))].sort();
+    const capabilities = input.capabilities?.includes('chat_intercept') ? ['chat_intercept'] : ['chat_intercept'];
+
+    if (!agentId || !botNpub || !workspaceOwnerNpub || !workingDirectory) {
+      throw new Error('agentId, botNpub, workspaceOwnerNpub, and workingDirectory are required.');
+    }
+    if (groupNpubs.length === 0) {
+      throw new Error('At least one group npub is required.');
+    }
+
+    const existing = this.agentStore.getByAgentId(agentId);
+    if (existing && existing.managedByNpub && existing.managedByNpub !== input.managedByNpub) {
+      throw new Error(`Agent ${agentId} is owned by another manager.`);
+    }
+
+    const now = new Date().toISOString();
+    return this.agentStore.save({
+      agentId,
+      label,
+      botNpub,
+      workspaceOwnerNpub,
+      groupNpubs,
+      workingDirectory,
+      capabilities,
+      enabled: input.enabled !== false,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      managedByNpub: input.managedByNpub,
+    });
+  }
+
+  removeAgentForManager(agentId: string, npub: string): boolean {
+    const record = this.getAgentForManager(agentId, npub);
+    if (!record) {
+      return false;
+    }
+    return this.agentStore.delete(agentId);
   }
 
   async createOrUpdate(input: CreateWorkspaceSubscriptionInput): Promise<WorkspaceSubscriptionRecord> {
@@ -625,25 +691,29 @@ export class WorkspaceSubscriptionManager {
           wsSession: runtime.wsSession,
           groupKeys: runtime.groupKeys,
           chatRecordId: recordId,
+          chatRecord: latest,
           chatMessage,
         });
         record.lastRoutingResult = routingResult.diagnostic;
         record.lastErrorCode = null;
         record.lastErrorAt = null;
         this.clearRuntimeFailure(record.subscriptionId, 'chat_record_decrypted');
-        if (routingResult.intercept && this.chatRuntime) {
-          void this.chatRuntime.handleRoutedChat({
-            subscription: record,
-            intercept: routingResult.intercept,
-            botIdentity: runtime.botIdentity,
-            chatMessage,
-          }).catch((runtimeError) => {
-            console.warn(
-              `[agent-chat] runtime dispatch failed for ${routingResult.intercept?.routingKey}: ${
-                runtimeError instanceof Error ? runtimeError.message : String(runtimeError)
-              }`,
-            );
-          });
+        if (routingResult.assignments.length > 0 && this.chatRuntime) {
+          for (const assignment of routingResult.assignments) {
+            void this.chatRuntime.handleRoutedChat({
+              agent: assignment.agent,
+              subscription: record,
+              intercept: assignment.intercept,
+              botIdentity: runtime.botIdentity,
+              chatMessage,
+            }).catch((runtimeError) => {
+              console.warn(
+                `[agent-chat] runtime dispatch failed for ${assignment.intercept.routingKey}: ${
+                  runtimeError instanceof Error ? runtimeError.message : String(runtimeError)
+                }`,
+              );
+            });
+          }
         }
       } catch (error) {
         const detailCode = typeof (error as { code?: string; detailCode?: string })?.code === 'string'

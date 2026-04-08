@@ -1,0 +1,80 @@
+function createDetailList(rows) {
+  const details = document.createElement('dl');
+  details.style.cssText = 'display:grid;grid-template-columns:max-content 1fr;gap:6px 12px;font-size:0.9em;';
+  rows.forEach(([termText, valueText]) => {
+    const term = document.createElement('dt');
+    term.textContent = termText;
+    const value = document.createElement('dd');
+    value.textContent = valueText;
+    value.style.margin = '0';
+    details.append(term, value);
+  });
+  return details;
+}
+
+function createActionButton(label, ariaLabel, testId, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'wm-button secondary';
+  button.textContent = label;
+  button.setAttribute('aria-label', ariaLabel);
+  button.setAttribute('data-testid', testId);
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+export function createAgentRegistryPanel(agents, handlers) {
+  const wrapper = document.createElement('div');
+  wrapper.setAttribute('data-testid', 'agent-chat-agent-list');
+
+  const heading = document.createElement('h4');
+  heading.textContent = 'Registered Local Agents';
+  wrapper.append(heading);
+
+  if (!Array.isArray(agents) || agents.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'wm-settings__port-note';
+    empty.textContent = 'No local Agent Chat agents are registered yet.';
+    wrapper.append(empty);
+    return wrapper;
+  }
+
+  agents.forEach((agent) => {
+    const card = document.createElement('article');
+    card.className = 'wm-card';
+    card.style.cssText = 'margin-top:12px;padding:14px;';
+    card.setAttribute('data-testid', `agent-chat-agent-${agent.agentId}`);
+
+    const title = document.createElement('h5');
+    title.textContent = `${agent.label || agent.agentId} (${agent.agentId})`;
+    card.append(title);
+
+    const status = document.createElement('p');
+    status.className = 'wm-settings__port-note';
+    status.textContent = `enabled=${agent.enabled ? 'yes' : 'no'}, groups=${agent.operator?.groupCount ?? agent.groupNpubs?.length ?? 0}, capabilities=${(agent.capabilities || []).join(', ') || 'none'}`;
+    card.append(status);
+
+    card.append(createDetailList([
+      ['Workspace Owner', agent.workspaceOwnerNpub || 'None'],
+      ['Bot npub', agent.botNpub || 'None'],
+      ['Working Directory', agent.workingDirectory || 'None'],
+      ['Groups', Array.isArray(agent.groupNpubs) && agent.groupNpubs.length > 0 ? agent.groupNpubs.join(', ') : 'None'],
+      ['Updated', agent.updatedAt || 'None'],
+    ]));
+
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;';
+    actions.append(
+      createActionButton(
+        'Remove',
+        `Remove Agent Chat agent ${agent.agentId}`,
+        `agent-chat-remove-agent-${agent.agentId}`,
+        () => handlers.remove(agent),
+      ),
+    );
+    card.append(actions);
+    wrapper.append(card);
+  });
+
+  return wrapper;
+}

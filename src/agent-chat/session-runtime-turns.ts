@@ -1,4 +1,10 @@
-import type { ChatInterceptStateStatus, ChatInterceptStateRecord, RuntimeBotIdentity, WorkspaceSubscriptionRecord } from './types';
+import type {
+  AgentDefinitionRecord,
+  ChatInterceptStateStatus,
+  ChatInterceptStateRecord,
+  RuntimeBotIdentity,
+  WorkspaceSubscriptionRecord,
+} from './types';
 import type { QueuedChatTurn } from './session-runtime-prompts';
 
 export const FORCE_INTERRUPT_FAILURE_ENV = 'AGENT_CHAT_FORCE_INTERRUPT_FAILURE';
@@ -8,6 +14,7 @@ type BlockedInterceptState = Extract<ChatInterceptStateStatus, 'blocked_auth' | 
 export interface RoutingRuntimeState {
   processing: boolean;
   latestInput: {
+    agent: AgentDefinitionRecord;
     subscription: WorkspaceSubscriptionRecord;
     intercept: ChatInterceptStateRecord;
     botIdentity: RuntimeBotIdentity;

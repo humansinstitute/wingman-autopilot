@@ -156,18 +156,58 @@ function createInterceptTable(subscription) {
   table.setAttribute('aria-label', `Agent Chat intercepts for ${subscription.workspaceOwnerNpub}`);
   table.setAttribute('data-testid', `agent-chat-intercepts-${subscription.subscriptionId}`);
   const thead = document.createElement('thead');
-  thead.innerHTML = '<tr><th>State</th><th>Channel</th><th>Thread</th><th>Pending</th><th>Session</th><th>Last Activity</th></tr>';
+  thead.innerHTML = '<tr><th>Agent</th><th>Decision</th><th>State</th><th>Channel</th><th>Thread</th><th>Pending</th><th>Session</th><th>Last Activity</th></tr>';
   table.append(thead);
 
   const tbody = document.createElement('tbody');
   intercepts.forEach((intercept) => {
     const row = document.createElement('tr');
+    appendTableCell(row, intercept.agentId || 'unknown');
+    appendTableCell(row, intercept.lastDecision || 'pending');
     appendTableCell(row, intercept.state || 'pending');
     appendTableCell(row, intercept.channelId || 'None');
     appendTableCell(row, intercept.threadId || 'None');
     appendTableCell(row, String(intercept.pendingMessageCount ?? 0));
     appendTableCell(row, intercept.sessionId || 'None');
     appendTableCell(row, formatTimestamp(intercept.lastActivityAt));
+    tbody.append(row);
+  });
+  table.append(tbody);
+  wrapper.append(table);
+  return wrapper;
+}
+
+function createCandidateAgentTable(subscription) {
+  const candidateAgents = Array.isArray(subscription.candidateAgents) ? subscription.candidateAgents : [];
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'margin-top:12px;';
+  const heading = document.createElement('h5');
+  heading.textContent = 'Candidate Agents';
+  wrapper.append(heading);
+
+  if (candidateAgents.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'wm-settings__port-note';
+    empty.textContent = 'No local agents currently target this subscription bot/workspace pair.';
+    wrapper.append(empty);
+    return wrapper;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'wm-table';
+  table.setAttribute('aria-label', `Candidate Agent Chat agents for ${subscription.workspaceOwnerNpub}`);
+  table.setAttribute('data-testid', `agent-chat-candidates-${subscription.subscriptionId}`);
+  const thead = document.createElement('thead');
+  thead.innerHTML = '<tr><th>Agent</th><th>Enabled</th><th>Groups</th><th>Directory</th></tr>';
+  table.append(thead);
+
+  const tbody = document.createElement('tbody');
+  candidateAgents.forEach((agent) => {
+    const row = document.createElement('tr');
+    appendTableCell(row, agent.agentId || 'unknown');
+    appendTableCell(row, agent.enabled ? 'yes' : 'no');
+    appendTableCell(row, Array.isArray(agent.groupNpubs) && agent.groupNpubs.length > 0 ? agent.groupNpubs.join(', ') : 'None');
+    appendTableCell(row, agent.workingDirectory || 'None');
     tbody.append(row);
   });
   table.append(tbody);
@@ -211,7 +251,7 @@ function createSessionTable(title, sessions, testId) {
     appendTableCell(row, session.name || session.id);
     appendTableCell(row, session.status || 'unknown');
     appendTableCell(row, session.agentRuntimeStatus || 'unknown');
-    appendTableCell(row, session.agent || 'unknown');
+    appendTableCell(row, session.metadata?.agentChatAgentId || session.agent || 'unknown');
     appendTableCell(row, session.origin?.id || 'None');
     appendTableCell(row, formatTimestamp(session.startedAt));
     tbody.append(row);
@@ -241,7 +281,10 @@ export function createAgentChatOverview(subscriptions, chatSessions) {
 
   const summary = document.createElement('p');
   summary.className = 'wm-settings__port-note';
-  summary.textContent = `${subscriptions.length} subscriptions, ${chatSessions.length} Agent Chat sessions, ${blockedIntercepts} blocked intercepts.`;
+  const agentCount = subscriptions.reduce((count, subscription) => (
+    count + (subscription.operator?.candidateAgentCount ?? 0)
+  ), 0);
+  summary.textContent = `${subscriptions.length} subscriptions, ${agentCount} candidate agents, ${chatSessions.length} Agent Chat sessions, ${blockedIntercepts} blocked intercepts.`;
   card.append(summary);
 
   return card;
@@ -283,6 +326,7 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
   ], subscription.subscriptionId));
 
   card.append(createRecommendedList(subscription));
+  card.append(createCandidateAgentTable(subscription));
   card.append(createInterceptTable(subscription));
   card.append(createSessionTable(
     'Linked Chat Sessions',

@@ -5,7 +5,11 @@ import { Database } from 'bun:sqlite';
 import type { SQLQueryBindings } from 'bun:sqlite';
 
 import { databaseFile } from '../storage/message-store';
-import type { ChatInterceptStateRecord, ChatInterceptStateStatus } from './types';
+import type {
+  AgentInterceptDecision,
+  ChatInterceptStateRecord,
+  ChatInterceptStateStatus,
+} from './types';
 
 const DEFAULT_DB_PATH = databaseFile;
 
@@ -31,6 +35,17 @@ function normaliseState(value: unknown): ChatInterceptStateStatus {
     case 'archived':
     case 'blocked_auth':
     case 'blocked_decrypt':
+      return value;
+    default:
+      return 'pending';
+  }
+}
+
+function normaliseDecision(value: unknown): AgentInterceptDecision {
+  switch (value) {
+    case 'respond':
+    case 'ignore':
+    case 'failed':
       return value;
     default:
       return 'pending';
@@ -63,16 +78,17 @@ class ChatInterceptStateStore {
   save(record: ChatInterceptStateRecord): ChatInterceptStateRecord {
     this.db.query(
       `INSERT INTO chat_intercept_state (
-         routing_key, subscription_id, session_id, session_class, workspace_owner_npub, source_app_npub,
-         channel_id, thread_id, target_bot_npub, last_message_id_seen, pending_message_count, state,
-         last_activity_at, created_at, updated_at
+         routing_key, subscription_id, agent_id, session_id, session_class, workspace_owner_npub,
+         source_app_npub, channel_id, thread_id, target_bot_npub, last_message_id_seen, pending_message_count,
+         state, last_decision, last_activity_at, created_at, updated_at
        ) VALUES (
          ?1, ?2, ?3, ?4, ?5, ?6,
          ?7, ?8, ?9, ?10, ?11, ?12,
-         ?13, ?14, ?15
+         ?13, ?14, ?15, ?16, ?17
        )
        ON CONFLICT(routing_key) DO UPDATE SET
          subscription_id = excluded.subscription_id,
+         agent_id = excluded.agent_id,
          session_id = excluded.session_id,
          session_class = excluded.session_class,
          workspace_owner_npub = excluded.workspace_owner_npub,
@@ -83,21 +99,24 @@ class ChatInterceptStateStore {
          last_message_id_seen = excluded.last_message_id_seen,
          pending_message_count = excluded.pending_message_count,
          state = excluded.state,
+         last_decision = excluded.last_decision,
          last_activity_at = excluded.last_activity_at,
          updated_at = excluded.updated_at`,
     ).run(
       record.routingKey,
       record.subscriptionId,
+      record.agentId,
       record.sessionId,
       record.sessionClass,
       record.workspaceOwnerNpub,
       record.sourceAppNpub,
       record.channelId,
       record.threadId,
-      record.targetBotNpub,
+      record.botNpub,
       record.lastMessageIdSeen,
       record.pendingMessageCount,
       record.state,
+      record.lastDecision,
       record.lastActivityAt,
       record.createdAt,
       record.updatedAt,
@@ -109,39 +128,45 @@ class ChatInterceptStateStore {
   upsertMessage(input: {
     routingKey: string;
     subscriptionId: string;
+    agentId: string;
     workspaceOwnerNpub: string;
     sourceAppNpub: string;
     channelId: string;
     threadId: string;
-    targetBotNpub: string;
+    botNpub: string;
     messageId: string;
     at?: string;
-  }): ChatInterceptStateRecord {
+  }): { record: ChatInterceptStateRecord; wasDuplicate: boolean } {
     const now = input.at ?? new Date().toISOString();
     const existing = this.getByRoutingKey(input.routingKey);
+    const wasDuplicate = existing?.lastMessageIdSeen === input.messageId;
+    if (existing && wasDuplicate) {
+      return { record: existing, wasDuplicate: true };
+    }
     const nextCount = existing
-      ? existing.lastMessageIdSeen === input.messageId
-        ? existing.pendingMessageCount
-        : existing.pendingMessageCount + 1
+      ? existing.pendingMessageCount + 1
       : 1;
 
-    return this.save({
+    const record = this.save({
       routingKey: input.routingKey,
       subscriptionId: input.subscriptionId,
+      agentId: input.agentId,
       sessionId: existing?.sessionId ?? null,
       sessionClass: 'chat',
       workspaceOwnerNpub: input.workspaceOwnerNpub,
       sourceAppNpub: input.sourceAppNpub,
       channelId: input.channelId,
       threadId: input.threadId,
-      targetBotNpub: input.targetBotNpub,
+      botNpub: input.botNpub,
       lastMessageIdSeen: input.messageId,
       pendingMessageCount: nextCount,
       state: existing?.sessionId ? existing.state : 'pending',
+      lastDecision: 'pending',
       lastActivityAt: now,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     });
+    return { record, wasDuplicate };
   }
 
   private listWhere(whereClause: string, args: SQLQueryBindings[]): ChatInterceptStateRecord[] {
@@ -150,6 +175,7 @@ class ChatInterceptStateStore {
         `SELECT
            routing_key,
            subscription_id,
+           agent_id,
            session_id,
            session_class,
            workspace_owner_npub,
@@ -160,6 +186,7 @@ class ChatInterceptStateStore {
            last_message_id_seen,
            pending_message_count,
            state,
+           last_decision,
            last_activity_at,
            created_at,
            updated_at
@@ -177,6 +204,7 @@ class ChatInterceptStateStore {
         `SELECT
            routing_key,
            subscription_id,
+           agent_id,
            session_id,
            session_class,
            workspace_owner_npub,
@@ -187,6 +215,7 @@ class ChatInterceptStateStore {
            last_message_id_seen,
            pending_message_count,
            state,
+           last_decision,
            last_activity_at,
            created_at,
            updated_at
@@ -202,16 +231,18 @@ class ChatInterceptStateStore {
     return {
       routingKey: String(row.routing_key ?? ''),
       subscriptionId: String(row.subscription_id ?? ''),
+      agentId: String(row.agent_id ?? ''),
       sessionId: typeof row.session_id === 'string' ? row.session_id : null,
       sessionClass: 'chat',
       workspaceOwnerNpub: String(row.workspace_owner_npub ?? ''),
       sourceAppNpub: String(row.source_app_npub ?? ''),
       channelId: String(row.channel_id ?? ''),
       threadId: String(row.thread_id ?? ''),
-      targetBotNpub: String(row.target_bot_npub ?? ''),
+      botNpub: String(row.target_bot_npub ?? ''),
       lastMessageIdSeen: typeof row.last_message_id_seen === 'string' ? row.last_message_id_seen : null,
       pendingMessageCount: normalisePendingMessageCount(row.pending_message_count),
       state: normaliseState(row.state),
+      lastDecision: normaliseDecision(row.last_decision),
       lastActivityAt: String(row.last_activity_at ?? ''),
       createdAt: String(row.created_at ?? ''),
       updatedAt: String(row.updated_at ?? ''),
@@ -223,6 +254,7 @@ class ChatInterceptStateStore {
       CREATE TABLE IF NOT EXISTS chat_intercept_state (
         routing_key TEXT PRIMARY KEY,
         subscription_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL DEFAULT '',
         session_id TEXT,
         session_class TEXT NOT NULL,
         workspace_owner_npub TEXT NOT NULL,
@@ -233,6 +265,7 @@ class ChatInterceptStateStore {
         last_message_id_seen TEXT,
         pending_message_count INTEGER NOT NULL DEFAULT 0,
         state TEXT NOT NULL,
+        last_decision TEXT NOT NULL DEFAULT 'pending',
         last_activity_at TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -240,9 +273,6 @@ class ChatInterceptStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_chat_intercept_state_subscription
         ON chat_intercept_state(subscription_id, updated_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_chat_intercept_state_session
-        ON chat_intercept_state(session_id);
     `);
 
     if (!hasColumn(this.db, 'chat_intercept_state', 'pending_message_count')) {
@@ -251,6 +281,28 @@ class ChatInterceptStateStore {
           ADD COLUMN pending_message_count INTEGER NOT NULL DEFAULT 0
       `);
     }
+    if (!hasColumn(this.db, 'chat_intercept_state', 'agent_id')) {
+      this.db.exec(`
+        ALTER TABLE chat_intercept_state
+          ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''
+      `);
+    }
+    if (!hasColumn(this.db, 'chat_intercept_state', 'last_decision')) {
+      this.db.exec(`
+        ALTER TABLE chat_intercept_state
+          ADD COLUMN last_decision TEXT NOT NULL DEFAULT 'pending'
+      `);
+    }
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_chat_intercept_state_subscription
+        ON chat_intercept_state(subscription_id, updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_chat_intercept_state_agent
+        ON chat_intercept_state(agent_id, updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_chat_intercept_state_session
+        ON chat_intercept_state(session_id);
+    `);
   }
 }
 

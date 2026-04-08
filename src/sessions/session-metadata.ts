@@ -7,6 +7,8 @@ export interface SessionMetadata {
   routerRunId?: string;
   autoStop?: boolean;
   routedBy?: string;
+  agentChatAgentId?: string;
+  agentChatBotNpub?: string;
   ownerNpub?: string;
   createdByNpub?: string;
   lastManagedByNpub?: string;
@@ -28,6 +30,8 @@ export const normaliseSessionMetadata = (
   const project = typeof metadata?.project === "string" ? metadata.project.trim() : "";
   const routerRunId = typeof metadata?.routerRunId === "string" ? metadata.routerRunId.trim() : "";
   const routedBy = typeof metadata?.routedBy === "string" ? metadata.routedBy.trim() : "";
+  const agentChatAgentId = typeof metadata?.agentChatAgentId === "string" ? metadata.agentChatAgentId.trim() : "";
+  const agentChatBotNpub = typeof metadata?.agentChatBotNpub === "string" ? metadata.agentChatBotNpub.trim() : "";
   const ownerNpub = typeof metadata?.ownerNpub === "string" ? metadata.ownerNpub.trim() : "";
   const createdByNpub = typeof metadata?.createdByNpub === "string" ? metadata.createdByNpub.trim() : "";
   const lastManagedByNpub = typeof metadata?.lastManagedByNpub === "string" ? metadata.lastManagedByNpub.trim() : "";
@@ -49,6 +53,8 @@ export const normaliseSessionMetadata = (
     routerRunId: routerRunId || undefined,
     autoStop: Boolean(metadata?.autoStop),
     routedBy: routedBy || undefined,
+    agentChatAgentId: agentChatAgentId || undefined,
+    agentChatBotNpub: agentChatBotNpub || undefined,
     ownerNpub: ownerNpub || undefined,
     createdByNpub: createdByNpub || undefined,
     lastManagedByNpub: lastManagedByNpub || undefined,
