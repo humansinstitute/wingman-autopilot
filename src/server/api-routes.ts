@@ -28,6 +28,9 @@ import {
 import { handleVoiceNoteUploadsApi, type VoiceNoteUploadApiContext } from "./voice-note-routes";
 import { handleSystemRoutes, type SystemRoutesContext } from "./system-routes";
 import { handleAgentChatApi, type AgentChatApiContext } from './agent-chat-routes';
+import { handleDelegationApi, type DelegationRoutesContext } from "./delegation-routes";
+import { handleOwnerSpaceApi } from "./owner-space-routes";
+import type { WorkspaceDelegationStore } from "../storage/workspace-delegation-store";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
@@ -89,6 +92,8 @@ export interface ApiRoutesContext {
   uploadApiContext: UploadApiContext;
   voiceNoteUploadApiContext: VoiceNoteUploadApiContext;
   agentChatApiContext?: AgentChatApiContext;
+  delegationRoutesContext: DelegationRoutesContext;
+  workspaceDelegationStore: WorkspaceDelegationStore;
 
   // Stores accessed directly by handleApi
   featureFlagStore: {
@@ -136,6 +141,7 @@ export interface ApiRoutesContext {
   createDirectoryEntry: (
     parentInput: string | null | undefined,
     nameInput: unknown,
+    scopeOverride?: WorkspaceScope,
   ) => Promise<unknown>;
 
   // Access control actions
@@ -156,6 +162,8 @@ export interface ApiRoutesContext {
   ) => Parameters<typeof handleStarterProjectsApi>[4];
   buildAppsContext: (
     appsAuthContext: RequestAuthContext,
+    workspaceScopeOverride?: WorkspaceScope,
+    canAccessAppOverride?: (app: AppRecord) => boolean,
   ) => Parameters<typeof handleAppsApi>[4];
   buildFeatureFlagsContext: (
     viewerIsAdmin: boolean,
@@ -506,14 +514,49 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
       if (ffResult) return ffResult;
     }
 
+    if (
+      pathname === "/api/delegations" ||
+      pathname.startsWith("/api/delegations/") ||
+      pathname.endsWith("/delegations")
+    ) {
+      const delegationAuthContext = ctx.resolveNip98AuthContext(request, url, authContext);
+      const delegationResult = await runWithRequestContext(
+        delegationAuthContext,
+        () => handleDelegationApi(request, url, method, delegationAuthContext, ctx.delegationRoutesContext),
+      );
+      if (delegationResult) return delegationResult;
+    }
+
+    if (pathname.startsWith("/api/owners/")) {
+      const ownerAuthContext = ctx.resolveNip98AuthContext(request, url, authContext);
+      const ownerSpaceResult = await runWithRequestContext(
+        ownerAuthContext,
+        () =>
+          handleOwnerSpaceApi(request, url, method, ownerAuthContext, {
+            workspaceDelegationStore: ctx.workspaceDelegationStore,
+            resolveWorkspace: ctx.resolveWorkspace,
+            buildAppsContext: ctx.buildAppsContext,
+            docsApiContext: ctx.docsApiContext,
+            listDirectories: ctx.listDirectories,
+            createDirectoryEntry: ctx.createDirectoryEntry,
+          }),
+      );
+      if (ownerSpaceResult) return ownerSpaceResult;
+    }
+
     // Docs/files API routes (delegated to docs-routes.ts)
     if (pathname.startsWith("/api/docs/")) {
-      const docsApiResponse = await handleDocsApi(request, url, method, authContext, ctx.docsApiContext);
+      const docsAuthContext = ctx.resolveNip98AuthContext(request, url, authContext);
+      const docsApiResponse = await runWithRequestContext(
+        docsAuthContext,
+        () => handleDocsApi(request, url, method, docsAuthContext, ctx.docsApiContext),
+      );
       if (docsApiResponse) return docsApiResponse;
     }
 
     if (pathname === "/api/directories" && method === "GET") {
-      const denied = await ctx.ensureApiAccess(ctx.AccessActions.FilesRead, request, url, authContext);
+      const directoriesAuthContext = ctx.resolveNip98AuthContext(request, url, authContext);
+      const denied = await ctx.ensureApiAccess(ctx.AccessActions.FilesRead, request, url, directoriesAuthContext);
       if (denied) {
         return denied;
       }
@@ -521,7 +564,7 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
         const data = await ctx.listDirectories(
           url.searchParams.get("path"),
           url.searchParams.get("query") ?? undefined,
-          workspaceScope,
+          ctx.resolveWorkspace(directoriesAuthContext),
         );
         return Response.json(data);
       } catch (error) {
@@ -530,7 +573,8 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
     }
 
     if (pathname === "/api/directories" && method === "POST") {
-      const denied = await ctx.ensureApiAccess(ctx.AccessActions.FilesWrite, request, url, authContext);
+      const directoriesAuthContext = ctx.resolveNip98AuthContext(request, url, authContext);
+      const denied = await ctx.ensureApiAccess(ctx.AccessActions.FilesWrite, request, url, directoriesAuthContext);
       if (denied) {
         return denied;
       }
@@ -552,6 +596,7 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
         const data = await ctx.createDirectoryEntry(
           typeof parentInput === "string" ? parentInput : null,
           nameInput,
+          ctx.resolveWorkspace(directoriesAuthContext),
         );
         return Response.json(data, { status: 201 });
       } catch (error) {
@@ -578,7 +623,8 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
     if (
       pathname.startsWith("/api/archive") ||
       pathname.startsWith("/api/sessions") ||
-      pathname.startsWith("/api/delegate-sessions")
+      pathname.startsWith("/api/delegate-sessions") ||
+      (pathname.startsWith("/api/owners/") && pathname.includes("/sessions"))
     ) {
       const sessionAuthContext = ctx.resolveNip98AuthContext(request, url, authContext);
       const sessionApiResponse = await runWithRequestContext(

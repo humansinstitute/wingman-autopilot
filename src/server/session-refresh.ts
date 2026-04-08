@@ -23,6 +23,13 @@ export const maybeRefreshSessionCookie = (response: Response, authContext: Reque
   const { cookie, payload } = mintSessionCookie(session.npub);
   authContext.session = payload;
   authContext.npub = payload.npub;
+  authContext.actorNpub = payload.npub;
+  authContext.signerNpub = payload.npub;
+  authContext.subjectNpub = payload.npub;
+  authContext.targetOwnerNpub = payload.npub;
+  authContext.delegatedOwnerNpub = null;
+  authContext.delegateRelationshipId = null;
+  authContext.delegateScopes = null;
   response.headers.append("set-cookie", cookie);
   return response;
 };

@@ -123,6 +123,13 @@ export async function handleAuthApi(
 
       const { cookie, expiresAt, payload: cookiePayload } = ctx.mintSessionCookie(trimmedNpub);
       authContext.npub = cookiePayload.npub;
+      authContext.actorNpub = cookiePayload.npub;
+      authContext.signerNpub = cookiePayload.npub;
+      authContext.subjectNpub = cookiePayload.npub;
+      authContext.targetOwnerNpub = cookiePayload.npub;
+      authContext.delegatedOwnerNpub = null;
+      authContext.delegateRelationshipId = null;
+      authContext.delegateScopes = null;
       authContext.session = cookiePayload;
       delete authContext.error;
       const alias = ctx.generateIdentityAlias(trimmedNpub);
@@ -192,6 +199,13 @@ export async function handleAuthApi(
       `${ctx.SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT${secureFlag}`,
     );
     authContext.npub = null;
+    authContext.actorNpub = null;
+    authContext.signerNpub = null;
+    authContext.subjectNpub = null;
+    authContext.targetOwnerNpub = null;
+    authContext.delegatedOwnerNpub = null;
+    authContext.delegateRelationshipId = null;
+    authContext.delegateScopes = null;
     authContext.session = null;
     delete authContext.error;
     return new Response(null, { status: 204, headers });

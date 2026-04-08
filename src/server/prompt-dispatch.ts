@@ -6,7 +6,7 @@
 import type { AgentType } from "../config";
 import type { SessionSnapshot } from "../agents/process-manager";
 import { InsufficientBalanceError } from "../storage/identity-user-store";
-import { isCreditsBillingSession } from "../sessions/session-metadata";
+import { isCreditsBillingSession, resolveSessionChargeNpub } from "../sessions/session-metadata";
 
 // ---------- Context supplied by server.ts ----------
 
@@ -248,7 +248,7 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
       void ctx.maybeTriggerNightWatch(session, ctx.nightWatchDeps);
       return;
     }
-    const userNpub = session.npub ?? null;
+    const userNpub = resolveSessionChargeNpub(session.metadata, session.npub ?? null);
     if (!userNpub) {
       console.warn(`[queue] cannot auto-dispatch session ${session.id} without owner npub`);
       return;

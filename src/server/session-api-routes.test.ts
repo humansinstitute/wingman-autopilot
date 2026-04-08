@@ -11,6 +11,9 @@ import type { SessionSnapshot } from "../agents/process-manager";
 const makeAuth = (overrides?: Partial<RequestAuthContext>): RequestAuthContext => ({
   npub: "npub1owner",
   actorNpub: "npub1bot",
+  signerNpub: "npub1bot",
+  subjectNpub: "npub1bot",
+  delegatedOwnerNpub: "npub1owner",
   session: null,
   authMethod: "nip98",
   delegatedByBot: true,
@@ -30,8 +33,8 @@ const baseSession: SessionSnapshot = {
   workingDirectory: "/tmp/project",
   logs: [],
   agentRuntimeStatus: "running",
-  origin: null,
-  pm2Name: null,
+  origin: undefined,
+  pm2Name: undefined,
   targetFile: undefined,
   metadata: { AGENT: false, billingMode: "subscription" },
 };
@@ -104,6 +107,9 @@ const buildCtx = (overrides?: Partial<SessionApiContext>): SessionApiContext => 
   getRecentMessages: (() => []) as any,
   formatMessagesAsContext: (() => "") as any,
   createGitWorktree: (async () => ({ path: "/tmp/project/.worktrees/test" })) as any,
+  workspaceDelegationStore: {
+    findActiveDelegation: () => null,
+  } as any,
   AccessActions: { SessionsManage: "sessions:manage" as any },
   ...overrides,
 });
@@ -209,7 +215,7 @@ describe("handleSessionApi", () => {
     const response = await handleSessionApi(request, url, "GET", makeAuth(), ctx);
     expect(response).not.toBeNull();
     expect(response!.status).toBe(200);
-    expect(requestedSessionId).toBe("26866c4d-835b-4ab8-b477-128fe2e29095");
+    expect(requestedSessionId as string | null).toBe("26866c4d-835b-4ab8-b477-128fe2e29095");
     await expect(response!.json()).resolves.toEqual({
       id: "26866c4d-835b-4ab8-b477-128fe2e29095",
       messages: [{ role: "agent", content: "READY" }],

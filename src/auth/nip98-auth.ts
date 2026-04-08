@@ -8,8 +8,8 @@ interface ResolveNip98AuthOptions {
 /**
  * Resolve internal Wingman API auth from a verified NIP-98 signer.
  *
- * For bot-signed requests, the effective auth identity becomes the mapped
- * owner user while preserving the bot signer in actorNpub for audit/debugging.
+ * NIP-98 requests always preserve the signer as the effective caller.
+ * Legacy bot-owner lookups are retained only as advisory delegation metadata.
  */
 export function resolveNip98AuthContext(
   request: Request,
@@ -27,23 +27,19 @@ export function resolveNip98AuthContext(
   }
 
   const ownerNpub = options.lookupBotOwnerNpub?.(signerNpub) ?? null;
-  if (ownerNpub) {
-    return {
-      ...authContext,
-      npub: ownerNpub,
-      actorNpub: signerNpub,
-      session: null,
-      authMethod: "nip98",
-      delegatedByBot: true,
-    };
-  }
 
   return {
     ...authContext,
     npub: signerNpub,
     actorNpub: signerNpub,
+    signerNpub,
+    subjectNpub: signerNpub,
+    targetOwnerNpub: signerNpub,
+    delegatedOwnerNpub: ownerNpub,
+    delegateRelationshipId: authContext.delegateRelationshipId ?? null,
+    delegateScopes: authContext.delegateScopes ?? null,
     session: null,
     authMethod: "nip98",
-    delegatedByBot: false,
+    delegatedByBot: Boolean(ownerNpub),
   };
 }

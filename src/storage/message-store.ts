@@ -6,7 +6,11 @@ import { Database } from "bun:sqlite";
 
 import type { AgentRuntimeStatus } from "../types/agent-status";
 import type { SessionOrigin } from "../agents/process-manager";
-import type { SessionMetadata } from "../sessions/session-metadata";
+import {
+  normaliseSessionMetadata,
+  type SessionMetadata,
+  type SessionMetadataInput,
+} from "../sessions/session-metadata";
 
 export interface StoredMessage {
   id: string;
@@ -102,10 +106,21 @@ const parseStoredOrigin = (value: string | null): SessionOrigin | null => {
   }
 };
 
-const parseStoredMetadata = (agentFlag: unknown, billingMode: unknown): SessionMetadata => ({
-  AGENT: agentFlag === 1 || agentFlag === true || agentFlag === "1" || agentFlag === "true",
-  billingMode: billingMode === "credits" ? "credits" : "subscription",
-});
+const parseStoredMetadata = (agentFlag: unknown, billingMode: unknown, metadataJson?: string | null): SessionMetadata => {
+  let parsedMetadata: SessionMetadataInput = null;
+  if (metadataJson) {
+    try {
+      parsedMetadata = JSON.parse(metadataJson) as SessionMetadataInput;
+    } catch {
+      parsedMetadata = null;
+    }
+  }
+  return normaliseSessionMetadata({
+    ...(parsedMetadata ?? {}),
+    AGENT: agentFlag === 1 || agentFlag === true || agentFlag === "1" || agentFlag === "true",
+    billingMode: billingMode === "credits" ? "credits" : "subscription",
+  });
+};
 
 export class MessageStore {
   private readonly db: Database;
@@ -124,6 +139,7 @@ export class MessageStore {
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA busy_timeout = 5000");
     this.initialise();
+    this.ensureMetadataColumn();
     this.insertSession = this.prepareInsertSession();
     this.deleteSession = this.prepareDeleteSession();
     this.listSessionsStmt = this.prepareListSessions();
@@ -152,6 +168,7 @@ export class MessageStore {
       session.targetFile ?? null,
       session.metadata?.AGENT ? 1 : 0,
       session.metadata?.billingMode === "credits" ? "credits" : "subscription",
+      session.metadata ? JSON.stringify(session.metadata) : null,
     );
   }
 
@@ -204,13 +221,15 @@ export class MessageStore {
         model,
         target_file as targetFile,
         agent_flag as agentFlag,
-        billing_mode as billingMode
+        billing_mode as billingMode,
+        metadata_json as metadataJson
       FROM sessions
       WHERE id = ?1
     `).get(sessionId) as (Omit<StoredSessionRecord, "origin" | "metadata"> & {
       origin: string | null;
       agentFlag: number | null;
       billingMode: string | null;
+      metadataJson: string | null;
     }) | null;
 
     if (!row) return null;
@@ -218,7 +237,7 @@ export class MessageStore {
     return {
       ...row,
       origin: parseStoredOrigin(row.origin),
-      metadata: parseStoredMetadata(row.agentFlag, row.billingMode),
+      metadata: parseStoredMetadata(row.agentFlag, row.billingMode, row.metadataJson),
     };
   }
 
@@ -228,12 +247,13 @@ export class MessageStore {
         origin: string | null;
         agentFlag: number | null;
         billingMode: string | null;
+        metadataJson: string | null;
       }
     >;
     return rows.map((row) => ({
       ...row,
       origin: parseStoredOrigin(row.origin),
-      metadata: parseStoredMetadata(row.agentFlag, row.billingMode),
+      metadata: parseStoredMetadata(row.agentFlag, row.billingMode, row.metadataJson),
     }));
   }
 
@@ -261,7 +281,8 @@ export class MessageStore {
         model,
         target_file as targetFile,
         agent_flag as agentFlag,
-        billing_mode as billingMode
+        billing_mode as billingMode,
+        metadata_json as metadataJson
       FROM sessions
       WHERE port IS NOT NULL
         AND pid IS NOT NULL
@@ -273,12 +294,13 @@ export class MessageStore {
         origin: string | null;
         agentFlag: number | null;
         billingMode: string | null;
+        metadataJson: string | null;
       }
     >;
     return rows.map((row) => ({
       ...row,
       origin: parseStoredOrigin(row.origin),
-      metadata: parseStoredMetadata(row.agentFlag, row.billingMode),
+      metadata: parseStoredMetadata(row.agentFlag, row.billingMode, row.metadataJson),
     }));
   }
 
@@ -335,12 +357,21 @@ export class MessageStore {
     ensureColumn("target_file", "TEXT");
     ensureColumn("agent_flag", "INTEGER NOT NULL DEFAULT 0");
     ensureColumn("billing_mode", "TEXT NOT NULL DEFAULT 'subscription'");
+    ensureColumn("metadata_json", "TEXT");
+  }
+
+  private ensureMetadataColumn() {
+    const sessionColumns = this.db.query("PRAGMA table_info(sessions)").all() as { name: string }[];
+    const hasMetadataColumn = sessionColumns.some((column) => column.name === "metadata_json");
+    if (!hasMetadataColumn) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN metadata_json TEXT");
+    }
   }
 
   private prepareInsertSession() {
     return this.db.prepare(
-      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, pm2_name, logs_dir, working_directory, command, runtime_status, origin, model, target_file, agent_flag, billing_mode)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, pm2_name, logs_dir, working_directory, command, runtime_status, origin, model, target_file, agent_flag, billing_mode, metadata_json)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
        ON CONFLICT(id) DO UPDATE SET
          agent = excluded.agent,
          started_at = excluded.started_at,
@@ -357,7 +388,8 @@ export class MessageStore {
          model = excluded.model,
          target_file = excluded.target_file,
          agent_flag = excluded.agent_flag,
-         billing_mode = excluded.billing_mode`,
+         billing_mode = excluded.billing_mode,
+         metadata_json = excluded.metadata_json`,
     );
   }
 
@@ -384,7 +416,8 @@ export class MessageStore {
          model,
          target_file as targetFile,
          agent_flag as agentFlag,
-         billing_mode as billingMode
+         billing_mode as billingMode,
+         metadata_json as metadataJson
        FROM sessions`,
     );
   }

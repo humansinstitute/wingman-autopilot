@@ -35,13 +35,15 @@ describe("resolveNip98AuthContext", () => {
     expect(resolved.delegatedByBot).toBe(false);
   });
 
-  test("maps bot signer to its owner for internal delegation", () => {
+  test("preserves bot signer identity while surfacing legacy owner linkage", () => {
     const resolved = resolveNip98AuthContext(request, url, makeAuth(), {
       verifyNip98AuthHeader: () => "npub1bot",
       lookupBotOwnerNpub: (botNpub) => (botNpub === "npub1bot" ? "npub1owner" : null),
     });
-    expect(resolved.npub).toBe("npub1owner");
+    expect(resolved.npub).toBe("npub1bot");
     expect(resolved.actorNpub).toBe("npub1bot");
+    expect(resolved.subjectNpub).toBe("npub1bot");
+    expect(resolved.delegatedOwnerNpub).toBe("npub1owner");
     expect(resolved.authMethod).toBe("nip98");
     expect(resolved.delegatedByBot).toBe(true);
   });

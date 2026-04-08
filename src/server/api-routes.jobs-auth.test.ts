@@ -7,7 +7,6 @@ const anonymousAuth: RequestAuthContext = {
   npub: null,
   actorNpub: null,
   session: null,
-  authMethod: null,
   delegatedByBot: false,
 };
 
@@ -21,8 +20,8 @@ describe("createApiRouteHandler autopilot-jobs auth", () => {
       delegatedByBot: false,
     };
 
-    let seenEnsureAccessAuth: RequestAuthContext | null = null;
-    let seenHandlerAuth: RequestAuthContext | null = null;
+    let seenEnsureAccessAuth: RequestAuthContext | undefined;
+    let seenHandlerAuth: RequestAuthContext | undefined;
 
     const handler = createApiRouteHandler({
       config: {
@@ -64,6 +63,8 @@ describe("createApiRouteHandler autopilot-jobs auth", () => {
       adminUsersApiContext: {} as any,
       uploadApiContext: {} as any,
       voiceNoteUploadApiContext: {} as any,
+      delegationRoutesContext: {} as any,
+      workspaceDelegationStore: {} as any,
       featureFlagStore: {
         getFlag: () => null,
       },

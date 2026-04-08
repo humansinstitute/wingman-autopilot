@@ -287,6 +287,20 @@ export class ProcessManager {
     return snapshot;
   }
 
+  updateSessionMetadata(id: string, metadata: SessionMetadataInput): SessionSnapshot | null {
+    const session = this.sessions.get(id);
+    if (!session) {
+      return null;
+    }
+    session.metadata = normaliseSessionMetadata({
+      ...session.metadata,
+      ...(metadata ?? {}),
+    });
+    const snapshot = this.toSnapshot(session);
+    this.emit({ type: "session-updated", session: snapshot });
+    return snapshot;
+  }
+
   async getLogs(id: string): Promise<string[] | undefined> {
     const session = this.sessions.get(id);
     if (!session) {

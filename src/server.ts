@@ -52,6 +52,7 @@ import {
   type FeatureFlagState,
 } from "./storage/feature-flag-store";
 import { starterProjectStore } from "./storage/starter-project-store";
+import { WorkspaceDelegationStore } from "./storage/workspace-delegation-store";
 import { FileWatcherRunner } from "./watchers/file-watcher-runner";
 import { identityUserStore } from "./storage/identity-user-store";
 import { TodoStore } from "./todos/todo-store";
@@ -367,6 +368,7 @@ const nightWatchApiHandler = createNightWatchApiHandler({
   featureFlagStore,
 });
 const botKeyStore = new BotKeyStore();
+const workspaceDelegationStore = new WorkspaceDelegationStore();
 const schedulerStore = new SchedulerStore();
 const triggerListener: TriggerListener = createTriggerListener({
   schedulerStore,
@@ -510,8 +512,8 @@ const workspaceSubscriptionManager = new WorkspaceSubscriptionManager({
   botKeyStore,
 });
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication({ allowNip98: true }));
-registerAccessRule(AccessActions.FilesRead, requireAuthentication());
-registerAccessRule(AccessActions.FilesWrite, requireAuthentication());
+registerAccessRule(AccessActions.FilesRead, requireAuthentication({ allowNip98: true }));
+registerAccessRule(AccessActions.FilesWrite, requireAuthentication({ allowNip98: true }));
 registerAccessRule(AccessActions.AppsManage, requireAuthentication({ allowNip98: true }));
 registerAccessRule(AccessActions.UiRestricted, requireAuthentication());
 registerAccessRule(AccessActions.TodosManage, requireAuthentication());
@@ -1285,8 +1287,12 @@ const normaliseDirectoryEntryName = (value: unknown): string => {
 };
 
 
-const createDirectoryEntry = async (parentInput: string | null | undefined, nameInput: unknown) => {
-  const parentDirectory = await ensureDirectory(parentInput);
+const createDirectoryEntry = async (
+  parentInput: string | null | undefined,
+  nameInput: unknown,
+  scopeOverride?: WorkspaceScope,
+) => {
+  const parentDirectory = await ensureDirectory(parentInput, scopeOverride);
   const name = normaliseDirectoryEntryName(nameInput);
   const target = normalize(join(parentDirectory, name));
   const parentWithSep = parentDirectory.endsWith(sep) ? parentDirectory : `${parentDirectory}${sep}`;
@@ -2217,6 +2223,7 @@ const sessionApiContext: SessionApiContext = {
   getRecentMessages,
   formatMessagesAsContext,
   createGitWorktree,
+  workspaceDelegationStore,
   AccessActions,
 };
 
@@ -2382,6 +2389,12 @@ const handleApi = createApiRouteHandler({
     ensureApiAccess,
     AccessActions,
   },
+  delegationRoutesContext: {
+    workspaceDelegationStore,
+    ensureApiAccess,
+    AccessActions,
+  },
+  workspaceDelegationStore,
 
   // Stores accessed directly
   featureFlagStore,
@@ -2420,10 +2433,13 @@ const handleApi = createApiRouteHandler({
     starterProjectStore,
     npubProjectStore,
   }),
-  buildAppsContext: (appsAuthContext) => {
-    const appsWorkspaceScope = resolveWorkspace(appsAuthContext);
+  buildAppsContext: (appsAuthContext, workspaceScopeOverride, canAccessAppOverride) => {
+    const appsWorkspaceScope = workspaceScopeOverride ?? resolveWorkspace(appsAuthContext);
     const appsViewerNpub = normaliseNpub(appsAuthContext.npub ?? null);
     const canAccessAppForRequest = (app: AppRecord): boolean => {
+      if (canAccessAppOverride) {
+        return canAccessAppOverride(app);
+      }
       if (appsWorkspaceScope.isAdmin) return true;
       if (!appsViewerNpub) return false;
       return app.ownerNpub === appsViewerNpub;

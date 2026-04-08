@@ -6,6 +6,12 @@ import { readSessionCookie, SessionCookieError } from "./session-cookie";
 export interface RequestAuthContext {
   npub: string | null;
   actorNpub?: string | null;
+  signerNpub?: string | null;
+  subjectNpub?: string | null;
+  targetOwnerNpub?: string | null;
+  delegatedOwnerNpub?: string | null;
+  delegateRelationshipId?: string | null;
+  delegateScopes?: string[] | null;
   session: SessionCookiePayload | null;
   authMethod?: "session" | "nip98";
   delegatedByBot?: boolean;
@@ -17,6 +23,12 @@ const requestContextStorage = new AsyncLocalStorage<RequestAuthContext>();
 const defaultContext: RequestAuthContext = {
   npub: null,
   actorNpub: null,
+  signerNpub: null,
+  subjectNpub: null,
+  targetOwnerNpub: null,
+  delegatedOwnerNpub: null,
+  delegateRelationshipId: null,
+  delegateScopes: null,
   session: null,
 };
 
@@ -34,6 +46,12 @@ export const resolveRequestAuthContext = (request: Request): RequestAuthContext 
     return {
       npub: session.npub,
       actorNpub: session.npub,
+      signerNpub: session.npub,
+      subjectNpub: session.npub,
+      targetOwnerNpub: session.npub,
+      delegatedOwnerNpub: null,
+      delegateRelationshipId: null,
+      delegateScopes: null,
       session,
       authMethod: "session",
     };
