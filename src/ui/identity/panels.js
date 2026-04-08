@@ -7,6 +7,7 @@
  */
 
 import { applyAvatarImage } from "../utils/avatar.js";
+import { renderWorkspaceDelegationPanel } from "./workspace-delegation-panel.js";
 
 export function initIdentityPanels(deps) {
   const {
@@ -685,6 +686,7 @@ export function initIdentityPanels(deps) {
 
     const summary = renderIdentitySummary();
     card.append(summary);
+    card.append(renderWorkspaceDelegationPanel());
 
     const primaryOptions = document.createElement("div");
     primaryOptions.className = "wm-identity-primary";

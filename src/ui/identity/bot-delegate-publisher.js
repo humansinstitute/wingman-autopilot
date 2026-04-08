@@ -1,3 +1,5 @@
+import { signIdentityEvent } from "./event-signer.js";
+
 const DEFAULT_CONNECT_RELAYS = [
   'wss://relay.nsec.app',
   'wss://nos.lol',
@@ -22,54 +24,8 @@ function resolvePublishRelays(config) {
   return [...DEFAULT_CONNECT_RELAYS];
 }
 
-function ensureNip07SigningAvailable() {
-  if (!window.nostr || typeof window.nostr.signEvent !== 'function') {
-    throw new Error('No signer available to publish delegate discovery');
-  }
-}
-
-async function signWithDeviceKey(eventTemplate) {
-  const identityApi = globalThis.wingmanIdentity;
-  const keystore = identityApi?.deviceKeystore;
-  if (!keystore || typeof keystore.retrieveNsec !== 'function') {
-    return null;
-  }
-  const stored = await keystore.retrieveNsec();
-  if (!stored?.nsec) {
-    return null;
-  }
-  const { finalizeEvent } = await import('/vendor/nostr-tools/index.js');
-  const secretKey = stored.nsec;
-  try {
-    const signed = finalizeEvent(eventTemplate, secretKey);
-    return {
-      id: signed.id,
-      pubkey: signed.pubkey,
-      created_at: signed.created_at,
-      kind: signed.kind,
-      tags: signed.tags,
-      content: signed.content,
-      sig: signed.sig,
-    };
-  } finally {
-    secretKey.fill(0);
-  }
-}
-
 async function signDelegateEvent(eventTemplate) {
-  if (window.nostr && typeof window.nostr.signEvent === 'function') {
-    return await window.nostr.signEvent(eventTemplate);
-  }
-  const bunkerSigner = globalThis.wingmanIdentity?.bunkerSigner;
-  if (bunkerSigner && typeof bunkerSigner.signEvent === 'function') {
-    return await bunkerSigner.signEvent(eventTemplate);
-  }
-  const deviceSigned = await signWithDeviceKey(eventTemplate);
-  if (deviceSigned) {
-    return deviceSigned;
-  }
-  ensureNip07SigningAvailable();
-  return await window.nostr.signEvent(eventTemplate);
+  return await signIdentityEvent(eventTemplate);
 }
 
 async function fetchDelegateRegistryTemplate() {

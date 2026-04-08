@@ -13,6 +13,12 @@ import { showToast } from "../utils/toast.js";
 import { fetchNpubProjects } from "../npub-projects/index.js";
 import { publishDelegateRegistryForCurrentUser } from "./bot-delegate-publisher.js";
 import { normaliseNpubValue, isFiniteNumber, toFiniteTimestamp } from "./dom.js";
+import {
+  createWorkspaceDelegation,
+  listWorkspaceDelegations,
+  renderWorkspaceDelegationList,
+  revokeWorkspaceDelegation,
+} from "./workspace-delegations.js";
 import * as deviceKeystore from "./device-keystore.js";
 
 export function initIdentityStateManager(deps) {
@@ -161,6 +167,255 @@ export function initIdentityStateManager(deps) {
     }
     return payload;
   };
+
+  const workspaceDelegationsState = {
+    loading: false,
+    ownerNpub: null,
+    items: [],
+    error: null,
+  };
+
+  function setWorkspaceDelegationFeedback(entry, message, state = "info") {
+    const feedback = entry?.workspaceDelegationFeedback;
+    if (!feedback) {
+      return;
+    }
+    if (!message) {
+      feedback.hidden = true;
+      feedback.textContent = "";
+      delete feedback.dataset.state;
+      return;
+    }
+    feedback.hidden = false;
+    feedback.textContent = message;
+    feedback.dataset.state = state;
+  }
+
+  function syncWorkspaceDelegationEntry(entry) {
+    if (!entry?.workspaceDelegationsSection) {
+      return;
+    }
+    const authenticated = Boolean(state.identity.authenticated && state.identity.npub);
+    entry.workspaceDelegationsSection.hidden = !authenticated;
+
+    if (!authenticated) {
+      if (entry.workspaceDelegationsList) {
+        entry.workspaceDelegationsList.replaceChildren();
+      }
+      setWorkspaceDelegationFeedback(entry, "");
+      return;
+    }
+
+    if (entry.workspaceDelegationUseBotButton) {
+      entry.workspaceDelegationUseBotButton.disabled = !state.identity.botNpub;
+    }
+    if (entry.workspaceDelegationCreateButton) {
+      if (entry.workspaceDelegationCreateButton.getAttribute("aria-busy") !== "true") {
+        entry.workspaceDelegationCreateButton.disabled = false;
+      }
+    }
+    if (entry.workspaceDelegationRefreshButton) {
+      if (entry.workspaceDelegationRefreshButton.getAttribute("aria-busy") !== "true") {
+        entry.workspaceDelegationRefreshButton.disabled = false;
+      }
+    }
+    if (entry.workspaceDelegationBotHint) {
+      entry.workspaceDelegationBotHint.textContent = state.identity.botNpub
+        ? `Tip: your current bot npub is ${state.identity.botNpub}. Use "Use my bot" to delegate directly to it.`
+        : "Tip: generate or unlock a bot key first if you want to grant access to your own agent.";
+    }
+
+    if (!entry.workspaceDelegationsList) {
+      return;
+    }
+    if (workspaceDelegationsState.loading) {
+      const loading = document.createElement("p");
+      loading.className = "wm-identity-delegations__empty";
+      loading.textContent = "Loading delegations…";
+      entry.workspaceDelegationsList.replaceChildren(loading);
+      return;
+    }
+    if (workspaceDelegationsState.error) {
+      const error = document.createElement("p");
+      error.className = "wm-identity-delegations__empty";
+      error.dataset.state = "error";
+      error.textContent = workspaceDelegationsState.error;
+      entry.workspaceDelegationsList.replaceChildren(error);
+      return;
+    }
+    renderWorkspaceDelegationList(entry.workspaceDelegationsList, workspaceDelegationsState.items);
+  }
+
+  function syncWorkspaceDelegationEntries() {
+    identityDomEntries.forEach((entry) => {
+      syncWorkspaceDelegationEntry(entry);
+    });
+  }
+
+  function resetWorkspaceDelegationsState() {
+    workspaceDelegationsState.loading = false;
+    workspaceDelegationsState.ownerNpub = null;
+    workspaceDelegationsState.items = [];
+    workspaceDelegationsState.error = null;
+    syncWorkspaceDelegationEntries();
+  }
+
+  async function loadWorkspaceDelegations({ silent = false } = {}) {
+    const ownerNpub = normaliseNpubValue(state.identity.npub);
+    if (!state.identity.authenticated || !ownerNpub) {
+      resetWorkspaceDelegationsState();
+      return [];
+    }
+
+    workspaceDelegationsState.loading = true;
+    workspaceDelegationsState.ownerNpub = ownerNpub;
+    workspaceDelegationsState.error = null;
+    syncWorkspaceDelegationEntries();
+
+    try {
+      const payload = await listWorkspaceDelegations({
+        ownerNpub,
+        onUnauthorized: () => handleUnauthorizedAccess(),
+      });
+      workspaceDelegationsState.items =
+        payload && typeof payload === "object" && Array.isArray(payload.delegations)
+          ? payload.delegations
+          : [];
+      workspaceDelegationsState.error = null;
+      return workspaceDelegationsState.items;
+    } catch (error) {
+      workspaceDelegationsState.error =
+        error instanceof Error ? error.message : "Failed to load workspace delegations";
+      if (!silent) {
+        showToast(workspaceDelegationsState.error);
+      }
+      return [];
+    } finally {
+      workspaceDelegationsState.loading = false;
+      syncWorkspaceDelegationEntries();
+    }
+  }
+
+  function collectWorkspaceDelegationInput(entry) {
+    const ownerNpub = normaliseNpubValue(state.identity.npub);
+    if (!ownerNpub) {
+      throw new Error("Sign in before creating delegations");
+    }
+    const scopes = Array.from(entry.workspaceDelegationScopeInputs ?? [])
+      .filter((input) => input instanceof HTMLInputElement && input.checked)
+      .map((input) => input.value);
+
+    return {
+      ownerNpub,
+      delegateNpub: entry.workspaceDelegationDelegateInput?.value ?? "",
+      scopes,
+      duration: entry.workspaceDelegationDurationSelect?.value ?? "none",
+      billingMode: entry.workspaceDelegationBillingSelect?.value ?? "delegate",
+      spendLimitSats: entry.workspaceDelegationSpendLimitInput?.value ?? "",
+      pathPrefixes: entry.workspaceDelegationPathPrefixesInput?.value ?? "",
+      appIds: entry.workspaceDelegationAppIdsInput?.value ?? "",
+      appRoots: entry.workspaceDelegationAppRootsInput?.value ?? "",
+      projectRoots: entry.workspaceDelegationProjectRootsInput?.value ?? "",
+    };
+  }
+
+  async function handleWorkspaceDelegationUseBot(entry) {
+    if (!state.identity.botNpub) {
+      setWorkspaceDelegationFeedback(entry, "No bot npub is available yet.", "warning");
+      return;
+    }
+    if (entry.workspaceDelegationDelegateInput) {
+      entry.workspaceDelegationDelegateInput.value = state.identity.botNpub;
+      entry.workspaceDelegationDelegateInput.focus();
+      setWorkspaceDelegationFeedback(entry, "Delegate npub set to your current bot.", "success");
+    }
+  }
+
+  async function handleWorkspaceDelegationSubmit(entry) {
+    const createButton = entry.workspaceDelegationCreateButton;
+    if (createButton) {
+      setButtonState(createButton, { state: "loading", label: "Creating…", disable: true });
+    }
+    setWorkspaceDelegationFeedback(entry, "Signing delegation…", "info");
+
+    try {
+      const payload = collectWorkspaceDelegationInput(entry);
+      const result = await createWorkspaceDelegation(payload, {
+        onUnauthorized: () => handleUnauthorizedAccess(),
+      });
+      const delegateNpub =
+        result && typeof result === "object" && result.delegation && typeof result.delegation.delegateNpub === "string"
+          ? result.delegation.delegateNpub
+          : payload.delegateNpub;
+      setWorkspaceDelegationFeedback(entry, `Delegation created for ${delegateNpub}.`, "success");
+      showToast(`Delegation created for ${delegateNpub}`);
+      await loadWorkspaceDelegations({ silent: true });
+      if (createButton) {
+        setButtonState(createButton, { state: "success", label: "Created", disable: false, restoreAfterMs: 2500 });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to create delegation";
+      setWorkspaceDelegationFeedback(entry, message, "error");
+      if (createButton) {
+        setButtonState(createButton, { state: "error", label: "Failed", disable: false, restoreAfterMs: 2500 });
+      }
+    }
+  }
+
+  async function handleWorkspaceDelegationRefresh(entry) {
+    const refreshButton = entry.workspaceDelegationRefreshButton;
+    if (refreshButton) {
+      setButtonState(refreshButton, { state: "loading", label: "Refreshing…", disable: true });
+    }
+    try {
+      await loadWorkspaceDelegations({ silent: true });
+      if (workspaceDelegationsState.error) {
+        throw new Error(workspaceDelegationsState.error);
+      }
+      setWorkspaceDelegationFeedback(entry, "Delegations refreshed.", "success");
+      if (refreshButton) {
+        setButtonState(refreshButton, { state: "success", label: "Refreshed", disable: false, restoreAfterMs: 2000 });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to refresh delegations";
+      setWorkspaceDelegationFeedback(entry, message, "error");
+      if (refreshButton) {
+        setButtonState(refreshButton, { state: "error", label: "Failed", disable: false, restoreAfterMs: 2000 });
+      }
+    }
+  }
+
+  async function handleWorkspaceDelegationListClick(event, entry) {
+    const target = event.target instanceof Element
+      ? event.target.closest('[data-action="workspace-delegation-revoke"]')
+      : null;
+    if (!(target instanceof HTMLButtonElement)) {
+      return;
+    }
+    const delegationId = target.dataset.delegationId;
+    if (!delegationId) {
+      return;
+    }
+    const confirmed = window.confirm("Revoke this delegation?");
+    if (!confirmed) {
+      return;
+    }
+
+    setButtonState(target, { state: "loading", label: "Revoking…", disable: true });
+    try {
+      await revokeWorkspaceDelegation(delegationId, {
+        onUnauthorized: () => handleUnauthorizedAccess(),
+      });
+      setWorkspaceDelegationFeedback(entry, "Delegation revoked.", "success");
+      showToast("Delegation revoked");
+      await loadWorkspaceDelegations({ silent: true });
+      setButtonState(target, { state: "success", label: "Revoked", disable: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to revoke delegation";
+      setWorkspaceDelegationFeedback(entry, message, "error");
+      setButtonState(target, { state: "error", label: "Failed", disable: false, restoreAfterMs: 2500 });
+    }
+  }
 
   // ── export bot nsec ──────────────────────────────────────────────
 
@@ -551,6 +806,7 @@ export function initIdentityStateManager(deps) {
     }
 
     syncIdentityDisplay();
+    syncWorkspaceDelegationEntries();
 
     if (emit && typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
       try {
@@ -580,10 +836,12 @@ export function initIdentityStateManager(deps) {
         startSigningListener(next.npub);
       }
       fetchBotIdentity();
+      loadWorkspaceDelegations({ silent: true }).catch(() => {});
       Promise.resolve().then(() => handleForceBotSetup(null, { silent: true }));
     }
     if (becameUnauthenticated) {
       stopSigningListener();
+      resetWorkspaceDelegationsState();
     }
 
     return next;
@@ -1011,6 +1269,23 @@ export function initIdentityStateManager(deps) {
       botPublishDelegateButton: root.querySelector('[data-action="publish-bot-delegate-kind"]'),
       botForceSetupButton: root.querySelector('[data-action="force-bot-setup"]'),
       botPublishDelegateFeedback: root.querySelector('[data-role="identity-bot-delegate-publish-feedback"]'),
+      workspaceDelegationsSection: root.querySelector('[data-role="workspace-delegations-section"]'),
+      workspaceDelegationBotHint: root.querySelector('[data-role="workspace-delegation-bot-hint"]'),
+      workspaceDelegationForm: root.querySelector('[data-form="workspace-delegation"]'),
+      workspaceDelegationDelegateInput: root.querySelector('[data-role="workspace-delegation-delegate"]'),
+      workspaceDelegationDurationSelect: root.querySelector('[data-role="workspace-delegation-duration"]'),
+      workspaceDelegationBillingSelect: root.querySelector('[data-role="workspace-delegation-billing"]'),
+      workspaceDelegationSpendLimitInput: root.querySelector('[data-role="workspace-delegation-spend-limit"]'),
+      workspaceDelegationPathPrefixesInput: root.querySelector('[data-role="workspace-delegation-path-prefixes"]'),
+      workspaceDelegationAppIdsInput: root.querySelector('[data-role="workspace-delegation-app-ids"]'),
+      workspaceDelegationAppRootsInput: root.querySelector('[data-role="workspace-delegation-app-roots"]'),
+      workspaceDelegationProjectRootsInput: root.querySelector('[data-role="workspace-delegation-project-roots"]'),
+      workspaceDelegationFeedback: root.querySelector('[data-role="workspace-delegation-feedback"]'),
+      workspaceDelegationUseBotButton: root.querySelector('[data-action="workspace-delegation-use-bot"]'),
+      workspaceDelegationCreateButton: root.querySelector('[data-action="workspace-delegation-create"]'),
+      workspaceDelegationRefreshButton: root.querySelector('[data-action="workspace-delegation-refresh"]'),
+      workspaceDelegationsList: root.querySelector('[data-role="workspace-delegations-list"]'),
+      workspaceDelegationScopeInputs: Array.from(root.querySelectorAll('[data-role="workspace-delegation-scope"]')),
       copyHandler: null,
       registerHandler: null,
       copyNpubHandler: null,
@@ -1020,6 +1295,10 @@ export function initIdentityStateManager(deps) {
       botExportHandler: null,
       botPublishDelegateHandler: null,
       botForceSetupHandler: null,
+      workspaceDelegationSubmitHandler: null,
+      workspaceDelegationUseBotHandler: null,
+      workspaceDelegationRefreshHandler: null,
+      workspaceDelegationListHandler: null,
     };
 
     if (entry.copyButton) {
@@ -1110,8 +1389,45 @@ export function initIdentityStateManager(deps) {
       identityDomEntryByNode.set(entry.botForceSetupButton, entry);
     }
 
+    if (entry.workspaceDelegationUseBotButton) {
+      ensureButtonOriginalLabel(entry.workspaceDelegationUseBotButton);
+      entry.workspaceDelegationUseBotHandler = (event) => {
+        event.preventDefault();
+        void handleWorkspaceDelegationUseBot(entry);
+      };
+      entry.workspaceDelegationUseBotButton.addEventListener("click", entry.workspaceDelegationUseBotHandler);
+    }
+
+    if (entry.workspaceDelegationRefreshButton) {
+      ensureButtonOriginalLabel(entry.workspaceDelegationRefreshButton);
+      entry.workspaceDelegationRefreshHandler = (event) => {
+        event.preventDefault();
+        void handleWorkspaceDelegationRefresh(entry);
+      };
+      entry.workspaceDelegationRefreshButton.addEventListener("click", entry.workspaceDelegationRefreshHandler);
+    }
+
+    if (entry.workspaceDelegationForm) {
+      entry.workspaceDelegationSubmitHandler = (event) => {
+        event.preventDefault();
+        void handleWorkspaceDelegationSubmit(entry);
+      };
+      entry.workspaceDelegationForm.addEventListener("submit", entry.workspaceDelegationSubmitHandler);
+    }
+
+    if (entry.workspaceDelegationsList) {
+      entry.workspaceDelegationListHandler = (event) => {
+        void handleWorkspaceDelegationListClick(event, entry);
+      };
+      entry.workspaceDelegationsList.addEventListener("click", entry.workspaceDelegationListHandler);
+    }
+
     identityDomEntries.add(entry);
     syncIdentityDisplayForEntry(entry);
+    syncWorkspaceDelegationEntry(entry);
+    if (state.identity.authenticated && state.identity.npub && workspaceDelegationsState.ownerNpub !== state.identity.npub) {
+      loadWorkspaceDelegations({ silent: true }).catch(() => {});
+    }
   }
 
   // ── wiring context ──────────────────────────────────────────────

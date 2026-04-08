@@ -483,6 +483,23 @@ export function initIdentityDom(deps) {
       identityDomEntryByNode.delete(entry.botForceSetupButton);
       resetButtonState(entry.botForceSetupButton);
     }
+    if (entry.workspaceDelegationUseBotButton && entry.workspaceDelegationUseBotHandler) {
+      entry.workspaceDelegationUseBotButton.removeEventListener("click", entry.workspaceDelegationUseBotHandler);
+      resetButtonState(entry.workspaceDelegationUseBotButton);
+    }
+    if (entry.workspaceDelegationRefreshButton && entry.workspaceDelegationRefreshHandler) {
+      entry.workspaceDelegationRefreshButton.removeEventListener("click", entry.workspaceDelegationRefreshHandler);
+      resetButtonState(entry.workspaceDelegationRefreshButton);
+    }
+    if (entry.workspaceDelegationForm && entry.workspaceDelegationSubmitHandler) {
+      entry.workspaceDelegationForm.removeEventListener("submit", entry.workspaceDelegationSubmitHandler);
+    }
+    if (entry.workspaceDelegationsList && entry.workspaceDelegationListHandler) {
+      entry.workspaceDelegationsList.removeEventListener("click", entry.workspaceDelegationListHandler);
+    }
+    if (entry.workspaceDelegationCreateButton) {
+      resetButtonState(entry.workspaceDelegationCreateButton);
+    }
     const timeoutId = identityCopyFeedbackTimeouts.get(entry);
     if (timeoutId) {
       window.clearTimeout(timeoutId);
