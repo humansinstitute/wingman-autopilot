@@ -78,6 +78,11 @@ function createCapabilityPicker() {
 
   return {
     row: fieldset,
+    setSelectedCapabilities(capabilities = []) {
+      const selected = new Set(Array.isArray(capabilities) ? capabilities : []);
+      chatIntercept.input.checked = selected.has('chat_intercept') || selected.size === 0;
+      taskDispatch.input.checked = selected.has('task_dispatch');
+    },
     getSelectedCapabilities() {
       const capabilities = [];
       if (chatIntercept.input.checked) {
@@ -175,6 +180,19 @@ export function createAgentChatSection() {
   const sessionContainer = document.createElement('div');
   sessionContainer.setAttribute('data-testid', 'agent-chat-session-list');
 
+  const populateAgentForm = (agent) => {
+    agentIdField.input.value = agent.agentId || '';
+    labelField.input.value = agent.label || '';
+    agentBotField.input.value = agent.botNpub || '';
+    agentWorkspaceField.input.value = agent.workspaceOwnerNpub || '';
+    agentGroupsField.input.value = Array.isArray(agent.groupNpubs) ? agent.groupNpubs.join(', ') : '';
+    workingDirectoryField.input.value = agent.workingDirectory || '';
+    capabilityPicker.setSelectedCapabilities(agent.capabilities);
+    enabledField.input.checked = agent.enabled !== false;
+    statusLine.textContent = `Editing local agent ${agent.agentId}. Update capabilities and save to reuse the same agent identity.`;
+    agentIdField.input.focus();
+  };
+
   const refreshList = async () => {
     overviewContainer.replaceChildren();
     agentRegistryContainer.replaceChildren();
@@ -184,6 +202,9 @@ export function createAgentChatSection() {
       const { subscriptions, agents, chatSessions } = await loadOperatorState();
       overviewContainer.append(createAgentChatOverview(subscriptions, chatSessions));
       agentRegistryContainer.append(createAgentRegistryPanel(agents, {
+        edit: (agent) => {
+          populateAgentForm(agent);
+        },
         remove: async (agent) => {
           statusLine.textContent = `Removing local agent ${agent.agentId}...`;
           try {

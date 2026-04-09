@@ -95,6 +95,12 @@ export function createAgentRegistryPanel(agents, handlers) {
     actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;';
     actions.append(
       createActionButton(
+        'Edit',
+        `Edit Agent Chat agent ${agent.agentId}`,
+        `agent-chat-edit-agent-${agent.agentId}`,
+        () => handlers.edit(agent),
+      ),
+      createActionButton(
         'Remove',
         `Remove Agent Chat agent ${agent.agentId}`,
         `agent-chat-remove-agent-${agent.agentId}`,
