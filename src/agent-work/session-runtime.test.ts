@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { describe, expect, test } from 'bun:test';
+import { nip19 } from 'nostr-tools';
 
 import type { SessionSnapshot } from '../agents/process-manager';
 import type { AgentDefinitionRecord, WorkspaceSubscriptionRecord } from '../agent-chat/types';
@@ -33,10 +34,11 @@ function makeSession(id: string, metadata: SessionSnapshot['metadata'] = { AGENT
 
 function makeAgent(): AgentDefinitionRecord {
   const now = new Date().toISOString();
+  const botNpub = nip19.npubEncode('ab'.repeat(32));
   return {
     agentId: 'agent-work',
     label: 'Worker',
-    botNpub: 'npub1bot',
+    botNpub,
     workspaceOwnerNpub: 'npub1workspace',
     groupNpubs: ['npub1group'],
     workingDirectory: '/tmp/work',
@@ -46,6 +48,14 @@ function makeAgent(): AgentDefinitionRecord {
     updatedAt: now,
     managedByNpub: 'npub1manager',
   };
+}
+
+function botPubkeyHex(agent: AgentDefinitionRecord): string {
+  const decoded = nip19.decode(agent.botNpub);
+  if (decoded.type !== 'npub' || typeof decoded.data !== 'string') {
+    throw new Error('Expected bot npub');
+  }
+  return decoded.data;
 }
 
 function makeSubscription(): WorkspaceSubscriptionRecord {
@@ -320,5 +330,58 @@ describe('AgentWorkSessionRuntime', () => {
     expect(prompts[2]?.content).toContain('Dispatch reason: approval updated.');
     expect(dispatches).toEqual(['session-1', 'session-1', 'session-1']);
     expect(nightWatch).toEqual(['session-1', 'session-1', 'session-1']);
+  });
+
+  test('accepts hex pubkey assignments as well as npub assignments', async () => {
+    const bindingStore = new AgentWorkSessionBindingStore(makeTempDb());
+    const sessions = new Map<string, SessionSnapshot>();
+    let createCount = 0;
+
+    const runtime = new AgentWorkSessionRuntime({
+      defaultAgent: 'codex',
+      bindingStore,
+      getSession: (sessionId) => sessions.get(sessionId) ?? null,
+      createSession: async () => {
+        createCount += 1;
+        const session = makeSession(`hex-session-${createCount}`);
+        sessions.set(session.id, session);
+        return session;
+      },
+      updateSessionMetadata: (sessionId, metadata) => {
+        const existing = sessions.get(sessionId)!;
+        const next = { ...existing, metadata: { ...existing.metadata, ...(metadata ?? {}) } };
+        sessions.set(sessionId, next);
+        return next;
+      },
+      addPrompt: () => undefined,
+      maybeAutoDispatchQueuedPrompt: () => undefined,
+      enableNightWatch: () => undefined,
+    });
+
+    const subscription = makeSubscription();
+    const agent = makeAgent();
+
+    const created = await runtime.handleTaskDispatch({
+      subscription,
+      agent,
+      recordId: 'record-hex-1',
+      recordState: null,
+      task: {
+        taskId: 'task-hex-1',
+        flowId: null,
+        flowRunId: null,
+        flowStep: null,
+        title: 'Hex assignment task',
+        description: 'Assigned using bot pubkey hex',
+        state: 'open',
+        assignedTo: botPubkeyHex(agent),
+        deleted: false,
+        done: false,
+        predecessorTaskIds: [],
+      },
+    });
+
+    expect(created?.id).toBe('hex-session-1');
+    expect(createCount).toBe(1);
   });
 });

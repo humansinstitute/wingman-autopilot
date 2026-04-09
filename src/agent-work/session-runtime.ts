@@ -2,6 +2,7 @@ import type { AgentType } from '../config';
 import type { SessionOrigin, SessionSnapshot } from '../agents/process-manager';
 import type { SessionMetadataInput } from '../sessions/session-metadata';
 import type { AgentDefinitionRecord, InboundApprovalRecord, InboundTaskRecord, WorkspaceSubscriptionRecord } from '../agent-chat/types';
+import { nip19 } from 'nostr-tools';
 import {
   agentWorkSessionBindingStore,
   type AgentWorkBindingType,
@@ -80,6 +81,26 @@ function compactBoolean(value: unknown): boolean {
   return value === true || value === 1 || value === '1';
 }
 
+function normaliseIdentityValue(value: string | null): string | null {
+  const compact = compactText(value);
+  return compact ? compact.toLowerCase() : null;
+}
+
+function decodeNpubToHex(npub: string | null): string | null {
+  const compact = compactText(npub);
+  if (!compact || !compact.startsWith('npub1')) {
+    return null;
+  }
+  try {
+    const decoded = nip19.decode(compact);
+    return decoded.type === 'npub' && typeof decoded.data === 'string'
+      ? decoded.data.toLowerCase()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function uniqueStrings(values: Array<string | null | undefined>): string[] {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value && value.trim()))));
 }
@@ -111,6 +132,16 @@ function mergeTaskIds(session: SessionSnapshot | null, taskId: string): string[]
 
 function hasBlockingPredecessors(task: InboundTaskRecord): boolean {
   return task.predecessorTaskIds.length > 0;
+}
+
+function isAssignedToAgent(task: InboundTaskRecord, agent: AgentDefinitionRecord): boolean {
+  const assignedTo = normaliseIdentityValue(task.assignedTo);
+  if (!assignedTo) {
+    return false;
+  }
+  const botNpub = normaliseIdentityValue(agent.botNpub);
+  const botPubkeyHex = decodeNpubToHex(agent.botNpub);
+  return assignedTo === botNpub || assignedTo === botPubkeyHex;
 }
 
 function isTerminalTask(task: InboundTaskRecord, recordState: string | null): boolean {
@@ -208,7 +239,7 @@ export class AgentWorkSessionRuntime {
     if (isTerminalTask(input.task, input.recordState)) {
       return null;
     }
-    if (!input.task.assignedTo || input.task.assignedTo !== input.agent.botNpub) {
+    if (!isAssignedToAgent(input.task, input.agent)) {
       return null;
     }
     if (hasBlockingPredecessors(input.task)) {
