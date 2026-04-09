@@ -351,18 +351,37 @@ function createSseHistoryTable(subscription) {
 
 function createDispatchHistoryTable(subscription) {
   const dispatches = Array.isArray(subscription.recentDispatches) ? subscription.recentDispatches : [];
-  return createTimelineList({
-    title: 'Recent Dispatches',
-    description: 'The last actions Wingmen chose from this subscription.',
-    testId: `agent-chat-dispatch-history-${subscription.subscriptionId}`,
-    items: dispatches.slice().reverse(),
-    emptyText: 'No dispatches recorded yet.',
-    renderItem: (entry) => createTimelineEntry(
-      `${entry.kind || 'unknown'} · ${entry.action || 'unknown'}`,
-      `${entry.agentId || 'unknown'} · binding=${entry.bindingId || entry.recordId || 'None'} · session=${entry.sessionId || 'None'}`,
-      formatTimestamp(entry.at),
-    ),
-  });
+  const chatDispatches = dispatches.filter((entry) => entry.kind === 'chat');
+  const workDispatches = dispatches.filter((entry) => entry.kind === 'task' || entry.kind === 'approval');
+  const wrapper = document.createElement('div');
+  wrapper.style.marginTop = '12px';
+  wrapper.append(
+    createTimelineList({
+      title: 'Chat Dispatches',
+      description: 'Recent chat-triggered routing decisions.',
+      testId: `agent-chat-dispatch-history-chat-${subscription.subscriptionId}`,
+      items: chatDispatches.slice().reverse(),
+      emptyText: 'No chat dispatches recorded yet.',
+      renderItem: (entry) => createTimelineEntry(
+        `${entry.action || 'unknown'} · ${entry.agentId || 'unknown'}`,
+        `thread binding=${entry.bindingId || entry.recordId || 'None'} · session=${entry.sessionId || 'None'}`,
+        formatTimestamp(entry.at),
+      ),
+    }),
+    createTimelineList({
+      title: 'Task And Approval Dispatches',
+      description: 'Recent task/approval dispatches that entered the agent-work runtime.',
+      testId: `agent-chat-dispatch-history-work-${subscription.subscriptionId}`,
+      items: workDispatches.slice().reverse(),
+      emptyText: 'No task or approval dispatches recorded yet.',
+      renderItem: (entry) => createTimelineEntry(
+        `${entry.kind || 'unknown'} · ${entry.action || 'unknown'}`,
+        `${entry.agentId || 'unknown'} · binding=${entry.bindingId || entry.recordId || 'None'} · session=${entry.sessionId || 'None'}`,
+        formatTimestamp(entry.at),
+      ),
+    }),
+  );
+  return wrapper;
 }
 
 function findLinkedSessions(subscription, chatSessions) {

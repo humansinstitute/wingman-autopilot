@@ -110,6 +110,86 @@ function createSummaryList(rows) {
   return details;
 }
 
+function createDispatchReferenceCard({ title, enabledAgents, description, promptPreview }) {
+  const card = createCard(title, description);
+  const enabled = document.createElement('p');
+  enabled.className = 'wm-settings__port-note';
+  enabled.textContent = enabledAgents.length > 0
+    ? `Enabled on: ${enabledAgents.join(', ')}`
+    : 'Enabled on: none';
+  const promptLabel = document.createElement('div');
+  promptLabel.className = 'wm-settings__port-note';
+  promptLabel.style.marginTop = '12px';
+  promptLabel.textContent = 'Default prompt contract';
+  const prompt = document.createElement('pre');
+  prompt.style.cssText = 'margin:8px 0 0;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(15,23,42,0.72);overflow:auto;font-size:0.85em;line-height:1.45;white-space:pre-wrap;';
+  prompt.textContent = promptPreview;
+  card.append(enabled, promptLabel, prompt);
+  return card;
+}
+
+function createConfiguredDispatchesPanel(agents) {
+  const wrapper = document.createElement('div');
+  wrapper.style.marginTop = '12px';
+
+  const heading = document.createElement('h4');
+  heading.textContent = 'Configured Dispatches';
+  wrapper.append(heading);
+
+  const note = document.createElement('p');
+  note.className = 'wm-settings__port-note';
+  note.textContent = 'This is the current local dispatch policy: which agent capabilities are enabled, what they do, and the prompt contract each runtime uses.';
+  wrapper.append(note);
+
+  const agentList = Array.isArray(agents) ? agents : [];
+  const chatAgents = agentList
+    .filter((agent) => agent.enabled !== false && (agent.capabilities ?? ['chat_intercept']).includes('chat_intercept'))
+    .map((agent) => agent.agentId);
+  const taskAgents = agentList
+    .filter((agent) => agent.enabled !== false && (agent.capabilities ?? []).includes('task_dispatch'))
+    .map((agent) => agent.agentId);
+
+  wrapper.append(
+    createDispatchReferenceCard({
+      title: 'Chat Dispatch',
+      enabledAgents: chatAgents,
+      description: 'When a workspace chat advisory matches a local agent, Wingmen reuses or creates the routed session and the agent must decide whether to respond in-thread or ignore.',
+      promptPreview: [
+        'Agent Chat runtime event: new_session | reused_session | interrupt follow-up.',
+        '',
+        'Thread package:',
+        '- agent_id / workspace_owner_npub / channel_id / thread_id / bot_npub',
+        '- recent turns and participants',
+        '- Yoke commands for context and reply-current',
+        '',
+        'Instructions:',
+        '- Start with AGENT_CHAT_DECISION: respond or ignore',
+        '- Nothing is visible unless the agent publishes back into the thread',
+        '- If responding, final action must be Yoke reply-current',
+      ].join('\n'),
+    }),
+    createDispatchReferenceCard({
+      title: 'Task Dispatch',
+      enabledAgents: taskAgents,
+      description: 'When a task or approval advisory targets the bot, Wingmen reuses or creates the bound agent-work session, queues the work prompt, and Night Watch keeps the session progressing.',
+      promptPreview: [
+        'Agent work dispatch.',
+        'Dispatch reason: new task | task updated | approval updated.',
+        'Task id / Flow id / Flow run id / Flow step',
+        'Title / Description',
+        '',
+        'Instructions:',
+        '- Complete only the current actionable task',
+        '- Inspect the board before acting',
+        '- Update the board with progress or completion',
+        '- Stop if blocked or awaiting approval',
+      ].join('\n'),
+    }),
+  );
+
+  return wrapper;
+}
+
 function createCapabilityPicker() {
   const fieldset = document.createElement('fieldset');
   fieldset.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:12px;padding:12px;border:1px solid var(--wm-border-muted, rgba(255,255,255,0.12));border-radius:10px;';
@@ -293,6 +373,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
 
   const setupPanel = document.createElement('div');
   const agentRegistryContainer = document.createElement('div');
+  const configuredDispatchesContainer = document.createElement('div');
   setupPanel.append(
     setupSummary,
     quickActionsCard,
@@ -300,6 +381,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
     subscriptionCard,
     agentCard,
     statusLine,
+    configuredDispatchesContainer,
     agentRegistryContainer,
   );
 
@@ -380,6 +462,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
   const refreshList = async () => {
     overviewContainer.replaceChildren();
     subscriptionSummaryContainer.replaceChildren();
+    configuredDispatchesContainer.replaceChildren();
     agentRegistryContainer.replaceChildren();
     listContainer.replaceChildren();
     sessionContainer.replaceChildren();
@@ -388,6 +471,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
       const primarySubscription = subscriptions[0] ?? null;
       currentPrimarySubscription = primarySubscription;
       prefillAgentFieldsFromSubscription(primarySubscription);
+      configuredDispatchesContainer.append(createConfiguredDispatchesPanel(agents));
 
       const subscriptionSummaryCard = createCard(
         'Current Subscription',
