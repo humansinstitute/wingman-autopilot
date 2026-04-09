@@ -8,6 +8,7 @@
 
 import { buildAgentUrl } from "../agents/agent-client";
 import type { SessionSnapshot } from "../agents/process-manager";
+import type { SessionMetadataInput } from "../sessions/session-metadata";
 import type { FeatureFlagRecord } from "../storage/feature-flag-store";
 import { deliverSessionAgentMessage } from "../server/session-agent-message";
 import type { NightWatchStore } from "./nightwatch-store";
@@ -45,6 +46,10 @@ export interface NightWatchDeps {
   featureFlagStore: FeatureFlagStore;
   agentHost: string;
   getSession: (sessionId: string) => SessionSnapshot | null;
+  updateSessionMetadata?: (
+    sessionId: string,
+    metadata: SessionMetadataInput,
+  ) => SessionSnapshot | null;
 }
 
 const nightwatchInFlight = new Set<string>();
@@ -66,6 +71,63 @@ function buildCheckInSummary(sessionName: string | null, cycleCount: number, pro
   const preview =
     compactPrompt.length > 80 ? `${compactPrompt.slice(0, 77)}...` : compactPrompt;
   return `Sent "${preview}" to ${label} (${cycleCount} check-ins).`;
+}
+
+function buildHookReasoning(action: string, detail?: string): string {
+  return detail ? `Night Watch hook "${action}" fired. ${detail}` : `Night Watch hook "${action}" fired.`;
+}
+
+function buildReflectionPrompt(session: SessionSnapshot): string {
+  const goal = typeof session.metadata?.goal === "string" ? session.metadata.goal.trim() : "";
+  const payload =
+    typeof session.metadata?.nextActionPayload === "string"
+      ? session.metadata.nextActionPayload.trim()
+      : "";
+
+  const sections = [
+    "Night Watch reflection check-in.",
+    goal
+      ? `Current goal: ${goal}`
+      : "Current goal: not set. First state the working goal you are following right now.",
+    "Briefly assess progress, identify the main blocker or uncertainty, and name the next concrete action you will take.",
+  ];
+  if (payload) {
+    sections.push(`Additional context: ${payload}`);
+  }
+  return sections.join("\n\n");
+}
+
+function disableNightWatchWithReport(
+  session: SessionSnapshot,
+  deps: NightWatchDeps,
+  report: {
+    status: "complete" | "monitor";
+    summary: string;
+    reasoning: string;
+    cycleCount: number;
+  },
+): void {
+  deps.store.disableSession(session.id);
+  deps.store.addReport({
+    sessionId: session.id,
+    sessionName: session.name ?? null,
+    workingDirectory: session.workingDirectory ?? null,
+    status: report.status,
+    summary: report.summary,
+    reasoning: report.reasoning,
+    cycleCount: report.cycleCount,
+  });
+}
+
+function consumeReflectionHook(
+  session: SessionSnapshot,
+  deps: NightWatchDeps,
+): SessionSnapshot {
+  const updated = deps.updateSessionMetadata?.(session.id, {
+    nextAction: "none",
+    nextActionPayload: undefined,
+  });
+  return updated ?? session;
 }
 
 async function sendNightWatchPrompt(
@@ -115,8 +177,36 @@ export async function maybeTriggerNightWatch(
   nightwatchInFlight.add(session.id);
   try {
     const currentSession = deps.getSession(session.id) ?? session;
+    const nextAction = currentSession.metadata?.nextAction;
+    if (nextAction === "stop") {
+      disableNightWatchWithReport(currentSession, deps, {
+        status: "complete",
+        summary: "Night Watch disabled by session metadata hook.",
+        reasoning: buildHookReasoning("stop"),
+        cycleCount: sessionState.cycleCount,
+      });
+      return;
+    }
+    if (nextAction === "restart") {
+      disableNightWatchWithReport(currentSession, deps, {
+        status: "monitor",
+        summary:
+          "Session requested restart, but restart orchestration is not implemented in this slice. Night Watch was disabled to avoid a retry loop.",
+        reasoning: buildHookReasoning(
+          "restart",
+          "Leave the metadata in place so the next slice can resume explicit restart handling.",
+        ),
+        cycleCount: sessionState.cycleCount,
+      });
+      return;
+    }
+
+    const prompt =
+      nextAction === "reflect"
+        ? buildReflectionPrompt(currentSession)
+        : sessionState.prompt;
     const willContinue = sessionState.cycleCount + 1 < sessionState.maxCycles;
-    const result = await sendNightWatchPrompt(currentSession, sessionState.prompt, deps);
+    const result = await sendNightWatchPrompt(currentSession, prompt, deps);
 
     if (!result.ok) {
       deps.store.postponePrompt(session.id, getNightWatchRetryPromptAt());
@@ -126,16 +216,21 @@ export async function maybeTriggerNightWatch(
       return;
     }
 
+    const persistedSession =
+      nextAction === "reflect"
+        ? consumeReflectionHook(currentSession, deps)
+        : currentSession;
     const cycleCount = deps.store.recordPromptSent(session.id, willContinue);
     deps.store.addReport({
       sessionId: session.id,
-      sessionName: currentSession.name ?? null,
-      workingDirectory: currentSession.workingDirectory ?? null,
+      sessionName: persistedSession.name ?? null,
+      workingDirectory: persistedSession.workingDirectory ?? null,
       status: willContinue ? "continue" : "complete",
-      summary: buildCheckInSummary(currentSession.name ?? null, cycleCount, sessionState.prompt),
+      summary: buildCheckInSummary(persistedSession.name ?? null, cycleCount, prompt),
       reasoning:
         `Night Watch timer fired after ${sessionState.intervalMinutes} minute` +
-        `${sessionState.intervalMinutes === 1 ? "" : "s"}.`,
+        `${sessionState.intervalMinutes === 1 ? "" : "s"}.` +
+        (nextAction === "reflect" ? ` ${buildHookReasoning("reflect")}` : ""),
       cycleCount,
     });
   } finally {

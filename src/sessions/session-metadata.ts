@@ -3,6 +3,13 @@ export interface SessionMetadata {
   billingMode: "subscription" | "credits";
   role?: string;
   project?: string;
+  goal?: string;
+  nextAction?: SessionMetadataNextAction;
+  nextActionPayload?: string;
+  bindingType?: SessionBindingType;
+  bindingId?: string;
+  flowId?: string;
+  flowRunId?: string;
   taskIds?: string[];
   routerRunId?: string;
   autoStop?: boolean;
@@ -18,6 +25,25 @@ export interface SessionMetadata {
 
 export type SessionMetadataInput = Partial<SessionMetadata> | null | undefined;
 
+export const SESSION_METADATA_NEXT_ACTIONS = [
+  "none",
+  "reflect",
+  "stop",
+  "restart",
+] as const;
+
+export type SessionMetadataNextAction =
+  (typeof SESSION_METADATA_NEXT_ACTIONS)[number];
+
+export const SESSION_METADATA_BINDING_TYPES = [
+  "thread",
+  "task",
+  "flow_run",
+] as const;
+
+export type SessionBindingType =
+  (typeof SESSION_METADATA_BINDING_TYPES)[number];
+
 export const DEFAULT_SESSION_METADATA: SessionMetadata = Object.freeze({
   AGENT: false,
   billingMode: "subscription",
@@ -28,6 +54,25 @@ export const normaliseSessionMetadata = (
 ): SessionMetadata => {
   const role = typeof metadata?.role === "string" ? metadata.role.trim() : "";
   const project = typeof metadata?.project === "string" ? metadata.project.trim() : "";
+  const goal = typeof metadata?.goal === "string" ? metadata.goal.trim() : "";
+  const nextActionValue = typeof metadata?.nextAction === "string" ? metadata.nextAction.trim().toLowerCase() : "";
+  const nextAction = SESSION_METADATA_NEXT_ACTIONS.includes(
+    nextActionValue as SessionMetadataNextAction,
+  )
+    ? nextActionValue as SessionMetadataNextAction
+    : undefined;
+  const nextActionPayload =
+    typeof metadata?.nextActionPayload === "string" ? metadata.nextActionPayload.trim() : "";
+  const bindingTypeValue =
+    typeof metadata?.bindingType === "string" ? metadata.bindingType.trim().toLowerCase() : "";
+  const bindingType = SESSION_METADATA_BINDING_TYPES.includes(
+    bindingTypeValue as SessionBindingType,
+  )
+    ? bindingTypeValue as SessionBindingType
+    : undefined;
+  const bindingId = typeof metadata?.bindingId === "string" ? metadata.bindingId.trim() : "";
+  const flowId = typeof metadata?.flowId === "string" ? metadata.flowId.trim() : "";
+  const flowRunId = typeof metadata?.flowRunId === "string" ? metadata.flowRunId.trim() : "";
   const routerRunId = typeof metadata?.routerRunId === "string" ? metadata.routerRunId.trim() : "";
   const routedBy = typeof metadata?.routedBy === "string" ? metadata.routedBy.trim() : "";
   const agentChatAgentId = typeof metadata?.agentChatAgentId === "string" ? metadata.agentChatAgentId.trim() : "";
@@ -49,6 +94,13 @@ export const normaliseSessionMetadata = (
     billingMode: metadata?.billingMode === "credits" ? "credits" : "subscription",
     role: role || undefined,
     project: project || undefined,
+    goal: goal || undefined,
+    nextAction,
+    nextActionPayload: nextActionPayload || undefined,
+    bindingType,
+    bindingId: bindingId || undefined,
+    flowId: flowId || undefined,
+    flowRunId: flowRunId || undefined,
     taskIds: taskIds?.length ? taskIds : undefined,
     routerRunId: routerRunId || undefined,
     autoStop: Boolean(metadata?.autoStop),

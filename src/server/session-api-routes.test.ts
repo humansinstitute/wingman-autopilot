@@ -98,6 +98,12 @@ const buildCtx = (overrides?: Partial<SessionApiContext>): SessionApiContext => 
   normaliseSessionNameInput: (value) => (typeof value === "string" ? value : null),
   parseSessionWorkspaceRequest: () => null,
   resolveSessionWorkingDirectory: async () => "/tmp/project",
+  resolveWorkspace: (() => ({
+    root: "/tmp",
+    docsRoot: "/tmp",
+    defaultDirectory: "/tmp/project",
+    allowedDirectories: ["/tmp/project"],
+  })) as any,
   parseSessionOriginInput: () => null,
   parseNightWatchStartOptions: () => null,
   buildAgentUrl: () => "http://localhost:3700",
@@ -224,6 +230,106 @@ describe("handleSessionApi", () => {
     });
   });
 
+  test("PATCH /api/sessions/:id/metadata updates autonomous hook metadata", async () => {
+    let updatePayload: Record<string, unknown> | undefined;
+    const updatedSession = {
+      ...baseSession,
+      metadata: {
+        AGENT: false,
+        billingMode: "subscription" as const,
+        goal: "Ship the release",
+        nextAction: "reflect" as const,
+        lastManagedByNpub: "npub1owner",
+      },
+    };
+    const ctx = buildCtx({
+      manager: {
+        getSession: (id: string) => (id === "session-1" ? baseSession : undefined),
+        listSessions: () => [baseSession],
+        updateSessionMetadata: (id: string, metadata: Record<string, unknown>) => {
+          if (id !== "session-1") return null;
+          updatePayload = metadata;
+          return updatedSession;
+        },
+      } as any,
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions/session-1/metadata");
+    const request = new Request(url.toString(), {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ goal: "Ship the release", nextAction: "reflect" }),
+    });
+
+    const response = await handleSessionApi(request, url, "PATCH", makeAuth({ actorNpub: "npub1owner", delegatedByBot: false }), ctx);
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    expect(updatePayload as Record<string, unknown>).toEqual({
+      goal: "Ship the release",
+      nextAction: "reflect",
+      lastManagedByNpub: "npub1bot",
+    });
+    await expect(response!.json()).resolves.toEqual({
+      id: "session-1",
+      metadata: updatedSession.metadata,
+    });
+  });
+
+  test("PATCH /api/owners/:owner/sessions/:id/metadata updates owner-space metadata", async () => {
+    let updatePayload: Record<string, unknown> | undefined;
+    const updatedSession = {
+      ...baseSession,
+      metadata: {
+        AGENT: false,
+        billingMode: "subscription" as const,
+        goal: "Review task state",
+        nextAction: "stop" as const,
+        lastManagedByNpub: "npub1owner",
+      },
+    };
+    const ownerSession = { ...baseSession, npub: "npub1owner" };
+    const ctx = buildCtx({
+      manager: {
+        getSession: (id: string) => (id === "session-1" ? ownerSession : undefined),
+        listSessions: () => [ownerSession],
+        updateSessionMetadata: (id: string, metadata: Record<string, unknown>) => {
+          if (id !== "session-1") return null;
+          updatePayload = metadata;
+          return updatedSession;
+        },
+      } as any,
+    });
+
+    const url = new URL("http://localhost:3021/api/owners/npub1owner/sessions/session-1/metadata");
+    const request = new Request(url.toString(), {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ metadata: { goal: "Review task state", nextAction: "stop" } }),
+    });
+
+    const ownerAuth = makeAuth({
+      npub: "npub1owner",
+      actorNpub: "npub1owner",
+      signerNpub: "npub1owner",
+      subjectNpub: "npub1owner",
+      delegatedByBot: false,
+      delegatedOwnerNpub: "npub1owner",
+    });
+    const response = await handleSessionApi(request, url, "PATCH", ownerAuth, ctx);
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    expect(updatePayload as Record<string, unknown>).toEqual({
+      goal: "Review task state",
+      nextAction: "stop",
+      lastManagedByNpub: "npub1owner",
+    });
+    await expect(response!.json()).resolves.toEqual({
+      id: "session-1",
+      ownerNpub: "npub1owner",
+      metadata: updatedSession.metadata,
+    });
+  });
+
   test("GET /api/sessions/:id returns 409 for ambiguous owned prefixes", async () => {
     const sessions = [
       { ...baseSession, id: "26866c4d-835b-4ab8-b477-128fe2e29095", name: "tower-sync-progress" },
@@ -295,7 +401,13 @@ describe("handleSessionApi", () => {
     expect(response).not.toBeNull();
     expect(response!.status).toBe(201);
     expect(explicitNpub).toBe("npub1owner");
-    expect(explicitMetadata).toEqual({ AGENT: true });
+    expect(explicitMetadata).toMatchObject({
+      AGENT: true,
+      ownerNpub: "npub1owner",
+      createdByNpub: "npub1bot",
+      lastManagedByNpub: "npub1bot",
+      chargeToNpub: "npub1owner",
+    });
     expect(explicitOrigin).toEqual({
       type: "delegate-bot",
       id: "npub1bot",
@@ -403,7 +515,13 @@ describe("handleSessionApi", () => {
     const response = await handleSessionApi(request, url, "POST", ownerAuth, ctx);
     expect(response).not.toBeNull();
     expect(response!.status).toBe(201);
-    expect(explicitMetadata).toEqual({ AGENT: true });
+    expect(explicitMetadata).toMatchObject({
+      AGENT: true,
+      ownerNpub: "npub1owner",
+      createdByNpub: "npub1bot",
+      lastManagedByNpub: "npub1bot",
+      chargeToNpub: "npub1owner",
+    });
   });
 
   test("GET /api/delegate-sessions/:id/messages refreshes live messages", async () => {

@@ -3,12 +3,17 @@
 /**
  * Wingman session management CLI (NIP-98 authenticated).
  *
- * Commands: list, create, stop, stop-self, info, logs, send, artifacts, queue,
- *           queue-add, queue-next, nightwatch-status, nightwatch-enable,
- *           nightwatch-disable, archive, archive-info, archive-logs, archive-delete
+ * Commands: list, create, stop, stop-self, info, metadata, metadata-update,
+ *           logs, send, artifacts, queue, queue-add, queue-next,
+ *           nightwatch-status, nightwatch-enable, nightwatch-disable,
+ *           archive, archive-info, archive-logs, archive-delete
  */
 
 import { parseCommonFlags, buildConfig, requestJson, requestJsonBotCrypto, resolveBaseUrl } from "./lib/auth";
+import {
+  buildSessionMetadataPath,
+  buildSessionMetadataUpdateBody,
+} from "./lib/session-metadata-cli";
 
 const USAGE = `Wingman session management CLI (NIP-98)
 
@@ -21,6 +26,8 @@ Commands:
   stop <id>            Stop and archive a session
   stop-self            Stop the current session using SESSION_ID
   info <id>            Show session details
+  metadata [id]        Show session metadata (uses SESSION_ID if omitted)
+  metadata-update [id] Update session metadata (uses SESSION_ID if omitted)
   logs <id>            Show session messages
   send <id> <message>  Send a message to a session
   artifacts <id>       List session artifacts
@@ -46,6 +53,13 @@ Options:
   --nightwatch-prompt <text> Prompt used by Night Watch check-ins
   --nightwatch-interval <n>  Minutes between Night Watch check-ins
   --nightwatch-max-cycles <n> Maximum number of Night Watch check-ins
+  --goal <text>        Session goal metadata (for metadata-update)
+  --next-action <type> Session hook action: none|reflect|stop|restart
+  --next-action-payload <text> Payload for the next action hook
+  --binding-type <type> Binding type: thread|task|flow_run
+  --binding-id <id>    Binding identifier
+  --flow-id <id>       Flow identifier
+  --flow-run-id <id>   Flow run identifier
   --owner <npub>       Use delegated owner-space routes for live session and archive commands
   --limit <n>          Pagination limit (for archive, default: 50)
   --offset <n>         Pagination offset (for archive)
@@ -61,6 +75,8 @@ Examples:
   bun clis/sessions.ts create codex --owner npub1owner... --name "worker" --directory /Users/mini/code/wingmen
   bun clis/sessions.ts archive --owner npub1owner... --limit 20
   bun clis/sessions.ts logs abc123
+  bun clis/sessions.ts metadata abc123
+  bun clis/sessions.ts metadata-update --goal "Ship the release" --next-action reflect
   bun clis/sessions.ts nightwatch-enable abc123 --nightwatch-prompt "Any progress?" --nightwatch-interval 10
   bun clis/sessions.ts artifacts abc123
   bun clis/sessions.ts queue abc123
@@ -89,6 +105,9 @@ interface NightWatchState {
   promptAt?: string | null;
   [key: string]: unknown;
 }
+
+const VALID_NEXT_ACTIONS = new Set(["none", "reflect", "stop", "restart"]);
+const VALID_BINDING_TYPES = new Set(["thread", "task", "flow_run"]);
 
 function parseBooleanFlag(value: string | undefined, flagName: string): boolean {
   if (value === undefined) {
@@ -161,6 +180,13 @@ async function run() {
   let nightwatchPrompt: string | undefined;
   let nightwatchInterval: number | undefined;
   let nightwatchMaxCycles: number | undefined;
+  let goal: string | undefined;
+  let nextAction: string | undefined;
+  let nextActionPayload: string | undefined;
+  let bindingType: string | undefined;
+  let bindingId: string | undefined;
+  let flowId: string | undefined;
+  let flowRunId: string | undefined;
   let owner: string | undefined;
   let limit: string | undefined;
   let offset: string | undefined;
@@ -187,6 +213,37 @@ async function run() {
       nightwatchInterval = parsePositiveIntegerFlag(args[++i], "--nightwatch-interval");
     } else if (flag === "--nightwatch-max-cycles") {
       nightwatchMaxCycles = parsePositiveIntegerFlag(args[++i], "--nightwatch-max-cycles");
+    } else if (flag === "--goal") {
+      goal = args[++i];
+      if (goal === undefined) throw new Error("--goal requires a value");
+    } else if (flag === "--next-action") {
+      const value = args[++i];
+      if (value === undefined) throw new Error("--next-action requires a value");
+      const normalized = value.trim().toLowerCase();
+      if (!VALID_NEXT_ACTIONS.has(normalized)) {
+        throw new Error("--next-action must be one of: none, reflect, stop, restart");
+      }
+      nextAction = normalized;
+    } else if (flag === "--next-action-payload") {
+      nextActionPayload = args[++i];
+      if (nextActionPayload === undefined) throw new Error("--next-action-payload requires a value");
+    } else if (flag === "--binding-type") {
+      const value = args[++i];
+      if (value === undefined) throw new Error("--binding-type requires a value");
+      const normalized = value.trim().toLowerCase();
+      if (!VALID_BINDING_TYPES.has(normalized)) {
+        throw new Error("--binding-type must be one of: thread, task, flow_run");
+      }
+      bindingType = normalized;
+    } else if (flag === "--binding-id") {
+      bindingId = args[++i];
+      if (bindingId === undefined) throw new Error("--binding-id requires a value");
+    } else if (flag === "--flow-id") {
+      flowId = args[++i];
+      if (flowId === undefined) throw new Error("--flow-id requires a value");
+    } else if (flag === "--flow-run-id") {
+      flowRunId = args[++i];
+      if (flowRunId === undefined) throw new Error("--flow-run-id requires a value");
     } else if (flag === "--owner") {
       owner = args[++i];
       if (!owner) throw new Error("--owner requires a value");
@@ -238,6 +295,10 @@ async function run() {
 
   function sessionPath(id: string): string {
     return `${sessionCollectionPath()}/${encodeURIComponent(id)}`;
+  }
+
+  function sessionMetadataPath(id: string): string {
+    return buildSessionMetadataPath(id, ownerTarget);
   }
 
   function sessionMessagesPath(id: string, options?: { refresh?: boolean }): string {
@@ -328,6 +389,14 @@ async function run() {
     return requestedId;
   }
 
+  function resolveMetadataTargetId(rawId: string | undefined, commandName: string): string {
+    const sessionId = rawId ?? process.env.SESSION_ID ?? Bun.env.SESSION_ID;
+    if (!sessionId) {
+      throw new Error(`${commandName} requires <id> or SESSION_ID in the environment`);
+    }
+    return sessionId;
+  }
+
   switch (command) {
     case "list": {
       const payload = await req<{ sessions?: Session[] }>("GET", sessionCollectionPath());
@@ -386,6 +455,34 @@ async function run() {
       if (!id) throw new Error("info requires <id>");
       const resolvedId = await resolveActiveSessionId(id);
       const payload = await req<Record<string, unknown>>("GET", sessionPath(resolvedId));
+      console.log(JSON.stringify(payload, null, 2));
+      break;
+    }
+
+    case "metadata": {
+      const id = resolveMetadataTargetId(positional[1], "metadata");
+      const resolvedId = await resolveActiveSessionId(id);
+      const payload = await req<Record<string, unknown>>("GET", sessionMetadataPath(resolvedId));
+      console.log(JSON.stringify(payload, null, 2));
+      break;
+    }
+
+    case "metadata-update": {
+      const id = resolveMetadataTargetId(positional[1], "metadata-update");
+      const resolvedId = await resolveActiveSessionId(id);
+      const body = buildSessionMetadataUpdateBody({
+        goal,
+        nextAction,
+        nextActionPayload,
+        bindingType,
+        bindingId,
+        flowId,
+        flowRunId,
+      });
+      if (!body) {
+        throw new Error("metadata-update requires at least one metadata flag");
+      }
+      const payload = await req<Record<string, unknown>>("PATCH", sessionMetadataPath(resolvedId), body);
       console.log(JSON.stringify(payload, null, 2));
       break;
     }
@@ -535,7 +632,7 @@ async function run() {
       const payload = await req<NightWatchState>(
         "POST",
         nightWatchEnablePath(resolvedId),
-        body && body !== false ? body : {},
+        body === false || body === undefined ? {} : body,
       );
       if (asJson) {
         console.log(JSON.stringify(payload, null, 2));

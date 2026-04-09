@@ -41,6 +41,7 @@ import { scanDirectoryTree } from "./apps/app-detector";
 /** Tmux session for the Wingman core process (used by warm restart manager). */
 const WINGMAN_CORE_TMUX_SESSION = "wingman-apps";
 import { messageStore } from "./storage/message-store";
+import type { SessionMetadataInput } from "./sessions/session-metadata";
 import { scheduleSessionArchive, cancelPendingArchive } from "./storage/session-archiver";
 import { sessionArchiveStore } from "./storage/session-archive-store";
 import { PromptQueueStore } from "./storage/prompt-queue-store";
@@ -718,6 +719,8 @@ const nightWatchDeps = {
   openRouterBaseUrl: "https://openrouter.ai/api",
   wingmanBaseUrl: config.baseUrl,
   getSession: (sid: string) => manager.getSession(sid) ?? null,
+  updateSessionMetadata: (sid: string, metadata: SessionMetadataInput) =>
+    manager.updateSessionMetadata(sid, metadata),
   dispatchPrompt: (session: SessionSnapshot) => {
     void maybeAutoDispatchQueuedPrompt(session);
   },
@@ -738,7 +741,7 @@ const nightWatchDeps = {
   markDispatchCooldown: (sessionId: string) => {
     markQueueDispatchCooldown(sessionId);
   },
-  onSessionComplete: (sessionId, report) => {
+  onSessionComplete: (sessionId: string, _report: unknown) => {
     // Check if this session is linked to an MG task
     const taskSession = nightWatchStore.getTaskSession(sessionId);
     if (!taskSession) return;

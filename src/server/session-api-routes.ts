@@ -21,6 +21,7 @@ import {
   isAgentManagedByMetadataOrOrigin,
   isCreditsBillingSession,
   resolveSessionChargeNpub,
+  type SessionMetadata,
 } from "../sessions/session-metadata";
 import {
   buildDelegatedWorkspaceScope,
@@ -242,6 +243,37 @@ const resolveOwnedLiveSession = (
   return { session: null, resolvedId: requestedId, error: null };
 };
 
+const parseSessionMetadataUpdateInput = (payload: unknown) => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  const candidate =
+    record.metadata !== undefined
+      ? record.metadata
+      : record;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    return null;
+  }
+  const metadataPatch = candidate as Record<string, unknown>;
+  return Object.keys(metadataPatch).length > 0 ? metadataPatch : null;
+};
+
+const buildSessionMetadataResponse = (
+  sessionId: string,
+  metadata: SessionMetadata | null | undefined,
+  ownerNpub?: string,
+) => {
+  const payload: Record<string, unknown> = {
+    id: sessionId,
+    metadata: metadata ?? null,
+  };
+  if (ownerNpub) {
+    payload.ownerNpub = ownerNpub;
+  }
+  return payload;
+};
+
 type OwnerSessionRouteMatch = {
   ownerNpub: string;
   remainder: string[];
@@ -320,6 +352,9 @@ const resolveOwnerSessionScope = (method: HttpMethod, remainder: string[]): stri
   }
   if (subresource === "messages") {
     return method === "POST" ? DelegationScopes.SessionsMessage : DelegationScopes.SessionsRead;
+  }
+  if (subresource === "metadata") {
+    return method === "GET" || method === "HEAD" ? DelegationScopes.SessionsRead : DelegationScopes.SessionsManage;
   }
   if (subresource === "history" || subresource === "events") {
     return DelegationScopes.SessionsRead;
@@ -837,6 +872,35 @@ export async function handleSessionApi(
     }
 
     const subresource = ownerRoute.remainder[1];
+    if (subresource === "metadata") {
+      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      if (method === "GET") {
+        return Response.json(
+          buildSessionMetadataResponse(resolvedId, ownedSession.metadata, targetOwnerNpub),
+        );
+      }
+      if (method === "PATCH") {
+        let payload: unknown;
+        try {
+          payload = await request.json();
+        } catch {
+          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+        }
+        const metadataPatch = parseSessionMetadataUpdateInput(payload);
+        if (!metadataPatch) {
+          return Response.json({ error: "Invalid metadata payload" }, { status: 400 });
+        }
+        const updated = ctx.manager.updateSessionMetadata(resolvedId, {
+          ...metadataPatch,
+          lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
+        });
+        if (!updated) return Response.json({ error: "Not found" }, { status: 404 });
+        return Response.json(
+          buildSessionMetadataResponse(resolvedId, updated.metadata, targetOwnerNpub),
+        );
+      }
+    }
+
     if (method === "GET" && subresource === "events") {
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
       return ctx.handleSessionEvents(resolvedId, request);
@@ -1186,6 +1250,31 @@ export async function handleSessionApi(
       }
       ctx.messageStore.removeSession(resolvedId);
       return Response.json({ id: resolvedId, deleted: true });
+    }
+
+    if (parts[4] === "metadata") {
+      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      if (method === "GET") {
+        return Response.json(buildSessionMetadataResponse(resolvedId, ownedSession.metadata));
+      }
+      if (method === "PATCH") {
+        let payload: unknown;
+        try {
+          payload = await request.json();
+        } catch {
+          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+        }
+        const metadataPatch = parseSessionMetadataUpdateInput(payload);
+        if (!metadataPatch) {
+          return Response.json({ error: "Invalid metadata payload" }, { status: 400 });
+        }
+        const updated = ctx.manager.updateSessionMetadata(resolvedId, {
+          ...metadataPatch,
+          lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
+        });
+        if (!updated) return Response.json({ error: "Not found" }, { status: 404 });
+        return Response.json(buildSessionMetadataResponse(resolvedId, updated.metadata));
+      }
     }
 
     if (method === "GET" && parts[4] === "logs") {
