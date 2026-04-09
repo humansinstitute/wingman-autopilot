@@ -127,7 +127,7 @@ function createSummaryList(rows) {
   return details;
 }
 
-function createDispatchReferenceCard({ title, enabledAgents, description, promptPreview }) {
+function createDispatchReferenceCard({ title, enabledAgents, description, promptPreview, actionLabel, onAction, actionTestId }) {
   const card = createCard(title, description);
   const enabled = document.createElement('p');
   enabled.className = 'wm-settings__port-note';
@@ -142,6 +142,11 @@ function createDispatchReferenceCard({ title, enabledAgents, description, prompt
   prompt.style.cssText = 'margin:8px 0 0;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(15,23,42,0.72);overflow:auto;font-size:0.85em;line-height:1.45;white-space:pre-wrap;';
   prompt.textContent = promptPreview;
   card.append(enabled, promptLabel, prompt);
+  if (typeof onAction === 'function' && typeof actionLabel === 'string' && actionLabel) {
+    const actionButton = createButton(actionLabel, actionTestId, actionLabel);
+    actionButton.addEventListener('click', () => onAction());
+    card.append(createInlineActions(actionButton));
+  }
   return card;
 }
 
@@ -159,7 +164,7 @@ function createPlaceholderNote(title, placeholders) {
   return wrapper;
 }
 
-function createConfiguredDispatchesPanel(agents) {
+function createConfiguredDispatchesPanel(agents, options = {}) {
   const wrapper = document.createElement('div');
   wrapper.style.marginTop = '12px';
 
@@ -177,6 +182,8 @@ function createConfiguredDispatchesPanel(agents) {
     .filter((agent) => agent.enabled !== false && (agent.capabilities ?? ['chat_intercept']).includes('chat_intercept'));
   const taskAgents = agentList
     .filter((agent) => agent.enabled !== false && (agent.capabilities ?? []).includes('task_dispatch'));
+  const primaryChatAgent = chatAgents[0] ?? null;
+  const primaryTaskAgent = taskAgents[0] ?? null;
 
   wrapper.append(
     createDispatchReferenceCard({
@@ -184,12 +191,22 @@ function createConfiguredDispatchesPanel(agents) {
       enabledAgents: chatAgents.map((agent) => agent.agentId),
       description: 'When a workspace chat advisory matches a local agent, Wingmen reuses or creates the routed session and the agent must decide whether to respond in-thread or ignore.',
       promptPreview: chatAgents[0]?.chatPromptTemplate || 'No enabled chat dispatch template.',
+      actionLabel: primaryChatAgent ? 'Edit Chat Template' : 'Add Chat Dispatch Agent',
+      actionTestId: 'agent-chat-edit-chat-template',
+      onAction: typeof options.onEditChatTemplate === 'function'
+        ? () => options.onEditChatTemplate(primaryChatAgent)
+        : null,
     }),
     createDispatchReferenceCard({
       title: 'Task Dispatch',
       enabledAgents: taskAgents.map((agent) => agent.agentId),
       description: 'When a task or approval advisory targets the bot, Wingmen reuses or creates the bound agent-work session, queues the work prompt, and Night Watch keeps the session progressing.',
       promptPreview: taskAgents[0]?.taskPromptTemplate || 'No enabled task dispatch template.',
+      actionLabel: primaryTaskAgent ? 'Edit Task Template' : 'Add Task Dispatch Agent',
+      actionTestId: 'agent-chat-edit-task-template',
+      onAction: typeof options.onEditTaskTemplate === 'function'
+        ? () => options.onEditTaskTemplate(primaryTaskAgent)
+        : null,
     }),
   );
 
@@ -497,14 +514,25 @@ export function createAgentChatSection({ standalone = false } = {}) {
     workspaceOwnerField.input.focus();
   };
 
-  const openAgentEditor = (agent = null) => {
+  const openAgentEditor = (agent = null, options = {}) => {
     if (agent) {
       populateAgentForm(agent);
     } else {
       clearAgentForm();
+      if (Array.isArray(options.capabilities) && options.capabilities.length > 0) {
+        capabilityPicker.setSelectedCapabilities(options.capabilities);
+      }
       statusLine.textContent = 'Creating a local agent. Add capabilities to the same agent over time.';
     }
     setPanelVisible(agentCard, true);
+    if (options.focusField === 'chat-template') {
+      chatPromptTemplateField.input.focus();
+      return;
+    }
+    if (options.focusField === 'task-template') {
+      taskPromptTemplateField.input.focus();
+      return;
+    }
     agentIdField.input.focus();
   };
 
@@ -543,7 +571,32 @@ export function createAgentChatSection({ standalone = false } = {}) {
       const primarySubscription = subscriptions[0] ?? null;
       currentPrimarySubscription = primarySubscription;
       prefillAgentFieldsFromSubscription(primarySubscription);
-      configuredDispatchesContainer.append(createConfiguredDispatchesPanel(agents));
+      configuredDispatchesContainer.append(createConfiguredDispatchesPanel(agents, {
+        onEditChatTemplate: (agent) => {
+          if (agent) {
+            openAgentEditor(agent, { focusField: 'chat-template' });
+            statusLine.textContent = `Editing chat dispatch template for ${agent.agentId}.`;
+            return;
+          }
+          openAgentEditor(null, {
+            capabilities: ['chat_intercept'],
+            focusField: 'chat-template',
+          });
+          statusLine.textContent = 'Create a local agent to save a chat dispatch template.';
+        },
+        onEditTaskTemplate: (agent) => {
+          if (agent) {
+            openAgentEditor(agent, { focusField: 'task-template' });
+            statusLine.textContent = `Editing task dispatch template for ${agent.agentId}.`;
+            return;
+          }
+          openAgentEditor(null, {
+            capabilities: ['task_dispatch'],
+            focusField: 'task-template',
+          });
+          statusLine.textContent = 'Create a local agent to save a task dispatch template.';
+        },
+      }));
 
       const subscriptionSummaryCard = createCard(
         'Current Subscription',
