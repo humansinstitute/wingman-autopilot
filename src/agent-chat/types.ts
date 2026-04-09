@@ -83,6 +83,8 @@ export interface AgentDefinitionRecord {
   groupNpubs: string[];
   workingDirectory: string;
   capabilities: AgentCapability[];
+  chatPromptTemplate: string;
+  taskPromptTemplate: string;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
@@ -128,6 +130,8 @@ export interface CreateAgentDefinitionInput {
   groupNpubs: string[];
   workingDirectory: string;
   capabilities?: AgentCapability[];
+  chatPromptTemplate?: string;
+  taskPromptTemplate?: string;
   enabled?: boolean;
 }
 
@@ -229,6 +233,12 @@ export interface InboundTaskRecord {
   flowId: string | null;
   flowRunId: string | null;
   flowStep: string | null;
+  scopeId: string | null;
+  scopeL1Id: string | null;
+  scopeL2Id: string | null;
+  scopeL3Id: string | null;
+  scopeL4Id: string | null;
+  scopeL5Id: string | null;
   title: string;
   description: string | null;
   state: string | null;

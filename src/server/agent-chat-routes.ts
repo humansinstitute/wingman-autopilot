@@ -1,5 +1,9 @@
 import type { RequestAuthContext } from '../auth/request-context';
 import type { WorkspaceSubscriptionManager } from '../agent-chat/subscription-runtime';
+import {
+  DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE,
+  DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE,
+} from '../agent-chat/prompt-templates';
 import type {
   AgentDefinitionRecord,
   AgentChatDiagnostic,
@@ -165,6 +169,10 @@ export async function handleAgentChatApi(
   if (url.pathname === '/api/agent-chat/agents' && method === 'GET') {
     return Response.json({
       agents: ctx.manager.listAgentsForManager(viewerNpub).map(serialiseAgent),
+      defaults: {
+        chatPromptTemplate: DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE,
+        taskPromptTemplate: DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE,
+      },
     });
   }
 
@@ -237,6 +245,8 @@ export async function handleAgentChatApi(
           ...(capabilityInput.includes('task_dispatch') ? ['task_dispatch'] as const : []),
         ]
       : ['chat_intercept'] as const;
+    const chatPromptTemplate = typeof body.chatPromptTemplate === 'string' ? body.chatPromptTemplate : undefined;
+    const taskPromptTemplate = typeof body.taskPromptTemplate === 'string' ? body.taskPromptTemplate : undefined;
 
     if (!agentId || !botNpub || !workspaceOwnerNpub || !workingDirectory) {
       return Response.json(
@@ -255,6 +265,8 @@ export async function handleAgentChatApi(
         groupNpubs,
         workingDirectory,
         capabilities: [...capabilities],
+        chatPromptTemplate,
+        taskPromptTemplate,
         enabled,
       });
       return Response.json({ agent: serialiseAgent(agent) });

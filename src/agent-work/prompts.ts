@@ -1,4 +1,8 @@
-import type { InboundApprovalRecord, InboundTaskRecord } from '../agent-chat/types';
+import type { AgentDefinitionRecord, InboundApprovalRecord, InboundTaskRecord } from '../agent-chat/types';
+import {
+  DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE,
+  renderPromptTemplate,
+} from '../agent-chat/prompt-templates';
 
 function compactText(value: string | null | undefined): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -10,32 +14,41 @@ export function buildAgentWorkGoal(task: InboundTaskRecord): string {
   return description ? `${title}\n\n${description}` : title;
 }
 
+function buildScopeLineage(task: InboundTaskRecord): string {
+  const values = [
+    task.scopeL1Id,
+    task.scopeL2Id,
+    task.scopeL3Id,
+    task.scopeL4Id,
+    task.scopeL5Id,
+  ].map((value) => compactText(value)).filter(Boolean);
+  return values.length > 0 ? values.join(' > ') : '-';
+}
+
 export function buildTaskDispatchPrompt(params: {
+  agent: AgentDefinitionRecord;
   task: InboundTaskRecord;
   dispatchReason: 'new task' | 'task updated';
 }): string {
-  const { task, dispatchReason } = params;
+  const { task, dispatchReason, agent } = params;
   const flowId = compactText(task.flowId) || '-';
   const flowRunId = compactText(task.flowRunId) || '-';
   const flowStep = compactText(task.flowStep) || '-';
+  const scopeId = compactText(task.scopeId) || '-';
+  const scopeLineage = buildScopeLineage(task);
   const title = compactText(task.title) || `Task ${task.taskId}`;
   const description = compactText(task.description) || '(no description provided)';
-
-  return [
-    'Agent work dispatch.',
-    `Dispatch reason: ${dispatchReason}.`,
-    `Task id: ${task.taskId}`,
-    `Flow id: ${flowId}`,
-    `Flow run id: ${flowRunId}`,
-    `Flow step: ${flowStep}`,
-    `Title: ${title}`,
-    `Description: ${description}`,
-    'Instructions:',
-    '- Complete only the current actionable task.',
-    '- Inspect the board before acting so you use current state rather than transcript memory.',
-    '- Update the board with progress or completion when you finish meaningful work.',
-    '- Stop if blocked, if a predecessor is unresolved, or if you are awaiting approval.',
-  ].join('\n');
+  return renderPromptTemplate(agent.taskPromptTemplate || DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE, {
+    dispatch_reason: dispatchReason,
+    task_id: task.taskId,
+    flow_id: flowId,
+    flow_run_id: flowRunId,
+    flow_step: flowStep,
+    scope_id: scopeId,
+    scope_lineage: scopeLineage,
+    title,
+    description,
+  });
 }
 
 export function buildApprovalDispatchPrompt(approval: InboundApprovalRecord): string {

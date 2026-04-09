@@ -5,6 +5,11 @@ import { Database } from 'bun:sqlite';
 import type { SQLQueryBindings } from 'bun:sqlite';
 
 import { databaseFile } from '../storage/message-store';
+import {
+  DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE,
+  DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE,
+  normalisePromptTemplate,
+} from './prompt-templates';
 import type {
   AgentCapability,
   AgentDefinitionRecord,
@@ -88,10 +93,11 @@ class AgentDefinitionStore {
     this.db.query(
       `INSERT INTO agent_definitions (
          agent_id, label, bot_npub, workspace_owner_npub, group_npubs_json,
-         working_directory, capabilities_json, enabled, created_at, updated_at, managed_by_npub
+         working_directory, capabilities_json, chat_prompt_template, task_prompt_template,
+         enabled, created_at, updated_at, managed_by_npub
        ) VALUES (
          ?1, ?2, ?3, ?4, ?5,
-         ?6, ?7, ?8, ?9, ?10, ?11
+         ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13
        )
        ON CONFLICT(agent_id) DO UPDATE SET
          label = excluded.label,
@@ -100,6 +106,8 @@ class AgentDefinitionStore {
          group_npubs_json = excluded.group_npubs_json,
          working_directory = excluded.working_directory,
          capabilities_json = excluded.capabilities_json,
+         chat_prompt_template = excluded.chat_prompt_template,
+         task_prompt_template = excluded.task_prompt_template,
          enabled = excluded.enabled,
          updated_at = excluded.updated_at,
          managed_by_npub = excluded.managed_by_npub`,
@@ -111,6 +119,8 @@ class AgentDefinitionStore {
       serialiseJsonArray(record.groupNpubs),
       record.workingDirectory,
       serialiseJsonArray(record.capabilities),
+      normalisePromptTemplate(record.chatPromptTemplate, DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE),
+      normalisePromptTemplate(record.taskPromptTemplate, DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE),
       record.enabled ? 1 : 0,
       record.createdAt,
       record.updatedAt,
@@ -135,6 +145,8 @@ class AgentDefinitionStore {
            group_npubs_json,
            working_directory,
            capabilities_json,
+           chat_prompt_template,
+           task_prompt_template,
            enabled,
            created_at,
            updated_at,
@@ -158,6 +170,8 @@ class AgentDefinitionStore {
            group_npubs_json,
            working_directory,
            capabilities_json,
+           chat_prompt_template,
+           task_prompt_template,
            enabled,
            created_at,
            updated_at,
@@ -179,6 +193,14 @@ class AgentDefinitionStore {
       groupNpubs: normaliseGroupNpubs(parseJsonArray(typeof row.group_npubs_json === 'string' ? row.group_npubs_json : null)),
       workingDirectory: String(row.working_directory ?? ''),
       capabilities: normaliseCapabilities(parseJsonArray(typeof row.capabilities_json === 'string' ? row.capabilities_json : null)),
+      chatPromptTemplate: normalisePromptTemplate(
+        typeof row.chat_prompt_template === 'string' ? row.chat_prompt_template : null,
+        DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE,
+      ),
+      taskPromptTemplate: normalisePromptTemplate(
+        typeof row.task_prompt_template === 'string' ? row.task_prompt_template : null,
+        DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE,
+      ),
       enabled: Number(row.enabled ?? 0) === 1,
       createdAt: String(row.created_at ?? ''),
       updatedAt: String(row.updated_at ?? ''),
@@ -196,6 +218,8 @@ class AgentDefinitionStore {
         group_npubs_json TEXT NOT NULL,
         working_directory TEXT NOT NULL,
         capabilities_json TEXT NOT NULL,
+        chat_prompt_template TEXT,
+        task_prompt_template TEXT,
         enabled INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -208,6 +232,15 @@ class AgentDefinitionStore {
       CREATE INDEX IF NOT EXISTS idx_agent_definitions_workspace_bot
         ON agent_definitions(workspace_owner_npub, bot_npub, enabled);
     `);
+    const columns = this.db.query('PRAGMA table_info(agent_definitions)').all() as Array<{ name?: string }>;
+    const hasChatTemplate = columns.some((row) => row.name === 'chat_prompt_template');
+    const hasTaskTemplate = columns.some((row) => row.name === 'task_prompt_template');
+    if (!hasChatTemplate) {
+      this.db.exec('ALTER TABLE agent_definitions ADD COLUMN chat_prompt_template TEXT');
+    }
+    if (!hasTaskTemplate) {
+      this.db.exec('ALTER TABLE agent_definitions ADD COLUMN task_prompt_template TEXT');
+    }
   }
 }
 

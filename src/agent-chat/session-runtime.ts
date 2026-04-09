@@ -208,6 +208,7 @@ export class AgentChatSessionRuntime {
 
         const prompt = promptMode
           ? buildMergedTurnPrompt({
+              agent: latestInput.agent,
               intercept,
               yokeStateDir: yokeRuntime.stateDir,
               contextError: yokeRuntime.contextError,

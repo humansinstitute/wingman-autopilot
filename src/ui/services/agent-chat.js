@@ -13,7 +13,10 @@ export async function listAgentChatAgents() {
   if (!response.ok) {
     throw new Error(payload.error || 'Failed to load Agent Chat agents');
   }
-  return Array.isArray(payload.agents) ? payload.agents : [];
+  return {
+    agents: Array.isArray(payload.agents) ? payload.agents : [],
+    defaults: payload.defaults && typeof payload.defaults === 'object' ? payload.defaults : {},
+  };
 }
 
 export async function saveAgentChatSubscription(input) {

@@ -5,6 +5,10 @@ import { tmpdir } from 'node:os';
 import { describe, expect, test } from 'bun:test';
 
 import { AgentDefinitionStore } from './agent-definition-store';
+import {
+  DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE,
+  DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE,
+} from './prompt-templates';
 
 function makeTempDb(): string {
   return join(tmpdir(), `agent-chat-agent-store-${randomUUID()}.sqlite`);
@@ -85,5 +89,32 @@ describe('AgentDefinitionStore', () => {
 
     expect(store.getByAgentId('agent_task')?.capabilities).toEqual(['task_dispatch']);
     expect(store.getByAgentId('agent_legacy')?.capabilities).toEqual(['chat_intercept']);
+    expect(store.getByAgentId('agent_legacy')?.chatPromptTemplate).toBe(DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE);
+    expect(store.getByAgentId('agent_legacy')?.taskPromptTemplate).toBe(DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE);
+  });
+
+  test('persists custom chat and task prompt templates', () => {
+    const store = new AgentDefinitionStore(makeTempDb());
+    const now = new Date().toISOString();
+
+    store.save({
+      agentId: 'agent_prompted',
+      label: 'Prompted',
+      botNpub: 'npub1botprompted',
+      workspaceOwnerNpub: 'npub1workspace',
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/prompted',
+      capabilities: ['chat_intercept', 'task_dispatch'],
+      chatPromptTemplate: 'Chat {{agent_id}} {{thread_id}}',
+      taskPromptTemplate: 'Task {{task_id}} {{scope_id}}',
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: 'npub1manager',
+    });
+
+    const stored = store.getByAgentId('agent_prompted');
+    expect(stored?.chatPromptTemplate).toBe('Chat {{agent_id}} {{thread_id}}');
+    expect(stored?.taskPromptTemplate).toBe('Task {{task_id}} {{scope_id}}');
   });
 });

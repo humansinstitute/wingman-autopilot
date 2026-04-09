@@ -39,6 +39,23 @@ function createInput(labelText, placeholder, testId, optional = false) {
   return { row, input };
 }
 
+function createTextarea(labelText, placeholder, testId, rows = 10) {
+  const row = document.createElement('label');
+  row.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:10px;';
+  row.textContent = labelText;
+
+  const textarea = document.createElement('textarea');
+  textarea.className = 'wm-input';
+  textarea.rows = rows;
+  textarea.placeholder = placeholder;
+  textarea.setAttribute('aria-label', labelText);
+  textarea.setAttribute('data-testid', testId);
+  textarea.style.whiteSpace = 'pre-wrap';
+  row.append(textarea);
+
+  return { row, input: textarea };
+}
+
 function createCheckbox(labelText, testId, checked = true) {
   const row = document.createElement('label');
   row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:10px;';
@@ -120,12 +137,26 @@ function createDispatchReferenceCard({ title, enabledAgents, description, prompt
   const promptLabel = document.createElement('div');
   promptLabel.className = 'wm-settings__port-note';
   promptLabel.style.marginTop = '12px';
-  promptLabel.textContent = 'Default prompt contract';
+  promptLabel.textContent = 'Current prompt template';
   const prompt = document.createElement('pre');
   prompt.style.cssText = 'margin:8px 0 0;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(15,23,42,0.72);overflow:auto;font-size:0.85em;line-height:1.45;white-space:pre-wrap;';
   prompt.textContent = promptPreview;
   card.append(enabled, promptLabel, prompt);
   return card;
+}
+
+function createPlaceholderNote(title, placeholders) {
+  const wrapper = document.createElement('div');
+  wrapper.style.marginTop = '10px';
+  const heading = document.createElement('div');
+  heading.className = 'wm-settings__port-note';
+  heading.textContent = title;
+  const body = document.createElement('div');
+  body.className = 'wm-settings__port-note';
+  body.style.marginTop = '4px';
+  body.textContent = placeholders.join(', ');
+  wrapper.append(heading, body);
+  return wrapper;
 }
 
 function createConfiguredDispatchesPanel(agents) {
@@ -143,47 +174,22 @@ function createConfiguredDispatchesPanel(agents) {
 
   const agentList = Array.isArray(agents) ? agents : [];
   const chatAgents = agentList
-    .filter((agent) => agent.enabled !== false && (agent.capabilities ?? ['chat_intercept']).includes('chat_intercept'))
-    .map((agent) => agent.agentId);
+    .filter((agent) => agent.enabled !== false && (agent.capabilities ?? ['chat_intercept']).includes('chat_intercept'));
   const taskAgents = agentList
-    .filter((agent) => agent.enabled !== false && (agent.capabilities ?? []).includes('task_dispatch'))
-    .map((agent) => agent.agentId);
+    .filter((agent) => agent.enabled !== false && (agent.capabilities ?? []).includes('task_dispatch'));
 
   wrapper.append(
     createDispatchReferenceCard({
       title: 'Chat Dispatch',
-      enabledAgents: chatAgents,
+      enabledAgents: chatAgents.map((agent) => agent.agentId),
       description: 'When a workspace chat advisory matches a local agent, Wingmen reuses or creates the routed session and the agent must decide whether to respond in-thread or ignore.',
-      promptPreview: [
-        'Agent Chat runtime event: new_session | reused_session | interrupt follow-up.',
-        '',
-        'Thread package:',
-        '- agent_id / workspace_owner_npub / channel_id / thread_id / bot_npub',
-        '- recent turns and participants',
-        '- Yoke commands for context and reply-current',
-        '',
-        'Instructions:',
-        '- Start with AGENT_CHAT_DECISION: respond or ignore',
-        '- Nothing is visible unless the agent publishes back into the thread',
-        '- If responding, final action must be Yoke reply-current',
-      ].join('\n'),
+      promptPreview: chatAgents[0]?.chatPromptTemplate || 'No enabled chat dispatch template.',
     }),
     createDispatchReferenceCard({
       title: 'Task Dispatch',
-      enabledAgents: taskAgents,
+      enabledAgents: taskAgents.map((agent) => agent.agentId),
       description: 'When a task or approval advisory targets the bot, Wingmen reuses or creates the bound agent-work session, queues the work prompt, and Night Watch keeps the session progressing.',
-      promptPreview: [
-        'Agent work dispatch.',
-        'Dispatch reason: new task | task updated | approval updated.',
-        'Task id / Flow id / Flow run id / Flow step',
-        'Title / Description',
-        '',
-        'Instructions:',
-        '- Complete only the current actionable task',
-        '- Inspect the board before acting',
-        '- Update the board with progress or completion',
-        '- Stop if blocked or awaiting approval',
-      ].join('\n'),
+      promptPreview: taskAgents[0]?.taskPromptTemplate || 'No enabled task dispatch template.',
     }),
   );
 
@@ -228,7 +234,7 @@ function createCapabilityPicker() {
 }
 
 async function loadOperatorState() {
-  const [subscriptions, agents, sessionPayload] = await Promise.all([
+  const [subscriptions, agentPayload, sessionPayload] = await Promise.all([
     listAgentChatSubscriptions(),
     listAgentChatAgents(),
     fetchSessionsApi(),
@@ -236,7 +242,8 @@ async function loadOperatorState() {
   const allSessions = Array.isArray(sessionPayload?.sessions) ? sessionPayload.sessions : [];
   return {
     subscriptions,
-    agents,
+    agents: Array.isArray(agentPayload?.agents) ? agentPayload.agents : [],
+    defaults: agentPayload?.defaults && typeof agentPayload.defaults === 'object' ? agentPayload.defaults : {},
     chatSessions: filterAgentChatSessions(allSessions),
   };
 }
@@ -263,6 +270,10 @@ export function createAgentChatSection({ standalone = false } = {}) {
   const container = document.createElement('div');
   container.className = 'wm-settings__agent-chat';
   let currentPrimarySubscription = null;
+  let promptDefaults = {
+    chatPromptTemplate: '',
+    taskPromptTemplate: '',
+  };
 
   if (standalone) {
     const heading = document.createElement('h2');
@@ -284,6 +295,18 @@ export function createAgentChatSection({ standalone = false } = {}) {
   const agentWorkspaceField = createInput('Agent Workspace Owner npub', 'npub1workspace...', 'agent-chat-agent-workspace-owner');
   const agentGroupsField = createInput('Group npubs', 'Leave blank to use the bot subscription groups', 'agent-chat-agent-groups', true);
   const workingDirectoryField = createInput('Working Directory', '/Users/mini/code/wingmen', 'agent-chat-agent-directory');
+  const chatPromptTemplateField = createTextarea(
+    'Chat Prompt Template',
+    'Editable chat dispatch prompt with {{placeholders}}',
+    'agent-chat-chat-prompt-template',
+    16,
+  );
+  const taskPromptTemplateField = createTextarea(
+    'Task Prompt Template',
+    'Editable task dispatch prompt with {{placeholders}}',
+    'agent-chat-task-prompt-template',
+    14,
+  );
   const capabilityPicker = createCapabilityPicker();
   const enabledField = createCheckbox('Enabled', 'agent-chat-agent-enabled', true);
   const statusLine = createStatusLine();
@@ -365,6 +388,47 @@ export function createAgentChatSection({ standalone = false } = {}) {
     agentGroupsField.row,
     workingDirectoryField.row,
     capabilityPicker.row,
+    chatPromptTemplateField.row,
+    createPlaceholderNote(
+      'Chat placeholders',
+      [
+        '{{chat_runtime_event}}',
+        '{{agent_id}}',
+        '{{agent_label}}',
+        '{{workspace_owner_npub}}',
+        '{{channel_id}}',
+        '{{thread_id}}',
+        '{{bot_npub}}',
+        '{{managed_by_npub}}',
+        '{{session_id}}',
+        '{{recent_turn_count}}',
+        '{{participants}}',
+        '{{recent_turns}}',
+        '{{merge_package_json}}',
+        '{{yoke_context_command}}',
+        '{{yoke_history_command}}',
+        '{{yoke_search_command}}',
+        '{{yoke_related_command}}',
+        '{{yoke_reply_current_command}}',
+        '{{yoke_context_status}}',
+        '{{chat_dispatch_instructions}}',
+      ],
+    ),
+    taskPromptTemplateField.row,
+    createPlaceholderNote(
+      'Task placeholders',
+      [
+        '{{dispatch_reason}}',
+        '{{task_id}}',
+        '{{flow_id}}',
+        '{{flow_run_id}}',
+        '{{flow_step}}',
+        '{{scope_id}}',
+        '{{scope_lineage}}',
+        '{{title}}',
+        '{{description}}',
+      ],
+    ),
     enabledField.row,
     agentGroupsNote,
     createInlineActions(saveAgentButton, closeAgentEditorButton),
@@ -400,6 +464,8 @@ export function createAgentChatSection({ standalone = false } = {}) {
     agentWorkspaceField.input.value = agent.workspaceOwnerNpub || '';
     agentGroupsField.input.value = Array.isArray(agent.groupNpubs) ? agent.groupNpubs.join(', ') : '';
     workingDirectoryField.input.value = agent.workingDirectory || '';
+    chatPromptTemplateField.input.value = agent.chatPromptTemplate || promptDefaults.chatPromptTemplate || '';
+    taskPromptTemplateField.input.value = agent.taskPromptTemplate || promptDefaults.taskPromptTemplate || '';
     capabilityPicker.setSelectedCapabilities(agent.capabilities);
     enabledField.input.checked = agent.enabled !== false;
     statusLine.textContent = `Editing local agent ${agent.agentId}. Add capabilities and save to keep the same identity.`;
@@ -413,6 +479,8 @@ export function createAgentChatSection({ standalone = false } = {}) {
     agentWorkspaceField.input.value = currentPrimarySubscription?.workspaceOwnerNpub || '';
     agentGroupsField.input.value = '';
     workingDirectoryField.input.value = '';
+    chatPromptTemplateField.input.value = promptDefaults.chatPromptTemplate || '';
+    taskPromptTemplateField.input.value = promptDefaults.taskPromptTemplate || '';
     capabilityPicker.setSelectedCapabilities(['chat_intercept']);
     enabledField.input.checked = true;
   };
@@ -467,7 +535,11 @@ export function createAgentChatSection({ standalone = false } = {}) {
     listContainer.replaceChildren();
     sessionContainer.replaceChildren();
     try {
-      const { subscriptions, agents, chatSessions } = await loadOperatorState();
+      const { subscriptions, agents, defaults, chatSessions } = await loadOperatorState();
+      promptDefaults = {
+        chatPromptTemplate: typeof defaults.chatPromptTemplate === 'string' ? defaults.chatPromptTemplate : promptDefaults.chatPromptTemplate,
+        taskPromptTemplate: typeof defaults.taskPromptTemplate === 'string' ? defaults.taskPromptTemplate : promptDefaults.taskPromptTemplate,
+      };
       const primarySubscription = subscriptions[0] ?? null;
       currentPrimarySubscription = primarySubscription;
       prefillAgentFieldsFromSubscription(primarySubscription);
@@ -597,6 +669,8 @@ export function createAgentChatSection({ standalone = false } = {}) {
           .filter(Boolean),
         workingDirectory: workingDirectoryField.input.value.trim(),
         capabilities: capabilityPicker.getSelectedCapabilities(),
+        chatPromptTemplate: chatPromptTemplateField.input.value,
+        taskPromptTemplate: taskPromptTemplateField.input.value,
         enabled: enabledField.input.checked,
       });
       statusLine.textContent = 'Local agent saved.';

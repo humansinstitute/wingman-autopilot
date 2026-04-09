@@ -1,5 +1,9 @@
 import type { SessionSnapshot } from '../agents/process-manager';
 import type { AgentDefinitionRecord, ChatInterceptStateRecord, WorkspaceSubscriptionRecord } from './types';
+import {
+  DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE,
+  renderPromptTemplate,
+} from './prompt-templates';
 import { buildAgentChatYokeCommands, type AgentChatYokeContext } from './yoke-runtime';
 
 export interface QueuedChatTurn {
@@ -59,6 +63,22 @@ function buildMergePackage(
   );
 }
 
+function buildChatDispatchInstructions(): string {
+  return [
+    '- You are inspecting the current thread for the registered local agent only.',
+    '- Start your answer with exactly one line: AGENT_CHAT_DECISION: respond or AGENT_CHAT_DECISION: ignore',
+    '- Nothing you write in this session is visible to the human unless you publish a reply into the chat thread.',
+    '- If you decide to respond, your final action must be to publish the reply into the current thread yourself by using the Yoke reply-current command shown above.',
+    '- After you have published the reply, end with only the decision line AGENT_CHAT_DECISION: respond and no extra text.',
+    '- Use the Yoke commands above if you need more context before answering.',
+    '- Only include reply text after the decision line if you are intentionally falling back to Wingmen handoff because you could not publish the reply directly.',
+    '- If you choose ignore, do not add any extra text after the decision line.',
+    '- Do not tell the human to run commands.',
+    '- Do not include tool transcripts in your final answer.',
+    '- Wingmen may fall back to relaying a reply body only when the decision is respond and you included one.',
+  ].join('\n');
+}
+
 export function buildBootstrapPrompt(params: {
   agent: AgentDefinitionRecord;
   isNewSession: boolean;
@@ -81,52 +101,34 @@ export function buildBootstrapPrompt(params: {
   const recentTurns = formatRecentTurns(params.context, params.latestTurn);
   const participants = formatParticipants(params.context, fallbackParticipants);
   const bootstrapMode = params.isNewSession ? 'new_session' : 'reused_session';
-
-  return [
-    `Agent Chat runtime event: ${bootstrapMode}.`,
-    '',
-    'Thread package:',
-    `- agent_id: ${params.agent.agentId}`,
-    `- agent_label: ${params.agent.label}`,
-    `- workspace_owner_npub: ${params.subscription.workspaceOwnerNpub}`,
-    `- channel_id: ${params.intercept.channelId}`,
-    `- thread_id: ${params.intercept.threadId}`,
-    `- bot_npub: ${params.agent.botNpub}`,
-    `- managed_by_npub: ${params.subscription.managedByNpub ?? 'unknown'}`,
-    `- session_id: ${params.session.id}`,
-    `- recent_turn_count: ${params.context?.recent_messages?.length ?? 1}`,
-    `- participants: ${participants}`,
-    '',
-    'Recent turns:',
-    recentTurns,
-    '',
-    'Yoke runtime commands:',
-    `- Prime current context: ${commands.context}`,
-    `- More thread history: ${commands.history}`,
-    `- Search active channel: ${commands.search}`,
-    `- Related threads: ${commands.related}`,
-    `- Publish the thread reply yourself: ${commands.replyCurrent}`,
-    '',
-    params.contextError
+  return renderPromptTemplate(params.agent.chatPromptTemplate || DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE, {
+    chat_runtime_event: bootstrapMode,
+    agent_id: params.agent.agentId,
+    agent_label: params.agent.label,
+    workspace_owner_npub: params.subscription.workspaceOwnerNpub,
+    channel_id: params.intercept.channelId,
+    thread_id: params.intercept.threadId,
+    bot_npub: params.agent.botNpub,
+    managed_by_npub: params.subscription.managedByNpub ?? 'unknown',
+    session_id: params.session.id,
+    recent_turn_count: String(params.context?.recent_messages?.length ?? 1),
+    participants,
+    recent_turns: recentTurns,
+    merge_package_json: 'null',
+    yoke_context_command: commands.context,
+    yoke_history_command: commands.history,
+    yoke_search_command: commands.search,
+    yoke_related_command: commands.related,
+    yoke_reply_current_command: commands.replyCurrent,
+    yoke_context_status: params.contextError
       ? `Yoke context warning: ${params.contextError}`
       : 'Yoke context is ready in the session state dir shown above.',
-    '',
-    'Instructions:',
-    '- You are inspecting the current thread for the registered local agent only.',
-    '- Start your answer with exactly one line: AGENT_CHAT_DECISION: respond or AGENT_CHAT_DECISION: ignore',
-    '- Nothing you write in this session is visible to the human unless you publish a reply into the chat thread.',
-    '- If you decide to respond, your final action must be to publish the reply into the current thread yourself by using the Yoke reply-current command shown above.',
-    '- After you have published the reply, end with only the decision line AGENT_CHAT_DECISION: respond and no extra text.',
-    '- Use the Yoke commands above if you need more context before answering.',
-    '- Only include reply text after the decision line if you are intentionally falling back to Wingmen handoff because you could not publish the reply directly.',
-    '- If you choose ignore, do not add any extra text after the decision line.',
-    '- Do not tell the human to run commands.',
-    '- Do not include tool transcripts in your final answer.',
-    '- Wingmen may fall back to relaying a reply body only when the decision is respond and you included one.',
-  ].join('\n');
+    chat_dispatch_instructions: buildChatDispatchInstructions(),
+  });
 }
 
 export function buildMergedTurnPrompt(params: {
+  agent: AgentDefinitionRecord;
   intercept: ChatInterceptStateRecord;
   yokeStateDir: string;
   contextError: string | null;
@@ -139,38 +141,42 @@ export function buildMergedTurnPrompt(params: {
     params.intercept.threadId,
   );
   const mergePackage = buildMergePackage(params.intercept, params.turns);
-
-  return [
-    `Agent Chat runtime event: ${params.followUpMode}.`,
-    '',
-    'A busy thread received additional user turns. Process the merged update package below in arrival order and continue on the same thread.',
-    '',
-    'Merge package JSON:',
-    '```json',
-    mergePackage,
-    '```',
-    '',
-    'Yoke runtime commands:',
-    `- Prime current context: ${commands.context}`,
-    `- More thread history: ${commands.history}`,
-    `- Search active channel: ${commands.search}`,
-    `- Related threads: ${commands.related}`,
-    `- Publish the thread reply yourself: ${commands.replyCurrent}`,
-    '',
-    params.contextError
+  return renderPromptTemplate(params.agent.chatPromptTemplate || DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE, {
+    chat_runtime_event: params.followUpMode,
+    agent_id: params.intercept.agentId,
+    agent_label: params.agent.label,
+    workspace_owner_npub: params.intercept.workspaceOwnerNpub,
+    channel_id: params.intercept.channelId,
+    thread_id: params.intercept.threadId,
+    bot_npub: params.intercept.botNpub,
+    managed_by_npub: 'unknown',
+    session_id: params.intercept.sessionId ?? 'unknown',
+    recent_turn_count: String(params.turns.length),
+    participants: 'unknown',
+    recent_turns: params.turns.map((turn, index) => {
+      const sender = turn.senderNpub ?? 'unknown';
+      return `${index + 1}. ${sender}: ${truncateText(turn.content, 240) || '[empty]'}`;
+    }).join('\n'),
+    merge_package_json: mergePackage,
+    yoke_context_command: commands.context,
+    yoke_history_command: commands.history,
+    yoke_search_command: commands.search,
+    yoke_related_command: commands.related,
+    yoke_reply_current_command: commands.replyCurrent,
+    yoke_context_status: params.contextError
       ? `Yoke context warning: ${params.contextError}`
       : 'Yoke context is ready in the session state dir shown above.',
-    '',
-    'Instructions:',
-    '- Stay on the current session and current routing key.',
-    '- Start your answer with exactly one line: AGENT_CHAT_DECISION: respond or AGENT_CHAT_DECISION: ignore',
-    '- Nothing you write in this session is visible to the human unless you publish a reply into the chat thread.',
-    '- If you decide to respond, your final action must be to publish the reply into the current thread yourself by using the Yoke reply-current command shown above.',
-    '- After you have published the reply, end with only the decision line AGENT_CHAT_DECISION: respond and no extra text.',
-    '- Treat the JSON package as authoritative for the newly arrived user turns.',
-    '- Preserve the arrival order of the merged user turns when reasoning about the reply.',
-    '- Only include reply text after the decision line if you are intentionally falling back to Wingmen handoff because you could not publish the reply directly.',
-    '- If you choose ignore, do not add any extra text after the decision line.',
-    '- Do not include the JSON package verbatim in the final answer.',
-  ].join('\n');
+    chat_dispatch_instructions: [
+      '- Stay on the current session and current routing key.',
+      '- Start your answer with exactly one line: AGENT_CHAT_DECISION: respond or AGENT_CHAT_DECISION: ignore',
+      '- Nothing you write in this session is visible to the human unless you publish a reply into the chat thread.',
+      '- If you decide to respond, your final action must be to publish the reply into the current thread yourself by using the Yoke reply-current command shown above.',
+      '- After you have published the reply, end with only the decision line AGENT_CHAT_DECISION: respond and no extra text.',
+      '- Treat the JSON package as authoritative for the newly arrived user turns.',
+      '- Preserve the arrival order of the merged user turns when reasoning about the reply.',
+      '- Only include reply text after the decision line if you are intentionally falling back to Wingmen handoff because you could not publish the reply directly.',
+      '- If you choose ignore, do not add any extra text after the decision line.',
+      '- Do not include the JSON package verbatim in the final answer.',
+    ].join('\n'),
+  });
 }

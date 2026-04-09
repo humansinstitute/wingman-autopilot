@@ -293,6 +293,12 @@ export function normaliseInboundTaskRecord(payload: Record<string, unknown>): In
       flowId: pickFirstText(candidate, ['flow_id', 'flowId']),
       flowRunId: pickFirstText(candidate, ['flow_run_id', 'flowRunId']),
       flowStep: pickFirstText(candidate, ['flow_step', 'flowStep']),
+      scopeId: pickFirstText(candidate, ['scope_id', 'scopeId']),
+      scopeL1Id: pickFirstText(candidate, ['scope_l1_id', 'scopeL1Id']),
+      scopeL2Id: pickFirstText(candidate, ['scope_l2_id', 'scopeL2Id']),
+      scopeL3Id: pickFirstText(candidate, ['scope_l3_id', 'scopeL3Id']),
+      scopeL4Id: pickFirstText(candidate, ['scope_l4_id', 'scopeL4Id']),
+      scopeL5Id: pickFirstText(candidate, ['scope_l5_id', 'scopeL5Id']),
       title: pickFirstText(candidate, ['title', 'name']) ?? taskId,
       description: pickFirstText(candidate, ['description', 'details', 'body']),
       state: pickFirstText(candidate, ['state', 'status'])?.toLowerCase() ?? null,
@@ -432,6 +438,7 @@ export class AgentWorkSessionRuntime {
     this.addPrompt(
       liveSession.id,
       buildTaskDispatchPrompt({
+        agent: input.agent,
         task: input.task,
         dispatchReason: resolveTaskDispatchReason(taskBinding),
       }),

@@ -19,6 +19,11 @@ import {
 } from './tower-client';
 import { loadYokeBotHelpers } from './yoke-bot-helpers';
 import { decryptRecordPayloadWithYoke } from './yoke-record-payload';
+import {
+  DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE,
+  DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE,
+  normalisePromptTemplate,
+} from './prompt-templates';
 import type {
   AgentChatDispatchHistoryEntry,
   AgentChatSseEventDiagnostic,
@@ -178,6 +183,8 @@ export class WorkspaceSubscriptionManager {
       ? requestedGroupNpubs
       : this.deriveAgentGroupNpubs(workspaceOwnerNpub, botNpub);
     const capabilities = this.normaliseAgentCapabilities(input.capabilities);
+    const chatPromptTemplate = normalisePromptTemplate(input.chatPromptTemplate, DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE);
+    const taskPromptTemplate = normalisePromptTemplate(input.taskPromptTemplate, DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE);
 
     if (!agentId || !botNpub || !workspaceOwnerNpub || !workingDirectory) {
       throw new Error('agentId, botNpub, workspaceOwnerNpub, and workingDirectory are required.');
@@ -200,6 +207,8 @@ export class WorkspaceSubscriptionManager {
       groupNpubs,
       workingDirectory,
       capabilities,
+      chatPromptTemplate,
+      taskPromptTemplate,
       enabled: input.enabled !== false,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
