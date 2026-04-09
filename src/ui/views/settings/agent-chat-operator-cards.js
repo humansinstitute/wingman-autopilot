@@ -4,20 +4,25 @@ function isAgentDispatchSession(session) {
   return isAgentChatSession(session) || session?.metadata?.role === 'agent-work' || session?.origin?.type === 'agent-work';
 }
 
+function createSection(title, description = '') {
+  const wrapper = document.createElement('section');
+  wrapper.style.cssText = 'margin-top:16px;';
+  const heading = document.createElement('h5');
+  heading.textContent = title;
+  wrapper.append(heading);
+  if (description) {
+    const note = document.createElement('p');
+    note.className = 'wm-settings__port-note';
+    note.textContent = description;
+    wrapper.append(note);
+  }
+  return wrapper;
+}
+
 function formatDiagnostic(diagnostic) {
   if (!diagnostic) return 'None';
   const status = diagnostic.ok ? 'ok' : (diagnostic.code || 'failed');
   return `${status} at ${diagnostic.at}`;
-}
-
-function formatKeyValueDetails(details) {
-  if (!details || typeof details !== 'object') {
-    return 'None';
-  }
-  const entries = Object.entries(details)
-    .filter(([, value]) => value != null && value !== '')
-    .map(([key, value]) => `${key}=${String(value)}`);
-  return entries.length > 0 ? entries.join(', ') : 'None';
 }
 
 function formatAdvisory(advisory) {
@@ -70,72 +75,112 @@ function appendTableCell(row, content) {
   row.append(cell);
 }
 
-function createDetailList(rows, subscriptionId) {
-  const details = document.createElement('dl');
-  details.style.cssText = 'display:grid;grid-template-columns:max-content 1fr;gap:6px 12px;font-size:0.9em;';
-  rows.forEach(([termText, valueText]) => {
-    const term = document.createElement('dt');
-    term.textContent = termText;
-    const value = document.createElement('dd');
-    value.textContent = valueText;
-    value.style.margin = '0';
-    if (termText === 'Latest Routing Trail') {
-      value.setAttribute('data-testid', `agent-chat-latest-trail-${subscriptionId}`);
-    }
-    if (termText === 'Last SSE Event ID') {
-      value.setAttribute('data-testid', `agent-chat-last-sse-event-id-${subscriptionId}`);
-    }
-    if (termText === 'Last Record Pull') {
-      value.setAttribute('data-testid', `agent-chat-last-record-pull-${subscriptionId}`);
-    }
-    if (termText === 'Last Decrypt') {
-      value.setAttribute('data-testid', `agent-chat-last-decrypt-${subscriptionId}`);
-    }
-    details.append(term, value);
-  });
-  return details;
+function createPill(text, tone = 'default') {
+  const pill = document.createElement('span');
+  const backgrounds = {
+    default: 'rgba(56, 189, 248, 0.12)',
+    success: 'rgba(34, 197, 94, 0.12)',
+    warning: 'rgba(245, 158, 11, 0.14)',
+    danger: 'rgba(239, 68, 68, 0.12)',
+  };
+  const borders = {
+    default: 'rgba(56, 189, 248, 0.28)',
+    success: 'rgba(34, 197, 94, 0.28)',
+    warning: 'rgba(245, 158, 11, 0.32)',
+    danger: 'rgba(239, 68, 68, 0.28)',
+  };
+  pill.textContent = text;
+  pill.style.cssText = `display:inline-flex;align-items:center;padding:5px 10px;border-radius:999px;background:${backgrounds[tone] || backgrounds.default};border:1px solid ${borders[tone] || borders.default};font-size:0.84em;`;
+  return pill;
 }
 
-function createCompactTable({ title, ariaLabel, testId, headings, rows, emptyText }) {
-  const wrapper = document.createElement('div');
-  wrapper.style.cssText = 'margin-top:12px;';
-  const heading = document.createElement('h5');
-  heading.textContent = title;
-  wrapper.append(heading);
+function createPillRow(pills) {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;';
+  row.append(...pills);
+  return row;
+}
 
-  if (!Array.isArray(rows) || rows.length === 0) {
+function createMetricGrid(items) {
+  const grid = document.createElement('div');
+  grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:14px;';
+  items.forEach(({ label, value }) => {
+    const tile = document.createElement('div');
+    tile.style.cssText = 'padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.03);';
+    const labelEl = document.createElement('div');
+    labelEl.className = 'wm-settings__port-note';
+    labelEl.textContent = label;
+    const valueEl = document.createElement('div');
+    valueEl.style.cssText = 'font-size:1.2rem;font-weight:600;margin-top:4px;';
+    valueEl.textContent = value;
+    tile.append(labelEl, valueEl);
+    grid.append(tile);
+  });
+  return grid;
+}
+
+function createDefinitionGrid(rows) {
+  const grid = document.createElement('dl');
+  grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 16px;margin:12px 0 0;';
+  rows.forEach(([termText, valueText]) => {
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);';
+    const term = document.createElement('dt');
+    term.className = 'wm-settings__port-note';
+    term.textContent = termText;
+    const value = document.createElement('dd');
+    value.style.cssText = 'margin:6px 0 0;font-size:0.95em;word-break:break-word;';
+    value.textContent = valueText;
+    wrapper.append(term, value);
+    grid.append(wrapper);
+  });
+  return grid;
+}
+
+function formatEventSummary(event) {
+  const familyHash = typeof event.payload?.family_hash === 'string' ? event.payload.family_hash : 'unknown-family';
+  const recordId = typeof event.payload?.record_id === 'string' ? event.payload.record_id : 'no-record';
+  return `${event.eventType || 'unknown'} · ${familyHash} · ${recordId}`;
+}
+
+function createTimelineList({ title, description, items, emptyText, renderItem, testId }) {
+  const section = createSection(title, description);
+  if (!items.length) {
     const empty = document.createElement('p');
     empty.className = 'wm-settings__port-note';
     empty.textContent = emptyText;
-    wrapper.append(empty);
-    return wrapper;
+    section.append(empty);
+    return section;
   }
 
-  const table = document.createElement('table');
-  table.className = 'wm-table';
-  table.setAttribute('aria-label', ariaLabel);
+  const list = document.createElement('div');
+  list.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:10px;';
   if (testId) {
-    table.setAttribute('data-testid', testId);
+    list.setAttribute('data-testid', testId);
   }
-  const thead = document.createElement('thead');
-  const headRow = document.createElement('tr');
-  headings.forEach((text) => {
-    const cell = document.createElement('th');
-    cell.textContent = text;
-    headRow.append(cell);
+  items.forEach((item) => {
+    const row = renderItem(item);
+    list.append(row);
   });
-  thead.append(headRow);
-  table.append(thead);
+  section.append(list);
+  return section;
+}
 
-  const tbody = document.createElement('tbody');
-  rows.forEach((values) => {
-    const row = document.createElement('tr');
-    values.forEach((value) => appendTableCell(row, value));
-    tbody.append(row);
-  });
-  table.append(tbody);
-  wrapper.append(table);
-  return wrapper;
+function createTimelineEntry(titleText, detailText, metaText) {
+  const card = document.createElement('article');
+  card.style.cssText = 'padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);';
+  const title = document.createElement('div');
+  title.style.cssText = 'font-weight:600;';
+  title.textContent = titleText;
+  const detail = document.createElement('div');
+  detail.style.cssText = 'margin-top:4px;font-size:0.92em;word-break:break-word;';
+  detail.textContent = detailText;
+  const meta = document.createElement('div');
+  meta.className = 'wm-settings__port-note';
+  meta.style.marginTop = '6px';
+  meta.textContent = metaText;
+  card.append(title, detail, meta);
+  return card;
 }
 
 function createActionButton(label, ariaLabel, testId, onClick) {
@@ -176,6 +221,39 @@ function createRecommendedList(subscription) {
   });
   wrapper.append(list);
   return wrapper;
+}
+
+function createLatestSsePanel(subscription) {
+  const latest = subscription.lastSseEvent;
+  const section = createSection(
+    'Latest SSE Message',
+    'This is the newest raw event the subscription recorded from the workspace stream.',
+  );
+  if (!latest) {
+    const empty = document.createElement('p');
+    empty.className = 'wm-settings__port-note';
+    empty.textContent = 'No SSE message has been captured yet.';
+    section.append(empty);
+    return section;
+  }
+
+  section.append(createDefinitionGrid([
+    ['Event ID', latest.eventId || 'None'],
+    ['Type', latest.eventType || 'unknown'],
+    ['At', formatTimestamp(latest.at)],
+    ['Family', typeof latest.payload?.family_hash === 'string' ? latest.payload.family_hash : 'None'],
+    ['Record', typeof latest.payload?.record_id === 'string' ? latest.payload.record_id : 'None'],
+  ]));
+
+  const payloadHeading = document.createElement('div');
+  payloadHeading.className = 'wm-settings__port-note';
+  payloadHeading.style.marginTop = '12px';
+  payloadHeading.textContent = 'Payload';
+  const payload = document.createElement('pre');
+  payload.style.cssText = 'margin:8px 0 0;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(15,23,42,0.72);overflow:auto;font-size:0.85em;line-height:1.45;';
+  payload.textContent = JSON.stringify(latest.payload ?? null, null, 2);
+  section.append(payloadHeading, payload);
+  return section;
 }
 
 function createInterceptTable(subscription) {
@@ -222,11 +300,7 @@ function createInterceptTable(subscription) {
 
 function createCandidateAgentTable(subscription) {
   const candidateAgents = Array.isArray(subscription.candidateAgents) ? subscription.candidateAgents : [];
-  const wrapper = document.createElement('div');
-  wrapper.style.cssText = 'margin-top:12px;';
-  const heading = document.createElement('h5');
-  heading.textContent = 'Candidate Agents';
-  wrapper.append(heading);
+  const wrapper = createSection('Candidate Agents');
 
   if (candidateAgents.length === 0) {
     const empty = document.createElement('p');
@@ -236,70 +310,58 @@ function createCandidateAgentTable(subscription) {
     return wrapper;
   }
 
-  const table = document.createElement('table');
-  table.className = 'wm-table';
-  table.setAttribute('aria-label', `Candidate Agent Dispatch agents for ${subscription.workspaceOwnerNpub}`);
-  table.setAttribute('data-testid', `agent-chat-candidates-${subscription.subscriptionId}`);
-  const thead = document.createElement('thead');
-  thead.innerHTML = '<tr><th>Agent</th><th>Enabled</th><th>Groups</th><th>Directory</th></tr>';
-  table.append(thead);
-
-  const tbody = document.createElement('tbody');
+  const list = document.createElement('div');
+  list.style.cssText = 'display:flex;flex-direction:column;gap:10px;margin-top:10px;';
+  list.setAttribute('data-testid', `agent-chat-candidates-${subscription.subscriptionId}`);
   candidateAgents.forEach((agent) => {
-    const row = document.createElement('tr');
-    appendTableCell(row, agent.agentId || 'unknown');
-    appendTableCell(row, agent.enabled ? 'yes' : 'no');
-    appendTableCell(row, Array.isArray(agent.groupNpubs) && agent.groupNpubs.length > 0 ? agent.groupNpubs.join(', ') : 'None');
-    appendTableCell(row, agent.workingDirectory || 'None');
-    tbody.append(row);
+    const item = document.createElement('article');
+    item.style.cssText = 'padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);';
+    const title = document.createElement('div');
+    title.style.cssText = 'font-weight:600;';
+    title.textContent = agent.label || agent.agentId || 'unknown';
+    const meta = document.createElement('div');
+    meta.className = 'wm-settings__port-note';
+    meta.style.marginTop = '4px';
+    meta.textContent = `${agent.agentId || 'unknown'} · ${agent.enabled ? 'enabled' : 'disabled'} · ${agent.groupNpubs?.length ?? 0} groups`;
+    const directory = document.createElement('div');
+    directory.style.cssText = 'margin-top:6px;font-size:0.92em;word-break:break-word;';
+    directory.textContent = agent.workingDirectory || 'No working directory';
+    item.append(title, meta, directory);
+    list.append(item);
   });
-  table.append(tbody);
-  wrapper.append(table);
+  wrapper.append(list);
   return wrapper;
 }
 
 function createSseHistoryTable(subscription) {
   const events = Array.isArray(subscription.recentSseEvents) ? subscription.recentSseEvents : [];
-  const rows = events
-    .slice()
-    .reverse()
-    .map((event) => [
-      event.eventId || 'None',
-      event.eventType || 'unknown',
-      typeof event.payload?.family_hash === 'string' ? event.payload.family_hash : 'None',
-      typeof event.payload?.record_id === 'string' ? event.payload.record_id : 'None',
-      formatTimestamp(event.at),
-    ]);
-  return createCompactTable({
+  return createTimelineList({
     title: 'SSE Event Stream',
-    ariaLabel: `Recent SSE events for ${subscription.workspaceOwnerNpub}`,
+    description: 'Rolling feed of the most recent SSE events recorded for this subscription.',
     testId: `agent-chat-sse-history-${subscription.subscriptionId}`,
-    headings: ['Event', 'Type', 'Family', 'Record', 'At'],
-    rows,
+    items: events.slice().reverse(),
     emptyText: 'No SSE activity captured yet.',
+    renderItem: (event) => createTimelineEntry(
+      event.eventId ? `Event ${event.eventId}` : 'Event pending',
+      formatEventSummary(event),
+      formatTimestamp(event.at),
+    ),
   });
 }
 
 function createDispatchHistoryTable(subscription) {
   const dispatches = Array.isArray(subscription.recentDispatches) ? subscription.recentDispatches : [];
-  const rows = dispatches
-    .slice()
-    .reverse()
-    .map((entry) => [
-      entry.kind || 'unknown',
-      entry.action || 'unknown',
-      entry.agentId || 'unknown',
-      entry.bindingId || entry.recordId || 'None',
-      entry.sessionId || 'None',
-      formatTimestamp(entry.at),
-    ]);
-  return createCompactTable({
+  return createTimelineList({
     title: 'Recent Dispatches',
-    ariaLabel: `Recent dispatches for ${subscription.workspaceOwnerNpub}`,
+    description: 'The last actions Wingmen chose from this subscription.',
     testId: `agent-chat-dispatch-history-${subscription.subscriptionId}`,
-    headings: ['Kind', 'Action', 'Agent', 'Binding', 'Session', 'At'],
-    rows,
+    items: dispatches.slice().reverse(),
     emptyText: 'No dispatches recorded yet.',
+    renderItem: (entry) => createTimelineEntry(
+      `${entry.kind || 'unknown'} · ${entry.action || 'unknown'}`,
+      `${entry.agentId || 'unknown'} · binding=${entry.bindingId || entry.recordId || 'None'} · session=${entry.sessionId || 'None'}`,
+      formatTimestamp(entry.at),
+    ),
   });
 }
 
@@ -315,41 +377,36 @@ function findLinkedSessions(subscription, chatSessions) {
 }
 
 function createSessionTable(title, sessions, testId) {
-  const wrapper = document.createElement('div');
-  wrapper.style.cssText = 'margin-top:12px;';
-  const heading = document.createElement('h5');
-  heading.textContent = title;
-  wrapper.append(heading);
+  const wrapper = createSection(title);
 
   if (!Array.isArray(sessions) || sessions.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'wm-settings__port-note';
-    empty.textContent = 'No Agent Chat sessions are currently active.';
+    empty.textContent = 'No agent dispatch sessions are currently active.';
     wrapper.append(empty);
     return wrapper;
   }
 
-  const table = document.createElement('table');
-  table.className = 'wm-table';
-  table.setAttribute('aria-label', title);
-  table.setAttribute('data-testid', testId);
-  const thead = document.createElement('thead');
-  thead.innerHTML = '<tr><th>Name</th><th>Status</th><th>Runtime</th><th>Agent</th><th>Routing</th><th>Started</th></tr>';
-  table.append(thead);
-
-  const tbody = document.createElement('tbody');
+  const list = document.createElement('div');
+  list.style.cssText = 'display:flex;flex-direction:column;gap:10px;margin-top:10px;';
+  list.setAttribute('data-testid', testId);
   sessions.forEach((session) => {
-    const row = document.createElement('tr');
-    appendTableCell(row, session.name || session.id);
-    appendTableCell(row, session.status || 'unknown');
-    appendTableCell(row, session.agentRuntimeStatus || 'unknown');
-    appendTableCell(row, session.metadata?.agentChatAgentId || session.agent || 'unknown');
-    appendTableCell(row, session.origin?.id || 'None');
-    appendTableCell(row, formatTimestamp(session.startedAt));
-    tbody.append(row);
+    const item = document.createElement('article');
+    item.style.cssText = 'padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);';
+    const titleEl = document.createElement('div');
+    titleEl.style.cssText = 'font-weight:600;';
+    titleEl.textContent = session.name || session.id;
+    const meta = document.createElement('div');
+    meta.className = 'wm-settings__port-note';
+    meta.style.marginTop = '4px';
+    meta.textContent = `${session.status || 'unknown'} · ${session.agentRuntimeStatus || 'unknown'} · ${formatTimestamp(session.startedAt)}`;
+    const detail = document.createElement('div');
+    detail.style.cssText = 'margin-top:6px;font-size:0.92em;word-break:break-word;';
+    detail.textContent = `${session.metadata?.agentChatAgentId || session.agent || 'unknown'} · ${session.origin?.id || 'No routing key'}`;
+    item.append(titleEl, meta, detail);
+    list.append(item);
   });
-  table.append(tbody);
-  wrapper.append(table);
+  wrapper.append(list);
   return wrapper;
 }
 
@@ -378,6 +435,12 @@ export function createAgentChatOverview(subscriptions, chatSessions) {
   ), 0);
   summary.textContent = `${subscriptions.length} subscriptions, ${agentCount} candidate agents, ${chatSessions.length} active agent sessions, ${blockedIntercepts} blocked chat intercepts.`;
   card.append(summary);
+  card.append(createMetricGrid([
+    { label: 'Subscriptions', value: String(subscriptions.length) },
+    { label: 'Candidates', value: String(agentCount) },
+    { label: 'Active Sessions', value: String(chatSessions.length) },
+    { label: 'Blocked Intercepts', value: String(blockedIntercepts) },
+  ]));
 
   return card;
 }
@@ -392,15 +455,20 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
   heading.textContent = `${subscription.workspaceOwnerNpub} → ${subscription.botNpub}`;
   card.append(heading);
 
-  const status = document.createElement('p');
-  status.className = 'wm-settings__port-note';
-  status.textContent = `health=${subscription.healthStatus}, enabled=${subscription.operator?.enabled ? 'yes' : 'no'}, ws_key=${subscription.wsKeyStatus}, group_keys=${subscription.groupKeyStatus}, sse=${subscription.sseStatus}`;
-  card.append(status);
+  const healthTone = subscription.healthStatus === 'healthy' ? 'success' : 'warning';
+  const sseTone = subscription.sseStatus === 'connected' ? 'success' : 'warning';
+  card.append(createPillRow([
+    createPill(`health ${subscription.healthStatus}`, healthTone),
+    createPill(subscription.operator?.enabled ? 'enabled' : 'disabled', subscription.operator?.enabled ? 'success' : 'warning'),
+    createPill(`ws ${subscription.wsKeyStatus}`),
+    createPill(`groups ${subscription.groupKeyStatus}`),
+    createPill(`sse ${subscription.sseStatus}`, sseTone),
+  ]));
 
-  card.append(createDetailList([
+  card.append(createDefinitionGrid([
     ['Backend', subscription.backendBaseUrl],
     ['Source App', subscription.sourceAppNpub],
-    ['ws_key_npub', subscription.wsKeyNpub || 'pending'],
+    ['Workspace Key', subscription.wsKeyNpub || 'pending'],
     ['Latest Routing Trail', formatTrail(subscription)],
     ['Last SSE Event ID', subscription.diagnostics?.lastSseEventId || 'None'],
     ['Last Advisory', formatAdvisory(subscription.diagnostics?.advisory)],
@@ -411,8 +479,9 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
     ['Group Refresh', formatDiagnostic(subscription.lastGroupRefreshResult)],
     ['Startup Reload', subscription.lastSuccessfulStartupReloadAt || 'None'],
     ['Last Error', subscription.lastErrorCode ? `${subscription.lastErrorCode} @ ${subscription.lastErrorAt}` : 'None'],
-  ], subscription.subscriptionId));
+  ]));
 
+  card.append(createLatestSsePanel(subscription));
   card.append(createSseHistoryTable(subscription));
   card.append(createDispatchHistoryTable(subscription));
   card.append(createRecommendedList(subscription));

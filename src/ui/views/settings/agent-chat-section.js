@@ -92,6 +92,24 @@ function createInlineActions(...buttons) {
   return row;
 }
 
+function setPanelVisible(panel, visible) {
+  panel.style.display = visible ? '' : 'none';
+}
+
+function createSummaryList(rows) {
+  const details = document.createElement('dl');
+  details.style.cssText = 'display:grid;grid-template-columns:max-content 1fr;gap:6px 12px;font-size:0.92em;margin:0;';
+  rows.forEach(([labelText, valueText]) => {
+    const label = document.createElement('dt');
+    label.textContent = labelText;
+    const value = document.createElement('dd');
+    value.textContent = valueText;
+    value.style.margin = '0';
+    details.append(label, value);
+  });
+  return details;
+}
+
 function createCapabilityPicker() {
   const fieldset = document.createElement('fieldset');
   fieldset.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:12px;padding:12px;border:1px solid var(--wm-border-muted, rgba(255,255,255,0.12));border-radius:10px;';
@@ -164,6 +182,7 @@ export function createAgentDispatchLauncher({ onNavigate } = {}) {
 export function createAgentChatSection({ standalone = false } = {}) {
   const container = document.createElement('div');
   container.className = 'wm-settings__agent-chat';
+  let currentPrimarySubscription = null;
 
   if (standalone) {
     const heading = document.createElement('h2');
@@ -193,6 +212,32 @@ export function createAgentChatSection({ standalone = false } = {}) {
   setupSummary.className = 'wm-settings__port-note';
   setupSummary.textContent = 'The subscription owns the Tower connection. Local agents attach to that subscription and can be expanded with more capabilities over time.';
 
+  const subscriptionSummaryContainer = document.createElement('div');
+  const quickActionsCard = createCard(
+    'Quick Actions',
+    'Only open the editors when you need to change subscription or agent configuration.',
+  );
+  const openSubscriptionEditorButton = createButton(
+    'Edit Subscription',
+    'agent-chat-open-subscription-editor',
+    'Edit Agent Dispatch subscription',
+  );
+  const openAgentEditorButton = createButton(
+    'Add Local Agent',
+    'agent-chat-open-agent-editor',
+    'Add Agent Dispatch local agent',
+  );
+  const refreshOperatorButton = createButton(
+    'Refresh View',
+    'agent-chat-refresh-view',
+    'Refresh Agent Dispatch operator view',
+  );
+  quickActionsCard.append(createInlineActions(
+    openSubscriptionEditorButton,
+    openAgentEditorButton,
+    refreshOperatorButton,
+  ));
+
   const subscriptionCard = createCard(
     'Workspace Subscription',
     'Create or refresh the shared SSE connection once. Agent dispatch uses the same subscription as chat dispatch.',
@@ -202,17 +247,18 @@ export function createAgentChatSection({ standalone = false } = {}) {
     'agent-chat-save',
     'Create or refresh Agent Dispatch subscription',
   );
-  const refreshOperatorButton = createButton(
-    'Refresh View',
-    'agent-chat-refresh-view',
-    'Refresh Agent Dispatch operator view',
+  const closeSubscriptionEditorButton = createButton(
+    'Done',
+    'agent-chat-close-subscription-editor',
+    'Close Agent Dispatch subscription editor',
   );
   subscriptionCard.append(
     workspaceOwnerField.row,
     backendUrlField.row,
     sourceAppField.row,
-    createInlineActions(saveSubscriptionButton, refreshOperatorButton),
+    createInlineActions(saveSubscriptionButton, closeSubscriptionEditorButton),
   );
+  setPanelVisible(subscriptionCard, false);
 
   const agentCard = createCard(
     'Local Agent',
@@ -226,6 +272,11 @@ export function createAgentChatSection({ standalone = false } = {}) {
   const agentGroupsNote = document.createElement('p');
   agentGroupsNote.className = 'wm-settings__port-note';
   agentGroupsNote.textContent = 'Leave group npubs blank to derive them from the bot groups already refreshed from Tower for this workspace subscription.';
+  const closeAgentEditorButton = createButton(
+    'Done',
+    'agent-chat-close-agent-editor',
+    'Close Agent Dispatch local agent editor',
+  );
   agentCard.append(
     agentIdField.row,
     labelField.row,
@@ -236,12 +287,21 @@ export function createAgentChatSection({ standalone = false } = {}) {
     capabilityPicker.row,
     enabledField.row,
     agentGroupsNote,
-    createInlineActions(saveAgentButton),
+    createInlineActions(saveAgentButton, closeAgentEditorButton),
   );
+  setPanelVisible(agentCard, false);
 
   const setupPanel = document.createElement('div');
   const agentRegistryContainer = document.createElement('div');
-  setupPanel.append(setupSummary, subscriptionCard, agentCard, statusLine, agentRegistryContainer);
+  setupPanel.append(
+    setupSummary,
+    quickActionsCard,
+    subscriptionSummaryContainer,
+    subscriptionCard,
+    agentCard,
+    statusLine,
+    agentRegistryContainer,
+  );
 
   const operatorPanel = document.createElement('div');
   const overviewContainer = document.createElement('div');
@@ -261,6 +321,40 @@ export function createAgentChatSection({ standalone = false } = {}) {
     capabilityPicker.setSelectedCapabilities(agent.capabilities);
     enabledField.input.checked = agent.enabled !== false;
     statusLine.textContent = `Editing local agent ${agent.agentId}. Add capabilities and save to keep the same identity.`;
+    agentIdField.input.focus();
+  };
+
+  const clearAgentForm = () => {
+    agentIdField.input.value = '';
+    labelField.input.value = '';
+    agentBotField.input.value = currentPrimarySubscription?.botNpub || '';
+    agentWorkspaceField.input.value = currentPrimarySubscription?.workspaceOwnerNpub || '';
+    agentGroupsField.input.value = '';
+    workingDirectoryField.input.value = '';
+    capabilityPicker.setSelectedCapabilities(['chat_intercept']);
+    enabledField.input.checked = true;
+  };
+
+  const populateSubscriptionForm = (subscription) => {
+    workspaceOwnerField.input.value = subscription?.workspaceOwnerNpub || '';
+    backendUrlField.input.value = subscription?.backendBaseUrl || '';
+    sourceAppField.input.value = subscription?.sourceAppNpub || '';
+  };
+
+  const openSubscriptionEditor = (subscription = null) => {
+    populateSubscriptionForm(subscription);
+    setPanelVisible(subscriptionCard, true);
+    workspaceOwnerField.input.focus();
+  };
+
+  const openAgentEditor = (agent = null) => {
+    if (agent) {
+      populateAgentForm(agent);
+    } else {
+      clearAgentForm();
+      statusLine.textContent = 'Creating a local agent. Add capabilities to the same agent over time.';
+    }
+    setPanelVisible(agentCard, true);
     agentIdField.input.focus();
   };
 
@@ -285,16 +379,49 @@ export function createAgentChatSection({ standalone = false } = {}) {
 
   const refreshList = async () => {
     overviewContainer.replaceChildren();
+    subscriptionSummaryContainer.replaceChildren();
     agentRegistryContainer.replaceChildren();
     listContainer.replaceChildren();
     sessionContainer.replaceChildren();
     try {
       const { subscriptions, agents, chatSessions } = await loadOperatorState();
       const primarySubscription = subscriptions[0] ?? null;
+      currentPrimarySubscription = primarySubscription;
       prefillAgentFieldsFromSubscription(primarySubscription);
 
+      const subscriptionSummaryCard = createCard(
+        'Current Subscription',
+        primarySubscription
+          ? 'The shared workspace connection is live here. Open the editor only when something changes.'
+          : 'No subscription is configured yet.',
+      );
+      if (primarySubscription) {
+        subscriptionSummaryCard.append(createSummaryList([
+          ['Workspace', primarySubscription.workspaceOwnerNpub || 'None'],
+          ['Bot', primarySubscription.botNpub || 'pending'],
+          ['Backend', primarySubscription.backendBaseUrl || 'None'],
+          ['Source App', primarySubscription.sourceAppNpub || 'None'],
+          ['SSE', primarySubscription.sseStatus || 'unknown'],
+        ]));
+        const manageSubscriptionButton = createButton(
+          'Edit Subscription',
+          'agent-chat-manage-subscription',
+          'Edit current Agent Dispatch subscription',
+        );
+        manageSubscriptionButton.addEventListener('click', () => openSubscriptionEditor(primarySubscription));
+        subscriptionSummaryCard.append(createInlineActions(manageSubscriptionButton));
+        setPanelVisible(subscriptionCard, false);
+      } else {
+        const empty = document.createElement('p');
+        empty.className = 'wm-settings__port-note';
+        empty.textContent = 'Create the workspace subscription first so local agents can reuse it.';
+        subscriptionSummaryCard.append(empty);
+        setPanelVisible(subscriptionCard, true);
+      }
+      subscriptionSummaryContainer.append(subscriptionSummaryCard);
+
       agentRegistryContainer.append(createAgentRegistryPanel(agents, {
-        edit: (agent) => populateAgentForm(agent),
+        edit: (agent) => openAgentEditor(agent),
         remove: async (agent) => {
           statusLine.textContent = `Removing local agent ${agent.agentId}...`;
           try {
@@ -306,6 +433,9 @@ export function createAgentChatSection({ standalone = false } = {}) {
           }
         },
       }));
+      if (agents.length === 0) {
+        setPanelVisible(agentCard, true);
+      }
 
       overviewContainer.append(createAgentChatOverview(subscriptions, chatSessions));
       sessionContainer.append(createAgentChatSessionPanel(chatSessions));
@@ -359,6 +489,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
         sourceAppNpub: sourceAppField.input.value.trim(),
       });
       statusLine.textContent = 'Subscription saved.';
+      setPanelVisible(subscriptionCard, false);
       await refreshList();
     } catch (error) {
       statusLine.textContent = error instanceof Error ? error.message : 'Failed to bootstrap subscription.';
@@ -385,6 +516,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
         enabled: enabledField.input.checked,
       });
       statusLine.textContent = 'Local agent saved.';
+      setPanelVisible(agentCard, false);
       await refreshList();
     } catch (error) {
       statusLine.textContent = error instanceof Error ? error.message : 'Failed to save local agent.';
@@ -401,6 +533,11 @@ export function createAgentChatSection({ standalone = false } = {}) {
       }
     });
   });
+
+  openSubscriptionEditorButton.addEventListener('click', () => openSubscriptionEditor(currentPrimarySubscription));
+  openAgentEditorButton.addEventListener('click', () => openAgentEditor());
+  closeSubscriptionEditorButton.addEventListener('click', () => setPanelVisible(subscriptionCard, false));
+  closeAgentEditorButton.addEventListener('click', () => setPanelVisible(agentCard, false));
 
   container.append(createSettingsTabs({
     tabDefs: [
