@@ -32,6 +32,7 @@ import type {
   ChatInterceptStateRecord,
   CreateAgentDefinitionInput,
   CreateWorkspaceSubscriptionInput,
+  InboundTaskRecord,
   RuntimeBotIdentity,
   WorkspaceSubscriptionRecord,
   YokeWorkspaceSession,
@@ -80,6 +81,71 @@ function isSelfUpdater(subscription: WorkspaceSubscriptionRecord, agent: AgentDe
     return false;
   }
   return updaterNpub === agent.botNpub || updaterNpub === subscription.wsKeyNpub;
+}
+
+interface TaskDispatchSnapshot {
+  title: string;
+  description: string | null;
+  assignedTo: string | null;
+  flowId: string | null;
+  flowRunId: string | null;
+  flowStep: string | null;
+  scopeId: string | null;
+  scopeL1Id: string | null;
+  scopeL2Id: string | null;
+  scopeL3Id: string | null;
+  scopeL4Id: string | null;
+  scopeL5Id: string | null;
+  predecessorTaskIds: string[];
+}
+
+function buildTaskDispatchSnapshot(task: InboundTaskRecord): TaskDispatchSnapshot {
+  return {
+    title: task.title.trim(),
+    description: task.description?.trim() || null,
+    assignedTo: task.assignedTo,
+    flowId: task.flowId,
+    flowRunId: task.flowRunId,
+    flowStep: task.flowStep,
+    scopeId: task.scopeId,
+    scopeL1Id: task.scopeL1Id,
+    scopeL2Id: task.scopeL2Id,
+    scopeL3Id: task.scopeL3Id,
+    scopeL4Id: task.scopeL4Id,
+    scopeL5Id: task.scopeL5Id,
+    predecessorTaskIds: [...task.predecessorTaskIds].sort(),
+  };
+}
+
+function diffTaskDispatchSnapshots(
+  current: TaskDispatchSnapshot,
+  previous: TaskDispatchSnapshot | null,
+): string[] {
+  if (!previous) {
+    return ['new_task'];
+  }
+  const changed: string[] = [];
+  const entries: Array<[keyof TaskDispatchSnapshot, unknown, unknown]> = [
+    ['title', current.title, previous.title],
+    ['description', current.description, previous.description],
+    ['assignedTo', current.assignedTo, previous.assignedTo],
+    ['flowId', current.flowId, previous.flowId],
+    ['flowRunId', current.flowRunId, previous.flowRunId],
+    ['flowStep', current.flowStep, previous.flowStep],
+    ['scopeId', current.scopeId, previous.scopeId],
+    ['scopeL1Id', current.scopeL1Id, previous.scopeL1Id],
+    ['scopeL2Id', current.scopeL2Id, previous.scopeL2Id],
+    ['scopeL3Id', current.scopeL3Id, previous.scopeL3Id],
+    ['scopeL4Id', current.scopeL4Id, previous.scopeL4Id],
+    ['scopeL5Id', current.scopeL5Id, previous.scopeL5Id],
+    ['predecessorTaskIds', current.predecessorTaskIds.join('|'), previous.predecessorTaskIds.join('|')],
+  ];
+  for (const [key, left, right] of entries) {
+    if (left !== right) {
+      changed.push(String(key));
+    }
+  }
+  return changed;
 }
 
 export interface WorkspaceSubscriptionManagerDependencies {
@@ -902,18 +968,17 @@ export class WorkspaceSubscriptionManager {
       .sort((left, right) => left.agentId.localeCompare(right.agentId));
   }
 
-  private async loadLatestAdvisoryRecord(
+  private async loadAdvisoryRecordVersions(
     subscription: WorkspaceSubscriptionRecord,
     recordId: string,
-  ): Promise<Record<string, unknown> | null> {
+  ): Promise<Record<string, unknown>[]> {
     const runtime = this.getRuntime(subscription.subscriptionId);
-    const versions = await this.fetchRecordHistoryImpl(
+    return await this.fetchRecordHistoryImpl(
       subscription.backendBaseUrl,
       subscription.workspaceOwnerNpub,
       recordId,
       runtime.wsSession,
     );
-    return versions.sort((left, right) => Number(right.version ?? 0) - Number(left.version ?? 0))[0] ?? null;
   }
 
   private async decryptAdvisoryPayload(
@@ -955,7 +1020,8 @@ export class WorkspaceSubscriptionManager {
     }
 
     try {
-      const latest = await this.loadLatestAdvisoryRecord(record, recordId);
+      const versions = await this.loadAdvisoryRecordVersions(record, recordId);
+      const [latest, previous] = versions.sort((left, right) => Number(right.version ?? 0) - Number(left.version ?? 0));
       if (!latest) {
         return record;
       }
@@ -979,8 +1045,20 @@ export class WorkspaceSubscriptionManager {
           },
         });
       }
+      let previousTask: InboundTaskRecord | null = null;
+      if (previous) {
+        try {
+          previousTask = normaliseInboundTaskRecord(await this.decryptAdvisoryPayload(record, previous));
+        } catch {
+          previousTask = null;
+        }
+      }
+      const changedFields = diffTaskDispatchSnapshots(
+        buildTaskDispatchSnapshot(task),
+        previousTask ? buildTaskDispatchSnapshot(previousTask) : null,
+      );
       for (const agent of taskAgents) {
-        if (isSelfUpdater(record, agent, updaterNpub)) {
+        if (isSelfUpdater(record, agent, updaterNpub) && !changedFields.includes('new_task') && changedFields.length === 0) {
           record = this.appendDispatchHistory(record, {
             at: new Date().toISOString(),
             kind: 'task',
@@ -993,6 +1071,7 @@ export class WorkspaceSubscriptionManager {
             details: {
               task_id: task.taskId,
               updater_npub: updaterNpub,
+              changed_fields: changedFields,
               assigned_to: task.assignedTo,
               state: task.state,
             },
@@ -1017,6 +1096,7 @@ export class WorkspaceSubscriptionManager {
             details: {
               task_id: task.taskId,
               updater_npub: updaterNpub,
+              changed_fields: changedFields,
               assigned_to: task.assignedTo,
               state: task.state,
               predecessor_task_ids: task.predecessorTaskIds,
@@ -1046,6 +1126,7 @@ export class WorkspaceSubscriptionManager {
               flow_run_id: task.flowRunId,
               flow_id: task.flowId,
               updater_npub: updaterNpub,
+              changed_fields: changedFields,
             },
           });
           continue;
@@ -1062,6 +1143,7 @@ export class WorkspaceSubscriptionManager {
           details: {
             task_id: task.taskId,
             updater_npub: updaterNpub,
+            changed_fields: changedFields,
           },
         });
       }
@@ -1093,7 +1175,8 @@ export class WorkspaceSubscriptionManager {
     }
 
     try {
-      const latest = await this.loadLatestAdvisoryRecord(record, recordId);
+      const versions = await this.loadAdvisoryRecordVersions(record, recordId);
+      const latest = versions.sort((left, right) => Number(right.version ?? 0) - Number(left.version ?? 0))[0] ?? null;
       if (!latest) {
         return record;
       }

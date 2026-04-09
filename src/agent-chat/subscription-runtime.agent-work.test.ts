@@ -389,13 +389,21 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           version: 2,
           signature_npub: 'npub1bot',
         },
+        {
+          record_id: 'record-task-self-1',
+          record_state: 'active',
+          version: 1,
+          signature_npub: 'npub1human',
+        },
       ],
-      decryptRecordPayload: async () => ({
+      decryptRecordPayload: async (params) => ({
         task_id: 'task-self-1',
         title: 'Self updated task',
+        description: 'Same task body',
         state: 'open',
         assigned_to_npub: 'npub1bot',
         predecessor_task_ids: [],
+        ...(params.record.version === 1 ? {} : {}),
       }),
       botKeyStore: {
         getActiveKeyForUser: () => makeBotKeyRecord(),
@@ -467,10 +475,17 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           version: 2,
           signature_npub: 'npub1wskey',
         },
+        {
+          record_id: 'record-task-self-2',
+          record_state: 'active',
+          version: 1,
+          signature_npub: 'npub1human',
+        },
       ],
       decryptRecordPayload: async () => ({
         task_id: 'task-self-2',
         title: 'Workspace self updated task',
+        description: 'Same workspace-signed task body',
         state: 'open',
         assigned_to_npub: 'npub1bot',
         predecessor_task_ids: [],
@@ -504,5 +519,188 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(next.recentDispatches[0]?.action).toBe('task_skip_self_update');
     expect(next.recentDispatches[0]?.details?.task_id).toBe('task-self-2');
     expect(next.recentDispatches[0]?.details?.updater_npub).toBe('npub1wskey');
+  });
+
+  test('dispatches a self-authored new task when there is no previous version', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-self-new-task-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-self-new-task-agents'));
+    const subscription = store.save({
+      ...makeSubscription(),
+      wsKeyNpub: 'npub1wskey',
+    });
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-task',
+      label: 'Task Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-work',
+      capabilities: ['task_dispatch'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+
+    const taskDispatches: Array<{ recordId: string; taskId: string; agentId: string }> = [];
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      agentWorkRuntime: {
+        handleTaskDispatch: async (input) => {
+          taskDispatches.push({
+            recordId: input.recordId,
+            taskId: input.task.taskId,
+            agentId: input.agent.agentId,
+          });
+          return null;
+        },
+        handleApprovalDispatch: async () => null,
+      } as unknown as AgentWorkSessionRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-task-self-new-1',
+          record_state: 'active',
+          version: 1,
+          signature_npub: 'npub1wskey',
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        task_id: 'task-self-new-1',
+        title: 'New self-created task',
+        description: 'Created by the agent for itself',
+        state: 'open',
+        assigned_to_npub: 'npub1bot',
+        predecessor_task_ids: [],
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-task-self-new-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'task'),
+        record_id: 'record-task-self-new-1',
+      }),
+    );
+
+    expect(taskDispatches).toEqual([
+      {
+        recordId: 'record-task-self-new-1',
+        taskId: 'task-self-new-1',
+        agentId: 'agent-task',
+      },
+    ]);
+    expect(next.recentDispatches[0]?.action).toBe('task_skip_runtime_returned_null');
+  });
+
+  test('dispatches a self-authored task when meaningful dispatch fields change', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-self-changed-task-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-self-changed-task-agents'));
+    const subscription = store.save({
+      ...makeSubscription(),
+      wsKeyNpub: 'npub1wskey',
+    });
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-task',
+      label: 'Task Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-work',
+      capabilities: ['task_dispatch'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+
+    const taskDispatches: Array<{ recordId: string; taskId: string; agentId: string }> = [];
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      agentWorkRuntime: {
+        handleTaskDispatch: async (input) => {
+          taskDispatches.push({
+            recordId: input.recordId,
+            taskId: input.task.taskId,
+            agentId: input.agent.agentId,
+          });
+          return null;
+        },
+        handleApprovalDispatch: async () => null,
+      } as unknown as AgentWorkSessionRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-task-self-changed-1',
+          record_state: 'active',
+          version: 2,
+          signature_npub: 'npub1wskey',
+        },
+        {
+          record_id: 'record-task-self-changed-1',
+          record_state: 'active',
+          version: 1,
+          signature_npub: 'npub1human',
+        },
+      ],
+      decryptRecordPayload: async (params) => ({
+        task_id: 'task-self-changed-1',
+        title: 'Self changed task',
+        description: params.record.version === 2 ? 'Expanded task description' : 'Short task description',
+        state: 'open',
+        assigned_to_npub: 'npub1bot',
+        predecessor_task_ids: [],
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-task-self-changed-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'task'),
+        record_id: 'record-task-self-changed-1',
+      }),
+    );
+
+    expect(taskDispatches).toEqual([
+      {
+        recordId: 'record-task-self-changed-1',
+        taskId: 'task-self-changed-1',
+        agentId: 'agent-task',
+      },
+    ]);
   });
 });
