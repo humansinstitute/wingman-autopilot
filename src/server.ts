@@ -181,6 +181,7 @@ import { createUploadHelpers } from "./server/uploads/helpers";
 import { resolveAndCacheNostrProfile } from "./server/nostr-profile";
 import { shouldKeepBotKeyForNostrTriggers } from "./server/botkey-lifecycle";
 import { waitForSessionPromptReadiness } from "./server/session-readiness";
+import { resolveTaskExecutorOwnerNpub } from "./server/task-executor-owner";
 import { createPromptDispatchEngine, QueueDispatchError } from "./server/prompt-dispatch";
 import { TeamBillingService } from "./billing/team-billing-service";
 import {
@@ -777,6 +778,7 @@ const taskListenerFlag = featureFlagStore.getFlag("task_listener_enabled");
 const taskListenerIdentity = getKeyTeleportIdentity();
 if (taskListenerIdentity && config.connectRelays.length > 0 && taskListenerFlag?.state !== "off") {
   const mgBaseUrl = Bun.env.MG_BASE_URL ?? "https://mg.otherstuff.ai";
+  const taskExecutorOwnerNpub = resolveTaskExecutorOwnerNpub(adminNpub, taskListenerIdentity.npub);
 
   const executor = createTaskExecutor({
     signNip98: async (url, method, bodyHash) => {
@@ -784,7 +786,7 @@ if (taskListenerIdentity && config.connectRelays.length > 0 && taskListenerFlag?
       return token;
     },
     createSession: (agent, dir, name, origin, metadata) =>
-      manager.createSession(agent, dir, name, origin, undefined, adminNpub ?? undefined, metadata),
+      manager.createSession(agent, dir, name, origin, undefined, taskExecutorOwnerNpub, metadata),
     enableNightwatch: (sid) => nightWatchStore.enableSession(sid),
     addPrompt: (sid, content) => promptQueueStore.addPrompt(sid, { content }),
     dispatchPrompt: (session) => {
