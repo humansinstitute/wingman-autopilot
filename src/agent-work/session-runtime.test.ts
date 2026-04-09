@@ -8,7 +8,7 @@ import { nip19 } from 'nostr-tools';
 import type { SessionSnapshot } from '../agents/process-manager';
 import type { AgentDefinitionRecord, WorkspaceSubscriptionRecord } from '../agent-chat/types';
 import { AgentWorkSessionBindingStore } from './session-binding-store';
-import { AgentWorkSessionRuntime, normaliseInboundTaskRecord } from './session-runtime';
+import { AgentWorkSessionRuntime, normaliseInboundApprovalRecord, normaliseInboundTaskRecord } from './session-runtime';
 
 function makeTempDb(): string {
   return join(tmpdir(), `agent-work-runtime-${randomUUID()}.sqlite`);
@@ -410,5 +410,47 @@ describe('AgentWorkSessionRuntime', () => {
     expect(task?.state).toBe('open');
     expect(task?.assignedTo).toBe('npub1bot');
     expect(task?.predecessorTaskIds).toEqual(['pred-1', 'pred-2']);
+  });
+
+  test('normalises yoke inbound task payloads that use data and assigned_to_npub', () => {
+    const task = normaliseInboundTaskRecord({
+      data: {
+        task_id: 'task-yoke-1',
+        title: 'Yoke task',
+        description: 'Translator-shaped payload',
+        state: 'new',
+        assigned_to_npub: 'npub1bot',
+        predecessor_task_ids: ['pred-a'],
+        flow_id: 'flow-yoke-1',
+        flow_run_id: 'run-yoke-1',
+        flow_step: 2,
+      },
+    });
+
+    expect(task).not.toBeNull();
+    expect(task?.taskId).toBe('task-yoke-1');
+    expect(task?.assignedTo).toBe('npub1bot');
+    expect(task?.flowId).toBe('flow-yoke-1');
+    expect(task?.flowRunId).toBe('run-yoke-1');
+    expect(task?.flowStep).toBe('2');
+    expect(task?.predecessorTaskIds).toEqual(['pred-a']);
+  });
+
+  test('normalises yoke inbound approval payloads that use data and status', () => {
+    const approval = normaliseInboundApprovalRecord({
+      data: {
+        approval_id: 'approval-yoke-1',
+        flow_id: 'flow-yoke-1',
+        flow_run_id: 'run-yoke-1',
+        flow_step: 3,
+        status: 'approved',
+      },
+    });
+
+    expect(approval).not.toBeNull();
+    expect(approval?.approvalId).toBe('approval-yoke-1');
+    expect(approval?.flowRunId).toBe('run-yoke-1');
+    expect(approval?.flowStep).toBe('3');
+    expect(approval?.state).toBe('approved');
   });
 });

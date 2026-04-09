@@ -66,6 +66,9 @@ const TERMINAL_TASK_STATES = new Set([
 ]);
 
 function compactText(value: unknown): string | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
   if (typeof value !== 'string') {
     return null;
   }
@@ -142,10 +145,19 @@ function pickFirstStringArray(payload: Record<string, unknown>, keys: string[]):
 }
 
 function candidatePayloads(payload: Record<string, unknown>): Record<string, unknown>[] {
-  const candidates = [payload];
-  for (const key of ['task', 'approval', 'data', 'payload', 'record', 'content']) {
+  const candidates: Record<string, unknown>[] = [];
+  const directData = compactRecord(payload.data);
+  if (directData) {
+    candidates.push(directData);
+  }
+  candidates.push(payload);
+  for (const key of ['task', 'approval', 'payload', 'record', 'content']) {
     const nested = compactRecord(payload[key]);
     if (nested) {
+      const nestedData = compactRecord(nested.data);
+      if (nestedData) {
+        candidates.push(nestedData);
+      }
       candidates.push(nested);
     }
   }
@@ -282,7 +294,8 @@ export function normaliseInboundTaskRecord(payload: Record<string, unknown>): In
       title: pickFirstText(candidate, ['title', 'name']) ?? taskId,
       description: pickFirstText(candidate, ['description', 'details', 'body']),
       state: pickFirstText(candidate, ['state', 'status'])?.toLowerCase() ?? null,
-      assignedTo: pickFirstText(candidate, ['assigned_to', 'assignedTo', 'assignee', 'assignee_npub', 'assigned_to_npub']),
+      // Mirror the Yoke inboundTask translator field names first.
+      assignedTo: pickFirstText(candidate, ['assigned_to_npub', 'assigned_to', 'assignedTo', 'assignee', 'assignee_npub']),
       deleted: pickFirstBoolean(candidate, ['deleted', 'is_deleted', 'isDeleted']),
       done: pickFirstBoolean(candidate, ['done', 'is_done', 'isDone', 'completed', 'complete']),
       predecessorTaskIds: pickFirstStringArray(candidate, [
@@ -308,7 +321,8 @@ export function normaliseInboundApprovalRecord(payload: Record<string, unknown>)
       flowId: pickFirstText(candidate, ['flow_id', 'flowId']),
       flowRunId,
       flowStep: pickFirstText(candidate, ['flow_step', 'flowStep']),
-      state: pickFirstText(candidate, ['state', 'status']),
+      // Yoke inboundApproval exposes status rather than state.
+      state: pickFirstText(candidate, ['status', 'state']),
     };
   }
   return null;
