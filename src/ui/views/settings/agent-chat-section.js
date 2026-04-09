@@ -99,7 +99,7 @@ export function createAgentChatSection() {
   const labelField = createInput('Agent Label', 'Wingman 21', 'agent-chat-agent-label', true);
   const agentBotField = createInput('Agent Bot npub', 'npub1bot...', 'agent-chat-agent-bot');
   const agentWorkspaceField = createInput('Agent Workspace Owner npub', 'npub1workspace...', 'agent-chat-agent-workspace-owner');
-  const agentGroupsField = createInput('Group npubs', 'npub1group..., npub1group...', 'agent-chat-agent-groups');
+  const agentGroupsField = createInput('Group npubs', 'Leave blank to use the bot subscription groups', 'agent-chat-agent-groups', true);
   const workingDirectoryField = createInput('Working Directory', '/Users/mini/code/wingmen', 'agent-chat-agent-directory');
   const enabledField = createCheckbox('Enabled', 'agent-chat-agent-enabled', true);
 
@@ -128,6 +128,9 @@ export function createAgentChatSection() {
   saveAgentButton.style.marginTop = '12px';
 
   const statusLine = createStatusLine();
+  const agentGroupsNote = document.createElement('p');
+  agentGroupsNote.className = 'wm-settings__port-note';
+  agentGroupsNote.textContent = 'Leave group npubs blank to derive them from the bot groups already refreshed from Tower for this workspace subscription.';
   const overviewContainer = document.createElement('div');
   const agentRegistryContainer = document.createElement('div');
   const listContainer = document.createElement('div');
@@ -262,6 +265,7 @@ export function createAgentChatSection() {
     agentGroupsField.row,
     workingDirectoryField.row,
     enabledField.row,
+    agentGroupsNote,
     saveAgentButton,
     statusLine,
     overviewContainer,

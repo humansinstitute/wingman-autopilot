@@ -18,6 +18,19 @@ function normaliseDecision(value: string): AgentInterceptDecision {
   }
 }
 
+function parseFallbackDecision(firstLine: string): AgentInterceptDecision {
+  const trimmed = firstLine.trim();
+  if (!trimmed) {
+    return 'failed';
+  }
+  const normalised = trimmed.toLowerCase();
+  if (/^(respond|ignore)\b/.test(normalised)) {
+    return normaliseDecision(normalised);
+  }
+  const decisionMatch = normalised.match(/^(?:decision:\s*)?(?:i\s+(?:should|will)\s+)?(respond|ignore)\b/);
+  return decisionMatch ? normaliseDecision(decisionMatch[1] ?? '') : 'failed';
+}
+
 export function parseAgentChatReply(content: string): ParsedAgentChatReply {
   const trimmed = content.trim();
   if (!trimmed) {
@@ -30,9 +43,13 @@ export function parseAgentChatReply(content: string): ParsedAgentChatReply {
   const lines = trimmed.split(/\r?\n/);
   const firstLine = lines[0]?.trim() ?? '';
   if (!firstLine.startsWith(DECISION_PREFIX)) {
+    const fallbackDecision = parseFallbackDecision(firstLine);
     return {
-      decision: 'failed',
-      replyBody: trimmed,
+      decision: fallbackDecision,
+      replyBody: lines
+        .slice(1)
+        .join('\n')
+        .trim(),
     };
   }
 

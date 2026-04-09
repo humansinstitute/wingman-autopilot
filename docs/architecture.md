@@ -1,107 +1,127 @@
-# Wingman V2 Architecture Overview
+# Wingman Architecture Overview
 
-## Directory Conventions
+Status: active working document
+Last updated: 2026-04-07
 
-- `src/config.ts`: Centralises environment defaults (ports, working directory, agent catalog).
-- `src/server.ts`: Bun HTTP server exposing REST APIs (`/api/*`) and serving the Home/Live UI.
-- `src/agents/process-manager.ts`: Session lifecycle orchestration and subprocess management.
-- `src/agents/runtime.ts`: Legacy placeholder agent runtime kept for testing; production sessions use `out/agentapi`.
-- `src/ui/`: Static assets for the Home dashboard and Live tabbed interface.
-- `data/`: Persistent databases, embeddings stores, or other on-disk state backing agents.
-- `out/agentapi`: Future build artifact location for production binaries.
-- `Examples/`: Reference compositions showing multi-session orchestration patterns.
-- `Examples/Example Web Interface/`: Demo frontend that consumes agent APIs.
+This document describes Wingmen as it exists today: the orchestration and control-plane layer around the wider Wingman suite.
+
+## Role In The Suite
+
+Wingmen sits beside the workspace stack:
+
+- `wingman-tower` owns the workspace contract, auth, groups, encrypted sync, storage, and service discovery
+- `wingman-fd` is the human-facing local-first Flight Deck
+- `wingman-yoke` is the agent/operator CLI against that same workspace contract
+- `wingman-flightlog` is the optional memory/history subsystem
+- `wingmen` launches and manages agents that use those systems
+
+Wingmen is not the source of truth for workspace state. It is the runtime harness and operational control plane for agent sessions.
+
+## Main Responsibilities
+
+- session lifecycle orchestration
+- browser control surfaces (`/home`, `/live`)
+- MCP server/tool brokering
+- per-user bot-key management and export
+- delegated NIP-98 flows
+- jobs, scheduler, app runtime management, and memory tooling
+- git/Gitea and Nostr helper surfaces
+- SuperBased/Flux HTTP tooling for agent-side operations
+
+## Runtime Shape
+
+### Core Server
+
+- `src/index.ts` boots the Bun server
+- `src/server.ts` exposes the HTTP API and serves the browser UI
+- `src/config.ts` centralizes environment defaults and command construction
+
+### Session And Agent Runtime
+
+- `src/agents/process-manager.ts` manages session start/stop and subprocess lifecycle
+- `src/agents/` contains runtime adapters, MCP injection, env shaping, log handling, and polling
+- spawned agent runtimes expose their own APIs on allocated ports and stream messages/logs back to Wingman
+
+### Auth And Identity
+
+- `src/auth/` handles cookie-backed auth, NIP-98 auth, access control, and request context
+- bot-key provisioning/export and related identity flows live across `src/auth/`, `src/identity/`, and `src/agents/`
+- `AGENT_NSEC` injection is part of the current session runtime model when the bot key is available
+
+### MCP Control Plane
+
+- `src/mcp/stdio-server.ts` provides the per-agent stdio MCP server
+- `src/mcp/tools/` contains the tool implementations surfaced to agents
+- the MCP plane calls back into Wingman’s HTTP APIs rather than mutating server state directly in-process
+
+### Browser UI
+
+- `src/ui/` contains the browser-side modules for Home, Live, Jobs, and related surfaces
+- `/home` is the operator dashboard
+- `/live` is the real-time session surface
+- Jobs is the reusable execution-pattern UI for manager/worker runs
+
+### Persistent State
+
+- `data/` holds persistent databases and local state
+- storage modules under `src/storage/` manage artifacts, settings, file watchers, archives, billing state, and related records
+
+## Jobs Terminology
+
+The current product surface is “Jobs”, but the implementation still uses legacy `autopilot-jobs` names in several places:
+
+- HTTP routes: `/api/autopilot-jobs/*`
+- modules such as `src/jobs-api.ts`
+- frontend stores such as `autopilotJobs`
+
+This should be treated as an internal compatibility layer, not as a separate product. When updating docs or UI copy, prefer “Jobs” unless the exact route/module name matters.
 
 ## Runtime Flow
 
-1. `src/index.ts` boots the Bun server defined in `src/server.ts`.
-2. API clients call `/api/sessions` to create, list, or stop agent sessions.
-3. The `ProcessManager` allocates an available port (`AGENT_PORTS` … `AGENT_PORTS + AGENT_MAX`) and spawns `out/agentapi server` with the requested agent CLI inside the `DIRECTORY_DEF` working directory. The dashboard’s file browsers and pickers only expose directories declared via `FOLDERACCESS`.
-4. The AgentAPI subprocess exposes its own HTTP API (messages, events, status) on that port while streaming stdout/stderr back to Wingman for diagnostics.
-5. The Wingman Home view lists sessions, while the Live view renders tabs, displays each agent conversation, lets users send prompts, and continues to poll `/api/sessions/:id/logs` for diagnostics.
+1. Wingmen boots the Bun server.
+2. Operators or APIs create/list/stop sessions via the server APIs.
+3. The process manager allocates a port and spawns the requested agent runtime.
+4. Wingmen injects env and MCP config, including identity-related values when available.
+5. The browser UI consumes Wingmen APIs for live status, logs, jobs, apps, and session interaction.
+6. Agent-side MCP tool calls route back through Wingmen APIs for controlled access to local and remote capabilities.
 
-## Extending the Platform
+## Adjacent Integrations
 
-- **Agent Logic**: Adjust the command templates in `src/config.ts` to target different agent CLIs or wrap additional tooling before invoking `out/agentapi`.
-- **Persistence**: Store datasets or embeddings in `data/`, ensuring agents mount that directory in their working context.
-- **Process Scaling**: Adjust `AGENT_MAX`/`AGENT_PORTS` in the environment; augment `ProcessManager` to distribute across nodes if required.
-- **Observability**: Enhance log streaming (e.g., WebSockets or SSE) and persist metrics for running sessions.
-- **Frontend**: Evolve `src/ui` or integrate the `Examples/Example Web Interface/` assets for richer controls, including runtime directory selection.
-  - The bunker (NIP-46) identity flows rely on a pre-bundled browser module generated from the applesauce libraries (`bun run build:bunker-client` emits `public/vendor/bunker-client.js`). The dashboard imports only that bundle so that bunker secrets never leave the browser while we keep network requests lean.
+### Wingman Workspace Stack
 
-## Image Attachments
+Wingmen-managed agents commonly interact with:
 
-- `/api/uploads/images` accepts pasted or uploaded images for a specific agent session and stores them in `tmp/images/<agent>/`. Files are limited to 10 MB and only image MIME types are accepted.
-- The client inserts the agent-specific placeholder returned by the upload API (e.g., Codex/Claude receive `file://` URLs) directly into the composer, so no additional UI wiring is required when the message is sent.
-- `src/server.ts` exposes the stored image via `/uploads/images/<agent>/<file>` for agents that need HTTP access, while returning a `file://` reference for local CLIs.
-- A daily cleanup task removes images older than 24 hours from `tmp/images/` so the temporary store does not grow without bound. Adjust `imageTtlMs` in `src/server.ts` if retention requirements change.
+- Tower for workspace authority and encrypted sync
+- Yoke for CLI-based workspace operations
+- Flight Deck indirectly as the human-facing counterpart to the same workspace
 
-## Frontend Architecture (Migration Target)
+### Gitea And Git Workflow
 
-We are migrating the frontend to a **Dexie + Alpine** architecture for better state management, offline support, and reactive UI patterns.
+- `src/gitea/` and `src/git/` provide repository, credential, and workflow helpers
+- these support both operator UX and agent-accessible tooling
 
-### Core Stack
-- **Dexie.js** — All client state lives in IndexedDB via Dexie
-- **Alpine.js** — Reactive UI binds directly to Dexie queries
-- **Backend DB** — PostgreSQL or SQLite as source of truth
+### Nostr
 
-### State Management
-- Browser state is Dexie-first; never store app state in memory-only variables
-- UI reactivity comes from Alpine watching Dexie liveQueries
-- All user-facing data reads come from Dexie, not direct API responses
+- `src/nostr/` and several MCP tools expose Nostr-related capabilities
+- bot keys are central to the current delegated/agent automation model
 
-### Secrets & Keys
-- Store keys/passwords/tokens **encrypted** in IndexedDB
-- Encrypt with a key derived from user passphrase (e.g., PBKDF2 + AES-GCM)
-- Never store plaintext secrets; decrypt only when needed in memory
+### SuperBased / Flux
 
-### Sync Strategy
+- MCP tools and HTTP routes provide app-less SuperBased/Flux fetch/sync/history/storage operations for agents
+- this is an operational integration surface, not the authority contract itself
 
-#### Real-time (WebSocket or SSE)
-- Maintain persistent connection for server→client pushes
-- On receiving update: upsert into Dexie, Alpine reactivity handles UI
-- Client→server writes go via WebSocket message or REST POST
+## Documentation Boundaries
 
-#### Page Load / Refresh
-- `GET /sync?since={lastSyncTimestamp}` — pull changes since last sync
-- `POST /sync` — push local unsynced changes (track with `syncedAt` or dirty flag)
-- Resolve conflicts with last-write-wins or server-authoritative merge
+- `README.md` is the product/runtime overview
+- this file is the current technical map
+- `docs/asbuilt/` and `docs/as_built/` are historical/as-built snapshots and may retain older internal naming
+- design docs should be explicit when they refer to a literal API/module name versus current product terminology
 
-#### Offline Handling
-- Queue mutations in Dexie with `pending: true` flag
-- On reconnect: flush pending queue to server, then pull latest
+## Current Review Notes
 
-### Dexie Schema Conventions
-```javascript
-db.version(1).stores({
-  items: '++id, visitorId, [syncedAt+id], *tags',
-  secrets: 'id',           // encrypted blobs
-  syncMeta: 'key'          // lastSyncTimestamp, etc.
-});
-```
+As of 2026-04-07:
 
-### Alpine Integration Pattern
-```javascript
-// Expose Dexie liveQuery to Alpine
-Alpine.store('items', {
-  list: [],
-  async init() {
-    liveQuery(() => db.items.toArray())
-      .subscribe(items => this.list = items);
-  }
-});
-```
-
-```html
-<div x-data x-init="$store.items.init()">
-  <template x-for="item in $store.items.list" :key="item.id">
-    <div x-text="item.name"></div>
-  </template>
-</div>
-```
-
-### Rules
-- No raw `fetch` results displayed directly — always write to Dexie first
-- All sensitive data encrypted at rest in IndexedDB
-- Sync timestamps on every record for incremental sync
-- WebSocket/SSE for live updates; REST fallback on reconnect/refresh
+- the main drift is documentation/naming, not top-level product direction
+- “Autopilot Jobs” is still a real internal/API name, but it reads as legacy terminology
+- older docs that describe Wingmen in isolation can miss its current role beside Tower, Flight Deck, and Yoke
+- current runtime behavior also includes bot-key export, AGENT_NSEC injection, app control, and richer MCP tooling than older architecture summaries describe

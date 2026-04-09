@@ -21,6 +21,7 @@ Wingman V2 centers on Bun services in `src/`. `src/server.ts` exposes the HTTP A
 ### Core Architecture Components
 
 **Backend (Bun/TypeScript)**:
+
 - `src/server.ts` - Main HTTP API and static file server
 - `src/agents/` - Agent lifecycle management and process orchestration
 - `src/storage/` - Persistent data stores for sessions, messages, and user data
@@ -31,6 +32,7 @@ Wingman V2 centers on Bun services in `src/`. `src/server.ts` exposes the HTTP A
 - `src/logging/` - Centralized logging infrastructure
 
 **Frontend (Vanilla JS)**:
+
 - `/home` - Session dashboard for starting/stopping agents
 - `/live` - Real-time tabbed interface showing agent conversations and logs
 - Modular ES6 architecture with state management
@@ -49,7 +51,7 @@ Tell me in your wrap up message what the git commit message was.
 
 TypeScript is the default; prefer ESM imports and explicit extensions when needed (`./foo.ts`). Use two-space indentation, trailing semicolons, and single quotes only inside template literals. Name files with kebab-case, classes/types with PascalCase, and functions or variables in camelCase. Co-locate agent helpers under `src/agents/` and UI utilities under `src/ui/` to keep files under 400 lines. Follow the strict TypeScript configuration in `tsconfig.json`; address compiler warnings before committing.
 
-**DON'T RUN TESTS. THEY DON'T HELP -> WE TEST MANUALLY AROUND HERE.**
+
 
 Keep changes tightly scoped: satisfy the request with the smallest viable diff unless the user explicitly asks for broader refactors.
 
@@ -70,28 +72,33 @@ When summarising your activity, please state what can be tested currently and if
 We are migrating the frontend to a **Dexie + Alpine** architecture. When making frontend changes, follow these patterns:
 
 ### Core Stack
+
 - **Dexie.js** — All client state lives in IndexedDB via Dexie
 - **Alpine.js** — Reactive UI binds directly to Dexie queries
 - **Backend DB** — PostgreSQL or SQLite as source of truth
 
 ### State Management Rules
+
 - Browser state is Dexie-first; never store app state in memory-only variables
 - UI reactivity comes from Alpine watching Dexie liveQueries
 - All user-facing data reads come from Dexie, not direct API responses
 - No raw `fetch` results displayed directly — always write to Dexie first
 
 ### Secrets & Keys
+
 - Store keys/passwords/tokens **encrypted** in IndexedDB
 - Encrypt with a key derived from user passphrase (e.g., PBKDF2 + AES-GCM)
 - Never store plaintext secrets; decrypt only when needed in memory
 
 ### Sync Strategy
+
 - **Real-time**: WebSocket/SSE for server→client pushes; upsert into Dexie on receive
 - **Page Load**: `GET /sync?since={timestamp}` for incremental sync
 - **Offline**: Queue mutations with `pending: true` flag, flush on reconnect
 - Sync timestamps on every record for incremental sync
 
 ### Dexie Schema Conventions
+
 ```javascript
 db.version(1).stores({
   items: '++id, visitorId, [syncedAt+id], *tags',
@@ -101,6 +108,7 @@ db.version(1).stores({
 ```
 
 ### Alpine Integration Pattern
+
 ```javascript
 Alpine.store('items', {
   list: [],

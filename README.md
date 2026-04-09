@@ -1,34 +1,39 @@
 # Wingman
 
-## Wingman: Every Computer Becomes a Ten-Person Team
+Wingman is the orchestration and control-plane layer for the Wingman suite.
 
-Wingman is an open-source Agent Management system that brings AI automation to small businesses, without the technical complexity or vendor lock-in.
+In the current stack:
 
-The Problem:
+- `wingman-tower` is the workspace authority for auth, groups, encrypted record sync, storage, and service discovery
+- `wingman-fd` is Flight Deck, the human-first local-first browser workspace
+- `wingman-yoke` is the agent/operator CLI workspace client
+- `wingman-flightlog` is the optional memory/history layer
+- `wingmen` is the session harness that launches, supervises, and connects agents to the rest of the suite
 
-The cost of hiring employees has become prohibitively expensive for small businesses and individuals. Whether you need developers, administrators, marketers, or support staff, the next marginal employee often costs more than small operations can afford.
+Wingmen does not replace Tower as the source of truth for workspace data. It sits beside the workspace stack and manages agents, sessions, live views, app runtimes, MCP tooling, NIP-98-protected operational APIs, and per-user bot-key flows.
 
-AI Agents offer a compelling alternative, but today's tools are built for technically capable users locked in terminals, expecting users to be present at their machines. This doesn't fit the reality of stressed business owners managing operations from their phones or in the field.
+## Core Responsibilities
 
-The Vision:
+- Launch and manage agent sessions for Codex, Claude, Goose, OpenCode, and other supported adapters
+- Provide browser control surfaces such as `/home` and `/live`
+- Broker MCP tools and agent-side capabilities back into Wingman over HTTP
+- Manage per-user bot keys, session identity, and delegated NIP-98 flows
+- Expose operational APIs for apps, git/Gitea, jobs, memories, Nostr, and SuperBased/Flux operations
+- Inject agent-local environment and MCP configuration, including bot-key material when available
 
-Wingman empowers Business Owners, Staff, Entrepreneurs, and Developers to deploy AI Agents into their businesses while retaining complete control over their data and processes.
+## Terminology Notes
 
-Core Capabilities:
-- Web-First Interface: Escape the terminal. Manage agents through intuitive web interfaces accessible from any device. Start automation on your desktop, monitor progress from your laptop, review results from your phone.
-- Multi-Agent Orchestration: Access powerful agents (Goose, Claude, Codex, OpenCode) with full MCP tool support. No model restrictions, no vendor lock-in. Hot-swap agents as better models emerge without rewriting your business logic.
-- Templates & Community Library: Pre-built agent profiles and orchestration workflows for common business tasks: MicroSaaS software development, content production, customer support, marketing automation. Community-driven marketplace for sharing and discovering proven patterns.
-- BYO SaaS ("Build Your Own Micro SaaS"): Create and host custom micro-apps directly in Wingman. Need adjustments? Click "Edit with AI" and reshape the app to your exact needs. Own your tools, don't rent them.
-- Visual Process Orchestration: Define business processes in human-readable workflows with simple understandable file based triggers and handoffs. Integrate APIs, scheduled jobs all in natural language without writing code. Build once, automate forever.
-- Self-Hosted First: Deploy on your infrastructure (Mac Mini, Raspberry Pi, VPS, or cloud). Control your data, you can run entirely local models via Ollama for complete privacy. Full control, zero compromises.
+Some internal routes and modules still use older naming:
 
-The Impact:
+- `autopilot-jobs` is the current internal/API path for the Jobs subsystem
+- `AGENT_NSEC` is the environment variable used to inject a session bot key into an agent process
+- some `wm21` references are deployment-specific defaults or admin fallbacks, not product concepts
 
-Wingman shortens the distance between having an idea and making a living from it. Democratising access to AI automation, we enable anyone to compete in the modern economy without being chained to their desk, their budget or locked in to SaaS middlemen.
+Those names are still real implementation details, but the current product framing is:
 
-Small businesses deserve the same AI capabilities as Fortune 500 companies. Wingman makes that possible, open source.
-
-Solivtur Ambulando!
+- Wingman = orchestration platform
+- Jobs = reusable job definitions and runs
+- Delegate sessions / agent sessions = the programmable session layer around agents
 
 ## Getting Started
 
@@ -38,20 +43,44 @@ Install dependencies:
 bun install
 ```
 
-Launch the orchestration server (defaults to port `3600` unless `PORT` is set):
+Launch the orchestration server:
 
 ```bash
 bun start
 ```
 
-Visit `http://localhost:<PORT>/home` for the session dashboard or `/live` for the tabbed, real-time view.
+Visit:
+
+- `http://localhost:<PORT>/home` for the session dashboard
+- `http://localhost:<PORT>/live` for the real-time live/session surface
+
+## Runtime Model
+
+Wingmen is a long-running Bun server that:
+
+1. serves the web UI and operational HTTP APIs
+2. allocates ports and spawns agent runtimes
+3. tracks sessions, logs, messages, and status
+4. injects MCP config and per-session identity/env context
+5. exposes higher-level app, git, job, memory, and Nostr tooling to agents and operators
+
+## Jobs
+
+The current Jobs subsystem is user-facing as “Jobs”, but internally still uses `autopilot-jobs` in API paths and some module names.
+
+Examples:
+
+- `/api/autopilot-jobs/definitions`
+- `/api/autopilot-jobs/runs`
+- `src/jobs-api.ts`
+
+Treat this as a naming-compatibility layer rather than a separate product.
 
 ## App Lifecycle CLI (NIP-98)
 
 Use `scripts/wingman-appctl.ts` to control registered apps over HTTP with NIP-98 auth headers.
 
 ```bash
-# Uses WINGMAN_NSEC for signing
 export WINGMAN_NSEC=nsec1...
 
 bun run appctl list
@@ -62,42 +91,45 @@ bun run appctl setup <app-id>
 ```
 
 Options:
-- `--base-url <url>` target Wingman base URL (default: `http://127.0.0.1:$PORT`)
+
+- `--base-url <url>` target Wingman base URL
 - `--key <nsec|hex>` override signing key for this invocation
 - `--json` print raw API responses
 
 ## Environment
 
-| Variable         | Description                                                                    | Default                 |
-|------------------|--------------------------------------------------------------------------------|-------------------------|
-| `PORT`           | Primary Wingman UI/API port                                                    | `3600`                  |
-| `AGENT_PORTS`    | Starting port assigned to agent subprocesses                                   | `3700`                  |
-| `AGENT_MAX`      | Total number of concurrent agent ports available                               | `10`                    |
-| `HOST_URL_BASE`  | Template for web app links; `<port>` is replaced with the app's assigned port  | `https://host.otherstuff.ai/<port>` |
-| `DIRECTORY_DEF`  | Working directory used when launching agent subprocesses                       | `~/code`                |
-| `FOLDERACCESS`   | Comma-separated directories exposed to file browsers and pickers               | `DIRECTORY_DEF`         |
-| `AGENT_SPAWN_MODE` | Primary spawn-mode setting: `bun` (direct child process) or `pm2` (persists agent processes across Wingman restarts) | `bun` |
-| `AGENT_MODE`     | Deprecated compatibility input only: `pm2` falls back to `AGENT_SPAWN_MODE=pm2` when `AGENT_SPAWN_MODE` is unset, `tmux` falls back to `agentapi-tmux` only when `AGENTAPI_BIN` is unset, `standard` has no effect | unset |
-| `AGENTAPI_BIN`   | Primary binary-path setting for the AgentAPI executable used to host each agent | `./out/agentapi` |
-| `CLAUDE_CLI`     | Executable invoked for Claude sessions (override if not simply `claude`)       | `claude`                |
-| `GLOVES`         | Claude approval mode; set `OFF` to add `--dangerously-skip-permissions`         | unset (normal approvals) |
-| `GOOSE_CLI`      | Executable invoked for Goose sessions                                          | `goose`                 |
-| `CODEX_CLI`      | Executable invoked for Codex sessions (Wingman passes `--type=codex` as well)  | `codex`                 |
-| `OPENCODE_CLI`   | Executable invoked for OpenCode sessions                                       | `opencode`              |
-| `AGENTAPI_ALLOWED_ORIGINS` | Value passed to AgentAPI `--allowed-origins`                         | `*`                     |
-| `AGENTAPI_ALLOWED_HOSTS`   | Value passed to AgentAPI `--allowed-hosts`                           | `localhost,127.0.0.1,[::1]` |
+| Variable | Description | Default |
+|---|---|---|
+| `PORT` | Primary Wingman UI/API port | `3600` |
+| `AGENT_PORTS` | Starting port assigned to agent subprocesses | `3700` |
+| `AGENT_MAX` | Total number of concurrent agent ports available | `10` |
+| `HOST_URL_BASE` | Template for app links; `<port>` is replaced with the app's assigned port | `https://host.otherstuff.ai/<port>` |
+| `DIRECTORY_DEF` | Working directory used when launching agent subprocesses | `~/code` |
+| `FOLDERACCESS` | Comma-separated directories exposed to file browsers and pickers | `DIRECTORY_DEF` |
+| `AGENT_SPAWN_MODE` | Primary spawn-mode setting: `bun` or `pm2` | `bun` |
+| `AGENT_MODE` | Deprecated compatibility input only | unset |
+| `AGENTAPI_BIN` | Primary binary path for the AgentAPI executable | `./out/agentapi` |
+| `CLAUDE_CLI` | Executable invoked for Claude sessions | `claude` |
+| `GLOVES` | Claude approval mode; `OFF` adds skip-permissions | unset |
+| `GOOSE_CLI` | Executable invoked for Goose sessions | `goose` |
+| `CODEX_CLI` | Executable invoked for Codex sessions | `codex` |
+| `OPENCODE_CLI` | Executable invoked for OpenCode sessions | `opencode` |
+| `AGENTAPI_ALLOWED_ORIGINS` | Value passed to AgentAPI `--allowed-origins` | `*` |
+| `AGENTAPI_ALLOWED_HOSTS` | Value passed to AgentAPI `--allowed-hosts` | `localhost,127.0.0.1,[::1]` |
 
 ## Workflow Overview
 
-- `Home` view lists active sessions and lets you start or stop agents.
-- `Live` view shows each running session in tabs, streams logs, displays the agent conversation transcript, and lets you send new prompts directly to the active agent.
-- All agents launch as subprocesses with dedicated ports allocated from the configured range.
+- `Home` lists sessions and lets operators start or stop agents.
+- `Live` shows running sessions, conversation state, logs, and prompt dispatch.
+- Jobs let operators define reusable manager/worker execution patterns.
+- App management controls registered local apps.
+- MCP tooling exposes memories, git, Nostr, image generation, SuperBased access, and more to agents.
 
-Refer to `docs/architecture.md` for a deeper dive into directory responsibilities and runtime flow.
+Refer to [docs/architecture.md](/Users/mini/code/wingmen/docs/architecture.md) for the current technical split.
 
-## Session Persistence (Recommended)
+## Session Persistence
 
-For reliable persistence through Wingman restarts, use PM2-backed agent spawning:
+For persistence across Wingman restarts, use PM2-backed spawning:
 
 ```bash
 AGENT_SPAWN_MODE=pm2 bun start
@@ -111,6 +143,12 @@ AGENT_MODE=pm2 bun start
 
 Active contract:
 
-- Use `AGENT_SPAWN_MODE` to choose `bun` or `pm2`.
-- Use `AGENTAPI_BIN` to choose which `agentapi` binary Wingman launches.
-- `AGENT_MODE` is deprecated compatibility only. `AGENT_SPAWN_MODE` always wins over `AGENT_MODE=pm2`, and `AGENTAPI_BIN` always wins over `AGENT_MODE=tmux`.
+- use `AGENT_SPAWN_MODE` to choose `bun` or `pm2`
+- use `AGENTAPI_BIN` to choose which `agentapi` binary Wingman launches
+- `AGENT_MODE` is deprecated compatibility only
+
+## Documentation Notes
+
+- `docs/architecture.md` is the main current technical map
+- `docs/asbuilt/` and `docs/as_built/` contain historical snapshots and implementation notes
+- design docs may still mention older internal names such as `autopilot-jobs`; treat those as implementation compatibility unless they explicitly propose a new contract

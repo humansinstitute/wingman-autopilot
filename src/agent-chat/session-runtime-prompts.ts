@@ -105,7 +105,7 @@ export function buildBootstrapPrompt(params: {
     `- More thread history: ${commands.history}`,
     `- Search active channel: ${commands.search}`,
     `- Related threads: ${commands.related}`,
-    `- Reply handoff used by Wingmen after your answer: ${commands.replyCurrent}`,
+    `- Publish the thread reply yourself: ${commands.replyCurrent}`,
     '',
     params.contextError
       ? `Yoke context warning: ${params.contextError}`
@@ -114,12 +114,15 @@ export function buildBootstrapPrompt(params: {
     'Instructions:',
     '- You are inspecting the current thread for the registered local agent only.',
     '- Start your answer with exactly one line: AGENT_CHAT_DECISION: respond or AGENT_CHAT_DECISION: ignore',
+    '- Nothing you write in this session is visible to the human unless you publish a reply into the chat thread.',
+    '- If you decide to respond, your final action must be to publish the reply into the current thread yourself by using the Yoke reply-current command shown above.',
+    '- After you have published the reply, end with only the decision line AGENT_CHAT_DECISION: respond and no extra text.',
     '- Use the Yoke commands above if you need more context before answering.',
-    '- If you choose respond, put the human-visible thread reply after the decision line.',
+    '- Only include reply text after the decision line if you are intentionally falling back to Wingmen handoff because you could not publish the reply directly.',
     '- If you choose ignore, do not add any extra text after the decision line.',
     '- Do not tell the human to run commands.',
     '- Do not include tool transcripts in your final answer.',
-    '- Wingmen only relays replies when the decision is respond.',
+    '- Wingmen may fall back to relaying a reply body only when the decision is respond and you included one.',
   ].join('\n');
 }
 
@@ -152,7 +155,7 @@ export function buildMergedTurnPrompt(params: {
     `- More thread history: ${commands.history}`,
     `- Search active channel: ${commands.search}`,
     `- Related threads: ${commands.related}`,
-    `- Reply handoff used by Wingmen after your answer: ${commands.replyCurrent}`,
+    `- Publish the thread reply yourself: ${commands.replyCurrent}`,
     '',
     params.contextError
       ? `Yoke context warning: ${params.contextError}`
@@ -161,9 +164,12 @@ export function buildMergedTurnPrompt(params: {
     'Instructions:',
     '- Stay on the current session and current routing key.',
     '- Start your answer with exactly one line: AGENT_CHAT_DECISION: respond or AGENT_CHAT_DECISION: ignore',
+    '- Nothing you write in this session is visible to the human unless you publish a reply into the chat thread.',
+    '- If you decide to respond, your final action must be to publish the reply into the current thread yourself by using the Yoke reply-current command shown above.',
+    '- After you have published the reply, end with only the decision line AGENT_CHAT_DECISION: respond and no extra text.',
     '- Treat the JSON package as authoritative for the newly arrived user turns.',
     '- Preserve the arrival order of the merged user turns when reasoning about the reply.',
-    '- If you choose respond, put the human-visible thread reply after the decision line.',
+    '- Only include reply text after the decision line if you are intentionally falling back to Wingmen handoff because you could not publish the reply directly.',
     '- If you choose ignore, do not add any extra text after the decision line.',
     '- Do not include the JSON package verbatim in the final answer.',
   ].join('\n');

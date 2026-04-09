@@ -75,6 +75,8 @@ export function openNightWatchEnableModal({
   intervalMinutes,
   minIntervalMinutes,
   maxIntervalMinutes,
+  maxCycles,
+  maxCycleOptions,
 }) {
   ensureNightWatchEnableModalStyles();
 
@@ -128,9 +130,14 @@ export function openNightWatchEnableModal({
 
     promptField.append(promptInput, promptHint);
 
+    const timingFields = document.createElement("div");
+    timingFields.style.display = "flex";
+    timingFields.style.flexDirection = "column";
+    timingFields.style.gap = "1rem";
+
     const intervalField = document.createElement("label");
     intervalField.className = "wm-dialog__field";
-    intervalField.textContent = "Timer";
+    intervalField.textContent = "How Often";
 
     const intervalInput = document.createElement("input");
     intervalInput.type = "number";
@@ -148,7 +155,44 @@ export function openNightWatchEnableModal({
 
     intervalField.append(intervalInput, intervalHint);
 
-    grid.append(promptField, intervalField);
+    const maxTurnsField = document.createElement("label");
+    maxTurnsField.className = "wm-dialog__field";
+    maxTurnsField.textContent = "Max Turns";
+
+    const maxTurnsInput = document.createElement("select");
+    maxTurnsInput.required = true;
+    maxTurnsInput.setAttribute("aria-label", "Night Watch maximum turns");
+    maxTurnsInput.setAttribute("data-testid", "nightwatch-max-cycles-input");
+
+    const cycleOptions = Array.isArray(maxCycleOptions) && maxCycleOptions.length > 0
+      ? maxCycleOptions
+      : [6, 21, 256];
+    const normalizedMaxCycles = Number.isFinite(Number(maxCycles)) && Number(maxCycles) > 0
+      ? Math.trunc(Number(maxCycles))
+      : cycleOptions[0];
+    const uniqueCycleOptions = Array.from(new Set([...cycleOptions, normalizedMaxCycles]))
+      .filter((value) => Number.isFinite(Number(value)) && Number(value) > 0)
+      .map((value) => Math.trunc(Number(value)))
+      .sort((a, b) => a - b);
+
+    uniqueCycleOptions.forEach((value) => {
+      const option = document.createElement("option");
+      option.value = String(value);
+      option.textContent = String(value);
+      if (value === normalizedMaxCycles) {
+        option.selected = true;
+      }
+      maxTurnsInput.append(option);
+    });
+
+    const maxTurnsHint = document.createElement("p");
+    maxTurnsHint.className = "wm-nightwatch-enable-modal__hint";
+    maxTurnsHint.textContent = "Stop Night Watch automatically after this many check-ins.";
+
+    maxTurnsField.append(maxTurnsInput, maxTurnsHint);
+    timingFields.append(intervalField, maxTurnsField);
+
+    grid.append(promptField, timingFields);
     body.append(grid);
 
     const status = document.createElement("p");
@@ -209,6 +253,7 @@ export function openNightWatchEnableModal({
       resolve({
         prompt: nextPrompt,
         intervalMinutes: Math.trunc(nextInterval),
+        maxCycles: Math.trunc(Number(maxTurnsInput.value)),
       });
     });
 

@@ -398,7 +398,7 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
       }
       return Response.json({ error: "Not found" }, { status: 404 });
     }
-    if (pathname.startsWith('/api/agent-chat/subscriptions')) {
+    if (pathname.startsWith('/api/agent-chat/subscriptions') || pathname.startsWith('/api/agent-chat/agents')) {
       const uiRestrictedAction = ctx.AccessActions.UiRestricted ?? ctx.AccessActions.SessionsManage;
       const denied = await ctx.ensureApiAccess(uiRestrictedAction, request, url, authContext);
       if (denied) {

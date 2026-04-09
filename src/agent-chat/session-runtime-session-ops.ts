@@ -1,6 +1,7 @@
 import type { AgentType } from '../config';
 import type { ProcessManager, SessionOrigin, SessionSnapshot } from '../agents/process-manager';
 import { scheduleSessionArchive } from '../storage/session-archiver';
+import { parseAgentChatReply } from './session-runtime-decision';
 import type { ChatInterceptStateStore } from './chat-intercept-state-store';
 import type { AgentDefinitionRecord, ChatInterceptStateRecord, WorkspaceSubscriptionRecord } from './types';
 
@@ -8,10 +9,19 @@ const SESSION_READY_TIMEOUT_MS = 120_000;
 const ASSISTANT_REPLY_TIMEOUT_MS = 300_000;
 const ASSISTANT_REPLY_POLL_INTERVAL_MS = 1_000;
 const ASSISTANT_REPLY_STABLE_POLLS = 2;
+const ASSISTANT_REPLY_DECISION_FALLBACK_STABLE_POLLS = 5;
 
 export interface AssistantReplyResult {
   content: string;
   createdAt: string;
+  settledWithoutStableRuntime?: boolean;
+}
+
+export interface AssistantReplyWaitOptions {
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+  stablePolls?: number;
+  decisionFallbackStablePolls?: number;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -84,6 +94,7 @@ export async function sendPromptAndAwaitAssistantReply(
   manager: ProcessManager,
   sessionId: string,
   prompt: string,
+  waitOptions?: AssistantReplyWaitOptions,
 ): Promise<AssistantReplyResult> {
   const adapter = manager.getAdapter(sessionId);
   if (!adapter) {
@@ -95,7 +106,7 @@ export async function sendPromptAndAwaitAssistantReply(
   });
   const initialMessages = await adapter.fetchMessages().catch(() => []);
   await adapter.sendMessage(prompt, 'user');
-  return await awaitAssistantReply(manager, sessionId, initialMessages.length);
+  return await awaitAssistantReply(manager, sessionId, initialMessages.length, waitOptions);
 }
 
 export function hasExpiredRetention(intercept: ChatInterceptStateRecord, idleRetentionMs: number): boolean {
@@ -213,21 +224,26 @@ async function awaitAssistantReply(
   manager: ProcessManager,
   sessionId: string,
   initialMessageCount: number,
+  options?: AssistantReplyWaitOptions,
 ): Promise<AssistantReplyResult> {
-  const deadline = Date.now() + ASSISTANT_REPLY_TIMEOUT_MS;
+  const pollIntervalMs = Math.max(10, options?.pollIntervalMs ?? ASSISTANT_REPLY_POLL_INTERVAL_MS);
+  const stablePollTarget = Math.max(1, options?.stablePolls ?? ASSISTANT_REPLY_STABLE_POLLS);
+  const fallbackStablePollTarget = Math.max(
+    stablePollTarget,
+    options?.decisionFallbackStablePolls ?? ASSISTANT_REPLY_DECISION_FALLBACK_STABLE_POLLS,
+  );
+  const deadline = Date.now() + Math.max(pollIntervalMs, options?.timeoutMs ?? ASSISTANT_REPLY_TIMEOUT_MS);
   let lastSeenContent = '';
   let stablePolls = 0;
+  let settledFallbackReply: AssistantReplyResult | null = null;
 
   while (Date.now() < deadline) {
-    await sleep(ASSISTANT_REPLY_POLL_INTERVAL_MS);
-
     const session = manager.getSession(sessionId);
-    if (!session || (session.status !== 'running' && session.status !== 'starting')) {
-      throw new Error(`Session ${sessionId} stopped before producing a reply.`);
-    }
-
     const adapter = manager.getAdapter(sessionId);
     if (!adapter) {
+      if (settledFallbackReply) {
+        return settledFallbackReply;
+      }
       throw new Error(`Session ${sessionId} no longer has an adapter.`);
     }
 
@@ -235,6 +251,7 @@ async function awaitAssistantReply(
     try {
       messages = await adapter.fetchMessages();
     } catch {
+      await sleep(pollIntervalMs);
       continue;
     }
 
@@ -244,23 +261,50 @@ async function awaitAssistantReply(
     const newAssistantMessage = assistantMessages[assistantMessages.length - 1];
 
     if (!newAssistantMessage) {
+      if (!session || (session.status !== 'running' && session.status !== 'starting')) {
+        throw new Error(`Session ${sessionId} stopped before producing a reply.`);
+      }
+      await sleep(pollIntervalMs);
       continue;
     }
 
-    const readyForHandoff = session.agentRuntimeStatus === 'stable' || session.agentRuntimeStatus == null;
-    if (newAssistantMessage.content === lastSeenContent && readyForHandoff) {
+    const parsedReply = parseAgentChatReply(newAssistantMessage.content);
+    const hasParseableDecision = parsedReply.decision !== 'failed';
+    const readyForHandoff = session?.agentRuntimeStatus === 'stable' || session?.agentRuntimeStatus == null;
+    const contentUnchanged = newAssistantMessage.content === lastSeenContent;
+    if (contentUnchanged) {
       stablePolls += 1;
     } else {
       lastSeenContent = newAssistantMessage.content;
-      stablePolls = readyForHandoff ? 1 : 0;
+      stablePolls = 1;
     }
 
-    if (stablePolls >= ASSISTANT_REPLY_STABLE_POLLS) {
+    if (readyForHandoff && stablePolls >= stablePollTarget) {
       return {
         content: newAssistantMessage.content.trim(),
         createdAt: newAssistantMessage.createdAt,
       };
     }
+
+    if (hasParseableDecision && stablePolls >= fallbackStablePollTarget) {
+      settledFallbackReply = {
+        content: newAssistantMessage.content.trim(),
+        createdAt: newAssistantMessage.createdAt,
+        settledWithoutStableRuntime: !readyForHandoff,
+      };
+      if (!session || (session.status !== 'running' && session.status !== 'starting') || !readyForHandoff) {
+        return settledFallbackReply;
+      }
+    }
+
+    if (!session || (session.status !== 'running' && session.status !== 'starting')) {
+      if (settledFallbackReply) {
+        return settledFallbackReply;
+      }
+      throw new Error(`Session ${sessionId} stopped before producing a reply.`);
+    }
+
+    await sleep(pollIntervalMs);
   }
 
   throw new Error(`Timed out waiting for an assistant reply from session ${sessionId}.`);

@@ -1,5 +1,11 @@
 # Jobs Sequencing Design
 
+Terminology note:
+
+- This document uses the current product term `Jobs`.
+- The implementation still uses legacy internal names such as `autopilot-jobs` in API routes and some modules.
+- Treat those names as compatibility details, not as separate product concepts.
+
 ## Summary
 
 Wingman's current jobs system is good at dispatching one worker and one manager for a single run, but sequencing is external. In practice that forced us to use a shell poller to chain work packages, which is not reliable enough for real delivery.

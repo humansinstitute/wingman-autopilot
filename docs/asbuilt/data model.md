@@ -11,7 +11,7 @@ Review inputs for this refresh:
 - live store implementations under `src/storage/`, `src/projects/`, `src/todos/`, `src/identity/`, `src/mcp/`, `src/nightwatch/`, `src/scheduler/`, `src/caprover/`, `src/agent-chat/`, and `src/ui/`
 - the current SQLite schemas materialized under `data/*.db`
 - the current JSON registries under `data/*.json`
-- the architecture baseline in `docs/architecture.md`
+- the architecture baseline in `docs/asbuilt/architecture.md`
 
 Wingmen is not backed by one normalized relational schema. The live model is split across:
 

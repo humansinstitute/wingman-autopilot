@@ -228,14 +228,25 @@ export class AgentChatSessionRuntime {
 
         try {
           const reply = await sendPromptAndAwaitAssistantReply(this.manager, session.id, prompt);
+          if (reply.settledWithoutStableRuntime) {
+            await logSession(
+              this.manager,
+              session.id,
+              '[agent-chat] settling completed turn from stable assistant decision without waiting for runtime status to flip stable',
+            );
+          }
           const parsedReply = parseAgentChatReply(reply.content);
           if (parsedReply.decision === 'respond') {
             if (!parsedReply.replyBody) {
               intercept = saveIntercept(this.interceptStore, intercept, {
-                lastDecision: 'failed',
+                lastDecision: 'respond',
                 lastActivityAt: new Date().toISOString(),
               });
-              await logSession(this.manager, session.id, '[agent-chat] decision failed: empty respond body');
+              await logSession(
+                this.manager,
+                session.id,
+                '[agent-chat] decision=respond (agent published reply directly or declined inline handoff body)',
+              );
             } else {
               const handoff = await handoffAgentChatReply({
                 workingDirectory: session.workingDirectory,
@@ -344,10 +355,50 @@ export class AgentChatSessionRuntime {
       if (isForcedInterruptFailure()) {
         throw new Error(`Forced by ${FORCE_INTERRUPT_FAILURE_ENV}`);
       }
+      const session = this.manager.getSession(runtime.currentSessionId);
+      if (!session || (session.status !== 'running' && session.status !== 'starting')) {
+        runtime.interruptRequested = false;
+        saveIntercept(this.interceptStore, intercept, {
+          state: 'active',
+          pendingMessageCount: runtime.queuedTurns.length,
+          lastActivityAt: new Date().toISOString(),
+        });
+        if (runtime.currentSessionId) await logSession(
+          this.manager,
+          runtime.currentSessionId,
+          '[agent-chat] interrupt skipped; session is not running, queued follow-up prompt will continue on the next loop',
+        );
+        return;
+      }
       const adapter = this.manager.getAdapter(runtime.currentSessionId);
-      const interrupted = adapter ? await adapter.interruptCurrentTurn() : false;
+      if (!adapter) {
+        runtime.interruptRequested = false;
+        saveIntercept(this.interceptStore, intercept, {
+          state: 'active',
+          pendingMessageCount: runtime.queuedTurns.length,
+          lastActivityAt: new Date().toISOString(),
+        });
+        await logSession(
+          this.manager,
+          runtime.currentSessionId,
+          '[agent-chat] interrupt skipped; no adapter available, queued follow-up prompt will continue on the next loop',
+        );
+        return;
+      }
+      const interrupted = await adapter.interruptCurrentTurn();
       if (!interrupted) {
-        throw new Error('Adapter could not interrupt the current turn.');
+        runtime.interruptRequested = false;
+        saveIntercept(this.interceptStore, intercept, {
+          state: 'active',
+          pendingMessageCount: runtime.queuedTurns.length,
+          lastActivityAt: new Date().toISOString(),
+        });
+        await logSession(
+          this.manager,
+          runtime.currentSessionId,
+          '[agent-chat] interrupt unavailable; queued follow-up prompt will continue on the next loop',
+        );
+        return;
       }
       await logSession(this.manager, runtime.currentSessionId, '[agent-chat] interrupt requested');
     } catch (error) {

@@ -51,6 +51,8 @@ export function addNightWatchToggle({
             Number(sessionState?.intervalMinutes) || Number(config.intervalMinutes) || 5,
           minIntervalMinutes: Number(config.minIntervalMinutes) || 2,
           maxIntervalMinutes: Number(config.maxIntervalMinutes) || 60,
+          maxCycles: Number(sessionState?.maxCycles) || Number(config.maxCycles) || 21,
+          maxCycleOptions: config.maxCycleOptions || [6, 21, 256],
         });
         if (!nextSettings) {
           return;
