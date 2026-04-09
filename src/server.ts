@@ -86,6 +86,7 @@ import { createBotCryptoApiHandler } from "./identity/bot-crypto-api";
 import { generateBotKey, clearBotKey, isBotKeyUnlocked, storeBotKeyInMemory, unlockViaEscrow } from "./identity/bot-key-manager";
 import { WorkspaceSubscriptionManager } from './agent-chat/subscription-runtime';
 import { AgentChatSessionRuntime } from './agent-chat/session-runtime';
+import { AgentWorkSessionRuntime } from './agent-work/session-runtime';
 import { browserSubscribers } from "./mcp/browser-subscribers";
 import { MemoryStore } from "./mcp/memory-store";
 import { userSettingsStore } from "./storage/user-settings-store";
@@ -1661,7 +1662,20 @@ const agentChatSessionRuntime = new AgentChatSessionRuntime({
   processManager: manager,
   idleRetentionMinutes: 60,
 });
+const agentWorkSessionRuntime = new AgentWorkSessionRuntime({
+  defaultAgent: config.defaultAgent,
+  getSession: (sessionId: string) => manager.getSession(sessionId) ?? null,
+  createSession: async (agent, workingDirectory, name, origin, explicitNpub, metadata) =>
+    await manager.createSession(agent, workingDirectory, name, origin, undefined, explicitNpub, metadata),
+  updateSessionMetadata: (sessionId, metadata) => manager.updateSessionMetadata(sessionId, metadata),
+  addPrompt: (sessionId, content) => promptQueueStore.addPrompt(sessionId, { content }),
+  maybeAutoDispatchQueuedPrompt,
+  enableNightWatch: (sessionId) => {
+    nightWatchStore.enableSession(sessionId);
+  },
+});
 workspaceSubscriptionManager.setChatRuntime(agentChatSessionRuntime);
+workspaceSubscriptionManager.setAgentWorkRuntime(agentWorkSessionRuntime);
 
 await workspaceSubscriptionManager.startupReload();
 

@@ -228,8 +228,14 @@ export async function handleAgentChatApi(
     const groupNpubs = Array.isArray(body.groupNpubs)
       ? body.groupNpubs.filter((value): value is string => typeof value === 'string').map((value) => value.trim()).filter(Boolean)
       : [];
-    const capabilities = Array.isArray(body.capabilities) && body.capabilities.includes('chat_intercept')
-      ? ['chat_intercept'] as const
+    const capabilityInput = Array.isArray(body.capabilities)
+      ? body.capabilities.filter((value): value is string => typeof value === 'string')
+      : [];
+    const capabilities = capabilityInput.includes('chat_intercept') || capabilityInput.includes('task_dispatch')
+      ? [
+          ...(capabilityInput.includes('chat_intercept') ? ['chat_intercept'] as const : []),
+          ...(capabilityInput.includes('task_dispatch') ? ['task_dispatch'] as const : []),
+        ]
       : ['chat_intercept'] as const;
 
     if (!agentId || !botNpub || !workspaceOwnerNpub || !workingDirectory) {

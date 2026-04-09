@@ -2,7 +2,7 @@ export type WorkspaceKeyStatus = 'pending' | 'active' | 'refresh_required' | 're
 export type GroupKeyStatus = 'pending' | 'active' | 'refresh_required' | 'revoked' | 'failed';
 export type SseStatus = 'disconnected' | 'connecting' | 'connected' | 'backoff' | 'disabled';
 export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy';
-export type AgentCapability = 'chat_intercept';
+export type AgentCapability = 'chat_intercept' | 'task_dispatch';
 export type AgentInterceptDecision = 'respond' | 'ignore' | 'pending' | 'failed';
 export type ChatInterceptStateStatus =
   | 'pending'
@@ -208,4 +208,26 @@ export interface BrowserSignedNip98TokenRequest {
   url: string;
   method: string;
   body?: unknown;
+}
+
+export interface InboundTaskRecord {
+  taskId: string;
+  flowId: string | null;
+  flowRunId: string | null;
+  flowStep: string | null;
+  title: string;
+  description: string | null;
+  state: string | null;
+  assignedTo: string | null;
+  deleted: boolean;
+  done: boolean;
+  predecessorTaskIds: string[];
+}
+
+export interface InboundApprovalRecord {
+  approvalId: string | null;
+  flowId: string | null;
+  flowRunId: string | null;
+  flowStep: string | null;
+  state: string | null;
 }

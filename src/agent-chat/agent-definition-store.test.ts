@@ -51,4 +51,39 @@ describe('AgentDefinitionStore', () => {
     expect(workspaceBotAgents).toHaveLength(1);
     expect(workspaceBotAgents[0]?.workingDirectory).toBe('/tmp/alpha');
   });
+
+  test('normalises capabilities backward-compatibly', () => {
+    const store = new AgentDefinitionStore(makeTempDb());
+    const now = new Date().toISOString();
+
+    store.save({
+      agentId: 'agent_task',
+      label: 'Task Agent',
+      botNpub: 'npub1bot',
+      workspaceOwnerNpub: 'npub1workspace',
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/task',
+      capabilities: ['task_dispatch'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: 'npub1manager',
+    });
+    store.save({
+      agentId: 'agent_legacy',
+      label: 'Legacy Agent',
+      botNpub: 'npub1bot',
+      workspaceOwnerNpub: 'npub1workspace',
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/legacy',
+      capabilities: ['unknown' as never],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: 'npub1manager',
+    });
+
+    expect(store.getByAgentId('agent_task')?.capabilities).toEqual(['task_dispatch']);
+    expect(store.getByAgentId('agent_legacy')?.capabilities).toEqual(['chat_intercept']);
+  });
 });

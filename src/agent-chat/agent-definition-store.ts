@@ -38,6 +38,10 @@ function normaliseCapabilities(values: string[]): AgentCapability[] {
   for (const value of values) {
     if (value === 'chat_intercept') {
       set.add(value);
+      continue;
+    }
+    if (value === 'task_dispatch') {
+      set.add(value);
     }
   }
   return set.size > 0 ? [...set] : ['chat_intercept'];

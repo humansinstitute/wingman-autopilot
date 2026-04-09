@@ -1,11 +1,14 @@
 import { unlockViaEscrow } from '../identity/bot-key-manager';
+import { AgentWorkSessionRuntime, normaliseInboundApprovalRecord, normaliseInboundTaskRecord } from '../agent-work/session-runtime';
 import { agentDefinitionStore, type AgentDefinitionStore } from './agent-definition-store';
 import { AgentChatRoutingEvaluator } from './routing-evaluator';
 import type { AgentChatSessionRuntime } from './session-runtime';
 import { workspaceSubscriptionStore, type WorkspaceSubscriptionStore } from './workspace-subscription-store';
 import { parseSseEvents } from './sse-events';
+import { chatInterceptStateStore } from './chat-intercept-state-store';
 import {
   buildChatMessageFamilyHash,
+  buildRecordFamilyHash,
   buildFailureDiagnostic,
   buildStreamUrl,
   buildSuccessDiagnostic,
@@ -15,9 +18,11 @@ import {
   registerWorkspaceKeyWithTower,
 } from './tower-client';
 import { loadYokeBotHelpers } from './yoke-bot-helpers';
+import { decryptRecordPayloadWithYoke } from './yoke-record-payload';
 import type {
   AgentDefinitionRecord,
   BotKeyStoreRecord,
+  ChatInterceptStateRecord,
   CreateAgentDefinitionInput,
   CreateWorkspaceSubscriptionInput,
   RuntimeBotIdentity,
@@ -43,6 +48,9 @@ export interface WorkspaceSubscriptionManagerDependencies {
   agentStore?: AgentDefinitionStore;
   routingEvaluator?: AgentChatRoutingEvaluator;
   chatRuntime?: AgentChatSessionRuntime | null;
+  agentWorkRuntime?: AgentWorkSessionRuntime | null;
+  fetchRecordHistory?: typeof fetchRecordHistory;
+  decryptRecordPayload?: typeof decryptRecordPayloadWithYoke;
   botKeyStore: {
     getActiveKeyForUser: (npub: string) => BotKeyStoreRecord | null;
     getActiveKeyForBotNpub: (botNpub: string) => BotKeyStoreRecord | null;
@@ -84,6 +92,9 @@ export class WorkspaceSubscriptionManager {
   private readonly routingEvaluator: AgentChatRoutingEvaluator;
   private readonly botKeyStore: WorkspaceSubscriptionManagerDependencies['botKeyStore'];
   private chatRuntime: AgentChatSessionRuntime | null;
+  private agentWorkRuntime: AgentWorkSessionRuntime | null;
+  private readonly fetchRecordHistoryImpl: typeof fetchRecordHistory;
+  private readonly decryptRecordPayloadImpl: typeof decryptRecordPayloadWithYoke;
   private readonly runtimes = new Map<string, RuntimeContext>();
 
   constructor(deps: WorkspaceSubscriptionManagerDependencies) {
@@ -92,10 +103,17 @@ export class WorkspaceSubscriptionManager {
     this.routingEvaluator = deps.routingEvaluator ?? new AgentChatRoutingEvaluator({ agentStore: this.agentStore });
     this.botKeyStore = deps.botKeyStore;
     this.chatRuntime = deps.chatRuntime ?? null;
+    this.agentWorkRuntime = deps.agentWorkRuntime ?? null;
+    this.fetchRecordHistoryImpl = deps.fetchRecordHistory ?? fetchRecordHistory;
+    this.decryptRecordPayloadImpl = deps.decryptRecordPayload ?? decryptRecordPayloadWithYoke;
   }
 
   setChatRuntime(chatRuntime: AgentChatSessionRuntime | null): void {
     this.chatRuntime = chatRuntime;
+  }
+
+  setAgentWorkRuntime(agentWorkRuntime: AgentWorkSessionRuntime | null): void {
+    this.agentWorkRuntime = agentWorkRuntime;
   }
 
   listForManager(npub: string): WorkspaceSubscriptionRecord[] {
@@ -130,20 +148,33 @@ export class WorkspaceSubscriptionManager {
     return this.routingEvaluator.listInterceptsForSubscription(subscriptionId);
   }
 
+  private normaliseAgentCapabilities(capabilities?: string[]): Array<'chat_intercept' | 'task_dispatch'> {
+    const set = new Set<'chat_intercept' | 'task_dispatch'>();
+    for (const capability of capabilities ?? []) {
+      if (capability === 'chat_intercept' || capability === 'task_dispatch') {
+        set.add(capability);
+      }
+    }
+    return set.size > 0 ? [...set] : ['chat_intercept'];
+  }
+
   saveAgentForManager(input: CreateAgentDefinitionInput): AgentDefinitionRecord {
     const agentId = input.agentId.trim();
     const label = input.label.trim() || agentId;
     const botNpub = input.botNpub.trim();
     const workspaceOwnerNpub = input.workspaceOwnerNpub.trim();
     const workingDirectory = input.workingDirectory.trim();
-    const groupNpubs = [...new Set(input.groupNpubs.map((value) => value.trim()).filter((value) => value.length > 0))].sort();
-    const capabilities = input.capabilities?.includes('chat_intercept') ? ['chat_intercept'] : ['chat_intercept'];
+    const requestedGroupNpubs = [...new Set(input.groupNpubs.map((value) => value.trim()).filter((value) => value.length > 0))].sort();
+    const groupNpubs = requestedGroupNpubs.length > 0
+      ? requestedGroupNpubs
+      : this.deriveAgentGroupNpubs(workspaceOwnerNpub, botNpub);
+    const capabilities = this.normaliseAgentCapabilities(input.capabilities);
 
     if (!agentId || !botNpub || !workspaceOwnerNpub || !workingDirectory) {
       throw new Error('agentId, botNpub, workspaceOwnerNpub, and workingDirectory are required.');
     }
     if (groupNpubs.length === 0) {
-      throw new Error('At least one group npub is required.');
+      throw new Error('At least one group npub is required, or a healthy subscription must already have refreshed readable bot group keys.');
     }
 
     const existing = this.agentStore.getByAgentId(agentId);
@@ -257,6 +288,7 @@ export class WorkspaceSubscriptionManager {
         this.saveRecord(refreshed);
         this.clearRuntimeFailure(refreshed.subscriptionId, 'startup_reload_recovered');
         await this.ensureConnected(refreshed, botIdentity, true);
+        await this.replayPendingIntercepts(refreshed, botIdentity);
       } catch (error) {
         const failed = {
           ...record,
@@ -637,6 +669,12 @@ export class WorkspaceSubscriptionManager {
     if (eventType === 'record-changed' && payload?.family_hash === buildChatMessageFamilyHash(record.sourceAppNpub)) {
       return await this.handleChatMessageRecordChanged(record, payload);
     }
+    if (eventType === 'record-changed' && payload?.family_hash === buildRecordFamilyHash(record.sourceAppNpub, 'task')) {
+      return await this.handleTaskRecordChanged(record, payload);
+    }
+    if (eventType === 'record-changed' && payload?.family_hash === buildRecordFamilyHash(record.sourceAppNpub, 'approval')) {
+      return await this.handleApprovalRecordChanged(record, payload);
+    }
 
     return record;
   }
@@ -774,6 +812,139 @@ export class WorkspaceSubscriptionManager {
     return this.saveRecord(this.recomputeHealth(record));
   }
 
+  private listTaskDispatchAgents(subscription: WorkspaceSubscriptionRecord): AgentDefinitionRecord[] {
+    return this.agentStore
+      .listByWorkspaceAndBot(subscription.workspaceOwnerNpub, subscription.botNpub)
+      .filter((agent) => agent.enabled && agent.capabilities.includes('task_dispatch'))
+      .sort((left, right) => left.agentId.localeCompare(right.agentId));
+  }
+
+  private async loadLatestAdvisoryRecord(
+    subscription: WorkspaceSubscriptionRecord,
+    recordId: string,
+  ): Promise<Record<string, unknown> | null> {
+    const runtime = this.getRuntime(subscription.subscriptionId);
+    const versions = await this.fetchRecordHistoryImpl(
+      subscription.backendBaseUrl,
+      subscription.workspaceOwnerNpub,
+      recordId,
+      runtime.wsSession,
+    );
+    return versions.sort((left, right) => Number(right.version ?? 0) - Number(left.version ?? 0))[0] ?? null;
+  }
+
+  private async decryptAdvisoryPayload(
+    subscription: WorkspaceSubscriptionRecord,
+    latest: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const runtime = this.getRuntime(subscription.subscriptionId);
+    if (!runtime.groupKeys && runtime.wrappedKeyRows.length > 0) {
+      const helpers = await loadYokeBotHelpers();
+      runtime.groupKeys = helpers.loadBotGroupKeys({
+        wsSession: runtime.wsSession,
+        botSecret: runtime.botIdentity.botSecret,
+        botNpub: runtime.botIdentity.botNpub,
+        keyRows: runtime.wrappedKeyRows,
+      });
+    }
+    return await this.decryptRecordPayloadImpl({
+      record: latest,
+      wsSession: runtime.wsSession,
+      groupKeys: runtime.groupKeys,
+    });
+  }
+
+  private async handleTaskRecordChanged(
+    record: WorkspaceSubscriptionRecord,
+    payload: Record<string, unknown>,
+  ): Promise<WorkspaceSubscriptionRecord> {
+    if (!this.agentWorkRuntime) {
+      return record;
+    }
+    const taskAgents = this.listTaskDispatchAgents(record);
+    if (taskAgents.length === 0) {
+      return record;
+    }
+
+    const recordId = typeof payload.record_id === 'string' ? payload.record_id : '';
+    if (!recordId) {
+      return record;
+    }
+
+    try {
+      const latest = await this.loadLatestAdvisoryRecord(record, recordId);
+      if (!latest) {
+        return record;
+      }
+      const decrypted = await this.decryptAdvisoryPayload(record, latest);
+      const task = normaliseInboundTaskRecord(decrypted);
+      if (!task) {
+        return record;
+      }
+      for (const agent of taskAgents) {
+        await this.agentWorkRuntime.handleTaskDispatch({
+          subscription: record,
+          agent,
+          recordId,
+          recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
+          task,
+        });
+      }
+    } catch (error) {
+      console.warn(
+        `[agent-work] task advisory failed for subscription ${record.subscriptionId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    return record;
+  }
+
+  private async handleApprovalRecordChanged(
+    record: WorkspaceSubscriptionRecord,
+    payload: Record<string, unknown>,
+  ): Promise<WorkspaceSubscriptionRecord> {
+    if (!this.agentWorkRuntime) {
+      return record;
+    }
+    const taskAgents = this.listTaskDispatchAgents(record);
+    if (taskAgents.length === 0) {
+      return record;
+    }
+
+    const recordId = typeof payload.record_id === 'string' ? payload.record_id : '';
+    if (!recordId) {
+      return record;
+    }
+
+    try {
+      const latest = await this.loadLatestAdvisoryRecord(record, recordId);
+      if (!latest) {
+        return record;
+      }
+      const decrypted = await this.decryptAdvisoryPayload(record, latest);
+      const approval = normaliseInboundApprovalRecord(decrypted);
+      if (!approval?.flowRunId) {
+        return record;
+      }
+      for (const agent of taskAgents) {
+        await this.agentWorkRuntime.handleApprovalDispatch({
+          subscription: record,
+          agent,
+          recordId,
+          approval,
+        });
+      }
+    } catch (error) {
+      console.warn(
+        `[agent-work] approval advisory failed for subscription ${record.subscriptionId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    return record;
+  }
+
   private stopRuntime(subscriptionId: string, removed: boolean): void {
     const runtime = this.runtimes.get(subscriptionId);
     if (!runtime) {
@@ -821,9 +992,116 @@ export class WorkspaceSubscriptionManager {
       await this.ensureConnected(next, botIdentity, false);
     }
 
+    await this.replayPendingIntercepts(next, botIdentity);
+
     const latest = this.store.getBySubscriptionId(record.subscriptionId) ?? next;
     this.clearRuntimeFailure(latest.subscriptionId, options.reason);
     return latest;
+  }
+
+  private async replayPendingIntercepts(
+    record: WorkspaceSubscriptionRecord,
+    botIdentity: RuntimeBotIdentity,
+  ): Promise<void> {
+    if (!this.chatRuntime) {
+      return;
+    }
+
+    const runtime = this.runtimes.get(record.subscriptionId);
+    if (!runtime || !runtime.wsSession) {
+      return;
+    }
+
+    const pendingIntercepts = this.routingEvaluator
+      .listInterceptsForSubscription(record.subscriptionId)
+      .filter((intercept) => this.shouldReplayPendingIntercept(intercept));
+
+    if (pendingIntercepts.length === 0) {
+      return;
+    }
+
+    const helpers = await loadYokeBotHelpers();
+    if (!runtime.groupKeys && runtime.wrappedKeyRows.length > 0) {
+      runtime.groupKeys = helpers.loadBotGroupKeys({
+        wsSession: runtime.wsSession,
+        botSecret: botIdentity.botSecret,
+        botNpub: botIdentity.botNpub,
+        keyRows: runtime.wrappedKeyRows,
+      });
+    }
+
+    for (const intercept of pendingIntercepts) {
+      const agent = this.agentStore.getByAgentId(intercept.agentId);
+      if (!agent || !agent.enabled) {
+        continue;
+      }
+      const messageId = intercept.lastMessageIdSeen;
+      if (!messageId) {
+        continue;
+      }
+
+      try {
+        const versions = await fetchRecordHistory(
+          record.backendBaseUrl,
+          record.workspaceOwnerNpub,
+          messageId,
+          runtime.wsSession,
+        );
+        const latest = versions.sort((left, right) => Number(right.version ?? 0) - Number(left.version ?? 0))[0];
+        if (!latest) {
+          continue;
+        }
+        const chatMessage = helpers.decryptChatRecord({
+          record: latest,
+          wsSession: runtime.wsSession,
+          groupKeys: runtime.groupKeys,
+        });
+        if (chatMessage?.sender_npub === agent.botNpub) {
+          chatInterceptStateStore.save({
+            ...intercept,
+            state: 'idle',
+            lastDecision: 'respond',
+            pendingMessageCount: 0,
+            lastActivityAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+          continue;
+        }
+        void this.chatRuntime.handleRoutedChat({
+          agent,
+          subscription: record,
+          intercept,
+          botIdentity,
+          chatMessage,
+        }).catch((runtimeError) => {
+          console.warn(
+            `[agent-chat] pending-turn replay failed for ${intercept.routingKey}: ${
+              runtimeError instanceof Error ? runtimeError.message : String(runtimeError)
+            }`,
+          );
+        });
+      } catch (error) {
+        console.warn(
+          `[agent-chat] failed to reload pending turn ${messageId} for ${intercept.routingKey}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+  }
+
+  private shouldReplayPendingIntercept(intercept: ChatInterceptStateRecord): boolean {
+    if (!intercept.lastMessageIdSeen) {
+      return false;
+    }
+    if (intercept.lastDecision !== 'pending') {
+      return false;
+    }
+    return intercept.state === 'idle'
+      || intercept.state === 'pending'
+      || intercept.state === 'active'
+      || intercept.state === 'interrupting'
+      || intercept.state === 'interrupt_failed';
   }
 
   private getRuntime(subscriptionId: string): RuntimeContext {
@@ -877,5 +1155,26 @@ export class WorkspaceSubscriptionManager {
     }
     record.healthStatus = 'degraded';
     return record;
+  }
+
+  private deriveAgentGroupNpubs(workspaceOwnerNpub: string, botNpub: string): string[] {
+    const subscription = this.store.getByWorkspaceAndBot(workspaceOwnerNpub, botNpub);
+    if (!subscription?.wrappedGroupKeysJson) {
+      return [];
+    }
+
+    try {
+      const rows = JSON.parse(subscription.wrappedGroupKeysJson) as unknown;
+      if (!Array.isArray(rows)) {
+        return [];
+      }
+      const groupNpubs = rows
+        .map((row) => (row && typeof row === 'object' ? (row as { group_npub?: unknown }).group_npub : null))
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .map((value) => value.trim());
+      return [...new Set(groupNpubs)].sort();
+    } catch {
+      return [];
+    }
   }
 }
