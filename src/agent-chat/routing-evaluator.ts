@@ -107,10 +107,11 @@ export class AgentChatRoutingEvaluator {
     const assignments: RoutedChatAssignment[] = [];
 
     for (const agent of matchedAgents) {
-      if (
+      const isSelfAuthored = Boolean(
         (senderNpub && senderNpub === agent.botNpub)
-        || (updaterNpub && updaterNpub === agent.botNpub)
-      ) {
+        || (updaterNpub && (updaterNpub === agent.botNpub || updaterNpub === input.subscription.wsKeyNpub))
+      );
+      if (isSelfAuthored) {
         selfSuppressedAgentIds.push(agent.agentId);
         continue;
       }

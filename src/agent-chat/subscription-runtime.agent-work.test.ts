@@ -427,4 +427,82 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(next.recentDispatches[0]?.details?.task_id).toBe('task-self-1');
     expect(next.recentDispatches[0]?.details?.updater_npub).toBe('npub1bot');
   });
+
+  test('skips task dispatch when the workspace key was the latest updater', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-ws-self-update-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-ws-self-update-agents'));
+    const subscription = store.save({
+      ...makeSubscription(),
+      wsKeyNpub: 'npub1wskey',
+    });
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-task',
+      label: 'Task Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-work',
+      capabilities: ['task_dispatch'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      agentWorkRuntime: {
+        handleTaskDispatch: async () => {
+          throw new Error('handleTaskDispatch should not run for workspace-key-authored task rewrites');
+        },
+        handleApprovalDispatch: async () => null,
+      } as unknown as AgentWorkSessionRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-task-self-2',
+          record_state: 'active',
+          version: 2,
+          signature_npub: 'npub1wskey',
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        task_id: 'task-self-2',
+        title: 'Workspace self updated task',
+        state: 'open',
+        assigned_to_npub: 'npub1bot',
+        predecessor_task_ids: [],
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-task-self-2',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'task'),
+        record_id: 'record-task-self-2',
+      }),
+    );
+
+    expect(next.recentDispatches).toHaveLength(1);
+    expect(next.recentDispatches[0]?.action).toBe('task_skip_self_update');
+    expect(next.recentDispatches[0]?.details?.task_id).toBe('task-self-2');
+    expect(next.recentDispatches[0]?.details?.updater_npub).toBe('npub1wskey');
+  });
 });

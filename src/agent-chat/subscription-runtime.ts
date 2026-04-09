@@ -75,6 +75,13 @@ function getRecordUpdaterNpub(record: Record<string, unknown>): string | null {
     ?? getOptionalText(record.owner_npub);
 }
 
+function isSelfUpdater(subscription: WorkspaceSubscriptionRecord, agent: AgentDefinitionRecord, updaterNpub: string | null): boolean {
+  if (!updaterNpub) {
+    return false;
+  }
+  return updaterNpub === agent.botNpub || updaterNpub === subscription.wsKeyNpub;
+}
+
 export interface WorkspaceSubscriptionManagerDependencies {
   store?: WorkspaceSubscriptionStore;
   agentStore?: AgentDefinitionStore;
@@ -973,7 +980,7 @@ export class WorkspaceSubscriptionManager {
         });
       }
       for (const agent of taskAgents) {
-        if (updaterNpub && updaterNpub === agent.botNpub) {
+        if (isSelfUpdater(record, agent, updaterNpub)) {
           record = this.appendDispatchHistory(record, {
             at: new Date().toISOString(),
             kind: 'task',
@@ -1111,7 +1118,7 @@ export class WorkspaceSubscriptionManager {
         });
       }
       for (const agent of taskAgents) {
-        if (updaterNpub && updaterNpub === agent.botNpub) {
+        if (isSelfUpdater(record, agent, updaterNpub)) {
           record = this.appendDispatchHistory(record, {
             at: new Date().toISOString(),
             kind: 'approval',
