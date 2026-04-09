@@ -188,6 +188,7 @@ let renderFiles = () => document.createElement("div");
 let renderLive = () => document.createElement("div");
 let renderSessionTabs = () => document.createElement("div");
 let renderTabs = () => document.createElement("div");
+let renderLiveTabsBarContent = () => document.createElement("div");
 let updateLivePanelsForSession = () => {};
 let captureFocusSnapshot = () => null;
 let restoreFocusFromSnapshot = () => {};
@@ -1725,10 +1726,10 @@ const pollSessions = async () => {
       if (sessionsChanged && tabsVisible) {
         const tabsBar = document.querySelector('.wm-tabs-bar');
         if (tabsBar) {
-          const existingTabs = tabsBar.querySelector('.wm-tabs');
-          if (existingTabs) {
-            const newTabs = renderTabs();
-            existingTabs.replaceWith(newTabs);
+          const existingTabsPanel = tabsBar.querySelector('.wm-live-tabs-panel');
+          if (existingTabsPanel) {
+            const newTabsPanel = renderLiveTabsBarContent();
+            existingTabsPanel.replaceWith(newTabsPanel);
           }
         }
       }
@@ -3222,6 +3223,7 @@ const liveViewModule = initLiveView({
 renderLive = liveViewModule.renderLive;
 renderSessionTabs = liveViewModule.renderSessionTabs;
 renderTabs = liveViewModule.renderTabs;
+renderLiveTabsBarContent = liveViewModule.renderLiveTabsBarContent;
 updateLivePanelsForSession = liveViewModule.updateLivePanelsForSession;
 captureFocusSnapshot = liveViewModule.captureFocusSnapshot;
 restoreFocusFromSnapshot = liveViewModule.restoreFocusFromSnapshot;

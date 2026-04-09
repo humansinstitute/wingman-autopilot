@@ -23,6 +23,13 @@ import { addNightWatchToggle } from "../nightwatch/cmd-toggle.js";
 import { openFilePicker } from "../modals/file-picker.js";
 import { npubProjectsState } from "../npub-projects/index.js";
 import { state, TERMINAL_CONTROL_ACTIONS } from "../state/index.js";
+import {
+  countSessionsByLiveTabGroup,
+  filterSessionsForLiveTabGroup,
+  getLiveSessionTabGroup,
+  LIVE_SESSION_TAB_GROUPS,
+  resolveLiveTabGroup,
+} from "../sessions/session-classification.js";
 import * as scrollPill from "../live/scroll-pill.js";
 import {
   createConversationElement,
@@ -103,6 +110,114 @@ export function initLiveView(deps) {
 
   // ── Session tabs ────────────────────────────────────────────────
 
+  function replaceLiveTabsBarContent() {
+    const tabsBar = document.querySelector(".wm-tabs-bar");
+    if (!tabsBar) {
+      return;
+    }
+    const existingPanel = tabsBar.querySelector(".wm-live-tabs-panel");
+    if (!existingPanel) {
+      return;
+    }
+    existingPanel.replaceWith(renderLiveTabsBarContent());
+  }
+
+  function syncLiveSessionTabGroup(session) {
+    if (state.liveSessionTabs.group === "all") {
+      return;
+    }
+    state.liveSessionTabs.group = getLiveSessionTabGroup(session);
+  }
+
+  function getSelectedLiveSessionTabGroup(activeSessions) {
+    const currentSessionId = resolveCurrentLiveSessionId();
+    const activeSession = activeSessions.find((session) => session.id === currentSessionId) ?? null;
+    return resolveLiveTabGroup(state.liveSessionTabs.group, activeSessions, activeSession);
+  }
+
+  function handleLiveSessionTabGroupChange(groupId) {
+    const activeSessions = getActiveSessions();
+    const nextSessions = filterSessionsForLiveTabGroup(activeSessions, groupId);
+    if (nextSessions.length === 0) {
+      return;
+    }
+
+    state.liveSessionTabs.group = groupId;
+    const currentSessionId = resolveCurrentLiveSessionId();
+    const currentVisible = nextSessions.some((session) => session.id === currentSessionId);
+    if (currentVisible) {
+      render();
+      return;
+    }
+
+    const targetSession = nextSessions[0];
+    setCurrentRoute("live");
+    setActiveSession(targetSession.id, { updateHistory: true, forceLog: true });
+    fetchLogs(targetSession.id);
+    fetchConversation(targetSession.id);
+    render();
+  }
+
+  function renderLiveSessionGroupTabs(activeSessions) {
+    const counts = countSessionsByLiveTabGroup(activeSessions);
+    const groupsWithSessions = LIVE_SESSION_TAB_GROUPS.filter((group) => counts[group.id] > 0);
+    if (groupsWithSessions.length <= 1) {
+      return null;
+    }
+
+    const selectedGroup = getSelectedLiveSessionTabGroup(activeSessions);
+    const groupBar = document.createElement("div");
+    groupBar.className = "wm-live-tab-groups";
+    groupBar.setAttribute("role", "group");
+    groupBar.setAttribute("aria-label", "Filter live sessions");
+
+    LIVE_SESSION_TAB_GROUPS.forEach((group) => {
+      const count = counts[group.id];
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "wm-live-tab-group";
+      button.setAttribute("aria-pressed", group.id === selectedGroup ? "true" : "false");
+      button.setAttribute("aria-label", `${group.label} (${count})`);
+      button.setAttribute("data-testid", `live-session-group-${group.id}`);
+      button.disabled = count === 0;
+
+      if (group.id === selectedGroup) {
+        button.classList.add("active");
+      }
+
+      const label = document.createElement("span");
+      label.className = "wm-live-tab-group__label";
+      label.textContent = group.label;
+
+      const badge = document.createElement("span");
+      badge.className = "wm-live-tab-group__count";
+      badge.textContent = String(count);
+
+      button.append(label, badge);
+      button.addEventListener("click", () => {
+        handleLiveSessionTabGroupChange(group.id);
+      });
+      groupBar.append(button);
+    });
+
+    return groupBar;
+  }
+
+  function renderLiveTabsBarContent() {
+    const panel = document.createElement("div");
+    panel.className = "wm-live-tabs-panel";
+
+    const activeSessions = getActiveSessions();
+    const selectedGroup = getSelectedLiveSessionTabGroup(activeSessions);
+    const groupTabs = renderLiveSessionGroupTabs(activeSessions);
+    if (groupTabs) {
+      panel.append(groupTabs);
+    }
+
+    panel.append(renderTabs({ sessions: filterSessionsForLiveTabGroup(activeSessions, selectedGroup) }));
+    return panel;
+  }
+
   const renderSessionTabs = (options = {}) => {
     const onSelect = typeof options.onSelect === "function" ? options.onSelect : null;
     const tabs = document.createElement("div");
@@ -132,20 +247,14 @@ export function initLiveView(deps) {
           onSelect?.();
           return;
         }
+        syncLiveSessionTabGroup(session);
         setCurrentRoute("live");
         setActiveSession(session.id, { updateHistory: true, forceLog: true });
         fetchLogs(session.id);
         fetchConversation(session.id);
         if (wasLiveRoute) {
           if (getTabsVisible()) {
-            const tabsBar = document.querySelector('.wm-tabs-bar');
-            if (tabsBar) {
-              const existingTabs = tabsBar.querySelector('.wm-tabs');
-              if (existingTabs) {
-                const newTabs = renderTabs();
-                existingTabs.replaceWith(newTabs);
-              }
-            }
+            replaceLiveTabsBarContent();
           }
           updateLivePanelsForSession(session.id);
         } else {
@@ -170,11 +279,11 @@ export function initLiveView(deps) {
   const renderTabs = (options = {}) => {
     const variant = options.variant === "menu" ? "menu" : "default";
     const onSelect = typeof options.onSelect === "function" ? options.onSelect : null;
+    const sessions = Array.isArray(options.sessions) ? options.sessions : getActiveSessions();
     const tabs = document.createElement("div");
     tabs.className = `wm-tabs${variant === "menu" ? " menu" : ""}`;
 
-    const activeSessions = getActiveSessions();
-    activeSessions.forEach((session) => {
+    sessions.forEach((session) => {
       const tab = document.createElement("div");
       tab.className = "wm-tab";
       const menuTabActiveId = resolveCurrentLiveSessionId();
@@ -196,19 +305,13 @@ export function initLiveView(deps) {
           onSelect?.();
           return;
         }
+        syncLiveSessionTabGroup(session);
         setCurrentRoute("live");
         setActiveSession(session.id, { updateHistory: true, forceLog: true });
         fetchLogs(session.id);
         fetchConversation(session.id);
         if (getTabsVisible()) {
-          const tabsBar = document.querySelector('.wm-tabs-bar');
-          if (tabsBar) {
-            const existingTabs = tabsBar.querySelector('.wm-tabs');
-            if (existingTabs) {
-              const newTabs = renderTabs();
-              existingTabs.replaceWith(newTabs);
-            }
-          }
+          replaceLiveTabsBarContent();
         }
         updateLivePanelsForSession(session.id);
         onSelect?.();
@@ -1128,11 +1231,19 @@ export function initLiveView(deps) {
   const renderLive = () => {
     const wrapper = document.createElement("div");
     wrapper.className = "wm-live";
+    const activeSessions = getActiveSessions();
+    const currentLiveSessionId = resolveCurrentLiveSessionId();
+    const currentLiveSession =
+      activeSessions.find((session) => session.id === currentLiveSessionId) ?? null;
+
+    if (currentLiveSession) {
+      syncLiveSessionTabGroup(currentLiveSession);
+    }
 
     if (getTabsVisible()) {
       const tabsBar = document.createElement("div");
       tabsBar.className = "wm-tabs-bar";
-      tabsBar.append(renderTabs());
+      tabsBar.append(renderLiveTabsBarContent());
       wrapper.append(tabsBar);
     }
 
@@ -1687,6 +1798,7 @@ export function initLiveView(deps) {
   return {
     renderSessionTabs,
     renderTabs,
+    renderLiveTabsBarContent,
     renderLive,
     updateLivePanelsForSession,
     captureFocusSnapshot,

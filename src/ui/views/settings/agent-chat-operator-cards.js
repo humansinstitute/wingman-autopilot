@@ -1,3 +1,5 @@
+import { isAgentChatSession } from '../../sessions/session-classification.js';
+
 function formatDiagnostic(diagnostic) {
   if (!diagnostic) return 'None';
   const status = diagnostic.ok ? 'ok' : (diagnostic.code || 'failed');
@@ -57,10 +59,6 @@ function formatTimestamp(value) {
   }
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString() : value;
-}
-
-function isAgentChatSession(session) {
-  return session?.metadata?.role === 'agent-chat' || session?.origin?.type === 'agent-chat';
 }
 
 function appendTableCell(row, content) {

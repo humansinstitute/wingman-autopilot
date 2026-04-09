@@ -84,6 +84,9 @@ export const state = {
   logs: new Map(),
   messageDrafts: new Map(),
   logPanelOpen: new Map(),
+  liveSessionTabs: {
+    group: null,
+  },
   promptQueues: new Map(), // sessionId -> {prompts: [], maxSize: 21}
   lastWorkingDirectory: null,
   // Archived session data for viewing historical sessions
