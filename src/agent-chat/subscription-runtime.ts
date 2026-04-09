@@ -31,6 +31,7 @@ import type {
   WorkspaceSubscriptionRecord,
   YokeWorkspaceSession,
 } from './types';
+import { evaluateTaskDispatchEligibility } from '../agent-work/session-runtime';
 
 interface RuntimeContext {
   abortController: AbortController | null;
@@ -906,9 +907,45 @@ export class WorkspaceSubscriptionManager {
       const decrypted = await this.decryptAdvisoryPayload(record, latest);
       const task = normaliseInboundTaskRecord(decrypted);
       if (!task) {
-        return record;
+        return this.appendDispatchHistory(record, {
+          at: new Date().toISOString(),
+          kind: 'task',
+          action: 'task_skip_invalid_payload',
+          agentId: taskAgents[0]?.agentId ?? 'unknown',
+          sessionId: null,
+          recordId,
+          bindingId: recordId,
+          bindingType: 'task',
+          details: {
+            reason: 'normalise_failed',
+          },
+        });
       }
       for (const agent of taskAgents) {
+        const eligibility = evaluateTaskDispatchEligibility({
+          task,
+          recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
+          agent,
+        });
+        if (eligibility !== 'dispatch') {
+          record = this.appendDispatchHistory(record, {
+            at: new Date().toISOString(),
+            kind: 'task',
+            action: eligibility,
+            agentId: agent.agentId,
+            sessionId: null,
+            recordId,
+            bindingId: task.flowRunId ?? task.taskId,
+            bindingType: task.flowRunId ? 'flow_run' : 'task',
+            details: {
+              task_id: task.taskId,
+              assigned_to: task.assignedTo,
+              state: task.state,
+              predecessor_task_ids: task.predecessorTaskIds,
+            },
+          });
+          continue;
+        }
         const session = await this.agentWorkRuntime.handleTaskDispatch({
           subscription: record,
           agent,
@@ -932,7 +969,21 @@ export class WorkspaceSubscriptionManager {
               flow_id: task.flowId,
             },
           });
+          continue;
         }
+        record = this.appendDispatchHistory(record, {
+          at: new Date().toISOString(),
+          kind: 'task',
+          action: 'task_skip_runtime_returned_null',
+          agentId: agent.agentId,
+          sessionId: null,
+          recordId,
+          bindingId: task.flowRunId ?? task.taskId,
+          bindingType: task.flowRunId ? 'flow_run' : 'task',
+          details: {
+            task_id: task.taskId,
+          },
+        });
       }
     } catch (error) {
       console.warn(
@@ -969,7 +1020,19 @@ export class WorkspaceSubscriptionManager {
       const decrypted = await this.decryptAdvisoryPayload(record, latest);
       const approval = normaliseInboundApprovalRecord(decrypted);
       if (!approval?.flowRunId) {
-        return record;
+        return this.appendDispatchHistory(record, {
+          at: new Date().toISOString(),
+          kind: 'approval',
+          action: 'approval_skip_invalid_payload',
+          agentId: taskAgents[0]?.agentId ?? 'unknown',
+          sessionId: null,
+          recordId,
+          bindingId: recordId,
+          bindingType: 'flow_run',
+          details: {
+            reason: 'missing_flow_run_id',
+          },
+        });
       }
       for (const agent of taskAgents) {
         const session = await this.agentWorkRuntime.handleApprovalDispatch({
@@ -994,7 +1057,23 @@ export class WorkspaceSubscriptionManager {
               flow_id: approval.flowId,
             },
           });
+          continue;
         }
+        record = this.appendDispatchHistory(record, {
+          at: new Date().toISOString(),
+          kind: 'approval',
+          action: 'approval_skip_no_live_flow_session',
+          agentId: agent.agentId,
+          sessionId: null,
+          recordId,
+          bindingId: approval.flowRunId,
+          bindingType: 'flow_run',
+          details: {
+            approval_id: approval.approvalId,
+            flow_run_id: approval.flowRunId,
+            flow_id: approval.flowId,
+          },
+        });
       }
     } catch (error) {
       console.warn(

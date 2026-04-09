@@ -16,6 +16,11 @@ import {
 } from './prompts';
 
 type DispatchReason = 'new task' | 'task updated';
+export type AgentWorkTaskDispatchDecisionCode =
+  | 'dispatch'
+  | 'skip_terminal'
+  | 'skip_assignment'
+  | 'skip_predecessors';
 
 export interface AgentWorkRuntimeDependencies {
   defaultAgent: AgentType;
@@ -151,6 +156,23 @@ function isTerminalTask(task: InboundTaskRecord, recordState: string | null): bo
   return Boolean(task.state && TERMINAL_TASK_STATES.has(task.state));
 }
 
+export function evaluateTaskDispatchEligibility(params: {
+  task: InboundTaskRecord;
+  recordState: string | null;
+  agent: AgentDefinitionRecord;
+}): AgentWorkTaskDispatchDecisionCode {
+  if (isTerminalTask(params.task, params.recordState)) {
+    return 'skip_terminal';
+  }
+  if (!isAssignedToAgent(params.task, params.agent)) {
+    return 'skip_assignment';
+  }
+  if (hasBlockingPredecessors(params.task)) {
+    return 'skip_predecessors';
+  }
+  return 'dispatch';
+}
+
 function resolveTaskDispatchReason(
   taskBinding: AgentWorkSessionBindingRecord | null,
 ): DispatchReason {
@@ -236,13 +258,7 @@ export class AgentWorkSessionRuntime {
   }
 
   async handleTaskDispatch(input: AgentWorkTaskDispatchInput): Promise<SessionSnapshot | null> {
-    if (isTerminalTask(input.task, input.recordState)) {
-      return null;
-    }
-    if (!isAssignedToAgent(input.task, input.agent)) {
-      return null;
-    }
-    if (hasBlockingPredecessors(input.task)) {
+    if (evaluateTaskDispatchEligibility(input) !== 'dispatch') {
       return null;
     }
 
