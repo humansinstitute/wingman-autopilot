@@ -148,6 +148,7 @@ function candidatePayloads(payload: Record<string, unknown>): Record<string, unk
   const candidates: Record<string, unknown>[] = [];
   const directData = compactRecord(payload.data);
   if (directData) {
+    candidates.push({ ...payload, ...directData });
     candidates.push(directData);
   }
   candidates.push(payload);
@@ -156,6 +157,7 @@ function candidatePayloads(payload: Record<string, unknown>): Record<string, unk
     if (nested) {
       const nestedData = compactRecord(nested.data);
       if (nestedData) {
+        candidates.push({ ...nested, ...nestedData });
         candidates.push(nestedData);
       }
       candidates.push(nested);
@@ -282,7 +284,7 @@ function buildMetadataPatch(params: {
 
 export function normaliseInboundTaskRecord(payload: Record<string, unknown>): InboundTaskRecord | null {
   for (const candidate of candidatePayloads(payload)) {
-    const taskId = pickFirstText(candidate, ['task_id', 'taskId', 'id']);
+    const taskId = pickFirstText(candidate, ['task_id', 'taskId', 'record_id', 'id']);
     if (!taskId) {
       continue;
     }
@@ -317,7 +319,7 @@ export function normaliseInboundApprovalRecord(payload: Record<string, unknown>)
       continue;
     }
     return {
-      approvalId: pickFirstText(candidate, ['approval_id', 'approvalId', 'id']),
+      approvalId: pickFirstText(candidate, ['approval_id', 'approvalId', 'record_id', 'id']),
       flowId: pickFirstText(candidate, ['flow_id', 'flowId']),
       flowRunId,
       flowStep: pickFirstText(candidate, ['flow_step', 'flowStep']),

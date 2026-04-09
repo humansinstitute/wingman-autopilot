@@ -414,8 +414,8 @@ describe('AgentWorkSessionRuntime', () => {
 
   test('normalises yoke inbound task payloads that use data and assigned_to_npub', () => {
     const task = normaliseInboundTaskRecord({
+      record_id: 'task-yoke-1',
       data: {
-        task_id: 'task-yoke-1',
         title: 'Yoke task',
         description: 'Translator-shaped payload',
         state: 'new',
@@ -438,8 +438,8 @@ describe('AgentWorkSessionRuntime', () => {
 
   test('normalises yoke inbound approval payloads that use data and status', () => {
     const approval = normaliseInboundApprovalRecord({
+      record_id: 'approval-yoke-1',
       data: {
-        approval_id: 'approval-yoke-1',
         flow_id: 'flow-yoke-1',
         flow_run_id: 'run-yoke-1',
         flow_step: 3,
