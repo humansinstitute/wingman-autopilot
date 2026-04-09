@@ -466,7 +466,7 @@ const getRouteFromPath = (pathname) => {
   ) {
     return "files";
   }
-  if (pathname === SETTINGS_ROUTE) {
+  if (pathname === SETTINGS_ROUTE || pathname.startsWith(`${SETTINGS_ROUTE}/`)) {
     return "settings";
   }
   if (pathname === APPS_ROUTE) {

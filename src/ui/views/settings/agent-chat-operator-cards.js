@@ -1,5 +1,9 @@
 import { isAgentChatSession } from '../../sessions/session-classification.js';
 
+function isAgentDispatchSession(session) {
+  return isAgentChatSession(session) || session?.metadata?.role === 'agent-work' || session?.origin?.type === 'agent-work';
+}
+
 function formatDiagnostic(diagnostic) {
   if (!diagnostic) return 'None';
   const status = diagnostic.ok ? 'ok' : (diagnostic.code || 'failed');
@@ -16,8 +20,7 @@ function formatKeyValueDetails(details) {
   return entries.length > 0 ? entries.join(', ') : 'None';
 }
 
-function formatAdvisory(subscription) {
-  const advisory = subscription.diagnostics?.advisory;
+function formatAdvisory(advisory) {
   if (!advisory || !advisory.at) {
     return 'None';
   }
@@ -76,7 +79,7 @@ function createDetailList(rows, subscriptionId) {
     const value = document.createElement('dd');
     value.textContent = valueText;
     value.style.margin = '0';
-    if (termText === 'Latest Chat Trail') {
+    if (termText === 'Latest Routing Trail') {
       value.setAttribute('data-testid', `agent-chat-latest-trail-${subscriptionId}`);
     }
     if (termText === 'Last SSE Event ID') {
@@ -91,6 +94,48 @@ function createDetailList(rows, subscriptionId) {
     details.append(term, value);
   });
   return details;
+}
+
+function createCompactTable({ title, ariaLabel, testId, headings, rows, emptyText }) {
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'margin-top:12px;';
+  const heading = document.createElement('h5');
+  heading.textContent = title;
+  wrapper.append(heading);
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'wm-settings__port-note';
+    empty.textContent = emptyText;
+    wrapper.append(empty);
+    return wrapper;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'wm-table';
+  table.setAttribute('aria-label', ariaLabel);
+  if (testId) {
+    table.setAttribute('data-testid', testId);
+  }
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  headings.forEach((text) => {
+    const cell = document.createElement('th');
+    cell.textContent = text;
+    headRow.append(cell);
+  });
+  thead.append(headRow);
+  table.append(thead);
+
+  const tbody = document.createElement('tbody');
+  rows.forEach((values) => {
+    const row = document.createElement('tr');
+    values.forEach((value) => appendTableCell(row, value));
+    tbody.append(row);
+  });
+  table.append(tbody);
+  wrapper.append(table);
+  return wrapper;
 }
 
 function createActionButton(label, ariaLabel, testId, onClick) {
@@ -193,7 +238,7 @@ function createCandidateAgentTable(subscription) {
 
   const table = document.createElement('table');
   table.className = 'wm-table';
-  table.setAttribute('aria-label', `Candidate Agent Chat agents for ${subscription.workspaceOwnerNpub}`);
+  table.setAttribute('aria-label', `Candidate Agent Dispatch agents for ${subscription.workspaceOwnerNpub}`);
   table.setAttribute('data-testid', `agent-chat-candidates-${subscription.subscriptionId}`);
   const thead = document.createElement('thead');
   thead.innerHTML = '<tr><th>Agent</th><th>Enabled</th><th>Groups</th><th>Directory</th></tr>';
@@ -213,9 +258,58 @@ function createCandidateAgentTable(subscription) {
   return wrapper;
 }
 
+function createSseHistoryTable(subscription) {
+  const events = Array.isArray(subscription.recentSseEvents) ? subscription.recentSseEvents : [];
+  const rows = events
+    .slice()
+    .reverse()
+    .map((event) => [
+      event.eventId || 'None',
+      event.eventType || 'unknown',
+      typeof event.payload?.family_hash === 'string' ? event.payload.family_hash : 'None',
+      typeof event.payload?.record_id === 'string' ? event.payload.record_id : 'None',
+      formatTimestamp(event.at),
+    ]);
+  return createCompactTable({
+    title: 'SSE Event Stream',
+    ariaLabel: `Recent SSE events for ${subscription.workspaceOwnerNpub}`,
+    testId: `agent-chat-sse-history-${subscription.subscriptionId}`,
+    headings: ['Event', 'Type', 'Family', 'Record', 'At'],
+    rows,
+    emptyText: 'No SSE activity captured yet.',
+  });
+}
+
+function createDispatchHistoryTable(subscription) {
+  const dispatches = Array.isArray(subscription.recentDispatches) ? subscription.recentDispatches : [];
+  const rows = dispatches
+    .slice()
+    .reverse()
+    .map((entry) => [
+      entry.kind || 'unknown',
+      entry.action || 'unknown',
+      entry.agentId || 'unknown',
+      entry.bindingId || entry.recordId || 'None',
+      entry.sessionId || 'None',
+      formatTimestamp(entry.at),
+    ]);
+  return createCompactTable({
+    title: 'Recent Dispatches',
+    ariaLabel: `Recent dispatches for ${subscription.workspaceOwnerNpub}`,
+    testId: `agent-chat-dispatch-history-${subscription.subscriptionId}`,
+    headings: ['Kind', 'Action', 'Agent', 'Binding', 'Session', 'At'],
+    rows,
+    emptyText: 'No dispatches recorded yet.',
+  });
+}
+
 function findLinkedSessions(subscription, chatSessions) {
   const intercepts = Array.isArray(subscription.intercepts) ? subscription.intercepts : [];
   const sessionIds = new Set(intercepts.map((intercept) => intercept.sessionId).filter(Boolean));
+  const dispatchSessionIds = Array.isArray(subscription.recentDispatches)
+    ? subscription.recentDispatches.map((entry) => entry.sessionId).filter(Boolean)
+    : [];
+  dispatchSessionIds.forEach((sessionId) => sessionIds.add(sessionId));
   const routingKeys = new Set(intercepts.map((intercept) => intercept.routingKey).filter(Boolean));
   return chatSessions.filter((session) => sessionIds.has(session.id) || routingKeys.has(session.origin?.id));
 }
@@ -260,7 +354,7 @@ function createSessionTable(title, sessions, testId) {
 }
 
 export function filterAgentChatSessions(sessions) {
-  return Array.isArray(sessions) ? sessions.filter(isAgentChatSession) : [];
+  return Array.isArray(sessions) ? sessions.filter(isAgentDispatchSession) : [];
 }
 
 export function createAgentChatOverview(subscriptions, chatSessions) {
@@ -270,7 +364,7 @@ export function createAgentChatOverview(subscriptions, chatSessions) {
   card.setAttribute('data-testid', 'agent-chat-operator-overview');
 
   const heading = document.createElement('h4');
-  heading.textContent = 'Operator Overview';
+  heading.textContent = 'Agent Dispatch Overview';
   card.append(heading);
 
   const blockedIntercepts = subscriptions.reduce((count, subscription) => (
@@ -282,7 +376,7 @@ export function createAgentChatOverview(subscriptions, chatSessions) {
   const agentCount = subscriptions.reduce((count, subscription) => (
     count + (subscription.operator?.candidateAgentCount ?? 0)
   ), 0);
-  summary.textContent = `${subscriptions.length} subscriptions, ${agentCount} candidate agents, ${chatSessions.length} Agent Chat sessions, ${blockedIntercepts} blocked intercepts.`;
+  summary.textContent = `${subscriptions.length} subscriptions, ${agentCount} candidate agents, ${chatSessions.length} active agent sessions, ${blockedIntercepts} blocked chat intercepts.`;
   card.append(summary);
 
   return card;
@@ -307,22 +401,20 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
     ['Backend', subscription.backendBaseUrl],
     ['Source App', subscription.sourceAppNpub],
     ['ws_key_npub', subscription.wsKeyNpub || 'pending'],
-    ['Latest Chat Trail', formatTrail(subscription)],
+    ['Latest Routing Trail', formatTrail(subscription)],
     ['Last SSE Event ID', subscription.diagnostics?.lastSseEventId || 'None'],
-    ['Last Advisory', formatAdvisory(subscription)],
-    ['Advisory Payload', formatKeyValueDetails(subscription.lastSseEvent?.payload)],
+    ['Last Advisory', formatAdvisory(subscription.diagnostics?.advisory)],
     ['Last Record Pull', formatDiagnostic(subscription.lastRecordPullResult)],
-    ['Record Pull Details', formatKeyValueDetails(subscription.lastRecordPullResult?.details)],
     ['Last Decrypt', formatDiagnostic(subscription.lastDecryptResult)],
-    ['Decrypt Details', formatKeyValueDetails(subscription.lastDecryptResult?.details)],
     ['Last Routing', formatDiagnostic(subscription.lastRoutingResult)],
-    ['Routing Details', formatKeyValueDetails(subscription.lastRoutingResult?.details)],
     ['Last Auth', formatDiagnostic(subscription.lastAuthResult)],
     ['Group Refresh', formatDiagnostic(subscription.lastGroupRefreshResult)],
     ['Startup Reload', subscription.lastSuccessfulStartupReloadAt || 'None'],
     ['Last Error', subscription.lastErrorCode ? `${subscription.lastErrorCode} @ ${subscription.lastErrorAt}` : 'None'],
   ], subscription.subscriptionId));
 
+  card.append(createSseHistoryTable(subscription));
+  card.append(createDispatchHistoryTable(subscription));
   card.append(createRecommendedList(subscription));
   card.append(createCandidateAgentTable(subscription));
   card.append(createInterceptTable(subscription));
@@ -366,5 +458,5 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
 }
 
 export function createAgentChatSessionPanel(chatSessions) {
-  return createSessionTable('Agent Chat Sessions', chatSessions, 'agent-chat-session-panel');
+  return createSessionTable('Agent Dispatch Sessions', chatSessions, 'agent-chat-session-panel');
 }

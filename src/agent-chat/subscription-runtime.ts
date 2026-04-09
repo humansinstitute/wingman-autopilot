@@ -20,6 +20,8 @@ import {
 import { loadYokeBotHelpers } from './yoke-bot-helpers';
 import { decryptRecordPayloadWithYoke } from './yoke-record-payload';
 import type {
+  AgentChatDispatchHistoryEntry,
+  AgentChatSseEventDiagnostic,
   AgentDefinitionRecord,
   BotKeyStoreRecord,
   ChatInterceptStateRecord,
@@ -42,6 +44,12 @@ interface RuntimeContext {
 }
 
 type RuntimeFailureState = 'blocked_auth' | 'blocked_decrypt' | null;
+const MAX_RECENT_SSE_EVENTS = 100;
+const MAX_RECENT_DISPATCHES = 10;
+
+function trimRecentEntries<T>(entries: T[], max: number): T[] {
+  return entries.slice(-max);
+}
 
 export interface WorkspaceSubscriptionManagerDependencies {
   store?: WorkspaceSubscriptionStore;
@@ -651,12 +659,17 @@ export class WorkspaceSubscriptionManager {
       payload = { raw: eventData };
     }
     record.lastSseEventId = eventId ?? record.lastSseEventId;
-    record.lastSseEvent = {
+    const nextEvent: AgentChatSseEventDiagnostic = {
       eventId,
       eventType,
       at: new Date().toISOString(),
       payload,
     };
+    record.lastSseEvent = nextEvent;
+    record.recentSseEvents = trimRecentEntries(
+      [...(Array.isArray(record.recentSseEvents) ? record.recentSseEvents : []), nextEvent],
+      MAX_RECENT_SSE_EVENTS,
+    );
     record = this.saveRecord(record);
 
     if (eventType === 'connected') {
@@ -738,6 +751,20 @@ export class WorkspaceSubscriptionManager {
         this.clearRuntimeFailure(record.subscriptionId, 'chat_record_decrypted');
         if (routingResult.assignments.length > 0 && this.chatRuntime) {
           for (const assignment of routingResult.assignments) {
+            record = this.appendDispatchHistory(record, {
+              at: new Date().toISOString(),
+              kind: 'chat',
+              action: 'chat_dispatch',
+              agentId: assignment.agent.agentId,
+              sessionId: assignment.intercept.sessionId ?? null,
+              recordId,
+              bindingId: assignment.intercept.routingKey,
+              bindingType: 'chat',
+              details: {
+                channel_id: assignment.intercept.channelId,
+                thread_id: assignment.intercept.threadId,
+              },
+            });
             void this.chatRuntime.handleRoutedChat({
               agent: assignment.agent,
               subscription: record,
@@ -882,13 +909,30 @@ export class WorkspaceSubscriptionManager {
         return record;
       }
       for (const agent of taskAgents) {
-        await this.agentWorkRuntime.handleTaskDispatch({
+        const session = await this.agentWorkRuntime.handleTaskDispatch({
           subscription: record,
           agent,
           recordId,
           recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
           task,
         });
+        if (session) {
+          record = this.appendDispatchHistory(record, {
+            at: new Date().toISOString(),
+            kind: 'task',
+            action: 'task_dispatch',
+            agentId: agent.agentId,
+            sessionId: session.id,
+            recordId,
+            bindingId: task.flowRunId ?? task.taskId,
+            bindingType: task.flowRunId ? 'flow_run' : 'task',
+            details: {
+              task_id: task.taskId,
+              flow_run_id: task.flowRunId,
+              flow_id: task.flowId,
+            },
+          });
+        }
       }
     } catch (error) {
       console.warn(
@@ -928,12 +972,29 @@ export class WorkspaceSubscriptionManager {
         return record;
       }
       for (const agent of taskAgents) {
-        await this.agentWorkRuntime.handleApprovalDispatch({
+        const session = await this.agentWorkRuntime.handleApprovalDispatch({
           subscription: record,
           agent,
           recordId,
           approval,
         });
+        if (session) {
+          record = this.appendDispatchHistory(record, {
+            at: new Date().toISOString(),
+            kind: 'approval',
+            action: 'approval_requeue',
+            agentId: agent.agentId,
+            sessionId: session.id,
+            recordId,
+            bindingId: approval.flowRunId,
+            bindingType: 'flow_run',
+            details: {
+              approval_id: approval.approvalId,
+              flow_run_id: approval.flowRunId,
+              flow_id: approval.flowId,
+            },
+          });
+        }
       }
     } catch (error) {
       console.warn(
@@ -1123,6 +1184,17 @@ export class WorkspaceSubscriptionManager {
   private saveRecord(record: WorkspaceSubscriptionRecord): WorkspaceSubscriptionRecord {
     record.updatedAt = new Date().toISOString();
     return this.store.save(record);
+  }
+
+  private appendDispatchHistory(
+    record: WorkspaceSubscriptionRecord,
+    entry: AgentChatDispatchHistoryEntry,
+  ): WorkspaceSubscriptionRecord {
+    record.recentDispatches = trimRecentEntries(
+      [...(Array.isArray(record.recentDispatches) ? record.recentDispatches : []), entry],
+      MAX_RECENT_DISPATCHES,
+    );
+    return this.saveRecord(record);
   }
 
   private markRuntimeFailure(subscriptionId: string, detailCode: string | null, reason: string): void {

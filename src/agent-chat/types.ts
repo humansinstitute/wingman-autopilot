@@ -29,6 +29,18 @@ export interface AgentChatSseEventDiagnostic {
   payload: Record<string, unknown> | null;
 }
 
+export interface AgentChatDispatchHistoryEntry {
+  at: string;
+  kind: 'chat' | 'task' | 'approval';
+  action: string;
+  agentId: string;
+  sessionId: string | null;
+  recordId: string | null;
+  bindingId?: string | null;
+  bindingType?: 'chat' | 'task' | 'flow_run' | null;
+  details?: Record<string, unknown> | null;
+}
+
 export interface WorkspaceSubscriptionRecord {
   subscriptionId: string;
   workspaceOwnerNpub: string;
@@ -58,6 +70,8 @@ export interface WorkspaceSubscriptionRecord {
   lastDecryptResult: AgentChatDiagnostic | null;
   lastRoutingResult: AgentChatDiagnostic | null;
   lastSseEvent: AgentChatSseEventDiagnostic | null;
+  recentSseEvents: AgentChatSseEventDiagnostic[];
+  recentDispatches: AgentChatDispatchHistoryEntry[];
   lastSuccessfulStartupReloadAt: string | null;
 }
 

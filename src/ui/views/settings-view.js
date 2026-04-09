@@ -11,7 +11,7 @@ import {
   createGiteaSection,
 } from './settings/workspace-sections.js';
 import { createTeamBillingSection } from './settings/admin-billing-section.js';
-import { createAgentChatSection } from './settings/agent-chat-section.js';
+import { createAgentChatSection, createAgentDispatchLauncher } from './settings/agent-chat-section.js';
 
 export function initSettingsView(deps) {
   const {
@@ -34,6 +34,11 @@ export function initSettingsView(deps) {
     renderNpubProjectsPanel,
   } = deps;
 
+  function navigateToAgentsSettings() {
+    window.history.pushState({ route: 'settings' }, '', '/settings/agents');
+    render();
+  }
+
   function renderWorkspaceTab() {
     const fragment = document.createDocumentFragment();
     const wingmanCard = document.createElement('section');
@@ -48,7 +53,7 @@ export function initSettingsView(deps) {
     if (state.identity.authenticated) {
       wingmanCard.append(createApiKeysSection());
       wingmanCard.append(createGitHubSection());
-      wingmanCard.append(createAgentChatSection());
+      wingmanCard.append(createAgentDispatchLauncher({ onNavigate: navigateToAgentsSettings }));
       const giteaPlaceholder = document.createElement('div');
       wingmanCard.append(giteaPlaceholder);
       fetch('/api/config')
@@ -195,6 +200,25 @@ export function initSettingsView(deps) {
   function renderSettings() {
     const wrapper = document.createElement('div');
     wrapper.className = 'wm-settings';
+
+    const path = typeof window !== 'undefined' ? window.location.pathname : '/settings';
+    if (path.startsWith('/settings/agents')) {
+      const pageTitle = document.createElement('h1');
+      pageTitle.textContent = 'Settings';
+      wrapper.append(pageTitle);
+
+      const backButton = document.createElement('button');
+      backButton.type = 'button';
+      backButton.className = 'wm-button secondary';
+      backButton.textContent = 'Back To Settings';
+      backButton.addEventListener('click', () => {
+        window.history.pushState({ route: 'settings' }, '', '/settings');
+        render();
+      });
+      wrapper.append(backButton);
+      wrapper.append(createAgentChatSection({ standalone: true }));
+      return wrapper;
+    }
 
     const pageTitle = document.createElement('h1');
     pageTitle.textContent = 'Settings';

@@ -72,7 +72,7 @@ class WorkspaceSubscriptionStore {
          last_error_code, last_error_at, created_at, updated_at, managed_by_npub,
          ws_key_blob_json, wrapped_group_keys_json, last_auth_result_json,
          last_group_refresh_result_json, last_record_pull_result_json, last_decrypt_result_json, last_routing_result_json,
-         last_sse_event_json, last_successful_startup_reload_at
+         last_sse_event_json, recent_sse_events_json, recent_dispatches_json, last_successful_startup_reload_at
        ) VALUES (
          ?1, ?2, ?3, ?4, ?5,
          ?6, ?7, ?8, ?9, ?10,
@@ -80,7 +80,7 @@ class WorkspaceSubscriptionStore {
          ?15, ?16, ?17, ?18, ?19,
          ?20, ?21, ?22,
          ?23, ?24, ?25, ?26,
-         ?27, ?28
+         ?27, ?28, ?29, ?30
        )
        ON CONFLICT(subscription_id) DO UPDATE SET
          workspace_owner_npub = excluded.workspace_owner_npub,
@@ -108,6 +108,8 @@ class WorkspaceSubscriptionStore {
          last_decrypt_result_json = excluded.last_decrypt_result_json,
          last_routing_result_json = excluded.last_routing_result_json,
          last_sse_event_json = excluded.last_sse_event_json,
+         recent_sse_events_json = excluded.recent_sse_events_json,
+         recent_dispatches_json = excluded.recent_dispatches_json,
          last_successful_startup_reload_at = excluded.last_successful_startup_reload_at`,
     ).run(
       record.subscriptionId,
@@ -137,6 +139,8 @@ class WorkspaceSubscriptionStore {
       serialiseJsonValue(record.lastDecryptResult),
       serialiseJsonValue(record.lastRoutingResult),
       serialiseJsonValue(record.lastSseEvent),
+      serialiseJsonValue(record.recentSseEvents),
+      serialiseJsonValue(record.recentDispatches),
       record.lastSuccessfulStartupReloadAt,
     );
 
@@ -180,6 +184,8 @@ class WorkspaceSubscriptionStore {
       lastDecryptResult: null,
       lastRoutingResult: null,
       lastSseEvent: null,
+      recentSseEvents: [],
+      recentDispatches: [],
       lastSuccessfulStartupReloadAt: null,
     };
   }
@@ -222,6 +228,8 @@ class WorkspaceSubscriptionStore {
            last_decrypt_result_json,
            last_routing_result_json,
            last_sse_event_json,
+           recent_sse_events_json,
+           recent_dispatches_json,
            last_successful_startup_reload_at
          FROM workspace_subscriptions
          WHERE ${whereClause}
@@ -262,6 +270,8 @@ class WorkspaceSubscriptionStore {
            last_decrypt_result_json,
            last_routing_result_json,
            last_sse_event_json,
+           recent_sse_events_json,
+           recent_dispatches_json,
            last_successful_startup_reload_at
          FROM workspace_subscriptions
          WHERE ${whereClause}
@@ -300,6 +310,8 @@ class WorkspaceSubscriptionStore {
       lastDecryptResult: parseJsonValue(row.last_decrypt_result_json ?? null),
       lastRoutingResult: parseJsonValue(row.last_routing_result_json ?? null),
       lastSseEvent: parseJsonValue(row.last_sse_event_json ?? null),
+      recentSseEvents: parseJsonValue(row.recent_sse_events_json ?? null) ?? [],
+      recentDispatches: parseJsonValue(row.recent_dispatches_json ?? null) ?? [],
       lastSuccessfulStartupReloadAt: row.last_successful_startup_reload_at ?? null,
     };
   }
@@ -334,6 +346,8 @@ class WorkspaceSubscriptionStore {
         last_decrypt_result_json TEXT,
         last_routing_result_json TEXT,
         last_sse_event_json TEXT,
+        recent_sse_events_json TEXT,
+        recent_dispatches_json TEXT,
         last_successful_startup_reload_at TEXT
       );
 
@@ -357,6 +371,18 @@ class WorkspaceSubscriptionStore {
       this.db.exec(`
         ALTER TABLE workspace_subscriptions
           ADD COLUMN last_routing_result_json TEXT
+      `);
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'recent_sse_events_json')) {
+      this.db.exec(`
+        ALTER TABLE workspace_subscriptions
+          ADD COLUMN recent_sse_events_json TEXT
+      `);
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'recent_dispatches_json')) {
+      this.db.exec(`
+        ALTER TABLE workspace_subscriptions
+          ADD COLUMN recent_dispatches_json TEXT
       `);
     }
   }
