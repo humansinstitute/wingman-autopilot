@@ -19,8 +19,7 @@ type DispatchReason = 'new task' | 'task updated';
 export type AgentWorkTaskDispatchDecisionCode =
   | 'dispatch'
   | 'skip_terminal'
-  | 'skip_assignment'
-  | 'skip_predecessors';
+  | 'skip_assignment';
 
 export interface AgentWorkRuntimeDependencies {
   defaultAgent: AgentType;
@@ -215,10 +214,6 @@ function mergeTaskIds(session: SessionSnapshot | null, taskId: string): string[]
   return uniqueStrings([...existing, taskId]);
 }
 
-function hasBlockingPredecessors(task: InboundTaskRecord): boolean {
-  return task.predecessorTaskIds.length > 0;
-}
-
 function isAssignedToAgent(task: InboundTaskRecord, agent: AgentDefinitionRecord): boolean {
   const assignedTo = normaliseIdentityValue(task.assignedTo);
   if (!assignedTo) {
@@ -246,9 +241,6 @@ export function evaluateTaskDispatchEligibility(params: {
   }
   if (!isAssignedToAgent(params.task, params.agent)) {
     return 'skip_assignment';
-  }
-  if (hasBlockingPredecessors(params.task)) {
-    return 'skip_predecessors';
   }
   return 'dispatch';
 }

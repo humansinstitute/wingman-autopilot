@@ -703,4 +703,90 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       },
     ]);
   });
+
+  test('dispatches tasks even when predecessor links are present', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-predecessor-dispatch-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-predecessor-dispatch-agents'));
+    const subscription = store.save(makeSubscription());
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-task',
+      label: 'Task Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-work',
+      capabilities: ['task_dispatch'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+
+    const taskDispatches: Array<{ recordId: string; taskId: string; agentId: string }> = [];
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      agentWorkRuntime: {
+        handleTaskDispatch: async (input) => {
+          taskDispatches.push({
+            recordId: input.recordId,
+            taskId: input.task.taskId,
+            agentId: input.agent.agentId,
+          });
+          return null;
+        },
+        handleApprovalDispatch: async () => null,
+      } as unknown as AgentWorkSessionRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-task-pred-1',
+          record_state: 'active',
+          version: 1,
+          signature_npub: 'npub1human',
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        task_id: 'task-pred-1',
+        title: 'Task with predecessor',
+        description: 'Should still dispatch to the agent',
+        state: 'new',
+        assigned_to_npub: 'npub1bot',
+        predecessor_task_ids: ['pred-1'],
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-task-pred-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'task'),
+        record_id: 'record-task-pred-1',
+      }),
+    );
+
+    expect(taskDispatches).toEqual([
+      {
+        recordId: 'record-task-pred-1',
+        taskId: 'task-pred-1',
+        agentId: 'agent-task',
+      },
+    ]);
+    expect(next.recentDispatches[0]?.action).toBe('task_skip_runtime_returned_null');
+  });
 });
