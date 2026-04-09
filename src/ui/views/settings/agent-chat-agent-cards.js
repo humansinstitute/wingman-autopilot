@@ -23,6 +23,34 @@ function createActionButton(label, ariaLabel, testId, onClick) {
   return button;
 }
 
+function formatCapability(capability) {
+  if (capability === 'chat_intercept') {
+    return 'Chat Dispatch';
+  }
+  if (capability === 'task_dispatch') {
+    return 'Task Dispatch';
+  }
+  return capability;
+}
+
+function createCapabilityList(capabilities) {
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;';
+
+  const list = Array.isArray(capabilities) && capabilities.length > 0
+    ? capabilities
+    : ['chat_intercept'];
+
+  list.forEach((capability) => {
+    const badge = document.createElement('span');
+    badge.textContent = formatCapability(capability);
+    badge.style.cssText = 'display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;background:rgba(71,176,140,0.15);border:1px solid rgba(71,176,140,0.35);font-size:0.85em;';
+    wrapper.append(badge);
+  });
+
+  return wrapper;
+}
+
 export function createAgentRegistryPanel(agents, handlers) {
   const wrapper = document.createElement('div');
   wrapper.setAttribute('data-testid', 'agent-chat-agent-list');
@@ -51,7 +79,7 @@ export function createAgentRegistryPanel(agents, handlers) {
 
     const status = document.createElement('p');
     status.className = 'wm-settings__port-note';
-    status.textContent = `enabled=${agent.enabled ? 'yes' : 'no'}, groups=${agent.operator?.groupCount ?? agent.groupNpubs?.length ?? 0}, capabilities=${(agent.capabilities || []).join(', ') || 'none'}`;
+    status.textContent = `enabled=${agent.enabled ? 'yes' : 'no'}, groups=${agent.operator?.groupCount ?? agent.groupNpubs?.length ?? 0}, capabilities=${(agent.capabilities || []).length}`;
     card.append(status);
 
     card.append(createDetailList([
@@ -61,6 +89,7 @@ export function createAgentRegistryPanel(agents, handlers) {
       ['Groups', Array.isArray(agent.groupNpubs) && agent.groupNpubs.length > 0 ? agent.groupNpubs.join(', ') : 'None'],
       ['Updated', agent.updatedAt || 'None'],
     ]));
+    card.append(createCapabilityList(agent.capabilities));
 
     const actions = document.createElement('div');
     actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;';

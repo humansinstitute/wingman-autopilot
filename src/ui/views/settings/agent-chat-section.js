@@ -55,6 +55,42 @@ function createCheckbox(labelText, testId, checked = true) {
   return { row, input };
 }
 
+function createCapabilityPicker() {
+  const fieldset = document.createElement('fieldset');
+  fieldset.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:12px;padding:12px;border:1px solid var(--wm-border-muted, rgba(255,255,255,0.12));border-radius:10px;';
+  fieldset.setAttribute('aria-label', 'Agent capabilities');
+  fieldset.setAttribute('data-testid', 'agent-chat-agent-capabilities');
+
+  const legend = document.createElement('legend');
+  legend.textContent = 'Capabilities';
+  legend.style.cssText = 'padding:0 6px;font-weight:600;';
+  fieldset.append(legend);
+
+  const note = document.createElement('p');
+  note.className = 'wm-settings__port-note';
+  note.style.margin = '0 0 4px 0';
+  note.textContent = 'Save the same Agent ID again to add more dispatch roles as Wingmen grows them.';
+  fieldset.append(note);
+
+  const chatIntercept = createCheckbox('Chat Dispatch', 'agent-chat-capability-chat-dispatch', true);
+  const taskDispatch = createCheckbox('Task Dispatch', 'agent-chat-capability-task-dispatch', false);
+  fieldset.append(chatIntercept.row, taskDispatch.row);
+
+  return {
+    row: fieldset,
+    getSelectedCapabilities() {
+      const capabilities = [];
+      if (chatIntercept.input.checked) {
+        capabilities.push('chat_intercept');
+      }
+      if (taskDispatch.input.checked) {
+        capabilities.push('task_dispatch');
+      }
+      return capabilities.length > 0 ? capabilities : ['chat_intercept'];
+    },
+  };
+}
+
 async function loadOperatorState() {
   const [subscriptions, agents, sessionPayload] = await Promise.all([
     listAgentChatSubscriptions(),
@@ -101,6 +137,7 @@ export function createAgentChatSection() {
   const agentWorkspaceField = createInput('Agent Workspace Owner npub', 'npub1workspace...', 'agent-chat-agent-workspace-owner');
   const agentGroupsField = createInput('Group npubs', 'Leave blank to use the bot subscription groups', 'agent-chat-agent-groups', true);
   const workingDirectoryField = createInput('Working Directory', '/Users/mini/code/wingmen', 'agent-chat-agent-directory');
+  const capabilityPicker = createCapabilityPicker();
   const enabledField = createCheckbox('Enabled', 'agent-chat-agent-enabled', true);
 
   const saveButton = document.createElement('button');
@@ -231,7 +268,7 @@ export function createAgentChatSection() {
           .map((value) => value.trim())
           .filter(Boolean),
         workingDirectory: workingDirectoryField.input.value.trim(),
-        capabilities: ['chat_intercept'],
+        capabilities: capabilityPicker.getSelectedCapabilities(),
         enabled: enabledField.input.checked,
       });
       statusLine.textContent = 'Local agent saved. Candidate routing diagnostics updated below.';
@@ -264,6 +301,7 @@ export function createAgentChatSection() {
     agentWorkspaceField.row,
     agentGroupsField.row,
     workingDirectoryField.row,
+    capabilityPicker.row,
     enabledField.row,
     agentGroupsNote,
     saveAgentButton,
