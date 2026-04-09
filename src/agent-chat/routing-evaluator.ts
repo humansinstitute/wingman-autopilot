@@ -99,13 +99,18 @@ export class AgentChatRoutingEvaluator {
       : extractMessageGroupNpubs(input.chatRecord, input.chatMessage);
     const matchedAgents = candidateAgents.filter((agent) => intersectsSorted(agent.groupNpubs, messageGroupNpubs));
     const senderNpub = getOptionalString(input.chatMessage.sender_npub);
+    const updaterNpub = getOptionalString(input.chatRecord.signature_npub)
+      ?? getOptionalString(input.chatRecord.owner_npub);
 
     const selfSuppressedAgentIds: string[] = [];
     const duplicateSuppressedAgentIds: string[] = [];
     const assignments: RoutedChatAssignment[] = [];
 
     for (const agent of matchedAgents) {
-      if (senderNpub && senderNpub === agent.botNpub) {
+      if (
+        (senderNpub && senderNpub === agent.botNpub)
+        || (updaterNpub && updaterNpub === agent.botNpub)
+      ) {
         selfSuppressedAgentIds.push(agent.agentId);
         continue;
       }
@@ -143,6 +148,8 @@ export class AgentChatRoutingEvaluator {
         thread_id: routingContext.threadId,
         participant_npubs: routingContext.participantNpubs,
         message_group_npubs: messageGroupNpubs,
+        sender_npub: senderNpub,
+        updater_npub: updaterNpub,
         configured_agent_ids: configuredAgents.map((agent) => agent.agentId),
         enabled_agent_ids: enabledAgents.map((agent) => agent.agentId),
         candidate_agent_ids: candidateAgents.map((agent) => agent.agentId),

@@ -352,4 +352,79 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(next.recentDispatches[0]?.action).toBe('skip_assignment');
     expect(next.recentDispatches[0]?.details?.assigned_to).toBe('npub1someoneelse');
   });
+
+  test('skips task dispatch when the bot was the latest updater', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-self-update-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-self-update-agents'));
+    const subscription = store.save(makeSubscription());
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-task',
+      label: 'Task Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-work',
+      capabilities: ['task_dispatch'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      agentWorkRuntime: {
+        handleTaskDispatch: async () => {
+          throw new Error('handleTaskDispatch should not run for bot-authored task rewrites');
+        },
+        handleApprovalDispatch: async () => null,
+      } as unknown as AgentWorkSessionRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-task-self-1',
+          record_state: 'active',
+          version: 2,
+          signature_npub: 'npub1bot',
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        task_id: 'task-self-1',
+        title: 'Self updated task',
+        state: 'open',
+        assigned_to_npub: 'npub1bot',
+        predecessor_task_ids: [],
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-task-self-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'task'),
+        record_id: 'record-task-self-1',
+      }),
+    );
+
+    expect(next.recentDispatches).toHaveLength(1);
+    expect(next.recentDispatches[0]?.action).toBe('task_skip_self_update');
+    expect(next.recentDispatches[0]?.details?.task_id).toBe('task-self-1');
+    expect(next.recentDispatches[0]?.details?.updater_npub).toBe('npub1bot');
+  });
 });

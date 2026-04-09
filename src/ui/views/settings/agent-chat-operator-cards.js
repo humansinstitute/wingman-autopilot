@@ -332,6 +332,8 @@ function formatDispatchDetails(details) {
     'approval_id',
     'flow_run_id',
     'flow_id',
+    'updater_npub',
+    'sender_npub',
     'assigned_to',
     'state',
     'predecessor_task_ids',
