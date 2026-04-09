@@ -82,8 +82,74 @@ function compactStringArray(value: unknown): string[] {
     .filter((entry): entry is string => Boolean(entry));
 }
 
+function compactRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function compactStringArrayFromMixed(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => {
+      if (typeof entry === 'string') {
+        return compactText(entry);
+      }
+      const record = compactRecord(entry);
+      if (!record) {
+        return null;
+      }
+      return compactText(record.task_id)
+        ?? compactText(record.taskId)
+        ?? compactText(record.id);
+    })
+    .filter((entry): entry is string => Boolean(entry));
+}
+
 function compactBoolean(value: unknown): boolean {
   return value === true || value === 1 || value === '1';
+}
+
+function pickFirstText(payload: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = compactText(payload[key]);
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function pickFirstBoolean(payload: Record<string, unknown>, keys: string[]): boolean {
+  for (const key of keys) {
+    if (compactBoolean(payload[key])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function pickFirstStringArray(payload: Record<string, unknown>, keys: string[]): string[] {
+  for (const key of keys) {
+    const values = compactStringArrayFromMixed(payload[key]);
+    if (values.length > 0) {
+      return values;
+    }
+  }
+  return [];
+}
+
+function candidatePayloads(payload: Record<string, unknown>): Record<string, unknown>[] {
+  const candidates = [payload];
+  for (const key of ['task', 'approval', 'data', 'payload', 'record', 'content']) {
+    const nested = compactRecord(payload[key]);
+    if (nested) {
+      candidates.push(nested);
+    }
+  }
+  return candidates;
 }
 
 function normaliseIdentityValue(value: string | null): string | null {
@@ -203,37 +269,49 @@ function buildMetadataPatch(params: {
 }
 
 export function normaliseInboundTaskRecord(payload: Record<string, unknown>): InboundTaskRecord | null {
-  const taskId = compactText(payload.task_id) ?? compactText(payload.id);
-  if (!taskId) {
-    return null;
+  for (const candidate of candidatePayloads(payload)) {
+    const taskId = pickFirstText(candidate, ['task_id', 'taskId', 'id']);
+    if (!taskId) {
+      continue;
+    }
+    return {
+      taskId,
+      flowId: pickFirstText(candidate, ['flow_id', 'flowId']),
+      flowRunId: pickFirstText(candidate, ['flow_run_id', 'flowRunId']),
+      flowStep: pickFirstText(candidate, ['flow_step', 'flowStep']),
+      title: pickFirstText(candidate, ['title', 'name']) ?? taskId,
+      description: pickFirstText(candidate, ['description', 'details', 'body']),
+      state: pickFirstText(candidate, ['state', 'status'])?.toLowerCase() ?? null,
+      assignedTo: pickFirstText(candidate, ['assigned_to', 'assignedTo', 'assignee', 'assignee_npub', 'assigned_to_npub']),
+      deleted: pickFirstBoolean(candidate, ['deleted', 'is_deleted', 'isDeleted']),
+      done: pickFirstBoolean(candidate, ['done', 'is_done', 'isDone', 'completed', 'complete']),
+      predecessorTaskIds: pickFirstStringArray(candidate, [
+        'predecessor_task_ids',
+        'predecessorTaskIds',
+        'depends_on_task_ids',
+        'dependsOnTaskIds',
+        'predecessors',
+      ]),
+    };
   }
-  return {
-    taskId,
-    flowId: compactText(payload.flow_id),
-    flowRunId: compactText(payload.flow_run_id),
-    flowStep: compactText(payload.flow_step),
-    title: compactText(payload.title) ?? taskId,
-    description: compactText(payload.description),
-    state: compactText(payload.state)?.toLowerCase() ?? null,
-    assignedTo: compactText(payload.assigned_to),
-    deleted: compactBoolean(payload.deleted),
-    done: compactBoolean(payload.done),
-    predecessorTaskIds: compactStringArray(payload.predecessor_task_ids),
-  };
+  return null;
 }
 
 export function normaliseInboundApprovalRecord(payload: Record<string, unknown>): InboundApprovalRecord | null {
-  const flowRunId = compactText(payload.flow_run_id);
-  if (!flowRunId) {
-    return null;
+  for (const candidate of candidatePayloads(payload)) {
+    const flowRunId = pickFirstText(candidate, ['flow_run_id', 'flowRunId']);
+    if (!flowRunId) {
+      continue;
+    }
+    return {
+      approvalId: pickFirstText(candidate, ['approval_id', 'approvalId', 'id']),
+      flowId: pickFirstText(candidate, ['flow_id', 'flowId']),
+      flowRunId,
+      flowStep: pickFirstText(candidate, ['flow_step', 'flowStep']),
+      state: pickFirstText(candidate, ['state', 'status']),
+    };
   }
-  return {
-    approvalId: compactText(payload.approval_id) ?? compactText(payload.id),
-    flowId: compactText(payload.flow_id),
-    flowRunId,
-    flowStep: compactText(payload.flow_step),
-    state: compactText(payload.state),
-  };
+  return null;
 }
 
 export class AgentWorkSessionRuntime {

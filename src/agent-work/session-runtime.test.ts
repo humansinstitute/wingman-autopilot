@@ -8,7 +8,7 @@ import { nip19 } from 'nostr-tools';
 import type { SessionSnapshot } from '../agents/process-manager';
 import type { AgentDefinitionRecord, WorkspaceSubscriptionRecord } from '../agent-chat/types';
 import { AgentWorkSessionBindingStore } from './session-binding-store';
-import { AgentWorkSessionRuntime } from './session-runtime';
+import { AgentWorkSessionRuntime, normaliseInboundTaskRecord } from './session-runtime';
 
 function makeTempDb(): string {
   return join(tmpdir(), `agent-work-runtime-${randomUUID()}.sqlite`);
@@ -385,5 +385,30 @@ describe('AgentWorkSessionRuntime', () => {
 
     expect(created?.id).toBe('hex-session-1');
     expect(createCount).toBe(1);
+  });
+
+  test('normalises camelCase wrapped task payloads', () => {
+    const task = normaliseInboundTaskRecord({
+      payload: {
+        taskId: 'task-camel-1',
+        flowId: 'flow-1',
+        flowRunId: 'run-1',
+        flowStep: 'step-1',
+        name: 'Camel task',
+        details: 'Wrapped payload task',
+        status: 'OPEN',
+        assignedTo: 'npub1bot',
+        predecessorTaskIds: [{ taskId: 'pred-1' }, { id: 'pred-2' }],
+      },
+    });
+
+    expect(task).not.toBeNull();
+    expect(task?.taskId).toBe('task-camel-1');
+    expect(task?.flowRunId).toBe('run-1');
+    expect(task?.title).toBe('Camel task');
+    expect(task?.description).toBe('Wrapped payload task');
+    expect(task?.state).toBe('open');
+    expect(task?.assignedTo).toBe('npub1bot');
+    expect(task?.predecessorTaskIds).toEqual(['pred-1', 'pred-2']);
   });
 });

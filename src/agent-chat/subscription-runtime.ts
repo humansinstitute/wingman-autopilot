@@ -918,6 +918,7 @@ export class WorkspaceSubscriptionManager {
           bindingType: 'task',
           details: {
             reason: 'normalise_failed',
+            payload_keys: Object.keys(decrypted).slice(0, 20),
           },
         });
       }
@@ -1031,6 +1032,7 @@ export class WorkspaceSubscriptionManager {
           bindingType: 'flow_run',
           details: {
             reason: 'missing_flow_run_id',
+            payload_keys: Object.keys(decrypted).slice(0, 20),
           },
         });
       }

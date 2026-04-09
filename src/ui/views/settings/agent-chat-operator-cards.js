@@ -672,7 +672,7 @@ function createDispatchHistoryTable(subscription) {
   );
   summary.append(createMetricGrid([
     { label: 'Chat Routes', value: String(chatDispatches.length) },
-    { label: 'Work Routes', value: String(workDispatches.length) },
+    { label: 'Work Outcomes', value: String(workDispatches.length) },
     { label: 'Task Signals', value: String(taskSignals) },
     { label: 'Approval Signals', value: String(approvalSignals) },
   ]));
@@ -717,7 +717,7 @@ function createDispatchHistoryTable(subscription) {
   }));
 
   wrapper.append(createTimelineList({
-    title: 'Task And Approval Dispatches',
+    title: 'Task And Approval Outcomes',
     description: 'Both routed work and explicit skip reasons appear here so task gating is debuggable.',
     testId: `agent-chat-dispatch-history-work-${subscription.subscriptionId}`,
     items: workDispatches.slice(0, 6),
@@ -819,7 +819,7 @@ export function createAgentChatOverview(subscriptions, chatSessions) {
 
   const summary = document.createElement('p');
   summary.className = 'wm-settings__port-note';
-  summary.textContent = `${subscriptions.length} subscriptions, ${agentCount} candidate agents, ${chatSessions.length} active agent sessions, ${workSignalCount} recent work signals, ${workDispatchCount} routed work dispatches, ${blockedIntercepts} blocked chat intercepts.`;
+  summary.textContent = `${subscriptions.length} subscriptions, ${agentCount} candidate agents, ${chatSessions.length} active agent sessions, ${workSignalCount} recent work signals, ${workDispatchCount} recorded work outcomes, ${blockedIntercepts} blocked chat intercepts.`;
   card.append(summary);
 
   card.append(createMetricGrid([
@@ -827,7 +827,7 @@ export function createAgentChatOverview(subscriptions, chatSessions) {
     { label: 'Candidates', value: String(agentCount) },
     { label: 'Active Sessions', value: String(chatSessions.length) },
     { label: 'Work Signals', value: String(workSignalCount) },
-    { label: 'Work Routes', value: String(workDispatchCount) },
+    { label: 'Work Outcomes', value: String(workDispatchCount) },
     { label: 'Blocked', value: String(blockedIntercepts) },
   ]));
 
@@ -866,7 +866,7 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
     { label: 'Recent Events', value: String(recentEvents.length) },
     { label: 'Work Signals', value: String(countWhere(recentEvents, isWorkSignalEvent)) },
     { label: 'Chat Routes', value: String(countWhere(recentDispatches, (entry) => entry.kind === 'chat')) },
-    { label: 'Work Routes', value: String(countWhere(recentDispatches, (entry) => entry.kind === 'task' || entry.kind === 'approval')) },
+    { label: 'Work Outcomes', value: String(countWhere(recentDispatches, (entry) => entry.kind === 'task' || entry.kind === 'approval')) },
   ]));
 
   card.append(createDefinitionGrid([
