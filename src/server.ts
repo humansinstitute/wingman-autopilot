@@ -207,6 +207,8 @@ import {
 
 const config = loadConfig();
 const adminNpub = normaliseNpub(Bun.env.ADMIN_NPUB ?? null);
+const agentHosts = parseAllowedHosts(config.allowedHosts);
+const agentHost = normaliseHostForUrl(pickAgentHost(agentHosts));
 
 // Subdomain proxy configuration
 const subdomainProxyConfig: SubdomainProxyConfig = {
@@ -1626,9 +1628,6 @@ const serveIndex = async () => {
 const isAgentType = (value: string): value is AgentType => {
   return SUPPORTED_AGENT_TYPES.includes(value as AgentType);
 };
-
-const agentHosts = parseAllowedHosts(config.allowedHosts);
-const agentHost = normaliseHostForUrl(pickAgentHost(agentHosts));
 
 await rehydrateWarmSessions(
   warmRestartMarker,
