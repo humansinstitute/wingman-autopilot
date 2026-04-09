@@ -4,7 +4,8 @@
  * Wingman session management CLI (NIP-98 authenticated).
  *
  * Commands: list, create, stop, stop-self, info, logs, send, artifacts, queue,
- *           queue-add, queue-next, archive, archive-info, archive-logs, archive-delete
+ *           queue-add, queue-next, nightwatch-status, nightwatch-enable,
+ *           nightwatch-disable, archive, archive-info, archive-logs, archive-delete
  */
 
 import { parseCommonFlags, buildConfig, requestJson, requestJsonBotCrypto, resolveBaseUrl } from "./lib/auth";
@@ -26,6 +27,9 @@ Commands:
   queue <id>           Show prompt queue
   queue-add <id> <msg> Add prompt to queue
   queue-next <id>      Execute next queued prompt
+  nightwatch-status <id>  Show Night Watch state for a live session
+  nightwatch-enable <id>  Enable Night Watch for a live session
+  nightwatch-disable <id> Disable Night Watch for a live session
   archive              List archived sessions
   archive-info <id>    Show archived session details
   archive-logs <id>    Show archived session messages
@@ -37,6 +41,11 @@ Options:
   --name <name>        Session name (for create)
   --directory <path>   Working directory (for create)
   --model <model>      Model override (for create)
+  --nightwatch <true|false> Enable/disable Night Watch on session start
+  --nightwatchman <true|false> Alias for --nightwatch
+  --nightwatch-prompt <text> Prompt used by Night Watch check-ins
+  --nightwatch-interval <n>  Minutes between Night Watch check-ins
+  --nightwatch-max-cycles <n> Maximum number of Night Watch check-ins
   --owner <npub>       Use delegated owner-space routes for live session and archive commands
   --limit <n>          Pagination limit (for archive, default: 50)
   --offset <n>         Pagination offset (for archive)
@@ -47,11 +56,12 @@ Options:
 
 Examples:
   bun clis/sessions.ts list
-  bun clis/sessions.ts create claude-code --name "my-task" --directory /tmp/project
+  bun clis/sessions.ts create claude-code --name "my-task" --directory /tmp/project --nightwatch true
   bun clis/sessions.ts list --owner npub1owner...
   bun clis/sessions.ts create codex --owner npub1owner... --name "worker" --directory /Users/mini/code/wingmen
   bun clis/sessions.ts archive --owner npub1owner... --limit 20
   bun clis/sessions.ts logs abc123
+  bun clis/sessions.ts nightwatch-enable abc123 --nightwatch-prompt "Any progress?" --nightwatch-interval 10
   bun clis/sessions.ts artifacts abc123
   bun clis/sessions.ts queue abc123
   bun clis/sessions.ts queue-add abc123 "run the tests"
@@ -67,6 +77,38 @@ interface Session {
   directory?: string;
   created?: string;
   [key: string]: unknown;
+}
+
+interface NightWatchState {
+  sessionId?: string;
+  enabled?: boolean;
+  cycleCount?: number;
+  maxCycles?: number;
+  prompt?: string | null;
+  intervalMinutes?: number | null;
+  promptAt?: string | null;
+  [key: string]: unknown;
+}
+
+function parseBooleanFlag(value: string | undefined, flagName: string): boolean {
+  if (value === undefined) {
+    throw new Error(`${flagName} requires a value: true or false`);
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  throw new Error(`${flagName} must be true or false`);
+}
+
+function parsePositiveIntegerFlag(value: string | undefined, flagName: string): number {
+  if (value === undefined) {
+    throw new Error(`${flagName} requires a numeric value`);
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${flagName} must be a positive integer`);
+  }
+  return parsed;
 }
 
 function printSessionList(sessions: Session[]) {
@@ -98,6 +140,16 @@ function printMessages(messages: Array<Record<string, unknown>>) {
   }
 }
 
+function printNightWatchState(state: NightWatchState) {
+  console.log(`Session:        ${String(state.sessionId ?? "-")}`);
+  console.log(`Enabled:        ${state.enabled ? "yes" : "no"}`);
+  console.log(`Cycle Count:    ${String(state.cycleCount ?? 0)}`);
+  console.log(`Max Cycles:     ${String(state.maxCycles ?? "-")}`);
+  console.log(`Interval Min:   ${String(state.intervalMinutes ?? "-")}`);
+  console.log(`Prompt At:      ${String(state.promptAt ?? "-")}`);
+  console.log(`Prompt:         ${String(state.prompt ?? "-")}`);
+}
+
 async function run() {
   const { args, urlInput, keyInput, asJson, help, botCrypto } = parseCommonFlags(Bun.argv.slice(2));
 
@@ -105,6 +157,10 @@ async function run() {
   let name: string | undefined;
   let directory: string | undefined;
   let model: string | undefined;
+  let nightwatchEnabled: boolean | undefined;
+  let nightwatchPrompt: string | undefined;
+  let nightwatchInterval: number | undefined;
+  let nightwatchMaxCycles: number | undefined;
   let owner: string | undefined;
   let limit: string | undefined;
   let offset: string | undefined;
@@ -122,6 +178,15 @@ async function run() {
     } else if (flag === "--model") {
       model = args[++i];
       if (!model) throw new Error("--model requires a value");
+    } else if (flag === "--nightwatch" || flag === "--nightwatchman") {
+      nightwatchEnabled = parseBooleanFlag(args[++i], flag);
+    } else if (flag === "--nightwatch-prompt") {
+      nightwatchPrompt = args[++i];
+      if (!nightwatchPrompt) throw new Error("--nightwatch-prompt requires a value");
+    } else if (flag === "--nightwatch-interval") {
+      nightwatchInterval = parsePositiveIntegerFlag(args[++i], "--nightwatch-interval");
+    } else if (flag === "--nightwatch-max-cycles") {
+      nightwatchMaxCycles = parsePositiveIntegerFlag(args[++i], "--nightwatch-max-cycles");
     } else if (flag === "--owner") {
       owner = args[++i];
       if (!owner) throw new Error("--owner requires a value");
@@ -192,10 +257,48 @@ async function run() {
     return `${sessionQueuePath(id)}/next`;
   }
 
+  function nightWatchSessionPath(id: string): string {
+    return `/api/nightwatch/sessions/${encodeURIComponent(id)}`;
+  }
+
+  function nightWatchEnablePath(id: string): string {
+    return `${nightWatchSessionPath(id)}/enable`;
+  }
+
+  function nightWatchDisablePath(id: string): string {
+    return `${nightWatchSessionPath(id)}/disable`;
+  }
+
   function ensureSelfSpaceOnly(commandName: string): void {
     if (ownerTarget) {
       throw new Error(`${commandName} does not support --owner yet`);
     }
+  }
+
+  function buildNightWatchRequestBody(): false | Record<string, unknown> | undefined {
+    const hasNightWatchFields =
+      nightwatchEnabled !== undefined ||
+      nightwatchPrompt !== undefined ||
+      nightwatchInterval !== undefined ||
+      nightwatchMaxCycles !== undefined;
+    if (!hasNightWatchFields) {
+      return undefined;
+    }
+    if (
+      nightwatchEnabled === false &&
+      nightwatchPrompt === undefined &&
+      nightwatchInterval === undefined &&
+      nightwatchMaxCycles === undefined
+    ) {
+      return false;
+    }
+
+    const payload: Record<string, unknown> = {};
+    if (nightwatchEnabled !== undefined) payload.enabled = nightwatchEnabled;
+    if (nightwatchPrompt !== undefined) payload.prompt = nightwatchPrompt;
+    if (nightwatchInterval !== undefined) payload.intervalMinutes = nightwatchInterval;
+    if (nightwatchMaxCycles !== undefined) payload.maxCycles = nightwatchMaxCycles;
+    return payload;
   }
 
   async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -246,6 +349,10 @@ async function run() {
       if (name) body.name = name;
       if (directory) body.directory = directory;
       if (model) body.model = model;
+      const nightWatchBody = buildNightWatchRequestBody();
+      if (nightWatchBody !== undefined) {
+        body.nightwatch = nightWatchBody;
+      }
       const payload = await req<Record<string, unknown>>("POST", sessionCollectionPath(), body);
       if (asJson) {
         console.log(JSON.stringify(payload, null, 2));
@@ -400,6 +507,53 @@ async function run() {
         console.log(JSON.stringify(payload, null, 2));
       } else {
         console.log(`Executing next prompt for ${resolvedId}`);
+      }
+      break;
+    }
+
+    case "nightwatch-status": {
+      const id = positional[1];
+      if (!id) throw new Error("nightwatch-status requires <id>");
+      const resolvedId = await resolveActiveSessionId(id);
+      const payload = await req<NightWatchState>("GET", nightWatchSessionPath(resolvedId));
+      if (asJson) {
+        console.log(JSON.stringify(payload, null, 2));
+      } else {
+        printNightWatchState(payload);
+      }
+      break;
+    }
+
+    case "nightwatch-enable": {
+      const id = positional[1];
+      if (!id) throw new Error("nightwatch-enable requires <id>");
+      if (nightwatchEnabled === false) {
+        throw new Error("nightwatch-enable cannot be used with --nightwatch false");
+      }
+      const resolvedId = await resolveActiveSessionId(id);
+      const body = buildNightWatchRequestBody();
+      const payload = await req<NightWatchState>(
+        "POST",
+        nightWatchEnablePath(resolvedId),
+        body && body !== false ? body : {},
+      );
+      if (asJson) {
+        console.log(JSON.stringify(payload, null, 2));
+      } else {
+        console.log(`Enabled Night Watch for ${resolvedId}`);
+      }
+      break;
+    }
+
+    case "nightwatch-disable": {
+      const id = positional[1];
+      if (!id) throw new Error("nightwatch-disable requires <id>");
+      const resolvedId = await resolveActiveSessionId(id);
+      const payload = await req<NightWatchState>("POST", nightWatchDisablePath(resolvedId));
+      if (asJson) {
+        console.log(JSON.stringify(payload, null, 2));
+      } else {
+        console.log(`Disabled Night Watch for ${resolvedId}`);
       }
       break;
     }

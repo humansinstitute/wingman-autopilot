@@ -43,6 +43,7 @@ Active window options:
 Update options:
   --enabled <true|false>     Enable/disable trigger
   --nightwatchman <true|false> Enable/disable Nightwatchman
+  --nightwatch <true|false>  Alias for --nightwatchman
 
 Common options:
   --url <url>                Wingman URL (env: WINGMAN_URL, default: http://localhost:3000)
@@ -52,8 +53,8 @@ Common options:
 
 Examples:
   bun clis/scheduler.ts list
-  bun clis/scheduler.ts create --name "Daily build" --agent codex --working-directory /tmp/app --prompt "check repo" --trigger-type cron --cron "0 * * * *"
-  bun clis/scheduler.ts update job_123 --enabled false
+  bun clis/scheduler.ts create --name "Daily build" --agent codex --working-directory /tmp/app --prompt "check repo" --trigger-type cron --cron "0 * * * *" --nightwatch true
+  bun clis/scheduler.ts update job_123 --enabled false --nightwatch false
   bun clis/scheduler.ts delete job_123
   bun clis/scheduler.ts trigger job_123
   bun clis/scheduler.ts runs job_123`;
@@ -190,8 +191,9 @@ function parseSchedulerOptions(args: string[]): ParsedOptions {
         parsed.enabled = parseBooleanFlag(args[++i], '--enabled');
         break;
       }
-      case '--nightwatchman': {
-        parsed.nightwatchmanEnabled = parseBooleanFlag(args[++i], '--nightwatchman');
+      case '--nightwatchman':
+      case '--nightwatch': {
+        parsed.nightwatchmanEnabled = parseBooleanFlag(args[++i], token);
         break;
       }
       default:

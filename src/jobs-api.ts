@@ -30,6 +30,7 @@ import { dispatchJobRun } from "./jobs-dispatch";
 import { isJobAgentType, listUniqueJobAgents, resolveJobAgent, resolveJobAgents } from "./jobs/agent-config";
 import { deliverSessionAgentMessage } from "./server/session-agent-message";
 import type { SessionApiContext } from "./server/session-api-routes";
+import { parseNightWatchStartOptions, type NightWatchStartOptions } from "./nightwatch/nightwatch-start-config";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -62,6 +63,7 @@ interface AutopilotJobsApiContext {
     refs?: string[];
     workerDir?: string | null;
     managerDir?: string | null;
+    nightwatch?: NightWatchStartOptions | null;
   }) => Promise<{
     run: JobRun;
     workerSession?: SessionSnapshot | null;
@@ -157,6 +159,7 @@ const createDefaultDispatchRun = (
     refs?: string[];
     workerDir?: string | null;
     managerDir?: string | null;
+    nightwatch?: NightWatchStartOptions | null;
   }) => {
     if (!sessionCtx) {
       throw new Error("Jobs dispatch is not configured");
@@ -196,7 +199,7 @@ const createDefaultDispatchRun = (
           updateRun: store.updateRun,
           getRun: store.getRun,
         },
-        createSession: async (name, directory, agent) => {
+        createSession: async (name, directory, agent, nightwatch) => {
           const session = await sessionCtx.manager.createSession(
             agent,
             directory,
@@ -205,6 +208,13 @@ const createDefaultDispatchRun = (
             undefined,
             input.authContext.npub ?? undefined,
           );
+          if (nightwatch?.enabled) {
+            sessionCtx.enableNightWatch(session.id, {
+              prompt: nightwatch.prompt,
+              intervalMinutes: nightwatch.intervalMinutes,
+              maxCycles: nightwatch.maxCycles,
+            });
+          }
           await recordLiveSession(sessionCtx, session);
           return session;
         },
@@ -242,6 +252,7 @@ const createDefaultDispatchRun = (
         refs: input.refs,
         workerDir: input.workerDir,
         managerDir: input.managerDir,
+        nightwatch: input.nightwatch,
       },
     );
   };
@@ -393,6 +404,12 @@ export function createAutopilotJobsApiHandler(context: AutopilotJobsApiContext =
     }
 
     try {
+      let nightwatch: NightWatchStartOptions | null = null;
+      try {
+        nightwatch = parseNightWatchStartOptions(body.nightwatch ?? null);
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
       const result = await dispatchRun({
         authContext,
         wingmanUrl: url.origin,
@@ -406,6 +423,7 @@ export function createAutopilotJobsApiHandler(context: AutopilotJobsApiContext =
         refs: normalizeRefs(body.refs),
         workerDir: normalizeText(body.worker_dir),
         managerDir: normalizeText(body.manager_dir),
+        nightwatch,
       });
 
       const responsePayload: Record<string, unknown> = { run: result.run };

@@ -35,12 +35,15 @@ bun clis/appctl.ts starters-delete <id>
 
 ```bash
 bun clis/sessions.ts list
-bun clis/sessions.ts create claude-code --name "my-task" --directory /tmp/project
+bun clis/sessions.ts create claude-code --name "my-task" --directory /tmp/project --nightwatch true
 bun clis/sessions.ts info <session-id>
 bun clis/sessions.ts logs <session-id>
 bun clis/sessions.ts send <session-id> "do the thing"
 bun clis/sessions.ts stop <session-id>
 bun clis/sessions.ts stop-self --bot-crypto
+bun clis/sessions.ts nightwatch-status <session-id>
+bun clis/sessions.ts nightwatch-enable <session-id> --nightwatch-interval 10
+bun clis/sessions.ts nightwatch-disable <session-id>
 bun clis/sessions.ts artifacts <session-id>
 bun clis/sessions.ts queue <session-id>
 bun clis/sessions.ts queue-add <session-id> "run the tests"
@@ -49,6 +52,16 @@ bun clis/sessions.ts archive [--limit 20] [--filter text]
 bun clis/sessions.ts archive-info <archive-id>
 bun clis/sessions.ts archive-logs <archive-id>
 bun clis/sessions.ts archive-delete <archive-id>
+```
+
+### nightwatch — Night Watch control
+
+```bash
+bun clis/nightwatch.ts status <session-id>
+bun clis/nightwatch.ts enable <session-id> --nightwatch-prompt "Any progress?" --nightwatch-interval 10
+bun clis/nightwatch.ts disable <session-id>
+bun clis/nightwatch.ts config
+bun clis/nightwatch.ts reports
 ```
 
 ### delegate-sessions — Bot-delegated session management
@@ -94,8 +107,8 @@ bun clis/deploy.ts logs <app-id>
 
 ```bash
 bun clis/scheduler.ts list
-bun clis/scheduler.ts create --name "Daily run" --agent codex --working-directory /tmp/project --prompt "check repo" --trigger-type cron --cron "0 * * * *"
-bun clis/scheduler.ts update <job-id> --enabled false
+bun clis/scheduler.ts create --name "Daily run" --agent codex --working-directory /tmp/project --prompt "check repo" --trigger-type cron --cron "0 * * * *" --nightwatch true
+bun clis/scheduler.ts update <job-id> --enabled false --nightwatch false
 bun clis/scheduler.ts delete <job-id>
 bun clis/scheduler.ts trigger <job-id>
 bun clis/scheduler.ts runs <job-id>
@@ -114,7 +127,8 @@ bun clis/jobs.ts create --id movie-research --name "Movie Research" \
 bun clis/jobs-dispatch.ts start movie-research \
   --worker-agent goose --manager-agent gemini \
   --worker-dir /tmp/movie-research --manager-dir /tmp/movie-review \
-  --goal "Research the best Korean thrillers of the 2000s"
+  --goal "Research the best Korean thrillers of the 2000s" \
+  --nightwatch true --nightwatch-interval 10
 
 bun clis/jobs-manager.ts read-worker <run-id> --bot-crypto
 ```

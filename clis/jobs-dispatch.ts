@@ -38,6 +38,11 @@ Options:
   --dir <path>               Worker directory override (alias for --worker-dir)
   --worker-dir <path>        Worker directory override
   --manager-dir <path>       Manager directory override
+  --nightwatch <true|false>  Enable/disable Night Watch for launched job sessions
+  --nightwatchman <true|false> Alias for --nightwatch
+  --nightwatch-prompt <text> Prompt used by Night Watch check-ins
+  --nightwatch-interval <n>  Minutes between Night Watch check-ins
+  --nightwatch-max-cycles <n> Maximum number of Night Watch check-ins
   --url <url>                Wingman URL (env: WINGMAN_URL, default: http://localhost:3000)
   --key <nsec|hex>           Nostr private key (env: WINGMAN_NSEC)
   --bot-crypto               Sign via bot-crypto API (for agent sessions)
@@ -47,7 +52,8 @@ Options:
 Examples:
   bun clis/jobs-dispatch.ts start movie-research --goal "Find 1990s neo-noir films"
   bun clis/jobs-dispatch.ts start my-job --worker-agent codex --manager-agent claude --worker-dir /tmp/project --manager-dir /tmp/review
-  bun clis/jobs-dispatch.ts start my-job --worker-goal "Write the design doc" --manager-goal "Review and update the task" --ref task-abc`;
+  bun clis/jobs-dispatch.ts start my-job --worker-goal "Write the design doc" --manager-goal "Review and update the task" --ref task-abc
+  bun clis/jobs-dispatch.ts start my-job --nightwatch true --nightwatch-interval 10`;
 
 interface DispatchFlags {
   positional: string[];
@@ -60,6 +66,10 @@ interface DispatchFlags {
   refs: string[];
   workerDir?: string;
   managerDir?: string;
+  nightwatchEnabled?: boolean;
+  nightwatchPrompt?: string;
+  nightwatchInterval?: number;
+  nightwatchMaxCycles?: number;
   urlInput?: string;
   keyInput?: string;
   asJson: boolean;
@@ -71,6 +81,27 @@ interface JobRunResponse {
   run?: Record<string, unknown>;
   worker_session?: Record<string, unknown>;
   manager_session?: Record<string, unknown>;
+}
+
+function parseBooleanFlag(value: string | undefined, flagName: string): boolean {
+  if (value === undefined) {
+    throw new Error(`${flagName} requires a value: true or false`);
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  throw new Error(`${flagName} must be true or false`);
+}
+
+function parsePositiveIntegerFlag(value: string | undefined, flagName: string): number {
+  if (value === undefined) {
+    throw new Error(`${flagName} requires a numeric value`);
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${flagName} must be a positive integer`);
+  }
+  return parsed;
 }
 
 function parseAgentFlag(value: string | undefined, flagName: string): string {
@@ -149,6 +180,25 @@ function parseDispatchFlags(argv: string[]): DispatchFlags {
         parsed.managerDir = value;
         break;
       }
+      case "--nightwatch":
+      case "--nightwatchman": {
+        parsed.nightwatchEnabled = parseBooleanFlag(args[++i], token);
+        break;
+      }
+      case "--nightwatch-prompt": {
+        const value = args[++i];
+        if (!value) throw new Error("--nightwatch-prompt requires a value");
+        parsed.nightwatchPrompt = value;
+        break;
+      }
+      case "--nightwatch-interval": {
+        parsed.nightwatchInterval = parsePositiveIntegerFlag(args[++i], "--nightwatch-interval");
+        break;
+      }
+      case "--nightwatch-max-cycles": {
+        parsed.nightwatchMaxCycles = parsePositiveIntegerFlag(args[++i], "--nightwatch-max-cycles");
+        break;
+      }
       default:
         parsed.positional.push(token);
     }
@@ -170,6 +220,32 @@ function printResult(result: JobRunResponse): void {
   console.log(`Manager Dir:      ${String(run.manager_dir ?? "-")}`);
 }
 
+function buildNightWatchPayload(flags: DispatchFlags): false | Record<string, unknown> | undefined {
+  const hasNightWatchFields =
+    flags.nightwatchEnabled !== undefined ||
+    flags.nightwatchPrompt !== undefined ||
+    flags.nightwatchInterval !== undefined ||
+    flags.nightwatchMaxCycles !== undefined;
+  if (!hasNightWatchFields) {
+    return undefined;
+  }
+  if (
+    flags.nightwatchEnabled === false &&
+    flags.nightwatchPrompt === undefined &&
+    flags.nightwatchInterval === undefined &&
+    flags.nightwatchMaxCycles === undefined
+  ) {
+    return false;
+  }
+
+  const payload: Record<string, unknown> = {};
+  if (flags.nightwatchEnabled !== undefined) payload.enabled = flags.nightwatchEnabled;
+  if (flags.nightwatchPrompt !== undefined) payload.prompt = flags.nightwatchPrompt;
+  if (flags.nightwatchInterval !== undefined) payload.intervalMinutes = flags.nightwatchInterval;
+  if (flags.nightwatchMaxCycles !== undefined) payload.maxCycles = flags.nightwatchMaxCycles;
+  return payload;
+}
+
 async function handleStart(flags: DispatchFlags): Promise<void> {
   const jobId = flags.positional[1];
   if (!jobId) throw new Error("start requires <job-id>");
@@ -188,6 +264,8 @@ async function handleStart(flags: DispatchFlags): Promise<void> {
   if (flags.refs.length > 0) body.refs = flags.refs;
   if (flags.workerDir) body.worker_dir = flags.workerDir;
   if (flags.managerDir) body.manager_dir = flags.managerDir;
+  const nightWatchBody = buildNightWatchPayload(flags);
+  if (nightWatchBody !== undefined) body.nightwatch = nightWatchBody;
 
   const result = flags.botCrypto
     ? await requestJsonBotCrypto<JobRunResponse>(baseUrl, "POST", "/api/autopilot-jobs/runs", body)

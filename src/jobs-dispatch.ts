@@ -9,6 +9,7 @@ import type { AgentType } from "./config";
 import type { SessionSnapshot } from "./agents/process-manager";
 import type { CreateRunInput, JobDefinition, JobRun } from "./jobs-db";
 import { buildDefaultJobSessionName, resolveJobAgents } from "./jobs/agent-config";
+import type { NightWatchStartOptions } from "./nightwatch/nightwatch-start-config";
 
 export interface JobRunStore {
   createRun: (input: CreateRunInput) => JobRun;
@@ -28,11 +29,17 @@ export interface DispatchJobRunInput {
   refs?: string[];
   workerDir?: string | null;
   managerDir?: string | null;
+  nightwatch?: NightWatchStartOptions | null;
 }
 
 export interface DispatchJobRunDeps {
   runStore: JobRunStore;
-  createSession: (name: string, directory: string, agent: AgentType) => Promise<SessionSnapshot>;
+  createSession: (
+    name: string,
+    directory: string,
+    agent: AgentType,
+    nightwatch?: NightWatchStartOptions | null,
+  ) => Promise<SessionSnapshot>;
   waitForSessionReady: (session: SessionSnapshot) => Promise<void>;
   seedSession: (session: SessionSnapshot, content: string) => Promise<void>;
 }
@@ -179,6 +186,7 @@ export async function dispatchJobRun(
       buildDefaultJobSessionName(input.job.id, "worker", workerAgent, runId),
       workerDir,
       workerAgent,
+      input.nightwatch,
     );
     await deps.waitForSessionReady(workerSession);
     await deps.seedSession(workerSession, workerPrompt);
@@ -198,6 +206,7 @@ export async function dispatchJobRun(
       buildDefaultJobSessionName(input.job.id, "manager", managerAgent, runId),
       managerDir,
       managerAgent,
+      input.nightwatch,
     );
     await deps.waitForSessionReady(managerSession);
     await deps.seedSession(managerSession, managerContext);
