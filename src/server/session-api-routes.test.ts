@@ -275,6 +275,41 @@ describe("handleSessionApi", () => {
     });
   });
 
+  test("GET /api/sessions/:id/metadata returns live session metadata", async () => {
+    const session = {
+      ...baseSession,
+      metadata: {
+        AGENT: false,
+        billingMode: "subscription" as const,
+        goal: "Ship the release",
+        nextAction: "reflect" as const,
+      },
+    };
+    const ctx = buildCtx({
+      manager: {
+        getSession: (id: string) => (id === "session-1" ? session : undefined),
+        listSessions: () => [session],
+      } as any,
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions/session-1/metadata");
+    const request = new Request(url.toString(), { method: "GET" });
+
+    const response = await handleSessionApi(
+      request,
+      url,
+      "GET",
+      makeAuth({ actorNpub: "npub1owner", delegatedByBot: false }),
+      ctx,
+    );
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    await expect(response!.json()).resolves.toEqual({
+      id: "session-1",
+      metadata: session.metadata,
+    });
+  });
+
   test("PATCH /api/owners/:owner/sessions/:id/metadata updates owner-space metadata", async () => {
     let updatePayload: Record<string, unknown> | undefined;
     const updatedSession = {
@@ -327,6 +362,45 @@ describe("handleSessionApi", () => {
       id: "session-1",
       ownerNpub: "npub1owner",
       metadata: updatedSession.metadata,
+    });
+  });
+
+  test("GET /api/owners/:owner/sessions/:id/metadata returns owner-space metadata", async () => {
+    const ownerSession = {
+      ...baseSession,
+      npub: "npub1owner",
+      metadata: {
+        AGENT: false,
+        billingMode: "subscription" as const,
+        goal: "Review task state",
+        nextAction: "stop" as const,
+      },
+    };
+    const ctx = buildCtx({
+      manager: {
+        getSession: (id: string) => (id === "session-1" ? ownerSession : undefined),
+        listSessions: () => [ownerSession],
+      } as any,
+    });
+
+    const url = new URL("http://localhost:3021/api/owners/npub1owner/sessions/session-1/metadata");
+    const request = new Request(url.toString(), { method: "GET" });
+
+    const ownerAuth = makeAuth({
+      npub: "npub1owner",
+      actorNpub: "npub1owner",
+      signerNpub: "npub1owner",
+      subjectNpub: "npub1owner",
+      delegatedByBot: false,
+      delegatedOwnerNpub: "npub1owner",
+    });
+    const response = await handleSessionApi(request, url, "GET", ownerAuth, ctx);
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    await expect(response!.json()).resolves.toEqual({
+      id: "session-1",
+      ownerNpub: "npub1owner",
+      metadata: ownerSession.metadata,
     });
   });
 

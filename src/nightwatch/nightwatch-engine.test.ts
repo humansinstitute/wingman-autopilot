@@ -179,4 +179,64 @@ describe("maybeTriggerNightWatch", () => {
       summary: "Night Watch disabled by session metadata hook.",
     });
   });
+
+  test("records an explicit placeholder when the session requests restart", async () => {
+    let disableCount = 0;
+    let recordPromptSentCount = 0;
+    const reports: Array<Record<string, unknown>> = [];
+
+    globalThis.fetch = (async () => {
+      throw new Error("fetch should not be called");
+    }) as unknown as typeof fetch;
+
+    await maybeTriggerNightWatch(
+      {
+        ...baseSession,
+        metadata: {
+          ...baseMetadata,
+          nextAction: "restart",
+          nextActionPayload: "resume from clean state",
+        },
+      },
+      {
+        store: {
+          getSessionState: () => baseState,
+          scheduleNextPrompt: () => {},
+          postponePrompt: () => {},
+          recordPromptSent: () => {
+            recordPromptSentCount += 1;
+            return 1;
+          },
+          addReport: (report: Record<string, unknown>) => {
+            reports.push(report);
+            return report as never;
+          },
+          disableSession: () => {
+            disableCount += 1;
+          },
+        } as never,
+        featureFlagStore: {
+          getFlag: () => ({ state: "on" }),
+        },
+        agentHost: "127.0.0.1",
+        getSession: () => ({
+          ...baseSession,
+          metadata: {
+            ...baseMetadata,
+            nextAction: "restart",
+            nextActionPayload: "resume from clean state",
+          },
+        }),
+      },
+    );
+
+    expect(disableCount).toBe(1);
+    expect(recordPromptSentCount).toBe(0);
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({
+      status: "monitor",
+    });
+    expect(String(reports[0]?.summary ?? "")).toContain("restart orchestration is not implemented");
+    expect(String(reports[0]?.reasoning ?? "")).toContain('hook "restart"');
+  });
 });
