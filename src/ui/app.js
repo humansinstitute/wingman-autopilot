@@ -664,6 +664,9 @@ const sessionWorkspaceModeSelect = document.getElementById("session-workspace-mo
 const sessionWorktreeField = document.querySelector('[data-workspace="worktree"]');
 const sessionWorktreeNameInput = document.getElementById("session-worktree-name");
 const sessionWorktreeHint = document.getElementById("session-worktree-hint");
+const sessionGoalInput = document.getElementById("session-goal");
+const sessionNextActionSelect = document.getElementById("session-next-action");
+const sessionNextActionTemplateInput = document.getElementById("session-next-action-template");
 const sessionWriterModeCheckbox = document.getElementById("session-writer-mode");
 const sessionTargetFileInput = document.getElementById("session-target-file");
 const sessionTargetFileField = document.getElementById("session-target-file-field");
@@ -1910,6 +1913,9 @@ sessionDialogController = createSessionDialogController({
   worktreeField: sessionWorktreeField,
   worktreeNameInput: sessionWorktreeNameInput,
   worktreeHint: sessionWorktreeHint,
+  goalInput: sessionGoalInput,
+  nextActionSelect: sessionNextActionSelect,
+  nextActionTemplateInput: sessionNextActionTemplateInput,
   writerModeCheckbox: sessionWriterModeCheckbox,
   targetFileInput: sessionTargetFileInput,
   targetFileField: sessionTargetFileField,
@@ -1918,8 +1924,14 @@ sessionDialogController = createSessionDialogController({
   getFallbackDirectory: getSessionFallbackDirectory,
   onRequireAuth: openIdentityLoginDialog,
   onDirectoryPrefill: (...args) => scheduleDirectorySuggestions(...args),
-  onSubmit: ({ agentId, workingDirectory, sessionName, workspace, targetFile }) => {
-    const options = targetFile ? { targetFile } : undefined;
+  onSubmit: ({ agentId, workingDirectory, sessionName, workspace, targetFile, metadata }) => {
+    const options = {};
+    if (targetFile) {
+      options.targetFile = targetFile;
+    }
+    if (metadata && typeof metadata === "object") {
+      options.metadata = metadata;
+    }
     launchSession(agentId, workingDirectory, sessionName, workspace, options);
   },
 });

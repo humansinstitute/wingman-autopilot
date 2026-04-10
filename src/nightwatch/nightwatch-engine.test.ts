@@ -123,6 +123,75 @@ describe("maybeTriggerNightWatch", () => {
     expect(String(reports[0]?.reasoning ?? "")).toContain('hook "reflect"');
   });
 
+  test("renders a custom reflection template with placeholders", async () => {
+    const requests: Array<{ url: string; body: Record<string, unknown> | null }> = [];
+
+    globalThis.fetch = (async (input, init) => {
+      requests.push({
+        url: String(input),
+        body: init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : null,
+      });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }) as typeof fetch;
+
+    await maybeTriggerNightWatch(
+      {
+        ...baseSession,
+        name: "custom-reflector",
+        metadata: {
+          ...baseMetadata,
+          goal: "Ship the release",
+          nextAction: "reflect",
+          nextActionPayload: "Focus on tests first",
+          nextActionTemplate:
+            "Goal: {{goal}}\nSession: {{sessionName}}\nNext move: {{nextActionPayload}}",
+        },
+      },
+      {
+        store: {
+          getSessionState: () => baseState,
+          scheduleNextPrompt: () => {},
+          postponePrompt: () => {},
+          recordPromptSent: () => 1,
+          addReport: () => ({} as never),
+          disableSession: () => {},
+        } as never,
+        featureFlagStore: {
+          getFlag: () => ({ state: "on" }),
+        },
+        agentHost: "127.0.0.1",
+        getSession: () => ({
+          ...baseSession,
+          name: "custom-reflector",
+          metadata: {
+            ...baseMetadata,
+            goal: "Ship the release",
+            nextAction: "reflect",
+            nextActionPayload: "Focus on tests first",
+            nextActionTemplate:
+              "Goal: {{goal}}\nSession: {{sessionName}}\nNext move: {{nextActionPayload}}",
+          },
+        }),
+        updateSessionMetadata: () => ({
+          ...baseSession,
+          name: "custom-reflector",
+          metadata: {
+            ...baseMetadata,
+            goal: "Ship the release",
+            nextAction: "none",
+            nextActionTemplate:
+              "Goal: {{goal}}\nSession: {{sessionName}}\nNext move: {{nextActionPayload}}",
+          },
+        }),
+      },
+    );
+
+    expect(requests).toHaveLength(1);
+    expect(String(requests[0]?.body?.content ?? "")).toBe(
+      "Goal: Ship the release\nSession: custom-reflector\nNext move: Focus on tests first",
+    );
+  });
+
   test("disables future prompts when the session requests stop", async () => {
     let disableCount = 0;
     let recordPromptSentCount = 0;

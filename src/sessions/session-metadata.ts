@@ -6,6 +6,7 @@ export interface SessionMetadata {
   goal?: string;
   nextAction?: SessionMetadataNextAction;
   nextActionPayload?: string;
+  nextActionTemplate?: string;
   bindingType?: SessionBindingType;
   bindingId?: string;
   flowId?: string;
@@ -63,6 +64,8 @@ export const normaliseSessionMetadata = (
     : undefined;
   const nextActionPayload =
     typeof metadata?.nextActionPayload === "string" ? metadata.nextActionPayload.trim() : "";
+  const nextActionTemplate =
+    typeof metadata?.nextActionTemplate === "string" ? metadata.nextActionTemplate.trim() : "";
   const bindingTypeValue =
     typeof metadata?.bindingType === "string" ? metadata.bindingType.trim().toLowerCase() : "";
   const bindingType = SESSION_METADATA_BINDING_TYPES.includes(
@@ -97,6 +100,7 @@ export const normaliseSessionMetadata = (
     goal: goal || undefined,
     nextAction,
     nextActionPayload: nextActionPayload || undefined,
+    nextActionTemplate: nextActionTemplate || undefined,
     bindingType,
     bindingId: bindingId || undefined,
     flowId: flowId || undefined,

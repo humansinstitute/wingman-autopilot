@@ -24,6 +24,35 @@ function ensureNightWatchEnableModalStyles() {
       gap: 1rem;
     }
 
+    .wm-nightwatch-enable-modal__tabs {
+      display: inline-flex;
+      align-self: flex-start;
+      gap: 0.4rem;
+      padding: 0.25rem;
+      border: 1px solid var(--border-primary, rgba(148, 163, 184, 0.3));
+      border-radius: 999px;
+      background: var(--bg-secondary, rgba(15, 23, 42, 0.04));
+    }
+
+    .wm-nightwatch-enable-modal__tab {
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: inherit;
+      padding: 0.45rem 0.9rem;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .wm-nightwatch-enable-modal__tab[aria-selected="true"] {
+      background: var(--accent-primary, #2563eb);
+      color: var(--accent-on-primary, #fff);
+    }
+
+    .wm-nightwatch-enable-modal__panel[hidden] {
+      display: none;
+    }
+
     .wm-nightwatch-enable-modal__hint {
       margin: 0.35rem 0 0;
       opacity: 0.75;
@@ -77,6 +106,9 @@ export function openNightWatchEnableModal({
   maxIntervalMinutes,
   maxCycles,
   maxCycleOptions,
+  goal,
+  nextAction,
+  nextActionTemplate,
 }) {
   ensureNightWatchEnableModalStyles();
 
@@ -107,6 +139,115 @@ export function openNightWatchEnableModal({
 
     const body = document.createElement("section");
     body.className = "wm-nightwatch-enable-modal__body";
+
+    const tabList = document.createElement("div");
+    tabList.className = "wm-nightwatch-enable-modal__tabs";
+    tabList.setAttribute("role", "tablist");
+    tabList.setAttribute("aria-label", "Night Watch settings");
+
+    const timerTab = document.createElement("button");
+    timerTab.type = "button";
+    timerTab.className = "wm-nightwatch-enable-modal__tab";
+    timerTab.setAttribute("role", "tab");
+    timerTab.setAttribute("aria-selected", "true");
+    timerTab.setAttribute("aria-controls", "wm-nightwatch-timer-panel");
+    timerTab.id = "wm-nightwatch-timer-tab";
+    timerTab.textContent = "Timer";
+
+    const hookTab = document.createElement("button");
+    hookTab.type = "button";
+    hookTab.className = "wm-nightwatch-enable-modal__tab";
+    hookTab.setAttribute("role", "tab");
+    hookTab.setAttribute("aria-selected", "false");
+    hookTab.setAttribute("aria-controls", "wm-nightwatch-hook-panel");
+    hookTab.id = "wm-nightwatch-hook-tab";
+    hookTab.textContent = "Hook";
+
+    tabList.append(timerTab, hookTab);
+
+    const timerPanel = document.createElement("section");
+    timerPanel.className = "wm-nightwatch-enable-modal__panel";
+    timerPanel.id = "wm-nightwatch-timer-panel";
+    timerPanel.setAttribute("role", "tabpanel");
+    timerPanel.setAttribute("aria-labelledby", timerTab.id);
+
+    const hookPanel = document.createElement("section");
+    hookPanel.className = "wm-nightwatch-enable-modal__panel";
+    hookPanel.id = "wm-nightwatch-hook-panel";
+    hookPanel.setAttribute("role", "tabpanel");
+    hookPanel.setAttribute("aria-labelledby", hookTab.id);
+    hookPanel.hidden = true;
+
+    const metadataFields = document.createElement("div");
+    metadataFields.style.display = "flex";
+    metadataFields.style.flexDirection = "column";
+    metadataFields.style.gap = "1rem";
+
+    const goalField = document.createElement("label");
+    goalField.className = "wm-dialog__field";
+    goalField.textContent = "Goal";
+
+    const goalInput = document.createElement("textarea");
+    goalInput.rows = 3;
+    goalInput.value = typeof goal === "string" ? goal : "";
+    goalInput.spellcheck = false;
+    goalInput.setAttribute("aria-label", "Session goal");
+    goalInput.setAttribute("data-testid", "nightwatch-goal-input");
+
+    const goalHint = document.createElement("p");
+    goalHint.className = "wm-nightwatch-enable-modal__hint";
+    goalHint.textContent = "Optional goal used by Night Watch reflection hooks.";
+
+    goalField.append(goalInput, goalHint);
+
+    const hookField = document.createElement("label");
+    hookField.className = "wm-dialog__field";
+    hookField.textContent = "Next Action Hook";
+
+    const hookSelect = document.createElement("select");
+    hookSelect.setAttribute("aria-label", "Night Watch next action hook");
+    hookSelect.setAttribute("data-testid", "nightwatch-next-action-select");
+    [
+      ["", "None"],
+      ["reflect", "Reflect"],
+      ["stop", "Stop"],
+      ["restart", "Restart"],
+    ].forEach(([value, label]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      if ((nextAction || "") === value) {
+        option.selected = true;
+      }
+      hookSelect.append(option);
+    });
+
+    const hookHint = document.createElement("p");
+    hookHint.className = "wm-nightwatch-enable-modal__hint";
+    hookHint.textContent = "What Night Watch should do when the timer fires for this session.";
+
+    hookField.append(hookSelect, hookHint);
+
+    const templateField = document.createElement("label");
+    templateField.className = "wm-dialog__field";
+    templateField.textContent = "Reflection Template";
+
+    const templateInput = document.createElement("textarea");
+    templateInput.rows = 4;
+    templateInput.value = typeof nextActionTemplate === "string" ? nextActionTemplate : "";
+    templateInput.spellcheck = false;
+    templateInput.placeholder = "Optional template for reflect hooks";
+    templateInput.setAttribute("aria-label", "Night Watch reflection template");
+    templateInput.setAttribute("data-testid", "nightwatch-next-action-template-input");
+
+    const templateHint = document.createElement("p");
+    templateHint.className = "wm-nightwatch-enable-modal__hint";
+    templateHint.textContent =
+      "Supports {{goal}}, {{nextActionPayload}}, {{sessionName}}, and {{workingDirectory}}.";
+
+    templateField.append(templateInput, templateHint);
+    metadataFields.append(goalField, hookField, templateField);
+    hookPanel.append(metadataFields);
 
     const grid = document.createElement("div");
     grid.className = "wm-nightwatch-enable-modal__grid";
@@ -193,7 +334,19 @@ export function openNightWatchEnableModal({
     timingFields.append(intervalField, maxTurnsField);
 
     grid.append(promptField, timingFields);
-    body.append(grid);
+    timerPanel.append(grid);
+    body.append(tabList, timerPanel, hookPanel);
+
+    const setActiveTab = (tabName) => {
+      const timerActive = tabName !== "hook";
+      timerTab.setAttribute("aria-selected", timerActive ? "true" : "false");
+      hookTab.setAttribute("aria-selected", timerActive ? "false" : "true");
+      timerPanel.hidden = !timerActive;
+      hookPanel.hidden = timerActive;
+    };
+
+    timerTab.addEventListener("click", () => setActiveTab("timer"));
+    hookTab.addEventListener("click", () => setActiveTab("hook"));
 
     const status = document.createElement("p");
     status.className = "wm-nightwatch-enable-modal__status";
@@ -254,6 +407,9 @@ export function openNightWatchEnableModal({
         prompt: nextPrompt,
         intervalMinutes: Math.trunc(nextInterval),
         maxCycles: Math.trunc(Number(maxTurnsInput.value)),
+        goal: goalInput.value.trim(),
+        nextAction: hookSelect.value.trim(),
+        nextActionTemplate: templateInput.value.trim(),
       });
     });
 

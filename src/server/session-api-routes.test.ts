@@ -239,6 +239,7 @@ describe("handleSessionApi", () => {
         billingMode: "subscription" as const,
         goal: "Ship the release",
         nextAction: "reflect" as const,
+        nextActionTemplate: "Goal: {{goal}}",
         lastManagedByNpub: "npub1owner",
       },
     };
@@ -258,7 +259,11 @@ describe("handleSessionApi", () => {
     const request = new Request(url.toString(), {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ goal: "Ship the release", nextAction: "reflect" }),
+      body: JSON.stringify({
+        goal: "Ship the release",
+        nextAction: "reflect",
+        nextActionTemplate: "Goal: {{goal}}",
+      }),
     });
 
     const response = await handleSessionApi(request, url, "PATCH", makeAuth({ actorNpub: "npub1owner", delegatedByBot: false }), ctx);
@@ -267,6 +272,7 @@ describe("handleSessionApi", () => {
     expect(updatePayload as Record<string, unknown>).toEqual({
       goal: "Ship the release",
       nextAction: "reflect",
+      nextActionTemplate: "Goal: {{goal}}",
       lastManagedByNpub: "npub1bot",
     });
     await expect(response!.json()).resolves.toEqual({

@@ -122,6 +122,27 @@ export async function updateSessionNameApi(sessionId, name) {
 }
 
 /**
+ * Updates session metadata.
+ * @param {string} sessionId - The session ID
+ * @param {Object} metadata - Session metadata patch
+ * @returns {Promise<{id: string, metadata: Object}>}
+ * @throws {Error} If the request fails
+ */
+export async function updateSessionMetadataApi(sessionId, metadata) {
+  const response = await fetch(`/api/sessions/${sessionId}/metadata`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(metadata),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const message = typeof data?.error === "string" ? data.error : response.statusText;
+    throw new Error(message || "Failed to update session metadata");
+  }
+  return response.json();
+}
+
+/**
  * Posts a message to a session.
  * @param {string} sessionId - The session ID
  * @param {string} content - Message content

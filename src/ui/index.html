@@ -213,6 +213,43 @@
                   New worktree path: /.worktrees/feature-new-ui
                 </p>
               </div>
+              <div class="wm-session-dialog__field">
+                <label for="session-goal">Goal</label>
+                <textarea
+                  id="session-goal"
+                  rows="3"
+                  maxlength="2000"
+                  placeholder="Optional goal for this session"
+                ></textarea>
+                <p class="wm-session-dialog__hint">
+                  Optional session goal. Useful with Night Watch reflection hooks.
+                </p>
+              </div>
+              <div class="wm-session-dialog__field">
+                <label for="session-next-action">Next Action Hook</label>
+                <select id="session-next-action">
+                  <option value="">None</option>
+                  <option value="reflect">Reflect</option>
+                  <option value="stop">Stop</option>
+                  <option value="restart">Restart</option>
+                </select>
+                <p class="wm-session-dialog__hint">
+                  Hook metadata for autonomous sessions. Hooks run when Night Watchman is enabled.
+                </p>
+              </div>
+              <div class="wm-session-dialog__field">
+                <label for="session-next-action-template">Next Action Template</label>
+                <textarea
+                  id="session-next-action-template"
+                  rows="4"
+                  maxlength="4000"
+                  placeholder="Optional template for reflect hooks"
+                ></textarea>
+                <p class="wm-session-dialog__hint">
+                  Optional custom prompt template for reflect hooks. Supports `{{goal}}`,
+                  `{{nextActionPayload}}`, `{{sessionName}}`, and `{{workingDirectory}}`.
+                </p>
+              </div>
             </div>
           </div>
         </section>

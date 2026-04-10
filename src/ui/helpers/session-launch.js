@@ -110,6 +110,7 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = 
       initialPrompt = null,
       targetFile = null,
       nightwatch = null,
+      metadata = null,
     } = options ?? {};
     const payload = { agent: normalizedAgent };
     const trimmedName = typeof name === "string" ? name.trim() : "";
@@ -133,6 +134,9 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = 
     }
     if (nightwatch && typeof nightwatch === "object") {
       payload.nightwatch = nightwatch;
+    }
+    if (metadata && typeof metadata === "object") {
+      payload.metadata = metadata;
     }
 
     const canAttemptNewTab = openInNewTab && !shouldLaunchSessionInCurrentTab();

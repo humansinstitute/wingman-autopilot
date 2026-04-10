@@ -26,6 +26,9 @@ export const createSessionDialogController = (options) => {
     worktreeField,
     worktreeNameInput,
     worktreeHint,
+    goalInput,
+    nextActionSelect,
+    nextActionTemplateInput,
     writerModeCheckbox,
     targetFileInput,
     targetFileField,
@@ -163,6 +166,15 @@ export const createSessionDialogController = (options) => {
     if (writerModeCheckbox) {
       writerModeCheckbox.checked = false;
     }
+    if (goalInput) {
+      goalInput.value = "";
+    }
+    if (nextActionSelect) {
+      nextActionSelect.value = "";
+    }
+    if (nextActionTemplateInput) {
+      nextActionTemplateInput.value = "";
+    }
     if (targetFileInput) {
       targetFileInput.value = "";
     }
@@ -192,9 +204,29 @@ export const createSessionDialogController = (options) => {
       workspaceSelect?.value === "worktree"
         ? { mode: "worktree", name: (worktreeNameInput?.value ?? "").trim() }
         : null;
+    const goal = goalInput?.value?.trim() || "";
+    const nextAction = nextActionSelect?.value?.trim() || "";
+    const nextActionTemplate = nextActionTemplateInput?.value?.trim() || "";
+    const metadata = {};
+    if (goal) {
+      metadata.goal = goal;
+    }
+    if (nextAction) {
+      metadata.nextAction = nextAction;
+    }
+    if (nextActionTemplate) {
+      metadata.nextActionTemplate = nextActionTemplate;
+    }
     const writerMode = writerModeCheckbox?.checked ?? false;
     const targetFile = writerMode ? (targetFileInput?.value?.trim() || null) : null;
-    return { agentId, workingDirectory, sessionName, workspace, targetFile };
+    return {
+      agentId,
+      workingDirectory,
+      sessionName,
+      workspace,
+      targetFile,
+      metadata: Object.keys(metadata).length > 0 ? metadata : null,
+    };
   };
 
   const handleSubmit = () => {
@@ -253,7 +285,7 @@ export const createSessionDialogController = (options) => {
     if (agent) {
       const directory = window.prompt("Working directory:", fallbackDirectory) ?? fallbackDirectory;
       const name = window.prompt("Session name (optional):", "") ?? "";
-      onSubmit({ agentId: agent, workingDirectory: directory, sessionName: name, workspace: null });
+      onSubmit({ agentId: agent, workingDirectory: directory, sessionName: name, workspace: null, metadata: null });
     }
   };
 

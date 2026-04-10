@@ -1662,22 +1662,11 @@ const agentChatSessionRuntime = new AgentChatSessionRuntime({
   processManager: manager,
   idleRetentionMinutes: 60,
 });
-const agentWorkSessionRuntime = new AgentWorkSessionRuntime({
-  defaultAgent: config.defaultAgent,
-  getSession: (sessionId: string) => manager.getSession(sessionId) ?? null,
-  createSession: async (agent, workingDirectory, name, origin, explicitNpub, metadata) =>
-    await manager.createSession(agent, workingDirectory, name, origin, undefined, explicitNpub, metadata),
-  updateSessionMetadata: (sessionId, metadata) => manager.updateSessionMetadata(sessionId, metadata),
-  addPrompt: (sessionId, content) => promptQueueStore.addPrompt(sessionId, { content }),
-  maybeAutoDispatchQueuedPrompt,
-  enableNightWatch: (sessionId) => {
-    nightWatchStore.enableSession(sessionId);
-  },
-});
 workspaceSubscriptionManager.setChatRuntime(agentChatSessionRuntime);
-workspaceSubscriptionManager.setAgentWorkRuntime(agentWorkSessionRuntime);
-
-await workspaceSubscriptionManager.startupReload();
+// NOTE: `agentWorkSessionRuntime` construction, `setAgentWorkRuntime`, and
+// `workspaceSubscriptionManager.startupReload()` are deferred until after
+// `promptDispatchEngine` is created below, because the runtime depends on
+// `maybeAutoDispatchQueuedPrompt` which is destructured from the engine.
 
 // Clean up any PM2 agent processes not reclaimed by rehydration
 try {
@@ -1764,6 +1753,25 @@ const {
   queueDispatchInFlight,
   waitForMessageUpdate,
 } = promptDispatchEngine;
+
+// Deferred from above: AgentWorkSessionRuntime depends on
+// maybeAutoDispatchQueuedPrompt, which is only available after the
+// promptDispatchEngine destructure.
+const agentWorkSessionRuntime = new AgentWorkSessionRuntime({
+  defaultAgent: config.defaultAgent,
+  getSession: (sessionId: string) => manager.getSession(sessionId) ?? null,
+  createSession: async (agent, workingDirectory, name, origin, explicitNpub, metadata) =>
+    await manager.createSession(agent, workingDirectory, name, origin, undefined, explicitNpub, metadata),
+  updateSessionMetadata: (sessionId, metadata) => manager.updateSessionMetadata(sessionId, metadata),
+  addPrompt: (sessionId, content) => promptQueueStore.addPrompt(sessionId, { content }),
+  maybeAutoDispatchQueuedPrompt,
+  enableNightWatch: (sessionId) => {
+    nightWatchStore.enableSession(sessionId);
+  },
+});
+workspaceSubscriptionManager.setAgentWorkRuntime(agentWorkSessionRuntime);
+
+await workspaceSubscriptionManager.startupReload();
 
 const APP_ACTIONS: AppLifecycleAction[] = ["start", "stop", "restart", "setup", "build"];
 

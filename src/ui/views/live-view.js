@@ -1009,6 +1009,7 @@ export function initLiveView(deps) {
     addNightWatchToggle({
       sessionId,
       sessionName: currentSession?.name ?? null,
+      sessionMetadata: currentSession?.metadata ?? null,
       addCommand,
       state,
       showToast,

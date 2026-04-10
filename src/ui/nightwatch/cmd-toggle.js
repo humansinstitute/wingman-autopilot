@@ -12,6 +12,7 @@ import {
   disableNightWatch,
 } from "./api.js";
 import { openNightWatchEnableModal } from "./enable-modal.js";
+import { updateSessionMetadataApi } from "../services/sessions.js";
 
 function labelFor(enabled) {
   return enabled ? "Night Watch: On" : "Night Watch: Off";
@@ -20,6 +21,7 @@ function labelFor(enabled) {
 export function addNightWatchToggle({
   sessionId,
   sessionName,
+  sessionMetadata,
   addCommand,
   state,
   showToast,
@@ -53,11 +55,31 @@ export function addNightWatchToggle({
           maxIntervalMinutes: Number(config.maxIntervalMinutes) || 60,
           maxCycles: Number(sessionState?.maxCycles) || Number(config.maxCycles) || 21,
           maxCycleOptions: config.maxCycleOptions || [6, 21, 256],
+          goal: sessionMetadata?.goal || "",
+          nextAction: sessionMetadata?.nextAction || "",
+          nextActionTemplate: sessionMetadata?.nextActionTemplate || "",
         });
         if (!nextSettings) {
           return;
         }
 
+        const metadataResult = await updateSessionMetadataApi(sessionId, {
+          goal: nextSettings.goal,
+          nextAction: nextSettings.nextAction,
+          nextActionTemplate: nextSettings.nextActionTemplate,
+        });
+        if (sessionMetadata && typeof sessionMetadata === "object") {
+          const normalizedMetadata =
+            metadataResult && typeof metadataResult === "object" && metadataResult.metadata
+              ? metadataResult.metadata
+              : {};
+          Object.keys(sessionMetadata).forEach((key) => {
+            if (!(key in normalizedMetadata)) {
+              delete sessionMetadata[key];
+            }
+          });
+          Object.assign(sessionMetadata, normalizedMetadata);
+        }
         const result = await enableNightWatch(sessionId, nextSettings);
         toggleMap.set(sessionId, { enabled: true, ...result });
         btn.textContent = labelFor(true);

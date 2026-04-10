@@ -77,12 +77,39 @@ function buildHookReasoning(action: string, detail?: string): string {
   return detail ? `Night Watch hook "${action}" fired. ${detail}` : `Night Watch hook "${action}" fired.`;
 }
 
+function renderHookTemplate(template: string, replacements: Record<string, string>): string {
+  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, rawKey) => {
+    const key = typeof rawKey === "string" ? rawKey : "";
+    return replacements[key] ?? "";
+  });
+}
+
 function buildReflectionPrompt(session: SessionSnapshot): string {
   const goal = typeof session.metadata?.goal === "string" ? session.metadata.goal.trim() : "";
   const payload =
     typeof session.metadata?.nextActionPayload === "string"
       ? session.metadata.nextActionPayload.trim()
       : "";
+  const template =
+    typeof session.metadata?.nextActionTemplate === "string"
+      ? session.metadata.nextActionTemplate.trim()
+      : "";
+  const sessionName = typeof session.name === "string" ? session.name.trim() : "";
+  const workingDirectory =
+    typeof session.workingDirectory === "string" ? session.workingDirectory.trim() : "";
+
+  if (template) {
+    const rendered = renderHookTemplate(template, {
+      goal,
+      nextActionPayload: payload,
+      payload,
+      sessionName,
+      workingDirectory,
+    }).trim();
+    if (rendered) {
+      return rendered;
+    }
+  }
 
   const sections = [
     "Night Watch reflection check-in.",

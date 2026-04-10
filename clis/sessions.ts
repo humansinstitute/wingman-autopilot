@@ -56,6 +56,7 @@ Options:
   --goal <text>        Session goal metadata (for metadata-update)
   --next-action <type> Session hook action: none|reflect|stop|restart
   --next-action-payload <text> Payload for the next action hook
+  --next-action-template <text> Template for reflect hooks, e.g. "Goal: {{goal}}"
   --binding-type <type> Binding type: thread|task|flow_run
   --binding-id <id>    Binding identifier
   --flow-id <id>       Flow identifier
@@ -183,6 +184,7 @@ async function run() {
   let goal: string | undefined;
   let nextAction: string | undefined;
   let nextActionPayload: string | undefined;
+  let nextActionTemplate: string | undefined;
   let bindingType: string | undefined;
   let bindingId: string | undefined;
   let flowId: string | undefined;
@@ -227,6 +229,9 @@ async function run() {
     } else if (flag === "--next-action-payload") {
       nextActionPayload = args[++i];
       if (nextActionPayload === undefined) throw new Error("--next-action-payload requires a value");
+    } else if (flag === "--next-action-template") {
+      nextActionTemplate = args[++i];
+      if (nextActionTemplate === undefined) throw new Error("--next-action-template requires a value");
     } else if (flag === "--binding-type") {
       const value = args[++i];
       if (value === undefined) throw new Error("--binding-type requires a value");
@@ -474,6 +479,7 @@ async function run() {
         goal,
         nextAction,
         nextActionPayload,
+        nextActionTemplate,
         bindingType,
         bindingId,
         flowId,

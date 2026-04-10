@@ -2,6 +2,7 @@ export interface SessionMetadataCliUpdateInput {
   goal?: string;
   nextAction?: string;
   nextActionPayload?: string;
+  nextActionTemplate?: string;
   bindingType?: string;
   bindingId?: string;
   flowId?: string;
@@ -26,6 +27,7 @@ export function buildSessionMetadataUpdateBody(
   if (input.goal !== undefined) payload.goal = input.goal;
   if (input.nextAction !== undefined) payload.nextAction = input.nextAction;
   if (input.nextActionPayload !== undefined) payload.nextActionPayload = input.nextActionPayload;
+  if (input.nextActionTemplate !== undefined) payload.nextActionTemplate = input.nextActionTemplate;
   if (input.bindingType !== undefined) payload.bindingType = input.bindingType;
   if (input.bindingId !== undefined) payload.bindingId = input.bindingId;
   if (input.flowId !== undefined) payload.flowId = input.flowId;

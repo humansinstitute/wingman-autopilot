@@ -19,6 +19,7 @@ describe("session metadata CLI helpers", () => {
         goal: "",
         nextAction: "reflect",
         nextActionPayload: "Focus on tests",
+        nextActionTemplate: "Goal: {{goal}}",
         bindingType: "task",
         bindingId: "task-7",
       }),
@@ -26,6 +27,7 @@ describe("session metadata CLI helpers", () => {
       goal: "",
       nextAction: "reflect",
       nextActionPayload: "Focus on tests",
+      nextActionTemplate: "Goal: {{goal}}",
       bindingType: "task",
       bindingId: "task-7",
     });
