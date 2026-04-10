@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { buildBootstrapPrompt, buildMergedTurnPrompt } from './session-runtime-prompts';
+import { buildBootstrapPrompt, buildChatCompletionGoal, buildMergedTurnPrompt } from './session-runtime-prompts';
 
 describe('Agent chat prompts', () => {
   test('bootstrap prompt states that the agent must publish the thread reply itself', () => {
@@ -241,5 +241,18 @@ describe('Agent chat prompts', () => {
     });
 
     expect(prompt).toContain('Chat agent_wm21 thread-1 1. npub1human: Hello');
+  });
+
+  test('chat completion goal includes the latest message and stop syntax', () => {
+    const goal = buildChatCompletionGoal({
+      messageId: 'msg-1',
+      senderNpub: 'npub1human',
+      sentAt: new Date().toISOString(),
+      content: 'Can you run the Perth Central handymen flow for me?',
+    });
+
+    expect(goal).toContain('Have you answered the chat message thoroughly?');
+    expect(goal).toContain('bun clis/sessions.ts metadata-update --next-action stop');
+    expect(goal).toContain('The message was: Can you run the Perth Central handymen flow for me?');
   });
 });

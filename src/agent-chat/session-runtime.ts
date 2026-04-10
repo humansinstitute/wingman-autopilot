@@ -2,7 +2,7 @@ import type { AgentType } from '../config';
 import type { ProcessManager, SessionSnapshot } from '../agents/process-manager';
 import { chatInterceptStateStore, type ChatInterceptStateStore } from './chat-intercept-state-store';
 import { archiveChatSession, archiveExpiredSessionIfNeeded, consumePendingMessages, createAgentChatSession, hasExpiredRetention, logSession, resolveRecoveryState, resolveReusableSession, saveIntercept, sendPromptAndAwaitAssistantReply } from './session-runtime-session-ops';
-import { buildBootstrapPrompt, buildMergedTurnPrompt } from './session-runtime-prompts';
+import { buildBootstrapPrompt, buildChatCompletionGoal, buildMergedTurnPrompt } from './session-runtime-prompts';
 import { parseAgentChatReply } from './session-runtime-decision';
 import {
   enqueueTurn,
@@ -205,6 +205,11 @@ export class AgentChatSessionRuntime {
           `[agent-chat] ${isNewSession ? 'created' : 'reused'} routing_key=${intercept.routingKey} channel=${intercept.channelId} thread=${intercept.threadId}`,
         );
         if (yokeRuntime.contextError) await logSession(this.manager, session.id, `[agent-chat] yoke context warning: ${yokeRuntime.contextError}`);
+
+        this.manager.updateSessionMetadata(session.id, {
+          goal: buildChatCompletionGoal(cycleTurns[cycleTurns.length - 1]!),
+          nextAction: 'reflect',
+        });
 
         const prompt = promptMode
           ? buildMergedTurnPrompt({

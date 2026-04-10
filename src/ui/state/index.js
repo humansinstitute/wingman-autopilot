@@ -129,6 +129,8 @@ export const state = {
   appCardLayout: { open: false, mode: "chat-narrow", mobileTab: "chat" },
   // Per-session pinned artifact file path
   pinnedFiles: new Map(),
+  // Per-session writer files that were manually dismissed by the user
+  writerDismissedFiles: new Map(),
   // Cached artifact counts per session
   artifactCounts: new Map(),
   // Per-session visible message windows for the live conversation view

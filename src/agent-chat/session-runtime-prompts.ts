@@ -13,10 +13,20 @@ export interface QueuedChatTurn {
   content: string;
 }
 
+const CHAT_GOAL_MESSAGE_MAX_LENGTH = 800;
+
 function truncateText(value: string, maxLength = 120): string {
   const compact = value.replace(/\s+/g, ' ').trim();
   if (!compact) {
     return '';
+  }
+  return compact.length > maxLength ? `${compact.slice(0, maxLength - 3)}...` : compact;
+}
+
+function truncateGoalMessage(value: string, maxLength = CHAT_GOAL_MESSAGE_MAX_LENGTH): string {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  if (!compact) {
+    return '[empty]';
   }
   return compact.length > maxLength ? `${compact.slice(0, maxLength - 3)}...` : compact;
 }
@@ -77,6 +87,16 @@ function buildChatDispatchInstructions(): string {
     '- Do not include tool transcripts in your final answer.',
     '- Wingmen may fall back to relaying a reply body only when the decision is respond and you included one.',
   ].join('\n');
+}
+
+export function buildChatCompletionGoal(latestTurn: QueuedChatTurn): string {
+  const message = truncateGoalMessage(latestTurn.content);
+  return [
+    'Have you answered the chat message thoroughly?',
+    'If so, set nextAction to stop using the Wingman session metadata CLI (`bun clis/sessions.ts metadata-update --next-action stop`).',
+    'Otherwise, continue to work towards an answer.',
+    `The message was: ${message}`,
+  ].join(' ');
 }
 
 export function buildBootstrapPrompt(params: {

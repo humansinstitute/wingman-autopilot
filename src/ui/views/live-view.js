@@ -9,7 +9,7 @@ import { escapeHtml, getSessionDisplayName } from "../core/icons.js";
 import { attachCopyButton, copyConversationToClipboard } from "../utils/clipboard.js";
 import { showToast } from "../utils/toast.js";
 import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
-import { fetchSessionHistoryApi, forkSessionToWorktreeApi } from "../services/sessions.js";
+import { fetchSessionHistoryApi, forkSessionToWorktreeApi, setPinnedArtifactApi } from "../services/sessions.js";
 import { triggerAppActionApi } from "../services/apps.js";
 import { isAlpineChatEnabled, getChatTemplate, Alpine, MessageStore } from "../live/index.js";
 import { attachPathMentionAutocomplete } from "../live/path-mention-autocomplete.js";
@@ -19,6 +19,13 @@ import { createMobileTabBar, attachSwipeGesture } from "../writer/mobile-tabs.js
 import { fetchSessionArtifacts, createArtifactsPanel, createArtifactsToolbar } from "../live/artifacts-panel.js";
 import { createAppControlsPanel, createAppControlsToolbar } from "../live/app-controls-panel.js";
 import { createCommandMenuController } from "../live/command-menu-positioning.js";
+import {
+  clearWriterDismissal,
+  getPinnedFileForSession,
+  markWriterDismissed,
+  shouldAutoOpenWriter,
+  syncPinnedFileForSession,
+} from "../live/writer-panel-state.js";
 import { addNightWatchToggle } from "../nightwatch/cmd-toggle.js";
 import { openFilePicker } from "../modals/file-picker.js";
 import { npubProjectsState } from "../npub-projects/index.js";
@@ -83,6 +90,25 @@ export function initLiveView(deps) {
 
   // Track active writer panel cleanup function
   let activeWriterCleanup = null;
+
+  function updateSessionPinnedFile(sessionId, filePath) {
+    const session = sessionsStore().items.find((item) => item.id === sessionId);
+    if (session) {
+      session.pinnedFile = filePath ?? null;
+    }
+  }
+
+  async function persistPinnedArtifact(sessionId, filePath) {
+    const result = await setPinnedArtifactApi(sessionId, filePath);
+    const pinnedFile = result?.pinnedFile ?? null;
+    updateSessionPinnedFile(sessionId, pinnedFile);
+    if (pinnedFile) {
+      state.pinnedFiles.set(sessionId, pinnedFile);
+    } else {
+      state.pinnedFiles.delete(sessionId);
+    }
+    return pinnedFile;
+  }
 
   function resolveCurrentLiveSessionId() {
     const liveSessions = sessionsStore().items;
@@ -1031,25 +1057,43 @@ export function initLiveView(deps) {
       });
     }
 
-    const hasPinnedFile = state.pinnedFiles.has(sessionId);
-    addCommand(hasPinnedFile ? "Close Artifact" : "Open Artifact", () => {
-      if (hasPinnedFile) {
-        state.pinnedFiles.delete(sessionId);
-        state.writerLayout.open = false;
+    const sessionPinnedFile = currentSession?.pinnedFile ?? null;
+    const pinnedFile = getPinnedFileForSession(state, sessionId, sessionPinnedFile);
+    const artifactPanelOpen = Boolean(pinnedFile) && state.writerLayout.open;
+    addCommand(artifactPanelOpen ? "Close Artifact" : "Open Artifact", async () => {
+      if (pinnedFile) {
+        if (artifactPanelOpen) {
+          markWriterDismissed(state, sessionId, pinnedFile);
+          state.writerLayout.open = false;
+          render();
+          return;
+        }
+        clearWriterDismissal(state, sessionId);
+        state.writerLayout.open = true;
+        state.writerLayout.mobileTab = "writer";
+        state.appCardLayout.open = false;
+        state.artifactsLayout.open = false;
+        state.webviewLayout.open = false;
         render();
-      } else {
-        const session = sessionsStore().items.find((s) => s.id === sessionId);
-        const startPath = session?.workingDirectory || "";
-        openFilePicker({ initialPath: startPath }).then((filePath) => {
-          if (filePath) {
-            state.pinnedFiles.set(sessionId, filePath);
-            state.writerLayout.open = true;
-            state.appCardLayout.open = false;
-            state.artifactsLayout.open = false;
-            state.webviewLayout.open = false;
-            render();
-          }
-        });
+        return;
+      }
+
+      const session = sessionsStore().items.find((s) => s.id === sessionId);
+      const startPath = session?.workingDirectory || "";
+      const filePath = await openFilePicker({ initialPath: startPath });
+      if (filePath) {
+        try {
+          await persistPinnedArtifact(sessionId, filePath);
+          clearWriterDismissal(state, sessionId);
+          state.writerLayout.open = true;
+          state.writerLayout.mobileTab = "writer";
+          state.appCardLayout.open = false;
+          state.artifactsLayout.open = false;
+          state.webviewLayout.open = false;
+          render();
+        } catch (error) {
+          showToast(`Failed to pin artifact: ${error.message}`, { type: "error" });
+        }
       }
     });
 
@@ -1423,16 +1467,18 @@ export function initLiveView(deps) {
     const activeSession = sessionsStore().items.find((s) => s.id === sessionId);
     const targetFile = activeSession?.targetFile ?? null;
 
-    // Sync server-side pinnedFile into client state
-    if (activeSession?.pinnedFile && !state.pinnedFiles.has(sessionId)) {
-      state.pinnedFiles.set(sessionId, activeSession.pinnedFile);
-    }
+    const sessionPinnedFile = activeSession?.pinnedFile ?? null;
+    syncPinnedFileForSession(state, sessionId, sessionPinnedFile);
 
     // Pinned file takes priority over session targetFile
-    const effectiveFile = state.pinnedFiles.get(sessionId) || targetFile;
+    const effectiveFile = getPinnedFileForSession(state, sessionId, sessionPinnedFile) || targetFile;
 
-    // Auto-open writer layout when session has an effective file
-    if (effectiveFile && !state.writerLayout.open) {
+    if (!effectiveFile) {
+      clearWriterDismissal(state, sessionId);
+    }
+
+    // Auto-open writer layout when session has an effective file unless the user dismissed it
+    if (shouldAutoOpenWriter(state, sessionId, effectiveFile)) {
       state.writerLayout.open = true;
     }
 
@@ -1484,8 +1530,8 @@ export function initLiveView(deps) {
           render();
         },
         () => {
+          markWriterDismissed(state, sessionId, effectiveFile);
           state.writerLayout.open = false;
-          state.pinnedFiles.delete(sessionId);
           render();
         },
       );

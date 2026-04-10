@@ -1,5 +1,16 @@
 const MODAL_STYLE_ID = "wm-nightwatch-enable-modal-styles";
 
+function buildDefaultNightWatchGoal(sessionName) {
+  const label = typeof sessionName === "string" && sessionName.trim().length > 0
+    ? sessionName.trim()
+    : "this session";
+  return [
+    `I would like you to reflect and consider whether you have adequately completed the work in ${label}.`,
+    'If you believe the work is complete and any required handoff is done, then set nextAction to stop using the Wingman session metadata CLI (`bun clis/sessions.ts metadata-update --next-action stop`).',
+    'Otherwise continue working toward completion.',
+  ].join(' ');
+}
+
 function ensureNightWatchEnableModalStyles() {
   if (document.getElementById(MODAL_STYLE_ID)) return;
 
@@ -111,6 +122,12 @@ export function openNightWatchEnableModal({
   nextActionTemplate,
 }) {
   ensureNightWatchEnableModalStyles();
+  const normalizedGoal = typeof goal === "string" && goal.trim().length > 0
+    ? goal.trim()
+    : buildDefaultNightWatchGoal(sessionName);
+  const normalizedNextAction = typeof nextAction === "string" && nextAction.trim().length > 0
+    ? nextAction.trim()
+    : "reflect";
 
   return new Promise((resolve) => {
     const dialog = document.createElement("dialog");
@@ -149,7 +166,7 @@ export function openNightWatchEnableModal({
     timerTab.type = "button";
     timerTab.className = "wm-nightwatch-enable-modal__tab";
     timerTab.setAttribute("role", "tab");
-    timerTab.setAttribute("aria-selected", "true");
+    timerTab.setAttribute("aria-selected", "false");
     timerTab.setAttribute("aria-controls", "wm-nightwatch-timer-panel");
     timerTab.id = "wm-nightwatch-timer-tab";
     timerTab.textContent = "Timer";
@@ -158,7 +175,7 @@ export function openNightWatchEnableModal({
     hookTab.type = "button";
     hookTab.className = "wm-nightwatch-enable-modal__tab";
     hookTab.setAttribute("role", "tab");
-    hookTab.setAttribute("aria-selected", "false");
+    hookTab.setAttribute("aria-selected", "true");
     hookTab.setAttribute("aria-controls", "wm-nightwatch-hook-panel");
     hookTab.id = "wm-nightwatch-hook-tab";
     hookTab.textContent = "Hook";
@@ -170,13 +187,13 @@ export function openNightWatchEnableModal({
     timerPanel.id = "wm-nightwatch-timer-panel";
     timerPanel.setAttribute("role", "tabpanel");
     timerPanel.setAttribute("aria-labelledby", timerTab.id);
+    timerPanel.hidden = true;
 
     const hookPanel = document.createElement("section");
     hookPanel.className = "wm-nightwatch-enable-modal__panel";
     hookPanel.id = "wm-nightwatch-hook-panel";
     hookPanel.setAttribute("role", "tabpanel");
     hookPanel.setAttribute("aria-labelledby", hookTab.id);
-    hookPanel.hidden = true;
 
     const metadataFields = document.createElement("div");
     metadataFields.style.display = "flex";
@@ -189,7 +206,7 @@ export function openNightWatchEnableModal({
 
     const goalInput = document.createElement("textarea");
     goalInput.rows = 3;
-    goalInput.value = typeof goal === "string" ? goal : "";
+    goalInput.value = normalizedGoal;
     goalInput.spellcheck = false;
     goalInput.setAttribute("aria-label", "Session goal");
     goalInput.setAttribute("data-testid", "nightwatch-goal-input");
@@ -216,7 +233,7 @@ export function openNightWatchEnableModal({
       const option = document.createElement("option");
       option.value = value;
       option.textContent = label;
-      if ((nextAction || "") === value) {
+      if (normalizedNextAction === value) {
         option.selected = true;
       }
       hookSelect.append(option);
@@ -391,6 +408,15 @@ export function openNightWatchEnableModal({
         return;
       }
 
+      const nextGoal = goalInput.value.trim();
+      const nextHook = hookSelect.value.trim();
+      if (nextHook && !nextGoal) {
+        status.textContent = "Goal cannot be empty when a hook is enabled.";
+        setActiveTab("hook");
+        goalInput.focus();
+        return;
+      }
+
       const nextInterval = Number(intervalInput.value);
       if (
         !Number.isFinite(nextInterval) ||
@@ -407,8 +433,8 @@ export function openNightWatchEnableModal({
         prompt: nextPrompt,
         intervalMinutes: Math.trunc(nextInterval),
         maxCycles: Math.trunc(Number(maxTurnsInput.value)),
-        goal: goalInput.value.trim(),
-        nextAction: hookSelect.value.trim(),
+        goal: nextGoal,
+        nextAction: nextHook,
         nextActionTemplate: templateInput.value.trim(),
       });
     });
@@ -426,6 +452,6 @@ export function openNightWatchEnableModal({
 
     document.body.append(dialog);
     dialog.showModal();
-    requestAnimationFrame(() => promptInput.focus());
+    requestAnimationFrame(() => goalInput.focus());
   });
 }

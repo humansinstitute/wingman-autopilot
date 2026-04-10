@@ -146,17 +146,6 @@ function disableNightWatchWithReport(
   });
 }
 
-function consumeReflectionHook(
-  session: SessionSnapshot,
-  deps: NightWatchDeps,
-): SessionSnapshot {
-  const updated = deps.updateSessionMetadata?.(session.id, {
-    nextAction: "none",
-    nextActionPayload: undefined,
-  });
-  return updated ?? session;
-}
-
 async function sendNightWatchPrompt(
   session: SessionSnapshot,
   prompt: string,
@@ -243,10 +232,7 @@ export async function maybeTriggerNightWatch(
       return;
     }
 
-    const persistedSession =
-      nextAction === "reflect"
-        ? consumeReflectionHook(currentSession, deps)
-        : currentSession;
+    const persistedSession = currentSession;
     const cycleCount = deps.store.recordPromptSent(session.id, willContinue);
     deps.store.addReport({
       sessionId: session.id,

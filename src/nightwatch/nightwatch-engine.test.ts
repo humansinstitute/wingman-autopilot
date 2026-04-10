@@ -44,10 +44,9 @@ describe("maybeTriggerNightWatch", () => {
     globalThis.fetch = originalFetch;
   });
 
-  test("sends a generated reflection prompt and consumes the hook", async () => {
+  test("sends a generated reflection prompt without consuming the hook", async () => {
     const requests: Array<{ url: string; body: Record<string, unknown> | null }> = [];
     const reports: Array<Record<string, unknown>> = [];
-    const metadataUpdates: Array<Record<string, unknown>> = [];
 
     globalThis.fetch = (async (input, init) => {
       requests.push({
@@ -92,17 +91,7 @@ describe("maybeTriggerNightWatch", () => {
             nextActionPayload: "Focus on tests first",
           },
         }),
-        updateSessionMetadata: (_sessionId, metadata) => {
-          metadataUpdates.push(metadata as Record<string, unknown>);
-          return {
-            ...baseSession,
-            metadata: {
-              ...baseMetadata,
-              goal: "Ship the release",
-              nextAction: "none",
-            },
-          };
-        },
+        updateSessionMetadata: () => baseSession,
       },
     );
 
@@ -113,12 +102,6 @@ describe("maybeTriggerNightWatch", () => {
     });
     expect(String(requests[0]?.body?.content ?? "")).toContain("Current goal: Ship the release");
     expect(String(requests[0]?.body?.content ?? "")).toContain("Additional context: Focus on tests first");
-    expect(metadataUpdates).toEqual([
-      {
-        nextAction: "none",
-        nextActionPayload: undefined,
-      },
-    ]);
     expect(reports).toHaveLength(1);
     expect(String(reports[0]?.reasoning ?? "")).toContain('hook "reflect"');
   });

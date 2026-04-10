@@ -143,6 +143,29 @@ export async function updateSessionMetadataApi(sessionId, metadata) {
 }
 
 /**
+ * Persists the pinned artifact file for a session.
+ * Pass null to clear the server-side pinned artifact.
+ *
+ * @param {string} sessionId - The session ID
+ * @param {string | null} filePath - Absolute path to pin, or null to clear
+ * @returns {Promise<{pinnedFile: string | null}>}
+ * @throws {Error} If the request fails
+ */
+export async function setPinnedArtifactApi(sessionId, filePath) {
+  const response = await fetch("/api/mcp/wingman/artifact/pin", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId, filePath }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const message = typeof data?.error === "string" ? data.error : response.statusText;
+    throw new Error(message || "Failed to update pinned artifact");
+  }
+  return response.json();
+}
+
+/**
  * Posts a message to a session.
  * @param {string} sessionId - The session ID
  * @param {string} content - Message content

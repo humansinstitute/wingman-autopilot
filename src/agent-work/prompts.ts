@@ -10,8 +10,18 @@ function compactText(value: string | null | undefined): string {
 
 export function buildAgentWorkGoal(task: InboundTaskRecord): string {
   const title = compactText(task.title) || `Task ${task.taskId}`;
-  const description = compactText(task.description);
-  return description ? `${title}\n\n${description}` : title;
+  const description = compactText(task.description) || '(no description provided)';
+  const flowId = compactText(task.flowId) || '-';
+  const flowRunId = compactText(task.flowRunId) || '-';
+  const flowStep = compactText(task.flowStep) || '-';
+
+  return [
+    'I would like you to reflect and consider if you have adequately achieved the task.',
+    'If the task has a flow, you should consider if you have met the flow step and correctly dispatched the next task.',
+    'If you believe the task has been met and the next steps are all correctly handed off, then set nextAction to stop using the Wingman session metadata CLI (`bun clis/sessions.ts metadata-update --next-action stop`).',
+    'Otherwise continue to work towards an answer.',
+    `The task was: ${title} (task_id=${task.taskId}, flow_id=${flowId}, flow_run_id=${flowRunId}, flow_step=${flowStep}). Description: ${description}`,
+  ].join(' ');
 }
 
 function buildScopeLineage(task: InboundTaskRecord): string {
