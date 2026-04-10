@@ -87,6 +87,7 @@ import { generateBotKey, clearBotKey, isBotKeyUnlocked, storeBotKeyInMemory, unl
 import { WorkspaceSubscriptionManager } from './agent-chat/subscription-runtime';
 import { AgentChatSessionRuntime } from './agent-chat/session-runtime';
 import { AgentWorkSessionRuntime } from './agent-work/session-runtime';
+import { AgentWorkSessionIdleRetention } from './agent-work/session-idle-retention';
 import { browserSubscribers } from "./mcp/browser-subscribers";
 import { MemoryStore } from "./mcp/memory-store";
 import { userSettingsStore } from "./storage/user-settings-store";
@@ -1770,6 +1771,10 @@ const agentWorkSessionRuntime = new AgentWorkSessionRuntime({
   },
 });
 workspaceSubscriptionManager.setAgentWorkRuntime(agentWorkSessionRuntime);
+void new AgentWorkSessionIdleRetention({
+  processManager: manager,
+  idleRetentionMinutes: 60,
+});
 
 await workspaceSubscriptionManager.startupReload();
 
