@@ -304,7 +304,12 @@ export function createLiveAgentsSection(deps) {
 
   const tableContainer = document.createElement("div");
   tableContainer.className = "wm-table-container session-table-wrapper";
-  tableContainer.append(createSessionTable(orderedSessions, deps));
+  tableContainer.append(
+    createSessionTable(orderedSessions, {
+      ...deps,
+      renderSessionActions,
+    }),
+  );
 
   liveContent.append(actions, cardsContainer, tableContainer);
   liveCard.append(liveContent);
