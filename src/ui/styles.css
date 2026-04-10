@@ -2743,7 +2743,48 @@ body[data-menu-open="true"] .wm-menu-panel {
 }
 
 .session-table th {
+  padding: 0;
   white-space: nowrap;
+}
+
+.session-table-sort-button {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding: 0.85rem 1rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-table-sort-button:hover {
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.session-table-sort-button:focus-visible {
+  outline: 2px solid rgba(16, 185, 129, 0.55);
+  outline-offset: -2px;
+}
+
+.session-table-sort-button[data-active="true"] {
+  color: var(--accent-primary);
+}
+
+.session-table-sort-label {
+  min-width: 0;
+}
+
+.session-table-sort-indicator {
+  flex: 0 0 auto;
+  font-size: 0.85em;
+  opacity: 0.8;
 }
 
 .session-table td.actions-cell {
@@ -4093,6 +4134,14 @@ body[data-keyboard-open="true"] .wm-composer-shell {
   .session-table td {
     padding: 0.6rem 0.75rem;
     font-size: 0.85rem;
+  }
+
+  .session-table th {
+    padding: 0;
+  }
+
+  .session-table-sort-button {
+    padding: 0.6rem 0.75rem;
   }
 
   .session-table-wrapper {
