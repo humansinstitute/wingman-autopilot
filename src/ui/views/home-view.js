@@ -8,6 +8,7 @@
 import { createArchiveComponent } from "../home/archive.js";
 import { createLiveAgentsSection } from "../home/live-agents.js";
 import { DEFAULT_LIVE_SESSION_SORT } from "../home/session-table.js";
+import { HOME_SESSION_GROUPS } from "../home/session-groups.js";
 
 export function initHomeView(deps) {
   const {
@@ -50,6 +51,7 @@ export function initHomeView(deps) {
 
   let archiveComponent = null;
   let liveSessionSort = { ...DEFAULT_LIVE_SESSION_SORT };
+  let liveSessionGroup = HOME_SESSION_GROUPS[0]?.id ?? 'my';
   const sessionActionPending = new Map();
 
   function getSessionPendingAction(sessionId) {
@@ -326,6 +328,11 @@ export function initHomeView(deps) {
         sessionSort: liveSessionSort,
         onSessionSortChange(nextSort) {
           liveSessionSort = nextSort;
+          rerenderHomeIfVisible();
+        },
+        sessionGroup: liveSessionGroup,
+        onSessionGroupChange(nextGroup) {
+          liveSessionGroup = nextGroup;
           rerenderHomeIfVisible();
         },
       }),

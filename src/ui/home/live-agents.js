@@ -5,6 +5,12 @@ import {
   getSessionIdentityLabel,
   sortSessions,
 } from "./session-table.js";
+import {
+  countSessionsByHomeGroup,
+  filterSessionsForHomeGroup,
+  HOME_SESSION_GROUPS,
+} from "./session-groups.js";
+import { createSessionGroupTabs } from "./session-group-tabs.js";
 
 function renderSessionActions(target, session, deps) {
   const {
@@ -72,6 +78,7 @@ function createSessionCards(orderedSessions, deps) {
     getSessionDisplayName,
     promptRenameSession,
     isSessionActionPending,
+    emptyLabel = 'No active sessions',
   } = deps;
 
   const cardsContainer = document.createElement("div");
@@ -80,7 +87,7 @@ function createSessionCards(orderedSessions, deps) {
   if (orderedSessions.length === 0) {
     const emptyCard = document.createElement("article");
     emptyCard.className = "session-card empty";
-    emptyCard.textContent = "No active sessions";
+    emptyCard.textContent = emptyLabel;
     cardsContainer.append(emptyCard);
     return cardsContainer;
   }
@@ -176,6 +183,8 @@ export function createLiveAgentsSection(deps) {
     syncMenuTabs,
     sessionSort,
     onSessionSortChange,
+    sessionGroup,
+    onSessionGroupChange,
   } = deps;
 
   const liveCard = document.createElement("section");
@@ -294,13 +303,24 @@ export function createLiveAgentsSection(deps) {
   });
   actions.append(refreshBtn);
 
-  const orderedSessions = sortSessions(sessionsStore().items, sessionSort, {
+  const groupCounts = countSessionsByHomeGroup(sessionsStore().items);
+  const activeGroup = HOME_SESSION_GROUPS.some((group) => group.id === sessionGroup)
+    ? sessionGroup
+    : HOME_SESSION_GROUPS[0].id;
+  const activeGroupDef =
+    HOME_SESSION_GROUPS.find((group) => group.id === activeGroup) ?? HOME_SESSION_GROUPS[0];
+  const groupedSessions = filterSessionsForHomeGroup(sessionsStore().items, activeGroup);
+  const orderedSessions = sortSessions(groupedSessions, sessionSort, {
     getSessionDisplayName: deps.getSessionDisplayName,
     isSessionActive: deps.isSessionActive,
     defaultDirectory: state.config?.defaultDirectory,
   });
 
-  const cardsContainer = createSessionCards(orderedSessions, deps);
+  const groupTabs = createSessionGroupTabs(activeGroup, groupCounts, onSessionGroupChange);
+  const cardsContainer = createSessionCards(orderedSessions, {
+    ...deps,
+    emptyLabel: activeGroupDef.emptyLabel,
+  });
 
   const tableContainer = document.createElement("div");
   tableContainer.className = "wm-table-container session-table-wrapper";
@@ -308,10 +328,11 @@ export function createLiveAgentsSection(deps) {
     createSessionTable(orderedSessions, {
       ...deps,
       renderSessionActions: (target, session) => renderSessionActions(target, session, deps),
+      emptyLabel: activeGroupDef.emptyLabel,
     }),
   );
 
-  liveContent.append(actions, cardsContainer, tableContainer);
+  liveContent.append(groupTabs, actions, cardsContainer, tableContainer);
   liveCard.append(liveContent);
 
   setCollapsed(false);

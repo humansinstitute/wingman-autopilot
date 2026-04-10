@@ -220,6 +220,7 @@ export function createSessionTable(orderedSessions, deps) {
     escapeHtml,
     isSessionActionPending,
     renderSessionActions,
+    emptyLabel = 'No active sessions',
   } = deps;
 
   const table = document.createElement("table");
@@ -247,7 +248,7 @@ export function createSessionTable(orderedSessions, deps) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.colSpan = SESSION_TABLE_COLUMNS.length;
-    cell.textContent = "No active sessions";
+    cell.textContent = emptyLabel;
     row.append(cell);
     tbody.append(row);
     table.append(tbody);
