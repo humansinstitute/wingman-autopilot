@@ -10,8 +10,17 @@
  */
 
 import { transcribeVoiceNoteApi, uploadVoiceNoteApi } from "../services/voice-notes.js";
-
-const AUDIO_LINK_PATTERN = /\[([^\]]+)\]\((\/uploads\/files\/[^)\s]+)\)/g;
+import {
+  buildTranscriptReplacement,
+  buildVoiceNoteBlockPattern,
+  buildVoiceNoteDraftBlock,
+  findVoiceNoteLinks,
+  getVoiceNoteMarkers,
+  removeVoiceNoteComments,
+  replacePendingTranscriptMarker,
+  replaceVoiceNoteLinkWithTranscript,
+  sanitizeTranscriptLabel,
+} from "./voice-note-draft.js";
 
 function getPreferredMimeType() {
   const candidates = [
@@ -39,40 +48,6 @@ function formatDuration(ms) {
   const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
   const seconds = String(totalSeconds % 60).padStart(2, "0");
   return `${minutes}:${seconds}`;
-}
-
-function sanitizeTranscriptLabel(value) {
-  const cleaned = String(value ?? "").replace(/\s+/g, " ").trim();
-  return cleaned || "voice note";
-}
-
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function getVoiceNoteMarkers(markerId) {
-  return {
-    start: `<!--VOICE_NOTE:${markerId}:START-->`,
-    transcript: `<!--VOICE_NOTE:${markerId}:TRANSCRIPT_PENDING-->`,
-    end: `<!--VOICE_NOTE:${markerId}:END-->`,
-  };
-}
-
-function buildVoiceNoteDraftBlock(markerId, label, publicPath) {
-  const markers = getVoiceNoteMarkers(markerId);
-  return `${markers.start}[${label}](${publicPath})\n${markers.transcript}\n${markers.end}`;
-}
-
-function buildVoiceNoteBlockPattern(markerId) {
-  const markers = getVoiceNoteMarkers(markerId);
-  return new RegExp(`${escapeRegExp(markers.start)}[\\s\\S]*?${escapeRegExp(markers.end)}`, "g");
-}
-
-function removeVoiceNoteComments(text) {
-  return String(text ?? "")
-    .replace(/<!--VOICE_NOTE:[^>]+-->/g, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
 }
 
 function createDialogShell() {
@@ -106,27 +81,6 @@ function createDialogShell() {
     </form>
   `;
   return dialog;
-}
-
-function buildTranscriptReplacement(label, transcript) {
-  return `Voice note transcript (${sanitizeTranscriptLabel(label)}):\n${transcript.trim()}`;
-}
-
-function findVoiceNoteLinks(draft) {
-  const text = typeof draft === "string" ? draft : "";
-  const matches = [];
-  AUDIO_LINK_PATTERN.lastIndex = 0;
-
-  let match = AUDIO_LINK_PATTERN.exec(text);
-  while (match) {
-    const [raw, label, publicPath] = match;
-    if (publicPath.includes("voice-note-")) {
-      matches.push({ raw, label, publicPath });
-    }
-    match = AUDIO_LINK_PATTERN.exec(text);
-  }
-
-  return matches;
 }
 
 export function initVoiceNotes(deps) {
@@ -273,11 +227,6 @@ export function initVoiceNotes(deps) {
     removeButton?.addEventListener("click", () => {
       removeVoiceNote(sessionId, entry.markerId);
     });
-  }
-
-  function replacePendingTranscriptMarker(text, markerId, replacement) {
-    const markers = getVoiceNoteMarkers(markerId);
-    return String(text ?? "").replace(markers.transcript, replacement);
   }
 
   function updateDraftWithTranscript(sessionId, markerId, label, transcript) {
@@ -496,7 +445,7 @@ export function initVoiceNotes(deps) {
         }
       }
 
-      nextDraft = nextDraft.replace(match.raw, buildTranscriptReplacement(match.label, transcript));
+      nextDraft = replaceVoiceNoteLinkWithTranscript(nextDraft, match, transcript);
     }
 
     return removeVoiceNoteComments(nextDraft);
