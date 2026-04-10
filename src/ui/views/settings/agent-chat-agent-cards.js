@@ -51,18 +51,18 @@ function createCapabilityList(capabilities) {
   return wrapper;
 }
 
-export function createAgentRegistryPanel(agents, handlers) {
+export function createAgentRegistryPanel(agents, handlers, options = {}) {
   const wrapper = document.createElement('div');
   wrapper.setAttribute('data-testid', 'agent-chat-agent-list');
 
   const heading = document.createElement('h4');
-  heading.textContent = 'Registered Local Agents';
+  heading.textContent = options.heading || 'Registered Local Agents';
   wrapper.append(heading);
 
   if (!Array.isArray(agents) || agents.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'wm-settings__port-note';
-    empty.textContent = 'No local Agent Chat agents are registered yet.';
+    empty.textContent = options.emptyMessage || 'No local Agent Chat agents are registered yet.';
     wrapper.append(empty);
     return wrapper;
   }

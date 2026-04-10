@@ -10,6 +10,7 @@ import {
 } from '../../services/agent-chat.js';
 import { fetchSessionsApi } from '../../services/sessions.js';
 import { createAgentRegistryPanel } from './agent-chat-agent-cards.js';
+import { createAgentDispatchSetupCards } from './agent-chat-setup-cards.js';
 import {
   createAgentChatOverview,
   createAgentChatSessionPanel,
@@ -111,20 +112,6 @@ function createInlineActions(...buttons) {
 
 function setPanelVisible(panel, visible) {
   panel.style.display = visible ? '' : 'none';
-}
-
-function createSummaryList(rows) {
-  const details = document.createElement('dl');
-  details.style.cssText = 'display:grid;grid-template-columns:max-content 1fr;gap:6px 12px;font-size:0.92em;margin:0;';
-  rows.forEach(([labelText, valueText]) => {
-    const label = document.createElement('dt');
-    label.textContent = labelText;
-    const value = document.createElement('dd');
-    value.textContent = valueText;
-    value.style.margin = '0';
-    details.append(label, value);
-  });
-  return details;
 }
 
 function createDispatchReferenceCard({ title, enabledAgents, description, promptPreview, actionLabel, onAction, actionTestId }) {
@@ -265,10 +252,17 @@ async function loadOperatorState() {
   };
 }
 
+function getPrimaryAgent(agents) {
+  if (!Array.isArray(agents) || agents.length === 0) {
+    return null;
+  }
+  return agents[0] ?? null;
+}
+
 export function createAgentDispatchLauncher({ onNavigate } = {}) {
   const card = createCard(
     'Agent Dispatch',
-    'Open the dedicated agent page to manage subscriptions, local agents, SSE activity, and dispatch history.',
+    'Open the dedicated agent page to manage one shared connection, one primary local agent, SSE activity, and dispatch history.',
   );
   const openButton = createButton('Open Agent Dispatch', 'agent-dispatch-open', 'Open Agent Dispatch settings');
   openButton.addEventListener('click', () => {
@@ -287,6 +281,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
   const container = document.createElement('div');
   container.className = 'wm-settings__agent-chat';
   let currentPrimarySubscription = null;
+  let currentPrimaryAgent = null;
   let promptDefaults = {
     chatPromptTemplate: '',
     taskPromptTemplate: '',
@@ -327,43 +322,29 @@ export function createAgentChatSection({ standalone = false } = {}) {
   const capabilityPicker = createCapabilityPicker();
   const enabledField = createCheckbox('Enabled', 'agent-chat-agent-enabled', true);
   const statusLine = createStatusLine();
-
-  const setupSummary = document.createElement('p');
-  setupSummary.className = 'wm-settings__port-note';
-  setupSummary.textContent = 'The subscription owns the Tower connection. Local agents attach to that subscription and can be expanded with more capabilities over time.';
-
-  const subscriptionSummaryContainer = document.createElement('div');
-  const quickActionsCard = createCard(
-    'Quick Actions',
-    'Only open the editors when you need to change subscription or agent configuration.',
-  );
+  const setupOverviewContainer = document.createElement('div');
   const openSubscriptionEditorButton = createButton(
-    'Edit Subscription',
+    'Edit Connection',
     'agent-chat-open-subscription-editor',
     'Edit Agent Dispatch subscription',
   );
   const openAgentEditorButton = createButton(
-    'Add Local Agent',
+    'Configure Agent',
     'agent-chat-open-agent-editor',
-    'Add Agent Dispatch local agent',
+    'Configure Agent Dispatch local agent',
   );
   const refreshOperatorButton = createButton(
     'Refresh View',
     'agent-chat-refresh-view',
     'Refresh Agent Dispatch operator view',
   );
-  quickActionsCard.append(createInlineActions(
-    openSubscriptionEditorButton,
-    openAgentEditorButton,
-    refreshOperatorButton,
-  ));
 
   const subscriptionCard = createCard(
-    'Workspace Subscription',
-    'Create or refresh the shared SSE connection once. Agent dispatch uses the same subscription as chat dispatch.',
+    'Workspace Connection',
+    'Save the shared workspace connection once. Agent dispatch reuses this same live subscription.',
   );
   const saveSubscriptionButton = createButton(
-    'Create / Refresh Subscription',
+    'Save Connection',
     'agent-chat-save',
     'Create or refresh Agent Dispatch subscription',
   );
@@ -381,14 +362,17 @@ export function createAgentChatSection({ standalone = false } = {}) {
   setPanelVisible(subscriptionCard, false);
 
   const agentCard = createCard(
-    'Local Agent',
-    'Keep one local agent and add capabilities to it. When a subscription exists, the bot and workspace fields can be prefilled from it.',
+    'Primary Local Agent',
+    'Keep one local agent and add capabilities to it. When a shared connection exists, the bot and workspace identity are inherited instead of re-entered.',
   );
   const saveAgentButton = createButton(
-    'Save Local Agent',
+    'Save Agent',
     'agent-chat-save-agent',
     'Create or update local Agent Dispatch agent',
   );
+  const agentIdentityNote = document.createElement('p');
+  agentIdentityNote.className = 'wm-settings__port-note';
+  agentIdentityNote.style.display = 'none';
   const agentGroupsNote = document.createElement('p');
   agentGroupsNote.className = 'wm-settings__port-note';
   agentGroupsNote.textContent = 'Leave group npubs blank to derive them from the bot groups already refreshed from Tower for this workspace subscription.';
@@ -400,6 +384,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
   agentCard.append(
     agentIdField.row,
     labelField.row,
+    agentIdentityNote,
     agentBotField.row,
     agentWorkspaceField.row,
     agentGroupsField.row,
@@ -456,9 +441,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
   const agentRegistryContainer = document.createElement('div');
   const configuredDispatchesContainer = document.createElement('div');
   setupPanel.append(
-    setupSummary,
-    quickActionsCard,
-    subscriptionSummaryContainer,
+    setupOverviewContainer,
     subscriptionCard,
     agentCard,
     statusLine,
@@ -474,6 +457,22 @@ export function createAgentChatSection({ standalone = false } = {}) {
   listContainer.setAttribute('data-testid', 'agent-chat-subscription-list');
   operatorPanel.append(overviewContainer, sessionContainer, listContainer);
 
+  function updateAgentIdentityFields() {
+    const inheritedBot = currentPrimarySubscription?.botNpub?.trim() || '';
+    const inheritedWorkspace = currentPrimarySubscription?.workspaceOwnerNpub?.trim() || '';
+    const hasInheritedIdentity = inheritedBot.length > 0 && inheritedWorkspace.length > 0;
+    setPanelVisible(agentBotField.row, !hasInheritedIdentity);
+    setPanelVisible(agentWorkspaceField.row, !hasInheritedIdentity);
+    agentIdentityNote.style.display = hasInheritedIdentity ? '' : 'none';
+    if (hasInheritedIdentity) {
+      agentIdentityNote.textContent = `This agent will reuse bot ${inheritedBot} and workspace ${inheritedWorkspace} from the shared connection.`;
+      agentBotField.input.value = inheritedBot;
+      agentWorkspaceField.input.value = inheritedWorkspace;
+      return;
+    }
+    agentIdentityNote.textContent = '';
+  }
+
   const populateAgentForm = (agent) => {
     agentIdField.input.value = agent.agentId || '';
     labelField.input.value = agent.label || '';
@@ -486,7 +485,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
     capabilityPicker.setSelectedCapabilities(agent.capabilities);
     enabledField.input.checked = agent.enabled !== false;
     statusLine.textContent = `Editing local agent ${agent.agentId}. Add capabilities and save to keep the same identity.`;
-    agentIdField.input.focus();
+    updateAgentIdentityFields();
   };
 
   const clearAgentForm = () => {
@@ -500,6 +499,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
     taskPromptTemplateField.input.value = promptDefaults.taskPromptTemplate || '';
     capabilityPicker.setSelectedCapabilities(['chat_intercept']);
     enabledField.input.checked = true;
+    updateAgentIdentityFields();
   };
 
   const populateSubscriptionForm = (subscription) => {
@@ -524,6 +524,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
       }
       statusLine.textContent = 'Creating a local agent. Add capabilities to the same agent over time.';
     }
+    updateAgentIdentityFields();
     setPanelVisible(agentCard, true);
     if (options.focusField === 'chat-template') {
       chatPromptTemplateField.input.focus();
@@ -555,9 +556,20 @@ export function createAgentChatSection({ standalone = false } = {}) {
     }
   };
 
+  const removeAgent = async (agent) => {
+    statusLine.textContent = `Removing local agent ${agent.agentId}...`;
+    try {
+      await deleteAgentChatAgent(agent.agentId);
+      statusLine.textContent = `Removed local agent ${agent.agentId}.`;
+      await refreshList();
+    } catch (error) {
+      statusLine.textContent = error instanceof Error ? error.message : 'Failed to remove local agent.';
+    }
+  };
+
   const refreshList = async () => {
     overviewContainer.replaceChildren();
-    subscriptionSummaryContainer.replaceChildren();
+    setupOverviewContainer.replaceChildren();
     configuredDispatchesContainer.replaceChildren();
     agentRegistryContainer.replaceChildren();
     listContainer.replaceChildren();
@@ -569,8 +581,30 @@ export function createAgentChatSection({ standalone = false } = {}) {
         taskPromptTemplate: typeof defaults.taskPromptTemplate === 'string' ? defaults.taskPromptTemplate : promptDefaults.taskPromptTemplate,
       };
       const primarySubscription = subscriptions[0] ?? null;
+      const primaryAgent = getPrimaryAgent(agents);
       currentPrimarySubscription = primarySubscription;
+      currentPrimaryAgent = primaryAgent;
       prefillAgentFieldsFromSubscription(primarySubscription);
+      updateAgentIdentityFields();
+      setupOverviewContainer.append(createAgentDispatchSetupCards({
+        subscription: primarySubscription,
+        primaryAgent,
+        additionalAgentCount: Math.max(0, agents.length - (primaryAgent ? 1 : 0)),
+        onEditSubscription: (subscription) => openSubscriptionEditor(subscription),
+        onEditAgent: (agent) => openAgentEditor(agent),
+        onCreateAgent: () => openAgentEditor(),
+        onRemoveAgent: (agent) => {
+          void removeAgent(agent);
+        },
+        onRefresh: () => {
+          statusLine.textContent = 'Refreshing Agent Dispatch view...';
+          void refreshList().then(() => {
+            if (!statusLine.textContent || statusLine.textContent === 'Refreshing Agent Dispatch view...') {
+              statusLine.textContent = 'Agent Dispatch view refreshed.';
+            }
+          });
+        },
+      }));
       configuredDispatchesContainer.append(createConfiguredDispatchesPanel(agents, {
         onEditChatTemplate: (agent) => {
           if (agent) {
@@ -597,54 +631,20 @@ export function createAgentChatSection({ standalone = false } = {}) {
           statusLine.textContent = 'Create a local agent to save a task dispatch template.';
         },
       }));
-
-      const subscriptionSummaryCard = createCard(
-        'Current Subscription',
-        primarySubscription
-          ? 'The shared workspace connection is live here. Open the editor only when something changes.'
-          : 'No subscription is configured yet.',
-      );
-      if (primarySubscription) {
-        subscriptionSummaryCard.append(createSummaryList([
-          ['Workspace', primarySubscription.workspaceOwnerNpub || 'None'],
-          ['Bot', primarySubscription.botNpub || 'pending'],
-          ['Backend', primarySubscription.backendBaseUrl || 'None'],
-          ['Source App', primarySubscription.sourceAppNpub || 'None'],
-          ['SSE', primarySubscription.sseStatus || 'unknown'],
-        ]));
-        const manageSubscriptionButton = createButton(
-          'Edit Subscription',
-          'agent-chat-manage-subscription',
-          'Edit current Agent Dispatch subscription',
-        );
-        manageSubscriptionButton.addEventListener('click', () => openSubscriptionEditor(primarySubscription));
-        subscriptionSummaryCard.append(createInlineActions(manageSubscriptionButton));
-        setPanelVisible(subscriptionCard, false);
-      } else {
-        const empty = document.createElement('p');
-        empty.className = 'wm-settings__port-note';
-        empty.textContent = 'Create the workspace subscription first so local agents can reuse it.';
-        subscriptionSummaryCard.append(empty);
-        setPanelVisible(subscriptionCard, true);
+      const additionalAgents = primaryAgent ? agents.slice(1) : agents;
+      if (additionalAgents.length > 0) {
+        agentRegistryContainer.append(createAgentRegistryPanel(additionalAgents, {
+          edit: (agent) => openAgentEditor(agent),
+          remove: (agent) => {
+            void removeAgent(agent);
+          },
+        }, {
+          heading: 'Additional Local Agents',
+          emptyMessage: 'The primary flow is designed around one local agent.',
+        }));
       }
-      subscriptionSummaryContainer.append(subscriptionSummaryCard);
-
-      agentRegistryContainer.append(createAgentRegistryPanel(agents, {
-        edit: (agent) => openAgentEditor(agent),
-        remove: async (agent) => {
-          statusLine.textContent = `Removing local agent ${agent.agentId}...`;
-          try {
-            await deleteAgentChatAgent(agent.agentId);
-            statusLine.textContent = `Removed local agent ${agent.agentId}.`;
-            await refreshList();
-          } catch (error) {
-            statusLine.textContent = error instanceof Error ? error.message : 'Failed to remove local agent.';
-          }
-        },
-      }));
-      if (agents.length === 0) {
-        setPanelVisible(agentCard, true);
-      }
+      setPanelVisible(subscriptionCard, !primarySubscription);
+      setPanelVisible(agentCard, Boolean(primarySubscription && agents.length === 0));
 
       overviewContainer.append(createAgentChatOverview(subscriptions, chatSessions));
       sessionContainer.append(createAgentChatSessionPanel(chatSessions));
@@ -690,7 +690,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
 
   saveSubscriptionButton.addEventListener('click', async () => {
     saveSubscriptionButton.disabled = true;
-    statusLine.textContent = 'Bootstrapping subscription...';
+    statusLine.textContent = 'Saving shared connection...';
     try {
       await saveAgentChatSubscription({
         workspaceOwnerNpub: workspaceOwnerField.input.value.trim(),
@@ -701,7 +701,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
       setPanelVisible(subscriptionCard, false);
       await refreshList();
     } catch (error) {
-      statusLine.textContent = error instanceof Error ? error.message : 'Failed to bootstrap subscription.';
+      statusLine.textContent = error instanceof Error ? error.message : 'Failed to save shared connection.';
     } finally {
       saveSubscriptionButton.disabled = false;
     }
@@ -709,13 +709,15 @@ export function createAgentChatSection({ standalone = false } = {}) {
 
   saveAgentButton.addEventListener('click', async () => {
     saveAgentButton.disabled = true;
-    statusLine.textContent = 'Saving local agent...';
+    statusLine.textContent = 'Saving primary agent...';
     try {
+      const effectiveBotNpub = currentPrimarySubscription?.botNpub?.trim() || agentBotField.input.value.trim();
+      const effectiveWorkspaceOwner = currentPrimarySubscription?.workspaceOwnerNpub?.trim() || agentWorkspaceField.input.value.trim();
       await saveAgentChatAgent({
         agentId: agentIdField.input.value.trim(),
         label: labelField.input.value.trim(),
-        botNpub: agentBotField.input.value.trim(),
-        workspaceOwnerNpub: agentWorkspaceField.input.value.trim(),
+        botNpub: effectiveBotNpub,
+        workspaceOwnerNpub: effectiveWorkspaceOwner,
         groupNpubs: agentGroupsField.input.value
           .split(',')
           .map((value) => value.trim())
@@ -730,7 +732,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
       setPanelVisible(agentCard, false);
       await refreshList();
     } catch (error) {
-      statusLine.textContent = error instanceof Error ? error.message : 'Failed to save local agent.';
+      statusLine.textContent = error instanceof Error ? error.message : 'Failed to save primary agent.';
     } finally {
       saveAgentButton.disabled = false;
     }
@@ -746,7 +748,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
   });
 
   openSubscriptionEditorButton.addEventListener('click', () => openSubscriptionEditor(currentPrimarySubscription));
-  openAgentEditorButton.addEventListener('click', () => openAgentEditor());
+  openAgentEditorButton.addEventListener('click', () => openAgentEditor(currentPrimaryAgent));
   closeSubscriptionEditorButton.addEventListener('click', () => setPanelVisible(subscriptionCard, false));
   closeAgentEditorButton.addEventListener('click', () => setPanelVisible(agentCard, false));
 
