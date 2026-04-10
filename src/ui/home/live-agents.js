@@ -307,7 +307,7 @@ export function createLiveAgentsSection(deps) {
   tableContainer.append(
     createSessionTable(orderedSessions, {
       ...deps,
-      renderSessionActions,
+      renderSessionActions: (target, session) => renderSessionActions(target, session, deps),
     }),
   );
 
