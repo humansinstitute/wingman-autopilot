@@ -31,6 +31,7 @@ import { isJobAgentType, listUniqueJobAgents, resolveJobAgent, resolveJobAgents 
 import { deliverSessionAgentMessage } from "./server/session-agent-message";
 import type { SessionApiContext } from "./server/session-api-routes";
 import { parseNightWatchStartOptions, type NightWatchStartOptions } from "./nightwatch/nightwatch-start-config";
+import { getEffectiveOwnerAuthContext, getEffectiveOwnerNpub } from "./auth/effective-owner";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -164,7 +165,9 @@ const createDefaultDispatchRun = (
     if (!sessionCtx) {
       throw new Error("Jobs dispatch is not configured");
     }
-    if (!input.authContext.npub) {
+    const effectiveAuthContext = getEffectiveOwnerAuthContext(input.authContext);
+    const ownerNpub = getEffectiveOwnerNpub(input.authContext);
+    if (!ownerNpub) {
       throw new Error("Sign in to launch a job");
     }
 
@@ -183,7 +186,7 @@ const createDefaultDispatchRun = (
     }
 
     if (requiresBalance) {
-      const balanceCheck = sessionCtx.ensureViewerHasBalance(input.authContext, {
+      const balanceCheck = sessionCtx.ensureViewerHasBalance(effectiveAuthContext, {
         feature: "launch a manual job",
         message: "Add sats to your balance to launch a job.",
       });
@@ -206,7 +209,7 @@ const createDefaultDispatchRun = (
             name,
             null,
             undefined,
-            input.authContext.npub ?? undefined,
+            ownerNpub ?? undefined,
           );
           if (nightwatch?.enabled) {
             sessionCtx.enableNightWatch(session.id, {

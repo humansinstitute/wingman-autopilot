@@ -22,6 +22,7 @@ import { buildDelegateRegistryTemplate, getBotDisplayName, signBotProfileEvent }
 import { publishDelegateRegistryEvent } from "./delegate-registry-publisher";
 import { getBotProfileStatus, publishBotProfileEvent } from "./bot-profile-publisher";
 import type { SessionSnapshot } from "../agents/process-manager";
+import type { StoredSessionRecord } from "../storage/message-store";
 import { normaliseNpub } from "./npub-utils";
 import { parseBody, jsonError } from "../utils/request-utils";
 
@@ -32,6 +33,7 @@ import { parseBody, jsonError } from "../utils/request-utils";
 export interface BotKeyApiDependencies {
   store: BotKeyStore;
   getSession: (sessionId: string) => SessionSnapshot | undefined;
+  getStoredSession?: (sessionId: string) => StoredSessionRecord | null;
   onBotKeyUnlocked?: (npub: string, secretKey: Uint8Array, botPubkeyHex: string) => void;
   defaultRelays?: string[];
 }
@@ -344,7 +346,7 @@ async function handleGetEncrypted(deps: BotKeyApiDependencies, request: Request)
  * Browser posts decrypted nsec hex after NIP-07/device keystore decryption.
  * Body: { nsecHex }
  */
-async function handleUnlock(deps: BotKeyApiDependencies, request: Request): Response {
+async function handleUnlock(deps: BotKeyApiDependencies, request: Request): Promise<Response> {
   const npub = getNpubFromCookie(request);
   if (!npub) {
     return jsonError("Not authenticated — session cookie required", 401);
@@ -383,7 +385,7 @@ async function handleUnlock(deps: BotKeyApiDependencies, request: Request): Resp
  * Autonomous unlock using escrow UUID. Validated by session ID.
  * Body: { sessionId, escrowUuid }
  */
-async function handleUnlockEscrow(deps: BotKeyApiDependencies, request: Request): Response {
+async function handleUnlockEscrow(deps: BotKeyApiDependencies, request: Request): Promise<Response> {
   const body = await parseBody(request);
   const sessionId = body.sessionId as string | undefined;
   const escrowUuid = body.escrowUuid as string | undefined;
@@ -392,7 +394,7 @@ async function handleUnlockEscrow(deps: BotKeyApiDependencies, request: Request)
     return jsonError("sessionId and escrowUuid are required", 400);
   }
 
-  const session = deps.getSession(sessionId);
+  const session = deps.getSession(sessionId) ?? deps.getStoredSession?.(sessionId) ?? null;
   if (!session) {
     return jsonError("Unknown session", 404);
   }
@@ -434,7 +436,7 @@ async function handleExportNsec(deps: BotKeyApiDependencies, request: Request): 
     return jsonError("sessionId is required", 400);
   }
 
-  const session = deps.getSession(sessionId);
+  const session = deps.getSession(sessionId) ?? deps.getStoredSession?.(sessionId) ?? null;
   if (!session) {
     return jsonError("Unknown session", 404);
   }
@@ -467,7 +469,7 @@ async function handleExportNsec(deps: BotKeyApiDependencies, request: Request): 
  * Rotate the escrow UUID. Returns the new UUID.
  * Body: { currentUuid }
  */
-async function handleRotateEscrow(deps: BotKeyApiDependencies, request: Request): Response {
+async function handleRotateEscrow(deps: BotKeyApiDependencies, request: Request): Promise<Response> {
   const npub = getNpubFromCookie(request);
   if (!npub) {
     return jsonError("Not authenticated — session cookie required", 401);
@@ -507,7 +509,7 @@ async function handleRotateEscrow(deps: BotKeyApiDependencies, request: Request)
  * Deactivate the old key and generate a new keypair.
  * Body: { userPubkeyHex }
  */
-async function handleReplace(deps: BotKeyApiDependencies, request: Request): Response {
+async function handleReplace(deps: BotKeyApiDependencies, request: Request): Promise<Response> {
   const npub = getNpubFromCookie(request);
   if (!npub) {
     return jsonError("Not authenticated — session cookie required", 401);

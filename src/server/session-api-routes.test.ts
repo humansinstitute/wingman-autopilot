@@ -235,6 +235,116 @@ describe("handleSessionApi", () => {
     });
   });
 
+  test("GET /api/sessions/:id returns stored session details when live session is missing", async () => {
+    const storedSession: StoredSessionRecord = {
+      id: "session-1",
+      agent: "codex",
+      startedAt: baseSession.startedAt,
+      name: "stored session",
+      npub: "npub1owner",
+      port: 3700,
+      pid: 1234,
+      pm2Name: null,
+      logsDir: null,
+      workingDirectory: "/tmp/project",
+      command: JSON.stringify(["codex"]),
+      runtimeStatus: "running",
+      origin: null,
+      model: null,
+      targetFile: null,
+      metadata: {
+        AGENT: true,
+        billingMode: "subscription",
+      },
+    };
+    const ctx = buildCtx({
+      manager: {
+        getSession: () => undefined,
+        listSessions: () => [],
+        rehydrateSession: () => null,
+      } as any,
+      messageStore: {
+        recordSession: () => {},
+        getSession: (id: string) => (id === "session-1" ? storedSession : null),
+        listSessions: () => [storedSession],
+        listSessionMessages: () => [],
+      } as any,
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions/session-1");
+    const request = new Request(url.toString(), { method: "GET" });
+
+    const response = await handleSessionApi(request, url, "GET", makeAuth(), ctx);
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    await expect(response!.json()).resolves.toEqual({
+      id: "session-1",
+      agent: "codex",
+      status: "running",
+      name: "stored session",
+      npub: "npub1owner",
+      port: 3700,
+      pid: 1234,
+      startedAt: baseSession.startedAt,
+      command: ["codex"],
+      workingDirectory: "/tmp/project",
+      origin: null,
+      targetFile: null,
+      metadata: {
+        AGENT: true,
+        billingMode: "subscription",
+      },
+    });
+  });
+
+  test("GET /api/sessions/:id/messages returns stored messages when live session is missing", async () => {
+    const storedSession: StoredSessionRecord = {
+      id: "session-1",
+      agent: "codex",
+      startedAt: baseSession.startedAt,
+      name: "stored session",
+      npub: "npub1owner",
+      port: 3700,
+      pid: 1234,
+      pm2Name: null,
+      logsDir: null,
+      workingDirectory: "/tmp/project",
+      command: JSON.stringify(["codex"]),
+      runtimeStatus: "running",
+      origin: null,
+      model: null,
+      targetFile: null,
+      metadata: {
+        AGENT: true,
+        billingMode: "subscription",
+      },
+    };
+    const ctx = buildCtx({
+      manager: {
+        getSession: () => undefined,
+        listSessions: () => [],
+        rehydrateSession: () => null,
+      } as any,
+      messageStore: {
+        recordSession: () => {},
+        getSession: (id: string) => (id === "session-1" ? storedSession : null),
+        listSessions: () => [storedSession],
+        listSessionMessages: () => [{ role: "agent", content: "stored output" }],
+      } as any,
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions/session-1/messages");
+    const request = new Request(url.toString(), { method: "GET" });
+
+    const response = await handleSessionApi(request, url, "GET", makeAuth(), ctx);
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    await expect(response!.json()).resolves.toEqual({
+      id: "session-1",
+      messages: [{ role: "agent", content: "stored output" }],
+    });
+  });
+
   test("PATCH /api/sessions/:id/metadata updates autonomous hook metadata", async () => {
     let updatePayload: Record<string, unknown> | undefined;
     const updatedSession = {

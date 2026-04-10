@@ -13,6 +13,7 @@ import { nip44Encrypt, nip44Decrypt } from "../superbased/nip44-crypto";
 import type { SessionSnapshot } from "../agents/process-manager";
 import { RateLimiter } from "../security/rate-limiter";
 import { parseBody, jsonError } from "../utils/request-utils";
+import type { StoredSessionRecord } from "../storage/message-store";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -20,6 +21,7 @@ import { parseBody, jsonError } from "../utils/request-utils";
 
 export interface BotCryptoApiDependencies {
   getSession: (sessionId: string) => SessionSnapshot | undefined;
+  getStoredSession?: (sessionId: string) => StoredSessionRecord | null;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -123,19 +125,28 @@ async function withRateLimit(
 function validateSession(
   deps: BotCryptoApiDependencies,
   sessionId: string,
-): { error: Response } | { session: NonNullable<ReturnType<BotCryptoApiDependencies["getSession"]>> } {
+): { error: Response } | { session: { npub: string } } {
   const session = deps.getSession(sessionId);
-  if (!session) {
+  const storedSession = !session ? deps.getStoredSession?.(sessionId) ?? null : null;
+  const effectiveSession = session
+    ? { npub: session.npub ?? null, status: session.status }
+    : storedSession
+      ? {
+          npub: storedSession.npub,
+          status: "running" as const,
+        }
+      : null;
+  if (!effectiveSession) {
     return { error: jsonError("Unknown session", 404) };
   }
   // Only allow active sessions — reject stopped/errored sessions
-  if (session.status === "stopped" || session.status === "error") {
+  if (effectiveSession.status === "stopped" || effectiveSession.status === "error") {
     return { error: jsonError("Session is not active", 403) };
   }
-  if (!session.npub) {
+  if (!effectiveSession.npub) {
     return { error: jsonError("Session has no associated user", 403) };
   }
-  return { session };
+  return { session: { npub: effectiveSession.npub } };
 }
 
 // ---------------------------------------------------------------------------

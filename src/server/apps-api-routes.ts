@@ -212,7 +212,7 @@ export async function handleAppsApi(
     if (denied) {
       return denied;
     }
-    const viewerNormalizedNpub = ctx.normaliseNpub(authContext.npub ?? null);
+    const viewerNormalizedNpub = ctx.viewerNpub;
     const tailParam = url.searchParams.get('tail') ?? url.searchParams.get('logs');
     const tail = tailParam ? Number.parseInt(tailParam, 10) : 0;
     const includeLogs = Number.isFinite(tail) && tail > 0;
@@ -320,8 +320,7 @@ export async function handleAppsApi(
       record.webApp !== undefined ? ctx.parseBooleanInput(record.webApp) : ctx.parseBooleanInput((record as Record<string, unknown>).isWebApp);
     const requestedWebApp = webAppInput ?? false;
     const requestedPort = ctx.parsePortInput(record.webAppPort);
-    const ownerNpub =
-      ctx.workspaceScope.isAdmin ? ctx.normaliseNpub(authContext.npub ?? null) ?? ctx.adminNpub : ctx.viewerNpub;
+    const ownerNpub = ctx.viewerNpub ?? (ctx.workspaceScope.isAdmin ? ctx.adminNpub : null);
     if (!ownerNpub) {
       return Response.json({ error: 'Unable to resolve app owner' }, { status: 403 });
     }

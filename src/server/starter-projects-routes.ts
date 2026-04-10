@@ -208,7 +208,8 @@ export async function handleStarterProjectsApi(
   if (pathname === "/api/apps/starter-projects" && method === "GET") {
     const denied = await ctx.ensureApiAccess(ctx.AccessActions.AppsManage, request, url, authContext);
     if (denied) return denied;
-    return Response.json({ starterProjects: ctx.starterProjectStore.list().map(toStarterResponse) });
+    const starterProjects = ctx.starterProjectStore.list().map(toStarterResponse);
+    return Response.json({ starterProjects, projects: starterProjects });
   }
 
   if (pathname === "/api/apps/starter-projects/launch" && method === "POST") {
@@ -234,8 +235,7 @@ export async function handleStarterProjectsApi(
     const starter = ctx.starterProjectStore.getById(starterId);
     if (!starter) return Response.json({ error: "Starter project not found" }, { status: 404 });
 
-    const ownerNpub =
-      ctx.workspaceScope.isAdmin ? ctx.normaliseNpub(authContext.npub ?? null) ?? ctx.adminNpub : ctx.viewerNpub;
+    const ownerNpub = ctx.viewerNpub ?? (ctx.workspaceScope.isAdmin ? ctx.adminNpub : null);
     if (!ownerNpub) {
       return Response.json({ error: "Unable to resolve app owner" }, { status: 403 });
     }
@@ -275,7 +275,8 @@ export async function handleStarterProjectsApi(
     const denied = await ctx.ensureApiAccess(ctx.AccessActions.AppsManage, request, url, authContext);
     if (denied) return denied;
     if (!ctx.workspaceScope.isAdmin) return Response.json({ error: "admin-only" }, { status: 403 });
-    return Response.json({ starterProjects: ctx.starterProjectStore.list().map(toStarterResponse) });
+    const starterProjects = ctx.starterProjectStore.list().map(toStarterResponse);
+    return Response.json({ starterProjects, projects: starterProjects });
   }
 
   if (pathname === "/api/admin/starter-projects" && method === "POST") {
@@ -300,7 +301,7 @@ export async function handleStarterProjectsApi(
         scriptAuto: toBoolean(body.scriptAuto) ?? false,
         notes: ctx.normaliseOptionalString(body.notes) ?? null,
         setupCommand: ctx.normaliseOptionalString(body.setupCommand) ?? null,
-        updatedBy: ctx.normaliseNpub(authContext.npub ?? null),
+        updatedBy: ctx.viewerNpub ?? ctx.adminNpub,
       });
       return Response.json({ starterProject: toStarterResponse(created) }, { status: 201 });
     } catch (error) {
@@ -335,7 +336,7 @@ export async function handleStarterProjectsApi(
         notes: Object.prototype.hasOwnProperty.call(body, "notes") ? ctx.normaliseOptionalString(body.notes) : undefined,
         setupCommand:
           Object.prototype.hasOwnProperty.call(body, "setupCommand") ? ctx.normaliseOptionalString(body.setupCommand) : undefined,
-        updatedBy: ctx.normaliseNpub(authContext.npub ?? null),
+        updatedBy: ctx.viewerNpub ?? ctx.adminNpub,
       });
       return Response.json({ starterProject: toStarterResponse(updated) });
     } catch (error) {

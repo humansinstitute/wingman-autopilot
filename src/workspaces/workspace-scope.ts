@@ -3,8 +3,8 @@ import { join, normalize, sep } from "node:path";
 
 import type { WingmanConfig } from "../config";
 import type { RequestAuthContext } from "../auth/request-context";
-import { normaliseNpub } from "../identity/npub-utils";
 import { generateIdentityAlias } from "../identity/identity-alias";
+import { getEffectiveOwnerNpub } from "../auth/effective-owner";
 
 export type WorkspaceScope = {
   allowedDirectories: string[];
@@ -31,7 +31,7 @@ export const resolveWorkspaceScope = (
   systemDocsRoot: string,
   systemDocsBoundary: string,
 ): WorkspaceScope => {
-  const normalizedNpub = normaliseNpub(context.npub ?? null);
+  const normalizedNpub = getEffectiveOwnerNpub(context);
   const isAdmin = Boolean(adminNpub && normalizedNpub && normalizedNpub === adminNpub);
 
   if (!normalizedNpub || isAdmin) {
@@ -45,7 +45,7 @@ export const resolveWorkspaceScope = (
     };
   }
 
-  const alias = generateIdentityAlias(context.npub);
+  const alias = generateIdentityAlias(normalizedNpub);
   const aliasDirectory = normalize(join(config.defaultWorkingDirectory, alias));
   ensureDirectoryExists(aliasDirectory);
   const aliasBoundary = aliasDirectory.endsWith(sep) ? aliasDirectory : `${aliasDirectory}${sep}`;

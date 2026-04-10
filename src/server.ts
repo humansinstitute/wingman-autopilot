@@ -108,6 +108,7 @@ import {
   getRequestContext,
   type RequestAuthContext,
 } from "./auth/request-context";
+import { getEffectiveOwnerAuthContext, getEffectiveOwnerNpub } from "./auth/effective-owner";
 import { resolveNip98AuthContext } from "./auth/nip98-auth";
 import { deriveNpubSegment, normaliseNpub } from "./identity/npub-utils";
 import { generateIdentityAlias } from "./identity/identity-alias";
@@ -499,11 +500,13 @@ const superbasedApiHandler = createSuperbasedApiHandler({
 const botKeyApiHandler = createBotKeyApiHandler({
   store: botKeyStore,
   getSession: (sid: string) => manager.getSession(sid),
+  getStoredSession: (sid: string) => messageStore.getSession(sid),
   onBotKeyUnlocked: onBotKeyUnlockedHook,
   defaultRelays: config.connectRelays,
 });
 const botCryptoApiHandler = createBotCryptoApiHandler({
   getSession: (sid: string) => manager.getSession(sid),
+  getStoredSession: (sid: string) => messageStore.getSession(sid),
 });
 const wingmanDataDir = new URL("../data", import.meta.url).pathname;
 const giteaApiHandler = createGiteaApiHandler({
@@ -1042,7 +1045,7 @@ const buildIdentitySummaries = (
 
 
 const getViewerNormalizedNpub = (authContext: RequestAuthContext): string | null => {
-  return normaliseNpub(authContext.npub ?? null);
+  return getEffectiveOwnerNpub(authContext);
 };
 
 type BalanceRequirementOptions = {
@@ -1057,7 +1060,7 @@ const ensureViewerHasBalance = (
   options: BalanceRequirementOptions,
 ): Response | { balance: number } => {
   const { feature, minimum = 1, message, signinMessage } = options;
-  const userNpub = authContext.npub ?? null;
+  const userNpub = getEffectiveOwnerNpub(authContext);
   if (!userNpub) {
     const error = signinMessage ?? `Sign in to ${feature}.`;
     return Response.json(
@@ -2491,8 +2494,9 @@ const handleApi = createApiRouteHandler({
     npubProjectStore,
   }),
   buildAppsContext: (appsAuthContext, workspaceScopeOverride, canAccessAppOverride) => {
-    const appsWorkspaceScope = workspaceScopeOverride ?? resolveWorkspace(appsAuthContext);
-    const appsViewerNpub = normaliseNpub(appsAuthContext.npub ?? null);
+    const effectiveAppsAuthContext = getEffectiveOwnerAuthContext(appsAuthContext);
+    const appsWorkspaceScope = workspaceScopeOverride ?? resolveWorkspace(effectiveAppsAuthContext);
+    const appsViewerNpub = getEffectiveOwnerNpub(effectiveAppsAuthContext);
     const canAccessAppForRequest = (app: AppRecord): boolean => {
       if (canAccessAppOverride) {
         return canAccessAppOverride(app);

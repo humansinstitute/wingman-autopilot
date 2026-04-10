@@ -7,7 +7,6 @@ import { runWithRequestContext, type RequestAuthContext } from "../auth/request-
 import type { AccessAction } from "../auth/access-control";
 import type { WorkspaceScope } from "../workspaces/workspace-scope";
 import type { AppRecord } from "../apps/app-registry";
-import { normaliseNpub } from "../identity/npub-utils";
 import { handleAppsApi, type AppsApiContext } from "./apps-api-routes";
 import { handleStarterProjectsApi, type StarterProjectsApiContext } from "./starter-projects-routes";
 import { handleChatApi, type ChatApiContext } from "./chat-routes";
@@ -31,6 +30,7 @@ import { handleAgentChatApi, type AgentChatApiContext } from './agent-chat-route
 import { handleDelegationApi, type DelegationRoutesContext } from "./delegation-routes";
 import { handleOwnerSpaceApi } from "./owner-space-routes";
 import type { WorkspaceDelegationStore } from "../storage/workspace-delegation-store";
+import { getEffectiveOwnerNpub } from "../auth/effective-owner";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
@@ -214,7 +214,7 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
     const viewerIsAdmin = workspaceScope.isAdmin;
     const projectsFlag = ctx.resolveFeatureFlagStateForViewer(ctx.PROJECTS_FLAG_KEY, viewerIsAdmin, "on_admin");
     const projectsEnabled = projectsFlag.effectiveState === "on";
-    const viewerNpub = normaliseNpub(authContext.npub ?? null);
+    const viewerNpub = getEffectiveOwnerNpub(authContext);
 
     const browserLogResponse = await ctx.browserLogHandler(request, url, method, authContext);
     if (browserLogResponse) {

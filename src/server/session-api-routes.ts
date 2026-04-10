@@ -379,6 +379,70 @@ const persistStoredSessionMetadata = (
   return mergedMetadata;
 };
 
+const parseStoredCommand = (storedCommand: string | null): string[] | undefined => {
+  if (!storedCommand) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(storedCommand);
+    return Array.isArray(parsed) && parsed.every((entry) => typeof entry === "string")
+      ? parsed as string[]
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const serializeStoredSession = (
+  storedSession: StoredSessionRecord,
+): Record<string, unknown> => ({
+  id: storedSession.id,
+  agent: storedSession.agent,
+  status: storedSession.runtimeStatus ?? "running",
+  name: storedSession.name,
+  npub: storedSession.npub,
+  port: storedSession.port,
+  pid: storedSession.pid,
+  startedAt: storedSession.startedAt,
+  command: parseStoredCommand(storedSession.command) ?? [],
+  workingDirectory: storedSession.workingDirectory,
+  origin: storedSession.origin,
+  targetFile: storedSession.targetFile,
+  metadata: storedSession.metadata,
+});
+
+const rehydrateStoredSession = (
+  ctx: SessionApiContext,
+  storedSession: StoredSessionRecord | null,
+): SessionSnapshot | null => {
+  if (!storedSession) {
+    return null;
+  }
+  if (!storedSession.port || !storedSession.workingDirectory || !ctx.isAgentType(storedSession.agent)) {
+    return null;
+  }
+  if (typeof ctx.manager.rehydrateSession !== "function") {
+    return null;
+  }
+
+  return ctx.manager.rehydrateSession({
+    id: storedSession.id,
+    agent: storedSession.agent,
+    port: storedSession.port,
+    name: storedSession.name ?? storedSession.id,
+    startedAt: storedSession.startedAt,
+    workingDirectory: storedSession.workingDirectory,
+    command: parseStoredCommand(storedSession.command),
+    pid: storedSession.pid ?? undefined,
+    npub: storedSession.npub ?? undefined,
+    agentRuntimeStatus: storedSession.runtimeStatus ?? null,
+    origin: storedSession.origin ?? null,
+    pm2Name: storedSession.pm2Name ?? undefined,
+    targetFile: storedSession.targetFile ?? undefined,
+    metadata: storedSession.metadata,
+  });
+};
+
 type OwnerSessionRouteMatch = {
   ownerNpub: string;
   remainder: string[];
@@ -939,13 +1003,20 @@ export async function handleSessionApi(
         : null;
     if (storedSessionResolution?.error) return storedSessionResolution.error;
     const storedOwnedSession = storedSessionResolution?.session ?? null;
+    const recoveredSession = !ownedSession ? rehydrateStoredSession(ctx, storedOwnedSession) : null;
+    const liveOwnedSession = ownedSession ?? recoveredSession;
     if (!ownedSession && storedOwnedSession) {
       resolvedId = storedSessionResolution?.resolvedId ?? resolvedId;
     }
 
     if (method === "GET" && ownerRoute.remainder.length === 1) {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      return Response.json(ctx.serializeSession(ownedSession));
+      if (liveOwnedSession) {
+        return Response.json(ctx.serializeSession(liveOwnedSession));
+      }
+      if (storedOwnedSession) {
+        return Response.json(serializeStoredSession(storedOwnedSession));
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
     }
 
     if (method === "PATCH" && ownerRoute.remainder.length === 1) {
@@ -975,7 +1046,7 @@ export async function handleSessionApi(
     }
 
     if (method === "DELETE" && ownerRoute.remainder.length === 1) {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      if (!liveOwnedSession) return Response.json({ error: "Not found" }, { status: 404 });
       ctx.manager.updateSessionMetadata(resolvedId, {
         lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
       });
@@ -988,7 +1059,7 @@ export async function handleSessionApi(
     const subresource = ownerRoute.remainder[1];
     if (subresource === "metadata") {
       if (method === "GET") {
-        const metadata = ownedSession?.metadata ?? storedOwnedSession?.metadata;
+        const metadata = liveOwnedSession?.metadata ?? storedOwnedSession?.metadata;
         if (!metadata) return Response.json({ error: "Not found" }, { status: 404 });
         return Response.json(
           buildSessionMetadataResponse(resolvedId, metadata, targetOwnerNpub),
@@ -1009,10 +1080,10 @@ export async function handleSessionApi(
           ...metadataPatch,
           lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
         };
-        const updated = ownedSession
+        const updated = liveOwnedSession
           ? ctx.manager.updateSessionMetadata(resolvedId, persistedPatch)
           : null;
-        if (ownedSession && !updated) return Response.json({ error: "Not found" }, { status: 404 });
+        if (liveOwnedSession && !updated) return Response.json({ error: "Not found" }, { status: 404 });
         const metadata = updated?.metadata ?? (
           storedOwnedSession
             ? persistStoredSessionMetadata(ctx, storedOwnedSession, persistedPatch)
@@ -1044,49 +1115,50 @@ export async function handleSessionApi(
     }
 
     if (method === "GET" && subresource === "events") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      if (!liveOwnedSession) return Response.json({ error: "Not found" }, { status: 404 });
       return ctx.handleSessionEvents(resolvedId, request);
     }
 
     if (subresource === "messages") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
       if (method === "GET") {
         const refresh = url.searchParams.get("refresh") === "true";
         const messages = await (
-          refresh ? ctx.syncSessionMessages(resolvedId, true) : ctx.messageStore.listSessionMessages(resolvedId)
+          refresh && liveOwnedSession
+            ? ctx.syncSessionMessages(resolvedId, true)
+            : ctx.messageStore.listSessionMessages(resolvedId)
         );
         return Response.json({ id: resolvedId, messages });
       }
       if (method === "POST") {
+        if (!liveOwnedSession) return Response.json({ error: "Not found" }, { status: 404 });
         ctx.manager.updateSessionMetadata(resolvedId, {
           lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
           chargeToNpub: chargeToNpub ?? undefined,
         });
-        return handlePostMessage(request, resolvedId, ownedSession, billingAuthContext, ctx);
+        return handlePostMessage(request, resolvedId, liveOwnedSession, billingAuthContext, ctx);
       }
     }
 
     if (method === "GET" && subresource === "history") {
-      return handleSessionHistory(resolvedId, ownedSession, normaliseNpub(targetOwnerNpub), false, ctx);
+      return handleSessionHistory(resolvedId, liveOwnedSession, normaliseNpub(targetOwnerNpub), false, ctx);
     }
 
     if (method === "POST" && subresource === "queue" && (ownerRoute.remainder[2] === "next" || ownerRoute.remainder[2] === "dispatch")) {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      if (!liveOwnedSession) return Response.json({ error: "Not found" }, { status: 404 });
       ctx.manager.updateSessionMetadata(resolvedId, {
         lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
         chargeToNpub: chargeToNpub ?? undefined,
       });
-      return handleQueueNext(resolvedId, ownedSession, billingAuthContext, ctx);
+      return handleQueueNext(resolvedId, liveOwnedSession, billingAuthContext, ctx);
     }
 
     if (subresource === "queue") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
       return handleQueueRoutes(
         request,
         method,
         ["", "api", "sessions", resolvedId, "queue", ...ownerRoute.remainder.slice(2)],
         resolvedId,
-        ownedSession,
+        liveOwnedSession,
         billingAuthContext,
         ctx,
       );
@@ -1336,13 +1408,20 @@ export async function handleSessionApi(
         : null;
     if (storedSessionResolution?.error) return storedSessionResolution.error;
     const storedOwnedSession = storedSessionResolution?.session ?? null;
+    const recoveredSession = !ownedSession ? rehydrateStoredSession(ctx, storedOwnedSession) : null;
+    const liveOwnedSession = ownedSession ?? recoveredSession;
     if (!ownedSession && storedOwnedSession) {
       resolvedId = storedSessionResolution?.resolvedId ?? resolvedId;
     }
 
     if (method === "GET" && parts.length === 4) {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      return Response.json(ctx.serializeSession(ownedSession));
+      if (liveOwnedSession) {
+        return Response.json(ctx.serializeSession(liveOwnedSession));
+      }
+      if (storedOwnedSession) {
+        return Response.json(serializeStoredSession(storedOwnedSession));
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
     }
 
     if (method === "PATCH" && parts.length === 4) {
@@ -1368,8 +1447,8 @@ export async function handleSessionApi(
     }
 
     if (method === "DELETE" && parts.length === 4) {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      if (!isAuthorizedCaller(authContext) && !isAgentManagedByMetadataOrOrigin(ownedSession.metadata, ownedSession.origin)) {
+      if (!liveOwnedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      if (!isAuthorizedCaller(authContext) && !isAgentManagedByMetadataOrOrigin(liveOwnedSession.metadata, liveOwnedSession.origin)) {
         return Response.json({ error: "Agents can only stop sessions with metadata.AGENT=true" }, { status: 403 });
       }
       const session = await ctx.manager.stopSession(resolvedId);
@@ -1379,7 +1458,7 @@ export async function handleSessionApi(
     }
 
     if (method === "DELETE" && parts[4] === "storage") {
-      if (ownedSession && (ownedSession.status === "starting" || ownedSession.status === "running")) {
+      if (liveOwnedSession && (liveOwnedSession.status === "starting" || liveOwnedSession.status === "running")) {
         return Response.json({ error: "Stop the session before deleting it" }, { status: 409 });
       }
 
@@ -1409,7 +1488,7 @@ export async function handleSessionApi(
 
     if (parts[4] === "metadata") {
       if (method === "GET") {
-        const metadata = ownedSession?.metadata ?? storedOwnedSession?.metadata;
+        const metadata = liveOwnedSession?.metadata ?? storedOwnedSession?.metadata;
         if (!metadata) return Response.json({ error: "Not found" }, { status: 404 });
         return Response.json(buildSessionMetadataResponse(resolvedId, metadata));
       }
@@ -1428,10 +1507,10 @@ export async function handleSessionApi(
           ...metadataPatch,
           lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
         };
-        const updated = ownedSession
+        const updated = liveOwnedSession
           ? ctx.manager.updateSessionMetadata(resolvedId, persistedPatch)
           : null;
-        if (ownedSession && !updated) return Response.json({ error: "Not found" }, { status: 404 });
+        if (liveOwnedSession && !updated) return Response.json({ error: "Not found" }, { status: 404 });
         const metadata = updated?.metadata ?? (
           storedOwnedSession
             ? persistStoredSessionMetadata(ctx, storedOwnedSession, persistedPatch)
@@ -1461,7 +1540,7 @@ export async function handleSessionApi(
     }
 
     if (method === "GET" && parts[4] === "logs") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      if (!liveOwnedSession) return Response.json({ error: "Not found" }, { status: 404 });
       const logs = await ctx.manager.getLogs(resolvedId);
       if (!logs) return Response.json({ error: "Not found" }, { status: 404 });
       return Response.json({ id: resolvedId, logs });
@@ -1476,40 +1555,40 @@ export async function handleSessionApi(
     // Note: SSE endpoint (/events) is handled earlier in the route chain
 
     if (parts[4] === "messages") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-
       if (method === "GET") {
         const refresh = url.searchParams.get("refresh") === "true";
         const messages = await (
-          refresh ? ctx.syncSessionMessages(resolvedId, true) : ctx.messageStore.listSessionMessages(resolvedId)
+          refresh && liveOwnedSession
+            ? ctx.syncSessionMessages(resolvedId, true)
+            : ctx.messageStore.listSessionMessages(resolvedId)
         );
         return Response.json({ id: resolvedId, messages });
       }
 
       if (method === "POST") {
-        return handlePostMessage(request, resolvedId, ownedSession, authContext, ctx);
+        if (!liveOwnedSession) return Response.json({ error: "Not found" }, { status: 404 });
+        return handlePostMessage(request, resolvedId, liveOwnedSession, authContext, ctx);
       }
     }
 
     // GET /api/sessions/:id/history
     if (method === "GET" && parts[4] === "history") {
-      return handleSessionHistory(resolvedId, ownedSession, viewerNormalizedNpub, viewerIsAdmin, ctx);
+      return handleSessionHistory(resolvedId, liveOwnedSession, viewerNormalizedNpub, viewerIsAdmin, ctx);
     }
 
     if (method === "POST" && parts[4] === "queue" && (parts[5] === "next" || parts[5] === "dispatch")) {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      return handleQueueNext(resolvedId, ownedSession, authContext, ctx);
+      if (!liveOwnedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      return handleQueueNext(resolvedId, liveOwnedSession, authContext, ctx);
     }
 
     if (parts[4] === "queue") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      return handleQueueRoutes(request, method, parts, resolvedId, ownedSession, authContext, ctx);
+      return handleQueueRoutes(request, method, parts, resolvedId, liveOwnedSession, authContext, ctx);
     }
 
     // Fork session to a new git worktree
     if (method === "POST" && parts[4] === "fork-to-worktree") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
-      return handleForkToWorktree(request, resolvedId, ownedSession, authContext, ctx);
+      if (!liveOwnedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      return handleForkToWorktree(request, resolvedId, liveOwnedSession, authContext, ctx);
     }
   }
 
@@ -1764,7 +1843,7 @@ async function handleQueueRoutes(
   method: HttpMethod,
   parts: string[],
   id: string,
-  ownedSession: SessionSnapshot,
+  ownedSession: SessionSnapshot | null,
   authContext: RequestAuthContext,
   ctx: SessionApiContext,
 ): Promise<Response> {
@@ -1797,7 +1876,9 @@ async function handleQueueRoutes(
       if (!prompt) {
         return Response.json({ error: "Failed to add prompt to queue" }, { status: 400 });
       }
-      void ctx.maybeAutoDispatchQueuedPrompt(ownedSession);
+      if (ownedSession) {
+        void ctx.maybeAutoDispatchQueuedPrompt(ownedSession);
+      }
       return Response.json({ id, prompt });
     } catch (error) {
       return Response.json({ error: (error as Error).message }, { status: 400 });
