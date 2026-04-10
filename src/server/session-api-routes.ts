@@ -13,13 +13,14 @@ import { normaliseNpub, deriveNpubSegment } from "../identity/npub-utils";
 import { generateIdentityAlias } from "../identity/identity-alias";
 import { validateInput, ArchiveListOptionsSchema } from "../utils/validation";
 import { InsufficientBalanceError } from "../storage/identity-user-store";
-import type { messageStore as MessageStoreInstance, StoredMessage } from "../storage/message-store";
+import type { messageStore as MessageStoreInstance, StoredMessage, StoredSessionRecord } from "../storage/message-store";
 import type { sessionArchiveStore as SessionArchiveStoreInstance } from "../storage/session-archive-store";
 import type { ForkToWorktreeInput } from "../sessions/fork-to-worktree";
 import { deliverSessionAgentMessage } from "./session-agent-message";
 import {
   isAgentManagedByMetadataOrOrigin,
   isCreditsBillingSession,
+  normaliseSessionMetadata,
   resolveSessionChargeNpub,
   type SessionMetadata,
 } from "../sessions/session-metadata";
@@ -179,6 +180,26 @@ const buildProgrammaticOrigin = (authContext: RequestAuthContext): SessionOrigin
   return { type: "cli", id: callerNpub, label: callerNpub };
 };
 
+const resolveSelfSpaceViewerNpub = (
+  authContext: RequestAuthContext,
+  ctx: SessionApiContext,
+): string | null => {
+  if (isDelegatedBotAuth(authContext)) {
+    return normaliseNpub(authContext.delegatedOwnerNpub ?? null);
+  }
+  return ctx.getViewerNormalizedNpub(authContext);
+};
+
+const buildSelfSpaceAuthContext = (
+  authContext: RequestAuthContext,
+  ownerNpub: string | null,
+): RequestAuthContext => {
+  if (!ownerNpub || !isDelegatedBotAuth(authContext)) {
+    return authContext;
+  }
+  return createOwnerScopedAuthContext(authContext, ownerNpub);
+};
+
 const recordLiveSession = async (
   ctx: SessionApiContext,
   session: SessionSnapshot,
@@ -243,6 +264,46 @@ const resolveOwnedLiveSession = (
   return { session: null, resolvedId: requestedId, error: null };
 };
 
+const resolveOwnedStoredSession = (
+  requestedId: string,
+  viewerNormalizedNpub: string | null,
+  viewerIsAdmin: boolean,
+  ctx: SessionApiContext,
+) => {
+  const ownedSessions = ctx.messageStore
+    .listSessions()
+    .filter((session) => ctx.sessionBelongsToViewer(session.npub ?? null, viewerNormalizedNpub, viewerIsAdmin));
+  const exactMatch = ownedSessions.find((session) => session.id === requestedId);
+  if (exactMatch) {
+    return { session: exactMatch, resolvedId: exactMatch.id, error: null };
+  }
+
+  const prefixMatches = ownedSessions.filter((session) => session.id.startsWith(requestedId));
+  if (prefixMatches.length === 1) {
+    const match = prefixMatches[0]!;
+    return { session: match, resolvedId: match.id, error: null };
+  }
+
+  if (prefixMatches.length > 1) {
+    return {
+      session: null,
+      resolvedId: requestedId,
+      error: Response.json(
+        {
+          error: "Ambiguous session id",
+          matches: prefixMatches.map((session) => ({
+            id: session.id,
+            name: session.name ?? null,
+          })),
+        },
+        { status: 409 },
+      ),
+    };
+  }
+
+  return { session: null, resolvedId: requestedId, error: null };
+};
+
 const parseSessionMetadataUpdateInput = (payload: unknown) => {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return null;
@@ -272,6 +333,50 @@ const buildSessionMetadataResponse = (
     payload.ownerNpub = ownerNpub;
   }
   return payload;
+};
+
+const persistStoredSessionMetadata = (
+  ctx: SessionApiContext,
+  storedSession: StoredSessionRecord,
+  metadataPatch: Record<string, unknown>,
+): SessionMetadata => {
+  const mergedMetadata = normaliseSessionMetadata({
+    ...(storedSession.metadata ?? {}),
+    ...metadataPatch,
+  });
+  const parsedCommand = storedSession.command
+    ? (() => {
+        try {
+          const parsed = JSON.parse(storedSession.command);
+          return Array.isArray(parsed) && parsed.every((entry) => typeof entry === "string")
+            ? parsed as string[]
+            : undefined;
+        } catch {
+          return undefined;
+        }
+      })()
+    : undefined;
+
+  ctx.messageStore.recordSession({
+    id: storedSession.id,
+    agent: storedSession.agent,
+    startedAt: storedSession.startedAt,
+    name: storedSession.name ?? undefined,
+    npub: storedSession.npub ?? undefined,
+    port: storedSession.port ?? undefined,
+    pid: storedSession.pid ?? undefined,
+    pm2Name: storedSession.pm2Name ?? undefined,
+    logsDir: storedSession.logsDir ?? undefined,
+    workingDirectory: storedSession.workingDirectory ?? undefined,
+    command: parsedCommand,
+    runtimeStatus: storedSession.runtimeStatus ?? null,
+    origin: storedSession.origin ?? null,
+    model: storedSession.model ?? undefined,
+    targetFile: storedSession.targetFile ?? undefined,
+    metadata: mergedMetadata,
+  });
+
+  return mergedMetadata;
 };
 
 type OwnerSessionRouteMatch = {
@@ -827,7 +932,16 @@ export async function handleSessionApi(
     );
     if (sessionResolution.error) return sessionResolution.error;
     const ownedSession = sessionResolution.session;
-    const resolvedId = sessionResolution.resolvedId;
+    let resolvedId = sessionResolution.resolvedId;
+    const storedSessionResolution =
+      !ownedSession
+        ? resolveOwnedStoredSession(id, normaliseNpub(targetOwnerNpub), false, ctx)
+        : null;
+    if (storedSessionResolution?.error) return storedSessionResolution.error;
+    const storedOwnedSession = storedSessionResolution?.session ?? null;
+    if (!ownedSession && storedOwnedSession) {
+      resolvedId = storedSessionResolution?.resolvedId ?? resolvedId;
+    }
 
     if (method === "GET" && ownerRoute.remainder.length === 1) {
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
@@ -873,10 +987,11 @@ export async function handleSessionApi(
 
     const subresource = ownerRoute.remainder[1];
     if (subresource === "metadata") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
       if (method === "GET") {
+        const metadata = ownedSession?.metadata ?? storedOwnedSession?.metadata;
+        if (!metadata) return Response.json({ error: "Not found" }, { status: 404 });
         return Response.json(
-          buildSessionMetadataResponse(resolvedId, ownedSession.metadata, targetOwnerNpub),
+          buildSessionMetadataResponse(resolvedId, metadata, targetOwnerNpub),
         );
       }
       if (method === "PATCH") {
@@ -890,13 +1005,40 @@ export async function handleSessionApi(
         if (!metadataPatch) {
           return Response.json({ error: "Invalid metadata payload" }, { status: 400 });
         }
-        const updated = ctx.manager.updateSessionMetadata(resolvedId, {
+        const persistedPatch = {
           ...metadataPatch,
           lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
-        });
-        if (!updated) return Response.json({ error: "Not found" }, { status: 404 });
+        };
+        const updated = ownedSession
+          ? ctx.manager.updateSessionMetadata(resolvedId, persistedPatch)
+          : null;
+        if (ownedSession && !updated) return Response.json({ error: "Not found" }, { status: 404 });
+        const metadata = updated?.metadata ?? (
+          storedOwnedSession
+            ? persistStoredSessionMetadata(ctx, storedOwnedSession, persistedPatch)
+            : null
+        );
+        if (!metadata) return Response.json({ error: "Not found" }, { status: 404 });
+        if (updated) {
+          ctx.messageStore.recordSession({
+            id: updated.id,
+            agent: updated.agent,
+            startedAt: updated.startedAt,
+            name: updated.name ?? undefined,
+            npub: updated.npub ?? undefined,
+            port: updated.port,
+            pid: updated.pid ?? undefined,
+            pm2Name: updated.pm2Name,
+            workingDirectory: updated.workingDirectory ?? undefined,
+            command: updated.command,
+            runtimeStatus: updated.agentRuntimeStatus ?? null,
+            origin: updated.origin ?? null,
+            targetFile: updated.targetFile ?? undefined,
+            metadata: updated.metadata,
+          });
+        }
         return Response.json(
-          buildSessionMetadataResponse(resolvedId, updated.metadata, targetOwnerNpub),
+          buildSessionMetadataResponse(resolvedId, metadata, targetOwnerNpub),
         );
       }
     }
@@ -959,7 +1101,7 @@ export async function handleSessionApi(
     const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, authContext);
     if (denied) return denied;
 
-    const viewerNormalizedNpub = ctx.getViewerNormalizedNpub(authContext);
+    const viewerNormalizedNpub = resolveSelfSpaceViewerNpub(authContext, ctx);
     const viewerIsAdmin = Boolean(ctx.adminNpub && viewerNormalizedNpub && viewerNormalizedNpub === ctx.adminNpub);
     const allSessions = ctx.manager.listSessions();
     const accessibleSessions = viewerIsAdmin
@@ -988,21 +1130,24 @@ export async function handleSessionApi(
       ? ctx.buildIdentitySummaries(allSessions, viewerNormalizedNpub, { includeAll: true })
       : ctx.buildIdentitySummaries(accessibleSessions, viewerNormalizedNpub, { includeAll: false });
 
-    if (!viewerIsAdmin && identitySummaries.length === 0 && viewerNormalizedNpub && authContext.npub) {
-      const segment = deriveNpubSegment(authContext.npub);
+    const identityNpub = isDelegatedBotAuth(authContext)
+      ? normaliseNpub(authContext.delegatedOwnerNpub ?? null)
+      : normaliseNpub(authContext.npub ?? null);
+    if (!viewerIsAdmin && identitySummaries.length === 0 && viewerNormalizedNpub && identityNpub) {
+      const segment = deriveNpubSegment(identityNpub);
       const dataRoot = normalize(join(ctx.userIdentityRoot, segment));
       const logsRoot = normalize(join(dataRoot, "logs"));
       const attachmentsRoot = normalize(join(ctx.attachmentRoot, segment));
       const imagesRoot = normalize(join(ctx.imageRoot, segment));
       const viewerRecord = ctx.identityUserStore.getByNormalized(viewerNormalizedNpub);
-      const ports = viewerRecord?.ports ?? ctx.identityUserStore.ensurePortsFor(authContext.npub);
+      const ports = viewerRecord?.ports ?? ctx.identityUserStore.ensurePortsFor(identityNpub);
       const balance = viewerRecord?.balance ?? 0;
       identitySummaries = [
         {
-          npub: authContext.npub,
+          npub: identityNpub,
           normalizedNpub: viewerNormalizedNpub,
           segment,
-          alias: generateIdentityAlias(authContext.npub),
+          alias: generateIdentityAlias(identityNpub),
           ports,
           balance,
           sessionIds: [],
@@ -1044,6 +1189,8 @@ export async function handleSessionApi(
     if (denied) return denied;
 
     try {
+      const sessionOwnerNpub = resolveSelfSpaceViewerNpub(authContext, ctx);
+      const selfSpaceAuthContext = buildSelfSpaceAuthContext(authContext, sessionOwnerNpub);
       const payload = (await request.json()) as Record<string, unknown> | null;
       const agent = typeof payload?.agent === "string" ? payload.agent.toLowerCase() : "";
       if (!ctx.isAgentType(agent)) {
@@ -1051,7 +1198,7 @@ export async function handleSessionApi(
       }
       const requiresBalance = await ctx.shouldRequireBalanceForAgent(agent);
       if (requiresBalance) {
-        const balanceCheck = ctx.ensureViewerHasBalance(authContext, {
+        const balanceCheck = ctx.ensureViewerHasBalance(selfSpaceAuthContext, {
           feature: "start an agent session",
           message: "Add sats to your balance to start an agent session.",
         });
@@ -1104,21 +1251,20 @@ export async function handleSessionApi(
           ? payload.metadata as Record<string, unknown>
           : null;
       const callerRequestedAgent = rawMetadata?.AGENT === true;
-      const sessionOwnerNpub = authContext.npub ?? undefined;
       const session = await ctx.manager.createSession(
         agent,
         workingDirectory,
         sessionName ?? undefined,
         origin,
         targetFile,
-        sessionOwnerNpub,
+        sessionOwnerNpub ?? undefined,
         {
           ...(rawMetadata ?? {}),
           AGENT: callerRequestedAgent || isDelegatedBotAuth(authContext),
-          ownerNpub: sessionOwnerNpub,
+          ownerNpub: sessionOwnerNpub ?? undefined,
           createdByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
           lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
-          chargeToNpub: authContext.npub ?? undefined,
+          chargeToNpub: sessionOwnerNpub ?? undefined,
         },
       );
       if (nightWatch?.enabled) {
@@ -1149,7 +1295,7 @@ export async function handleSessionApi(
       if (denied) return denied;
 
       const liveSession = ctx.manager.getSession(id);
-      const viewerNormalizedNpub = ctx.getViewerNormalizedNpub(authContext);
+      const viewerNormalizedNpub = resolveSelfSpaceViewerNpub(authContext, ctx);
       const viewerIsAdmin = Boolean(ctx.adminNpub && viewerNormalizedNpub && viewerNormalizedNpub === ctx.adminNpub);
       const ownedSession =
         liveSession && ctx.sessionBelongsToViewer(liveSession.npub ?? null, viewerNormalizedNpub, viewerIsAdmin)
@@ -1168,7 +1314,7 @@ export async function handleSessionApi(
       return Response.json({ error: "Session id required" }, { status: 400 });
     }
 
-    const viewerNormalizedNpub = ctx.getViewerNormalizedNpub(authContext);
+    const viewerNormalizedNpub = resolveSelfSpaceViewerNpub(authContext, ctx);
     const viewerIsAdmin = Boolean(ctx.adminNpub && viewerNormalizedNpub && viewerNormalizedNpub === ctx.adminNpub);
     if (!viewerIsAdmin && !viewerNormalizedNpub) {
       return Response.json({ error: "Not found" }, { status: 404 });
@@ -1183,7 +1329,16 @@ export async function handleSessionApi(
     );
     if (sessionResolution.error) return sessionResolution.error;
     const ownedSession = sessionResolution.session;
-    const resolvedId = sessionResolution.resolvedId;
+    let resolvedId = sessionResolution.resolvedId;
+    const storedSessionResolution =
+      !ownedSession
+        ? resolveOwnedStoredSession(id, viewerNormalizedNpub, viewerIsAdmin, ctx)
+        : null;
+    if (storedSessionResolution?.error) return storedSessionResolution.error;
+    const storedOwnedSession = storedSessionResolution?.session ?? null;
+    if (!ownedSession && storedOwnedSession) {
+      resolvedId = storedSessionResolution?.resolvedId ?? resolvedId;
+    }
 
     if (method === "GET" && parts.length === 4) {
       if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
@@ -1253,9 +1408,10 @@ export async function handleSessionApi(
     }
 
     if (parts[4] === "metadata") {
-      if (!ownedSession) return Response.json({ error: "Not found" }, { status: 404 });
       if (method === "GET") {
-        return Response.json(buildSessionMetadataResponse(resolvedId, ownedSession.metadata));
+        const metadata = ownedSession?.metadata ?? storedOwnedSession?.metadata;
+        if (!metadata) return Response.json({ error: "Not found" }, { status: 404 });
+        return Response.json(buildSessionMetadataResponse(resolvedId, metadata));
       }
       if (method === "PATCH") {
         let payload: unknown;
@@ -1268,12 +1424,39 @@ export async function handleSessionApi(
         if (!metadataPatch) {
           return Response.json({ error: "Invalid metadata payload" }, { status: 400 });
         }
-        const updated = ctx.manager.updateSessionMetadata(resolvedId, {
+        const persistedPatch = {
           ...metadataPatch,
           lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
-        });
-        if (!updated) return Response.json({ error: "Not found" }, { status: 404 });
-        return Response.json(buildSessionMetadataResponse(resolvedId, updated.metadata));
+        };
+        const updated = ownedSession
+          ? ctx.manager.updateSessionMetadata(resolvedId, persistedPatch)
+          : null;
+        if (ownedSession && !updated) return Response.json({ error: "Not found" }, { status: 404 });
+        const metadata = updated?.metadata ?? (
+          storedOwnedSession
+            ? persistStoredSessionMetadata(ctx, storedOwnedSession, persistedPatch)
+            : null
+        );
+        if (!metadata) return Response.json({ error: "Not found" }, { status: 404 });
+        if (updated) {
+          ctx.messageStore.recordSession({
+            id: updated.id,
+            agent: updated.agent,
+            startedAt: updated.startedAt,
+            name: updated.name ?? undefined,
+            npub: updated.npub ?? undefined,
+            port: updated.port,
+            pid: updated.pid ?? undefined,
+            pm2Name: updated.pm2Name,
+            workingDirectory: updated.workingDirectory ?? undefined,
+            command: updated.command,
+            runtimeStatus: updated.agentRuntimeStatus ?? null,
+            origin: updated.origin ?? null,
+            targetFile: updated.targetFile ?? undefined,
+            metadata: updated.metadata,
+          });
+        }
+        return Response.json(buildSessionMetadataResponse(resolvedId, metadata));
       }
     }
 

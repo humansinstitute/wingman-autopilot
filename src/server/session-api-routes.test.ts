@@ -7,6 +7,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { handleSessionApi, type SessionApiContext } from "./session-api-routes";
 import type { RequestAuthContext } from "../auth/request-context";
 import type { SessionSnapshot } from "../agents/process-manager";
+import type { StoredSessionRecord } from "../storage/message-store";
 
 const makeAuth = (overrides?: Partial<RequestAuthContext>): RequestAuthContext => ({
   npub: "npub1owner",
@@ -68,12 +69,16 @@ const buildCtx = (overrides?: Partial<SessionApiContext>): SessionApiContext => 
   agentHost: "127.0.0.1",
   messageStore: {
     recordSession: () => {},
+    getSession: () => null,
+    listSessions: () => [],
     listSessionMessages: () => [],
   } as any,
   sessionArchiveStore: {} as any,
   identityUserStore: {
     debit: () => 100,
     credit: () => 100,
+    ensurePortsFor: () => [],
+    getByNormalized: () => null,
   } as any,
   promptQueueStore: {} as any,
   artifactsStore: {} as any,
@@ -281,6 +286,93 @@ describe("handleSessionApi", () => {
     });
   });
 
+  test("PATCH /api/sessions/:id/metadata falls back to stored session metadata for delegated bot auth", async () => {
+    let persistedRecord: Record<string, unknown> | null = null;
+    const storedSession: StoredSessionRecord = {
+      id: "session-1",
+      agent: "codex",
+      startedAt: baseSession.startedAt,
+      name: "stored session",
+      npub: "npub1owner",
+      port: 3700,
+      pid: 1234,
+      pm2Name: null,
+      logsDir: null,
+      workingDirectory: "/tmp/project",
+      command: JSON.stringify(["codex"]),
+      runtimeStatus: "running",
+      origin: null,
+      model: null,
+      targetFile: null,
+      metadata: {
+        AGENT: true,
+        billingMode: "subscription",
+        goal: "Ship the release",
+      },
+    };
+    const ctx = buildCtx({
+      manager: {
+        getSession: () => undefined,
+        listSessions: () => [],
+        updateSessionMetadata: () => null,
+      } as any,
+      messageStore: {
+        recordSession: (session: Record<string, unknown>) => {
+          persistedRecord = session;
+        },
+        getSession: (id: string) => (id === "session-1" ? storedSession : null),
+        listSessions: () => [storedSession],
+        listSessionMessages: () => [],
+      } as any,
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions/session-1/metadata");
+    const request = new Request(url.toString(), {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ nextAction: "stop" }),
+    });
+
+    const response = await handleSessionApi(
+      request,
+      url,
+      "PATCH",
+      makeAuth({
+        npub: "npub1bot",
+        actorNpub: "npub1bot",
+        signerNpub: "npub1bot",
+        subjectNpub: "npub1bot",
+        delegatedOwnerNpub: "npub1owner",
+        delegatedByBot: true,
+      }),
+      ctx,
+    );
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    expect(persistedRecord).toMatchObject({
+      id: "session-1",
+      npub: "npub1owner",
+      metadata: {
+        AGENT: true,
+        billingMode: "subscription",
+        goal: "Ship the release",
+        nextAction: "stop",
+        lastManagedByNpub: "npub1bot",
+      },
+    });
+    await expect(response!.json()).resolves.toEqual({
+      id: "session-1",
+      metadata: {
+        AGENT: true,
+        autoStop: false,
+        billingMode: "subscription",
+        goal: "Ship the release",
+        nextAction: "stop",
+        lastManagedByNpub: "npub1bot",
+      },
+    });
+  });
+
   test("GET /api/sessions/:id/metadata returns live session metadata", async () => {
     const session = {
       ...baseSession,
@@ -313,6 +405,38 @@ describe("handleSessionApi", () => {
     await expect(response!.json()).resolves.toEqual({
       id: "session-1",
       metadata: session.metadata,
+    });
+  });
+
+  test("GET /api/sessions returns owner sessions for delegated bot auth in self space", async () => {
+    const ctx = buildCtx({
+      manager: {
+        listSessions: () => [{ ...baseSession, npub: "npub1owner" }],
+      } as any,
+      buildIdentitySummaries: () => [],
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions");
+    const request = new Request(url.toString(), { method: "GET" });
+
+    const response = await handleSessionApi(
+      request,
+      url,
+      "GET",
+      makeAuth({
+        npub: "npub1bot",
+        actorNpub: "npub1bot",
+        signerNpub: "npub1bot",
+        subjectNpub: "npub1bot",
+        delegatedOwnerNpub: "npub1owner",
+        delegatedByBot: true,
+      }),
+      ctx,
+    );
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    await expect(response!.json()).resolves.toMatchObject({
+      sessions: [{ id: "session-1", npub: "npub1owner" }],
     });
   });
 
