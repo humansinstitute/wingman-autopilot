@@ -45,6 +45,10 @@ import {
   schedulePrependedScrollRestore,
 } from "../live/conversation-window.js";
 import { focusComposerTextarea } from "../live/mobile-runtime.js";
+import {
+  createLiveSessionDrawer,
+  isLiveDrawerVisible,
+} from "../live/session-drawer.js";
 
 export function initLiveView(deps) {
   const {
@@ -132,6 +136,36 @@ export function initLiveView(deps) {
     }
 
     return null;
+  }
+
+  function closeLiveDrawerModal() {
+    state.liveDrawer.reportModalOpen = false;
+    state.liveDrawer.selectedReportId = "";
+  }
+
+  function setLiveDrawerOpen(nextOpen) {
+    state.liveDrawer.userToggled = true;
+    state.liveDrawer.open = Boolean(nextOpen);
+    if (!nextOpen) {
+      closeLiveDrawerModal();
+    }
+  }
+
+  function closeSecondaryPanels() {
+    state.writerLayout.open = false;
+    state.artifactsLayout.open = false;
+    state.appCardLayout.open = false;
+    state.webviewLayout.open = false;
+  }
+
+  function toggleLiveDrawer() {
+    const visible = isLiveDrawerVisible(state.liveDrawer, window.innerWidth);
+    const nextOpen = !visible;
+    if (nextOpen) {
+      closeSecondaryPanels();
+    }
+    setLiveDrawerOpen(nextOpen);
+    render();
   }
 
   // ── Session tabs ────────────────────────────────────────────────
@@ -809,6 +843,12 @@ export function initLiveView(deps) {
       commandMenu.append(submenu);
     };
 
+    const drawerVisible = isLiveDrawerVisible(state.liveDrawer, window.innerWidth);
+    addCommand(drawerVisible ? "Hide Session Drawer" : "Show Session Drawer", () => {
+      toggleLiveDrawer();
+    });
+    addCommandDivider();
+
     const executeGitAction = async (action, options = {}) => {
       const session = sessionsStore().items.find((s) => s.id === sessionId);
       const directory = session?.workingDirectory;
@@ -1170,11 +1210,19 @@ export function initLiveView(deps) {
 
     const buttonGroup = document.createElement("div");
     buttonGroup.className = "wm-button-group";
+    const drawerButton = document.createElement("button");
+    drawerButton.type = "button";
+    drawerButton.className = "wm-button secondary";
+    drawerButton.textContent = drawerVisible ? "Hide Session" : "Session";
+    drawerButton.dataset.testid = "live-session-drawer-toggle";
+    drawerButton.addEventListener("click", () => {
+      toggleLiveDrawer();
+    });
     const commandWrapper = document.createElement("div");
     commandWrapper.className = "wm-command-wrapper";
     commandWrapper.append(commandButton, commandMenu);
 
-    buttonGroup.append(commandWrapper, submit);
+    buttonGroup.append(drawerButton, commandWrapper, submit);
 
     const textareaWrapper = document.createElement("div");
     textareaWrapper.className = "wm-textarea-wrapper";
@@ -1775,10 +1823,37 @@ export function initLiveView(deps) {
       });
     } else {
       delete appRoot.dataset.webviewOpen;
+      const drawer = createLiveSessionDrawer({
+        session: activeSession,
+        state,
+        showToast,
+        render,
+        viewportWidth: window.innerWidth,
+      });
       main.append(scrollRegion);
-      wrapper.append(main);
       const composerEl = renderComposer(sessionId);
-      wrapper.append(composerEl);
+      if (drawer.visible && drawer.mode === "desktop") {
+        const layout = document.createElement("div");
+        layout.className = "wm-live-drawer-layout";
+
+        const chatStack = document.createElement("div");
+        chatStack.className = "wm-live-drawer-layout__main";
+        chatStack.append(main, composerEl);
+
+        layout.append(drawer.aside, chatStack);
+        wrapper.append(layout);
+      } else {
+        wrapper.append(main, composerEl);
+        if (drawer.visible && drawer.backdrop) {
+          wrapper.append(drawer.backdrop);
+        }
+        if (drawer.visible) {
+          wrapper.append(drawer.aside);
+        }
+      }
+      if (drawer.modal) {
+        wrapper.append(drawer.modal);
+      }
       // Attach scroll pill to the composer — scrollTarget is the document for non-split
       requestAnimationFrame(() => {
         const docScroll = document.scrollingElement || document.documentElement || document.body;

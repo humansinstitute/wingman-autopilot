@@ -119,6 +119,16 @@ export const state = {
       maxCycleOptions: [6, 21, 256],
     },
   },
+  liveDrawer: {
+    open: false,
+    userToggled: false,
+    saving: false,
+    reportsError: null,
+    reportModalOpen: false,
+    selectedReportId: "",
+    goalDrafts: new Map(),
+    nextActionPayloadDrafts: new Map(),
+  },
   // Webview split-panel layout state
   webviewLayout: { open: false, mode: "chat-narrow", mobileTab: "chat" },
   // Writer split-panel layout state

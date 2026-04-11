@@ -6,17 +6,10 @@
  */
 
 import {
-  fetchNightWatchConfig,
-  fetchNightWatchSessionState,
-  enableNightWatch,
-  disableNightWatch,
-} from "./api.js";
-import { openNightWatchEnableModal } from "./enable-modal.js";
-import { updateSessionMetadataApi } from "../services/sessions.js";
-
-function labelFor(enabled) {
-  return enabled ? "Night Watch: On" : "Night Watch: Off";
-}
+  ensureNightWatchSessionToggleLoaded,
+  getNightWatchToggleLabel,
+  toggleNightWatchForSession,
+} from "./session-toggle.js";
 
 export function addNightWatchToggle({
   sessionId,
@@ -33,57 +26,17 @@ export function addNightWatchToggle({
   const cached = toggleMap.get(sessionId);
   const initiallyOn = cached?.enabled ?? false;
 
-  const btn = addCommand(labelFor(initiallyOn), async () => {
-    const currentlyOn = toggleMap.get(sessionId)?.enabled ?? false;
+  const btn = addCommand(getNightWatchToggleLabel(initiallyOn), async () => {
     try {
-      if (currentlyOn) {
-        await disableNightWatch(sessionId);
-        toggleMap.set(sessionId, { enabled: false });
-        btn.textContent = labelFor(false);
-        showToast("Night Watch disabled");
-      } else {
-        const [config, sessionState] = await Promise.all([
-          fetchNightWatchConfig(),
-          fetchNightWatchSessionState(sessionId).catch(() => null),
-        ]);
-        const nextSettings = await openNightWatchEnableModal({
-          sessionName,
-          prompt: sessionState?.prompt || config.prompt || "Any progress?",
-          intervalMinutes:
-            Number(sessionState?.intervalMinutes) || Number(config.intervalMinutes) || 5,
-          minIntervalMinutes: Number(config.minIntervalMinutes) || 2,
-          maxIntervalMinutes: Number(config.maxIntervalMinutes) || 60,
-          maxCycles: Number(sessionState?.maxCycles) || Number(config.maxCycles) || 21,
-          maxCycleOptions: config.maxCycleOptions || [6, 21, 256],
-          goal: sessionMetadata?.goal || "",
-          nextAction: sessionMetadata?.nextAction || "",
-          nextActionTemplate: sessionMetadata?.nextActionTemplate || "",
-        });
-        if (!nextSettings) {
-          return;
-        }
-
-        const metadataResult = await updateSessionMetadataApi(sessionId, {
-          goal: nextSettings.goal,
-          nextAction: nextSettings.nextAction,
-          nextActionTemplate: nextSettings.nextActionTemplate,
-        });
-        if (sessionMetadata && typeof sessionMetadata === "object") {
-          const normalizedMetadata =
-            metadataResult && typeof metadataResult === "object" && metadataResult.metadata
-              ? metadataResult.metadata
-              : {};
-          Object.keys(sessionMetadata).forEach((key) => {
-            if (!(key in normalizedMetadata)) {
-              delete sessionMetadata[key];
-            }
-          });
-          Object.assign(sessionMetadata, normalizedMetadata);
-        }
-        const result = await enableNightWatch(sessionId, nextSettings);
-        toggleMap.set(sessionId, { enabled: true, ...result });
-        btn.textContent = labelFor(true);
-        showToast("Night Watch enabled");
+      const result = await toggleNightWatchForSession({
+        sessionId,
+        sessionName,
+        sessionMetadata,
+        state,
+        showToast,
+      });
+      if (result) {
+        btn.textContent = getNightWatchToggleLabel(Boolean(result.enabled));
       }
     } catch (err) {
       showToast(`Night Watch toggle failed: ${err.message}`, { type: "error" });
@@ -91,14 +44,13 @@ export function addNightWatchToggle({
   });
 
   // Lazy-load session state if not cached, update button when resolved
-  if (!toggleMap.has(sessionId)) {
-    fetchNightWatchSessionState(sessionId)
-      .then((data) => {
-        toggleMap.set(sessionId, data);
-        if (data.enabled) {
-          btn.textContent = labelFor(true);
-        }
-      })
-      .catch(() => {});
-  }
+  void ensureNightWatchSessionToggleLoaded({
+    sessionId,
+    state,
+    onResolved: (data) => {
+      if (data?.enabled) {
+        btn.textContent = getNightWatchToggleLabel(true);
+      }
+    },
+  });
 }
