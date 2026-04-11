@@ -19,7 +19,8 @@ type DispatchReason = 'new task' | 'task updated';
 export type AgentWorkTaskDispatchDecisionCode =
   | 'dispatch'
   | 'skip_terminal'
-  | 'skip_assignment';
+  | 'skip_assignment'
+  | 'skip_not_ready';
 
 export interface AgentWorkRuntimeDependencies {
   defaultAgent: AgentType;
@@ -35,6 +36,8 @@ export interface AgentWorkRuntimeDependencies {
   ) => Promise<SessionSnapshot>;
   updateSessionMetadata: (sessionId: string, metadata: SessionMetadataInput) => SessionSnapshot | null;
   addPrompt: (sessionId: string, content: string) => unknown;
+  hasQueuedPrompt?: (sessionId: string, content: string) => boolean;
+  hasQueuedTaskDispatchPrompt?: (sessionId: string, taskId: string) => boolean;
   maybeAutoDispatchQueuedPrompt: (session: SessionSnapshot | null) => void | Promise<void>;
   enableNightWatch: (sessionId: string) => unknown;
 }
@@ -231,6 +234,10 @@ function isTerminalTask(task: InboundTaskRecord, recordState: string | null): bo
   return Boolean(task.state && TERMINAL_TASK_STATES.has(task.state));
 }
 
+function isReadyTask(task: InboundTaskRecord): boolean {
+  return task.state === 'ready';
+}
+
 export function evaluateTaskDispatchEligibility(params: {
   task: InboundTaskRecord;
   recordState: string | null;
@@ -241,6 +248,9 @@ export function evaluateTaskDispatchEligibility(params: {
   }
   if (!isAssignedToAgent(params.task, params.agent)) {
     return 'skip_assignment';
+  }
+  if (!isReadyTask(params.task)) {
+    return 'skip_not_ready';
   }
   return 'dispatch';
 }
@@ -335,6 +345,8 @@ export class AgentWorkSessionRuntime {
   private readonly createSession: AgentWorkRuntimeDependencies['createSession'];
   private readonly updateSessionMetadata: AgentWorkRuntimeDependencies['updateSessionMetadata'];
   private readonly addPrompt: AgentWorkRuntimeDependencies['addPrompt'];
+  private readonly hasQueuedPrompt: AgentWorkRuntimeDependencies['hasQueuedPrompt'];
+  private readonly hasQueuedTaskDispatchPrompt: AgentWorkRuntimeDependencies['hasQueuedTaskDispatchPrompt'];
   private readonly maybeAutoDispatchQueuedPrompt: AgentWorkRuntimeDependencies['maybeAutoDispatchQueuedPrompt'];
   private readonly enableNightWatch: AgentWorkRuntimeDependencies['enableNightWatch'];
 
@@ -345,6 +357,8 @@ export class AgentWorkSessionRuntime {
     this.createSession = deps.createSession;
     this.updateSessionMetadata = deps.updateSessionMetadata;
     this.addPrompt = deps.addPrompt;
+    this.hasQueuedPrompt = deps.hasQueuedPrompt;
+    this.hasQueuedTaskDispatchPrompt = deps.hasQueuedTaskDispatchPrompt;
     this.maybeAutoDispatchQueuedPrompt = deps.maybeAutoDispatchQueuedPrompt;
     this.enableNightWatch = deps.enableNightWatch;
   }
@@ -427,8 +441,9 @@ export class AgentWorkSessionRuntime {
     }
 
     this.enableNightWatch(liveSession.id);
-    this.addPrompt(
+    this.queueTaskPromptIfMissing(
       liveSession.id,
+      input.task.taskId,
       buildTaskDispatchPrompt({
         agent: input.agent,
         task: input.task,
@@ -469,9 +484,23 @@ export class AgentWorkSessionRuntime {
     });
 
     this.enableNightWatch(flowSession.id);
-    this.addPrompt(flowSession.id, buildApprovalDispatchPrompt(input.approval));
+    this.queuePromptIfMissing(flowSession.id, buildApprovalDispatchPrompt(input.approval));
     await this.maybeAutoDispatchQueuedPrompt(this.getSession(flowSession.id) ?? flowSession);
     return this.getSession(flowSession.id) ?? flowSession;
+  }
+
+  private queuePromptIfMissing(sessionId: string, content: string): void {
+    if (this.hasQueuedPrompt?.(sessionId, content)) {
+      return;
+    }
+    this.addPrompt(sessionId, content);
+  }
+
+  private queueTaskPromptIfMissing(sessionId: string, taskId: string, content: string): void {
+    if (this.hasQueuedTaskDispatchPrompt?.(sessionId, taskId)) {
+      return;
+    }
+    this.queuePromptIfMissing(sessionId, content);
   }
 
   private resolveLiveBindingSession(

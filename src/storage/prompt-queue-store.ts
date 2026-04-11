@@ -23,6 +23,8 @@ export class PromptQueueStore {
   private updatePrompt: any;
   private deletePrompt: any;
   private getNextPrompt: any;
+  private hasPromptByContentStmt: any;
+  private hasTaskDispatchPromptStmt: any;
   private countPrompts: any;
   private clearQueue: any;
 
@@ -61,6 +63,22 @@ export class PromptQueueStore {
       SELECT * FROM prompt_queue
       WHERE session_id = ?
       ORDER BY queue_order ASC
+      LIMIT 1
+    `);
+
+    this.hasPromptByContentStmt = this.db.prepare(`
+      SELECT 1
+      FROM prompt_queue
+      WHERE session_id = ? AND content = ?
+      LIMIT 1
+    `);
+
+    this.hasTaskDispatchPromptStmt = this.db.prepare(`
+      SELECT 1
+      FROM prompt_queue
+      WHERE session_id = ?
+        AND instr(content, 'Agent work dispatch.') > 0
+        AND instr(content, ?) > 0
       LIMIT 1
     `);
     
@@ -146,6 +164,22 @@ export class PromptQueueStore {
   getQueueCount(sessionId: string): number {
     const result = this.countPrompts.get(sessionId) as { count: number } | undefined;
     return result?.count || 0;
+  }
+
+  hasQueuedPrompt(sessionId: string, content: string): boolean {
+    const trimmedContent = content?.trim() ?? "";
+    if (!trimmedContent) {
+      return false;
+    }
+    return Boolean(this.hasPromptByContentStmt.get(sessionId, trimmedContent));
+  }
+
+  hasQueuedTaskDispatchPrompt(sessionId: string, taskId: string): boolean {
+    const trimmedTaskId = taskId?.trim() ?? "";
+    if (!trimmedTaskId) {
+      return false;
+    }
+    return Boolean(this.hasTaskDispatchPromptStmt.get(sessionId, `Task id: ${trimmedTaskId}`));
   }
 
   clearSessionQueue(sessionId: string): void {

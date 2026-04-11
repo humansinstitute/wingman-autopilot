@@ -8,7 +8,12 @@ import { nip19 } from 'nostr-tools';
 import type { SessionSnapshot } from '../agents/process-manager';
 import type { AgentDefinitionRecord, WorkspaceSubscriptionRecord } from '../agent-chat/types';
 import { AgentWorkSessionBindingStore } from './session-binding-store';
-import { AgentWorkSessionRuntime, normaliseInboundApprovalRecord, normaliseInboundTaskRecord } from './session-runtime';
+import {
+  AgentWorkSessionRuntime,
+  evaluateTaskDispatchEligibility,
+  normaliseInboundApprovalRecord,
+  normaliseInboundTaskRecord,
+} from './session-runtime';
 
 function makeTempDb(): string {
   return join(tmpdir(), `agent-work-runtime-${randomUUID()}.sqlite`);
@@ -163,7 +168,7 @@ describe('AgentWorkSessionRuntime', () => {
         flowStep: 'step-1',
         title: 'Task one',
         description: 'Do the thing',
-        state: 'open',
+        state: 'ready',
         assignedTo: agent.botNpub,
         deleted: false,
         done: false,
@@ -184,7 +189,7 @@ describe('AgentWorkSessionRuntime', () => {
         flowStep: 'step-2',
         title: 'Task two',
         description: 'Do the next thing',
-        state: 'open',
+        state: 'ready',
         assignedTo: agent.botNpub,
         deleted: false,
         done: false,
@@ -205,7 +210,7 @@ describe('AgentWorkSessionRuntime', () => {
         flowStep: null,
         title: 'Task three',
         description: 'Create a new session',
-        state: 'open',
+        state: 'ready',
         assignedTo: agent.botNpub,
         deleted: false,
         done: false,
@@ -274,7 +279,7 @@ describe('AgentWorkSessionRuntime', () => {
         flowStep: 'step-1',
         title: 'First task',
         description: 'Initial task',
-        state: 'open',
+        state: 'ready',
         assignedTo: agent.botNpub,
         deleted: false,
         done: false,
@@ -301,7 +306,7 @@ describe('AgentWorkSessionRuntime', () => {
         flowStep: 'step-2',
         title: 'Second task',
         description: 'Follow-up task',
-        state: 'open',
+        state: 'ready',
         assignedTo: agent.botNpub,
         deleted: false,
         done: false,
@@ -332,6 +337,88 @@ describe('AgentWorkSessionRuntime', () => {
     expect(prompts[2]?.content).toContain('Dispatch reason: approval updated.');
     expect(dispatches).toEqual(['session-1', 'session-1', 'session-1']);
     expect(nightWatch).toEqual(['session-1', 'session-1', 'session-1']);
+  });
+
+  test('does not enqueue duplicate task update advisories while the same prompt is already queued', async () => {
+    const bindingStore = new AgentWorkSessionBindingStore(makeTempDb());
+    const sessions = new Map<string, SessionSnapshot>();
+    const prompts: Array<{ sessionId: string; content: string }> = [];
+    const dispatches: string[] = [];
+
+    const runtime = new AgentWorkSessionRuntime({
+      defaultAgent: 'codex',
+      bindingStore,
+      getSession: (sessionId) => sessions.get(sessionId) ?? null,
+      createSession: async (_agent, workingDirectory, name, _origin, explicitNpub, metadata) => {
+        const session = makeSession('session-1', {
+          AGENT: true,
+          billingMode: 'subscription',
+          ...metadata,
+        });
+        session.name = name;
+        session.workingDirectory = workingDirectory;
+        session.npub = explicitNpub;
+        sessions.set(session.id, session);
+        return session;
+      },
+      updateSessionMetadata: (sessionId, metadata) => {
+        const existing = sessions.get(sessionId)!;
+        const next = { ...existing, metadata: { ...existing.metadata, ...(metadata ?? {}) } };
+        sessions.set(sessionId, next);
+        return next;
+      },
+      addPrompt: (sessionId, content) => {
+        prompts.push({ sessionId, content });
+        return null;
+      },
+      hasQueuedTaskDispatchPrompt: (sessionId, taskId) =>
+        prompts.some(
+          (prompt) =>
+            prompt.sessionId === sessionId &&
+            prompt.content.includes('Agent work dispatch.') &&
+            prompt.content.includes(`Task id: ${taskId}`),
+        ),
+      maybeAutoDispatchQueuedPrompt: (session) => {
+        if (session) dispatches.push(session.id);
+      },
+      enableNightWatch: () => undefined,
+    });
+
+    const subscription = makeSubscription();
+    const agent = makeAgent();
+    const task = {
+      taskId: 'task-1',
+      flowId: 'flow-a',
+      flowRunId: 'run-1',
+      flowStep: 'step-1',
+      title: 'First task',
+      description: 'Initial task',
+      state: 'ready',
+      assignedTo: agent.botNpub,
+      deleted: false,
+      done: false,
+      predecessorTaskIds: [],
+    } as const;
+
+    await runtime.handleTaskDispatch({
+      subscription,
+      agent,
+      recordId: 'record-task-1',
+      recordState: null,
+      task,
+    });
+
+    await runtime.handleTaskDispatch({
+      subscription,
+      agent,
+      recordId: 'record-task-2',
+      recordState: null,
+      task,
+    });
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.content).toContain('Dispatch reason: new task.');
+    expect(dispatches).toEqual(['session-1', 'session-1']);
   });
 
   test('accepts hex pubkey assignments as well as npub assignments', async () => {
@@ -375,7 +462,7 @@ describe('AgentWorkSessionRuntime', () => {
         flowStep: null,
         title: 'Hex assignment task',
         description: 'Assigned using bot pubkey hex',
-        state: 'open',
+        state: 'ready',
         assignedTo: botPubkeyHex(agent),
         deleted: false,
         done: false,
@@ -434,6 +521,46 @@ describe('AgentWorkSessionRuntime', () => {
     expect(task?.flowRunId).toBe('run-yoke-1');
     expect(task?.flowStep).toBe('2');
     expect(task?.predecessorTaskIds).toEqual(['pred-a']);
+  });
+
+  test('requires ready state before dispatching assigned tasks', () => {
+    const agent = makeAgent();
+
+    expect(evaluateTaskDispatchEligibility({
+      task: {
+        taskId: 'task-open-1',
+        flowId: null,
+        flowRunId: null,
+        flowStep: null,
+        title: 'Open task',
+        description: null,
+        state: 'open',
+        assignedTo: agent.botNpub,
+        deleted: false,
+        done: false,
+        predecessorTaskIds: [],
+      },
+      recordState: null,
+      agent,
+    })).toBe('skip_not_ready');
+
+    expect(evaluateTaskDispatchEligibility({
+      task: {
+        taskId: 'task-ready-1',
+        flowId: null,
+        flowRunId: null,
+        flowStep: null,
+        title: 'Ready task',
+        description: null,
+        state: 'ready',
+        assignedTo: agent.botNpub,
+        deleted: false,
+        done: false,
+        predecessorTaskIds: [],
+      },
+      recordState: null,
+      agent,
+    })).toBe('dispatch');
   });
 
   test('normalises yoke inbound approval payloads that use data and status', () => {

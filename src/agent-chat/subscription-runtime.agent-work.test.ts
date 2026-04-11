@@ -147,7 +147,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
         flow_step: 'step-1',
         title: 'Task one',
         description: 'Complete the task',
-        state: 'open',
+        state: 'ready',
         assigned_to: 'npub1bot',
         predecessor_task_ids: [],
       }),
@@ -351,6 +351,81 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(next.recentDispatches[0]?.kind).toBe('task');
     expect(next.recentDispatches[0]?.action).toBe('skip_assignment');
     expect(next.recentDispatches[0]?.details?.assigned_to).toBe('npub1someoneelse');
+  });
+
+  test('records skip_not_ready when an assigned task is not ready yet', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-not-ready-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-not-ready-agents'));
+    const subscription = store.save(makeSubscription());
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-task',
+      label: 'Task Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-work',
+      capabilities: ['task_dispatch'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      agentWorkRuntime: {
+        handleTaskDispatch: async () => {
+          throw new Error('handleTaskDispatch should not run until the task is ready');
+        },
+        handleApprovalDispatch: async () => null,
+      } as unknown as AgentWorkSessionRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-task-not-ready-1',
+          record_state: 'active',
+          version: 1,
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        task_id: 'task-not-ready-1',
+        title: 'Not ready task',
+        description: 'Assigned, but still in progress',
+        state: 'in_progress',
+        assigned_to_npub: 'npub1bot',
+        predecessor_task_ids: [],
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-task-not-ready-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'task'),
+        record_id: 'record-task-not-ready-1',
+      }),
+    );
+
+    expect(next.recentDispatches).toHaveLength(1);
+    expect(next.recentDispatches[0]?.action).toBe('skip_not_ready');
+    expect(next.recentDispatches[0]?.details?.assigned_to).toBe('npub1bot');
+    expect(next.recentDispatches[0]?.details?.state).toBe('in_progress');
   });
 
   test('skips task dispatch when the bot was the latest updater', async () => {
@@ -571,7 +646,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
         task_id: 'task-self-new-1',
         title: 'New self-created task',
         description: 'Created by the agent for itself',
-        state: 'open',
+        state: 'ready',
         assigned_to_npub: 'npub1bot',
         predecessor_task_ids: [],
       }),
@@ -666,7 +741,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
         task_id: 'task-self-changed-1',
         title: 'Self changed task',
         description: params.record.version === 2 ? 'Expanded task description' : 'Short task description',
-        state: 'open',
+        state: 'ready',
         assigned_to_npub: 'npub1bot',
         predecessor_task_ids: [],
       }),
@@ -751,7 +826,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
         task_id: 'task-pred-1',
         title: 'Task with predecessor',
         description: 'Should still dispatch to the agent',
-        state: 'new',
+        state: 'ready',
         assigned_to_npub: 'npub1bot',
         predecessor_task_ids: ['pred-1'],
       }),

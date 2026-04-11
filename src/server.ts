@@ -1768,6 +1768,9 @@ const agentWorkSessionRuntime = new AgentWorkSessionRuntime({
     await manager.createSession(agent, workingDirectory, name, origin, undefined, explicitNpub, metadata),
   updateSessionMetadata: (sessionId, metadata) => manager.updateSessionMetadata(sessionId, metadata),
   addPrompt: (sessionId, content) => promptQueueStore.addPrompt(sessionId, { content }),
+  hasQueuedPrompt: (sessionId, content) => promptQueueStore.hasQueuedPrompt(sessionId, content),
+  hasQueuedTaskDispatchPrompt: (sessionId, taskId) =>
+    promptQueueStore.hasQueuedTaskDispatchPrompt(sessionId, taskId),
   maybeAutoDispatchQueuedPrompt,
   enableNightWatch: (sessionId) => {
     nightWatchStore.enableSession(sessionId);
