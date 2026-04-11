@@ -49,6 +49,7 @@ import {
   createLiveSessionDrawer,
   isLiveDrawerVisible,
 } from "../live/session-drawer.js";
+import { createLiveSessionToolbar } from "../live/session-toolbar.js";
 
 export function initLiveView(deps) {
   const {
@@ -1210,19 +1211,11 @@ export function initLiveView(deps) {
 
     const buttonGroup = document.createElement("div");
     buttonGroup.className = "wm-button-group";
-    const drawerButton = document.createElement("button");
-    drawerButton.type = "button";
-    drawerButton.className = "wm-button secondary";
-    drawerButton.textContent = drawerVisible ? "Hide Session" : "Session";
-    drawerButton.dataset.testid = "live-session-drawer-toggle";
-    drawerButton.addEventListener("click", () => {
-      toggleLiveDrawer();
-    });
     const commandWrapper = document.createElement("div");
     commandWrapper.className = "wm-command-wrapper";
     commandWrapper.append(commandButton, commandMenu);
 
-    buttonGroup.append(drawerButton, commandWrapper, submit);
+    buttonGroup.append(commandWrapper, submit);
 
     const textareaWrapper = document.createElement("div");
     textareaWrapper.className = "wm-textarea-wrapper";
@@ -1513,6 +1506,12 @@ export function initLiveView(deps) {
 
     // Determine if this session has a target file for writer mode
     const activeSession = sessionsStore().items.find((s) => s.id === sessionId);
+    const liveToolbar = createLiveSessionToolbar({
+      title: getSessionDisplayName(activeSession),
+      meta: [activeSession?.agent, activeSession?.port].filter((value) => value != null && value !== "").join(":"),
+      drawerVisible: isLiveDrawerVisible(state.liveDrawer, window.innerWidth),
+      onToggleDrawer: toggleLiveDrawer,
+    });
     const targetFile = activeSession?.targetFile ?? null;
 
     const sessionPinnedFile = activeSession?.pinnedFile ?? null;
@@ -1562,7 +1561,7 @@ export function initLiveView(deps) {
 
       const chatCol = document.createElement("div");
       chatCol.className = "wm-live-chat-col";
-      main.append(scrollRegion);
+      main.append(liveToolbar, scrollRegion);
       chatCol.append(main);
 
       const writerCol = document.createElement("div");
@@ -1630,7 +1629,7 @@ export function initLiveView(deps) {
 
       const chatCol = document.createElement("div");
       chatCol.className = "wm-live-chat-col";
-      main.append(scrollRegion);
+      main.append(liveToolbar, scrollRegion);
       chatCol.append(main);
 
       const artifactsCol = document.createElement("div");
@@ -1704,7 +1703,7 @@ export function initLiveView(deps) {
 
       const chatCol = document.createElement("div");
       chatCol.className = "wm-live-chat-col";
-      main.append(scrollRegion);
+      main.append(liveToolbar, scrollRegion);
       chatCol.append(main);
 
       const appCol = document.createElement("div");
@@ -1771,7 +1770,7 @@ export function initLiveView(deps) {
 
       const chatCol = document.createElement("div");
       chatCol.className = "wm-live-chat-col";
-      main.append(scrollRegion);
+      main.append(liveToolbar, scrollRegion);
       chatCol.append(main);
 
       const webviewCol = document.createElement("div");
@@ -1830,7 +1829,7 @@ export function initLiveView(deps) {
         render,
         viewportWidth: window.innerWidth,
       });
-      main.append(scrollRegion);
+      main.append(liveToolbar, scrollRegion);
       const composerEl = renderComposer(sessionId);
       if (drawer.visible && drawer.mode === "desktop") {
         const layout = document.createElement("div");

@@ -2400,6 +2400,51 @@ body[data-menu-open="true"] .wm-menu-panel {
   min-height: 0;
 }
 
+.wm-live-session-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid rgba(16, 185, 129, 0.16);
+  border-radius: 0.9rem;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.74), rgba(15, 23, 42, 0.58));
+}
+
+.wm-live-session-toolbar__details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.wm-live-session-toolbar__eyebrow {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.wm-live-session-toolbar__title {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.wm-live-session-toolbar__meta {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.wm-live-session-toolbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+
 .wm-live-scroll {
   display: flex;
   flex-direction: column;
@@ -4406,6 +4451,19 @@ body[data-keyboard-open="true"] .wm-composer-shell {
   .wm-live-main {
     gap: 0.9rem;
     padding: 0 1rem;
+  }
+
+  .wm-live-session-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .wm-live-session-toolbar__actions {
+    width: 100%;
+  }
+
+  .wm-live-session-toolbar__actions > .wm-button {
+    width: 100%;
   }
 
   .wm-live-scroll {
