@@ -49,6 +49,10 @@ import {
   createLiveSessionDrawer,
   isLiveDrawerVisible,
 } from "../live/session-drawer.js";
+import {
+  getLiveDrawerLayoutState,
+  getRenderedLiveDrawerVisible,
+} from "../live/drawer-visibility.js";
 import { createLiveSessionToolbar } from "../live/session-toolbar.js";
 
 export function initLiveView(deps) {
@@ -159,8 +163,42 @@ export function initLiveView(deps) {
     state.webviewLayout.open = false;
   }
 
+  function getLiveDrawerRenderState(sessionId) {
+    const session = sessionsStore().items.find((item) => item.id === sessionId) ?? null;
+    const sessionPinnedFile = session?.pinnedFile ?? null;
+    const effectiveFile =
+      getPinnedFileForSession(state, sessionId, sessionPinnedFile) || session?.targetFile || null;
+    const matchingApp = findAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
+    const webApp = findWebAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
+    const layoutState = getLiveDrawerLayoutState({
+      effectiveFile,
+      matchingApp,
+      webApp,
+      writerLayout: state.writerLayout,
+      artifactsLayout: state.artifactsLayout,
+      appCardLayout: state.appCardLayout,
+      webviewLayout: state.webviewLayout,
+    });
+
+    return {
+      session,
+      effectiveFile,
+      matchingApp,
+      webApp,
+      layoutState,
+      visible: getRenderedLiveDrawerVisible({
+        drawerState: state.liveDrawer,
+        viewportWidth: window.innerWidth,
+        layoutState,
+      }),
+    };
+  }
+
   function toggleLiveDrawer() {
-    const visible = isLiveDrawerVisible(state.liveDrawer, window.innerWidth);
+    const sessionId = resolveCurrentLiveSessionId();
+    const visible = sessionId
+      ? getLiveDrawerRenderState(sessionId).visible
+      : isLiveDrawerVisible(state.liveDrawer, window.innerWidth);
     const nextOpen = !visible;
     if (nextOpen) {
       closeSecondaryPanels();
@@ -844,7 +882,7 @@ export function initLiveView(deps) {
       commandMenu.append(submenu);
     };
 
-    const drawerVisible = isLiveDrawerVisible(state.liveDrawer, window.innerWidth);
+    const drawerVisible = getLiveDrawerRenderState(sessionId).visible;
     addCommand(drawerVisible ? "Hide Session Drawer" : "Show Session Drawer", () => {
       toggleLiveDrawer();
     });
@@ -1505,11 +1543,12 @@ export function initLiveView(deps) {
     }
 
     // Determine if this session has a target file for writer mode
-    const activeSession = sessionsStore().items.find((s) => s.id === sessionId);
+    const drawerRenderState = getLiveDrawerRenderState(sessionId);
+    const activeSession = drawerRenderState.session;
     const liveToolbar = createLiveSessionToolbar({
       title: getSessionDisplayName(activeSession),
       meta: [activeSession?.agent, activeSession?.port].filter((value) => value != null && value !== "").join(":"),
-      drawerVisible: isLiveDrawerVisible(state.liveDrawer, window.innerWidth),
+      drawerVisible: drawerRenderState.visible,
       onToggleDrawer: toggleLiveDrawer,
     });
     const targetFile = activeSession?.targetFile ?? null;
@@ -1518,7 +1557,7 @@ export function initLiveView(deps) {
     syncPinnedFileForSession(state, sessionId, sessionPinnedFile);
 
     // Pinned file takes priority over session targetFile
-    const effectiveFile = getPinnedFileForSession(state, sessionId, sessionPinnedFile) || targetFile;
+    const effectiveFile = drawerRenderState.effectiveFile ?? targetFile;
 
     if (!effectiveFile) {
       clearWriterDismissal(state, sessionId);
@@ -1529,11 +1568,11 @@ export function initLiveView(deps) {
       state.writerLayout.open = true;
     }
 
-    const matchingApp = findAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
+    const matchingApp = drawerRenderState.matchingApp;
     if (!matchingApp && state.appCardLayout.open) {
       state.appCardLayout.open = false;
     }
-    const webApp = matchingApp?.webApp ? matchingApp : null;
+    const webApp = drawerRenderState.webApp;
     syncHeaderWebviewToggle(webApp);
     syncHeaderWriterToggle(effectiveFile);
 
