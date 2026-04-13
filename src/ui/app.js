@@ -119,11 +119,13 @@ import {
   fetchSessionApi,
   fetchSessionLogsApi,
   fetchSessionMessagesApi,
-  stopSessionApi,
-  deleteSessionApi,
-  updateSessionNameApi,
   postSessionMessageApi,
 } from "./services/sessions.js";
+import {
+  stopSession as stopSessionAction,
+  deleteSession as deleteSessionAction,
+  renameSession as renameSessionAction,
+} from "./sessions/actions.js";
 import {
   fetchAppsApi,
   fetchAppLogsApi,
@@ -1975,18 +1977,23 @@ jobDialogController = createJobDialogController({
 });
 
 const stopSession = async (sessionId) => {
-  const result = await stopSessionApi(sessionId);
-  if (!result.success) {
-    window.alert(`Failed to stop session: ${result.error}`);
-    return;
+  try {
+    const result = await stopSessionAction(sessionId);
+    if (!result.success) {
+      window.alert(`Failed to stop session: ${result.error}`);
+      return;
+    }
+    await fetchSessions();
+    render();
+  } catch (error) {
+    console.error("Failed to stop session", error);
+    window.alert("Failed to stop session. Check console for details.");
   }
-  await fetchSessions();
-  render();
 };
 
 const deleteSession = async (sessionId) => {
   try {
-    const result = await deleteSessionApi(sessionId);
+    const result = await deleteSessionAction(sessionId);
     if (!result.success) {
       window.alert(`Failed to delete session: ${result.error}`);
       return;
@@ -2000,7 +2007,7 @@ const deleteSession = async (sessionId) => {
 };
 
 const updateSessionName = async (sessionId, name) => {
-  return updateSessionNameApi(sessionId, name);
+  return renameSessionAction(sessionId, name);
 };
 
 const promptRenameSession = async (session) => {
