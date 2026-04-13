@@ -37,6 +37,11 @@ export interface AgentChatYokeRuntime {
   contextError: string | null;
 }
 
+export interface AgentWorkspaceYokeRuntime {
+  stateDir: string;
+  commandPrefix: string;
+}
+
 interface RunYokeCommandInput {
   args: string[];
   workingDirectory: string;
@@ -161,6 +166,26 @@ function buildCommandPrefix(stateDir: string): string {
   return `WINGMAN_YOKE_STATE_DIR=${shellQuote(stateDir)} ${shellQuote(resolveNodeBinary())} ${shellQuote(YOKE_CLI_PATH)}`;
 }
 
+export async function prepareAgentWorkspaceYokeRuntime(params: {
+  sessionId: string;
+  workingDirectory: string;
+  subscription: WorkspaceSubscriptionRecord;
+  botIdentity: RuntimeBotIdentity;
+}): Promise<AgentWorkspaceYokeRuntime> {
+  const stateDir = join(YOKE_STATE_ROOT, params.sessionId);
+  await initialiseYokeState(
+    params.workingDirectory,
+    stateDir,
+    params.subscription,
+    params.botIdentity,
+  );
+  await syncYokeState(params.workingDirectory, stateDir, params.botIdentity);
+  return {
+    stateDir,
+    commandPrefix: buildCommandPrefix(stateDir),
+  };
+}
+
 export function buildAgentChatYokeCommands(stateDir: string, channelId: string, threadId: string) {
   const prefix = buildCommandPrefix(stateDir);
   return {
@@ -172,6 +197,24 @@ export function buildAgentChatYokeCommands(stateDir: string, channelId: string, 
   };
 }
 
+export function buildAgentTaskCommentYokeCommands(stateDir: string, taskId: string, commentId: string) {
+  const prefix = buildCommandPrefix(stateDir);
+  return {
+    sync: `${prefix} sync --json`,
+    show: `${prefix} tasks show ${shellQuote(taskId)} --json`,
+    reply: `${prefix} tasks reply ${shellQuote(commentId)} --body ${shellQuote('<reply>')} --json`,
+  };
+}
+
+export function buildAgentDocumentCommentYokeCommands(stateDir: string, documentId: string, commentId: string) {
+  const prefix = buildCommandPrefix(stateDir);
+  return {
+    sync: `${prefix} sync --json`,
+    show: `${prefix} docs show ${shellQuote(documentId)} --json`,
+    reply: `${prefix} docs reply ${shellQuote(commentId)} --body ${shellQuote('<reply>')} --json`,
+  };
+}
+
 export async function prepareAgentChatYokeRuntime(params: {
   sessionId: string;
   workingDirectory: string;
@@ -180,15 +223,13 @@ export async function prepareAgentChatYokeRuntime(params: {
   channelId: string;
   threadId: string;
 }): Promise<AgentChatYokeRuntime> {
-  const stateDir = join(YOKE_STATE_ROOT, params.sessionId);
   try {
-    await initialiseYokeState(
-      params.workingDirectory,
-      stateDir,
-      params.subscription,
-      params.botIdentity,
-    );
-    await syncYokeState(params.workingDirectory, stateDir, params.botIdentity);
+    const workspace = await prepareAgentWorkspaceYokeRuntime({
+      sessionId: params.sessionId,
+      workingDirectory: params.workingDirectory,
+      subscription: params.subscription,
+      botIdentity: params.botIdentity,
+    });
     const stdout = await runYokeCommand({
       args: [
         'chat',
@@ -201,16 +242,17 @@ export async function prepareAgentChatYokeRuntime(params: {
         'json',
       ],
       workingDirectory: params.workingDirectory,
-      stateDir,
+      stateDir: workspace.stateDir,
       botIdentity: params.botIdentity,
     });
     return {
-      stateDir,
-      commandPrefix: buildCommandPrefix(stateDir),
+      stateDir: workspace.stateDir,
+      commandPrefix: workspace.commandPrefix,
       context: parseContextPayload(stdout),
       contextError: null,
     };
   } catch (error) {
+    const stateDir = join(YOKE_STATE_ROOT, params.sessionId);
     return {
       stateDir,
       commandPrefix: buildCommandPrefix(stateDir),

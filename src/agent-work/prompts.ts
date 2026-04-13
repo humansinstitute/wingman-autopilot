@@ -1,4 +1,9 @@
-import type { AgentDefinitionRecord, InboundApprovalRecord, InboundTaskRecord } from '../agent-chat/types';
+import type {
+  AgentDefinitionRecord,
+  InboundApprovalRecord,
+  InboundCommentRecord,
+  InboundTaskRecord,
+} from '../agent-chat/types';
 import {
   DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE,
   renderPromptTemplate,
@@ -77,5 +82,42 @@ export function buildApprovalDispatchPrompt(approval: InboundApprovalRecord): st
     `Flow step: ${flowStep}`,
     `Approval state: ${state}`,
     'Inspect the board and continue only if a new step is now actionable. Do not continue speculative work.',
+  ].join('\n');
+}
+
+export function buildTaskCommentDispatchPrompt(params: {
+  agent: AgentDefinitionRecord;
+  taskId: string;
+  comment: InboundCommentRecord;
+  commands: {
+    sync: string;
+    show: string;
+    reply: string;
+  };
+}): string {
+  const body = compactText(params.comment.body) || '[empty]';
+  return [
+    'Agent work comment advisory.',
+    'Dispatch reason: task comment added.',
+    `Agent id: ${params.agent.agentId}`,
+    `Task id: ${params.taskId}`,
+    `Comment id: ${params.comment.commentId}`,
+    `Thread id: ${params.comment.parentCommentId ?? params.comment.commentId}`,
+    `Sender npub: ${compactText(params.comment.senderNpub) || 'unknown'}`,
+    `Comment status: ${params.comment.commentStatus}`,
+    'Comment body:',
+    body,
+    '',
+    'Yoke commands:',
+    `- Sync workspace state: ${params.commands.sync}`,
+    `- Review the task: ${params.commands.show}`,
+    `- Reply in the current comment thread: ${params.commands.reply}`,
+    '',
+    'Instructions:',
+    '- Sync first so you inspect the latest board state before replying.',
+    '- Review the task and the new comment together.',
+    '- Reply in the existing task comment thread, not in the Wingman chat transcript.',
+    '- Confirm whether this comment changes the required next actions on the task.',
+    '- If no further work is needed after replying, set nextAction to stop.',
   ].join('\n');
 }

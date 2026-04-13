@@ -1,6 +1,13 @@
 import { unlockViaEscrow } from '../identity/bot-key-manager';
 import { AgentWorkSessionRuntime, normaliseInboundApprovalRecord, normaliseInboundTaskRecord } from '../agent-work/session-runtime';
 import { agentDefinitionStore, type AgentDefinitionStore } from './agent-definition-store';
+import { AgentCommentSessionRuntime } from './comment-session-runtime';
+import {
+  isDocumentCommentTarget,
+  isTaskCommentTarget,
+  normaliseInboundCommentRecord,
+  selectDocumentCommentAgents,
+} from './comment-records';
 import { AgentChatRoutingEvaluator } from './routing-evaluator';
 import type { AgentChatSessionRuntime } from './session-runtime';
 import { workspaceSubscriptionStore, type WorkspaceSubscriptionStore } from './workspace-subscription-store';
@@ -32,6 +39,7 @@ import type {
   ChatInterceptStateRecord,
   CreateAgentDefinitionInput,
   CreateWorkspaceSubscriptionInput,
+  InboundCommentRecord,
   InboundTaskRecord,
   RuntimeBotIdentity,
   WorkspaceSubscriptionRecord,
@@ -154,6 +162,7 @@ export interface WorkspaceSubscriptionManagerDependencies {
   routingEvaluator?: AgentChatRoutingEvaluator;
   chatRuntime?: AgentChatSessionRuntime | null;
   agentWorkRuntime?: AgentWorkSessionRuntime | null;
+  agentCommentRuntime?: AgentCommentSessionRuntime | null;
   fetchRecordHistory?: typeof fetchRecordHistory;
   decryptRecordPayload?: typeof decryptRecordPayloadWithYoke;
   botKeyStore: {
@@ -198,6 +207,7 @@ export class WorkspaceSubscriptionManager {
   private readonly botKeyStore: WorkspaceSubscriptionManagerDependencies['botKeyStore'];
   private chatRuntime: AgentChatSessionRuntime | null;
   private agentWorkRuntime: AgentWorkSessionRuntime | null;
+  private agentCommentRuntime: AgentCommentSessionRuntime | null;
   private readonly fetchRecordHistoryImpl: typeof fetchRecordHistory;
   private readonly decryptRecordPayloadImpl: typeof decryptRecordPayloadWithYoke;
   private readonly runtimes = new Map<string, RuntimeContext>();
@@ -209,6 +219,7 @@ export class WorkspaceSubscriptionManager {
     this.botKeyStore = deps.botKeyStore;
     this.chatRuntime = deps.chatRuntime ?? null;
     this.agentWorkRuntime = deps.agentWorkRuntime ?? null;
+    this.agentCommentRuntime = deps.agentCommentRuntime ?? null;
     this.fetchRecordHistoryImpl = deps.fetchRecordHistory ?? fetchRecordHistory;
     this.decryptRecordPayloadImpl = deps.decryptRecordPayload ?? decryptRecordPayloadWithYoke;
   }
@@ -219,6 +230,10 @@ export class WorkspaceSubscriptionManager {
 
   setAgentWorkRuntime(agentWorkRuntime: AgentWorkSessionRuntime | null): void {
     this.agentWorkRuntime = agentWorkRuntime;
+  }
+
+  setAgentCommentRuntime(agentCommentRuntime: AgentCommentSessionRuntime | null): void {
+    this.agentCommentRuntime = agentCommentRuntime;
   }
 
   listForManager(npub: string): WorkspaceSubscriptionRecord[] {
@@ -789,6 +804,9 @@ export class WorkspaceSubscriptionManager {
     if (eventType === 'record-changed' && payload?.family_hash === buildRecordFamilyHash(record.sourceAppNpub, 'approval')) {
       return await this.handleApprovalRecordChanged(record, payload);
     }
+    if (eventType === 'record-changed' && payload?.family_hash === buildRecordFamilyHash(record.sourceAppNpub, 'comment')) {
+      return await this.handleCommentRecordChanged(record, payload);
+    }
 
     return record;
   }
@@ -966,6 +984,17 @@ export class WorkspaceSubscriptionManager {
       .listByWorkspaceAndBot(subscription.workspaceOwnerNpub, subscription.botNpub)
       .filter((agent) => agent.enabled && agent.capabilities.includes('task_dispatch'))
       .sort((left, right) => left.agentId.localeCompare(right.agentId));
+  }
+
+  private listDocumentCommentAgents(
+    subscription: WorkspaceSubscriptionRecord,
+    commentRecord: Record<string, unknown>,
+  ): AgentDefinitionRecord[] {
+    return selectDocumentCommentAgents({
+      subscription,
+      commentRecord,
+      agents: this.agentStore.listByWorkspaceAndBot(subscription.workspaceOwnerNpub, subscription.botNpub),
+    });
   }
 
   private async loadAdvisoryRecordVersions(
@@ -1270,6 +1299,227 @@ export class WorkspaceSubscriptionManager {
       );
     }
     return record;
+  }
+
+  private async handleCommentRecordChanged(
+    record: WorkspaceSubscriptionRecord,
+    payload: Record<string, unknown>,
+  ): Promise<WorkspaceSubscriptionRecord> {
+    const recordId = typeof payload.record_id === 'string' ? payload.record_id : '';
+    if (!recordId) {
+      return record;
+    }
+
+    try {
+      const versions = await this.loadAdvisoryRecordVersions(record, recordId);
+      const latest = versions.sort((left, right) => Number(right.version ?? 0) - Number(left.version ?? 0))[0] ?? null;
+      if (!latest) {
+        return record;
+      }
+      record.lastRecordPullResult = buildSuccessDiagnostic('Comment advisory pulled.', {
+        record_id: recordId,
+        version: typeof latest.version === 'number' ? latest.version : Number(latest.version ?? 0),
+        record_state: typeof latest.record_state === 'string' ? latest.record_state : null,
+      });
+
+      const decrypted = await this.decryptAdvisoryPayload(record, latest);
+      const comment = normaliseInboundCommentRecord(decrypted, latest);
+      if (!comment) {
+        record.lastDecryptResult = buildFailureDiagnostic(
+          'decrypt_failed',
+          'Comment routing skipped because the payload could not be normalized.',
+          'normalise_failed',
+          { record_id: recordId },
+        );
+        return this.appendDispatchHistory(record, {
+          at: new Date().toISOString(),
+          kind: 'comment',
+          action: 'comment_skip_invalid_payload',
+          agentId: 'unknown',
+          sessionId: null,
+          recordId,
+          bindingId: recordId,
+          bindingType: null,
+          details: {
+            payload_keys: Object.keys(decrypted).slice(0, 20),
+          },
+        });
+      }
+
+      record.lastDecryptResult = buildSuccessDiagnostic('Comment advisory decrypted.', {
+        record_id: recordId,
+        target_record_id: comment.targetRecordId,
+        target_record_family_hash: comment.targetRecordFamilyHash,
+      });
+      const updaterNpub = getRecordUpdaterNpub(latest);
+
+      if (isTaskCommentTarget(comment)) {
+        return await this.handleTaskCommentDispatch(record, recordId, latest, comment, updaterNpub);
+      }
+      if (isDocumentCommentTarget(comment)) {
+        return await this.handleDocumentCommentDispatch(record, recordId, latest, comment, updaterNpub);
+      }
+
+      return this.appendDispatchHistory(record, {
+        at: new Date().toISOString(),
+        kind: 'comment',
+        action: 'comment_skip_unsupported_target',
+        agentId: 'unknown',
+        sessionId: null,
+        recordId,
+        bindingId: comment.targetRecordId,
+        bindingType: null,
+        details: {
+          target_record_family_hash: comment.targetRecordFamilyHash,
+          comment_id: comment.commentId,
+        },
+      });
+    } catch (error) {
+      console.warn(
+        `[agent-comment] comment advisory failed for subscription ${record.subscriptionId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return record;
+    }
+  }
+
+  private async handleTaskCommentDispatch(
+    record: WorkspaceSubscriptionRecord,
+    recordId: string,
+    _latest: Record<string, unknown>,
+    comment: InboundCommentRecord,
+    updaterNpub: string | null,
+  ): Promise<WorkspaceSubscriptionRecord> {
+    if (!this.agentWorkRuntime) {
+      return record;
+    }
+
+    const taskAgents = this.listTaskDispatchAgents(record);
+    if (taskAgents.length === 0) {
+      return record;
+    }
+
+    const runtime = this.getRuntime(record.subscriptionId);
+    for (const agent of taskAgents) {
+      if (isSelfUpdater(record, agent, updaterNpub)) {
+        record = this.appendDispatchHistory(record, {
+          at: new Date().toISOString(),
+          kind: 'comment',
+          action: 'task_comment_skip_self_update',
+          agentId: agent.agentId,
+          sessionId: null,
+          recordId,
+          bindingId: comment.targetRecordId,
+          bindingType: 'task',
+          details: {
+            comment_id: comment.commentId,
+            updater_npub: updaterNpub,
+            target_record_family_hash: comment.targetRecordFamilyHash,
+          },
+        });
+        continue;
+      }
+      const session = await this.agentWorkRuntime.handleTaskCommentDispatch({
+        subscription: record,
+        agent,
+        recordId,
+        comment,
+        botIdentity: runtime.botIdentity,
+      });
+      record = this.appendDispatchHistory(record, {
+        at: new Date().toISOString(),
+        kind: 'comment',
+        action: session ? 'task_comment_dispatch' : 'task_comment_skip_no_live_session',
+        agentId: agent.agentId,
+        sessionId: session?.id ?? null,
+        recordId,
+        bindingId: comment.targetRecordId,
+        bindingType: 'task',
+        details: {
+          comment_id: comment.commentId,
+          updater_npub: updaterNpub,
+          target_record_family_hash: comment.targetRecordFamilyHash,
+        },
+      });
+    }
+    return this.saveRecord(this.recomputeHealth(record));
+  }
+
+  private async handleDocumentCommentDispatch(
+    record: WorkspaceSubscriptionRecord,
+    recordId: string,
+    latest: Record<string, unknown>,
+    comment: InboundCommentRecord,
+    updaterNpub: string | null,
+  ): Promise<WorkspaceSubscriptionRecord> {
+    if (!this.agentCommentRuntime) {
+      return record;
+    }
+
+    const agents = this.listDocumentCommentAgents(record, latest);
+    if (agents.length === 0) {
+      return this.appendDispatchHistory(record, {
+        at: new Date().toISOString(),
+        kind: 'comment',
+        action: 'document_comment_skip_no_matching_agent',
+        agentId: 'unknown',
+        sessionId: null,
+        recordId,
+        bindingId: comment.parentCommentId ?? comment.commentId,
+        bindingType: 'thread',
+        details: {
+          comment_id: comment.commentId,
+          target_record_id: comment.targetRecordId,
+        },
+      });
+    }
+
+    const runtime = this.getRuntime(record.subscriptionId);
+    for (const agent of agents) {
+      if (isSelfUpdater(record, agent, updaterNpub)) {
+        record = this.appendDispatchHistory(record, {
+          at: new Date().toISOString(),
+          kind: 'comment',
+          action: 'document_comment_skip_self_update',
+          agentId: agent.agentId,
+          sessionId: null,
+          recordId,
+          bindingId: comment.parentCommentId ?? comment.commentId,
+          bindingType: 'thread',
+          details: {
+            comment_id: comment.commentId,
+            updater_npub: updaterNpub,
+            target_record_id: comment.targetRecordId,
+          },
+        });
+        continue;
+      }
+      const session = await this.agentCommentRuntime.handleDocumentCommentDispatch({
+        subscription: record,
+        agent,
+        recordId,
+        comment,
+        botIdentity: runtime.botIdentity,
+      });
+      record = this.appendDispatchHistory(record, {
+        at: new Date().toISOString(),
+        kind: 'comment',
+        action: session ? 'document_comment_dispatch' : 'document_comment_skip_runtime_returned_null',
+        agentId: agent.agentId,
+        sessionId: session?.id ?? null,
+        recordId,
+        bindingId: comment.parentCommentId ?? comment.commentId,
+        bindingType: 'thread',
+        details: {
+          comment_id: comment.commentId,
+          updater_npub: updaterNpub,
+          target_record_id: comment.targetRecordId,
+          target_record_family_hash: comment.targetRecordFamilyHash,
+        },
+      });
+    }
+    return this.saveRecord(this.recomputeHealth(record));
   }
 
   private stopRuntime(subscriptionId: string, removed: boolean): void {

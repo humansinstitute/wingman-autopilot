@@ -339,6 +339,102 @@ describe('AgentWorkSessionRuntime', () => {
     expect(nightWatch).toEqual(['session-1', 'session-1', 'session-1']);
   });
 
+  test('routes task comments into the existing live task session with yoke commands', async () => {
+    const bindingStore = new AgentWorkSessionBindingStore(makeTempDb());
+    const sessions = new Map<string, SessionSnapshot>();
+    const prompts: Array<{ sessionId: string; content: string }> = [];
+    const dispatches: string[] = [];
+    const nightWatch: string[] = [];
+    const now = new Date().toISOString();
+    const liveSession = makeSession('task-comment-session', {
+      AGENT: true,
+      billingMode: 'subscription',
+      bindingType: 'task',
+      bindingId: 'task-comment-1',
+      taskIds: ['task-comment-1'],
+    });
+    sessions.set(liveSession.id, liveSession);
+
+    bindingStore.save({
+      subscriptionId: 'sub-1',
+      agentId: 'agent-work',
+      bindingType: 'task',
+      bindingId: 'task-comment-1',
+      sessionId: liveSession.id,
+      lastRecordIdSeen: 'record-task-1',
+      state: 'active',
+      lastActivityAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const runtime = new AgentWorkSessionRuntime({
+      defaultAgent: 'codex',
+      bindingStore,
+      getSession: (sessionId) => sessions.get(sessionId) ?? null,
+      createSession: async () => {
+        throw new Error('createSession should not run for task comments with an active task session');
+      },
+      updateSessionMetadata: (sessionId, metadata) => {
+        const existing = sessions.get(sessionId)!;
+        const next = { ...existing, metadata: { ...existing.metadata, ...(metadata ?? {}) } };
+        sessions.set(sessionId, next);
+        return next;
+      },
+      addPrompt: (sessionId, content) => {
+        prompts.push({ sessionId, content });
+        return null;
+      },
+      maybeAutoDispatchQueuedPrompt: (session) => {
+        if (session) {
+          dispatches.push(session.id);
+        }
+      },
+      enableNightWatch: (sessionId) => {
+        nightWatch.push(sessionId);
+      },
+      prepareWorkspaceYokeRuntime: async () => ({
+        stateDir: '/tmp/agent-work-task-comment',
+        commandPrefix: 'ignored',
+      }),
+    });
+
+    const subscription = makeSubscription();
+    const agent = makeAgent();
+
+    const session = await runtime.handleTaskCommentDispatch({
+      subscription,
+      agent,
+      recordId: 'record-comment-1',
+      comment: {
+        commentId: 'comment-1',
+        targetRecordId: 'task-comment-1',
+        targetRecordFamilyHash: 'npub1source:task',
+        parentCommentId: null,
+        anchorLineNumber: null,
+        commentStatus: 'open',
+        body: 'Please review the latest change and confirm next steps.',
+        attachments: [],
+        senderNpub: 'npub1reviewer',
+        recordState: 'active',
+      },
+      botIdentity: {
+        botNpub: agent.botNpub,
+        botPubkeyHex: botPubkeyHex(agent),
+        botSecret: new Uint8Array(32),
+      },
+    });
+
+    expect(session?.id).toBe(liveSession.id);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.sessionId).toBe(liveSession.id);
+    expect(prompts[0]?.content).toContain('Dispatch reason: task comment added.');
+    expect(prompts[0]?.content).toContain("tasks show 'task-comment-1'");
+    expect(prompts[0]?.content).toContain("tasks reply 'comment-1'");
+    expect(dispatches).toEqual([liveSession.id]);
+    expect(nightWatch).toEqual([liveSession.id]);
+  });
+
   test('does not enqueue duplicate task update advisories while the same prompt is already queued', async () => {
     const bindingStore = new AgentWorkSessionBindingStore(makeTempDb());
     const sessions = new Map<string, SessionSnapshot>();

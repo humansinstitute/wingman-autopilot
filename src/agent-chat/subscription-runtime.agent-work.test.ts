@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 
 import { describe, expect, test } from 'bun:test';
 
+import type { SessionSnapshot } from '../agents/process-manager';
 import type { AgentWorkSessionRuntime } from '../agent-work/session-runtime';
+import type { AgentCommentSessionRuntime } from './comment-session-runtime';
 import type { BotKeyStoreRecord, WorkspaceSubscriptionRecord } from './types';
 import { AgentDefinitionStore } from './agent-definition-store';
 import { WorkspaceSubscriptionManager } from './subscription-runtime';
@@ -65,6 +67,24 @@ function makeBotKeyRecord(): BotKeyStoreRecord {
     isActive: 1,
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+function makeSession(id: string): SessionSnapshot {
+  return {
+    id,
+    agent: 'codex',
+    port: 3700,
+    name: id,
+    status: 'running',
+    agentRuntimeStatus: 'stable',
+    startedAt: new Date().toISOString(),
+    npub: 'npub1manager',
+    pid: 1234,
+    command: ['codex'],
+    workingDirectory: '/tmp/agent-work',
+    logs: [],
+    metadata: { AGENT: true, billingMode: 'subscription' },
   };
 }
 
@@ -777,6 +797,186 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
         agentId: 'agent-task',
       },
     ]);
+  });
+
+  test('routes task comments into the agent-work runtime when the comment targets a task', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-task-comment-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-task-comment-agents'));
+    const subscription = store.save(makeSubscription());
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-task',
+      label: 'Task Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-work',
+      capabilities: ['task_dispatch'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+
+    const taskCommentDispatches: Array<{ recordId: string; taskId: string; commentId: string; agentId: string }> = [];
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      agentWorkRuntime: {
+        handleTaskDispatch: async () => null,
+        handleApprovalDispatch: async () => null,
+        handleTaskCommentDispatch: async (input) => {
+          taskCommentDispatches.push({
+            recordId: input.recordId,
+            taskId: input.comment.targetRecordId ?? '',
+            commentId: input.comment.commentId,
+            agentId: input.agent.agentId,
+          });
+          return null;
+        },
+      } as unknown as AgentWorkSessionRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-task-comment-1',
+          record_state: 'active',
+          version: 1,
+          signature_npub: 'npub1reviewer',
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        comment_id: 'comment-task-1',
+        target_record_id: 'task-1',
+        target_record_family_hash: `${subscription.sourceAppNpub}:task`,
+        body: 'Please check the task again.',
+        comment_status: 'open',
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-task-comment-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'comment'),
+        record_id: 'record-task-comment-1',
+      }),
+    );
+
+    expect(taskCommentDispatches).toEqual([
+      {
+        recordId: 'record-task-comment-1',
+        taskId: 'task-1',
+        commentId: 'comment-task-1',
+        agentId: 'agent-task',
+      },
+    ]);
+    expect(next.recentDispatches[0]?.kind).toBe('comment');
+    expect(next.recentDispatches[0]?.action).toBe('task_comment_skip_no_live_session');
+  });
+
+  test('routes document comments into the agent-comment runtime when the comment targets a document', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-comment-document-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-comment-document-agents'));
+    const subscription = store.save(makeSubscription());
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-comment',
+      label: 'Comment Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-comment',
+      capabilities: ['chat_intercept'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+      chatPromptTemplate: '',
+      taskPromptTemplate: '',
+    });
+
+    const documentCommentDispatches: Array<{ recordId: string; documentId: string; commentId: string; agentId: string }> = [];
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      agentCommentRuntime: {
+        handleDocumentCommentDispatch: async (input) => {
+          documentCommentDispatches.push({
+            recordId: input.recordId,
+            documentId: input.comment.targetRecordId ?? '',
+            commentId: input.comment.commentId,
+            agentId: input.agent.agentId,
+          });
+          return makeSession('doc-comment-session');
+        },
+      } as unknown as AgentCommentSessionRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-doc-comment-1',
+          record_state: 'active',
+          version: 1,
+          signature_npub: 'npub1reviewer',
+          group_npubs: ['npub1group'],
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        comment_id: 'comment-doc-1',
+        target_record_id: 'doc-1',
+        target_record_family_hash: `${subscription.sourceAppNpub}:document`,
+        body: 'Please respond in the document thread.',
+        comment_status: 'open',
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-doc-comment-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'comment'),
+        record_id: 'record-doc-comment-1',
+      }),
+    );
+
+    expect(documentCommentDispatches).toEqual([
+      {
+        recordId: 'record-doc-comment-1',
+        documentId: 'doc-1',
+        commentId: 'comment-doc-1',
+        agentId: 'agent-comment',
+      },
+    ]);
+    expect(next.recentDispatches[0]?.kind).toBe('comment');
+    expect(next.recentDispatches[0]?.action).toBe('document_comment_dispatch');
+    expect(next.recentDispatches[0]?.sessionId).toBe('doc-comment-session');
   });
 
   test('dispatches tasks even when predecessor links are present', async () => {

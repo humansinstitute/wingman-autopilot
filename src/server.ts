@@ -85,6 +85,7 @@ import { createBotKeyApiHandler } from "./identity/bot-key-api";
 import { createBotCryptoApiHandler } from "./identity/bot-crypto-api";
 import { generateBotKey, clearBotKey, isBotKeyUnlocked, storeBotKeyInMemory, unlockViaEscrow } from "./identity/bot-key-manager";
 import { WorkspaceSubscriptionManager } from './agent-chat/subscription-runtime';
+import { AgentCommentSessionRuntime } from './agent-chat/comment-session-runtime';
 import { AgentChatSessionRuntime } from './agent-chat/session-runtime';
 import { AgentWorkSessionRuntime } from './agent-work/session-runtime';
 import { AgentWorkSessionIdleRetention } from './agent-work/session-idle-retention';
@@ -1777,6 +1778,20 @@ const agentWorkSessionRuntime = new AgentWorkSessionRuntime({
   },
 });
 workspaceSubscriptionManager.setAgentWorkRuntime(agentWorkSessionRuntime);
+
+const agentCommentSessionRuntime = new AgentCommentSessionRuntime({
+  defaultAgent: config.defaultAgent,
+  getSession: (sessionId: string) => manager.getSession(sessionId) ?? null,
+  listSessions: () => manager.listSessions(),
+  createSession: async (agent, workingDirectory, name, origin, explicitNpub, metadata) =>
+    await manager.createSession(agent, workingDirectory, name, origin, undefined, explicitNpub, metadata),
+  updateSessionMetadata: (sessionId, metadata) => manager.updateSessionMetadata(sessionId, metadata),
+  addPrompt: (sessionId, content) => promptQueueStore.addPrompt(sessionId, { content }),
+  hasQueuedPrompt: (sessionId, content) => promptQueueStore.hasQueuedPrompt(sessionId, content),
+  maybeAutoDispatchQueuedPrompt,
+});
+workspaceSubscriptionManager.setAgentCommentRuntime(agentCommentSessionRuntime);
+
 void new AgentWorkSessionIdleRetention({
   processManager: manager,
   idleRetentionMinutes: 60,

@@ -31,13 +31,13 @@ export interface AgentChatSseEventDiagnostic {
 
 export interface AgentChatDispatchHistoryEntry {
   at: string;
-  kind: 'chat' | 'task' | 'approval';
+  kind: 'chat' | 'task' | 'approval' | 'comment';
   action: string;
   agentId: string;
   sessionId: string | null;
   recordId: string | null;
   bindingId?: string | null;
-  bindingType?: 'chat' | 'task' | 'flow_run' | null;
+  bindingType?: 'chat' | 'task' | 'flow_run' | 'thread' | null;
   details?: Record<string, unknown> | null;
 }
 
@@ -254,4 +254,17 @@ export interface InboundApprovalRecord {
   flowRunId: string | null;
   flowStep: string | null;
   state: string | null;
+}
+
+export interface InboundCommentRecord {
+  commentId: string;
+  targetRecordId: string | null;
+  targetRecordFamilyHash: string | null;
+  parentCommentId: string | null;
+  anchorLineNumber: number | null;
+  commentStatus: 'open' | 'resolved';
+  body: string;
+  attachments: unknown[];
+  senderNpub: string | null;
+  recordState: string | null;
 }

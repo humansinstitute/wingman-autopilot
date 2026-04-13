@@ -1,7 +1,14 @@
 import type { AgentType } from '../config';
 import type { SessionOrigin, SessionSnapshot } from '../agents/process-manager';
 import type { SessionMetadataInput } from '../sessions/session-metadata';
-import type { AgentDefinitionRecord, InboundApprovalRecord, InboundTaskRecord, WorkspaceSubscriptionRecord } from '../agent-chat/types';
+import type {
+  AgentDefinitionRecord,
+  InboundApprovalRecord,
+  InboundCommentRecord,
+  InboundTaskRecord,
+  RuntimeBotIdentity,
+  WorkspaceSubscriptionRecord,
+} from '../agent-chat/types';
 import { nip19 } from 'nostr-tools';
 import {
   agentWorkSessionBindingStore,
@@ -12,8 +19,14 @@ import {
 import {
   buildAgentWorkGoal,
   buildApprovalDispatchPrompt,
+  buildTaskCommentDispatchPrompt,
   buildTaskDispatchPrompt,
 } from './prompts';
+import {
+  buildAgentTaskCommentYokeCommands,
+  prepareAgentWorkspaceYokeRuntime,
+  type AgentWorkspaceYokeRuntime,
+} from '../agent-chat/yoke-runtime';
 
 type DispatchReason = 'new task' | 'task updated';
 export type AgentWorkTaskDispatchDecisionCode =
@@ -40,6 +53,12 @@ export interface AgentWorkRuntimeDependencies {
   hasQueuedTaskDispatchPrompt?: (sessionId: string, taskId: string) => boolean;
   maybeAutoDispatchQueuedPrompt: (session: SessionSnapshot | null) => void | Promise<void>;
   enableNightWatch: (sessionId: string) => unknown;
+  prepareWorkspaceYokeRuntime?: (params: {
+    sessionId: string;
+    workingDirectory: string;
+    subscription: WorkspaceSubscriptionRecord;
+    botIdentity: RuntimeBotIdentity;
+  }) => Promise<AgentWorkspaceYokeRuntime>;
 }
 
 export interface AgentWorkTaskDispatchInput {
@@ -55,6 +74,14 @@ export interface AgentWorkApprovalDispatchInput {
   agent: AgentDefinitionRecord;
   recordId: string;
   approval: InboundApprovalRecord;
+}
+
+export interface AgentWorkTaskCommentDispatchInput {
+  subscription: WorkspaceSubscriptionRecord;
+  agent: AgentDefinitionRecord;
+  recordId: string;
+  comment: InboundCommentRecord;
+  botIdentity: RuntimeBotIdentity;
 }
 
 const TERMINAL_TASK_STATES = new Set([
@@ -349,6 +376,7 @@ export class AgentWorkSessionRuntime {
   private readonly hasQueuedTaskDispatchPrompt: AgentWorkRuntimeDependencies['hasQueuedTaskDispatchPrompt'];
   private readonly maybeAutoDispatchQueuedPrompt: AgentWorkRuntimeDependencies['maybeAutoDispatchQueuedPrompt'];
   private readonly enableNightWatch: AgentWorkRuntimeDependencies['enableNightWatch'];
+  private readonly prepareWorkspaceYokeRuntime: NonNullable<AgentWorkRuntimeDependencies['prepareWorkspaceYokeRuntime']>;
 
   constructor(deps: AgentWorkRuntimeDependencies) {
     this.defaultAgent = deps.defaultAgent;
@@ -361,6 +389,7 @@ export class AgentWorkSessionRuntime {
     this.hasQueuedTaskDispatchPrompt = deps.hasQueuedTaskDispatchPrompt;
     this.maybeAutoDispatchQueuedPrompt = deps.maybeAutoDispatchQueuedPrompt;
     this.enableNightWatch = deps.enableNightWatch;
+    this.prepareWorkspaceYokeRuntime = deps.prepareWorkspaceYokeRuntime ?? prepareAgentWorkspaceYokeRuntime;
   }
 
   async handleTaskDispatch(input: AgentWorkTaskDispatchInput): Promise<SessionSnapshot | null> {
@@ -487,6 +516,48 @@ export class AgentWorkSessionRuntime {
     this.queuePromptIfMissing(flowSession.id, buildApprovalDispatchPrompt(input.approval));
     await this.maybeAutoDispatchQueuedPrompt(this.getSession(flowSession.id) ?? flowSession);
     return this.getSession(flowSession.id) ?? flowSession;
+  }
+
+  async handleTaskCommentDispatch(input: AgentWorkTaskCommentDispatchInput): Promise<SessionSnapshot | null> {
+    const taskId = compactText(input.comment.targetRecordId);
+    if (!taskId) {
+      return null;
+    }
+
+    const taskBinding = this.bindingStore.getByBinding(
+      input.subscription.subscriptionId,
+      input.agent.agentId,
+      'task',
+      taskId,
+    );
+    const liveSession = this.resolveLiveBindingSession(taskBinding);
+    if (!liveSession) {
+      return null;
+    }
+
+    const yokeRuntime = await this.prepareWorkspaceYokeRuntime({
+      sessionId: liveSession.id,
+      workingDirectory: liveSession.workingDirectory,
+      subscription: input.subscription,
+      botIdentity: input.botIdentity,
+    });
+    const commands = buildAgentTaskCommentYokeCommands(
+      yokeRuntime.stateDir,
+      taskId,
+      input.comment.commentId,
+    );
+    this.enableNightWatch(liveSession.id);
+    this.queuePromptIfMissing(
+      liveSession.id,
+      buildTaskCommentDispatchPrompt({
+        agent: input.agent,
+        taskId,
+        comment: input.comment,
+        commands,
+      }),
+    );
+    await this.maybeAutoDispatchQueuedPrompt(this.getSession(liveSession.id) ?? liveSession);
+    return this.getSession(liveSession.id) ?? liveSession;
   }
 
   private queuePromptIfMissing(sessionId: string, content: string): void {
