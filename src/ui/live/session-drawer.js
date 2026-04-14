@@ -17,14 +17,7 @@ export function getLiveDrawerMode(viewportWidth = 1024) {
 }
 
 export function isLiveDrawerVisible(drawerState = {}, viewportWidth = 1024) {
-  const mode = getLiveDrawerMode(viewportWidth);
-  if (mode === "mobile") {
-    return Boolean(drawerState.open);
-  }
-  if (drawerState.userToggled) {
-    return Boolean(drawerState.open);
-  }
-  return true;
+  return Boolean(drawerState.open);
 }
 
 export function getSessionDrawerRelatedRecords(session) {
@@ -338,17 +331,19 @@ export function createLiveSessionDrawer({
   subtitle.textContent = session?.name || "Current live session";
   titleWrap.append(title, subtitle);
 
-  const close = document.createElement("button");
-  close.type = "button";
-  close.className = "wm-live-drawer__close";
-  close.textContent = mode === "mobile" ? "Close" : "Hide";
-  close.addEventListener("click", () => {
-    drawerState.userToggled = true;
-    drawerState.open = false;
-    render?.();
-  });
-
-  header.append(titleWrap, close);
+  header.append(titleWrap);
+  if (mode === "mobile") {
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "wm-live-drawer__close";
+    close.textContent = "Close";
+    close.addEventListener("click", () => {
+      drawerState.userToggled = true;
+      drawerState.open = false;
+      render?.();
+    });
+    header.append(close);
+  }
   aside.append(header);
 
   const metadataSection = document.createElement("section");

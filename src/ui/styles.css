@@ -2377,7 +2377,6 @@ body[data-menu-open="true"] .wm-menu-panel {
 
 .wm-live {
   --wm-live-drawer-width: min(24rem, 32vw);
-  --wm-live-drawer-gap: 1rem;
   --wm-live-drawer-offset: max(0.75rem, calc((100vw - 1080px) / 2 + 1.15rem));
   display: flex;
   flex-direction: column;
@@ -2403,51 +2402,6 @@ body[data-menu-open="true"] .wm-menu-panel {
   min-height: 0;
 }
 
-.wm-live-session-toolbar {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 1.1rem;
-  border: 1px solid rgba(16, 185, 129, 0.16);
-  border-radius: 0.9rem;
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.74), rgba(15, 23, 42, 0.58));
-}
-
-.wm-live-session-toolbar__details {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  min-width: 0;
-}
-
-.wm-live-session-toolbar__eyebrow {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-}
-
-.wm-live-session-toolbar__title {
-  margin: 0;
-  font-size: 1rem;
-  color: var(--text-primary);
-}
-
-.wm-live-session-toolbar__meta {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-}
-
-.wm-live-session-toolbar__actions {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-shrink: 0;
-}
-
 .wm-live-scroll {
   display: flex;
   flex-direction: column;
@@ -2463,23 +2417,6 @@ body[data-menu-open="true"] .wm-menu-panel {
   overflow-y: auto;
   padding-right: 0.25rem;
   scrollbar-width: thin;
-}
-
-.wm-live-drawer-layout {
-  display: block;
-  flex: 1;
-  min-height: 0;
-  position: relative;
-}
-
-.wm-live-drawer-layout__main {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-  gap: 1rem;
-  padding-left: calc(var(--wm-live-drawer-width) + var(--wm-live-drawer-gap));
 }
 
 .wm-live-drawer {
@@ -4495,19 +4432,6 @@ body[data-keyboard-open="true"] .wm-composer-shell {
   .wm-live-main {
     gap: 0.9rem;
     padding: 0 1rem;
-  }
-
-  .wm-live-session-toolbar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .wm-live-session-toolbar__actions {
-    width: 100%;
-  }
-
-  .wm-live-session-toolbar__actions > .wm-button {
-    width: 100%;
   }
 
   .wm-live-scroll {
@@ -9454,14 +9378,6 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 }
 
 @media (max-width: 768px) {
-  .wm-live-drawer-layout {
-    display: block;
-  }
-
-  .wm-live-drawer-layout__main {
-    padding-left: 0;
-  }
-
   .wm-live-drawer {
     position: fixed;
     top: calc(var(--nav-height) + 0.75rem);

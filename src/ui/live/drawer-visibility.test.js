@@ -35,11 +35,11 @@ describe('drawer-visibility', () => {
     })).toBe(false);
   });
 
-  test('preserves the existing desktop default when no split panel is open', () => {
+  test('keeps the drawer hidden by default when no split panel is open', () => {
     expect(getRenderedLiveDrawerVisible({
       drawerState: { open: false, userToggled: false },
       viewportWidth: 1280,
       layoutState: { splitPanelOpen: false },
-    })).toBe(true);
+    })).toBe(false);
   });
 });
