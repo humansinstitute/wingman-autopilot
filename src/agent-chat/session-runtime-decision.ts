@@ -6,6 +6,7 @@ export interface ParsedAgentChatReply {
 }
 
 const DECISION_PREFIX = 'AGENT_CHAT_DECISION:';
+const LEADING_MARKER_PATTERN = /^(?:[-*•]|\d+[.)]|>)+\s*/;
 
 function normaliseDecision(value: string): AgentInterceptDecision {
   switch (value.trim().toLowerCase()) {
@@ -31,6 +32,24 @@ function parseFallbackDecision(firstLine: string): AgentInterceptDecision {
   return decisionMatch ? normaliseDecision(decisionMatch[1] ?? '') : 'failed';
 }
 
+function normaliseDecisionCandidate(line: string): string {
+  return line.trim().replace(LEADING_MARKER_PATTERN, '').trim();
+}
+
+function findExplicitDecisionLine(lines: string[]): { decision: AgentInterceptDecision; index: number } | null {
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const candidate = normaliseDecisionCandidate(lines[index] ?? '');
+    if (!candidate.startsWith(DECISION_PREFIX)) {
+      continue;
+    }
+    return {
+      decision: normaliseDecision(candidate.slice(DECISION_PREFIX.length)),
+      index,
+    };
+  }
+  return null;
+}
+
 export function parseAgentChatReply(content: string): ParsedAgentChatReply {
   const trimmed = content.trim();
   if (!trimmed) {
@@ -41,6 +60,17 @@ export function parseAgentChatReply(content: string): ParsedAgentChatReply {
   }
 
   const lines = trimmed.split(/\r?\n/);
+  const explicitDecision = findExplicitDecisionLine(lines);
+  if (explicitDecision) {
+    return {
+      decision: explicitDecision.decision,
+      replyBody: lines
+        .slice(explicitDecision.index + 1)
+        .join('\n')
+        .trim(),
+    };
+  }
+
   const firstLine = lines[0]?.trim() ?? '';
   if (!firstLine.startsWith(DECISION_PREFIX)) {
     const fallbackDecision = parseFallbackDecision(firstLine);

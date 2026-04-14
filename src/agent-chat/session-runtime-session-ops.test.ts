@@ -137,4 +137,36 @@ describe('sendPromptAndAwaitAssistantReply', () => {
 
     expect(reply.content).toBe('AGENT_CHAT_DECISION: ignore');
   });
+
+  test('treats a trailing decision line inside Codex transcript output as parseable', async () => {
+    const session: SessionSnapshot = {
+      id: 'session-3',
+      agent: 'codex',
+      port: 0,
+      name: 'Agent Chat',
+      status: 'running',
+      agentRuntimeStatus: 'running',
+      startedAt: new Date().toISOString(),
+      command: [],
+      workingDirectory: '/tmp',
+      logs: [],
+    };
+    const transcriptReply = [
+      'Ran bun mycode/yoke.js chat reply-current --body "done"',
+      '{"status":"sent"}',
+      '',
+      '• AGENT_CHAT_DECISION: respond',
+    ].join('\n');
+    const manager = buildManager(session, new FakeAdapter(transcriptReply));
+
+    const reply = await sendPromptAndAwaitAssistantReply(manager, session.id, 'prompt', {
+      timeoutMs: 250,
+      pollIntervalMs: 10,
+      stablePolls: 2,
+      decisionFallbackStablePolls: 3,
+    });
+
+    expect(reply.content).toBe(transcriptReply);
+    expect(reply.settledWithoutStableRuntime).toBe(true);
+  });
 });

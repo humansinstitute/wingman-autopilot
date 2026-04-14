@@ -34,4 +34,18 @@ describe('parseAgentChatReply', () => {
       replyBody: '',
     });
   });
+
+  test('parses a trailing explicit decision line after Codex transcript output', () => {
+    const parsed = parseAgentChatReply([
+      'Ran bun mycode/yoke.js chat reply-current --body "done"',
+      '{"status":"sent"}',
+      '',
+      '• AGENT_CHAT_DECISION: respond',
+    ].join('\n'));
+
+    expect(parsed).toEqual({
+      decision: 'respond',
+      replyBody: '',
+    });
+  });
 });
