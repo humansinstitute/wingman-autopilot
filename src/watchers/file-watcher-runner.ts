@@ -4,7 +4,8 @@ import { basename, join, normalize, relative, resolve, sep, isAbsolute } from "n
 import { homedir } from "node:os";
 
 import type { ProcessManager, SessionOrigin } from "../agents/process-manager";
-import type { AgentType, WingmanConfig } from "../config";
+import { isAgentType, type AgentType } from "../agent-types";
+import type { WingmanConfig } from "../config";
 import type { FileWatcherRecord, JsonValue } from "../storage/file-watcher-store";
 import { fileWatcherStore } from "../storage/file-watcher-store";
 import { messageStore } from "../storage/message-store";
@@ -163,10 +164,6 @@ const normaliseCleanupStrategy = (value: unknown): CleanupStrategy => {
     return "none";
   }
   return "delete";
-};
-
-const isAgentType = (value: string): value is AgentType => {
-  return ["codex", "claude", "goose", "opencode"].includes(value);
 };
 
 interface StartSessionOptions {

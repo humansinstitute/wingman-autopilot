@@ -7,7 +7,7 @@
  */
 
 import type { SessionSnapshot } from "./agents/process-manager";
-import type { AgentType } from "./config";
+import { AGENT_TYPE_LIST, type AgentType } from "./agent-types";
 import { waitForAgentReady } from "./agents/agent-client";
 import type { RequestAuthContext } from "./auth/request-context";
 import {
@@ -302,10 +302,10 @@ export function createAutopilotJobsApiHandler(context: AutopilotJobsApiContext =
     if (!name) return Response.json({ error: "name is required" }, { status: 400 });
     if (!manager_dir) return Response.json({ error: "manager_dir is required" }, { status: 400 });
     if (body.worker_agent !== undefined && !worker_agent) {
-      return Response.json({ error: "worker_agent must be one of: codex, claude, goose, opencode, gemini" }, { status: 400 });
+      return Response.json({ error: `worker_agent must be one of: ${AGENT_TYPE_LIST}` }, { status: 400 });
     }
     if (body.manager_agent !== undefined && !manager_agent) {
-      return Response.json({ error: "manager_agent must be one of: codex, claude, goose, opencode, gemini" }, { status: 400 });
+      return Response.json({ error: `manager_agent must be one of: ${AGENT_TYPE_LIST}` }, { status: 400 });
     }
 
     const existing = store.getJob(id);
@@ -341,14 +341,14 @@ export function createAutopilotJobsApiHandler(context: AutopilotJobsApiContext =
     if (body.worker_agent !== undefined) {
       const workerAgent = normalizeAgent(body.worker_agent);
       if (!workerAgent) {
-        return Response.json({ error: "worker_agent must be one of: codex, claude, goose, opencode, gemini" }, { status: 400 });
+        return Response.json({ error: `worker_agent must be one of: ${AGENT_TYPE_LIST}` }, { status: 400 });
       }
       updates.worker_agent = workerAgent;
     }
     if (body.manager_agent !== undefined) {
       const managerAgent = normalizeAgent(body.manager_agent);
       if (!managerAgent) {
-        return Response.json({ error: "manager_agent must be one of: codex, claude, goose, opencode, gemini" }, { status: 400 });
+        return Response.json({ error: `manager_agent must be one of: ${AGENT_TYPE_LIST}` }, { status: 400 });
       }
       updates.manager_agent = managerAgent;
     }
@@ -392,10 +392,10 @@ export function createAutopilotJobsApiHandler(context: AutopilotJobsApiContext =
       return Response.json({ error: "job_id is required" }, { status: 400 });
     }
     if (body.worker_agent !== undefined && !workerAgent) {
-      return Response.json({ error: "worker_agent must be one of: codex, claude, goose, opencode, gemini" }, { status: 400 });
+      return Response.json({ error: `worker_agent must be one of: ${AGENT_TYPE_LIST}` }, { status: 400 });
     }
     if (body.manager_agent !== undefined && !managerAgent) {
-      return Response.json({ error: "manager_agent must be one of: codex, claude, goose, opencode, gemini" }, { status: 400 });
+      return Response.json({ error: `manager_agent must be one of: ${AGENT_TYPE_LIST}` }, { status: 400 });
     }
 
     const job = store.getJob(jobId);

@@ -10,6 +10,7 @@ import type { SchedulerEngine } from "./scheduler-engine";
 import { wrapEscrowUuid } from "./key-wrapper";
 import type { BotKeyStore } from "../identity/bot-key-store";
 import { getSessionSecretBytes } from "../auth/session-secret";
+import { AGENT_TYPES as VALID_AGENTS, AGENT_TYPE_LIST } from "../agent-types";
 import { PathSchema } from "../utils/validation";
 
 // ============================================================
@@ -34,8 +35,6 @@ function parseJsonBody(request: Request): Promise<Record<string, unknown>> {
     throw new Error("Invalid JSON payload");
   }) as Promise<Record<string, unknown>>;
 }
-
-const VALID_AGENTS = ["codex", "claude", "goose", "opencode", "gemini"];
 
 function validateCronExpression(expr: string): boolean {
   // Basic validation: 5 or 6 space-separated fields
@@ -93,8 +92,8 @@ async function handleCreateJob(
   const activeEndTime = typeof body.activeEndTime === "string" ? body.activeEndTime.trim() : null;
 
   if (!name) return Response.json({ error: "name is required" }, { status: 400 });
-  if (!VALID_AGENTS.includes(agent)) {
-    return Response.json({ error: `agent must be one of: ${VALID_AGENTS.join(", ")}` }, { status: 400 });
+  if (!VALID_AGENTS.includes(agent as typeof VALID_AGENTS[number])) {
+    return Response.json({ error: `agent must be one of: ${AGENT_TYPE_LIST}` }, { status: 400 });
   }
   if (!workingDirectory) return Response.json({ error: "workingDirectory is required" }, { status: 400 });
   const wdResult = PathSchema.safeParse(workingDirectory);
@@ -186,8 +185,8 @@ async function handleUpdateJob(
 
   if (typeof body.name === "string") update.name = body.name.trim();
   if (typeof body.agent === "string") {
-    if (!VALID_AGENTS.includes(body.agent)) {
-      return Response.json({ error: `agent must be one of: ${VALID_AGENTS.join(", ")}` }, { status: 400 });
+    if (!VALID_AGENTS.includes(body.agent as typeof VALID_AGENTS[number])) {
+      return Response.json({ error: `agent must be one of: ${AGENT_TYPE_LIST}` }, { status: 400 });
     }
     update.agent = body.agent;
   }

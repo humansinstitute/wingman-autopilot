@@ -8,8 +8,8 @@ import { createRequire } from "node:module";
 
 import "./logging/server-logger";
 
-import type { AgentType } from "./config";
 import { getKeyTeleportIdentity } from "./config";
+import { AGENT_TYPES as SUPPORTED_AGENT_TYPES, isAgentType, type AgentType } from "./agent-types";
 import { z } from "zod";
 import { 
   validateInput, 
@@ -355,7 +355,6 @@ const FEATURE_FLAG_DEFAULTS: Array<{
 
 featureFlagStore.ensureDefaults(FEATURE_FLAG_DEFAULTS);
 process.env.WINGMAN_PID = process.pid.toString();
-const SUPPORTED_AGENT_TYPES: AgentType[] = ["codex", "claude", "goose", "opencode", "gemini"];
 const MESSAGE_COST_SATS = 100;
 const projectStore = new ProjectStore();
 const todoStore = new TodoStore();
@@ -1636,10 +1635,6 @@ const serveIndex = async () => {
   });
 };
 
-const isAgentType = (value: string): value is AgentType => {
-  return SUPPORTED_AGENT_TYPES.includes(value as AgentType);
-};
-
 await rehydrateWarmSessions(
   warmRestartMarker,
   restartMarkerPath,
@@ -1648,7 +1643,7 @@ await rehydrateWarmSessions(
   ensureUserWorkspace,
   config.defaultWorkingDirectory,
   messageStore,
-  SUPPORTED_AGENT_TYPES,
+  [...SUPPORTED_AGENT_TYPES],
 );
 
 // Auto-rehydrate orphaned sessions that survived a restart
@@ -1658,7 +1653,7 @@ await rehydrateOrphanedSessions(
   ensureUserWorkspace,
   config.defaultWorkingDirectory,
   messageStore,
-  SUPPORTED_AGENT_TYPES,
+  [...SUPPORTED_AGENT_TYPES],
   24, // Look for sessions started in the last 24 hours
 );
 

@@ -9,7 +9,12 @@
  */
 
 import Alpine from "/vendor/alpinejs/module.esm.js";
-import { DEFAULT_AGENT, renderAgentOptions } from "../common/agent-options.js";
+import { DEFAULT_AGENT, normalizeAgentValue, renderAgentOptions } from "../common/agent-options.js";
+import { state } from "../state/index.js";
+
+function getConfiguredDefaultAgent() {
+  return normalizeAgentValue(state.config?.defaultAgent ?? state.config?.systemDefaultAgent ?? DEFAULT_AGENT);
+}
 
 // ============================================================
 // Page Module
@@ -43,8 +48,8 @@ export function initJobsPage({ showToast }) {
       worker_prompt: "",
       manager_prompt: "",
       manager_goal: "",
-      worker_agent: DEFAULT_AGENT,
-      manager_agent: DEFAULT_AGENT,
+      worker_agent: getConfiguredDefaultAgent(),
+      manager_agent: getConfiguredDefaultAgent(),
       manager_dir: "",
       check_interval: 300,
       enabled: true,
@@ -71,8 +76,8 @@ export function initJobsPage({ showToast }) {
         worker_prompt: "",
         manager_prompt: "",
         manager_goal: "",
-        worker_agent: DEFAULT_AGENT,
-        manager_agent: DEFAULT_AGENT,
+        worker_agent: getConfiguredDefaultAgent(),
+        manager_agent: getConfiguredDefaultAgent(),
         manager_dir: "",
         check_interval: 300,
         enabled: true,
@@ -108,8 +113,8 @@ export function initJobsPage({ showToast }) {
         worker_prompt: job.worker_prompt,
         manager_prompt: job.manager_prompt,
         manager_goal: job.manager_goal,
-        worker_agent: job.worker_agent || DEFAULT_AGENT,
-        manager_agent: job.manager_agent || DEFAULT_AGENT,
+        worker_agent: normalizeAgentValue(job.worker_agent || getConfiguredDefaultAgent()),
+        manager_agent: normalizeAgentValue(job.manager_agent || getConfiguredDefaultAgent()),
         manager_dir: job.manager_dir,
         check_interval: job.check_interval,
         enabled: !!job.enabled,

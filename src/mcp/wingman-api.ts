@@ -11,7 +11,7 @@
  */
 
 import type { SessionOrigin, SessionSnapshot } from "../agents/process-manager";
-import type { AgentType } from "../config";
+import { AGENT_TYPES, AGENT_TYPE_LIST, type AgentType } from "../agent-types";
 import type { AppRecord, AppLifecycleAction } from "../apps/app-registry";
 import type { AppProcessStatus } from "../apps/app-process-manager";
 import type { CaproverStore } from "../caprover/caprover-store";
@@ -387,9 +387,8 @@ async function handleCreateSession(
     return jsonError("Caller session not found", 404);
   }
 
-  const validAgents: AgentType[] = ["codex", "claude", "goose", "opencode", "gemini"];
-  if (!agent || !validAgents.includes(agent as AgentType)) {
-    return jsonError(`agent must be one of: ${validAgents.join(", ")}`, 400);
+  if (!agent || !AGENT_TYPES.includes(agent as AgentType)) {
+    return jsonError(`agent must be one of: ${AGENT_TYPE_LIST}`, 400);
   }
 
   try {

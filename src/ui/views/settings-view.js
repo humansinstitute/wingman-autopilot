@@ -10,6 +10,7 @@ import {
   createGitHubSection,
   createGiteaSection,
 } from './settings/workspace-sections.js';
+import { createDefaultAgentSection } from './settings/profile-sections.js';
 import { createTeamBillingSection } from './settings/admin-billing-section.js';
 import { createAgentChatSection, createAgentDispatchLauncher } from './settings/agent-chat-section.js';
 
@@ -130,6 +131,7 @@ export function initSettingsView(deps) {
   function renderProfileTab() {
     const fragment = document.createDocumentFragment();
     fragment.append(renderIdentityPanel());
+    fragment.append(createDefaultAgentSection({ state }));
     return fragment;
   }
 

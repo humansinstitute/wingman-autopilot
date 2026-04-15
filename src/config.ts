@@ -1,6 +1,7 @@
 import { isAbsolute, normalize, resolve } from "node:path";
+import { AGENT_TYPES, DEFAULT_AGENT_TYPE, type AgentType } from "./agent-types";
 
-export type AgentType = "codex" | "claude" | "goose" | "opencode" | "gemini";
+export type { AgentType } from "./agent-types";
 
 /** How agent processes are spawned - "bun" for direct child process, "pm2" for PM2 managed */
 export type AgentSpawnMode = "bun" | "pm2";
@@ -309,6 +310,7 @@ function createDefaultAgents(
       extraArgs: openCodeExtraArgs,
     }),
     gemini: withAgentCommand(agentApiBinary, "Gemini", readEnvValue(env, "GEMINI_CLI") ?? "gemini"),
+    pi: withAgentCommand(agentApiBinary, "Pi", readEnvValue(env, "PI_CLI") ?? "pi"),
   };
 }
 
@@ -364,11 +366,10 @@ export const loadConfig = (): WingmanConfig => {
   );
 
   // Default agent for AI features
-  const validAgentTypes: AgentType[] = ["codex", "claude", "goose", "opencode", "gemini"];
   const defaultAgentInput = Bun.env.DEFAULT_AGENT?.trim().toLowerCase();
-  const defaultAgent: AgentType = defaultAgentInput && validAgentTypes.includes(defaultAgentInput as AgentType)
+  const defaultAgent: AgentType = defaultAgentInput && AGENT_TYPES.includes(defaultAgentInput as AgentType)
     ? (defaultAgentInput as AgentType)
-    : "claude";
+    : DEFAULT_AGENT_TYPE;
   console.log(`[Config] Default agent: ${defaultAgent}${defaultAgentInput && defaultAgentInput !== defaultAgent ? ` (DEFAULT_AGENT="${defaultAgentInput}" was invalid)` : ""}`);
   const claudeExtraArgs = resolveClaudeExtraArgs(Bun.env.GLOVES);
   const agents = createDefaultAgents(Bun.env, agentLaunchConfig.agentApiBinary);

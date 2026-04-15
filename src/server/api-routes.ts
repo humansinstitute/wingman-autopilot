@@ -178,6 +178,7 @@ export interface ApiRoutesContext {
 
 // Localhost addresses accepted for internal-only API routes.
 const LOCALHOST_ADDRESSES = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+const DEFAULT_AGENT_SETTING_KEY = "default_agent";
 
 function isLocalhostRequest(request: Request, ctx: ApiRoutesContext): boolean {
   if (!ctx.getRequestIP) {
@@ -186,6 +187,19 @@ function isLocalhostRequest(request: Request, ctx: ApiRoutesContext): boolean {
   }
   const ip = ctx.getRequestIP(request);
   return ip !== null && LOCALHOST_ADDRESSES.has(ip.address);
+}
+
+function resolveViewerDefaultAgent(ctx: ApiRoutesContext, viewerNpub: string | null): string {
+  if (!viewerNpub) {
+    return ctx.config.defaultAgent;
+  }
+
+  const storedAgent = ctx.userSettingsStore.getAll(viewerNpub)[DEFAULT_AGENT_SETTING_KEY];
+  const normalizedAgent = typeof storedAgent === "string" ? storedAgent.trim().toLowerCase() : "";
+  if (normalizedAgent && normalizedAgent in ctx.config.agents) {
+    return normalizedAgent;
+  }
+  return ctx.config.defaultAgent;
 }
 
 export function createApiRouteHandler(ctx: ApiRoutesContext) {
@@ -488,6 +502,7 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
     }
 
     if (pathname === "/api/config" && method === "GET") {
+      const defaultAgent = resolveViewerDefaultAgent(ctx, viewerNpub);
       return Response.json({
         port: ctx.config.port,
         agentPortStart: ctx.config.agentPortStart,
@@ -501,7 +516,8 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
           id: key,
           label: definition.label,
         })),
-        defaultAgent: ctx.config.defaultAgent,
+        defaultAgent,
+        systemDefaultAgent: ctx.config.defaultAgent,
         featureFlags: ctx.serialiseFeatureFlagsForViewer(workspaceScope.isAdmin),
         giteaUrl: ctx.config.giteaUrl ?? null,
       });
@@ -710,6 +726,15 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
         const value = typeof record.value === "string" ? record.value.trim() : "";
         if (!value) {
           return Response.json({ error: "value is required" }, { status: 400 });
+        }
+        if (settingKey === DEFAULT_AGENT_SETTING_KEY) {
+          const normalizedValue = value.toLowerCase();
+          if (!(normalizedValue in ctx.config.agents)) {
+            const supportedAgents = Object.keys(ctx.config.agents).join(", ");
+            return Response.json({ error: `value must be one of: ${supportedAgents}` }, { status: 400 });
+          }
+          ctx.userSettingsStore.set(viewerNpub, settingKey, normalizedValue);
+          return Response.json({ success: true, key: settingKey, value: normalizedValue });
         }
         ctx.userSettingsStore.set(viewerNpub, settingKey, value);
         return Response.json({ success: true, key: settingKey });

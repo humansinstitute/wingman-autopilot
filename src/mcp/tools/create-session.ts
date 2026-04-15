@@ -5,10 +5,11 @@
  */
 
 import { z } from "zod";
+import { AGENT_TYPES, AGENT_TYPE_LIST } from "../../agent-types";
 
 export const createSessionSchema = {
   agent: z
-    .enum(["codex", "claude", "goose", "opencode", "gemini"])
+    .enum(AGENT_TYPES)
     .describe("The agent type to spawn"),
   directory: z
     .string()
@@ -41,8 +42,7 @@ export const createSessionSchema = {
 };
 
 export const createSessionDescription =
-  "Spawn a new agent session. Choose the agent type (codex, claude, " +
-  "goose, opencode, gemini) and optionally set a working directory " +
+  `Spawn a new agent session. Choose the agent type (${AGENT_TYPE_LIST}) and optionally set a working directory ` +
   "and name. Optionally enable Night Watch with a custom prompt and interval. Returns the new session details including ID and port.";
 
 interface CreateSessionParams {

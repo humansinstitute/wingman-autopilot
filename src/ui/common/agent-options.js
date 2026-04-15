@@ -4,6 +4,7 @@ const AGENT_OPTIONS = [
   { value: "goose", label: "Goose" },
   { value: "opencode", label: "OpenCode" },
   { value: "gemini", label: "Gemini" },
+  { value: "pi", label: "Pi" },
 ];
 
 const DEFAULT_AGENT = "claude";

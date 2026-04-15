@@ -7,7 +7,9 @@ const ENV_KEYS = [
   "AGENT_MODE",
   "AGENT_SPAWN_MODE",
   "AGENTAPI_BIN",
+  "DEFAULT_AGENT",
   "GLOVES",
+  "PI_CLI",
 ] as const;
 
 const originalEnv = new Map<string, string | undefined>(
@@ -122,5 +124,27 @@ describe("loadConfig", () => {
 
     expect(command[0]).toBe("/tmp/custom-agentapi");
     expect(config.agentSpawnMode).toBe("bun");
+  });
+
+  test("accepts pi as a configured default agent and launcher target", () => {
+    applyEnv({
+      DEFAULT_AGENT: "pi",
+      PI_CLI: "/opt/bin/pi",
+      AGENTAPI_BIN: "/tmp/custom-agentapi",
+      AGENT_MODE: undefined,
+      AGENT_SPAWN_MODE: undefined,
+      GLOVES: undefined,
+    });
+
+    const config = loadConfig();
+    const command = config.agents.pi.command({
+      agent: "pi",
+      config,
+      port: 3701,
+    });
+
+    expect(config.defaultAgent).toBe("pi");
+    expect(command[0]).toBe("/tmp/custom-agentapi");
+    expect(command.slice(-2)).toEqual(["--", "/opt/bin/pi"]);
   });
 });

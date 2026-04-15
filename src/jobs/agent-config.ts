@@ -1,9 +1,9 @@
-import type { AgentType } from "../config";
+import { AGENT_TYPES, DEFAULT_AGENT_TYPE, type AgentType } from "../agent-types";
 
 export type JobRole = "worker" | "manager";
 
-export const JOB_AGENT_TYPES: AgentType[] = ["codex", "claude", "goose", "opencode", "gemini"];
-export const DEFAULT_JOB_AGENT: AgentType = "claude";
+export const JOB_AGENT_TYPES: AgentType[] = [...AGENT_TYPES];
+export const DEFAULT_JOB_AGENT: AgentType = DEFAULT_AGENT_TYPE;
 
 type JobAgentSource = {
   worker_agent?: string | null;

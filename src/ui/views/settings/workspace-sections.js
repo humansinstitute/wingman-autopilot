@@ -2,11 +2,14 @@
  * Workspace settings sections shared by the Settings view.
  */
 
+import {
+  deleteUserSetting,
+  fetchUserSettings,
+  saveUserSetting,
+} from '../../services/user-settings.js';
+
 function loadUserSettings() {
-  return fetch('/api/user/settings')
-    .then((response) => response.json())
-    .then((data) => data.settings || {})
-    .catch(() => ({}));
+  return fetchUserSettings().catch(() => ({}));
 }
 
 function createRowLabel(text, minWidth = 140) {
@@ -83,22 +86,12 @@ export function createApiKeysSection() {
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving...';
     try {
-      const response = await fetch('/api/user/settings/openrouter_api_key', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value }),
-      });
-
-      if (!response.ok) {
-        const err = await response.json();
-        setStatus(status, err.error || 'Save failed', 'var(--error, #f44336)');
-      } else {
-        input.value = '';
-        input.placeholder = value.slice(0, 4) + '..' + value.slice(-4);
-        setStatus(status, 'Saved', 'var(--success, #4caf50)');
-      }
-    } catch {
-      setStatus(status, 'Network error', 'var(--error, #f44336)');
+      await saveUserSetting('openrouter_api_key', value);
+      input.value = '';
+      input.placeholder = value.slice(0, 4) + '..' + value.slice(-4);
+      setStatus(status, 'Saved', 'var(--success, #4caf50)');
+    } catch (error) {
+      setStatus(status, error.message || 'Save failed', 'var(--error, #f44336)');
     }
 
     saveBtn.disabled = false;
@@ -108,12 +101,12 @@ export function createApiKeysSection() {
   clearBtn.addEventListener('click', async () => {
     clearBtn.disabled = true;
     try {
-      await fetch('/api/user/settings/openrouter_api_key', { method: 'DELETE' });
+      await deleteUserSetting('openrouter_api_key');
       input.value = '';
       input.placeholder = 'sk-or-...';
       setStatus(status, 'Cleared');
-    } catch {
-      setStatus(status, 'Failed to clear', 'var(--error, #f44336)');
+    } catch (error) {
+      setStatus(status, error.message || 'Failed to clear', 'var(--error, #f44336)');
     }
     clearBtn.disabled = false;
   });
@@ -197,33 +190,17 @@ export function createGitHubSection() {
     saveBtn.textContent = 'Saving...';
 
     try {
-      const [userResp, tokenResp] = await Promise.all([
-        fetch('/api/user/settings/github_username', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ value: username }),
-        }),
-        fetch('/api/user/settings/github_api_key', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ value: token }),
-        }),
+      await Promise.all([
+        saveUserSetting('github_username', username),
+        saveUserSetting('github_api_key', token),
       ]);
-
-      if (!userResp.ok || !tokenResp.ok) {
-        const userErr = userResp.ok ? null : await userResp.json().catch(() => null);
-        const tokenErr = tokenResp.ok ? null : await tokenResp.json().catch(() => null);
-        const message = tokenErr?.error || userErr?.error || 'Save failed';
-        setStatus(status, message, 'var(--error, #f44336)');
-      } else {
-        currentUsername = username;
-        usernameInput.value = username;
-        tokenInput.value = '';
-        tokenInput.placeholder = token.slice(0, 4) + '..' + token.slice(-4);
-        setStatus(status, 'Saved', 'var(--success, #4caf50)');
-      }
-    } catch {
-      setStatus(status, 'Network error', 'var(--error, #f44336)');
+      currentUsername = username;
+      usernameInput.value = username;
+      tokenInput.value = '';
+      tokenInput.placeholder = token.slice(0, 4) + '..' + token.slice(-4);
+      setStatus(status, 'Saved', 'var(--success, #4caf50)');
+    } catch (error) {
+      setStatus(status, error.message || 'Save failed', 'var(--error, #f44336)');
     }
 
     saveBtn.disabled = false;
@@ -234,10 +211,10 @@ export function createGitHubSection() {
     clearBtn.disabled = true;
     try {
       await Promise.all([
-        fetch('/api/user/settings/github_api_key', { method: 'DELETE' }),
-        fetch('/api/user/settings/github_token', { method: 'DELETE' }),
-        fetch('/api/user/settings/github_username', { method: 'DELETE' }),
-        fetch('/api/user/settings/github_user', { method: 'DELETE' }),
+        deleteUserSetting('github_api_key'),
+        deleteUserSetting('github_token'),
+        deleteUserSetting('github_username'),
+        deleteUserSetting('github_user'),
       ]);
 
       currentUsername = 'x-access-token';
@@ -246,8 +223,8 @@ export function createGitHubSection() {
       tokenInput.value = '';
       tokenInput.placeholder = 'ghp_...';
       setStatus(status, 'Cleared');
-    } catch {
-      setStatus(status, 'Failed to clear', 'var(--error, #f44336)');
+    } catch (error) {
+      setStatus(status, error.message || 'Failed to clear', 'var(--error, #f44336)');
     }
     clearBtn.disabled = false;
   });
@@ -326,16 +303,16 @@ export function createGiteaSection(giteaUrl) {
     resetBtn.disabled = true;
     resetBtn.textContent = 'Resetting...';
     try {
-      await fetch('/api/user/settings/gitea_api_token', { method: 'DELETE' });
-      await fetch('/api/user/settings/gitea_username', { method: 'DELETE' });
+      await deleteUserSetting('gitea_api_token');
+      await deleteUserSetting('gitea_username');
       usernameValue.textContent = '—';
       statusBadge.textContent = 'Reset — log in again to re-provision';
       statusBadge.style.background = 'var(--bg-secondary)';
       statusBadge.style.color = 'var(--text-muted)';
       repoLink.style.display = 'none';
       resetBtn.style.display = 'none';
-    } catch {
-      resetBtn.textContent = 'Failed';
+    } catch (error) {
+      resetBtn.textContent = error.message || 'Failed';
     }
     resetBtn.disabled = false;
     resetBtn.textContent = 'Reset';

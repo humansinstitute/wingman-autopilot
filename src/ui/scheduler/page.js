@@ -11,6 +11,8 @@
 import Alpine from "/vendor/alpinejs/module.esm.js";
 import { fetchSchedulerJobRuns } from "./api.js";
 import { attachDirAutocomplete } from "./dir-autocomplete.js";
+import { DEFAULT_AGENT, normalizeAgentValue, renderAgentOptions } from "../common/agent-options.js";
+import { state } from "../state/index.js";
 
 // ============================================================
 // Schedule → cron helpers
@@ -97,6 +99,10 @@ function parseCron(expr) {
   return { frequency: "daily", hour, minute, weekday: "1" };
 }
 
+function getConfiguredDefaultAgent() {
+  return normalizeAgentValue(state.config?.defaultAgent ?? state.config?.systemDefaultAgent ?? DEFAULT_AGENT);
+}
+
 // ============================================================
 // Page Module
 // ============================================================
@@ -126,7 +132,7 @@ export function initSchedulerPage({ showToast }) {
     triggerType: "cron",
     form: {
       name: "",
-      agent: "claude",
+      agent: getConfiguredDefaultAgent(),
       workingDirectory: "",
       initialPrompt: "",
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
@@ -292,7 +298,7 @@ export function initSchedulerPage({ showToast }) {
       this.editTriggerType = job.triggerType || "cron";
       this.editForm = {
         name: job.name,
-        agent: job.agent,
+        agent: normalizeAgentValue(job.agent || getConfiguredDefaultAgent()),
         workingDirectory: job.workingDirectory,
         initialPrompt: job.initialPrompt,
         timezone: job.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
@@ -355,7 +361,7 @@ export function initSchedulerPage({ showToast }) {
       this.triggerType = "cron";
       this.form = {
         name: "",
-        agent: "claude",
+        agent: getConfiguredDefaultAgent(),
         workingDirectory: "",
         initialPrompt: "",
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
@@ -539,11 +545,7 @@ function getPageTemplate() {
         <div class="wm-form-group">
           <label>Agent</label>
           <select class="wm-select" x-model="form.agent">
-            <option value="claude">Claude</option>
-            <option value="codex">Codex</option>
-            <option value="goose">Goose</option>
-            <option value="opencode">OpenCode</option>
-            <option value="gemini">Gemini</option>
+            ${renderAgentOptions()}
           </select>
         </div>
       </div>
@@ -802,11 +804,7 @@ function getPageTemplate() {
               <div class="wm-form-group">
                 <label>Agent</label>
                 <select class="wm-select" x-model="editForm.agent">
-                  <option value="claude">Claude</option>
-                  <option value="codex">Codex</option>
-                  <option value="goose">Goose</option>
-                  <option value="opencode">OpenCode</option>
-                  <option value="gemini">Gemini</option>
+                  ${renderAgentOptions()}
                 </select>
               </div>
             </div>
