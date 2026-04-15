@@ -73,6 +73,13 @@ export const OPENCODE_NATIVE_SDK_FLAG = "opencode-use-native-sdk";
  * - all other agents → AgentApiAdapter
  */
 export function resolveAdapterFactory(agent: AgentType): AgentAdapterFactory {
+  if (agent === "pi") {
+    return (context: AdapterSessionContext) => {
+      const { PiAdapter } = require("./pi-adapter") as typeof import("./pi-adapter");
+      return new PiAdapter(context);
+    };
+  }
+
   if (agent === "codex") {
     const flag = featureFlagStore.getFlag(CODEX_NATIVE_SDK_FLAG);
     if (flag && resolveFeatureFlagEffectiveState(flag.state, true) === "on") {

@@ -95,13 +95,13 @@ import { userSettingsStore } from "./storage/user-settings-store";
 import { artifactsStore } from "./storage/artifacts-store";
 import {
   buildAgentUrl,
-  fetchAgentMessages,
   normaliseHostForUrl,
   parseAllowedHosts,
   pickAgentHost,
 } from "./agents/agent-client";
 import { AgentRuntimeStatusPoller } from "./agents/agent-status-poller";
 import { LiveMessagePersistenceLoop } from "./server/live-message-persistence";
+import { syncLiveSessionMessages } from "./server/live-session-messages";
 import { mintSessionCookie, SessionCookieError, SESSION_COOKIE_NAME } from "./auth/session-cookie";
 import {
   resolveRequestAuthContext,
@@ -1688,30 +1688,13 @@ const handleSessionEvents = createSessionEventsHandler({
 });
 
 const syncSessionMessages = async (sessionId: string, force = false) => {
-  if (!force && messageStore.hasMessages(sessionId)) {
-    return messageStore.listSessionMessages(sessionId);
-  }
-
-  const session = manager.getSession(sessionId);
-  if (!session) {
-    return messageStore.listSessionMessages(sessionId);
-  }
-
-  if (session.status !== "running") {
-    return messageStore.listSessionMessages(sessionId);
-  }
-
-  try {
-    const hadMessages = messageStore.hasMessages(sessionId);
-    const messages = await fetchAgentMessages(agentHost, session.port);
-    if (messages.length > 0 || !hadMessages) {
-      messageStore.replaceMessages(sessionId, messages);
-    }
-  } catch (error) {
-    console.error(`Failed to synchronise messages for session ${sessionId}:`, error);
-  }
-
-  return messageStore.listSessionMessages(sessionId);
+  return syncLiveSessionMessages({
+    sessionId,
+    force,
+    manager,
+    messageStore,
+    agentHost,
+  });
 };
 
 const agentStatusPoller = new AgentRuntimeStatusPoller(manager, {

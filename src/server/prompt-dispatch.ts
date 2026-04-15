@@ -7,6 +7,7 @@ import type { AgentType } from "../config";
 import type { SessionSnapshot } from "../agents/process-manager";
 import { InsufficientBalanceError } from "../storage/identity-user-store";
 import { isCreditsBillingSession, resolveSessionChargeNpub } from "../sessions/session-metadata";
+import { deliverSessionAgentMessage } from "./session-agent-message";
 
 // ---------- Context supplied by server.ts ----------
 
@@ -207,18 +208,20 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
 
     try {
       const initialCount = ctx.messageStore.listSessionMessages(session.id).length;
-      const agentUrl = ctx.buildAgentUrl(ctx.agentHost, session.port, "/message");
-      const agentResponse = await fetch(agentUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "user", content: nextPrompt.content }),
+      const result = await deliverSessionAgentMessage({
+        agentHost: ctx.agentHost,
+        buildAgentUrl: ctx.buildAgentUrl,
+        agent: session.agent,
+        port: session.port,
+        content: nextPrompt.content,
+        type: "user",
+        pm2Name: session.pm2Name,
+        adapter: ctx.manager.getAdapter(session.id),
       });
 
-      if (!agentResponse.ok) {
-        const errorPayload = await agentResponse.json().catch(() => ({})) as Record<string, unknown>;
-        const message = (errorPayload?.error as string) ?? agentResponse.statusText ?? "Agent request failed";
+      if (!result.ok) {
         refundDebit();
-        throw new QueueDispatchError(message, agentResponse.status, {
+        throw new QueueDispatchError(result.message, result.status, {
           balance: currentBalance,
           failedPrompt: nextPrompt,
         });

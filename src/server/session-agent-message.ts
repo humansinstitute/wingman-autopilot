@@ -1,3 +1,4 @@
+import type { AgentAdapter } from "../agents/agent-adapter";
 import { waitForAgentReady } from "../agents/agent-client";
 import { getProcessByName, restartProcess } from "../agents/pm2-wrapper";
 import type { AgentType } from "../config";
@@ -11,6 +12,7 @@ export interface SessionAgentMessageInput {
   content: string;
   type: "user" | "raw";
   pm2Name?: string;
+  adapter?: AgentAdapter | null;
 }
 
 export interface SessionAgentMessageResult {
@@ -116,6 +118,20 @@ async function tryWithTransientRetries(input: SessionAgentMessageInput): Promise
 export async function deliverSessionAgentMessage(
   input: SessionAgentMessageInput,
 ): Promise<SessionAgentMessageResult> {
+  if (input.agent === "pi" && input.type !== "raw" && input.adapter) {
+    try {
+      await input.adapter.waitForReady({
+        timeoutMs: 8000,
+        pollIntervalMs: 100,
+      });
+      await input.adapter.sendMessage(input.content, input.type);
+      return { ok: true, status: 200, message: "" };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, status: 502, message: `Failed to contact agent: ${message}` };
+    }
+  }
+
   const initialResult = await tryWithTransientRetries(input);
   if (initialResult.ok || !shouldAttemptPm2Recovery(initialResult.status, input.pm2Name)) {
     return initialResult;

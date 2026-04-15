@@ -1639,6 +1639,7 @@ async function handlePostMessage(
       content,
       type: messageType,
       pm2Name: ownedSession.pm2Name,
+      adapter: ctx.manager.getAdapter(id),
     });
     if (!result.ok) {
       return Response.json({ error: result.message }, { status: result.status });
@@ -1676,6 +1677,7 @@ async function handlePostMessage(
       content,
       type: messageType,
       pm2Name: ownedSession.pm2Name,
+      adapter: ctx.manager.getAdapter(id),
     });
     if (!result.ok) {
       if (!isCreditsBilling) {

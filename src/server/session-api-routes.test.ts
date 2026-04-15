@@ -64,6 +64,7 @@ const buildCtx = (overrides?: Partial<SessionApiContext>): SessionApiContext => 
     getSession: (id: string) => (id === "session-1" ? baseSession : undefined),
     listSessions: () => [baseSession],
     stopSession: async (id: string) => (id === "session-1" ? baseSession : null),
+    getAdapter: () => null,
   } as any,
   adminNpub: null,
   agentHost: "127.0.0.1",
@@ -888,6 +889,45 @@ describe("handleSessionApi", () => {
       id: "session-1",
       queued: false,
       messages,
+    });
+  });
+
+  test("POST /api/sessions/:id/messages sends via the pi adapter for pi sessions", async () => {
+    let sentContent: string | null = null;
+    const ctx = buildCtx({
+      manager: {
+        getSession: (id: string) => (id === "session-1" ? { ...baseSession, agent: "pi" } : undefined),
+        listSessions: () => [{ ...baseSession, agent: "pi" }],
+        getAdapter: () => ({
+          waitForReady: async () => undefined,
+          sendMessage: async (content: string) => {
+            sentContent = content;
+          },
+        }),
+      } as any,
+      waitForMessageUpdate: async () => [
+        { role: "user", content: "ping" },
+        { role: "assistant", content: "pong" },
+      ],
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions/session-1/messages");
+    const request = new Request(url.toString(), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "ping" }),
+    });
+
+    const response = await handleSessionApi(request, url, "POST", makeAuth({ session: { id: "viewer" } as any }), ctx);
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    expect(sentContent).toBe("ping");
+    await expect(response!.json()).resolves.toMatchObject({
+      id: "session-1",
+      messages: [
+        { role: "user", content: "ping" },
+        { role: "assistant", content: "pong" },
+      ],
     });
   });
 
