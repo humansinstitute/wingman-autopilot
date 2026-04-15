@@ -59,6 +59,20 @@ export const buildAgentUrl = (host: string, port: number, path: string): URL => 
   return new URL(path, `http://${host}:${port}/`);
 };
 
+export function matchesReadyAgentType(agent: AgentType, reportedAgentType: string): boolean {
+  if (reportedAgentType === agent) {
+    return true;
+  }
+
+  // Pi currently runs behind agentapi as a custom PTY command, so `/status`
+  // reports `custom` even when the launched Wingman session is explicitly Pi.
+  if (agent === "pi" && reportedAgentType === "custom") {
+    return true;
+  }
+
+  return false;
+}
+
 export const waitForAgentReady = async (
   host: string,
   port: number,
@@ -87,7 +101,7 @@ export const waitForAgentReady = async (
         const data = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : null;
         const agentType = data && typeof data.agent_type === "string" ? data.agent_type.toLowerCase() : "";
         const status = data && typeof data.status === "string" ? data.status : "";
-        if (agentType === agent && (status === "running" || status === "stable")) {
+        if (matchesReadyAgentType(agent, agentType) && (status === "running" || status === "stable")) {
           return;
         }
       }
