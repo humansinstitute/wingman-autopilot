@@ -140,4 +140,25 @@ process.stdout.write(reply + "\\n");
       },
     ]);
   });
+
+  test("returns a stable startup message before the first real pi turn", async () => {
+    scratchDir = await mkdtemp(join(tmpdir(), "wingmen-pi-startup-"));
+    process.env.HOME = scratchDir;
+
+    const adapter = new PiAdapter({
+      id: "session-startup",
+      port: 3703,
+      agent: "pi",
+      host: "127.0.0.1",
+      workingDirectory: scratchDir,
+    });
+
+    await expect(adapter.fetchMessages()).resolves.toEqual([
+      {
+        role: "assistant",
+        content: "Pi session started. Send a message to begin.",
+        createdAt: "1970-01-01T00:00:00.000Z",
+      },
+    ]);
+  });
 });

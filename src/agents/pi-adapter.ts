@@ -23,6 +23,8 @@ interface PiSessionEntry {
 type AdapterState = "initializing" | "ready" | "busy" | "disposed";
 
 const DEFAULT_PI_CLI = "pi";
+const PI_STARTUP_MESSAGE = "Pi session started. Send a message to begin.";
+const PI_STARTUP_CREATED_AT = "1970-01-01T00:00:00.000Z";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -227,9 +229,25 @@ export class PiAdapter implements AgentAdapter {
   private async reloadMessages(): Promise<void> {
     const sessionFile = await this.findLatestSessionFile();
     if (!sessionFile) {
+      this.messages = [
+        {
+          role: "assistant",
+          content: PI_STARTUP_MESSAGE,
+          createdAt: PI_STARTUP_CREATED_AT,
+        },
+      ];
       return;
     }
     const content = await readFile(sessionFile, "utf8");
-    this.messages = parsePiSessionMessages(content);
+    const parsedMessages = parsePiSessionMessages(content);
+    this.messages = parsedMessages.length > 0
+      ? parsedMessages
+      : [
+          {
+            role: "assistant",
+            content: PI_STARTUP_MESSAGE,
+            createdAt: PI_STARTUP_CREATED_AT,
+          },
+        ];
   }
 }
