@@ -5,92 +5,19 @@ import { join } from "node:path";
 import type { AgentAdapter, AdapterSessionContext } from "./agent-adapter";
 import type { AgentRuntimeStatus } from "../types/agent-status";
 import type { AgentMessage, AgentReadyOptions } from "./agent-client";
-
-interface PiSessionEntry {
-  type?: string;
-  timestamp?: string;
-  message?: {
-    role?: string;
-    timestamp?: string | number;
-    content?: Array<{
-      type?: string;
-      text?: string;
-    }>;
-    errorMessage?: string;
-  };
-}
+import { parsePiSessionMessagesWithProgress } from "./pi-session-messages";
 
 type AdapterState = "initializing" | "ready" | "busy" | "disposed";
 
 const DEFAULT_PI_CLI = "pi";
 const PI_STARTUP_MESSAGE = "Pi session started. Send a message to begin.";
 const PI_STARTUP_CREATED_AT = "1970-01-01T00:00:00.000Z";
+const PI_BUSY_SESSION_FILE_RETRY_MS = 40;
+const PI_BUSY_SESSION_FILE_RETRY_ATTEMPTS = 5;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const extractPiMessageText = (entry: PiSessionEntry["message"]): string => {
-  const parts = Array.isArray(entry?.content) ? entry.content : [];
-  const text = parts
-    .filter((part) => part?.type === "text" && typeof part.text === "string")
-    .map((part) => part.text ?? "")
-    .join("")
-    .trim();
-  if (text.length > 0) {
-    return text;
-  }
-  return typeof entry?.errorMessage === "string" ? entry.errorMessage.trim() : "";
-};
-
-export function parsePiSessionMessages(content: string): AgentMessage[] {
-  const messages: AgentMessage[] = [];
-  const lines = content
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
-  for (const line of lines) {
-    let parsed: PiSessionEntry | null = null;
-    try {
-      parsed = JSON.parse(line) as PiSessionEntry;
-    } catch {
-      continue;
-    }
-
-    if (parsed?.type !== "message" || !parsed.message) {
-      continue;
-    }
-
-    const role =
-      parsed.message.role === "user" || parsed.message.role === "assistant"
-        ? parsed.message.role
-        : null;
-    if (!role) {
-      continue;
-    }
-
-    const text = extractPiMessageText(parsed.message);
-    if (!text) {
-      continue;
-    }
-
-    const createdAtCandidate =
-      typeof parsed.timestamp === "string"
-        ? parsed.timestamp
-        : typeof parsed.message.timestamp === "string"
-          ? parsed.message.timestamp
-          : typeof parsed.message.timestamp === "number"
-            ? new Date(parsed.message.timestamp).toISOString()
-            : null;
-
-    messages.push({
-      role,
-      content: text,
-      createdAt: createdAtCandidate ?? new Date().toISOString(),
-    });
-  }
-
-  return messages;
-}
+export { parsePiSessionMessages } from "./pi-session-messages";
 
 function buildPiEnv(context: AdapterSessionContext): Record<string, string> {
   const env = {
@@ -227,19 +154,37 @@ export class PiAdapter implements AgentAdapter {
   }
 
   private async reloadMessages(): Promise<void> {
-    const sessionFile = await this.findLatestSessionFile();
+    let sessionFile = await this.findLatestSessionFile();
+    if (!sessionFile && this.state === "busy") {
+      for (let attempt = 0; attempt < PI_BUSY_SESSION_FILE_RETRY_ATTEMPTS && !sessionFile; attempt += 1) {
+        await sleep(PI_BUSY_SESSION_FILE_RETRY_MS);
+        sessionFile = await this.findLatestSessionFile();
+      }
+    }
     if (!sessionFile) {
-      this.messages = [
+      const baseMessages: AgentMessage[] = [
         {
           role: "assistant",
           content: PI_STARTUP_MESSAGE,
           createdAt: PI_STARTUP_CREATED_AT,
         },
       ];
+      this.messages = this.state === "busy"
+        ? [
+            ...baseMessages,
+            {
+              role: "assistant",
+              content: "Pi is working on your request...",
+              createdAt: "1970-01-01T00:00:01.000Z",
+            },
+          ]
+        : baseMessages;
       return;
     }
     const content = await readFile(sessionFile, "utf8");
-    const parsedMessages = parsePiSessionMessages(content);
+    const parsedMessages = parsePiSessionMessagesWithProgress(content, {
+      includeProgress: this.state === "busy",
+    });
     this.messages = parsedMessages.length > 0
       ? parsedMessages
       : [
