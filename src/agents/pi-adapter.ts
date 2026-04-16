@@ -2,18 +2,31 @@ import { mkdir, readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { AgentAdapter, AdapterSessionContext } from "./agent-adapter";
+import type { AgentAdapter, AdapterSessionContext, AdapterStreamEvent } from "./agent-adapter";
 import type { AgentRuntimeStatus } from "../types/agent-status";
 import type { AgentMessage, AgentReadyOptions } from "./agent-client";
-import { parsePiSessionMessages } from "./pi-session-messages";
+import { PiRpcClient, type PiRpcEvent } from "./pi-rpc-client";
+import {
+  normalizePiRuntimeMessages,
+  normalizePiStreamingMessage,
+  parsePiSessionMessages,
+  type PiSessionMessage,
+} from "./pi-session-messages";
 
 type AdapterState = "initializing" | "ready" | "busy" | "disposed";
+
+interface DeferredTurn {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: Error) => void;
+}
 
 const DEFAULT_PI_CLI = "pi";
 const PI_STARTUP_MESSAGE = "Pi session started. Send a message to begin.";
 const PI_STARTUP_CREATED_AT = "1970-01-01T00:00:00.000Z";
 const PI_BUSY_SESSION_FILE_RETRY_MS = 40;
 const PI_BUSY_SESSION_FILE_RETRY_ATTEMPTS = 5;
+const PI_AGENT_END_SETTLE_MS = 75;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -32,6 +45,45 @@ function buildPiEnv(context: AdapterSessionContext): Record<string, string> {
   return env;
 }
 
+function createStartupMessages(): AgentMessage[] {
+  return [
+    {
+      role: "assistant",
+      content: PI_STARTUP_MESSAGE,
+      createdAt: PI_STARTUP_CREATED_AT,
+    },
+  ];
+}
+
+function createDeferredTurn(): DeferredTurn {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  return { promise, resolve, reject };
+}
+
+function readPiEventType(event: PiRpcEvent): string {
+  return typeof event.type === "string" ? event.type : "";
+}
+
+function readPiEventMessage(event: PiRpcEvent): PiSessionMessage | null {
+  const message = event.message;
+  if (!message || typeof message !== "object") {
+    return null;
+  }
+  return message as PiSessionMessage;
+}
+
+function readPiEventMessages(event: PiRpcEvent): PiSessionMessage[] {
+  return Array.isArray(event.messages)
+    ? event.messages.filter((message): message is PiSessionMessage => Boolean(message && typeof message === "object"))
+    : [];
+}
+
 export class PiAdapter implements AgentAdapter {
   private readonly workingDirectory: string;
   private readonly sessionDirectory: string;
@@ -39,6 +91,12 @@ export class PiAdapter implements AgentAdapter {
   private readonly env: Record<string, string>;
   private state: AdapterState = "initializing";
   private messages: AgentMessage[] = [];
+  private readonly eventListeners = new Set<(event: AdapterStreamEvent) => void>();
+  private rpcClient: PiRpcClient | null = null;
+  private startPromise: Promise<void> | null = null;
+  private currentTurn: DeferredTurn | null = null;
+  private finishTimer: ReturnType<typeof setTimeout> | null = null;
+  private clientUnsubscribe: (() => void) | null = null;
 
   constructor(private readonly context: AdapterSessionContext) {
     this.workingDirectory = context.workingDirectory ?? process.cwd();
@@ -60,53 +118,46 @@ export class PiAdapter implements AgentAdapter {
     }
 
     await this.waitForReady();
-    this.state = "busy";
+    const client = await this.ensureClient();
+    const turn = this.beginTurn();
 
     try {
-      const hasExistingSession = await this.hasExistingSessionFile();
-      const command = [
-        this.piCommand,
-        "--session-dir",
-        this.sessionDirectory,
-        ...(hasExistingSession ? ["--continue"] : []),
-        "-p",
-        content,
-      ];
-
-      const proc = Bun.spawn(command, {
-        cwd: this.workingDirectory,
-        env: this.env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdoutText, stderrText, exitCode] = await Promise.all([
-        proc.stdout ? new Response(proc.stdout).text() : Promise.resolve(""),
-        proc.stderr ? new Response(proc.stderr).text() : Promise.resolve(""),
-        proc.exited,
-      ]);
-
-      await this.reloadMessages();
-
-      if ((exitCode ?? 0) !== 0) {
-        const message = stderrText.trim() || stdoutText.trim() || `Pi exited with code ${exitCode ?? 1}`;
-        throw new Error(message);
+      await client.prompt(content);
+      await turn.promise;
+      await this.reloadMessages(false);
+    } catch (error) {
+      if (this.currentTurn === turn) {
+        this.currentTurn = null;
       }
-    } finally {
-      this.state = this.state === "disposed" ? "disposed" : "ready";
+      this.setState("ready");
+      throw error;
     }
   }
 
   async fetchMessages(): Promise<AgentMessage[]> {
-    await this.reloadMessages();
+    await this.waitForReady();
+    await this.reloadMessages(false);
     return this.messages;
   }
 
   async interruptCurrentTurn(): Promise<boolean> {
-    return false;
+    const client = this.rpcClient;
+    if (!client || this.state !== "busy") {
+      return false;
+    }
+    await client.abort();
+    return true;
   }
 
   getEventsUrl(): URL | null {
     return null;
+  }
+
+  subscribeToEvents(listener: (event: AdapterStreamEvent) => void): () => void {
+    this.eventListeners.add(listener);
+    return () => {
+      this.eventListeners.delete(listener);
+    };
   }
 
   async waitForReady(options?: AgentReadyOptions): Promise<void> {
@@ -115,9 +166,7 @@ export class PiAdapter implements AgentAdapter {
     }
 
     await mkdir(this.sessionDirectory, { recursive: true });
-    if (this.state === "initializing") {
-      this.state = "ready";
-    }
+    await this.ensureClient();
 
     const timeoutMs = options?.timeoutMs ?? 30000;
     const pollMs = options?.pollIntervalMs ?? 50;
@@ -131,7 +180,223 @@ export class PiAdapter implements AgentAdapter {
   }
 
   async dispose(): Promise<void> {
+    this.clearFinishTimer();
+    if (this.currentTurn) {
+      this.currentTurn.reject(new Error("PiAdapter has been disposed"));
+      this.currentTurn = null;
+    }
     this.state = "disposed";
+    this.clientUnsubscribe?.();
+    this.clientUnsubscribe = null;
+    const client = this.rpcClient;
+    this.rpcClient = null;
+    this.startPromise = null;
+    if (client) {
+      await client.stop();
+    }
+  }
+
+  private async ensureClient(): Promise<PiRpcClient> {
+    if (this.rpcClient) {
+      return this.rpcClient;
+    }
+    if (this.startPromise) {
+      await this.startPromise;
+      if (!this.rpcClient) {
+        throw new Error("Pi RPC client failed to start");
+      }
+      return this.rpcClient;
+    }
+
+    this.startPromise = this.startClient();
+    try {
+      await this.startPromise;
+    } finally {
+      this.startPromise = null;
+    }
+
+    if (!this.rpcClient) {
+      throw new Error("Pi RPC client failed to start");
+    }
+    return this.rpcClient;
+  }
+
+  private async startClient(): Promise<void> {
+    const client = new PiRpcClient({
+      cliPath: this.piCommand,
+      workingDirectory: this.workingDirectory,
+      sessionDirectory: this.sessionDirectory,
+      continueSession: await this.hasExistingSessionFile(),
+      env: this.env,
+    });
+
+    await client.start();
+    this.clientUnsubscribe = client.onEvent((event) => {
+      void this.handleRpcEvent(event);
+    });
+    this.rpcClient = client;
+
+    await this.reloadMessages(false);
+    if (this.state !== "busy" && this.state !== "disposed") {
+      this.setState("ready");
+    }
+  }
+
+  private beginTurn(): DeferredTurn {
+    this.clearFinishTimer();
+    if (this.currentTurn) {
+      this.currentTurn.reject(new Error("PiAdapter started a new turn before the previous turn completed"));
+    }
+    const turn = createDeferredTurn();
+    this.currentTurn = turn;
+    this.setState("busy");
+    return turn;
+  }
+
+  private finishTurn(error?: Error): void {
+    this.clearFinishTimer();
+    const turn = this.currentTurn;
+    this.currentTurn = null;
+    if (this.state !== "disposed") {
+      this.setState("ready");
+    }
+    if (!turn) {
+      return;
+    }
+    if (error) {
+      turn.reject(error);
+      return;
+    }
+    turn.resolve();
+  }
+
+  private scheduleFinishTurn(): void {
+    this.clearFinishTimer();
+    this.finishTimer = setTimeout(() => {
+      this.finishTimer = null;
+      this.finishTurn();
+    }, PI_AGENT_END_SETTLE_MS);
+  }
+
+  private clearFinishTimer(): void {
+    if (this.finishTimer) {
+      clearTimeout(this.finishTimer);
+      this.finishTimer = null;
+    }
+  }
+
+  private async handleRpcEvent(event: PiRpcEvent): Promise<void> {
+    const eventType = readPiEventType(event);
+    if (!eventType || this.state === "disposed") {
+      return;
+    }
+
+    if (eventType === "process_exit") {
+      this.rpcClient = null;
+      this.clientUnsubscribe?.();
+      this.clientUnsubscribe = null;
+      const stderr = typeof event.stderr === "string" ? event.stderr.trim() : "";
+      this.finishTurn(new Error(stderr || "Pi RPC process exited unexpectedly"));
+      this.state = "initializing";
+      return;
+    }
+
+    if (eventType === "agent_start" || eventType === "turn_start") {
+      this.clearFinishTimer();
+      this.setState("busy");
+      return;
+    }
+
+    if (eventType === "message_start" || eventType === "message_update" || eventType === "message_end") {
+      const message = readPiEventMessage(event);
+      if (message) {
+        this.upsertRuntimeMessage(message);
+      }
+      return;
+    }
+
+    if (eventType === "turn_end") {
+      const messages = readPiEventMessages(event);
+      if (messages.length > 0) {
+        this.replaceMessages(normalizePiRuntimeMessages(messages), true);
+      }
+      this.scheduleFinishTurn();
+      return;
+    }
+
+    if (eventType === "agent_end") {
+      const messages = readPiEventMessages(event);
+      if (messages.length > 0) {
+        this.replaceMessages(normalizePiRuntimeMessages(messages), true);
+      } else {
+        await this.reloadMessages(true);
+      }
+      this.finishTurn();
+    }
+  }
+
+  private upsertRuntimeMessage(rawMessage: PiSessionMessage): void {
+    const message = normalizePiStreamingMessage(rawMessage);
+    if (!message) {
+      return;
+    }
+
+    const existingIndex = this.messages.findIndex((entry) => {
+      return entry.role === message.role && entry.createdAt === message.createdAt;
+    });
+
+    if (existingIndex >= 0) {
+      const existing = this.messages[existingIndex]!;
+      if (existing.content === message.content) {
+        return;
+      }
+      this.messages[existingIndex] = message;
+    } else {
+      this.messages = [...this.messages, message];
+    }
+
+    this.emitEvent({ type: "message", message });
+  }
+
+  private replaceMessages(nextMessages: AgentMessage[], emitChanges: boolean): void {
+    const messages = nextMessages.length > 0 ? nextMessages : createStartupMessages();
+    const previousMessages = this.messages;
+    this.messages = messages;
+
+    if (!emitChanges) {
+      return;
+    }
+
+    const maxLength = Math.max(previousMessages.length, messages.length);
+    for (let index = 0; index < maxLength; index += 1) {
+      const previous = previousMessages[index];
+      const next = messages[index];
+      if (!next) {
+        continue;
+      }
+      if (!previous || previous.role !== next.role || previous.content !== next.content || previous.createdAt !== next.createdAt) {
+        this.emitEvent({ type: "message", message: next });
+      }
+    }
+  }
+
+  private emitEvent(event: AdapterStreamEvent): void {
+    for (const listener of this.eventListeners) {
+      try {
+        listener(event);
+      } catch {
+        // Listener failures should not break the adapter.
+      }
+    }
+  }
+
+  private setState(nextState: AdapterState): void {
+    if (this.state === nextState || this.state === "disposed") {
+      return;
+    }
+    this.state = nextState;
+    const runtimeStatus: AgentRuntimeStatus | null = nextState === "busy" ? "running" : "stable";
+    this.emitEvent({ type: "status", status: runtimeStatus });
   }
 
   private async hasExistingSessionFile(): Promise<boolean> {
@@ -153,7 +418,7 @@ export class PiAdapter implements AgentAdapter {
     }
   }
 
-  private async reloadMessages(): Promise<void> {
+  private async reloadMessages(emitChanges: boolean): Promise<void> {
     let sessionFile = await this.findLatestSessionFile();
     if (!sessionFile && this.state === "busy") {
       for (let attempt = 0; attempt < PI_BUSY_SESSION_FILE_RETRY_ATTEMPTS && !sessionFile; attempt += 1) {
@@ -161,26 +426,14 @@ export class PiAdapter implements AgentAdapter {
         sessionFile = await this.findLatestSessionFile();
       }
     }
+
     if (!sessionFile) {
-      this.messages = [
-        {
-          role: "assistant",
-          content: PI_STARTUP_MESSAGE,
-          createdAt: PI_STARTUP_CREATED_AT,
-        },
-      ];
+      this.replaceMessages(createStartupMessages(), emitChanges);
       return;
     }
+
     const content = await readFile(sessionFile, "utf8");
     const parsedMessages = parsePiSessionMessages(content);
-    this.messages = parsedMessages.length > 0
-      ? parsedMessages
-      : [
-          {
-            role: "assistant",
-            content: PI_STARTUP_MESSAGE,
-            createdAt: PI_STARTUP_CREATED_AT,
-          },
-        ];
+    this.replaceMessages(parsedMessages, emitChanges);
   }
 }

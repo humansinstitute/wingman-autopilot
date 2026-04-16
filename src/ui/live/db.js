@@ -55,6 +55,25 @@ export const MessageStore = {
     const role = normalized.role;
     const content = normalized.content;
     const createdAt = normalized.createdAt;
+    const now = new Date().toISOString();
+
+    const matchingTimestampMessages = createdAt
+      ? await db.messages
+          .where("[sessionId+createdAt]")
+          .equals([sessionId, createdAt])
+          .toArray()
+      : [];
+    const matchingMessage = [...matchingTimestampMessages]
+      .reverse()
+      .find((entry) => entry.role === role);
+
+    if (matchingMessage) {
+      await db.messages.update(matchingMessage.id, {
+        content,
+        updatedAt: now,
+      });
+      return { id: matchingMessage.id, isStreamingUpdate: true };
+    }
 
     // Find the last message for this session
     const existing = await db.messages
@@ -67,7 +86,7 @@ export const MessageStore = {
       if (content.length > oldContent.length && content.startsWith(oldContent.slice(0, 50))) {
         await db.messages.update(existing.id, {
           content,
-          updatedAt: new Date().toISOString(),
+          updatedAt: now,
         });
         return { id: existing.id, isStreamingUpdate: true };
       }
@@ -79,7 +98,7 @@ export const MessageStore = {
       role,
       content,
       createdAt,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
       messageHash: `${sessionId}:${role}:${Date.now()}`,
     });
     return { id, isStreamingUpdate: false };

@@ -9,34 +9,33 @@ const runningSession = {
   status: "running",
 };
 
-function createManager(getEventsUrl: URL | null) {
+function createManager(adapter: {
+  getEventsUrl: () => URL | null;
+  subscribeToEvents?: ((listener: (event: any) => void) => (() => void) | null) | undefined;
+}) {
   return {
     getSession(id: string) {
       return id === "session-1" ? runningSession : null;
     },
     getAdapter() {
-      return {
-        getEventsUrl() {
-          return getEventsUrl;
-        },
-      };
+      return adapter;
     },
   } as any;
 }
 
-async function readUntilTransport(response: Response): Promise<string> {
+async function readUntil(response: Response, expectedText: string): Promise<string> {
   const reader = response.body?.getReader();
   if (!reader) {
     return "";
   }
 
   let combined = "";
-  for (let index = 0; index < 4; index += 1) {
+  for (let index = 0; index < 8; index += 1) {
     const { value, done } = await reader.read();
     if (value) {
       combined += decoder.decode(value);
     }
-    if (combined.includes("event: transport") || done) {
+    if (combined.includes(expectedText) || done) {
       break;
     }
   }
@@ -53,7 +52,7 @@ describe("createSessionEventsHandler", () => {
   });
 
   test("announces event-stream transport for proxied SSE sessions", async () => {
-    globalThis.fetch = async () =>
+    globalThis.fetch = (async () =>
       new Response(
         new ReadableStream({
           start() {
@@ -63,30 +62,77 @@ describe("createSessionEventsHandler", () => {
         {
           headers: { "Content-Type": "text/event-stream" },
         },
-      );
+      )) as unknown as typeof fetch;
 
     const handler = createSessionEventsHandler({
-      manager: createManager(new URL("http://127.0.0.1:3700/events")),
+      manager: createManager({
+        getEventsUrl() {
+          return new URL("http://127.0.0.1:3700/events");
+        },
+      }),
       agentHost: "127.0.0.1",
       sseKeepaliveIntervalMs: 1000,
     });
 
     const response = await handler("session-1", new Request("http://localhost/api/sessions/session-1/events"));
-    const chunk = await readUntilTransport(response);
+    const chunk = await readUntil(response, "event: transport");
 
     expect(chunk).toContain("event: transport");
     expect(chunk).toContain('"mode":"event-stream"');
   });
 
-  test("announces heartbeat-only transport for native adapter sessions", async () => {
+  test("announces event-stream transport for native adapter sessions", async () => {
     const handler = createSessionEventsHandler({
-      manager: createManager(null),
+      manager: createManager({
+        getEventsUrl() {
+          return null;
+        },
+        subscribeToEvents(listener) {
+          queueMicrotask(() => {
+            listener({
+              type: "message",
+              message: {
+                role: "assistant",
+                content: "partial",
+                createdAt: "2026-04-16T08:00:00.000Z",
+              },
+            });
+            listener({
+              type: "status",
+              status: "running",
+            });
+          });
+          return () => {};
+        },
+      }),
       agentHost: "127.0.0.1",
       sseKeepaliveIntervalMs: 1000,
     });
 
     const response = await handler("session-1", new Request("http://localhost/api/sessions/session-1/events"));
-    const chunk = await readUntilTransport(response);
+    const chunk = await readUntil(response, '"status":"running"');
+
+    expect(chunk).toContain("event: transport");
+    expect(chunk).toContain('"mode":"event-stream"');
+    expect(chunk).toContain("event: message");
+    expect(chunk).toContain('"content":"partial"');
+    expect(chunk).toContain("event: status");
+    expect(chunk).toContain('"status":"running"');
+  });
+
+  test("announces heartbeat-only transport when no stream source exists", async () => {
+    const handler = createSessionEventsHandler({
+      manager: createManager({
+        getEventsUrl() {
+          return null;
+        },
+      }),
+      agentHost: "127.0.0.1",
+      sseKeepaliveIntervalMs: 1000,
+    });
+
+    const response = await handler("session-1", new Request("http://localhost/api/sessions/session-1/events"));
+    const chunk = await readUntil(response, "event: transport");
 
     expect(chunk).toContain("event: transport");
     expect(chunk).toContain('"mode":"heartbeat-only"');

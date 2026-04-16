@@ -55,12 +55,30 @@ export interface AgentAdapter {
    */
   getEventsUrl(): URL | null;
 
+  /**
+   * Subscribe to adapter-native message/status events when no upstream SSE URL exists.
+   * Returns an unsubscribe function when supported.
+   */
+  subscribeToEvents?(
+    listener: (event: AdapterStreamEvent) => void,
+  ): (() => void) | null;
+
   /** Wait for agent to be ready to accept prompts */
   waitForReady(options?: AgentReadyOptions): Promise<void>;
 
   /** Clean up adapter-specific resources on session stop */
   dispose(): Promise<void>;
 }
+
+export type AdapterStreamEvent =
+  | {
+      type: "message";
+      message: AgentMessage;
+    }
+  | {
+      type: "status";
+      status: AgentRuntimeStatus | null;
+    };
 
 export type AgentAdapterFactory = (context: AdapterSessionContext) => AgentAdapter;
 
