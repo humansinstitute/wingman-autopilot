@@ -166,7 +166,7 @@ export function createConversationElement(options) {
 
   if (snapshot.totalCount === 0) {
     const empty = document.createElement("p");
-    empty.textContent = "Conversation has no messages yet.";
+    empty.textContent = "Session ready. Send a message to begin.";
     wrapper.append(empty);
     return wrapper;
   }

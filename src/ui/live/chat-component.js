@@ -412,7 +412,7 @@ export function getChatTemplate(sessionId) {
     <!-- Empty state -->
     <template x-if="!$store.chat.isLoading && $store.chat.messages.length === 0">
       <div class="chat-empty">
-        <span>No messages yet</span>
+        <span>Session ready. Send a message to begin.</span>
       </div>
     </template>
   </div>
