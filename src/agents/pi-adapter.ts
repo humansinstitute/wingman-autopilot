@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { AgentAdapter, AdapterSessionContext } from "./agent-adapter";
 import type { AgentRuntimeStatus } from "../types/agent-status";
 import type { AgentMessage, AgentReadyOptions } from "./agent-client";
-import { parsePiSessionMessagesWithProgress } from "./pi-session-messages";
+import { parsePiSessionMessages } from "./pi-session-messages";
 
 type AdapterState = "initializing" | "ready" | "busy" | "disposed";
 
@@ -162,29 +162,17 @@ export class PiAdapter implements AgentAdapter {
       }
     }
     if (!sessionFile) {
-      const baseMessages: AgentMessage[] = [
+      this.messages = [
         {
           role: "assistant",
           content: PI_STARTUP_MESSAGE,
           createdAt: PI_STARTUP_CREATED_AT,
         },
       ];
-      this.messages = this.state === "busy"
-        ? [
-            ...baseMessages,
-            {
-              role: "assistant",
-              content: "Pi is working on your request...",
-              createdAt: "1970-01-01T00:00:01.000Z",
-            },
-          ]
-        : baseMessages;
       return;
     }
     const content = await readFile(sessionFile, "utf8");
-    const parsedMessages = parsePiSessionMessagesWithProgress(content, {
-      includeProgress: this.state === "busy",
-    });
+    const parsedMessages = parsePiSessionMessages(content);
     this.messages = parsedMessages.length > 0
       ? parsedMessages
       : [

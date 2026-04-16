@@ -18,14 +18,16 @@ interface PiSessionMessage {
 }
 
 interface PiSessionEntry {
+  id?: string;
   type?: string;
   timestamp?: string;
   message?: PiSessionMessage;
 }
 
-const PI_PROGRESS_CREATED_AT = '1970-01-01T00:00:01.000Z';
-const PI_WORKING_MESSAGE = 'Pi is working on your request...';
-const PI_REASONING_MESSAGE = 'Pi is reasoning about your request...';
+interface PiToolCallSummary {
+  label: string;
+  content: string;
+}
 
 function safeParsePiEntries(content: string): PiSessionEntry[] {
   return content
@@ -69,7 +71,7 @@ function resolvePiCreatedAt(entry: PiSessionEntry): string {
   return new Date().toISOString();
 }
 
-function truncatePiDetail(value: string, maxLength = 64): string {
+function truncatePiDetail(value: string, maxLength = 120): string {
   const trimmed = value.trim();
   if (trimmed.length <= maxLength) {
     return trimmed;
@@ -77,130 +79,137 @@ function truncatePiDetail(value: string, maxLength = 64): string {
   return `${trimmed.slice(0, Math.max(0, maxLength - 1)).trimEnd()}...`;
 }
 
-function summarizePiToolCall(part: PiSessionContentPart): string {
+function readPiToolArgument(args: Record<string, unknown> | null, key: string): string {
+  if (!args) {
+    return '';
+  }
+  const value = args[key];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function buildPiToolCallSummary(part: PiSessionContentPart): PiToolCallSummary {
   const toolName = typeof part.name === 'string' && part.name.trim().length > 0
     ? part.name.trim()
     : 'tool';
   const args = part.arguments && typeof part.arguments === 'object' ? part.arguments : null;
-  const command = typeof args?.command === 'string' ? args.command.trim() : '';
-  if (command) {
-    return `${toolName}: ${truncatePiDetail(command)}`;
-  }
-  const path = typeof args?.path === 'string' ? args.path.trim() : '';
-  if (path) {
-    return `${toolName}: ${truncatePiDetail(path)}`;
-  }
-  return toolName;
-}
+  const command = readPiToolArgument(args, 'command');
+  const path = readPiToolArgument(args, 'path');
+  const target = command || path;
+  const label = target ? `${toolName}: ${truncatePiDetail(target)}` : toolName;
+  const content = target
+    ? `${toolName}\n${target}`
+    : toolName;
 
-function summarizePiToolCalls(parts: PiSessionContentPart[]): string | null {
-  const calls = parts
-    .filter((part) => part?.type === 'toolCall')
-    .map((part) => summarizePiToolCall(part))
-    .filter((value) => value.length > 0);
-
-  if (calls.length === 0) {
-    return null;
-  }
-
-  if (calls.length === 1) {
-    return `Pi is working... ${calls[0]}`;
-  }
-
-  const [first, second, ...rest] = calls;
-  const summary = [first, second].filter(Boolean).join(', ');
-  if (rest.length === 0) {
-    return `Pi is working... ${summary}`;
-  }
-  return `Pi is working... ${summary} (+${rest.length} more)`;
-}
-
-function buildPiProgressMessage(
-  entry: PiSessionEntry | null,
-  fallbackCreatedAt: string,
-): AgentMessage {
-  const message = entry?.message;
-  const parts = Array.isArray(message?.content) ? message.content : [];
-  const toolCallSummary = summarizePiToolCalls(parts);
-  if (toolCallSummary) {
-    return {
-      role: 'assistant',
-      content: toolCallSummary,
-      createdAt: resolvePiCreatedAt(entry!),
-    };
-  }
-
-  if (message?.role === 'toolResult') {
-    const toolName = typeof message.toolName === 'string' && message.toolName.trim().length > 0
-      ? message.toolName.trim()
-      : 'tool';
-    return {
-      role: 'assistant',
-      content: `Pi is working... completed ${toolName}`,
-      createdAt: resolvePiCreatedAt(entry!),
-    };
-  }
-
-  const hasThinking = parts.some((part) => part?.type === 'thinking');
   return {
-    role: 'assistant',
-    content: hasThinking ? PI_REASONING_MESSAGE : PI_WORKING_MESSAGE,
-    createdAt: entry ? resolvePiCreatedAt(entry) : fallbackCreatedAt,
+    label,
+    content,
   };
+}
+
+function extractPiToolCalls(message: PiSessionMessage | undefined): PiSessionContentPart[] {
+  const parts = Array.isArray(message?.content) ? message.content : [];
+  return parts.filter((part) => part?.type === 'toolCall');
+}
+
+function buildPiToolCallContent(parts: PiSessionContentPart[]): string {
+  const summaries = parts.map((part) => buildPiToolCallSummary(part));
+  if (summaries.length === 0) {
+    return '';
+  }
+  if (summaries.length === 1) {
+    return summaries[0]!.content;
+  }
+  return summaries
+    .map((summary, index) => `[${index + 1}] ${summary.content}`)
+    .join('\n\n');
+}
+
+function buildPiToolResultContent(
+  message: PiSessionMessage,
+  toolCallsById: Map<string, PiToolCallSummary>,
+): string {
+  const body = extractPiTextParts(message);
+  const toolName = typeof message.toolName === 'string' && message.toolName.trim().length > 0
+    ? message.toolName.trim()
+    : 'tool';
+  const toolCallId = typeof message.toolCallId === 'string' ? message.toolCallId : '';
+  const callSummary = toolCallsById.get(toolCallId);
+  const header = callSummary?.label ?? toolName;
+
+  if (!body) {
+    return header;
+  }
+
+  return `${header}\n\n${body}`;
 }
 
 export function parsePiSessionMessages(content: string): AgentMessage[] {
   const messages: AgentMessage[] = [];
+  const toolCallsById = new Map<string, PiToolCallSummary>();
 
   for (const entry of safeParsePiEntries(content)) {
     if (entry.type !== 'message' || !entry.message) {
       continue;
     }
 
-    const role =
-      entry.message.role === 'user' || entry.message.role === 'assistant'
-        ? entry.message.role
-        : null;
-    if (!role) {
+    const createdAt = resolvePiCreatedAt(entry);
+    const role = entry.message.role;
+
+    if (role === 'user') {
+      const text = extractPiTextParts(entry.message);
+      if (text) {
+        messages.push({
+          role: 'user',
+          content: text,
+          createdAt,
+        });
+      }
       continue;
     }
 
-    const text = extractPiTextParts(entry.message);
-    if (!text) {
+    if (role === 'assistant') {
+      const text = extractPiTextParts(entry.message);
+      if (text) {
+        messages.push({
+          role: 'assistant',
+          content: text,
+          createdAt,
+        });
+      }
+
+      const toolCalls = extractPiToolCalls(entry.message);
+      if (toolCalls.length > 0) {
+        for (const toolCall of toolCalls) {
+          const toolCallId = typeof toolCall.id === 'string' ? toolCall.id : '';
+          if (toolCallId) {
+            toolCallsById.set(toolCallId, buildPiToolCallSummary(toolCall));
+          }
+        }
+
+        messages.push({
+          role: 'assistant',
+          content: buildPiToolCallContent(toolCalls),
+          createdAt,
+        });
+      }
       continue;
     }
 
-    messages.push({
-      role,
-      content: text,
-      createdAt: resolvePiCreatedAt(entry),
-    });
+    if (role === 'toolResult') {
+      const content = buildPiToolResultContent(entry.message, toolCallsById);
+      if (content) {
+        messages.push({
+          role: 'assistant',
+          content,
+          createdAt,
+        });
+      }
+    }
   }
 
   return messages;
 }
 
-export function parsePiSessionMessagesWithProgress(
-  content: string,
-  options?: { includeProgress?: boolean },
-): AgentMessage[] {
-  const messages = parsePiSessionMessages(content);
-  if (!options?.includeProgress) {
-    return messages;
-  }
-
-  const entries = safeParsePiEntries(content).filter((entry) => entry.type === 'message' && entry.message);
-  const lastEntry = entries.length > 0 ? entries[entries.length - 1]! : null;
-  const lastUserIndex = messages.map((message) => message.role).lastIndexOf('user');
-  const lastAssistantIndex = messages.map((message) => message.role).lastIndexOf('assistant');
-  const awaitingAssistantReply = lastUserIndex > lastAssistantIndex;
-  if (!awaitingAssistantReply) {
-    return messages;
-  }
-
-  const progressMessage = buildPiProgressMessage(
-    lastEntry,
-    messages[lastUserIndex]?.createdAt ?? PI_PROGRESS_CREATED_AT,
-  );
-  return [...messages, progressMessage];
+export function parsePiSessionMessagesWithProgress(content: string): AgentMessage[] {
+  return parsePiSessionMessages(content);
 }

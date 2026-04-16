@@ -6,8 +6,6 @@ import { join } from "node:path";
 import { parsePiSessionMessages, PiAdapter } from "./pi-adapter";
 import { parsePiSessionMessagesWithProgress } from "./pi-session-messages";
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 describe("parsePiSessionMessages", () => {
   test("extracts user and assistant text messages from session jsonl", () => {
     const content = [
@@ -49,7 +47,7 @@ describe("parsePiSessionMessages", () => {
 });
 
 describe("parsePiSessionMessagesWithProgress", () => {
-  test("adds a progress message while pi is mid-turn", () => {
+  test("surfaces tool calls as actual conversation entries while pi is mid-turn", () => {
     const content = [
       JSON.stringify({ type: "session", id: "abc" }),
       JSON.stringify({
@@ -76,7 +74,7 @@ describe("parsePiSessionMessagesWithProgress", () => {
       }),
     ].join("\n");
 
-    expect(parsePiSessionMessagesWithProgress(content, { includeProgress: true })).toEqual([
+    expect(parsePiSessionMessagesWithProgress(content)).toEqual([
       {
         role: "user",
         content: "Inspect the repo",
@@ -84,7 +82,7 @@ describe("parsePiSessionMessagesWithProgress", () => {
       },
       {
         role: "assistant",
-        content: "Pi is working... bash: ls -la",
+        content: "bash\nls -la",
         createdAt: "2026-04-16T05:10:01.000Z",
       },
     ]);
@@ -208,73 +206,58 @@ process.stdout.write(reply + "\\n");
     ]);
   });
 
-  test("surfaces a progress message while pi is still working", async () => {
-    scratchDir = await mkdtemp(join(tmpdir(), "wingmen-pi-progress-"));
-    process.env.HOME = scratchDir;
+  test("includes tool results as actual visible content", () => {
+    const content = [
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-04-16T05:10:00.000Z",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "Inspect the repo" }],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-04-16T05:10:01.000Z",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "call-1",
+              name: "read",
+              arguments: { path: "src/main.ts" },
+            },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-04-16T05:10:02.000Z",
+        message: {
+          role: "toolResult",
+          toolCallId: "call-1",
+          toolName: "read",
+          content: [{ type: "text", text: "const answer = 42;" }],
+        },
+      }),
+    ].join("\n");
 
-    const fakePiPath = join(scratchDir, "slow-pi.js");
-    await writeFile(
-      fakePiPath,
-      `#!/usr/bin/env node
-const fs = require("fs");
-const path = require("path");
-
-const args = process.argv.slice(2);
-const sessionDir = args[args.indexOf("--session-dir") + 1];
-const prompt = args[args.indexOf("-p") + 1];
-fs.mkdirSync(sessionDir, { recursive: true });
-const sessionFile = path.join(sessionDir, "session.jsonl");
-if (!fs.existsSync(sessionFile)) {
-  fs.writeFileSync(sessionFile, JSON.stringify({ type: "session", id: "session-1" }) + "\\n");
-}
-const now = new Date().toISOString();
-fs.appendFileSync(sessionFile, JSON.stringify({ type: "message", timestamp: now, message: { role: "user", content: [{ type: "text", text: prompt }] } }) + "\\n");
-fs.appendFileSync(sessionFile, JSON.stringify({ type: "message", timestamp: new Date(Date.now() + 1).toISOString(), message: { role: "assistant", content: [{ type: "toolCall", name: "bash", arguments: { command: "ls -la" } }] } }) + "\\n");
-setTimeout(() => {
-  fs.appendFileSync(sessionFile, JSON.stringify({ type: "message", timestamp: new Date(Date.now() + 2).toISOString(), message: { role: "assistant", content: [{ type: "text", text: "done" }] } }) + "\\n");
-  process.stdout.write("done\\n");
-}, 200);
-`,
-    );
-    await chmod(fakePiPath, 0o755);
-
-    const adapter = new PiAdapter({
-      id: "session-progress",
-      port: 3703,
-      agent: "pi",
-      host: "127.0.0.1",
-      workingDirectory: scratchDir,
-      env: { PI_CLI: fakePiPath },
-    });
-
-    const sendPromise = adapter.sendMessage("Check the repo");
-    await sleep(75);
-
-    await expect(adapter.fetchMessages()).resolves.toEqual([
+    expect(parsePiSessionMessages(content)).toEqual([
       {
         role: "user",
-        content: "Check the repo",
-        createdAt: expect.any(String),
+        content: "Inspect the repo",
+        createdAt: "2026-04-16T05:10:00.000Z",
       },
       {
         role: "assistant",
-        content: "Pi is working... bash: ls -la",
-        createdAt: expect.any(String),
-      },
-    ]);
-
-    await sendPromise;
-
-    await expect(adapter.fetchMessages()).resolves.toEqual([
-      {
-        role: "user",
-        content: "Check the repo",
-        createdAt: expect.any(String),
+        content: "read\nsrc/main.ts",
+        createdAt: "2026-04-16T05:10:01.000Z",
       },
       {
         role: "assistant",
-        content: "done",
-        createdAt: expect.any(String),
+        content: "read: src/main.ts\n\nconst answer = 42;",
+        createdAt: "2026-04-16T05:10:02.000Z",
       },
     ]);
   });
