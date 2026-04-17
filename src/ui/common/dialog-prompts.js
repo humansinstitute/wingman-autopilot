@@ -19,7 +19,7 @@ function appendDialogToBody(dialog) {
 
 function createDialogShell({ title, description, testId }) {
   const dialog = document.createElement('dialog');
-  dialog.className = 'wm-dialog';
+  dialog.className = 'wm-dialog wm-dialog-prompt';
   dialog.setAttribute('aria-labelledby', 'wm-dialog-prompt-title');
   if (description) {
     dialog.setAttribute('aria-describedby', 'wm-dialog-prompt-description');
@@ -52,6 +52,7 @@ function createDialogShell({ title, description, testId }) {
   body.className = 'wm-dialog__body';
 
   const footer = document.createElement('menu');
+  footer.className = 'wm-dialog__menu';
 
   form.append(header, body, footer);
   dialog.append(form);
@@ -83,13 +84,16 @@ export async function openTextPromptDialog({
     field.className = 'wm-dialog__field';
 
     const labelEl = document.createElement('span');
+    labelEl.className = 'wm-dialog__field-label';
     labelEl.textContent = label;
 
     const input = document.createElement('input');
     input.type = 'text';
+    input.className = 'wm-dialog__input';
     input.value = value;
     input.placeholder = placeholder;
     input.autocomplete = 'off';
+    input.setAttribute('aria-label', label);
 
     const status = document.createElement('p');
     status.className = 'wm-dialog__status';
@@ -102,16 +106,20 @@ export async function openTextPromptDialog({
 
     const cancelButton = document.createElement('button');
     cancelButton.type = 'button';
+    cancelButton.className = 'wm-button secondary';
     cancelButton.value = 'cancel';
     cancelButton.textContent = cancelLabel;
+    cancelButton.dataset.testid = 'dialog-cancel';
     cancelButton.addEventListener('click', () => {
       dialog.close('cancel');
     });
 
     const confirmButton = document.createElement('button');
     confirmButton.type = 'submit';
+    confirmButton.className = 'wm-button';
     confirmButton.value = 'confirm';
     confirmButton.textContent = confirmLabel;
+    confirmButton.dataset.testid = 'dialog-confirm';
 
     footer.append(cancelButton, confirmButton);
 
@@ -158,16 +166,20 @@ export async function openConfirmDialog({
 
     const cancelButton = document.createElement('button');
     cancelButton.type = 'button';
+    cancelButton.className = 'wm-button secondary';
     cancelButton.value = 'cancel';
     cancelButton.textContent = cancelLabel;
+    cancelButton.dataset.testid = 'dialog-cancel';
     cancelButton.addEventListener('click', () => {
       dialog.close('cancel');
     });
 
     const confirmButton = document.createElement('button');
     confirmButton.type = 'button';
+    confirmButton.className = 'wm-button';
     confirmButton.value = 'confirm';
     confirmButton.textContent = confirmLabel;
+    confirmButton.dataset.testid = 'dialog-confirm';
     confirmButton.addEventListener('click', () => {
       dialog.close('confirm');
     });
