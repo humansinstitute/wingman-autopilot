@@ -186,8 +186,6 @@ export function initWorkspaceTree({ state, refreshApps, showToast }) {
       const message = error instanceof Error ? error.message : "Failed to import app";
       if (showToast) {
         showToast(message, "error");
-      } else {
-        window.alert(message);
       }
     }
   }

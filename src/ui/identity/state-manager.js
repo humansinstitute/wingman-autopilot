@@ -1102,7 +1102,9 @@ export function initIdentityStateManager(deps) {
     const root = entry?.root ?? document;
     const generateBtn = root.querySelector('[data-action="generate-keys"]');
     if (!generateBtn) {
-      window.alert("Registration is unavailable right now. Try an advanced option below.");
+      showToast("Registration is unavailable right now. Try an advanced option below.", {
+        type: "warning",
+      });
       return;
     }
     if (entry?.registerButton) {
@@ -1191,7 +1193,7 @@ export function initIdentityStateManager(deps) {
         } catch (error) {
           console.error("[identity] logout failed", error);
           const message = error instanceof Error ? error.message : "Failed to sign out";
-          window.alert(message);
+          showToast(message, { type: "error" });
         }
       }
     }
@@ -1203,7 +1205,7 @@ export function initIdentityStateManager(deps) {
       } catch (error) {
         console.error("[identity] server logout failed", error);
         const message = error instanceof Error ? error.message : "Failed to clear session on server.";
-        window.alert(message);
+        showToast(message, { type: "error" });
       }
     }
 

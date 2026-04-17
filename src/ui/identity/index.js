@@ -13,6 +13,7 @@ import { nip19, nip44 } from "/vendor/nostr-tools/index.js";
 import { schnorr, secp256k1 } from "/vendor/@noble/curves/secp256k1.js";
 import { renderQrCode } from "./nostrconnect-qr.js";
 import * as deviceKeystore from "./device-keystore.js";
+import { showToast } from "../utils/toast.js";
 
 // bunker-client.js (1.4 MB) is lazy-loaded only when Nostr Connect is needed
 let _bunkerModule = null;
@@ -975,7 +976,7 @@ const wireLocalIdentityPanel = (root, context) => {
       handleAuthSuccess({ npub, nsec, expiresAt, method: "local_keys" });
     } catch (error) {
       console.error("[identity] generate keys failed", error);
-      window.alert(error instanceof Error ? error.message : "Failed to generate keys");
+      showToast(error instanceof Error ? error.message : "Failed to generate keys", { type: "error" });
     } finally {
       if (secretKey) {
         wipeBytes(secretKey);
@@ -1023,10 +1024,10 @@ const wireLocalIdentityPanel = (root, context) => {
 
       const { expiresAt } = await persistServerSession(npub, null);
       handleAuthSuccess({ npub, nsec, expiresAt, method: "local_keys" });
-      window.alert("Signed in with imported key");
+      showToast("Signed in with imported key", { type: "success" });
     } catch (error) {
       console.error("[identity] import nsec failed", error);
-      window.alert(error instanceof Error ? error.message : "Failed to import key");
+      showToast(error instanceof Error ? error.message : "Failed to import key", { type: "error" });
     } finally {
       importForm.classList.remove("is-loading");
       if (submitButton) submitButton.disabled = false;
@@ -1290,7 +1291,7 @@ const handleKeyTeleport = async ({ blob, context }) => {
     if (!response.ok) {
       const errorMsg = data?.error ?? `Key teleport failed (${response.status})`;
       console.error("[KeyTeleport]", errorMsg);
-      window.alert(`Key Teleport failed: ${errorMsg}`);
+      showToast(`Key Teleport failed: ${errorMsg}`, { type: "error" });
       return null;
     }
 
@@ -1298,12 +1299,12 @@ const handleKeyTeleport = async ({ blob, context }) => {
     const { encryptedNsec, npub: userNpub } = data;
     if (!encryptedNsec || typeof encryptedNsec !== "string") {
       console.error("[KeyTeleport] Invalid encryptedNsec received");
-      window.alert("Key Teleport failed: Invalid key format received");
+      showToast("Key Teleport failed: Invalid key format received", { type: "error" });
       return null;
     }
     if (!userNpub || typeof userNpub !== "string" || !userNpub.startsWith("npub1")) {
       console.error("[KeyTeleport] Invalid npub received");
-      window.alert("Key Teleport failed: Invalid public key received");
+      showToast("Key Teleport failed: Invalid public key received", { type: "error" });
       return null;
     }
 
@@ -1334,7 +1335,7 @@ const handleKeyTeleport = async ({ blob, context }) => {
       throwawaySecretKey = decoded.data;
     } catch (err) {
       console.error("[KeyTeleport] Failed to decode unlock code:", err);
-      window.alert("Key Teleport failed: Invalid unlock code");
+      showToast("Key Teleport failed: Invalid unlock code", { type: "error" });
       return null;
     }
 
@@ -1348,7 +1349,7 @@ const handleKeyTeleport = async ({ blob, context }) => {
       userPubkeyHex = decodedNpub.data;
     } catch (err) {
       console.error("[KeyTeleport] Failed to decode npub:", err);
-      window.alert("Key Teleport failed: Invalid public key");
+      showToast("Key Teleport failed: Invalid public key", { type: "error" });
       return null;
     }
 
@@ -1360,7 +1361,7 @@ const handleKeyTeleport = async ({ blob, context }) => {
       decryptedNsec = nip44.v2.decrypt(encryptedNsec, conversationKey);
     } catch (err) {
       console.error("[KeyTeleport] Failed to decrypt:", err);
-      window.alert("Key Teleport failed: Decryption failed. Wrong unlock code?");
+      showToast("Key Teleport failed: Decryption failed. Wrong unlock code?", { type: "error" });
       return null;
     }
 
@@ -1374,7 +1375,7 @@ const handleKeyTeleport = async ({ blob, context }) => {
       secretKey = decoded.data;
     } catch (err) {
       console.error("[KeyTeleport] Failed to decode decrypted nsec:", err);
-      window.alert("Key Teleport failed: Invalid decrypted key");
+      showToast("Key Teleport failed: Invalid decrypted key", { type: "error" });
       return null;
     }
 
@@ -1385,7 +1386,7 @@ const handleKeyTeleport = async ({ blob, context }) => {
 
     if (npub !== userNpub) {
       console.error("[KeyTeleport] Key mismatch: derived npub doesn't match provided npub");
-      window.alert("Key Teleport failed: Key verification failed");
+      showToast("Key Teleport failed: Key verification failed", { type: "error" });
       return null;
     }
 
@@ -1421,7 +1422,9 @@ const handleKeyTeleport = async ({ blob, context }) => {
     return npub;
   } catch (error) {
     console.error("[KeyTeleport] Error:", error instanceof Error ? error.message : error);
-    window.alert(`Key Teleport failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+    showToast(`Key Teleport failed: ${error instanceof Error ? error.message : "Unknown error"}`, {
+      type: "error",
+    });
     return null;
   }
 };

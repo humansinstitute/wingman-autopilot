@@ -59,6 +59,7 @@ export const createJobDialogController = (options) => {
     managerGoalOutput,
     workerPromptOutput,
     managerPromptOutput,
+    showToast,
   } = options;
 
   let definitions = [];
@@ -145,7 +146,7 @@ export const createJobDialogController = (options) => {
     resetFormState();
     updateSubmittingState();
     if (!definitions.length) {
-      window.alert("No enabled job definitions are available yet.");
+      showToast?.("No enabled job definitions are available yet.", { type: "warning" });
       return;
     }
     if (typeof dialog?.showModal === "function") {
@@ -179,17 +180,17 @@ export const createJobDialogController = (options) => {
     if (submitting) return;
     const values = collectValues();
     if (!values.jobId) {
-      window.alert("Select a job before launching.");
+      showToast?.("Select a job before launching.", { type: "warning" });
       jobSelect?.focus();
       return;
     }
     if (!values.workerDir) {
-      window.alert("Worker directory is required.");
+      showToast?.("Worker directory is required.", { type: "warning" });
       workerDirInput?.focus();
       return;
     }
     if (!values.managerDir) {
-      window.alert("Manager directory is required.");
+      showToast?.("Manager directory is required.", { type: "warning" });
       managerDirInput?.focus();
       return;
     }
@@ -200,7 +201,9 @@ export const createJobDialogController = (options) => {
       close();
     } catch (error) {
       console.error("Failed to launch job", error);
-      window.alert(`Failed to launch job: ${error instanceof Error ? error.message : String(error)}`);
+      showToast?.(`Failed to launch job: ${error instanceof Error ? error.message : String(error)}`, {
+        type: "error",
+      });
     } finally {
       submitting = false;
       updateSubmittingState();

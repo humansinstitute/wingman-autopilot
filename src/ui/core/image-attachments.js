@@ -5,7 +5,7 @@
  */
 
 export function initImageAttachments(deps) {
-  const { state, getSessionById } = deps;
+  const { state, getSessionById, showToast } = deps;
 
   // ── Text cursor helper ──────────────────────────────────────────
 
@@ -259,7 +259,7 @@ export function initImageAttachments(deps) {
     if (!files || files.length === 0) return;
     const session = getSessionById(sessionId);
     if (!session) {
-      window.alert("Unable to locate session for image upload.");
+      showToast?.("Unable to locate session for image upload.", { type: "error" });
       return;
     }
 
@@ -296,7 +296,7 @@ export function initImageAttachments(deps) {
           const errorText = data?.error || response.statusText || "Unknown error";
           const message = `Image upload failed (${response.status}): ${errorText}`;
           console.error("[image-upload]", message, { status: response.status, data });
-          window.alert(message);
+          showToast?.(message, { type: "error" });
           const currentValue = textarea.value;
           const markerIndex = markerId ? imagePreviewTracker.findMarkerInText(currentValue, markerId) : currentValue.lastIndexOf(uploadingPlaceholder);
           if (markerIndex !== -1) {
@@ -322,7 +322,7 @@ export function initImageAttachments(deps) {
               : null;
 
         if (!placeholder) {
-          window.alert("Image upload succeeded without a usable reference.");
+          showToast?.("Image upload succeeded without a usable reference.", { type: "error" });
           const currentValue = textarea.value;
           const markerIndex = markerId ? imagePreviewTracker.findMarkerInText(currentValue, markerId) : currentValue.lastIndexOf(uploadingPlaceholder);
           if (markerIndex !== -1) {
@@ -368,7 +368,7 @@ export function initImageAttachments(deps) {
         textarea.focus({ preventScroll: true });
       } catch (error) {
         console.error("Failed to upload image", error);
-        window.alert("Image upload failed. Check console for details.");
+        showToast?.("Image upload failed. Check console for details.", { type: "error" });
       } finally {
         setUploadingState(false);
       }
@@ -403,7 +403,7 @@ export function initImageAttachments(deps) {
     if (!files || files.length === 0) return;
     const session = getSessionById(sessionId);
     if (!session) {
-      window.alert("Unable to locate session for file upload.");
+      showToast?.("Unable to locate session for file upload.", { type: "error" });
       return;
     }
 
@@ -420,7 +420,7 @@ export function initImageAttachments(deps) {
               : "";
         const reference = placeholder || fallback;
         if (!reference) {
-          window.alert("File upload succeeded without a usable reference.");
+          showToast?.("File upload succeeded without a usable reference.", { type: "error" });
           continue;
         }
         const needsPrefix = textarea.value.length > 0 && !textarea.value.endsWith("\n");
@@ -431,7 +431,7 @@ export function initImageAttachments(deps) {
       } catch (error) {
         console.error("Failed to upload file", error);
         const message = error instanceof Error ? error.message : "File upload failed. Check console for details.";
-        window.alert(message);
+        showToast?.(message, { type: "error" });
       } finally {
         setUploadingState(false);
       }

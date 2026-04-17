@@ -1,3 +1,5 @@
+import { showToast } from "../utils/toast.js";
+
 const DEFAULT_LIVE_ROUTE_PREFIX = "/live";
 const MOBILE_SESSION_LAUNCH_MEDIA_QUERY = "(max-width: 720px)";
 
@@ -96,15 +98,17 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix, not
     typeof liveRoutePrefix === "string" && liveRoutePrefix.trim().length > 0
       ? liveRoutePrefix
       : DEFAULT_LIVE_ROUTE_PREFIX;
+  const notifyUser =
+    typeof notify === "function"
+      ? notify
+      : typeof document !== "undefined"
+        ? (message, options) => showToast(message, options)
+        : null;
 
   return async (agentId, workingDirectory, name, workspace, options = {}) => {
     const normalizedAgent = typeof agentId === "string" ? agentId.trim() : "";
     if (!normalizedAgent) {
-      if (typeof notify === "function") {
-        notify("Select an agent before launching a session.", { type: "warning" });
-      } else {
-        window.alert("Select an agent before launching a session.");
-      }
+      notifyUser?.("Select an agent before launching a session.", { type: "warning" });
       return;
     }
 
@@ -156,11 +160,7 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix, not
       closePendingSessionWindow(pendingWindow);
       const data = await response.json().catch(() => ({}));
       const message = `Failed to start session: ${data.error ?? response.statusText}`;
-      if (typeof notify === "function") {
-        notify(message, { type: "error" });
-      } else {
-        window.alert(message);
-      }
+      notifyUser?.(message, { type: "error" });
       return;
     }
 

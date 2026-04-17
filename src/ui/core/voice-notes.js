@@ -454,12 +454,12 @@ export function initVoiceNotes(deps) {
   async function openVoiceNoteRecorder(sessionId) {
     const session = getSessionById(sessionId);
     if (!session) {
-      window.alert("Unable to locate session for voice note recording.");
+      showToast("Unable to locate session for voice note recording.", { type: "error" });
       return;
     }
 
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      window.alert("Voice note recording is not supported in this browser.");
+      showToast("Voice note recording is not supported in this browser.", { type: "warning" });
       return;
     }
 

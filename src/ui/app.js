@@ -1966,6 +1966,7 @@ jobDialogController = createJobDialogController({
   managerGoalOutput: jobDefaultManagerGoal,
   workerPromptOutput: jobDefaultWorkerPrompt,
   managerPromptOutput: jobDefaultManagerPrompt,
+  showToast,
 });
 
 const stopSession = async (sessionId) => {
@@ -2927,7 +2928,7 @@ liveRefreshController = createLiveRefreshController({
 
 initQuickLauncher({ state, launchSession, showToast });
 
-const imageAttachmentsModule = initImageAttachments({ state, getSessionById });
+const imageAttachmentsModule = initImageAttachments({ state, getSessionById, showToast });
 insertTextAtCursor = imageAttachmentsModule.insertTextAtCursor;
 clearImagePreviews = imageAttachmentsModule.clearImagePreviews;
 extractImageFiles = imageAttachmentsModule.extractImageFiles;
