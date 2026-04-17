@@ -5,6 +5,7 @@
  */
 
 import { getSessionDisplayName } from "../core/icons.js";
+import { openConfirmDialog, openTextPromptDialog } from "../common/dialog-prompts.js";
 import { show as scrollPillShow } from "../live/scroll-pill.js";
 import { isAlpineChatEnabled, MessageStore } from "../live/index.js";
 
@@ -562,28 +563,42 @@ export function initQueueModule(deps) {
     }
   };
 
-  const editQueuePrompt = (sessionId, promptId, currentContent) => {
-    const newContent = window.prompt("Edit prompt:", currentContent);
-    if (newContent !== null && newContent.trim() !== "") {
-      updatePromptInQueue(sessionId, promptId, newContent.trim()).then((success) => {
-        if (success) {
-          const queue = getSessionQueue(sessionId);
-          updateQueueModalContent(sessionId, queue.prompts);
-          updateAgentStatusIndicators();
-        }
-      });
+  const editQueuePrompt = async (sessionId, promptId, currentContent) => {
+    const newContent = await openTextPromptDialog({
+      title: "Edit Queued Prompt",
+      description: "Update the queued prompt before it is dispatched to the agent.",
+      label: "Prompt",
+      value: currentContent,
+      confirmLabel: "Save",
+      testId: "edit-queued-prompt-dialog",
+      validate: (value) => (value ? "" : "Prompt content cannot be empty."),
+    });
+    if (newContent === null) {
+      return;
+    }
+    const success = await updatePromptInQueue(sessionId, promptId, newContent);
+    if (success) {
+      const queue = getSessionQueue(sessionId);
+      updateQueueModalContent(sessionId, queue.prompts);
+      updateAgentStatusIndicators();
     }
   };
 
-  const deleteQueuePrompt = (sessionId, promptId) => {
-    if (window.confirm("Delete this prompt from the queue?")) {
-      removeFromPromptQueue(sessionId, promptId).then((success) => {
-        if (success) {
-          const queue = getSessionQueue(sessionId);
-          updateQueueModalContent(sessionId, queue.prompts);
-          updateAgentStatusIndicators();
-        }
-      });
+  const deleteQueuePrompt = async (sessionId, promptId) => {
+    const confirmed = await openConfirmDialog({
+      title: "Delete Queued Prompt",
+      description: "Remove this prompt from the session queue. This cannot be undone.",
+      confirmLabel: "Delete",
+      testId: "delete-queued-prompt-dialog",
+    });
+    if (!confirmed) {
+      return;
+    }
+    const success = await removeFromPromptQueue(sessionId, promptId);
+    if (success) {
+      const queue = getSessionQueue(sessionId);
+      updateQueueModalContent(sessionId, queue.prompts);
+      updateAgentStatusIndicators();
     }
   };
 

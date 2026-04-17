@@ -31,6 +31,7 @@ import {
   createWriterIcon,
 } from "./writer/writer-panel.js";
 import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
+import { openTextPromptDialog } from "./common/dialog-prompts.js";
 import { populateAgentSelect } from "./common/agent-options.js";
 import { createSessionDialogController } from "./common/session-dialog.js";
 import { createJobDialogController } from "./common/job-dialog.js";
@@ -2015,13 +2016,16 @@ const promptRenameSession = async (session) => {
     typeof session.name === "string" && session.name.trim().length > 0
       ? session.name.trim()
       : getSessionDisplayName(session);
-  const nextName = window.prompt("Rename session", currentLabel);
-  if (nextName === null) return;
-  const trimmed = nextName.trim();
-  if (!trimmed) {
-    window.alert("Session name cannot be empty.");
-    return;
-  }
+  const trimmed = await openTextPromptDialog({
+    title: "Rename Session",
+    description: "Update the label used across the session list and live view.",
+    label: "Session name",
+    value: currentLabel,
+    confirmLabel: "Save",
+    testId: "rename-session-dialog",
+    validate: (value) => (value ? "" : "Session name cannot be empty."),
+  });
+  if (trimmed === null) return;
   const existing = typeof session.name === "string" ? session.name.trim() : "";
   if (existing === trimmed) {
     return;
