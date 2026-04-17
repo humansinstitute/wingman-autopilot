@@ -23,6 +23,7 @@
  * @param {Function} deps.triggerWarmRestart         - triggers a warm restart of Wingman
  * @param {Function} deps.runSystemCleanup           - triggers system cleanup
  * @param {Function} deps.openIdentityLoginDialog    - opens the identity login dialog
+ * @param {Function} deps.showToast                  - displays toast feedback
  * @param {Function} deps.buildSessionOrigin         - builds session origin metadata
  * @param {Function} deps.openAppLogsDialog          - opens the app logs dialog
  * @param {Function} deps.openDeployDialog           - opens the deploy dialog
@@ -50,6 +51,7 @@ export function initAppCards(deps) {
     triggerWarmRestart,
     runSystemCleanup,
     openIdentityLoginDialog,
+    showToast,
     buildSessionOrigin,
     openAppLogsDialog,
     openDeployDialog,
@@ -468,13 +470,15 @@ export function initAppCards(deps) {
       }
       const workingDirectory = typeof app.root === "string" ? app.root : "";
       if (!workingDirectory) {
-        window.alert("App root directory is unavailable for this app.");
+        showToast("App root directory is unavailable for this app.", { type: "warning" });
         return;
       }
       const agentId = state.config?.defaultAgent ?? "claude";
       const configuredAgents = Array.isArray(state.config?.agents) ? state.config.agents : null;
       if (configuredAgents && !configuredAgents.some((agent) => agent && typeof agent.id === "string" && agent.id === agentId)) {
-        window.alert(`${agentId} agent is not available. Update your configuration and try again.`);
+        showToast(`${agentId} agent is not available. Update your configuration and try again.`, {
+          type: "error",
+        });
         return;
       }
       const appName =
@@ -513,13 +517,15 @@ export function initAppCards(deps) {
       }
       const workingDirectory = typeof app.root === "string" ? app.root : "";
       if (!workingDirectory) {
-        window.alert("App root directory is unavailable for this app.");
+        showToast("App root directory is unavailable for this app.", { type: "warning" });
         return;
       }
       const agentId = state.config?.defaultAgent ?? "claude";
       const configuredAgents = Array.isArray(state.config?.agents) ? state.config.agents : null;
       if (configuredAgents && !configuredAgents.some((agent) => agent && typeof agent.id === "string" && agent.id === agentId)) {
-        window.alert(`${agentId} agent is not available. Update your configuration and try again.`);
+        showToast(`${agentId} agent is not available. Update your configuration and try again.`, {
+          type: "error",
+        });
         return;
       }
 
@@ -571,7 +577,7 @@ export function initAppCards(deps) {
         });
       } catch (error) {
         console.error("Fix with AI failed:", error);
-        window.alert("Failed to launch Fix with AI. Check console for details.");
+        showToast("Failed to launch Fix with AI. Check console for details.", { type: "error" });
       } finally {
         if (fixWithAiButton.isConnected) {
           fixWithAiButton.disabled = false;

@@ -402,7 +402,7 @@ export const initAppDialogs = ({
     event.preventDefault();
     const values = collectAppFormValues();
     if (!values.root) {
-      window.alert("Provide a root directory for the app.");
+      showToast("Provide a root directory for the app.", { type: "warning" });
       appRootInput?.focus();
       return;
     }
@@ -468,7 +468,7 @@ export const initAppDialogs = ({
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save app";
-      window.alert(message);
+      showToast(message, { type: "error" });
     } finally {
       setAppDialogSubmitting(false);
     }
@@ -607,7 +607,7 @@ export const initAppDialogs = ({
     const targetRoot = typeof root === "string" ? root.trim() : appRootInput?.value?.trim() ?? "";
     if (!targetRoot) {
       if (!silent) {
-        window.alert("Enter the app root directory before discovering scripts.");
+        showToast("Enter the app root directory before discovering scripts.", { type: "warning" });
         appRootInput?.focus();
       }
       return { applied: 0, success: false };
@@ -625,13 +625,13 @@ export const initAppDialogs = ({
       const scripts = payload && typeof payload === "object" ? (payload.scripts ?? {}) : {};
       const applied = applyDiscoveredScripts(scripts, { revealAdvanced });
       if (!silent && applied === 0) {
-        window.alert("No scripts discovered. Enter commands manually.");
+        showToast("No scripts discovered. Enter commands manually.", { type: "info" });
       }
       return { applied, success: true };
     } catch (error) {
       if (!silent) {
         const message = error instanceof Error ? error.message : "Failed to discover scripts";
-        window.alert(message);
+        showToast(message, { type: "error" });
       } else {
         console.warn("[apps] Script discovery failed", error);
       }
@@ -711,7 +711,7 @@ export const initAppDialogs = ({
     const repoUrl = appCloneUrlInput.value.trim();
     let folderName = appCloneNameInput?.value.trim() ?? "";
     if (!repoUrl) {
-      window.alert("Provide a repository URL to clone.");
+      showToast("Provide a repository URL to clone.", { type: "warning" });
       appCloneUrlInput.focus();
       return;
     }
@@ -722,7 +722,7 @@ export const initAppDialogs = ({
       }
     }
     if (!folderName) {
-      window.alert("Provide a folder name for the cloned repository.");
+      showToast("Provide a folder name for the cloned repository.", { type: "warning" });
       appCloneNameInput?.focus();
       return;
     }
@@ -759,7 +759,7 @@ export const initAppDialogs = ({
       closeAppCloneDialog();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to clone repository";
-      window.alert(message);
+      showToast(message, { type: "error" });
     } finally {
       appCloneConfirmButton.disabled = false;
     }
@@ -770,12 +770,12 @@ export const initAppDialogs = ({
     if (starterDialogState.launching) return;
     const selected = getSelectedStarterProject();
     if (!selected?.id) {
-      window.alert("Select a starter project.");
+      showToast("Select a starter project.", { type: "warning" });
       return;
     }
     const name = appStarterNameInput?.value?.trim() ?? "";
     if (!name) {
-      window.alert("Provide a name for the starter app.");
+      showToast("Provide a name for the starter app.", { type: "warning" });
       appStarterNameInput?.focus();
       return;
     }
@@ -801,7 +801,7 @@ export const initAppDialogs = ({
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to launch starter project";
-      window.alert(message);
+      showToast(message, { type: "error" });
     } finally {
       setStarterDialogSubmitting(false);
     }

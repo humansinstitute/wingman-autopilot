@@ -939,7 +939,7 @@ const linkAppToProject = async (context, app) => {
     showToast(context.projectName ? `Added to ${context.projectName}` : "App linked to project");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to link app to project";
-    window.alert(message);
+    showToast(message, { type: "error" });
   }
 };
 
@@ -1814,7 +1814,9 @@ const openJobDialog = async () => {
     await jobDialogController.open();
   } catch (error) {
     console.error("Failed to open job dialog", error);
-    window.alert(`Failed to load jobs: ${(error instanceof Error ? error.message : String(error))}`);
+    showToast(`Failed to load jobs: ${error instanceof Error ? error.message : String(error)}`, {
+      type: "error",
+    });
   }
 };
 
@@ -1854,6 +1856,7 @@ const handleSessionStart = createSessionStartHandler({
 const launchSession = createSessionLauncher({
   handleSessionStart,
   liveRoutePrefix: LIVE_ROUTE_PREFIX,
+  notify: (message, options) => showToast(message, options),
 });
 
 const launchJob = async ({
@@ -1969,14 +1972,14 @@ const stopSession = async (sessionId) => {
   try {
     const result = await stopSessionAction(sessionId);
     if (!result.success) {
-      window.alert(`Failed to stop session: ${result.error}`);
+      showToast(`Failed to stop session: ${result.error}`, { type: "error" });
       return;
     }
     await fetchSessions();
     render();
   } catch (error) {
     console.error("Failed to stop session", error);
-    window.alert("Failed to stop session. Check console for details.");
+    showToast("Failed to stop session. Check console for details.", { type: "error" });
   }
 };
 
@@ -1984,14 +1987,14 @@ const deleteSession = async (sessionId) => {
   try {
     const result = await deleteSessionAction(sessionId);
     if (!result.success) {
-      window.alert(`Failed to delete session: ${result.error}`);
+      showToast(`Failed to delete session: ${result.error}`, { type: "error" });
       return;
     }
     await fetchSessions();
     render();
   } catch (error) {
     console.error("Failed to delete session", error);
-    window.alert("Failed to delete session. Check console for details.");
+    showToast("Failed to delete session. Check console for details.", { type: "error" });
   }
 };
 
@@ -2024,14 +2027,14 @@ const promptRenameSession = async (session) => {
     render();
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to rename session";
-    window.alert(message);
+    showToast(message, { type: "error" });
   }
 };
 
 const resumeSession = async (sessionId) => {
   const session = getSessionById(sessionId);
   if (!session) {
-    window.alert("Session not available. It may have been deleted.");
+    showToast("Session not available. It may have been deleted.", { type: "warning" });
     return;
   }
   currentRoute = "live";
@@ -2061,7 +2064,7 @@ const sendMessage = async (sessionId, content) => {
   if (!session) return;
   const trimmed = typeof content === "string" ? content.trim() : "";
   if (!trimmed) {
-    window.alert("Enter a message before sending.");
+    showToast("Enter a message before sending.", { type: "warning" });
     return;
   }
 
@@ -2115,7 +2118,7 @@ const sendMessage = async (sessionId, content) => {
 
   const finalContent = typeof preparedContent === "string" ? preparedContent.trim() : "";
   if (!finalContent) {
-    window.alert("Enter a message before sending.");
+    showToast("Enter a message before sending.", { type: "warning" });
     return { sent: false, queued: false };
   }
 
@@ -2303,7 +2306,7 @@ const deriveAppWindowName = (labelValue, rootValue) => {
 const triggerAppAction = async (appId, action) => {
   const result = await triggerAppActionApi(appId, action);
   if (!result.success) {
-    window.alert(result.error);
+    showToast(result.error, { type: "error" });
     return false;
   }
   await refreshApps({ skipRender: currentRoute !== "apps" });
@@ -2330,7 +2333,7 @@ const triggerWarmRestart = async () => {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to initiate restart";
     appsStore().system.restart.error = message;
-    window.alert(message);
+    showToast(message, { type: "error" });
     return false;
   } finally {
     appsStore().system.restart.submitting = false;
@@ -2358,7 +2361,7 @@ const runSystemCleanup = async () => {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to stop agents and apps";
     appsStore().system.cleanup.error = message;
-    window.alert(message);
+    showToast(message, { type: "error" });
     return false;
   } finally {
     appsStore().system.cleanup.running = false;
@@ -2388,7 +2391,7 @@ const removeApp = async (appId) => {
     : false;
   const result = await removeAppApi(appId, killSession);
   if (!result.success) {
-    window.alert(result.error);
+    showToast(result.error, { type: "error" });
     return;
   }
   await refreshApps({ skipRender: false });
@@ -3042,6 +3045,7 @@ const appCardsModule = initAppCards({
   triggerWarmRestart: (...args) => triggerWarmRestart(...args),
   runSystemCleanup: (...args) => runSystemCleanup(...args),
   openIdentityLoginDialog,
+  showToast,
   buildSessionOrigin,
   openAppLogsDialog: (...args) => openAppLogsDialog(...args),
   openDeployDialog: (...args) => openDeployDialog(...args),
@@ -3167,6 +3171,7 @@ const dirBrowserModule = initDirectoryBrowser({
   loadFilesTree,
   fetchConfig: (...args) => fetchConfig(...args),
   getSessionDialogController: () => sessionDialogController,
+  showToast,
 });
 scheduleDirectorySuggestions = dirBrowserModule.scheduleDirectorySuggestions;
 openDirectoryBrowser = dirBrowserModule.openDirectoryBrowser;

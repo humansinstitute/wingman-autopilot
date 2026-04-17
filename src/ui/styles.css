@@ -8022,6 +8022,18 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   box-shadow: 0 12px 28px rgba(239, 68, 68, 0.28);
 }
 
+.wm-toast--success {
+  background: rgba(16, 185, 129, 0.94);
+  color: #ffffff;
+  box-shadow: 0 12px 28px rgba(16, 185, 129, 0.24);
+}
+
+.wm-toast--warning {
+  background: rgba(245, 158, 11, 0.96);
+  color: #ffffff;
+  box-shadow: 0 12px 28px rgba(245, 158, 11, 0.26);
+}
+
 @media (max-width: 720px) {
   .wm-file-editor {
     padding: 1rem;

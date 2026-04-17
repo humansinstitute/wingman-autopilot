@@ -45,6 +45,7 @@ export function initDirectoryBrowser(deps) {
     loadFilesTree,
     fetchConfig,
     getSessionDialogController,
+    showToast,
   } = deps;
 
   // ── constants and internal state ──────────────────────────────────
@@ -336,7 +337,7 @@ export function initDirectoryBrowser(deps) {
 
     const loaded = await updateDirectoryBrowser(seedCandidate);
     if (!loaded) {
-      window.alert("Unable to open directory browser for the requested path.");
+      showToast("Unable to open directory browser for the requested path.", { type: "error" });
       directoryBrowserState.onSelect = null;
       return null;
     }
@@ -352,7 +353,7 @@ export function initDirectoryBrowser(deps) {
   const promptCreateDirectoryAtPath = async (parentPath, { onSuccess } = {}) => {
     const basePath = typeof parentPath === "string" && parentPath.length > 0 ? parentPath : null;
     if (!basePath) {
-      window.alert("Select a parent directory first.");
+      showToast("Select a parent directory first.", { type: "warning" });
       return false;
     }
     const trimmed = await openTextPromptDialog({
@@ -375,7 +376,7 @@ export function initDirectoryBrowser(deps) {
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create folder";
-      window.alert(message);
+      showToast(message, { type: "error" });
       return false;
     }
   };
@@ -604,7 +605,7 @@ export function initDirectoryBrowser(deps) {
     } catch (error) {
       if (transfer.browser.requestId === requestId) {
         const message = error instanceof Error ? error.message : "Failed to load directories";
-        window.alert(message);
+        showToast(message, { type: "error" });
       }
       return false;
     }
@@ -693,11 +694,11 @@ export function initDirectoryBrowser(deps) {
     const transfer = state.files.transfer;
     if (!transfer.mode || transfer.submitting) return;
     if (!transfer.sourcePath || !transfer.destinationPath) {
-      window.alert("Select a destination directory first.");
+      showToast("Select a destination directory first.", { type: "warning" });
       return;
     }
     if (transfer.nameError) {
-      window.alert(transfer.nameError);
+      showToast(transfer.nameError, { type: "warning" });
       return;
     }
     const sourcePath = transfer.sourcePath;
@@ -722,7 +723,7 @@ export function initDirectoryBrowser(deps) {
       transfer.submitting = false;
       syncFileTransferConfirmState();
       const message = error instanceof Error ? error.message : "File operation failed";
-      window.alert(message);
+      showToast(message, { type: "error" });
     }
   };
 
@@ -773,7 +774,7 @@ export function initDirectoryBrowser(deps) {
     if (!directoryBrowserState.allowCreate) return;
     const parentPath = directoryBrowserState.currentPath || directoryBrowserState.parent || state.config?.defaultDirectory || "";
     if (!parentPath) {
-      window.alert("Select a directory first.");
+      showToast("Select a directory first.", { type: "warning" });
       return;
     }
     await promptCreateDirectoryAtPath(parentPath, {
@@ -846,7 +847,7 @@ export function initDirectoryBrowser(deps) {
       state.files.currentPath ||
       "";
     if (!parent) {
-      window.alert("Select a directory first.");
+      showToast("Select a directory first.", { type: "warning" });
       return;
     }
     await promptCreateDirectoryAtPath(parent, {

@@ -171,7 +171,7 @@ export function initFilesView(deps) {
       files.uploading = false;
       if (getCurrentRoute() === "files") render();
       const message = error instanceof Error ? error.message : "Failed to upload file";
-      window.alert(message);
+      showToast(message, { type: "error" });
       return;
     }
     files.uploading = false;
@@ -280,7 +280,7 @@ export function initFilesView(deps) {
           await loadFilesTree(files.currentPath);
         } catch (err) {
           const msg = err instanceof Error ? err.message : "Failed to move item";
-          window.alert(msg);
+          showToast(msg, { type: "error" });
         }
       });
     }
@@ -381,7 +381,7 @@ export function initFilesView(deps) {
       const config = typeof getConfig === "function" ? getConfig() : null;
       const agents = config?.agents ?? [];
       if (agents.length === 0) {
-        window.alert("No agents available.");
+        showToast("No agents available.", { type: "warning" });
         return;
       }
       showQuickAgentPicker(agentButton, agents, (agentId) => {
@@ -572,7 +572,7 @@ export function initFilesView(deps) {
               await loadFilesTree(files.currentPath);
             } catch (err) {
               const msg = err instanceof Error ? err.message : "Failed to move item";
-              window.alert(msg);
+              showToast(msg, { type: "error" });
             }
           });
         } else if (entry.previewable) {
@@ -719,7 +719,7 @@ export function initFilesView(deps) {
         const config = typeof getConfig === "function" ? getConfig() : null;
         const agents = config?.agents ?? [];
         if (agents.length === 0) {
-          window.alert("No agents available.");
+          showToast("No agents available.", { type: "warning" });
           return;
         }
         showQuickAgentPicker(writerBtn, agents, (agentId) => {
@@ -761,7 +761,7 @@ export function initFilesView(deps) {
           copyUrlBtn.dataset.copied = "true";
           setTimeout(() => { if (copyUrlBtn.isConnected) delete copyUrlBtn.dataset.copied; }, 1600);
         } else {
-          window.alert("Unable to copy the file URL.");
+          showToast("Unable to copy the file URL.", { type: "error" });
         }
       });
       toolbar.append(copyUrlBtn);

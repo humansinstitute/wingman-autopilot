@@ -88,7 +88,7 @@ export const buildSessionOrigin = ({ type, id, url, label }) => {
   return origin;
 };
 
-export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = {}) => {
+export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix, notify } = {}) => {
   if (typeof handleSessionStart !== "function") {
     throw new Error("handleSessionStart callback is required to launch sessions.");
   }
@@ -100,7 +100,11 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = 
   return async (agentId, workingDirectory, name, workspace, options = {}) => {
     const normalizedAgent = typeof agentId === "string" ? agentId.trim() : "";
     if (!normalizedAgent) {
-      window.alert("Select an agent before launching a session.");
+      if (typeof notify === "function") {
+        notify("Select an agent before launching a session.", { type: "warning" });
+      } else {
+        window.alert("Select an agent before launching a session.");
+      }
       return;
     }
 
@@ -151,7 +155,12 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix } = 
     if (!response.ok) {
       closePendingSessionWindow(pendingWindow);
       const data = await response.json().catch(() => ({}));
-      window.alert(`Failed to start session: ${data.error ?? response.statusText}`);
+      const message = `Failed to start session: ${data.error ?? response.statusText}`;
+      if (typeof notify === "function") {
+        notify(message, { type: "error" });
+      } else {
+        window.alert(message);
+      }
       return;
     }
 

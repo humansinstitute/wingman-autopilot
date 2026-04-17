@@ -23,16 +23,36 @@ function ensureToastContainer() {
 /**
  * Displays a toast notification.
  * @param {string} message - The message to display
- * @param {Object} options - Configuration options
- * @param {string} [options.variant="info"] - Toast variant ("info" or "error")
+ * @param {Object|string} options - Configuration options or a variant/type string
+ * @param {string} [options.variant="info"] - Toast variant
+ * @param {string} [options.type] - Alias for variant
  * @param {number} [options.duration] - Duration in ms before auto-dismiss
  */
 export function showToast(message, options = {}) {
   if (!message) return;
-  const variant = options.variant === "error" ? "error" : "info";
+  const normalizedOptions =
+    typeof options === "string"
+      ? { variant: options }
+      : options && typeof options === "object"
+        ? options
+        : {};
+  const requestedVariant =
+    typeof normalizedOptions.type === "string" && normalizedOptions.type.trim().length > 0
+      ? normalizedOptions.type.trim()
+      : typeof normalizedOptions.variant === "string" && normalizedOptions.variant.trim().length > 0
+        ? normalizedOptions.variant.trim()
+        : "info";
+  const variant =
+    requestedVariant === "error" ||
+    requestedVariant === "success" ||
+    requestedVariant === "warning"
+      ? requestedVariant
+      : "info";
   const duration =
-    typeof options.duration === "number" && Number.isFinite(options.duration) && options.duration > 0
-      ? options.duration
+    typeof normalizedOptions.duration === "number" &&
+    Number.isFinite(normalizedOptions.duration) &&
+    normalizedOptions.duration > 0
+      ? normalizedOptions.duration
       : TOAST_DEFAULT_DURATION_MS;
   const container = ensureToastContainer();
   const toast = document.createElement("div");
