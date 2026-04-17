@@ -1,3 +1,5 @@
+import { showDialogElement } from "../common/dialog-element.js";
+
 export const FEATURE_FLAG_STATES = ["off", "on_admin", "on"];
 export const FEATURE_FLAG_STATE_LABELS = {
   off: "Off for everyone",
@@ -149,15 +151,8 @@ export const initFeatureFlagsUI = ({ state, render, showToast, abbreviateNpub })
     formState.error = null;
     formState.success = null;
     syncFormFields();
-    if (dialog && typeof dialog.showModal === "function") {
-      dialog.showModal();
+    if (showDialogElement(dialog)) {
       keyInput?.focus();
-    } else {
-      // Fallback: inline prompt
-      const key = window.prompt("Feature flag key", formState.key);
-      if (key) {
-        formState.key = key;
-      }
     }
   };
 

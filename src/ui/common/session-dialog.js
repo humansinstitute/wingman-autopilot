@@ -1,3 +1,5 @@
+import { showDialogElement } from "./dialog-element.js";
+
 /**
  * @param {string} root
  * @param {string} name
@@ -265,8 +267,7 @@ export const createSessionDialogController = (options) => {
       sessionNameInput.value = "";
     }
 
-    if (typeof dialog?.showModal === "function") {
-      dialog.showModal();
+    if (showDialogElement(dialog)) {
       if (sessionNameInput) {
         sessionNameInput.focus();
         sessionNameInput.select();
@@ -275,17 +276,6 @@ export const createSessionDialogController = (options) => {
         directoryInput?.select();
       }
       syncWorktreeHint();
-      return;
-    }
-
-    const agent = window.prompt(
-      `Select agent (${config.agents.map((a) => a.id).join(", ")}):`,
-      config.agents[0]?.id ?? "",
-    );
-    if (agent) {
-      const directory = window.prompt("Working directory:", fallbackDirectory) ?? fallbackDirectory;
-      const name = window.prompt("Session name (optional):", "") ?? "";
-      onSubmit({ agentId: agent, workingDirectory: directory, sessionName: name, workspace: null, metadata: null });
     }
   };
 

@@ -31,6 +31,7 @@ import {
   createWriterIcon,
 } from "./writer/writer-panel.js";
 import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
+import { showDialogElement } from "./common/dialog-element.js";
 import { openConfirmDialog, openTextPromptDialog } from "./common/dialog-prompts.js";
 import { populateAgentSelect } from "./common/agent-options.js";
 import { createSessionDialogController } from "./common/session-dialog.js";
@@ -1782,26 +1783,13 @@ const openDialog = () => {
     directoryInput.value = fallbackDirectory;
     scheduleDirectorySuggestions(fallbackDirectory);
   }
-  if (typeof dialog.showModal === "function") {
-    dialog.showModal();
-    if (sessionNameInput) {
-      sessionNameInput.focus();
-      sessionNameInput.select();
-    } else {
-      directoryInput?.focus();
-      directoryInput?.select();
-    }
+  showDialogElement(dialog);
+  if (sessionNameInput) {
+    sessionNameInput.focus();
+    sessionNameInput.select();
   } else {
-    // Fallback: use prompt if dialog unsupported.
-    const agent = window.prompt(
-      `Select agent (${state.config.agents.map((a) => a.id).join(", ")}):`,
-      state.config.agents[0]?.id ?? "",
-    );
-    if (agent) {
-      const directory = window.prompt("Working directory:", fallbackDirectory) ?? fallbackDirectory;
-      const sessionName = window.prompt("Session name (optional):", "") ?? "";
-      launchSession(agent, directory, sessionName);
-    }
+    directoryInput?.focus();
+    directoryInput?.select();
   }
 };
 

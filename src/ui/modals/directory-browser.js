@@ -8,6 +8,7 @@
  * Depends on: state, various DOM elements (via DI), API helpers.
  */
 import { openTextPromptDialog } from "../common/dialog-prompts.js";
+import { showDialogElement } from "../common/dialog-element.js";
 
 export function initDirectoryBrowser(deps) {
   const {
@@ -301,8 +302,16 @@ export function initDirectoryBrowser(deps) {
     directoryBrowserState.confirmLabel = confirmLabel;
     directoryBrowserState.title = title;
 
-    if (!directoryDialog || typeof directoryDialog.showModal !== "function") {
-      const fallback = window.prompt("Enter directory", seedCandidate);
+    if (!directoryDialog) {
+      const fallback = await openTextPromptDialog({
+        title,
+        description: "Enter the directory path to use.",
+        label: "Directory path",
+        value: seedCandidate,
+        confirmLabel: "Use Directory",
+        testId: "directory-browser-manual-path-dialog",
+        validate: (value) => (value ? "" : "Directory path is required."),
+      });
       if (fallback) {
         chooseDirectory(fallback);
       }
@@ -332,7 +341,7 @@ export function initDirectoryBrowser(deps) {
       return null;
     }
 
-    directoryDialog.showModal();
+    showDialogElement(directoryDialog);
     return new Promise((resolve) => {
       directoryBrowserState.pendingResolve = resolve;
     });
