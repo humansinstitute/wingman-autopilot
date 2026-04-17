@@ -5,6 +5,7 @@
  */
 
 import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
+import { openConfirmDialog } from "../common/dialog-prompts.js";
 import {
   CHAT_ROUTE_PREFIX,
   getChatIdFromPath,
@@ -94,7 +95,13 @@ export function initPrivateChat(deps) {
   // ── Delete ──────────────────────────────────────────────────────
 
   const deleteChat = async (chatId) => {
-    if (!window.confirm("Delete this chat? This cannot be undone.")) {
+    const confirmed = await openConfirmDialog({
+      title: "Delete Chat",
+      description: "Delete this chat? This cannot be undone.",
+      confirmLabel: "Delete",
+      testId: "delete-chat-dialog",
+    });
+    if (!confirmed) {
       return;
     }
 

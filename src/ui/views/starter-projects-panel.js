@@ -4,6 +4,7 @@ import {
   updateAdminStarterProjectApi,
   deleteAdminStarterProjectApi,
 } from "../services/starter-projects.js";
+import { openConfirmDialog } from "../common/dialog-prompts.js";
 
 export function initStarterProjectsPanel({ state, getCurrentRoute, render, showToast }) {
   const panelState = {
@@ -111,7 +112,12 @@ export function initStarterProjectsPanel({ state, getCurrentRoute, render, showT
 
   async function handleDelete(id) {
     if (!id || panelState.deletingId) return;
-    const confirmed = window.confirm("Delete this starter project?");
+    const confirmed = await openConfirmDialog({
+      title: "Delete Starter Project",
+      description: "Delete this starter project?",
+      confirmLabel: "Delete",
+      testId: "delete-starter-project-dialog",
+    });
     if (!confirmed) return;
     panelState.deletingId = id;
     panelState.error = null;

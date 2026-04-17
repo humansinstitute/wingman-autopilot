@@ -6,6 +6,7 @@
  */
 
 import { escapeHtml, getSessionDisplayName } from "../core/icons.js";
+import { openTextPromptDialog } from "../common/dialog-prompts.js";
 import { attachCopyButton, copyConversationToClipboard } from "../utils/clipboard.js";
 import { showToast } from "../utils/toast.js";
 import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
@@ -928,11 +929,19 @@ export function initLiveView(deps) {
       { label: "Push", handler: () => executeGitAction("push") },
       {
         label: "Commit...",
-        handler: () => {
-          const message = window.prompt("Enter commit message:");
-          if (message?.trim()) {
+        handler: async () => {
+          const message = await openTextPromptDialog({
+            title: "Git Commit",
+            description: "Enter the commit message to use for all staged changes.",
+            label: "Commit message",
+            value: "",
+            confirmLabel: "Commit",
+            testId: "live-view-git-commit-dialog",
+            validate: (value) => (value ? "" : "Commit message is required."),
+          });
+          if (message) {
             executeGitAction("addAll").then(() => {
-              executeGitAction("commit", { message: message.trim() });
+              executeGitAction("commit", { message });
             });
           }
         }
@@ -946,16 +955,18 @@ export function initLiveView(deps) {
             return;
           }
 
-          const branch = window.prompt(
-            "Enter branch name for the worktree:\n\n" +
-            "This will create a new worktree and session with the last 5 messages as context.",
-            ""
-          );
-          if (!branch?.trim()) {
+          const trimmedBranch = await openTextPromptDialog({
+            title: "Fork To Worktree",
+            description: "Create a new worktree and session with the last 5 messages as context.",
+            label: "Branch name",
+            value: "",
+            confirmLabel: "Create",
+            testId: "live-view-worktree-branch-dialog",
+            validate: (value) => (value ? "" : "Branch name is required."),
+          });
+          if (!trimmedBranch) {
             return;
           }
-
-          const trimmedBranch = branch.trim();
           if (!/^[a-zA-Z0-9._/-]+$/.test(trimmedBranch)) {
             showToast("Invalid branch name. Use alphanumeric characters, dots, underscores, and hyphens.", { type: "error" });
             return;
@@ -1034,8 +1045,15 @@ export function initLiveView(deps) {
         handler: async () => {
           const session = sessionsStore().items.find((s) => s.id === sessionId);
           const dirName = session?.workingDirectory?.split("/").pop() || "";
-          const projectName = window.prompt("Project name for Gitea repo:", dirName);
-          if (projectName === null) return; // cancelled
+          const projectName = await openTextPromptDialog({
+            title: "Gitea Project Name",
+            description: "Choose the project name to use when creating the remote repository.",
+            label: "Project name",
+            value: dirName,
+            confirmLabel: "Setup",
+            testId: "live-view-gitea-project-dialog",
+          });
+          if (projectName === null) return;
           showToast("Setting up Gitea repo...", { type: "info" });
           const data = await executeGiteaAction("set-remote", { projectName: projectName || undefined });
           if (data?.cloneUrl) {
@@ -1047,9 +1065,16 @@ export function initLiveView(deps) {
       { label: "Pull", handler: () => executeGiteaAction("pull") },
       {
         label: "Commit and Push All",
-        handler: () => {
-          const message = window.prompt("Commit message:", "updates");
-          if (message === null) return; // cancelled
+        handler: async () => {
+          const message = await openTextPromptDialog({
+            title: "Commit And Push",
+            description: "Enter the commit message to use before pushing all changes.",
+            label: "Commit message",
+            value: "updates",
+            confirmLabel: "Commit And Push",
+            testId: "live-view-gitea-commit-dialog",
+          });
+          if (message === null) return;
           executeGiteaAction("commit-and-push", { message: message || "updates" });
         },
       },

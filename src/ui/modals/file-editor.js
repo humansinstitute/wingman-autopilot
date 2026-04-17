@@ -10,6 +10,7 @@ import {
   decodeBytesToText,
   encodeTextToBytes,
 } from "../core/encoding.js";
+import { openConfirmDialog } from "../common/dialog-prompts.js";
 
 /**
  * @param {object} deps
@@ -159,11 +160,16 @@ export function initFileEditor(deps) {
     render();
   };
 
-  const requestFileEditorClose = () => {
+  const requestFileEditorClose = async () => {
     const editor = state.fileEditor;
     if (editor.saving) return;
     if (editor.dirty) {
-      const confirmClose = window.confirm("Discard unsaved changes?");
+      const confirmClose = await openConfirmDialog({
+        title: "Discard Changes",
+        description: "Discard unsaved changes?",
+        confirmLabel: "Discard",
+        testId: "file-editor-discard-dialog",
+      });
       if (!confirmClose) return;
     }
     closeFileEditor();

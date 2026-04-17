@@ -28,6 +28,8 @@
  * @param {Function} deps.openDeployDialog           - opens the deploy dialog
  * @param {Function} deps.openAppDialog              - opens the app edit dialog
  */
+import { openConfirmDialog } from "../common/dialog-prompts.js";
+
 export function initAppCards(deps) {
   const {
     appsStore,
@@ -617,7 +619,12 @@ export function initAppCards(deps) {
         return;
       }
       const appName = app.label ?? app.id;
-      const confirmed = window.confirm(`Clear logs for "${appName}"?`);
+      const confirmed = await openConfirmDialog({
+        title: "Clear App Logs",
+        description: `Clear logs for "${appName}"?`,
+        confirmLabel: "Clear",
+        testId: "app-card-clear-logs-dialog",
+      });
       if (!confirmed) {
         return;
       }

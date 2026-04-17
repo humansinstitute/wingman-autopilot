@@ -5,6 +5,7 @@
  */
 
 import { createIconSvg, setIconButton, FILE_BROWSER_ICON_DEFS } from "../core/icons.js";
+import { openConfirmDialog, openTextPromptDialog } from "../common/dialog-prompts.js";
 import { copyTextToClipboard } from "../utils/clipboard.js";
 import {
   FILES_SHOW_HIDDEN_STORAGE_KEY,
@@ -94,8 +95,15 @@ export function initFilesView(deps) {
     const files = state.files;
     if (files.loading) return;
     const parentPath = files.currentPath;
-    const rawName = window.prompt("Folder name", "New Folder");
-    const name = rawName?.trim();
+    const name = await openTextPromptDialog({
+      title: "Create Folder",
+      description: "Add a new folder inside the current directory.",
+      label: "Folder name",
+      value: "New Folder",
+      confirmLabel: "Create",
+      testId: "files-create-folder-dialog",
+      validate: (value) => (value ? "" : "Folder name is required."),
+    });
     if (!name) return;
     files.loading = true;
     if (getCurrentRoute() === "files") render();
@@ -106,7 +114,7 @@ export function initFilesView(deps) {
       files.loading = false;
       if (getCurrentRoute() === "files") render();
       const message = error instanceof Error ? error.message : "Failed to create directory";
-      window.alert(message);
+      showToast(message, { type: "error" });
     }
   };
 
@@ -114,8 +122,15 @@ export function initFilesView(deps) {
     const files = state.files;
     if (files.loading) return;
     const parentPath = files.currentPath;
-    const rawName = window.prompt("File name (include extension)", "notes.txt");
-    const name = rawName?.trim();
+    const name = await openTextPromptDialog({
+      title: "Create File",
+      description: "Add a new text file inside the current directory.",
+      label: "File name",
+      value: "notes.txt",
+      confirmLabel: "Create",
+      testId: "files-create-file-dialog",
+      validate: (value) => (value ? "" : "File name is required."),
+    });
     if (!name) return;
     files.loading = true;
     if (getCurrentRoute() === "files") render();
@@ -135,7 +150,7 @@ export function initFilesView(deps) {
       files.loading = false;
       if (getCurrentRoute() === "files") render();
       const message = error instanceof Error ? error.message : "Failed to create file";
-      window.alert(message);
+      showToast(message, { type: "error" });
     }
   };
 
@@ -582,7 +597,12 @@ export function initFilesView(deps) {
         deleteBtn.addEventListener("click", async (e) => {
           e.stopPropagation();
           const displayName = entry.name || entry.path;
-          const confirmed = window.confirm(`Delete "${displayName}"? This cannot be undone.`);
+          const confirmed = await openConfirmDialog({
+            title: "Delete Entry",
+            description: `Delete "${displayName}"? This cannot be undone.`,
+            confirmLabel: "Delete",
+            testId: "files-delete-entry-dialog",
+          });
           if (!confirmed) return;
           deleteBtn.disabled = true;
           try {
@@ -594,7 +614,7 @@ export function initFilesView(deps) {
           } catch (err) {
             deleteBtn.disabled = false;
             const msg = err instanceof Error ? err.message : "Failed to delete";
-            window.alert(msg);
+            showToast(msg, { type: "error" });
           }
         });
 
@@ -766,7 +786,12 @@ export function initFilesView(deps) {
         const targetPath = typeof files.previewPath === "string" ? files.previewPath : null;
         if (!targetPath) return;
         const displayName = files.previewName ?? files.previewDisplayPath ?? targetPath;
-        const confirmed = window.confirm(`Delete "${displayName}"? This cannot be undone.`);
+        const confirmed = await openConfirmDialog({
+          title: "Delete File",
+          description: `Delete "${displayName}"? This cannot be undone.`,
+          confirmLabel: "Delete",
+          testId: "files-delete-preview-dialog",
+        });
         if (!confirmed) return;
         deleteBtn.disabled = true;
         deleteBtn.dataset.loading = "true";
@@ -779,7 +804,7 @@ export function initFilesView(deps) {
           deleteBtn.disabled = false;
           delete deleteBtn.dataset.loading;
           const message = error instanceof Error ? error.message : "Failed to delete file";
-          window.alert(message);
+          showToast(message, { type: "error" });
         }
       });
       toolbar.append(deleteBtn);

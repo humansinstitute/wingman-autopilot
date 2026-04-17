@@ -1,13 +1,18 @@
+import { openConfirmDialog } from "../common/dialog-prompts.js";
+
 function describeSession(sessionId, getSessionById, getSessionDisplayName) {
   const session = getSessionById(sessionId);
   const displayName = session ? getSessionDisplayName(session) : "this session";
   return { session, displayName };
 }
 
-function confirmStop(displayName) {
-  return window.confirm(
-    `Are you sure you want to stop "${displayName}"?\n\nThe session will be archived after 5 seconds.`
-  );
+async function confirmStop(displayName) {
+  return openConfirmDialog({
+    title: "Stop Session",
+    description: `Stop "${displayName}"? The session will be archived after 5 seconds.`,
+    confirmLabel: "Stop",
+    testId: "stop-session-dialog",
+  });
 }
 
 function getErrorMessage(error, fallback) {
@@ -32,7 +37,7 @@ export function createSessionStopFeedback({
 
     const { displayName } = describeSession(sessionId, getSessionById, getSessionDisplayName);
     const shouldConfirm = options.confirm === true;
-    if (shouldConfirm && !confirmStop(displayName)) {
+    if (shouldConfirm && !(await confirmStop(displayName))) {
       return { success: false, cancelled: true };
     }
 

@@ -31,7 +31,7 @@ import {
   createWriterIcon,
 } from "./writer/writer-panel.js";
 import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
-import { openTextPromptDialog } from "./common/dialog-prompts.js";
+import { openConfirmDialog, openTextPromptDialog } from "./common/dialog-prompts.js";
 import { populateAgentSelect } from "./common/agent-options.js";
 import { createSessionDialogController } from "./common/session-dialog.js";
 import { createJobDialogController } from "./common/job-dialog.js";
@@ -2383,10 +2383,20 @@ const runSystemCleanup = async () => {
 const removeApp = async (appId) => {
   const app = getAppById(appId);
   if (!app) return;
-  const confirmed = window.confirm(`Remove "${app.label ?? app.id}" from Wingman?`);
+  const confirmed = await openConfirmDialog({
+    title: "Remove App",
+    description: `Remove "${app.label ?? app.id}" from Wingman?`,
+    confirmLabel: "Remove",
+    testId: "remove-app-dialog",
+  });
   if (!confirmed) return;
   const killSession = app?.status?.running
-    ? window.confirm("The app appears to be running. Kill the tmux session as well?")
+    ? await openConfirmDialog({
+      title: "Kill Tmux Session",
+      description: "The app appears to be running. Kill the tmux session as well?",
+      confirmLabel: "Kill Session",
+      testId: "remove-app-kill-session-dialog",
+    })
     : false;
   const result = await removeAppApi(appId, killSession);
   if (!result.success) {

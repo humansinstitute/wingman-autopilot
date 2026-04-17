@@ -17,6 +17,10 @@ function appendDialogToBody(dialog) {
   dialog.setAttribute('open', 'open');
 }
 
+function hasDocumentDialogSupport() {
+  return typeof document !== 'undefined' && typeof document.createElement === 'function';
+}
+
 function createDialogShell({ title, description, testId }) {
   const dialog = document.createElement('dialog');
   dialog.className = 'wm-dialog wm-dialog-prompt';
@@ -77,6 +81,14 @@ export async function openTextPromptDialog({
   validate,
   testId,
 } = {}) {
+  if (!hasDocumentDialogSupport()) {
+    if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
+      const fallbackValue = window.prompt(title || label || 'Enter value', value);
+      return typeof fallbackValue === 'string' ? fallbackValue.trim() : null;
+    }
+    return null;
+  }
+
   return new Promise((resolve) => {
     const { dialog, form, body, footer } = createDialogShell({ title, description, testId });
 
@@ -161,6 +173,13 @@ export async function openConfirmDialog({
   cancelLabel = 'Cancel',
   testId,
 } = {}) {
+  if (!hasDocumentDialogSupport()) {
+    if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+      return window.confirm(description || title || 'Are you sure?');
+    }
+    return false;
+  }
+
   return new Promise((resolve) => {
     const { dialog, footer } = createDialogShell({ title, description, testId });
 

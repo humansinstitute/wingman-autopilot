@@ -1,4 +1,5 @@
 import { TODO_CATEGORY_OPTIONS, getParentCandidates, toDateInputValue } from "./utils.js";
+import { openConfirmDialog } from "../common/dialog-prompts.js";
 
 function buildTodoFocusKey(todoId, field) {
   return `todo:${todoId}:${field}`;
@@ -241,9 +242,14 @@ function createTodoDetailView({ todo, draft, actions, state }) {
   deleteButton.className = "wm-button secondary danger";
   deleteButton.textContent = state.deletingIds.has(todo.id) ? "Deleting…" : "Delete";
   deleteButton.disabled = state.deletingIds.has(todo.id);
-  deleteButton.addEventListener("click", (event) => {
+  deleteButton.addEventListener("click", async (event) => {
     event.preventDefault();
-    const confirmed = window.confirm("Delete this todo?");
+    const confirmed = await openConfirmDialog({
+      title: "Delete Todo",
+      description: "Delete this todo?",
+      confirmLabel: "Delete",
+      testId: "delete-todo-dialog",
+    });
     if (confirmed) {
       actions.deleteTodo(todo.id);
     }

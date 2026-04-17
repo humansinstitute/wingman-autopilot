@@ -10,6 +10,7 @@ import { startSigningListener, stopSigningListener } from "../nip98/signing-list
 import { createUnauthorizedGuard } from "../common/unauthorized-guard.js";
 import { createAdminUsersState } from "../state/index.js";
 import { showToast } from "../utils/toast.js";
+import { openConfirmDialog } from "../common/dialog-prompts.js";
 import { fetchNpubProjects } from "../npub-projects/index.js";
 import { publishDelegateRegistryForCurrentUser } from "./bot-delegate-publisher.js";
 import { normaliseNpubValue, isFiniteNumber, toFiniteTimestamp } from "./dom.js";
@@ -396,7 +397,12 @@ export function initIdentityStateManager(deps) {
     if (!delegationId) {
       return;
     }
-    const confirmed = window.confirm("Revoke this delegation?");
+    const confirmed = await openConfirmDialog({
+      title: "Revoke Delegation",
+      description: "Revoke this delegation?",
+      confirmLabel: "Revoke",
+      testId: "revoke-workspace-delegation-dialog",
+    });
     if (!confirmed) {
       return;
     }
@@ -425,12 +431,14 @@ export function initIdentityStateManager(deps) {
     if (!btn) return;
 
     // Warn the user before proceeding
-    const confirmed = window.confirm(
-      "WARNING: You are about to copy your bot's private key (nsec) to the clipboard.\n\n" +
-      "Anyone with this key can sign events as your bot identity. " +
-      "Only proceed if you understand the risk and need to export it.\n\n" +
-      "Continue?",
-    );
+    const confirmed = await openConfirmDialog({
+      title: "Export Bot Private Key",
+      description:
+        "You are about to copy your bot's private key (nsec) to the clipboard. " +
+        "Anyone with this key can sign events as your bot identity. Only continue if you understand the risk.",
+      confirmLabel: "Continue",
+      testId: "export-bot-nsec-dialog",
+    });
     if (!confirmed) return;
 
     setButtonState(btn, { state: "loading", label: "Fetching\u2026", disable: true });

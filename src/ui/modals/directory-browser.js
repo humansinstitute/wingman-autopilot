@@ -7,6 +7,7 @@
  *
  * Depends on: state, various DOM elements (via DI), API helpers.
  */
+import { openTextPromptDialog } from "../common/dialog-prompts.js";
 
 export function initDirectoryBrowser(deps) {
   const {
@@ -345,13 +346,16 @@ export function initDirectoryBrowser(deps) {
       window.alert("Select a parent directory first.");
       return false;
     }
-    const rawName = window.prompt("Folder name", "New Folder");
-    if (!rawName) {
-      return false;
-    }
-    const trimmed = rawName.trim();
-    if (trimmed.length === 0) {
-      window.alert("Folder name cannot be empty.");
+    const trimmed = await openTextPromptDialog({
+      title: "Create Folder",
+      description: "Add a new folder inside the selected directory.",
+      label: "Folder name",
+      value: "New Folder",
+      confirmLabel: "Create",
+      testId: "directory-browser-create-folder-dialog",
+      validate: (value) => (value ? "" : "Folder name cannot be empty."),
+    });
+    if (!trimmed) {
       return false;
     }
     try {

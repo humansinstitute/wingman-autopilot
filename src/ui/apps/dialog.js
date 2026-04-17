@@ -1,4 +1,5 @@
 import { fetchStarterProjectsApi, launchStarterProjectApi } from "../services/starter-projects.js";
+import { openConfirmDialog } from "../common/dialog-prompts.js";
 
 export const initAppDialogs = ({
   state,
@@ -863,7 +864,12 @@ export const initAppDialogs = ({
     if (!targetId) return;
     const app = getAppById(targetId);
     const appName = app?.label ?? targetId;
-    const confirmed = window.confirm(`Clear logs for "${appName}"?`);
+    const confirmed = await openConfirmDialog({
+      title: "Clear App Logs",
+      description: `Clear logs for "${appName}"?`,
+      confirmLabel: "Clear",
+      testId: "clear-app-logs-dialog",
+    });
     if (!confirmed) return;
 
     if (appLogsClearButton) {
