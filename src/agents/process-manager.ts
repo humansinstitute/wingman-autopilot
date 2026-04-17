@@ -32,6 +32,7 @@ import {
   waitForStatus,
 } from "./pm2-wrapper";
 import { injectMcpConfig, cleanupMcpConfig } from "./mcp-injector";
+import { stopManagedSubprocess } from "./process-stop";
 import { resolveBotNsecHex } from "../identity/bot-key-export";
 import { isBotKeyUnlocked } from "../identity/bot-key-manager";
 import { parseAllowedHosts, pickAgentHost, normaliseHostForUrl } from "./agent-client";
@@ -712,8 +713,10 @@ export class ProcessManager {
       }
       session.detachedPid = undefined;
     } else if (session.process) {
-      session.process.kill("SIGTERM");
-      await session.process.exited;
+      const stopResult = await stopManagedSubprocess(session.process);
+      if (stopResult.forced) {
+        this.appendLog(session, "[manager] process did not exit after SIGTERM; sent SIGKILL");
+      }
       session.process = null;
     } else if (typeof session.detachedPid === "number" && session.detachedPid > 0) {
       try {

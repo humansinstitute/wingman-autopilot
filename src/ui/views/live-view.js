@@ -19,6 +19,7 @@ import { createMobileTabBar, attachSwipeGesture } from "../writer/mobile-tabs.js
 import { fetchSessionArtifacts, createArtifactsPanel, createArtifactsToolbar } from "../live/artifacts-panel.js";
 import { createAppControlsPanel, createAppControlsToolbar } from "../live/app-controls-panel.js";
 import { createCommandMenuController } from "../live/command-menu-positioning.js";
+import { createSessionStopFeedback } from "../live/session-stop-feedback.js";
 import {
   clearWriterDismissal,
   getPinnedFileForSession,
@@ -98,6 +99,14 @@ export function initLiveView(deps) {
 
   // Track active writer panel cleanup function
   let activeWriterCleanup = null;
+  const sessionStopFeedback = createSessionStopFeedback({
+    getSessionById(sessionId) {
+      return sessionsStore().items.find((item) => item.id === sessionId) ?? null;
+    },
+    getSessionDisplayName,
+    stopSession,
+    showToast,
+  });
 
   function updateSessionPinnedFile(sessionId, filePath) {
     const session = sessionsStore().items.find((item) => item.id === sessionId);
@@ -364,7 +373,7 @@ export function initLiveView(deps) {
       const closeButton = tab.querySelector(".close");
       closeButton.addEventListener("click", (event) => {
         event.stopPropagation();
-        stopSession(session.id);
+        void sessionStopFeedback.requestStopSession(session.id);
         onSelect?.();
       });
 
@@ -418,7 +427,7 @@ export function initLiveView(deps) {
       const closeButton = tab.querySelector(".close");
       closeButton.addEventListener("click", (event) => {
         event.stopPropagation();
-        stopSession(session.id);
+        void sessionStopFeedback.requestStopSession(session.id);
         onSelect?.();
       });
 
@@ -1225,14 +1234,7 @@ export function initLiveView(deps) {
 
     addCommandDivider();
     addCommand("Stop Session", () => {
-      const session = sessionsStore().items.find((s) => s.id === sessionId);
-      const displayName = session ? getSessionDisplayName(session) : "this session";
-      const confirmed = window.confirm(
-        `Are you sure you want to stop "${displayName}"?\n\nThe session will be archived after 5 seconds.`
-      );
-      if (confirmed) {
-        stopSession(sessionId);
-      }
+      void sessionStopFeedback.requestStopSession(sessionId, { confirm: true });
     });
 
     commandButton.addEventListener("click", () => {
