@@ -130,8 +130,8 @@ export function createSessionRuntimeActions(deps) {
       forceLog: true,
       allowPending: !Boolean(getSessionById(sessionId)),
     });
-    await Promise.all([fetchConversation(sessionId), fetchLogs(sessionId)]);
     render();
+    void Promise.allSettled([fetchConversation(sessionId), fetchLogs(sessionId)]);
   }
 
   async function postSessionMessage(sessionId, content, type = "user") {

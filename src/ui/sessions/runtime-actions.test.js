@@ -78,4 +78,35 @@ describe("session runtime actions", () => {
     expect(fetchLogs).toHaveBeenCalledWith("session-1");
     expect(showToast).not.toHaveBeenCalled();
   });
+
+  test("resumeSession renders live view without waiting for conversation and logs", async () => {
+    getSessionById = mock(() => ({ id: "session-1", name: "Ready session" }));
+    let releaseConversation;
+    let releaseLogs;
+    fetchConversation = mock(
+      () =>
+        new Promise((resolve) => {
+          releaseConversation = resolve;
+        }),
+    );
+    fetchLogs = mock(
+      () =>
+        new Promise((resolve) => {
+          releaseLogs = resolve;
+        }),
+    );
+
+    const actions = buildActions();
+    await actions.resumeSession("session-1");
+
+    expect(setCurrentRoute).toHaveBeenCalledWith("live");
+    expect(setActiveSession).toHaveBeenCalledWith(
+      "session-1",
+      expect.objectContaining({ updateHistory: true, forceLog: true, allowPending: false }),
+    );
+    expect(render).toHaveBeenCalled();
+
+    releaseConversation?.();
+    releaseLogs?.();
+  });
 });
