@@ -16,6 +16,7 @@ import { InsufficientBalanceError } from "../storage/identity-user-store";
 import type { messageStore as MessageStoreInstance, StoredMessage, StoredSessionRecord } from "../storage/message-store";
 import type { sessionArchiveStore as SessionArchiveStoreInstance } from "../storage/session-archive-store";
 import type { ForkToWorktreeInput } from "../sessions/fork-to-worktree";
+import { resolveSessionOwnerNpub } from "../sessions/session-ownership";
 import { deliverSessionAgentMessage } from "./session-agent-message";
 import {
   isAgentManagedByMetadataOrOrigin,
@@ -112,7 +113,12 @@ export interface SessionApiContext {
 
   // Session helpers
   serializeSession: (session: SessionSnapshot) => Record<string, unknown>;
-  sessionBelongsToViewer: (sessionNpub: string | null | undefined, viewerNormalizedNpub: string | null, viewerIsAdmin: boolean) => boolean;
+  sessionBelongsToViewer: (
+    sessionNpub: string | null | undefined,
+    sessionMetadata: SessionMetadata | null | undefined,
+    viewerNormalizedNpub: string | null,
+    viewerIsAdmin: boolean,
+  ) => boolean;
   getViewerNormalizedNpub: (authContext: RequestAuthContext) => string | null;
   buildIdentitySummaries: (sessions: SessionSnapshot[], viewerNpub: string | null, options?: { includeAll?: boolean }) => IdentitySummary[];
   createSessionSubscribeResponse: (npub: string) => Response;
@@ -231,7 +237,7 @@ const resolveOwnedLiveSession = (
   ctx: SessionApiContext,
 ): { session: SessionSnapshot | null; resolvedId: string; error: Response | null } => {
   const ownedSessions = sessions.filter((session) =>
-    ctx.sessionBelongsToViewer(session.npub ?? null, viewerNormalizedNpub, viewerIsAdmin),
+    ctx.sessionBelongsToViewer(session.npub ?? null, session.metadata, viewerNormalizedNpub, viewerIsAdmin),
   );
   const exactMatch = ownedSessions.find((session) => session.id === requestedId);
   if (exactMatch) {
@@ -272,7 +278,7 @@ const resolveOwnedStoredSession = (
 ) => {
   const ownedSessions = ctx.messageStore
     .listSessions()
-    .filter((session) => ctx.sessionBelongsToViewer(session.npub ?? null, viewerNormalizedNpub, viewerIsAdmin));
+    .filter((session) => ctx.sessionBelongsToViewer(session.npub ?? null, session.metadata, viewerNormalizedNpub, viewerIsAdmin));
   const exactMatch = ownedSessions.find((session) => session.id === requestedId);
   if (exactMatch) {
     return { session: exactMatch, resolvedId: exactMatch.id, error: null };
@@ -395,21 +401,26 @@ const parseStoredCommand = (storedCommand: string | null): string[] | undefined 
 
 const serializeStoredSession = (
   storedSession: StoredSessionRecord,
-): Record<string, unknown> => ({
-  id: storedSession.id,
-  agent: storedSession.agent,
-  status: storedSession.runtimeStatus ?? "running",
-  name: storedSession.name,
-  npub: storedSession.npub,
-  port: storedSession.port,
-  pid: storedSession.pid,
-  startedAt: storedSession.startedAt,
-  command: parseStoredCommand(storedSession.command) ?? [],
-  workingDirectory: storedSession.workingDirectory,
-  origin: storedSession.origin,
-  targetFile: storedSession.targetFile,
-  metadata: storedSession.metadata,
-});
+): Record<string, unknown> => {
+  const ownerNpub = resolveSessionOwnerNpub(storedSession.npub, storedSession.metadata);
+  return {
+    id: storedSession.id,
+    agent: storedSession.agent,
+    status: storedSession.runtimeStatus ?? "running",
+    name: storedSession.name,
+    npub: storedSession.npub,
+    ownerNpub,
+    identityAlias: generateIdentityAlias(ownerNpub),
+    port: storedSession.port,
+    pid: storedSession.pid,
+    startedAt: storedSession.startedAt,
+    command: parseStoredCommand(storedSession.command) ?? [],
+    workingDirectory: storedSession.workingDirectory,
+    origin: storedSession.origin,
+    targetFile: storedSession.targetFile,
+    metadata: storedSession.metadata,
+  };
+};
 
 const rehydrateStoredSession = (
   ctx: SessionApiContext,
@@ -532,7 +543,7 @@ const resolveOwnerSessionScope = (method: HttpMethod, remainder: string[]): stri
 };
 
 const archivedSessionBelongsToOwner = (
-  archivedSession: { npub: string | null; metadata?: { ownerNpub?: unknown } | null },
+  archivedSession: { npub: string | null; metadata?: SessionMetadata | null },
   ownerNpub: string,
   ctx: SessionApiContext,
 ): boolean => {
@@ -545,7 +556,7 @@ const archivedSessionBelongsToOwner = (
   if (metadataOwnerNpub) {
     return metadataOwnerNpub === ownerNpub;
   }
-  return ctx.sessionBelongsToViewer(archivedSession.npub, ownerNpub, false);
+  return ctx.sessionBelongsToViewer(archivedSession.npub, archivedSession.metadata ?? null, ownerNpub, false);
 };
 
 /**
@@ -726,7 +737,7 @@ export async function handleSessionApi(
     }
     const sessions = ctx.manager
       .listSessions()
-      .filter((session) => ctx.sessionBelongsToViewer(session.npub ?? null, viewerNormalizedNpub, false))
+      .filter((session) => ctx.sessionBelongsToViewer(session.npub ?? null, session.metadata, viewerNormalizedNpub, false))
       .map(ctx.serializeSession);
     return Response.json({ sessions });
   }
@@ -895,7 +906,9 @@ export async function handleSessionApi(
       if (denied) return denied;
       const sessions = ctx.manager
         .listSessions()
-        .filter((session) => ctx.sessionBelongsToViewer(session.npub ?? null, normaliseNpub(targetOwnerNpub), false))
+        .filter((session) =>
+          ctx.sessionBelongsToViewer(session.npub ?? null, session.metadata, normaliseNpub(targetOwnerNpub), false),
+        )
         .map(ctx.serializeSession);
       return Response.json({ ownerNpub: targetOwnerNpub, sessions });
     }
@@ -1179,7 +1192,9 @@ export async function handleSessionApi(
     const accessibleSessions = viewerIsAdmin
       ? allSessions
       : viewerNormalizedNpub
-        ? allSessions.filter((session) => ctx.sessionBelongsToViewer(session.npub ?? null, viewerNormalizedNpub, false))
+        ? allSessions.filter((session) =>
+            ctx.sessionBelongsToViewer(session.npub ?? null, session.metadata, viewerNormalizedNpub, false),
+          )
         : [];
     const filterParam = url.searchParams.get("npub");
 
@@ -1193,7 +1208,7 @@ export async function handleSessionApi(
     const filterValue = normalizeFilterValue(filterParam);
     const filteredSessions = accessibleSessions.filter((session) => {
       if (filterValue === null) return true;
-      const sessionNormalized = normaliseNpub(session.npub ?? null);
+      const sessionNormalized = resolveSessionOwnerNpub(session.npub ?? null, session.metadata);
       if (filterValue === "__anonymous__") return sessionNormalized === null;
       return sessionNormalized === filterValue;
     });
@@ -1370,7 +1385,7 @@ export async function handleSessionApi(
       const viewerNormalizedNpub = resolveSelfSpaceViewerNpub(authContext, ctx);
       const viewerIsAdmin = Boolean(ctx.adminNpub && viewerNormalizedNpub && viewerNormalizedNpub === ctx.adminNpub);
       const ownedSession =
-        liveSession && ctx.sessionBelongsToViewer(liveSession.npub ?? null, viewerNormalizedNpub, viewerIsAdmin)
+        liveSession && ctx.sessionBelongsToViewer(liveSession.npub ?? null, liveSession.metadata, viewerNormalizedNpub, viewerIsAdmin)
           ? liveSession
           : null;
       if (!ownedSession) {
@@ -1466,7 +1481,10 @@ export async function handleSessionApi(
         if (!viewerIsAdmin) {
           const storedRecord = ctx.messageStore
             .listSessions()
-            .find((record) => record.id === resolvedId && ctx.sessionBelongsToViewer(record.npub, viewerNormalizedNpub, viewerIsAdmin));
+            .find((record) =>
+              record.id === resolvedId &&
+              ctx.sessionBelongsToViewer(record.npub, record.metadata, viewerNormalizedNpub, viewerIsAdmin),
+            );
           if (!storedRecord) {
             return Response.json({ error: "Not found" }, { status: 404 });
           }
@@ -1791,8 +1809,9 @@ async function handleSessionHistory(
   // Check wingman.db for abandoned session (server restart, etc.)
   const storedSession = ctx.messageStore.getSession(id);
   if (storedSession) {
-    const isOwned = ctx.sessionBelongsToViewer(storedSession.npub, viewerNormalizedNpub, viewerIsAdmin);
+    const isOwned = ctx.sessionBelongsToViewer(storedSession.npub, storedSession.metadata, viewerNormalizedNpub, viewerIsAdmin);
     if (isOwned) {
+      const ownerNpub = resolveSessionOwnerNpub(storedSession.npub, storedSession.metadata);
       const messages = ctx.messageStore.listSessionMessages(id);
       return Response.json({
         id,
@@ -1802,6 +1821,8 @@ async function handleSessionHistory(
           agent: storedSession.agent,
           name: storedSession.name,
           npub: storedSession.npub,
+          ownerNpub,
+          identityAlias: generateIdentityAlias(ownerNpub),
           workingDirectory: storedSession.workingDirectory,
           startedAt: storedSession.startedAt,
           origin: storedSession.origin,
@@ -1815,8 +1836,9 @@ async function handleSessionHistory(
   // Check archive store
   const archivedSession = ctx.sessionArchiveStore.getArchivedSession(id);
   if (archivedSession) {
-    const isOwned = ctx.sessionBelongsToViewer(archivedSession.npub, viewerNormalizedNpub, viewerIsAdmin);
+    const isOwned = ctx.sessionBelongsToViewer(archivedSession.npub, archivedSession.metadata, viewerNormalizedNpub, viewerIsAdmin);
     if (isOwned) {
+      const ownerNpub = resolveSessionOwnerNpub(archivedSession.npub, archivedSession.metadata);
       const messages = ctx.sessionArchiveStore.getArchivedMessages(id);
       return Response.json({
         id,
@@ -1826,6 +1848,8 @@ async function handleSessionHistory(
           agent: archivedSession.agent,
           name: archivedSession.name,
           npub: archivedSession.npub,
+          ownerNpub,
+          identityAlias: generateIdentityAlias(ownerNpub),
           workingDirectory: archivedSession.workingDirectory,
           startedAt: archivedSession.startedAt,
           archivedAt: archivedSession.archivedAt,

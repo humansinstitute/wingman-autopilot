@@ -114,4 +114,30 @@ describe("wingman-api session ownership", () => {
     const payload = await stopResponse!.json() as Record<string, unknown>;
     expect(payload.error).toBe("Cannot stop sessions belonging to another user");
   });
+
+  test("stop_session accepts metadata.ownerNpub as the effective owner", async () => {
+    const sessions = new Map<string, SessionSnapshot>();
+    sessions.set("caller-1", buildSession({ id: "caller-1", npub: "npub-user-1" }));
+    sessions.set(
+      "worker-2",
+      buildSession({
+        id: "worker-2",
+        npub: null,
+        metadata: { AGENT: true, ownerNpub: "npub-user-1" } as any,
+      }),
+    );
+    const handler = createWingmanMcpApiHandler(makeDeps(sessions));
+
+    const stopResponse = await handler(
+      new Request("http://localhost/api/mcp/wingman/sessions/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: "caller-1", targetSessionId: "worker-2" }),
+      }),
+      new URL("http://localhost/api/mcp/wingman/sessions/stop"),
+      "POST",
+    );
+
+    expect(stopResponse?.status).toBe(200);
+  });
 });

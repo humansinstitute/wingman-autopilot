@@ -113,6 +113,7 @@ import { getEffectiveOwnerAuthContext, getEffectiveOwnerNpub } from "./auth/effe
 import { resolveNip98AuthContext } from "./auth/nip98-auth";
 import { deriveNpubSegment, normaliseNpub } from "./identity/npub-utils";
 import { generateIdentityAlias } from "./identity/identity-alias";
+import { resolveSessionOwnerNpub, sessionBelongsToViewer as sessionOwnerMatchesViewer } from "./sessions/session-ownership";
 import { resolveWorkspaceScope, type WorkspaceScope } from "./workspaces/workspace-scope";
 import {
   AccessActions,
@@ -867,8 +868,9 @@ process.on("beforeExit", () => {
 
 const serializeSession = (session: SessionSnapshot) => ({
   ...session,
+  ownerNpub: resolveSessionOwnerNpub(session.npub ?? null, session.metadata),
   agentRuntimeStatus: session.agentRuntimeStatus ?? null,
-  identityAlias: generateIdentityAlias(session.npub ?? null),
+  identityAlias: generateIdentityAlias(resolveSessionOwnerNpub(session.npub ?? null, session.metadata)),
   origin: session.origin ?? null,
 });
 
@@ -956,8 +958,15 @@ const buildIdentitySummaries = (
 
   const summaryMap = new Map<string, Accumulator>();
 
-  const registerSession = (npubValue: string | null, sessionId: string, startedAt: string, isActive: boolean) => {
-    const normalized = normaliseNpub(npubValue);
+  const registerSession = (
+    sessionNpub: string | null,
+    metadata: SessionMetadataInput,
+    sessionId: string,
+    startedAt: string,
+    isActive: boolean,
+  ) => {
+    const ownerNpub = resolveSessionOwnerNpub(sessionNpub, metadata);
+    const normalized = normaliseNpub(ownerNpub);
     if (!includeAll) {
       if (!normalized || normalized !== viewerNormalizedNpub) {
         return;
@@ -966,16 +975,16 @@ const buildIdentitySummaries = (
     const key = normalized ?? "__anonymous__";
     let accumulator = summaryMap.get(key);
     if (!accumulator) {
-      const segment = deriveNpubSegment(npubValue);
+      const segment = deriveNpubSegment(ownerNpub);
       const dataRoot = normalize(join(userIdentityRoot, segment));
       const logsRoot = normalize(join(dataRoot, "logs"));
       const attachmentsRoot = normalize(join(attachmentRoot, segment));
       const imagesRoot = normalize(join(imageRoot, segment));
       accumulator = {
-        npub: npubValue,
+        npub: ownerNpub,
         normalized,
         segment,
-        alias: generateIdentityAlias(npubValue),
+        alias: generateIdentityAlias(ownerNpub),
         ports: [],
         balance: normalized ? balanceByNormalized.get(normalized) ?? 0 : 0,
         dataRoot,
@@ -1012,12 +1021,11 @@ const buildIdentitySummaries = (
 
   const storedSessions = messageStore.listSessions();
   for (const record of storedSessions) {
-    const npubValue = record.npub ?? null;
-    registerSession(npubValue, record.id, record.startedAt, activeSessionMap.has(record.id));
+    registerSession(record.npub ?? null, record.metadata, record.id, record.startedAt, activeSessionMap.has(record.id));
   }
 
   for (const session of activeSessions) {
-    registerSession(session.npub ?? null, session.id, session.startedAt, true);
+    registerSession(session.npub ?? null, session.metadata, session.id, session.startedAt, true);
   }
 
   return Array.from(summaryMap.values())
@@ -1107,20 +1115,11 @@ const ensureViewerHasBalance = (
 
 const sessionBelongsToViewer = (
   sessionNpub: string | null | undefined,
+  sessionMetadata: SessionMetadataInput,
   viewerNormalizedNpub: string | null,
   viewerIsAdmin: boolean,
 ): boolean => {
-  if (viewerIsAdmin) {
-    return true;
-  }
-  if (!viewerNormalizedNpub) {
-    return false;
-  }
-  const normalized = normaliseNpub(sessionNpub ?? null);
-  if (!normalized) {
-    return false;
-  }
-  return normalized === viewerNormalizedNpub;
+  return sessionOwnerMatchesViewer(sessionNpub, sessionMetadata, viewerNormalizedNpub, viewerIsAdmin);
 };
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -1129,27 +1128,29 @@ scheduleCleanup({ root: imageRoot, ttlMs: ONE_DAY_MS, intervalMs: ONE_DAY_MS, la
 scheduleCleanup({ root: attachmentRoot, ttlMs: ONE_DAY_MS, intervalMs: ONE_DAY_MS, label: "attachment" });
 
 manager.on((event) => {
+  const sessionOwnerNpub = resolveSessionOwnerNpub(event.session.npub ?? null, event.session.metadata);
+
   if (event.type === "session-started") {
-    ensureUserWorkspace(event.session.npub ?? null);
-    if (event.session.npub) {
+    ensureUserWorkspace(sessionOwnerNpub);
+    if (sessionOwnerNpub) {
       try {
-        identityUserStore.touch(event.session.npub, {
-          alias: generateIdentityAlias(event.session.npub),
+        identityUserStore.touch(sessionOwnerNpub, {
+          alias: generateIdentityAlias(sessionOwnerNpub),
           lastSeenAt: new Date().toISOString(),
         });
       } catch (error) {
-        console.warn(`[admin] failed to record identity ${event.session.npub}:`, error);
+        console.warn(`[admin] failed to record identity ${sessionOwnerNpub}:`, error);
       }
       // Auto-generate bot key if user doesn't have one yet
       try {
-        const existingBotKey = botKeyStore.getActiveKeyForUser(event.session.npub);
+        const existingBotKey = botKeyStore.getActiveKeyForUser(sessionOwnerNpub);
         if (!existingBotKey) {
-          const decoded = nip19.decode(event.session.npub);
+          const decoded = nip19.decode(sessionOwnerNpub);
           if (decoded.type === "npub") {
             const userPubkeyHex = decoded.data as string;
             const generated = generateBotKey(userPubkeyHex);
             botKeyStore.createKey({
-              userNpub: event.session.npub,
+              userNpub: sessionOwnerNpub,
               botPubkeyHex: generated.botPubkeyHex,
               botNpub: generated.botNpub,
               displayName: generated.displayName,
@@ -1157,30 +1158,30 @@ manager.on((event) => {
               encryptedEscrow: generated.encryptedEscrow,
               escrowUuid: generated.escrowUuid,
             });
-            console.log(`[bot-key] Generated bot key for ${event.session.npub.slice(0, 20)}…: ${generated.botNpub.slice(0, 20)}…`);
+            console.log(`[bot-key] Generated bot key for ${sessionOwnerNpub.slice(0, 20)}…: ${generated.botNpub.slice(0, 20)}…`);
           }
         }
       } catch (error) {
-        console.warn(`[bot-key] Failed to auto-generate bot key for ${event.session.npub}:`, error);
+        console.warn(`[bot-key] Failed to auto-generate bot key for ${sessionOwnerNpub}:`, error);
       }
       // Trigger auto-unlock if bot key exists but isn't in memory.
       // Prefer escrow unlock immediately; if that fails and browser is connected,
       // request browser-side decrypt.
       try {
-        if (!isBotKeyUnlocked(event.session.npub)) {
-          const unlocked = tryAutoUnlockBotKeyViaEscrow(event.session.npub, "session-start");
+        if (!isBotKeyUnlocked(sessionOwnerNpub)) {
+          const unlocked = tryAutoUnlockBotKeyViaEscrow(sessionOwnerNpub, "session-start");
           if (!unlocked) {
-            const botRecord = botKeyStore.getActiveKeyForUser(event.session.npub);
+            const botRecord = botKeyStore.getActiveKeyForUser(sessionOwnerNpub);
             if (botRecord) {
               const rootIdentity = getKeyTeleportIdentity();
-              if (rootIdentity && browserSubscribers.hasSubscriber(event.session.npub)) {
-                browserSubscribers.send(event.session.npub, {
+              if (rootIdentity && browserSubscribers.hasSubscriber(sessionOwnerNpub)) {
+                browserSubscribers.send(sessionOwnerNpub, {
                   type: "botkey:decrypt_request",
                   encryptedToUser: botRecord.encryptedToUser,
                   senderPubkey: rootIdentity.pubkey,
                   botPubkeyHex: botRecord.botPubkeyHex,
                 });
-                console.log(`[bot-key] Sent decrypt request to browser for ${event.session.npub.slice(0, 20)}…`);
+                console.log(`[bot-key] Sent decrypt request to browser for ${sessionOwnerNpub.slice(0, 20)}…`);
               }
             }
           }
@@ -1207,8 +1208,8 @@ manager.on((event) => {
     messageStore.replaceMessages(event.session.id, []);
     void maybeAutoDispatchQueuedPrompt(event.session);
     // Broadcast to browser so home page / nav live-refresh
-    if (event.session.npub) {
-      sessionBroadcaster.broadcast(event.session.npub, {
+    if (sessionOwnerNpub) {
+      sessionBroadcaster.broadcast(sessionOwnerNpub, {
         type: "session-started",
         sessionId: event.session.id,
         agent: event.session.agent,
@@ -1220,8 +1221,8 @@ manager.on((event) => {
   if (event.type === "session-deleted") {
     clearPromptStartupReady(event.session.id);
     // Session archived and removed from memory — notify browsers to refresh
-    if (event.session.npub) {
-      sessionBroadcaster.broadcast(event.session.npub, {
+    if (sessionOwnerNpub) {
+      sessionBroadcaster.broadcast(sessionOwnerNpub, {
         type: "session-deleted",
         sessionId: event.session.id,
         agent: event.session.agent,
@@ -1231,21 +1232,23 @@ manager.on((event) => {
     return;
   }
   if (event.type === "session-updated" || event.type === "session-stopped") {
-    ensureUserWorkspace(event.session.npub ?? null);
-    if (event.session.npub) {
+    ensureUserWorkspace(sessionOwnerNpub);
+    if (sessionOwnerNpub) {
       try {
-        identityUserStore.touchExisting(event.session.npub, {
+        identityUserStore.touchExisting(sessionOwnerNpub, {
           lastSeenAt: new Date().toISOString(),
         });
       } catch (error) {
-        console.warn(`[admin] failed to update identity ${event.session.npub}:`, error);
+        console.warn(`[admin] failed to update identity ${sessionOwnerNpub}:`, error);
       }
       // Clear bot key from memory when last session for this user stops
       if (event.type === "session-stopped") {
         clearPromptStartupReady(event.session.id);
-        const userNpub = event.session.npub;
+        const userNpub = sessionOwnerNpub;
         const otherActive = manager.listSessions().some(
-          (s) => s.npub === userNpub && s.id !== event.session.id,
+          (s) =>
+            resolveSessionOwnerNpub(s.npub ?? null, s.metadata) === userNpub &&
+            s.id !== event.session.id,
         );
         const hasEnabledNostrTrigger = shouldKeepBotKeyForNostrTriggers(schedulerStore, userNpub);
         if (!otherActive && !hasEnabledNostrTrigger) {
@@ -1273,8 +1276,8 @@ manager.on((event) => {
     });
     void maybeAutoDispatchQueuedPrompt(event.session);
     // Broadcast to browser so home page / nav live-refresh
-    if (event.session.npub) {
-      sessionBroadcaster.broadcast(event.session.npub, {
+    if (sessionOwnerNpub) {
+      sessionBroadcaster.broadcast(sessionOwnerNpub, {
         type: event.type as "session-updated" | "session-stopped",
         sessionId: event.session.id,
         agent: event.session.agent,
@@ -1444,14 +1447,14 @@ const stopSessionsForUser = async (npub: string | null | undefined) => {
   const sessionIds = new Set<string>();
   const activeSessions = manager.listSessions();
   for (const session of activeSessions) {
-    const sessionNpub = normaliseNpub(session.npub ?? null);
+    const sessionNpub = resolveSessionOwnerNpub(session.npub ?? null, session.metadata);
     if (sessionNpub && sessionNpub === normalized) {
       sessionIds.add(session.id);
     }
   }
   const storedSessions = messageStore.listSessions();
   for (const record of storedSessions) {
-    const recordNpub = normaliseNpub(record.npub ?? null);
+    const recordNpub = resolveSessionOwnerNpub(record.npub ?? null, record.metadata);
     if (recordNpub && recordNpub === normalized) {
       sessionIds.add(record.id);
     }

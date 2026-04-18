@@ -23,7 +23,6 @@ import type { UserSettingsStore } from "../storage/user-settings-store";
 import type { ArtifactsStore, CreateArtifactInput } from "../storage/artifacts-store";
 import type { NpubProjectRecord } from "../projects/npub-project-store";
 import type { MemoryStore } from "./memory-store";
-import { normaliseNpub } from "../identity/npub-utils";
 import { parseBody, jsonError } from "../utils/request-utils";
 import type { NightWatchStartOptions } from "../nightwatch/nightwatch-start-config";
 import { parseNightWatchStartOptions } from "../nightwatch/nightwatch-start-config";
@@ -31,6 +30,7 @@ import {
   type SessionMetadataInput,
   isAgentManagedByMetadataOrOrigin,
 } from "../sessions/session-metadata";
+import { resolveSessionOwnerNpub } from "../sessions/session-ownership";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -359,6 +359,7 @@ function handleListSessions(
     workingDirectory: s.workingDirectory,
     port: s.port,
     pid: s.pid ?? null,
+    ownerNpub: resolveSessionOwnerNpub(s.npub ?? null, s.metadata),
     metadata: s.metadata ?? { AGENT: false, billingMode: "subscription" },
   }));
 
@@ -473,8 +474,8 @@ async function handleStopSession(
   }
 
   // Same-owner check: caller's npub must match target's npub
-  const callerNpub = normaliseNpub(callerSession.npub ?? null);
-  const targetNpub = normaliseNpub(targetSession.npub ?? null);
+  const callerNpub = resolveSessionOwnerNpub(callerSession.npub ?? null, callerSession.metadata);
+  const targetNpub = resolveSessionOwnerNpub(targetSession.npub ?? null, targetSession.metadata);
   if (!callerNpub || !targetNpub || callerNpub !== targetNpub) {
     return jsonError("Cannot stop sessions belonging to another user", 403);
   }

@@ -12,6 +12,7 @@
 import Alpine from "/vendor/alpinejs/module.esm.js";
 import { Dexie, ApiSessionStore } from "../live/db.js";
 import { fetchSessionsApi } from "../services/sessions.js";
+import { resolveSessionOwnerNpub } from "./ownership.js";
 
 /**
  * Normalize an npub value for comparison/filtering.
@@ -261,7 +262,7 @@ export function initSessionsStore({ showToast, getIdentity, onUnauthorized, onId
       const filter = this.filters.npub;
       if (!filter || filter === "all") return this.items;
       return this.items.filter(
-        (s) => normaliseNpub(s.npub) === filter,
+        (s) => normaliseNpub(resolveSessionOwnerNpub(s)) === filter,
       );
     },
 

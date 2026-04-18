@@ -1,3 +1,5 @@
+import { resolveSessionOwnerNpub } from "../sessions/ownership.js";
+
 const SESSION_STATUS_ORDER = Object.freeze({
   starting: 0,
   running: 1,
@@ -59,7 +61,8 @@ export function getSessionIdentityLabel(session) {
   if (identityAlias) {
     return identityAlias;
   }
-  return typeof session?.npub === "string" && session.npub.length > 0 ? session.npub : "Anonymous";
+  const ownerNpub = resolveSessionOwnerNpub(session);
+  return ownerNpub ?? "Anonymous";
 }
 
 export function getSessionDirectoryValue(session, defaultDirectory) {
@@ -259,8 +262,8 @@ export function createSessionTable(orderedSessions, deps) {
     const row = document.createElement("tr");
     const displayName = getSessionDisplayName(session);
     const identityLabel = getSessionIdentityLabel(session);
-    const identityTooltip =
-      typeof session?.npub === "string" && session.npub.length > 0 ? session.npub : identityLabel;
+    const ownerNpub = resolveSessionOwnerNpub(session);
+    const identityTooltip = ownerNpub ?? identityLabel;
 
     row.innerHTML = `
       <td class="actions-cell"></td>

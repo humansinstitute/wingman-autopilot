@@ -8,6 +8,7 @@ import { handleSessionApi, type SessionApiContext } from "./session-api-routes";
 import type { RequestAuthContext } from "../auth/request-context";
 import type { SessionSnapshot } from "../agents/process-manager";
 import type { StoredSessionRecord } from "../storage/message-store";
+import { sessionBelongsToViewer as sessionOwnerMatchesViewer } from "../sessions/session-ownership";
 
 const makeAuth = (overrides?: Partial<RequestAuthContext>): RequestAuthContext => ({
   npub: "npub1owner",
@@ -91,7 +92,8 @@ const buildCtx = (overrides?: Partial<SessionApiContext>): SessionApiContext => 
   ensureViewerHasBalance: () => ({ balance: 100 }),
   shouldRequireBalanceForAgent: async () => false,
   serializeSession: (session) => ({ id: session.id, npub: session.npub, metadata: session.metadata, origin: session.origin }),
-  sessionBelongsToViewer: (sessionNpub, viewerNormalizedNpub) => sessionNpub === viewerNormalizedNpub,
+  sessionBelongsToViewer: (sessionNpub, sessionMetadata, viewerNormalizedNpub, viewerIsAdmin) =>
+    sessionOwnerMatchesViewer(sessionNpub, sessionMetadata as any, viewerNormalizedNpub, viewerIsAdmin),
   getViewerNormalizedNpub: () => "npub1owner",
   buildIdentitySummaries: () => [],
   createSessionSubscribeResponse: () => new Response(null, { status: 200 }),
@@ -284,6 +286,8 @@ describe("handleSessionApi", () => {
       status: "running",
       name: "stored session",
       npub: "npub1owner",
+      ownerNpub: "npub1owner",
+      identityAlias: expect.any(String),
       port: 3700,
       pid: 1234,
       startedAt: baseSession.startedAt,
@@ -294,6 +298,59 @@ describe("handleSessionApi", () => {
       metadata: {
         AGENT: true,
         billingMode: "subscription",
+      },
+    });
+  });
+
+  test("GET /api/sessions/:id returns stored sessions owned via metadata.ownerNpub", async () => {
+    const storedSession: StoredSessionRecord = {
+      id: "session-1",
+      agent: "codex",
+      startedAt: baseSession.startedAt,
+      name: "stored delegated session",
+      npub: null,
+      port: 3700,
+      pid: 1234,
+      pm2Name: null,
+      logsDir: null,
+      workingDirectory: "/tmp/project",
+      command: JSON.stringify(["codex"]),
+      runtimeStatus: "running",
+      origin: null,
+      model: null,
+      targetFile: null,
+      metadata: {
+        AGENT: true,
+        billingMode: "subscription",
+        ownerNpub: "npub1owner",
+      },
+    };
+    const ctx = buildCtx({
+      manager: {
+        getSession: () => undefined,
+        listSessions: () => [],
+        rehydrateSession: () => null,
+      } as any,
+      messageStore: {
+        recordSession: () => {},
+        getSession: (id: string) => (id === "session-1" ? storedSession : null),
+        listSessions: () => [storedSession],
+        listSessionMessages: () => [],
+      } as any,
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions/session-1");
+    const request = new Request(url.toString(), { method: "GET" });
+
+    const response = await handleSessionApi(request, url, "GET", makeAuth(), ctx);
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    await expect(response!.json()).resolves.toMatchObject({
+      id: "session-1",
+      npub: null,
+      ownerNpub: "npub1owner",
+      metadata: {
+        ownerNpub: "npub1owner",
       },
     });
   });
@@ -548,6 +605,41 @@ describe("handleSessionApi", () => {
     expect(response!.status).toBe(200);
     await expect(response!.json()).resolves.toMatchObject({
       sessions: [{ id: "session-1", npub: "npub1owner" }],
+    });
+  });
+
+  test("GET /api/sessions includes sessions owned via metadata.ownerNpub", async () => {
+    const delegatedSession = {
+      ...baseSession,
+      id: "session-meta-owner",
+      npub: null,
+      metadata: {
+        AGENT: true,
+        billingMode: "subscription" as const,
+        ownerNpub: "npub1owner",
+      },
+    };
+    const ctx = buildCtx({
+      manager: {
+        listSessions: () => [delegatedSession],
+      } as any,
+      serializeSession: (session) => ({
+        id: session.id,
+        npub: session.npub,
+        ownerNpub: session.metadata?.ownerNpub ?? null,
+        metadata: session.metadata,
+      }),
+      buildIdentitySummaries: () => [],
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions");
+    const request = new Request(url.toString(), { method: "GET" });
+
+    const response = await handleSessionApi(request, url, "GET", makeAuth(), ctx);
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    await expect(response!.json()).resolves.toMatchObject({
+      sessions: [{ id: "session-meta-owner", ownerNpub: "npub1owner" }],
     });
   });
 
