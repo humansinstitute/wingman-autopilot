@@ -18,6 +18,7 @@ export function createSessionRuntimeActions(deps) {
     getSessionById,
     getSessionDisplayName,
     fetchSessions,
+    fetchSessionApi,
     fetchConversation,
     fetchLogs,
     render,
@@ -107,13 +108,28 @@ export function createSessionRuntimeActions(deps) {
   }
 
   async function resumeSession(sessionId) {
-    const session = getSessionById(sessionId);
+    let session = getSessionById(sessionId);
+    if (!session) {
+      await fetchSessions();
+      session = getSessionById(sessionId);
+    }
+    if (!session && typeof fetchSessionApi === "function") {
+      const fetchedSession = await fetchSessionApi(sessionId).catch(() => null);
+      if (fetchedSession) {
+        await fetchSessions();
+        session = getSessionById(sessionId) ?? fetchedSession;
+      }
+    }
     if (!session) {
       showToast("Session not available. It may have been deleted.", { type: "warning" });
       return;
     }
     setCurrentRoute("live");
-    setActiveSession(sessionId, { updateHistory: true, forceLog: true });
+    setActiveSession(sessionId, {
+      updateHistory: true,
+      forceLog: true,
+      allowPending: !Boolean(getSessionById(sessionId)),
+    });
     await Promise.all([fetchConversation(sessionId), fetchLogs(sessionId)]);
     render();
   }

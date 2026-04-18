@@ -1976,6 +1976,7 @@ const sessionRuntimeActions = createSessionRuntimeActions({
   getSessionById,
   getSessionDisplayName,
   fetchSessions: (...args) => fetchSessions(...args),
+  fetchSessionApi: (...args) => fetchSessionApi(...args),
   fetchConversation: (...args) => fetchConversation(...args),
   fetchLogs: (...args) => fetchLogs(...args),
   render: () => render(),

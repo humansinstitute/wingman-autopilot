@@ -12,6 +12,12 @@ import {
 } from "./session-groups.js";
 import { createSessionGroupTabs } from "./session-group-tabs.js";
 
+function shouldRenderSessionCards() {
+  return typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(max-width: 720px)").matches;
+}
+
 function renderSessionActions(target, session, deps) {
   const {
     getSessionPendingAction,
@@ -317,22 +323,28 @@ export function createLiveAgentsSection(deps) {
   });
 
   const groupTabs = createSessionGroupTabs(activeGroup, groupCounts, onSessionGroupChange);
-  const cardsContainer = createSessionCards(orderedSessions, {
-    ...deps,
-    emptyLabel: activeGroupDef.emptyLabel,
-  });
+  const renderCards = shouldRenderSessionCards();
 
-  const tableContainer = document.createElement("div");
-  tableContainer.className = "wm-table-container session-table-wrapper";
-  tableContainer.append(
-    createSessionTable(orderedSessions, {
-      ...deps,
-      renderSessionActions: (target, session) => renderSessionActions(target, session, deps),
-      emptyLabel: activeGroupDef.emptyLabel,
-    }),
-  );
-
-  liveContent.append(groupTabs, actions, cardsContainer, tableContainer);
+  liveContent.append(groupTabs, actions);
+  if (renderCards) {
+    liveContent.append(
+      createSessionCards(orderedSessions, {
+        ...deps,
+        emptyLabel: activeGroupDef.emptyLabel,
+      }),
+    );
+  } else {
+    const tableContainer = document.createElement("div");
+    tableContainer.className = "wm-table-container session-table-wrapper";
+    tableContainer.append(
+      createSessionTable(orderedSessions, {
+        ...deps,
+        renderSessionActions: (target, session) => renderSessionActions(target, session, deps),
+        emptyLabel: activeGroupDef.emptyLabel,
+      }),
+    );
+    liveContent.append(tableContainer);
+  }
   liveCard.append(liveContent);
 
   setCollapsed(false);
