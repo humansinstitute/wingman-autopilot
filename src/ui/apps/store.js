@@ -38,8 +38,15 @@ function normaliseNpub(npub) {
  * @param {Function} deps.getIdentity - Returns current identity state object
  * @param {Function} [deps.onUnauthorized] - Called on 401 responses
  * @param {Function} [deps.formatWebAppUrl] - Formats a port number into a full URL
+ * @param {boolean} [deps.syncOnInit=true] - Whether init() should immediately sync from the API
  */
-export function initAppsStore({ showToast, getIdentity, onUnauthorized, formatWebAppUrl }) {
+export function initAppsStore({
+  showToast,
+  getIdentity,
+  onUnauthorized,
+  formatWebAppUrl,
+  syncOnInit = true,
+}) {
   Alpine.store("apps", {
     // ----- State -----
     items: [],
@@ -91,8 +98,10 @@ export function initAppsStore({ showToast, getIdentity, onUnauthorized, formatWe
         this.initialized = true;
         this.loading = false;
 
-        // 3. Background-sync from server (non-blocking)
-        this.sync();
+        // 3. Background-sync from server unless bootstrap owns the first fetch.
+        if (syncOnInit) {
+          void this.sync();
+        }
       } catch (err) {
         console.error("[apps-store] init failed:", err);
         this.loading = false;

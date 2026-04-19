@@ -33,8 +33,15 @@ function normaliseNpub(npub) {
  * @param {Function} deps.getIdentity - Returns current identity state object
  * @param {Function} [deps.onUnauthorized] - Called on 401 responses
  * @param {Function} [deps.onIdentityUpdate] - Called with identity updates from session data
+ * @param {boolean} [deps.syncOnInit=true] - Whether init() should immediately sync from the API
  */
-export function initSessionsStore({ showToast, getIdentity, onUnauthorized, onIdentityUpdate }) {
+export function initSessionsStore({
+  showToast,
+  getIdentity,
+  onUnauthorized,
+  onIdentityUpdate,
+  syncOnInit = true,
+}) {
   Alpine.store("sessions", {
     // ----- State -----
     items: [],
@@ -71,8 +78,10 @@ export function initSessionsStore({ showToast, getIdentity, onUnauthorized, onId
         this.initialized = true;
         this.loading = false;
 
-        // 3. Background-sync from server (non-blocking)
-        this.sync();
+        // 3. Background-sync from server unless bootstrap owns the first fetch.
+        if (syncOnInit) {
+          void this.sync();
+        }
       } catch (err) {
         console.error("[sessions-store] init failed:", err);
         this.loading = false;
