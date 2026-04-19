@@ -39,6 +39,7 @@ import { createJobDialogController } from "./common/job-dialog.js";
 import { initAppDialogs } from "./apps/dialog.js";
 import { initWorkspaceTree } from "./apps/tree.js";
 import { initAppCards } from "./apps/cards.js";
+import { initAppsRuntime, APP_STATUS_LABELS, APP_ACTION_LABELS } from "./apps/runtime.js";
 import {
   initFeatureFlagsUI,
   ORCHESTRATOR_FLAG_KEY,
@@ -108,14 +109,10 @@ import {
   copyTextToClipboard,
   attachCopyButton,
   copyConversationToClipboard,
-  createCopyIconButton,
 } from "./utils/clipboard.js";
 import {
   fetchConfigApi,
   normaliseConnectRelays,
-  fetchRestartStatusApi,
-  triggerWarmRestartApi,
-  runSystemCleanupApi,
 } from "./services/config.js";
 import {
   fetchSessionsApi,
@@ -130,10 +127,7 @@ import {
   renameSession as renameSessionAction,
 } from "./sessions/actions.js";
 import {
-  fetchAppsApi,
   fetchAppLogsApi,
-  triggerAppActionApi,
-  removeAppApi,
 } from "./services/apps.js";
 import { isChatRoute } from "./chat/index.js";
 import { initPrivateChat } from "./chat/private-chat.js";
@@ -142,6 +136,7 @@ import { initAdminUsersPanels } from "./api/admin-users-panels.js";
 import { initPrivacyPolicy } from "./views/privacy-policy.js";
 import { initSettingsView } from "./views/settings-view.js";
 import { initStarterProjectsPanel } from "./views/starter-projects-panel.js";
+import { initAppsView } from "./views/apps-view.js";
 import { initHomeView } from "./views/home-view.js";
 import { initFilesView } from "./views/files-view.js";
 import { initFilesApi } from "./files/api.js";
@@ -189,6 +184,7 @@ let renderAdminUsersPanel = () => document.createDocumentFragment();
 let renderPrivacyPolicy = () => document.createElement("div");
 let renderSettings = () => document.createElement("div");
 let renderHome = () => document.createElement("div");
+let renderApps = () => document.createElement("div");
 let renderFiles = () => document.createElement("div");
 let renderLive = () => document.createElement("div");
 let renderSessionTabs = () => document.createElement("div");
@@ -206,6 +202,20 @@ let resetAppDialog = () => {};
 let createWorkspaceTreeSidebar = () => null;
 let renderAppCard = () => document.createElement("section");
 let renderWingmanCard = () => document.createElement("section");
+let fetchApps = async () => {};
+let refreshApps = async () => {};
+let getAppById = () => null;
+let formatAppActionLabel = (action) => action ?? "Unknown";
+let formatAppTimestamp = () => "—";
+let isAppActionDisabled = () => true;
+let triggerAppAction = async () => false;
+let triggerWarmRestart = async () => false;
+let runSystemCleanup = async () => false;
+let removeApp = async () => {};
+let deriveAppWindowName = () => "app";
+let appendVariableUrlRow = () => {};
+let appendVariablePubkeyRow = () => {};
+let renderAppLogPreview = () => document.createElement("pre");
 let renderFeatureFlagsPanel = () => document.createDocumentFragment();
 let ensureFeatureFlagsLoaded = () => {};
 let renderStarterProjectsPanel = () => document.createDocumentFragment();
@@ -1496,38 +1506,6 @@ const buildSessionFilterOptions = () => {
   return options;
 };
 
-const buildAppFilterOptions = () => {
-  if (!state.identity.isAdmin) {
-    return [];
-  }
-  const seen = new Set();
-  const options = [];
-  const appendOption = (value, label) => {
-    if (seen.has(value)) return;
-    seen.add(value);
-    options.push({ value, label });
-  };
-  const viewerNpub = normaliseNpubValue(state.identity.npub);
-  if (viewerNpub) {
-    appendOption(viewerNpub, `My apps (${abbreviateNpub(viewerNpub)})`);
-  }
-  appendOption("all", "All apps");
-  const appFilterOptions = appsStore().filters.options;
-  appFilterOptions.forEach((option) => {
-    if (!option || typeof option !== "object") return;
-    const value = typeof option.value === "string" ? option.value : "__anonymous__";
-    if (seen.has(value)) return;
-    const alias = typeof option.alias === "string" && option.alias.trim().length > 0 ? option.alias.trim() : null;
-    const npub = typeof option.npub === "string" ? option.npub : null;
-    const appCount = typeof option.appCount === "number" ? option.appCount : 0;
-    const baseLabel = alias ?? (npub ? abbreviateNpub(npub) : value === "__anonymous__" ? "Shared" : "Unknown");
-    const detail =
-      appCount === 0 ? "No apps" : appCount === 1 ? "1 app" : `${appCount} apps`;
-    appendOption(value, `${baseLabel} • ${detail}`);
-  });
-  return options;
-};
-
 const fetchLogs = async (sessionId) => {
   const data = await fetchSessionLogsApi(sessionId);
   if (!data) return;
@@ -1632,61 +1610,6 @@ const fetchConversation = async (sessionId) => {
     await renderConversationForSession(sessionId);
   } catch (error) {
     console.error("Failed to load conversation", error);
-  }
-};
-
-const fetchApps = async ({ tail = APP_LOG_PREVIEW_LINES } = {}) => {
-  await appsStore().sync({ tail });
-};
-
-const fetchRestartStatus = async () => {
-  if (!state.identity.isAdmin) {
-    appsStore().system.restart.loading = false;
-    appsStore().system.restart.inProgress = false;
-    appsStore().system.restart.marker = null;
-    appsStore().system.restart.outcome = null;
-    appsStore().system.restart.error = null;
-    return;
-  }
-  appsStore().system.restart.loading = true;
-  try {
-    const response = await fetch("/api/system/restart/status");
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      const message =
-        payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
-          ? payload.error
-          : response.statusText || "Failed to load restart status";
-      throw new Error(message);
-    }
-    appsStore().system.restart.inProgress = Boolean(payload?.inProgress);
-    appsStore().system.restart.marker = payload?.marker ?? null;
-    appsStore().system.restart.outcome = payload?.outcome ?? null;
-    appsStore().system.restart.error = null;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to load restart status";
-    appsStore().system.restart.error = message;
-  } finally {
-    appsStore().system.restart.loading = false;
-  }
-};
-
-
-const refreshApps = async ({ tail = APP_LOG_PREVIEW_LINES, skipRender = false } = {}) => {
-  if (state.identity.isAdmin) {
-    await Promise.all([fetchApps({ tail }), fetchRestartStatus()]);
-  } else {
-    await fetchApps({ tail });
-  }
-  if (!skipRender && currentRoute === "apps") {
-    render();
-  }
-};
-
-const ensureAppsLoaded = async () => {
-  if (appsStore().loading) return;
-  if (!appsStore().initialized) {
-    await refreshApps({ skipRender: false });
   }
 };
 
@@ -2013,484 +1936,29 @@ const postSessionMessage = (...args) => sessionRuntimeActions.postSessionMessage
 const sendMessage = (...args) => sessionRuntimeActions.sendMessage(...args);
 const sendControlCommand = (...args) => sessionRuntimeActions.sendControlCommand(...args);
 
-const APP_STATUS_LABELS = {
-  idle: "Idle",
-  running: "Running",
-  stopping: "Stopping",
-  restarting: "Restarting",
-  building: "Building",
-  "setting-up": "Setting Up",
-  failed: "Failed",
-};
-
-const APP_ACTION_LABELS = {
-  start: "Start",
-  stop: "Stop",
-  restart: "Restart",
-  setup: "Setup",
-  build: "Build",
-};
-
-const APP_BUSY_STATUSES = new Set(["stopping", "restarting", "building", "setting-up"]);
-
-const formatAppActionLabel = (action) => APP_ACTION_LABELS[action] ?? action ?? "Unknown";
-
-const formatAppTimestamp = (value) => {
-  if (!value) return "—";
-  try {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      return value;
-    }
-    return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
-  } catch {
-    return value;
-  }
-};
-
-const getAppById = (appId) => appsStore().items.find((item) => item?.id === appId) ?? null;
-
-const isAppBusy = (app) => {
-  const status = app?.status;
-  if (!status) return false;
-  if (status.inProgressAction) return true;
-  if (APP_BUSY_STATUSES.has(status.status)) return true;
-  return false;
-};
-
-const isAppActionDisabled = (app, action) => {
-  const status = app?.status;
-  if (!status) return true;
-  const available = Boolean(app?.availableScripts?.[action]);
-  if (!available) return true;
-  if (status.inProgressAction && status.inProgressAction !== action) {
-    return true;
-  }
-  if (status.inProgressAction === action) {
-    return true;
-  }
-  const statusValue = status.status;
-  if (APP_BUSY_STATUSES.has(statusValue)) {
-    return true;
-  }
-  if (action === "start") {
-    return statusValue === "running";
-  }
-  if (action === "stop") {
-    return statusValue !== "running";
-  }
-  if (action === "restart") {
-    return false;
-  }
-  if (action === "setup") {
-    return statusValue === "running";
-  }
-  if (action === "build") {
-    return statusValue === "running";
-  }
-  return true;
-};
-
-const deriveAppWindowName = (labelValue, rootValue) => {
-  const label = (labelValue ?? "").trim();
-  const root = (rootValue ?? "").trim();
-  const basename = (input) => {
-    if (!input) return "";
-    const segments = input.split(/[\\/]/).filter(Boolean);
-    return segments.length > 0 ? segments[segments.length - 1] : "";
-  };
-  const source = label || basename(root);
-  const cleaned = source
-    .replace(/[^A-Za-z0-9._-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-+/, "")
-    .replace(/-+$/, "")
-    .slice(0, 48);
-  return cleaned.length > 0 ? cleaned : "app";
-};
-
-const triggerAppAction = async (appId, action) => {
-  const result = await triggerAppActionApi(appId, action);
-  if (!result.success) {
-    showToast(result.error, { type: "error" });
-    return false;
-  }
-  await refreshApps({ skipRender: currentRoute !== "apps" });
-  if (currentRoute !== "apps") {
-    render();
-  }
-  return true;
-};
-
-const triggerWarmRestart = async () => {
-  if (appsStore().system.restart.submitting || appsStore().system.restart.inProgress) {
-    return false;
-  }
-  appsStore().system.restart.submitting = true;
-  try {
-    await triggerWarmRestartApi();
-    appsStore().system.restart.inProgress = true;
-    appsStore().system.restart.error = null;
-    await fetchRestartStatus();
-    if (currentRoute === "apps") {
-      render();
-    }
-    return true;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to initiate restart";
-    appsStore().system.restart.error = message;
-    showToast(message, { type: "error" });
-    return false;
-  } finally {
-    appsStore().system.restart.submitting = false;
-  }
-};
-
-const runSystemCleanup = async () => {
-  if (appsStore().system.cleanup.running) {
-    return false;
-  }
-  appsStore().system.cleanup.running = true;
-  appsStore().system.cleanup.error = null;
-  if (currentRoute === "apps") {
-    render();
-  }
-  try {
-    const payload = await runSystemCleanupApi();
-    appsStore().system.cleanup.result = payload;
-    appsStore().system.cleanup.error = null;
-    await Promise.all([
-      fetchSessions(),
-      refreshApps({ skipRender: true }),
-    ]);
-    return true;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to stop agents and apps";
-    appsStore().system.cleanup.error = message;
-    showToast(message, { type: "error" });
-    return false;
-  } finally {
-    appsStore().system.cleanup.running = false;
-    if (currentRoute === "apps") {
-      render();
-    }
-  }
-};
-
-const removeApp = async (appId) => {
-  const app = getAppById(appId);
-  if (!app) return;
-  const confirmed = await openConfirmDialog({
-    title: "Remove App",
-    description: `Remove "${app.label ?? app.id}" from Wingman?`,
-    confirmLabel: "Remove",
-    testId: "remove-app-dialog",
-  });
-  if (!confirmed) return;
-  const killSession = app?.status?.running
-    ? await openConfirmDialog({
-      title: "Kill Tmux Session",
-      description: "The app appears to be running. Kill the tmux session as well?",
-      confirmLabel: "Kill Session",
-      testId: "remove-app-kill-session-dialog",
-    })
-    : false;
-  const result = await removeAppApi(appId, killSession);
-  if (!result.success) {
-    showToast(result.error, { type: "error" });
-    return;
-  }
-  await refreshApps({ skipRender: false });
-};
-
-const VARIABLE_URL_LOG_PREFIX = "[WINGMAN21-URL]";
-const VARIABLE_PUBKEY_LOG_PREFIX = "[WINGMAN21-PUBKEY]";
-
-const extractVariableUrlFromLogs = (logs) => {
-  if (!Array.isArray(logs)) return null;
-  for (const entry of logs) {
-    if (typeof entry !== "string") continue;
-    if (!entry.startsWith(VARIABLE_URL_LOG_PREFIX)) continue;
-    const remainder = entry.slice(VARIABLE_URL_LOG_PREFIX.length).trim();
-    if (!remainder) continue;
-    const candidate = remainder.split(/\s+/)[0];
-    try {
-      const url = new URL(candidate);
-      return url.toString();
-    } catch {
-      continue;
-    }
-  }
-  return null;
-};
-
-const extractPubkeyFromLogs = (logs) => {
-  if (!Array.isArray(logs)) return null;
-  for (const entry of logs) {
-    if (typeof entry !== "string") continue;
-    if (!entry.startsWith(VARIABLE_PUBKEY_LOG_PREFIX)) continue;
-    const remainder = entry.slice(VARIABLE_PUBKEY_LOG_PREFIX.length).trim();
-    if (!remainder) continue;
-    const candidate = remainder.split(/\s+/)[0];
-    if (!candidate) continue;
-    if (!/^[0-9a-fA-F]{64,130}$/.test(candidate)) continue;
-    return candidate;
-  }
-  return null;
-};
-
-const appendVariableUrlRow = (metaContainer, logs) => {
-  if (!metaContainer) return;
-  const variableUrl = extractVariableUrlFromLogs(logs);
-  if (!variableUrl) return;
-
-  const row = document.createElement("div");
-  row.className = "wm-app-meta-row";
-
-  const label = document.createElement("span");
-  label.className = "wm-app-meta-label";
-  label.textContent = "Variable URL";
-
-  const value = document.createElement("span");
-  value.className = "wm-app-meta-value";
-
-  const link = document.createElement("a");
-  link.href = variableUrl;
-  link.target = "_blank";
-  link.rel = "noopener noreferrer";
-  link.textContent = variableUrl;
-  value.append(link);
-
-  const copyButton = createCopyIconButton({
-    text: variableUrl,
-    ariaLabel: "Copy variable URL",
-    title: "Copy variable URL",
-  });
-  value.append(copyButton);
-  row.append(label, value);
-  metaContainer.append(row);
-};
-
-const appendVariablePubkeyRow = (metaContainer, logs) => {
-  if (!metaContainer) return;
-  const pubkey = extractPubkeyFromLogs(logs);
-  if (!pubkey) return;
-
-  const row = document.createElement("div");
-  row.className = "wm-app-meta-row";
-
-  const label = document.createElement("span");
-  label.className = "wm-app-meta-label";
-  label.textContent = "Pubkey";
-
-  const value = document.createElement("span");
-  value.className = "wm-app-meta-value";
-
-  const pubkeyDisplay = document.createElement("code");
-  pubkeyDisplay.textContent = pubkey;
-  value.append(pubkeyDisplay);
-
-  const copyButton = createCopyIconButton({
-    text: pubkey,
-    ariaLabel: "Copy pubkey",
-    title: "Copy pubkey",
-  });
-
-  value.append(copyButton);
-  row.append(label, value);
-  metaContainer.append(row);
-};
-
-const renderAppLogPreview = (logs) => {
-  const preview = document.createElement("pre");
-  preview.className = "wm-app-log";
-  if (Array.isArray(logs) && logs.length > 0) {
-    preview.textContent = logs.join("\n");
-  } else {
-    preview.textContent = "No recent logs.";
-  }
-  return preview;
-};
-
-const renderApps = () => {
-  const wrapper = document.createElement("div");
-  wrapper.className = "wm-apps";
-
-  const schedulePendingAppDialog = () => {
-    if (appsStore().pendingOpenDialog === "create") {
-      appsStore().pendingOpenDialog = null;
-      requestAnimationFrame(() => {
-        openAppDialog();
-      });
-    }
-  };
-
-  const header = document.createElement("div");
-  header.className = "wm-apps-header";
-
-  const title = document.createElement("h2");
-  title.textContent = "Apps";
-  header.append(title);
-
-  const headerActions = document.createElement("div");
-  headerActions.className = "wm-apps-header-actions";
-
-  if (state.identity.isAdmin) {
-    const ownerFilterOptions = buildAppFilterOptions();
-    if (ownerFilterOptions.length > 0) {
-      const filterContainer = document.createElement("div");
-      filterContainer.className = "wm-session-filter";
-      const filterLabel = document.createElement("label");
-      filterLabel.textContent = "Owner";
-      const filterSelect = document.createElement("select");
-      filterSelect.className = "wm-select";
-      ownerFilterOptions.forEach((option) => {
-        const opt = document.createElement("option");
-        opt.value = option.value;
-        opt.textContent = option.label;
-        const currentAppFilter = appsStore().filters.npub;
-        if (option.value === currentAppFilter) {
-          opt.selected = true;
-        }
-        filterSelect.append(opt);
-      });
-      filterSelect.addEventListener("change", (event) => {
-        const target = event.target;
-        const value = target instanceof HTMLSelectElement && target.value ? target.value : "all";
-        const as = appsStore();
-        as.filters.npub = value;
-        as.filters.initialized = true;
-        void fetchApps({ tail: APP_LOG_PREVIEW_LINES }).then(() => {
-          if (currentRoute === "apps") {
-            render();
-          }
-        });
-      });
-      filterLabel.append(filterSelect);
-      filterContainer.append(filterLabel);
-      headerActions.append(filterContainer);
-    }
-  }
-
-  const refreshButton = document.createElement("button");
-  refreshButton.type = "button";
-  refreshButton.className = "wm-button secondary";
-  refreshButton.textContent = appsStore().loading ? "Refreshing…" : "Refresh";
-  refreshButton.disabled = appsStore().loading;
-  refreshButton.addEventListener("click", () => {
-    refreshButton.disabled = true;
-    void refreshApps({ skipRender: false });
-  });
-
-  const addButton = document.createElement("button");
-  addButton.type = "button";
-  addButton.className = "wm-button";
-  addButton.textContent = "Add App";
-  addButton.addEventListener("click", () => openAppDialog());
-
-  headerActions.append(refreshButton, addButton);
-  header.append(headerActions);
-  wrapper.append(header);
-
-  if (!appsStore().initialized && !appsStore().loading) {
-    void refreshApps({ skipRender: false });
-  }
-
-  // Split layout: sidebar + main content
-  const splitContainer = document.createElement("div");
-  splitContainer.className = "wm-apps-split";
-
-  // Create sidebar with workspace tree
-  const sidebar = createWorkspaceTreeSidebar();
-  if (sidebar) {
-    splitContainer.append(sidebar);
-  }
-
-  // Main content area
-  const mainArea = document.createElement("div");
-  mainArea.className = "wm-apps-main";
-
-  if (appsStore().error) {
-    const errorBox = document.createElement("div");
-    errorBox.className = "wm-apps-error";
-    const errorText = document.createElement("p");
-    errorText.textContent = appsStore().error;
-    const retry = document.createElement("button");
-    retry.type = "button";
-    retry.className = "wm-button secondary";
-    retry.textContent = "Retry";
-    retry.addEventListener("click", () => {
-      void refreshApps({ skipRender: false });
-    });
-    errorBox.append(errorText, retry);
-    mainArea.append(errorBox);
-  }
-
-  const apps = Array.isArray(appsStore().items)
-    ? appsStore().items.filter((app) => app?.id !== "wingman-core")
-    : [];
-  if (appsStore().loading && apps.length === 0) {
-    const loading = document.createElement("p");
-    loading.className = "wm-apps-empty";
-    loading.textContent = "Loading apps…";
-    mainArea.append(loading);
-    splitContainer.append(mainArea);
-    wrapper.append(splitContainer);
-    schedulePendingAppDialog();
-    return wrapper;
-  }
-
-  if (apps.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "wm-apps-empty";
-    empty.textContent = "No apps registered yet. Import from the sidebar or use 'Add App' to get started.";
-    mainArea.append(empty);
-    splitContainer.append(mainArea);
-    wrapper.append(splitContainer);
-    schedulePendingAppDialog();
-    return wrapper;
-  }
-
-  const grid = document.createElement("div");
-  grid.className = "wm-apps-grid";
-
-  apps.forEach((app) => {
-    grid.append(renderAppCard(app));
-  });
-
-  mainArea.append(grid);
-  splitContainer.append(mainArea);
-  wrapper.append(splitContainer);
-
-  const focusPendingAppCard = () => {
-    if (!appsStore().pendingFocusId) {
-      return;
-    }
-    const targetId = appsStore().pendingFocusId;
-    appsStore().pendingFocusId = null;
-    requestAnimationFrame(() => {
-      const escape = typeof CSS?.escape === "function" ? CSS.escape : (value) => value.replace(/"/g, '\\"');
-      const selector = `[data-app-id=\"${escape(targetId)}\"]`;
-      const card = grid.querySelector(selector);
-      if (!card) {
-        return;
-      }
-      card.classList.add("wm-app-card--highlight");
-      card.scrollIntoView({ block: "center", behavior: "smooth" });
-      window.setTimeout(() => {
-        if (card.isConnected) {
-          card.classList.remove("wm-app-card--highlight");
-        }
-      }, 1600);
-    });
-  };
-
-  focusPendingAppCard();
-
-  schedulePendingAppDialog();
-
-  return wrapper;
-};
+const appsRuntime = initAppsRuntime({
+  state,
+  appsStore,
+  getCurrentRoute: () => currentRoute,
+  render: () => render(),
+  showToast,
+  fetchSessions,
+  logPreviewLines: APP_LOG_PREVIEW_LINES,
+});
+fetchApps = (...args) => appsRuntime.fetchApps(...args);
+refreshApps = (...args) => appsRuntime.refreshApps(...args);
+getAppById = (...args) => appsRuntime.getAppById(...args);
+formatAppActionLabel = (...args) => appsRuntime.formatAppActionLabel(...args);
+formatAppTimestamp = (...args) => appsRuntime.formatAppTimestamp(...args);
+isAppActionDisabled = (...args) => appsRuntime.isAppActionDisabled(...args);
+triggerAppAction = (...args) => appsRuntime.triggerAppAction(...args);
+triggerWarmRestart = (...args) => appsRuntime.triggerWarmRestart(...args);
+runSystemCleanup = (...args) => appsRuntime.runSystemCleanup(...args);
+removeApp = (...args) => appsRuntime.removeApp(...args);
+deriveAppWindowName = (...args) => appsRuntime.deriveAppWindowName(...args);
+appendVariableUrlRow = (...args) => appsRuntime.appendVariableUrlRow(...args);
+appendVariablePubkeyRow = (...args) => appsRuntime.appendVariablePubkeyRow(...args);
+renderAppLogPreview = (...args) => appsRuntime.renderAppLogPreview(...args);
 
 const renderProjects = () => {
   if (!projectsFeatureEnabledForViewer()) {
@@ -3167,6 +2635,22 @@ const workspaceTree = initWorkspaceTree({
 });
 
 createWorkspaceTreeSidebar = workspaceTree.createSidebar;
+
+const appsViewModule = initAppsView({
+  state,
+  appsStore,
+  getCurrentRoute: () => currentRoute,
+  render,
+  openAppDialog: (...args) => openAppDialog(...args),
+  createWorkspaceTreeSidebar: (...args) => createWorkspaceTreeSidebar(...args),
+  renderAppCard: (...args) => renderAppCard(...args),
+  refreshApps: (...args) => refreshApps(...args),
+  fetchApps: (...args) => fetchApps(...args),
+  logPreviewLines: APP_LOG_PREVIEW_LINES,
+  normaliseNpubValue,
+  abbreviateNpub,
+});
+renderApps = appsViewModule.renderApps;
 
 const featureFlagsUI = initFeatureFlagsUI({
   state,
