@@ -98,6 +98,7 @@ import {
 } from "./rendering/markdown.js";
 import { initFileEditor } from "./modals/file-editor.js";
 import { initQueueModule } from "./sessions/queue-modal.js";
+import { createAppRenderer } from "./core/app-renderer.js";
 import { initQuickLauncher } from "./core/quick-launcher.js";
 import { initImageAttachments } from "./core/image-attachments.js";
 import { initVoiceNotes } from "./core/voice-notes.js";
@@ -1782,135 +1783,69 @@ const renderProjects = () => {
   return container;
 };
 
-
-
-let renderDebounceTimer = null;
-let isRendering = false;
-let previousRenderRoute = null;
-
-// ===========================================================================
-
-const render = () => {
-  // Prevent concurrent renders
-  if (isRendering) {
-    return;
-  }
-  
-  // Clear any pending render and set a new one
-  if (renderDebounceTimer) {
-    clearTimeout(renderDebounceTimer);
-  }
-  
-  renderDebounceTimer = setTimeout(() => {
-    isRendering = true;
-    try {
-      const routeChanged = previousRenderRoute !== currentRoute;
-      previousRenderRoute = syncLiveRouteTransport({
-        previousRoute: previousRenderRoute,
-        currentRoute,
-        activeSessionId: sessionsStore().activeSessionId,
-        sseManager,
-        liveRefreshController,
-      });
-
-      const projectsEnabled = syncProjectsNavigationVisibility();
-      if (!projectsEnabled && currentRoute === "projects") {
-        currentRoute = "home";
-        if (window.location.pathname === PROJECTS_ROUTE) {
-          window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
-        }
-      }
-      const nightwatchEnabled = syncNightWatchNavigationVisibility();
-      if (!nightwatchEnabled && currentRoute === "nightwatch") {
-        currentRoute = "home";
-        if (window.location.pathname === NIGHTWATCH_ROUTE) {
-          window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
-        }
-      }
-      const focusSnapshot = captureFocusSnapshot();
-
-      // Skip full DOM rebuild for pages that manage their own Alpine state
-      // to avoid destroying in-progress form edits
-      const stablePages = ["scheduler", "jobs"];
-      if (!routeChanged && stablePages.includes(currentRoute)) {
-        setActiveNav();
-        syncMenuTabs();
-        syncDesktopSessionIndicator();
-        updateAgentStatusIndicators();
-        updateDocumentTitle();
-        return;
-      }
-
-      appRoot.innerHTML = "";
-      let view;
-      if (currentRoute === "live") {
-        view = renderLive();
-      } else if (currentRoute === "apps") {
-        view = renderApps();
-      } else if (currentRoute === "projects") {
-        view = renderProjects();
-      } else if (currentRoute === "nightwatch") {
-        view = renderNightWatchPage();
-      } else if (currentRoute === "scheduler") {
-        view = renderSchedulerPage();
-      } else if (currentRoute === "jobs") {
-        view = renderJobsPage();
-      } else if (currentRoute === "files") {
-        view = renderFiles();
-      } else if (currentRoute === "settings") {
-        view = renderSettings();
-      } else if (currentRoute === "chat") {
-        view = renderChat();
-      } else if (currentRoute === "privacy") {
-        view = renderPrivacyPolicy();
-      } else {
-        view = renderHome();
-      }
-      appRoot.append(view);
-      renderFileEditorOverlay();
-      renderWorktreeModal();
-      appRoot.dataset.route = currentRoute;
-      restoreFocusFromSnapshot(focusSnapshot);
-      // If on live route and no element was focused, focus the composer textarea
-      if (currentRoute === "live" && (!document.activeElement || document.activeElement === document.body)) {
-        const textarea = document.querySelector('.wm-composer textarea');
-        focusComposerTextarea(textarea, "restore");
-      }
-      setActiveNav();
-      syncMenuTabs();
-      syncDesktopSessionIndicator();
-      // Hide header webview/writer toggles when not on live route (renderLive handles showing them)
-      if (currentRoute !== "live") {
-        syncHeaderWebviewToggle(null);
-        syncHeaderWriterToggle(null);
-      }
-      updateAgentStatusIndicators();
-      updateDocumentTitle();
-    } finally {
-      isRendering = false;
-      renderDebounceTimer = null;
+const appRenderer = createAppRenderer({
+  appRoot,
+  sessionsStore,
+  getCurrentRoute: () => currentRoute,
+  setCurrentRoute: (route) => {
+    currentRoute = route;
+  },
+  sseManager,
+  getLiveRefreshController: () => liveRefreshController,
+  syncLiveRouteTransport,
+  syncProjectsNavigationVisibility,
+  syncNightWatchNavigationVisibility,
+  homeRoute: HOME_ROUTE,
+  projectsRoute: PROJECTS_ROUTE,
+  nightwatchRoute: NIGHTWATCH_ROUTE,
+  captureFocusSnapshot: (...args) => captureFocusSnapshot(...args),
+  restoreFocusFromSnapshot: (...args) => restoreFocusFromSnapshot(...args),
+  renderRouteView: (route) => {
+    if (route === "live") {
+      return renderLive();
     }
-  }, 50); // 50ms debounce to prevent rapid re-renders
-};
-
-function shouldFullRenderOnSessionUpdate(route) {
-  // Files view should not full re-render on background session updates because
-  // it resets reading position in the spec/file preview.
-  if (route === "files" || route === "live") {
-    return false;
-  }
-  return true;
-}
-
-function handleSessionsStoreItemsChanged() {
-  syncMenuTabs();
-  syncDesktopSessionIndicator();
-  if (shouldFullRenderOnSessionUpdate(currentRoute)) {
-    render();
-  } else {
-    updateAgentStatusIndicators();
-  }
-}
+    if (route === "apps") {
+      return renderApps();
+    }
+    if (route === "projects") {
+      return renderProjects();
+    }
+    if (route === "nightwatch") {
+      return renderNightWatchPage();
+    }
+    if (route === "scheduler") {
+      return renderSchedulerPage();
+    }
+    if (route === "jobs") {
+      return renderJobsPage();
+    }
+    if (route === "files") {
+      return renderFiles();
+    }
+    if (route === "settings") {
+      return renderSettings();
+    }
+    if (route === "chat") {
+      return renderChat();
+    }
+    if (route === "privacy") {
+      return renderPrivacyPolicy();
+    }
+    return renderHome();
+  },
+  renderFileEditorOverlay: (...args) => renderFileEditorOverlay(...args),
+  renderWorktreeModal: (...args) => renderWorktreeModal(...args),
+  focusComposerTextarea,
+  setActiveNav,
+  syncMenuTabs,
+  syncDesktopSessionIndicator,
+  syncHeaderWebviewToggle,
+  syncHeaderWriterToggle,
+  updateAgentStatusIndicators: (...args) => updateAgentStatusIndicators(...args),
+  updateDocumentTitle,
+});
+const render = (...args) => appRenderer.render(...args);
+const handleSessionsStoreItemsChanged = (...args) => appRenderer.handleSessionsStoreItemsChanged(...args);
 
 projectFeature = createProjectFeature({
   onRenderRequested: () => {
@@ -2800,6 +2735,8 @@ jobDialog?.addEventListener("cancel", (event) => {
     onItemsChanged: () => {
       handleSessionsStoreItemsChanged();
     },
+    // The main bootstrap restores auth first, then performs the initial fetch.
+    syncOnInit: false,
   });
 
   // Initialize Apps Alpine store (Dexie-backed, must register before Alpine.start)
@@ -2808,6 +2745,8 @@ jobDialog?.addEventListener("cancel", (event) => {
     getIdentity: () => state.identity,
     onUnauthorized: () => handleUnauthorizedAccess(),
     formatWebAppUrl,
+    // Avoid protected app fetches before auth restoration completes.
+    syncOnInit: false,
   });
 
   // Initialize Alpine.js chat component if enabled
