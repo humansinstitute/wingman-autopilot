@@ -55,6 +55,7 @@ import { dispatchJobRun, fetchJobDefinitions } from "./jobs/api.js";
 import { initSessionsStore } from "./sessions/store.js";
 import { initAppsStore } from "./apps/store.js";
 import { createSessionRuntimeActions } from "./sessions/runtime-actions.js";
+import { initSessionRuntimeSync } from "./sessions/runtime-sync.js";
 import { startSigningListener, stopSigningListener } from "./nip98/signing-listener.js";
 import { startSessionSubscriber, stopSessionSubscriber } from "./sessions/subscriber.js";
 import { buildSessionOrigin, createSessionLauncher } from "./helpers/session-launch.js";
@@ -111,14 +112,7 @@ import {
   copyConversationToClipboard,
 } from "./utils/clipboard.js";
 import {
-  fetchConfigApi,
-  normaliseConnectRelays,
-} from "./services/config.js";
-import {
-  fetchSessionsApi,
   fetchSessionApi,
-  fetchSessionLogsApi,
-  fetchSessionMessagesApi,
   postSessionMessageApi,
 } from "./services/sessions.js";
 import {
@@ -126,9 +120,7 @@ import {
   deleteSession as deleteSessionAction,
   renameSession as renameSessionAction,
 } from "./sessions/actions.js";
-import {
-  fetchAppLogsApi,
-} from "./services/apps.js";
+import { fetchAppLogsApi } from "./services/apps.js";
 import { isChatRoute } from "./chat/index.js";
 import { initPrivateChat } from "./chat/private-chat.js";
 import { initIdentityPanels } from "./identity/panels.js";
@@ -202,6 +194,13 @@ let resetAppDialog = () => {};
 let createWorkspaceTreeSidebar = () => null;
 let renderAppCard = () => document.createElement("section");
 let renderWingmanCard = () => document.createElement("section");
+let fetchConfig = async () => {};
+let fetchSessions = async () => {};
+let buildSessionFilterOptions = () => [];
+let fetchLogs = async () => {};
+let fetchConversation = async () => {};
+let renderConversationForSession = async () => {};
+let setupConversationSelectionLock = () => {};
 let fetchApps = async () => {};
 let refreshApps = async () => {};
 let getAppById = () => null;
@@ -1374,245 +1373,6 @@ const triggerPullRefresh = () => {
 };
 
 
-const fetchConfig = async () => {
-  const configData = await fetchConfigApi();
-  const adminNpubNormalized = normaliseNpubValue(configData?.adminNpub ?? null);
-  const connectRelays = normaliseConnectRelays(configData?.connectRelays);
-  state.config = { ...configData, adminNpub: adminNpubNormalized ?? null, connectRelays };
-  if (typeof globalThis !== "undefined" && globalThis.wingmanIdentity) {
-    globalThis.wingmanIdentity.connectRelays = connectRelays;
-  }
-  if (Array.isArray(configData?.featureFlags)) {
-    syncFeatureFlagsFromConfig(configData.featureFlags);
-  }
-  agentSelect.innerHTML = "";
-  state.config.agents.forEach((agent) => {
-    const option = document.createElement("option");
-    option.value = agent.id;
-    option.textContent = agent.label;
-    agentSelect.append(option);
-  });
-  // Default to configured default agent if available
-  const defaultAgentId = state.config.defaultAgent ?? "claude";
-  if (state.config.agents.some((a) => a.id === defaultAgentId)) {
-    agentSelect.value = defaultAgentId;
-  }
-  if (directoryInput) {
-    const initial =
-      state.lastWorkingDirectory ??
-      state.config.defaultDirectory ??
-      "";
-    directoryInput.value = initial;
-    directoryInput.placeholder = state.config.defaultDirectory ?? "";
-    scheduleDirectorySuggestions(initial);
-  }
-  updateIdentityState({ npub: state.identity.npub }, { persist: false, emit: true });
-};
-
-const fetchSessions = async () => {
-  const ss = sessionsStore();
-
-  // Delegate API call + Dexie write + filter/identity processing to store
-  await ss.sync();
-
-  // Handle 401 redirect (store sets items to [] on unauthorized)
-  if (ss.items.length === 0 && !ss.initialized) {
-    if (currentRoute !== "home") {
-      currentRoute = "home";
-      if (window.location.pathname !== HOME_ROUTE) {
-        window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
-      }
-    }
-    return;
-  }
-
-  const allSessions = ss.items;
-  const sessionIds = new Set(allSessions.map((session) => session.id));
-  const lastId = ss.lastActiveSessionId;
-  if (lastId && !sessionIds.has(lastId)) {
-    ss.lastActiveSessionId = null;
-  }
-
-  // Clean up data and DOM references for deleted sessions
-  for (const key of Array.from(state.logs.keys())) {
-    if (!sessionIds.has(key)) state.logs.delete(key);
-  }
-  for (const key of Array.from(state.messageDrafts.keys())) {
-    if (!sessionIds.has(key)) state.messageDrafts.delete(key);
-  }
-  for (const key of Array.from(state.conversationContainers.keys())) {
-    if (!sessionIds.has(key)) state.conversationContainers.delete(key);
-  }
-  for (const key of Array.from(state.logContainers.keys())) {
-    if (!sessionIds.has(key)) state.logContainers.delete(key);
-  }
-  for (const key of Array.from(state.lastMessageCount.keys())) {
-    if (!sessionIds.has(key)) state.lastMessageCount.delete(key);
-  }
-  for (const key of Array.from(state.liveMessageWindows.keys())) {
-    if (!sessionIds.has(key)) state.liveMessageWindows.delete(key);
-  }
-  for (const key of Array.from(state.lastLogLength.keys())) {
-    if (!sessionIds.has(key)) state.lastLogLength.delete(key);
-  }
-  for (const key of Array.from(state.promptQueues.keys())) {
-    if (!sessionIds.has(key)) state.promptQueues.delete(key);
-  }
-  const routeSessionId = getSessionIdFromPath(window.location.pathname);
-  const allowHistoryUpdate = currentRoute === "live" && !routeSessionId;
-  applyRouteSessionFromPath({ allowHistoryUpdate });
-  ensureActiveSession();
-  const activeId = ss.activeSessionId;
-
-  syncDesktopSessionIndicator();
-
-  if (currentRoute === "live" && activeId) {
-    await Promise.all([
-      fetchLogs(activeId),
-      fetchConversation(activeId),
-      fetchSessionQueue(activeId),
-    ]);
-  }
-};
-
-const buildSessionFilterOptions = () => {
-  const seen = new Set();
-  const options = [];
-  const appendOption = (value, label, meta = {}) => {
-    if (seen.has(value)) return;
-    seen.add(value);
-    options.push({ value, label, ...meta });
-  };
-
-  const viewerNpub = normaliseNpubValue(state.identity.npub);
-  if (state.identity.isAdmin && viewerNpub) {
-    appendOption(viewerNpub, `My identity (${abbreviateNpub(viewerNpub)})`, { npub: viewerNpub });
-  }
-
-  appendOption("all", "All identities");
-
-  const sessionFilterOptions = sessionsStore().filters.options;
-  sessionFilterOptions.forEach((option) => {
-    if (!option || typeof option !== "object") return;
-    const value = typeof option.value === "string" ? option.value : "__anonymous__";
-    const npub = typeof option.npub === "string" ? option.npub : null;
-    const baseLabel = typeof option.label === "string" && option.label.trim().length > 0 ? option.label.trim() : npub ?? "Anonymous";
-    const sessionCount = typeof option.sessionCount === "number" ? option.sessionCount : 0;
-    const activeCount = typeof option.activeCount === "number" ? option.activeCount : 0;
-    const detail = activeCount > 0 ? `${sessionCount} sessions (${activeCount} active)` : `${sessionCount} sessions`;
-    appendOption(value, `${baseLabel} • ${detail}`, { npub, sessionCount, activeCount });
-  });
-
-  return options;
-};
-
-const fetchLogs = async (sessionId) => {
-  const data = await fetchSessionLogsApi(sessionId);
-  if (!data) return;
-  state.logs.set(sessionId, data.logs);
-
-  // Trigger incremental DOM update if on live route
-  if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
-    updateLogsDOM(sessionId);
-  }
-};
-
-const conversationSelectionState = {
-  pointerDownInConversation: false,
-  locked: false,
-};
-
-function isConversationSelectionInsideLiveChat() {
-  const selection = typeof window !== "undefined" ? window.getSelection?.() : null;
-  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-    return false;
-  }
-  const anchorNode = selection.anchorNode;
-  const focusNode = selection.focusNode;
-  const anchorEl = anchorNode instanceof Element ? anchorNode : anchorNode?.parentElement ?? null;
-  const focusEl = focusNode instanceof Element ? focusNode : focusNode?.parentElement ?? null;
-  const anchorInConversation = Boolean(anchorEl?.closest?.(".wm-live-conversation .wm-conversation"));
-  const focusInConversation = Boolean(focusEl?.closest?.(".wm-live-conversation .wm-conversation"));
-  return anchorInConversation || focusInConversation;
-}
-
-function isConversationRenderLocked(sessionId) {
-  return conversationSelectionState.locked &&
-    currentRoute === "live" &&
-    sessionId === sessionsStore().activeSessionId;
-}
-
-async function renderConversationForSession(sessionId, options = {}) {
-  const { isStreamingUpdate = false } = options;
-  if (isConversationRenderLocked(sessionId)) {
-    return;
-  }
-  if (isAlpineChatEnabled()) {
-    if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
-      if (!scrollPillIsNearBottom() && !isStreamingUpdate) {
-        scrollPillShow();
-      }
-    }
-    return;
-  }
-  if (currentRoute === "live" && sessionId === sessionsStore().activeSessionId) {
-    const wasNearBottom = scrollPillIsNearBottom();
-    await updateConversationDOM(sessionId);
-    if (!wasNearBottom && !isStreamingUpdate) {
-      scrollPillShow();
-    }
-  }
-}
-
-function flushConversationRenderLock() {
-  const activeSessionId = sessionsStore().activeSessionId;
-  if (!activeSessionId) {
-    return;
-  }
-  void renderConversationForSession(activeSessionId);
-}
-
-function setupConversationSelectionLock() {
-  document.addEventListener("mousedown", (event) => {
-    const target = event.target;
-    conversationSelectionState.pointerDownInConversation = Boolean(
-      target instanceof Element && target.closest(".wm-live-conversation .wm-conversation"),
-    );
-  });
-  document.addEventListener("mouseup", () => {
-    conversationSelectionState.pointerDownInConversation = false;
-    const shouldLock = isConversationSelectionInsideLiveChat();
-    const wasLocked = conversationSelectionState.locked;
-    conversationSelectionState.locked = shouldLock;
-    if (wasLocked && !shouldLock) {
-      flushConversationRenderLock();
-    }
-  });
-  document.addEventListener("selectionchange", () => {
-    const shouldLock = conversationSelectionState.pointerDownInConversation && isConversationSelectionInsideLiveChat();
-    const wasLocked = conversationSelectionState.locked;
-    conversationSelectionState.locked = shouldLock;
-    if (wasLocked && !shouldLock) {
-      flushConversationRenderLock();
-    }
-  });
-}
-
-const fetchConversation = async (sessionId) => {
-  try {
-    const data = await fetchSessionMessagesApi(sessionId);
-    if (!data) return;
-    const items = Array.isArray(data?.messages) ? data.messages : [];
-    const { changed } = await MessageStore.syncFromServerIfChanged(sessionId, items);
-    if (!changed) {
-      return;
-    }
-    await renderConversationForSession(sessionId);
-  } catch (error) {
-    console.error("Failed to load conversation", error);
-  }
-};
-
 // Apps polling has been replaced by Dexie-backed Alpine store with liveQuery.
 // These stubs remain for callers that haven't been updated yet.
 const syncAppsPolling = () => {};
@@ -1892,6 +1652,41 @@ jobDialogController = createJobDialogController({
   managerPromptOutput: jobDefaultManagerPrompt,
   showToast,
 });
+
+const sessionRuntimeSync = initSessionRuntimeSync({
+  state,
+  sessionsStore,
+  agentSelect,
+  directoryInput,
+  getCurrentRoute: () => currentRoute,
+  setCurrentRoute: (route) => {
+    currentRoute = route;
+  },
+  homeRoute: HOME_ROUTE,
+  getSessionIdFromPath,
+  normaliseNpubValue,
+  abbreviateNpub,
+  syncFeatureFlagsFromConfig,
+  updateIdentityState,
+  scheduleDirectorySuggestions,
+  MessageStore,
+  isAlpineChatEnabled,
+  scrollPillIsNearBottom,
+  scrollPillShow,
+  updateLogsDOM: (...args) => updateLogsDOM(...args),
+  updateConversationDOM: (...args) => updateConversationDOM(...args),
+  fetchSessionQueue: (...args) => fetchSessionQueue(...args),
+  applyRouteSessionFromPath: (...args) => applyRouteSessionFromPath(...args),
+  ensureActiveSession: (...args) => ensureActiveSession(...args),
+  syncDesktopSessionIndicator: (...args) => syncDesktopSessionIndicator(...args),
+});
+fetchConfig = (...args) => sessionRuntimeSync.fetchConfig(...args);
+fetchSessions = (...args) => sessionRuntimeSync.fetchSessions(...args);
+buildSessionFilterOptions = (...args) => sessionRuntimeSync.buildSessionFilterOptions(...args);
+fetchLogs = (...args) => sessionRuntimeSync.fetchLogs(...args);
+renderConversationForSession = (...args) => sessionRuntimeSync.renderConversationForSession(...args);
+setupConversationSelectionLock = (...args) => sessionRuntimeSync.setupConversationSelectionLock(...args);
+fetchConversation = (...args) => sessionRuntimeSync.fetchConversation(...args);
 
 const sessionRuntimeActions = createSessionRuntimeActions({
   state,
