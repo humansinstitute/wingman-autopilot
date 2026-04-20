@@ -1,4 +1,7 @@
 function getComposerTextarea() {
+  if (typeof document === "undefined") {
+    return null;
+  }
   return document.querySelector(".wm-composer textarea");
 }
 
@@ -9,6 +12,25 @@ function clearComposerTextarea(textarea, focusComposerTextarea, mode) {
   textarea.value = "";
   textarea.style.height = "auto";
   focusComposerTextarea(textarea, mode);
+}
+
+async function queueMessageFallback({
+  sessionId,
+  content,
+  state,
+  addToPromptQueue,
+  updateAgentStatusIndicators,
+  focusComposerTextarea,
+}) {
+  const queued = await addToPromptQueue(sessionId, content);
+  if (!queued) {
+    return false;
+  }
+
+  state.messageDrafts.set(sessionId, "");
+  clearComposerTextarea(getComposerTextarea(), focusComposerTextarea, "queue");
+  updateAgentStatusIndicators();
+  return true;
 }
 
 export function createSessionRuntimeActions(deps) {
@@ -209,11 +231,15 @@ export function createSessionRuntimeActions(deps) {
     }
 
     if (isSessionBusy(session)) {
-      const queued = await addToPromptQueue(sessionId, finalContent);
+      const queued = await queueMessageFallback({
+        sessionId,
+        content: finalContent,
+        state,
+        addToPromptQueue,
+        updateAgentStatusIndicators,
+        focusComposerTextarea,
+      });
       if (queued) {
-        state.messageDrafts.set(sessionId, "");
-        clearComposerTextarea(getComposerTextarea(), focusComposerTextarea, "queue");
-        updateAgentStatusIndicators();
         return { sent: false, queued: true };
       }
       return { sent: false, queued: false };
@@ -252,6 +278,17 @@ export function createSessionRuntimeActions(deps) {
         normalized.includes("agent working") ||
         normalized.includes("not ready for prompt dispatch");
       if (isWorkingState) {
+        const queued = await queueMessageFallback({
+          sessionId,
+          content: finalContent,
+          state,
+          addToPromptQueue,
+          updateAgentStatusIndicators,
+          focusComposerTextarea,
+        });
+        if (queued) {
+          return { sent: false, queued: true, busy: true };
+        }
         showToast("Agent working", { variant: "info", duration: 2600 });
         return { sent: false, queued: false, busy: true };
       }

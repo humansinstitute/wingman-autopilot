@@ -12,11 +12,16 @@ describe("session runtime actions", () => {
   let setActiveSession;
   let render;
   let showToast;
+  let state;
+  let sessions;
+  let postSessionMessageApi;
+  let addToPromptQueue;
+  let updateAgentStatusIndicators;
 
   const buildActions = () =>
     createSessionRuntimeActions({
-      state: { messageDrafts: new Map() },
-      sessionsStore: () => ({ items: [] }),
+      state,
+      sessionsStore: () => ({ items: sessions }),
       getSessionById,
       getSessionDisplayName: (session) => session?.name ?? session?.id ?? "session",
       fetchSessions,
@@ -31,11 +36,11 @@ describe("session runtime actions", () => {
       renameSessionAction: mock(async () => ({})),
       openTextPromptDialog: mock(async () => null),
       showToast,
-      postSessionMessageApi: mock(async () => ({})),
+      postSessionMessageApi,
       updateIdentityState: mock(() => {}),
       isSessionBusy: () => false,
-      addToPromptQueue: mock(async () => false),
-      updateAgentStatusIndicators: mock(() => {}),
+      addToPromptQueue,
+      updateAgentStatusIndicators,
       renderConversationForSession: mock(async () => {}),
       scrollPillHide: mock(() => {}),
       scrollConversationAreaToBottom: mock(() => {}),
@@ -43,7 +48,7 @@ describe("session runtime actions", () => {
       focusComposerTextarea: mock(() => {}),
       isAlpineChatEnabled: () => false,
       MessageStore: { syncFromServer: mock(async () => {}), syncFromServerIfChanged: mock(async () => ({ changed: false })) },
-      prepareVoiceNoteDraftForSend: mock(async (value) => value),
+      prepareVoiceNoteDraftForSend: mock(async (_sessionId, value) => value),
     });
 
   beforeEach(() => {
@@ -56,6 +61,11 @@ describe("session runtime actions", () => {
     setActiveSession = mock(() => true);
     render = mock(() => {});
     showToast = mock(() => {});
+    state = { messageDrafts: new Map() };
+    sessions = [];
+    postSessionMessageApi = mock(async () => ({}));
+    addToPromptQueue = mock(async () => false);
+    updateAgentStatusIndicators = mock(() => {});
   });
 
   test("resumeSession falls back to API lookup when local cache is stale", async () => {
@@ -108,5 +118,27 @@ describe("session runtime actions", () => {
 
     releaseConversation?.();
     releaseLogs?.();
+  });
+
+  test("sendMessage queues the prompt after a busy direct-send rejection", async () => {
+    sessions = [{ id: "session-1", status: "running", agentRuntimeStatus: "stable" }];
+    state.messageDrafts.set("session-1", "Follow up");
+
+    const busyError = new Error("Agent working");
+    busyError.status = 409;
+    postSessionMessageApi = mock(async () => {
+      throw busyError;
+    });
+    addToPromptQueue = mock(async () => true);
+
+    const actions = buildActions();
+    const result = await actions.sendMessage("session-1", "Follow up");
+
+    expect(postSessionMessageApi).toHaveBeenCalledWith("session-1", "Follow up", "user");
+    expect(addToPromptQueue).toHaveBeenCalledWith("session-1", "Follow up");
+    expect(updateAgentStatusIndicators).toHaveBeenCalled();
+    expect(state.messageDrafts.get("session-1")).toBe("");
+    expect(result).toEqual({ sent: false, queued: true, busy: true });
+    expect(showToast).not.toHaveBeenCalledWith("Agent working", expect.anything());
   });
 });
