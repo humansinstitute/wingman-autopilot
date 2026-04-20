@@ -161,6 +161,7 @@ export function initQueueModule(deps) {
       const data = await response.json();
       const queue = getSessionQueue(sessionId);
       queue.prompts = data.queue?.prompts ?? [];
+      updateAgentStatusIndicators();
       return queue.prompts;
     } catch (error) {
       console.error("Failed to fetch session queue:", error);
@@ -212,6 +213,7 @@ export function initQueueModule(deps) {
         queue.prompts = queue.prompts.filter((prompt) => prompt.id !== result.sentPrompt.id);
       }
 
+      updateAgentStatusIndicators();
       showToast("Prompt sent to agent", { type: "success" });
       return true;
     } catch (error) {

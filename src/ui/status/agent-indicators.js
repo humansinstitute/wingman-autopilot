@@ -126,7 +126,8 @@ export function initAgentIndicators(deps) {
       if (targetSessionId && sessionId !== targetSessionId) return;
       const session = sessionsStore().items.find((s) => s.id === sessionId);
       const isBusy = isSessionBusy(session);
-      element.classList.toggle("active", isBusy);
+      const hasQueuedPrompts = getQueueCount(sessionId) > 0;
+      element.classList.toggle("active", isBusy || hasQueuedPrompts);
     });
   };
 
