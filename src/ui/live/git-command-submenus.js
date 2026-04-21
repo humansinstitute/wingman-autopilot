@@ -1,4 +1,5 @@
 import { executeGitAction, executeGitHubAction, parseGitRemoteList } from './git-command-api.js';
+import { openConfirmDialog } from '../common/dialog-prompts.js';
 import { openGitOutputDialog, openGitRemoteDialog } from './git-dialogs.js';
 
 function isValidBranchName(branch) {
@@ -126,6 +127,26 @@ async function promptSwitchBranch({
   });
 }
 
+async function confirmGitInit({ sessionsStore, sessionId, showToast }) {
+  const confirmed = await openConfirmDialog({
+    title: 'Initialize Git Repository',
+    description: 'This will run git init in the current session directory. Continue only if this folder is intended to become a repository root.',
+    confirmLabel: 'Run Git Init',
+    cancelLabel: 'Cancel',
+    testId: 'live-view-git-init-confirm-dialog',
+  });
+  if (!confirmed) {
+    return;
+  }
+
+  await executeGitAction({
+    sessionsStore,
+    sessionId,
+    showToast,
+    action: 'init',
+  });
+}
+
 async function promptGitHubCommit({
   sessionId,
   sessionsStore,
@@ -229,14 +250,6 @@ function createGitMenuItems({
       handler: () => showGitStatus({ sessionsStore, sessionId, showToast }),
     },
     {
-      label: 'Switch Branch...',
-      handler: () => promptSwitchBranch({ sessionId, sessionsStore, openTextPromptDialog, showToast }),
-    },
-    {
-      label: 'Init',
-      handler: () => executeGitAction({ sessionsStore, sessionId, showToast, action: 'init' }),
-    },
-    {
       label: 'Add All',
       handler: () => executeGitAction({
         sessionsStore,
@@ -245,6 +258,14 @@ function createGitMenuItems({
         action: 'addAll',
         successMessage: 'Git add all successful',
       }),
+    },
+    {
+      label: 'Switch Branch...',
+      handler: () => promptSwitchBranch({ sessionId, sessionsStore, openTextPromptDialog, showToast }),
+    },
+    {
+      label: 'Init',
+      handler: () => confirmGitInit({ sessionsStore, sessionId, showToast }),
     },
   ];
 }
