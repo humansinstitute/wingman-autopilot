@@ -1,4 +1,4 @@
-import { executeGitAction, executeGitHubAction, parseGitRemoteList } from './git-command-api.js';
+import { deriveGitHubWebUrl, executeGitAction, executeGitHubAction, parseGitRemoteList } from './git-command-api.js';
 import { openConfirmDialog } from '../common/dialog-prompts.js';
 import { openGitCommitDialog, openGitOutputDialog, openGitRemoteDialog } from './git-dialogs.js';
 
@@ -88,6 +88,32 @@ async function promptGitHubRemote({
     successMessage: `GitHub remote "${remoteInput.remote}" saved`,
     errorLabel: `GitHub remote "${remoteInput.remote}"`,
   });
+}
+
+async function openGitHubRepo({ sessionsStore, sessionId, showToast }) {
+  const listResult = await executeGitAction({
+    sessionsStore,
+    sessionId,
+    showToast,
+    action: 'listRemotes',
+    showSuccessToast: false,
+    errorLabel: 'GitHub remote lookup',
+  });
+  if (!listResult) {
+    return;
+  }
+
+  const remotes = parseGitRemoteList(listResult.stdout);
+  const origin = remotes.find((remote) => remote.name === 'origin') ?? remotes[0] ?? null;
+  const remoteUrl = origin?.fetchUrl || origin?.pushUrl || '';
+  const webUrl = deriveGitHubWebUrl(remoteUrl);
+
+  if (!webUrl) {
+    showToast('No GitHub remote configured. Set an origin remote first.', { type: 'warning', duration: 4000 });
+    return;
+  }
+
+  window.open(webUrl, '_blank', 'noopener');
 }
 
 async function promptSwitchBranch({
@@ -285,6 +311,10 @@ function createGitHubMenuItems({
   forkSessionToWorktreeApi,
 }) {
   return [
+    {
+      label: 'Go to repo',
+      handler: () => openGitHubRepo({ sessionsStore, sessionId, showToast }),
+    },
     {
       label: 'Remote...',
       handler: () => promptGitHubRemote({ sessionsStore, sessionId, showToast }),

@@ -126,3 +126,25 @@ export function parseGitRemoteList(stdout) {
 
   return remotes;
 }
+
+export function deriveGitHubWebUrl(remoteUrl) {
+  if (typeof remoteUrl !== 'string') {
+    return null;
+  }
+
+  const trimmed = remoteUrl.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.startsWith('https://github.com/')) {
+    return trimmed.replace(/\.git$/i, '');
+  }
+
+  const sshMatch = trimmed.match(/^git@github\.com:(.+?)(?:\.git)?$/i);
+  if (sshMatch?.[1]) {
+    return `https://github.com/${sshMatch[1]}`;
+  }
+
+  return null;
+}

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { parseGitRemoteList } from './git-command-api.js';
+import { deriveGitHubWebUrl, parseGitRemoteList } from './git-command-api.js';
 
 describe('parseGitRemoteList', () => {
   test('groups fetch and push URLs by remote name', () => {
@@ -27,5 +27,19 @@ describe('parseGitRemoteList', () => {
 
   test('ignores lines that do not match git remote -v output', () => {
     expect(parseGitRemoteList('warning: nothing configured')).toEqual([]);
+  });
+});
+
+describe('deriveGitHubWebUrl', () => {
+  test('converts an HTTPS GitHub remote to the repo page URL', () => {
+    expect(deriveGitHubWebUrl('https://github.com/openai/wingmen.git')).toBe('https://github.com/openai/wingmen');
+  });
+
+  test('converts an SSH GitHub remote to the repo page URL', () => {
+    expect(deriveGitHubWebUrl('git@github.com:openai/wingmen.git')).toBe('https://github.com/openai/wingmen');
+  });
+
+  test('returns null for non-GitHub remotes', () => {
+    expect(deriveGitHubWebUrl('https://git.example.com/openai/wingmen.git')).toBeNull();
   });
 });
