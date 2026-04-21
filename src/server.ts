@@ -2714,6 +2714,13 @@ const server = Bun.serve({
 
     return maybeRefreshSessionCookie(response, authContext);
   },
+  error(error: Error): Response {
+    console.error("[server] unhandled request error:", error);
+    return Response.json(
+      { error: error.message || "Internal Server Error" },
+      { status: 500 },
+    );
+  },
 });
 
 // Wire up the request-IP resolver now that the server object exists.
