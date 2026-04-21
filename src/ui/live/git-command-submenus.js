@@ -1,6 +1,6 @@
 import { executeGitAction, executeGitHubAction, parseGitRemoteList } from './git-command-api.js';
 import { openConfirmDialog } from '../common/dialog-prompts.js';
-import { openGitOutputDialog, openGitRemoteDialog } from './git-dialogs.js';
+import { openGitCommitDialog, openGitOutputDialog, openGitRemoteDialog } from './git-dialogs.js';
 
 function isValidBranchName(branch) {
   return /^[a-zA-Z0-9._/-]+$/.test(branch);
@@ -150,19 +150,15 @@ async function confirmGitInit({ sessionsStore, sessionId, showToast }) {
 async function promptGitHubCommit({
   sessionId,
   sessionsStore,
-  openTextPromptDialog,
   showToast,
 }) {
-  const message = await openTextPromptDialog({
+  const commitInput = await openGitCommitDialog({
     title: 'GitHub Commit',
-    description: 'Enter the commit message to use for all staged changes before pushing to GitHub.',
+    description: 'Enter the commit message to use for all staged changes.',
     label: 'Commit message',
-    value: '',
-    confirmLabel: 'Commit',
     testId: 'live-view-github-commit-dialog',
-    validate: (value) => (value ? '' : 'Commit message is required.'),
   });
-  if (!message) {
+  if (!commitInput) {
     return;
   }
 
@@ -171,8 +167,20 @@ async function promptGitHubCommit({
     sessionId,
     showToast,
     action: 'addAll',
+    showSuccessToast: false,
   });
   if (!addResult) {
+    return;
+  }
+
+  const commitResult = await executeGitHubAction({
+    sessionsStore,
+    sessionId,
+    showToast,
+    action: 'commit',
+    options: { message: commitInput.message },
+  });
+  if (!commitResult || commitInput.action !== 'commit-and-push') {
     return;
   }
 
@@ -180,8 +188,7 @@ async function promptGitHubCommit({
     sessionsStore,
     sessionId,
     showToast,
-    action: 'commit',
-    options: { message },
+    action: 'push',
   });
 }
 
@@ -292,7 +299,7 @@ function createGitHubMenuItems({
     },
     {
       label: 'Commit...',
-      handler: () => promptGitHubCommit({ sessionId, sessionsStore, openTextPromptDialog, showToast }),
+      handler: () => promptGitHubCommit({ sessionId, sessionsStore, showToast }),
     },
     {
       label: 'Fork to Worktree...',

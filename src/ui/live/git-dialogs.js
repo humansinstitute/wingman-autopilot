@@ -274,3 +274,111 @@ export async function openGitRemoteDialog({
     });
   });
 }
+
+export async function openGitCommitDialog({
+  title = 'GitHub Commit',
+  description = 'Enter the commit message to use for all staged changes.',
+  label = 'Commit message',
+  value = '',
+  placeholder = '',
+  confirmLabel = 'Commit',
+  confirmAndPushLabel = 'Commit + Push',
+  cancelLabel = 'Cancel',
+  testId,
+}) {
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
+    return null;
+  }
+
+  return new Promise((resolve) => {
+    const { dialog, form, body, footer } = createGitDialogShell({
+      title,
+      description,
+      testId,
+    });
+
+    const { field, input } = createField({
+      label,
+      value,
+      placeholder,
+    });
+
+    const status = document.createElement('p');
+    status.className = 'wm-dialog__status';
+    status.hidden = true;
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+
+    body.append(field, status);
+
+    const cancelButton = createButton({
+      label: cancelLabel,
+      variant: 'secondary',
+      testId: 'dialog-cancel',
+      onClick: () => dialog.close('cancel'),
+    });
+
+    const confirmAndPushButton = createButton({
+      label: confirmAndPushLabel,
+      variant: 'secondary',
+      testId: 'dialog-confirm-and-push',
+      onClick: () => {
+        const message = input.value.trim();
+        if (!message) {
+          status.hidden = false;
+          status.textContent = 'Commit message is required.';
+          input.focus();
+          return;
+        }
+        status.hidden = true;
+        dialog.close('confirm-and-push');
+      },
+    });
+
+    const confirmButton = document.createElement('button');
+    confirmButton.type = 'submit';
+    confirmButton.className = 'wm-button';
+    confirmButton.textContent = confirmLabel;
+    confirmButton.dataset.testid = 'dialog-confirm';
+
+    footer.append(cancelButton, confirmAndPushButton, confirmButton);
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const message = input.value.trim();
+      if (!message) {
+        status.hidden = false;
+        status.textContent = 'Commit message is required.';
+        input.focus();
+        return;
+      }
+
+      status.hidden = true;
+      dialog.close('confirm');
+    });
+
+    dialog.addEventListener(
+      'close',
+      () => {
+        const message = input.value.trim();
+        const result =
+          dialog.returnValue === 'confirm' || dialog.returnValue === 'confirm-and-push'
+            ? {
+                action: dialog.returnValue === 'confirm-and-push' ? 'commit-and-push' : 'commit',
+                message,
+              }
+            : null;
+        removeDialog(dialog);
+        resolve(result);
+      },
+      { once: true },
+    );
+
+    document.body.append(dialog);
+    showDialogElement(dialog);
+    queueMicrotask(() => {
+      input.focus();
+      input.select();
+    });
+  });
+}
