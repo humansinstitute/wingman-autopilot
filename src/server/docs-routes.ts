@@ -74,6 +74,7 @@ export interface DocsApiContext {
     remote?: string | null;
     branch?: string | null;
     viewerNpub?: string | null;
+    expectedRemoteHost?: string | null;
   }) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
   describeGitRepository: (directory: string) => Promise<Record<string, unknown> | null>;
 }
@@ -1084,6 +1085,7 @@ export async function handleDocsApi(
     const messageInput = normaliseOptionalString((payload as Record<string, unknown>).message);
     const remoteInput = normaliseOptionalString((payload as Record<string, unknown>).remote);
     const branchInput = normaliseOptionalString((payload as Record<string, unknown>).branch);
+    const expectedRemoteHostInput = normaliseOptionalString((payload as Record<string, unknown>).expectedRemoteHost);
 
     if (!directoryInput) {
       return Response.json({ error: "Directory is required" }, { status: 400 });
@@ -1112,6 +1114,7 @@ export async function handleDocsApi(
         remote: remoteInput,
         branch: branchInput,
         viewerNpub: authContext.npub ?? null,
+        expectedRemoteHost: expectedRemoteHostInput,
       });
 
       if (result.exitCode !== 0) {

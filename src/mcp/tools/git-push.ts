@@ -1,9 +1,10 @@
 /**
  * MCP Tool: git_push
  *
- * Push the current branch to the Gitea remote. Proxies through the
- * Wingman server's /api/gitea/push endpoint which handles credential
- * injection scoped to the Gitea URL only.
+ * Push the current branch to the best available remote for the session.
+ * Prefers the branch upstream, then falls back to `gitea`, then `origin`.
+ * The server injects host-scoped credentials so GitHub HTTPS remotes and
+ * Gitea remotes both work from the user's own account.
  *
  * When the push guard blocks a push, formats actionable instructions
  * so the agent can fix the issue and retry.
@@ -19,9 +20,8 @@ export const gitPushSchema = {
 };
 
 export const gitPushDescription =
-  "Push current branch to Gitea remote. " +
-  "Uses Wingman's credential helper scoped to the Gitea URL — " +
-  "does not affect pushes to GitHub or other remotes.";
+  "Push current branch to the session's configured remote. " +
+  "Uses Wingman's host-scoped credential helpers for GitHub HTTPS and Gitea remotes.";
 
 interface GitPushParams {
   branch?: string;
@@ -146,7 +146,7 @@ export async function handleGitPush(
   sessionId: string,
 ) {
   try {
-    const response = await fetch(`${wingmanUrl}/api/gitea/push`, {
+    const response = await fetch(`${wingmanUrl}/api/git/push`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -177,20 +177,20 @@ export async function handleGitPush(
         content: [
           {
             type: "text" as const,
-            text: `Push to Gitea failed (${response.status}): ${errorText}`,
+            text: `Push failed (${response.status}): ${errorText}`,
           },
         ],
       };
     }
 
-    const result = await response.json() as { stdout: string; stderr: string };
+    const result = await response.json() as { stdout: string; stderr: string; remote?: string; branch?: string };
 
     return {
       content: [
         {
           type: "text" as const,
           text: [
-            "Pushed to Gitea successfully.",
+            `Pushed successfully${result.remote ? ` to ${result.remote}` : ""}${result.branch ? ` (${result.branch})` : ""}.`,
             result.stdout ? `\nOutput:\n${result.stdout}` : "",
             result.stderr ? `\nStderr:\n${result.stderr}` : "",
           ].join(""),

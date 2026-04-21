@@ -8,6 +8,7 @@
 
 import type { SessionSnapshot } from "../agents/process-manager";
 import type { WingmanConfig } from "../config";
+import { buildSessionGitCredentialEnv } from "../git/credential-env";
 import type { GiteaOperationConfig } from "./gitea-operations";
 import { resolveGiteaCredentials } from "./gitea-user-manager";
 import {
@@ -21,6 +22,7 @@ import {
   mergeBranch,
   getMergeReport,
 } from "./git-workflow-ops";
+import { runPushGuard } from "./push-guard";
 import { parseBody, jsonError } from "../utils/request-utils";
 
 // ---------------------------------------------------------------------------
@@ -31,6 +33,14 @@ export interface GitWorkflowApiDependencies {
   getSession: (sessionId: string) => SessionSnapshot | undefined;
   config: WingmanConfig;
   dataDir: string;
+  executeGitCommand: (options: {
+    directory: string;
+    action: "push" | "pushUpstream";
+    remote?: string | null;
+    branch?: string | null;
+    viewerNpub?: string | null;
+    gitEnv?: Record<string, string> | null;
+  }) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -46,7 +56,7 @@ function jsonOk(data: Record<string, unknown>): Response {
 function resolveSessionContext(
   deps: GitWorkflowApiDependencies,
   sessionId: string,
-): { directory: string; opConfig: GiteaOperationConfig } | Response {
+): { session: SessionSnapshot; directory: string; opConfig: GiteaOperationConfig } | Response {
   const session = deps.getSession(sessionId);
   if (!session) {
     return jsonError("Unknown session", 404);
@@ -64,7 +74,58 @@ function resolveSessionContext(
     giteaOverride,
   };
 
-  return { directory: session.workingDirectory, opConfig };
+  return { session, directory: session.workingDirectory, opConfig };
+}
+
+async function runGit(
+  directory: string,
+  args: string[],
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const proc = Bun.spawn(["git", ...args], {
+    cwd: directory,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  const exitCode = await proc.exited;
+  return { exitCode, stdout: stdout.trim(), stderr: stderr.trim() };
+}
+
+async function resolveCurrentBranch(directory: string): Promise<string | null> {
+  const result = await runGit(directory, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  if (result.exitCode !== 0 || !result.stdout || result.stdout === "HEAD") {
+    return null;
+  }
+  return result.stdout;
+}
+
+async function remoteExists(directory: string, remote: string): Promise<boolean> {
+  const result = await runGit(directory, ["remote", "get-url", remote]);
+  return result.exitCode === 0 && result.stdout.length > 0;
+}
+
+async function resolvePreferredPushRemote(directory: string, branch: string | null): Promise<string | null> {
+  if (branch) {
+    const upstreamRemote = await runGit(directory, ["config", `branch.${branch}.remote`]);
+    if (upstreamRemote.exitCode === 0 && upstreamRemote.stdout) {
+      if (await remoteExists(directory, upstreamRemote.stdout)) {
+        return upstreamRemote.stdout;
+      }
+    }
+  }
+
+  if (await remoteExists(directory, "gitea")) {
+    return "gitea";
+  }
+
+  if (await remoteExists(directory, "origin")) {
+    return "origin";
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -125,6 +186,11 @@ export function createGitWorkflowApiHandler(deps: GitWorkflowApiDependencies) {
       // POST /api/git/merge
       if (segments.length === 3 && segments[2] === "merge") {
         return await handleMerge(deps, request);
+      }
+
+      // POST /api/git/push
+      if (segments.length === 3 && segments[2] === "push") {
+        return await handlePush(deps, request);
       }
 
       return jsonError("Not found", 404);
@@ -310,5 +376,63 @@ async function handleMerge(
     success: true,
     summary: result.summary,
     report: report || result.report,
+  });
+}
+
+async function handlePush(
+  deps: GitWorkflowApiDependencies,
+  request: Request,
+): Promise<Response> {
+  const body = await parseBody(request);
+  const sessionId = body.sessionId as string | undefined;
+  if (!sessionId) return jsonError("sessionId is required", 400);
+
+  const ctx = resolveSessionContext(deps, sessionId);
+  if (ctx instanceof Response) return ctx;
+
+  const guard = await runPushGuard(ctx.directory);
+  if (!guard.allowed) {
+    return Response.json(
+      { error: "Push blocked by safety guard", issues: guard.issues },
+      { status: 400 },
+    );
+  }
+
+  const requestedBranch = typeof body.branch === "string" ? body.branch.trim() : "";
+  const branch = requestedBranch || await resolveCurrentBranch(ctx.directory);
+  if (!branch) {
+    return jsonError("Unable to determine the current branch", 400);
+  }
+
+  const remote = await resolvePreferredPushRemote(ctx.directory, branch);
+  if (!remote) {
+    return jsonError("No push remote is configured for this repository", 400);
+  }
+
+  const gitEnv = buildSessionGitCredentialEnv({
+    npub: ctx.session.npub,
+    dataDir: deps.dataDir,
+    giteaConfig: ctx.opConfig.giteaOverride ?? null,
+  });
+
+  const action = remote === "gitea" ? "pushUpstream" : "push";
+  const result = await deps.executeGitCommand({
+    directory: ctx.directory,
+    action,
+    remote,
+    branch,
+    viewerNpub: ctx.session.npub ?? null,
+    gitEnv,
+  });
+
+  if (result.exitCode !== 0) {
+    return jsonError(result.stderr || result.stdout || "Push failed", 500);
+  }
+
+  return jsonOk({
+    remote,
+    branch,
+    stdout: result.stdout,
+    stderr: result.stderr,
   });
 }

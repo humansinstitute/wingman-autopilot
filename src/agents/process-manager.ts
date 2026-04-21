@@ -37,7 +37,7 @@ import { resolveBotNsecHex } from "../identity/bot-key-export";
 import { isBotKeyUnlocked } from "../identity/bot-key-manager";
 import { parseAllowedHosts, pickAgentHost, normaliseHostForUrl } from "./agent-client";
 import { BotKeyStore } from "../identity/bot-key-store";
-import { ensureCredentialHelper, getGiteaGitEnv } from "../gitea/credential-helper";
+import { buildSessionGitCredentialEnv } from "../git/credential-env";
 import { resolveGiteaCredentials } from "../gitea/gitea-user-manager";
 
 const MAX_LOG_LINES = 500;
@@ -462,36 +462,49 @@ export class ProcessManager {
       this.appendLog(session, `[manager] MCP config injection failed (non-fatal): ${(mcpError as Error).message}`);
     }
 
-    // Inject Gitea git credentials so agents can push to the Gitea server
-    // Uses per-user credentials when available, falls back to admin (wm21)
-    if (this.config.giteaUrl && this.config.giteaApiToken && this.config.giteaOwner) {
-      try {
-        const giteaInjectStartedAt = Date.now();
-        const giteaCreds = resolveGiteaCredentials(npub, this.config);
-        if (giteaCreds) {
-          const dataDir = new URL("../../data", import.meta.url).pathname;
-          const helperPath = ensureCredentialHelper(dataDir);
-          if (helperPath) {
-            const giteaEnv = getGiteaGitEnv(giteaCreds, helperPath);
-            // Also inject git identity so agent commits use the correct owner name
-            // (doesn't touch user's .gitconfig — scoped to this subprocess)
-            const gitIdentityEnv: Record<string, string> = {
-              GIT_AUTHOR_NAME: giteaCreds.owner,
-              GIT_AUTHOR_EMAIL: `${giteaCreds.owner}@wingman-os.ai`,
-              GIT_COMMITTER_NAME: giteaCreds.owner,
-              GIT_COMMITTER_EMAIL: `${giteaCreds.owner}@wingman-os.ai`,
-            };
-            session.definition = {
-              ...session.definition,
-              env: { ...session.definition.env, ...giteaEnv, ...gitIdentityEnv },
-            };
-            this.appendLog(session, `[manager] Gitea credentials configured for ${giteaCreds.owner}@${this.config.giteaUrl}`);
-          }
-        }
-        giteaInjectMs = Date.now() - giteaInjectStartedAt;
-      } catch (giteaError) {
-        this.appendLog(session, `[manager] Gitea credential setup failed (non-fatal): ${(giteaError as Error).message}`);
+    // Inject host-scoped git credentials so sessions can authenticate to
+    // GitHub HTTPS remotes and per-user Gitea remotes without mutating ~/.gitconfig.
+    try {
+      const gitCredentialInjectStartedAt = Date.now();
+      const dataDir = new URL("../../data", import.meta.url).pathname;
+      const giteaCreds = resolveGiteaCredentials(npub, this.config);
+      const gitCredentialEnv = buildSessionGitCredentialEnv({
+        npub,
+        dataDir,
+        giteaConfig: giteaCreds,
+      });
+
+      const nextEnv: Record<string, string> = {};
+      if (Object.keys(gitCredentialEnv).length > 0) {
+        Object.assign(nextEnv, gitCredentialEnv);
       }
+
+      if (giteaCreds) {
+        Object.assign(nextEnv, {
+          GIT_AUTHOR_NAME: giteaCreds.owner,
+          GIT_AUTHOR_EMAIL: `${giteaCreds.owner}@wingman-os.ai`,
+          GIT_COMMITTER_NAME: giteaCreds.owner,
+          GIT_COMMITTER_EMAIL: `${giteaCreds.owner}@wingman-os.ai`,
+        });
+      }
+
+      if (Object.keys(nextEnv).length > 0) {
+        session.definition = {
+          ...session.definition,
+          env: { ...session.definition.env, ...nextEnv },
+        };
+      }
+
+      if (gitCredentialEnv.WINGMAN_GITHUB_TOKEN) {
+        this.appendLog(session, "[manager] GitHub HTTPS credentials configured for this session");
+      }
+      if (giteaCreds) {
+        this.appendLog(session, `[manager] Gitea credentials configured for ${giteaCreds.owner}@${this.config.giteaUrl}`);
+      }
+
+      giteaInjectMs = Date.now() - gitCredentialInjectStartedAt;
+    } catch (gitCredentialError) {
+      this.appendLog(session, `[manager] git credential setup failed (non-fatal): ${(gitCredentialError as Error).message}`);
     }
 
     // Inject billing proxy env for supported providers when credits billing is enabled.

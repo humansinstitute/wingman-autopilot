@@ -20,6 +20,7 @@ import { createMobileTabBar, attachSwipeGesture } from "../writer/mobile-tabs.js
 import { fetchSessionArtifacts, createArtifactsPanel, createArtifactsToolbar } from "../live/artifacts-panel.js";
 import { createAppControlsPanel, createAppControlsToolbar } from "../live/app-controls-panel.js";
 import { createCommandMenuController } from "../live/command-menu-positioning.js";
+import { addGitCommandSubmenus } from "../live/git-command-submenus.js";
 import { createSessionStopFeedback } from "../live/session-stop-feedback.js";
 import {
   clearWriterDismissal,
@@ -896,189 +897,14 @@ export function initLiveView(deps) {
       toggleLiveDrawer();
     });
     addCommandDivider();
-
-    const executeGitAction = async (action, options = {}) => {
-      const session = sessionsStore().items.find((s) => s.id === sessionId);
-      const directory = session?.workingDirectory;
-      if (!directory) {
-        showToast("No working directory set for this session", { type: "error" });
-        return;
-      }
-      try {
-        const response = await fetch("/api/docs/git", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ directory, action, ...options }),
-        });
-        const data = await response.json();
-        if (!response.ok) {
-          showToast(`Git ${action} failed: ${data.error || "Unknown error"}`, { type: "error", duration: 5000 });
-          return;
-        }
-        showToast(`Git ${action} successful`, { type: "success" });
-        if (data.stdout) {
-          console.log(`Git ${action} output:`, data.stdout);
-        }
-      } catch (error) {
-        showToast(`Git ${action} failed: ${error.message}`, { type: "error" });
-      }
-    };
-
-    addSubmenu("Git", [
-      { label: "Pull", handler: () => executeGitAction("pull") },
-      { label: "Push", handler: () => executeGitAction("push") },
-      {
-        label: "Commit...",
-        handler: async () => {
-          const message = await openTextPromptDialog({
-            title: "Git Commit",
-            description: "Enter the commit message to use for all staged changes.",
-            label: "Commit message",
-            value: "",
-            confirmLabel: "Commit",
-            testId: "live-view-git-commit-dialog",
-            validate: (value) => (value ? "" : "Commit message is required."),
-          });
-          if (message) {
-            executeGitAction("addAll").then(() => {
-              executeGitAction("commit", { message });
-            });
-          }
-        }
-      },
-      {
-        label: "Fork to Worktree...",
-        handler: async () => {
-          const session = sessionsStore().items.find((s) => s.id === sessionId);
-          if (!session?.workingDirectory) {
-            showToast("No working directory set for this session", { type: "error" });
-            return;
-          }
-
-          const trimmedBranch = await openTextPromptDialog({
-            title: "Fork To Worktree",
-            description: "Create a new worktree and session with the last 5 messages as context.",
-            label: "Branch name",
-            value: "",
-            confirmLabel: "Create",
-            testId: "live-view-worktree-branch-dialog",
-            validate: (value) => (value ? "" : "Branch name is required."),
-          });
-          if (!trimmedBranch) {
-            return;
-          }
-          if (!/^[a-zA-Z0-9._/-]+$/.test(trimmedBranch)) {
-            showToast("Invalid branch name. Use alphanumeric characters, dots, underscores, and hyphens.", { type: "error" });
-            return;
-          }
-
-          showToast(`Creating worktree "${trimmedBranch}"...`, { type: "info" });
-
-          try {
-            const result = await forkSessionToWorktreeApi(sessionId, trimmedBranch, 5);
-
-            if (result.session?.id) {
-              if (result.initialPrompt) {
-                try {
-                  localStorage.setItem(`session-draft-${result.session.id}`, result.initialPrompt);
-                  localStorage.setItem(`session-autosubmit-${result.session.id}`, "true");
-                } catch {
-                  // Ignore localStorage errors
-                }
-              }
-
-              const sessionUrl = `/live/${result.session.id}`;
-              window.open(sessionUrl, "_blank", "noopener");
-
-              showToast(`Forked to worktree: ${result.worktreePath}`, { type: "success", duration: 5000 });
-            }
-          } catch (error) {
-            showToast(`Fork failed: ${error.message}`, { type: "error", duration: 5000 });
-          }
-        }
-      },
-    ]);
-
-    // ---- Gitea submenu ----
-    const executeGiteaAction = async (action, options = {}) => {
-      try {
-        const response = await fetch(`/api/gitea/${action}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId, ...options }),
-        });
-        const data = await response.json();
-        if (!response.ok) {
-          showToast(`Gitea ${action} failed: ${data.error || "Unknown error"}`, { type: "error", duration: 5000 });
-          return null;
-        }
-        showToast(`Gitea ${action} successful`, { type: "success" });
-        if (data.stdout) {
-          console.log(`Gitea ${action} output:`, data.stdout);
-        }
-        return data;
-      } catch (error) {
-        showToast(`Gitea ${action} failed: ${error.message}`, { type: "error" });
-        return null;
-      }
-    };
-
-    addSubmenu("Gitea", [
-      {
-        label: "Go to repo",
-        handler: async () => {
-          try {
-            const resp = await fetch(`/api/gitea/remote-url?sessionId=${sessionId}`);
-            const data = await resp.json();
-            if (!resp.ok || !data.configured) {
-              showToast(data.error || "No Gitea remote configured — run Setup first", { type: "warning", duration: 4000 });
-              return;
-            }
-            window.open(data.webUrl, "_blank");
-          } catch (err) {
-            showToast(`Failed to get repo URL: ${err.message}`, { type: "error" });
-          }
-        },
-      },
-      {
-        label: "Setup",
-        handler: async () => {
-          const session = sessionsStore().items.find((s) => s.id === sessionId);
-          const dirName = session?.workingDirectory?.split("/").pop() || "";
-          const projectName = await openTextPromptDialog({
-            title: "Gitea Project Name",
-            description: "Choose the project name to use when creating the remote repository.",
-            label: "Project name",
-            value: dirName,
-            confirmLabel: "Setup",
-            testId: "live-view-gitea-project-dialog",
-          });
-          if (projectName === null) return;
-          showToast("Setting up Gitea repo...", { type: "info" });
-          const data = await executeGiteaAction("set-remote", { projectName: projectName || undefined });
-          if (data?.cloneUrl) {
-            showToast(`Gitea repo ready: ${data.cloneUrl}`, { type: "success", duration: 5000 });
-          }
-        },
-      },
-      { label: "Push", handler: () => executeGiteaAction("push") },
-      { label: "Pull", handler: () => executeGiteaAction("pull") },
-      {
-        label: "Commit and Push All",
-        handler: async () => {
-          const message = await openTextPromptDialog({
-            title: "Commit And Push",
-            description: "Enter the commit message to use before pushing all changes.",
-            label: "Commit message",
-            value: "updates",
-            confirmLabel: "Commit And Push",
-            testId: "live-view-gitea-commit-dialog",
-          });
-          if (message === null) return;
-          executeGiteaAction("commit-and-push", { message: message || "updates" });
-        },
-      },
-    ]);
+    addGitCommandSubmenus({
+      addSubmenu,
+      sessionId,
+      sessionsStore,
+      openTextPromptDialog,
+      showToast,
+      forkSessionToWorktreeApi,
+    });
 
     const matchingApp = findAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
 

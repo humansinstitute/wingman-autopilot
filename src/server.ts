@@ -213,6 +213,10 @@ import {
 } from "./server/git-operations";
 
 const config = loadConfig();
+const migratedUserSettingCount = userSettingsStore.migrateSensitiveValues();
+if (migratedUserSettingCount > 0) {
+  console.log(`[config] migrated ${migratedUserSettingCount} sensitive user setting(s) to encrypted storage`);
+}
 const adminNpub = normaliseNpub(Bun.env.ADMIN_NPUB ?? null);
 const agentHosts = parseAllowedHosts(config.allowedHosts);
 const agentHost = normaliseHostForUrl(pickAgentHost(agentHosts));
@@ -519,6 +523,7 @@ const gitWorkflowApiHandler = createGitWorkflowApiHandler({
   getSession: (sid: string) => manager.getSession(sid),
   config,
   dataDir: wingmanDataDir,
+  executeGitCommand,
 });
 const workspaceSubscriptionManager = new WorkspaceSubscriptionManager({
   botKeyStore,

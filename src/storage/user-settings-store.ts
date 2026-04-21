@@ -11,6 +11,7 @@ import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 
 import { databaseFile } from "./message-store";
+import { decryptSettingValue, encryptSettingValue, isEncryptedSettingValue } from "./setting-value-crypto";
 
 // ============================================================
 // Store Implementation
@@ -33,18 +34,20 @@ class UserSettingsStore {
         "SELECT value FROM user_settings WHERE npub = ?1 AND key = ?2",
       )
       .get(npub, key);
-    return row?.value ?? null;
+    if (!row) return null;
+    return this.decodeValue(npub, key, row.value);
   }
 
   set(npub: string, key: string, value: string): void {
     const now = new Date().toISOString();
+    const storedValue = this.encodeValue(key, value);
     this.db
       .query(
         `INSERT INTO user_settings (npub, key, value, updated_at)
          VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(npub, key) DO UPDATE SET value = ?3, updated_at = ?4`,
       )
-      .run(npub, key, value, now);
+      .run(npub, key, storedValue, now);
   }
 
   delete(npub: string, key: string): boolean {
@@ -52,6 +55,25 @@ class UserSettingsStore {
       .query("DELETE FROM user_settings WHERE npub = ?1 AND key = ?2")
       .run(npub, key);
     return result.changes > 0;
+  }
+
+  migrateSensitiveValues(): number {
+    const rows = this.db
+      .query<{ npub: string; key: string; value: string }, []>(
+        "SELECT npub, key, value FROM user_settings",
+      )
+      .all();
+
+    let migrated = 0;
+    for (const row of rows) {
+      if (!isSensitiveUserSettingKey(row.key) || isEncryptedSettingValue(row.value)) {
+        continue;
+      }
+      this.writeMigratedValue(row.npub, row.key, encryptSettingValue(row.value));
+      migrated += 1;
+    }
+
+    return migrated;
   }
 
   getAll(npub: string): Record<string, string> {
@@ -62,9 +84,40 @@ class UserSettingsStore {
       .all(npub);
     const result: Record<string, string> = {};
     for (const row of rows) {
-      result[row.key] = row.value;
+      result[row.key] = this.decodeValue(npub, row.key, row.value);
     }
     return result;
+  }
+
+  private encodeValue(key: string, value: string): string {
+    if (!isSensitiveUserSettingKey(key)) {
+      return value;
+    }
+    if (isEncryptedSettingValue(value)) {
+      return value;
+    }
+    return encryptSettingValue(value);
+  }
+
+  private decodeValue(npub: string, key: string, value: string): string {
+    if (!isSensitiveUserSettingKey(key)) {
+      return value;
+    }
+    if (!isEncryptedSettingValue(value)) {
+      const encryptedValue = encryptSettingValue(value);
+      if (encryptedValue !== value) {
+        this.writeMigratedValue(npub, key, encryptedValue);
+      }
+      return value;
+    }
+    return decryptSettingValue(value);
+  }
+
+  private writeMigratedValue(npub: string, key: string, value: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .query("UPDATE user_settings SET value = ?3, updated_at = ?4 WHERE npub = ?1 AND key = ?2")
+      .run(npub, key, value, now);
   }
 
   private initialise() {
@@ -79,6 +132,16 @@ class UserSettingsStore {
     `);
   }
 }
+
+export const isSensitiveUserSettingKey = (key: string): boolean => {
+  const normalizedKey = key.trim().toLowerCase();
+  return (
+    normalizedKey.includes("key") ||
+    normalizedKey.includes("secret") ||
+    normalizedKey.includes("token") ||
+    normalizedKey.includes("password")
+  );
+};
 
 export const userSettingsStore = new UserSettingsStore();
 export { UserSettingsStore };

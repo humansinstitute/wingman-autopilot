@@ -134,7 +134,7 @@ export function createGitHubSection() {
 
   const description = document.createElement('p');
   description.className = 'wm-settings__port-note';
-  description.textContent = 'Optional per-user HTTPS credentials for GitHub remotes. Used by Git pull/push actions in Live sessions.';
+  description.textContent = 'Optional per-user HTTPS credentials for GitHub remotes. Used by GitHub pull/push actions in Live sessions and stored encrypted at rest.';
   container.append(description);
 
   const usernameRow = document.createElement('div');

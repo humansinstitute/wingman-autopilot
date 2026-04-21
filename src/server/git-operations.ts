@@ -7,6 +7,11 @@ import { dirname, isAbsolute, join, normalize } from "node:path";
 import { mkdir, realpath, rm, stat } from "node:fs/promises";
 import { readStreamToString } from "./bootstrap/warm-restart";
 import { getGitHubGitEnvForUser } from "../git/github-credential-helper";
+import {
+  buildGitHostMismatchMessage,
+  buildGitHubHttpsRequiredMessage,
+  describeGitRemote,
+} from "../git/remote-auth";
 
 /** Resolved path to the project data directory (e.g. for git credential helpers). */
 const wingmanDataDir = new URL("../../data", import.meta.url).pathname;
@@ -113,6 +118,8 @@ export const executeGitCommand = async (options: {
   remote?: string | null;
   branch?: string | null;
   viewerNpub?: string | null;
+  gitEnv?: Record<string, string> | null;
+  expectedRemoteHost?: string | null;
 }): Promise<CommandResult> => {
   const directory = options.directory;
   const action = options.action;
@@ -132,6 +139,15 @@ export const executeGitCommand = async (options: {
     case "push": {
       const remote = options.remote?.trim();
       const branch = options.branch?.trim();
+      const remoteName = remote || null;
+      const commandGitEnv = await resolveGitCommandEnv({
+        directory,
+        action,
+        remote: remoteName,
+        viewerNpub: options.viewerNpub,
+        gitEnv: options.gitEnv,
+        expectedRemoteHost: options.expectedRemoteHost,
+      });
       const args = ["push"];
       if (remote) {
         args.push(remote);
@@ -139,8 +155,7 @@ export const executeGitCommand = async (options: {
           args.push(branch);
         }
       }
-      const gitEnv = getGitHubGitEnvForUser(options.viewerNpub, wingmanDataDir);
-      return runCommand("git", args, { cwd: directory, env: gitEnv ?? undefined });
+      return runCommand("git", args, { cwd: directory, env: commandGitEnv ?? undefined });
     }
     case "pushUpstream": {
       const remote = options.remote?.trim() || "origin";
@@ -148,12 +163,28 @@ export const executeGitCommand = async (options: {
       if (!branch) {
         throw new Error("Branch name is required to set upstream");
       }
-      const gitEnv = getGitHubGitEnvForUser(options.viewerNpub, wingmanDataDir);
-      return runCommand("git", ["push", "-u", remote, branch], { cwd: directory, env: gitEnv ?? undefined });
+      const commandGitEnv = await resolveGitCommandEnv({
+        directory,
+        action,
+        remote,
+        viewerNpub: options.viewerNpub,
+        gitEnv: options.gitEnv,
+        expectedRemoteHost: options.expectedRemoteHost,
+      });
+      return runCommand("git", ["push", "-u", remote, branch], { cwd: directory, env: commandGitEnv ?? undefined });
     }
     case "pull": {
       const remote = options.remote?.trim();
       const branch = options.branch?.trim();
+      const remoteName = remote || null;
+      const commandGitEnv = await resolveGitCommandEnv({
+        directory,
+        action,
+        remote: remoteName,
+        viewerNpub: options.viewerNpub,
+        gitEnv: options.gitEnv,
+        expectedRemoteHost: options.expectedRemoteHost,
+      });
       const args = ["pull"];
       if (remote) {
         args.push(remote);
@@ -161,13 +192,66 @@ export const executeGitCommand = async (options: {
           args.push(branch);
         }
       }
-      const gitEnv = getGitHubGitEnvForUser(options.viewerNpub, wingmanDataDir);
-      return runCommand("git", args, { cwd: directory, env: gitEnv ?? undefined });
+      return runCommand("git", args, { cwd: directory, env: commandGitEnv ?? undefined });
     }
     default:
       throw new Error("Unsupported git command");
   }
 };
+
+async function resolveRemoteUrl(directory: string, remote: string): Promise<string | null> {
+  const result = await runCommand("git", ["remote", "get-url", remote], { cwd: directory });
+  if (result.exitCode !== 0 || !result.stdout) {
+    return null;
+  }
+  return result.stdout.trim();
+}
+
+async function resolveGitCommandEnv(options: {
+  directory: string;
+  action: GitCommandAction;
+  remote: string | null;
+  viewerNpub?: string | null;
+  gitEnv?: Record<string, string> | null;
+  expectedRemoteHost?: string | null;
+}): Promise<Record<string, string> | null> {
+  const remoteName = options.remote?.trim() || null;
+  const githubEnv = getGitHubGitEnvForUser(options.viewerNpub, wingmanDataDir);
+  const fallbackEnv = options.gitEnv ?? githubEnv ?? null;
+
+  if (!remoteName) {
+    return fallbackEnv;
+  }
+
+  const remoteUrl = await resolveRemoteUrl(options.directory, remoteName);
+  if (!remoteUrl) {
+    if (options.expectedRemoteHost) {
+      throw new Error(`Remote '${remoteName}' is not configured in this repository`);
+    }
+    return fallbackEnv;
+  }
+
+  const remoteDescriptor = describeGitRemote(remoteName, remoteUrl);
+
+  if (options.expectedRemoteHost && remoteDescriptor.host !== options.expectedRemoteHost) {
+    throw new Error(
+      buildGitHostMismatchMessage(remoteName, options.expectedRemoteHost, remoteDescriptor.host),
+    );
+  }
+
+  if (remoteDescriptor.isGithub && remoteDescriptor.usesSsh) {
+    throw new Error(buildGitHubHttpsRequiredMessage(remoteName, remoteUrl));
+  }
+
+  if (remoteDescriptor.isGithub) {
+    if ((options.action === "push" || options.action === "pushUpstream") && !githubEnv) {
+      throw new Error("GitHub credentials are not configured for this user. Open Settings -> GitHub and save a token first.");
+    }
+    return githubEnv ?? fallbackEnv;
+  }
+
+  return fallbackEnv;
+}
 
 const parseGitWorktreeList = (output: string, repoRoot: string): GitWorktreeSummary[] => {
   if (!output || output.trim().length === 0) {
