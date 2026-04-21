@@ -22,6 +22,7 @@ import {
   createCard,
   createConfiguredDispatchesPanel,
   createInlineActions,
+  formatCapability,
   createStatusLine,
   setPanelVisible,
 } from './agent-chat-shared-ui.js';
@@ -47,6 +48,12 @@ function getPrimaryAgent(agents) {
     return null;
   }
   return agents[0] ?? null;
+}
+
+function normaliseAgentCapabilities(agent) {
+  return Array.isArray(agent?.capabilities) && agent.capabilities.length > 0
+    ? [...new Set(agent.capabilities)]
+    : ['chat_intercept'];
 }
 
 export function createAgentDispatchLauncher({ onNavigate } = {}) {
@@ -235,6 +242,41 @@ export function createAgentChatSection({ standalone = false } = {}) {
       statusLine.textContent = error instanceof Error ? error.message : 'Failed to remove local agent.';
     }
   }
+  async function toggleCapability(agent, capability, currentlyEnabled) {
+    const nextCapabilities = new Set(normaliseAgentCapabilities(agent));
+    if (currentlyEnabled) {
+      nextCapabilities.delete(capability);
+    } else {
+      nextCapabilities.add(capability);
+    }
+    if (nextCapabilities.size === 0) {
+      nextCapabilities.add('chat_intercept');
+    }
+    statusLine.textContent = `${currentlyEnabled ? 'Disabling' : 'Enabling'} ${formatCapability(capability)} for ${agent.agentId}...`;
+    try {
+      const effectiveBotNpub = currentPrimarySubscription?.botNpub?.trim() || agent.botNpub?.trim() || '';
+      const effectiveWorkspaceOwner = currentPrimarySubscription?.workspaceOwnerNpub?.trim() || agent.workspaceOwnerNpub?.trim() || '';
+      await saveAgentChatAgent({
+        agentId: agent.agentId,
+        label: agent.label || '',
+        botNpub: effectiveBotNpub,
+        workspaceOwnerNpub: effectiveWorkspaceOwner,
+        groupNpubs: Array.isArray(agent.groupNpubs) ? agent.groupNpubs : [],
+        workingDirectory: agent.workingDirectory || '',
+        capabilities: [...nextCapabilities],
+        chatPromptTemplate: typeof agent.chatPromptTemplate === 'string' ? agent.chatPromptTemplate : '',
+        taskPromptTemplate: typeof agent.taskPromptTemplate === 'string' ? agent.taskPromptTemplate : '',
+        flowDispatchPromptTemplate: typeof agent.flowDispatchPromptTemplate === 'string' ? agent.flowDispatchPromptTemplate : '',
+        taskReviewPromptTemplate: typeof agent.taskReviewPromptTemplate === 'string' ? agent.taskReviewPromptTemplate : '',
+        approvalDispatchPromptTemplate: typeof agent.approvalDispatchPromptTemplate === 'string' ? agent.approvalDispatchPromptTemplate : '',
+        enabled: agent.enabled !== false,
+      });
+      statusLine.textContent = `${currentlyEnabled ? 'Disabled' : 'Enabled'} ${formatCapability(capability)} for ${agent.agentId}.`;
+      await refreshList();
+    } catch (error) {
+      statusLine.textContent = error instanceof Error ? error.message : 'Failed to update agent capability.';
+    }
+  }
   async function refreshList() {
     overviewContainer.replaceChildren();
     setupOverviewContainer.replaceChildren();
@@ -282,7 +324,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
           });
         },
       }));
-      configuredDispatchesContainer.append(createConfiguredDispatchesPanel(agents, {
+      configuredDispatchesContainer.append(createConfiguredDispatchesPanel(primaryAgent, promptDefaults, {
         onEditChatTemplate: (agent) => {
           if (agent) {
             openAgentEditor(agent, { focusField: 'chat-template' });
@@ -342,6 +384,9 @@ export function createAgentChatSection({ standalone = false } = {}) {
             focusField: 'approval-template',
           });
           statusLine.textContent = 'Create a local agent to save an approval dispatch template.';
+        },
+        onToggleCapability: (agent, capability, currentlyEnabled) => {
+          void toggleCapability(agent, capability, currentlyEnabled);
         },
       }));
       const additionalAgents = primaryAgent ? agents.slice(1) : agents;
@@ -453,7 +498,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
   container.append(createSettingsTabs({
     tabDefs: [
       { id: 'setup', label: 'Setup', render: () => setupPanel },
-      { id: 'operator', label: 'Operator', render: () => operatorPanel },
+      { id: 'operator', label: 'Live', render: () => operatorPanel },
     ],
     activeTabId: 'setup',
     onTabChange: () => {},

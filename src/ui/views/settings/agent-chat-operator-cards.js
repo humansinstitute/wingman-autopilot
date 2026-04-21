@@ -182,22 +182,15 @@ function dedupeEvents(events) {
 
 function createPill(text, tone = 'default') {
   const pill = document.createElement('span');
-  const backgrounds = {
-    default: 'rgba(56, 189, 248, 0.12)',
-    success: 'rgba(34, 197, 94, 0.12)',
-    warning: 'rgba(245, 158, 11, 0.14)',
-    danger: 'rgba(239, 68, 68, 0.12)',
-    muted: 'rgba(148, 163, 184, 0.14)',
-  };
-  const borders = {
-    default: 'rgba(56, 189, 248, 0.28)',
-    success: 'rgba(34, 197, 94, 0.28)',
-    warning: 'rgba(245, 158, 11, 0.32)',
-    danger: 'rgba(239, 68, 68, 0.28)',
-    muted: 'rgba(148, 163, 184, 0.26)',
+  const styles = {
+    default: 'background:var(--wm-pill-muted-bg);border:1px solid var(--wm-pill-muted-border);color:var(--wm-pill-muted-fg);',
+    success: 'background:var(--wm-pill-success-bg);border:1px solid var(--wm-pill-success-border);color:var(--wm-pill-success-fg);',
+    warning: 'background:var(--wm-pill-warning-bg);border:1px solid var(--wm-pill-warning-border);color:var(--wm-pill-warning-fg);',
+    danger: 'background:var(--wm-pill-danger-bg);border:1px solid var(--wm-pill-danger-border);color:var(--wm-pill-danger-fg);',
+    muted: 'background:var(--wm-pill-muted-bg);border:1px solid var(--wm-pill-muted-border);color:var(--wm-pill-muted-fg);',
   };
   pill.textContent = text;
-  pill.style.cssText = `display:inline-flex;align-items:center;padding:5px 10px;border-radius:999px;background:${backgrounds[tone] || backgrounds.default};border:1px solid ${borders[tone] || borders.default};font-size:0.84em;`;
+  pill.style.cssText = `display:inline-flex;align-items:center;padding:5px 10px;border-radius:999px;font-size:0.84em;${styles[tone] || styles.default}`;
   return pill;
 }
 
@@ -401,10 +394,35 @@ function createDisclosure(label, value) {
   summary.textContent = label;
 
   const pre = document.createElement('pre');
-  pre.style.cssText = 'margin:10px 0 0;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(15,23,42,0.72);overflow:auto;font-size:0.84em;line-height:1.45;white-space:pre-wrap;';
+  pre.className = 'wm-agent-dispatch-preview';
   pre.textContent = value;
 
   details.append(summary, pre);
+  return details;
+}
+
+function createDisclosureSection(title, description, content, { open = false } = {}) {
+  const details = document.createElement('details');
+  details.style.cssText = 'margin-top:14px;padding:12px 14px;border-radius:14px;border:1px solid var(--border-primary);background:rgba(127,127,127,0.04);';
+  details.open = open;
+
+  const summary = document.createElement('summary');
+  summary.style.cssText = 'cursor:pointer;list-style:none;';
+
+  const heading = document.createElement('div');
+  heading.style.cssText = 'font-weight:650;';
+  heading.textContent = title;
+  summary.append(heading);
+
+  if (description) {
+    const note = document.createElement('div');
+    note.className = 'wm-settings__port-note';
+    note.style.marginTop = '4px';
+    note.textContent = description;
+    summary.append(note);
+  }
+
+  details.append(summary, content);
   return details;
 }
 
@@ -809,7 +827,7 @@ export function createAgentChatOverview(subscriptions, chatSessions) {
   card.setAttribute('data-testid', 'agent-chat-operator-overview');
 
   const heading = document.createElement('h4');
-  heading.textContent = 'Agent Dispatch Overview';
+  heading.textContent = 'Workspace Live Overview';
   card.append(heading);
 
   const blockedIntercepts = subscriptions.reduce((count, subscription) => (
@@ -832,7 +850,7 @@ export function createAgentChatOverview(subscriptions, chatSessions) {
 
   const summary = document.createElement('p');
   summary.className = 'wm-settings__port-note';
-  summary.textContent = `${subscriptions.length} subscriptions, ${agentCount} candidate agents, ${chatSessions.length} active agent sessions, ${workSignalCount} recent work signals, ${workDispatchCount} recorded work outcomes, ${blockedIntercepts} blocked chat intercepts.`;
+  summary.textContent = `${subscriptions.length} workspace subscription${subscriptions.length === 1 ? '' : 's'}, ${agentCount} candidate agent${agentCount === 1 ? '' : 's'}, ${chatSessions.length} active dispatch session${chatSessions.length === 1 ? '' : 's'}, ${workSignalCount} recent work signal${workSignalCount === 1 ? '' : 's'}, ${workDispatchCount} recorded work outcome${workDispatchCount === 1 ? '' : 's'}, ${blockedIntercepts} blocked chat intercept${blockedIntercepts === 1 ? '' : 's'}.`;
   card.append(summary);
 
   card.append(createMetricGrid([
@@ -854,7 +872,7 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
   card.setAttribute('data-testid', `agent-chat-subscription-${subscription.subscriptionId}`);
 
   const heading = document.createElement('h4');
-  heading.textContent = `${shortenIdentifier(subscription.workspaceOwnerNpub, { head: 14, tail: 8 })} -> ${shortenIdentifier(subscription.botNpub, { head: 14, tail: 8 })}`;
+  heading.textContent = 'Workspace Subscription';
   card.append(heading);
 
   const identity = document.createElement('p');
@@ -882,7 +900,8 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
     { label: 'Work Outcomes', value: String(countWhere(recentDispatches, (entry) => entry.kind === 'task' || entry.kind === 'approval')) },
   ]));
 
-  card.append(createDefinitionGrid([
+  const definitions = document.createElement('div');
+  definitions.append(createDefinitionGrid([
     ['Backend', subscription.backendBaseUrl],
     ['Workspace Key', subscription.wsKeyNpub || 'pending'],
     ['Latest Routing Trail', formatTrail(subscription)],
@@ -897,17 +916,48 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
     ['Last Error', subscription.lastErrorCode ? `${subscription.lastErrorCode} @ ${formatTimestamp(subscription.lastErrorAt)}` : 'None'],
   ]));
 
-  card.append(createLatestSsePanel(subscription));
-  card.append(createSseHistoryTable(subscription));
-  card.append(createDispatchHistoryTable(subscription));
-  card.append(createRecommendedList(subscription));
-  card.append(createCandidateAgentTable(subscription));
-  card.append(createInterceptTable(subscription));
-  card.append(createSessionTable(
-    'Linked Chat Sessions',
-    findLinkedSessions(subscription, chatSessions),
-    `agent-chat-linked-sessions-${subscription.subscriptionId}`,
-  ));
+  const liveDetails = document.createElement('div');
+  liveDetails.append(
+    createLatestSsePanel(subscription),
+    createSseHistoryTable(subscription),
+  );
+
+  const routingDetails = document.createElement('div');
+  routingDetails.append(
+    createDispatchHistoryTable(subscription),
+    createSessionTable(
+      'Linked Dispatch Sessions',
+      findLinkedSessions(subscription, chatSessions),
+      `agent-chat-linked-sessions-${subscription.subscriptionId}`,
+    ),
+  );
+
+  const diagnostics = document.createElement('div');
+  diagnostics.append(
+    definitions,
+    createRecommendedList(subscription),
+    createCandidateAgentTable(subscription),
+    createInterceptTable(subscription),
+  );
+
+  card.append(
+    createDisclosureSection(
+      'Workspace Stream',
+      'See whether the subscription is alive, whether events are arriving, and what the latest record changes look like.',
+      liveDetails,
+      { open: true },
+    ),
+    createDisclosureSection(
+      'Dispatch Activity',
+      'See what the runtime actually routed from the stream and which sessions are currently linked.',
+      routingDetails,
+    ),
+    createDisclosureSection(
+      'Routing Diagnostics',
+      'Open this when you need deeper repair guidance, key state, candidate agent matching, or intercept internals.',
+      diagnostics,
+    ),
+  );
 
   const actions = document.createElement('div');
   actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;';
@@ -943,5 +993,5 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
 }
 
 export function createAgentChatSessionPanel(chatSessions) {
-  return createSessionTable('Agent Dispatch Sessions', chatSessions, 'agent-chat-session-panel');
+  return createSessionTable('Dispatch Sessions', chatSessions, 'agent-chat-session-panel');
 }

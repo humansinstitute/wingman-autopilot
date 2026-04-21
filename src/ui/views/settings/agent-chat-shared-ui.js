@@ -1,10 +1,10 @@
 function createTonePill(label, tone = 'muted') {
   const pill = document.createElement('span');
   const styles = {
-    success: 'background:rgba(71,176,140,0.16);border:1px solid rgba(71,176,140,0.35);color:rgba(194,255,230,0.95);',
-    warning: 'background:rgba(245,158,11,0.16);border:1px solid rgba(245,158,11,0.35);color:rgba(255,226,164,0.95);',
-    danger: 'background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.35);color:rgba(255,210,210,0.95);',
-    muted: 'background:rgba(148,163,184,0.12);border:1px solid rgba(148,163,184,0.24);color:rgba(226,232,240,0.92);',
+    success: 'background:var(--wm-pill-success-bg);border:1px solid var(--wm-pill-success-border);color:var(--wm-pill-success-fg);',
+    warning: 'background:var(--wm-pill-warning-bg);border:1px solid var(--wm-pill-warning-border);color:var(--wm-pill-warning-fg);',
+    danger: 'background:var(--wm-pill-danger-bg);border:1px solid var(--wm-pill-danger-border);color:var(--wm-pill-danger-fg);',
+    muted: 'background:var(--wm-pill-muted-bg);border:1px solid var(--wm-pill-muted-border);color:var(--wm-pill-muted-fg);',
   };
   pill.style.cssText = `display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:0.85em;${styles[tone] || styles.muted}`;
   pill.textContent = label;
@@ -223,91 +223,208 @@ export function createCapabilityPicker() {
   };
 }
 
-export function createConfiguredDispatchesPanel(agents, options = {}) {
+function normaliseAgentCapabilities(agent) {
+  return Array.isArray(agent?.capabilities) && agent.capabilities.length > 0
+    ? agent.capabilities
+    : ['chat_intercept'];
+}
+
+function createPromptPreview({ sourceLabel, promptPreview }) {
+  const details = document.createElement('details');
+  details.style.marginTop = '10px';
+
+  const summary = document.createElement('summary');
+  summary.style.cssText = 'cursor:pointer;font-size:0.92em;color:var(--text-secondary);';
+  summary.textContent = `Prompt preview · ${sourceLabel}`;
+
+  const prompt = document.createElement('pre');
+  prompt.className = 'wm-agent-dispatch-preview';
+  prompt.textContent = promptPreview;
+
+  details.append(summary, prompt);
+  return details;
+}
+
+function createCapabilityCard({
+  title,
+  description,
+  enabled,
+  promptSource,
+  promptPreview,
+  onEdit,
+  onToggle,
+  toggleLabel,
+  toggleDisabled = false,
+  toggleDisabledReason = '',
+}) {
+  const card = document.createElement('article');
+  card.className = 'wm-agent-dispatch-capability-card';
+
+  const headingRow = document.createElement('div');
+  headingRow.style.cssText = 'display:flex;justify-content:space-between;gap:12px;align-items:flex-start;';
+
+  const headingBlock = document.createElement('div');
+  headingBlock.style.flex = '1';
+
+  const heading = document.createElement('h5');
+  heading.style.cssText = 'margin:0;';
+  heading.textContent = title;
+
+  const note = document.createElement('p');
+  note.className = 'wm-settings__port-note';
+  note.style.margin = '6px 0 0 0';
+  note.textContent = description;
+  headingBlock.append(heading, note);
+
+  const status = createTonePill(enabled ? 'On' : 'Off', enabled ? 'success' : 'muted');
+  headingRow.append(headingBlock, status);
+  card.append(headingRow);
+
+  const sourceNote = document.createElement('p');
+  sourceNote.className = 'wm-settings__port-note';
+  sourceNote.style.margin = '12px 0 0 0';
+  sourceNote.textContent = `Prompt source: ${promptSource}`;
+  card.append(sourceNote);
+
+  card.append(createPromptPreview({ sourceLabel: promptSource, promptPreview }));
+
+  const toggleButton = createButton(toggleLabel, null, toggleLabel);
+  toggleButton.disabled = toggleDisabled;
+  if (toggleDisabledReason) {
+    toggleButton.title = toggleDisabledReason;
+  }
+  toggleButton.addEventListener('click', () => onToggle?.());
+
+  const editButton = createButton('Edit Prompt', null, `Edit ${title} prompt`);
+  editButton.addEventListener('click', () => onEdit?.());
+
+  card.append(createInlineActions(toggleButton, editButton));
+  return card;
+}
+
+export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, options = {}) {
   const wrapper = document.createElement('div');
   wrapper.style.marginTop = '12px';
 
   const heading = document.createElement('h4');
-  heading.textContent = 'Configured Dispatches';
+  heading.textContent = 'Dispatch Capabilities';
   wrapper.append(heading);
 
   const note = document.createElement('p');
   note.className = 'wm-settings__port-note';
-  note.textContent = 'This is the current local dispatch policy: which agent capabilities are enabled, what they do, and the prompt contract each runtime uses.';
+  note.textContent = primaryAgent
+    ? 'Turn roles on or off for the primary agent and edit the prompt contract for each runtime without digging through a long stack of forms.'
+    : 'Create the primary agent first, then enable the dispatch roles it should handle.';
   wrapper.append(note);
 
-  const agentList = Array.isArray(agents) ? agents : [];
+  if (!primaryAgent) {
+    const empty = document.createElement('p');
+    empty.className = 'wm-settings__port-note';
+    empty.textContent = 'No primary agent is configured yet.';
+    wrapper.append(empty);
+    return wrapper;
+  }
+
+  const summary = document.createElement('section');
+  summary.className = 'wm-card';
+  summary.style.cssText = 'padding:14px;margin-top:12px;';
+
+  const summaryHeading = document.createElement('h5');
+  summaryHeading.style.cssText = 'margin:0;';
+  summaryHeading.textContent = primaryAgent.label || primaryAgent.agentId || 'Primary agent';
+
+  const summaryNote = document.createElement('p');
+  summaryNote.className = 'wm-settings__port-note';
+  summaryNote.style.margin = '8px 0 0 0';
+  summaryNote.textContent = `Working directory: ${primaryAgent.workingDirectory || 'Not set'}`;
+
+  const summaryPills = document.createElement('div');
+  summaryPills.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;';
+  summaryPills.append(
+    createTonePill(primaryAgent.enabled === false ? 'Agent Disabled' : 'Agent Enabled', primaryAgent.enabled === false ? 'warning' : 'success'),
+    createTonePill(`${normaliseAgentCapabilities(primaryAgent).length} Capabilities`, 'muted'),
+  );
+  summary.append(summaryHeading, summaryNote, summaryPills);
+  wrapper.append(summary);
+
+  const grid = document.createElement('div');
+  grid.className = 'wm-agent-dispatch-capability-grid';
+
   const dispatchCards = [
     {
       capability: 'chat_intercept',
       title: 'Chat Dispatch',
       description: 'When a workspace chat advisory matches a local agent, Wingmen reuses or creates the routed session and the agent must decide whether to respond in-thread or ignore.',
       promptKey: 'chatPromptTemplate',
-      actionLabel: 'Chat',
-      actionTestId: 'agent-chat-edit-chat-template',
-      onAction: options.onEditChatTemplate,
+      onEdit: options.onEditChatTemplate,
     },
     {
       capability: 'task_dispatch',
       title: 'Task Dispatch',
       description: 'When a concrete ready task targets the bot, Wingmen reuses or creates the delivery session, queues the task prompt, and Night Watch keeps the worker moving.',
       promptKey: 'taskPromptTemplate',
-      actionLabel: 'Task',
-      actionTestId: 'agent-chat-edit-task-template',
-      onAction: options.onEditTaskTemplate,
+      onEdit: options.onEditTaskTemplate,
     },
     {
       capability: 'flow_dispatch',
       title: 'Flow Dispatch',
       description: 'When a kickoff task is new, assigned to the bot, and has a flow without a flow run, Wingmen routes it into a short-lived orchestration session.',
       promptKey: 'flowDispatchPromptTemplate',
-      actionLabel: 'Flow',
-      actionTestId: 'agent-chat-edit-flow-template',
-      onAction: options.onEditFlowDispatchTemplate,
+      onEdit: options.onEditFlowDispatchTemplate,
     },
     {
       capability: 'task_review',
       title: 'Task Review',
       description: 'When a flow-run task moves to review, Wingmen routes it into orchestration so newly-unblocked downstream tasks can be promoted in one pass.',
       promptKey: 'taskReviewPromptTemplate',
-      actionLabel: 'Review',
-      actionTestId: 'agent-chat-edit-review-template',
-      onAction: options.onEditTaskReviewTemplate,
+      onEdit: options.onEditTaskReviewTemplate,
     },
     {
       capability: 'approval_dispatch',
       title: 'Approval Dispatch',
       description: 'When an approval record transitions to approved for a live flow run, Wingmen routes it into orchestration so downstream tasks can continue.',
       promptKey: 'approvalDispatchPromptTemplate',
-      actionLabel: 'Approval',
-      actionTestId: 'agent-chat-edit-approval-template',
-      onAction: options.onEditApprovalDispatchTemplate,
+      onEdit: options.onEditApprovalDispatchTemplate,
     },
   ];
 
-  wrapper.append(...dispatchCards.map((cardConfig) => {
-    const enabledAgents = agentList
-      .filter((agent) => {
-        const capabilities = Array.isArray(agent.capabilities) && agent.capabilities.length > 0
-          ? agent.capabilities
-          : ['chat_intercept'];
-        return agent.enabled !== false && capabilities.includes(cardConfig.capability);
-      });
-    const primaryAgent = enabledAgents[0] ?? null;
-    return createDispatchReferenceCard({
+  const selectedCapabilities = new Set(normaliseAgentCapabilities(primaryAgent));
+  grid.append(...dispatchCards.map((cardConfig) => {
+    const promptOverride = typeof primaryAgent?.[cardConfig.promptKey] === 'string'
+      ? primaryAgent[cardConfig.promptKey]
+      : '';
+    const defaultPrompt = typeof defaults?.[cardConfig.promptKey] === 'string'
+      ? defaults[cardConfig.promptKey]
+      : '';
+    const preview = promptOverride || defaultPrompt || `No ${cardConfig.title.toLowerCase()} prompt is configured yet.`;
+    const promptSource = promptOverride
+      ? 'Agent override'
+      : defaultPrompt
+        ? 'Workspace default'
+        : 'Missing';
+    const enabled = primaryAgent.enabled !== false && selectedCapabilities.has(cardConfig.capability);
+    const lastEnabledCapability = selectedCapabilities.size === 1 && selectedCapabilities.has(cardConfig.capability);
+
+    return createCapabilityCard({
       title: cardConfig.title,
-      enabledAgents: enabledAgents.map((agent) => agent.agentId),
       description: cardConfig.description,
-      promptPreview: primaryAgent?.[cardConfig.promptKey] || `No enabled ${cardConfig.title.toLowerCase()} template.`,
-      actionLabel: primaryAgent
-        ? `Edit ${cardConfig.actionLabel} Template`
-        : `Add ${cardConfig.title} Agent`,
-      actionTestId: cardConfig.actionTestId,
-      onAction: typeof cardConfig.onAction === 'function'
-        ? () => cardConfig.onAction(primaryAgent)
+      enabled,
+      promptSource,
+      promptPreview: preview,
+      onEdit: typeof cardConfig.onEdit === 'function' ? () => cardConfig.onEdit(primaryAgent) : null,
+      onToggle: typeof options.onToggleCapability === 'function'
+        ? () => options.onToggleCapability(primaryAgent, cardConfig.capability, enabled)
         : null,
+      toggleLabel: enabled ? 'Turn Off' : 'Turn On',
+      toggleDisabled: primaryAgent.enabled === false || (lastEnabledCapability && enabled),
+      toggleDisabledReason: primaryAgent.enabled === false
+        ? 'Enable the agent first.'
+        : lastEnabledCapability && enabled
+          ? 'At least one dispatch capability must remain enabled on the agent.'
+          : '',
     });
   }));
+  wrapper.append(grid);
 
   return wrapper;
 }

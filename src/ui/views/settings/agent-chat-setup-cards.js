@@ -34,10 +34,10 @@ function createDetailList(rows) {
 function createTonePill(label, tone = 'muted') {
   const pill = document.createElement('span');
   const styles = {
-    success: 'background:rgba(71,176,140,0.16);border:1px solid rgba(71,176,140,0.35);color:rgba(194,255,230,0.95);',
-    warning: 'background:rgba(245,158,11,0.16);border:1px solid rgba(245,158,11,0.35);color:rgba(255,226,164,0.95);',
-    danger: 'background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.35);color:rgba(255,210,210,0.95);',
-    muted: 'background:rgba(148,163,184,0.12);border:1px solid rgba(148,163,184,0.24);color:rgba(226,232,240,0.92);',
+    success: 'background:var(--wm-pill-success-bg);border:1px solid var(--wm-pill-success-border);color:var(--wm-pill-success-fg);',
+    warning: 'background:var(--wm-pill-warning-bg);border:1px solid var(--wm-pill-warning-border);color:var(--wm-pill-warning-fg);',
+    danger: 'background:var(--wm-pill-danger-bg);border:1px solid var(--wm-pill-danger-border);color:var(--wm-pill-danger-fg);',
+    muted: 'background:var(--wm-pill-muted-bg);border:1px solid var(--wm-pill-muted-border);color:var(--wm-pill-muted-fg);',
   };
   pill.style.cssText = `display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:0.85em;${styles[tone] || styles.muted}`;
   pill.textContent = label;
@@ -100,6 +100,35 @@ function createCapabilityList(capabilities = []) {
   });
 
   return wrapper;
+}
+
+function createMetricRow(items) {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-top:12px;';
+  items.forEach(({ label, value }) => {
+    const tile = document.createElement('div');
+    tile.style.cssText = 'padding:10px 12px;border-radius:12px;border:1px solid var(--border-primary);background:rgba(127,127,127,0.04);';
+
+    const labelEl = document.createElement('div');
+    labelEl.className = 'wm-settings__port-note';
+    labelEl.textContent = label;
+
+    const valueEl = document.createElement('div');
+    valueEl.style.cssText = 'margin-top:4px;font-weight:650;';
+    valueEl.textContent = value;
+
+    tile.append(labelEl, valueEl);
+    row.append(tile);
+  });
+  return row;
+}
+
+function formatTimestamp(value) {
+  if (typeof value !== 'string' || !value) {
+    return 'None';
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString() : value;
 }
 
 function appendStep(card, title, description, complete) {
@@ -226,6 +255,11 @@ export function createAgentDispatchSetupCards({
       createTonePill(subscription.botNpub ? 'Bot Bound' : 'Bot Pending', subscription.botNpub ? 'success' : 'warning'),
     );
     connectionCard.append(statusRow);
+    connectionCard.append(createMetricRow([
+      { label: 'Recent Events', value: String(Array.isArray(subscription.recentSseEvents) ? subscription.recentSseEvents.length : 0) },
+      { label: 'Dispatches', value: String(Array.isArray(subscription.recentDispatches) ? subscription.recentDispatches.length : 0) },
+      { label: 'Last Event', value: formatTimestamp(subscription.lastSseEvent?.at || '') },
+    ]));
     connectionCard.append(createDetailList([
       ['Workspace', subscription.workspaceOwnerNpub || 'None'],
       ['Backend', subscription.backendBaseUrl || 'None'],
@@ -277,8 +311,8 @@ export function createAgentDispatchSetupCards({
     note.className = 'wm-settings__port-note';
     note.style.marginTop = '10px';
     note.textContent = additionalAgentCount > 0
-      ? 'Additional agents still exist below, but the main setup flow is now centered on this primary identity.'
-      : 'As new runtime features arrive, add them here as capability toggles instead of creating a second local agent.';
+      ? 'Additional agents still exist below, but this page is optimized around one primary identity with role toggles.'
+      : 'Use the Dispatch Capabilities section below to turn individual roles on and off for this same agent.';
     agentCard.append(note);
   } else {
     const empty = document.createElement('p');

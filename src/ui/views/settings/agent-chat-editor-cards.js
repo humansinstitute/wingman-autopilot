@@ -12,7 +12,7 @@ import {
 
 function createDisclosureSection(title, description, testId) {
   const details = document.createElement('details');
-  details.style.cssText = 'margin-top:12px;padding:12px;border:1px solid var(--wm-border-muted, rgba(255,255,255,0.12));border-radius:10px;background:rgba(15,23,42,0.24);';
+  details.style.cssText = 'margin-top:12px;padding:12px;border:1px solid var(--wm-border-muted, rgba(255,255,255,0.12));border-radius:10px;background:rgba(127,127,127,0.04);';
   if (testId) {
     details.setAttribute('data-testid', testId);
   }
