@@ -6569,6 +6569,25 @@ dialog textarea {
   min-width: 5.5rem;
 }
 
+.wm-git-dialog__output {
+  margin: 0;
+  max-height: min(22rem, 50vh);
+  overflow: auto;
+  padding: 0.875rem 1rem;
+  border-radius: 0.875rem;
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  font-family: var(--font-family-monospace, monospace);
+  font-size: 0.92rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.wm-git-dialog__summary {
+  max-height: min(16rem, 36vh);
+}
+
 @media (max-width: 600px) {
   .wm-dialog-prompt {
     width: calc(100vw - 1rem);

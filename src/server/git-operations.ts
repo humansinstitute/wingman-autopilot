@@ -45,7 +45,17 @@ export type GitRepositorySummary = {
   worktreeError: string | null;
 };
 
-export type GitCommandAction = "init" | "addAll" | "commit" | "push" | "pushUpstream" | "pull";
+export type GitCommandAction =
+  | "init"
+  | "addAll"
+  | "commit"
+  | "push"
+  | "pushUpstream"
+  | "pull"
+  | "status"
+  | "switchBranch"
+  | "listRemotes"
+  | "setRemote";
 
 export type CreateWorktreeOptions = {
   directory: string;
@@ -116,6 +126,7 @@ export const executeGitCommand = async (options: {
   action: GitCommandAction;
   message?: string | null;
   remote?: string | null;
+  remoteUrl?: string | null;
   branch?: string | null;
   viewerNpub?: string | null;
   gitEnv?: Record<string, string> | null;
@@ -129,12 +140,38 @@ export const executeGitCommand = async (options: {
       return runCommand("git", ["init"], { cwd: directory });
     case "addAll":
       return runCommand("git", ["add", "."], { cwd: directory });
+    case "status":
+      return runCommand("git", ["status", "--short", "--branch"], { cwd: directory });
     case "commit": {
       const message = options.message?.trim();
       if (!message) {
         throw new Error("Commit message is required");
       }
       return runCommand("git", ["commit", "-m", message], { cwd: directory });
+    }
+    case "switchBranch": {
+      const branch = options.branch?.trim();
+      if (!branch) {
+        throw new Error("Branch name is required");
+      }
+      return runCommand("git", ["switch", branch], { cwd: directory });
+    }
+    case "listRemotes":
+      return runCommand("git", ["remote", "-v"], { cwd: directory });
+    case "setRemote": {
+      const remote = options.remote?.trim();
+      const remoteUrl = options.remoteUrl?.trim();
+      if (!remote) {
+        throw new Error("Remote name is required");
+      }
+      if (!remoteUrl) {
+        throw new Error("Remote URL is required");
+      }
+      const existingRemoteUrl = await resolveRemoteUrl(directory, remote);
+      if (existingRemoteUrl) {
+        return runCommand("git", ["remote", "set-url", remote, remoteUrl], { cwd: directory });
+      }
+      return runCommand("git", ["remote", "add", remote, remoteUrl], { cwd: directory });
     }
     case "push": {
       const remote = options.remote?.trim();

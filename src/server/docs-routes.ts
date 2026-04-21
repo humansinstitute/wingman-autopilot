@@ -72,6 +72,7 @@ export interface DocsApiContext {
     action: GitCommandAction;
     message?: string | null;
     remote?: string | null;
+    remoteUrl?: string | null;
     branch?: string | null;
     viewerNpub?: string | null;
     expectedRemoteHost?: string | null;
@@ -1084,6 +1085,7 @@ export async function handleDocsApi(
     const actionInput = normaliseOptionalString((payload as Record<string, unknown>).action);
     const messageInput = normaliseOptionalString((payload as Record<string, unknown>).message);
     const remoteInput = normaliseOptionalString((payload as Record<string, unknown>).remote);
+    const remoteUrlInput = normaliseOptionalString((payload as Record<string, unknown>).remoteUrl);
     const branchInput = normaliseOptionalString((payload as Record<string, unknown>).branch);
     const expectedRemoteHostInput = normaliseOptionalString((payload as Record<string, unknown>).expectedRemoteHost);
 
@@ -1095,7 +1097,7 @@ export async function handleDocsApi(
       return Response.json({ error: "Action is required" }, { status: 400 });
     }
 
-    if (!["init", "addAll", "commit", "push", "pushUpstream", "pull"].includes(actionInput)) {
+    if (!["init", "addAll", "commit", "push", "pushUpstream", "pull", "status", "switchBranch", "listRemotes", "setRemote"].includes(actionInput)) {
       return Response.json({ error: "Unsupported git action" }, { status: 400 });
     }
 
@@ -1112,6 +1114,7 @@ export async function handleDocsApi(
         action: actionInput as GitCommandAction,
         message: messageInput,
         remote: remoteInput,
+        remoteUrl: remoteUrlInput,
         branch: branchInput,
         viewerNpub: authContext.npub ?? null,
         expectedRemoteHost: expectedRemoteHostInput,

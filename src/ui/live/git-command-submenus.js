@@ -1,68 +1,154 @@
-function getSessionWorkingDirectory(sessionsStore, sessionId) {
+import { executeGitAction, executeGitHubAction, parseGitRemoteList } from './git-command-api.js';
+import { openGitOutputDialog, openGitRemoteDialog } from './git-dialogs.js';
+
+function isValidBranchName(branch) {
+  return /^[a-zA-Z0-9._/-]+$/.test(branch);
+}
+
+async function showGitStatus({ sessionsStore, sessionId, showToast }) {
+  const result = await executeGitAction({
+    sessionsStore,
+    sessionId,
+    showToast,
+    action: 'status',
+    showSuccessToast: false,
+  });
+  if (!result) {
+    return;
+  }
+
+  await openGitOutputDialog({
+    title: 'Git Status',
+    description: 'Current branch and working tree state for this session directory.',
+    output: result.stdout,
+    testId: 'live-view-git-status-dialog',
+  });
+}
+
+async function promptGitRemote({
+  sessionsStore,
+  sessionId,
+  showToast,
+}) {
+  const listResult = await executeGitAction({
+    sessionsStore,
+    sessionId,
+    showToast,
+    action: 'listRemotes',
+    showSuccessToast: false,
+    errorLabel: 'Git remote lookup',
+  });
+  if (!listResult) {
+    return;
+  }
+
+  const remoteInput = await openGitRemoteDialog({
+    remotes: parseGitRemoteList(listResult.stdout),
+    initialRemoteName: 'origin',
+    testId: 'live-view-git-remote-dialog',
+  });
+  if (!remoteInput) {
+    return;
+  }
+
+  await executeGitAction({
+    sessionsStore,
+    sessionId,
+    showToast,
+    action: 'setRemote',
+    options: {
+      remote: remoteInput.remote,
+      remoteUrl: remoteInput.url,
+    },
+    successMessage: `Git remote "${remoteInput.remote}" saved`,
+    errorLabel: `Git remote "${remoteInput.remote}"`,
+  });
+}
+
+async function promptSwitchBranch({
+  sessionId,
+  sessionsStore,
+  openTextPromptDialog,
+  showToast,
+}) {
+  const branch = await openTextPromptDialog({
+    title: 'Switch Git Branch',
+    description: 'Enter the branch name to switch this directory to.',
+    label: 'Branch name',
+    value: '',
+    confirmLabel: 'Switch',
+    testId: 'live-view-git-branch-dialog',
+    validate: (value) => {
+      if (!value) {
+        return 'Branch name is required.';
+      }
+      return isValidBranchName(value)
+        ? ''
+        : 'Invalid branch name. Use alphanumeric characters, dots, underscores, slashes, and hyphens.';
+    },
+  });
+  if (!branch) {
+    return;
+  }
+
+  await executeGitAction({
+    sessionsStore,
+    sessionId,
+    showToast,
+    action: 'switchBranch',
+    options: { branch },
+    successMessage: `Switched to branch "${branch}"`,
+    errorLabel: `Git switch branch "${branch}"`,
+  });
+}
+
+async function promptGitHubCommit({
+  sessionId,
+  sessionsStore,
+  openTextPromptDialog,
+  showToast,
+}) {
+  const message = await openTextPromptDialog({
+    title: 'GitHub Commit',
+    description: 'Enter the commit message to use for all staged changes before pushing to GitHub.',
+    label: 'Commit message',
+    value: '',
+    confirmLabel: 'Commit',
+    testId: 'live-view-github-commit-dialog',
+    validate: (value) => (value ? '' : 'Commit message is required.'),
+  });
+  if (!message) {
+    return;
+  }
+
+  const addResult = await executeGitHubAction({
+    sessionsStore,
+    sessionId,
+    showToast,
+    action: 'addAll',
+  });
+  if (!addResult) {
+    return;
+  }
+
+  await executeGitHubAction({
+    sessionsStore,
+    sessionId,
+    showToast,
+    action: 'commit',
+    options: { message },
+  });
+}
+
+async function promptWorktreeFork({
+  sessionId,
+  sessionsStore,
+  openTextPromptDialog,
+  showToast,
+  forkSessionToWorktreeApi,
+}) {
   const session = sessionsStore().items.find((item) => item.id === sessionId);
-  return session?.workingDirectory ?? null;
-}
-
-async function executeGitHubAction({ sessionsStore, sessionId, showToast, action, options = {} }) {
-  const directory = getSessionWorkingDirectory(sessionsStore, sessionId);
-  if (!directory) {
-    showToast('No working directory set for this session', { type: 'error' });
-    return null;
-  }
-
-  try {
-    const response = await fetch('/api/docs/git', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        directory,
-        action,
-        remote: 'origin',
-        expectedRemoteHost: 'github.com',
-        ...options,
-      }),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      showToast(`GitHub ${action} failed: ${data.error || 'Unknown error'}`, { type: 'error', duration: 5000 });
-      return null;
-    }
-    showToast(`GitHub ${action} successful`, { type: 'success' });
-    if (data.stdout) {
-      console.log(`GitHub ${action} output:`, data.stdout);
-    }
-    return data;
-  } catch (error) {
-    showToast(`GitHub ${action} failed: ${error.message}`, { type: 'error' });
-    return null;
-  }
-}
-
-async function executeGiteaAction({ sessionId, showToast, action, options = {} }) {
-  try {
-    const response = await fetch(`/api/gitea/${action}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, ...options }),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      showToast(`Gitea ${action} failed: ${data.error || 'Unknown error'}`, { type: 'error', duration: 5000 });
-      return null;
-    }
-    showToast(`Gitea ${action} successful`, { type: 'success' });
-    if (data.stdout) {
-      console.log(`Gitea ${action} output:`, data.stdout);
-    }
-    return data;
-  } catch (error) {
-    showToast(`Gitea ${action} failed: ${error.message}`, { type: 'error' });
-    return null;
-  }
-}
-
-async function promptWorktreeFork({ sessionId, sessionsStore, openTextPromptDialog, showToast, forkSessionToWorktreeApi }) {
-  const directory = getSessionWorkingDirectory(sessionsStore, sessionId);
+  const directory = session?.workingDirectory ?? null;
   if (!directory) {
     showToast('No working directory set for this session', { type: 'error' });
     return;
@@ -80,7 +166,7 @@ async function promptWorktreeFork({ sessionId, sessionsStore, openTextPromptDial
   if (!trimmedBranch) {
     return;
   }
-  if (!/^[a-zA-Z0-9._/-]+$/.test(trimmedBranch)) {
+  if (!isValidBranchName(trimmedBranch)) {
     showToast('Invalid branch name. Use alphanumeric characters, dots, underscores, and hyphens.', { type: 'error' });
     return;
   }
@@ -107,15 +193,50 @@ async function promptWorktreeFork({ sessionId, sessionsStore, openTextPromptDial
   }
 }
 
-export function addGitCommandSubmenus({
-  addSubmenu,
+function createGitMenuItems({
+  sessionId,
+  sessionsStore,
+  openTextPromptDialog,
+  showToast,
+}) {
+  return [
+    {
+      label: 'Status',
+      handler: () => showGitStatus({ sessionsStore, sessionId, showToast }),
+    },
+    {
+      label: 'Remote...',
+      handler: () => promptGitRemote({ sessionsStore, sessionId, showToast }),
+    },
+    {
+      label: 'Switch Branch...',
+      handler: () => promptSwitchBranch({ sessionId, sessionsStore, openTextPromptDialog, showToast }),
+    },
+    {
+      label: 'Init',
+      handler: () => executeGitAction({ sessionsStore, sessionId, showToast, action: 'init' }),
+    },
+    {
+      label: 'Add All',
+      handler: () => executeGitAction({
+        sessionsStore,
+        sessionId,
+        showToast,
+        action: 'addAll',
+        successMessage: 'Git add all successful',
+      }),
+    },
+  ];
+}
+
+function createGitHubMenuItems({
   sessionId,
   sessionsStore,
   openTextPromptDialog,
   showToast,
   forkSessionToWorktreeApi,
 }) {
-  addSubmenu('GitHub', [
+  return [
     {
       label: 'Pull',
       handler: () => executeGitHubAction({ sessionsStore, sessionId, showToast, action: 'pull' }),
@@ -126,30 +247,7 @@ export function addGitCommandSubmenus({
     },
     {
       label: 'Commit...',
-      handler: async () => {
-        const message = await openTextPromptDialog({
-          title: 'GitHub Commit',
-          description: 'Enter the commit message to use for all staged changes before pushing to GitHub.',
-          label: 'Commit message',
-          value: '',
-          confirmLabel: 'Commit',
-          testId: 'live-view-github-commit-dialog',
-          validate: (value) => (value ? '' : 'Commit message is required.'),
-        });
-        if (!message) {
-          return;
-        }
-        const addResult = await executeGitHubAction({ sessionsStore, sessionId, showToast, action: 'addAll' });
-        if (addResult) {
-          await executeGitHubAction({
-            sessionsStore,
-            sessionId,
-            showToast,
-            action: 'commit',
-            options: { message },
-          });
-        }
-      },
+      handler: () => promptGitHubCommit({ sessionId, sessionsStore, openTextPromptDialog, showToast }),
     },
     {
       label: 'Fork to Worktree...',
@@ -161,9 +259,39 @@ export function addGitCommandSubmenus({
         forkSessionToWorktreeApi,
       }),
     },
-  ]);
+  ];
+}
 
-  addSubmenu('Gitea', [
+async function executeGiteaAction({ sessionId, showToast, action, options = {} }) {
+  try {
+    const response = await fetch(`/api/gitea/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, ...options }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      showToast(`Gitea ${action} failed: ${data.error || 'Unknown error'}`, { type: 'error', duration: 5000 });
+      return null;
+    }
+    showToast(`Gitea ${action} successful`, { type: 'success' });
+    if (data.stdout) {
+      console.log(`Gitea ${action} output:`, data.stdout);
+    }
+    return data;
+  } catch (error) {
+    showToast(`Gitea ${action} failed: ${error.message}`, { type: 'error' });
+    return null;
+  }
+}
+
+function createGiteaMenuItems({
+  sessionId,
+  sessionsStore,
+  openTextPromptDialog,
+  showToast,
+}) {
+  return [
     {
       label: 'Go to repo',
       handler: async () => {
@@ -183,7 +311,8 @@ export function addGitCommandSubmenus({
     {
       label: 'Setup',
       handler: async () => {
-        const directory = getSessionWorkingDirectory(sessionsStore, sessionId);
+        const session = sessionsStore().items.find((item) => item.id === sessionId);
+        const directory = session?.workingDirectory ?? null;
         const dirName = directory ? directory.split('/').pop() || '' : '';
         const projectName = await openTextPromptDialog({
           title: 'Gitea Project Name',
@@ -238,5 +367,36 @@ export function addGitCommandSubmenus({
         });
       },
     },
-  ]);
+  ];
+}
+
+export function addGitCommandSubmenus({
+  addSubmenu,
+  sessionId,
+  sessionsStore,
+  openTextPromptDialog,
+  showToast,
+  forkSessionToWorktreeApi,
+}) {
+  addSubmenu('Git', createGitMenuItems({
+    sessionId,
+    sessionsStore,
+    openTextPromptDialog,
+    showToast,
+  }));
+
+  addSubmenu('GitHub', createGitHubMenuItems({
+    sessionId,
+    sessionsStore,
+    openTextPromptDialog,
+    showToast,
+    forkSessionToWorktreeApi,
+  }));
+
+  addSubmenu('Gitea', createGiteaMenuItems({
+    sessionId,
+    sessionsStore,
+    openTextPromptDialog,
+    showToast,
+  }));
 }
