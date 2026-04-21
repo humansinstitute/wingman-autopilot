@@ -151,6 +151,9 @@ export async function openGitOutputDialog({
 export async function openGitRemoteDialog({
   remotes = [],
   initialRemoteName = 'origin',
+  title = 'Git Remote',
+  description = 'Check the current remote and add or update a remote URL for this directory.',
+  confirmLabel = 'Save Remote',
   testId,
 }) {
   if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
@@ -164,8 +167,8 @@ export async function openGitRemoteDialog({
       null;
 
     const { dialog, form, body, footer } = createGitDialogShell({
-      title: 'Git Remote',
-      description: 'Check the current remote and add or update a remote URL for this directory.',
+      title,
+      description,
       testId,
     });
 
@@ -221,7 +224,7 @@ export async function openGitRemoteDialog({
     const confirmButton = document.createElement('button');
     confirmButton.type = 'submit';
     confirmButton.className = 'wm-button';
-    confirmButton.textContent = 'Save Remote';
+    confirmButton.textContent = confirmLabel;
     confirmButton.dataset.testid = 'dialog-confirm';
     footer.append(cancelButton, confirmButton);
 

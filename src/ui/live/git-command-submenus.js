@@ -5,6 +5,19 @@ function isValidBranchName(branch) {
   return /^[a-zA-Z0-9._/-]+$/.test(branch);
 }
 
+function isGitHubHttpsRemoteUrl(url) {
+  if (typeof url !== 'string' || !url.trim()) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(url.trim());
+    return parsed.protocol === 'https:' && parsed.hostname === 'github.com';
+  } catch {
+    return false;
+  }
+}
+
 async function showGitStatus({ sessionsStore, sessionId, showToast }) {
   const result = await executeGitAction({
     sessionsStore,
@@ -25,7 +38,7 @@ async function showGitStatus({ sessionsStore, sessionId, showToast }) {
   });
 }
 
-async function promptGitRemote({
+async function promptGitHubRemote({
   sessionsStore,
   sessionId,
   showToast,
@@ -45,9 +58,20 @@ async function promptGitRemote({
   const remoteInput = await openGitRemoteDialog({
     remotes: parseGitRemoteList(listResult.stdout),
     initialRemoteName: 'origin',
-    testId: 'live-view-git-remote-dialog',
+    title: 'GitHub Remote',
+    description: 'Set the GitHub HTTPS remote used by PAT-authenticated pull and push actions.',
+    confirmLabel: 'Save GitHub Remote',
+    testId: 'live-view-github-remote-dialog',
   });
   if (!remoteInput) {
+    return;
+  }
+
+  if (!isGitHubHttpsRemoteUrl(remoteInput.url)) {
+    showToast('GitHub remote must use an HTTPS github.com URL so the personal access token helper can authenticate push and pull.', {
+      type: 'error',
+      duration: 6000,
+    });
     return;
   }
 
@@ -60,8 +84,8 @@ async function promptGitRemote({
       remote: remoteInput.remote,
       remoteUrl: remoteInput.url,
     },
-    successMessage: `Git remote "${remoteInput.remote}" saved`,
-    errorLabel: `Git remote "${remoteInput.remote}"`,
+    successMessage: `GitHub remote "${remoteInput.remote}" saved`,
+    errorLabel: `GitHub remote "${remoteInput.remote}"`,
   });
 }
 
@@ -205,10 +229,6 @@ function createGitMenuItems({
       handler: () => showGitStatus({ sessionsStore, sessionId, showToast }),
     },
     {
-      label: 'Remote...',
-      handler: () => promptGitRemote({ sessionsStore, sessionId, showToast }),
-    },
-    {
       label: 'Switch Branch...',
       handler: () => promptSwitchBranch({ sessionId, sessionsStore, openTextPromptDialog, showToast }),
     },
@@ -237,6 +257,10 @@ function createGitHubMenuItems({
   forkSessionToWorktreeApi,
 }) {
   return [
+    {
+      label: 'Remote...',
+      handler: () => promptGitHubRemote({ sessionsStore, sessionId, showToast }),
+    },
     {
       label: 'Pull',
       handler: () => executeGitHubAction({ sessionsStore, sessionId, showToast, action: 'pull' }),
