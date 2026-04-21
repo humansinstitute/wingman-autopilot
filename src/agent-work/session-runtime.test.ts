@@ -146,7 +146,7 @@ describe('AgentWorkSessionRuntime', () => {
     bindingStore.save({
       subscriptionId: subscription.subscriptionId,
       agentId: agent.agentId,
-      bindingType: 'flow_run',
+      bindingType: 'flow_orchestration',
       bindingId: 'flow-1',
       sessionId: 'flow-session',
       lastRecordIdSeen: 'record-2',
@@ -196,7 +196,7 @@ describe('AgentWorkSessionRuntime', () => {
         predecessorTaskIds: [],
       },
     });
-    expect(flowFallback?.id).toBe('task-session');
+    expect(flowFallback?.id).toBe('created-1');
 
     const created = await runtime.handleTaskDispatch({
       subscription,
@@ -217,11 +217,11 @@ describe('AgentWorkSessionRuntime', () => {
         predecessorTaskIds: [],
       },
     });
-    expect(created?.id).toBe('created-1');
-    expect(createCount).toBe(1);
+    expect(created?.id).toBe('created-2');
+    expect(createCount).toBe(2);
   });
 
-  test('creates bindings, reuses same flow session, and requeues approvals', async () => {
+  test('keeps delivery task-bound and reuses a dedicated orchestration session for review and approval', async () => {
     const bindingStore = new AgentWorkSessionBindingStore(makeTempDb());
     const sessions = new Map<string, SessionSnapshot>();
     const prompts: Array<{ sessionId: string; content: string }> = [];
@@ -289,7 +289,6 @@ describe('AgentWorkSessionRuntime', () => {
 
     expect(first?.id).toBe('session-1');
     expect(createCount).toBe(1);
-    expect(bindingStore.getByBinding(subscription.subscriptionId, agent.agentId, 'flow_run', 'run-1')?.sessionId).toBe('session-1');
     expect(bindingStore.getByBinding(subscription.subscriptionId, agent.agentId, 'task', 'task-1')?.sessionId).toBe('session-1');
     expect(prompts[0]?.content).toContain('Dispatch reason: new task.');
     expect(prompts[0]?.content).toContain('Task id: task-1');
@@ -314,9 +313,34 @@ describe('AgentWorkSessionRuntime', () => {
       },
     });
 
-    expect(second?.id).toBe('session-1');
-    expect(createCount).toBe(1);
-    expect(bindingStore.getByBinding(subscription.subscriptionId, agent.agentId, 'task', 'task-2')?.sessionId).toBe('session-1');
+    expect(second?.id).toBe('session-2');
+    expect(createCount).toBe(2);
+    expect(bindingStore.getByBinding(subscription.subscriptionId, agent.agentId, 'task', 'task-2')?.sessionId).toBe('session-2');
+
+    const review = await runtime.handleTaskReview({
+      subscription,
+      agent,
+      recordId: 'record-review-1',
+      recordState: null,
+      task: {
+        taskId: 'task-2',
+        flowId: 'flow-a',
+        flowRunId: 'run-1',
+        flowStep: 'step-2',
+        title: 'Second task',
+        description: 'Ready for orchestration',
+        state: 'review',
+        assignedTo: agent.botNpub,
+        deleted: false,
+        done: false,
+        predecessorTaskIds: [],
+      },
+    });
+
+    expect(review?.id).toBe('session-3');
+    expect(createCount).toBe(3);
+    expect(bindingStore.getByBinding(subscription.subscriptionId, agent.agentId, 'flow_orchestration', 'run-1')?.sessionId).toBe('session-3');
+    expect(bindingStore.getByBinding(subscription.subscriptionId, agent.agentId, 'task', 'task-2')?.sessionId).toBe('session-3');
 
     const approval = await runtime.handleApprovalDispatch({
       subscription,
@@ -331,12 +355,13 @@ describe('AgentWorkSessionRuntime', () => {
       },
     });
 
-    expect(approval?.id).toBe('session-1');
-    expect(createCount).toBe(1);
-    expect(prompts).toHaveLength(3);
-    expect(prompts[2]?.content).toContain('Dispatch reason: approval updated.');
-    expect(dispatches).toEqual(['session-1', 'session-1', 'session-1']);
-    expect(nightWatch).toEqual(['session-1', 'session-1', 'session-1']);
+    expect(approval?.id).toBe('session-3');
+    expect(createCount).toBe(3);
+    expect(prompts).toHaveLength(4);
+    expect(prompts[2]?.content).toContain('Dispatch reason: task ready for review.');
+    expect(prompts[3]?.content).toContain('Dispatch reason: approval updated.');
+    expect(dispatches).toEqual(['session-1', 'session-2', 'session-3', 'session-3']);
+    expect(nightWatch).toEqual(['session-1', 'session-2', 'session-3', 'session-3']);
   });
 
   test('routes task comments into the existing live task session with yoke commands', async () => {

@@ -5,7 +5,10 @@ import type {
   InboundTaskRecord,
 } from '../agent-chat/types';
 import {
+  DEFAULT_APPROVAL_DISPATCH_PROMPT_TEMPLATE,
+  DEFAULT_FLOW_DISPATCH_PROMPT_TEMPLATE,
   DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE,
+  DEFAULT_TASK_REVIEW_PROMPT_TEMPLATE,
   renderPromptTemplate,
 } from '../agent-chat/prompt-templates';
 
@@ -66,23 +69,74 @@ export function buildTaskDispatchPrompt(params: {
   });
 }
 
-export function buildApprovalDispatchPrompt(approval: InboundApprovalRecord): string {
+export function buildFlowDispatchPrompt(params: {
+  agent: AgentDefinitionRecord;
+  task: InboundTaskRecord;
+  dispatchReason: 'new task' | 'task updated';
+}): string {
+  const { task, dispatchReason, agent } = params;
+  const flowId = compactText(task.flowId) || '-';
+  const scopeId = compactText(task.scopeId) || '-';
+  const scopeLineage = buildScopeLineage(task);
+  const title = compactText(task.title) || `Task ${task.taskId}`;
+  const description = compactText(task.description) || '(no description provided)';
+  return renderPromptTemplate(agent.flowDispatchPromptTemplate || DEFAULT_FLOW_DISPATCH_PROMPT_TEMPLATE, {
+    dispatch_reason: dispatchReason,
+    task_id: task.taskId,
+    flow_id: flowId,
+    scope_id: scopeId,
+    scope_lineage: scopeLineage,
+    title,
+    description,
+  });
+}
+
+export function buildTaskReviewPrompt(params: {
+  agent: AgentDefinitionRecord;
+  task: InboundTaskRecord;
+  dispatchReason: 'task ready for review' | 'review updated';
+}): string {
+  const { task, dispatchReason, agent } = params;
+  const flowId = compactText(task.flowId) || '-';
+  const flowRunId = compactText(task.flowRunId) || '-';
+  const flowStep = compactText(task.flowStep) || '-';
+  const state = compactText(task.state) || '-';
+  const title = compactText(task.title) || `Task ${task.taskId}`;
+  const description = compactText(task.description) || '(no description provided)';
+  return renderPromptTemplate(agent.taskReviewPromptTemplate || DEFAULT_TASK_REVIEW_PROMPT_TEMPLATE, {
+    dispatch_reason: dispatchReason,
+    task_id: task.taskId,
+    flow_id: flowId,
+    flow_run_id: flowRunId,
+    flow_step: flowStep,
+    state,
+    title,
+    description,
+  });
+}
+
+export function buildApprovalDispatchPrompt(params: {
+  agent: AgentDefinitionRecord;
+  approval: InboundApprovalRecord;
+}): string {
+  const { agent, approval } = params;
   const flowId = compactText(approval.flowId) || '-';
   const flowRunId = compactText(approval.flowRunId) || '-';
   const flowStep = compactText(approval.flowStep) || '-';
   const approvalId = compactText(approval.approvalId) || '-';
   const state = compactText(approval.state) || '-';
 
-  return [
-    'Agent work approval advisory.',
-    'Dispatch reason: approval updated.',
-    `Approval id: ${approvalId}`,
-    `Flow id: ${flowId}`,
-    `Flow run id: ${flowRunId}`,
-    `Flow step: ${flowStep}`,
-    `Approval state: ${state}`,
-    'Inspect the board and continue only if a new step is now actionable. Do not continue speculative work.',
-  ].join('\n');
+  return renderPromptTemplate(
+    agent.approvalDispatchPromptTemplate || DEFAULT_APPROVAL_DISPATCH_PROMPT_TEMPLATE,
+    {
+      dispatch_reason: 'approval updated',
+      approval_id: approvalId,
+      flow_id: flowId,
+      flow_run_id: flowRunId,
+      flow_step: flowStep,
+      approval_state: state,
+    },
+  );
 }
 
 export function buildTaskCommentDispatchPrompt(params: {

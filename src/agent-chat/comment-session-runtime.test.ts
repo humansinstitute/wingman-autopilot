@@ -34,11 +34,12 @@ function mergeSessionMetadata(
   existing: SessionSnapshot,
   metadata: SessionMetadataInput,
 ): SessionSnapshot['metadata'] {
+  const existingMetadata = existing.metadata ?? { AGENT: true, billingMode: 'subscription' };
   return {
-    ...existing.metadata,
+    ...existingMetadata,
     ...(metadata ?? {}),
-    AGENT: metadata?.AGENT ?? existing.metadata.AGENT,
-    billingMode: metadata?.billingMode ?? existing.metadata.billingMode,
+    AGENT: metadata?.AGENT ?? existingMetadata.AGENT,
+    billingMode: metadata?.billingMode ?? existingMetadata.billingMode,
   };
 }
 
@@ -90,6 +91,9 @@ function makeAgent(): AgentDefinitionRecord {
     capabilities: ['chat_intercept'],
     chatPromptTemplate: '',
     taskPromptTemplate: '',
+    flowDispatchPromptTemplate: '',
+    taskReviewPromptTemplate: '',
+    approvalDispatchPromptTemplate: '',
     enabled: true,
     createdAt: now,
     updatedAt: now,

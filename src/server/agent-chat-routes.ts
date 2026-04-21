@@ -1,8 +1,11 @@
 import type { RequestAuthContext } from '../auth/request-context';
 import type { WorkspaceSubscriptionManager } from '../agent-chat/subscription-runtime';
 import {
+  DEFAULT_APPROVAL_DISPATCH_PROMPT_TEMPLATE,
   DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE,
+  DEFAULT_FLOW_DISPATCH_PROMPT_TEMPLATE,
   DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE,
+  DEFAULT_TASK_REVIEW_PROMPT_TEMPLATE,
 } from '../agent-chat/prompt-templates';
 import type {
   AgentDefinitionRecord,
@@ -172,6 +175,9 @@ export async function handleAgentChatApi(
       defaults: {
         chatPromptTemplate: DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE,
         taskPromptTemplate: DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE,
+        flowDispatchPromptTemplate: DEFAULT_FLOW_DISPATCH_PROMPT_TEMPLATE,
+        taskReviewPromptTemplate: DEFAULT_TASK_REVIEW_PROMPT_TEMPLATE,
+        approvalDispatchPromptTemplate: DEFAULT_APPROVAL_DISPATCH_PROMPT_TEMPLATE,
       },
     });
   }
@@ -239,14 +245,32 @@ export async function handleAgentChatApi(
     const capabilityInput = Array.isArray(body.capabilities)
       ? body.capabilities.filter((value): value is string => typeof value === 'string')
       : [];
-    const capabilities = capabilityInput.includes('chat_intercept') || capabilityInput.includes('task_dispatch')
+    const capabilities = capabilityInput.some((value) => (
+      value === 'chat_intercept'
+      || value === 'task_dispatch'
+      || value === 'flow_dispatch'
+      || value === 'task_review'
+      || value === 'approval_dispatch'
+    ))
       ? [
           ...(capabilityInput.includes('chat_intercept') ? ['chat_intercept'] as const : []),
           ...(capabilityInput.includes('task_dispatch') ? ['task_dispatch'] as const : []),
+          ...(capabilityInput.includes('flow_dispatch') ? ['flow_dispatch'] as const : []),
+          ...(capabilityInput.includes('task_review') ? ['task_review'] as const : []),
+          ...(capabilityInput.includes('approval_dispatch') ? ['approval_dispatch'] as const : []),
         ]
       : ['chat_intercept'] as const;
     const chatPromptTemplate = typeof body.chatPromptTemplate === 'string' ? body.chatPromptTemplate : undefined;
     const taskPromptTemplate = typeof body.taskPromptTemplate === 'string' ? body.taskPromptTemplate : undefined;
+    const flowDispatchPromptTemplate = typeof body.flowDispatchPromptTemplate === 'string'
+      ? body.flowDispatchPromptTemplate
+      : undefined;
+    const taskReviewPromptTemplate = typeof body.taskReviewPromptTemplate === 'string'
+      ? body.taskReviewPromptTemplate
+      : undefined;
+    const approvalDispatchPromptTemplate = typeof body.approvalDispatchPromptTemplate === 'string'
+      ? body.approvalDispatchPromptTemplate
+      : undefined;
 
     if (!agentId || !botNpub || !workspaceOwnerNpub || !workingDirectory) {
       return Response.json(
@@ -267,6 +291,9 @@ export async function handleAgentChatApi(
         capabilities: [...capabilities],
         chatPromptTemplate,
         taskPromptTemplate,
+        flowDispatchPromptTemplate,
+        taskReviewPromptTemplate,
+        approvalDispatchPromptTemplate,
         enabled,
       });
       return Response.json({ agent: serialiseAgent(agent) });

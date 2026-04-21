@@ -2,7 +2,12 @@ export type WorkspaceKeyStatus = 'pending' | 'active' | 'refresh_required' | 're
 export type GroupKeyStatus = 'pending' | 'active' | 'refresh_required' | 'revoked' | 'failed';
 export type SseStatus = 'disconnected' | 'connecting' | 'connected' | 'backoff' | 'disabled';
 export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy';
-export type AgentCapability = 'chat_intercept' | 'task_dispatch';
+export type AgentCapability =
+  | 'chat_intercept'
+  | 'task_dispatch'
+  | 'flow_dispatch'
+  | 'task_review'
+  | 'approval_dispatch';
 export type AgentInterceptDecision = 'respond' | 'ignore' | 'pending' | 'failed';
 export type ChatInterceptStateStatus =
   | 'pending'
@@ -31,13 +36,13 @@ export interface AgentChatSseEventDiagnostic {
 
 export interface AgentChatDispatchHistoryEntry {
   at: string;
-  kind: 'chat' | 'task' | 'approval' | 'comment';
+  kind: 'chat' | 'task' | 'flow' | 'review' | 'approval' | 'comment';
   action: string;
   agentId: string;
   sessionId: string | null;
   recordId: string | null;
   bindingId?: string | null;
-  bindingType?: 'chat' | 'task' | 'flow_run' | 'thread' | null;
+  bindingType?: 'chat' | 'task' | 'flow_run' | 'flow_orchestration' | 'thread' | null;
   details?: Record<string, unknown> | null;
 }
 
@@ -83,8 +88,11 @@ export interface AgentDefinitionRecord {
   groupNpubs: string[];
   workingDirectory: string;
   capabilities: AgentCapability[];
-  chatPromptTemplate: string;
-  taskPromptTemplate: string;
+  chatPromptTemplate?: string;
+  taskPromptTemplate?: string;
+  flowDispatchPromptTemplate?: string;
+  taskReviewPromptTemplate?: string;
+  approvalDispatchPromptTemplate?: string;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
@@ -132,6 +140,9 @@ export interface CreateAgentDefinitionInput {
   capabilities?: AgentCapability[];
   chatPromptTemplate?: string;
   taskPromptTemplate?: string;
+  flowDispatchPromptTemplate?: string;
+  taskReviewPromptTemplate?: string;
+  approvalDispatchPromptTemplate?: string;
   enabled?: boolean;
 }
 

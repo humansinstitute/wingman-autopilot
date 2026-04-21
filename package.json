@@ -11,6 +11,7 @@
     "cli:apps": "bun clis/appctl.ts",
     "cli:delegate-sessions": "bun clis/delegate-sessions.ts",
     "cli:sessions": "bun clis/sessions.ts",
+    "cli:wingman": "bun clis/wingman.ts",
     "cli:export-bot-key": "bun clis/export-bot-key.ts",
     "cli:status": "bun clis/status.ts",
     "cli:deploy": "bun clis/deploy.ts",

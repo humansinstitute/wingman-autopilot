@@ -18,6 +18,15 @@ function formatCapability(capability) {
   if (capability === 'task_dispatch') {
     return 'Task Dispatch';
   }
+  if (capability === 'flow_dispatch') {
+    return 'Flow Dispatch';
+  }
+  if (capability === 'task_review') {
+    return 'Task Review';
+  }
+  if (capability === 'approval_dispatch') {
+    return 'Approval Dispatch';
+  }
   return capability;
 }
 
@@ -183,21 +192,32 @@ export function createCapabilityPicker() {
   note.textContent = 'Use one local agent identity and add dispatch roles to it as new features arrive.';
   fieldset.append(note);
 
-  const chatIntercept = createCheckbox('Chat Dispatch', 'agent-chat-capability-chat-dispatch', true);
-  const taskDispatch = createCheckbox('Task Dispatch', 'agent-chat-capability-task-dispatch', false);
-  fieldset.append(chatIntercept.row, taskDispatch.row);
+  const capabilityControls = [
+    ['chat_intercept', createCheckbox('Chat Dispatch', 'agent-chat-capability-chat-dispatch', true)],
+    ['task_dispatch', createCheckbox('Task Dispatch', 'agent-chat-capability-task-dispatch', false)],
+    ['flow_dispatch', createCheckbox('Flow Dispatch', 'agent-chat-capability-flow-dispatch', false)],
+    ['task_review', createCheckbox('Task Review', 'agent-chat-capability-task-review', false)],
+    ['approval_dispatch', createCheckbox('Approval Dispatch', 'agent-chat-capability-approval-dispatch', false)],
+  ];
+  fieldset.append(...capabilityControls.map(([, control]) => control.row));
 
   return {
     row: fieldset,
     setSelectedCapabilities(capabilities = []) {
       const selected = new Set(Array.isArray(capabilities) ? capabilities : []);
-      chatIntercept.input.checked = selected.has('chat_intercept') || selected.size === 0;
-      taskDispatch.input.checked = selected.has('task_dispatch');
+      capabilityControls.forEach(([capability, control]) => {
+        control.input.checked = capability === 'chat_intercept'
+          ? selected.has('chat_intercept') || selected.size === 0
+          : selected.has(capability);
+      });
     },
     getSelectedCapabilities() {
       const capabilities = [];
-      if (chatIntercept.input.checked) capabilities.push('chat_intercept');
-      if (taskDispatch.input.checked) capabilities.push('task_dispatch');
+      capabilityControls.forEach(([capability, control]) => {
+        if (control.input.checked) {
+          capabilities.push(capability);
+        }
+      });
       return capabilities.length > 0 ? capabilities : ['chat_intercept'];
     },
   };
@@ -217,37 +237,77 @@ export function createConfiguredDispatchesPanel(agents, options = {}) {
   wrapper.append(note);
 
   const agentList = Array.isArray(agents) ? agents : [];
-  const chatAgents = agentList
-    .filter((agent) => agent.enabled !== false && (agent.capabilities ?? ['chat_intercept']).includes('chat_intercept'));
-  const taskAgents = agentList
-    .filter((agent) => agent.enabled !== false && (agent.capabilities ?? []).includes('task_dispatch'));
-  const primaryChatAgent = chatAgents[0] ?? null;
-  const primaryTaskAgent = taskAgents[0] ?? null;
-
-  wrapper.append(
-    createDispatchReferenceCard({
+  const dispatchCards = [
+    {
+      capability: 'chat_intercept',
       title: 'Chat Dispatch',
-      enabledAgents: chatAgents.map((agent) => agent.agentId),
       description: 'When a workspace chat advisory matches a local agent, Wingmen reuses or creates the routed session and the agent must decide whether to respond in-thread or ignore.',
-      promptPreview: chatAgents[0]?.chatPromptTemplate || 'No enabled chat dispatch template.',
-      actionLabel: primaryChatAgent ? 'Edit Chat Template' : 'Add Chat Dispatch Agent',
+      promptKey: 'chatPromptTemplate',
+      actionLabel: 'Chat',
       actionTestId: 'agent-chat-edit-chat-template',
-      onAction: typeof options.onEditChatTemplate === 'function'
-        ? () => options.onEditChatTemplate(primaryChatAgent)
-        : null,
-    }),
-    createDispatchReferenceCard({
+      onAction: options.onEditChatTemplate,
+    },
+    {
+      capability: 'task_dispatch',
       title: 'Task Dispatch',
-      enabledAgents: taskAgents.map((agent) => agent.agentId),
-      description: 'When a task or approval advisory targets the bot, Wingmen reuses or creates the bound agent-work session, queues the work prompt, and Night Watch keeps the session progressing.',
-      promptPreview: taskAgents[0]?.taskPromptTemplate || 'No enabled task dispatch template.',
-      actionLabel: primaryTaskAgent ? 'Edit Task Template' : 'Add Task Dispatch Agent',
+      description: 'When a concrete ready task targets the bot, Wingmen reuses or creates the delivery session, queues the task prompt, and Night Watch keeps the worker moving.',
+      promptKey: 'taskPromptTemplate',
+      actionLabel: 'Task',
       actionTestId: 'agent-chat-edit-task-template',
-      onAction: typeof options.onEditTaskTemplate === 'function'
-        ? () => options.onEditTaskTemplate(primaryTaskAgent)
+      onAction: options.onEditTaskTemplate,
+    },
+    {
+      capability: 'flow_dispatch',
+      title: 'Flow Dispatch',
+      description: 'When a kickoff task is new, assigned to the bot, and has a flow without a flow run, Wingmen routes it into a short-lived orchestration session.',
+      promptKey: 'flowDispatchPromptTemplate',
+      actionLabel: 'Flow',
+      actionTestId: 'agent-chat-edit-flow-template',
+      onAction: options.onEditFlowDispatchTemplate,
+    },
+    {
+      capability: 'task_review',
+      title: 'Task Review',
+      description: 'When a flow-run task moves to review, Wingmen routes it into orchestration so newly-unblocked downstream tasks can be promoted in one pass.',
+      promptKey: 'taskReviewPromptTemplate',
+      actionLabel: 'Review',
+      actionTestId: 'agent-chat-edit-review-template',
+      onAction: options.onEditTaskReviewTemplate,
+    },
+    {
+      capability: 'approval_dispatch',
+      title: 'Approval Dispatch',
+      description: 'When an approval record transitions to approved for a live flow run, Wingmen routes it into orchestration so downstream tasks can continue.',
+      promptKey: 'approvalDispatchPromptTemplate',
+      actionLabel: 'Approval',
+      actionTestId: 'agent-chat-edit-approval-template',
+      onAction: options.onEditApprovalDispatchTemplate,
+    },
+  ];
+
+  wrapper.append(...dispatchCards.map((cardConfig) => {
+    const enabledAgents = agentList
+      .filter((agent) => {
+        const capabilities = Array.isArray(agent.capabilities) && agent.capabilities.length > 0
+          ? agent.capabilities
+          : ['chat_intercept'];
+        return agent.enabled !== false && capabilities.includes(cardConfig.capability);
+      });
+    const primaryAgent = enabledAgents[0] ?? null;
+    return createDispatchReferenceCard({
+      title: cardConfig.title,
+      enabledAgents: enabledAgents.map((agent) => agent.agentId),
+      description: cardConfig.description,
+      promptPreview: primaryAgent?.[cardConfig.promptKey] || `No enabled ${cardConfig.title.toLowerCase()} template.`,
+      actionLabel: primaryAgent
+        ? `Edit ${cardConfig.actionLabel} Template`
+        : `Add ${cardConfig.title} Agent`,
+      actionTestId: cardConfig.actionTestId,
+      onAction: typeof cardConfig.onAction === 'function'
+        ? () => cardConfig.onAction(primaryAgent)
         : null,
-    }),
-  );
+    });
+  }));
 
   return wrapper;
 }

@@ -43,6 +43,8 @@ function createSubscription(): WorkspaceSubscriptionRecord {
     lastDecryptResult: null,
     lastRoutingResult: null,
     lastSseEvent: null,
+    recentSseEvents: [],
+    recentDispatches: [],
     lastSuccessfulStartupReloadAt: null,
   };
 }

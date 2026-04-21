@@ -330,6 +330,7 @@ function formatDispatchDetails(details) {
     'reason',
     'task_id',
     'approval_id',
+    'approval_state',
     'flow_run_id',
     'flow_id',
     'updater_npub',
@@ -660,7 +661,12 @@ function createDispatchHistoryTable(subscription) {
   const dispatches = Array.isArray(subscription.recentDispatches) ? subscription.recentDispatches.slice().reverse() : [];
   const recentEvents = Array.isArray(subscription.recentSseEvents) ? subscription.recentSseEvents.slice().reverse() : [];
   const chatDispatches = dispatches.filter((entry) => entry.kind === 'chat');
-  const workDispatches = dispatches.filter((entry) => entry.kind === 'task' || entry.kind === 'approval');
+  const workDispatches = dispatches.filter((entry) => (
+    entry.kind === 'task'
+    || entry.kind === 'flow'
+    || entry.kind === 'review'
+    || entry.kind === 'approval'
+  ));
   const workSignals = dedupeEvents(recentEvents.filter(isWorkSignalEvent));
   const taskSignals = countWhere(workSignals, (event) => resolveEventFamily(event) === 'task');
   const approvalSignals = countWhere(workSignals, (event) => resolveEventFamily(event) === 'approval');
@@ -816,7 +822,12 @@ export function createAgentChatOverview(subscriptions, chatSessions) {
     count + countWhere(Array.isArray(subscription.recentSseEvents) ? subscription.recentSseEvents : [], isWorkSignalEvent)
   ), 0);
   const workDispatchCount = subscriptions.reduce((count, subscription) => (
-    count + countWhere(Array.isArray(subscription.recentDispatches) ? subscription.recentDispatches : [], (entry) => entry.kind === 'task' || entry.kind === 'approval')
+    count + countWhere(Array.isArray(subscription.recentDispatches) ? subscription.recentDispatches : [], (entry) => (
+      entry.kind === 'task'
+      || entry.kind === 'flow'
+      || entry.kind === 'review'
+      || entry.kind === 'approval'
+    ))
   ), 0);
 
   const summary = document.createElement('p');

@@ -136,7 +136,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       store,
       agentStore,
       agentWorkRuntime: {
-        handleTaskDispatch: async (input) => {
+        handleTaskDispatch: async (input: any) => {
           taskDispatches.push({
             recordId: input.recordId,
             taskId: input.task.taskId,
@@ -144,7 +144,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           });
           return null;
         },
-        handleApprovalDispatch: async (input) => {
+        handleApprovalDispatch: async (input: any) => {
           approvalDispatches.push({
             recordId: input.recordId,
             flowRunId: input.approval.flowRunId ?? '',
@@ -220,7 +220,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       workspaceOwnerNpub: subscription.workspaceOwnerNpub,
       groupNpubs: ['npub1group'],
       workingDirectory: '/tmp/agent-work',
-      capabilities: ['task_dispatch'],
+      capabilities: ['approval_dispatch'],
       enabled: true,
       createdAt: now,
       updatedAt: now,
@@ -233,7 +233,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       store,
       agentStore,
       agentWorkRuntime: {
-        handleTaskDispatch: async (input) => {
+        handleTaskDispatch: async (input: any) => {
           taskDispatches.push({
             recordId: input.recordId,
             taskId: input.task.taskId,
@@ -241,7 +241,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           });
           return null;
         },
-        handleApprovalDispatch: async (input) => {
+        handleApprovalDispatch: async (input: any) => {
           approvalDispatches.push({
             recordId: input.recordId,
             flowRunId: input.approval.flowRunId ?? '',
@@ -297,6 +297,190 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
         agentId: 'agent-task',
       },
     ]);
+  });
+
+  test('routes kickoff tasks into flow dispatch instead of ordinary task dispatch', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-flow-dispatch-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-flow-dispatch-agents'));
+    const subscription = store.save(makeSubscription());
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-flow',
+      label: 'Flow Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-work',
+      capabilities: ['flow_dispatch'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+
+    const flowDispatches: Array<{ recordId: string; taskId: string; agentId: string }> = [];
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      agentWorkRuntime: {
+        handleTaskDispatch: async () => {
+          throw new Error('handleTaskDispatch should not run for kickoff tasks');
+        },
+        handleFlowDispatch: async (input: any) => {
+          flowDispatches.push({
+            recordId: input.recordId,
+            taskId: input.task.taskId,
+            agentId: input.agent.agentId,
+          });
+          return makeSession('flow-session-1');
+        },
+        handleApprovalDispatch: async () => null,
+      } as unknown as AgentWorkSessionRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-kickoff-1',
+          record_state: 'active',
+          version: 1,
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        task_id: 'kickoff-1',
+        flow_id: 'flow-1',
+        flow_run_id: null,
+        flow_step: null,
+        title: 'Kickoff',
+        description: 'Start the flow',
+        state: 'new',
+        assigned_to: 'npub1bot',
+        predecessor_task_ids: [],
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-kickoff-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'task'),
+        record_id: 'record-kickoff-1',
+      }),
+    );
+
+    expect(flowDispatches).toEqual([
+      {
+        recordId: 'record-kickoff-1',
+        taskId: 'kickoff-1',
+        agentId: 'agent-flow',
+      },
+    ]);
+    expect(next.recentDispatches[0]?.kind).toBe('flow');
+    expect(next.recentDispatches[0]?.action).toBe('flow_dispatch');
+  });
+
+  test('routes review tasks into task review instead of delivery dispatch', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-review-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-review-agents'));
+    const subscription = store.save(makeSubscription());
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-review',
+      label: 'Review Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-work',
+      capabilities: ['task_review'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+
+    const reviewDispatches: Array<{ recordId: string; taskId: string; agentId: string }> = [];
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      agentWorkRuntime: {
+        handleTaskDispatch: async () => {
+          throw new Error('handleTaskDispatch should not run for review tasks');
+        },
+        handleTaskReview: async (input: any) => {
+          reviewDispatches.push({
+            recordId: input.recordId,
+            taskId: input.task.taskId,
+            agentId: input.agent.agentId,
+          });
+          return makeSession('review-session-1');
+        },
+        handleApprovalDispatch: async () => null,
+      } as unknown as AgentWorkSessionRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-review-1',
+          record_state: 'active',
+          version: 1,
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        task_id: 'review-1',
+        flow_id: 'flow-1',
+        flow_run_id: 'run-1',
+        flow_step: 3,
+        title: 'Review work',
+        description: 'Continue orchestration',
+        state: 'review',
+        assigned_to: 'npub1bot',
+        predecessor_task_ids: [],
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-review-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'task'),
+        record_id: 'record-review-1',
+      }),
+    );
+
+    expect(reviewDispatches).toEqual([
+      {
+        recordId: 'record-review-1',
+        taskId: 'review-1',
+        agentId: 'agent-review',
+      },
+    ]);
+    expect(next.recentDispatches[0]?.kind).toBe('review');
+    expect(next.recentDispatches[0]?.action).toBe('task_review');
   });
 
   test('records task skip reasons when task advisories are not actionable', async () => {
@@ -644,7 +828,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       store,
       agentStore,
       agentWorkRuntime: {
-        handleTaskDispatch: async (input) => {
+        handleTaskDispatch: async (input: any) => {
           taskDispatches.push({
             recordId: input.recordId,
             taskId: input.task.taskId,
@@ -733,7 +917,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       store,
       agentStore,
       agentWorkRuntime: {
-        handleTaskDispatch: async (input) => {
+        handleTaskDispatch: async (input: any) => {
           taskDispatches.push({
             recordId: input.recordId,
             taskId: input.task.taskId,
@@ -826,7 +1010,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       agentWorkRuntime: {
         handleTaskDispatch: async () => null,
         handleApprovalDispatch: async () => null,
-        handleTaskCommentDispatch: async (input) => {
+        handleTaskCommentDispatch: async (input: any) => {
           taskCommentDispatches.push({
             recordId: input.recordId,
             taskId: input.comment.targetRecordId ?? '',
@@ -915,7 +1099,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       store,
       agentStore,
       agentCommentRuntime: {
-        handleDocumentCommentDispatch: async (input) => {
+        handleDocumentCommentDispatch: async (input: any) => {
           documentCommentDispatches.push({
             recordId: input.recordId,
             documentId: input.comment.targetRecordId ?? '',
@@ -1004,7 +1188,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       store,
       agentStore,
       agentWorkRuntime: {
-        handleTaskDispatch: async (input) => {
+        handleTaskDispatch: async (input: any) => {
           taskDispatches.push({
             recordId: input.recordId,
             taskId: input.task.taskId,

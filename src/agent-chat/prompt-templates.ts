@@ -52,6 +52,75 @@ export const DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE = [
   '- Stop if blocked, if a predecessor is unresolved, or if you are awaiting approval.',
 ].join('\n');
 
+export const DEFAULT_FLOW_DISPATCH_PROMPT_TEMPLATE = [
+  'Agent flow dispatch.',
+  'Dispatch reason: {{dispatch_reason}}.',
+  'Task id: {{task_id}}',
+  'Flow id: {{flow_id}}',
+  'Scope id: {{scope_id}}',
+  'Scope lineage: {{scope_lineage}}',
+  'Title: {{title}}',
+  'Description: {{description}}',
+  'Instructions:',
+  '- Claim the kickoff task exactly once and treat it as the parent task for the run.',
+  '- Use the stable board wrapper, not ad hoc Yoke commands, for run instantiation.',
+  '- Stamp one shared flow_run_id across the parent, child tasks, and approval records.',
+  '- Create all child tasks and approval records up front, then leave blocked work in new and actionable work in ready.',
+  '- Stop after the run graph and kickoff evidence are on the board.',
+].join('\n');
+
+export const DEFAULT_TASK_REVIEW_PROMPT_TEMPLATE = [
+  'Agent task review dispatch.',
+  'Dispatch reason: {{dispatch_reason}}.',
+  'Task id: {{task_id}}',
+  'Flow id: {{flow_id}}',
+  'Flow run id: {{flow_run_id}}',
+  'Flow step: {{flow_step}}',
+  'Task state: {{state}}',
+  'Title: {{title}}',
+  'Description: {{description}}',
+  'Instructions:',
+  '- Inspect the flow-run graph through the stable board wrapper.',
+  '- Promote every newly-unblocked downstream task from new to ready in one pass.',
+  '- Respect fan-out and fan-in by using predecessor completion, not step-number guesses.',
+  '- Post concise board evidence describing which successors changed state.',
+  '- Stop when no further downstream task can be promoted.',
+].join('\n');
+
+export const DEFAULT_APPROVAL_DISPATCH_PROMPT_TEMPLATE = [
+  'Agent approval dispatch.',
+  'Dispatch reason: {{dispatch_reason}}.',
+  'Approval id: {{approval_id}}',
+  'Flow id: {{flow_id}}',
+  'Flow run id: {{flow_run_id}}',
+  'Flow step: {{flow_step}}',
+  'Approval state: {{approval_state}}',
+  'Instructions:',
+  '- Continue only when the approval transition is approved and part of a live flow run.',
+  '- Use the stable board wrapper to inspect the approval, linked tasks, and downstream graph.',
+  '- Promote newly-unblocked downstream tasks from new to ready and record evidence on the board.',
+  '- Stop if no further task is actionable after the approval decision.',
+].join('\n');
+
+export function getDefaultDispatchPromptTemplate(capability: string): string {
+  if (capability === 'chat_intercept') {
+    return DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE;
+  }
+  if (capability === 'task_dispatch') {
+    return DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE;
+  }
+  if (capability === 'flow_dispatch') {
+    return DEFAULT_FLOW_DISPATCH_PROMPT_TEMPLATE;
+  }
+  if (capability === 'task_review') {
+    return DEFAULT_TASK_REVIEW_PROMPT_TEMPLATE;
+  }
+  if (capability === 'approval_dispatch') {
+    return DEFAULT_APPROVAL_DISPATCH_PROMPT_TEMPLATE;
+  }
+  return DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE;
+}
+
 export function normalisePromptTemplate(value: string | null | undefined, fallback: string): string {
   if (typeof value !== 'string') {
     return fallback;

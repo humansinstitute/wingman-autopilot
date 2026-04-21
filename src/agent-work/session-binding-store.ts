@@ -5,7 +5,7 @@ import { Database } from 'bun:sqlite';
 
 import { databaseFile } from '../storage/message-store';
 
-export type AgentWorkBindingType = 'task' | 'flow_run';
+export type AgentWorkBindingType = 'task' | 'flow_run' | 'flow_orchestration';
 export type AgentWorkBindingState = 'active' | 'stale';
 
 export interface AgentWorkSessionBindingRecord {

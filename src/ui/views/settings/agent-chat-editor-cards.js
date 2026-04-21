@@ -100,6 +100,24 @@ export function createPrimaryAgentEditorCard() {
     'agent-chat-task-prompt-template',
     14,
   );
+  const flowDispatchPromptTemplateField = createTextarea(
+    'Flow Dispatch Prompt Template',
+    'Editable flow dispatch prompt with {{placeholders}}',
+    'agent-chat-flow-dispatch-prompt-template',
+    14,
+  );
+  const taskReviewPromptTemplateField = createTextarea(
+    'Task Review Prompt Template',
+    'Editable task review prompt with {{placeholders}}',
+    'agent-chat-task-review-prompt-template',
+    14,
+  );
+  const approvalDispatchPromptTemplateField = createTextarea(
+    'Approval Dispatch Prompt Template',
+    'Editable approval dispatch prompt with {{placeholders}}',
+    'agent-chat-approval-dispatch-prompt-template',
+    12,
+  );
   const capabilityPicker = createCapabilityPicker();
   const enabledField = createCheckbox('Enabled', 'agent-chat-agent-enabled', true);
 
@@ -191,6 +209,69 @@ export function createPrimaryAgentEditorCard() {
     ),
   );
 
+  const flowDispatchTemplateSection = createDisclosureSection(
+    'Flow Dispatch Template',
+    'Open this only when the kickoff orchestration prompt needs an override for this local agent.',
+    'agent-chat-flow-template-section',
+  );
+  flowDispatchTemplateSection.body.append(
+    flowDispatchPromptTemplateField.row,
+    createPlaceholderNote(
+      'Flow placeholders',
+      [
+        '{{dispatch_reason}}',
+        '{{task_id}}',
+        '{{flow_id}}',
+        '{{scope_id}}',
+        '{{scope_lineage}}',
+        '{{title}}',
+        '{{description}}',
+      ],
+    ),
+  );
+
+  const taskReviewTemplateSection = createDisclosureSection(
+    'Task Review Template',
+    'Open this only when the review-orchestration prompt needs an override for this local agent.',
+    'agent-chat-task-review-template-section',
+  );
+  taskReviewTemplateSection.body.append(
+    taskReviewPromptTemplateField.row,
+    createPlaceholderNote(
+      'Review placeholders',
+      [
+        '{{dispatch_reason}}',
+        '{{task_id}}',
+        '{{flow_id}}',
+        '{{flow_run_id}}',
+        '{{flow_step}}',
+        '{{state}}',
+        '{{title}}',
+        '{{description}}',
+      ],
+    ),
+  );
+
+  const approvalDispatchTemplateSection = createDisclosureSection(
+    'Approval Dispatch Template',
+    'Open this only when the approval-continuation prompt needs an override for this local agent.',
+    'agent-chat-approval-template-section',
+  );
+  approvalDispatchTemplateSection.body.append(
+    approvalDispatchPromptTemplateField.row,
+    createPlaceholderNote(
+      'Approval placeholders',
+      [
+        '{{dispatch_reason}}',
+        '{{approval_id}}',
+        '{{flow_id}}',
+        '{{flow_run_id}}',
+        '{{flow_step}}',
+        '{{approval_state}}',
+      ],
+    ),
+  );
+
   const saveButton = createButton(
     'Save Agent',
     'agent-chat-save-agent',
@@ -214,6 +295,9 @@ export function createPrimaryAgentEditorCard() {
     advancedSection.element,
     chatTemplateSection.element,
     taskTemplateSection.element,
+    flowDispatchTemplateSection.element,
+    taskReviewTemplateSection.element,
+    approvalDispatchTemplateSection.element,
     createInlineActions(saveButton, closeButton),
   );
   setPanelVisible(card, false);
@@ -243,6 +327,9 @@ export function createPrimaryAgentEditorCard() {
     advancedSection.setOpen(shouldOpenAdvanced);
     chatTemplateSection.setOpen(focusField === 'chat-template');
     taskTemplateSection.setOpen(focusField === 'task-template');
+    flowDispatchTemplateSection.setOpen(focusField === 'flow-template');
+    taskReviewTemplateSection.setOpen(focusField === 'review-template');
+    approvalDispatchTemplateSection.setOpen(focusField === 'approval-template');
   }
 
   return {
@@ -257,6 +344,9 @@ export function createPrimaryAgentEditorCard() {
     workingDirectoryField,
     chatPromptTemplateField,
     taskPromptTemplateField,
+    flowDispatchPromptTemplateField,
+    taskReviewPromptTemplateField,
+    approvalDispatchPromptTemplateField,
     capabilityPicker,
     enabledField,
     applyInheritedIdentity,

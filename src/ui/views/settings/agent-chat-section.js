@@ -71,7 +71,13 @@ export function createAgentChatSection({ standalone = false } = {}) {
   const container = document.createElement('div');
   container.className = 'wm-settings__agent-chat';
   let currentPrimarySubscription = null;
-  let promptDefaults = { chatPromptTemplate: '', taskPromptTemplate: '' };
+  let promptDefaults = {
+    chatPromptTemplate: '',
+    taskPromptTemplate: '',
+    flowDispatchPromptTemplate: '',
+    taskReviewPromptTemplate: '',
+    approvalDispatchPromptTemplate: '',
+  };
   if (standalone) {
     const heading = document.createElement('h2');
     heading.textContent = 'Agent Dispatch';
@@ -141,6 +147,9 @@ export function createAgentChatSection({ standalone = false } = {}) {
     agentEditor.workingDirectoryField.input.value = agent.workingDirectory || '';
     agentEditor.chatPromptTemplateField.input.value = agent.chatPromptTemplate || promptDefaults.chatPromptTemplate || '';
     agentEditor.taskPromptTemplateField.input.value = agent.taskPromptTemplate || promptDefaults.taskPromptTemplate || '';
+    agentEditor.flowDispatchPromptTemplateField.input.value = agent.flowDispatchPromptTemplate || promptDefaults.flowDispatchPromptTemplate || '';
+    agentEditor.taskReviewPromptTemplateField.input.value = agent.taskReviewPromptTemplate || promptDefaults.taskReviewPromptTemplate || '';
+    agentEditor.approvalDispatchPromptTemplateField.input.value = agent.approvalDispatchPromptTemplate || promptDefaults.approvalDispatchPromptTemplate || '';
     agentEditor.capabilityPicker.setSelectedCapabilities(agent.capabilities);
     agentEditor.enabledField.input.checked = agent.enabled !== false;
     agentEditor.setFocusState(null, {
@@ -158,6 +167,9 @@ export function createAgentChatSection({ standalone = false } = {}) {
     agentEditor.workingDirectoryField.input.value = '';
     agentEditor.chatPromptTemplateField.input.value = promptDefaults.chatPromptTemplate || '';
     agentEditor.taskPromptTemplateField.input.value = promptDefaults.taskPromptTemplate || '';
+    agentEditor.flowDispatchPromptTemplateField.input.value = promptDefaults.flowDispatchPromptTemplate || '';
+    agentEditor.taskReviewPromptTemplateField.input.value = promptDefaults.taskReviewPromptTemplate || '';
+    agentEditor.approvalDispatchPromptTemplateField.input.value = promptDefaults.approvalDispatchPromptTemplate || '';
     agentEditor.capabilityPicker.setSelectedCapabilities(['chat_intercept']);
     agentEditor.enabledField.input.checked = true;
     agentEditor.setFocusState(null, {
@@ -199,6 +211,18 @@ export function createAgentChatSection({ standalone = false } = {}) {
       agentEditor.taskPromptTemplateField.input.focus();
       return;
     }
+    if (options.focusField === 'flow-template') {
+      agentEditor.flowDispatchPromptTemplateField.input.focus();
+      return;
+    }
+    if (options.focusField === 'review-template') {
+      agentEditor.taskReviewPromptTemplateField.input.focus();
+      return;
+    }
+    if (options.focusField === 'approval-template') {
+      agentEditor.approvalDispatchPromptTemplateField.input.focus();
+      return;
+    }
     agentEditor.agentIdField.input.focus();
   }
   async function removeAgent(agent) {
@@ -224,6 +248,15 @@ export function createAgentChatSection({ standalone = false } = {}) {
       promptDefaults = {
         chatPromptTemplate: typeof defaults.chatPromptTemplate === 'string' ? defaults.chatPromptTemplate : promptDefaults.chatPromptTemplate,
         taskPromptTemplate: typeof defaults.taskPromptTemplate === 'string' ? defaults.taskPromptTemplate : promptDefaults.taskPromptTemplate,
+        flowDispatchPromptTemplate: typeof defaults.flowDispatchPromptTemplate === 'string'
+          ? defaults.flowDispatchPromptTemplate
+          : promptDefaults.flowDispatchPromptTemplate,
+        taskReviewPromptTemplate: typeof defaults.taskReviewPromptTemplate === 'string'
+          ? defaults.taskReviewPromptTemplate
+          : promptDefaults.taskReviewPromptTemplate,
+        approvalDispatchPromptTemplate: typeof defaults.approvalDispatchPromptTemplate === 'string'
+          ? defaults.approvalDispatchPromptTemplate
+          : promptDefaults.approvalDispatchPromptTemplate,
       };
       const primarySubscription = subscriptions[0] ?? null;
       const primaryAgent = getPrimaryAgent(agents);
@@ -273,6 +306,42 @@ export function createAgentChatSection({ standalone = false } = {}) {
             focusField: 'task-template',
           });
           statusLine.textContent = 'Create a local agent to save a task dispatch template.';
+        },
+        onEditFlowDispatchTemplate: (agent) => {
+          if (agent) {
+            openAgentEditor(agent, { focusField: 'flow-template' });
+            statusLine.textContent = `Editing flow dispatch template for ${agent.agentId}.`;
+            return;
+          }
+          openAgentEditor(null, {
+            capabilities: ['flow_dispatch'],
+            focusField: 'flow-template',
+          });
+          statusLine.textContent = 'Create a local agent to save a flow dispatch template.';
+        },
+        onEditTaskReviewTemplate: (agent) => {
+          if (agent) {
+            openAgentEditor(agent, { focusField: 'review-template' });
+            statusLine.textContent = `Editing task review template for ${agent.agentId}.`;
+            return;
+          }
+          openAgentEditor(null, {
+            capabilities: ['task_review'],
+            focusField: 'review-template',
+          });
+          statusLine.textContent = 'Create a local agent to save a task review template.';
+        },
+        onEditApprovalDispatchTemplate: (agent) => {
+          if (agent) {
+            openAgentEditor(agent, { focusField: 'approval-template' });
+            statusLine.textContent = `Editing approval dispatch template for ${agent.agentId}.`;
+            return;
+          }
+          openAgentEditor(null, {
+            capabilities: ['approval_dispatch'],
+            focusField: 'approval-template',
+          });
+          statusLine.textContent = 'Create a local agent to save an approval dispatch template.';
         },
       }));
       const additionalAgents = primaryAgent ? agents.slice(1) : agents;
@@ -365,6 +434,9 @@ export function createAgentChatSection({ standalone = false } = {}) {
         capabilities: agentEditor.capabilityPicker.getSelectedCapabilities(),
         chatPromptTemplate: agentEditor.chatPromptTemplateField.input.value,
         taskPromptTemplate: agentEditor.taskPromptTemplateField.input.value,
+        flowDispatchPromptTemplate: agentEditor.flowDispatchPromptTemplateField.input.value,
+        taskReviewPromptTemplate: agentEditor.taskReviewPromptTemplateField.input.value,
+        approvalDispatchPromptTemplate: agentEditor.approvalDispatchPromptTemplateField.input.value,
         enabled: agentEditor.enabledField.input.checked,
       });
       statusLine.textContent = 'Local agent saved.';

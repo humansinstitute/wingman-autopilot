@@ -18,7 +18,7 @@ describe('AgentWorkSessionBindingStore', () => {
     store.save({
       subscriptionId: 'sub-1',
       agentId: 'agent-1',
-      bindingType: 'flow_run',
+      bindingType: 'flow_orchestration',
       bindingId: 'flow-run-1',
       sessionId: 'session-1',
       lastRecordIdSeen: 'record-1',
@@ -40,7 +40,7 @@ describe('AgentWorkSessionBindingStore', () => {
       updatedAt: now,
     });
 
-    expect(store.getByBinding('sub-1', 'agent-1', 'flow_run', 'flow-run-1')).toMatchObject({
+    expect(store.getByBinding('sub-1', 'agent-1', 'flow_orchestration', 'flow-run-1')).toMatchObject({
       sessionId: 'session-1',
       lastRecordIdSeen: 'record-1',
     });

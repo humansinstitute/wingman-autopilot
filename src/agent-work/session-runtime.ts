@@ -19,8 +19,10 @@ import {
 import {
   buildAgentWorkGoal,
   buildApprovalDispatchPrompt,
+  buildFlowDispatchPrompt,
   buildTaskCommentDispatchPrompt,
   buildTaskDispatchPrompt,
+  buildTaskReviewPrompt,
 } from './prompts';
 import {
   buildAgentTaskCommentYokeCommands,
@@ -29,11 +31,22 @@ import {
 } from '../agent-chat/yoke-runtime';
 
 type DispatchReason = 'new task' | 'task updated';
+type ReviewDispatchReason = 'task ready for review' | 'review updated';
 export type AgentWorkTaskDispatchDecisionCode =
   | 'dispatch'
   | 'skip_terminal'
   | 'skip_assignment'
   | 'skip_not_ready';
+export type AgentWorkFlowDispatchDecisionCode =
+  | 'dispatch'
+  | 'skip_terminal'
+  | 'skip_assignment'
+  | 'skip_not_kickoff';
+export type AgentWorkTaskReviewDecisionCode =
+  | 'dispatch'
+  | 'skip_terminal'
+  | 'skip_assignment'
+  | 'skip_not_review';
 
 export interface AgentWorkRuntimeDependencies {
   defaultAgent: AgentType;
@@ -219,16 +232,29 @@ function uniqueStrings(values: Array<string | null | undefined>): string[] {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value && value.trim()))));
 }
 
-function buildSessionName(agent: AgentDefinitionRecord, task: InboundTaskRecord): string {
+function buildSessionName(
+  agent: AgentDefinitionRecord,
+  task: InboundTaskRecord,
+  mode: 'task_dispatch' | 'flow_dispatch' | 'task_review' = 'task_dispatch',
+): string {
   const title = compactText(task.title) ?? task.taskId;
-  return `${agent.label || agent.agentId} Work ${title}`.slice(0, 120);
+  const prefix = mode === 'flow_dispatch'
+    ? 'Flow Dispatch'
+    : mode === 'task_review'
+      ? 'Task Review'
+      : 'Work';
+  return `${agent.label || agent.agentId} ${prefix} ${title}`.slice(0, 120);
 }
 
-function buildSessionOrigin(agent: AgentDefinitionRecord, task: InboundTaskRecord): SessionOrigin {
+function buildSessionOrigin(
+  agent: AgentDefinitionRecord,
+  task: InboundTaskRecord,
+  mode: 'task_dispatch' | 'flow_dispatch' | 'task_review' = 'task_dispatch',
+): SessionOrigin {
   return {
     type: 'agent-work',
-    id: task.flowRunId ?? task.taskId,
-    label: `${agent.agentId}:${task.taskId}`,
+    id: mode === 'task_dispatch' ? (task.flowRunId ?? task.taskId) : task.taskId,
+    label: `${agent.agentId}:${mode}:${task.taskId}`,
   };
 }
 
@@ -265,6 +291,29 @@ function isReadyTask(task: InboundTaskRecord): boolean {
   return task.state === 'ready';
 }
 
+function isKickoffTask(task: InboundTaskRecord): boolean {
+  return task.state === 'new' && Boolean(task.flowId) && !task.flowRunId;
+}
+
+function isReviewTask(task: InboundTaskRecord): boolean {
+  return task.state === 'review' && Boolean(task.flowRunId);
+}
+
+function getFlowOrchestrationBinding(
+  bindingStore: AgentWorkSessionBindingStore,
+  input: AgentWorkTaskDispatchInput,
+): AgentWorkSessionBindingRecord | null {
+  if (!input.task.flowRunId) {
+    return null;
+  }
+  return bindingStore.getByBinding(
+    input.subscription.subscriptionId,
+    input.agent.agentId,
+    'flow_orchestration',
+    input.task.flowRunId,
+  );
+}
+
 export function evaluateTaskDispatchEligibility(params: {
   task: InboundTaskRecord;
   recordState: string | null;
@@ -278,6 +327,40 @@ export function evaluateTaskDispatchEligibility(params: {
   }
   if (!isReadyTask(params.task)) {
     return 'skip_not_ready';
+  }
+  return 'dispatch';
+}
+
+export function evaluateFlowDispatchEligibility(params: {
+  task: InboundTaskRecord;
+  recordState: string | null;
+  agent: AgentDefinitionRecord;
+}): AgentWorkFlowDispatchDecisionCode {
+  if (isTerminalTask(params.task, params.recordState)) {
+    return 'skip_terminal';
+  }
+  if (!isAssignedToAgent(params.task, params.agent)) {
+    return 'skip_assignment';
+  }
+  if (!isKickoffTask(params.task)) {
+    return 'skip_not_kickoff';
+  }
+  return 'dispatch';
+}
+
+export function evaluateTaskReviewEligibility(params: {
+  task: InboundTaskRecord;
+  recordState: string | null;
+  agent: AgentDefinitionRecord;
+}): AgentWorkTaskReviewDecisionCode {
+  if (isTerminalTask(params.task, params.recordState)) {
+    return 'skip_terminal';
+  }
+  if (!isAssignedToAgent(params.task, params.agent)) {
+    return 'skip_assignment';
+  }
+  if (!isReviewTask(params.task)) {
+    return 'skip_not_review';
   }
   return 'dispatch';
 }
@@ -404,29 +487,19 @@ export class AgentWorkSessionRuntime {
       input.task.taskId,
     );
     const taskSession = this.resolveLiveBindingSession(taskBinding);
-    const flowBinding = input.task.flowRunId
-      ? this.bindingStore.getByBinding(
-          input.subscription.subscriptionId,
-          input.agent.agentId,
-          'flow_run',
-          input.task.flowRunId,
-        )
-      : null;
-    const flowSession = this.resolveLiveBindingSession(flowBinding);
-
-    const session = taskSession ?? flowSession ?? await this.createSession(
+    const session = taskSession ?? await this.createSession(
       this.defaultAgent,
       input.agent.workingDirectory,
-      buildSessionName(input.agent, input.task),
-      buildSessionOrigin(input.agent, input.task),
+      buildSessionName(input.agent, input.task, 'task_dispatch'),
+      buildSessionOrigin(input.agent, input.task, 'task_dispatch'),
       input.subscription.managedByNpub ?? undefined,
       {
         AGENT: true,
         role: 'agent-work',
         goal: buildAgentWorkGoal(input.task),
         nextAction: 'reflect',
-        bindingType: input.task.flowRunId ? 'flow_run' : 'task',
-        bindingId: input.task.flowRunId ?? input.task.taskId,
+        bindingType: 'task',
+        bindingId: input.task.taskId,
         flowId: input.task.flowId ?? undefined,
         flowRunId: input.task.flowRunId ?? undefined,
         taskIds: [input.task.taskId],
@@ -436,15 +509,13 @@ export class AgentWorkSessionRuntime {
       },
     );
 
-    const canonicalBindingType: AgentWorkBindingType = input.task.flowRunId ? 'flow_run' : 'task';
-    const canonicalBindingId = input.task.flowRunId ?? input.task.taskId;
     const liveSession = this.updateSessionMetadata(
       session.id,
       buildMetadataPatch({
         session,
         task: input.task,
-        bindingType: canonicalBindingType,
-        bindingId: canonicalBindingId,
+        bindingType: 'task',
+        bindingId: input.task.taskId,
         managedByNpub: input.subscription.managedByNpub,
       }),
     ) ?? session;
@@ -457,17 +528,6 @@ export class AgentWorkSessionRuntime {
       sessionId: liveSession.id,
       lastRecordIdSeen: input.recordId,
     });
-
-    if (input.task.flowRunId) {
-      this.saveBinding({
-        subscriptionId: input.subscription.subscriptionId,
-        agentId: input.agent.agentId,
-        bindingType: 'flow_run',
-        bindingId: input.task.flowRunId,
-        sessionId: liveSession.id,
-        lastRecordIdSeen: input.recordId,
-      });
-    }
 
     this.enableNightWatch(liveSession.id);
     this.queueTaskPromptIfMissing(
@@ -483,6 +543,156 @@ export class AgentWorkSessionRuntime {
     return this.getSession(liveSession.id) ?? liveSession;
   }
 
+  async handleFlowDispatch(input: AgentWorkTaskDispatchInput): Promise<SessionSnapshot | null> {
+    if (evaluateFlowDispatchEligibility(input) !== 'dispatch') {
+      return null;
+    }
+
+    const taskBinding = this.bindingStore.getByBinding(
+      input.subscription.subscriptionId,
+      input.agent.agentId,
+      'task',
+      input.task.taskId,
+    );
+    const liveTaskSession = this.resolveLiveBindingSession(taskBinding);
+    const session = liveTaskSession ?? await this.createSession(
+      this.defaultAgent,
+      input.agent.workingDirectory,
+      buildSessionName(input.agent, input.task, 'flow_dispatch'),
+      buildSessionOrigin(input.agent, input.task, 'flow_dispatch'),
+      input.subscription.managedByNpub ?? undefined,
+      {
+        AGENT: true,
+        role: 'agent-work',
+        goal: buildAgentWorkGoal(input.task),
+        nextAction: 'reflect',
+        bindingType: 'task',
+        bindingId: input.task.taskId,
+        flowId: input.task.flowId ?? undefined,
+        taskIds: [input.task.taskId],
+        createdByNpub: input.subscription.managedByNpub ?? undefined,
+        lastManagedByNpub: input.subscription.managedByNpub ?? undefined,
+        chargeToNpub: input.subscription.managedByNpub ?? undefined,
+      },
+    );
+
+    const liveSession = this.updateSessionMetadata(
+      session.id,
+      buildMetadataPatch({
+        session,
+        task: input.task,
+        bindingType: 'task',
+        bindingId: input.task.taskId,
+        managedByNpub: input.subscription.managedByNpub,
+      }),
+    ) ?? session;
+
+    this.saveBinding({
+      subscriptionId: input.subscription.subscriptionId,
+      agentId: input.agent.agentId,
+      bindingType: 'task',
+      bindingId: input.task.taskId,
+      sessionId: liveSession.id,
+      lastRecordIdSeen: input.recordId,
+    });
+
+    this.enableNightWatch(liveSession.id);
+    this.queuePromptIfMissing(
+      liveSession.id,
+      buildFlowDispatchPrompt({
+        agent: input.agent,
+        task: input.task,
+        dispatchReason: taskBinding ? 'task updated' : 'new task',
+      }),
+    );
+    await this.maybeAutoDispatchQueuedPrompt(this.getSession(liveSession.id) ?? liveSession);
+    return this.getSession(liveSession.id) ?? liveSession;
+  }
+
+  async handleTaskReview(input: AgentWorkTaskDispatchInput): Promise<SessionSnapshot | null> {
+    if (evaluateTaskReviewEligibility(input) !== 'dispatch') {
+      return null;
+    }
+
+    const flowRunId = input.task.flowRunId;
+    if (!flowRunId) {
+      return null;
+    }
+
+    const taskBinding = this.bindingStore.getByBinding(
+      input.subscription.subscriptionId,
+      input.agent.agentId,
+      'task',
+      input.task.taskId,
+    );
+    const orchestrationBinding = getFlowOrchestrationBinding(this.bindingStore, input);
+    const orchestrationSession = this.resolveLiveBindingSession(orchestrationBinding);
+    const session = orchestrationSession ?? await this.createSession(
+      this.defaultAgent,
+      input.agent.workingDirectory,
+      buildSessionName(input.agent, input.task, 'task_review'),
+      buildSessionOrigin(input.agent, input.task, 'task_review'),
+      input.subscription.managedByNpub ?? undefined,
+      {
+        AGENT: true,
+        role: 'agent-work',
+        goal: buildAgentWorkGoal(input.task),
+        nextAction: 'reflect',
+        bindingType: 'flow_orchestration',
+        bindingId: flowRunId,
+        flowId: input.task.flowId ?? undefined,
+        flowRunId,
+        taskIds: [input.task.taskId],
+        createdByNpub: input.subscription.managedByNpub ?? undefined,
+        lastManagedByNpub: input.subscription.managedByNpub ?? undefined,
+        chargeToNpub: input.subscription.managedByNpub ?? undefined,
+      },
+    );
+
+    const liveSession = this.updateSessionMetadata(
+      session.id,
+      buildMetadataPatch({
+        session,
+        task: input.task,
+        bindingType: 'flow_orchestration',
+        bindingId: flowRunId,
+        managedByNpub: input.subscription.managedByNpub,
+      }),
+    ) ?? session;
+
+    const reviewReason: ReviewDispatchReason = orchestrationBinding ? 'review updated' : 'task ready for review';
+
+    this.saveBinding({
+      subscriptionId: input.subscription.subscriptionId,
+      agentId: input.agent.agentId,
+      bindingType: 'flow_orchestration',
+      bindingId: flowRunId,
+      sessionId: liveSession.id,
+      lastRecordIdSeen: input.recordId,
+    });
+
+    this.saveBinding({
+      subscriptionId: input.subscription.subscriptionId,
+      agentId: input.agent.agentId,
+      bindingType: 'task',
+      bindingId: input.task.taskId,
+      sessionId: liveSession.id,
+      lastRecordIdSeen: input.recordId,
+    });
+
+    this.enableNightWatch(liveSession.id);
+    this.queuePromptIfMissing(
+      liveSession.id,
+      buildTaskReviewPrompt({
+        agent: input.agent,
+        task: input.task,
+        dispatchReason: reviewReason,
+      }),
+    );
+    await this.maybeAutoDispatchQueuedPrompt(this.getSession(liveSession.id) ?? liveSession);
+    return this.getSession(liveSession.id) ?? liveSession;
+  }
+
   async handleApprovalDispatch(input: AgentWorkApprovalDispatchInput): Promise<SessionSnapshot | null> {
     const flowRunId = input.approval.flowRunId;
     if (!flowRunId) {
@@ -492,30 +702,54 @@ export class AgentWorkSessionRuntime {
     const flowBinding = this.bindingStore.getByBinding(
       input.subscription.subscriptionId,
       input.agent.agentId,
-      'flow_run',
+      'flow_orchestration',
       flowRunId,
     );
     const flowSession = this.resolveLiveBindingSession(flowBinding);
-    if (!flowBinding || !flowSession) {
-      return null;
-    }
-    if (flowBinding.lastRecordIdSeen && flowBinding.lastRecordIdSeen === input.recordId) {
-      return flowSession;
+    const session = flowSession ?? await this.createSession(
+      this.defaultAgent,
+      input.agent.workingDirectory,
+      `${input.agent.label || input.agent.agentId} Approval Dispatch ${flowRunId}`.slice(0, 120),
+      {
+        type: 'agent-work',
+        id: flowRunId,
+        label: `${input.agent.agentId}:approval:${input.approval.approvalId ?? flowRunId}`,
+      },
+      input.subscription.managedByNpub ?? undefined,
+      {
+        AGENT: true,
+        role: 'agent-work',
+        goal: `Continue flow run ${flowRunId} after approval ${input.approval.approvalId ?? '-'}.`,
+        nextAction: 'reflect',
+        bindingType: 'flow_orchestration',
+        bindingId: flowRunId,
+        flowId: input.approval.flowId ?? undefined,
+        flowRunId,
+        createdByNpub: input.subscription.managedByNpub ?? undefined,
+        lastManagedByNpub: input.subscription.managedByNpub ?? undefined,
+        chargeToNpub: input.subscription.managedByNpub ?? undefined,
+      },
+    );
+    if (flowBinding?.lastRecordIdSeen && flowBinding.lastRecordIdSeen === input.recordId) {
+      return session;
     }
 
     this.saveBinding({
       subscriptionId: input.subscription.subscriptionId,
       agentId: input.agent.agentId,
-      bindingType: 'flow_run',
+      bindingType: 'flow_orchestration',
       bindingId: flowRunId,
-      sessionId: flowSession.id,
+      sessionId: session.id,
       lastRecordIdSeen: input.recordId,
     });
 
-    this.enableNightWatch(flowSession.id);
-    this.queuePromptIfMissing(flowSession.id, buildApprovalDispatchPrompt(input.approval));
-    await this.maybeAutoDispatchQueuedPrompt(this.getSession(flowSession.id) ?? flowSession);
-    return this.getSession(flowSession.id) ?? flowSession;
+    this.enableNightWatch(session.id);
+    this.queuePromptIfMissing(session.id, buildApprovalDispatchPrompt({
+      agent: input.agent,
+      approval: input.approval,
+    }));
+    await this.maybeAutoDispatchQueuedPrompt(this.getSession(session.id) ?? session);
+    return this.getSession(session.id) ?? session;
   }
 
   async handleTaskCommentDispatch(input: AgentWorkTaskCommentDispatchInput): Promise<SessionSnapshot | null> {

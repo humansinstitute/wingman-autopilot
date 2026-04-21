@@ -50,4 +50,20 @@ describe("normaliseSessionMetadata", () => {
       billingMode: "subscription",
     });
   });
+
+  test("accepts flow orchestration binding metadata", () => {
+    expect(
+      normaliseSessionMetadata({
+        AGENT: true,
+        billingMode: "subscription",
+        bindingType: "FLOW_ORCHESTRATION" as never,
+        bindingId: "  run-42  ",
+      }),
+    ).toMatchObject({
+      AGENT: true,
+      billingMode: "subscription",
+      bindingType: "flow_orchestration",
+      bindingId: "run-42",
+    });
+  });
 });

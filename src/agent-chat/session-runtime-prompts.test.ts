@@ -47,6 +47,8 @@ describe('Agent chat prompts', () => {
         lastDecryptResult: null,
         lastRoutingResult: null,
         lastSseEvent: null,
+        recentSseEvents: [],
+        recentDispatches: [],
         lastSuccessfulStartupReloadAt: null,
       },
       intercept: {

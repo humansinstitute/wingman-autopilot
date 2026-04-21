@@ -75,6 +75,15 @@ function formatCapability(capability) {
   if (capability === 'task_dispatch') {
     return 'Task Dispatch';
   }
+  if (capability === 'flow_dispatch') {
+    return 'Flow Dispatch';
+  }
+  if (capability === 'task_review') {
+    return 'Task Review';
+  }
+  if (capability === 'approval_dispatch') {
+    return 'Approval Dispatch';
+  }
   return capability;
 }
 
@@ -165,8 +174,8 @@ export function createAgentDispatchSetupCards({
     overviewCard,
     '3. Expand capabilities over time',
     hasAgent
-      ? 'Add or remove Chat Dispatch and Task Dispatch on the same agent as new runtime features arrive.'
-      : 'Once the first agent exists, turn on Chat Dispatch or Task Dispatch without creating a second identity.',
+      ? 'Add or remove delivery and orchestration roles on the same agent as new runtime features arrive.'
+      : 'Once the first agent exists, turn on chat, delivery, and orchestration capabilities without creating a second identity.',
     hasAgent && countEnabledCapabilities(primaryAgent) > 0,
   );
 
