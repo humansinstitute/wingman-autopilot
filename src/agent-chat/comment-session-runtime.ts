@@ -32,16 +32,23 @@ function isLiveSession(session: SessionSnapshot | null): session is SessionSnaps
   return session.status === 'running' || session.status === 'starting';
 }
 
-function buildCommentThreadKey(
+function isStoppedSession(session: SessionSnapshot | null): session is SessionSnapshot {
+  if (!session) {
+    return false;
+  }
+  return session.status === 'stopped' || session.status === 'error';
+}
+
+function buildDocumentCommentKey(
   subscription: WorkspaceSubscriptionRecord,
   agent: AgentDefinitionRecord,
-  comment: InboundCommentRecord,
+  documentId: string,
 ): string {
   return [
     subscription.workspaceOwnerNpub,
     subscription.sourceAppNpub,
     agent.agentId,
-    comment.parentCommentId ?? comment.commentId,
+    documentId,
   ].join('+');
 }
 
@@ -49,15 +56,15 @@ function buildSessionName(agent: AgentDefinitionRecord, documentId: string): str
   return `${agent.label || agent.agentId} Comment ${documentId}`.slice(0, 120);
 }
 
-function buildSessionOrigin(threadKey: string): SessionOrigin {
+function buildSessionOrigin(documentKey: string): SessionOrigin {
   return {
     type: 'agent-comment',
-    id: threadKey,
-    label: `comment:${threadKey.slice(0, 48)}`,
+    id: documentKey,
+    label: `comment:${documentKey.slice(0, 48)}`,
   };
 }
 
-function buildMetadata(threadKey: string, input: {
+function buildMetadata(documentKey: string, input: {
   subscription: WorkspaceSubscriptionRecord;
   agent: AgentDefinitionRecord;
   comment: InboundCommentRecord;
@@ -71,7 +78,7 @@ function buildMetadata(threadKey: string, input: {
     agentChatAgentId: input.agent.agentId,
     agentChatBotNpub: input.agent.botNpub,
     bindingType: 'thread',
-    bindingId: threadKey,
+    bindingId: documentKey,
     goal: `Review document comment ${input.comment.commentId} on document ${input.documentId} and answer in the thread.`,
     nextAction: 'reflect',
     nextActionPayload: route,
@@ -79,6 +86,41 @@ function buildMetadata(threadKey: string, input: {
     lastManagedByNpub: input.subscription.managedByNpub ?? undefined,
     chargeToNpub: input.subscription.managedByNpub ?? undefined,
   };
+}
+
+function getDocumentIdFromMetadata(session: SessionSnapshot): string | null {
+  const payload = compactText(session.metadata?.nextActionPayload);
+  if (!payload) {
+    return null;
+  }
+  try {
+    const params = new URLSearchParams(payload.includes('?') ? payload.split('?')[1] : payload);
+    return compactText(params.get('docid'));
+  } catch {
+    return null;
+  }
+}
+
+function isDocumentCommentSession(params: {
+  session: SessionSnapshot;
+  documentKey: string;
+  agentId: string;
+  documentId: string;
+}): boolean {
+  const metadata = params.session.metadata;
+  if (metadata?.routedBy !== 'agent-comment') {
+    return false;
+  }
+  if (metadata?.agentChatAgentId !== params.agentId) {
+    return false;
+  }
+  if (params.session.origin?.id === params.documentKey || metadata?.bindingId === params.documentKey) {
+    return true;
+  }
+  if (getDocumentIdFromMetadata(params.session) === params.documentId) {
+    return true;
+  }
+  return params.session.name.includes(` Comment ${params.documentId}`);
 }
 
 export interface AgentCommentSessionRuntimeDependencies {
@@ -142,15 +184,18 @@ export class AgentCommentSessionRuntime {
       return null;
     }
 
-    const threadKey = buildCommentThreadKey(input.subscription, input.agent, input.comment);
-    const reusable = this.resolveReusableSession(threadKey, input.agent.agentId);
+    const documentKey = buildDocumentCommentKey(input.subscription, input.agent, documentId);
+    const reusable = this.resolveReusableSession(documentKey, input.agent.agentId, documentId);
+    if (reusable === 'stopped') {
+      return null;
+    }
     const session = reusable ?? await this.createSession(
       this.defaultAgent,
       input.agent.workingDirectory,
       buildSessionName(input.agent, documentId),
-      buildSessionOrigin(threadKey),
+      buildSessionOrigin(documentKey),
       input.subscription.managedByNpub ?? undefined,
-      buildMetadata(threadKey, {
+      buildMetadata(documentKey, {
         subscription: input.subscription,
         agent: input.agent,
         comment: input.comment,
@@ -160,7 +205,7 @@ export class AgentCommentSessionRuntime {
 
     const liveSession = this.updateSessionMetadata(
       session.id,
-      buildMetadata(threadKey, {
+      buildMetadata(documentKey, {
         subscription: input.subscription,
         agent: input.agent,
         comment: input.comment,
@@ -193,21 +238,23 @@ export class AgentCommentSessionRuntime {
     return this.getSession(liveSession.id) ?? liveSession;
   }
 
-  private resolveReusableSession(threadKey: string, agentId: string): SessionSnapshot | null {
+  private resolveReusableSession(
+    documentKey: string,
+    agentId: string,
+    documentId: string,
+  ): SessionSnapshot | 'stopped' | null {
+    let sawStoppedSession = false;
     for (const session of this.listSessions()) {
-      if (session?.origin?.id !== threadKey) {
-        continue;
-      }
-      if (session?.metadata?.agentChatAgentId !== agentId) {
-        continue;
-      }
-      if (session?.metadata?.routedBy !== 'agent-comment') {
+      if (!isDocumentCommentSession({ session, documentKey, agentId, documentId })) {
         continue;
       }
       if (isLiveSession(session)) {
         return session;
       }
+      if (isStoppedSession(session)) {
+        sawStoppedSession = true;
+      }
     }
-    return null;
+    return sawStoppedSession ? 'stopped' : null;
   }
 }
