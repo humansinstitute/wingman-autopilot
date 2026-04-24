@@ -181,6 +181,17 @@ export function createSessionRuntimeActions(deps) {
     }
 
     if (sessionMessageSendInFlight.has(sessionId)) {
+      const queued = await queueMessageFallback({
+        sessionId,
+        content: trimmed,
+        state,
+        addToPromptQueue,
+        updateAgentStatusIndicators,
+        focusComposerTextarea,
+      });
+      if (queued) {
+        return { sent: false, queued: true, busy: true };
+      }
       showToast("Agent working", { variant: "info", duration: 2200 });
       return { sent: false, queued: false, busy: true };
     }
@@ -240,7 +251,7 @@ export function createSessionRuntimeActions(deps) {
         focusComposerTextarea,
       });
       if (queued) {
-        return { sent: false, queued: true };
+        return { sent: false, queued: true, busy: true };
       }
       return { sent: false, queued: false };
     }
