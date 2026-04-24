@@ -18,6 +18,7 @@ import type { sessionArchiveStore as SessionArchiveStoreInstance } from "../stor
 import type { ForkToWorktreeInput } from "../sessions/fork-to-worktree";
 import { resolveSessionOwnerNpub } from "../sessions/session-ownership";
 import { deliverSessionAgentMessage } from "./session-agent-message";
+import { normalizeBusySessionMessageFailure } from "./session-message-failures";
 import {
   isAgentManagedByMetadataOrOrigin,
   isCreditsBillingSession,
@@ -1648,6 +1649,8 @@ async function handlePostMessage(
     return Response.json({ error: "Sign in to send messages", balance: 0 }, { status: 403 });
   }
 
+  const adapter = ctx.manager.getAdapter(id);
+
   if (messageType === "raw") {
     const result = await deliverSessionAgentMessage({
       agentHost: ctx.agentHost,
@@ -1657,7 +1660,7 @@ async function handlePostMessage(
       content,
       type: messageType,
       pm2Name: ownedSession.pm2Name,
-      adapter: ctx.manager.getAdapter(id),
+      adapter,
     });
     if (!result.ok) {
       return Response.json({ error: result.message }, { status: result.status });
@@ -1695,7 +1698,7 @@ async function handlePostMessage(
       content,
       type: messageType,
       pm2Name: ownedSession.pm2Name,
-      adapter: ctx.manager.getAdapter(id),
+      adapter,
     });
     if (!result.ok) {
       if (!isCreditsBilling) {
@@ -1705,7 +1708,11 @@ async function handlePostMessage(
           console.error("[billing] failed to refund after agent rejection:", creditError);
         }
       }
-      return Response.json({ error: result.message, balance: currentBalance }, { status: result.status });
+      const normalizedResult = await normalizeBusySessionMessageFailure(ownedSession, result, adapter);
+      return Response.json(
+        { error: normalizedResult.message, balance: currentBalance },
+        { status: normalizedResult.status },
+      );
     }
 
     const messages = await ctx.waitForMessageUpdate(id, initialCount);

@@ -1023,6 +1023,34 @@ describe("handleSessionApi", () => {
     });
   });
 
+  test("POST /api/sessions/:id/messages maps a generic busy 5xx into a queueable busy response", async () => {
+    globalThis.fetch = async () => Response.json({ error: "Internal Server Error" }, { status: 500 });
+
+    const ctx = buildCtx({
+      manager: {
+        getSession: (id: string) => (id === "session-1" ? { ...baseSession, agentRuntimeStatus: "stable" } : undefined),
+        listSessions: () => [{ ...baseSession, agentRuntimeStatus: "stable" }],
+        getAdapter: () => ({
+          fetchStatus: async () => "running",
+        }),
+      } as any,
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions/session-1/messages");
+    const request = new Request(url.toString(), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "ping" }),
+    });
+
+    const response = await handleSessionApi(request, url, "POST", makeAuth({ session: { id: "viewer" } as any }), ctx);
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(409);
+    await expect(response!.json()).resolves.toMatchObject({
+      error: "Agent working",
+    });
+  });
+
   test("POST /api/sessions/:id/queue/next dispatches the queued prompt", async () => {
     const ctx = buildCtx({
       dispatchNextQueuedPromptForSession: async () => ({ id: "session-1", sentPrompt: { content: "queued" }, messages: [], balance: 100 }),
