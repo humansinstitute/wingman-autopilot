@@ -1163,6 +1163,79 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(next.recentDispatches[0]?.sessionId).toBe('doc-comment-session');
   });
 
+  test('skips existing comment advisories from startup or reconnect replay', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-comment-existing-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-comment-existing-agents'));
+    const subscription = store.save({
+      ...makeSubscription(),
+      lastSuccessfulStartupReloadAt: '2026-04-24T08:00:00.000Z',
+    });
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-comment',
+      label: 'Comment Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-comment',
+      capabilities: ['chat_intercept'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+      chatPromptTemplate: '',
+      taskPromptTemplate: '',
+    });
+
+    const documentCommentDispatches: string[] = [];
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      agentCommentRuntime: {
+        handleDocumentCommentDispatch: async (input: any) => {
+          documentCommentDispatches.push(input.recordId);
+          return makeSession('doc-comment-session');
+        },
+      } as unknown as AgentCommentSessionRuntime,
+      fetchRecordHistory: async () => {
+        throw new Error('existing comment advisories should be skipped before record fetch');
+      },
+      decryptRecordPayload: async () => {
+        throw new Error('existing comment advisories should be skipped before decrypt');
+      },
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-existing-comment-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'comment'),
+        record_id: 'record-existing-comment-1',
+        updated_at: '2026-04-24T07:27:59.631Z',
+      }),
+    );
+
+    expect(documentCommentDispatches).toEqual([]);
+    expect(next.recentDispatches[0]?.kind).toBe('comment');
+    expect(next.recentDispatches[0]?.action).toBe('comment_skip_existing_record');
+    expect(next.recentDispatches[0]?.sessionId).toBeNull();
+  });
+
   test('dispatches tasks even when predecessor links are present', async () => {
     const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-predecessor-dispatch-subscriptions'));
     const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-predecessor-dispatch-agents'));

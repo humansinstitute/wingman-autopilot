@@ -100,6 +100,32 @@ function isSelfUpdater(subscription: WorkspaceSubscriptionRecord, agent: AgentDe
   return updaterNpub === agent.botNpub || updaterNpub === subscription.wsKeyNpub;
 }
 
+function parseTimestampMs(value: unknown): number | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getRecordUpdatedAtMs(record: Record<string, unknown> | null | undefined): number | null {
+  return parseTimestampMs(record?.updated_at)
+    ?? parseTimestampMs(record?.updatedAt);
+}
+
+function shouldSkipExistingCommentAdvisory(
+  subscription: WorkspaceSubscriptionRecord,
+  record: Record<string, unknown> | null | undefined,
+): boolean {
+  const startupReloadAt = parseTimestampMs(subscription.lastSuccessfulStartupReloadAt);
+  const recordUpdatedAt = getRecordUpdatedAtMs(record);
+  return startupReloadAt != null && recordUpdatedAt != null && recordUpdatedAt <= startupReloadAt;
+}
+
 interface TaskDispatchSnapshot {
   title: string;
   description: string | null;
@@ -1449,12 +1475,44 @@ export class WorkspaceSubscriptionManager {
     if (!recordId) {
       return record;
     }
+    if (shouldSkipExistingCommentAdvisory(record, payload)) {
+      return this.appendDispatchHistory(record, {
+        at: new Date().toISOString(),
+        kind: 'comment',
+        action: 'comment_skip_existing_record',
+        agentId: 'unknown',
+        sessionId: null,
+        recordId,
+        bindingId: recordId,
+        bindingType: null,
+        details: {
+          record_updated_at: payload.updated_at ?? payload.updatedAt ?? null,
+          startup_reload_at: record.lastSuccessfulStartupReloadAt,
+        },
+      });
+    }
 
     try {
       const versions = await this.loadAdvisoryRecordVersions(record, recordId);
       const latest = versions.sort((left, right) => Number(right.version ?? 0) - Number(left.version ?? 0))[0] ?? null;
       if (!latest) {
         return record;
+      }
+      if (shouldSkipExistingCommentAdvisory(record, latest)) {
+        return this.appendDispatchHistory(record, {
+          at: new Date().toISOString(),
+          kind: 'comment',
+          action: 'comment_skip_existing_record',
+          agentId: 'unknown',
+          sessionId: null,
+          recordId,
+          bindingId: recordId,
+          bindingType: null,
+          details: {
+            record_updated_at: latest.updated_at ?? latest.updatedAt ?? null,
+            startup_reload_at: record.lastSuccessfulStartupReloadAt,
+          },
+        });
       }
       record.lastRecordPullResult = buildSuccessDiagnostic('Comment advisory pulled.', {
         record_id: recordId,
