@@ -100,6 +100,18 @@ function isSelfUpdater(subscription: WorkspaceSubscriptionRecord, agent: AgentDe
   return updaterNpub === agent.botNpub || updaterNpub === subscription.wsKeyNpub;
 }
 
+function isSelfCommentAuthor(
+  subscription: WorkspaceSubscriptionRecord,
+  agent: AgentDefinitionRecord,
+  comment: InboundCommentRecord,
+  updaterNpub: string | null,
+): boolean {
+  if (isSelfUpdater(subscription, agent, updaterNpub)) {
+    return true;
+  }
+  return Boolean(comment.senderNpub && comment.senderNpub === agent.botNpub);
+}
+
 function parseTimestampMs(value: unknown): number | null {
   if (typeof value !== 'string') {
     return null;
@@ -1600,7 +1612,7 @@ export class WorkspaceSubscriptionManager {
 
     const runtime = this.getRuntime(record.subscriptionId);
     for (const agent of taskAgents) {
-      if (isSelfUpdater(record, agent, updaterNpub)) {
+      if (isSelfCommentAuthor(record, agent, comment, updaterNpub)) {
         record = this.appendDispatchHistory(record, {
           at: new Date().toISOString(),
           kind: 'comment',
@@ -1613,6 +1625,7 @@ export class WorkspaceSubscriptionManager {
           details: {
             comment_id: comment.commentId,
             updater_npub: updaterNpub,
+            sender_npub: comment.senderNpub,
             target_record_family_hash: comment.targetRecordFamilyHash,
           },
         });
@@ -1637,6 +1650,7 @@ export class WorkspaceSubscriptionManager {
         details: {
           comment_id: comment.commentId,
           updater_npub: updaterNpub,
+          sender_npub: comment.senderNpub,
           target_record_family_hash: comment.targetRecordFamilyHash,
         },
       });
@@ -1675,7 +1689,7 @@ export class WorkspaceSubscriptionManager {
 
     const runtime = this.getRuntime(record.subscriptionId);
     for (const agent of agents) {
-      if (isSelfUpdater(record, agent, updaterNpub)) {
+      if (isSelfCommentAuthor(record, agent, comment, updaterNpub)) {
         record = this.appendDispatchHistory(record, {
           at: new Date().toISOString(),
           kind: 'comment',

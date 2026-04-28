@@ -361,7 +361,7 @@ describe('AgentWorkSessionRuntime', () => {
     expect(prompts[2]?.content).toContain('Dispatch reason: task ready for review.');
     expect(prompts[3]?.content).toContain('Dispatch reason: approval updated.');
     expect(dispatches).toEqual(['session-1', 'session-2', 'session-3', 'session-3']);
-    expect(nightWatch).toEqual(['session-1', 'session-2', 'session-3', 'session-3']);
+    expect(nightWatch).toEqual([]);
   });
 
   test('routes task comments into the existing live task session with yoke commands', async () => {
@@ -421,6 +421,7 @@ describe('AgentWorkSessionRuntime', () => {
       prepareWorkspaceYokeRuntime: async () => ({
         stateDir: '/tmp/agent-work-task-comment',
         commandPrefix: 'ignored',
+        didSync: true,
       }),
     });
 
@@ -457,7 +458,105 @@ describe('AgentWorkSessionRuntime', () => {
     expect(prompts[0]?.content).toContain("tasks show 'task-comment-1'");
     expect(prompts[0]?.content).toContain("tasks reply 'comment-1'");
     expect(dispatches).toEqual([liveSession.id]);
-    expect(nightWatch).toEqual([liveSession.id]);
+    expect(nightWatch).toEqual([]);
+  });
+
+  test('does not re-enqueue the same task comment advisory when the same record is seen again', async () => {
+    const bindingStore = new AgentWorkSessionBindingStore(makeTempDb());
+    const sessions = new Map<string, SessionSnapshot>();
+    const prompts: Array<{ sessionId: string; content: string }> = [];
+    const dispatches: string[] = [];
+    const now = new Date().toISOString();
+    const liveSession = makeSession('task-comment-session', {
+      AGENT: true,
+      billingMode: 'subscription',
+      bindingType: 'task',
+      bindingId: 'task-comment-1',
+      taskIds: ['task-comment-1'],
+    });
+    sessions.set(liveSession.id, liveSession);
+
+    bindingStore.save({
+      subscriptionId: 'sub-1',
+      agentId: 'agent-work',
+      bindingType: 'task',
+      bindingId: 'task-comment-1',
+      sessionId: liveSession.id,
+      lastRecordIdSeen: 'record-task-1',
+      state: 'active',
+      lastActivityAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const runtime = new AgentWorkSessionRuntime({
+      defaultAgent: 'codex',
+      bindingStore,
+      getSession: (sessionId) => sessions.get(sessionId) ?? null,
+      createSession: async () => {
+        throw new Error('createSession should not run for task comments with an active task session');
+      },
+      updateSessionMetadata: (sessionId, metadata) => {
+        const existing = sessions.get(sessionId)!;
+        const next = { ...existing, metadata: { ...existing.metadata, ...(metadata ?? {}) } };
+        sessions.set(sessionId, next);
+        return next;
+      },
+      addPrompt: (sessionId, content) => {
+        prompts.push({ sessionId, content });
+        return null;
+      },
+      maybeAutoDispatchQueuedPrompt: (session) => {
+        if (session) {
+          dispatches.push(session.id);
+        }
+      },
+      enableNightWatch: () => undefined,
+      prepareWorkspaceYokeRuntime: async () => ({
+        stateDir: '/tmp/agent-work-task-comment',
+        commandPrefix: 'ignored',
+        didSync: true,
+      }),
+    });
+
+    const subscription = makeSubscription();
+    const agent = makeAgent();
+    const comment = {
+      commentId: 'comment-1',
+      targetRecordId: 'task-comment-1',
+      targetRecordFamilyHash: 'npub1source:task',
+      parentCommentId: null,
+      anchorLineNumber: null,
+      commentStatus: 'open' as const,
+      body: 'Please review the latest change and confirm next steps.',
+      attachments: [],
+      senderNpub: 'npub1reviewer',
+      recordState: 'active',
+    };
+    const botIdentity = {
+      botNpub: agent.botNpub,
+      botPubkeyHex: botPubkeyHex(agent),
+      botSecret: new Uint8Array(32),
+    };
+
+    await runtime.handleTaskCommentDispatch({
+      subscription,
+      agent,
+      recordId: 'record-comment-1',
+      comment,
+      botIdentity,
+    });
+
+    await runtime.handleTaskCommentDispatch({
+      subscription,
+      agent,
+      recordId: 'record-comment-1',
+      comment,
+      botIdentity,
+    });
+
+    expect(prompts).toHaveLength(1);
+    expect(dispatches).toEqual([liveSession.id]);
   });
 
   test('does not enqueue duplicate task update advisories while the same prompt is already queued', async () => {
@@ -593,6 +692,76 @@ describe('AgentWorkSessionRuntime', () => {
 
     expect(created?.id).toBe('hex-session-1');
     expect(createCount).toBe(1);
+  });
+
+  test('uses explicit repo and artifact paths from the task description to choose the dispatch working directory', async () => {
+    const bindingStore = new AgentWorkSessionBindingStore(makeTempDb());
+    const sessions = new Map<string, SessionSnapshot>();
+    let createdWorkingDirectory: string | null = null;
+
+    const runtime = new AgentWorkSessionRuntime({
+      defaultAgent: 'codex',
+      bindingStore,
+      getSession: (sessionId) => sessions.get(sessionId) ?? null,
+      createSession: async (_agent, workingDirectory, name, _origin, explicitNpub, metadata) => {
+        createdWorkingDirectory = workingDirectory;
+        const session = makeSession('repo-aware-session', {
+          AGENT: true,
+          billingMode: 'subscription',
+          ...metadata,
+        });
+        session.name = name;
+        session.workingDirectory = workingDirectory;
+        session.npub = explicitNpub;
+        sessions.set(session.id, session);
+        return session;
+      },
+      updateSessionMetadata: (sessionId, metadata) => {
+        const existing = sessions.get(sessionId)!;
+        const next = { ...existing, metadata: { ...existing.metadata, ...(metadata ?? {}) } };
+        sessions.set(sessionId, next);
+        return next;
+      },
+      addPrompt: () => undefined,
+      maybeAutoDispatchQueuedPrompt: () => undefined,
+      enableNightWatch: () => undefined,
+    });
+
+    const subscription = makeSubscription();
+    const agent = makeAgent();
+
+    await runtime.handleTaskDispatch({
+      subscription,
+      agent,
+      recordId: 'record-repo-aware-1',
+      recordState: null,
+      task: {
+        taskId: 'task-repo-aware-1',
+        flowId: 'flow-1',
+        flowRunId: 'run-1',
+        flowStep: '5',
+        scopeId: 'scope-7',
+        scopeL1Id: null,
+        scopeL2Id: null,
+        scopeL3Id: null,
+        scopeL4Id: null,
+        scopeL5Id: null,
+        title: 'Review design handoff',
+        description: [
+          'Review the design handoff before implementation.',
+          'Run contract:',
+          '- Working directory: ~/code/wingmen',
+          '- Primary artifact: ~/code/wingmen/docs/feature-links.md',
+        ].join('\n'),
+        state: 'ready',
+        assignedTo: agent.botNpub,
+        deleted: false,
+        done: false,
+        predecessorTaskIds: [],
+      },
+    });
+
+    expect(createdWorkingDirectory).toBe('/Users/mini/code/wingmen');
   });
 
   test('normalises camelCase wrapped task payloads', () => {

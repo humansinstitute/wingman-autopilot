@@ -42,6 +42,59 @@ function compactStringArray(value: unknown): string[] {
     : [];
 }
 
+function compactStringArrayMaybeJson(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return compactStringArray(value);
+  }
+  const text = compactText(value);
+  if (!text) {
+    return [];
+  }
+  if (text.startsWith('[')) {
+    try {
+      return compactStringArray(JSON.parse(text));
+    } catch {
+      return [];
+    }
+  }
+  return text.split(',').map((entry) => entry.trim()).filter(Boolean);
+}
+
+function compactReferenceArrayMaybeJson(value: unknown): Array<{ type: string; id: string }> {
+  const parsed = (() => {
+    if (Array.isArray(value)) {
+      return value;
+    }
+    const text = compactText(value);
+    if (!text.startsWith('[')) {
+      return [];
+    }
+    try {
+      const decoded = JSON.parse(text);
+      return Array.isArray(decoded) ? decoded : [];
+    } catch {
+      return [];
+    }
+  })();
+  const seen = new Set<string>();
+  return parsed.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return [];
+    }
+    const type = compactText((entry as Record<string, unknown>).type);
+    const id = compactText((entry as Record<string, unknown>).id);
+    if (!type || !id) {
+      return [];
+    }
+    const key = `${type}:${id}`;
+    if (seen.has(key)) {
+      return [];
+    }
+    seen.add(key);
+    return [{ type, id }];
+  });
+}
+
 function normaliseStateDir(repoRoot: string, config: RepoBoardConfig): string {
   const configured = compactText(config.stateDir);
   return configured
@@ -167,6 +220,7 @@ function parseTaskRecord(raw: Record<string, unknown>): BoardTaskRecord {
       compactText(raw.scope_l4_id) || null,
       compactText(raw.scope_l5_id) || null,
     ],
+    references: compactReferenceArrayMaybeJson(raw.references ?? raw.references_json),
     tags: compactText(raw.tags)
       ? compactText(raw.tags).split(',').map((entry) => entry.trim()).filter(Boolean)
       : [],
@@ -182,9 +236,9 @@ function parseApprovalRecord(raw: Record<string, unknown>): BoardApprovalRecord 
     flowStep: Number.isFinite(Number(raw.flow_step)) ? Number(raw.flow_step) : null,
     status: compactText(raw.status) || null,
     approvalMode: compactText(raw.approval_mode) === 'agent' ? 'agent' : 'manual',
-    taskIds: compactStringArray(raw.task_ids),
+    taskIds: compactStringArrayMaybeJson(raw.task_ids ?? raw.task_ids_json),
     brief: compactText(raw.brief),
-    approverWhitelist: compactStringArray(raw.approver_whitelist),
+    approverWhitelist: compactStringArrayMaybeJson(raw.approver_whitelist ?? raw.approver_whitelist_json),
   };
 }
 
@@ -362,6 +416,17 @@ export class YokeBoardClient implements FlowBoard {
       `SELECT * FROM tasks WHERE record_state != 'deleted' AND flow_run_id = ? ORDER BY flow_step ASC, updated_at ASC`,
     ).all(flowRunId) as Array<Record<string, unknown>>;
     return rows.map((row) => parseTaskRecord(parseJsonOutput<Record<string, unknown>>(String(row.raw_json ?? '{}'))));
+  }
+
+  async listFlowRunApprovals(flowRunId: string): Promise<BoardApprovalRecord[]> {
+    const db = this.openDb();
+    const rows = db.prepare(
+      `SELECT * FROM approvals WHERE record_state != 'deleted' AND flow_run_id = ? ORDER BY flow_step ASC, updated_at ASC`,
+    ).all(flowRunId) as Array<Record<string, unknown>>;
+    return rows.map((row) => {
+      const rawJson = compactText(row.raw_json);
+      return parseApprovalRecord(rawJson ? parseJsonOutput<Record<string, unknown>>(rawJson) : row);
+    });
   }
 
   async approve(approvalId: string, note = ''): Promise<BoardApprovalRecord> {

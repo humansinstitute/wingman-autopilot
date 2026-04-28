@@ -46,9 +46,13 @@ export const DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE = [
   'Title: {{title}}',
   'Description: {{description}}',
   'Instructions:',
+  '- Treat the task record as the source of truth. Do not rely on transcript memory for missing business context.',
+  '- Read the task description for a concrete working directory, repo root, primary artifact path, and acceptance criteria before doing anything else.',
+  '- If the task targets another repo, work in that repo. Do not stay in the agent home directory unless the task gives no concrete repo context.',
   '- Complete only the current actionable task.',
   '- Inspect the board before acting so you use current state rather than transcript memory.',
   '- Update the board with progress or completion when you finish meaningful work.',
+  '- If the task still contains unresolved placeholders like <project directory> or feature-<name>.md, stop and correct the board record before delivery work.',
   '- Stop if blocked, if a predecessor is unresolved, or if you are awaiting approval.',
 ].join('\n');
 
@@ -62,10 +66,14 @@ export const DEFAULT_FLOW_DISPATCH_PROMPT_TEMPLATE = [
   'Title: {{title}}',
   'Description: {{description}}',
   'Instructions:',
+  '- Run the stable wrapper from the Wingmen repo: `cd /Users/mini/code/wingmen && bun clis/wingman.ts board flow-dispatch {{task_id}}`.',
+  '- If the repo-local board wrapper is not initialised, initialise it once and continue rather than exploring alternate code paths.',
   '- Claim the kickoff task exactly once and treat it as the parent task for the run.',
   '- Use the stable board wrapper, not ad hoc Yoke commands, for run instantiation.',
   '- Stamp one shared flow_run_id across the parent, child tasks, and approval records.',
+  '- Materialise the run contract up front: resolve the concrete repo/workdir, expand placeholders, and stamp explicit artifact paths into every child task and approval brief.',
   '- Create all child tasks and approval records up front, then leave blocked work in new and actionable work in ready.',
+  '- Approval steps are approval-prep tasks first: assign them to the agent, prepare the review package, then hand them to the human approver during task review.',
   '- Stop after the run graph and kickoff evidence are on the board.',
 ].join('\n');
 
@@ -81,6 +89,7 @@ export const DEFAULT_TASK_REVIEW_PROMPT_TEMPLATE = [
   'Description: {{description}}',
   'Instructions:',
   '- Inspect the flow-run graph through the stable board wrapper.',
+  '- If the reviewed task is an approval-prep task, do not promote downstream work yet. Reassign that task to the human approver and leave it in review.',
   '- Promote every newly-unblocked downstream task from new to ready in one pass.',
   '- Respect fan-out and fan-in by using predecessor completion, not step-number guesses.',
   '- Post concise board evidence describing which successors changed state.',
@@ -98,6 +107,7 @@ export const DEFAULT_APPROVAL_DISPATCH_PROMPT_TEMPLATE = [
   'Instructions:',
   '- Continue only when the approval transition is approved and part of a live flow run.',
   '- Use the stable board wrapper to inspect the approval, linked tasks, and downstream graph.',
+  '- Treat the linked approval task as the human-reviewed gate that is now satisfied; mark it done and only then promote newly-unblocked downstream work.',
   '- Promote newly-unblocked downstream tasks from new to ready and record evidence on the board.',
   '- Stop if no further task is actionable after the approval decision.',
 ].join('\n');

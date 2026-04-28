@@ -6,6 +6,7 @@ import { loadConfig, resolveAgentLaunchConfig } from "./config";
 const ENV_KEYS = [
   "AGENT_MODE",
   "AGENT_SPAWN_MODE",
+  "AGENT_STATUS_POLL_TIMEOUT_MS",
   "AGENTAPI_BIN",
   "DEFAULT_AGENT",
   "GLOVES",
@@ -146,5 +147,25 @@ describe("loadConfig", () => {
     expect(config.defaultAgent).toBe("pi");
     expect(command[0]).toBe("/tmp/custom-agentapi");
     expect(command.slice(-2)).toEqual(["--", "/opt/bin/pi"]);
+  });
+
+  test("defaults status polling to a short local request timeout", () => {
+    applyEnv({
+      AGENT_STATUS_POLL_TIMEOUT_MS: undefined,
+    });
+
+    const config = loadConfig();
+
+    expect(config.agentStatusPollTimeoutMs).toBe(1000);
+  });
+
+  test("allows status polling timeout override", () => {
+    applyEnv({
+      AGENT_STATUS_POLL_TIMEOUT_MS: "2500",
+    });
+
+    const config = loadConfig();
+
+    expect(config.agentStatusPollTimeoutMs).toBe(2500);
   });
 });

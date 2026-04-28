@@ -83,8 +83,40 @@ export interface PromptDispatchEngine {
 // ---------- Factory ----------
 
 const QUEUE_DISPATCH_RETRY_MS = 5000;
+const QUEUE_DISPATCH_TIMING_LOG_THRESHOLD_MS = 750;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function elapsedSince(startedAt: number): number {
+  return Date.now() - startedAt;
+}
+
+function logQueueDispatchTiming(params: {
+  sessionId: string;
+  agent: AgentType;
+  status: "sent" | "failed";
+  totalMs: number;
+  readinessMs: number;
+  billingMs: number;
+  deliveryMs: number;
+  messageSyncMs: number;
+  errorStatus?: number;
+}): void {
+  if (params.totalMs < QUEUE_DISPATCH_TIMING_LOG_THRESHOLD_MS && params.status === "sent") {
+    return;
+  }
+  const message =
+    `[queue] dispatch ${params.status} session=${params.sessionId} agent=${params.agent}`
+    + ` total=${params.totalMs}ms readiness=${params.readinessMs}ms`
+    + ` billing=${params.billingMs}ms delivery=${params.deliveryMs}ms`
+    + ` messageSync=${params.messageSyncMs}ms`
+    + (params.errorStatus ? ` status=${params.errorStatus}` : "");
+  if (params.status === "sent") {
+    console.info(message);
+  } else {
+    console.warn(message);
+  }
+}
 
 export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDispatchEngine {
   const queueDispatchInFlight = new Set<string>();
@@ -129,7 +161,7 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
 
     const deadline = Date.now() + Math.max(timeoutMs, 1000);
     while (Date.now() < deadline) {
-      await sleep(750);
+      await sleep(250);
       messages = await ctx.syncSessionMessages(sessionId, true);
       if (messages.length > initialCount) {
         return messages;
@@ -150,20 +182,28 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
       sessionId: session.id,
       host: ctx.agentHost,
       timeoutMs,
-      pollIntervalMs: 500,
+      pollIntervalMs: 250,
       requiredStablePolls: session.agent === "codex" ? 3 : 2,
-      requestTimeoutMs: 2500,
+      requestTimeoutMs: 750,
     });
     markPromptStartupReady(session.id);
   }
 
   async function dispatchNextQueuedPromptForSession(session: SessionSnapshot, userNpub: string | null) {
+    const dispatchStartedAt = Date.now();
+    let readinessMs = 0;
+    let billingMs = 0;
+    let deliveryMs = 0;
+    let messageSyncMs = 0;
+
     if (!userNpub) {
       throw new QueueDispatchError("Sign in to send messages", 403, { balance: 0 });
     }
 
     try {
+      const readinessStartedAt = Date.now();
       await ensureSessionReadyForPromptDispatch(session);
+      readinessMs = elapsedSince(readinessStartedAt);
     } catch (error) {
       throw new QueueDispatchError(
         `Session is not ready for prompt dispatch: ${(error as Error).message}`,
@@ -192,7 +232,9 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
 
     if (!creditsBilling) {
       try {
+        const billingStartedAt = Date.now();
         currentBalance = ctx.identityUserStore.debit(userNpub, ctx.MESSAGE_COST_SATS);
+        billingMs = elapsedSince(billingStartedAt);
         debitApplied = true;
       } catch (error) {
         if (error instanceof InsufficientBalanceError) {
@@ -208,6 +250,7 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
 
     try {
       const initialCount = ctx.messageStore.listSessionMessages(session.id).length;
+      const deliveryStartedAt = Date.now();
       const result = await deliverSessionAgentMessage({
         agentHost: ctx.agentHost,
         buildAgentUrl: ctx.buildAgentUrl,
@@ -218,6 +261,7 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
         pm2Name: session.pm2Name,
         adapter: ctx.manager.getAdapter(session.id),
       });
+      deliveryMs = elapsedSince(deliveryStartedAt);
 
       if (!result.ok) {
         refundDebit();
@@ -228,14 +272,48 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
       }
 
       ctx.promptQueueStore.removeNextPrompt(session.id);
+      const messageSyncStartedAt = Date.now();
       const messages = await waitForMessageUpdate(session.id, initialCount);
+      messageSyncMs = elapsedSince(messageSyncStartedAt);
       clearQueueDispatchCooldown(session.id);
+      logQueueDispatchTiming({
+        sessionId: session.id,
+        agent: session.agent,
+        status: "sent",
+        totalMs: elapsedSince(dispatchStartedAt),
+        readinessMs,
+        billingMs,
+        deliveryMs,
+        messageSyncMs,
+      });
       return { id: session.id, messages, balance: currentBalance, sentPrompt: nextPrompt };
     } catch (error) {
       if (error instanceof QueueDispatchError) {
+        logQueueDispatchTiming({
+          sessionId: session.id,
+          agent: session.agent,
+          status: "failed",
+          totalMs: elapsedSince(dispatchStartedAt),
+          readinessMs,
+          billingMs,
+          deliveryMs,
+          messageSyncMs,
+          errorStatus: error.status,
+        });
         throw error;
       }
       refundDebit();
+      logQueueDispatchTiming({
+        sessionId: session.id,
+        agent: session.agent,
+        status: "failed",
+        totalMs: elapsedSince(dispatchStartedAt),
+        readinessMs,
+        billingMs,
+        deliveryMs,
+        messageSyncMs,
+        errorStatus: 502,
+      });
       throw new QueueDispatchError(`Failed to contact agent: ${(error as Error).message}`, 502, {
         balance: currentBalance,
         failedPrompt: nextPrompt,

@@ -61,6 +61,7 @@ class FakeBoard implements FlowBoard {
       predecessorTaskIds: input.predecessorTaskIds ?? [],
       scopeId: input.scopeId ?? null,
       scopeLineage: [input.scopeId ?? null, null, null, null, null],
+      references: [],
       tags: input.tags ?? [],
     };
     this.tasks.set(task.taskId, task);
@@ -96,13 +97,46 @@ class FakeBoard implements FlowBoard {
   async listFlowRunTasks(flowRunId: string): Promise<BoardTaskRecord[]> {
     return Array.from(this.tasks.values()).filter((task) => task.flowRunId === flowRunId);
   }
+
+  async listFlowRunApprovals(flowRunId: string): Promise<BoardApprovalRecord[]> {
+    return Array.from(this.approvals.values()).filter((approval) => approval.flowRunId === flowRunId);
+  }
 }
 
 function makeKickoffTask(): BoardTaskRecord {
   return {
     taskId: 'kickoff-1',
-    title: 'Kickoff',
-    description: 'Start the run',
+    title: 'Design kickoff: dispatch a chat thread into a flow from the ellipsis menu',
+    description: [
+      'Review and action the source chat thread below. Follow the selected flow end-to-end and develop all tasks required to produce the design.',
+      '',
+      'Requested flow behavior:',
+      '- Treat this as if Flight Deck started the flow from a thread message using the existing start-flow machinery.',
+      '- The feature to design is an ellipsis-menu action on a chat thread message that can dispatch the thread into a flow.',
+      '- Model it off the current Flight Deck start-flow function.',
+      '- The dispatch prompt should be generated from general dispatch details plus the chat history.',
+      '',
+      'Boilerplate instruction:',
+      'Review and action this chat thread. Follow the Design flow. Develop all tasks needed to design the feature cleanly. Preserve source-thread provenance in resulting records.',
+      '',
+      'Source thread metadata:',
+      '- workspace_owner_npub: npub1workspace',
+      '- channel_id: channel-1',
+      '- thread_id: thread-1',
+      '- source_scope_id: scope-1',
+      '- selected_flow_id: flow-1',
+      '- source_commit_message_id: message-2',
+      '',
+      'Resolved run contract:',
+      '- repo_root: /Users/mini/code/wingmen',
+      '- primary_workdir: /Users/mini/code/wingmen',
+      '- docs_dir: /Users/mini/code/wingmen/docs',
+      '- primary_artifact_path: /Users/mini/code/wingmen/docs/feature-links.md',
+      '- cross_repo_review_targets:',
+      '  - /Users/mini/code/wingmanbefree/wingman-fd/src/flows-manager.js',
+      '  - /Users/mini/code/wingmanbefree/wingman-fd/src/chat-message-manager.js',
+      '  - /Users/mini/code/wingmen/docs/design/flight-deck-flow-dispatch-contract.md',
+    ].join('\n'),
     state: 'new',
     assignedTo: 'npub1bot',
     parentTaskId: null,
@@ -112,6 +146,13 @@ function makeKickoffTask(): BoardTaskRecord {
     predecessorTaskIds: [],
     scopeId: 'scope-1',
     scopeLineage: ['scope-1', null, null, null, null],
+    references: [
+      { type: 'scope', id: 'scope-1' },
+      { type: 'flow', id: 'flow-1' },
+      { type: 'channel', id: 'channel-1' },
+      { type: 'message', id: 'thread-1' },
+      { type: 'message', id: 'message-2' },
+    ],
     tags: [],
   };
 }
@@ -122,9 +163,45 @@ function makeLinearFlow(): BoardFlowRecord {
     title: 'Linear Flow',
     description: 'A linear test flow',
     steps: [
-      { stepNumber: 1, type: 'job_dispatch', title: 'Research', instruction: 'Do research', approvalMode: 'manual', approverWhitelist: [] },
-      { stepNumber: 2, type: 'approval', title: 'Review', instruction: 'Approve the work', approvalMode: 'manual', approverWhitelist: ['npub1reviewer'] },
-      { stepNumber: 3, type: 'job_dispatch', title: 'Publish', instruction: 'Ship it', approvalMode: 'manual', approverWhitelist: [] },
+      {
+        stepNumber: 1,
+        type: 'job_dispatch',
+        title: 'Research',
+        instruction: 'Review the design brief in <project directory>/docs/feature-<name>.md.',
+        approvalMode: 'manual',
+        approverWhitelist: [],
+        artifactsExpected: ['document'],
+        briefTemplate: '',
+        managerGuidance: '',
+        workerGuidance: 'Keep the handoff doc current.',
+        directoryOverride: '',
+      },
+      {
+        stepNumber: 2,
+        type: 'approval',
+        title: 'Review',
+        instruction: 'Prepare approval for the feature brief.',
+        approvalMode: 'manual',
+        approverWhitelist: ['npub1reviewer'],
+        artifactsExpected: ['document'],
+        briefTemplate: 'Review the completed design in <project directory>/docs/feature-<name>.md.',
+        managerGuidance: '',
+        workerGuidance: '',
+        directoryOverride: '',
+      },
+      {
+        stepNumber: 3,
+        type: 'job_dispatch',
+        title: 'Publish',
+        instruction: 'Ship it once the approval is complete.',
+        approvalMode: 'manual',
+        approverWhitelist: [],
+        artifactsExpected: [],
+        briefTemplate: '',
+        managerGuidance: '',
+        workerGuidance: '',
+        directoryOverride: '',
+      },
     ],
   };
 }
@@ -149,9 +226,23 @@ describe('flow orchestration', () => {
     const approvalRecord = Array.from(board.approvals.values())[0];
     expect(runTasks.every((task) => task.flowRunId === first.flowRunId)).toBe(true);
     expect(childTasks.map((task) => task.state)).toEqual(['ready', 'new', 'new']);
-    expect(approvalTask?.assignedTo).toBeNull();
+    expect(approvalTask?.assignedTo).toBe('npub1bot');
+    expect(childTasks[0]?.description).toContain('Requested behavior:');
+    expect(childTasks[0]?.description).toContain('Source provenance:');
+    expect(childTasks[0]?.description).toContain('@[Flight Deck chat](mention:channel:channel-1)');
+    expect(childTasks[0]?.description).toContain('@[thread root](mention:message:thread-1)');
+    expect(childTasks[0]?.description).toContain('@[dispatch request](mention:message:message-2)');
+    expect(childTasks[0]?.description).toContain('Cross-repo review targets:');
+    expect(childTasks[0]?.description).toContain('/Users/mini/code/wingmanbefree/wingman-fd/src/flows-manager.js');
+    expect(childTasks[0]?.description).toContain(`Flow run id: ${first.flowRunId}`);
+    expect(childTasks[0]?.description).toContain('Docs directory: /Users/mini/code/wingmen/docs');
+    expect(childTasks[0]?.description).toContain('Expected artifacts: Feature brief at /Users/mini/code/wingmen/docs/feature-links.md');
+    expect(board.tasks.get('kickoff-1')?.description).toContain('Primary artifact: /Users/mini/code/wingmen/docs/feature-links.md');
+    expect(approvalTask?.description).toContain('Approval prep task. Keep this task assigned to the agent while it is actionable.');
     expect(publishTask?.predecessorTaskIds).toEqual(approvalTask ? [approvalTask.taskId] : undefined);
     expect(approvalRecord?.approverWhitelist).toEqual(['npub1reviewer']);
+    expect(approvalRecord?.brief).toContain('Approval package requirements:');
+    expect(approvalRecord?.brief).toContain('/Users/mini/code/wingmen/docs/feature-links.md');
 
     const second = await instantiateFlowRun(board, 'kickoff-1');
     expect(second.status).toBe('already_instantiated');
@@ -177,6 +268,7 @@ describe('flow orchestration', () => {
       predecessorTaskIds: [],
       scopeId: 'scope-1',
       scopeLineage: ['scope-1', null, null, null, null],
+      references: [],
       tags: [],
     });
     board.tasks.set('task-b', {
@@ -192,6 +284,7 @@ describe('flow orchestration', () => {
       predecessorTaskIds: ['task-a'],
       scopeId: 'scope-1',
       scopeLineage: ['scope-1', null, null, null, null],
+      references: [],
       tags: [],
     });
     board.tasks.set('task-c', {
@@ -207,6 +300,7 @@ describe('flow orchestration', () => {
       predecessorTaskIds: ['task-a'],
       scopeId: 'scope-1',
       scopeLineage: ['scope-1', null, null, null, null],
+      references: [],
       tags: [],
     });
     board.tasks.set('task-d', {
@@ -222,6 +316,7 @@ describe('flow orchestration', () => {
       predecessorTaskIds: ['task-b', 'task-c'],
       scopeId: 'scope-1',
       scopeLineage: ['scope-1', null, null, null, null],
+      references: [],
       tags: [],
     });
 
@@ -238,14 +333,14 @@ describe('flow orchestration', () => {
     expect(afterC.promotedTaskIds).toEqual(['task-d']);
   });
 
-  test('approval dispatch marks approval task done and promotes downstream tasks', async () => {
+  test('approval prep review hands the task to the human approver before downstream work is promoted', async () => {
     const board = new FakeBoard();
     board.tasks.set('approval-task-1', {
       taskId: 'approval-task-1',
       title: 'Review',
-      description: '',
-      state: 'ready',
-      assignedTo: null,
+      description: 'Approval prep task.',
+      state: 'review',
+      assignedTo: 'npub1bot',
       parentTaskId: 'kickoff-1',
       flowId: 'flow-1',
       flowRunId: 'run-1',
@@ -253,7 +348,8 @@ describe('flow orchestration', () => {
       predecessorTaskIds: ['task-a'],
       scopeId: 'scope-1',
       scopeLineage: ['scope-1', null, null, null, null],
-      tags: ['flow_approval'],
+      references: [],
+      tags: ['flow_approval', 'flow_approval_prep', 'flow_step'],
     });
     board.tasks.set('task-next', {
       taskId: 'task-next',
@@ -268,6 +364,62 @@ describe('flow orchestration', () => {
       predecessorTaskIds: ['approval-task-1'],
       scopeId: 'scope-1',
       scopeLineage: ['scope-1', null, null, null, null],
+      references: [],
+      tags: [],
+    });
+    board.approvals.set('approval-1', {
+      approvalId: 'approval-1',
+      title: 'Review',
+      flowId: 'flow-1',
+      flowRunId: 'run-1',
+      flowStep: 2,
+      status: 'pending',
+      approvalMode: 'manual',
+      taskIds: ['approval-task-1'],
+      brief: 'Review the completed design.',
+      approverWhitelist: ['npub1reviewer'],
+    });
+
+    const result = await continueFlowAfterTaskReview(board, 'approval-task-1');
+
+    expect(result.promotedTaskIds).toEqual([]);
+    expect(board.tasks.get('approval-task-1')?.assignedTo).toBe('npub1reviewer');
+    expect(board.tasks.get('approval-task-1')?.state).toBe('review');
+    expect(board.tasks.get('task-next')?.state).toBe('new');
+  });
+
+  test('approval dispatch marks approval task done and promotes downstream tasks', async () => {
+    const board = new FakeBoard();
+    board.tasks.set('approval-task-1', {
+      taskId: 'approval-task-1',
+      title: 'Review',
+      description: '',
+      state: 'review',
+      assignedTo: 'npub1reviewer',
+      parentTaskId: 'kickoff-1',
+      flowId: 'flow-1',
+      flowRunId: 'run-1',
+      flowStep: 2,
+      predecessorTaskIds: ['task-a'],
+      scopeId: 'scope-1',
+      scopeLineage: ['scope-1', null, null, null, null],
+      references: [],
+      tags: ['flow_approval', 'flow_approval_prep'],
+    });
+    board.tasks.set('task-next', {
+      taskId: 'task-next',
+      title: 'Next',
+      description: '',
+      state: 'new',
+      assignedTo: 'npub1bot',
+      parentTaskId: 'kickoff-1',
+      flowId: 'flow-1',
+      flowRunId: 'run-1',
+      flowStep: 3,
+      predecessorTaskIds: ['approval-task-1'],
+      scopeId: 'scope-1',
+      scopeLineage: ['scope-1', null, null, null, null],
+      references: [],
       tags: [],
     });
 

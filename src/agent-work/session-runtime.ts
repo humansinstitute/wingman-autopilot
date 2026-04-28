@@ -1,3 +1,5 @@
+import { dirname } from 'node:path';
+
 import type { AgentType } from '../config';
 import type { SessionOrigin, SessionSnapshot } from '../agents/process-manager';
 import type { SessionMetadataInput } from '../sessions/session-metadata';
@@ -29,6 +31,7 @@ import {
   prepareAgentWorkspaceYokeRuntime,
   type AgentWorkspaceYokeRuntime,
 } from '../agent-chat/yoke-runtime';
+import { expandHomeDirectory } from '../server/path-utils';
 
 type DispatchReason = 'new task' | 'task updated';
 type ReviewDispatchReason = 'task ready for review' | 'review updated';
@@ -256,6 +259,70 @@ function buildSessionOrigin(
     id: mode === 'task_dispatch' ? (task.flowRunId ?? task.taskId) : task.taskId,
     label: `${agent.agentId}:${mode}:${task.taskId}`,
   };
+}
+
+function normalisePathCandidate(value: string | null | undefined): string | null {
+  const compact = compactText(value);
+  if (!compact) {
+    return null;
+  }
+  const withoutLineSuffix = compact.replace(/:(\d+)(?::\d+)?$/, '');
+  const cleaned = withoutLineSuffix
+    .replace(/^[<('"`]+/, '')
+    .replace(/[>)"'`,;:.]+$/, '');
+  if (!cleaned) {
+    return null;
+  }
+  const homeRelative = cleaned.replace(/^[Cc]ode\//, 'code/');
+  const candidate = /^[Cc]ode\//.test(cleaned)
+    ? `~/${homeRelative}`
+    : cleaned;
+  const expanded = expandHomeDirectory(candidate);
+  return expanded.startsWith('/') ? expanded : null;
+}
+
+function pathCandidateToWorkingDirectory(candidate: string): string {
+  if (candidate.endsWith('/docs')) {
+    return dirname(candidate);
+  }
+  const docsIndex = candidate.indexOf('/docs/');
+  if (docsIndex >= 0) {
+    return candidate.slice(0, docsIndex);
+  }
+  if (/\.[a-z0-9]+$/i.test(candidate)) {
+    return dirname(candidate);
+  }
+  return candidate;
+}
+
+function extractWorkingDirectoryFromText(value: string | null | undefined): string | null {
+  const compact = compactText(value);
+  if (!compact) {
+    return null;
+  }
+  const labelledMatches = Array.from(
+    compact.matchAll(/(?:^|\n)\s*(?:working directory|repo root|directory override|primary workdir|project directory|repo)\s*:\s*([^\n]+)/gi),
+  );
+  for (const match of labelledMatches) {
+    const candidate = normalisePathCandidate(match[1]);
+    if (candidate) {
+      return pathCandidateToWorkingDirectory(candidate);
+    }
+  }
+  const pathMatches = compact.match(/(?:~\/|\/Users\/|\/home\/|[Cc]ode\/)[^\s<>"'`),;]+/g) ?? [];
+  for (const match of pathMatches) {
+    const candidate = normalisePathCandidate(match);
+    if (candidate) {
+      return pathCandidateToWorkingDirectory(candidate);
+    }
+  }
+  return null;
+}
+
+function resolveDispatchWorkingDirectory(task: InboundTaskRecord | null | undefined, agent: AgentDefinitionRecord): string {
+  return extractWorkingDirectoryFromText(task?.description)
+    ?? extractWorkingDirectoryFromText(task?.title)
+    ?? agent.workingDirectory;
 }
 
 function isLiveSession(session: SessionSnapshot | null): session is SessionSnapshot {
@@ -487,9 +554,10 @@ export class AgentWorkSessionRuntime {
       input.task.taskId,
     );
     const taskSession = this.resolveLiveBindingSession(taskBinding);
+    const workingDirectory = resolveDispatchWorkingDirectory(input.task, input.agent);
     const session = taskSession ?? await this.createSession(
       this.defaultAgent,
-      input.agent.workingDirectory,
+      workingDirectory,
       buildSessionName(input.agent, input.task, 'task_dispatch'),
       buildSessionOrigin(input.agent, input.task, 'task_dispatch'),
       input.subscription.managedByNpub ?? undefined,
@@ -529,7 +597,6 @@ export class AgentWorkSessionRuntime {
       lastRecordIdSeen: input.recordId,
     });
 
-    this.enableNightWatch(liveSession.id);
     this.queueTaskPromptIfMissing(
       liveSession.id,
       input.task.taskId,
@@ -555,9 +622,10 @@ export class AgentWorkSessionRuntime {
       input.task.taskId,
     );
     const liveTaskSession = this.resolveLiveBindingSession(taskBinding);
+    const workingDirectory = resolveDispatchWorkingDirectory(input.task, input.agent);
     const session = liveTaskSession ?? await this.createSession(
       this.defaultAgent,
-      input.agent.workingDirectory,
+      workingDirectory,
       buildSessionName(input.agent, input.task, 'flow_dispatch'),
       buildSessionOrigin(input.agent, input.task, 'flow_dispatch'),
       input.subscription.managedByNpub ?? undefined,
@@ -596,7 +664,6 @@ export class AgentWorkSessionRuntime {
       lastRecordIdSeen: input.recordId,
     });
 
-    this.enableNightWatch(liveSession.id);
     this.queuePromptIfMissing(
       liveSession.id,
       buildFlowDispatchPrompt({
@@ -627,9 +694,10 @@ export class AgentWorkSessionRuntime {
     );
     const orchestrationBinding = getFlowOrchestrationBinding(this.bindingStore, input);
     const orchestrationSession = this.resolveLiveBindingSession(orchestrationBinding);
+    const workingDirectory = resolveDispatchWorkingDirectory(input.task, input.agent);
     const session = orchestrationSession ?? await this.createSession(
       this.defaultAgent,
-      input.agent.workingDirectory,
+      workingDirectory,
       buildSessionName(input.agent, input.task, 'task_review'),
       buildSessionOrigin(input.agent, input.task, 'task_review'),
       input.subscription.managedByNpub ?? undefined,
@@ -680,7 +748,6 @@ export class AgentWorkSessionRuntime {
       lastRecordIdSeen: input.recordId,
     });
 
-    this.enableNightWatch(liveSession.id);
     this.queuePromptIfMissing(
       liveSession.id,
       buildTaskReviewPrompt({
@@ -708,7 +775,7 @@ export class AgentWorkSessionRuntime {
     const flowSession = this.resolveLiveBindingSession(flowBinding);
     const session = flowSession ?? await this.createSession(
       this.defaultAgent,
-      input.agent.workingDirectory,
+      flowSession?.workingDirectory ?? input.agent.workingDirectory,
       `${input.agent.label || input.agent.agentId} Approval Dispatch ${flowRunId}`.slice(0, 120),
       {
         type: 'agent-work',
@@ -743,7 +810,6 @@ export class AgentWorkSessionRuntime {
       lastRecordIdSeen: input.recordId,
     });
 
-    this.enableNightWatch(session.id);
     this.queuePromptIfMissing(session.id, buildApprovalDispatchPrompt({
       agent: input.agent,
       approval: input.approval,
@@ -768,6 +834,19 @@ export class AgentWorkSessionRuntime {
     if (!liveSession) {
       return null;
     }
+    const commentBinding = this.bindingStore.getByBinding(
+      input.subscription.subscriptionId,
+      input.agent.agentId,
+      'thread',
+      input.comment.commentId,
+    );
+    if (
+      commentBinding
+      && commentBinding.sessionId === liveSession.id
+      && commentBinding.lastRecordIdSeen === input.recordId
+    ) {
+      return liveSession;
+    }
 
     const yokeRuntime = await this.prepareWorkspaceYokeRuntime({
       sessionId: liveSession.id,
@@ -780,7 +859,6 @@ export class AgentWorkSessionRuntime {
       taskId,
       input.comment.commentId,
     );
-    this.enableNightWatch(liveSession.id);
     this.queuePromptIfMissing(
       liveSession.id,
       buildTaskCommentDispatchPrompt({
@@ -790,6 +868,14 @@ export class AgentWorkSessionRuntime {
         commands,
       }),
     );
+    this.saveBinding({
+      subscriptionId: input.subscription.subscriptionId,
+      agentId: input.agent.agentId,
+      bindingType: 'thread',
+      bindingId: input.comment.commentId,
+      sessionId: liveSession.id,
+      lastRecordIdSeen: input.recordId,
+    });
     await this.maybeAutoDispatchQueuedPrompt(this.getSession(liveSession.id) ?? liveSession);
     return this.getSession(liveSession.id) ?? liveSession;
   }

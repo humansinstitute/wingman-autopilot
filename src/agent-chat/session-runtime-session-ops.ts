@@ -7,7 +7,7 @@ import type { AgentDefinitionRecord, ChatInterceptStateRecord, WorkspaceSubscrip
 
 const SESSION_READY_TIMEOUT_MS = 120_000;
 const ASSISTANT_REPLY_TIMEOUT_MS = 300_000;
-const ASSISTANT_REPLY_POLL_INTERVAL_MS = 1_000;
+const ASSISTANT_REPLY_POLL_INTERVAL_MS = 250;
 const ASSISTANT_REPLY_STABLE_POLLS = 2;
 const ASSISTANT_REPLY_DECISION_FALLBACK_STABLE_POLLS = 5;
 
@@ -102,7 +102,7 @@ export async function sendPromptAndAwaitAssistantReply(
   }
   await adapter.waitForReady({
     timeoutMs: SESSION_READY_TIMEOUT_MS,
-    pollIntervalMs: 500,
+    pollIntervalMs: 250,
   });
   const initialMessages = await adapter.fetchMessages().catch(() => []);
   await adapter.sendMessage(prompt, 'user');

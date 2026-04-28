@@ -224,7 +224,7 @@ const createDefaultDispatchRun = (
         waitForSessionReady: async (session) => {
           await waitForAgentReady(sessionCtx.agentHost, session.port, session.agent, {
             timeoutMs: session.agent === "codex" ? 120_000 : 60_000,
-            pollIntervalMs: 500,
+            pollIntervalMs: 250,
           });
         },
         seedSession: async (session, content) => {

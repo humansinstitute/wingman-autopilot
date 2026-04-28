@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "token": "eyJ0eXBlIjoic3VwZXJiYXNlZF9jb25uZWN0aW9uIiwiZGlyZWN0X2h0dHBzX3VybCI6Imh0dHBzOi8vc2I0Lm90aGVyc3R1ZmYuc3R1ZGlvIiwid29ya3NwYWNlX293bmVyX25wdWIiOiJucHViMWp2ajd0eGpzZ2U2MmdtZzdhcjdrZnUyM3pkOTVzcHczMm56NW4wNjYzZXE0cHp6eXlqcXNubGF6N2UiLCJhcHBfbnB1YiI6Im5wdWIxaGQzN3JlcWdmY256M3B2emo0Z3JrbmQybmt6Yzk0cDllcmNtdW5yeHgyMnJhenIycmZ4c3c2ZG5zNSJ9",
+  "directHttpsUrl": "https://sb4.otherstuff.studio",
+  "serviceNpub": null,
+  "workspaceOwnerNpub": "npub1jvj7txjsge62gmg7ar7kfu23zd95spw32nz5n0663eq4pzzyyjqsnlaz7e",
+  "workspaceOwnerPubkey": "9325e59a504674a46d1ee8fd64f151134b4805d154c549bf5a8e415088442481",
+  "appNpub": "npub1hd37reqgfcnz3pvzj4grknd2nkzc94p9ercmunrxx22razr2rfxsw6dns5",
+  "appPubkey": "bb63e1e4084e2628858295503b4daa9d8582d425c8f1be4c6632943e886a1a4d",
+  "createdAt": "2026-04-21T08:39:23.113Z",
+  "updatedAt": "2026-04-21T08:39:23.114Z"
+}

@@ -178,6 +178,7 @@ describe('AgentCommentSessionRuntime', () => {
       prepareWorkspaceYokeRuntime: async () => ({
         stateDir: '/tmp/agent-comment-thread',
         commandPrefix: 'ignored',
+        didSync: true,
       }),
     });
 

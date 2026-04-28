@@ -1034,6 +1034,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
         target_record_family_hash: `${subscription.sourceAppNpub}:task`,
         body: 'Please check the task again.',
         comment_status: 'open',
+        sender_npub: 'npub1reviewer',
       }),
       botKeyStore: {
         getActiveKeyForUser: () => makeBotKeyRecord(),
@@ -1070,6 +1071,89 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     ]);
     expect(next.recentDispatches[0]?.kind).toBe('comment');
     expect(next.recentDispatches[0]?.action).toBe('task_comment_skip_no_live_session');
+  });
+
+  test('skips self-authored task comments instead of routing them back into the agent-work runtime', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-task-comment-self-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-task-comment-self-agents'));
+    const subscription = store.save(makeSubscription());
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-task',
+      label: 'Task Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-work',
+      capabilities: ['task_dispatch'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+
+    const taskCommentDispatches: Array<{ recordId: string; taskId: string; commentId: string; agentId: string }> = [];
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      agentWorkRuntime: {
+        handleTaskDispatch: async () => null,
+        handleApprovalDispatch: async () => null,
+        handleTaskCommentDispatch: async (input: any) => {
+          taskCommentDispatches.push({
+            recordId: input.recordId,
+            taskId: input.comment.targetRecordId ?? '',
+            commentId: input.comment.commentId,
+            agentId: input.agent.agentId,
+          });
+          return null;
+        },
+      } as unknown as AgentWorkSessionRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-task-comment-self-1',
+          record_state: 'active',
+          version: 1,
+          signature_npub: 'npub1servicewriter',
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        comment_id: 'comment-task-self-1',
+        target_record_id: 'task-1',
+        target_record_family_hash: `${subscription.sourceAppNpub}:task`,
+        body: 'No change to the required next action.',
+        comment_status: 'open',
+        sender_npub: subscription.botNpub,
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-task-comment-self-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'comment'),
+        record_id: 'record-task-comment-self-1',
+      }),
+    );
+
+    expect(taskCommentDispatches).toEqual([]);
+    expect(next.recentDispatches[0]?.kind).toBe('comment');
+    expect(next.recentDispatches[0]?.action).toBe('task_comment_skip_self_update');
   });
 
   test('routes document comments into the agent-comment runtime when the comment targets a document', async () => {
@@ -1234,6 +1318,85 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(next.recentDispatches[0]?.kind).toBe('comment');
     expect(next.recentDispatches[0]?.action).toBe('comment_skip_existing_record');
     expect(next.recentDispatches[0]?.sessionId).toBeNull();
+  });
+
+  test('skips self-authored document comments instead of routing them back into the agent-comment runtime', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-comment-document-self-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-comment-document-self-agents'));
+    const subscription = store.save(makeSubscription());
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-comment',
+      label: 'Comment Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-comment',
+      capabilities: ['chat_intercept'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+      chatPromptTemplate: '',
+      taskPromptTemplate: '',
+    });
+
+    const documentCommentDispatches: string[] = [];
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      agentCommentRuntime: {
+        handleDocumentCommentDispatch: async (input: any) => {
+          documentCommentDispatches.push(input.recordId);
+          return makeSession('doc-comment-session');
+        },
+      } as unknown as AgentCommentSessionRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-doc-comment-self-1',
+          record_state: 'active',
+          version: 1,
+          signature_npub: 'npub1reviewer',
+          group_npubs: ['npub1group'],
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        comment_id: 'comment-doc-self-1',
+        target_record_id: 'doc-1',
+        target_record_family_hash: `${subscription.sourceAppNpub}:document`,
+        sender_npub: subscription.botNpub,
+        body: 'Self-authored reply.',
+        comment_status: 'open',
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-doc-comment-self-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'comment'),
+        record_id: 'record-doc-comment-self-1',
+      }),
+    );
+
+    expect(documentCommentDispatches).toEqual([]);
+    expect(next.recentDispatches[0]?.kind).toBe('comment');
+    expect(next.recentDispatches[0]?.action).toBe('document_comment_skip_self_update');
   });
 
   test('dispatches tasks even when predecessor links are present', async () => {

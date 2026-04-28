@@ -197,6 +197,9 @@ export class AgentChatSessionRuntime {
           botIdentity: latestInput.botIdentity,
           channelId: intercept.channelId,
           threadId: intercept.threadId,
+          options: {
+            syncMode: isNewSession ? 'eager' : 'lazy',
+          },
         });
 
         await logSession(

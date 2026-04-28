@@ -13,15 +13,19 @@ export interface WaitForSessionPromptReadinessOptions {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const DEFAULT_STATUS_REQUEST_TIMEOUT_MS = 750;
 
 export async function waitForSessionPromptReadiness(
   options: WaitForSessionPromptReadinessOptions,
 ): Promise<void> {
   const timeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : 60000;
-  const pollIntervalMs = options.pollIntervalMs && options.pollIntervalMs > 0 ? options.pollIntervalMs : 500;
+  const pollIntervalMs = options.pollIntervalMs && options.pollIntervalMs > 0 ? options.pollIntervalMs : 250;
   const requiredStablePolls =
     options.requiredStablePolls && options.requiredStablePolls > 0 ? options.requiredStablePolls : 3;
-  const requestTimeoutMs = options.requestTimeoutMs && options.requestTimeoutMs > 0 ? options.requestTimeoutMs : 2500;
+  const requestTimeoutMs =
+    options.requestTimeoutMs && options.requestTimeoutMs > 0
+      ? options.requestTimeoutMs
+      : DEFAULT_STATUS_REQUEST_TIMEOUT_MS;
 
   const deadline = Date.now() + timeoutMs;
   let stablePolls = 0;
@@ -37,12 +41,13 @@ export async function waitForSessionPromptReadiness(
     }
 
     const adapter = options.getAdapter(options.sessionId);
-    let runtimeStatus: string | null = null;
-    if (adapter) {
+    let runtimeStatus: string | null =
+      typeof session.agentRuntimeStatus === "string" ? session.agentRuntimeStatus : null;
+    if (runtimeStatus !== "stable" && adapter) {
       try {
         runtimeStatus = await adapter.fetchStatus(requestTimeoutMs);
       } catch {
-        runtimeStatus = null;
+        runtimeStatus = typeof session.agentRuntimeStatus === "string" ? session.agentRuntimeStatus : null;
       }
     }
 

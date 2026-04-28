@@ -436,9 +436,9 @@ const schedulerEngine = new SchedulerEngine({
       sessionId: session.id,
       host: agentHost,
       timeoutMs,
-      pollIntervalMs: 500,
+      pollIntervalMs: 250,
       requiredStablePolls: agent === "codex" ? 3 : 2,
-      requestTimeoutMs: 2500,
+      requestTimeoutMs: 750,
     });
     markPromptStartupReady(session.id);
   },
@@ -1710,7 +1710,7 @@ const agentStatusPoller = new AgentRuntimeStatusPoller(manager, {
   intervalMs: config.agentStatusPollIntervalMs,
   maxIntervalMs: config.agentStatusPollMaxIntervalMs,
   timeoutMs: config.agentStatusPollTimeoutMs,
-  initialDelayMs: 3000,
+  initialDelayMs: config.agentStatusPollIntervalMs,
 });
 agentStatusPoller.start();
 
