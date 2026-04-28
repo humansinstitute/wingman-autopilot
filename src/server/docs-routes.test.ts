@@ -98,4 +98,52 @@ describe("handleDocsApi file images", () => {
     expect(response!.headers.get("content-length")).toBe(String(bytes.length));
     expect(downloaded.byteLength).toBe(bytes.length);
   });
+
+  test("marks json, csv, and pdf files as previewable formats", async () => {
+    await writeFile(join(rootDir, "data.json"), '{"name":"Ada","skills":["math"]}');
+    await writeFile(join(rootDir, "people.csv"), "name,count\nAda,2\nGrace,3");
+    await writeFile(join(rootDir, "paper.pdf"), "%PDF-1.7\n");
+
+    const response = await callDocsApi(ctx, "/api/docs/tree");
+    const body = await response!.json() as {
+      entries: Array<{ name: string; previewable: boolean; previewFormat: string; previewLabel: string }>;
+    };
+    const entries = new Map(body.entries.map((entry) => [entry.name, entry]));
+
+    expect(response!.status).toBe(200);
+    expect(entries.get("data.json")).toMatchObject({
+      previewable: true,
+      previewFormat: "json",
+      previewLabel: "JSON",
+    });
+    expect(entries.get("people.csv")).toMatchObject({
+      previewable: true,
+      previewFormat: "csv",
+      previewLabel: "CSV",
+    });
+    expect(entries.get("paper.pdf")).toMatchObject({
+      previewable: true,
+      previewFormat: "pdf",
+      previewLabel: "PDF",
+    });
+  });
+
+  test("loads pdf preview metadata without reading file content", async () => {
+    const pdfContent = "%PDF-1.7\n";
+    await writeFile(join(rootDir, "paper.pdf"), pdfContent);
+
+    const response = await callDocsApi(ctx, "/api/docs/file?path=paper.pdf");
+    const body = await response!.json() as {
+      content: string | null;
+      format: string;
+      mimeType: string;
+      size: number;
+    };
+
+    expect(response!.status).toBe(200);
+    expect(body.content).toBeNull();
+    expect(body.format).toBe("pdf");
+    expect(body.mimeType).toBe("application/pdf");
+    expect(body.size).toBe(pdfContent.length);
+  });
 });

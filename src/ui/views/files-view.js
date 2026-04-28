@@ -12,6 +12,11 @@ import {
   FILES_BROWSER_SHELVED_STORAGE_KEY,
   FILES_FAVORITES_STORAGE_KEY,
 } from "../state/index.js";
+import {
+  createCsvPreview,
+  createJsonPreview,
+  createPdfPreview,
+} from "../files/preview-renderers.js";
 import { createWriterPanel } from "../writer/writer-panel.js";
 
 /**
@@ -95,6 +100,30 @@ function createImagePreviewElement(files) {
 
   container.append(image, status);
   return container;
+}
+
+function getPreviewIconKey(format) {
+  if (format === "image") return "fileImage";
+  if (format === "markdown") return "fileText";
+  if (format === "pdf") return "fileText";
+  if (format === "csv") return "fileText";
+  return "fileCode";
+}
+
+function getPreviewMetaLabel(entry) {
+  return entry.previewLabel ?? (
+    entry.previewFormat === "image"
+      ? "Image"
+      : entry.previewFormat === "markdown"
+        ? "Markdown"
+        : entry.previewFormat === "pdf"
+          ? "PDF"
+          : entry.previewFormat === "csv"
+            ? "CSV"
+            : entry.previewFormat === "json"
+              ? "JSON"
+              : "Code"
+  );
 }
 
 export function initFilesView(deps) {
@@ -565,11 +594,7 @@ export function initFilesView(deps) {
           entry.type === "directory"
             ? "folder"
             : entry.previewable
-              ? entry.previewFormat === "image"
-                ? "fileImage"
-                : entry.previewFormat === "markdown"
-                ? "fileText"
-                : "fileCode"
+              ? getPreviewIconKey(entry.previewFormat)
               : "ban";
         const iconDefinition = FILE_BROWSER_ICON_DEFS[iconKey] ?? FILE_BROWSER_ICON_DEFS.file;
         const icon = createIconSvg(iconDefinition);
@@ -587,7 +612,7 @@ export function initFilesView(deps) {
         if (entry.type === "directory") {
           meta.textContent = "Folder";
         } else if (entry.previewable) {
-          meta.textContent = entry.previewLabel ?? (entry.previewFormat === "image" ? "Image" : entry.previewFormat === "markdown" ? "Markdown" : "Code");
+          meta.textContent = getPreviewMetaLabel(entry);
         } else {
           meta.textContent = "Preview unavailable";
         }
@@ -719,7 +744,13 @@ export function initFilesView(deps) {
     toolbar.className = "wm-files-preview__toolbar";
     const hasFileSelection = typeof files.previewPath === "string" && !files.previewLoading;
     const isImagePreview = files.previewFormat === "image";
-    const canEdit = hasFileSelection && !files.previewError && !isImagePreview && files.previewContent !== null;
+    const isPdfPreview = files.previewFormat === "pdf";
+    const isJsonPreview = files.previewFormat === "json";
+    const isCsvPreview = files.previewFormat === "csv";
+    const isStructuredPreview = isJsonPreview || isCsvPreview;
+    const isBinaryPreview = isImagePreview || isPdfPreview;
+    const canEdit = hasFileSelection && !files.previewError && !isBinaryPreview && files.previewContent !== null;
+    const canUseWriter = canEdit && !isStructuredPreview;
 
     /** Helper: create a small icon button for the toolbar */
     function toolbarButton(iconKey, label, extraClass) {
@@ -754,7 +785,7 @@ export function initFilesView(deps) {
     }
 
     // Writer
-    if (canEdit) {
+    if (canUseWriter) {
       const writerBtn = toolbarButton("penTool", "Writer");
       writerBtn.addEventListener("click", () => {
         const config = typeof getConfig === "function" ? getConfig() : null;
@@ -775,6 +806,17 @@ export function initFilesView(deps) {
     }
 
     if (hasFileSelection) {
+      if (isPdfPreview) {
+        const openPdfBtn = toolbarButton("link", "Open PDF in browser");
+        openPdfBtn.dataset.testid = "files-open-pdf-toolbar-button";
+        openPdfBtn.addEventListener("click", () => {
+          const targetPath = typeof files.previewPath === "string" ? files.previewPath : null;
+          if (!targetPath) return;
+          window.open(buildDocsFileDownloadUrl(targetPath, { inline: true }), "_blank", "noopener");
+        });
+        toolbar.append(openPdfBtn);
+      }
+
       // Download
       const downloadBtn = toolbarButton("download", "Download file");
       downloadBtn.dataset.testid = "files-download-button";
@@ -797,7 +839,7 @@ export function initFilesView(deps) {
       copyUrlBtn.addEventListener("click", async () => {
         const targetPath = typeof files.previewPath === "string" ? files.previewPath : null;
         if (!targetPath) return;
-        const rawPath = isImagePreview
+        const rawPath = isImagePreview || isPdfPreview
           ? buildDocsFileDownloadUrl(targetPath, { inline: true })
           : buildDocsRawUrl(targetPath);
         const rawUrl = `${window.location.origin}${rawPath}`;
@@ -863,7 +905,7 @@ export function initFilesView(deps) {
     previewBody.className = "wm-files-preview__body";
 
     // Clean up stale writer panel when file changes or view state changes
-    const shouldHaveWriter = canEdit;
+    const shouldHaveWriter = canUseWriter;
     if (activeFileWriter && (!shouldHaveWriter || activeFileWriter.path !== files.previewPath)) {
       activeFileWriter.cleanup();
       activeFileWriter = null;
@@ -879,6 +921,12 @@ export function initFilesView(deps) {
       previewBody.append(error);
     } else if (isImagePreview && files.previewPath) {
       previewBody.append(createImagePreviewElement(files));
+    } else if (isPdfPreview && files.previewPath) {
+      previewBody.append(createPdfPreview(files, (path) => buildDocsFileDownloadUrl(path, { inline: true })));
+    } else if (isJsonPreview && files.previewContent !== null) {
+      previewBody.append(createJsonPreview(files.previewContent));
+    } else if (isCsvPreview && files.previewContent !== null) {
+      previewBody.append(createCsvPreview(files.previewContent, files.previewLanguage));
     } else if (files.previewContent !== null) {
       // Reuse existing writer panel if same file, otherwise create a new one
       if (activeFileWriter && activeFileWriter.path === files.previewPath) {

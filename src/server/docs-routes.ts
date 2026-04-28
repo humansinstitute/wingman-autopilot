@@ -37,7 +37,7 @@ type GitCommandAction = "init" | "addAll" | "commit" | "push" | "pushUpstream" |
 
 
 interface DocsPreviewType {
-  format: "markdown" | "code" | "image";
+  format: "markdown" | "code" | "image" | "json" | "csv" | "pdf";
   language: string;
   label: string;
   mimeType?: string;
@@ -175,8 +175,11 @@ const TEXT_PREVIEW_TYPES = new Map<string, DocsPreviewType>([
   [".mdx", { format: "markdown", language: "markdown", label: "Markdown" }],
   [".txt", { format: "code", language: "plaintext", label: "Text" }],
   [".log", { format: "code", language: "plaintext", label: "Log" }],
-  [".json", { format: "code", language: "json", label: "JSON" }],
+  [".json", { format: "json", language: "json", label: "JSON", mimeType: "application/json" }],
   [".jsonc", { format: "code", language: "json", label: "JSON" }],
+  [".csv", { format: "csv", language: "csv", label: "CSV", mimeType: "text/csv" }],
+  [".tsv", { format: "csv", language: "tsv", label: "TSV", mimeType: "text/tab-separated-values" }],
+  [".pdf", { format: "pdf", language: "pdf", label: "PDF", mimeType: "application/pdf" }],
   [".yaml", { format: "code", language: "yaml", label: "YAML" }],
   [".yml", { format: "code", language: "yaml", label: "YAML" }],
   [".js", { format: "code", language: "javascript", label: "JavaScript" }],
@@ -230,6 +233,8 @@ function resolveDocsMimeType(filePath: string): string {
   const extension = extname(filePath).toLowerCase();
   const imageType = IMAGE_PREVIEW_TYPES.get(extension)?.mimeType;
   if (imageType) return imageType;
+  const textType = TEXT_PREVIEW_TYPES.get(extension)?.mimeType;
+  if (textType) return textType;
   return Bun.file(filePath).type || "application/octet-stream";
 }
 
@@ -432,7 +437,7 @@ async function loadDocsFile(input: string | null | undefined, scope: WorkspaceSc
     throw new Error("Unsupported Markdown extension");
   }
 
-  if (preview.format === "image") {
+  if (preview.format === "image" || preview.format === "pdf") {
     return {
       path: filePath,
       relativePath: toDocsRelativePath(filePath, scope),
