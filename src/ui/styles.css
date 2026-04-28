@@ -7791,6 +7791,25 @@ dialog button[value="cancel"] {
   font-style: italic;
 }
 
+.wm-files-preview-image {
+  display: grid;
+  min-height: 18rem;
+  place-items: center;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  background: var(--surface-secondary);
+  overflow: auto;
+}
+
+.wm-files-preview-image img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: min(72vh, 48rem);
+  object-fit: contain;
+}
+
 .wm-files-preview-content {
   font-size: 0.95rem;
   line-height: 1.6;

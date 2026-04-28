@@ -59,6 +59,44 @@ function showQuickAgentPicker(anchor, agents, onSelect) {
   });
 }
 
+function buildDocsFileDownloadUrl(path, options = {}) {
+  const url = new URL("/api/docs/file/download", window.location.origin);
+  url.searchParams.set("path", path);
+  if (options.inline) {
+    url.searchParams.set("inline", "1");
+  }
+  return `${url.pathname}${url.search}`;
+}
+
+function buildDocsRawUrl(path) {
+  return `/api/docs/file/raw?path=${encodeURIComponent(path)}`;
+}
+
+function createImagePreviewElement(files) {
+  const container = document.createElement("div");
+  container.className = "wm-files-preview-image";
+  container.dataset.testid = "files-image-preview";
+
+  const image = document.createElement("img");
+  image.src = files.previewUrl || buildDocsFileDownloadUrl(files.previewPath, { inline: true });
+  image.alt = files.previewName || "Image preview";
+  image.decoding = "async";
+  image.loading = "eager";
+
+  const status = document.createElement("div");
+  status.className = "wm-files-browser__status";
+  status.textContent = "Image preview unavailable in this browser.";
+  status.hidden = true;
+
+  image.addEventListener("error", () => {
+    image.hidden = true;
+    status.hidden = false;
+  });
+
+  container.append(image, status);
+  return container;
+}
+
 export function initFilesView(deps) {
   const {
     state,
@@ -527,7 +565,9 @@ export function initFilesView(deps) {
           entry.type === "directory"
             ? "folder"
             : entry.previewable
-              ? entry.previewFormat === "markdown"
+              ? entry.previewFormat === "image"
+                ? "fileImage"
+                : entry.previewFormat === "markdown"
                 ? "fileText"
                 : "fileCode"
               : "ban";
@@ -547,7 +587,7 @@ export function initFilesView(deps) {
         if (entry.type === "directory") {
           meta.textContent = "Folder";
         } else if (entry.previewable) {
-          meta.textContent = entry.previewLabel ?? (entry.previewFormat === "markdown" ? "Markdown" : "Code");
+          meta.textContent = entry.previewLabel ?? (entry.previewFormat === "image" ? "Image" : entry.previewFormat === "markdown" ? "Markdown" : "Code");
         } else {
           meta.textContent = "Preview unavailable";
         }
@@ -678,7 +718,8 @@ export function initFilesView(deps) {
     const toolbar = document.createElement("div");
     toolbar.className = "wm-files-preview__toolbar";
     const hasFileSelection = typeof files.previewPath === "string" && !files.previewLoading;
-    const canEdit = hasFileSelection && !files.previewError && files.previewContent !== null;
+    const isImagePreview = files.previewFormat === "image";
+    const canEdit = hasFileSelection && !files.previewError && !isImagePreview && files.previewContent !== null;
 
     /** Helper: create a small icon button for the toolbar */
     function toolbarButton(iconKey, label, extraClass) {
@@ -736,10 +777,11 @@ export function initFilesView(deps) {
     if (hasFileSelection) {
       // Download
       const downloadBtn = toolbarButton("download", "Download file");
+      downloadBtn.dataset.testid = "files-download-button";
       downloadBtn.addEventListener("click", () => {
         const targetPath = typeof files.previewPath === "string" ? files.previewPath : null;
         if (!targetPath) return;
-        const downloadUrl = `/api/docs/file/download?path=${encodeURIComponent(targetPath)}`;
+        const downloadUrl = buildDocsFileDownloadUrl(targetPath);
         const a = document.createElement("a");
         a.href = downloadUrl;
         a.download = files.previewName || "";
@@ -755,7 +797,10 @@ export function initFilesView(deps) {
       copyUrlBtn.addEventListener("click", async () => {
         const targetPath = typeof files.previewPath === "string" ? files.previewPath : null;
         if (!targetPath) return;
-        const rawUrl = `${window.location.origin}/api/docs/file/raw?path=${encodeURIComponent(targetPath)}`;
+        const rawPath = isImagePreview
+          ? buildDocsFileDownloadUrl(targetPath, { inline: true })
+          : buildDocsRawUrl(targetPath);
+        const rawUrl = `${window.location.origin}${rawPath}`;
         const success = await copyTextToClipboard(rawUrl);
         if (success) {
           copyUrlBtn.dataset.copied = "true";
@@ -818,7 +863,7 @@ export function initFilesView(deps) {
     previewBody.className = "wm-files-preview__body";
 
     // Clean up stale writer panel when file changes or view state changes
-    const shouldHaveWriter = !files.previewLoading && !files.previewError && files.previewContent !== null;
+    const shouldHaveWriter = canEdit;
     if (activeFileWriter && (!shouldHaveWriter || activeFileWriter.path !== files.previewPath)) {
       activeFileWriter.cleanup();
       activeFileWriter = null;
@@ -832,6 +877,8 @@ export function initFilesView(deps) {
       error.className = "wm-files-browser__status";
       error.textContent = files.previewError;
       previewBody.append(error);
+    } else if (isImagePreview && files.previewPath) {
+      previewBody.append(createImagePreviewElement(files));
     } else if (files.previewContent !== null) {
       // Reuse existing writer panel if same file, otherwise create a new one
       if (activeFileWriter && activeFileWriter.path === files.previewPath) {

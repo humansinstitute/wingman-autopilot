@@ -25,6 +25,9 @@ export function initFilesApi({ state, getCurrentRoute, render, FILES_ROUTE }) {
     state.files.previewFormat = null;
     state.files.previewLanguage = null;
     state.files.previewLabel = null;
+    state.files.previewMimeType = null;
+    state.files.previewSize = null;
+    state.files.previewUrl = null;
   }
 
   /**
@@ -171,6 +174,9 @@ export function initFilesApi({ state, getCurrentRoute, render, FILES_ROUTE }) {
     files.previewFormat = null;
     files.previewLanguage = null;
     files.previewLabel = null;
+    files.previewMimeType = null;
+    files.previewSize = null;
+    files.previewUrl = null;
     if (getCurrentRoute() === "files") {
       render();
     }
@@ -201,6 +207,11 @@ export function initFilesApi({ state, getCurrentRoute, render, FILES_ROUTE }) {
       files.previewFormat = data?.format ?? null;
       files.previewLanguage = data?.language ?? null;
       files.previewLabel = data?.label ?? null;
+      files.previewMimeType = data?.mimeType ?? null;
+      files.previewSize = typeof data?.size === "number" ? data.size : null;
+      files.previewUrl = data?.format === "image"
+        ? `/api/docs/file/download?path=${encodeURIComponent(files.previewPath)}&inline=1`
+        : null;
       files.previewLoading = false;
       files.previewError = null;
       updateFilesUrl();
@@ -224,6 +235,9 @@ export function initFilesApi({ state, getCurrentRoute, render, FILES_ROUTE }) {
     files.previewFormat = null;
     files.previewLanguage = null;
     files.previewLabel = entry?.previewLabel ?? null;
+    files.previewMimeType = null;
+    files.previewSize = null;
+    files.previewUrl = null;
     files.previewContent = null;
     files.previewLoading = false;
     files.previewError = "Preview not available for this file type.";

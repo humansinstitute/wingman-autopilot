@@ -86,6 +86,12 @@ export const FILE_BROWSER_ICON_DEFS = {
     ["polyline", { points: "10 13 8 15 10 17" }],
     ["polyline", { points: "14 17 16 15 14 13" }],
   ],
+  fileImage: [
+    ["path", { d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" }],
+    ["polyline", { points: "14 2 14 8 20 8" }],
+    ["circle", { cx: 9, cy: 12, r: 1.5 }],
+    ["path", { d: "m7 18 3.5-4 2.5 3 2-2.3 3 3.3" }],
+  ],
   ban: [
     ["circle", { cx: 12, cy: 12, r: 9 }],
     ["line", { x1: 5, y1: 19, x2: 19, y2: 5 }],

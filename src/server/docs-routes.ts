@@ -37,9 +37,10 @@ type GitCommandAction = "init" | "addAll" | "commit" | "push" | "pushUpstream" |
 
 
 interface DocsPreviewType {
-  format: "markdown" | "code";
+  format: "markdown" | "code" | "image";
   language: string;
   label: string;
+  mimeType?: string;
 }
 
 interface CreateDocsFilePayload {
@@ -203,10 +204,58 @@ const TEXT_PREVIEW_TYPES_BY_NAME = new Map<string, DocsPreviewType>([
   [".env.example", { format: "code", language: "ini", label: "Config" }],
 ]);
 
-function resolvePreviewType(filePath: string): DocsPreviewType {
+const IMAGE_PREVIEW_TYPES = new Map<string, DocsPreviewType>([
+  [".apng", { format: "image", language: "image", label: "Image", mimeType: "image/apng" }],
+  [".avif", { format: "image", language: "image", label: "Image", mimeType: "image/avif" }],
+  [".bmp", { format: "image", language: "image", label: "Image", mimeType: "image/bmp" }],
+  [".gif", { format: "image", language: "image", label: "Image", mimeType: "image/gif" }],
+  [".heic", { format: "image", language: "image", label: "Image", mimeType: "image/heic" }],
+  [".heif", { format: "image", language: "image", label: "Image", mimeType: "image/heif" }],
+  [".ico", { format: "image", language: "image", label: "Image", mimeType: "image/x-icon" }],
+  [".jfif", { format: "image", language: "image", label: "Image", mimeType: "image/jpeg" }],
+  [".jpe", { format: "image", language: "image", label: "Image", mimeType: "image/jpeg" }],
+  [".jpeg", { format: "image", language: "image", label: "Image", mimeType: "image/jpeg" }],
+  [".jpg", { format: "image", language: "image", label: "Image", mimeType: "image/jpeg" }],
+  [".jxl", { format: "image", language: "image", label: "Image", mimeType: "image/jxl" }],
+  [".pjp", { format: "image", language: "image", label: "Image", mimeType: "image/jpeg" }],
+  [".pjpeg", { format: "image", language: "image", label: "Image", mimeType: "image/jpeg" }],
+  [".png", { format: "image", language: "image", label: "Image", mimeType: "image/png" }],
+  [".svg", { format: "image", language: "image", label: "Image", mimeType: "image/svg+xml" }],
+  [".tif", { format: "image", language: "image", label: "Image", mimeType: "image/tiff" }],
+  [".tiff", { format: "image", language: "image", label: "Image", mimeType: "image/tiff" }],
+  [".webp", { format: "image", language: "image", label: "Image", mimeType: "image/webp" }],
+]);
+
+function resolveDocsMimeType(filePath: string): string {
+  const extension = extname(filePath).toLowerCase();
+  const imageType = IMAGE_PREVIEW_TYPES.get(extension)?.mimeType;
+  if (imageType) return imageType;
+  return Bun.file(filePath).type || "application/octet-stream";
+}
+
+function buildContentDisposition(fileName: string, mode: "attachment" | "inline"): string {
+  return `${mode}; filename="${fileName.replace(/"/g, '\\"')}"`;
+}
+
+function resolveEntryPreviewType(filePath: string): DocsPreviewType | null {
   const name = basename(filePath).toLowerCase();
   const extension = extname(name).toLowerCase();
-  const preview = TEXT_PREVIEW_TYPES_BY_NAME.get(name) ?? TEXT_PREVIEW_TYPES.get(extension);
+  const textPreview = TEXT_PREVIEW_TYPES_BY_NAME.get(name) ?? TEXT_PREVIEW_TYPES.get(extension);
+  if (textPreview) return textPreview;
+
+  const imagePreview = IMAGE_PREVIEW_TYPES.get(extension);
+  if (imagePreview) return imagePreview;
+
+  const mimeType = Bun.file(filePath).type;
+  if (mimeType.startsWith("image/")) {
+    return { format: "image", language: "image", label: "Image", mimeType };
+  }
+
+  return null;
+}
+
+function resolvePreviewType(filePath: string): DocsPreviewType {
+  const preview = resolveEntryPreviewType(filePath);
   if (!preview) {
     throw new Error("Preview for this file type is not supported");
   }
@@ -304,9 +353,7 @@ async function listDocsDirectory(
 
     if (entry.isFile()) {
       const relativePath = toDocsRelativePath(entryPath, scope);
-      const extension = extname(entry.name).toLowerCase();
-      const lowerName = entry.name.toLowerCase();
-      const preview = TEXT_PREVIEW_TYPES_BY_NAME.get(lowerName) ?? TEXT_PREVIEW_TYPES.get(extension) ?? null;
+      const preview = resolveEntryPreviewType(entryPath);
       files.push({
         name: entry.name,
         path: entryPath,
@@ -379,14 +426,29 @@ async function loadDocsFile(input: string | null | undefined, scope: WorkspaceSc
     throw new Error("Requested path is not a file");
   }
 
-  if (stats.size > MAX_DOCS_FILE_SIZE) {
-    throw new Error("File is too large to preview");
-  }
-
   const preview = resolvePreviewType(filePath);
 
   if (preview.format === "markdown" && !MARKDOWN_EXTENSIONS.has(extname(filePath).toLowerCase())) {
     throw new Error("Unsupported Markdown extension");
+  }
+
+  if (preview.format === "image") {
+    return {
+      path: filePath,
+      relativePath: toDocsRelativePath(filePath, scope),
+      displayPath: toDocsDisplayPath(filePath, scope),
+      name: basename(filePath),
+      content: null,
+      format: preview.format,
+      language: preview.language,
+      label: preview.label,
+      mimeType: preview.mimeType ?? resolveDocsMimeType(filePath),
+      size: stats.size,
+    };
+  }
+
+  if (stats.size > MAX_DOCS_FILE_SIZE) {
+    throw new Error("File is too large to preview");
   }
 
   let content: string;
@@ -597,8 +659,7 @@ async function createDocsFile(
     throw new Error(`Failed to create file: ${(error as Error).message ?? "unknown error"}`);
   }
 
-  const extension = extname(name).toLowerCase();
-  const preview = TEXT_PREVIEW_TYPES.get(extension) ?? null;
+  const preview = resolveEntryPreviewType(target);
 
   return {
     path: target,
@@ -914,16 +975,12 @@ export async function handleDocsApi(
       if (!fileStats.isFile()) {
         return Response.json({ error: "Requested path is not a file" }, { status: 400 });
       }
-      if (fileStats.size > MAX_DOCS_FILE_SIZE) {
-        return Response.json({ error: "File is too large to download" }, { status: 400 });
-      }
-      const data = await readFile(filePath);
       const fileName = basename(filePath);
-      const bunFile = Bun.file(filePath);
-      return new Response(data, {
+      const dispositionMode = url.searchParams.get("inline") === "1" ? "inline" : "attachment";
+      return new Response(Bun.file(filePath), {
         headers: {
-          "content-disposition": `attachment; filename="${fileName.replace(/"/g, '\\"')}"`,
-          "content-type": bunFile.type || "application/octet-stream",
+          "content-disposition": buildContentDisposition(fileName, dispositionMode),
+          "content-type": resolveDocsMimeType(filePath),
           "content-length": String(fileStats.size),
         },
       });
