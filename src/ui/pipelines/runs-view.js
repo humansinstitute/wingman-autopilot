@@ -163,9 +163,12 @@ function renderStepDetail(state) {
       <div class="wm-pipeline-section-heading">
         <div>
           <h3>${escapeHtml(step.name)}</h3>
-          <p><code>${escapeHtml(step.id)}</code>${step.wingmanSessionId ? ` session <code>${escapeHtml(step.wingmanSessionId)}</code>` : ""}</p>
+          <p><code>${escapeHtml(step.id)}</code>${step.wingmanSessionId ? ` agent session <code>${escapeHtml(step.wingmanSessionId)}</code>` : ""}</p>
         </div>
-        <span class="wm-pipeline-status-chip" data-status="${escapeAttribute(step.status)}">${escapeHtml(statusLabel(step.status))}</span>
+        <div class="wm-pipeline-step-actions">
+          ${renderAgentSessionLink(step)}
+          <span class="wm-pipeline-status-chip" data-status="${escapeAttribute(step.status)}">${escapeHtml(statusLabel(step.status))}</span>
+        </div>
       </div>
       <div class="wm-pipeline-json-grid">
         ${renderJsonBlock("Input", step.input)}
@@ -175,6 +178,22 @@ function renderStepDetail(state) {
       ${renderStepDetailSection("Events", events)}
       ${renderStepDetailSection("Callbacks", callbacks)}
     </section>
+  `;
+}
+
+function renderAgentSessionLink(step) {
+  if (!step.wingmanSessionId) return "";
+  const sessionId = step.wingmanSessionId;
+  return `
+    <a
+      class="wm-pipeline-agent-session-link"
+      href="/live/${encodeURIComponent(sessionId)}"
+      aria-label="Open agent session ${escapeAttribute(sessionId)}"
+      title="Open agent session ${escapeAttribute(sessionId)}"
+      data-testid="pipeline-agent-session-link"
+    >
+      Open session <code>${escapeHtml(sessionId.slice(0, 8))}</code>
+    </a>
   `;
 }
 

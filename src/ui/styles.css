@@ -11074,6 +11074,35 @@ textarea.wm-input {
   overflow-wrap: anywhere;
 }
 
+.wm-pipeline-step-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.wm-pipeline-agent-session-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 1.55rem;
+  padding: 0.16rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 50%, var(--border-primary));
+  border-radius: 999px;
+  color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--bg-primary));
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.wm-pipeline-agent-session-link:hover,
+.wm-pipeline-agent-session-link:focus-visible {
+  border-color: var(--accent-primary);
+  text-decoration: underline;
+}
+
 .wm-pipeline-json-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -11196,6 +11225,10 @@ textarea.wm-input {
   .wm-pipeline-tabs button {
     flex: 1;
     min-width: 0;
+  }
+
+  .wm-pipeline-step-actions {
+    justify-content: flex-start;
   }
 
   .wm-pipeline-run-item,
