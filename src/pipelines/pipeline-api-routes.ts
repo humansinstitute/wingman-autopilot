@@ -1,0 +1,265 @@
+import { readFile, realpath } from "node:fs/promises";
+import { join, sep } from "node:path";
+import type { AccessAction } from "../auth/access-control";
+import type { RequestAuthContext } from "../auth/request-context";
+import { getEffectiveOwnerNpub } from "../auth/effective-owner";
+import { generateIdentityAlias } from "../identity/identity-alias";
+import type { SessionApiContext } from "../server/session-api-routes";
+import { loadPipelineFunctionRegistry } from "./function-loader";
+import { startPipelineFunctionWizardSession } from "./function-wizard";
+import { builtinPipelineFunctions } from "./functions";
+import {
+  ensurePipelineDirectories,
+  getPipelineDefinition,
+  getPipelineRoot,
+  getSharedPipelineFunctionsDirectory,
+  getUserPipelineDefinitionsDirectory,
+  getUserPipelineFunctionsDirectory,
+  listPipelineDefinitions,
+  makePipelineSlug,
+  nextVersionedDefinitionPath,
+  nextVersionedDefinitionPathForSource,
+  nextVersionedFunctionPath,
+} from "./pipeline-loader";
+import { acceptAgentCallback, runDeclarativePipeline } from "./pipeline-runner";
+import { type JsonObject, PipelineStore } from "./pipeline-store";
+import { startPipelineWizardSession } from "./pipeline-wizard";
+
+type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
+
+export interface PipelineApiContext {
+  store: PipelineStore;
+  sessionApiContext: SessionApiContext;
+  callbackOrigin?: string;
+  ensureApiAccess: (action: AccessAction, request: Request, url: URL, authContext: RequestAuthContext) => Promise<Response | null>;
+  AccessActions: { SessionsManage: AccessAction };
+}
+
+export async function handlePipelineApi(
+  request: Request,
+  url: URL,
+  method: HttpMethod,
+  authContext: RequestAuthContext,
+  ctx: PipelineApiContext,
+): Promise<Response | null> {
+  const pathname = url.pathname;
+
+  const callbackMatch = pathname.match(/^\/api\/pipelines\/runs\/([^/]+)\/steps\/([^/]+)\/callback$/);
+  if (callbackMatch && method === "POST") {
+    const payload = await request.json().catch(() => null);
+    const result = await acceptAgentCallback({
+      store: ctx.store,
+      runId: decodeURIComponent(callbackMatch[1]!),
+      stepId: decodeURIComponent(callbackMatch[2]!),
+      token: request.headers.get("x-wingmen-pipeline-token") ?? url.searchParams.get("token"),
+      payload,
+    });
+    return Response.json(result.body, { status: result.status });
+  }
+
+  if (!pathname.startsWith("/api/pipelines")) return null;
+
+  const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, authContext);
+  if (denied) return denied;
+
+  const ownerNpub = getEffectiveOwnerNpub(authContext);
+  if (!ownerNpub) {
+    return Response.json({ error: "Authentication required" }, { status: 401 });
+  }
+  const ownerAlias = generateIdentityAlias(ownerNpub);
+
+  if (pathname === "/api/pipelines/root" && method === "GET") {
+    return Response.json({
+      root: getPipelineRoot(),
+      sharedDefinitions: `${getPipelineRoot()}/shared/definitions`,
+      sharedFunctions: getSharedPipelineFunctionsDirectory(),
+      userDefinitions: `${getPipelineRoot()}/users/${ownerAlias}/definitions`,
+      userFunctions: getUserPipelineFunctionsDirectory(ownerAlias),
+    });
+  }
+
+  if (pathname === "/api/pipelines/functions" && method === "GET") {
+    const functions = await loadPipelineFunctionRegistry(ownerAlias, builtinPipelineFunctions);
+    return Response.json({ functions: functions.records });
+  }
+
+  const functionMatch = pathname.match(/^\/api\/pipelines\/functions\/([^/]+)$/);
+  if (functionMatch && method === "GET") {
+    const name = decodeURIComponent(functionMatch[1]!);
+    const functions = await loadPipelineFunctionRegistry(ownerAlias, builtinPipelineFunctions);
+    const record = functions.records.find((entry) => entry.name === name);
+    if (!record) return Response.json({ error: "Pipeline function not found" }, { status: 404 });
+    const sourcePath = record.path ?? (record.scope === "builtin" ? join(process.cwd(), "src/pipelines/functions.ts") : null);
+    const code = sourcePath ? await readAllowedPipelineFunctionSource(sourcePath, ownerAlias, record.scope === "builtin") : null;
+    return Response.json({
+      function: record,
+      sourcePath,
+      language: sourcePath?.endsWith(".ts") ? "typescript" : "javascript",
+      code,
+    });
+  }
+
+  if (pathname === "/api/pipelines/functions/wizard" && method === "POST") {
+    const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+    const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+    if (!prompt) return Response.json({ error: "Prompt is required" }, { status: 400 });
+    await ensurePipelineDirectories(ownerAlias);
+    const functionsDirectory = getUserPipelineFunctionsDirectory(ownerAlias);
+    const targetPath = await nextVersionedFunctionPath(functionsDirectory, makePipelineSlug(prompt));
+    const result = await startPipelineFunctionWizardSession({
+      sessionApiContext: ctx.sessionApiContext,
+      ownerNpub,
+      ownerAlias,
+      prompt,
+      targetPath,
+    });
+    return Response.json({ ...result, functionsDirectory });
+  }
+
+  if (pathname === "/api/pipelines/definitions" && method === "GET") {
+    const definitions = await listPipelineDefinitions(ownerAlias);
+    return Response.json({
+      definitions: definitions.map((definition) => ({
+        id: definition.id,
+        slug: definition.slug,
+        name: definition.name,
+        description: typeof definition.spec.description === "string" ? definition.spec.description : "",
+        version: definition.spec.version ?? null,
+        supersedes: typeof definition.spec.supersedes === "string" ? definition.spec.supersedes : null,
+        scope: definition.scope,
+        ownerAlias: definition.ownerAlias,
+        path: definition.path,
+        input: definition.spec.input ?? {},
+        steps: definition.spec.steps,
+      })),
+    });
+  }
+
+  if (pathname === "/api/pipelines/wizard" && method === "POST") {
+    const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+    const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+    if (!prompt) return Response.json({ error: "Prompt is required" }, { status: 400 });
+    await ensurePipelineDirectories(ownerAlias);
+    const definitionsDirectory = getUserPipelineDefinitionsDirectory(ownerAlias);
+    const targetPath = await nextVersionedDefinitionPath(definitionsDirectory, makePipelineSlug(prompt));
+    const result = await startPipelineWizardSession({
+      sessionApiContext: ctx.sessionApiContext,
+      ownerNpub,
+      ownerAlias,
+      prompt,
+      targetPath,
+      mode: "create",
+    });
+    return Response.json({ ...result, definitionsDirectory });
+  }
+
+  const definitionRunMatch = pathname.match(/^\/api\/pipelines\/definitions\/([^/]+)\/runs$/);
+  if (definitionRunMatch && method === "POST") {
+    const id = decodeURIComponent(definitionRunMatch[1]!);
+    const definition = await getPipelineDefinition(id, ownerAlias);
+    if (!definition) return Response.json({ error: "Pipeline definition not found" }, { status: 404 });
+    const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+    const submittedInput = body.input && typeof body.input === "object" && !Array.isArray(body.input)
+      ? body.input as JsonObject
+      : {};
+    const input = { ...(definition.spec.input ?? {}), ...submittedInput };
+    const functions = await loadPipelineFunctionRegistry(ownerAlias, builtinPipelineFunctions);
+    const run = await runDeclarativePipeline({
+      store: ctx.store,
+      sessionApiContext: ctx.sessionApiContext,
+      definition,
+      registry: functions.registry,
+      input,
+      ownerNpub,
+      ownerAlias,
+      callbackOrigin: ctx.callbackOrigin ?? url.origin,
+    });
+    return Response.json({ run, steps: ctx.store.listSteps(run.id) });
+  }
+
+  const definitionWizardEditMatch = pathname.match(/^\/api\/pipelines\/definitions\/([^/]+)\/wizard-edit$/);
+  if (definitionWizardEditMatch && method === "POST") {
+    const definition = await getPipelineDefinition(decodeURIComponent(definitionWizardEditMatch[1]!), ownerAlias);
+    if (!definition) return Response.json({ error: "Pipeline definition not found" }, { status: 404 });
+    if (definition.scope !== "user" || definition.ownerAlias !== ownerAlias) {
+      return Response.json({ error: "Only user pipeline definitions can be edited by the wizard" }, { status: 403 });
+    }
+    const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+    const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+    if (!prompt) return Response.json({ error: "Prompt is required" }, { status: 400 });
+    const targetPath = await nextVersionedDefinitionPathForSource(definition.path);
+    const result = await startPipelineWizardSession({
+      sessionApiContext: ctx.sessionApiContext,
+      ownerNpub,
+      ownerAlias,
+      prompt,
+      targetPath,
+      sourcePath: definition.path,
+      mode: "edit",
+    });
+    return Response.json(result);
+  }
+
+  const definitionMatch = pathname.match(/^\/api\/pipelines\/definitions\/([^/]+)$/);
+  if (definitionMatch && method === "GET") {
+    const definition = await getPipelineDefinition(decodeURIComponent(definitionMatch[1]!), ownerAlias);
+    if (!definition) return Response.json({ error: "Pipeline definition not found" }, { status: 404 });
+    return Response.json({ definition });
+  }
+
+  if (pathname === "/api/pipelines/runs" && method === "GET") {
+    return Response.json({ runs: ctx.store.listRuns({ ownerNpub }) });
+  }
+
+  const runStepsMatch = pathname.match(/^\/api\/pipelines\/runs\/([^/]+)\/steps$/);
+  if (runStepsMatch && method === "GET") {
+    const run = ctx.store.getRun(decodeURIComponent(runStepsMatch[1]!));
+    if (!run || run.ownerNpub !== ownerNpub) {
+      return Response.json({ error: "Pipeline run not found" }, { status: 404 });
+    }
+    return Response.json({ steps: ctx.store.listSteps(run.id) });
+  }
+
+  const stepMatch = pathname.match(/^\/api\/pipelines\/runs\/([^/]+)\/steps\/([^/]+)$/);
+  if (stepMatch && method === "GET") {
+    const run = ctx.store.getRun(decodeURIComponent(stepMatch[1]!));
+    const step = ctx.store.getStep(decodeURIComponent(stepMatch[2]!));
+    if (!run || !step || step.runId !== run.id || run.ownerNpub !== ownerNpub) {
+      return Response.json({ error: "Pipeline step not found" }, { status: 404 });
+    }
+    return Response.json({
+      step,
+      events: ctx.store.listEventsForStep(step.id),
+      callbacks: ctx.store.listCallbacksForStep(step.id),
+      previousSteps: ctx.store.listSteps(run.id).filter((entry) => entry.stepIndex < step.stepIndex),
+    });
+  }
+
+  const runMatch = pathname.match(/^\/api\/pipelines\/runs\/([^/]+)$/);
+  if (runMatch && method === "GET") {
+    const run = ctx.store.getRun(decodeURIComponent(runMatch[1]!));
+    if (!run || run.ownerNpub !== ownerNpub) {
+      return Response.json({ error: "Pipeline run not found" }, { status: 404 });
+    }
+    return Response.json({ run, steps: ctx.store.listSteps(run.id) });
+  }
+
+  return Response.json({ error: "Not found" }, { status: 404 });
+}
+
+async function readAllowedPipelineFunctionSource(path: string, ownerAlias: string, allowBuiltin: boolean): Promise<string> {
+  const allowedRoots = [
+    getSharedPipelineFunctionsDirectory(),
+    getUserPipelineFunctionsDirectory(ownerAlias),
+  ];
+  if (allowBuiltin) {
+    allowedRoots.push(join(process.cwd(), "src/pipelines"));
+  }
+  const realPath = await realpath(path);
+  const realRoots = await Promise.all(allowedRoots.map((root) => realpath(root).catch(() => null)));
+  const allowed = realRoots.some((root) => root && (realPath === root || realPath.startsWith(`${root}${sep}`)));
+  if (!allowed) {
+    throw new Error("Pipeline function source path is outside allowed roots");
+  }
+  return readFile(realPath, "utf8");
+}

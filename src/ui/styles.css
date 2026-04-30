@@ -75,6 +75,12 @@ body[data-theme="dark"] {
   color-scheme: dark;
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
   min-height: var(--wm-viewport-height);
@@ -713,6 +719,7 @@ body[data-menu-open="true"] .wm-menu-panel {
   padding: 1.75rem clamp(1.15rem, 2vw, 2.25rem);
   max-width: 1080px;
   width: 100%;
+  min-width: 0;
   margin: 0 auto;
 }
 
@@ -7254,6 +7261,7 @@ dialog button[value="cancel"] {
 
 .wm-files-preview {
   position: relative;
+  min-width: 0;
 }
 
 @media (max-width: 980px) {
@@ -7791,6 +7799,11 @@ dialog button[value="cancel"] {
   font-style: italic;
 }
 
+.wm-files-preview__body {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .wm-files-preview-image {
   display: grid;
   min-height: 18rem;
@@ -7813,6 +7826,8 @@ dialog button[value="cancel"] {
 .wm-json-preview,
 .wm-csv-preview,
 .wm-pdf-preview {
+  max-width: 100%;
+  min-width: 0;
   border: 1px solid var(--border-primary);
   border-radius: 8px;
   background: var(--surface-secondary);
@@ -7942,6 +7957,8 @@ dialog button[value="cancel"] {
 }
 
 .wm-files-preview-content {
+  max-width: 100%;
+  min-width: 0;
   font-size: 0.95rem;
   line-height: 1.6;
   color: var(--text-primary);
@@ -7984,16 +8001,22 @@ dialog button[value="cancel"] {
 }
 
 .wm-files-preview-content pre {
+  max-width: 100%;
+  min-width: 0;
   background: var(--code-bg);
   color: var(--text-secondary);
   padding: 1rem;
   border-radius: 12px;
   overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   margin: 1rem 0;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 }
 
 .wm-files-preview-content code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
   background: var(--inline-code-bg);
   padding: 0.1rem 0.35rem;
   border-radius: 6px;
@@ -8014,6 +8037,8 @@ dialog button[value="cancel"] {
 }
 
 .wm-files-preview-code {
+  max-width: 100%;
+  min-width: 0;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   font-size: 0.92rem;
   line-height: 1.55;
@@ -8021,6 +8046,8 @@ dialog button[value="cancel"] {
 }
 
 .wm-files-preview-code pre {
+  max-width: 100%;
+  min-width: 0;
   background: var(--code-bg);
   border-radius: 12px;
   padding: 1.25rem;

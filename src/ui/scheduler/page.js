@@ -10,6 +10,7 @@
 
 import Alpine from "/vendor/alpinejs/module.esm.js";
 import { fetchSchedulerJobRuns } from "./api.js";
+import { fetchPipelineDefinitions } from "../pipelines/api.js";
 import { attachDirAutocomplete } from "./dir-autocomplete.js";
 import { DEFAULT_AGENT, normalizeAgentValue, renderAgentOptions } from "../common/agent-options.js";
 import { state } from "../state/index.js";
@@ -129,12 +130,16 @@ export function initSchedulerPage({ showToast }) {
 
     // Create form state
     showForm: false,
+    actionType: "session",
     triggerType: "cron",
+    pipelineDefinitions: [],
     form: {
       name: "",
       agent: getConfiguredDefaultAgent(),
       workingDirectory: "",
       initialPrompt: "",
+      pipelineDefinitionId: "",
+      pipelineInput: "{}",
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
       nightwatchmanEnabled: true,
       watchDirectory: "",
@@ -153,6 +158,7 @@ export function initSchedulerPage({ showToast }) {
 
     // Edit state
     editingJobId: null,
+    editActionType: "session",
     editTriggerType: "cron",
     editForm: {},
     editSched: {},
@@ -165,6 +171,10 @@ export function initSchedulerPage({ showToast }) {
 
     get isCron() {
       return this.triggerType === "cron";
+    },
+
+    get isPipelineAction() {
+      return this.actionType === "pipeline";
     },
 
     get isNostr() {
@@ -196,6 +206,7 @@ export function initSchedulerPage({ showToast }) {
     },
 
     init() {
+      this.loadPipelineDefinitions();
       // Watch showForm toggle to attach/detach autocomplete on create form
       this.$watch("showForm", (open) => {
         if (open) {
@@ -224,6 +235,16 @@ export function initSchedulerPage({ showToast }) {
           this.$nextTick(() => this._attachEditAC());
         }
       });
+    },
+
+    async loadPipelineDefinitions() {
+      try {
+        const payload = await fetchPipelineDefinitions();
+        this.pipelineDefinitions = payload.definitions || [];
+      } catch (err) {
+        showToast(`Failed to load pipelines: ${err.message}`, { type: "error" });
+        this.pipelineDefinitions = [];
+      }
     },
 
     _attachCreateAC() {
@@ -265,6 +286,10 @@ export function initSchedulerPage({ showToast }) {
       return this.editTriggerType === "cron";
     },
 
+    get editIsPipelineAction() {
+      return this.editActionType === "pipeline";
+    },
+
     get editIsNostr() {
       return this.editTriggerType === "nostr";
     },
@@ -295,12 +320,15 @@ export function initSchedulerPage({ showToast }) {
 
     startEdit(job) {
       this.editingJobId = job.id;
+      this.editActionType = job.actionType || "session";
       this.editTriggerType = job.triggerType || "cron";
       this.editForm = {
         name: job.name,
         agent: normalizeAgentValue(job.agent || getConfiguredDefaultAgent()),
         workingDirectory: job.workingDirectory,
         initialPrompt: job.initialPrompt,
+        pipelineDefinitionId: job.pipelineDefinitionId || "",
+        pipelineInput: this.formatPipelineInput(job.pipelineInputJson),
         timezone: job.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         nightwatchmanEnabled: !!job.nightwatchmanEnabled,
         watchDirectory: job.watchDirectory || "",
@@ -313,6 +341,7 @@ export function initSchedulerPage({ showToast }) {
 
     cancelEdit() {
       this.editingJobId = null;
+      this.editActionType = "session";
       this.editForm = {};
       this.editSched = {};
     },
@@ -323,12 +352,24 @@ export function initSchedulerPage({ showToast }) {
       try {
         const payload = {
           name: this.editForm.name,
-          agent: this.editForm.agent,
-          workingDirectory: this.editForm.workingDirectory,
-          initialPrompt: this.editForm.initialPrompt,
-          nightwatchmanEnabled: this.editForm.nightwatchmanEnabled,
+          actionType: this.editActionType,
           triggerType: this.editTriggerType,
         };
+        if (this.editActionType === "pipeline") {
+          payload.pipelineDefinitionId = this.editForm.pipelineDefinitionId;
+          payload.pipelineInput = this.parsePipelineInput(this.editForm.pipelineInput);
+          payload.agent = "codex";
+          payload.workingDirectory = "";
+          payload.initialPrompt = "";
+          payload.nightwatchmanEnabled = false;
+        } else {
+          payload.agent = this.editForm.agent;
+          payload.workingDirectory = this.editForm.workingDirectory;
+          payload.initialPrompt = this.editForm.initialPrompt;
+          payload.nightwatchmanEnabled = this.editForm.nightwatchmanEnabled;
+          payload.pipelineDefinitionId = null;
+          payload.pipelineInput = {};
+        }
         if (this.editTriggerType === "cron") {
           payload.cronExpression = this.editComputedCron;
           payload.timezone = this.editForm.timezone;
@@ -346,6 +387,7 @@ export function initSchedulerPage({ showToast }) {
         }
         await this.$store.scheduler.update(this.editingJobId, payload);
         this.editingJobId = null;
+        this.editActionType = "session";
         this.editForm = {};
         this.editSched = {};
       } catch { /* store shows toast */ }
@@ -358,12 +400,15 @@ export function initSchedulerPage({ showToast }) {
     },
 
     resetForm() {
+      this.actionType = "session";
       this.triggerType = "cron";
       this.form = {
         name: "",
         agent: getConfiguredDefaultAgent(),
         workingDirectory: "",
         initialPrompt: "",
+        pipelineDefinitionId: "",
+        pipelineInput: "{}",
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         nightwatchmanEnabled: true,
         watchDirectory: "",
@@ -381,12 +426,22 @@ export function initSchedulerPage({ showToast }) {
       try {
         const payload = {
           name: this.form.name,
-          agent: this.form.agent,
-          workingDirectory: this.form.workingDirectory,
-          initialPrompt: this.form.initialPrompt,
-          nightwatchmanEnabled: this.form.nightwatchmanEnabled,
+          actionType: this.actionType,
           triggerType: this.triggerType,
         };
+        if (this.actionType === "pipeline") {
+          payload.pipelineDefinitionId = this.form.pipelineDefinitionId;
+          payload.pipelineInput = this.parsePipelineInput(this.form.pipelineInput);
+          payload.agent = "codex";
+          payload.workingDirectory = "";
+          payload.initialPrompt = "";
+          payload.nightwatchmanEnabled = false;
+        } else {
+          payload.agent = this.form.agent;
+          payload.workingDirectory = this.form.workingDirectory;
+          payload.initialPrompt = this.form.initialPrompt;
+          payload.nightwatchmanEnabled = this.form.nightwatchmanEnabled;
+        }
         if (this.triggerType === "cron") {
           payload.cronExpression = this.computedCron;
           payload.timezone = this.form.timezone;
@@ -450,6 +505,16 @@ export function initSchedulerPage({ showToast }) {
       return describeCron(expr);
     },
 
+    describeJobAction(job) {
+      if ((job.actionType || "session") === "pipeline") return "PIPELINE";
+      return String(job.agent || "").toUpperCase();
+    },
+
+    pipelineName(id) {
+      const definition = this.pipelineDefinitions.find((entry) => entry.id === id);
+      return definition?.name || id || "Pipeline";
+    },
+
     describeTrigger(job) {
       if (job.triggerType === "nostr") return "Nostr Remote Trigger";
       if (job.triggerType === "file_watcher") {
@@ -461,6 +526,34 @@ export function initSchedulerPage({ showToast }) {
         desc += ` (${job.activeStartTime}\u2013${job.activeEndTime})`;
       }
       return desc;
+    },
+
+    setPipelineDefaultInput(edit = false) {
+      const form = edit ? this.editForm : this.form;
+      const definition = this.pipelineDefinitions.find((entry) => entry.id === form.pipelineDefinitionId);
+      form.pipelineInput = JSON.stringify(definition?.input || {}, null, 2);
+    },
+
+    formatPipelineInput(value) {
+      try {
+        const parsed = typeof value === "string" && value ? JSON.parse(value) : {};
+        return JSON.stringify(parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}, null, 2);
+      } catch {
+        return "{}";
+      }
+    },
+
+    parsePipelineInput(value) {
+      try {
+        const parsed = value ? JSON.parse(value) : {};
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("Pipeline input must be a JSON object");
+        }
+        return parsed;
+      } catch (err) {
+        showToast(err.message || "Pipeline input must be valid JSON", { type: "error" });
+        throw err;
+      }
     },
 
     async copyToClipboard(text, label) {
@@ -536,26 +629,51 @@ function getPageTemplate() {
           @click="triggerType = 'nostr'">Nostr</button>
       </div>
 
-      <!-- Row 1: Name + Agent -->
+      <!-- Action Type Selector -->
+      <div style="display: flex; gap: 0.5rem; margin-bottom: 0.75rem;">
+        <button type="button" class="wm-btn wm-btn--sm"
+          :class="actionType === 'session' ? 'wm-btn--primary' : ''"
+          @click="actionType = 'session'">Agent Session</button>
+        <button type="button" class="wm-btn wm-btn--sm"
+          :class="actionType === 'pipeline' ? 'wm-btn--primary' : ''"
+          @click="actionType = 'pipeline'">Pipeline</button>
+      </div>
+
+      <!-- Row 1: Name + Agent/Pipeline -->
       <div class="wm-scheduler-grid-two">
         <div class="wm-form-group">
           <label>Trigger Name</label>
           <input type="text" class="wm-input" x-model="form.name" placeholder="e.g. Daily code review">
         </div>
-        <div class="wm-form-group">
+        <div class="wm-form-group" x-show="!isPipelineAction">
           <label>Agent</label>
           <select class="wm-select" x-model="form.agent">
             ${renderAgentOptions()}
           </select>
         </div>
+        <div class="wm-form-group" x-show="isPipelineAction">
+          <label>Pipeline</label>
+          <select class="wm-select" x-model="form.pipelineDefinitionId" @change="setPipelineDefaultInput(false)">
+            <option value="">Select pipeline</option>
+            <template x-for="definition in pipelineDefinitions" :key="definition.id">
+              <option :value="definition.id" x-text="definition.name"></option>
+            </template>
+          </select>
+        </div>
       </div>
 
       <!-- Row 2: Working Directory -->
-      <div class="wm-form-group" style="margin-top: 0.75rem;">
+      <div class="wm-form-group" style="margin-top: 0.75rem;" x-show="!isPipelineAction">
         <label>Working Directory</label>
         <input type="text" class="wm-input" x-model="form.workingDirectory" placeholder="/path/to/project"
           data-ac="create-workdir" list="create-workdir-suggestions" autocomplete="off">
         <datalist id="create-workdir-suggestions" data-ac="create-workdir-list"></datalist>
+      </div>
+
+      <!-- Pipeline input -->
+      <div class="wm-form-group" style="margin-top: 0.75rem;" x-show="isPipelineAction">
+        <label>Pipeline Input</label>
+        <textarea class="wm-input" x-model="form.pipelineInput" rows="7" spellcheck="false" style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;"></textarea>
       </div>
 
       <!-- Row 3a: Schedule Picker (cron only) -->
@@ -658,13 +776,13 @@ function getPageTemplate() {
       </template>
 
       <!-- Row 4: Initial Prompt -->
-      <div class="wm-form-group" style="margin-top: 0.75rem;">
+      <div class="wm-form-group" style="margin-top: 0.75rem;" x-show="!isPipelineAction">
         <label>Initial Prompt</label>
         <textarea class="wm-input" x-model="form.initialPrompt" rows="4" placeholder="What should the agent do?"></textarea>
       </div>
 
       <!-- Row 5: Night Watchman + Timezone -->
-      <div style="display: flex; align-items: center; gap: 1rem; margin-top: 0.75rem; flex-wrap: wrap;">
+      <div style="display: flex; align-items: center; gap: 1rem; margin-top: 0.75rem; flex-wrap: wrap;" x-show="!isPipelineAction">
         <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer;">
           <input type="checkbox" x-model="form.nightwatchmanEnabled">
           <span style="font-weight: 600;">Enable Night Watchman</span>
@@ -681,7 +799,7 @@ function getPageTemplate() {
       <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; border-top: 1px solid var(--border-primary); padding-top: 0.75rem;">
         <button type="button" class="wm-btn wm-btn--sm" @click="showForm = false; resetForm()">Cancel</button>
         <button type="button" class="wm-btn wm-btn--sm wm-btn--primary" @click="submitJob()"
-          :disabled="submitting || !form.name || !form.workingDirectory || !form.initialPrompt || (triggerType === 'file_watcher' && !form.watchDirectory)">
+          :disabled="submitting || !form.name || (actionType === 'session' && (!form.workingDirectory || !form.initialPrompt)) || (actionType === 'pipeline' && !form.pipelineDefinitionId) || (triggerType === 'file_watcher' && !form.watchDirectory)">
           <span x-text="submitting ? 'Creating\u2026' : 'Create Trigger'"></span>
         </button>
       </div>
@@ -717,11 +835,16 @@ function getPageTemplate() {
           <div class="wm-scheduler-job-info">
             <div style="display: flex; align-items: baseline; gap: 0.5rem;">
               <strong x-text="job.name" style="font-size: 0.95rem;"></strong>
-              <span x-text="job.agent" style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;"></span>
+              <span x-text="describeJobAction(job)" style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;"></span>
               <span x-text="describeTrigger(job)" style="font-size: 0.75rem; color: var(--accent-primary);"></span>
             </div>
             <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px;">
-              <span x-text="job.workingDirectory" style="opacity: 0.8;"></span>
+              <template x-if="(job.actionType || 'session') === 'pipeline'">
+                <span x-text="pipelineName(job.pipelineDefinitionId)" style="opacity: 0.8;"></span>
+              </template>
+              <template x-if="(job.actionType || 'session') !== 'pipeline'">
+                <span x-text="job.workingDirectory" style="opacity: 0.8;"></span>
+              </template>
               <template x-if="job.nextRunAt && job.triggerType !== 'file_watcher' && job.triggerType !== 'nostr'">
                 <span> &middot; Next: <span x-text="formatTime(job.nextRunAt)"></span></span>
               </template>
@@ -771,10 +894,16 @@ function getPageTemplate() {
         </template>
 
         <!-- Prompt preview (shown when NOT editing) -->
-        <template x-if="editingJobId !== job.id">
+        <template x-if="editingJobId !== job.id && (job.actionType || 'session') !== 'pipeline'">
           <details style="margin-top: 0.5rem;">
             <summary style="cursor: pointer; font-size: 0.8rem; color: var(--text-secondary);">Prompt</summary>
             <pre style="font-size: 0.8rem; white-space: pre-wrap; margin: 0.25rem 0 0; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px; max-height: 200px; overflow: auto;" x-text="job.initialPrompt"></pre>
+          </details>
+        </template>
+        <template x-if="editingJobId !== job.id && (job.actionType || 'session') === 'pipeline'">
+          <details style="margin-top: 0.5rem;">
+            <summary style="cursor: pointer; font-size: 0.8rem; color: var(--text-secondary);">Pipeline Input</summary>
+            <pre style="font-size: 0.8rem; white-space: pre-wrap; margin: 0.25rem 0 0; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px; max-height: 200px; overflow: auto;" x-text="formatPipelineInput(job.pipelineInputJson)"></pre>
           </details>
         </template>
 
@@ -795,26 +924,51 @@ function getPageTemplate() {
                 @click="editTriggerType = 'nostr'">Nostr</button>
             </div>
 
-            <!-- Row 1: Name + Agent -->
+            <!-- Action Type Selector -->
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.75rem;">
+              <button type="button" class="wm-btn wm-btn--sm"
+                :class="editActionType === 'session' ? 'wm-btn--primary' : ''"
+                @click="editActionType = 'session'">Agent Session</button>
+              <button type="button" class="wm-btn wm-btn--sm"
+                :class="editActionType === 'pipeline' ? 'wm-btn--primary' : ''"
+                @click="editActionType = 'pipeline'">Pipeline</button>
+            </div>
+
+            <!-- Row 1: Name + Agent/Pipeline -->
             <div class="wm-scheduler-grid-two">
               <div class="wm-form-group">
                 <label>Trigger Name</label>
                 <input type="text" class="wm-input" x-model="editForm.name">
               </div>
-              <div class="wm-form-group">
+              <div class="wm-form-group" x-show="!editIsPipelineAction">
                 <label>Agent</label>
                 <select class="wm-select" x-model="editForm.agent">
                   ${renderAgentOptions()}
                 </select>
               </div>
+              <div class="wm-form-group" x-show="editIsPipelineAction">
+                <label>Pipeline</label>
+                <select class="wm-select" x-model="editForm.pipelineDefinitionId" @change="setPipelineDefaultInput(true)">
+                  <option value="">Select pipeline</option>
+                  <template x-for="definition in pipelineDefinitions" :key="definition.id">
+                    <option :value="definition.id" x-text="definition.name"></option>
+                  </template>
+                </select>
+              </div>
             </div>
 
             <!-- Row 2: Working Directory -->
-            <div class="wm-form-group" style="margin-top: 0.75rem;">
+            <div class="wm-form-group" style="margin-top: 0.75rem;" x-show="!editIsPipelineAction">
               <label>Working Directory</label>
               <input type="text" class="wm-input" x-model="editForm.workingDirectory"
                 data-ac="edit-workdir" list="edit-workdir-suggestions" autocomplete="off">
               <datalist id="edit-workdir-suggestions" data-ac="edit-workdir-list"></datalist>
+            </div>
+
+            <!-- Pipeline input -->
+            <div class="wm-form-group" style="margin-top: 0.75rem;" x-show="editIsPipelineAction">
+              <label>Pipeline Input</label>
+              <textarea class="wm-input" x-model="editForm.pipelineInput" rows="7" spellcheck="false" style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;"></textarea>
             </div>
 
             <!-- Row 3a: Schedule Picker (cron only) -->
@@ -916,13 +1070,13 @@ function getPageTemplate() {
             </template>
 
             <!-- Row 4: Initial Prompt -->
-            <div class="wm-form-group" style="margin-top: 0.75rem;">
+            <div class="wm-form-group" style="margin-top: 0.75rem;" x-show="!editIsPipelineAction">
               <label>Initial Prompt</label>
               <textarea class="wm-input" x-model="editForm.initialPrompt" rows="4"></textarea>
             </div>
 
             <!-- Row 5: Night Watchman + Timezone -->
-            <div style="display: flex; align-items: center; gap: 1rem; margin-top: 0.75rem; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 1rem; margin-top: 0.75rem; flex-wrap: wrap;" x-show="!editIsPipelineAction">
               <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer;">
                 <input type="checkbox" x-model="editForm.nightwatchmanEnabled">
                 <span style="font-weight: 600;">Enable Night Watchman</span>
@@ -939,7 +1093,7 @@ function getPageTemplate() {
             <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; border-top: 1px solid var(--border-primary); padding-top: 0.75rem;">
               <button type="button" class="wm-btn wm-btn--sm" @click="cancelEdit()">Cancel</button>
               <button type="button" class="wm-btn wm-btn--sm wm-btn--primary" @click="saveEdit()"
-                :disabled="editSubmitting || !editForm.name || !editForm.workingDirectory || !editForm.initialPrompt || (editTriggerType === 'file_watcher' && !editForm.watchDirectory)">
+                :disabled="editSubmitting || !editForm.name || (editActionType === 'session' && (!editForm.workingDirectory || !editForm.initialPrompt)) || (editActionType === 'pipeline' && !editForm.pipelineDefinitionId) || (editTriggerType === 'file_watcher' && !editForm.watchDirectory)">
                 <span x-text="editSubmitting ? 'Saving\u2026' : 'Save Changes'"></span>
               </button>
             </div>

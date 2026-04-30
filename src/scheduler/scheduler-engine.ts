@@ -24,6 +24,7 @@ import type { AgentType } from "../config";
 import type { SessionSnapshot, SessionOrigin } from "../agents/process-manager";
 import { getSessionSecretBytes } from "../auth/session-secret";
 import type { SessionMetadataInput } from "../sessions/session-metadata";
+import type { JsonObject } from "../pipelines/pipeline-store";
 
 // ============================================================
 // Types
@@ -45,7 +46,13 @@ export interface SchedulerEngineDeps {
   addPrompt: (sessionId: string, content: string) => void;
   dispatchPrompt: (session: SessionSnapshot) => void;
   awaitSessionReadyForPrompt?: (session: SessionSnapshot, agent: AgentType) => Promise<void>;
+  runPipeline?: (job: ScheduledJob, input: JsonObject) => Promise<string>;
   onBotKeyUnlocked?: (npub: string, secretKey: Uint8Array, botPubkeyHex: string) => void;
+}
+
+export interface SchedulerExecutionResult {
+  sessionId?: string;
+  pipelineRunId?: string;
 }
 
 // ============================================================
@@ -246,9 +253,9 @@ class SchedulerEngine {
   }
 
   /**
-   * Manually trigger a job. Returns the session ID on success.
+   * Manually trigger a job. Returns the created session or pipeline run ID.
    */
-  async executeJob(jobId: string): Promise<string> {
+  async executeJob(jobId: string): Promise<SchedulerExecutionResult> {
     return this.onJobTriggered(jobId);
   }
 
@@ -288,7 +295,7 @@ class SchedulerEngine {
    * Trigger a job with an appended message (used by Nostr triggers).
    * Composes the prompt as `initialPrompt + "\n\n" + message`.
    */
-  async executeJobWithMessage(jobId: string, message?: string): Promise<string> {
+  async executeJobWithMessage(jobId: string, message?: string): Promise<SchedulerExecutionResult> {
     const job = this.deps.store.getJob(jobId);
     if (!job) throw new Error(`Job ${jobId} not found`);
 
@@ -314,7 +321,7 @@ class SchedulerEngine {
     promptOverride?: string,
     originOverride?: SessionOrigin,
     sessionNameOverride?: string,
-  ): Promise<string> {
+  ): Promise<SchedulerExecutionResult> {
     // Reload job from DB to get latest state
     const job = this.deps.store.getJob(jobId);
     if (!job) {
@@ -328,7 +335,7 @@ class SchedulerEngine {
     if (!promptOverride && !originOverride) {
       if (!isWithinActiveWindow(job.activeStartTime, job.activeEndTime, job.timezone)) {
         console.log(`[scheduler] Job "${job.name}" skipped — outside active window (${job.activeStartTime}–${job.activeEndTime})`);
-        return "";
+        return {};
       }
     }
 
@@ -356,6 +363,14 @@ class SchedulerEngine {
         );
         storeBotKeyInMemory(job.userNpub, secretKey, botKey.botPubkeyHex, "escrow");
         this.deps.onBotKeyUnlocked?.(job.userNpub, secretKey, botKey.botPubkeyHex);
+      }
+
+      if (job.actionType === "pipeline") {
+        const pipelineRunId = await this.runPipelineAction(job, promptOverride);
+        this.updateJobAfterSuccess(jobId);
+        this.deps.store.completeRun(runId, "success", undefined, undefined, pipelineRunId);
+        console.log(`[scheduler] Job "${job.name}" triggered — pipeline run ${pipelineRunId}`);
+        return { pipelineRunId };
       }
 
       // 3. Create session with explicit npub
@@ -398,24 +413,46 @@ class SchedulerEngine {
       this.deps.dispatchPrompt(session);
 
       // 8. Update job and record success
-      const now = new Date().toISOString();
-      const updateFields: Record<string, unknown> = { lastRunAt: now };
-      const cron = this.cronJobs.get(jobId);
-      if (cron) {
-        const nextRun = cron.nextRun();
-        if (nextRun) updateFields.nextRunAt = nextRun.toISOString();
-      }
-      this.deps.store.updateJob(jobId, updateFields);
+      this.updateJobAfterSuccess(jobId);
       this.deps.store.completeRun(runId, "success", session.id);
 
       console.log(`[scheduler] Job "${job.name}" triggered — session ${session.id}`);
-      return session.id;
+      return { sessionId: session.id };
     } catch (err) {
       const message = (err as Error).message ?? String(err);
       this.deps.store.completeRun(runId, "error", undefined, message);
       console.error(`[scheduler] Job "${job.name}" failed: ${message}`);
       throw err;
     }
+  }
+
+  private async runPipelineAction(job: ScheduledJob, triggerMessage?: string): Promise<string> {
+    if (!this.deps.runPipeline) {
+      throw new Error("Scheduler pipeline execution is not configured");
+    }
+    if (!job.pipelineDefinitionId) {
+      throw new Error("Pipeline trigger has no pipeline definition selected");
+    }
+    const parsed = job.pipelineInputJson ? JSON.parse(job.pipelineInputJson) : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Pipeline trigger input must be a JSON object");
+    }
+    const input = { ...(parsed as JsonObject) };
+    if (triggerMessage) {
+      input.triggerMessage = triggerMessage;
+    }
+    return this.deps.runPipeline(job, input);
+  }
+
+  private updateJobAfterSuccess(jobId: string): void {
+    const now = new Date().toISOString();
+    const updateFields: Record<string, unknown> = { lastRunAt: now };
+    const cron = this.cronJobs.get(jobId);
+    if (cron) {
+      const nextRun = cron.nextRun();
+      if (nextRun) updateFields.nextRunAt = nextRun.toISOString();
+    }
+    this.deps.store.updateJob(jobId, updateFields);
   }
 }
 

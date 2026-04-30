@@ -93,6 +93,11 @@ import { browserSubscribers } from "./mcp/browser-subscribers";
 import { MemoryStore } from "./mcp/memory-store";
 import { userSettingsStore } from "./storage/user-settings-store";
 import { artifactsStore } from "./storage/artifacts-store";
+import { type JsonObject, PipelineStore } from "./pipelines/pipeline-store";
+import { getPipelineDefinition } from "./pipelines/pipeline-loader";
+import { loadPipelineFunctionRegistry } from "./pipelines/function-loader";
+import { builtinPipelineFunctions } from "./pipelines/functions";
+import { runDeclarativePipeline } from "./pipelines/pipeline-runner";
 import {
   buildAgentUrl,
   normaliseHostForUrl,
@@ -365,6 +370,7 @@ const MESSAGE_COST_SATS = 100;
 const projectStore = new ProjectStore();
 const todoStore = new TodoStore();
 const promptQueueStore = new PromptQueueStore("data/prompt-queue.db");
+const pipelineStore = new PipelineStore();
 const todoApiHandler = createTodoApiHandler({ store: todoStore, projectStore });
 const projectApiHandler = createProjectApiHandler({
   store: projectStore,
@@ -442,6 +448,28 @@ const schedulerEngine = new SchedulerEngine({
       requestTimeoutMs: 750,
     });
     markPromptStartupReady(session.id);
+  },
+  runPipeline: async (job, input: JsonObject) => {
+    if (!job.pipelineDefinitionId) {
+      throw new Error("Pipeline trigger has no pipeline definition selected");
+    }
+    const ownerAlias = generateIdentityAlias(job.userNpub);
+    const definition = await getPipelineDefinition(job.pipelineDefinitionId, ownerAlias);
+    if (!definition) {
+      throw new Error(`Pipeline definition not found: ${job.pipelineDefinitionId}`);
+    }
+    const functions = await loadPipelineFunctionRegistry(ownerAlias, builtinPipelineFunctions);
+    const run = await runDeclarativePipeline({
+      store: pipelineStore,
+      sessionApiContext,
+      definition,
+      registry: functions.registry,
+      input,
+      ownerNpub: job.userNpub,
+      ownerAlias,
+      callbackOrigin: `http://127.0.0.1:${config.port}`,
+    });
+    return run.id;
   },
   onBotKeyUnlocked: onBotKeyUnlockedHook,
 });
@@ -1622,7 +1650,7 @@ const assetService = createStaticAssetService({
 });
 
 // Asset version — increment to bust browser caches after deploys.
-const ASSET_VERSION = "12";
+const ASSET_VERSION = "23";
 
 const serveIndex = async () => {
   const url = new URL("./ui/index.html", import.meta.url);
@@ -2465,6 +2493,13 @@ const handleApi = createApiRouteHandler({
     ensureApiAccess,
     AccessActions,
   },
+  pipelineApiContext: {
+    store: pipelineStore,
+    sessionApiContext,
+    callbackOrigin: `http://127.0.0.1:${config.port}`,
+    ensureApiAccess,
+    AccessActions,
+  },
   workspaceDelegationStore,
 
   // Stores accessed directly
@@ -2624,6 +2659,7 @@ const server = Bun.serve({
         pathname.startsWith("/nightwatch") ||
         pathname.startsWith("/scheduler") ||
         pathname.startsWith("/triggers") ||
+        pathname.startsWith("/pipelines") ||
         pathname.startsWith("/auth") ||
         pathname === "/" ||
         pathname === "/favicon.ico";
@@ -2672,7 +2708,9 @@ const server = Bun.serve({
         pathname === "/scheduler" ||
         pathname.startsWith("/scheduler/") ||
         pathname === "/triggers" ||
-        pathname.startsWith("/triggers/");
+        pathname.startsWith("/triggers/") ||
+        pathname === "/pipelines" ||
+        pathname.startsWith("/pipelines/");
 
       if (isSpaRoutePath && !assetService.isUiAssetPath(pathname)) {
         return compressResponse(request, await serveIndex());

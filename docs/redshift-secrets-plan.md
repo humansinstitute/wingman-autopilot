@@ -1,133 +1,58 @@
 # Redshift Secret Management Integration Plan
 
-## Context
+## Context and Current State
 
-The ecosystem config generator was dumping all `.env` contents into plaintext `ecosystem.config.cjs` files. That immediate leak is patched (secrets now sourced at bash runtime), but `.env` files on disk remain a weak link. Redshift is a Nostr-native, self-hostable secret manager that encrypts secrets via NIP-59 Gift Wrap and stores them on configurable relays.
+Wingman previously generated `ecosystem.config.cjs` files that embedded all `.env` values in plaintext. That immediate leak has been patched: local `.env` values are sourced at bash runtime instead of serialized into the ecosystem config, and `createUserAppEcosystemConfig` already detects `redshift.yaml` and emits a `redshift run -- ...` command path for matching apps.
 
-## Key Redshift Architecture Facts
+Redshift remains attractive because it is a Nostr-native, self-hostable secret manager that encrypts secrets via NIP-59 Gift Wrap and stores encrypted events on configurable relays. The integration goal is not just to call Redshift; it is to keep app secrets and Wingman root key material out of generated config, logs, routine API responses, and avoidable PM2 metadata.
 
-- **Single-recipient encryption only** — `wrapSecrets(secrets, privateKey, dTag)` encrypts to one pubkey. No multi-recipient support in the current implementation.
-- **NIP-46 bunker support** — `wrapSecretsWithSigner` / `unwrapGiftWrapWithSigner` exist, enabling remote signing via NIP-46 Nostr Connect.
-- **TypeScript crypto package** — `@redshift/crypto` exports `wrapSecrets`, `unwrapSecrets`, `unwrapGiftWrap`, `createDTag`, `getRedshiftSecretsFilter`. Importable directly, no CLI dependency needed.
-- **Secret storage** — Kind 30078 replaceable events on Nostr relays, keyed by d-tag (`project|environment`).
-- **Relay configurable** — `redshift.yaml` has a `relays` field. Point at your own local relays, secrets never leave your infrastructure.
-- **Auth methods** — nsec (direct key), bunker:// (NIP-46 remote signer), or `REDSHIFT_NSEC` / `REDSHIFT_BUNKER` env vars for CI/CD.
+## Non-Negotiable Decisions
 
-## The Identity Problem
+1. `KEYTELEPORT_PRIVKEY` is not the Redshift decrypt identity for app secrets.
+2. Wingman must not populate PM2 child environment with `KEYTELEPORT_PRIVKEY`, a derivative of it, or `REDSHIFT_NSEC` derived from it.
+3. Phase 1 is hardening of the already-present `redshift run` path, not greenfield detection work.
+4. Any fallback from Redshift to local `.env` must be explicit app-owner opt-in, logged, and tested; silent fallback is rejected.
+5. Generated ecosystem config must not contain decrypted secrets, `.env` values, `KEYTELEPORT_PRIVKEY`, or root-key-equivalent Redshift credentials.
 
-Wingman doesn't hold user private keys — the browser has them (NIP-07 / device keystore). Redshift needs a private key to decrypt secrets. Three approaches:
+## Redshift Architecture Facts That Drive the Design
 
-### Option A: Wingman Server Key (Recommended for Phase 1)
+- **Single-recipient encryption only.** Current `wrapSecrets(secrets, privateKey, dTag)` behavior encrypts to one recipient. Team sharing can still be built with multiple single-recipient wraps, but only after Wingman defines event addressing, version matching, deletion, and revocation.
+- **NIP-46 bunker support exists.** `wrapSecretsWithSigner` and `unwrapGiftWrapWithSigner` may enable remote signer flows, but the browser path must prove it supports the private-key decryption operations Redshift needs, not only event signing.
+- **TypeScript crypto package exists.** `@redshift/crypto` exports `wrapSecrets`, `unwrapSecrets`, `unwrapGiftWrap`, `createDTag`, and `getRedshiftSecretsFilter`. Native integration can avoid the CLI, subject to dependency review.
+- **Secret storage uses kind 30078 replaceable events keyed by d-tag.** Wingman must not use a bare human project name as the durable namespace in a multi-owner system. The canonical namespace should be `wingman:<owner_npub>:<app_id>:<environment>` or a stable hash of that tuple; the app registry stores the canonical namespace plus optional human aliases used for UI display or Redshift compatibility.
+- **Relay configuration is app-specific.** `redshift.yaml` can define `relays`, but native/UI phases can also use app registry configuration.
+- **CLI auth methods are host concerns.** Redshift supports direct key, bunker, and environment-based auth modes, but Wingman must verify how those modes behave for the actual PM2 runtime user before depending on them.
 
-User stores app secrets under the **Wingman server's pubkey** (derived from `KEYTELEPORT_PRIVKEY`). At app startup, Wingman decrypts with its own key. No browser needed.
+## Identity Model
 
-- **Pro:** Simple, works offline, instant startup
-- **Con:** User must target Wingman's pubkey when setting secrets, trusts server with plaintext at runtime
-- **UX:** `redshift secrets set API_KEY xxx --identity <wingman-pubkey>` or Wingman UI wraps this
+### Phase 1 Identity: Host-Configured Redshift CLI Identity
 
-### Option B: Browser-Mediated Decrypt + Cache
+Phase 1 uses whatever Redshift CLI identity is already configured for the runtime user that launches the app. Wingman does not inject Redshift private key material into the PM2 app environment. The Phase 1 contract is: if an app has `redshift.yaml`, generated startup uses `redshift run -- ...`; Redshift CLI is responsible for decrypting and injecting secrets according to its own configured identity.
 
-When user starts an app, Wingman requests decryption via the existing Tier 2 SSE pipeline (browser signs). Decrypted secrets are cached in-memory (or encrypted in SQLite with server key) for the session lifetime.
+The old idea of using the Wingman server pubkey derived from `KEYTELEPORT_PRIVKEY` is rejected for the default path. Any user-facing provisioning command such as `redshift secrets set API_KEY xxx --identity <runtime-pubkey>` is illustrative until verified against the actual Redshift CLI. If recipient targeting is not supported, users must pre-provision secrets with supported Redshift tooling or Wingman must provide a small wrapper/UI flow that publishes a runtime-recipient wrap.
 
-- **Pro:** User's key stays in browser, no trust delegation
-- **Con:** First start requires browser, adds latency, cache invalidation complexity
-- **UX:** Transparent — browser auto-approves like Tier 2 NIP-98 signing
+### Phase 2+ Identity: Dedicated Wingman Redshift Runtime/App Key
 
-### Option C: NIP-46 Bunker Bridge
+Native integration uses a dedicated Redshift key, not `KEYTELEPORT_PRIVKEY`.
 
-Wingman acts as a NIP-46 signer relay. User's browser is the bunker. Redshift crypto calls go through `unwrapGiftWrapWithSigner` which delegates signing to the browser.
+- Initial key name: `REDSHIFT_RUNTIME_NSEC` for one host-wide runtime identity, with a path to app-scoped keys later.
+- Storage: host environment or a local secrets store owned by the Wingman runtime process, never serialized into app config or passed to PM2 child env.
+- Public-key discovery: Flight Deck displays the runtime Redshift pubkey for each app/namespace so users can provision or verify wraps.
+- Rotation: generate a new runtime key, publish new runtime-recipient wraps at a higher version, mark the old runtime pubkey deprecated, then retire it after all active namespaces have matching new wraps.
+- Recovery: if the runtime key is lost and no user-authoritative wrap remains decryptable, secrets must be re-entered by an authorized user. Wingman should not imply it can recover plaintext from relays.
 
-- **Pro:** Uses Redshift's existing signer abstraction, most "Nostr-native"
-- **Con:** Browser must be available, NIP-46 round-trips add latency, complex plumbing
-- **UX:** User approves a "bunker connection" once, Wingman maintains the session
+### Browser-Mediated Decrypt Is a Separate Research Track
 
-## Recommended Phased Approach
+Browser-mediated decrypt remains useful but is not the Phase 1 or Phase 2 default. It must first prove that the existing Tier 2 browser/SSE path can perform the NIP-44/NIP-59 decryption operations needed by Redshift, not just NIP-98/event signing. Persisting a browser-decrypted cache encrypted with a server-held key is not part of this option unless a separate threat model is accepted, because that would reintroduce server trust.
 
-### Phase 1: CLI Integration (Quick Win)
+NIP-46 bunker bridging is also a research track. It may be the cleanest Nostr-native delegation model, but it requires connection management, browser availability handling, and latency/failure UX before it can sit on the app startup path.
 
-**Goal:** Apps with `redshift.yaml` use `redshift run` instead of `source .env`.
+## Configuration and Namespace Model
 
-**Changes:**
-- `ecosystem-generator.ts` — detect `redshift.yaml` in app root
-- If present, wrap start command: `redshift run -- <start script>` instead of `set -a; source .env; set +a; <start script>`
-- Requires: Redshift CLI installed on host, user authenticated via `redshift login`
-- Auth: Set `REDSHIFT_NSEC` from `KEYTELEPORT_PRIVKEY` so Wingman's server identity is used
+### Repo Configuration
 
-**Files touched:**
-- `src/agents/ecosystem-generator.ts` — command building logic
-- `src/apps/app-detector.ts` — add `redshift.yaml` detection
+`redshift.yaml` remains the Phase 1 opt-in signal because the current generator can observe it:
 
-**Effort:** Small. Mostly conditional logic in existing code.
-
-### Phase 2: Native TypeScript Integration
-
-**Goal:** Import `@redshift/crypto` directly. No CLI dependency. Wingman fetches and decrypts secrets programmatically.
-
-**Changes:**
-- Add `@redshift/crypto` as a dependency (or vendor the Gift Wrap functions since they use nostr-tools + @noble libs we already have)
-- New module: `src/secrets/redshift-provider.ts`
-  - Connects to configured relays
-  - Fetches Gift Wrap events for project/environment
-  - Decrypts with `KEYTELEPORT_PRIVKEY`
-  - Returns `Record<string, string>` of secrets
-- `src/secrets/secret-injector.ts` — orchestrates: check for redshift config, fetch secrets, merge with any local overrides, return env record
-- `ecosystem-generator.ts` — calls secret injector, passes secrets as runtime env vars to the spawned process (in-memory only, never written to config file)
-- New API route: `GET /api/apps/:id/secrets/status` — returns whether secrets are configured, last sync time, count (no values)
-
-**Files touched:**
-- `src/secrets/redshift-provider.ts` (new)
-- `src/secrets/secret-injector.ts` (new)
-- `src/agents/ecosystem-generator.ts`
-- `src/apps/app-process-manager.ts`
-- `package.json` (new dependency)
-
-**Effort:** Medium. Core crypto is handled by the library, main work is relay connection management and wiring.
-
-### Phase 3: User Secret Management UI
-
-**Goal:** Users manage per-app secrets from the Wingman dashboard. No CLI needed.
-
-**Changes:**
-- **Secret editor UI** — per-app panel in the app card to add/edit/delete secrets
-  - Key-value editor with masked values
-  - Environment selector (dev/staging/prod)
-  - "Sync to relays" button
-- **Encryption flow:**
-  1. User enters secret in browser
-  2. Browser encrypts with user's NIP-07 key via `wrapSecrets` (runs client-side)
-  3. Encrypted event posted to configured relays
-  4. Separately, browser also wraps secrets to Wingman server pubkey (so server can decrypt at runtime without browser)
-- **API routes:**
-  - `POST /api/apps/:id/secrets` — store encrypted event (relay passthrough)
-  - `GET /api/apps/:id/secrets` — fetch + decrypt with server key, return key names only (not values) for UI display
-  - `POST /api/apps/:id/secrets/sync` — trigger re-encryption to server key (browser-mediated via Tier 2)
-- **Per-app config** — store relay URLs and project/environment mapping in app registry
-
-**Files touched:**
-- `src/ui/apps/secret-editor.js` (new)
-- `src/secrets/secrets-api.ts` (new)
-- `src/apps/app-registry.ts` — extend AppRecord with relay config
-- Existing app card UI
-
-**Effort:** Large. Full feature with UI, API, and dual-encryption flow.
-
-### Phase 4: Team Secret Sharing
-
-**Goal:** Multiple Wingman users can share secrets for the same app.
-
-**Changes:**
-- Admin designates which users (by npub) can access an app's secrets
-- When secrets are updated, they're re-wrapped to each authorized user's pubkey + server pubkey
-- Each user can decrypt from their own identity
-- Revocation: re-wrap without the revoked user's pubkey, publish new events
-
-**This phase depends on upstream Redshift changes** — either multi-recipient Gift Wrap support or a Wingman-side wrapper that publishes multiple single-recipient wraps.
-
-**Effort:** Large. Requires careful access control design.
-
-## Configuration
-
-### Per-App (`redshift.yaml` in app root)
 ```yaml
 project: my-saas-app
 environment: production
@@ -136,23 +61,159 @@ relays:
   - ws://relay.myinfra.lan:4848
 ```
 
-### Wingman Server (`src/config.ts` or env)
-```
-KEYTELEPORT_PRIVKEY=<hex>          # existing — used as decrypt identity
-REDSHIFT_DEFAULT_RELAYS=ws://localhost:7777  # fallback if app has no redshift.yaml
+For native phases, the app registry stores a normalized secrets config:
+
+```json
+{
+  "enabled": true,
+  "environment": "production",
+  "namespace": "wingman:<owner_npub>:<app_id>:production",
+  "projectAlias": "my-saas-app",
+  "relays": ["ws://localhost:7777"]
+}
 ```
 
-## Security Considerations
+Precedence:
 
-- Secrets are decrypted in-memory at app startup. They exist as plaintext in the process environment (same as Doppler, Infisical, or any env-based injection). This is unavoidable.
-- `KEYTELEPORT_PRIVKEY` becomes a high-value target — it can decrypt all app secrets stored to the server pubkey. Protect it accordingly.
-- Relay access control matters. Even though events are encrypted, a compromised relay could withhold events (denial of service). Use your own relays.
-- NIP-59 Gift Wrap hides metadata (sender, recipient, timestamps) from relay operators. Even on your own relays, defense in depth.
-- Never log decrypted secret values. The existing `log-sanitizer.ts` should be extended to catch common secret patterns.
+1. Explicit app registry secrets config.
+2. Repo `redshift.yaml`.
+3. Wingman environment defaults such as `REDSHIFT_DEFAULT_RELAYS`.
+4. Redshift CLI config only for Phase 1 CLI execution, never as a silent override of registry settings.
+
+Wingman server configuration should use dedicated Redshift names:
+
+```dotenv
+REDSHIFT_RUNTIME_NSEC=<hex-or-nsec>         # dedicated Redshift runtime identity, not KeyTeleport
+REDSHIFT_DEFAULT_RELAYS=ws://localhost:7777 # fallback relay list for native/UI phases
+REDSHIFT_ALLOW_ENV_FALLBACK=false           # default false; explicit opt-in only
+```
+
+## Phase 1: Harden Existing CLI Integration
+
+**Goal:** Keep the existing `redshift.yaml` -> `redshift run -- ...` behavior, but make it safe, diagnosable, and tested.
+
+Work items:
+
+- In `src/agents/ecosystem-generator.ts`, quote every generated shell metadata value with the existing `shellQuote` helper. Add tests for spaces, apostrophes, quotes, semicolons, command substitution characters, and shell metacharacters in app labels, aliases, ids, and paths.
+- Decide metadata scope deliberately. Preferred command shape is `redshift run -- env APP_ID=... APP_LABEL=... <start command>` so app metadata is visible to the child app but not to Redshift unless Redshift specifically needs it.
+- Add preflight diagnostics for the same runtime user/environment that PM2 will use: `redshift` executable exists, `redshift.yaml` parses, working directory is correct, HOME/config path is the one Redshift will use, and the configured identity can access the target namespace.
+- Remove any plan or code path that sets `REDSHIFT_NSEC` from `KEYTELEPORT_PRIVKEY` for child apps.
+- Fail closed for Redshift-enabled apps by default. Missing CLI, unauthenticated CLI, relay timeout, malformed `redshift.yaml`, no matching event, and decryption failure must stop startup with actionable logs. Fallback to `.env` requires explicit app-owner opt-in.
+- Add assertions that generated ecosystem config does not contain `.env` values, decrypted Redshift values, `KEYTELEPORT_PRIVKEY`, or any `REDSHIFT_NSEC` derived from it.
+
+## Phase 2: Native Runtime Integration
+
+**Goal:** Fetch and decrypt Redshift secrets in Wingman code without requiring the Redshift CLI, while keeping decrypted values and runtime private keys out of generated PM2 config.
+
+Proposed modules:
+
+- `src/secrets/redshift-provider.ts`: parse normalized config, connect to relays, fetch candidate events, select the accepted version, decrypt with the dedicated runtime key, and return a secret record.
+- `src/secrets/secret-injector.ts`: prepare the app startup environment through a wrapper boundary, apply explicit override policy, register known secret values with redaction, and produce structured failure diagnostics.
+- `src/secrets/redshift-runtime-key.ts`: load `REDSHIFT_RUNTIME_NSEC`, derive/display pubkey, validate key format, support rotation state, and reject `KEYTELEPORT_PRIVKEY` unless an explicit development/migration flag is set.
+
+Relay fetch policy:
+
+- Startup blocks on secret fetch for Redshift-enabled apps.
+- Default timeout budget: short and bounded, for example 5 seconds total with per-relay deadlines. The exact values should be codified with config knobs.
+- Retry transient relay/network errors within the budget, but do not retry decryption or authorization failures as transient.
+- If multiple relays return events, choose the highest valid version for the expected namespace, recipient, and manifest hash. Relay disagreement is logged as a warning with event ids, not plaintext.
+- Reject stale runtime-recipient wraps whose version/hash does not match the current user-authoritative manifest.
+- Fail closed by default on timeout, no event, stale event, decrypt failure, or manifest mismatch.
+
+Injection boundary:
+
+- Preferred first native implementation is a wrapper process that fetches/decrypts immediately before `exec` and keeps secrets out of ecosystem `env`.
+- The final application may still receive secrets as environment variables for compatibility. That residual exposure must be documented: same OS user, PM2 tooling, and process inspection may observe app env.
+- Alternatives to evaluate before locking the first native implementation: stdin, inherited file descriptor, temporary file on tmpfs with strict permissions, and app-specific config handoff. Env remains acceptable only as an explicit compatibility tradeoff.
+
+Local override policy:
+
+- Local `.env` overrides are disabled by default for Redshift-enabled apps.
+- If enabled, precedence is explicit and visible: app owner chooses either "Redshift wins" or "local override wins" per app/environment.
+- Every local override startup emits an audit log entry with key names only, never values.
+- Redshift failures cannot be masked by local overrides unless the app owner enables a separate "allow startup without Redshift" policy.
+
+Status endpoint:
+
+- `GET /api/apps/:id/secrets/status` is owner/app-authorized through the existing app API authorization path.
+- Response fields are minimal: configured boolean, active namespace, relay health/error class, latest accepted event id/version/hash if known, and runtime pubkey fingerprint.
+- Secret count is omitted unless product UX later proves it is needed.
+- Persisted metadata lives in app registry secrets status or a dedicated secrets status table; it stores event ids, versions, hashes, timestamps, and error classes, never values.
+
+## Phase 3: User Secret Management UI and API
+
+**Goal:** Let authorized users manage per-app secrets from Flight Deck without relying on the Redshift CLI.
+
+Browser flow:
+
+1. User enters or edits secrets in the browser.
+2. Browser produces the user-authoritative encrypted payload using the user's key.
+3. Browser or Wingman publishes encrypted events only to configured/allowed relays.
+4. Browser also produces a runtime-recipient wrap for the dedicated Wingman Redshift runtime/app pubkey, not the KeyTeleport pubkey.
+5. Both user and runtime wraps carry the same logical `secretSetId`, namespace, environment, version, and content hash.
+
+Deletion and stale-wrap handling:
+
+- Whole-set replacement is preferred for v1 to avoid partial-delete ambiguity.
+- Deletions produce a higher version/hash and, where needed, tombstone metadata.
+- Wingman runtime only accepts a runtime-recipient wrap whose version/hash matches the user-authoritative manifest.
+
+API boundaries:
+
+- `POST /api/apps/:id/secrets/events` may act as a relay write helper, not a generic event proxy. It verifies owner/app authorization, expected namespace/d-tag, event kind, tags, recipient set, runtime pubkey, relay allowlist, payload size, and rate limits before publishing or forwarding.
+- `GET /api/apps/:id/secrets/status` returns status only, not values.
+- UI key-name display should prefer browser-side decrypt. If server-side key-name metadata is needed, cache only names keyed to a verified event hash/version and treat names as sensitive metadata. Routine dashboard reads must not decrypt full secret payloads on the server.
+
+## Phase 4: Team Secret Sharing
+
+**Goal:** Support multiple authorized users for one app secret set.
+
+This phase has two independent design tracks:
+
+- **Cryptographic distribution:** likely possible today with multiple single-recipient wraps if event addressing is defined. Candidate layouts are recipient-specific d-tags or a manifest event that references per-recipient wrap event ids.
+- **Team authorization product design:** membership source of truth, who can add recipients, who can rotate runtime recipients, audit log, stale wrap cleanup, and revocation behavior.
+
+Revocation means publishing a higher-version secret set re-wrapped to the remaining recipients and runtime pubkey. It cannot erase ciphertext already seen by a revoked user; it only prevents future updates from being decryptable by that user.
+
+## Logging and Redaction Requirements
+
+- Never log decrypted secret values.
+- Native integration registers known decrypted values for exact redaction before starting app processes or serializing errors.
+- Phase 1 CLI cannot know secret values, so it must avoid echoing Redshift output that may contain values and must apply generic token-pattern redaction to captured stdout/stderr and diagnostics.
+- Extend `log-sanitizer.ts`; it currently strips ANSI/control characters and must gain tested secret redaction behavior.
+- Tests cover known values, key names where appropriate, token-like strings, PM2 stdout/stderr capture, generated ecosystem files, and API error serialization.
+
+## Acceptance Criteria
+
+Phase 1 is complete when:
+
+- Generated command snapshots show `redshift run -- ...` for `redshift.yaml` apps and no `.env` serialization.
+- All app metadata shell values are quoted safely.
+- CLI missing, unauthenticated CLI, wrong runtime HOME/config, malformed `redshift.yaml`, relay timeout, no matching event, and decryption failure produce actionable fail-closed diagnostics.
+- No generated ecosystem config contains `.env` values, decrypted Redshift values, `KEYTELEPORT_PRIVKEY`, `REDSHIFT_NSEC` derived from it, or other root-key-equivalent material.
+- Explicit `.env` fallback policy is covered by tests and is off by default.
+
+Phase 2 is complete when:
+
+- `KEYTELEPORT_PRIVKEY` is not accepted as the default runtime decrypt identity.
+- Dedicated runtime key loading, pubkey display, and rotation metadata exist.
+- Relay fetch has bounded timeout/retry behavior and deterministic version/hash selection.
+- Runtime wrapper keeps decrypted values out of ecosystem `env`; any final app env exposure is documented and tested as the chosen compatibility boundary.
+- Local override and startup-without-Redshift policies are explicit, audited, and covered by tests.
+
+Phase 3 is complete when:
+
+- Secret events are accepted only after owner/app authorization, namespace validation, expected recipient checks, kind/tag validation, relay allowlist checks, size limits, and rate limits.
+- User and runtime wraps share `secretSetId`, version, and content hash.
+- UI reads do not decrypt full server-side payloads merely to list names.
+- Deletion and stale runtime wrap rejection are tested.
 
 ## Open Questions
 
-1. **Vendor or depend?** — `@redshift/crypto` uses nostr-tools + @noble libs we already have. Worth vendoring the Gift Wrap functions (~350 lines) to avoid version conflicts, or just add the dependency?
-2. **Secret rotation UX** — when a user updates a secret, how do running apps pick it up? Restart required, or watch for relay events?
-3. **Offline/relay-down fallback** — if relays are unreachable at app startup, should there be a local encrypted cache? What's the cache invalidation strategy?
-4. **Redshift project maturity** — the project is young. We should evaluate stability before deep integration. Phase 1 (CLI wrapper) is low-risk regardless.
+1. **Dependency choice:** Add `@redshift/crypto` or vendor only the needed Gift Wrap functions?
+2. **Runtime key scope:** Start with one `REDSHIFT_RUNTIME_NSEC` per host or generate app-scoped runtime keys immediately?
+3. **Secret rotation UX:** Require app restart for new secrets first, or watch relay events and restart/reload apps automatically?
+4. **Offline cache:** Should native integration support a local encrypted cache? If yes, what key encrypts it, what is the TTL, and can it ever start an app after relay failure?
+5. **Browser decrypt:** Can the current Tier 2 browser/SSE path safely expose NIP-44/NIP-59 decrypt operations, or is NIP-46 the better delegation boundary?
+6. **Team sharing layout:** Recipient-specific d-tags or manifest event with referenced per-recipient wrap event ids?
+7. **Redshift CLI verification:** Which exact CLI commands support identity discovery, recipient targeting, config path inspection, and noninteractive preflight?

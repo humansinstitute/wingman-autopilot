@@ -52,6 +52,7 @@ import { initSchedulerPage } from "./scheduler/page.js";
 import { initJobsStore } from "./jobs/store.js";
 import { initJobsPage } from "./jobs/page.js";
 import { dispatchJobRun, fetchJobDefinitions } from "./jobs/api.js";
+import { initPipelinesPage } from "./pipelines/page.js";
 import { initSessionsStore } from "./sessions/store.js";
 import { initAppsStore } from "./apps/store.js";
 import { createSessionRuntimeActions } from "./sessions/runtime-actions.js";
@@ -230,6 +231,8 @@ let renderSchedulerPage = () => document.createDocumentFragment();
 let ensureSchedulerPageLoaded = () => {};
 let renderJobsPage = () => document.createDocumentFragment();
 let ensureJobsPageLoaded = () => {};
+let renderPipelinesPage = () => document.createDocumentFragment();
+let ensurePipelinesPageLoaded = () => {};
 let projectsFeatureEnabledForViewer = () => true;
 let syncFeatureFlagsFromConfig = () => {};
 let scheduleDirectorySuggestions = () => {};
@@ -469,6 +472,7 @@ const NIGHTWATCH_ROUTE = "/nightwatch";
 const SCHEDULER_ROUTE = "/scheduler";
 const TRIGGERS_ROUTE = "/triggers";
 const JOBS_ROUTE = "/jobs";
+const PIPELINES_ROUTE = "/pipelines";
 const HOME_ROUTE = "/home";
 const PRIVACY_ROUTE = "/privacy";
 
@@ -498,6 +502,9 @@ const getRouteFromPath = (pathname) => {
   }
   if (pathname === JOBS_ROUTE) {
     return "jobs";
+  }
+  if (pathname === PIPELINES_ROUTE || pathname.startsWith(`${PIPELINES_ROUTE}/`)) {
+    return "pipelines";
   }
   if (pathname === LIVE_ROUTE_PREFIX || pathname.startsWith(`${LIVE_ROUTE_PREFIX}/`)) {
     return "live";
@@ -1243,6 +1250,8 @@ const updateDocumentTitle = () => {
     title = "Triggers - Wingman";
   } else if (currentRoute === "jobs") {
     title = "Jobs - Wingman";
+  } else if (currentRoute === "pipelines") {
+    title = "Pipelines - Wingman";
   } else if (currentRoute === "home") {
     title = "Home - Wingman";
   }
@@ -1818,6 +1827,9 @@ const appRenderer = createAppRenderer({
     }
     if (route === "jobs") {
       return renderJobsPage();
+    }
+    if (route === "pipelines") {
+      return renderPipelinesPage();
     }
     if (route === "files") {
       return renderFiles();
@@ -2411,6 +2423,10 @@ const jobsPageUI = initJobsPage({ showToast });
 renderJobsPage = jobsPageUI.renderPage;
 ensureJobsPageLoaded = jobsPageUI.ensureLoaded;
 
+const pipelinesPageUI = initPipelinesPage({ showToast });
+renderPipelinesPage = pipelinesPageUI.renderPage;
+ensurePipelinesPageLoaded = pipelinesPageUI.ensureLoaded;
+
 renderMenuIdentitySection();
 
 const handleTouchStart = (event) => {
@@ -2503,6 +2519,7 @@ const {
   ensureNightWatchPageLoaded: (...args) => ensureNightWatchPageLoaded(...args),
   ensureSchedulerPageLoaded: (...args) => ensureSchedulerPageLoaded(...args),
   ensureJobsPageLoaded: (...args) => ensureJobsPageLoaded(...args),
+  ensurePipelinesPageLoaded: (...args) => ensurePipelinesPageLoaded(...args),
   loadFilesTree: (...args) => loadFilesTree(...args),
   updateFilesUrl: (...args) => updateFilesUrl(...args),
   getActiveSessionForIndicator,
@@ -2514,6 +2531,7 @@ const {
   TRIGGERS_ROUTE,
   SCHEDULER_ROUTE,
   JOBS_ROUTE,
+  PIPELINES_ROUTE,
   SETTINGS_ROUTE,
   PRIVACY_ROUTE,
   navLinks,
@@ -2645,6 +2663,8 @@ window.addEventListener("popstate", () => {
     } else {
       void ensureJobsPageLoaded();
     }
+  } else if (currentRoute === "pipelines") {
+    void ensurePipelinesPageLoaded();
   }
   render();
 });

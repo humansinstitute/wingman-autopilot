@@ -29,6 +29,7 @@ import { handleSystemRoutes, type SystemRoutesContext } from "./system-routes";
 import { handleAgentChatApi, type AgentChatApiContext } from './agent-chat-routes';
 import { handleDelegationApi, type DelegationRoutesContext } from "./delegation-routes";
 import { handleOwnerSpaceApi } from "./owner-space-routes";
+import { handlePipelineApi, type PipelineApiContext } from "../pipelines/pipeline-api-routes";
 import type { WorkspaceDelegationStore } from "../storage/workspace-delegation-store";
 import { getEffectiveOwnerNpub } from "../auth/effective-owner";
 
@@ -93,6 +94,7 @@ export interface ApiRoutesContext {
   voiceNoteUploadApiContext: VoiceNoteUploadApiContext;
   agentChatApiContext?: AgentChatApiContext;
   delegationRoutesContext: DelegationRoutesContext;
+  pipelineApiContext?: PipelineApiContext;
   workspaceDelegationStore: WorkspaceDelegationStore;
 
   // Stores accessed directly by handleApi
@@ -243,6 +245,15 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
     const billingApiResponse = await handleBillingApi(request, url, method, authContext, ctx.billingApiContext);
     if (billingApiResponse) {
       return billingApiResponse;
+    }
+
+    if (pathname.startsWith("/api/pipelines") && ctx.pipelineApiContext) {
+      const pipelineAuthContext = ctx.resolveNip98AuthContext(request, url, authContext);
+      const pipelineResponse = await runWithRequestContext(
+        pipelineAuthContext,
+        () => handlePipelineApi(request, url, method, pipelineAuthContext, ctx.pipelineApiContext),
+      );
+      if (pipelineResponse) return pipelineResponse;
     }
 
     if (pathname.startsWith("/api/npub-projects")) {

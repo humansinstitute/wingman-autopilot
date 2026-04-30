@@ -18,6 +18,7 @@ import { databaseFile } from "../storage/message-store";
 // ============================================================
 
 export type TriggerType = "cron" | "file_watcher" | "nostr";
+export type SchedulerActionType = "session" | "pipeline";
 
 export interface ScheduledJob {
   id: string;
@@ -37,6 +38,9 @@ export interface ScheduledJob {
   filePattern: string;
   activeStartTime: string | null;
   activeEndTime: string | null;
+  actionType: SchedulerActionType;
+  pipelineDefinitionId: string | null;
+  pipelineInputJson: string | null;
   enabled: boolean;
   lastRunAt: string | null;
   nextRunAt: string | null;
@@ -48,6 +52,7 @@ export interface ScheduledJobRun {
   id: string;
   jobId: string;
   sessionId: string | null;
+  pipelineRunId: string | null;
   startedAt: string;
   status: "started" | "success" | "error";
   errorMessage: string | null;
@@ -70,6 +75,9 @@ export interface CreateJobInput {
   filePattern?: string;
   activeStartTime?: string;
   activeEndTime?: string;
+  actionType?: SchedulerActionType;
+  pipelineDefinitionId?: string | null;
+  pipelineInputJson?: string | null;
 }
 
 export interface UpdateJobInput {
@@ -85,6 +93,9 @@ export interface UpdateJobInput {
   filePattern?: string;
   activeStartTime?: string | null;
   activeEndTime?: string | null;
+  actionType?: SchedulerActionType;
+  pipelineDefinitionId?: string | null;
+  pipelineInputJson?: string | null;
   enabled?: boolean;
   lastRunAt?: string;
   nextRunAt?: string;
@@ -112,6 +123,9 @@ interface RawJobRow {
   filePattern: string;
   activeStartTime: string | null;
   activeEndTime: string | null;
+  actionType: string;
+  pipelineDefinitionId: string | null;
+  pipelineInputJson: string | null;
   enabled: number;
   lastRunAt: string | null;
   nextRunAt: string | null;
@@ -124,6 +138,7 @@ function rowToJob(row: RawJobRow): ScheduledJob {
     ...row,
     nightwatchmanEnabled: Boolean(row.nightwatchmanEnabled),
     triggerType: (row.triggerType || "cron") as TriggerType,
+    actionType: (row.actionType || "session") as SchedulerActionType,
     filePattern: row.filePattern || "*",
     enabled: Boolean(row.enabled),
   };
@@ -151,6 +166,9 @@ const JOB_SELECT_COLS = `
   file_pattern AS filePattern,
   active_start_time AS activeStartTime,
   active_end_time AS activeEndTime,
+  action_type AS actionType,
+  pipeline_definition_id AS pipelineDefinitionId,
+  pipeline_input_json AS pipelineInputJson,
   enabled,
   last_run_at AS lastRunAt,
   next_run_at AS nextRunAt,
@@ -185,9 +203,10 @@ class SchedulerStore {
            nightwatchman_enabled, trigger_type, cron_expression, timezone,
            watch_directory, file_pattern,
            active_start_time, active_end_time,
+           action_type, pipeline_definition_id, pipeline_input_json,
            enabled, last_run_at, next_run_at,
            created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, 1, NULL, NULL, ?18, ?19)`,
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, 1, NULL, NULL, ?21, ?22)`,
       )
       .run(
         id,
@@ -207,6 +226,9 @@ class SchedulerStore {
         input.filePattern ?? "*",
         input.activeStartTime ?? null,
         input.activeEndTime ?? null,
+        input.actionType ?? "session",
+        input.pipelineDefinitionId ?? null,
+        input.pipelineInputJson ?? null,
         now,
         now,
       );
@@ -303,6 +325,18 @@ class SchedulerStore {
       sets.push(`active_end_time = ?${paramIndex++}`);
       values.push(input.activeEndTime);
     }
+    if (input.actionType !== undefined) {
+      sets.push(`action_type = ?${paramIndex++}`);
+      values.push(input.actionType);
+    }
+    if (input.pipelineDefinitionId !== undefined) {
+      sets.push(`pipeline_definition_id = ?${paramIndex++}`);
+      values.push(input.pipelineDefinitionId);
+    }
+    if (input.pipelineInputJson !== undefined) {
+      sets.push(`pipeline_input_json = ?${paramIndex++}`);
+      values.push(input.pipelineInputJson);
+    }
     if (input.enabled !== undefined) {
       sets.push(`enabled = ?${paramIndex++}`);
       values.push(input.enabled ? 1 : 0);
@@ -347,8 +381,8 @@ class SchedulerStore {
     const now = new Date().toISOString();
     this.db
       .query(
-        `INSERT INTO scheduled_job_runs (id, job_id, session_id, started_at, status, error_message)
-         VALUES (?1, ?2, NULL, ?3, 'started', NULL)`,
+        `INSERT INTO scheduled_job_runs (id, job_id, session_id, pipeline_run_id, started_at, status, error_message)
+         VALUES (?1, ?2, NULL, NULL, ?3, 'started', NULL)`,
       )
       .run(id, jobId, now);
     return id;
@@ -359,14 +393,15 @@ class SchedulerStore {
     status: "success" | "error",
     sessionId?: string,
     errorMessage?: string,
+    pipelineRunId?: string,
   ): void {
     this.db
       .query(
         `UPDATE scheduled_job_runs
-         SET status = ?2, session_id = ?3, error_message = ?4
+         SET status = ?2, session_id = ?3, error_message = ?4, pipeline_run_id = ?5
          WHERE id = ?1`,
       )
-      .run(runId, status, sessionId ?? null, errorMessage ?? null);
+      .run(runId, status, sessionId ?? null, errorMessage ?? null, pipelineRunId ?? null);
   }
 
   getJobRuns(jobId: string, limit = 20): ScheduledJobRun[] {
@@ -376,6 +411,7 @@ class SchedulerStore {
            id,
            job_id AS jobId,
            session_id AS sessionId,
+           pipeline_run_id AS pipelineRunId,
            started_at AS startedAt,
            status,
            error_message AS errorMessage
@@ -404,6 +440,9 @@ class SchedulerStore {
         working_directory TEXT NOT NULL,
         initial_prompt TEXT NOT NULL,
         nightwatchman_enabled INTEGER NOT NULL DEFAULT 1,
+        action_type TEXT NOT NULL DEFAULT 'session',
+        pipeline_definition_id TEXT,
+        pipeline_input_json TEXT,
         cron_expression TEXT NOT NULL,
         timezone TEXT NOT NULL DEFAULT 'UTC',
         enabled INTEGER NOT NULL DEFAULT 1,
@@ -422,6 +461,7 @@ class SchedulerStore {
         id TEXT PRIMARY KEY,
         job_id TEXT NOT NULL,
         session_id TEXT,
+        pipeline_run_id TEXT,
         started_at TEXT NOT NULL,
         status TEXT NOT NULL,
         error_message TEXT,
@@ -441,6 +481,10 @@ class SchedulerStore {
       "ALTER TABLE scheduled_jobs ADD COLUMN file_pattern TEXT DEFAULT '*'",
       "ALTER TABLE scheduled_jobs ADD COLUMN active_start_time TEXT",
       "ALTER TABLE scheduled_jobs ADD COLUMN active_end_time TEXT",
+      "ALTER TABLE scheduled_jobs ADD COLUMN action_type TEXT NOT NULL DEFAULT 'session'",
+      "ALTER TABLE scheduled_jobs ADD COLUMN pipeline_definition_id TEXT",
+      "ALTER TABLE scheduled_jobs ADD COLUMN pipeline_input_json TEXT",
+      "ALTER TABLE scheduled_job_runs ADD COLUMN pipeline_run_id TEXT",
     ];
     for (const sql of migrations) {
       try { this.db.exec(sql); } catch { /* column already exists */ }

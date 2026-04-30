@@ -42,6 +42,22 @@ function validateCronExpression(expr: string): boolean {
   return parts.length >= 5 && parts.length <= 6;
 }
 
+function parsePipelineInput(value: unknown): { ok: true; json: string } | { ok: false; error: string } {
+  if (value === undefined || value === null || value === "") return { ok: true, json: "{}" };
+  let parsed = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return { ok: false, error: "pipelineInput must be valid JSON" };
+    }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, error: "pipelineInput must be a JSON object" };
+  }
+  return { ok: true, json: JSON.stringify(parsed) };
+}
+
 // ============================================================
 // Route Handlers
 // ============================================================
@@ -78,6 +94,9 @@ async function handleCreateJob(
   const agent = typeof body.agent === "string" ? body.agent.trim() : "";
   const workingDirectory = typeof body.workingDirectory === "string" ? body.workingDirectory.trim() : "";
   const initialPrompt = typeof body.initialPrompt === "string" ? body.initialPrompt.trim() : "";
+  const actionType = body.actionType === "pipeline" ? "pipeline" as const : "session" as const;
+  const pipelineDefinitionId = typeof body.pipelineDefinitionId === "string" ? body.pipelineDefinitionId.trim() : "";
+  const pipelineInput = parsePipelineInput(body.pipelineInput ?? body.pipelineInputJson);
   const triggerType = body.triggerType === "file_watcher"
     ? "file_watcher" as const
     : body.triggerType === "nostr"
@@ -92,15 +111,20 @@ async function handleCreateJob(
   const activeEndTime = typeof body.activeEndTime === "string" ? body.activeEndTime.trim() : null;
 
   if (!name) return Response.json({ error: "name is required" }, { status: 400 });
-  if (!VALID_AGENTS.includes(agent as typeof VALID_AGENTS[number])) {
-    return Response.json({ error: `agent must be one of: ${AGENT_TYPE_LIST}` }, { status: 400 });
+  if (actionType === "pipeline") {
+    if (!pipelineDefinitionId) return Response.json({ error: "pipelineDefinitionId is required" }, { status: 400 });
+    if (!pipelineInput.ok) return Response.json({ error: pipelineInput.error }, { status: 400 });
+  } else {
+    if (!VALID_AGENTS.includes(agent as typeof VALID_AGENTS[number])) {
+      return Response.json({ error: `agent must be one of: ${AGENT_TYPE_LIST}` }, { status: 400 });
+    }
+    if (!workingDirectory) return Response.json({ error: "workingDirectory is required" }, { status: 400 });
+    const wdResult = PathSchema.safeParse(workingDirectory);
+    if (!wdResult.success) {
+      return Response.json({ error: wdResult.error.issues[0]?.message ?? "Invalid workingDirectory" }, { status: 400 });
+    }
+    if (!initialPrompt) return Response.json({ error: "initialPrompt is required" }, { status: 400 });
   }
-  if (!workingDirectory) return Response.json({ error: "workingDirectory is required" }, { status: 400 });
-  const wdResult = PathSchema.safeParse(workingDirectory);
-  if (!wdResult.success) {
-    return Response.json({ error: wdResult.error.issues[0]?.message ?? "Invalid workingDirectory" }, { status: 400 });
-  }
-  if (!initialPrompt) return Response.json({ error: "initialPrompt is required" }, { status: 400 });
 
   // Validate active window times (HH:MM format)
   const timeRe = /^\d{2}:\d{2}$/;
@@ -147,10 +171,10 @@ async function handleCreateJob(
     botNpub: botKey.botNpub,
     wrappedKeyCiphertext: wrapped.ciphertext,
     wrappedKeyNonce: wrapped.nonce,
-    agent,
-    workingDirectory,
-    initialPrompt,
-    nightwatchmanEnabled,
+    agent: actionType === "session" ? agent : "codex",
+    workingDirectory: actionType === "session" ? workingDirectory : "",
+    initialPrompt: actionType === "session" ? initialPrompt : "",
+    nightwatchmanEnabled: actionType === "session" ? nightwatchmanEnabled : false,
     triggerType,
     cronExpression,
     timezone,
@@ -158,6 +182,9 @@ async function handleCreateJob(
     filePattern: triggerType === "file_watcher" ? filePattern : undefined,
     activeStartTime: activeStartTime || undefined,
     activeEndTime: activeEndTime || undefined,
+    actionType,
+    pipelineDefinitionId: actionType === "pipeline" ? pipelineDefinitionId : null,
+    pipelineInputJson: actionType === "pipeline" && pipelineInput.ok ? pipelineInput.json : null,
   });
 
   // Schedule it
@@ -184,6 +211,17 @@ async function handleUpdateJob(
   const update: Record<string, unknown> = {};
 
   if (typeof body.name === "string") update.name = body.name.trim();
+  if (body.actionType === "session" || body.actionType === "pipeline") {
+    update.actionType = body.actionType;
+  }
+  if (typeof body.pipelineDefinitionId === "string") {
+    update.pipelineDefinitionId = body.pipelineDefinitionId.trim() || null;
+  }
+  if (body.pipelineInput !== undefined || body.pipelineInputJson !== undefined) {
+    const pipelineInput = parsePipelineInput(body.pipelineInput ?? body.pipelineInputJson);
+    if (!pipelineInput.ok) return Response.json({ error: pipelineInput.error }, { status: 400 });
+    update.pipelineInputJson = pipelineInput.json;
+  }
   if (typeof body.agent === "string") {
     if (!VALID_AGENTS.includes(body.agent as typeof VALID_AGENTS[number])) {
       return Response.json({ error: `agent must be one of: ${AGENT_TYPE_LIST}` }, { status: 400 });
@@ -293,8 +331,8 @@ async function handleTriggerJob(
   }
 
   try {
-    const sessionId = await deps.engine.executeJob(jobId);
-    return Response.json({ sessionId });
+    const result = await deps.engine.executeJob(jobId);
+    return Response.json(result);
   } catch (err) {
     return Response.json(
       { error: (err as Error).message },

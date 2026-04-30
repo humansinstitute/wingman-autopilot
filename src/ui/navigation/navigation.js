@@ -27,6 +27,7 @@
  * @param {Function} deps.ensureNightWatchPageLoaded      - lazy loader for night watch page
  * @param {Function} deps.ensureSchedulerPageLoaded       - lazy loader for scheduler page
  * @param {Function} deps.ensureJobsPageLoaded            - lazy loader for jobs page
+ * @param {Function} deps.ensurePipelinesPageLoaded       - lazy loader for pipelines page
  * @param {Function} deps.loadFilesTree                   - loads the files tree
  * @param {Function} deps.updateFilesUrl                  - updates the URL for the files view
  * @param {Function} deps.getActiveSessionForIndicator    - returns the active session for the indicator
@@ -38,6 +39,7 @@
  * @param {string} deps.TRIGGERS_ROUTE                    - route path constant
  * @param {string} deps.SCHEDULER_ROUTE                   - route path constant
  * @param {string} deps.JOBS_ROUTE                        - route path constant
+ * @param {string} deps.PIPELINES_ROUTE                   - route path constant
  * @param {string} deps.SETTINGS_ROUTE                    - route path constant
  * @param {string} deps.PRIVACY_ROUTE                     - route path constant
  * @param {Element[]} deps.navLinks                       - nav anchor elements with data-route
@@ -71,6 +73,7 @@ export function createNavigation(deps) {
     ensureNightWatchPageLoaded,
     ensureSchedulerPageLoaded,
     ensureJobsPageLoaded,
+    ensurePipelinesPageLoaded,
     loadFilesTree,
     updateFilesUrl,
     getActiveSessionForIndicator,
@@ -82,6 +85,7 @@ export function createNavigation(deps) {
     TRIGGERS_ROUTE,
     SCHEDULER_ROUTE,
     JOBS_ROUTE,
+    PIPELINES_ROUTE,
     SETTINGS_ROUTE,
     PRIVACY_ROUTE,
     navLinks,
@@ -232,6 +236,25 @@ export function createNavigation(deps) {
     render();
   }
 
+  function navigateToPipelines({ skipMenuClose = false } = {}) {
+    if (!state.identity.authenticated) {
+      openIdentityLoginDialog();
+      return;
+    }
+    if (!skipMenuClose) {
+      closeMenu();
+    }
+    closeIdentityLoginDialog();
+    deactivateLiveSessionRefresh();
+    setCurrentRoute("pipelines");
+    setLastLoggedSessionId(null);
+    if (window.location.pathname !== PIPELINES_ROUTE) {
+      window.history.pushState({ route: "pipelines" }, "", PIPELINES_ROUTE);
+    }
+    void ensurePipelinesPageLoaded();
+    render();
+  }
+
   function navigateToSettings({ skipMenuClose = false } = {}) {
     if (!skipMenuClose) {
       closeMenu();
@@ -285,6 +308,9 @@ export function createNavigation(deps) {
           return;
         } else if (targetRoute === "jobs") {
           navigateToJobs({ skipMenuClose: true });
+          return;
+        } else if (targetRoute === "pipelines") {
+          navigateToPipelines({ skipMenuClose: true });
           return;
         } else if (targetRoute === "files") {
           // If navigating from live page with an active session, start in that session's directory
@@ -397,6 +423,7 @@ export function createNavigation(deps) {
     navigateToNightWatch,
     navigateToScheduler,
     navigateToJobs,
+    navigateToPipelines,
     navigateToSettings,
     setupNavListeners,
   };
