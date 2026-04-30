@@ -123,8 +123,9 @@ function renderDefinitionDetail(state, definition) {
         <span class="wm-pipeline-status-chip" data-status="${escapeAttribute(definition.scope)}">${escapeHtml(definition.scope)}</span>
       </header>
       <div class="wm-pipeline-definition-actions">
-        <button type="button" data-action="open-launcher-for-definition" data-id="${escapeAttribute(definition.id)}">Run</button>
-        <button type="button" data-action="open-edit-wizard" data-id="${escapeAttribute(definition.id)}" ${definition.scope !== "user" ? "disabled title='Shared definitions must be duplicated before editing'" : ""}>Edit with Wizard</button>
+        <button type="button" data-action="open-launcher-for-definition" data-id="${escapeAttribute(definition.id)}" aria-label="Run pipeline definition">Run</button>
+        <button type="button" data-action="open-manual-edit" data-id="${escapeAttribute(definition.id)}" aria-label="Manually edit pipeline definition" ${definition.scope !== "user" ? "disabled title='Shared definitions must be duplicated before editing'" : ""}>Manual Edit</button>
+        <button type="button" data-action="open-edit-wizard" data-id="${escapeAttribute(definition.id)}" aria-label="Edit pipeline definition with wizard" ${definition.scope !== "user" ? "disabled title='Shared definitions must be duplicated before editing'" : ""}>Edit with Wizard</button>
       </div>
       ${definition.scope !== "user" ? `<p class="wm-muted">Shared definitions cannot be edited directly. Create a user-owned version before changing them.</p>` : ""}
       <dl class="wm-pipeline-facts">
@@ -133,6 +134,7 @@ function renderDefinitionDetail(state, definition) {
         <div><dt>Scope</dt><dd>${escapeHtml(definition.scope)}</dd></div>
         <div><dt>Path</dt><dd><code>${escapeHtml(definition.path)}</code></dd></div>
       </dl>
+      ${state.manualEditDefinitionId === definition.id ? renderManualEditPanel(state, definition) : ""}
       ${state.editDefinitionId === definition.id ? renderEditWizard(state, definition) : ""}
       <h3>Step Preview</h3>
       ${renderDefinitionFlow(definition)}
@@ -141,6 +143,54 @@ function renderDefinitionDetail(state, definition) {
         <pre>${escapeHtml(JSON.stringify(definition.input ?? {}, null, 2))}</pre>
       </details>
     </article>
+  `;
+}
+
+function renderManualEditPanel(state, definition) {
+  const form = state.manualEditForm ?? {};
+  return `
+    <section class="wm-pipeline-creator wm-pipeline-edit-panel" aria-labelledby="pipeline-manual-edit-title" data-testid="pipeline-manual-edit-panel">
+      <div class="wm-pipeline-section-heading">
+        <div>
+          <h3 id="pipeline-manual-edit-title">Manual Edit</h3>
+          <p class="wm-muted">Saves a new versioned JSON declaration and leaves this file untouched.</p>
+        </div>
+        <button type="button" data-action="cancel-manual-edit" aria-label="Close manual edit panel">Close</button>
+      </div>
+      <label class="wm-pipeline-field">
+        <span>Title</span>
+        <input type="text" data-action="manual-edit-field" data-field="name" value="${escapeAttribute(form.name ?? definition.name)}" data-testid="pipeline-manual-edit-title-input" aria-label="Pipeline title">
+      </label>
+      <label class="wm-pipeline-field">
+        <span>Description</span>
+        <textarea data-action="manual-edit-field" data-field="description" rows="3" aria-label="Pipeline description">${escapeHtml(form.description ?? definition.description ?? "")}</textarea>
+      </label>
+      <label class="wm-pipeline-field">
+        <span>Default input JSON</span>
+        <textarea data-action="manual-edit-field" data-field="inputText" rows="8" spellcheck="false" aria-label="Pipeline default input JSON">${escapeHtml(form.inputText ?? JSON.stringify(definition.input ?? {}, null, 2))}</textarea>
+      </label>
+      <label class="wm-pipeline-field">
+        <span>Workflow steps JSON</span>
+        <textarea data-action="manual-edit-field" data-field="stepsText" rows="12" spellcheck="false" aria-label="Pipeline workflow steps JSON">${escapeHtml(form.stepsText ?? JSON.stringify(definition.steps ?? [], null, 2))}</textarea>
+      </label>
+      <div class="wm-pipeline-launcher-actions">
+        <button type="button" data-action="cancel-manual-edit" aria-label="Cancel manual edit">Cancel</button>
+        <button type="button" data-action="save-manual-edit" data-id="${escapeAttribute(definition.id)}" aria-label="Save manual edit as next version" ${state.manualEditBusy ? "disabled" : ""}>
+          ${state.manualEditBusy ? "Saving..." : "Save Next Version"}
+        </button>
+      </div>
+      ${state.manualEditResult ? renderManualEditResult(state.manualEditResult) : ""}
+    </section>
+  `;
+}
+
+function renderManualEditResult(result) {
+  return `
+    <div class="wm-pipeline-wizard-result" role="status">
+      <strong>Saved new version</strong>
+      <p>Target <code>${escapeHtml(result.targetPath ?? "")}</code></p>
+      ${result.sourcePath ? `<p>Source <code>${escapeHtml(result.sourcePath)}</code></p>` : ""}
+    </div>
   `;
 }
 

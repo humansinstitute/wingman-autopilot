@@ -7,6 +7,7 @@ import {
   fetchPipelineRun,
   editPipelineWithWizard,
   runPipelineDefinition,
+  saveManualPipelineEdit,
   startPipelineFunctionWizard,
   startPipelineWizard,
 } from "./api.js";
@@ -152,6 +153,7 @@ export function initPipelinesPage({ showToast }) {
     if (route.section !== "definitions") {
       state.creatorOpen = false;
       state.editDefinitionId = "";
+      state.manualEditDefinitionId = "";
     }
     if (route.section !== "functions") {
       state.functionCreatorOpen = false;
@@ -206,6 +208,7 @@ export function initPipelinesPage({ showToast }) {
       showToast,
       startCreateWizard,
       startEditWizard,
+      saveManualEdit,
       startSelectedRun,
       startFunctionWizard,
     }));
@@ -251,6 +254,65 @@ export function initPipelinesPage({ showToast }) {
       showToast(state.error, { type: "error" });
     } finally {
       state.editBusy = false;
+      updatePage(page);
+    }
+  }
+
+  async function saveManualEdit(page, id) {
+    if (!id) return;
+    const form = state.manualEditForm ?? {};
+    const name = String(form.name ?? "").trim();
+    if (!name) {
+      showToast("Title is required", { type: "warning" });
+      return;
+    }
+
+    let input;
+    let steps;
+    try {
+      input = JSON.parse(form.inputText || "{}");
+      steps = JSON.parse(form.stepsText || "[]");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), { type: "error" });
+      return;
+    }
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      showToast("Default input must be a JSON object", { type: "warning" });
+      return;
+    }
+    if (!Array.isArray(steps)) {
+      showToast("Workflow steps must be a JSON array", { type: "warning" });
+      return;
+    }
+
+    state.manualEditBusy = true;
+    state.manualEditResult = null;
+    state.error = null;
+    updatePage(page);
+    try {
+      state.manualEditResult = await saveManualPipelineEdit(id, {
+        name,
+        description: String(form.description ?? ""),
+        input,
+        steps,
+      });
+      const definitions = await fetchPipelineDefinitions();
+      state.definitions = definitions.definitions ?? [];
+      const nextId = state.manualEditResult.definition?.id;
+      if (nextId) {
+        state.selectedDefinitionId = nextId;
+        state.manualEditDefinitionId = "";
+        await navigateToPipelinePath(page, makePipelinePath("definitions", nextId));
+      } else {
+        updatePage(page);
+      }
+      showToast("Pipeline version saved", { type: "success" });
+    } catch (error) {
+      state.error = error instanceof Error ? error.message : String(error);
+      showToast(state.error, { type: "error" });
+      updatePage(page);
+    } finally {
+      state.manualEditBusy = false;
       updatePage(page);
     }
   }

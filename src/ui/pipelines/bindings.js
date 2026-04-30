@@ -88,6 +88,20 @@ function bindWizardActions(root, page, actions) {
   root.querySelector('[data-action="open-edit-wizard"]')?.addEventListener("click", (event) => {
     actions.openEditWizard(page, event.currentTarget?.dataset?.id ?? "");
   });
+  root.querySelector('[data-action="open-manual-edit"]')?.addEventListener("click", (event) => {
+    actions.openManualEdit(page, event.currentTarget?.dataset?.id ?? "");
+  });
+  root.querySelectorAll('[data-action="cancel-manual-edit"]').forEach((button) => {
+    button.addEventListener("click", () => actions.cancelManualEdit(page));
+  });
+  root.querySelectorAll('[data-action="manual-edit-field"]').forEach((input) => {
+    input.addEventListener("input", (event) => {
+      actions.updateManualEditField(event.target?.dataset?.field ?? "", event.target?.value ?? "");
+    });
+  });
+  root.querySelector('[data-action="save-manual-edit"]')?.addEventListener("click", async (event) => {
+    await actions.saveManualEdit(page, event.currentTarget?.dataset?.id ?? "");
+  });
   root.querySelector('[data-action="cancel-edit-wizard"]')?.addEventListener("click", () => actions.cancelEditWizard(page));
   root.querySelector('[data-action="edit-prompt"]')?.addEventListener("input", (event) => {
     actions.updateEditPrompt(event.target?.value ?? "");

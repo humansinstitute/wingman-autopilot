@@ -331,6 +331,26 @@ export async function listPipelineDefinitions(ownerAlias: string | null): Promis
   return records.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export async function listLatestPipelineDefinitions(ownerAlias: string | null): Promise<PipelineDefinitionRecord[]> {
+  return selectLatestPipelineDefinitions(await listPipelineDefinitions(ownerAlias));
+}
+
+export function selectLatestPipelineDefinitions(records: PipelineDefinitionRecord[]): PipelineDefinitionRecord[] {
+  const latestByFamily = new Map<string, PipelineDefinitionRecord>();
+  for (const record of records) {
+    const key = [
+      record.scope,
+      record.ownerAlias ?? "",
+      stripVersionSuffix(record.slug),
+    ].join(":");
+    const existing = latestByFamily.get(key);
+    if (!existing || compareDefinitionVersions(record, existing) > 0) {
+      latestByFamily.set(key, record);
+    }
+  }
+  return Array.from(latestByFamily.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
 async function ensurePipelineGitRepository(): Promise<void> {
   const root = getPipelineRoot();
   const ignorePath = join(root, ".gitignore");
@@ -433,6 +453,19 @@ export async function nextVersionedDefinitionPathForSource(sourcePath: string): 
 
 function stripVersionSuffix(value: string): string {
   return value.replace(/\.v\d+$/i, "");
+}
+
+function compareDefinitionVersions(a: PipelineDefinitionRecord, b: PipelineDefinitionRecord): number {
+  const versionDelta = definitionVersionNumber(a) - definitionVersionNumber(b);
+  if (versionDelta !== 0) return versionDelta;
+  return a.path.localeCompare(b.path);
+}
+
+function definitionVersionNumber(record: PipelineDefinitionRecord): number {
+  const specVersion = Number(record.spec.version);
+  if (Number.isFinite(specVersion)) return specVersion;
+  const slugVersion = record.slug.match(/\.v(\d+)$/i);
+  return slugVersion ? Number(slugVersion[1]) : 0;
 }
 
 function escapeRegExp(value: string): string {

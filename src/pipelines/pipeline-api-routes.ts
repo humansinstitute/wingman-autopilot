@@ -8,6 +8,7 @@ import type { SessionApiContext } from "../server/session-api-routes";
 import { loadPipelineFunctionRegistry } from "./function-loader";
 import { startPipelineFunctionWizardSession } from "./function-wizard";
 import { builtinPipelineFunctions } from "./functions";
+import { writeManualDefinitionVersion } from "./definition-editor";
 import {
   ensurePipelineDirectories,
   getPipelineDefinition,
@@ -15,11 +16,13 @@ import {
   getSharedPipelineFunctionsDirectory,
   getUserPipelineDefinitionsDirectory,
   getUserPipelineFunctionsDirectory,
+  listLatestPipelineDefinitions,
   listPipelineDefinitions,
   makePipelineSlug,
   nextVersionedDefinitionPath,
   nextVersionedDefinitionPathForSource,
   nextVersionedFunctionPath,
+  type PipelineDefinitionRecord,
 } from "./pipeline-loader";
 import { acceptAgentCallback, runDeclarativePipeline } from "./pipeline-runner";
 import { type JsonObject, PipelineStore } from "./pipeline-store";
@@ -117,21 +120,9 @@ export async function handlePipelineApi(
   }
 
   if (pathname === "/api/pipelines/definitions" && method === "GET") {
-    const definitions = await listPipelineDefinitions(ownerAlias);
+    const definitions = await listLatestPipelineDefinitions(ownerAlias);
     return Response.json({
-      definitions: definitions.map((definition) => ({
-        id: definition.id,
-        slug: definition.slug,
-        name: definition.name,
-        description: typeof definition.spec.description === "string" ? definition.spec.description : "",
-        version: definition.spec.version ?? null,
-        supersedes: typeof definition.spec.supersedes === "string" ? definition.spec.supersedes : null,
-        scope: definition.scope,
-        ownerAlias: definition.ownerAlias,
-        path: definition.path,
-        input: definition.spec.input ?? {},
-        steps: definition.spec.steps,
-      })),
+      definitions: definitions.map(serializeDefinitionSummary),
     });
   }
 
@@ -200,6 +191,33 @@ export async function handlePipelineApi(
     return Response.json(result);
   }
 
+  const definitionManualEditMatch = pathname.match(/^\/api\/pipelines\/definitions\/([^/]+)\/manual-edit$/);
+  if (definitionManualEditMatch && method === "POST") {
+    const definition = await getPipelineDefinition(decodeURIComponent(definitionManualEditMatch[1]!), ownerAlias);
+    if (!definition) return Response.json({ error: "Pipeline definition not found" }, { status: 404 });
+    if (definition.scope !== "user" || definition.ownerAlias !== ownerAlias) {
+      return Response.json({ error: "Only user pipeline definitions can be manually edited" }, { status: 403 });
+    }
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return Response.json({ error: "Manual edit body must be a JSON object" }, { status: 400 });
+    }
+    try {
+      const result = await writeManualDefinitionVersion(definition, body as Record<string, unknown>);
+      const definitions = await listPipelineDefinitions(ownerAlias);
+      const nextDefinition = definitions.find((entry) => entry.path === result.targetPath);
+      return Response.json({
+        sourcePath: result.sourcePath,
+        targetPath: result.targetPath,
+        definition: nextDefinition ? serializeDefinitionSummary(nextDefinition) : null,
+      });
+    } catch (error) {
+      return Response.json({
+        error: error instanceof Error ? error.message : String(error),
+      }, { status: 400 });
+    }
+  }
+
   const definitionMatch = pathname.match(/^\/api\/pipelines\/definitions\/([^/]+)$/);
   if (definitionMatch && method === "GET") {
     const definition = await getPipelineDefinition(decodeURIComponent(definitionMatch[1]!), ownerAlias);
@@ -245,6 +263,22 @@ export async function handlePipelineApi(
   }
 
   return Response.json({ error: "Not found" }, { status: 404 });
+}
+
+function serializeDefinitionSummary(definition: PipelineDefinitionRecord): JsonObject {
+  return {
+    id: definition.id,
+    slug: definition.slug,
+    name: definition.name,
+    description: typeof definition.spec.description === "string" ? definition.spec.description : "",
+    version: definition.spec.version ?? null,
+    supersedes: typeof definition.spec.supersedes === "string" ? definition.spec.supersedes : null,
+    scope: definition.scope,
+    ownerAlias: definition.ownerAlias,
+    path: definition.path,
+    input: definition.spec.input ?? {},
+    steps: definition.spec.steps,
+  };
 }
 
 async function readAllowedPipelineFunctionSource(path: string, ownerAlias: string, allowBuiltin: boolean): Promise<string> {

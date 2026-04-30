@@ -13,6 +13,7 @@ export function createPipelineActionHandlers(deps) {
     showToast,
     startCreateWizard,
     startEditWizard,
+    saveManualEdit,
     startSelectedRun,
     startFunctionWizard,
   } = deps;
@@ -57,6 +58,7 @@ export function createPipelineActionHandlers(deps) {
       state.selectedDefinitionId = id;
       state.creatorOpen = false;
       state.editDefinitionId = "";
+      state.manualEditDefinitionId = "";
       await navigateToPipelinePath(page, makePipelinePath("definitions", id));
     },
     selectLauncherDefinition: (page, id) => {
@@ -74,6 +76,7 @@ export function createPipelineActionHandlers(deps) {
     openCreator: async (page) => {
       state.creatorOpen = true;
       state.editDefinitionId = "";
+      state.manualEditDefinitionId = "";
       state.wizardResult = null;
       await navigateToPipelinePath(page, makePipelinePath("definitions"));
     },
@@ -83,6 +86,7 @@ export function createPipelineActionHandlers(deps) {
     openEditWizard: (page, id) => {
       if (!id) return;
       state.creatorOpen = false;
+      state.manualEditDefinitionId = "";
       state.editDefinitionId = id;
       state.editPrompt = "";
       state.editResult = null;
@@ -96,6 +100,31 @@ export function createPipelineActionHandlers(deps) {
     },
     updateEditPrompt: (value) => { state.editPrompt = value; },
     startEditWizard,
+    openManualEdit: (page, id) => {
+      const definition = state.definitions.find((entry) => entry.id === id);
+      if (!definition) return;
+      state.creatorOpen = false;
+      state.editDefinitionId = "";
+      state.manualEditDefinitionId = id;
+      state.manualEditResult = null;
+      state.manualEditForm = {
+        name: definition.name ?? "",
+        description: definition.description ?? "",
+        inputText: JSON.stringify(definition.input ?? {}, null, 2),
+        stepsText: JSON.stringify(definition.steps ?? [], null, 2),
+      };
+      updatePage(page);
+    },
+    cancelManualEdit: (page) => {
+      state.manualEditDefinitionId = "";
+      state.manualEditResult = null;
+      updatePage(page);
+    },
+    updateManualEditField: (field, value) => {
+      if (!state.manualEditForm) state.manualEditForm = {};
+      state.manualEditForm[field] = value;
+    },
+    saveManualEdit,
     startSelectedRun,
     openFunctionCreator: async (page) => {
       state.functionCreatorOpen = true;

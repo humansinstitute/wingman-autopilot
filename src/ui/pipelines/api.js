@@ -84,6 +84,20 @@ export async function editPipelineWithWizard(id, prompt) {
   return res.json();
 }
 
+export async function saveManualPipelineEdit(id, edit) {
+  const res = await fetch(`/api/pipelines/definitions/${encodeURIComponent(id)}/manual-edit`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(edit),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.error || `Failed to save pipeline edit: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function fetchPipelineRun(id) {
   const res = await fetch(`/api/pipelines/runs/${encodeURIComponent(id)}`, { credentials: "include" });
   if (!res.ok) throw new Error(`Failed to fetch pipeline run: ${res.status}`);
