@@ -11111,6 +11111,137 @@ textarea.wm-input {
 
 .wm-pipeline-json-block {
   min-width: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.wm-pipeline-json-block-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.wm-pipeline-json-block-header h3 {
+  margin: 0;
+}
+
+.wm-pipeline-json-block-header span,
+.wm-pipeline-json-meta,
+.wm-pipeline-json-empty {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.wm-pipeline-json-tree {
+  max-width: 100%;
+  min-width: 0;
+  max-height: min(56vh, 34rem);
+  overflow: auto;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.45rem;
+  background: var(--bg-primary);
+  padding: 0.65rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.wm-pipeline-json-branch,
+.wm-pipeline-json-row {
+  min-width: max-content;
+  padding: 0.08rem 0;
+}
+
+.wm-pipeline-json-branch > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+.wm-pipeline-json-branch > summary:hover .wm-pipeline-json-key {
+  color: var(--accent-primary);
+}
+
+.wm-pipeline-json-children {
+  display: grid;
+  gap: 0.08rem;
+  margin-left: 1.05rem;
+  padding-left: 0.8rem;
+  border-left: 1px solid var(--border-primary);
+}
+
+.wm-pipeline-json-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+
+.wm-pipeline-json-key {
+  color: var(--accent-primary);
+  font-weight: 700;
+}
+
+.wm-pipeline-json-value {
+  display: inline-block;
+  max-width: min(100%, 42rem);
+  overflow: auto;
+  color: var(--text-secondary);
+  background: transparent;
+  white-space: pre;
+}
+
+.wm-pipeline-json-value-string {
+  color: #047857;
+}
+
+.wm-pipeline-json-value-number,
+.wm-pipeline-json-value-boolean {
+  color: #5c7cfa;
+}
+
+.wm-pipeline-json-value-null {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.wm-pipeline-json-text {
+  display: grid;
+  max-width: min(100%, 52rem);
+  max-height: 18rem;
+  overflow: auto;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.4rem;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.wm-pipeline-json-text-line {
+  display: grid;
+  grid-template-columns: 3.2rem minmax(24rem, 1fr);
+  min-width: max-content;
+}
+
+.wm-pipeline-json-line-number {
+  user-select: none;
+  border-right: 1px solid var(--border-primary);
+  padding: 0.08rem 0.55rem;
+  color: var(--text-secondary);
+  text-align: right;
+  background: var(--bg-tertiary);
+}
+
+.wm-pipeline-json-text-line code {
+  padding: 0.08rem 0.65rem;
+  white-space: pre;
+  color: inherit;
+}
+
+.wm-pipeline-json-text-line:nth-child(even) code {
+  background: color-mix(in srgb, var(--bg-tertiary) 45%, transparent);
 }
 
 .wm-pipeline-json-block pre,

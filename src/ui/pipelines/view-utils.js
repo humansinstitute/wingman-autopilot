@@ -60,12 +60,110 @@ export function formatRunMeta(run) {
 }
 
 export function renderJsonBlock(title, value) {
+  const normalized = value === undefined ? {} : value;
   return `
-    <section class="wm-pipeline-json-block">
-      <h3>${escapeHtml(title)}</h3>
-      <pre>${escapeHtml(JSON.stringify(value ?? {}, null, 2))}</pre>
+    <section class="wm-pipeline-json-block" data-testid="pipeline-json-block">
+      <div class="wm-pipeline-json-block-header">
+        <h3>${escapeHtml(title)}</h3>
+        <span>${escapeHtml(describeJsonValue(normalized))}</span>
+      </div>
+      <div class="wm-pipeline-json-tree" data-testid="pipeline-json-tree">
+        ${renderJsonTreeNode("root", normalized, 0)}
+      </div>
     </section>
   `;
+}
+
+function renderJsonTreeNode(label, value, depth) {
+  if (value !== null && typeof value === "object") {
+    return renderJsonBranch(label, value, depth);
+  }
+  return renderJsonScalar(label, value);
+}
+
+function renderJsonBranch(label, value, depth) {
+  const entries = Array.isArray(value)
+    ? value.map((item, index) => [String(index), item])
+    : Object.entries(value);
+  const openAttribute = depth < 2 ? " open" : "";
+  return `
+    <details class="wm-pipeline-json-branch"${openAttribute}>
+      <summary>
+        <span class="wm-pipeline-json-key">${escapeHtml(label)}</span>
+        <span class="wm-pipeline-json-meta">${escapeHtml(describeJsonValue(value))}</span>
+      </summary>
+      <div class="wm-pipeline-json-children">
+        ${entries.length
+          ? entries.map(([childLabel, childValue]) => renderJsonTreeNode(childLabel, childValue, depth + 1)).join("")
+          : `<span class="wm-pipeline-json-empty">Empty ${Array.isArray(value) ? "array" : "object"}</span>`}
+      </div>
+    </details>
+  `;
+}
+
+function renderJsonScalar(label, value) {
+  return `
+    <div class="wm-pipeline-json-row">
+      <span class="wm-pipeline-json-key">${escapeHtml(label)}</span>
+      ${renderJsonScalarValue(value)}
+    </div>
+  `;
+}
+
+function renderJsonScalarValue(value) {
+  const type = getJsonValueType(value);
+  if (typeof value === "string" && shouldRenderTextLines(value)) {
+    return renderJsonTextValue(value);
+  }
+  return `<code class="wm-pipeline-json-value wm-pipeline-json-value-${escapeAttribute(type)}">${escapeHtml(formatScalarValue(value))}</code>`;
+}
+
+function renderJsonTextValue(value) {
+  const lines = splitTextLines(value);
+  return `
+    <div class="wm-pipeline-json-text" data-lines="${escapeAttribute(String(lines.length))}">
+      ${lines.map((line, index) => `
+        <div class="wm-pipeline-json-text-line">
+          <span class="wm-pipeline-json-line-number">${index + 1}</span>
+          <code>${line ? escapeHtml(line) : "&nbsp;"}</code>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function shouldRenderTextLines(value) {
+  return value.includes("\n") || value.includes("\r") || value.length > 160;
+}
+
+function splitTextLines(value) {
+  return value.split(/\r\n|\r|\n/);
+}
+
+function formatScalarValue(value) {
+  if (typeof value === "string") return value;
+  if (value === undefined) return "undefined";
+  return String(value);
+}
+
+function describeJsonValue(value) {
+  if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? "" : "s"}`;
+  if (value !== null && typeof value === "object") {
+    const count = Object.keys(value).length;
+    return `${count} field${count === 1 ? "" : "s"}`;
+  }
+  if (typeof value === "string") {
+    const lines = splitTextLines(value).length;
+    if (lines > 1) return `${lines} lines`;
+    return `${value.length} char${value.length === 1 ? "" : "s"}`;
+  }
+  return getJsonValueType(value);
+}
+
+function getJsonValueType(value) {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
 }
 
 export function renderEmptyState(message, actionLabel, action) {
