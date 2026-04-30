@@ -1,0 +1,94 @@
+export async function fetchPipelineRoot() {
+  const res = await fetch("/api/pipelines/root", { credentials: "include" });
+  if (!res.ok) throw new Error(`Failed to fetch pipeline root: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchPipelineDefinitions() {
+  const res = await fetch("/api/pipelines/definitions", { credentials: "include" });
+  if (!res.ok) throw new Error(`Failed to fetch pipeline definitions: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchPipelineRuns() {
+  const res = await fetch("/api/pipelines/runs", { credentials: "include" });
+  if (!res.ok) throw new Error(`Failed to fetch pipeline runs: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchPipelineFunctions() {
+  const res = await fetch("/api/pipelines/functions", { credentials: "include" });
+  if (!res.ok) throw new Error(`Failed to fetch pipeline functions: ${res.status}`);
+  return res.json();
+}
+
+export async function runPipelineDefinition(id, input = null) {
+  const res = await fetch(`/api/pipelines/definitions/${encodeURIComponent(id)}/runs`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input ? { input } : {}),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.error || `Failed to run pipeline: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function startPipelineWizard(prompt) {
+  const res = await fetch("/api/pipelines/wizard", {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.error || `Failed to start pipeline wizard: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function startPipelineFunctionWizard(prompt) {
+  const res = await fetch("/api/pipelines/functions/wizard", {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.error || `Failed to start function wizard: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function editPipelineWithWizard(id, prompt) {
+  const res = await fetch(`/api/pipelines/definitions/${encodeURIComponent(id)}/wizard-edit`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.error || `Failed to start pipeline edit wizard: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchPipelineRun(id) {
+  const res = await fetch(`/api/pipelines/runs/${encodeURIComponent(id)}`, { credentials: "include" });
+  if (!res.ok) throw new Error(`Failed to fetch pipeline run: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchPipelineStep(runId, stepId) {
+  const res = await fetch(
+    `/api/pipelines/runs/${encodeURIComponent(runId)}/steps/${encodeURIComponent(stepId)}`,
+    { credentials: "include" },
+  );
+  if (!res.ok) throw new Error(`Failed to fetch pipeline step: ${res.status}`);
+  return res.json();
+}
