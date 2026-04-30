@@ -1,5 +1,6 @@
-import type { AgentAdapter } from "../agents/agent-adapter";
+import type { AgentAdapter, PromptReadiness } from "../agents/agent-adapter";
 import type { SessionSnapshot } from "../agents/process-manager";
+import { getSessionPromptReadiness } from "./prompt-readiness";
 
 export interface WaitForSessionPromptReadinessOptions {
   getSession: (sessionId: string) => SessionSnapshot | null;
@@ -28,40 +29,31 @@ export async function waitForSessionPromptReadiness(
       : DEFAULT_STATUS_REQUEST_TIMEOUT_MS;
 
   const deadline = Date.now() + timeoutMs;
-  let stablePolls = 0;
+  let readyPolls = 0;
+  let lastReadiness: PromptReadiness | null = null;
 
   while (Date.now() < deadline) {
     const session = options.getSession(options.sessionId);
-    if (!session) {
-      throw new Error(`Session ${options.sessionId} no longer exists`);
-    }
-
-    if (session.status !== "running") {
-      throw new Error(`Session ${options.sessionId} is not running`);
-    }
-
     const adapter = options.getAdapter(options.sessionId);
-    let runtimeStatus: string | null =
-      typeof session.agentRuntimeStatus === "string" ? session.agentRuntimeStatus : null;
-    if (runtimeStatus !== "stable" && adapter) {
-      try {
-        runtimeStatus = await adapter.fetchStatus(requestTimeoutMs);
-      } catch {
-        runtimeStatus = typeof session.agentRuntimeStatus === "string" ? session.agentRuntimeStatus : null;
-      }
-    }
+    const readiness = await getSessionPromptReadiness({
+      session,
+      adapter,
+      timeoutMs: requestTimeoutMs,
+    });
+    lastReadiness = readiness;
 
-    if (runtimeStatus === "stable") {
-      stablePolls += 1;
-      if (stablePolls >= requiredStablePolls) {
+    if (readiness.state === "ready") {
+      readyPolls += 1;
+      if (readyPolls >= requiredStablePolls) {
         return;
       }
     } else {
-      stablePolls = 0;
+      readyPolls = 0;
     }
 
-    await sleep(pollIntervalMs);
+    await sleep(Math.max(pollIntervalMs, readiness.retryAfterMs));
   }
 
-  throw new Error(`Timed out waiting for session ${options.sessionId} to reach steady stable status`);
+  const reason = lastReadiness ? ` last readiness: ${lastReadiness.state} (${lastReadiness.reason})` : "";
+  throw new Error(`Timed out waiting for session ${options.sessionId} to become prompt-ready.${reason}`);
 }

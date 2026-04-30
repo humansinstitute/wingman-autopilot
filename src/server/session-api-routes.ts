@@ -19,6 +19,7 @@ import type { ForkToWorktreeInput } from "../sessions/fork-to-worktree";
 import { resolveSessionOwnerNpub } from "../sessions/session-ownership";
 import { deliverSessionAgentMessage } from "./session-agent-message";
 import { normalizeBusySessionMessageFailure } from "./session-message-failures";
+import type { PromptReadiness } from "../agents/agent-adapter";
 import {
   isAgentManagedByMetadataOrOrigin,
   isCreditsBillingSession,
@@ -147,6 +148,7 @@ export interface SessionApiContext {
   queueDispatchInFlight: Set<string>;
   maybeAutoDispatchQueuedPrompt: (session: SessionSnapshot | null) => void;
   dispatchNextQueuedPromptForSession: (session: SessionSnapshot, userNpub: string | null) => Promise<Record<string, unknown>>;
+  getPromptReadinessForSession?: (session: SessionSnapshot) => Promise<PromptReadiness>;
 
   // Fork-to-worktree helpers
   validateForkInput: (payload: unknown) => ForkToWorktreeInput;
@@ -1775,7 +1777,13 @@ async function handleDelegatedQueuedMessage(
   }
 
   const liveSession = ctx.manager.getSession(id) ?? ownedSession;
-  if (liveSession.status === "running" && liveSession.agentRuntimeStatus === "stable") {
+  const readiness = ctx.getPromptReadinessForSession
+    ? await ctx.getPromptReadinessForSession(liveSession)
+    : null;
+  const readyForImmediateDispatch = readiness
+    ? readiness.state === "ready"
+    : liveSession.status === "running" && liveSession.agentRuntimeStatus === "stable";
+  if (liveSession.status === "running" && readyForImmediateDispatch) {
     try {
       const result = await ctx.dispatchNextQueuedPromptForSession(liveSession, userNpub);
       return Response.json({ id, queued: false, prompt, ...result });
@@ -1788,9 +1796,13 @@ async function handleDelegatedQueuedMessage(
         }
       }
     }
-  } else {
-    void ctx.maybeAutoDispatchQueuedPrompt(liveSession);
+  } else if (readiness) {
+    console.info(
+      `[queue] delegated message queued session=${liveSession.id} readiness=${readiness.state}`
+      + ` reason=${readiness.reason}`,
+    );
   }
+  void ctx.maybeAutoDispatchQueuedPrompt(liveSession);
 
   return Response.json({ id, queued: true, prompt }, { status: 202 });
 }

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 
+import type { AgentAdapter, PromptReadiness } from "../agents/agent-adapter";
 import type { SessionSnapshot } from "../agents/process-manager";
 import { createPromptDispatchEngine } from "./prompt-dispatch";
 
@@ -51,12 +52,28 @@ function buildEngine(overrides: Record<string, unknown> = {}) {
   const waitForSessionPromptReadiness = mock(async () => undefined);
   const syncSessionMessages = mock(async () => [{ role: "user", content: "queued prompt" }]);
   const maybeTriggerNightWatch = mock(() => undefined);
+  const getPromptReadiness = mock(async (): Promise<PromptReadiness> => ({
+    state: "ready",
+    reason: "test-ready",
+    retryAfterMs: 250,
+    observedAt: Date.now(),
+  }));
+  const adapter = {
+    getPromptReadiness,
+    fetchStatus: mock(async () => "stable" as const),
+    sendMessage: mock(async () => {}),
+    fetchMessages: mock(async () => []),
+    interruptCurrentTurn: mock(async () => false),
+    getEventsUrl: () => null,
+    waitForReady: mock(async () => {}),
+    dispose: mock(async () => {}),
+  } satisfies AgentAdapter;
 
   const engine = createPromptDispatchEngine({
     manager: {
       getSession: (id: string) => (id === session.id ? session : undefined),
       listSessions: () => [],
-      getAdapter: () => null,
+      getAdapter: () => adapter,
     },
     agentHost: "127.0.0.1",
     messageStore: {
@@ -80,6 +97,8 @@ function buildEngine(overrides: Record<string, unknown> = {}) {
     engine,
     session,
     queue,
+    adapter,
+    getPromptReadiness,
     waitForSessionPromptReadiness,
     syncSessionMessages,
     maybeTriggerNightWatch,
@@ -103,6 +122,25 @@ describe("prompt dispatch engine", () => {
     expect(waitForSessionPromptReadiness).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(queue.getQueueCount(session.id)).toBe(0);
+  });
+
+  test("auto-dispatch defers when adapter readiness says busy even if cached status is stable", async () => {
+    const fetchMock = mock(async () => new Response("{}", { status: 200 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const { engine, session, queue, getPromptReadiness, waitForSessionPromptReadiness } = buildEngine();
+    session.agentRuntimeStatus = "stable";
+    getPromptReadiness.mockResolvedValue({
+      state: "busy",
+      reason: "test-active-turn",
+      retryAfterMs: 250,
+      observedAt: Date.now(),
+    });
+
+    await engine.maybeAutoDispatchQueuedPrompt(session);
+
+    expect(waitForSessionPromptReadiness).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(queue.getQueueCount(session.id)).toBe(1);
   });
 
   test("cached startup readiness does not skip per-turn readiness while a session is busy", async () => {

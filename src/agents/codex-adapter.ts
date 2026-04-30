@@ -17,7 +17,7 @@ import {
   type Usage,
 } from "@openai/codex-sdk";
 
-import type { AgentAdapter, AdapterSessionContext } from "./agent-adapter";
+import type { AgentAdapter, AdapterSessionContext, PromptReadiness } from "./agent-adapter";
 import type { AgentRuntimeStatus } from "../types/agent-status";
 import type { AgentMessage, AgentReadyOptions } from "./agent-client";
 
@@ -91,6 +91,22 @@ export class CodexAdapter implements AgentAdapter {
         return null;
       default:
         return null;
+    }
+  }
+
+  async getPromptReadiness(_timeoutMs?: number): Promise<PromptReadiness> {
+    const observedAt = Date.now();
+    switch (this.state) {
+      case "initializing":
+        return { state: "starting", reason: "codex-initializing", retryAfterMs: 1000, observedAt };
+      case "ready":
+        return { state: "ready", reason: "codex-ready", retryAfterMs: 250, observedAt };
+      case "busy":
+        return { state: "busy", reason: "codex-active-turn", retryAfterMs: 1000, observedAt };
+      case "disposed":
+        return { state: "unreachable", reason: "codex-disposed", retryAfterMs: 5000, observedAt };
+      default:
+        return { state: "unreachable", reason: "codex-unknown-state", retryAfterMs: 5000, observedAt };
     }
   }
 

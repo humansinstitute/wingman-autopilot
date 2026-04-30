@@ -187,6 +187,7 @@ import { createUploadHelpers } from "./server/uploads/helpers";
 import { resolveAndCacheNostrProfile } from "./server/nostr-profile";
 import { shouldKeepBotKeyForNostrTriggers } from "./server/botkey-lifecycle";
 import { waitForSessionPromptReadiness } from "./server/session-readiness";
+import { getSessionPromptReadiness } from "./server/prompt-readiness";
 import { resolveTaskExecutorOwnerNpub } from "./server/task-executor-owner";
 import { createPromptDispatchEngine, QueueDispatchError } from "./server/prompt-dispatch";
 import { TeamBillingService } from "./billing/team-billing-service";
@@ -2283,6 +2284,12 @@ const sessionApiContext: SessionApiContext = {
   queueDispatchInFlight,
   maybeAutoDispatchQueuedPrompt,
   dispatchNextQueuedPromptForSession,
+  getPromptReadinessForSession: (session) =>
+    getSessionPromptReadiness({
+      session,
+      adapter: manager.getAdapter(session.id),
+      timeoutMs: 750,
+    }),
   validateForkInput,
   getRecentMessages,
   formatMessagesAsContext,

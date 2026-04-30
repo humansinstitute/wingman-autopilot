@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { AgentAdapter, AdapterSessionContext, AdapterStreamEvent } from "./agent-adapter";
+import type { AgentAdapter, AdapterSessionContext, AdapterStreamEvent, PromptReadiness } from "./agent-adapter";
 import type { AgentRuntimeStatus } from "../types/agent-status";
 import type { AgentMessage, AgentReadyOptions } from "./agent-client";
 import { PiRpcClient, type PiRpcEvent } from "./pi-rpc-client";
@@ -110,6 +110,20 @@ export class PiAdapter implements AgentAdapter {
       return null;
     }
     return this.state === "busy" ? "running" : "stable";
+  }
+
+  async getPromptReadiness(_timeoutMs?: number): Promise<PromptReadiness> {
+    const observedAt = Date.now();
+    if (this.state === "disposed") {
+      return { state: "unreachable", reason: "pi-disposed", retryAfterMs: 5000, observedAt };
+    }
+    if (this.state === "initializing") {
+      return { state: "starting", reason: "pi-initializing", retryAfterMs: 1000, observedAt };
+    }
+    if (this.state === "busy" || this.currentTurn) {
+      return { state: "busy", reason: "pi-active-turn", retryAfterMs: 1000, observedAt };
+    }
+    return { state: "ready", reason: "pi-ready", retryAfterMs: 250, observedAt };
   }
 
   async sendMessage(content: string, _type = "user"): Promise<void> {

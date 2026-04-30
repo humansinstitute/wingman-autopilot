@@ -10,6 +10,15 @@ import type { AgentRuntimeStatus } from "../types/agent-status";
 import type { AgentMessage, AgentReadyOptions } from "./agent-client";
 import { featureFlagStore, resolveFeatureFlagEffectiveState } from "../storage/feature-flag-store";
 
+export type PromptReadinessState = "ready" | "starting" | "busy" | "unreachable";
+
+export interface PromptReadiness {
+  state: PromptReadinessState;
+  reason: string;
+  retryAfterMs: number;
+  observedAt: number;
+}
+
 /** Minimal session context needed by adapters */
 export interface AdapterSessionContext {
   id: string;
@@ -38,6 +47,9 @@ export interface AdapterSessionContext {
 export interface AgentAdapter {
   /** Get the agent's current runtime status */
   fetchStatus(timeoutMs?: number): Promise<AgentRuntimeStatus | null>;
+
+  /** Get whether the agent can accept a new user prompt right now. */
+  getPromptReadiness?(timeoutMs?: number): Promise<PromptReadiness>;
 
   /** Send a message to the agent. Throws on failure after retries. */
   sendMessage(content: string, type?: string): Promise<void>;

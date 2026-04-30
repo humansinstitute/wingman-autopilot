@@ -8,6 +8,7 @@ import type { SessionSnapshot } from "../agents/process-manager";
 import { InsufficientBalanceError } from "../storage/identity-user-store";
 import { isCreditsBillingSession, resolveSessionChargeNpub } from "../sessions/session-metadata";
 import { deliverSessionAgentMessage } from "./session-agent-message";
+import { getSessionPromptReadiness } from "./prompt-readiness";
 
 // ---------- Context supplied by server.ts ----------
 
@@ -75,7 +76,7 @@ export interface PromptDispatchEngine {
   sweepQueuedSessionsForDispatch: () => void;
   markPromptStartupReady: (sessionId: string) => void;
   clearPromptStartupReady: (sessionId: string) => void;
-  markQueueDispatchCooldown: (sessionId: string) => void;
+  markQueueDispatchCooldown: (sessionId: string, retryAfterMs?: number) => void;
   queueDispatchInFlight: Set<string>;
   waitForMessageUpdate: (sessionId: string, initialCount: number, timeoutMs?: number) => Promise<unknown[]>;
 }
@@ -139,8 +140,8 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
     queueDispatchCooldowns.delete(sessionId);
   }
 
-  function markQueueDispatchCooldown(sessionId: string): void {
-    queueDispatchCooldowns.set(sessionId, Date.now() + QUEUE_DISPATCH_RETRY_MS);
+  function markQueueDispatchCooldown(sessionId: string, retryAfterMs = QUEUE_DISPATCH_RETRY_MS): void {
+    queueDispatchCooldowns.set(sessionId, Date.now() + Math.max(retryAfterMs, 250));
   }
 
   function shouldAutoDispatchSession(session: SessionSnapshot | null): boolean {
@@ -170,10 +171,6 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
   }
 
   async function ensureSessionReadyForPromptDispatch(session: SessionSnapshot): Promise<void> {
-    if (promptStartupReadiness.has(session.id) && session.agentRuntimeStatus === "stable") {
-      return;
-    }
-
     const timeoutMs = getPromptStartupTimeoutMs(session.agent);
     await ctx.waitForSessionPromptReadiness({
       getSession: (sessionId) => ctx.manager.getSession(sessionId) ?? null,
@@ -335,6 +332,20 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
     }
     const cooldownUntil = getQueueDispatchCooldown(session.id);
     if (cooldownUntil && cooldownUntil > Date.now()) {
+      return;
+    }
+
+    const readiness = await getSessionPromptReadiness({
+      session,
+      adapter: ctx.manager.getAdapter(session.id),
+      timeoutMs: 750,
+    });
+    if (readiness.state !== "ready") {
+      markQueueDispatchCooldown(session.id, readiness.retryAfterMs);
+      console.info(
+        `[queue] deferred session=${session.id} readiness=${readiness.state}`
+        + ` reason=${readiness.reason} retry=${readiness.retryAfterMs}ms`,
+      );
       return;
     }
 

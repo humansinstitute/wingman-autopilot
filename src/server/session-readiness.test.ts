@@ -54,7 +54,7 @@ describe("waitForSessionPromptReadiness", () => {
     expect(elapsedMs).toBeLessThan(900);
   });
 
-  test("reuses a stable session snapshot without requiring adapter status fetches", async () => {
+  test("does not trust a stable session snapshot when adapter readiness is busy", async () => {
     const session: SessionSnapshot = {
       id: "session-2",
       agent: "codex",
@@ -69,10 +69,16 @@ describe("waitForSessionPromptReadiness", () => {
       metadata: { AGENT: true, billingMode: "subscription" },
     };
 
-    let fetchStatusCalls = 0;
     const adapter: AgentAdapter = {
+      async getPromptReadiness() {
+        return {
+          state: "busy",
+          reason: "test-active-turn",
+          retryAfterMs: 25,
+          observedAt: Date.now(),
+        };
+      },
       async fetchStatus() {
-        fetchStatusCalls += 1;
         return "stable";
       },
       async sendMessage() {},
@@ -89,17 +95,18 @@ describe("waitForSessionPromptReadiness", () => {
       async dispose() {},
     };
 
-    await waitForSessionPromptReadiness({
-      getSession: () => session,
-      getAdapter: () => adapter,
-      sessionId: session.id,
-      host: "127.0.0.1",
-      timeoutMs: 2_000,
-      requiredStablePolls: 3,
-      requestTimeoutMs: 25,
-    });
-
-    expect(fetchStatusCalls).toBe(0);
+    await expect(
+      waitForSessionPromptReadiness({
+        getSession: () => session,
+        getAdapter: () => adapter,
+        sessionId: session.id,
+        host: "127.0.0.1",
+        timeoutMs: 100,
+        pollIntervalMs: 25,
+        requiredStablePolls: 1,
+        requestTimeoutMs: 25,
+      }),
+    ).rejects.toThrow("test-active-turn");
   });
 
   test("uses a short default status request timeout when the snapshot is not stable yet", async () => {

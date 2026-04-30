@@ -7,7 +7,7 @@
  * have a native SDK (Claude, Goose, Gemini).
  */
 
-import type { AgentAdapter, AdapterSessionContext } from "./agent-adapter";
+import type { AgentAdapter, AdapterSessionContext, PromptReadiness } from "./agent-adapter";
 import type { AgentRuntimeStatus } from "../types/agent-status";
 import { isAgentRuntimeStatus } from "../types/agent-status";
 import {
@@ -52,6 +52,42 @@ export class AgentApiAdapter implements AgentAdapter {
       throw error instanceof Error ? error : new Error(String(error));
     } finally {
       clearTimeout(timeoutId);
+    }
+  }
+
+  async getPromptReadiness(timeoutMs = 5000): Promise<PromptReadiness> {
+    try {
+      const status = await this.fetchStatus(timeoutMs);
+      if (status === "stable") {
+        return {
+          state: "ready",
+          reason: "agentapi-status-stable",
+          retryAfterMs: 250,
+          observedAt: Date.now(),
+        };
+      }
+      if (status === "running") {
+        return {
+          state: "busy",
+          reason: "agentapi-status-running",
+          retryAfterMs: 1000,
+          observedAt: Date.now(),
+        };
+      }
+      return {
+        state: "unreachable",
+        reason: "agentapi-status-unavailable",
+        retryAfterMs: 5000,
+        observedAt: Date.now(),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        state: "unreachable",
+        reason: `agentapi-status-error: ${message}`,
+        retryAfterMs: 5000,
+        observedAt: Date.now(),
+      };
     }
   }
 

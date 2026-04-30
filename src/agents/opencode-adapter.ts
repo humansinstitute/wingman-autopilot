@@ -9,7 +9,7 @@
 
 import { createOpencodeClient } from "@opencode-ai/sdk/client";
 
-import type { AgentAdapter, AdapterSessionContext } from "./agent-adapter";
+import type { AgentAdapter, AdapterSessionContext, PromptReadiness } from "./agent-adapter";
 import type { AgentRuntimeStatus } from "../types/agent-status";
 import type { AgentMessage, AgentReadyOptions } from "./agent-client";
 
@@ -83,6 +83,41 @@ export class OpenCodeAdapter implements AgentAdapter {
       return "stable";
     } catch {
       return null;
+    }
+  }
+
+  async getPromptReadiness(_timeoutMs?: number): Promise<PromptReadiness> {
+    const observedAt = Date.now();
+    if (this.state === "disposed") {
+      return { state: "unreachable", reason: "opencode-disposed", retryAfterMs: 5000, observedAt };
+    }
+    if (this.state === "busy") {
+      return { state: "busy", reason: "opencode-active-turn", retryAfterMs: 1000, observedAt };
+    }
+    if (!this.sessionId) {
+      try {
+        const result = await this.client.session.list();
+        if (result.data) {
+          this.state = "ready";
+          return { state: "ready", reason: "opencode-server-ready", retryAfterMs: 250, observedAt };
+        }
+      } catch {
+        return { state: "starting", reason: "opencode-server-starting", retryAfterMs: 1000, observedAt };
+      }
+      return { state: "starting", reason: "opencode-session-not-created", retryAfterMs: 1000, observedAt };
+    }
+
+    try {
+      const result = await this.client.session.get({
+        path: { id: this.sessionId },
+      });
+      if (result.error) {
+        return { state: "unreachable", reason: "opencode-session-error", retryAfterMs: 5000, observedAt };
+      }
+      this.state = "ready";
+      return { state: "ready", reason: "opencode-session-ready", retryAfterMs: 250, observedAt };
+    } catch {
+      return { state: "unreachable", reason: "opencode-session-unreachable", retryAfterMs: 5000, observedAt };
     }
   }
 
