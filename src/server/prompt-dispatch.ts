@@ -145,8 +145,7 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
 
   function shouldAutoDispatchSession(session: SessionSnapshot | null): boolean {
     if (!session) return false;
-    if (session.status !== "running") return false;
-    return session.agentRuntimeStatus === "stable";
+    return session.status === "running";
   }
 
   function getPromptStartupTimeoutMs(agent: AgentType): number {
@@ -171,7 +170,7 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
   }
 
   async function ensureSessionReadyForPromptDispatch(session: SessionSnapshot): Promise<void> {
-    if (promptStartupReadiness.has(session.id)) {
+    if (promptStartupReadiness.has(session.id) && session.agentRuntimeStatus === "stable") {
       return;
     }
 
