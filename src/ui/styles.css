@@ -10711,6 +10711,17 @@ textarea.wm-input {
   align-items: start;
 }
 
+.wm-pipeline-page-section {
+  display: grid;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.wm-pipeline-run-detail-page,
+.wm-pipeline-definition-detail-page {
+  max-width: 980px;
+}
+
 .wm-pipeline-panel {
   padding: 0.9rem;
   display: grid;
@@ -10796,7 +10807,7 @@ textarea.wm-input {
   min-width: 0;
 }
 
-.wm-pipeline-root-list p,
+.wm-pipeline-root-list > div,
 .wm-pipeline-function-row {
   min-width: 0;
   border: 1px solid var(--border-primary);
@@ -10805,7 +10816,7 @@ textarea.wm-input {
   padding: 0.65rem;
 }
 
-.wm-pipeline-root-list p {
+.wm-pipeline-root-list > div {
   display: grid;
   gap: 0.2rem;
   margin: 0;
@@ -10817,13 +10828,22 @@ textarea.wm-input {
 }
 
 .wm-pipeline-function-row {
+  width: 100%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.75rem;
   align-items: start;
+  color: inherit;
+  font: inherit;
+  text-align: left;
 }
 
-.wm-pipeline-function-row > div {
+.wm-pipeline-function-row[aria-current="true"] {
+  border-color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 10%, var(--bg-tertiary));
+}
+
+.wm-pipeline-function-row > span:first-child {
   min-width: 0;
   display: grid;
   gap: 0.25rem;
@@ -10831,6 +10851,38 @@ textarea.wm-input {
 
 .wm-pipeline-function-row small {
   color: var(--text-secondary);
+}
+
+.wm-pipeline-code-view {
+  max-height: min(68vh, 48rem);
+  overflow: auto;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.45rem;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  padding: 0.85rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.wm-code-token-keyword {
+  color: #7c3aed;
+  font-weight: 650;
+}
+
+.wm-code-token-string {
+  color: #047857;
+}
+
+.wm-code-token-number {
+  color: #b45309;
+}
+
+.wm-code-token-comment {
+  color: var(--text-secondary);
+  font-style: italic;
 }
 
 .wm-pipeline-run-item,

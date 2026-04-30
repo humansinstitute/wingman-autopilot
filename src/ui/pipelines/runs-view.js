@@ -32,6 +32,41 @@ export function renderRunsWorkspace(state) {
   `;
 }
 
+export function renderRunsListPage(state) {
+  const runs = getFilteredRuns(state);
+  return `
+    <section class="wm-pipeline-page-section wm-pipeline-runs-page" aria-labelledby="pipeline-runs-title">
+      <div class="wm-pipeline-panel">
+        <div class="wm-pipeline-panel-header">
+          <div>
+            <h2 id="pipeline-runs-title">Previous Runs</h2>
+            <p class="wm-muted">${state.runs.length} run${state.runs.length === 1 ? "" : "s"} recorded</p>
+          </div>
+        </div>
+        ${renderRunControls(state)}
+        ${runs.length ? renderRunList(state, runs) : renderEmptyState("No pipeline runs match this view.", "Run Pipeline", "open-launcher")}
+      </div>
+    </section>
+  `;
+}
+
+export function renderRunDetailPage(state, runId) {
+  const loadedRunId = state.selectedRun?.run?.id ?? "";
+  const detail = loadedRunId && loadedRunId === runId
+    ? renderRunDetail(state)
+    : `<div class="wm-pipeline-empty-detail"><h2 id="pipeline-run-detail-title">Loading Run</h2><p>Loading pipeline run...</p></div>`;
+  return `
+    <section class="wm-pipeline-page-section wm-pipeline-run-detail-page" aria-labelledby="pipeline-run-detail-title">
+      <div class="wm-pipeline-panel">
+        <div>
+          <button type="button" data-action="navigate-pipeline" data-path="/pipelines/runs">Back to Runs</button>
+        </div>
+        ${detail}
+      </div>
+    </section>
+  `;
+}
+
 function renderRunControls(state) {
   return `
     <div class="wm-pipeline-toolbar">
@@ -54,7 +89,7 @@ function renderRunList(state, runs) {
   return `
     <div class="wm-pipeline-run-list" data-testid="pipeline-run-list">
       ${runs.map((run) => `
-        <button type="button" class="wm-pipeline-run-item" data-action="select-run" data-id="${escapeAttribute(run.id)}" aria-current="${state.selectedRun?.run?.id === run.id}" data-testid="pipeline-run-row">
+        <button type="button" class="wm-pipeline-run-item" data-action="open-run" data-id="${escapeAttribute(run.id)}" aria-current="${state.selectedRun?.run?.id === run.id}" data-testid="pipeline-run-row">
           <span class="wm-pipeline-status-chip" data-status="${escapeAttribute(run.status)}">${escapeHtml(statusLabel(run.status))}</span>
           <span class="wm-pipeline-run-main">
             <strong>${escapeHtml(run.name)}</strong>
@@ -74,7 +109,7 @@ function renderRunDetail(state) {
     <article class="wm-pipeline-run-detail" data-testid="pipeline-run-detail">
       <header class="wm-pipeline-detail-header">
         <div>
-          <h2>${escapeHtml(run.name)}</h2>
+          <h2 id="pipeline-run-detail-title">${escapeHtml(run.name)}</h2>
           <p><code>${escapeHtml(run.id)}</code></p>
         </div>
         <span class="wm-pipeline-status-chip" data-status="${escapeAttribute(run.status)}">${escapeHtml(statusLabel(run.status))}</span>

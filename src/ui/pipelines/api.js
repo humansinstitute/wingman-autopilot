@@ -22,6 +22,12 @@ export async function fetchPipelineFunctions() {
   return res.json();
 }
 
+export async function fetchPipelineFunction(name) {
+  const res = await fetch(`/api/pipelines/functions/${encodeURIComponent(name)}`, { credentials: "include" });
+  if (!res.ok) throw new Error(`Failed to fetch pipeline function: ${res.status}`);
+  return res.json();
+}
+
 export async function runPipelineDefinition(id, input = null) {
   const res = await fetch(`/api/pipelines/definitions/${encodeURIComponent(id)}/runs`, {
     method: "POST",

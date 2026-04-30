@@ -32,6 +32,48 @@ export function renderDefinitionsWorkspace(state, selected) {
   `;
 }
 
+export function renderDefinitionsListPage(state) {
+  const definitions = getFilteredDefinitions(state);
+  return `
+    <section class="wm-pipeline-page-section wm-pipeline-definitions-page" aria-labelledby="pipeline-definitions-title">
+      <div class="wm-pipeline-panel">
+        <div class="wm-pipeline-panel-header">
+          <div>
+            <h2 id="pipeline-definitions-title">Definitions</h2>
+            <p class="wm-muted">${state.definitions.length} definition${state.definitions.length === 1 ? "" : "s"} available</p>
+          </div>
+          <button type="button" data-action="open-creator" data-testid="pipeline-new-action">New Pipeline</button>
+        </div>
+        ${renderDefinitionControls(state)}
+        ${definitions.length ? renderDefinitionList(state, definitions) : renderEmptyState("No pipeline definitions match this view.", "New Pipeline", "open-creator")}
+      </div>
+      ${state.creatorOpen ? `<div class="wm-pipeline-panel">${renderCreator(state)}</div>` : ""}
+    </section>
+  `;
+}
+
+export function renderDefinitionDetailPage(state, definition) {
+  return `
+    <section class="wm-pipeline-page-section wm-pipeline-definition-detail-page" aria-labelledby="pipeline-definition-detail-title">
+      <div class="wm-pipeline-panel">
+        <div>
+          <button type="button" data-action="navigate-pipeline" data-path="/pipelines/definitions">Back to Definitions</button>
+        </div>
+        ${definition ? renderDefinitionDetail(state, definition) : renderMissingDefinition()}
+      </div>
+    </section>
+  `;
+}
+
+function renderMissingDefinition() {
+  return `
+    <div class="wm-pipeline-empty-detail">
+      <h2 id="pipeline-definition-detail-title">Definition Not Found</h2>
+      <p>Pipeline definition not found.</p>
+    </div>
+  `;
+}
+
 function renderDefinitionControls(state) {
   return `
     <div class="wm-pipeline-toolbar">
@@ -54,7 +96,7 @@ function renderDefinitionList(state, definitions) {
   return `
     <div class="wm-pipeline-definition-list" data-testid="pipeline-definition-list">
       ${definitions.map((definition) => `
-        <button type="button" class="wm-pipeline-definition-item" data-action="select-definition-card" data-id="${escapeAttribute(definition.id)}" aria-current="${state.selectedDefinitionId === definition.id}" data-testid="pipeline-definition-row">
+        <button type="button" class="wm-pipeline-definition-item" data-action="open-definition" data-id="${escapeAttribute(definition.id)}" aria-current="${state.selectedDefinitionId === definition.id}" data-testid="pipeline-definition-row">
           <span>
             <strong>${escapeHtml(definition.name)}</strong>
             <small>${escapeHtml(definition.description || "No description")}</small>
@@ -74,7 +116,7 @@ function renderDefinitionDetail(state, definition) {
     <article class="wm-pipeline-definition-detail" data-testid="pipeline-definition-detail">
       <header class="wm-pipeline-detail-header">
         <div>
-          <h2>${escapeHtml(definition.name)}</h2>
+          <h2 id="pipeline-definition-detail-title">${escapeHtml(definition.name)}</h2>
           ${definition.description ? `<p>${escapeHtml(definition.description)}</p>` : `<p class="wm-muted">No description.</p>`}
           <p><code>${escapeHtml(definition.id)}</code></p>
         </div>
