@@ -225,6 +225,7 @@ export function createAppConfig(sessionConfig: SessionConfig): EcosystemApp {
   // if it leaked through envOverride (agents use AGENT_NSEC instead).
   const { KEYTELEPORT_PRIVKEY: _stripped, ...cleanEnvOverride } = sessionConfig.envOverride ?? {} as Record<string, string>;
   const runtimeEnv: Record<string, string> = {
+    WINGMAN_PROCESS_KIND: "agent-session",
     SESSION_ID: sessionId,
     SESSION_NAME: sessionName,
     SESSION_PORT: String(port),
