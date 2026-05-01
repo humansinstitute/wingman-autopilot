@@ -140,7 +140,7 @@ function renderSelectedRunTab(state, run, steps) {
     <section class="wm-pipeline-step-timeline" aria-label="Pipeline steps">
       ${steps.length ? steps.map((step) => renderStepRow(state, run.id, step)).join("") : `<p class="wm-muted">No steps recorded for this run.</p>`}
     </section>
-    ${state.selectedStep ? renderStepDetail(state) : ""}
+    ${state.selectedStep ? renderStepDetailModal(state) : ""}
   `;
 }
 
@@ -157,28 +157,39 @@ function renderStepRow(state, runId, step) {
   `;
 }
 
+function renderStepDetailModal(state) {
+  return `
+    <div class="wm-pipeline-step-modal" role="dialog" aria-modal="true" aria-labelledby="pipeline-step-modal-title" data-testid="pipeline-step-modal">
+      <section class="wm-pipeline-step-modal-content">
+        ${renderStepDetail(state)}
+      </section>
+    </div>
+  `;
+}
+
 function renderStepDetail(state) {
   const { step, events = [], callbacks = [], previousSteps = [] } = state.selectedStep;
   return `
     <section class="wm-pipeline-step-detail" data-testid="pipeline-step-detail">
-      <div class="wm-pipeline-section-heading">
+      <div class="wm-pipeline-section-heading wm-pipeline-step-modal-header">
         <div>
-          <h3>${escapeHtml(step.name)}</h3>
+          <h3 id="pipeline-step-modal-title">${escapeHtml(step.name)}</h3>
           <p><code>${escapeHtml(step.id)}</code>${step.wingmanSessionId ? ` agent session <code>${escapeHtml(step.wingmanSessionId)}</code>` : ""}</p>
         </div>
         <div class="wm-pipeline-step-actions">
           ${renderAgentSessionLink(step)}
           <span class="wm-pipeline-status-chip" data-status="${escapeAttribute(step.status)}">${escapeHtml(statusLabel(step.status))}</span>
+          <button type="button" class="wm-pipeline-step-close" data-action="close-step-detail" aria-label="Close step detail" data-testid="pipeline-step-detail-close">Close</button>
         </div>
       </div>
       ${renderJsonTransformBlock(step.input, step.result)}
-      <div class="wm-pipeline-json-grid">
-        ${renderJsonBlock("Input", step.input)}
-        ${renderJsonBlock("Output", step.result)}
+      <div class="wm-pipeline-step-secondary" aria-label="Step source data and diagnostics">
+        ${renderCollapsedJsonBlock("Input", step.input)}
+        ${renderCollapsedJsonBlock("Output", step.result)}
+        ${renderStepDetailSection("Previous outputs", previousSteps.map((entry) => ({ name: entry.name, result: entry.result })))}
+        ${renderStepDetailSection("Events", events)}
+        ${renderStepDetailSection("Callbacks", callbacks)}
       </div>
-      ${renderStepDetailSection("Previous outputs", previousSteps.map((entry) => ({ name: entry.name, result: entry.result })))}
-      ${renderStepDetailSection("Events", events)}
-      ${renderStepDetailSection("Callbacks", callbacks)}
     </section>
   `;
 }
@@ -204,6 +215,15 @@ function renderStepDetailSection(title, value) {
     <details>
       <summary>${escapeHtml(title)}</summary>
       <pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>
+    </details>
+  `;
+}
+
+function renderCollapsedJsonBlock(title, value) {
+  return `
+    <details class="wm-pipeline-step-data-panel">
+      <summary>${escapeHtml(title)}</summary>
+      ${renderJsonBlock(title, value)}
     </details>
   `;
 }

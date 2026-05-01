@@ -51,6 +51,7 @@ export function createPipelineActionHandlers(deps) {
       state.selectedStep = await fetchPipelineStep(runId, stepId);
       updatePage(page);
     },
+    closeStepDetail: (page) => updateField(page, "selectedStep", null),
     updateDefinitionSearch: (page, value) => updateSearch(page, "definitionSearch", value, '[data-action="definition-search"]'),
     setDefinitionFilter: (page, value) => updateField(page, "definitionFilter", value),
     openDefinition: async (page, id) => {

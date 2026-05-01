@@ -47,6 +47,9 @@ function bindRunActions(root, page, actions) {
       await actions.selectStep(page, button.dataset.runId ?? "", button.dataset.stepId ?? "");
     });
   });
+  root.querySelectorAll('[data-action="close-step-detail"]').forEach((button) => {
+    button.addEventListener("click", () => actions.closeStepDetail(page));
+  });
 }
 
 function bindDefinitionActions(root, page, actions) {

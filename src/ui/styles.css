@@ -11103,6 +11103,43 @@ textarea.wm-input {
   text-decoration: underline;
 }
 
+.wm-pipeline-step-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  background: color-mix(in srgb, var(--bg-primary) 92%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.wm-pipeline-step-modal-content {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: clamp(0.75rem, 2vw, 1.5rem);
+}
+
+.wm-pipeline-step-modal .wm-pipeline-step-detail {
+  max-width: 1180px;
+  min-height: calc(100vh - clamp(1.5rem, 4vw, 3rem));
+  margin: 0 auto;
+}
+
+.wm-pipeline-step-modal-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  border-bottom: 1px solid var(--border-primary);
+  background: color-mix(in srgb, var(--bg-primary) 94%, transparent);
+  padding-bottom: 0.75rem;
+  backdrop-filter: blur(8px);
+}
+
+.wm-pipeline-step-close {
+  border-color: var(--border-primary);
+  background: var(--bg-primary);
+}
+
 .wm-pipeline-json-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -11155,6 +11192,29 @@ textarea.wm-input {
   background: var(--bg-primary);
   color: var(--text-secondary);
   padding: 0.8rem;
+}
+
+.wm-pipeline-step-secondary {
+  display: grid;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.wm-pipeline-step-data-panel {
+  border: 1px solid var(--border-primary);
+  border-radius: 0.45rem;
+  background: var(--bg-secondary);
+  padding: 0.65rem;
+}
+
+.wm-pipeline-step-data-panel > summary {
+  cursor: pointer;
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.wm-pipeline-step-data-panel .wm-pipeline-json-block {
+  margin-top: 0.65rem;
 }
 
 .wm-pipeline-json-block {
