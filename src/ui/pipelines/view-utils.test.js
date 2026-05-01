@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { renderJsonBlock } from "./view-utils.js";
+import { buildOutputDiff, renderJsonBlock, renderJsonTransformBlock } from "./view-utils.js";
 
 describe("pipeline JSON rendering", () => {
   test("renders objects as expandable tree nodes", () => {
@@ -26,5 +26,41 @@ describe("pipeline JSON rendering", () => {
     expect(html).toContain('data-lines="2"');
     expect(html).toContain("first line");
     expect(html).toContain("second line");
+  });
+
+  test("builds an output-only diff that omits carried forward values", () => {
+    const diff = buildOutputDiff(
+      {
+        prompt: "same prompt",
+        profile: { name: "Pete", status: "draft" },
+        tags: ["one", "two"],
+      },
+      {
+        prompt: "same prompt",
+        profile: { name: "Pete", status: "ready" },
+        tags: ["one", "three"],
+        summary: "new output",
+      },
+    );
+
+    expect(diff.changed).toBe(true);
+    expect(diff.value).toEqual({
+      profile: { status: "ready" },
+      tags: { 1: "three" },
+      summary: "new output",
+    });
+  });
+
+  test("renders a clean transform area for changed output fields", () => {
+    const html = renderJsonTransformBlock(
+      { unchanged: "carried", text: "old" },
+      { unchanged: "carried", text: "line one\nline two" },
+    );
+
+    expect(html).toContain('data-testid="pipeline-transform-block"');
+    expect(html).toContain("New and changed output data");
+    expect(html).toContain("line one");
+    expect(html).toContain("line two");
+    expect(html).not.toContain("carried");
   });
 });

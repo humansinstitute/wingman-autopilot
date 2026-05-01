@@ -74,6 +74,50 @@ export function renderJsonBlock(title, value) {
   `;
 }
 
+export function renderJsonTransformBlock(inputValue, outputValue) {
+  const diff = buildOutputDiff(inputValue, outputValue);
+  const changeCount = diff.changed ? countDiffLeaves(diff.value) : 0;
+  return `
+    <section class="wm-pipeline-transform-block" data-testid="pipeline-transform-block">
+      <div class="wm-pipeline-transform-header">
+        <div>
+          <h3>Transform</h3>
+          <p>New and changed output data</p>
+        </div>
+        <span>${escapeHtml(changeCount ? `${changeCount} change${changeCount === 1 ? "" : "s"}` : "No changes")}</span>
+      </div>
+      ${diff.changed
+        ? `<div class="wm-pipeline-json-tree wm-pipeline-json-tree-transform" data-testid="pipeline-transform-tree">
+            ${renderJsonTreeEntries(diff.value)}
+          </div>`
+        : `<div class="wm-pipeline-transform-empty">Output matches input for this step.</div>`}
+    </section>
+  `;
+}
+
+export function buildOutputDiff(inputValue, outputValue) {
+  if (jsonValuesEqual(inputValue, outputValue)) {
+    return { changed: false, value: undefined };
+  }
+
+  if (isObjectLike(inputValue) && isObjectLike(outputValue)) {
+    const diffValue = {};
+    for (const [key, nextValue] of getJsonEntries(outputValue)) {
+      const previousValue = getJsonChild(inputValue, key);
+      const childDiff = buildOutputDiff(previousValue, nextValue);
+      if (childDiff.changed) {
+        diffValue[key] = childDiff.value;
+      }
+    }
+    if (Object.keys(diffValue).length > 0) {
+      return { changed: true, value: diffValue };
+    }
+    return { changed: false, value: undefined };
+  }
+
+  return { changed: true, value: outputValue };
+}
+
 function renderJsonTreeNode(label, value, depth) {
   if (value !== null && typeof value === "object") {
     return renderJsonBranch(label, value, depth);
@@ -81,10 +125,17 @@ function renderJsonTreeNode(label, value, depth) {
   return renderJsonScalar(label, value);
 }
 
+function renderJsonTreeEntries(value) {
+  if (value !== null && typeof value === "object") {
+    const entries = getJsonEntries(value);
+    if (!entries.length) return `<span class="wm-pipeline-json-empty">No fields</span>`;
+    return entries.map(([label, childValue]) => renderJsonTreeNode(label, childValue, 0)).join("");
+  }
+  return renderJsonTreeNode("value", value, 0);
+}
+
 function renderJsonBranch(label, value, depth) {
-  const entries = Array.isArray(value)
-    ? value.map((item, index) => [String(index), item])
-    : Object.entries(value);
+  const entries = getJsonEntries(value);
   const openAttribute = depth < 2 ? " open" : "";
   return `
     <details class="wm-pipeline-json-branch"${openAttribute}>
@@ -164,6 +215,45 @@ function getJsonValueType(value) {
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";
   return typeof value;
+}
+
+function getJsonEntries(value) {
+  return Array.isArray(value)
+    ? value.map((item, index) => [String(index), item])
+    : Object.entries(value);
+}
+
+function getJsonChild(value, key) {
+  if (Array.isArray(value)) return value[Number(key)];
+  if (value !== null && typeof value === "object") return value[key];
+  return undefined;
+}
+
+function isObjectLike(value) {
+  return value !== null && typeof value === "object";
+}
+
+function jsonValuesEqual(left, right) {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+    return left.every((item, index) => jsonValuesEqual(item, right[index]));
+  }
+  if (isObjectLike(left) || isObjectLike(right)) {
+    if (!isObjectLike(left) || !isObjectLike(right)) return false;
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    if (leftKeys.length !== rightKeys.length) return false;
+    return leftKeys.every((key) => Object.prototype.hasOwnProperty.call(right, key) && jsonValuesEqual(left[key], right[key]));
+  }
+  return false;
+}
+
+function countDiffLeaves(value) {
+  if (!isObjectLike(value)) return 1;
+  const entries = getJsonEntries(value);
+  if (!entries.length) return 1;
+  return entries.reduce((total, [, childValue]) => total + countDiffLeaves(childValue), 0);
 }
 
 export function renderEmptyState(message, actionLabel, action) {

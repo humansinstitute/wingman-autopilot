@@ -11109,6 +11109,54 @@ textarea.wm-input {
   gap: 0.75rem;
 }
 
+.wm-pipeline-transform-block {
+  display: grid;
+  gap: 0.7rem;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 28%, var(--border-primary));
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--accent-primary) 4%, var(--bg-primary));
+  padding: 0.8rem;
+}
+
+.wm-pipeline-transform-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.wm-pipeline-transform-header h3,
+.wm-pipeline-transform-header p {
+  margin: 0;
+}
+
+.wm-pipeline-transform-header p {
+  margin-top: 0.15rem;
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+}
+
+.wm-pipeline-transform-header span {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 38%, var(--border-primary));
+  border-radius: 999px;
+  background: var(--bg-primary);
+  color: var(--accent-primary);
+  padding: 0.16rem 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.wm-pipeline-transform-empty {
+  border: 1px dashed var(--border-primary);
+  border-radius: 0.45rem;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  padding: 0.8rem;
+}
+
 .wm-pipeline-json-block {
   min-width: 0;
   display: grid;
@@ -11146,6 +11194,11 @@ textarea.wm-input {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.82rem;
   line-height: 1.45;
+}
+
+.wm-pipeline-json-tree-transform {
+  max-height: min(48vh, 28rem);
+  background: var(--bg-primary);
 }
 
 .wm-pipeline-json-branch,

@@ -8,6 +8,7 @@ import {
   renderEmptyDetail,
   renderEmptyState,
   renderJsonBlock,
+  renderJsonTransformBlock,
   statusLabel,
 } from "./view-utils.js";
 
@@ -170,6 +171,7 @@ function renderStepDetail(state) {
           <span class="wm-pipeline-status-chip" data-status="${escapeAttribute(step.status)}">${escapeHtml(statusLabel(step.status))}</span>
         </div>
       </div>
+      ${renderJsonTransformBlock(step.input, step.result)}
       <div class="wm-pipeline-json-grid">
         ${renderJsonBlock("Input", step.input)}
         ${renderJsonBlock("Output", step.result)}
