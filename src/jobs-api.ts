@@ -27,11 +27,11 @@ import {
   type UpdateJobInput,
 } from "./jobs-db";
 import { dispatchJobRun } from "./jobs-dispatch";
-import { isJobAgentType, listUniqueJobAgents, resolveJobAgent, resolveJobAgents } from "./jobs/agent-config";
+import { isJobAgentType, resolveJobAgent } from "./jobs/agent-config";
 import { deliverSessionAgentMessage } from "./server/session-agent-message";
 import type { SessionApiContext } from "./server/session-api-routes";
 import { parseNightWatchStartOptions, type NightWatchStartOptions } from "./nightwatch/nightwatch-start-config";
-import { getEffectiveOwnerAuthContext, getEffectiveOwnerNpub } from "./auth/effective-owner";
+import { getEffectiveOwnerNpub } from "./auth/effective-owner";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -165,34 +165,9 @@ const createDefaultDispatchRun = (
     if (!sessionCtx) {
       throw new Error("Jobs dispatch is not configured");
     }
-    const effectiveAuthContext = getEffectiveOwnerAuthContext(input.authContext);
     const ownerNpub = getEffectiveOwnerNpub(input.authContext);
     if (!ownerNpub) {
       throw new Error("Sign in to launch a job");
-    }
-
-    const requestedAgents = listUniqueJobAgents(
-      resolveJobAgents(input.job, {
-        workerAgent: input.workerAgent,
-        managerAgent: input.managerAgent,
-      }),
-    );
-    let requiresBalance = false;
-    for (const agent of requestedAgents) {
-      if (await sessionCtx.shouldRequireBalanceForAgent(agent)) {
-        requiresBalance = true;
-        break;
-      }
-    }
-
-    if (requiresBalance) {
-      const balanceCheck = sessionCtx.ensureViewerHasBalance(effectiveAuthContext, {
-        feature: "launch a manual job",
-        message: "Add sats to your balance to launch a job.",
-      });
-      if (balanceCheck instanceof Response) {
-        throw new Error("Insufficient balance to launch a job");
-      }
     }
 
     return dispatchJobRun(

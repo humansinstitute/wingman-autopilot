@@ -77,8 +77,6 @@ const buildCtx = (overrides?: Partial<SessionApiContext>): SessionApiContext => 
   } as any,
   sessionArchiveStore: {} as any,
   identityUserStore: {
-    debit: () => 100,
-    credit: () => 100,
     ensurePortsFor: () => [],
     getByNormalized: () => null,
   } as any,
@@ -87,10 +85,7 @@ const buildCtx = (overrides?: Partial<SessionApiContext>): SessionApiContext => 
   userIdentityRoot: "/tmp",
   attachmentRoot: "/tmp",
   imageRoot: "/tmp",
-  MESSAGE_COST_SATS: 0,
   ensureApiAccess: async () => null,
-  ensureViewerHasBalance: () => ({ balance: 100 }),
-  shouldRequireBalanceForAgent: async () => false,
   serializeSession: (session) => ({ id: session.id, npub: session.npub, metadata: session.metadata, origin: session.origin }),
   sessionBelongsToViewer: (sessionNpub, sessionMetadata, viewerNormalizedNpub, viewerIsAdmin) =>
     sessionOwnerMatchesViewer(sessionNpub, sessionMetadata as any, viewerNormalizedNpub, viewerIsAdmin),

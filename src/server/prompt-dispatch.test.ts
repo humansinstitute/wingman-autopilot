@@ -79,12 +79,7 @@ function buildEngine(overrides: Record<string, unknown> = {}) {
     messageStore: {
       listSessionMessages: () => [],
     },
-    identityUserStore: {
-      debit: () => 100,
-      credit: () => 100,
-    },
     promptQueueStore: queue,
-    MESSAGE_COST_SATS: 1,
     buildAgentUrl: () => "http://127.0.0.1:3700/message",
     waitForSessionPromptReadiness,
     syncSessionMessages,
@@ -134,6 +129,20 @@ describe("prompt dispatch engine", () => {
       reason: "test-active-turn",
       retryAfterMs: 250,
       observedAt: Date.now(),
+    });
+
+    await engine.maybeAutoDispatchQueuedPrompt(session);
+
+    expect(waitForSessionPromptReadiness).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(queue.getQueueCount(session.id)).toBe(1);
+  });
+
+  test("auto-dispatch does not send queued prompts for unapproved users", async () => {
+    const fetchMock = mock(async () => new Response("{}", { status: 200 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const { engine, session, queue, waitForSessionPromptReadiness } = buildEngine({
+      isUserApprovedForWork: () => false,
     });
 
     await engine.maybeAutoDispatchQueuedPrompt(session);

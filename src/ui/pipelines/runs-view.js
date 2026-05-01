@@ -2,6 +2,7 @@ import {
   RUN_FILTERS,
   escapeAttribute,
   escapeHtml,
+  formatBytes,
   formatDateTime,
   formatDuration,
   formatRunMeta,
@@ -145,12 +146,13 @@ function renderSelectedRunTab(state, run, steps) {
 }
 
 function renderStepRow(state, runId, step) {
+  const dataSize = Number(step.inputBytes ?? 0) + Number(step.resultBytes ?? 0);
   return `
     <button type="button" class="wm-pipeline-step-row" data-action="select-step" data-run-id="${escapeAttribute(runId)}" data-step-id="${escapeAttribute(step.id)}" aria-current="${state.selectedStep?.step?.id === step.id}">
       <span class="wm-pipeline-step-number">${escapeHtml(String(step.stepIndex))}</span>
       <span class="wm-pipeline-step-main">
         <strong>${escapeHtml(step.name)}</strong>
-        <small>${escapeHtml(step.kind)}${step.wingmanSessionId ? ` - ${escapeHtml(step.wingmanSessionId.slice(0, 8))}` : ""}</small>
+        <small>${escapeHtml(step.kind)}${step.wingmanSessionId ? ` - ${escapeHtml(step.wingmanSessionId.slice(0, 8))}` : ""}${dataSize ? ` - ${escapeHtml(formatBytes(dataSize))}` : ""}</small>
       </span>
       <span class="wm-pipeline-status-chip" data-status="${escapeAttribute(step.status)}">${escapeHtml(statusLabel(step.status))}</span>
     </button>
@@ -186,7 +188,16 @@ function renderStepDetail(state) {
       <div class="wm-pipeline-step-secondary" aria-label="Step source data and diagnostics">
         ${renderCollapsedJsonBlock("Input", step.input)}
         ${renderCollapsedJsonBlock("Output", step.result)}
-        ${renderStepDetailSection("Previous outputs", previousSteps.map((entry) => ({ name: entry.name, result: entry.result })))}
+        ${renderStepDetailSection("Previous steps", previousSteps.map((entry) => ({
+          stepIndex: entry.stepIndex,
+          name: entry.name,
+          kind: entry.kind,
+          status: entry.status,
+          wingmanSessionId: entry.wingmanSessionId,
+          inputBytes: entry.inputBytes,
+          resultBytes: entry.resultBytes,
+          completedAt: entry.completedAt,
+        })))}
         ${renderStepDetailSection("Events", events)}
         ${renderStepDetailSection("Callbacks", callbacks)}
       </div>

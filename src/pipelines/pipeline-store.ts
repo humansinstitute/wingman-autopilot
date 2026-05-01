@@ -39,6 +39,24 @@ export interface PipelineStepRecord {
   completedAt: string | null;
 }
 
+export interface PipelineStepSummary {
+  id: string;
+  runId: string;
+  stepIndex: number;
+  name: string;
+  kind: StepKind;
+  status: PipelineStatus;
+  error: string | null;
+  wingmanSessionId: string | null;
+  callbackToken: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  inputBytes: number;
+  resultBytes: number;
+  hasInput: boolean;
+  hasResult: boolean;
+}
+
 const DEFAULT_DB_PATH = "data/pipelines.sqlite";
 
 function now(): string {
@@ -199,6 +217,22 @@ export class PipelineStore {
     return rows.map(mapStep);
   }
 
+  listStepSummaries(runId: string): PipelineStepSummary[] {
+    const rows = this.db
+      .query(`
+        SELECT
+          id, run_id, step_index, name, kind, status, error, wingman_session_id,
+          callback_token, started_at, completed_at,
+          length(coalesce(input_json, '')) AS input_bytes,
+          length(coalesce(result_json, '')) AS result_bytes
+        FROM pipeline_steps
+        WHERE run_id = ?
+        ORDER BY step_index ASC
+      `)
+      .all(runId) as Record<string, unknown>[];
+    return rows.map(mapStepSummary);
+  }
+
   listEventsForStep(stepId: string): Array<Record<string, unknown>> {
     return this.db.query(`SELECT * FROM pipeline_events WHERE step_id = ? ORDER BY ts ASC`).all(stepId) as Array<Record<string, unknown>>;
   }
@@ -333,5 +367,27 @@ function mapStep(row: Record<string, unknown>): PipelineStepRecord {
     callbackToken: row.callback_token === null || row.callback_token === undefined ? null : String(row.callback_token),
     startedAt: String(row.started_at),
     completedAt: row.completed_at === null || row.completed_at === undefined ? null : String(row.completed_at),
+  };
+}
+
+function mapStepSummary(row: Record<string, unknown>): PipelineStepSummary {
+  const inputBytes = Number(row.input_bytes ?? 0);
+  const resultBytes = Number(row.result_bytes ?? 0);
+  return {
+    id: String(row.id),
+    runId: String(row.run_id),
+    stepIndex: Number(row.step_index),
+    name: String(row.name),
+    kind: row.kind as StepKind,
+    status: row.status as PipelineStatus,
+    error: row.error === null || row.error === undefined ? null : String(row.error),
+    wingmanSessionId: row.wingman_session_id === null || row.wingman_session_id === undefined ? null : String(row.wingman_session_id),
+    callbackToken: row.callback_token === null || row.callback_token === undefined ? null : String(row.callback_token),
+    startedAt: String(row.started_at),
+    completedAt: row.completed_at === null || row.completed_at === undefined ? null : String(row.completed_at),
+    inputBytes,
+    resultBytes,
+    hasInput: inputBytes > 0,
+    hasResult: resultBytes > 0,
   };
 }

@@ -24,7 +24,7 @@ import {
   nextVersionedFunctionPath,
   type PipelineDefinitionRecord,
 } from "./pipeline-loader";
-import { acceptAgentCallback, runDeclarativePipeline } from "./pipeline-runner";
+import { acceptAgentCallback, runDeclarativePipeline, startDeclarativePipeline } from "./pipeline-runner";
 import { type JsonObject, PipelineStore } from "./pipeline-store";
 import { startPipelineWizardSession } from "./pipeline-wizard";
 
@@ -155,7 +155,7 @@ export async function handlePipelineApi(
       : {};
     const input = { ...(definition.spec.input ?? {}), ...submittedInput };
     const functions = await loadPipelineFunctionRegistry(ownerAlias, builtinPipelineFunctions);
-    const run = await runDeclarativePipeline({
+    const runnerInput = {
       store: ctx.store,
       sessionApiContext: ctx.sessionApiContext,
       definition,
@@ -164,7 +164,12 @@ export async function handlePipelineApi(
       ownerNpub,
       ownerAlias,
       callbackOrigin: ctx.callbackOrigin ?? url.origin,
-    });
+    };
+    if (url.searchParams.get("async") === "1") {
+      const run = startDeclarativePipeline(runnerInput);
+      return Response.json({ run, steps: [] }, { status: 202 });
+    }
+    const run = await runDeclarativePipeline(runnerInput);
     return Response.json({ run, steps: ctx.store.listSteps(run.id) });
   }
 
@@ -235,7 +240,8 @@ export async function handlePipelineApi(
     if (!run || run.ownerNpub !== ownerNpub) {
       return Response.json({ error: "Pipeline run not found" }, { status: 404 });
     }
-    return Response.json({ steps: ctx.store.listSteps(run.id) });
+    const includePayload = url.searchParams.get("includePayload") === "1";
+    return Response.json({ steps: includePayload ? ctx.store.listSteps(run.id) : ctx.store.listStepSummaries(run.id) });
   }
 
   const stepMatch = pathname.match(/^\/api\/pipelines\/runs\/([^/]+)\/steps\/([^/]+)$/);
@@ -249,7 +255,7 @@ export async function handlePipelineApi(
       step,
       events: ctx.store.listEventsForStep(step.id),
       callbacks: ctx.store.listCallbacksForStep(step.id),
-      previousSteps: ctx.store.listSteps(run.id).filter((entry) => entry.stepIndex < step.stepIndex),
+      previousSteps: ctx.store.listStepSummaries(run.id).filter((entry) => entry.stepIndex < step.stepIndex),
     });
   }
 
@@ -259,7 +265,8 @@ export async function handlePipelineApi(
     if (!run || run.ownerNpub !== ownerNpub) {
       return Response.json({ error: "Pipeline run not found" }, { status: 404 });
     }
-    return Response.json({ run, steps: ctx.store.listSteps(run.id) });
+    const includePayload = url.searchParams.get("includePayload") === "1";
+    return Response.json({ run, steps: includePayload ? ctx.store.listSteps(run.id) : ctx.store.listStepSummaries(run.id) });
   }
 
   return Response.json({ error: "Not found" }, { status: 404 });

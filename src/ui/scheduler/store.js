@@ -130,7 +130,10 @@ export function initSchedulerStore({ showToast }) {
     async trigger(id) {
       try {
         const result = await triggerSchedulerJob(id);
-        showToast(`Triggered — session ${result.sessionId?.slice(0, 8)}…`);
+        const label = result.pipelineRunId
+          ? `pipeline ${result.pipelineRunId.slice(0, 8)}…`
+          : `session ${result.sessionId?.slice(0, 8)}…`;
+        showToast(`Triggered — ${label}`);
         await this.sync();
         return result;
       } catch (err) {

@@ -1,4 +1,5 @@
-import { unlockViaEscrow } from '../identity/bot-key-manager';
+import { nip19 } from 'nostr-tools';
+import { generateBotKey, unlockViaEscrow } from '../identity/bot-key-manager';
 import {
   AgentWorkSessionRuntime,
   evaluateFlowDispatchEligibility,
@@ -215,6 +216,15 @@ export interface WorkspaceSubscriptionManagerDependencies {
   botKeyStore: {
     getActiveKeyForUser: (npub: string) => BotKeyStoreRecord | null;
     getActiveKeyForBotNpub: (botNpub: string) => BotKeyStoreRecord | null;
+    createKey?: (input: {
+      userNpub: string;
+      botPubkeyHex: string;
+      botNpub: string;
+      displayName: string;
+      encryptedToUser: string;
+      encryptedEscrow: string;
+      escrowUuid: string;
+    }) => BotKeyStoreRecord;
   };
 }
 
@@ -402,9 +412,25 @@ export class WorkspaceSubscriptionManager {
 
   async createOrUpdate(input: CreateWorkspaceSubscriptionInput): Promise<WorkspaceSubscriptionRecord> {
     const backendBaseUrl = normaliseBackendBaseUrl(input.backendBaseUrl);
-    const botRecord = this.botKeyStore.getActiveKeyForUser(input.managedByNpub);
+    let botRecord = this.botKeyStore.getActiveKeyForUser(input.managedByNpub);
     if (!botRecord) {
-      throw new Error('No active bot key exists for this user.');
+      if (!this.botKeyStore.createKey) {
+        throw new Error('No active bot key exists for this user.');
+      }
+      const decoded = nip19.decode(input.managedByNpub);
+      if (decoded.type !== 'npub' || typeof decoded.data !== 'string') {
+        throw new Error('Cannot create agent-chat bot key for invalid manager npub.');
+      }
+      const generated = generateBotKey(decoded.data);
+      botRecord = this.botKeyStore.createKey({
+        userNpub: input.managedByNpub,
+        botPubkeyHex: generated.botPubkeyHex,
+        botNpub: generated.botNpub,
+        displayName: generated.displayName,
+        encryptedToUser: generated.encryptedToUser,
+        encryptedEscrow: generated.encryptedEscrow,
+        escrowUuid: generated.escrowUuid,
+      });
     }
 
     const botIdentity = this.unlockBotIdentity(botRecord);

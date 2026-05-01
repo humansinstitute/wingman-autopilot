@@ -358,7 +358,7 @@ export function initPipelinesPage({ showToast }) {
       if (payload?.run?.id) {
         pushPipelinePath(makePipelinePath("runs", payload.run.id));
       }
-      showToast("Pipeline run complete", { type: "success" });
+      showToast("Pipeline run started", { type: "success" });
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
       showToast(state.error, { type: "error" });

@@ -424,15 +424,15 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
     if (pathname.startsWith('/api/agent-chat/subscriptions') || pathname.startsWith('/api/agent-chat/agents')) {
-      const uiRestrictedAction = ctx.AccessActions.UiRestricted ?? ctx.AccessActions.SessionsManage;
-      const denied = await ctx.ensureApiAccess(uiRestrictedAction, request, url, authContext);
+      const agentChatAuthContext = ctx.resolveNip98AuthContext(request, url, authContext);
+      const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, agentChatAuthContext);
       if (denied) {
         return denied;
       }
       if (!ctx.agentChatApiContext) {
         return Response.json({ error: 'agent-chat-unavailable' }, { status: 503 });
       }
-      const response = await handleAgentChatApi(request, url, method === 'GET' || method === 'POST' || method === 'DELETE' ? method : 'GET', authContext, ctx.agentChatApiContext);
+      const response = await handleAgentChatApi(request, url, method === 'GET' || method === 'POST' || method === 'DELETE' ? method : 'GET', agentChatAuthContext, ctx.agentChatApiContext);
       if (response) {
         return response;
       }

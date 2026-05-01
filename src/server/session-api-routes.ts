@@ -12,7 +12,6 @@ import type { WorkspaceScope } from "../workspaces/workspace-scope";
 import { normaliseNpub, deriveNpubSegment } from "../identity/npub-utils";
 import { generateIdentityAlias } from "../identity/identity-alias";
 import { validateInput, ArchiveListOptionsSchema } from "../utils/validation";
-import { InsufficientBalanceError } from "../storage/identity-user-store";
 import type { messageStore as MessageStoreInstance, StoredMessage, StoredSessionRecord } from "../storage/message-store";
 import type { sessionArchiveStore as SessionArchiveStoreInstance } from "../storage/session-archive-store";
 import type { ForkToWorktreeInput } from "../sessions/fork-to-worktree";
@@ -22,7 +21,6 @@ import { normalizeBusySessionMessageFailure } from "./session-message-failures";
 import type { PromptReadiness } from "../agents/agent-adapter";
 import {
   isAgentManagedByMetadataOrOrigin,
-  isCreditsBillingSession,
   normaliseSessionMetadata,
   resolveSessionChargeNpub,
   type SessionMetadata,
@@ -40,13 +38,6 @@ import type { NightWatchStartOptions } from "../nightwatch/nightwatch-start-conf
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
 // ---------- Types shared with server.ts ----------
-
-type BalanceRequirementOptions = {
-  feature: string;
-  minimum?: number;
-  message?: string;
-  signinMessage?: string;
-};
 
 type SessionWorkspaceRequest =
   | { mode: "worktree"; name: string }
@@ -80,8 +71,6 @@ export interface SessionApiContext {
   sessionArchiveStore: typeof SessionArchiveStoreInstance;
   identityUserStore: {
     touch: (npub: string) => { balance?: number };
-    debit: (npub: string, amount: number) => number;
-    credit: (npub: string, amount: number) => number;
     listUsers: () => Array<{ normalizedNpub: string; ports: number[]; balance: number }>;
     ensurePortsFor: (npub: string) => number[];
     getByNormalized: (normalizedNpub: string) => { ports?: number[]; balance?: number } | null;
@@ -104,13 +93,8 @@ export interface SessionApiContext {
   attachmentRoot: string;
   imageRoot: string;
 
-  // Constants
-  MESSAGE_COST_SATS: number;
-
   // Auth helpers
   ensureApiAccess: (action: AccessAction, request: Request, url: URL, authContext: RequestAuthContext) => Promise<Response | null>;
-  ensureViewerHasBalance: (authContext: RequestAuthContext, options: BalanceRequirementOptions) => Response | { balance: number };
-  shouldRequireBalanceForAgent: (agent: AgentType) => Promise<boolean>;
   resolveWorkspace: (context?: RequestAuthContext) => WorkspaceScope;
 
   // Session helpers
@@ -197,16 +181,6 @@ const resolveSelfSpaceViewerNpub = (
     return normaliseNpub(authContext.delegatedOwnerNpub ?? null);
   }
   return ctx.getViewerNormalizedNpub(authContext);
-};
-
-const buildSelfSpaceAuthContext = (
-  authContext: RequestAuthContext,
-  ownerNpub: string | null,
-): RequestAuthContext => {
-  if (!ownerNpub || !isDelegatedBotAuth(authContext)) {
-    return authContext;
-  }
-  return createOwnerScopedAuthContext(authContext, ownerNpub);
 };
 
 const recordLiveSession = async (
@@ -758,15 +732,6 @@ export async function handleSessionApi(
       if (!ctx.isAgentType(agent)) {
         return Response.json({ error: "Invalid agent selection" }, { status: 400 });
       }
-      const requiresBalance = await ctx.shouldRequireBalanceForAgent(agent);
-      if (requiresBalance) {
-        const balanceCheck = ctx.ensureViewerHasBalance(authContext, {
-          feature: "start an agent session",
-          message: "Add sats to your balance to start an agent session.",
-        });
-        if (balanceCheck instanceof Response) return balanceCheck;
-      }
-
       const directoryInput = typeof payload?.directory === "string" ? payload.directory : undefined;
       const rawName =
         payload && typeof payload === "object" && payload !== null
@@ -926,15 +891,6 @@ export async function handleSessionApi(
         if (!ctx.isAgentType(agent)) {
           return Response.json({ error: "Invalid agent selection" }, { status: 400 });
         }
-        const requiresBalance = await ctx.shouldRequireBalanceForAgent(agent);
-        if (requiresBalance) {
-          const balanceCheck = ctx.ensureViewerHasBalance(billingAuthContext, {
-            feature: "start an agent session",
-            message: "Add sats to your balance to start an agent session.",
-          });
-          if (balanceCheck instanceof Response) return balanceCheck;
-        }
-
         const directoryInput = typeof payload?.directory === "string" ? payload.directory : undefined;
         const rawName = payload && typeof payload === "object" && payload !== null ? payload.name : null;
         let workspace: SessionWorkspaceRequest = null;
@@ -1280,21 +1236,11 @@ export async function handleSessionApi(
 
     try {
       const sessionOwnerNpub = resolveSelfSpaceViewerNpub(authContext, ctx);
-      const selfSpaceAuthContext = buildSelfSpaceAuthContext(authContext, sessionOwnerNpub);
       const payload = (await request.json()) as Record<string, unknown> | null;
       const agent = typeof payload?.agent === "string" ? payload.agent.toLowerCase() : "";
       if (!ctx.isAgentType(agent)) {
         return Response.json({ error: "Invalid agent selection" }, { status: 400 });
       }
-      const requiresBalance = await ctx.shouldRequireBalanceForAgent(agent);
-      if (requiresBalance) {
-        const balanceCheck = ctx.ensureViewerHasBalance(selfSpaceAuthContext, {
-          feature: "start an agent session",
-          message: "Add sats to your balance to start an agent session.",
-        });
-        if (balanceCheck instanceof Response) return balanceCheck;
-      }
-
       const directoryInput = typeof payload?.directory === "string" ? payload.directory : undefined;
       const rawName =
         payload && typeof payload === "object" && payload !== null
@@ -1670,25 +1616,7 @@ async function handlePostMessage(
     return Response.json({ id, ok: true });
   }
 
-  const isCreditsBilling = isCreditsBillingSession(ownedSession.metadata);
   let currentBalance: number | null = null;
-  if (!isCreditsBilling) {
-    try {
-      currentBalance = ctx.identityUserStore.debit(userNpub, ctx.MESSAGE_COST_SATS);
-    } catch (error) {
-      if (error instanceof InsufficientBalanceError) {
-        return Response.json(
-          {
-            error: "Insufficient balance to send message",
-            balance: error.balance,
-          },
-          { status: 402 },
-        );
-      }
-      console.error("[billing] failed to debit message cost:", error);
-      return Response.json({ error: "Failed to debit balance" }, { status: 500 });
-    }
-  }
 
   try {
     const initialCount = ctx.messageStore.listSessionMessages(id).length;
@@ -1703,13 +1631,6 @@ async function handlePostMessage(
       adapter,
     });
     if (!result.ok) {
-      if (!isCreditsBilling) {
-        try {
-          currentBalance = ctx.identityUserStore.credit(userNpub, ctx.MESSAGE_COST_SATS);
-        } catch (creditError) {
-          console.error("[billing] failed to refund after agent rejection:", creditError);
-        }
-      }
       const normalizedResult = await normalizeBusySessionMessageFailure(ownedSession, result, adapter);
       return Response.json(
         { error: normalizedResult.message, balance: currentBalance },
@@ -1720,13 +1641,6 @@ async function handlePostMessage(
     const messages = await ctx.waitForMessageUpdate(id, initialCount);
     return Response.json({ id, messages, balance: currentBalance });
   } catch (error) {
-    if (!isCreditsBilling) {
-      try {
-        currentBalance = ctx.identityUserStore.credit(userNpub, ctx.MESSAGE_COST_SATS);
-      } catch (creditError) {
-        console.error("[billing] failed to refund after agent error:", creditError);
-      }
-    }
     return Response.json(
       { error: `Failed to contact agent: ${(error as Error).message}`, balance: currentBalance },
       { status: 502 },
@@ -2051,15 +1965,6 @@ async function handleForkToWorktree(
   }
 
   // Create new session in the worktree with the same agent
-  const requiresBalance = await ctx.shouldRequireBalanceForAgent(ownedSession.agent);
-  if (requiresBalance) {
-    const balanceCheck = ctx.ensureViewerHasBalance(authContext, {
-      feature: "start an agent session",
-      message: "Add sats to your balance to fork to a worktree.",
-    });
-    if (balanceCheck instanceof Response) return balanceCheck;
-  }
-
   const sessionName = `${ownedSession.name || "session"} (${forkInput.branch})`;
   let newSession: SessionSnapshot;
   try {

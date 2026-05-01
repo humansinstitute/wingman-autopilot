@@ -44,6 +44,7 @@ A pipeline definition is a JSON object:
       "type": "agent",
       "agent": "codex",
       "directory": "/Users/mini/wingmen/wingman21",
+      "timeoutMs": "$.agentTimeoutMs",
       "input": { "pick": { "text": "$.normalised.text" } },
       "prompt": "Classify the input and return kind, reason, and confidence.",
       "assign": "$.agentRaw"
@@ -63,6 +64,8 @@ A pipeline definition is a JSON object:
 - `agent.parseParagraphAnalysis`
 - `route.byKind`
 - `object.finalise`
+
+Agent steps can set `timeoutMs` as milliseconds or as a JSON path. If omitted, the runner waits 10 minutes for the callback. When a timeout fires, the run is marked as an error and the pipeline session is stopped; the runner does not send a reminder prompt.
 - `object.finaliseParagraphAnalysis`
 - `review.appendIteration`
 - `review.finaliseDesignReview`

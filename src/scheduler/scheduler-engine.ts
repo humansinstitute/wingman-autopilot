@@ -80,13 +80,13 @@ function isWithinActiveWindow(
     timeZone: timezone || "UTC",
   });
   const nowStr = formatter.format(now); // "HH:MM"
-  const [nowH, nowM] = nowStr.split(":").map(Number);
+  const [nowH = 0, nowM = 0] = nowStr.split(":").map(Number);
   const nowMinutes = nowH * 60 + nowM;
 
-  const [startH, startM] = startTime.split(":").map(Number);
+  const [startH = 0, startM = 0] = startTime.split(":").map(Number);
   const startMinutes = startH * 60 + startM;
 
-  const [endH, endM] = endTime.split(":").map(Number);
+  const [endH = 0, endM = 0] = endTime.split(":").map(Number);
   const endMinutes = endH * 60 + endM;
 
   if (startMinutes <= endMinutes) {
@@ -300,7 +300,9 @@ class SchedulerEngine {
     if (!job) throw new Error(`Job ${jobId} not found`);
 
     const promptOverride = message
-      ? `${job.initialPrompt}\n\n${message}`
+      ? job.actionType === "pipeline"
+        ? message
+        : `${job.initialPrompt}\n\n${message}`
       : undefined;
 
     const now = new Date();

@@ -45,6 +45,7 @@ export type DeclarativeStep =
       when?: EqualsCondition;
       agent?: string;
       directory?: string;
+      timeoutMs?: number | string;
     }
   | {
       id?: string;

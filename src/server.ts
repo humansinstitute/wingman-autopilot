@@ -366,7 +366,6 @@ const FEATURE_FLAG_DEFAULTS: Array<{
 
 featureFlagStore.ensureDefaults(FEATURE_FLAG_DEFAULTS);
 process.env.WINGMAN_PID = process.pid.toString();
-const MESSAGE_COST_SATS = 100;
 const projectStore = new ProjectStore();
 const todoStore = new TodoStore();
 const promptQueueStore = new PromptQueueStore("data/prompt-queue.db");
@@ -557,14 +556,45 @@ const gitWorkflowApiHandler = createGitWorkflowApiHandler({
 const workspaceSubscriptionManager = new WorkspaceSubscriptionManager({
   botKeyStore,
 });
+
+const APPROVED_WORK_ROLES = new Set(["approved", "onboard"]);
+
+const isUserApprovedForWork = (npub: string | null | undefined): boolean => {
+  const normalized = normaliseNpub(npub ?? null);
+  if (!normalized) {
+    return false;
+  }
+  if (adminNpub && normalized === adminNpub) {
+    return true;
+  }
+  const record = identityUserStore.getByNormalized(normalized);
+  return Boolean(record?.roles.some((role) => APPROVED_WORK_ROLES.has(role)));
+};
+
+const requireApprovedWorkAccess = (): AccessRule => {
+  return (context) => {
+    const ownerNpub = getEffectiveOwnerNpub(context.auth);
+    return isUserApprovedForWork(ownerNpub)
+      ? allow()
+      : deny("approval-required", 403);
+  };
+};
+
 registerAccessRule(AccessActions.SessionsManage, requireAuthentication({ allowNip98: true }));
+registerAccessRule(AccessActions.SessionsManage, requireApprovedWorkAccess());
 registerAccessRule(AccessActions.FilesRead, requireAuthentication({ allowNip98: true }));
+registerAccessRule(AccessActions.FilesRead, requireApprovedWorkAccess());
 registerAccessRule(AccessActions.FilesWrite, requireAuthentication({ allowNip98: true }));
+registerAccessRule(AccessActions.FilesWrite, requireApprovedWorkAccess());
 registerAccessRule(AccessActions.AppsManage, requireAuthentication({ allowNip98: true }));
+registerAccessRule(AccessActions.AppsManage, requireApprovedWorkAccess());
 registerAccessRule(AccessActions.UiRestricted, requireAuthentication());
 registerAccessRule(AccessActions.TodosManage, requireAuthentication());
+registerAccessRule(AccessActions.TodosManage, requireApprovedWorkAccess());
 registerAccessRule(AccessActions.ProjectsManage, requireAuthentication());
+registerAccessRule(AccessActions.ProjectsManage, requireApprovedWorkAccess());
 registerAccessRule(AccessActions.DeploymentsManage, requireAuthentication());
+registerAccessRule(AccessActions.DeploymentsManage, requireApprovedWorkAccess());
 
 const projectRootPath = (() => {
   let root = normalize(fileURLToPath(new URL("..", import.meta.url)));
@@ -1090,63 +1120,6 @@ const getViewerNormalizedNpub = (authContext: RequestAuthContext): string | null
   return getEffectiveOwnerNpub(authContext);
 };
 
-type BalanceRequirementOptions = {
-  feature: string;
-  minimum?: number;
-  message?: string;
-  signinMessage?: string;
-};
-
-const ensureViewerHasBalance = (
-  authContext: RequestAuthContext,
-  options: BalanceRequirementOptions,
-): Response | { balance: number } => {
-  const { feature, minimum = 1, message, signinMessage } = options;
-  const userNpub = getEffectiveOwnerNpub(authContext);
-  if (!userNpub) {
-    const error = signinMessage ?? `Sign in to ${feature}.`;
-    return Response.json(
-      {
-        error,
-        balance: 0,
-        required: minimum,
-      },
-      { status: 403 },
-    );
-  }
-
-  let balance = 0;
-  try {
-    const record = identityUserStore.touch(userNpub);
-    balance = record.balance ?? 0;
-  } catch (error) {
-    console.warn("[billing] unable to resolve identity during balance check:", error);
-    const errorMessage = signinMessage ?? `Sign in to ${feature}.`;
-    return Response.json(
-      {
-        error: errorMessage,
-        balance: 0,
-        required: minimum,
-      },
-      { status: 403 },
-    );
-  }
-
-  if (balance < minimum) {
-    const errorMessage = message ?? `Add sats to your balance to ${feature}.`;
-    return Response.json(
-      {
-        error: errorMessage,
-        balance,
-        required: minimum,
-      },
-      { status: 402 },
-    );
-  }
-
-  return { balance };
-};
-
 const sessionBelongsToViewer = (
   sessionNpub: string | null | undefined,
   sessionMetadata: SessionMetadataInput,
@@ -1650,7 +1623,7 @@ const assetService = createStaticAssetService({
 });
 
 // Asset version — increment to bust browser caches after deploys.
-const ASSET_VERSION = "23";
+const ASSET_VERSION = "24";
 
 const serveIndex = async () => {
   const url = new URL("./ui/index.html", import.meta.url);
@@ -1755,9 +1728,8 @@ const promptDispatchEngine = createPromptDispatchEngine({
   manager,
   agentHost,
   messageStore,
-  identityUserStore,
+  isUserApprovedForWork,
   promptQueueStore,
-  MESSAGE_COST_SATS,
   buildAgentUrl,
   waitForSessionPromptReadiness,
   syncSessionMessages,
@@ -2280,10 +2252,7 @@ const sessionApiContext: SessionApiContext = {
   userIdentityRoot,
   attachmentRoot,
   imageRoot,
-  MESSAGE_COST_SATS,
   ensureApiAccess,
-  ensureViewerHasBalance,
-  shouldRequireBalanceForAgent: async () => false,
   resolveWorkspace,
   serializeSession,
   sessionBelongsToViewer,
@@ -2557,7 +2526,6 @@ const handleApi = createApiRouteHandler({
       viewerNpub: appsViewerNpub,
       AccessActions,
       ensureApiAccess,
-      ensureViewerHasBalance,
       normaliseOptionalString,
       normaliseNpub,
       ensureDirectory,

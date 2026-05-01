@@ -59,6 +59,16 @@ export function formatRunMeta(run) {
   return [started, duration].filter((value) => value && value !== "--").join(" - ") || "--";
 }
 
+export function formatBytes(value) {
+  const bytes = Number(value ?? 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  const kib = bytes / 1024;
+  if (kib < 1024) return `${kib.toFixed(kib < 10 ? 1 : 0)} KiB`;
+  const mib = kib / 1024;
+  return `${mib.toFixed(mib < 10 ? 1 : 0)} MiB`;
+}
+
 export function renderJsonBlock(title, value) {
   const normalized = value === undefined ? {} : value;
   return `

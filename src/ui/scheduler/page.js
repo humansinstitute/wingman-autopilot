@@ -1128,6 +1128,12 @@ function getPageTemplate() {
                    x-text="run.sessionId.slice(0, 8) + '\u2026'"
                    title="Open session"></a>
               </template>
+              <template x-if="run.pipelineRunId">
+                <a :href="'/pipelines/runs/' + run.pipelineRunId"
+                   style="font-family: monospace; font-size: 0.75rem; color: var(--accent-primary); text-decoration: none;"
+                   x-text="run.pipelineRunId.slice(0, 8) + '\u2026'"
+                   title="Open pipeline run"></a>
+              </template>
               <template x-if="run.errorMessage">
                 <span style="color: #ef4444; font-size: 0.8rem;" x-text="run.errorMessage"></span>
               </template>

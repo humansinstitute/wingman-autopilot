@@ -22,10 +22,6 @@ export interface AppsApiContext {
   };
 
   ensureApiAccess: (action: AccessAction, request: Request, url: URL, authContext: RequestAuthContext) => Promise<Response | null>;
-  ensureViewerHasBalance: (
-    authContext: RequestAuthContext,
-    options: { feature: string; minimum?: number; message?: string; signinMessage?: string },
-  ) => Response | { balance: number };
 
   normaliseOptionalString: (value: unknown) => string | null;
   normaliseNpub: (npub: string | null | undefined) => string | null;
@@ -646,19 +642,6 @@ export async function handleAppsApi(
 
       if (!ctx.appActions.includes(normalizedAction as AppLifecycleAction)) {
         return Response.json({ error: `Unsupported action: ${actionValue}` }, { status: 400 });
-      }
-
-      if (normalizedAction === 'start' || normalizedAction === 'restart') {
-        const balanceCheck = ctx.ensureViewerHasBalance(authContext, {
-          feature: normalizedAction === 'start' ? 'start this app' : 'restart this app',
-          message:
-            normalizedAction === 'start'
-              ? 'Add sats to your balance to start this app.'
-              : 'Add sats to your balance to restart this app.',
-        });
-        if (balanceCheck instanceof Response) {
-          return balanceCheck;
-        }
       }
 
       try {

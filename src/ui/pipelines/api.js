@@ -29,7 +29,7 @@ export async function fetchPipelineFunction(name) {
 }
 
 export async function runPipelineDefinition(id, input = null) {
-  const res = await fetch(`/api/pipelines/definitions/${encodeURIComponent(id)}/runs`, {
+  const res = await fetch(`/api/pipelines/definitions/${encodeURIComponent(id)}/runs?async=1`, {
     method: "POST",
     credentials: "include",
     headers: { "content-type": "application/json" },

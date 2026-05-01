@@ -5,8 +5,7 @@
 
 import type { AgentType } from "../config";
 import type { SessionSnapshot } from "../agents/process-manager";
-import { InsufficientBalanceError } from "../storage/identity-user-store";
-import { isCreditsBillingSession, resolveSessionChargeNpub } from "../sessions/session-metadata";
+import { resolveSessionChargeNpub } from "../sessions/session-metadata";
 import { deliverSessionAgentMessage } from "./session-agent-message";
 import { getSessionPromptReadiness } from "./prompt-readiness";
 
@@ -22,16 +21,12 @@ export interface PromptDispatchContext {
   messageStore: {
     listSessionMessages: (id: string) => unknown[];
   };
-  identityUserStore: {
-    debit: (npub: string, amount: number) => number;
-    credit: (npub: string, amount: number) => number;
-  };
+  isUserApprovedForWork?: (npub: string) => boolean;
   promptQueueStore: {
     getNextQueuedPrompt: (sessionId: string) => { content: string } | null;
     removeNextPrompt: (sessionId: string) => void;
     getQueueCount: (sessionId: string) => number;
   };
-  MESSAGE_COST_SATS: number;
   buildAgentUrl: (host: string, port: number, path: string) => string | URL;
   waitForSessionPromptReadiness: (opts: {
     getSession: (id: string) => SessionSnapshot | null;
@@ -195,6 +190,11 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
     if (!userNpub) {
       throw new QueueDispatchError("Sign in to send messages", 403, { balance: 0 });
     }
+    if (ctx.isUserApprovedForWork && !ctx.isUserApprovedForWork(userNpub)) {
+      throw new QueueDispatchError("User is not approved to use Wingman", 403, {
+        approvalRequired: true,
+      });
+    }
 
     try {
       const readinessStartedAt = Date.now();
@@ -212,37 +212,7 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
       throw new QueueDispatchError("No prompts in queue", 404);
     }
 
-    const creditsBilling = isCreditsBillingSession(session.metadata);
     let currentBalance: number | null = null;
-    let debitApplied = false;
-    const refundDebit = () => {
-      if (!debitApplied) return;
-      try {
-        currentBalance = ctx.identityUserStore.credit(userNpub, ctx.MESSAGE_COST_SATS);
-      } catch (creditError) {
-        console.error("[billing] failed to refund queued prompt debit:", creditError);
-      } finally {
-        debitApplied = false;
-      }
-    };
-
-    if (!creditsBilling) {
-      try {
-        const billingStartedAt = Date.now();
-        currentBalance = ctx.identityUserStore.debit(userNpub, ctx.MESSAGE_COST_SATS);
-        billingMs = elapsedSince(billingStartedAt);
-        debitApplied = true;
-      } catch (error) {
-        if (error instanceof InsufficientBalanceError) {
-          throw new QueueDispatchError("Insufficient balance", 402, {
-            balance: error.balance,
-            required: ctx.MESSAGE_COST_SATS,
-          });
-        }
-        console.error("[billing] failed to debit message cost:", error);
-        throw new QueueDispatchError("Failed to debit balance", 500);
-      }
-    }
 
     try {
       const initialCount = ctx.messageStore.listSessionMessages(session.id).length;
@@ -260,7 +230,6 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
       deliveryMs = elapsedSince(deliveryStartedAt);
 
       if (!result.ok) {
-        refundDebit();
         throw new QueueDispatchError(result.message, result.status, {
           balance: currentBalance,
           failedPrompt: nextPrompt,
@@ -298,7 +267,6 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
         });
         throw error;
       }
-      refundDebit();
       logQueueDispatchTiming({
         sessionId: session.id,
         agent: session.agent,

@@ -41,8 +41,19 @@ export class PipelineHalt extends Error {
 }
 
 export async function runDeclarativePipeline(input: PipelineRunnerInput) {
-  const { store, definition, registry } = input;
-  const run = store.createRun({
+  const run = createPipelineRun(input);
+  return await executeDeclarativePipeline(input, run.id, input.input);
+}
+
+export function startDeclarativePipeline(input: PipelineRunnerInput) {
+  const run = createPipelineRun(input);
+  void executeDeclarativePipeline(input, run.id, input.input);
+  return run;
+}
+
+function createPipelineRun(input: PipelineRunnerInput) {
+  const { store, definition } = input;
+  return store.createRun({
     definitionId: definition.id,
     definitionPath: definition.path,
     name: definition.spec.name,
@@ -51,7 +62,11 @@ export async function runDeclarativePipeline(input: PipelineRunnerInput) {
     scope: definition.scope,
     input: input.input,
   });
-  let current = input.input;
+}
+
+async function executeDeclarativePipeline(input: PipelineRunnerInput, runId: string, initialInput: JsonObject) {
+  const { store, definition } = input;
+  let current = initialInput;
   let stepIndex = 0;
   let cursor = 0;
   let executedSteps = 0;
@@ -67,7 +82,7 @@ export async function runDeclarativePipeline(input: PipelineRunnerInput) {
       const step = topLevelSteps[cursor]!;
       const outcome = await executePipelineStep({
         ...input,
-        runId: run.id,
+        runId,
         step,
         current,
         nextStepIndex: () => stepIndex++,
@@ -77,12 +92,12 @@ export async function runDeclarativePipeline(input: PipelineRunnerInput) {
       cursor = typeof outcome.jumpTo === "number" ? outcome.jumpTo : cursor + 1;
     }
 
-    return store.completeRun(run.id, "ok", current);
+    return store.completeRun(runId, "ok", current);
   } catch (error) {
     if (error instanceof PipelineHalt) {
-      return store.completeRun(run.id, error.status, error.result, error.message);
+      return store.completeRun(runId, error.status, error.result, error.message);
     }
-    return store.completeRun(run.id, "error", current, error instanceof Error ? error.message : String(error));
+    return store.completeRun(runId, "error", current, error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -235,6 +250,7 @@ async function executePipelineStep(input: PipelineRunnerInput & {
     callbackToken: token,
     agent: resolveStringTemplate(input.current, step.agent),
     directory: resolveStringTemplate(input.current, step.directory),
+    callbackTimeoutMs: resolveDurationMs(input.current, step.timeoutMs, CALLBACK_TIMEOUT_MS),
   });
   const current = assignOutput(input.current, result, step.assign);
   store.completeStep({
@@ -259,7 +275,16 @@ function resolveIterationCount(current: JsonObject, value: number | string): num
   const raw = typeof value === "string" ? resolvePath(current, value) : value;
   const count = Math.floor(Number(raw));
   if (!Number.isFinite(count) || count < 1) return 1;
-  return Math.min(count, 25);
+  return Math.min(count, 200);
+}
+
+function resolveDurationMs(current: JsonObject, value: number | string | undefined, fallbackMs: number): number {
+  const raw = typeof value === "string" && (value.startsWith("$.") || value === "$")
+    ? resolvePath(current, value)
+    : value;
+  const duration = Math.floor(Number(raw));
+  if (!Number.isFinite(duration) || duration < 1_000) return fallbackMs;
+  return Math.min(duration, 24 * 60 * 60 * 1000);
 }
 
 function getHistoryItems(current: JsonObject, path: string): unknown[] {
@@ -334,6 +359,7 @@ async function runAgentStep(input: PipelineRunnerInput & {
   callbackToken: string;
   agent?: string;
   directory?: string;
+  callbackTimeoutMs: number;
 }): Promise<JsonObject> {
   const sessionCtx = input.sessionApiContext;
   const agent = resolveAgent(sessionCtx, input.agent);
@@ -385,7 +411,7 @@ async function runAgentStep(input: PipelineRunnerInput & {
       throw new Error(delivered.message);
     }
 
-    result = await waitForCallbackResult(input.store, input.stepId);
+    result = await waitForCallbackResult(input.store, input.stepId, input.callbackTimeoutMs);
   } catch (error) {
     const latest = input.store.getStep(input.stepId);
     if (latest?.status === "running") {
@@ -490,8 +516,12 @@ curl -sS -X POST '${input.callbackUrl}' \\
 	  -d '{"runId":"${input.runId}","stepId":"${input.stepId}","status":"ok","result":{"answer":"..."}}'`;
 }
 
-async function waitForCallbackResult(store: PipelineStore, stepId: string): Promise<{ status: PipelineStatus; result: JsonObject | null; error: string | null }> {
-  const deadline = Date.now() + CALLBACK_TIMEOUT_MS;
+async function waitForCallbackResult(
+  store: PipelineStore,
+  stepId: string,
+  timeoutMs: number,
+): Promise<{ status: PipelineStatus; result: JsonObject | null; error: string | null }> {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const step = store.getStep(stepId);
     if (step && step.status !== "running") {
@@ -499,7 +529,7 @@ async function waitForCallbackResult(store: PipelineStore, stepId: string): Prom
     }
     await new Promise((resolve) => setTimeout(resolve, CALLBACK_POLL_MS));
   }
-  throw new Error("Timed out waiting for pipeline agent callback");
+  throw new Error(`Timed out waiting for pipeline agent callback after ${Math.round(timeoutMs / 1000)}s`);
 }
 
 function parseAgentCallbackPayload(
