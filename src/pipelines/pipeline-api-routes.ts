@@ -24,7 +24,7 @@ import {
   nextVersionedFunctionPath,
   type PipelineDefinitionRecord,
 } from "./pipeline-loader";
-import { acceptAgentCallback, runDeclarativePipeline, startDeclarativePipeline } from "./pipeline-runner";
+import { acceptAgentCallback, resumeDeclarativePipeline, runDeclarativePipeline, startDeclarativePipeline } from "./pipeline-runner";
 import { type JsonObject, PipelineStore } from "./pipeline-store";
 import { startPipelineWizardSession } from "./pipeline-wizard";
 
@@ -57,6 +57,17 @@ export async function handlePipelineApi(
       token: request.headers.get("x-wingmen-pipeline-token") ?? url.searchParams.get("token"),
       payload,
     });
+    if (result.ok) {
+      const runId = decodeURIComponent(callbackMatch[1]!);
+      void resumeStoredPipelineRun(ctx, runId, ctx.callbackOrigin ?? url.origin).catch((error) => {
+        ctx.store.addEvent({
+          runId,
+          level: "error",
+          type: "run_resume_failed",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
     return Response.json(result.body, { status: result.status });
   }
 
@@ -270,6 +281,41 @@ export async function handlePipelineApi(
   }
 
   return Response.json({ error: "Not found" }, { status: 404 });
+}
+
+export async function resumeStoredPipelineRun(
+  ctx: PipelineApiContext,
+  runId: string,
+  callbackOrigin: string,
+): Promise<void> {
+  const run = ctx.store.getRun(runId);
+  if (!run || run.status !== "running") return;
+  const ownerAlias = run.ownerAlias;
+  const definition = await getPipelineDefinition(run.definitionId, ownerAlias);
+  if (!definition) {
+    ctx.store.completeRun(run.id, "error", run.current, `Pipeline definition not found: ${run.definitionId}`);
+    return;
+  }
+  const functions = await loadPipelineFunctionRegistry(ownerAlias, builtinPipelineFunctions);
+  await resumeDeclarativePipeline({
+    store: ctx.store,
+    sessionApiContext: ctx.sessionApiContext,
+    definition,
+    registry: functions.registry,
+    input: run.input,
+    ownerNpub: run.ownerNpub,
+    ownerAlias,
+    callbackOrigin,
+  }, run.id);
+}
+
+export async function resumeRunningPipelineRuns(
+  ctx: PipelineApiContext,
+  callbackOrigin: string,
+): Promise<void> {
+  for (const run of ctx.store.listRunningRuns()) {
+    await resumeStoredPipelineRun(ctx, run.id, callbackOrigin);
+  }
 }
 
 function serializeDefinitionSummary(definition: PipelineDefinitionRecord): JsonObject {

@@ -4,8 +4,8 @@ import { mkdirSync } from "node:fs";
 
 export type JsonObject = Record<string, unknown>;
 export type PipelineScope = "shared" | "user";
-export type StepKind = "code" | "agent" | "loop" | "block";
-export type PipelineStatus = "running" | "ok" | "needs_input" | "error" | "skipped";
+export type StepKind = "code" | "agent" | "loop" | "block" | "parallel";
+export type PipelineStatus = "queued" | "running" | "ok" | "needs_input" | "error" | "skipped";
 
 export interface PipelineRunRecord {
   id: string;
@@ -17,6 +17,9 @@ export interface PipelineRunRecord {
   ownerAlias: string | null;
   scope: PipelineScope;
   input: JsonObject;
+  current: JsonObject;
+  cursorIndex: number;
+  activeStepId: string | null;
   result: JsonObject | null;
   error: string | null;
   startedAt: string;
@@ -34,7 +37,10 @@ export interface PipelineStepRecord {
   result: JsonObject | null;
   error: string | null;
   wingmanSessionId: string | null;
+  parentStepId: string | null;
+  logicalKey: string | null;
   callbackToken: string | null;
+  output: JsonObject | null;
   startedAt: string;
   completedAt: string | null;
 }
@@ -48,6 +54,8 @@ export interface PipelineStepSummary {
   status: PipelineStatus;
   error: string | null;
   wingmanSessionId: string | null;
+  parentStepId: string | null;
+  logicalKey: string | null;
   callbackToken: string | null;
   startedAt: string;
   completedAt: string | null;
@@ -104,8 +112,8 @@ export class PipelineStore {
     this.db.run(
       `INSERT INTO pipeline_runs (
         id, definition_id, definition_path, name, status, owner_npub, owner_alias, scope,
-        input_json, result_json, error, started_at, completed_at
-      ) VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, NULL, NULL, ?, NULL)`,
+        input_json, current_json, cursor_index, active_step_id, result_json, error, started_at, completed_at
+      ) VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, NULL)`,
       [
         id,
         input.definitionId,
@@ -115,6 +123,7 @@ export class PipelineStore {
         input.ownerAlias ?? null,
         input.scope,
         encodeJson(input.input),
+        encodeJson(input.input),
         now(),
       ],
     );
@@ -123,7 +132,7 @@ export class PipelineStore {
 
   completeRun(id: string, status: PipelineStatus, result: JsonObject | null, error?: string | null): PipelineRunRecord {
     this.db.run(
-      `UPDATE pipeline_runs SET status = ?, result_json = ?, error = ?, completed_at = ? WHERE id = ?`,
+      `UPDATE pipeline_runs SET status = ?, result_json = ?, error = ?, active_step_id = NULL, completed_at = ? WHERE id = ?`,
       [status, result ? encodeJson(result) : null, error ?? null, now(), id],
     );
     return this.getRun(id)!;
@@ -135,34 +144,66 @@ export class PipelineStore {
     name: string;
     kind: StepKind;
     input: JsonObject;
+    status?: PipelineStatus;
+    parentStepId?: string | null;
+    logicalKey?: string | null;
     callbackToken?: string | null;
   }): PipelineStepRecord {
     const id = crypto.randomUUID();
+    const status = input.status ?? "running";
     this.db.run(
       `INSERT INTO pipeline_steps (
         id, run_id, step_index, name, kind, status, input_json, result_json, error,
-        wingman_session_id, callback_token, started_at, completed_at
-      ) VALUES (?, ?, ?, ?, ?, 'running', ?, NULL, NULL, NULL, ?, ?, NULL)`,
-      [id, input.runId, input.stepIndex, input.name, input.kind, encodeJson(input.input), input.callbackToken ?? null, now()],
+        wingman_session_id, parent_step_id, logical_key, callback_token, output_json, started_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, NULL, ?, NULL)`,
+      [
+        id,
+        input.runId,
+        input.stepIndex,
+        input.name,
+        input.kind,
+        status,
+        encodeJson(input.input),
+        input.parentStepId ?? null,
+        input.logicalKey ?? null,
+        input.callbackToken ?? null,
+        now(),
+      ],
     );
-    this.addEvent({ runId: input.runId, stepId: id, level: "info", type: "step_started", message: input.name, data: input.input });
+    this.addEvent({
+      runId: input.runId,
+      stepId: id,
+      level: "info",
+      type: status === "queued" ? "step_queued" : "step_started",
+      message: input.name,
+      data: input.input,
+    });
     return this.getStep(id)!;
+  }
+
+  startStep(id: string): PipelineStepRecord {
+    this.db.run(`UPDATE pipeline_steps SET status = 'running', started_at = COALESCE(started_at, ?) WHERE id = ?`, [now(), id]);
+    const step = this.getStep(id)!;
+    this.addEvent({ runId: step.runId, stepId: id, level: "info", type: "step_started", message: step.name, data: step.input });
+    return step;
   }
 
   completeStep(input: {
     id: string;
     status: PipelineStatus;
     result: JsonObject | null;
+    output?: JsonObject | null;
     error?: string | null;
     wingmanSessionId?: string | null;
   }): PipelineStepRecord {
     this.db.run(
       `UPDATE pipeline_steps
-       SET status = ?, result_json = ?, error = ?, wingman_session_id = COALESCE(?, wingman_session_id), completed_at = ?
+       SET status = ?, result_json = ?, output_json = COALESCE(?, output_json), error = ?, wingman_session_id = COALESCE(?, wingman_session_id), completed_at = ?
        WHERE id = ?`,
       [
         input.status,
         input.result ? encodeJson(input.result) : null,
+        input.output ? encodeJson(input.output) : null,
         input.error ?? null,
         input.wingmanSessionId ?? null,
         now(),
@@ -183,6 +224,21 @@ export class PipelineStore {
 
   setStepSession(stepId: string, sessionId: string): void {
     this.db.run(`UPDATE pipeline_steps SET wingman_session_id = ? WHERE id = ?`, [sessionId, stepId]);
+  }
+
+  setStepCallbackToken(stepId: string, token: string): void {
+    this.db.run(`UPDATE pipeline_steps SET callback_token = ? WHERE id = ?`, [token, stepId]);
+  }
+
+  updateRunProgress(runId: string, current: JsonObject, cursorIndex: number): void {
+    this.db.run(
+      `UPDATE pipeline_runs SET current_json = ?, cursor_index = ?, active_step_id = NULL WHERE id = ?`,
+      [encodeJson(current), cursorIndex, runId],
+    );
+  }
+
+  setRunActiveStep(runId: string, stepId: string | null): void {
+    this.db.run(`UPDATE pipeline_runs SET active_step_id = ? WHERE id = ?`, [stepId, runId]);
   }
 
   getRun(id: string): PipelineRunRecord | null {
@@ -217,12 +273,26 @@ export class PipelineStore {
     return rows.map(mapStep);
   }
 
+  listChildSteps(parentStepId: string): PipelineStepRecord[] {
+    const rows = this.db
+      .query(`SELECT * FROM pipeline_steps WHERE parent_step_id = ? ORDER BY step_index ASC`)
+      .all(parentStepId) as Record<string, unknown>[];
+    return rows.map(mapStep);
+  }
+
+  listRunningRuns(): PipelineRunRecord[] {
+    const rows = this.db
+      .query(`SELECT * FROM pipeline_runs WHERE status = 'running' ORDER BY started_at ASC`)
+      .all() as Record<string, unknown>[];
+    return rows.map(mapRun);
+  }
+
   listStepSummaries(runId: string): PipelineStepSummary[] {
     const rows = this.db
       .query(`
         SELECT
           id, run_id, step_index, name, kind, status, error, wingman_session_id,
-          callback_token, started_at, completed_at,
+          parent_step_id, logical_key, callback_token, started_at, completed_at,
           length(coalesce(input_json, '')) AS input_bytes,
           length(coalesce(result_json, '')) AS result_bytes
         FROM pipeline_steps
@@ -284,6 +354,9 @@ export class PipelineStore {
         owner_alias TEXT,
         scope TEXT NOT NULL,
         input_json TEXT NOT NULL,
+        current_json TEXT NOT NULL DEFAULT '{}',
+        cursor_index INTEGER NOT NULL DEFAULT 0,
+        active_step_id TEXT,
         result_json TEXT,
         error TEXT,
         started_at TEXT NOT NULL,
@@ -302,12 +375,23 @@ export class PipelineStore {
         result_json TEXT,
         error TEXT,
         wingman_session_id TEXT,
+        parent_step_id TEXT,
+        logical_key TEXT,
         callback_token TEXT,
+        output_json TEXT,
         started_at TEXT NOT NULL,
         completed_at TEXT
       )
     `);
+    this.ensureColumn("pipeline_runs", "current_json", "TEXT NOT NULL DEFAULT '{}'");
+    this.ensureColumn("pipeline_runs", "cursor_index", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("pipeline_runs", "active_step_id", "TEXT");
+    this.db.run(`UPDATE pipeline_runs SET current_json = input_json WHERE status = 'running' AND cursor_index = 0 AND current_json = '{}'`);
+    this.ensureColumn("pipeline_steps", "parent_step_id", "TEXT");
+    this.ensureColumn("pipeline_steps", "logical_key", "TEXT");
+    this.ensureColumn("pipeline_steps", "output_json", "TEXT");
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_pipeline_steps_run_order ON pipeline_steps(run_id, step_index)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_pipeline_steps_parent_order ON pipeline_steps(parent_step_id, step_index)`);
     this.db.run(`
       CREATE TABLE IF NOT EXISTS pipeline_events (
         id TEXT PRIMARY KEY,
@@ -332,6 +416,13 @@ export class PipelineStore {
       )
     `);
   }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const rows = this.db.query(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
+    if (!rows.some((row) => row.name === column)) {
+      this.db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  }
 }
 
 function mapRun(row: Record<string, unknown>): PipelineRunRecord {
@@ -345,6 +436,9 @@ function mapRun(row: Record<string, unknown>): PipelineRunRecord {
     ownerAlias: row.owner_alias === null || row.owner_alias === undefined ? null : String(row.owner_alias),
     scope: row.scope as PipelineScope,
     input: decodeJsonObject(row.input_json),
+    current: decodeJsonObject(row.current_json ?? row.input_json),
+    cursorIndex: Number(row.cursor_index ?? 0),
+    activeStepId: row.active_step_id === null || row.active_step_id === undefined ? null : String(row.active_step_id),
     result: decodeNullableJsonObject(row.result_json),
     error: row.error === null || row.error === undefined ? null : String(row.error),
     startedAt: String(row.started_at),
@@ -364,7 +458,10 @@ function mapStep(row: Record<string, unknown>): PipelineStepRecord {
     result: decodeNullableJsonObject(row.result_json),
     error: row.error === null || row.error === undefined ? null : String(row.error),
     wingmanSessionId: row.wingman_session_id === null || row.wingman_session_id === undefined ? null : String(row.wingman_session_id),
+    parentStepId: row.parent_step_id === null || row.parent_step_id === undefined ? null : String(row.parent_step_id),
+    logicalKey: row.logical_key === null || row.logical_key === undefined ? null : String(row.logical_key),
     callbackToken: row.callback_token === null || row.callback_token === undefined ? null : String(row.callback_token),
+    output: decodeNullableJsonObject(row.output_json),
     startedAt: String(row.started_at),
     completedAt: row.completed_at === null || row.completed_at === undefined ? null : String(row.completed_at),
   };
@@ -382,6 +479,8 @@ function mapStepSummary(row: Record<string, unknown>): PipelineStepSummary {
     status: row.status as PipelineStatus,
     error: row.error === null || row.error === undefined ? null : String(row.error),
     wingmanSessionId: row.wingman_session_id === null || row.wingman_session_id === undefined ? null : String(row.wingman_session_id),
+    parentStepId: row.parent_step_id === null || row.parent_step_id === undefined ? null : String(row.parent_step_id),
+    logicalKey: row.logical_key === null || row.logical_key === undefined ? null : String(row.logical_key),
     callbackToken: row.callback_token === null || row.callback_token === undefined ? null : String(row.callback_token),
     startedAt: String(row.started_at),
     completedAt: row.completed_at === null || row.completed_at === undefined ? null : String(row.completed_at),

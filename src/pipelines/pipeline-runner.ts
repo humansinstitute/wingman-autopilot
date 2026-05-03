@@ -12,12 +12,14 @@ import {
   type DeclarativeStep,
   type FunctionRegistry,
 } from "./declarative";
+import { runParallelStep } from "./parallel-runner";
 import { expandPipelineBlock } from "./pipeline-blocks";
 import type { PipelineDefinitionRecord } from "./pipeline-loader";
-import { type JsonObject, PipelineStore, type PipelineStatus } from "./pipeline-store";
+import { type JsonObject, PipelineStore, type PipelineStatus, type PipelineStepRecord, type StepKind } from "./pipeline-store";
 
 const CALLBACK_POLL_MS = 1000;
 const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000;
+const activeRunExecutions = new Set<string>();
 
 interface PipelineRunnerInput {
   store: PipelineStore;
@@ -42,13 +44,19 @@ export class PipelineHalt extends Error {
 
 export async function runDeclarativePipeline(input: PipelineRunnerInput) {
   const run = createPipelineRun(input);
-  return await executeDeclarativePipeline(input, run.id, input.input);
+  return await executeDeclarativePipeline(input, run.id);
 }
 
 export function startDeclarativePipeline(input: PipelineRunnerInput) {
   const run = createPipelineRun(input);
-  void executeDeclarativePipeline(input, run.id, input.input);
+  void executeDeclarativePipeline(input, run.id);
   return run;
+}
+
+export async function resumeDeclarativePipeline(input: PipelineRunnerInput, runId: string) {
+  const run = input.store.getRun(runId);
+  if (!run || run.status !== "running") return run;
+  return await executeDeclarativePipeline(input, runId);
 }
 
 function createPipelineRun(input: PipelineRunnerInput) {
@@ -64,11 +72,16 @@ function createPipelineRun(input: PipelineRunnerInput) {
   });
 }
 
-async function executeDeclarativePipeline(input: PipelineRunnerInput, runId: string, initialInput: JsonObject) {
+async function executeDeclarativePipeline(input: PipelineRunnerInput, runId: string) {
+  if (activeRunExecutions.has(runId)) {
+    return input.store.getRun(runId)!;
+  }
+  activeRunExecutions.add(runId);
   const { store, definition } = input;
-  let current = initialInput;
-  let stepIndex = 0;
-  let cursor = 0;
+  const persisted = store.getRun(runId);
+  let current = persisted?.current ?? input.input;
+  let cursor = persisted?.cursorIndex ?? 0;
+  let stepIndex = nextStoredStepIndex(store, runId);
   let executedSteps = 0;
   const topLevelSteps = definition.spec.steps;
   const stepTargetIndex = buildStepTargetIndex(topLevelSteps);
@@ -90,6 +103,7 @@ async function executeDeclarativePipeline(input: PipelineRunnerInput, runId: str
       });
       current = outcome.current;
       cursor = typeof outcome.jumpTo === "number" ? outcome.jumpTo : cursor + 1;
+      store.updateRunProgress(runId, current, cursor);
     }
 
     return store.completeRun(runId, "ok", current);
@@ -97,7 +111,10 @@ async function executeDeclarativePipeline(input: PipelineRunnerInput, runId: str
     if (error instanceof PipelineHalt) {
       return store.completeRun(runId, error.status, error.result, error.message);
     }
+    store.setRunActiveStep(runId, null);
     return store.completeRun(runId, "error", current, error instanceof Error ? error.message : String(error));
+  } finally {
+    activeRunExecutions.delete(runId);
   }
 }
 
@@ -108,6 +125,7 @@ async function executePipelineStep(input: PipelineRunnerInput & {
   nextStepIndex: () => number;
   targetIndex?: Map<string, number>;
   namePrefix?: string;
+  trackActive?: boolean;
 }): Promise<{ current: JsonObject; jumpTo?: number }> {
   const { store, registry, step } = input;
   const stepName = input.namePrefix ? `${input.namePrefix} / ${step.name}` : step.name;
@@ -125,13 +143,20 @@ async function executePipelineStep(input: PipelineRunnerInput & {
 
   if (step.type === "code") {
     const selected = selectInput(input.current, step.input);
-    const stepRecord = store.createStep({
+    const activeStep = getActiveStep(store, input.runId, stepName, "code");
+    if (activeStep?.status === "ok") {
+      const raw = activeStep.output ?? activeStep.result ?? {};
+      const current = activeStep.output ? assignOutput(input.current, raw, step.assign) : raw;
+      return { current };
+    }
+    const stepRecord = activeStep ?? store.createStep({
       runId: input.runId,
       stepIndex: input.nextStepIndex(),
       name: stepName,
       kind: "code",
       input: selected,
     });
+    setActiveStep(input, stepRecord.id);
     const fn = registry[step.function];
     if (!fn) {
       throw new Error(`Unknown pipeline function: ${step.function}`);
@@ -139,7 +164,7 @@ async function executePipelineStep(input: PipelineRunnerInput & {
     const result = await fn(selected);
     assertObject(result, `step ${stepName} result`);
     const current = assignOutput(input.current, result, step.assign);
-    store.completeStep({ id: stepRecord.id, status: "ok", result: current });
+    store.completeStep({ id: stepRecord.id, status: "ok", result: current, output: result });
     return { current };
   }
 
@@ -150,35 +175,59 @@ async function executePipelineStep(input: PipelineRunnerInput & {
       ...selected,
     };
     const expansion = expandPipelineBlock(step);
-    const stepRecord = store.createStep({
+    const activeStep = getActiveStep(store, input.runId, stepName, "block");
+    if (activeStep?.status === "ok") {
+      return { current: activeStep.result ?? input.current };
+    }
+    const stepRecord = activeStep ?? store.createStep({
       runId: input.runId,
       stepIndex: input.nextStepIndex(),
       name: stepName,
       kind: "block",
       input: blockInput,
     });
+    setActiveStep(input, stepRecord.id);
     let current = assignOutput(input.current, blockInput, expansion.inputPath);
     for (const child of expansion.steps) {
       const childOutcome = await executePipelineStep({
         ...input,
         step: child,
         current,
+        trackActive: false,
       });
       current = childOutcome.current;
     }
-    store.completeStep({ id: stepRecord.id, status: "ok", result: current });
+    store.completeStep({ id: stepRecord.id, status: "ok", result: current, output: current });
     return { current };
   }
 
   if (step.type === "loop") {
     const selected = selectInput(input.current, step.input);
-    const stepRecord = store.createStep({
+    const activeStep = getActiveStep(store, input.runId, stepName, "loop");
+    if (activeStep?.status === "ok") {
+      const current = activeStep.result ?? input.current;
+      if (!Array.isArray(step.steps)) {
+        const counterPath = step.counter ?? `$.loop.${step.name.replace(/[^a-zA-Z0-9_]+/g, "_")}`;
+        const counter = resolvePath(current, counterPath);
+        if (counter && typeof counter === "object" && !Array.isArray(counter) && (counter as Record<string, unknown>).done !== true) {
+          if (!step.target) throw new Error(`Loop step ${stepName} requires target`);
+          const jumpTo = input.targetIndex?.get(step.target);
+          if (typeof jumpTo !== "number") {
+            throw new Error(`Loop step ${stepName} target not found: ${step.target}`);
+          }
+          return { current, jumpTo };
+        }
+      }
+      return { current };
+    }
+    const stepRecord = activeStep ?? store.createStep({
       runId: input.runId,
       stepIndex: input.nextStepIndex(),
       name: stepName,
       kind: "loop",
       input: selected,
     });
+    setActiveStep(input, stepRecord.id);
     if (Array.isArray(step.steps)) {
       const iterations = resolveIterationCount(input.current, step.iterations ?? 1);
       let current = input.current;
@@ -191,13 +240,14 @@ async function executePipelineStep(input: PipelineRunnerInput & {
             step: child,
             current,
             namePrefix: `${stepName} #${iteration}`,
+            trackActive: false,
           });
           current = childOutcome.current;
         }
       }
       const result = { iterations, current };
       const next = step.assign ? assignOutput(current, result, step.assign) : current;
-      store.completeStep({ id: stepRecord.id, status: "ok", result: next });
+      store.completeStep({ id: stepRecord.id, status: "ok", result: next, output: result });
       return { current: next };
     }
 
@@ -227,13 +277,96 @@ async function executePipelineStep(input: PipelineRunnerInput & {
         throw new Error(`Loop step ${stepName} target not found: ${step.target}`);
       }
     }
-    store.completeStep({ id: stepRecord.id, status: "ok", result: next });
+    store.completeStep({ id: stepRecord.id, status: "ok", result: next, output: captured });
     return { current: next, jumpTo };
   }
 
+  if (step.type === "parallel") {
+    const selected = selectInput(input.current, step.input);
+    const activeStep = getActiveStep(store, input.runId, stepName, "parallel");
+    if (activeStep?.status === "ok") {
+      return { current: activeStep.result ?? input.current };
+    }
+    const stepRecord = activeStep ?? store.createStep({
+      runId: input.runId,
+      stepIndex: input.nextStepIndex(),
+      name: stepName,
+      kind: "parallel",
+      input: selected,
+    });
+    setActiveStep(input, stepRecord.id);
+    const aggregate = await runParallelStep({
+      ...input,
+      parentStep: step,
+      parentStepId: stepRecord.id,
+      parentStepName: stepName,
+      shouldRelaunchAgentChild: (child) => !child.wingmanSessionId || !input.sessionApiContext.manager.getSession(child.wingmanSessionId),
+      runAgentChild: async ({ childStep, childRecord, selectedInput }) => {
+        const token = childRecord.callbackToken ?? crypto.randomUUID();
+        if (!childRecord.callbackToken) {
+          input.store.setStepCallbackToken(childRecord.id, token);
+        }
+        try {
+          const result = await runOrResumeAgentStep({
+            ...input,
+            stepName: childRecord.name,
+            stepId: childRecord.id,
+            selectedInput,
+            prompt: childStep.prompt,
+            callbackToken: token,
+            agent: resolveStringTemplate(input.current, childStep.agent),
+            directory: resolveStringTemplate(input.current, childStep.directory),
+            callbackTimeoutMs: resolveDurationMs(input.current, childStep.timeoutMs, CALLBACK_TIMEOUT_MS),
+          });
+          input.store.completeStep({
+            id: childRecord.id,
+            status: "ok",
+            result,
+            output: result,
+            wingmanSessionId: input.store.getStep(childRecord.id)?.wingmanSessionId ?? null,
+          });
+        } catch (error) {
+          if (error instanceof PipelineHalt) {
+            input.store.completeStep({
+              id: childRecord.id,
+              status: "needs_input",
+              result: error.result,
+              output: error.result,
+              error: error.message,
+            });
+            return;
+          }
+          throw error;
+        }
+      },
+    });
+    const current = assignOutput(input.current, aggregate, step.assign);
+    store.completeStep({ id: stepRecord.id, status: "ok", result: current, output: aggregate });
+    return { current };
+  }
+
   const selected = selectInput(input.current, step.input);
-  const token = crypto.randomUUID();
-  const stepRecord = store.createStep({
+  const activeStep = getActiveStep(store, input.runId, stepName, "agent");
+  if (activeStep?.status === "ok") {
+    const raw = activeStep.output ?? activeStep.result ?? {};
+    const current = assignOutput(input.current, raw, step.assign);
+    store.completeStep({
+      id: activeStep.id,
+      status: "ok",
+      result: current,
+      output: raw,
+      wingmanSessionId: activeStep.wingmanSessionId,
+    });
+    return { current };
+  }
+  if (activeStep?.status === "error") {
+    throw new Error(activeStep.error ?? "Agent step failed");
+  }
+  if (activeStep?.status === "needs_input") {
+    throw new PipelineHalt("needs_input", activeStep.output ?? activeStep.result ?? {}, "Agent step needs input");
+  }
+  const token = activeStep?.callbackToken ?? crypto.randomUUID();
+  const stepRecord = activeStep ?? store.createStep({
     runId: input.runId,
     stepIndex: input.nextStepIndex(),
     name: stepName,
@@ -241,7 +374,11 @@ async function executePipelineStep(input: PipelineRunnerInput & {
     input: selected,
     callbackToken: token,
   });
-  const result = await runAgentStep({
+  if (!stepRecord.callbackToken) {
+    store.setStepCallbackToken(stepRecord.id, token);
+  }
+  setActiveStep(input, stepRecord.id);
+  const result = await runOrResumeAgentStep({
     ...input,
     stepName,
     stepId: stepRecord.id,
@@ -257,6 +394,7 @@ async function executePipelineStep(input: PipelineRunnerInput & {
     id: stepRecord.id,
     status: "ok",
     result: current,
+    output: result,
     wingmanSessionId: store.getStep(stepRecord.id)?.wingmanSessionId ?? null,
   });
   return { current };
@@ -269,6 +407,24 @@ function buildStepTargetIndex(steps: DeclarativeStep[]): Map<string, number> {
     out.set(step.name, index);
   });
   return out;
+}
+
+function nextStoredStepIndex(store: PipelineStore, runId: string): number {
+  const steps = store.listSteps(runId);
+  return steps.reduce((max, step) => Math.max(max, step.stepIndex + 1), 0);
+}
+
+function getActiveStep(store: PipelineStore, runId: string, stepName: string, kind: StepKind): PipelineStepRecord | null {
+  const run = store.getRun(runId);
+  if (!run?.activeStepId) return null;
+  const step = store.getStep(run.activeStepId);
+  if (!step || step.runId !== runId || step.name !== stepName || step.kind !== kind) return null;
+  return step;
+}
+
+function setActiveStep(input: { store: PipelineStore; runId: string; trackActive?: boolean }, stepId: string): void {
+  if (input.trackActive === false) return;
+  input.store.setRunActiveStep(input.runId, stepId);
 }
 
 function resolveIterationCount(current: JsonObject, value: number | string): number {
@@ -345,9 +501,36 @@ export async function acceptAgentCallback(input: {
     id: input.stepId,
     status: parsed.value.status,
     result: parsed.value.result,
+    output: parsed.value.result,
     error: parsed.value.error ?? null,
   });
   return { ok: true, status: 200, body: { ok: true, runId: input.runId, stepId: input.stepId } };
+}
+
+async function runOrResumeAgentStep(input: PipelineRunnerInput & {
+  runId: string;
+  stepId: string;
+  stepName: string;
+  selectedInput: JsonObject;
+  prompt: string;
+  callbackToken: string;
+  agent?: string;
+  directory?: string;
+  callbackTimeoutMs: number;
+}): Promise<JsonObject> {
+  const latest = input.store.getStep(input.stepId);
+  if (latest?.status === "ok") return latest.output ?? latest.result ?? {};
+  if (latest?.status === "error") throw new Error(latest.error ?? "Agent step failed");
+  if (latest?.status === "needs_input") {
+    throw new PipelineHalt("needs_input", latest.output ?? latest.result ?? {}, "Agent step needs input");
+  }
+  if (latest?.wingmanSessionId && input.sessionApiContext.manager.getSession(latest.wingmanSessionId)) {
+    const result = await waitForCallbackResult(input.store, input.stepId, input.callbackTimeoutMs);
+    if (result.status === "error") throw new Error(result.error ?? "Agent step failed");
+    if (result.status === "needs_input") throw new PipelineHalt("needs_input", result.result ?? {}, "Agent step needs input");
+    return result.result ?? {};
+  }
+  return runAgentStep(input);
 }
 
 async function runAgentStep(input: PipelineRunnerInput & {
@@ -525,7 +708,7 @@ async function waitForCallbackResult(
   while (Date.now() < deadline) {
     const step = store.getStep(stepId);
     if (step && step.status !== "running") {
-      return { status: step.status, result: step.result, error: step.error };
+      return { status: step.status, result: step.output ?? step.result, error: step.error };
     }
     await new Promise((resolve) => setTimeout(resolve, CALLBACK_POLL_MS));
   }

@@ -61,6 +61,21 @@ export type DeclarativeStep =
       input?: SelectorSpec;
       assign?: string;
       when?: EqualsCondition;
+    }
+  | {
+      id?: string;
+      name: string;
+      description?: string;
+      type: "parallel";
+      source: string;
+      maxConcurrency?: number | string;
+      itemKey?: string;
+      itemInput?: SelectorSpec;
+      step: DeclarativeStep;
+      input?: SelectorSpec;
+      assign?: string;
+      when?: EqualsCondition;
+      failurePolicy?: "collect_errors" | "fail_fast";
     };
 
 export interface DeclarativePipeline {

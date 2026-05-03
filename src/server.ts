@@ -93,6 +93,7 @@ import { browserSubscribers } from "./mcp/browser-subscribers";
 import { MemoryStore } from "./mcp/memory-store";
 import { userSettingsStore } from "./storage/user-settings-store";
 import { artifactsStore } from "./storage/artifacts-store";
+import { resumeRunningPipelineRuns } from "./pipelines/pipeline-api-routes";
 import { type JsonObject, PipelineStore } from "./pipelines/pipeline-store";
 import { getPipelineDefinition } from "./pipelines/pipeline-loader";
 import { loadPipelineFunctionRegistry } from "./pipelines/function-loader";
@@ -2294,6 +2295,16 @@ const sessionApiContext: SessionApiContext = {
   workspaceDelegationStore,
   AccessActions,
 };
+
+void resumeRunningPipelineRuns({
+  store: pipelineStore,
+  sessionApiContext,
+  callbackOrigin: `http://127.0.0.1:${config.port}`,
+  ensureApiAccess,
+  AccessActions,
+}, `http://127.0.0.1:${config.port}`).catch((error) => {
+  console.warn("[pipelines] failed to resume running pipeline runs:", error instanceof Error ? error.message : String(error));
+});
 
 const docsApiContext: DocsApiContext = {
   resolveWorkspace,

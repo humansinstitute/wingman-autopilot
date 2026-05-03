@@ -175,6 +175,59 @@ The runner also supports a compact container-loop form with nested `steps`, but 
 
 See `docs/declarative-pipeline-loop-design.md` for the loop design notes.
 
+`parallel` steps fan out over an array and fan back in before the next top-level step runs. The parent step remains running while child steps are queued or running. Child steps are recorded with the parent step as their owner, so the run timeline shows the parent barrier plus each child item. The runner starts at most `maxConcurrency` children at once, capped by `PIPELINE_MAX_PARALLEL_SESSIONS`, which defaults to `21`.
+
+Parallel children currently support `code` and `agent` step templates. `itemInput` selectors can read `$item`, `$item.field`, `$index`, `$key`, and normal pipeline paths like `$.workingDirectory`. The aggregate assigned by the parent has this shape:
+
+```json
+{
+  "total": 3,
+  "ok": 3,
+  "error": 0,
+  "needsInput": 0,
+  "items": [
+    {
+      "key": "0",
+      "index": 0,
+      "status": "ok",
+      "result": {},
+      "error": null,
+      "stepId": "child-step-id",
+      "wingmanSessionId": "agent-session-id"
+    }
+  ]
+}
+```
+
+Example:
+
+```json
+{
+  "name": "analyse-files",
+  "type": "parallel",
+  "source": "$.files",
+  "maxConcurrency": 21,
+  "itemKey": "$item.path",
+  "itemInput": {
+    "pick": {
+      "file": "$item",
+      "instructions": "$.instructions"
+    }
+  },
+  "step": {
+    "name": "analyse-file",
+    "type": "agent",
+    "agent": "codex",
+    "directory": "$.workingDirectory",
+    "prompt": "Analyse the selected file and return structured findings."
+  },
+  "assign": "$.fileAnalyses",
+  "failurePolicy": "collect_errors"
+}
+```
+
+`failurePolicy` defaults to `collect_errors`, which waits for every child and continues with mixed results. Use `fail_fast` to stop launching queued children after the first `error` or `needs_input` child result.
+
 `agent` steps create a Wingmen session and send a strict completion contract to the agent. The agent must POST a JSON object back to the callback URL with the provided `x-wingmen-pipeline-token` header. The accepted body is:
 
 ```json
@@ -187,6 +240,12 @@ See `docs/declarative-pipeline-loop-design.md` for the loop design notes.
 ```
 
 `status` can be `ok`, `needs_input`, or `error`. `result` must always be a JSON object. The runner waits for this callback and records the accepted callback payload against the step.
+
+## Restart Recovery
+
+Pipeline runs persist their current object, cursor, active step, callback tokens, parent-child step relationships, and child outputs in SQLite. On Wingmen startup, running pipeline runs are resumed from the stored cursor. Accepted agent callbacks also trigger a run continuation, so a callback that arrives after a server restart can advance the pipeline.
+
+For active agent steps, the runner waits on the existing Wingmen session when it is still present. If a queued or running parallel child has no live session after restart, the child is launched again with its existing callback token and step id. Completed children are not relaunched.
 
 ## Selectors
 

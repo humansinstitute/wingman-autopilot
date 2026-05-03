@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { builtinPipelineFunctions } from "./functions";
 import type { PipelineDefinitionRecord } from "./pipeline-loader";
-import { acceptAgentCallback, runDeclarativePipeline } from "./pipeline-runner";
+import { acceptAgentCallback, resumeDeclarativePipeline, runDeclarativePipeline } from "./pipeline-runner";
 import { PipelineStore } from "./pipeline-store";
 
 let tempDir: string;
@@ -231,6 +231,148 @@ describe("runDeclarativePipeline", () => {
       "loop",
     ]);
     expect(run.result?.reviewLoop).toMatchObject({ completed: 3, done: true });
+  });
+
+  test("runs parallel child steps and aggregates results", async () => {
+    const store = makeStore();
+    const definition: PipelineDefinitionRecord = {
+      id: "parallel-test",
+      slug: "parallel-test",
+      name: "parallel-test",
+      scope: "user",
+      ownerAlias: "alpha-beta-gamma",
+      path: join(tempDir, "parallel-test.json"),
+      spec: {
+        name: "parallel-test",
+        input: { values: ["alpha", "beta", "gamma"] },
+        steps: [
+          {
+            name: "fan-out",
+            type: "parallel",
+            source: "$.values",
+            maxConcurrency: 2,
+            itemInput: { pick: { value: "$item", index: "$index" } },
+            step: {
+              name: "uppercase",
+              type: "code",
+              function: "test.uppercase",
+            },
+            assign: "$.parallel",
+          },
+        ],
+      },
+    };
+
+    const run = await runDeclarativePipeline({
+      store,
+      sessionApiContext: {} as never,
+      definition,
+      registry: {
+        ...builtinPipelineFunctions,
+        async "test.uppercase"(input) {
+          return { value: String(input.value).toUpperCase(), index: input.index };
+        },
+      },
+      input: definition.spec.input!,
+      ownerNpub: "npub-test",
+      ownerAlias: "alpha-beta-gamma",
+      callbackOrigin: "http://localhost",
+    });
+
+    expect(run.status).toBe("ok");
+    expect((run.result?.parallel as { ok?: number })?.ok).toBe(3);
+    expect((run.result?.parallel as { items?: Array<{ result: { value: string } }> })?.items?.map((item) => item.result.value)).toEqual([
+      "ALPHA",
+      "BETA",
+      "GAMMA",
+    ]);
+    expect(store.listSteps(run.id).map((step) => step.kind)).toEqual(["parallel", "code", "code", "code"]);
+  });
+
+  test("resumes a run after an agent callback completed during downtime", async () => {
+    const store = makeStore();
+    const definition: PipelineDefinitionRecord = {
+      id: "resume-test",
+      slug: "resume-test",
+      name: "resume-test",
+      scope: "user",
+      ownerAlias: "alpha-beta-gamma",
+      path: join(tempDir, "resume-test.json"),
+      spec: {
+        name: "resume-test",
+        input: { seed: true },
+        steps: [
+          {
+            name: "prepare",
+            type: "code",
+            function: "test.prepare",
+            assign: "$.prepared",
+          },
+          {
+            name: "agent",
+            type: "agent",
+            prompt: "Return a decision.",
+            assign: "$.agentRaw",
+          },
+          {
+            name: "finalise",
+            type: "code",
+            function: "test.finalise",
+          },
+        ],
+      },
+    };
+    const run = store.createRun({
+      definitionId: definition.id,
+      definitionPath: definition.path,
+      name: definition.name,
+      ownerNpub: "npub-test",
+      ownerAlias: "alpha-beta-gamma",
+      scope: "user",
+      input: definition.spec.input!,
+    });
+    const prepared = { seed: true, prepared: { ok: true } };
+    store.updateRunProgress(run.id, prepared, 1);
+    const agentStep = store.createStep({
+      runId: run.id,
+      stepIndex: 1,
+      name: "agent",
+      kind: "agent",
+      input: prepared,
+      callbackToken: "secret-token",
+    });
+    store.setRunActiveStep(run.id, agentStep.id);
+
+    await acceptAgentCallback({
+      store,
+      runId: run.id,
+      stepId: agentStep.id,
+      token: "secret-token",
+      payload: { runId: run.id, stepId: agentStep.id, status: "ok", result: { decision: "continue" } },
+    });
+
+    const resumed = await resumeDeclarativePipeline({
+      store,
+      sessionApiContext: {} as never,
+      definition,
+      registry: {
+        ...builtinPipelineFunctions,
+        async "test.prepare"() {
+          return { ok: true };
+        },
+        async "test.finalise"(input) {
+          return { done: true, decision: (input.agentRaw as { decision?: string }).decision };
+        },
+      },
+      input: definition.spec.input!,
+      ownerNpub: "npub-test",
+      ownerAlias: "alpha-beta-gamma",
+      callbackOrigin: "http://localhost",
+    }, run.id);
+
+    expect(resumed?.status).toBe("ok");
+    expect(resumed?.result).toEqual({ done: true, decision: "continue" });
+    expect(store.listSteps(run.id).map((step) => step.name)).toEqual(["agent", "finalise"]);
   });
 });
 
