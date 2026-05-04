@@ -7,6 +7,9 @@ import {
 import { type JsonObject, PipelineStore, type PipelineStatus, type PipelineStepRecord } from "./pipeline-store";
 
 const PARALLEL_POLL_MS = 1000;
+const DEFAULT_AGENT_LAUNCH_CONCURRENCY = 1;
+const DEFAULT_AGENT_STARTUP_RETRIES = 2;
+const DEFAULT_AGENT_STARTUP_RETRY_BACKOFF_MS = 2_500;
 
 type ParallelStep = Extract<DeclarativeStep, { type: "parallel" }>;
 type AgentStep = Extract<DeclarativeStep, { type: "agent" }>;
@@ -35,6 +38,9 @@ export async function runParallelStep(input: ParallelStepRunnerInput): Promise<J
   }
   const itemKeys = resolveParallelItemKeys(input.current, itemsValue, input.parentStep.itemKey);
   const maxConcurrency = resolveParallelConcurrency(input.current, input.parentStep.maxConcurrency);
+  const agentLaunchConcurrency = resolveAgentLaunchConcurrency(input.current, input.parentStep.agentLaunchConcurrency, maxConcurrency);
+  const agentStartupRetries = resolveAgentStartupRetries(input.current, input.parentStep.agentStartupRetries);
+  const agentStartupRetryBackoffMs = resolveAgentStartupRetryBackoffMs(input.current, input.parentStep.agentStartupRetryBackoffMs);
   ensureParallelChildren(input, itemsValue, itemKeys);
   const active = new Map<string, Promise<void>>();
 
@@ -57,10 +63,32 @@ export async function runParallelStep(input: ParallelStepRunnerInput): Promise<J
       return buildParallelAggregate(input.store.listChildSteps(input.parentStepId));
     }
 
+    let pendingAgentLaunches = countPendingAgentLaunches(input, children, active);
     for (const child of children) {
       if (active.size >= maxConcurrency) break;
       if (active.has(child.id) || !shouldLaunchParallelChild(input, child)) continue;
+      const childTemplate = input.parentStep.step;
+      const usesAgentLaunchSlot = childTemplate.type === "agent" && !child.wingmanSessionId;
+      if (usesAgentLaunchSlot && pendingAgentLaunches >= agentLaunchConcurrency) continue;
       const promise = runParallelChild(input, child, itemsValue, itemKeys)
+        .catch(async (error) => {
+          if (!shouldRetryAgentStartup(input, child.id, error, agentStartupRetries)) {
+            throw error;
+          }
+          for (let attempt = 1; attempt <= agentStartupRetries; attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, agentStartupRetryBackoffMs * attempt));
+            try {
+              const latest = input.store.getStep(child.id) ?? child;
+              await runParallelChild(input, latest, itemsValue, itemKeys);
+              return;
+            } catch (retryError) {
+              if (!shouldRetryAgentStartup(input, child.id, retryError, agentStartupRetries - attempt)) {
+                throw retryError;
+              }
+            }
+          }
+          throw error;
+        })
         .catch((error) => {
           const latest = input.store.getStep(child.id);
           if (latest?.status === "running" || latest?.status === "queued") {
@@ -77,14 +105,33 @@ export async function runParallelStep(input: ParallelStepRunnerInput): Promise<J
           active.delete(child.id);
         });
       active.set(child.id, promise);
+      if (usesAgentLaunchSlot) pendingAgentLaunches += 1;
     }
 
     if (active.size > 0) {
-      await Promise.race(active.values());
+      await Promise.race([
+        ...active.values(),
+        new Promise((resolve) => setTimeout(resolve, resolveParallelPollMs())),
+      ]);
     } else {
-      await new Promise((resolve) => setTimeout(resolve, PARALLEL_POLL_MS));
+      await new Promise((resolve) => setTimeout(resolve, resolveParallelPollMs()));
     }
   }
+}
+
+function countPendingAgentLaunches(
+  input: ParallelStepRunnerInput,
+  children: PipelineStepRecord[],
+  active: Map<string, Promise<void>>,
+): number {
+  if (input.parentStep.step.type !== "agent") return 0;
+  return children.filter((child) =>
+    active.has(child.id) &&
+    child.kind === "agent" &&
+    child.status === "running" &&
+    !child.wingmanSessionId &&
+    !isTerminalStatus(child.status)
+  ).length;
 }
 
 function ensureParallelChildren(input: ParallelStepRunnerInput, items: unknown[], itemKeys: string[]): void {
@@ -175,6 +222,51 @@ function resolveParallelConcurrency(current: JsonObject, value: number | string 
   const requested = Math.floor(Number(raw ?? globalLimit));
   const perStep = Number.isFinite(requested) && requested > 0 ? requested : globalLimit;
   return Math.max(1, Math.min(perStep, globalLimit, 200));
+}
+
+function resolveAgentLaunchConcurrency(current: JsonObject, value: number | string | undefined, maxConcurrency: number): number {
+  const configuredLimit = Math.floor(Number(process.env.PIPELINE_PARALLEL_AGENT_LAUNCH_CONCURRENCY ?? DEFAULT_AGENT_LAUNCH_CONCURRENCY));
+  const globalLimit = Number.isFinite(configuredLimit) && configuredLimit > 0 ? configuredLimit : DEFAULT_AGENT_LAUNCH_CONCURRENCY;
+  const raw = typeof value === "string" ? resolvePath(current, value) : value;
+  const requested = Math.floor(Number(raw ?? globalLimit));
+  const perStep = Number.isFinite(requested) && requested > 0 ? requested : globalLimit;
+  return Math.max(1, Math.min(perStep, maxConcurrency, 50));
+}
+
+function resolveAgentStartupRetries(current: JsonObject, value: number | string | undefined): number {
+  const configuredLimit = Math.floor(Number(process.env.PIPELINE_PARALLEL_AGENT_START_RETRIES ?? DEFAULT_AGENT_STARTUP_RETRIES));
+  const globalLimit = Number.isFinite(configuredLimit) && configuredLimit >= 0 ? configuredLimit : DEFAULT_AGENT_STARTUP_RETRIES;
+  const raw = typeof value === "string" ? resolvePath(current, value) : value;
+  const requested = Math.floor(Number(raw ?? globalLimit));
+  const perStep = Number.isFinite(requested) && requested >= 0 ? requested : globalLimit;
+  return Math.max(0, Math.min(perStep, 10));
+}
+
+function resolveAgentStartupRetryBackoffMs(current: JsonObject, value: number | string | undefined): number {
+  const configuredLimit = Math.floor(Number(process.env.PIPELINE_PARALLEL_AGENT_START_RETRY_BACKOFF_MS ?? DEFAULT_AGENT_STARTUP_RETRY_BACKOFF_MS));
+  const globalLimit = Number.isFinite(configuredLimit) && configuredLimit >= 0 ? configuredLimit : DEFAULT_AGENT_STARTUP_RETRY_BACKOFF_MS;
+  const raw = typeof value === "string" ? resolvePath(current, value) : value;
+  const requested = Math.floor(Number(raw ?? globalLimit));
+  const perStep = Number.isFinite(requested) && requested >= 0 ? requested : globalLimit;
+  return Math.max(0, Math.min(perStep, 60_000));
+}
+
+function resolveParallelPollMs(): number {
+  const requested = Math.floor(Number(process.env.PIPELINE_PARALLEL_POLL_MS ?? PARALLEL_POLL_MS));
+  return Number.isFinite(requested) && requested > 0 ? Math.min(requested, PARALLEL_POLL_MS) : PARALLEL_POLL_MS;
+}
+
+function shouldRetryAgentStartup(
+  input: ParallelStepRunnerInput,
+  childId: string,
+  error: unknown,
+  retriesRemaining: number,
+): boolean {
+  if (retriesRemaining <= 0 || input.parentStep.step.type !== "agent") return false;
+  const latest = input.store.getStep(childId);
+  if (latest?.wingmanSessionId) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return /\bPM2 process\b.+\bfailed (?:to start within timeout|during startup)\b/.test(message);
 }
 
 function resolveParallelItemKey(current: JsonObject, item: unknown, index: number, itemKey?: string): string {

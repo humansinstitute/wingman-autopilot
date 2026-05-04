@@ -177,6 +177,8 @@ See `docs/declarative-pipeline-loop-design.md` for the loop design notes.
 
 `parallel` steps fan out over an array and fan back in before the next top-level step runs. The parent step remains running while child steps are queued or running. Child steps are recorded with the parent step as their owner, so the run timeline shows the parent barrier plus each child item. The runner starts at most `maxConcurrency` children at once, capped by `PIPELINE_MAX_PARALLEL_SESSIONS`, which defaults to `21`.
 
+For `agent` children, process startup is separately throttled by `agentLaunchConcurrency`, capped by the active child limit. It defaults to `PIPELINE_PARALLEL_AGENT_LAUNCH_CONCURRENCY`, or `1` when unset. This allows the runner to ramp sessions into the active pool instead of asking PM2 to start every agent at once. Agent startup failures matching PM2 launch timeout/startup errors are retried by `agentStartupRetries`, which defaults to `PIPELINE_PARALLEL_AGENT_START_RETRIES` or `2`.
+
 Parallel children currently support `code` and `agent` step templates. `itemInput` selectors can read `$item`, `$item.field`, `$index`, `$key`, and normal pipeline paths like `$.workingDirectory`. The aggregate assigned by the parent has this shape:
 
 ```json
@@ -207,6 +209,9 @@ Example:
   "type": "parallel",
   "source": "$.files",
   "maxConcurrency": 21,
+  "agentLaunchConcurrency": 1,
+  "agentStartupRetries": 2,
+  "agentStartupRetryBackoffMs": 2500,
   "itemKey": "$item.path",
   "itemInput": {
     "pick": {

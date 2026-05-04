@@ -69,6 +69,9 @@ export type DeclarativeStep =
       type: "parallel";
       source: string;
       maxConcurrency?: number | string;
+      agentLaunchConcurrency?: number | string;
+      agentStartupRetries?: number | string;
+      agentStartupRetryBackoffMs?: number | string;
       itemKey?: string;
       itemInput?: SelectorSpec;
       step: DeclarativeStep;

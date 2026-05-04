@@ -19,6 +19,7 @@ import { type JsonObject, PipelineStore, type PipelineStatus, type PipelineStepR
 
 const CALLBACK_POLL_MS = 1000;
 const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000;
+const MAX_PIPELINE_EXECUTED_STEPS = 2000;
 const activeRunExecutions = new Set<string>();
 
 interface PipelineRunnerInput {
@@ -89,7 +90,7 @@ async function executeDeclarativePipeline(input: PipelineRunnerInput, runId: str
   try {
     while (cursor < topLevelSteps.length) {
       executedSteps += 1;
-      if (executedSteps > 500) {
+      if (executedSteps > MAX_PIPELINE_EXECUTED_STEPS) {
         throw new Error("Pipeline exceeded the maximum step execution limit");
       }
       const step = topLevelSteps[cursor]!;

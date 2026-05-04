@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { builtinPipelineFunctions } from "./functions";
 import type { PipelineDefinitionRecord } from "./pipeline-loader";
 import { acceptAgentCallback, resumeDeclarativePipeline, runDeclarativePipeline } from "./pipeline-runner";
+import { runParallelStep } from "./parallel-runner";
 import { PipelineStore } from "./pipeline-store";
 
 let tempDir: string;
@@ -15,6 +16,8 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true });
+  delete process.env.PIPELINE_PARALLEL_POLL_MS;
+  delete process.env.PIPELINE_PARALLEL_AGENT_START_RETRY_BACKOFF_MS;
 });
 
 const makeStore = () => new PipelineStore(join(tempDir, "pipelines.sqlite"));
@@ -287,6 +290,140 @@ describe("runDeclarativePipeline", () => {
       "GAMMA",
     ]);
     expect(store.listSteps(run.id).map((step) => step.kind)).toEqual(["parallel", "code", "code", "code"]);
+  });
+
+  test("stagger-starts parallel agent children while allowing active concurrency", async () => {
+    process.env.PIPELINE_PARALLEL_POLL_MS = "5";
+    const store = makeStore();
+    const run = store.createRun({
+      definitionId: "parallel-agent",
+      name: "parallel-agent",
+      ownerNpub: "npub-test",
+      ownerAlias: "alpha-beta-gamma",
+      scope: "user",
+      input: { values: ["alpha", "beta", "gamma", "delta"] },
+    });
+    let stepIndex = 0;
+    const parent = store.createStep({
+      runId: run.id,
+      stepIndex: stepIndex++,
+      name: "fan-out",
+      kind: "parallel",
+      input: run.input ?? {},
+    });
+    let launching = 0;
+    let activeAgents = 0;
+    let maxLaunching = 0;
+    let maxActiveAgents = 0;
+
+    const aggregate = await runParallelStep({
+      store,
+      registry: builtinPipelineFunctions,
+      runId: run.id,
+      current: run.input ?? {},
+      nextStepIndex: () => stepIndex++,
+      parentStep: {
+        name: "fan-out",
+        type: "parallel",
+        source: "$.values",
+        maxConcurrency: 4,
+        agentLaunchConcurrency: 1,
+        itemInput: { pick: { value: "$item" } },
+        step: {
+          name: "review",
+          type: "agent",
+          prompt: "Review the value.",
+        },
+      },
+      parentStepId: parent.id,
+      parentStepName: "fan-out",
+      shouldRelaunchAgentChild: () => false,
+      runAgentChild: async ({ childRecord, selectedInput }) => {
+        launching += 1;
+        activeAgents += 1;
+        maxLaunching = Math.max(maxLaunching, launching);
+        maxActiveAgents = Math.max(maxActiveAgents, activeAgents);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        store.setStepSession(childRecord.id, `session-${selectedInput.value}`);
+        launching -= 1;
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        store.completeStep({
+          id: childRecord.id,
+          status: "ok",
+          result: { value: selectedInput.value },
+          output: { value: selectedInput.value },
+          wingmanSessionId: `session-${selectedInput.value}`,
+        });
+        activeAgents -= 1;
+      },
+    });
+
+    expect(aggregate).toMatchObject({ total: 4, ok: 4, error: 0 });
+    expect(maxLaunching).toBe(1);
+    expect(maxActiveAgents).toBeGreaterThan(1);
+  });
+
+  test("retries parallel agent PM2 startup failures before marking the child failed", async () => {
+    process.env.PIPELINE_PARALLEL_POLL_MS = "5";
+    process.env.PIPELINE_PARALLEL_AGENT_START_RETRY_BACKOFF_MS = "1";
+    const store = makeStore();
+    const run = store.createRun({
+      definitionId: "parallel-agent-retry",
+      name: "parallel-agent-retry",
+      ownerNpub: "npub-test",
+      ownerAlias: "alpha-beta-gamma",
+      scope: "user",
+      input: { values: ["alpha"] },
+    });
+    let stepIndex = 0;
+    const parent = store.createStep({
+      runId: run.id,
+      stepIndex: stepIndex++,
+      name: "fan-out",
+      kind: "parallel",
+      input: run.input ?? {},
+    });
+    let attempts = 0;
+
+    const aggregate = await runParallelStep({
+      store,
+      registry: builtinPipelineFunctions,
+      runId: run.id,
+      current: run.input ?? {},
+      nextStepIndex: () => stepIndex++,
+      parentStep: {
+        name: "fan-out",
+        type: "parallel",
+        source: "$.values",
+        maxConcurrency: 1,
+        agentStartupRetries: 1,
+        step: {
+          name: "review",
+          type: "agent",
+          prompt: "Review the value.",
+        },
+      },
+      parentStepId: parent.id,
+      parentStepName: "fan-out",
+      shouldRelaunchAgentChild: () => false,
+      runAgentChild: async ({ childRecord }) => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error("PM2 process pipeline-review failed to start within timeout");
+        }
+        store.setStepSession(childRecord.id, "session-alpha");
+        store.completeStep({
+          id: childRecord.id,
+          status: "ok",
+          result: { value: "alpha" },
+          output: { value: "alpha" },
+          wingmanSessionId: "session-alpha",
+        });
+      },
+    });
+
+    expect(attempts).toBe(2);
+    expect(aggregate).toMatchObject({ total: 1, ok: 1, error: 0 });
   });
 
   test("resumes a run after an agent callback completed during downtime", async () => {

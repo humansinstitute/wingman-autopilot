@@ -59,6 +59,10 @@ function hasLegacyAgentWrapperShape(pm2Env: Record<string, unknown>): boolean {
 }
 
 export function isWingmanAgentPm2Process(proc: PM2ProcessDescription): boolean {
+  if (proc.name === "wingman") {
+    return false;
+  }
+
   const pm2Env = getPm2Env(proc);
   const namespace = pm2Env.namespace;
   if (namespace === PM2_NAMESPACE_AGENTS) {

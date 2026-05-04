@@ -41,6 +41,7 @@ import { buildSessionGitCredentialEnv } from "../git/credential-env";
 import { resolveGiteaCredentials } from "../gitea/gitea-user-manager";
 
 const MAX_LOG_LINES = 500;
+const DEFAULT_PM2_AGENT_START_TIMEOUT_MS = 60_000;
 
 export type SessionStatus = "starting" | "running" | "stopped" | "error";
 
@@ -903,7 +904,7 @@ export class ProcessManager {
     await startProcessFromConfig(ecosystemPath, processName);
 
     // Wait for process to come online
-    const proc = await waitForStatus(processName, "online", 15000);
+    const proc = await waitForStatus(processName, "online", resolvePm2AgentStartTimeoutMs());
     const pm2Status = proc?.pm2_env?.status;
     if (!proc || pm2Status !== "online") {
       const startupDetail = await this.readPm2StartupFailure(logsDir, processName);
@@ -1136,4 +1137,12 @@ export class ProcessManager {
       listener(event);
     }
   }
+}
+
+function resolvePm2AgentStartTimeoutMs(): number {
+  const configured = Math.floor(Number(process.env.WINGMEN_PM2_AGENT_START_TIMEOUT_MS ?? DEFAULT_PM2_AGENT_START_TIMEOUT_MS));
+  if (!Number.isFinite(configured) || configured < 1_000) {
+    return DEFAULT_PM2_AGENT_START_TIMEOUT_MS;
+  }
+  return Math.min(configured, 5 * 60 * 1000);
 }
