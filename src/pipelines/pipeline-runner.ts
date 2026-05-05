@@ -1,8 +1,8 @@
 import type { AgentType } from "../config";
 import type { SessionSnapshot } from "../agents/process-manager";
-import { waitForAgentReady } from "../agents/agent-client";
 import { deliverSessionAgentMessage } from "../server/session-agent-message";
 import type { SessionApiContext } from "../server/session-api-routes";
+import { waitForSessionPromptReadiness } from "../server/session-readiness";
 import {
   assignOutput,
   assertObject,
@@ -566,9 +566,16 @@ async function runAgentStep(input: PipelineRunnerInput & {
   );
   input.store.setStepSession(input.stepId, session.id);
   await recordLiveSession(sessionCtx, session);
-  await waitForAgentReady(sessionCtx.agentHost, session.port, session.agent, {
+
+  await waitForSessionPromptReadiness({
+    getSession: (sessionId) => sessionCtx.manager.getSession(sessionId) ?? null,
+    getAdapter: (sessionId) => sessionCtx.manager.getAdapter(sessionId),
+    sessionId: session.id,
+    host: sessionCtx.agentHost,
     timeoutMs: session.agent === "codex" ? 120_000 : 60_000,
     pollIntervalMs: 250,
+    requiredStablePolls: session.agent === "codex" ? 3 : 2,
+    requestTimeoutMs: 750,
   });
 
   const callbackUrl = buildCallbackUrl(input.callbackOrigin, input.runId, input.stepId, input.callbackToken);
