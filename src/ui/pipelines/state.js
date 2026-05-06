@@ -8,6 +8,8 @@ export function createPipelinesState() {
     selectedRun: null,
     selectedStep: null,
     selectedRunTab: "overview",
+    selectedRunPayloadLoading: false,
+    selectedRunPayloadError: null,
     selectedDefinitionId: "",
     runFilter: "all",
     definitionFilter: "all",
@@ -76,6 +78,13 @@ export function parseRunInput(state) {
     throw new Error("Run input must be a JSON object");
   }
   return parsed;
+}
+
+export function hasRunPayload(run) {
+  if (!run) return false;
+  return Object.prototype.hasOwnProperty.call(run, "input")
+    || Object.prototype.hasOwnProperty.call(run, "current")
+    || Object.prototype.hasOwnProperty.call(run, "result");
 }
 
 export function pickDefaultDefinitionId(state) {

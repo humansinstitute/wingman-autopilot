@@ -1,3 +1,10 @@
+import {
+  cacheRunDetail,
+  clearCachedRunDetail,
+  getCachedRunDetail,
+  isActivePipelineRunStatus,
+} from "./db.js";
+
 export async function fetchPipelineRoot() {
   const res = await fetch("/api/pipelines/root", { credentials: "include" });
   if (!res.ok) throw new Error(`Failed to fetch pipeline root: ${res.status}`);
@@ -98,10 +105,29 @@ export async function saveManualPipelineEdit(id, edit) {
   return res.json();
 }
 
-export async function fetchPipelineRun(id) {
-  const res = await fetch(`/api/pipelines/runs/${encodeURIComponent(id)}`, { credentials: "include" });
+export async function fetchPipelineRun(id, options = {}) {
+  const includeRunPayload = options.includeRunPayload === true;
+  const forceFresh = options.forceFresh === true;
+  if (includeRunPayload && !forceFresh) {
+    const cached = await getCachedRunDetail(id);
+    if (cached) return cached;
+  }
+
+  const params = new URLSearchParams();
+  if (includeRunPayload) params.set("includeRunPayload", "1");
+  if (options.includeStepPayload === true) params.set("includePayload", "1");
+  const query = params.toString();
+  const res = await fetch(`/api/pipelines/runs/${encodeURIComponent(id)}${query ? `?${query}` : ""}`, { credentials: "include" });
   if (!res.ok) throw new Error(`Failed to fetch pipeline run: ${res.status}`);
-  return res.json();
+  const payload = await res.json();
+  if (includeRunPayload) {
+    if (isActivePipelineRunStatus(payload?.run?.status)) {
+      await clearCachedRunDetail(id);
+    } else {
+      await cacheRunDetail(payload);
+    }
+  }
+  return payload;
 }
 
 export async function fetchPipelineStep(runId, stepId) {

@@ -26,6 +26,28 @@ export interface PipelineRunRecord {
   completedAt: string | null;
 }
 
+export interface PipelineRunSummary {
+  id: string;
+  definitionId: string;
+  definitionPath: string | null;
+  name: string;
+  status: PipelineStatus;
+  ownerNpub: string | null;
+  ownerAlias: string | null;
+  scope: PipelineScope;
+  cursorIndex: number;
+  activeStepId: string | null;
+  error: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  inputBytes: number;
+  currentBytes: number;
+  resultBytes: number;
+  hasInput: boolean;
+  hasCurrent: boolean;
+  hasResult: boolean;
+}
+
 export interface PipelineStepRecord {
   id: string;
   runId: string;
@@ -246,9 +268,30 @@ export class PipelineStore {
     return row ? mapRun(row) : null;
   }
 
+  getRunSummary(id: string): PipelineRunSummary | null {
+    const row = this.db.query(runSummarySelectSql(`WHERE id = ?`)).get(id) as Record<string, unknown> | null;
+    return row ? mapRunSummary(row) : null;
+  }
+
   getStep(id: string): PipelineStepRecord | null {
     const row = this.db.query(`SELECT * FROM pipeline_steps WHERE id = ?`).get(id) as Record<string, unknown> | null;
     return row ? mapStep(row) : null;
+  }
+
+  listRunSummaries(options: { ownerNpub?: string | null; includeShared?: boolean; limit?: number } = {}): PipelineRunSummary[] {
+    const limit = options.limit ?? 100;
+    let rows: Record<string, unknown>[];
+    if (options.ownerNpub) {
+      rows = this.db.query(
+        runSummarySelectSql(`
+          WHERE owner_npub = ? OR (? = 1 AND scope = 'shared')
+          ORDER BY started_at DESC LIMIT ?
+        `),
+      ).all(options.ownerNpub, options.includeShared ? 1 : 0, limit) as Record<string, unknown>[];
+    } else {
+      rows = this.db.query(runSummarySelectSql(`ORDER BY started_at DESC LIMIT ?`)).all(limit) as Record<string, unknown>[];
+    }
+    return rows.map(mapRunSummary);
   }
 
   listRuns(options: { ownerNpub?: string | null; includeShared?: boolean; limit?: number } = {}): PipelineRunRecord[] {
@@ -443,6 +486,46 @@ function mapRun(row: Record<string, unknown>): PipelineRunRecord {
     error: row.error === null || row.error === undefined ? null : String(row.error),
     startedAt: String(row.started_at),
     completedAt: row.completed_at === null || row.completed_at === undefined ? null : String(row.completed_at),
+  };
+}
+
+function runSummarySelectSql(suffix: string): string {
+  return `
+    SELECT
+      id, definition_id, definition_path, name, status, owner_npub, owner_alias, scope,
+      cursor_index, active_step_id, error, started_at, completed_at,
+      length(coalesce(input_json, '')) AS input_bytes,
+      length(coalesce(current_json, '')) AS current_bytes,
+      length(coalesce(result_json, '')) AS result_bytes
+    FROM pipeline_runs
+    ${suffix}
+  `;
+}
+
+function mapRunSummary(row: Record<string, unknown>): PipelineRunSummary {
+  const inputBytes = Number(row.input_bytes ?? 0);
+  const currentBytes = Number(row.current_bytes ?? 0);
+  const resultBytes = Number(row.result_bytes ?? 0);
+  return {
+    id: String(row.id),
+    definitionId: String(row.definition_id),
+    definitionPath: row.definition_path === null || row.definition_path === undefined ? null : String(row.definition_path),
+    name: String(row.name),
+    status: row.status as PipelineStatus,
+    ownerNpub: row.owner_npub === null || row.owner_npub === undefined ? null : String(row.owner_npub),
+    ownerAlias: row.owner_alias === null || row.owner_alias === undefined ? null : String(row.owner_alias),
+    scope: row.scope as PipelineScope,
+    cursorIndex: Number(row.cursor_index ?? 0),
+    activeStepId: row.active_step_id === null || row.active_step_id === undefined ? null : String(row.active_step_id),
+    error: row.error === null || row.error === undefined ? null : String(row.error),
+    startedAt: String(row.started_at),
+    completedAt: row.completed_at === null || row.completed_at === undefined ? null : String(row.completed_at),
+    inputBytes,
+    currentBytes,
+    resultBytes,
+    hasInput: inputBytes > 0,
+    hasCurrent: currentBytes > 0,
+    hasResult: resultBytes > 0,
   };
 }
 

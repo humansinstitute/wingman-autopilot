@@ -12,6 +12,7 @@ import {
   renderJsonTransformBlock,
   statusLabel,
 } from "./view-utils.js";
+import { hasRunPayload } from "./state.js";
 
 export function renderRunsWorkspace(state) {
   const runs = getFilteredRuns(state);
@@ -135,13 +136,30 @@ function renderRunDetail(state) {
 }
 
 function renderSelectedRunTab(state, run, steps) {
-  if (state.selectedRunTab === "input") return renderJsonBlock("Input", run.input);
-  if (state.selectedRunTab === "result") return renderJsonBlock("Result", run.result ?? run.error ?? {});
+  if (state.selectedRunTab === "input") {
+    if (!hasRunPayload(run)) return renderRunPayloadState(state, "input");
+    return renderJsonBlock("Input", run.input);
+  }
+  if (state.selectedRunTab === "result") {
+    if (!hasRunPayload(run)) return renderRunPayloadState(state, "result");
+    return renderJsonBlock("Result", run.result ?? run.error ?? {});
+  }
   return `
     <section class="wm-pipeline-step-timeline" aria-label="Pipeline steps">
       ${steps.length ? steps.map((step) => renderStepRow(state, run.id, step)).join("") : `<p class="wm-muted">No steps recorded for this run.</p>`}
     </section>
     ${state.selectedStep ? renderStepDetailModal(state) : ""}
+  `;
+}
+
+function renderRunPayloadState(state, tab) {
+  if (state.selectedRunPayloadError) {
+    return `<p class="wm-error" role="alert">${escapeHtml(state.selectedRunPayloadError)}</p>`;
+  }
+  return `
+    <div class="wm-pipeline-empty-detail" aria-live="polite">
+      <p>${state.selectedRunPayloadLoading ? `Loading run ${tab}...` : `Select ${escapeHtml(tab)} again to load run data.`}</p>
+    </div>
   `;
 }
 

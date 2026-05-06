@@ -6,10 +6,12 @@ export function createPipelineActionHandlers(deps) {
   const {
     state,
     loadAll,
+    loadDefinitions,
     hydrateRouteDetail,
     updatePage,
     updatePageAndRestoreFocus,
     navigateToPipelinePath,
+    ensureSelectedRunPayload,
     showToast,
     startCreateWizard,
     startEditWizard,
@@ -30,12 +32,13 @@ export function createPipelineActionHandlers(deps) {
   return {
     navigate: navigateToPipelinePath,
     refresh: async (page) => {
-      await loadAll();
+      await loadAll({ force: true });
       await hydrateRouteDetail();
       updatePage(page);
       showToast("Pipelines refreshed");
     },
-    openLauncher: (page) => {
+    openLauncher: async (page) => {
+      await loadDefinitions();
       state.launcherOpen = true;
       ensureSelectedDefinition(state);
       state.runInputText = "";
@@ -45,7 +48,13 @@ export function createPipelineActionHandlers(deps) {
     updateRunSearch: (page, value) => updateSearch(page, "runSearch", value, '[data-action="run-search"]'),
     setRunFilter: (page, value) => updateField(page, "runFilter", value),
     openRun: (page, id) => navigateToPipelinePath(page, makePipelinePath("runs", id)),
-    setRunTab: (page, value) => updateField(page, "selectedRunTab", value),
+    setRunTab: async (page, value) => {
+      state.selectedRunTab = value;
+      updatePage(page);
+      if (value === "input" || value === "result") {
+        await ensureSelectedRunPayload(page);
+      }
+    },
     selectStep: async (page, runId, stepId) => {
       if (!runId || !stepId) return;
       state.selectedStep = await fetchPipelineStep(runId, stepId);
@@ -68,7 +77,8 @@ export function createPipelineActionHandlers(deps) {
       updatePage(page);
     },
     updateRunInput: (value) => { state.runInputText = value; },
-    openLauncherForDefinition: (page, id) => {
+    openLauncherForDefinition: async (page, id) => {
+      await loadDefinitions();
       if (id) state.selectedDefinitionId = id;
       state.launcherOpen = true;
       state.runInputText = "";

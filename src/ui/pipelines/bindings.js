@@ -20,7 +20,9 @@ function bindHeaderActions(root, page, actions) {
     await actions.refresh(page);
   });
   root.querySelectorAll('[data-action="open-launcher"]').forEach((button) => {
-    button.addEventListener("click", () => actions.openLauncher(page));
+    button.addEventListener("click", async () => {
+      await actions.openLauncher(page);
+    });
   });
   root.querySelectorAll('[data-action="close-launcher"]').forEach((button) => {
     button.addEventListener("click", () => actions.closeLauncher(page));
@@ -40,7 +42,9 @@ function bindRunActions(root, page, actions) {
     });
   });
   root.querySelectorAll('[data-action="set-run-tab"]').forEach((button) => {
-    button.addEventListener("click", () => actions.setRunTab(page, button.dataset.tab ?? "overview"));
+    button.addEventListener("click", async () => {
+      await actions.setRunTab(page, button.dataset.tab ?? "overview");
+    });
   });
   root.querySelectorAll('[data-action="select-step"]').forEach((button) => {
     button.addEventListener("click", async () => {
@@ -70,8 +74,8 @@ function bindDefinitionActions(root, page, actions) {
   root.querySelector('[data-action="run-input"]')?.addEventListener("input", (event) => {
     actions.updateRunInput(event.target?.value ?? "");
   });
-  root.querySelector('[data-action="open-launcher-for-definition"]')?.addEventListener("click", (event) => {
-    actions.openLauncherForDefinition(page, event.currentTarget?.dataset?.id ?? "");
+  root.querySelector('[data-action="open-launcher-for-definition"]')?.addEventListener("click", async (event) => {
+    await actions.openLauncherForDefinition(page, event.currentTarget?.dataset?.id ?? "");
   });
 }
 

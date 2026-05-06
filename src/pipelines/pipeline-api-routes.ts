@@ -242,7 +242,7 @@ export async function handlePipelineApi(
   }
 
   if (pathname === "/api/pipelines/runs" && method === "GET") {
-    return Response.json({ runs: ctx.store.listRuns({ ownerNpub }) });
+    return Response.json({ runs: ctx.store.listRunSummaries({ ownerNpub }) });
   }
 
   const runStepsMatch = pathname.match(/^\/api\/pipelines\/runs\/([^/]+)\/steps$/);
@@ -272,7 +272,9 @@ export async function handlePipelineApi(
 
   const runMatch = pathname.match(/^\/api\/pipelines\/runs\/([^/]+)$/);
   if (runMatch && method === "GET") {
-    const run = ctx.store.getRun(decodeURIComponent(runMatch[1]!));
+    const id = decodeURIComponent(runMatch[1]!);
+    const includeRunPayload = url.searchParams.get("includeRunPayload") === "1" || url.searchParams.get("includePayload") === "1";
+    const run = includeRunPayload ? ctx.store.getRun(id) : ctx.store.getRunSummary(id);
     if (!run || run.ownerNpub !== ownerNpub) {
       return Response.json({ error: "Pipeline run not found" }, { status: 404 });
     }

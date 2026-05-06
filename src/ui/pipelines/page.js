@@ -24,14 +24,22 @@ import {
   ensureSelectedDefinition,
   getRouteDefinition,
   getSelectedDefinition,
+  hasRunPayload,
   normalizeTab,
   parseRunInput,
   pickDefaultDefinitionId,
 } from "./state.js";
 import { escapeHtml } from "./view-utils.js";
+import { isActivePipelineRunStatus } from "./db.js";
 
 export function initPipelinesPage({ showToast }) {
   const state = createPipelinesState();
+  const loaded = {
+    root: false,
+    definitions: false,
+    runs: false,
+    functions: false,
+  };
 
   async function ensureLoaded() {
     await loadAll();
@@ -42,24 +50,57 @@ export function initPipelinesPage({ showToast }) {
     page.className = "wm-page wm-pipelines-page";
     state.loading = true;
     page.append(renderShell());
-    void loadAll().then(() => hydrateRouteDetail()).then(() => updatePage(page)).catch((error) => renderError(page, error));
+    void loadAll({ force: true }).then(() => hydrateRouteDetail()).then(() => updatePage(page)).catch((error) => renderError(page, error));
     return page;
   }
 
-  async function loadAll() {
+  async function loadAll(options = {}) {
     state.loading = true;
-    const [root, definitions, runs, functions] = await Promise.all([
-      fetchPipelineRoot(),
-      fetchPipelineDefinitions(),
-      fetchPipelineRuns(),
-      fetchPipelineFunctions(),
-    ]);
-    state.root = root;
-    state.definitions = definitions.definitions ?? [];
-    state.runs = runs.runs ?? [];
-    state.functions = functions.functions ?? [];
-    ensureSelectedDefinition(state);
+    await loadRouteData(getCurrentRoute(), options);
     state.loading = false;
+  }
+
+  async function loadRouteData(route, options = {}) {
+    const tasks = [loadRoot(options)];
+    if (route.section === "runs") {
+      tasks.push(loadRuns(options));
+    } else if (route.section === "definitions") {
+      tasks.push(loadDefinitions(options));
+    } else if (route.section === "functions") {
+      tasks.push(loadFunctions(options));
+    }
+    if (state.launcherOpen) {
+      tasks.push(loadDefinitions(options));
+    }
+    await Promise.all(tasks);
+  }
+
+  async function loadRoot({ force = false } = {}) {
+    if (loaded.root && !force) return;
+    state.root = await fetchPipelineRoot();
+    loaded.root = true;
+  }
+
+  async function loadDefinitions({ force = false } = {}) {
+    if (loaded.definitions && !force) return;
+    const definitions = await fetchPipelineDefinitions();
+    state.definitions = definitions.definitions ?? [];
+    loaded.definitions = true;
+    ensureSelectedDefinition(state);
+  }
+
+  async function loadRuns({ force = false } = {}) {
+    if (loaded.runs && !force) return;
+    const runs = await fetchPipelineRuns();
+    state.runs = runs.runs ?? [];
+    loaded.runs = true;
+  }
+
+  async function loadFunctions({ force = false } = {}) {
+    if (loaded.functions && !force) return;
+    const functions = await fetchPipelineFunctions();
+    state.functions = functions.functions ?? [];
+    loaded.functions = true;
   }
 
   function updatePage(page) {
@@ -168,10 +209,27 @@ export function initPipelinesPage({ showToast }) {
 
   async function hydrateRouteDetail(route = getCurrentRoute()) {
     applyRoute(route);
-    if (route.section === "runs" && route.id && state.selectedRun?.run?.id !== route.id) {
-      state.selectedRun = await fetchPipelineRun(route.id);
-      state.selectedStep = null;
-      state.selectedRunTab = "overview";
+    const summary = route.section === "runs" && route.id
+      ? state.runs.find((run) => run.id === route.id)
+      : null;
+    const runStatus = summary?.status ?? state.selectedRun?.run?.status;
+    const runIsActive = isActivePipelineRunStatus(runStatus);
+    const runChanged = state.selectedRun?.run?.id !== route.id;
+    const shouldRefreshRun =
+      route.section === "runs" &&
+      route.id &&
+      (runChanged || runIsActive);
+    if (shouldRefreshRun) {
+      state.selectedRun = await fetchPipelineRun(route.id, {
+        includeRunPayload: runIsActive,
+        forceFresh: runIsActive,
+      });
+      if (runChanged) {
+        state.selectedStep = null;
+        state.selectedRunTab = "overview";
+      }
+      state.selectedRunPayloadLoading = false;
+      state.selectedRunPayloadError = null;
     }
     if (route.section === "functions" && route.id && state.selectedFunctionDetail?.function?.name !== route.id) {
       state.selectedFunctionLoading = true;
@@ -183,12 +241,32 @@ export function initPipelinesPage({ showToast }) {
     }
   }
 
+  async function ensureSelectedRunPayload(page) {
+    const run = state.selectedRun?.run;
+    if (!run?.id || hasRunPayload(run)) return;
+    state.selectedRunPayloadLoading = true;
+    state.selectedRunPayloadError = null;
+    updatePage(page);
+    try {
+      state.selectedRun = await fetchPipelineRun(run.id, {
+        includeRunPayload: true,
+        forceFresh: isActivePipelineRunStatus(run.status),
+      });
+    } catch (error) {
+      state.selectedRunPayloadError = error instanceof Error ? error.message : String(error);
+    } finally {
+      state.selectedRunPayloadLoading = false;
+      updatePage(page);
+    }
+  }
+
   async function navigateToPipelinePath(page, path) {
     if (!path) return;
     pushPipelinePath(path);
     state.error = null;
     updatePage(page);
     try {
+      await loadRouteData(getCurrentRoute());
       await hydrateRouteDetail();
       updatePage(page);
     } catch (error) {
@@ -201,10 +279,12 @@ export function initPipelinesPage({ showToast }) {
     bindPipelinesPageActions(root, page, createPipelineActionHandlers({
       state,
       loadAll,
+      loadDefinitions,
       hydrateRouteDetail,
       updatePage,
       updatePageAndRestoreFocus,
       navigateToPipelinePath,
+      ensureSelectedRunPayload,
       showToast,
       startCreateWizard,
       startEditWizard,
