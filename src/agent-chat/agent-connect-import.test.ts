@@ -6,6 +6,7 @@ import {
   buildAgentConnectImportResult,
   validateAgentConnectPackage,
 } from './agent-connect-import';
+import { checkBackendConnectionHealth } from './tower-client';
 import type { BackendConnectionRecord } from './types';
 
 function encodeToken(payload: Record<string, unknown>): string {
@@ -37,6 +38,26 @@ function makePackage(overrides: Record<string, unknown> = {}) {
     app: { app_npub: 'npub1app', schema_namespace: 'cowork' },
     connection_token: connectionToken,
     capabilities: ['chat_intercept', 'task_dispatch'],
+    ...overrides,
+  };
+}
+
+function makeBackendConnection(overrides: Partial<BackendConnectionRecord> = {}): BackendConnectionRecord {
+  return {
+    backendConnectionId: 'backend-1',
+    managedByNpub: 'npub1manager',
+    backendBaseUrl: 'https://tower.example.com',
+    serviceNpub: 'npub1service',
+    relayUrls: ['wss://relay.example.com'],
+    openapiUrl: null,
+    docsUrl: null,
+    healthUrl: 'https://tower.example.com/health',
+    supportedVersion: '5',
+    sharePolicy: 'private',
+    healthStatus: 'degraded',
+    lastHealthResult: null,
+    createdAt: '2026-05-05T00:00:00.000Z',
+    updatedAt: '2026-05-05T00:00:00.000Z',
     ...overrides,
   };
 }
@@ -85,5 +106,40 @@ describe('Agent Connect import validation', () => {
       managedByNpub: 'npub1manager',
       packageJson: makePackage({ connection_token: badToken }),
     })).toThrow('service npub');
+  });
+
+  test('checks backend health successfully when health URL is available', async () => {
+    const result = await checkBackendConnectionHealth(makeBackendConnection(), async () => (
+      new Response(JSON.stringify({ ok: true, version: '5' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    ));
+
+    expect(result.healthStatus).toBe('healthy');
+    expect(result.diagnostic.ok).toBe(true);
+    expect(result.diagnostic.details?.response).toEqual({ ok: true, version: '5' });
+  });
+
+  test('marks backend health unhealthy when the health URL fails', async () => {
+    const result = await checkBackendConnectionHealth(makeBackendConnection(), async () => (
+      new Response('nope', { status: 503, statusText: 'Service Unavailable' })
+    ));
+
+    expect(result.healthStatus).toBe('unhealthy');
+    expect(result.diagnostic.ok).toBe(false);
+    expect(result.diagnostic.code).toBe('backend_health_failed');
+    expect(result.diagnostic.details?.detailCode).toBe('backend_health_http_error');
+  });
+
+  test('marks backend health degraded when no health URL is configured', async () => {
+    const result = await checkBackendConnectionHealth(makeBackendConnection({ healthUrl: null }), async () => {
+      throw new Error('fetch should not run');
+    });
+
+    expect(result.healthStatus).toBe('degraded');
+    expect(result.diagnostic.ok).toBe(false);
+    expect(result.diagnostic.code).toBe('backend_health_unavailable');
+    expect(result.diagnostic.details?.detailCode).toBe('backend_health_url_missing');
   });
 });

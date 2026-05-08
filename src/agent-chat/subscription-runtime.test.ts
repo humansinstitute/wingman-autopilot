@@ -1,15 +1,152 @@
 import { randomUUID } from 'node:crypto';
+import { Buffer } from 'node:buffer';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { describe, expect, test } from 'bun:test';
 
 import { AgentDefinitionStore } from './agent-definition-store';
+import { BackendConnectionStore } from './backend-connection-store';
 import { WorkspaceSubscriptionManager } from './subscription-runtime';
 import { WorkspaceSubscriptionStore } from './workspace-subscription-store';
+import type {
+  AgentDefinitionRecord,
+  BotKeyStoreRecord,
+  RuntimeBotIdentity,
+  WorkspaceSubscriptionRecord,
+} from './types';
 
 function makeTempDb(): string {
   return join(tmpdir(), `agent-chat-subscription-runtime-${randomUUID()}.sqlite`);
+}
+
+function encodeToken(payload: Record<string, unknown>): string {
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+}
+
+function makeConnectPackage(overrides: Record<string, unknown> = {}) {
+  const connectionToken = encodeToken({
+    direct_https_url: 'https://tower.example.com',
+    service_npub: 'npub1service',
+    workspace_owner_npub: 'npub1workspace',
+    app_npub: 'npub1sourceapp',
+  });
+  return {
+    kind: 'coworker_agent_connect',
+    version: 5,
+    generated_at: '2026-05-05T00:00:00.000Z',
+    service: {
+      direct_https_url: 'https://tower.example.com',
+      service_npub: 'npub1service',
+      health_url: 'https://tower.example.com/health',
+    },
+    workspace: { owner_npub: 'npub1workspace' },
+    app: { app_npub: 'npub1sourceapp' },
+    connection_token: connectionToken,
+    capabilities: ['chat_intercept'],
+    ...overrides,
+  };
+}
+
+function makeBotKeyRecord(botNpub: string): BotKeyStoreRecord {
+  const now = new Date().toISOString();
+  return {
+    id: `key-${botNpub}`,
+    userNpub: 'npub1manager',
+    botPubkeyHex: `${botNpub.slice(-2) || 'ab'}`.padEnd(64, 'a').slice(0, 64),
+    botNpub,
+    displayName: botNpub,
+    encryptedToUser: 'encrypted-user',
+    encryptedEscrow: 'encrypted-escrow',
+    escrowUuid: 'escrow-1',
+    isActive: 1,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function createTestManager(
+  dbPath: string,
+  botKeys: Map<string, BotKeyStoreRecord>,
+  checkBackendHealth?: ConstructorParameters<typeof WorkspaceSubscriptionManager>[0]['checkBackendHealth'],
+) {
+  const store = new WorkspaceSubscriptionStore(dbPath);
+  const agentStore = new AgentDefinitionStore(dbPath);
+  const backendStore = new BackendConnectionStore(dbPath);
+  const manager = new WorkspaceSubscriptionManager({
+    store,
+    agentStore,
+    backendStore,
+    checkBackendHealth: checkBackendHealth ?? (async (record) => ({
+      healthStatus: record.healthUrl ? 'healthy' : 'degraded',
+      diagnostic: {
+        ok: Boolean(record.healthUrl),
+        code: record.healthUrl ? null : 'backend_health_unavailable',
+        message: record.healthUrl ? 'Backend health check passed.' : 'Backend connection has no health URL.',
+        at: new Date().toISOString(),
+        details: { health_url: record.healthUrl },
+      },
+    })),
+    botKeyStore: {
+      getActiveKeyForUser: () => null,
+      getActiveKeyForBotNpub: (botNpub) => botKeys.get(botNpub) ?? null,
+    },
+  });
+
+  const managerInternals = manager as unknown as {
+    unlockBotIdentity: (record: BotKeyStoreRecord) => RuntimeBotIdentity;
+    prepareWorkspaceSession: (record: WorkspaceSubscriptionRecord, botIdentity: RuntimeBotIdentity) => Promise<WorkspaceSubscriptionRecord>;
+    registerWorkspaceKey: (record: WorkspaceSubscriptionRecord) => Promise<WorkspaceSubscriptionRecord>;
+    refreshGroupKeys: (record: WorkspaceSubscriptionRecord) => Promise<WorkspaceSubscriptionRecord>;
+    ensureConnected: (record: WorkspaceSubscriptionRecord) => Promise<void>;
+  };
+  managerInternals.unlockBotIdentity = (record) => ({
+    botNpub: record.botNpub,
+    botPubkeyHex: record.botPubkeyHex,
+    botSecret: new Uint8Array(32),
+  });
+  managerInternals.prepareWorkspaceSession = async (record) => store.save({
+    ...record,
+    wsKeyNpub: `ws-${record.botNpub}`,
+    wsKeyBlobJson: JSON.stringify({ bot: record.botNpub }),
+  });
+  managerInternals.registerWorkspaceKey = async (record) => store.save({
+    ...record,
+    wsKeyStatus: 'active',
+    lastAuthOkAt: new Date().toISOString(),
+  });
+  managerInternals.refreshGroupKeys = async (record) => store.save({
+    ...record,
+    groupKeyStatus: 'active',
+    healthStatus: 'healthy',
+    wrappedGroupKeysJson: JSON.stringify([{ group_npub: `group-${record.botNpub}` }]),
+  });
+  managerInternals.ensureConnected = async (record) => {
+    store.save({
+      ...record,
+      sseStatus: 'connected',
+      healthStatus: 'healthy',
+    });
+  };
+
+  return { manager, store, agentStore, backendStore };
+}
+
+function saveAgent(agentStore: AgentDefinitionStore, input: Partial<AgentDefinitionRecord> & { agentId: string; botNpub: string; managedByNpub: string }) {
+  const now = new Date().toISOString();
+  agentStore.save({
+    agentId: input.agentId,
+    label: input.label ?? input.agentId,
+    botNpub: input.botNpub,
+    workspaceOwnerNpub: input.workspaceOwnerNpub ?? 'npub1workspace',
+    groupNpubs: input.groupNpubs ?? ['npub1group'],
+    workingDirectory: input.workingDirectory ?? `/tmp/${input.agentId}`,
+    capabilities: input.capabilities ?? ['chat_intercept'],
+    enabled: input.enabled ?? true,
+    createdAt: now,
+    updatedAt: now,
+    managedByNpub: input.managedByNpub,
+  });
 }
 
 describe('WorkspaceSubscriptionManager', () => {
@@ -78,5 +215,113 @@ describe('WorkspaceSubscriptionManager', () => {
     });
 
     expect(record.groupNpubs).toEqual(['npub1groupa', 'npub1groupb']);
+  });
+
+  test('imports the same Agent Connect workspace for two owned profiles with separate bot identities', async () => {
+    const dbPath = makeTempDb();
+    const botKeys = new Map([
+      ['npub1botone', makeBotKeyRecord('npub1botone')],
+      ['npub1bottwo', makeBotKeyRecord('npub1bottwo')],
+    ]);
+    const { manager, store, agentStore, backendStore } = createTestManager(dbPath, botKeys);
+    saveAgent(agentStore, { agentId: 'wm-one', botNpub: 'npub1botone', managedByNpub: 'npub1manager' });
+    saveAgent(agentStore, { agentId: 'wm-two', botNpub: 'npub1bottwo', managedByNpub: 'npub1manager' });
+
+    const first = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackage(),
+      agentProfileId: 'wm-one',
+    });
+    const second = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackage(),
+      agentProfileId: 'wm-two',
+    });
+
+    expect(first.subscription.subscriptionId).not.toBe(second.subscription.subscriptionId);
+    expect(first.subscription.agentProfileId).toBe('wm-one');
+    expect(second.subscription.agentProfileId).toBe('wm-two');
+    expect(first.subscription.botNpub).toBe('npub1botone');
+    expect(second.subscription.botNpub).toBe('npub1bottwo');
+    expect(store.listForManagerNpub('npub1manager')).toHaveLength(2);
+    expect(backendStore.listForManagerNpub('npub1manager')[0]?.healthStatus).toBe('healthy');
+  });
+
+  test('rejects missing or foreign Agent Profile ids before importing Agent Connect packages', async () => {
+    const dbPath = makeTempDb();
+    const botKeys = new Map([['npub1botone', makeBotKeyRecord('npub1botone')]]);
+    const { manager, agentStore, backendStore } = createTestManager(dbPath, botKeys);
+    saveAgent(agentStore, { agentId: 'foreign-agent', botNpub: 'npub1botone', managedByNpub: 'npub1othermanager' });
+
+    await expect(manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackage(),
+    })).rejects.toThrow('requires a selected Agent Profile');
+
+    await expect(manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackage(),
+      agentProfileId: 'missing-agent',
+    })).rejects.toThrow('was not found');
+
+    await expect(manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackage(),
+      agentProfileId: 'foreign-agent',
+    })).rejects.toThrow('owned by another manager');
+
+    expect(backendStore.listForManagerNpub('npub1manager')).toHaveLength(0);
+  });
+
+  test('persists degraded backend health when Agent Connect has no health URL', async () => {
+    const dbPath = makeTempDb();
+    const botKeys = new Map([['npub1botone', makeBotKeyRecord('npub1botone')]]);
+    const { manager, agentStore, backendStore } = createTestManager(dbPath, botKeys);
+    saveAgent(agentStore, { agentId: 'wm-one', botNpub: 'npub1botone', managedByNpub: 'npub1manager' });
+
+    await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackage({
+        service: {
+          direct_https_url: 'https://tower.example.com',
+          service_npub: 'npub1service',
+        },
+      }),
+      agentProfileId: 'wm-one',
+    });
+
+    const [backend] = backendStore.listForManagerNpub('npub1manager');
+    expect(backend?.healthStatus).toBe('degraded');
+    expect(backend?.lastHealthResult?.code).toBe('backend_health_unavailable');
+  });
+
+  test('persists unhealthy backend health diagnostics during Agent Connect import', async () => {
+    const dbPath = makeTempDb();
+    const botKeys = new Map([['npub1botone', makeBotKeyRecord('npub1botone')]]);
+    const { manager, agentStore, backendStore } = createTestManager(
+      dbPath,
+      botKeys,
+      async () => ({
+        healthStatus: 'unhealthy',
+        diagnostic: {
+          ok: false,
+          code: 'backend_health_failed',
+          message: 'Service unavailable',
+          at: new Date().toISOString(),
+          details: { detailCode: 'backend_health_http_error' },
+        },
+      }),
+    );
+    saveAgent(agentStore, { agentId: 'wm-one', botNpub: 'npub1botone', managedByNpub: 'npub1manager' });
+
+    await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackage(),
+      agentProfileId: 'wm-one',
+    });
+
+    const [backend] = backendStore.listForManagerNpub('npub1manager');
+    expect(backend?.healthStatus).toBe('unhealthy');
+    expect(backend?.lastHealthResult?.message).toBe('Service unavailable');
   });
 });

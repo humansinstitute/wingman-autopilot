@@ -36,6 +36,7 @@ import {
   buildFailureDiagnostic,
   buildStreamUrl,
   buildSuccessDiagnostic,
+  checkBackendConnectionHealth,
   fetchRecordHistory,
   normaliseBackendBaseUrl,
   parseTowerError,
@@ -226,6 +227,7 @@ export interface WorkspaceSubscriptionManagerDependencies {
   commentDispatchRuntime?: AgentCommentDispatchRuntime | null;
   fetchRecordHistory?: typeof fetchRecordHistory;
   decryptRecordPayload?: typeof decryptRecordPayloadWithYoke;
+  checkBackendHealth?: typeof checkBackendConnectionHealth;
   botKeyStore: {
     getActiveKeyForUser: (npub: string) => BotKeyStoreRecord | null;
     getActiveKeyForBotNpub: (botNpub: string) => BotKeyStoreRecord | null;
@@ -282,6 +284,7 @@ export class WorkspaceSubscriptionManager {
   private commentDispatchRuntime: AgentCommentDispatchRuntime | null;
   private readonly fetchRecordHistoryImpl: typeof fetchRecordHistory;
   private readonly decryptRecordPayloadImpl: typeof decryptRecordPayloadWithYoke;
+  private readonly checkBackendHealthImpl: typeof checkBackendConnectionHealth;
   private readonly runtimes = new Map<string, RuntimeContext>();
 
   constructor(deps: WorkspaceSubscriptionManagerDependencies) {
@@ -296,6 +299,7 @@ export class WorkspaceSubscriptionManager {
     this.commentDispatchRuntime = deps.commentDispatchRuntime ?? agentCommentDispatchRuntime;
     this.fetchRecordHistoryImpl = deps.fetchRecordHistory ?? fetchRecordHistory;
     this.decryptRecordPayloadImpl = deps.decryptRecordPayload ?? decryptRecordPayloadWithYoke;
+    this.checkBackendHealthImpl = deps.checkBackendHealth ?? checkBackendConnectionHealth;
   }
 
   setChatRuntime(chatRuntime: AgentChatSessionRuntime | null): void {
@@ -440,11 +444,16 @@ export class WorkspaceSubscriptionManager {
     backendConnection: BackendConnectionRecord;
     subscription: WorkspaceSubscriptionRecord;
   }> {
+    const agentProfileId = input.agentProfileId?.trim() || null;
+    if (!agentProfileId) {
+      throw new Error('Agent Connect import requires a selected Agent Profile.');
+    }
+    this.resolveOwnedAgentProfile(agentProfileId, input.managedByNpub);
     const validation = validateAgentConnectPackage({
       managedByNpub: input.managedByNpub,
       packageJson: input.packageJson,
     });
-    const backendConnection = this.createOrReuseBackendConnection({
+    const backendConnection = await this.createOrReuseBackendConnection({
       managedByNpub: input.managedByNpub,
       backendBaseUrl: validation.service.directHttpsUrl,
       serviceNpub: validation.service.serviceNpub,
@@ -457,15 +466,23 @@ export class WorkspaceSubscriptionManager {
     const importResult = buildAgentConnectImportResult(validation, backendConnection);
     const subscription = await this.createOrUpdate({
       ...importResult.subscriptionInput,
-      agentProfileId: input.agentProfileId ?? importResult.subscriptionInput.agentProfileId ?? null,
+      agentProfileId,
     });
     return { backendConnection, subscription };
   }
 
   async createOrUpdate(input: CreateWorkspaceSubscriptionInput): Promise<WorkspaceSubscriptionRecord> {
     const backendBaseUrl = normaliseBackendBaseUrl(input.backendBaseUrl);
-    let botRecord = this.botKeyStore.getActiveKeyForUser(input.managedByNpub);
+    const agentProfile = input.agentProfileId
+      ? this.resolveOwnedAgentProfile(input.agentProfileId, input.managedByNpub)
+      : null;
+    let botRecord = agentProfile
+      ? this.botKeyStore.getActiveKeyForBotNpub(agentProfile.botNpub)
+      : this.botKeyStore.getActiveKeyForUser(input.managedByNpub);
     if (!botRecord) {
+      if (agentProfile) {
+        throw new Error(`No active bot key exists for Agent Profile ${agentProfile.agentId}.`);
+      }
       if (!this.botKeyStore.createKey) {
         throw new Error('No active bot key exists for this user.');
       }
@@ -486,9 +503,12 @@ export class WorkspaceSubscriptionManager {
     }
 
     const botIdentity = this.unlockBotIdentity(botRecord);
+    if (agentProfile && botIdentity.botNpub !== agentProfile.botNpub) {
+      throw new Error(`Agent Profile ${agentProfile.agentId} bot key does not match its botNpub.`);
+    }
     const backendConnection = input.backendConnectionId
       ? this.backendStore.getById(input.backendConnectionId)
-      : this.createOrReuseBackendConnection({
+      : await this.createOrReuseBackendConnection({
           managedByNpub: input.managedByNpub,
           backendBaseUrl,
         });
@@ -502,7 +522,7 @@ export class WorkspaceSubscriptionManager {
       workspaceOwnerNpub: input.workspaceOwnerNpub,
       sourceAppNpub: input.sourceAppNpub,
       botNpub: botIdentity.botNpub,
-      agentProfileId: input.agentProfileId ?? null,
+      agentProfileId: agentProfile?.agentId ?? input.agentProfileId ?? null,
     });
     const legacyRecord = this.store.getByWorkspaceAndBot(input.workspaceOwnerNpub, botIdentity.botNpub);
     let record = scopedRecord
@@ -515,7 +535,7 @@ export class WorkspaceSubscriptionManager {
         sourceAppNpub: input.sourceAppNpub,
         backendConnectionId: backendConnection?.backendConnectionId ?? null,
         connectionTokenRef: input.connectionTokenRef ?? null,
-        agentProfileId: input.agentProfileId ?? null,
+        agentProfileId: agentProfile?.agentId ?? input.agentProfileId ?? null,
         sourceAppSchemaNamespace: input.sourceAppSchemaNamespace ?? null,
         capabilityDefaults: input.capabilityDefaults ?? [],
         dispatchRouteIds: input.dispatchRouteIds ?? [],
@@ -526,7 +546,7 @@ export class WorkspaceSubscriptionManager {
     record.backendBaseUrl = backendBaseUrl;
     record.sourceAppNpub = input.sourceAppNpub;
     record.connectionTokenRef = input.connectionTokenRef ?? record.connectionTokenRef ?? null;
-    record.agentProfileId = input.agentProfileId ?? record.agentProfileId ?? null;
+    record.agentProfileId = agentProfile?.agentId ?? input.agentProfileId ?? record.agentProfileId ?? null;
     record.sourceAppSchemaNamespace = input.sourceAppSchemaNamespace ?? record.sourceAppSchemaNamespace ?? null;
     record.capabilityDefaults = input.capabilityDefaults ?? record.capabilityDefaults ?? [];
     record.dispatchRouteIds = input.dispatchRouteIds ?? record.dispatchRouteIds ?? [];
@@ -689,7 +709,21 @@ export class WorkspaceSubscriptionManager {
     }
   }
 
-  private createOrReuseBackendConnection(input: {
+  private resolveOwnedAgentProfile(agentProfileId: string, managedByNpub: string): AgentDefinitionRecord {
+    const agent = this.agentStore.getByAgentId(agentProfileId);
+    if (!agent) {
+      throw new Error(`Agent Profile ${agentProfileId} was not found.`);
+    }
+    if (agent.managedByNpub !== managedByNpub) {
+      throw new Error(`Agent Profile ${agentProfileId} is owned by another manager.`);
+    }
+    if (!agent.botNpub) {
+      throw new Error(`Agent Profile ${agentProfileId} does not have a bot NPUB.`);
+    }
+    return agent;
+  }
+
+  private async createOrReuseBackendConnection(input: {
     managedByNpub: string;
     backendBaseUrl: string;
     serviceNpub?: string | null;
@@ -698,7 +732,7 @@ export class WorkspaceSubscriptionManager {
     docsUrl?: string | null;
     healthUrl?: string | null;
     supportedVersion?: string | null;
-  }): BackendConnectionRecord {
+  }): Promise<BackendConnectionRecord> {
     const backendBaseUrl = normaliseBackendBaseUrl(input.backendBaseUrl);
     const existing = this.backendStore.findReusable({
       managedByNpub: input.managedByNpub,
@@ -706,7 +740,7 @@ export class WorkspaceSubscriptionManager {
       serviceNpub: input.serviceNpub ?? null,
     });
     if (existing) {
-      return this.backendStore.save({
+      const saved = this.backendStore.save({
         ...existing,
         serviceNpub: input.serviceNpub ?? existing.serviceNpub,
         relayUrls: input.relayUrls ?? existing.relayUrls,
@@ -716,8 +750,9 @@ export class WorkspaceSubscriptionManager {
         supportedVersion: input.supportedVersion ?? existing.supportedVersion,
         updatedAt: new Date().toISOString(),
       });
+      return await this.checkAndSaveBackendHealth(saved);
     }
-    return this.backendStore.save(this.backendStore.createDefault({
+    const created = this.backendStore.save(this.backendStore.createDefault({
       managedByNpub: input.managedByNpub,
       backendBaseUrl,
       serviceNpub: input.serviceNpub ?? null,
@@ -727,6 +762,17 @@ export class WorkspaceSubscriptionManager {
       healthUrl: input.healthUrl ?? null,
       supportedVersion: input.supportedVersion ?? null,
     }));
+    return await this.checkAndSaveBackendHealth(created);
+  }
+
+  private async checkAndSaveBackendHealth(record: BackendConnectionRecord): Promise<BackendConnectionRecord> {
+    const result = await this.checkBackendHealthImpl(record);
+    return this.backendStore.save({
+      ...record,
+      healthStatus: result.healthStatus,
+      lastHealthResult: result.diagnostic,
+      updatedAt: new Date().toISOString(),
+    });
   }
 
   private async prepareWorkspaceSession(

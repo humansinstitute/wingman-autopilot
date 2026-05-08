@@ -33,6 +33,20 @@ export async function saveAgentChatSubscription(input) {
   return payload.subscription;
 }
 
+export async function importAgentConnectPackage(input) {
+  const response = await fetch('/api/agent-chat/agent-connect/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(input),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || 'Failed to import Agent Connect package');
+  }
+  return payload;
+}
+
 export async function saveAgentChatAgent(input) {
   const response = await fetch('/api/agent-chat/agents', {
     method: 'POST',

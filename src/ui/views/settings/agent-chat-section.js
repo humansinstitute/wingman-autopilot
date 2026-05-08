@@ -2,6 +2,7 @@ import { createSettingsTabs } from '../settings-tabs.js';
 import {
   deleteAgentChatAgent,
   deleteAgentChatSubscription,
+  importAgentConnectPackage,
   listAgentChatAgents,
   listAgentChatSubscriptions,
   runAgentChatSubscriptionAction,
@@ -27,6 +28,7 @@ import {
   setPanelVisible,
 } from './agent-chat-shared-ui.js';
 import { createAgentDispatchSetupCards } from './agent-chat-setup-cards.js';
+import { createAgentConnectImportCard } from './agent-chat-connect-import-card.js';
 
 async function loadOperatorState() {
   const [subscriptions, agentPayload, sessionPayload] = await Promise.all([
@@ -98,11 +100,13 @@ export function createAgentChatSection({ standalone = false } = {}) {
   const subscriptionEditor = createSubscriptionEditorCard();
   const agentEditor = createPrimaryAgentEditorCard();
   const setupOverviewContainer = document.createElement('div');
+  const agentConnectImportContainer = document.createElement('div');
   const configuredDispatchesContainer = document.createElement('div');
   const agentRegistryContainer = document.createElement('div');
   const setupPanel = document.createElement('div');
   setupPanel.append(
     setupOverviewContainer,
+    agentConnectImportContainer,
     subscriptionEditor.card,
     agentEditor.card,
     statusLine,
@@ -280,6 +284,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
   async function refreshList() {
     overviewContainer.replaceChildren();
     setupOverviewContainer.replaceChildren();
+    agentConnectImportContainer.replaceChildren();
     configuredDispatchesContainer.replaceChildren();
     agentRegistryContainer.replaceChildren();
     listContainer.replaceChildren();
@@ -322,6 +327,15 @@ export function createAgentChatSection({ standalone = false } = {}) {
               statusLine.textContent = 'Agent Dispatch view refreshed.';
             }
           });
+        },
+      }));
+      agentConnectImportContainer.append(createAgentConnectImportCard({
+        agents,
+        onImport: async ({ packageJson, agentProfileId }) => {
+          const payload = await importAgentConnectPackage({ packageJson, agentProfileId });
+          statusLine.textContent = 'Agent Connect package imported.';
+          await refreshList();
+          return payload;
         },
       }));
       configuredDispatchesContainer.append(createConfiguredDispatchesPanel(primaryAgent, promptDefaults, {

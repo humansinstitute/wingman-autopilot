@@ -267,6 +267,9 @@ export async function handleAgentChatApi(
     const triggerConfigRecordId = typeof body.triggerConfigRecordId === 'string' && body.triggerConfigRecordId.trim().length > 0
       ? body.triggerConfigRecordId.trim()
       : null;
+    const agentProfileId = typeof body.agentProfileId === 'string' && body.agentProfileId.trim().length > 0
+      ? body.agentProfileId.trim()
+      : null;
 
     if (!workspaceOwnerNpub || !backendBaseUrl || !sourceAppNpub) {
       return Response.json(
@@ -282,6 +285,7 @@ export async function handleAgentChatApi(
         backendBaseUrl,
         sourceAppNpub,
         backendConnectionId,
+        agentProfileId,
         triggerConfigRecordId,
       });
       return Response.json({

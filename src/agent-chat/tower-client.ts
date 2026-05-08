@@ -1,4 +1,4 @@
-import type { AgentChatDiagnostic, YokeWorkspaceSession } from './types';
+import type { AgentChatDiagnostic, BackendConnectionRecord, HealthStatus, YokeWorkspaceSession } from './types';
 import { loadYokeBotHelpers } from './yoke-bot-helpers';
 
 export interface TowerErrorDetails {
@@ -6,6 +6,8 @@ export interface TowerErrorDetails {
   message: string;
   detailCode: string | null;
 }
+
+export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export function normaliseBackendBaseUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim();
@@ -136,6 +138,78 @@ export async function registerWorkspaceKeyWithTower(params: {
     throw Object.assign(new Error(error.message), error);
   }
   return await response.json() as Record<string, unknown>;
+}
+
+export async function checkBackendConnectionHealth(
+  record: BackendConnectionRecord,
+  fetchImpl: FetchLike = fetch,
+): Promise<{ healthStatus: HealthStatus; diagnostic: AgentChatDiagnostic }> {
+  const targetUrl = record.healthUrl?.trim() || null;
+  if (!targetUrl) {
+    return {
+      healthStatus: 'degraded',
+      diagnostic: buildFailureDiagnostic(
+        'backend_health_unavailable',
+        'Backend connection has no health URL.',
+        'backend_health_url_missing',
+        {
+          backend_connection_id: record.backendConnectionId,
+          backend_base_url: record.backendBaseUrl,
+        },
+      ),
+    };
+  }
+
+  const startedAt = Date.now();
+  try {
+    const response = await fetchImpl(targetUrl, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    const elapsedMs = Date.now() - startedAt;
+    const details: Record<string, unknown> = {
+      backend_connection_id: record.backendConnectionId,
+      backend_base_url: record.backendBaseUrl,
+      health_url: targetUrl,
+      status: response.status,
+      elapsed_ms: elapsedMs,
+    };
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType.includes('application/json')) {
+      details.response = await response.json().catch(() => null);
+    }
+
+    if (!response.ok) {
+      return {
+        healthStatus: 'unhealthy',
+        diagnostic: buildFailureDiagnostic(
+          'backend_health_failed',
+          response.statusText || `Backend health check failed with HTTP ${response.status}.`,
+          'backend_health_http_error',
+          details,
+        ),
+      };
+    }
+
+    return {
+      healthStatus: 'healthy',
+      diagnostic: buildSuccessDiagnostic('Backend health check passed.', details),
+    };
+  } catch (error) {
+    return {
+      healthStatus: 'unhealthy',
+      diagnostic: buildFailureDiagnostic(
+        'backend_health_failed',
+        error instanceof Error ? error.message : 'Backend health check failed.',
+        'backend_health_request_failed',
+        {
+          backend_connection_id: record.backendConnectionId,
+          backend_base_url: record.backendBaseUrl,
+          health_url: targetUrl,
+        },
+      ),
+    };
+  }
 }
 
 export function buildFailureDiagnostic(
