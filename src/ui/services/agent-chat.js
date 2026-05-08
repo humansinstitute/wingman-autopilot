@@ -19,6 +19,15 @@ export async function listAgentChatAgents() {
   };
 }
 
+export async function listAgentChatBackendConnections() {
+  const response = await fetch('/api/agent-chat/backend-connections', { credentials: 'include' });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || 'Failed to load Agent Chat backend connections');
+  }
+  return Array.isArray(payload.backendConnections) ? payload.backendConnections : [];
+}
+
 export async function saveAgentChatSubscription(input) {
   const response = await fetch('/api/agent-chat/subscriptions', {
     method: 'POST',

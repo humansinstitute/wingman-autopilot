@@ -337,6 +337,71 @@ describe('WorkspaceSubscriptionManager', () => {
       .toContain(sharedBackend.backendConnectionId);
   });
 
+  test('creates a selected-user subscription from backend setup hints without repeated fields', async () => {
+    const dbPath = makeTempDb();
+    const botKeys = new Map([['npub1botone', makeBotKeyRecord('npub1botone')]]);
+    const { manager, agentStore, backendStore } = createTestManager(dbPath, botKeys);
+    saveAgent(agentStore, { agentId: 'wm-one', botNpub: 'npub1botone', managedByNpub: 'npub1manager' });
+    const sharedBackend = saveBackendConnection(backendStore, {
+      managedByNpub: 'npub1owner',
+      backendBaseUrl: 'https://shared-hints.example.com',
+      setupWorkspaceOwnerNpub: 'npub1workspacehints',
+      setupSourceAppNpub: 'npub1sourcehints',
+      setupSourceAppSchemaNamespace: 'cowork',
+      setupCapabilityDefaults: ['chat_intercept', 'task_dispatch'],
+    });
+    backendStore.replaceAvailabilityGrants({
+      backendConnectionId: sharedBackend.backendConnectionId,
+      managerNpubs: ['npub1manager'],
+    });
+
+    const subscription = await manager.createOrUpdate({
+      managedByNpub: 'npub1manager',
+      workspaceOwnerNpub: '',
+      backendBaseUrl: '',
+      sourceAppNpub: '',
+      backendConnectionId: sharedBackend.backendConnectionId,
+      agentProfileId: 'wm-one',
+    });
+
+    expect(subscription.backendConnectionId).toBe(sharedBackend.backendConnectionId);
+    expect(subscription.backendBaseUrl).toBe('https://shared-hints.example.com');
+    expect(subscription.workspaceOwnerNpub).toBe('npub1workspacehints');
+    expect(subscription.sourceAppNpub).toBe('npub1sourcehints');
+    expect(subscription.sourceAppSchemaNamespace).toBe('cowork');
+    expect(subscription.capabilityDefaults).toEqual(['chat_intercept', 'task_dispatch']);
+  });
+
+  test('backfills legacy direct subscriptions into reusable backend connections once', () => {
+    const dbPath = makeTempDb();
+    const botKeys = new Map<string, BotKeyStoreRecord>();
+    const { manager, store, backendStore } = createTestManager(dbPath, botKeys);
+    const legacy = store.save(store.createDefault({
+      managedByNpub: 'npub1manager',
+      workspaceOwnerNpub: 'npub1workspace',
+      backendBaseUrl: 'https://legacy-tower.example.com/',
+      botNpub: 'npub1legacybot',
+      sourceAppNpub: 'npub1sourceapp',
+      sourceAppSchemaNamespace: 'cowork',
+      capabilityDefaults: ['chat_intercept'],
+    }));
+
+    const first = manager.backfillLegacyBackendConnections();
+    const linked = store.getBySubscriptionId(legacy.subscriptionId);
+    const backends = backendStore.listForManagerNpub('npub1manager');
+    const second = manager.backfillLegacyBackendConnections();
+
+    expect(first).toEqual({ backfilled: 1, linkedSubscriptions: 1 });
+    expect(second).toEqual({ backfilled: 0, linkedSubscriptions: 0 });
+    expect(backends).toHaveLength(1);
+    expect(backends[0]?.backendBaseUrl).toBe('https://legacy-tower.example.com');
+    expect(backends[0]?.setupWorkspaceOwnerNpub).toBe('npub1workspace');
+    expect(backends[0]?.setupSourceAppNpub).toBe('npub1sourceapp');
+    expect(backends[0]?.setupCapabilityDefaults).toEqual(['chat_intercept']);
+    expect(linked?.backendConnectionId).toBe(backends[0]?.backendConnectionId);
+    expect(linked?.wsKeyBlobJson).toBeNull();
+  });
+
   test('rejects an unlisted user for a selected-users backend connection', async () => {
     const dbPath = makeTempDb();
     const botKeys = new Map([['npub1botone', makeBotKeyRecord('npub1botone')]]);

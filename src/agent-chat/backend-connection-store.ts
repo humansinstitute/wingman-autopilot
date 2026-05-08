@@ -6,7 +6,8 @@ import { Database } from 'bun:sqlite';
 import type { SQLQueryBindings } from 'bun:sqlite';
 
 import { databaseFile } from '../storage/message-store';
-import type { BackendConnectionGrantRecord, BackendConnectionRecord } from './types';
+import { normaliseBackendBaseUrl } from './tower-client';
+import type { BackendConnectionGrantRecord, BackendConnectionRecord, WorkspaceSubscriptionRecord } from './types';
 
 const DEFAULT_DB_PATH = databaseFile;
 
@@ -39,6 +40,11 @@ function serialiseJsonValue(value: unknown): string | null {
   return value == null ? null : JSON.stringify(value);
 }
 
+function hasColumn(db: Database, tableName: string, columnName: string): boolean {
+  const rows = db.query(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: string }>;
+  return rows.some((row) => row.name === columnName);
+}
+
 class BackendConnectionStore {
   private readonly db: Database;
 
@@ -59,6 +65,8 @@ class BackendConnectionStore {
       .query(
         `SELECT DISTINCT
            b.backend_connection_id, b.managed_by_npub, b.backend_base_url, b.service_npub,
+           b.setup_workspace_owner_npub, b.setup_source_app_npub, b.setup_source_app_schema_namespace,
+           b.setup_connection_token_ref, b.setup_capability_defaults_json,
            b.relay_urls_json, b.openapi_url, b.docs_url, b.health_url, b.supported_version,
            b.share_policy, b.health_status, b.last_health_result_json, b.created_at, b.updated_at
          FROM backend_connections b
@@ -102,6 +110,11 @@ class BackendConnectionStore {
     managedByNpub: string;
     backendBaseUrl: string;
     serviceNpub?: string | null;
+    setupWorkspaceOwnerNpub?: string | null;
+    setupSourceAppNpub?: string | null;
+    setupSourceAppSchemaNamespace?: string | null;
+    setupConnectionTokenRef?: string | null;
+    setupCapabilityDefaults?: BackendConnectionRecord['setupCapabilityDefaults'];
     relayUrls?: string[];
     openapiUrl?: string | null;
     docsUrl?: string | null;
@@ -114,6 +127,11 @@ class BackendConnectionStore {
       managedByNpub: input.managedByNpub,
       backendBaseUrl: input.backendBaseUrl,
       serviceNpub: input.serviceNpub ?? null,
+      setupWorkspaceOwnerNpub: input.setupWorkspaceOwnerNpub ?? null,
+      setupSourceAppNpub: input.setupSourceAppNpub ?? null,
+      setupSourceAppSchemaNamespace: input.setupSourceAppSchemaNamespace ?? null,
+      setupConnectionTokenRef: input.setupConnectionTokenRef ?? null,
+      setupCapabilityDefaults: input.setupCapabilityDefaults ?? [],
       relayUrls: input.relayUrls ?? [],
       openapiUrl: input.openapiUrl ?? null,
       docsUrl: input.docsUrl ?? null,
@@ -131,17 +149,25 @@ class BackendConnectionStore {
     this.db.query(
       `INSERT INTO backend_connections (
          backend_connection_id, managed_by_npub, backend_base_url, service_npub,
+         setup_workspace_owner_npub, setup_source_app_npub, setup_source_app_schema_namespace,
+         setup_connection_token_ref, setup_capability_defaults_json,
          relay_urls_json, openapi_url, docs_url, health_url, supported_version,
          share_policy, health_status, last_health_result_json, created_at, updated_at
        ) VALUES (
          ?1, ?2, ?3, ?4,
          ?5, ?6, ?7, ?8, ?9,
-         ?10, ?11, ?12, ?13, ?14
+         ?10, ?11, ?12, ?13, ?14,
+         ?15, ?16, ?17, ?18, ?19
        )
        ON CONFLICT(backend_connection_id) DO UPDATE SET
          managed_by_npub = excluded.managed_by_npub,
          backend_base_url = excluded.backend_base_url,
          service_npub = excluded.service_npub,
+         setup_workspace_owner_npub = excluded.setup_workspace_owner_npub,
+         setup_source_app_npub = excluded.setup_source_app_npub,
+         setup_source_app_schema_namespace = excluded.setup_source_app_schema_namespace,
+         setup_connection_token_ref = excluded.setup_connection_token_ref,
+         setup_capability_defaults_json = excluded.setup_capability_defaults_json,
          relay_urls_json = excluded.relay_urls_json,
          openapi_url = excluded.openapi_url,
          docs_url = excluded.docs_url,
@@ -156,6 +182,11 @@ class BackendConnectionStore {
       record.managedByNpub,
       record.backendBaseUrl,
       record.serviceNpub,
+      record.setupWorkspaceOwnerNpub,
+      record.setupSourceAppNpub,
+      record.setupSourceAppSchemaNamespace,
+      record.setupConnectionTokenRef,
+      serialiseJsonValue(record.setupCapabilityDefaults ?? []),
       serialiseJsonValue(record.relayUrls),
       record.openapiUrl,
       record.docsUrl,
@@ -168,6 +199,37 @@ class BackendConnectionStore {
       record.updatedAt,
     );
     return this.getById(record.backendConnectionId) ?? record;
+  }
+
+  backfillFromLegacySubscription(subscription: WorkspaceSubscriptionRecord): BackendConnectionRecord | null {
+    if (subscription.backendConnectionId || !subscription.managedByNpub || !subscription.backendBaseUrl) {
+      return null;
+    }
+
+    const backendBaseUrl = normaliseBackendBaseUrl(subscription.backendBaseUrl);
+    const existing = this.findReusable({
+      managedByNpub: subscription.managedByNpub,
+      backendBaseUrl,
+      serviceNpub: null,
+    });
+    const baseRecord = existing ?? this.createDefault({
+      managedByNpub: subscription.managedByNpub,
+      backendBaseUrl,
+    });
+    return this.save({
+      ...baseRecord,
+      backendBaseUrl,
+      setupWorkspaceOwnerNpub: baseRecord.setupWorkspaceOwnerNpub ?? subscription.workspaceOwnerNpub,
+      setupSourceAppNpub: baseRecord.setupSourceAppNpub ?? subscription.sourceAppNpub,
+      setupSourceAppSchemaNamespace: baseRecord.setupSourceAppSchemaNamespace ?? subscription.sourceAppSchemaNamespace ?? null,
+      setupConnectionTokenRef: baseRecord.setupConnectionTokenRef ?? subscription.connectionTokenRef ?? null,
+      setupCapabilityDefaults: baseRecord.setupCapabilityDefaults.length > 0
+        ? baseRecord.setupCapabilityDefaults
+        : subscription.capabilityDefaults ?? [],
+      healthStatus: subscription.healthStatus,
+      lastHealthResult: baseRecord.lastHealthResult ?? subscription.lastAuthResult ?? subscription.lastRecordPullResult ?? null,
+      updatedAt: new Date().toISOString(),
+    });
   }
 
   listGrants(backendConnectionId: string): BackendConnectionGrantRecord[] {
@@ -292,6 +354,8 @@ class BackendConnectionStore {
       .query(
         `SELECT
            backend_connection_id, managed_by_npub, backend_base_url, service_npub,
+           setup_workspace_owner_npub, setup_source_app_npub, setup_source_app_schema_namespace,
+           setup_connection_token_ref, setup_capability_defaults_json,
            relay_urls_json, openapi_url, docs_url, health_url, supported_version,
            share_policy, health_status, last_health_result_json, created_at, updated_at
          FROM backend_connections
@@ -307,6 +371,8 @@ class BackendConnectionStore {
       .query(
         `SELECT
            backend_connection_id, managed_by_npub, backend_base_url, service_npub,
+           setup_workspace_owner_npub, setup_source_app_npub, setup_source_app_schema_namespace,
+           setup_connection_token_ref, setup_capability_defaults_json,
            relay_urls_json, openapi_url, docs_url, health_url, supported_version,
            share_policy, health_status, last_health_result_json, created_at, updated_at
          FROM backend_connections
@@ -323,6 +389,11 @@ class BackendConnectionStore {
       managedByNpub: row.managed_by_npub!,
       backendBaseUrl: row.backend_base_url!,
       serviceNpub: row.service_npub ?? null,
+      setupWorkspaceOwnerNpub: row.setup_workspace_owner_npub ?? null,
+      setupSourceAppNpub: row.setup_source_app_npub ?? null,
+      setupSourceAppSchemaNamespace: row.setup_source_app_schema_namespace ?? null,
+      setupConnectionTokenRef: row.setup_connection_token_ref ?? null,
+      setupCapabilityDefaults: parseJsonArray(row.setup_capability_defaults_json ?? null) as BackendConnectionRecord['setupCapabilityDefaults'],
       relayUrls: parseJsonArray(row.relay_urls_json ?? null),
       openapiUrl: row.openapi_url ?? null,
       docsUrl: row.docs_url ?? null,
@@ -354,6 +425,11 @@ class BackendConnectionStore {
         managed_by_npub TEXT NOT NULL,
         backend_base_url TEXT NOT NULL,
         service_npub TEXT,
+        setup_workspace_owner_npub TEXT,
+        setup_source_app_npub TEXT,
+        setup_source_app_schema_namespace TEXT,
+        setup_connection_token_ref TEXT,
+        setup_capability_defaults_json TEXT,
         relay_urls_json TEXT,
         openapi_url TEXT,
         docs_url TEXT,
@@ -387,6 +463,21 @@ class BackendConnectionStore {
       CREATE INDEX IF NOT EXISTS idx_backend_connection_grants_grantee
         ON backend_connection_grants(grantee_npub, backend_connection_id);
     `);
+    if (!hasColumn(this.db, 'backend_connections', 'setup_workspace_owner_npub')) {
+      this.db.exec('ALTER TABLE backend_connections ADD COLUMN setup_workspace_owner_npub TEXT');
+    }
+    if (!hasColumn(this.db, 'backend_connections', 'setup_source_app_npub')) {
+      this.db.exec('ALTER TABLE backend_connections ADD COLUMN setup_source_app_npub TEXT');
+    }
+    if (!hasColumn(this.db, 'backend_connections', 'setup_source_app_schema_namespace')) {
+      this.db.exec('ALTER TABLE backend_connections ADD COLUMN setup_source_app_schema_namespace TEXT');
+    }
+    if (!hasColumn(this.db, 'backend_connections', 'setup_connection_token_ref')) {
+      this.db.exec('ALTER TABLE backend_connections ADD COLUMN setup_connection_token_ref TEXT');
+    }
+    if (!hasColumn(this.db, 'backend_connections', 'setup_capability_defaults_json')) {
+      this.db.exec('ALTER TABLE backend_connections ADD COLUMN setup_capability_defaults_json TEXT');
+    }
   }
 }
 

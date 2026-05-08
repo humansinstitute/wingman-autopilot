@@ -6,7 +6,7 @@ import {
   WorkspaceSubscriptionAccessError,
   type WorkspaceSubscriptionManager,
 } from '../agent-chat/subscription-runtime';
-import type { WorkspaceSubscriptionRecord } from '../agent-chat/types';
+import type { BackendConnectionRecord, WorkspaceSubscriptionRecord } from '../agent-chat/types';
 import { handleAgentChatApi } from './agent-chat-routes';
 
 const authContext: RequestAuthContext = {
@@ -58,6 +58,32 @@ function buildManager(createOrUpdate: WorkspaceSubscriptionManager['createOrUpda
     listInterceptsForSubscription: () => [],
     listAgentsForWorkspaceBot: () => [],
   } as unknown as WorkspaceSubscriptionManager;
+}
+
+function makeBackendConnection(overrides: Partial<BackendConnectionRecord> = {}): BackendConnectionRecord {
+  const now = new Date().toISOString();
+  return {
+    backendConnectionId: 'backend-owned',
+    managedByNpub: 'npub1manager',
+    backendBaseUrl: 'https://tower.example.com',
+    serviceNpub: 'npub1service',
+    setupWorkspaceOwnerNpub: 'npub1workspace',
+    setupSourceAppNpub: 'npub1sourceapp',
+    setupSourceAppSchemaNamespace: 'cowork',
+    setupConnectionTokenRef: null,
+    setupCapabilityDefaults: ['chat_intercept'],
+    relayUrls: [],
+    openapiUrl: null,
+    docsUrl: null,
+    healthUrl: null,
+    supportedVersion: '5',
+    sharePolicy: 'selected_users',
+    healthStatus: 'healthy',
+    lastHealthResult: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
 }
 
 async function postSubscription(manager: WorkspaceSubscriptionManager, backendConnectionId: string) {
@@ -115,5 +141,27 @@ describe('agent-chat routes', () => {
     expect(response?.status).toBe(200);
     expect(body.subscription.backendConnectionId).toBe('backend-owned');
     expect(body.subscription.backend.backendConnectionId).toBe('backend-owned');
+  });
+
+  test('returns safe setup hints for available backend connections', async () => {
+    const manager = {
+      listBackendConnectionsForManager: () => [makeBackendConnection()],
+    } as unknown as WorkspaceSubscriptionManager;
+    const request = new Request('http://localhost/api/agent-chat/backend-connections');
+
+    const response = await handleAgentChatApi(
+      request,
+      new URL(request.url),
+      'GET',
+      authContext,
+      { manager },
+    );
+    const body = await response!.json();
+
+    expect(response?.status).toBe(200);
+    expect(body.backendConnections[0].backendConnectionId).toBe('backend-owned');
+    expect(body.backendConnections[0].setupWorkspaceOwnerNpub).toBe('npub1workspace');
+    expect(body.backendConnections[0].setupSourceAppNpub).toBe('npub1sourceapp');
+    expect(body.backendConnections[0].setupCapabilityDefaults).toEqual(['chat_intercept']);
   });
 });

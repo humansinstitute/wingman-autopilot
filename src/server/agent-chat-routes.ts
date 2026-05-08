@@ -384,6 +384,9 @@ export async function handleAgentChatApi(
     const backendConnectionGrantKind = body.backendConnectionGrantKind === 'shared_service'
       ? 'shared_service'
       : null;
+    const sourceAppSchemaNamespace = typeof body.sourceAppSchemaNamespace === 'string' && body.sourceAppSchemaNamespace.trim().length > 0
+      ? body.sourceAppSchemaNamespace.trim()
+      : null;
     const triggerConfigRecordId = typeof body.triggerConfigRecordId === 'string' && body.triggerConfigRecordId.trim().length > 0
       ? body.triggerConfigRecordId.trim()
       : null;
@@ -391,9 +394,9 @@ export async function handleAgentChatApi(
       ? body.agentProfileId.trim()
       : null;
 
-    if (!workspaceOwnerNpub || !backendBaseUrl || !sourceAppNpub) {
+    if (!backendConnectionId && (!workspaceOwnerNpub || !backendBaseUrl || !sourceAppNpub)) {
       return Response.json(
-        { error: 'workspaceOwnerNpub, backendBaseUrl, and sourceAppNpub are required.' },
+        { error: 'workspaceOwnerNpub, backendBaseUrl, and sourceAppNpub are required unless backendConnectionId has setup hints.' },
         { status: 400 },
       );
     }
@@ -407,6 +410,7 @@ export async function handleAgentChatApi(
         backendConnectionId,
         backendConnectionGrantKind,
         agentProfileId,
+        sourceAppSchemaNamespace,
         triggerConfigRecordId,
       });
       return Response.json({

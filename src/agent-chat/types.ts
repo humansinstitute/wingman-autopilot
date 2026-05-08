@@ -44,6 +44,11 @@ export interface BackendConnectionRecord {
   managedByNpub: string;
   backendBaseUrl: string;
   serviceNpub: string | null;
+  setupWorkspaceOwnerNpub: string | null;
+  setupSourceAppNpub: string | null;
+  setupSourceAppSchemaNamespace: string | null;
+  setupConnectionTokenRef: string | null;
+  setupCapabilityDefaults: AgentCapability[];
   relayUrls: string[];
   openapiUrl: string | null;
   docsUrl: string | null;

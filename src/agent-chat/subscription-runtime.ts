@@ -370,7 +370,36 @@ export class WorkspaceSubscriptionManager {
   }
 
   listBackendConnectionsForManager(npub: string) {
+    this.backfillLegacyBackendConnections();
     return this.backendStore.listAvailableForManagerNpub(npub);
+  }
+
+  backfillLegacyBackendConnections(): { backfilled: number; linkedSubscriptions: number } {
+    let backfilled = 0;
+    let linkedSubscriptions = 0;
+    for (const subscription of this.store.listLegacyDirectSubscriptions()) {
+      const backendConnection = (() => {
+        try {
+          return this.backendStore.backfillFromLegacySubscription(subscription);
+        } catch {
+          return null;
+        }
+      })();
+      if (!backendConnection) {
+        continue;
+      }
+      backfilled += 1;
+      if (subscription.backendConnectionId !== backendConnection.backendConnectionId) {
+        this.store.save({
+          ...subscription,
+          backendConnectionId: backendConnection.backendConnectionId,
+          backendBaseUrl: backendConnection.backendBaseUrl,
+          updatedAt: new Date().toISOString(),
+        });
+        linkedSubscriptions += 1;
+      }
+    }
+    return { backfilled, linkedSubscriptions };
   }
 
   getAgentForManager(agentId: string, npub: string): AgentDefinitionRecord | null {
@@ -545,6 +574,11 @@ export class WorkspaceSubscriptionManager {
       managedByNpub: input.managedByNpub,
       backendBaseUrl: validation.service.directHttpsUrl,
       serviceNpub: validation.service.serviceNpub,
+      setupWorkspaceOwnerNpub: validation.workspaceOwnerNpub,
+      setupSourceAppNpub: validation.sourceAppNpub,
+      setupSourceAppSchemaNamespace: validation.sourceAppSchemaNamespace,
+      setupConnectionTokenRef: validation.connectionTokenRef,
+      setupCapabilityDefaults: validation.capabilityDefaults,
       relayUrls: validation.service.relayUrls,
       openapiUrl: validation.service.openapiUrl,
       docsUrl: validation.service.docsUrl,
@@ -568,7 +602,51 @@ export class WorkspaceSubscriptionManager {
   }
 
   async createOrUpdate(input: CreateWorkspaceSubscriptionInput): Promise<WorkspaceSubscriptionRecord> {
-    const backendBaseUrl = normaliseBackendBaseUrl(input.backendBaseUrl);
+    const requestedBackendConnectionId = input.backendConnectionId?.trim() || null;
+    const requestedBackendConnection = requestedBackendConnectionId
+      ? this.backendStore.getById(requestedBackendConnectionId)
+      : null;
+    if (requestedBackendConnectionId && !requestedBackendConnection) {
+      throw new BackendConnectionNotFoundError(`Backend connection ${requestedBackendConnectionId} was not found.`);
+    }
+    if (
+      requestedBackendConnection
+      && !canUseBackendConnection(
+        requestedBackendConnection,
+        input.managedByNpub,
+        this.backendStore,
+        input.backendConnectionGrantKind ?? null,
+      )
+    ) {
+      throw new WorkspaceSubscriptionAccessError(
+        `Backend connection ${requestedBackendConnection.backendConnectionId} is not available to this manager.`,
+      );
+    }
+
+    const backendBaseUrl = getOptionalText(input.backendBaseUrl)
+      ? normaliseBackendBaseUrl(input.backendBaseUrl)
+      : requestedBackendConnection?.backendBaseUrl ?? '';
+    const workspaceOwnerNpub = getOptionalText(input.workspaceOwnerNpub)
+      ?? requestedBackendConnection?.setupWorkspaceOwnerNpub
+      ?? '';
+    const sourceAppNpub = getOptionalText(input.sourceAppNpub)
+      ?? requestedBackendConnection?.setupSourceAppNpub
+      ?? '';
+    const sourceAppSchemaNamespace = getOptionalText(input.sourceAppSchemaNamespace)
+      ?? requestedBackendConnection?.setupSourceAppSchemaNamespace
+      ?? null;
+    const connectionTokenRef = getOptionalText(input.connectionTokenRef)
+      ?? requestedBackendConnection?.setupConnectionTokenRef
+      ?? null;
+    const capabilityDefaults = input.capabilityDefaults ?? requestedBackendConnection?.setupCapabilityDefaults ?? [];
+
+    if (!backendBaseUrl || !workspaceOwnerNpub || !sourceAppNpub) {
+      throw Object.assign(
+        new Error('workspaceOwnerNpub, backendBaseUrl, and sourceAppNpub are required.'),
+        { statusCode: 400 },
+      );
+    }
+
     const agentProfile = input.agentProfileId
       ? this.resolveOwnedAgentProfile(input.agentProfileId, input.managedByNpub)
       : null;
@@ -602,63 +680,52 @@ export class WorkspaceSubscriptionManager {
     if (agentProfile && botIdentity.botNpub !== agentProfile.botNpub) {
       throw new Error(`Agent Profile ${agentProfile.agentId} bot key does not match its botNpub.`);
     }
-    const backendConnection = input.backendConnectionId
-      ? this.backendStore.getById(input.backendConnectionId)
-      : await this.createOrReuseBackendConnection({
+    const backendConnection = requestedBackendConnection
+      ?? await this.createOrReuseBackendConnection({
           managedByNpub: input.managedByNpub,
           backendBaseUrl,
+          setupWorkspaceOwnerNpub: workspaceOwnerNpub,
+          setupSourceAppNpub: sourceAppNpub,
+          setupSourceAppSchemaNamespace: sourceAppSchemaNamespace,
+          setupConnectionTokenRef: connectionTokenRef,
+          setupCapabilityDefaults: capabilityDefaults,
         });
-    if (input.backendConnectionId && !backendConnection) {
-      throw new BackendConnectionNotFoundError(`Backend connection ${input.backendConnectionId} was not found.`);
-    }
-    if (
-      backendConnection
-      && !canUseBackendConnection(
-        backendConnection,
-        input.managedByNpub,
-        this.backendStore,
-        input.backendConnectionGrantKind ?? null,
-      )
-    ) {
-      throw new WorkspaceSubscriptionAccessError(
-        `Backend connection ${backendConnection.backendConnectionId} is not available to this manager.`,
-      );
-    }
     const subscriptionBackendBaseUrl = backendConnection?.backendBaseUrl ?? backendBaseUrl;
 
     const scopedRecord = this.store.getBySubscriptionScope({
       backendConnectionId: backendConnection?.backendConnectionId ?? null,
       managedByNpub: input.managedByNpub,
-      workspaceOwnerNpub: input.workspaceOwnerNpub,
-      sourceAppNpub: input.sourceAppNpub,
+      workspaceOwnerNpub,
+      sourceAppNpub,
       botNpub: botIdentity.botNpub,
       agentProfileId: agentProfile?.agentId ?? input.agentProfileId ?? null,
     });
-    const legacyRecord = this.store.getByWorkspaceAndBot(input.workspaceOwnerNpub, botIdentity.botNpub);
+    const legacyRecord = this.store.getByWorkspaceAndBot(workspaceOwnerNpub, botIdentity.botNpub);
     let record = scopedRecord
       ?? (legacyRecord && (!legacyRecord.managedByNpub || legacyRecord.managedByNpub === input.managedByNpub) ? legacyRecord : null)
       ?? this.store.createDefault({
         managedByNpub: input.managedByNpub,
-        workspaceOwnerNpub: input.workspaceOwnerNpub,
+        workspaceOwnerNpub,
         backendBaseUrl: subscriptionBackendBaseUrl,
         botNpub: botIdentity.botNpub,
-        sourceAppNpub: input.sourceAppNpub,
+        sourceAppNpub,
         backendConnectionId: backendConnection?.backendConnectionId ?? null,
-        connectionTokenRef: input.connectionTokenRef ?? null,
+        connectionTokenRef,
         agentProfileId: agentProfile?.agentId ?? input.agentProfileId ?? null,
-        sourceAppSchemaNamespace: input.sourceAppSchemaNamespace ?? null,
-        capabilityDefaults: input.capabilityDefaults ?? [],
+        sourceAppSchemaNamespace,
+        capabilityDefaults,
         dispatchRouteIds: input.dispatchRouteIds ?? [],
         triggerConfigRecordId: input.triggerConfigRecordId ?? null,
       });
 
     record.backendConnectionId = backendConnection?.backendConnectionId ?? record.backendConnectionId ?? null;
     record.backendBaseUrl = subscriptionBackendBaseUrl;
-    record.sourceAppNpub = input.sourceAppNpub;
-    record.connectionTokenRef = input.connectionTokenRef ?? record.connectionTokenRef ?? null;
+    record.workspaceOwnerNpub = workspaceOwnerNpub;
+    record.sourceAppNpub = sourceAppNpub;
+    record.connectionTokenRef = connectionTokenRef ?? record.connectionTokenRef ?? null;
     record.agentProfileId = agentProfile?.agentId ?? input.agentProfileId ?? record.agentProfileId ?? null;
-    record.sourceAppSchemaNamespace = input.sourceAppSchemaNamespace ?? record.sourceAppSchemaNamespace ?? null;
-    record.capabilityDefaults = input.capabilityDefaults ?? record.capabilityDefaults ?? [];
+    record.sourceAppSchemaNamespace = sourceAppSchemaNamespace ?? record.sourceAppSchemaNamespace ?? null;
+    record.capabilityDefaults = capabilityDefaults.length > 0 ? capabilityDefaults : record.capabilityDefaults ?? [];
     record.dispatchRouteIds = input.dispatchRouteIds ?? record.dispatchRouteIds ?? [];
     record.triggerConfigRecordId = input.triggerConfigRecordId ?? null;
     record.managedByNpub = input.managedByNpub;
@@ -837,6 +904,11 @@ export class WorkspaceSubscriptionManager {
     managedByNpub: string;
     backendBaseUrl: string;
     serviceNpub?: string | null;
+    setupWorkspaceOwnerNpub?: string | null;
+    setupSourceAppNpub?: string | null;
+    setupSourceAppSchemaNamespace?: string | null;
+    setupConnectionTokenRef?: string | null;
+    setupCapabilityDefaults?: BackendConnectionRecord['setupCapabilityDefaults'];
     relayUrls?: string[];
     openapiUrl?: string | null;
     docsUrl?: string | null;
@@ -853,6 +925,11 @@ export class WorkspaceSubscriptionManager {
       const saved = this.backendStore.save({
         ...existing,
         serviceNpub: input.serviceNpub ?? existing.serviceNpub,
+        setupWorkspaceOwnerNpub: input.setupWorkspaceOwnerNpub ?? existing.setupWorkspaceOwnerNpub,
+        setupSourceAppNpub: input.setupSourceAppNpub ?? existing.setupSourceAppNpub,
+        setupSourceAppSchemaNamespace: input.setupSourceAppSchemaNamespace ?? existing.setupSourceAppSchemaNamespace,
+        setupConnectionTokenRef: input.setupConnectionTokenRef ?? existing.setupConnectionTokenRef,
+        setupCapabilityDefaults: input.setupCapabilityDefaults ?? existing.setupCapabilityDefaults,
         relayUrls: input.relayUrls ?? existing.relayUrls,
         openapiUrl: input.openapiUrl ?? existing.openapiUrl,
         docsUrl: input.docsUrl ?? existing.docsUrl,
@@ -866,6 +943,11 @@ export class WorkspaceSubscriptionManager {
       managedByNpub: input.managedByNpub,
       backendBaseUrl,
       serviceNpub: input.serviceNpub ?? null,
+      setupWorkspaceOwnerNpub: input.setupWorkspaceOwnerNpub ?? null,
+      setupSourceAppNpub: input.setupSourceAppNpub ?? null,
+      setupSourceAppSchemaNamespace: input.setupSourceAppSchemaNamespace ?? null,
+      setupConnectionTokenRef: input.setupConnectionTokenRef ?? null,
+      setupCapabilityDefaults: input.setupCapabilityDefaults ?? [],
       relayUrls: input.relayUrls ?? [],
       openapiUrl: input.openapiUrl ?? null,
       docsUrl: input.docsUrl ?? null,

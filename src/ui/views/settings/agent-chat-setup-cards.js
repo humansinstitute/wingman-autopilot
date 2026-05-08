@@ -167,11 +167,76 @@ function countEnabledCapabilities(agent) {
     : 1;
 }
 
+function getSetupReadyBackendConnections(backendConnections = []) {
+  return Array.isArray(backendConnections)
+    ? backendConnections.filter((backendConnection) => (
+        backendConnection
+        && backendConnection.backendConnectionId
+        && backendConnection.backendBaseUrl
+        && backendConnection.setupWorkspaceOwnerNpub
+        && backendConnection.setupSourceAppNpub
+      ))
+    : [];
+}
+
+function getAvailableBackendConnections(backendConnections = []) {
+  return Array.isArray(backendConnections)
+    ? backendConnections.filter((backendConnection) => backendConnection?.backendConnectionId && backendConnection?.backendBaseUrl)
+    : [];
+}
+
+function createBackendConnectionChoice(backendConnection, onUseBackendConnection) {
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'margin-top:12px;padding:12px;border:1px solid var(--border-primary);border-radius:8px;background:rgba(127,127,127,0.04);';
+  wrapper.setAttribute('data-testid', `agent-chat-available-backend-${backendConnection.backendConnectionId}`);
+
+  const title = document.createElement('div');
+  title.style.cssText = 'font-weight:650;';
+  title.textContent = backendConnection.serviceNpub
+    ? `Backend service ${backendConnection.serviceNpub}`
+    : `Backend managed by ${backendConnection.managedByNpub || 'another user'}`;
+
+  const statusRow = document.createElement('div');
+  statusRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;margin-bottom:10px;';
+  statusRow.append(
+    createTonePill(backendConnection.sharePolicy === 'selected_users' ? 'Granted Backend' : 'Shared Service', 'success'),
+    createTonePill(backendConnection.healthStatus === 'healthy' ? 'Healthy' : backendConnection.healthStatus || 'Unknown', backendConnection.healthStatus === 'healthy' ? 'success' : 'warning'),
+  );
+
+  const canUseBackend = Boolean(backendConnection.setupWorkspaceOwnerNpub && backendConnection.setupSourceAppNpub);
+  const actionButton = createActionButton(
+    canUseBackend ? 'Use Shared Backend' : 'Missing Setup Hints',
+    `agent-chat-use-backend-${backendConnection.backendConnectionId}`,
+    `Create your Agent Dispatch subscription from backend ${backendConnection.backendConnectionId}`,
+    () => {
+      if (canUseBackend) {
+        onUseBackendConnection?.(backendConnection);
+      }
+    },
+  );
+  actionButton.disabled = !canUseBackend;
+
+  wrapper.append(
+    title,
+    statusRow,
+    createDetailList([
+      ['Workspace', backendConnection.setupWorkspaceOwnerNpub || 'None'],
+      ['Backend', backendConnection.backendBaseUrl || 'None'],
+      ['Source App', backendConnection.setupSourceAppNpub || 'None'],
+      ['Manager', backendConnection.managedByNpub || 'None'],
+    ]),
+    createInlineActions([actionButton]),
+  );
+  return wrapper;
+}
+
 export function createAgentDispatchSetupCards({
   subscription,
   primaryAgent,
+  availableBackendConnections = [],
   additionalAgentCount = 0,
   onEditSubscription,
+  onUseBackendConnection,
   onEditAgent,
   onCreateAgent,
   onRemoveAgent,
@@ -181,6 +246,10 @@ export function createAgentDispatchSetupCards({
 
   const hasSubscription = Boolean(subscription);
   const hasAgent = Boolean(primaryAgent);
+  const visibleBackendConnections = getAvailableBackendConnections(availableBackendConnections);
+  const setupReadyBackendConnections = getSetupReadyBackendConnections(availableBackendConnections);
+  const hasAvailableBackend = !hasSubscription && visibleBackendConnections.length > 0;
+  const hasSetupReadyBackend = setupReadyBackendConnections.length > 0;
   const overviewCard = createCard(
     'Guided Setup',
     'Connect the workspace once, keep one local Wingman identity, and layer new dispatch roles onto that same agent instead of repeating the same values across multiple forms.',
@@ -191,8 +260,12 @@ export function createAgentDispatchSetupCards({
     '1. Connect the workspace',
     hasSubscription
       ? `Workspace ${subscription.workspaceOwnerNpub || 'unknown'} is already connected to ${subscription.backendBaseUrl || 'the backend'}.`
+      : hasSetupReadyBackend
+        ? `${setupReadyBackendConnections.length} shared backend${setupReadyBackendConnections.length === 1 ? ' is' : 's are'} available. Create your own subscription from one without retyping backend details.`
+        : hasAvailableBackend
+          ? 'A shared backend is available, but it does not include all setup hints yet. Use the manual connection fields for the missing workspace facts.'
       : 'Save the workspace owner, backend URL, and source app once so dispatch can reuse the same live connection.',
-    hasSubscription,
+    hasSubscription || hasAvailableBackend,
   );
   appendStep(
     overviewCard,
@@ -212,7 +285,14 @@ export function createAgentDispatchSetupCards({
   );
 
   const overviewActions = [];
-  if (!hasSubscription) {
+  if (!hasSubscription && hasSetupReadyBackend) {
+    overviewActions.push(createActionButton(
+      'Use Shared Backend',
+      'agent-chat-guided-use-backend',
+      'Create Agent Dispatch subscription from an available shared backend',
+      () => onUseBackendConnection?.(setupReadyBackendConnections[0]),
+    ));
+  } else if (!hasSubscription) {
     overviewActions.push(createActionButton(
       'Connect Workspace',
       'agent-chat-guided-connect',
@@ -247,6 +327,8 @@ export function createAgentDispatchSetupCards({
     'Shared Connection',
     hasSubscription
       ? 'All dispatch paths reuse this single Tower connection.'
+      : hasAvailableBackend
+        ? 'A backend managed by another user is available. Reuse it to create your own subscription and local agent state.'
       : 'No subscription is configured yet. This is the only required connection form.',
   );
   if (hasSubscription) {
@@ -271,20 +353,33 @@ export function createAgentDispatchSetupCards({
       ['Import', subscription.connectionTokenRef ? 'Agent Connect' : 'Manual'],
       ['Bot', subscription.botNpub || 'Pending'],
     ]));
+  } else if (hasAvailableBackend) {
+    const note = document.createElement('p');
+    note.className = 'wm-settings__port-note';
+    note.textContent = hasSetupReadyBackend
+      ? 'Using a shared backend copies only non-secret setup facts into your user-scoped subscription. Bot identity, route state, diagnostics, and dispatch history stay separate.'
+      : 'The shared backend record is visible, but it is missing workspace owner or source app setup hints. Use the manual connection fields until those hints are added.';
+    connectionCard.append(note);
+    const renderedBackendConnections = hasSetupReadyBackend ? setupReadyBackendConnections : visibleBackendConnections;
+    renderedBackendConnections.forEach((backendConnection) => {
+      connectionCard.append(createBackendConnectionChoice(backendConnection, onUseBackendConnection));
+    });
   } else {
     const empty = document.createElement('p');
     empty.className = 'wm-settings__port-note';
     empty.textContent = 'Set the workspace owner npub, backend base URL, and source app npub here once. The agent editor should not have to repeat them.';
     connectionCard.append(empty);
   }
-  connectionCard.append(createInlineActions([
-    createActionButton(
-      hasSubscription ? 'Edit Connection' : 'Create Connection',
-      'agent-chat-setup-edit-subscription',
-      'Edit Agent Dispatch connection',
-      () => onEditSubscription?.(subscription ?? null),
-    ),
-  ]));
+  if (hasSubscription || !hasSetupReadyBackend) {
+    connectionCard.append(createInlineActions([
+      createActionButton(
+        hasSubscription ? 'Edit Connection' : 'Create Connection',
+        'agent-chat-setup-edit-subscription',
+        'Edit Agent Dispatch connection',
+        () => onEditSubscription?.(subscription ?? null),
+      ),
+    ]));
+  }
   wrapper.append(connectionCard);
 
   const agentCard = createCard(
@@ -324,6 +419,8 @@ export function createAgentDispatchSetupCards({
     empty.className = 'wm-settings__port-note';
     empty.textContent = hasSubscription
       ? 'The connection is ready. Save one local agent and reuse the subscription bot/workspace automatically.'
+      : hasSetupReadyBackend
+        ? 'Use the shared backend first, then save your local agent against the new user-scoped subscription.'
       : 'Create the shared connection first, then save the primary local agent once.';
     agentCard.append(empty);
   }

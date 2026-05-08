@@ -3,6 +3,7 @@ import {
   deleteAgentChatAgent,
   deleteAgentChatSubscription,
   importAgentConnectPackage,
+  listAgentChatBackendConnections,
   listAgentChatDispatchRoutes,
   listAgentChatAgents,
   listAgentChatSubscriptions,
@@ -34,9 +35,10 @@ import { createAgentDispatchSetupCards, createDispatchPipelineRouteCards } from 
 import { createAgentConnectImportCard } from './agent-chat-connect-import-card.js';
 
 async function loadOperatorState() {
-  const [subscriptions, agentPayload, sessionPayload, definitionPayload] = await Promise.all([
+  const [subscriptions, agentPayload, backendConnections, sessionPayload, definitionPayload] = await Promise.all([
     listAgentChatSubscriptions(),
     listAgentChatAgents(),
+    listAgentChatBackendConnections(),
     fetchSessionsApi(),
     fetchPipelineDefinitions().catch(() => ({ definitions: [] })),
   ]);
@@ -48,6 +50,7 @@ async function loadOperatorState() {
   return {
     subscriptions,
     agents: Array.isArray(agentPayload?.agents) ? agentPayload.agents : [],
+    backendConnections: Array.isArray(backendConnections) ? backendConnections : [],
     defaults: agentPayload?.defaults && typeof agentPayload.defaults === 'object' ? agentPayload.defaults : {},
     chatSessions: filterAgentChatSessions(allSessions),
     dispatchRoutes,
@@ -90,6 +93,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
   const container = document.createElement('div');
   container.className = 'wm-settings__agent-chat';
   let currentPrimarySubscription = null;
+  let selectedBackendConnection = null;
   let promptDefaults = {
     chatPromptTemplate: '',
     taskPromptTemplate: '',
@@ -137,6 +141,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
     subscriptionEditor.workspaceOwnerField.input.value = subscription?.workspaceOwnerNpub || '';
     subscriptionEditor.backendUrlField.input.value = subscription?.backendBaseUrl || '';
     subscriptionEditor.sourceAppField.input.value = subscription?.sourceAppNpub || '';
+    selectedBackendConnection = subscription?.backendConnectionId ? subscription : null;
   }
 
   function prefillFieldsFromSubscription(subscription) {
@@ -202,6 +207,24 @@ export function createAgentChatSection({ standalone = false } = {}) {
     populateSubscriptionForm(subscription);
     setPanelVisible(subscriptionEditor.card, true);
     subscriptionEditor.workspaceOwnerField.input.focus();
+  }
+  async function useBackendConnection(backendConnection) {
+    selectedBackendConnection = backendConnection;
+    statusLine.textContent = 'Creating a user-scoped subscription from the shared backend...';
+    try {
+      await saveAgentChatSubscription({
+        backendConnectionId: backendConnection.backendConnectionId,
+        backendConnectionGrantKind: backendConnection.sharePolicy === 'shared_service' ? 'shared_service' : null,
+        backendBaseUrl: backendConnection.backendBaseUrl || '',
+        workspaceOwnerNpub: backendConnection.setupWorkspaceOwnerNpub || '',
+        sourceAppNpub: backendConnection.setupSourceAppNpub || '',
+        sourceAppSchemaNamespace: backendConnection.setupSourceAppSchemaNamespace || null,
+      });
+      statusLine.textContent = 'Shared backend reused for your subscription.';
+      await refreshList();
+    } catch (error) {
+      statusLine.textContent = error instanceof Error ? error.message : 'Failed to reuse shared backend.';
+    }
   }
   function openAgentEditor(agent = null, options = {}) {
     if (agent) {
@@ -301,7 +324,15 @@ export function createAgentChatSection({ standalone = false } = {}) {
     sessionContainer.replaceChildren();
 
     try {
-      const { subscriptions, agents, defaults, chatSessions, dispatchRoutes, pipelineDefinitions } = await loadOperatorState();
+      const {
+        subscriptions,
+        agents,
+        backendConnections,
+        defaults,
+        chatSessions,
+        dispatchRoutes,
+        pipelineDefinitions,
+      } = await loadOperatorState();
       promptDefaults = {
         chatPromptTemplate: typeof defaults.chatPromptTemplate === 'string' ? defaults.chatPromptTemplate : promptDefaults.chatPromptTemplate,
         taskPromptTemplate: typeof defaults.taskPromptTemplate === 'string' ? defaults.taskPromptTemplate : promptDefaults.taskPromptTemplate,
@@ -317,14 +348,24 @@ export function createAgentChatSection({ standalone = false } = {}) {
       };
       const primarySubscription = subscriptions[0] ?? null;
       const primaryAgent = getPrimaryAgent(agents);
+      const hasReusableBackendConnection = backendConnections.some((backendConnection) => (
+        backendConnection?.backendConnectionId
+        && backendConnection?.backendBaseUrl
+        && backendConnection?.setupWorkspaceOwnerNpub
+        && backendConnection?.setupSourceAppNpub
+      ));
       currentPrimarySubscription = primarySubscription;
       prefillFieldsFromSubscription(primarySubscription);
       updateAgentIdentityFields();
       setupOverviewContainer.append(createAgentDispatchSetupCards({
         subscription: primarySubscription,
         primaryAgent,
+        availableBackendConnections: backendConnections,
         additionalAgentCount: Math.max(0, agents.length - (primaryAgent ? 1 : 0)),
         onEditSubscription: (subscription) => openSubscriptionEditor(subscription),
+        onUseBackendConnection: (backendConnection) => {
+          void useBackendConnection(backendConnection);
+        },
         onEditAgent: (agent) => openAgentEditor(agent),
         onCreateAgent: () => openAgentEditor(),
         onRemoveAgent: (agent) => {
@@ -435,7 +476,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
           emptyMessage: 'The primary flow is designed around one local agent.',
         }));
       }
-      setPanelVisible(subscriptionEditor.card, !primarySubscription);
+      setPanelVisible(subscriptionEditor.card, !primarySubscription && !hasReusableBackendConnection);
       setPanelVisible(agentEditor.card, Boolean(primarySubscription && agents.length === 0));
       overviewContainer.append(createAgentChatOverview(subscriptions, chatSessions));
       sessionContainer.append(createAgentChatSessionPanel(chatSessions));
@@ -484,6 +525,9 @@ export function createAgentChatSection({ standalone = false } = {}) {
         workspaceOwnerNpub: subscriptionEditor.workspaceOwnerField.input.value.trim(),
         backendBaseUrl: subscriptionEditor.backendUrlField.input.value.trim(),
         sourceAppNpub: subscriptionEditor.sourceAppField.input.value.trim(),
+        backendConnectionId: selectedBackendConnection?.backendConnectionId || null,
+        backendConnectionGrantKind: selectedBackendConnection?.sharePolicy === 'shared_service' ? 'shared_service' : null,
+        sourceAppSchemaNamespace: selectedBackendConnection?.setupSourceAppSchemaNamespace || null,
       });
       statusLine.textContent = 'Subscription saved.';
       setPanelVisible(subscriptionEditor.card, false);

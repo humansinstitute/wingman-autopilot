@@ -52,6 +52,13 @@ class WorkspaceSubscriptionStore {
     return this.listWhere('managed_by_npub = ?1', [npub]);
   }
 
+  listLegacyDirectSubscriptions(): WorkspaceSubscriptionRecord[] {
+    return this.listWhere(
+      'backend_connection_id IS NULL AND managed_by_npub IS NOT NULL',
+      [],
+    );
+  }
+
   listStartupCandidates(): WorkspaceSubscriptionRecord[] {
     return this.listWhere(
       "sse_status != 'disabled' AND health_status IN ('healthy', 'degraded')",
