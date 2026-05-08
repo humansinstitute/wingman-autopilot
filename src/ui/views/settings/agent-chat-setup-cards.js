@@ -75,6 +75,9 @@ function formatCapability(capability) {
   if (capability === 'task_dispatch') {
     return 'Task Dispatch';
   }
+  if (capability === 'comment_dispatch') {
+    return 'Comment Dispatch';
+  }
   if (capability === 'flow_dispatch') {
     return 'Flow Dispatch';
   }
@@ -263,7 +266,9 @@ export function createAgentDispatchSetupCards({
     connectionCard.append(createDetailList([
       ['Workspace', subscription.workspaceOwnerNpub || 'None'],
       ['Backend', subscription.backendBaseUrl || 'None'],
+      ['Backend Connection', subscription.backendConnectionId || 'Legacy direct URL'],
       ['Source App', subscription.sourceAppNpub || 'None'],
+      ['Import', subscription.connectionTokenRef ? 'Agent Connect' : 'Manual'],
       ['Bot', subscription.botNpub || 'Pending'],
     ]));
   } else {

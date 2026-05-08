@@ -25,6 +25,13 @@ function serialiseJsonValue(value: unknown): string | null {
   return value == null ? null : JSON.stringify(value);
 }
 
+function parseJsonArray(value: string | null): string[] {
+  const parsed = parseJsonValue<unknown>(value);
+  return Array.isArray(parsed)
+    ? parsed.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+    : [];
+}
+
 function hasColumn(db: Database, tableName: string, columnName: string): boolean {
   const rows = db.query(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: string }>;
   return rows.some((row) => row.name === columnName);
@@ -63,10 +70,38 @@ class WorkspaceSubscriptionStore {
     );
   }
 
+  getBySubscriptionScope(input: {
+    backendConnectionId?: string | null;
+    managedByNpub: string;
+    workspaceOwnerNpub: string;
+    sourceAppNpub: string;
+    botNpub: string;
+    agentProfileId?: string | null;
+  }): WorkspaceSubscriptionRecord | null {
+    return this.getWhere(
+      `(backend_connection_id = ?1 OR (?1 IS NULL AND backend_connection_id IS NULL))
+        AND managed_by_npub = ?2
+        AND workspace_owner_npub = ?3
+        AND source_app_npub = ?4
+        AND bot_npub = ?5
+        AND (agent_profile_id = ?6 OR (?6 IS NULL AND agent_profile_id IS NULL))`,
+      [
+        input.backendConnectionId ?? null,
+        input.managedByNpub,
+        input.workspaceOwnerNpub,
+        input.sourceAppNpub,
+        input.botNpub,
+        input.agentProfileId ?? null,
+      ],
+    );
+  }
+
   save(record: WorkspaceSubscriptionRecord): WorkspaceSubscriptionRecord {
     this.db.query(
       `INSERT INTO workspace_subscriptions (
-         subscription_id, workspace_owner_npub, backend_base_url, bot_npub, source_app_npub,
+         subscription_id, backend_connection_id, workspace_owner_npub, backend_base_url, bot_npub, source_app_npub,
+         connection_token_ref, agent_profile_id, source_app_schema_namespace, capability_defaults_json,
+         dispatch_route_ids_json, last_sync_cursor, last_pipeline_run_id,
          ws_key_npub, ws_key_status, group_key_status, sse_status, health_status,
          trigger_config_record_id, last_sse_event_id, last_auth_ok_at, last_group_refresh_at,
          last_error_code, last_error_at, created_at, updated_at, managed_by_npub,
@@ -74,19 +109,29 @@ class WorkspaceSubscriptionStore {
          last_group_refresh_result_json, last_record_pull_result_json, last_decrypt_result_json, last_routing_result_json,
          last_sse_event_json, recent_sse_events_json, recent_dispatches_json, last_successful_startup_reload_at
        ) VALUES (
-         ?1, ?2, ?3, ?4, ?5,
-         ?6, ?7, ?8, ?9, ?10,
-         ?11, ?12, ?13, ?14,
-         ?15, ?16, ?17, ?18, ?19,
-         ?20, ?21, ?22,
-         ?23, ?24, ?25, ?26,
-         ?27, ?28, ?29, ?30
+         ?1, ?2, ?3, ?4, ?5, ?6,
+         ?7, ?8, ?9, ?10,
+         ?11, ?12, ?13,
+         ?14, ?15, ?16, ?17, ?18,
+         ?19, ?20, ?21, ?22,
+         ?23, ?24, ?25, ?26, ?27,
+         ?28, ?29, ?30,
+         ?31, ?32, ?33, ?34,
+         ?35, ?36, ?37, ?38
        )
        ON CONFLICT(subscription_id) DO UPDATE SET
+         backend_connection_id = excluded.backend_connection_id,
          workspace_owner_npub = excluded.workspace_owner_npub,
          backend_base_url = excluded.backend_base_url,
          bot_npub = excluded.bot_npub,
          source_app_npub = excluded.source_app_npub,
+         connection_token_ref = excluded.connection_token_ref,
+         agent_profile_id = excluded.agent_profile_id,
+         source_app_schema_namespace = excluded.source_app_schema_namespace,
+         capability_defaults_json = excluded.capability_defaults_json,
+         dispatch_route_ids_json = excluded.dispatch_route_ids_json,
+         last_sync_cursor = excluded.last_sync_cursor,
+         last_pipeline_run_id = excluded.last_pipeline_run_id,
          ws_key_npub = excluded.ws_key_npub,
          ws_key_status = excluded.ws_key_status,
          group_key_status = excluded.group_key_status,
@@ -113,10 +158,18 @@ class WorkspaceSubscriptionStore {
          last_successful_startup_reload_at = excluded.last_successful_startup_reload_at`,
     ).run(
       record.subscriptionId,
+      record.backendConnectionId,
       record.workspaceOwnerNpub,
       record.backendBaseUrl,
       record.botNpub,
       record.sourceAppNpub,
+      record.connectionTokenRef,
+      record.agentProfileId,
+      record.sourceAppSchemaNamespace,
+      serialiseJsonValue(record.capabilityDefaults),
+      serialiseJsonValue(record.dispatchRouteIds),
+      record.lastSyncCursor,
+      record.lastPipelineRunId,
       record.wsKeyNpub,
       record.wsKeyStatus,
       record.groupKeyStatus,
@@ -153,15 +206,29 @@ class WorkspaceSubscriptionStore {
     backendBaseUrl: string;
     botNpub: string;
     sourceAppNpub: string;
+    backendConnectionId?: string | null;
+    connectionTokenRef?: string | null;
+    agentProfileId?: string | null;
+    sourceAppSchemaNamespace?: string | null;
+    capabilityDefaults?: WorkspaceSubscriptionRecord['capabilityDefaults'];
+    dispatchRouteIds?: string[];
     triggerConfigRecordId?: string | null;
   }): WorkspaceSubscriptionRecord {
     const now = new Date().toISOString();
     return {
       subscriptionId: randomUUID(),
+      backendConnectionId: input.backendConnectionId ?? null,
       workspaceOwnerNpub: input.workspaceOwnerNpub,
       backendBaseUrl: input.backendBaseUrl,
       botNpub: input.botNpub,
       sourceAppNpub: input.sourceAppNpub,
+      connectionTokenRef: input.connectionTokenRef ?? null,
+      agentProfileId: input.agentProfileId ?? null,
+      sourceAppSchemaNamespace: input.sourceAppSchemaNamespace ?? null,
+      capabilityDefaults: input.capabilityDefaults ?? [],
+      dispatchRouteIds: input.dispatchRouteIds ?? [],
+      lastSyncCursor: null,
+      lastPipelineRunId: null,
       wsKeyNpub: null,
       wsKeyStatus: 'pending',
       groupKeyStatus: 'pending',
@@ -202,10 +269,18 @@ class WorkspaceSubscriptionStore {
       .query(
         `SELECT
            subscription_id,
+           backend_connection_id,
            workspace_owner_npub,
            backend_base_url,
            bot_npub,
            source_app_npub,
+           connection_token_ref,
+           agent_profile_id,
+           source_app_schema_namespace,
+           capability_defaults_json,
+           dispatch_route_ids_json,
+           last_sync_cursor,
+           last_pipeline_run_id,
            ws_key_npub,
            ws_key_status,
            group_key_status,
@@ -244,10 +319,18 @@ class WorkspaceSubscriptionStore {
       .query(
         `SELECT
            subscription_id,
+           backend_connection_id,
            workspace_owner_npub,
            backend_base_url,
            bot_npub,
            source_app_npub,
+           connection_token_ref,
+           agent_profile_id,
+           source_app_schema_namespace,
+           capability_defaults_json,
+           dispatch_route_ids_json,
+           last_sync_cursor,
+           last_pipeline_run_id,
            ws_key_npub,
            ws_key_status,
            group_key_status,
@@ -284,10 +367,18 @@ class WorkspaceSubscriptionStore {
   private mapRow(row: Record<string, string | null>): WorkspaceSubscriptionRecord {
     return {
       subscriptionId: row.subscription_id!,
+      backendConnectionId: row.backend_connection_id ?? null,
       workspaceOwnerNpub: row.workspace_owner_npub!,
       backendBaseUrl: row.backend_base_url!,
       botNpub: row.bot_npub!,
       sourceAppNpub: row.source_app_npub!,
+      connectionTokenRef: row.connection_token_ref ?? null,
+      agentProfileId: row.agent_profile_id ?? null,
+      sourceAppSchemaNamespace: row.source_app_schema_namespace ?? null,
+      capabilityDefaults: parseJsonArray(row.capability_defaults_json ?? null) as WorkspaceSubscriptionRecord['capabilityDefaults'],
+      dispatchRouteIds: parseJsonArray(row.dispatch_route_ids_json ?? null),
+      lastSyncCursor: row.last_sync_cursor ?? null,
+      lastPipelineRunId: row.last_pipeline_run_id ?? null,
       wsKeyNpub: row.ws_key_npub ?? null,
       wsKeyStatus: row.ws_key_status as WorkspaceSubscriptionRecord['wsKeyStatus'],
       groupKeyStatus: row.group_key_status as WorkspaceSubscriptionRecord['groupKeyStatus'],
@@ -320,10 +411,18 @@ class WorkspaceSubscriptionStore {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS workspace_subscriptions (
         subscription_id TEXT PRIMARY KEY,
+        backend_connection_id TEXT,
         workspace_owner_npub TEXT NOT NULL,
         backend_base_url TEXT NOT NULL,
         bot_npub TEXT NOT NULL,
         source_app_npub TEXT NOT NULL,
+        connection_token_ref TEXT,
+        agent_profile_id TEXT,
+        source_app_schema_namespace TEXT,
+        capability_defaults_json TEXT,
+        dispatch_route_ids_json TEXT,
+        last_sync_cursor TEXT,
+        last_pipeline_run_id TEXT,
         ws_key_npub TEXT,
         ws_key_status TEXT NOT NULL,
         group_key_status TEXT NOT NULL,
@@ -350,9 +449,6 @@ class WorkspaceSubscriptionStore {
         recent_dispatches_json TEXT,
         last_successful_startup_reload_at TEXT
       );
-
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_subscriptions_workspace_bot
-        ON workspace_subscriptions(workspace_owner_npub, bot_npub);
 
       CREATE INDEX IF NOT EXISTS idx_workspace_subscriptions_managed_by
         ON workspace_subscriptions(managed_by_npub);
@@ -385,6 +481,43 @@ class WorkspaceSubscriptionStore {
           ADD COLUMN recent_dispatches_json TEXT
       `);
     }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'backend_connection_id')) {
+      this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN backend_connection_id TEXT');
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'connection_token_ref')) {
+      this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN connection_token_ref TEXT');
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'agent_profile_id')) {
+      this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN agent_profile_id TEXT');
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'source_app_schema_namespace')) {
+      this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN source_app_schema_namespace TEXT');
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'capability_defaults_json')) {
+      this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN capability_defaults_json TEXT');
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'dispatch_route_ids_json')) {
+      this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN dispatch_route_ids_json TEXT');
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'last_sync_cursor')) {
+      this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN last_sync_cursor TEXT');
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'last_pipeline_run_id')) {
+      this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN last_pipeline_run_id TEXT');
+    }
+    this.db.exec(`
+      DROP INDEX IF EXISTS idx_workspace_subscriptions_workspace_bot;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_subscriptions_scope
+        ON workspace_subscriptions(
+          backend_connection_id,
+          managed_by_npub,
+          agent_profile_id,
+          workspace_owner_npub,
+          source_app_npub,
+          bot_npub
+        );
+    `);
   }
 }
 

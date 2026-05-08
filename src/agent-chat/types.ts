@@ -2,9 +2,11 @@ export type WorkspaceKeyStatus = 'pending' | 'active' | 'refresh_required' | 're
 export type GroupKeyStatus = 'pending' | 'active' | 'refresh_required' | 'revoked' | 'failed';
 export type SseStatus = 'disconnected' | 'connecting' | 'connected' | 'backoff' | 'disabled';
 export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy';
+export type BackendConnectionSharePolicy = 'private' | 'selected_users' | 'shared_service';
 export type AgentCapability =
   | 'chat_intercept'
   | 'task_dispatch'
+  | 'comment_dispatch'
   | 'flow_dispatch'
   | 'task_review'
   | 'approval_dispatch';
@@ -34,6 +36,23 @@ export interface AgentChatSseEventDiagnostic {
   payload: Record<string, unknown> | null;
 }
 
+export interface BackendConnectionRecord {
+  backendConnectionId: string;
+  managedByNpub: string;
+  backendBaseUrl: string;
+  serviceNpub: string | null;
+  relayUrls: string[];
+  openapiUrl: string | null;
+  docsUrl: string | null;
+  healthUrl: string | null;
+  supportedVersion: string | null;
+  sharePolicy: BackendConnectionSharePolicy;
+  healthStatus: HealthStatus;
+  lastHealthResult: AgentChatDiagnostic | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AgentChatDispatchHistoryEntry {
   at: string;
   kind: 'chat' | 'task' | 'flow' | 'review' | 'approval' | 'comment';
@@ -48,10 +67,18 @@ export interface AgentChatDispatchHistoryEntry {
 
 export interface WorkspaceSubscriptionRecord {
   subscriptionId: string;
+  backendConnectionId?: string | null;
   workspaceOwnerNpub: string;
   backendBaseUrl: string;
   botNpub: string;
   sourceAppNpub: string;
+  connectionTokenRef?: string | null;
+  agentProfileId?: string | null;
+  sourceAppSchemaNamespace?: string | null;
+  capabilityDefaults?: AgentCapability[];
+  dispatchRouteIds?: string[];
+  lastSyncCursor?: string | null;
+  lastPipelineRunId?: string | null;
   wsKeyNpub: string | null;
   wsKeyStatus: WorkspaceKeyStatus;
   groupKeyStatus: GroupKeyStatus;
@@ -124,6 +151,12 @@ export interface CreateWorkspaceSubscriptionInput {
   workspaceOwnerNpub: string;
   backendBaseUrl: string;
   sourceAppNpub: string;
+  backendConnectionId?: string | null;
+  connectionTokenRef?: string | null;
+  agentProfileId?: string | null;
+  sourceAppSchemaNamespace?: string | null;
+  capabilityDefaults?: AgentCapability[];
+  dispatchRouteIds?: string[];
   triggerConfigRecordId?: string | null;
 }
 

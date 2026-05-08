@@ -16,6 +16,15 @@ import {
   normaliseInboundCommentRecord,
   selectDocumentCommentAgents,
 } from './comment-records';
+import {
+  AgentCommentDispatchRuntime,
+  agentCommentDispatchRuntime,
+} from './comment-dispatch-runtime';
+import {
+  buildAgentConnectImportResult,
+  validateAgentConnectPackage,
+} from './agent-connect-import';
+import { backendConnectionStore, type BackendConnectionStore } from './backend-connection-store';
 import { AgentChatRoutingEvaluator } from './routing-evaluator';
 import type { AgentChatSessionRuntime } from './session-runtime';
 import { workspaceSubscriptionStore, type WorkspaceSubscriptionStore } from './workspace-subscription-store';
@@ -46,8 +55,10 @@ import type {
   AgentChatDispatchHistoryEntry,
   AgentChatSseEventDiagnostic,
   AgentDefinitionRecord,
+  BackendConnectionRecord,
   BotKeyStoreRecord,
   ChatInterceptStateRecord,
+  InboundApprovalRecord,
   CreateAgentDefinitionInput,
   CreateWorkspaceSubscriptionInput,
   InboundCommentRecord,
@@ -207,10 +218,12 @@ function diffTaskDispatchSnapshots(
 export interface WorkspaceSubscriptionManagerDependencies {
   store?: WorkspaceSubscriptionStore;
   agentStore?: AgentDefinitionStore;
+  backendStore?: BackendConnectionStore;
   routingEvaluator?: AgentChatRoutingEvaluator;
   chatRuntime?: AgentChatSessionRuntime | null;
   agentWorkRuntime?: AgentWorkSessionRuntime | null;
   agentCommentRuntime?: AgentCommentSessionRuntime | null;
+  commentDispatchRuntime?: AgentCommentDispatchRuntime | null;
   fetchRecordHistory?: typeof fetchRecordHistory;
   decryptRecordPayload?: typeof decryptRecordPayloadWithYoke;
   botKeyStore: {
@@ -260,11 +273,13 @@ function mapFailureState(detailCode: string | null): RuntimeFailureState {
 export class WorkspaceSubscriptionManager {
   private readonly store: WorkspaceSubscriptionStore;
   private readonly agentStore: AgentDefinitionStore;
+  private readonly backendStore: BackendConnectionStore;
   private readonly routingEvaluator: AgentChatRoutingEvaluator;
   private readonly botKeyStore: WorkspaceSubscriptionManagerDependencies['botKeyStore'];
   private chatRuntime: AgentChatSessionRuntime | null;
   private agentWorkRuntime: AgentWorkSessionRuntime | null;
   private agentCommentRuntime: AgentCommentSessionRuntime | null;
+  private commentDispatchRuntime: AgentCommentDispatchRuntime | null;
   private readonly fetchRecordHistoryImpl: typeof fetchRecordHistory;
   private readonly decryptRecordPayloadImpl: typeof decryptRecordPayloadWithYoke;
   private readonly runtimes = new Map<string, RuntimeContext>();
@@ -272,11 +287,13 @@ export class WorkspaceSubscriptionManager {
   constructor(deps: WorkspaceSubscriptionManagerDependencies) {
     this.store = deps.store ?? workspaceSubscriptionStore;
     this.agentStore = deps.agentStore ?? agentDefinitionStore;
+    this.backendStore = deps.backendStore ?? backendConnectionStore;
     this.routingEvaluator = deps.routingEvaluator ?? new AgentChatRoutingEvaluator({ agentStore: this.agentStore });
     this.botKeyStore = deps.botKeyStore;
     this.chatRuntime = deps.chatRuntime ?? null;
     this.agentWorkRuntime = deps.agentWorkRuntime ?? null;
     this.agentCommentRuntime = deps.agentCommentRuntime ?? null;
+    this.commentDispatchRuntime = deps.commentDispatchRuntime ?? agentCommentDispatchRuntime;
     this.fetchRecordHistoryImpl = deps.fetchRecordHistory ?? fetchRecordHistory;
     this.decryptRecordPayloadImpl = deps.decryptRecordPayload ?? decryptRecordPayloadWithYoke;
   }
@@ -306,6 +323,10 @@ export class WorkspaceSubscriptionManager {
     return this.agentStore.listForManagerNpub(npub);
   }
 
+  listBackendConnectionsForManager(npub: string) {
+    return this.backendStore.listForManagerNpub(npub);
+  }
+
   getAgentForManager(agentId: string, npub: string): AgentDefinitionRecord | null {
     const record = this.agentStore.getByAgentId(agentId);
     return record?.managedByNpub === npub ? record : null;
@@ -327,12 +348,13 @@ export class WorkspaceSubscriptionManager {
 
   private normaliseAgentCapabilities(
     capabilities?: string[],
-  ): Array<'chat_intercept' | 'task_dispatch' | 'flow_dispatch' | 'task_review' | 'approval_dispatch'> {
-    const set = new Set<'chat_intercept' | 'task_dispatch' | 'flow_dispatch' | 'task_review' | 'approval_dispatch'>();
+  ): Array<'chat_intercept' | 'task_dispatch' | 'comment_dispatch' | 'flow_dispatch' | 'task_review' | 'approval_dispatch'> {
+    const set = new Set<'chat_intercept' | 'task_dispatch' | 'comment_dispatch' | 'flow_dispatch' | 'task_review' | 'approval_dispatch'>();
     for (const capability of capabilities ?? []) {
       if (
         capability === 'chat_intercept'
         || capability === 'task_dispatch'
+        || capability === 'comment_dispatch'
         || capability === 'flow_dispatch'
         || capability === 'task_review'
         || capability === 'approval_dispatch'
@@ -410,6 +432,36 @@ export class WorkspaceSubscriptionManager {
     return this.agentStore.delete(agentId);
   }
 
+  async importAgentConnectPackage(input: {
+    managedByNpub: string;
+    packageJson: string | Record<string, unknown>;
+    agentProfileId?: string | null;
+  }): Promise<{
+    backendConnection: BackendConnectionRecord;
+    subscription: WorkspaceSubscriptionRecord;
+  }> {
+    const validation = validateAgentConnectPackage({
+      managedByNpub: input.managedByNpub,
+      packageJson: input.packageJson,
+    });
+    const backendConnection = this.createOrReuseBackendConnection({
+      managedByNpub: input.managedByNpub,
+      backendBaseUrl: validation.service.directHttpsUrl,
+      serviceNpub: validation.service.serviceNpub,
+      relayUrls: validation.service.relayUrls,
+      openapiUrl: validation.service.openapiUrl,
+      docsUrl: validation.service.docsUrl,
+      healthUrl: validation.service.healthUrl,
+      supportedVersion: validation.supportedVersion,
+    });
+    const importResult = buildAgentConnectImportResult(validation, backendConnection);
+    const subscription = await this.createOrUpdate({
+      ...importResult.subscriptionInput,
+      agentProfileId: input.agentProfileId ?? importResult.subscriptionInput.agentProfileId ?? null,
+    });
+    return { backendConnection, subscription };
+  }
+
   async createOrUpdate(input: CreateWorkspaceSubscriptionInput): Promise<WorkspaceSubscriptionRecord> {
     const backendBaseUrl = normaliseBackendBaseUrl(input.backendBaseUrl);
     let botRecord = this.botKeyStore.getActiveKeyForUser(input.managedByNpub);
@@ -434,18 +486,50 @@ export class WorkspaceSubscriptionManager {
     }
 
     const botIdentity = this.unlockBotIdentity(botRecord);
-    let record = this.store.getByWorkspaceAndBot(input.workspaceOwnerNpub, botIdentity.botNpub)
+    const backendConnection = input.backendConnectionId
+      ? this.backendStore.getById(input.backendConnectionId)
+      : this.createOrReuseBackendConnection({
+          managedByNpub: input.managedByNpub,
+          backendBaseUrl,
+        });
+    if (input.backendConnectionId && !backendConnection) {
+      throw new Error(`Backend connection ${input.backendConnectionId} was not found.`);
+    }
+
+    const scopedRecord = this.store.getBySubscriptionScope({
+      backendConnectionId: backendConnection?.backendConnectionId ?? null,
+      managedByNpub: input.managedByNpub,
+      workspaceOwnerNpub: input.workspaceOwnerNpub,
+      sourceAppNpub: input.sourceAppNpub,
+      botNpub: botIdentity.botNpub,
+      agentProfileId: input.agentProfileId ?? null,
+    });
+    const legacyRecord = this.store.getByWorkspaceAndBot(input.workspaceOwnerNpub, botIdentity.botNpub);
+    let record = scopedRecord
+      ?? (legacyRecord && (!legacyRecord.managedByNpub || legacyRecord.managedByNpub === input.managedByNpub) ? legacyRecord : null)
       ?? this.store.createDefault({
         managedByNpub: input.managedByNpub,
         workspaceOwnerNpub: input.workspaceOwnerNpub,
         backendBaseUrl,
         botNpub: botIdentity.botNpub,
         sourceAppNpub: input.sourceAppNpub,
+        backendConnectionId: backendConnection?.backendConnectionId ?? null,
+        connectionTokenRef: input.connectionTokenRef ?? null,
+        agentProfileId: input.agentProfileId ?? null,
+        sourceAppSchemaNamespace: input.sourceAppSchemaNamespace ?? null,
+        capabilityDefaults: input.capabilityDefaults ?? [],
+        dispatchRouteIds: input.dispatchRouteIds ?? [],
         triggerConfigRecordId: input.triggerConfigRecordId ?? null,
       });
 
+    record.backendConnectionId = backendConnection?.backendConnectionId ?? record.backendConnectionId ?? null;
     record.backendBaseUrl = backendBaseUrl;
     record.sourceAppNpub = input.sourceAppNpub;
+    record.connectionTokenRef = input.connectionTokenRef ?? record.connectionTokenRef ?? null;
+    record.agentProfileId = input.agentProfileId ?? record.agentProfileId ?? null;
+    record.sourceAppSchemaNamespace = input.sourceAppSchemaNamespace ?? record.sourceAppSchemaNamespace ?? null;
+    record.capabilityDefaults = input.capabilityDefaults ?? record.capabilityDefaults ?? [];
+    record.dispatchRouteIds = input.dispatchRouteIds ?? record.dispatchRouteIds ?? [];
     record.triggerConfigRecordId = input.triggerConfigRecordId ?? null;
     record.managedByNpub = input.managedByNpub;
     record = await this.prepareWorkspaceSession(record, botIdentity);
@@ -603,6 +687,46 @@ export class WorkspaceSubscriptionManager {
     for (const subscriptionId of this.runtimes.keys()) {
       this.stopRuntime(subscriptionId, true);
     }
+  }
+
+  private createOrReuseBackendConnection(input: {
+    managedByNpub: string;
+    backendBaseUrl: string;
+    serviceNpub?: string | null;
+    relayUrls?: string[];
+    openapiUrl?: string | null;
+    docsUrl?: string | null;
+    healthUrl?: string | null;
+    supportedVersion?: string | null;
+  }): BackendConnectionRecord {
+    const backendBaseUrl = normaliseBackendBaseUrl(input.backendBaseUrl);
+    const existing = this.backendStore.findReusable({
+      managedByNpub: input.managedByNpub,
+      backendBaseUrl,
+      serviceNpub: input.serviceNpub ?? null,
+    });
+    if (existing) {
+      return this.backendStore.save({
+        ...existing,
+        serviceNpub: input.serviceNpub ?? existing.serviceNpub,
+        relayUrls: input.relayUrls ?? existing.relayUrls,
+        openapiUrl: input.openapiUrl ?? existing.openapiUrl,
+        docsUrl: input.docsUrl ?? existing.docsUrl,
+        healthUrl: input.healthUrl ?? existing.healthUrl,
+        supportedVersion: input.supportedVersion ?? existing.supportedVersion,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    return this.backendStore.save(this.backendStore.createDefault({
+      managedByNpub: input.managedByNpub,
+      backendBaseUrl,
+      serviceNpub: input.serviceNpub ?? null,
+      relayUrls: input.relayUrls ?? [],
+      openapiUrl: input.openapiUrl ?? null,
+      docsUrl: input.docsUrl ?? null,
+      healthUrl: input.healthUrl ?? null,
+      supportedVersion: input.supportedVersion ?? null,
+    }));
   }
 
   private async prepareWorkspaceSession(
@@ -1082,6 +1206,13 @@ export class WorkspaceSubscriptionManager {
     return this.agentStore
       .listByWorkspaceAndBot(subscription.workspaceOwnerNpub, subscription.botNpub)
       .filter((agent) => agent.enabled && agent.capabilities.includes(capability))
+      .sort((left, right) => left.agentId.localeCompare(right.agentId));
+  }
+
+  private listCommentDispatchAgents(subscription: WorkspaceSubscriptionRecord): AgentDefinitionRecord[] {
+    return this.agentStore
+      .listByWorkspaceAndBot(subscription.workspaceOwnerNpub, subscription.botNpub)
+      .filter((agent) => agent.enabled && agent.capabilities.includes('comment_dispatch'))
       .sort((left, right) => left.agentId.localeCompare(right.agentId));
   }
 
@@ -1627,17 +1758,27 @@ export class WorkspaceSubscriptionManager {
     comment: InboundCommentRecord,
     updaterNpub: string | null,
   ): Promise<WorkspaceSubscriptionRecord> {
-    if (!this.agentWorkRuntime) {
-      return record;
+    const commentAgents = this.listCommentDispatchAgents(record);
+    if (commentAgents.length === 0) {
+      return this.appendDispatchHistory(record, {
+        at: new Date().toISOString(),
+        kind: 'comment',
+        action: 'task_comment_skip_no_comment_dispatch_agent',
+        agentId: 'unknown',
+        sessionId: null,
+        recordId,
+        bindingId: comment.targetRecordId,
+        bindingType: 'task',
+        details: {
+          comment_id: comment.commentId,
+          updater_npub: updaterNpub,
+          sender_npub: comment.senderNpub,
+          target_record_family_hash: comment.targetRecordFamilyHash,
+        },
+      });
     }
 
-    const taskAgents = this.listTaskDispatchAgents(record);
-    if (taskAgents.length === 0) {
-      return record;
-    }
-
-    const runtime = this.getRuntime(record.subscriptionId);
-    for (const agent of taskAgents) {
+    for (const agent of commentAgents) {
       if (isSelfCommentAuthor(record, agent, comment, updaterNpub)) {
         record = this.appendDispatchHistory(record, {
           at: new Date().toISOString(),
@@ -1657,27 +1798,27 @@ export class WorkspaceSubscriptionManager {
         });
         continue;
       }
-      const session = await this.agentWorkRuntime.handleTaskCommentDispatch({
-        subscription: record,
+      const decision = this.commentDispatchRuntime?.handleDisabledDispatch({
+        target: 'task',
         agent,
-        recordId,
         comment,
-        botIdentity: runtime.botIdentity,
+        updaterNpub,
       });
       record = this.appendDispatchHistory(record, {
         at: new Date().toISOString(),
         kind: 'comment',
-        action: session ? 'task_comment_dispatch' : 'task_comment_skip_no_live_session',
+        action: decision?.action ?? 'task_comment_dispatch_disabled',
         agentId: agent.agentId,
-        sessionId: session?.id ?? null,
+        sessionId: null,
         recordId,
         bindingId: comment.targetRecordId,
         bindingType: 'task',
-        details: {
+        details: decision?.details ?? {
           comment_id: comment.commentId,
           updater_npub: updaterNpub,
           sender_npub: comment.senderNpub,
           target_record_family_hash: comment.targetRecordFamilyHash,
+          disabled_reason: 'comment_dispatch_stubbed',
         },
       });
     }
@@ -1691,16 +1832,12 @@ export class WorkspaceSubscriptionManager {
     comment: InboundCommentRecord,
     updaterNpub: string | null,
   ): Promise<WorkspaceSubscriptionRecord> {
-    if (!this.agentCommentRuntime) {
-      return record;
-    }
-
     const agents = this.listDocumentCommentAgents(record, latest);
     if (agents.length === 0) {
       return this.appendDispatchHistory(record, {
         at: new Date().toISOString(),
         kind: 'comment',
-        action: 'document_comment_skip_no_matching_agent',
+        action: 'document_comment_skip_no_comment_dispatch_agent',
         agentId: 'unknown',
         sessionId: null,
         recordId,
@@ -1713,7 +1850,6 @@ export class WorkspaceSubscriptionManager {
       });
     }
 
-    const runtime = this.getRuntime(record.subscriptionId);
     for (const agent of agents) {
       if (isSelfCommentAuthor(record, agent, comment, updaterNpub)) {
         record = this.appendDispatchHistory(record, {
@@ -1733,27 +1869,28 @@ export class WorkspaceSubscriptionManager {
         });
         continue;
       }
-      const session = await this.agentCommentRuntime.handleDocumentCommentDispatch({
-        subscription: record,
+      const decision = this.commentDispatchRuntime?.handleDisabledDispatch({
+        target: 'document',
         agent,
-        recordId,
         comment,
-        botIdentity: runtime.botIdentity,
+        updaterNpub,
       });
       record = this.appendDispatchHistory(record, {
         at: new Date().toISOString(),
         kind: 'comment',
-        action: session ? 'document_comment_dispatch' : 'document_comment_skip_runtime_returned_null',
+        action: decision?.action ?? 'document_comment_dispatch_disabled',
         agentId: agent.agentId,
-        sessionId: session?.id ?? null,
+        sessionId: null,
         recordId,
         bindingId: comment.parentCommentId ?? comment.commentId,
         bindingType: 'thread',
-        details: {
+        details: decision?.details ?? {
           comment_id: comment.commentId,
           updater_npub: updaterNpub,
+          sender_npub: comment.senderNpub,
           target_record_id: comment.targetRecordId,
           target_record_family_hash: comment.targetRecordFamilyHash,
+          disabled_reason: 'comment_dispatch_stubbed',
         },
       });
     }

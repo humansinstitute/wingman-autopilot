@@ -144,7 +144,7 @@ export function selectDocumentCommentAgents(params: {
       agent.workspaceOwnerNpub === params.subscription.workspaceOwnerNpub
       && agent.botNpub === params.subscription.botNpub
       && agent.enabled
-      && agent.capabilities.includes('chat_intercept')
+      && agent.capabilities.includes('comment_dispatch')
       && intersects(agent.groupNpubs, commentGroups),
     )
     .sort((left, right) => left.agentId.localeCompare(right.agentId));

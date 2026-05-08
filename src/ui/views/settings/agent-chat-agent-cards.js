@@ -30,6 +30,9 @@ function formatCapability(capability) {
   if (capability === 'task_dispatch') {
     return 'Task Dispatch';
   }
+  if (capability === 'comment_dispatch') {
+    return 'Comment Dispatch';
+  }
   if (capability === 'flow_dispatch') {
     return 'Flow Dispatch';
   }

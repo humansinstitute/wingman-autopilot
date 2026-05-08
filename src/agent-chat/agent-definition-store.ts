@@ -52,6 +52,10 @@ function normaliseCapabilities(values: string[]): AgentCapability[] {
       set.add(value);
       continue;
     }
+    if (value === 'comment_dispatch') {
+      set.add(value);
+      continue;
+    }
     if (value === 'flow_dispatch') {
       set.add(value);
       continue;

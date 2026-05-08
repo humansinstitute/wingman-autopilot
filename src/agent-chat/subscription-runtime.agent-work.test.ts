@@ -983,7 +983,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     ]);
   });
 
-  test('routes task comments into the agent-work runtime when the comment targets a task', async () => {
+  test('keeps task comments off the task-dispatch runtime when only task dispatch is enabled', async () => {
     const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-task-comment-subscriptions'));
     const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-task-comment-agents'));
     const subscription = store.save(makeSubscription());
@@ -1061,16 +1061,9 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       }),
     );
 
-    expect(taskCommentDispatches).toEqual([
-      {
-        recordId: 'record-task-comment-1',
-        taskId: 'task-1',
-        commentId: 'comment-task-1',
-        agentId: 'agent-task',
-      },
-    ]);
+    expect(taskCommentDispatches).toEqual([]);
     expect(next.recentDispatches[0]?.kind).toBe('comment');
-    expect(next.recentDispatches[0]?.action).toBe('task_comment_skip_no_live_session');
+    expect(next.recentDispatches[0]?.action).toBe('task_comment_skip_no_comment_dispatch_agent');
   });
 
   test('skips self-authored task comments instead of routing them back into the agent-work runtime', async () => {
@@ -1086,7 +1079,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       workspaceOwnerNpub: subscription.workspaceOwnerNpub,
       groupNpubs: ['npub1group'],
       workingDirectory: '/tmp/agent-work',
-      capabilities: ['task_dispatch'],
+      capabilities: ['comment_dispatch'],
       enabled: true,
       createdAt: now,
       updatedAt: now,
@@ -1156,7 +1149,87 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(next.recentDispatches[0]?.action).toBe('task_comment_skip_self_update');
   });
 
-  test('routes document comments into the agent-comment runtime when the comment targets a document', async () => {
+  test('records task comment dispatch as disabled when comment dispatch is enabled', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-task-comment-disabled-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-task-comment-disabled-agents'));
+    const subscription = store.save(makeSubscription());
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-comment',
+      label: 'Comment Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-comment',
+      capabilities: ['comment_dispatch'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+
+    const taskCommentDispatches: string[] = [];
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      agentWorkRuntime: {
+        handleTaskDispatch: async () => null,
+        handleApprovalDispatch: async () => null,
+        handleTaskCommentDispatch: async (input: any) => {
+          taskCommentDispatches.push(input.recordId);
+          return null;
+        },
+      } as unknown as AgentWorkSessionRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-task-comment-disabled-1',
+          record_state: 'active',
+          version: 1,
+          signature_npub: 'npub1reviewer',
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        comment_id: 'comment-task-disabled-1',
+        target_record_id: 'task-1',
+        target_record_family_hash: `${subscription.sourceAppNpub}:task`,
+        body: 'Please check the task again.',
+        comment_status: 'open',
+        sender_npub: 'npub1reviewer',
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-task-comment-disabled-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'comment'),
+        record_id: 'record-task-comment-disabled-1',
+      }),
+    );
+
+    expect(taskCommentDispatches).toEqual([]);
+    expect(next.recentDispatches[0]?.kind).toBe('comment');
+    expect(next.recentDispatches[0]?.action).toBe('task_comment_dispatch_disabled');
+    expect(next.recentDispatches[0]?.sessionId).toBeNull();
+    expect(next.recentDispatches[0]?.details?.disabled_reason).toBe('comment_dispatch_stubbed');
+  });
+
+  test('records document comment dispatch as disabled when comment dispatch is enabled', async () => {
     const store = new WorkspaceSubscriptionStore(makeTempDb('agent-comment-document-subscriptions'));
     const agentStore = new AgentDefinitionStore(makeTempDb('agent-comment-document-agents'));
     const subscription = store.save(makeSubscription());
@@ -1169,7 +1242,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       workspaceOwnerNpub: subscription.workspaceOwnerNpub,
       groupNpubs: ['npub1group'],
       workingDirectory: '/tmp/agent-comment',
-      capabilities: ['chat_intercept'],
+      capabilities: ['comment_dispatch'],
       enabled: true,
       createdAt: now,
       updatedAt: now,
@@ -1234,17 +1307,10 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       }),
     );
 
-    expect(documentCommentDispatches).toEqual([
-      {
-        recordId: 'record-doc-comment-1',
-        documentId: 'doc-1',
-        commentId: 'comment-doc-1',
-        agentId: 'agent-comment',
-      },
-    ]);
+    expect(documentCommentDispatches).toEqual([]);
     expect(next.recentDispatches[0]?.kind).toBe('comment');
-    expect(next.recentDispatches[0]?.action).toBe('document_comment_dispatch');
-    expect(next.recentDispatches[0]?.sessionId).toBe('doc-comment-session');
+    expect(next.recentDispatches[0]?.action).toBe('document_comment_dispatch_disabled');
+    expect(next.recentDispatches[0]?.sessionId).toBeNull();
   });
 
   test('skips existing comment advisories from startup or reconnect replay', async () => {
@@ -1263,7 +1329,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       workspaceOwnerNpub: subscription.workspaceOwnerNpub,
       groupNpubs: ['npub1group'],
       workingDirectory: '/tmp/agent-comment',
-      capabilities: ['chat_intercept'],
+      capabilities: ['comment_dispatch'],
       enabled: true,
       createdAt: now,
       updatedAt: now,
@@ -1333,7 +1399,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       workspaceOwnerNpub: subscription.workspaceOwnerNpub,
       groupNpubs: ['npub1group'],
       workingDirectory: '/tmp/agent-comment',
-      capabilities: ['chat_intercept'],
+      capabilities: ['comment_dispatch'],
       enabled: true,
       createdAt: now,
       updatedAt: now,

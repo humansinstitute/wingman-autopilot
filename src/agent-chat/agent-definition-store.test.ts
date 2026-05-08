@@ -77,6 +77,19 @@ describe('AgentDefinitionStore', () => {
       managedByNpub: 'npub1manager',
     });
     store.save({
+      agentId: 'agent_comment',
+      label: 'Comment Agent',
+      botNpub: 'npub1bot',
+      workspaceOwnerNpub: 'npub1workspace',
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/comment',
+      capabilities: ['comment_dispatch'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: 'npub1manager',
+    });
+    store.save({
       agentId: 'agent_legacy',
       label: 'Legacy Agent',
       botNpub: 'npub1bot',
@@ -91,6 +104,7 @@ describe('AgentDefinitionStore', () => {
     });
 
     expect(store.getByAgentId('agent_task')?.capabilities).toEqual(['task_dispatch']);
+    expect(store.getByAgentId('agent_comment')?.capabilities).toEqual(['comment_dispatch']);
     expect(store.getByAgentId('agent_legacy')?.capabilities).toEqual(['chat_intercept']);
     expect(store.getByAgentId('agent_legacy')?.chatPromptTemplate).toBe(DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE);
     expect(store.getByAgentId('agent_legacy')?.taskPromptTemplate).toBe(DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE);

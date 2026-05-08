@@ -60,6 +60,8 @@ describe('WorkspaceSubscriptionManager', () => {
       lastDecryptResult: null,
       lastRoutingResult: null,
       lastSseEvent: null,
+      recentSseEvents: [],
+      recentDispatches: [],
       lastSuccessfulStartupReloadAt: null,
     });
 

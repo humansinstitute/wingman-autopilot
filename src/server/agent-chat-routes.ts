@@ -11,6 +11,7 @@ import type {
   AgentDefinitionRecord,
   AgentChatDiagnostic,
   AgentChatSseEventDiagnostic,
+  BackendConnectionRecord,
   ChatInterceptStateRecord,
   WorkspaceSubscriptionRecord,
 } from '../agent-chat/types';
@@ -79,6 +80,16 @@ function serialiseAgent(record: AgentDefinitionRecord) {
   };
 }
 
+function serialiseBackendConnection(record: BackendConnectionRecord) {
+  return {
+    ...record,
+    operator: {
+      relayCount: record.relayUrls.length,
+      hasHealthUrl: Boolean(record.healthUrl),
+    },
+  };
+}
+
 function serialiseSubscription(
   record: WorkspaceSubscriptionRecord,
   intercepts: ChatInterceptStateRecord[],
@@ -87,6 +98,9 @@ function serialiseSubscription(
   const recommendations = buildOperatorRecommendations(record, intercepts);
   return {
     ...record,
+    backend: record.backendConnectionId
+      ? { backendConnectionId: record.backendConnectionId }
+      : null,
     intercepts,
     candidateAgents: candidateAgents.map(serialiseAgent),
     operator: {
@@ -148,7 +162,12 @@ export async function handleAgentChatApi(
   authContext: RequestAuthContext,
   ctx: AgentChatApiContext,
 ): Promise<Response | null> {
-  if (!url.pathname.startsWith('/api/agent-chat/subscriptions') && !url.pathname.startsWith('/api/agent-chat/agents')) {
+  if (
+    !url.pathname.startsWith('/api/agent-chat/subscriptions')
+    && !url.pathname.startsWith('/api/agent-chat/agents')
+    && !url.pathname.startsWith('/api/agent-chat/backend-connections')
+    && !url.pathname.startsWith('/api/agent-chat/agent-connect')
+  ) {
     return null;
   }
 
@@ -182,6 +201,55 @@ export async function handleAgentChatApi(
     });
   }
 
+  if (url.pathname === '/api/agent-chat/backend-connections' && method === 'GET') {
+    return Response.json({
+      backendConnections: ctx.manager.listBackendConnectionsForManager(viewerNpub).map(serialiseBackendConnection),
+    });
+  }
+
+  if (url.pathname === '/api/agent-chat/agent-connect/import' && method === 'POST') {
+    let body: Record<string, unknown>;
+    try {
+      body = await request.json() as Record<string, unknown>;
+    } catch {
+      return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+    }
+
+    const rawPackage = typeof body.packageJson === 'string'
+      ? body.packageJson
+      : typeof body.agentConnectJson === 'string'
+        ? body.agentConnectJson
+        : body.package && typeof body.package === 'object'
+          ? body.package as Record<string, unknown>
+          : null;
+    const agentProfileId = typeof body.agentProfileId === 'string' && body.agentProfileId.trim().length > 0
+      ? body.agentProfileId.trim()
+      : null;
+
+    if (!rawPackage) {
+      return Response.json({ error: 'packageJson or package is required.' }, { status: 400 });
+    }
+
+    try {
+      const imported = await ctx.manager.importAgentConnectPackage({
+        managedByNpub: viewerNpub,
+        packageJson: rawPackage,
+        agentProfileId,
+      });
+      return Response.json({
+        backendConnection: serialiseBackendConnection(imported.backendConnection),
+        subscription: serialiseSubscription(
+          imported.subscription,
+          ctx.manager.listInterceptsForSubscription(imported.subscription.subscriptionId, viewerNpub),
+          ctx.manager.listAgentsForWorkspaceBot(imported.subscription.workspaceOwnerNpub, imported.subscription.botNpub, viewerNpub),
+        ),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Agent Connect import failed.';
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
   if (url.pathname === '/api/agent-chat/subscriptions' && method === 'POST') {
     let body: Record<string, unknown>;
     try {
@@ -193,6 +261,9 @@ export async function handleAgentChatApi(
     const workspaceOwnerNpub = typeof body.workspaceOwnerNpub === 'string' ? body.workspaceOwnerNpub.trim() : '';
     const backendBaseUrl = typeof body.backendBaseUrl === 'string' ? body.backendBaseUrl.trim() : '';
     const sourceAppNpub = typeof body.sourceAppNpub === 'string' ? body.sourceAppNpub.trim() : '';
+    const backendConnectionId = typeof body.backendConnectionId === 'string' && body.backendConnectionId.trim().length > 0
+      ? body.backendConnectionId.trim()
+      : null;
     const triggerConfigRecordId = typeof body.triggerConfigRecordId === 'string' && body.triggerConfigRecordId.trim().length > 0
       ? body.triggerConfigRecordId.trim()
       : null;
@@ -210,6 +281,7 @@ export async function handleAgentChatApi(
         workspaceOwnerNpub,
         backendBaseUrl,
         sourceAppNpub,
+        backendConnectionId,
         triggerConfigRecordId,
       });
       return Response.json({
@@ -248,6 +320,7 @@ export async function handleAgentChatApi(
     const capabilities = capabilityInput.some((value) => (
       value === 'chat_intercept'
       || value === 'task_dispatch'
+      || value === 'comment_dispatch'
       || value === 'flow_dispatch'
       || value === 'task_review'
       || value === 'approval_dispatch'
@@ -255,6 +328,7 @@ export async function handleAgentChatApi(
       ? [
           ...(capabilityInput.includes('chat_intercept') ? ['chat_intercept'] as const : []),
           ...(capabilityInput.includes('task_dispatch') ? ['task_dispatch'] as const : []),
+          ...(capabilityInput.includes('comment_dispatch') ? ['comment_dispatch'] as const : []),
           ...(capabilityInput.includes('flow_dispatch') ? ['flow_dispatch'] as const : []),
           ...(capabilityInput.includes('task_review') ? ['task_review'] as const : []),
           ...(capabilityInput.includes('approval_dispatch') ? ['approval_dispatch'] as const : []),

@@ -18,6 +18,9 @@ function formatCapability(capability) {
   if (capability === 'task_dispatch') {
     return 'Task Dispatch';
   }
+  if (capability === 'comment_dispatch') {
+    return 'Comment Dispatch';
+  }
   if (capability === 'flow_dispatch') {
     return 'Flow Dispatch';
   }
@@ -195,6 +198,7 @@ export function createCapabilityPicker() {
   const capabilityControls = [
     ['chat_intercept', createCheckbox('Chat Dispatch', 'agent-chat-capability-chat-dispatch', true)],
     ['task_dispatch', createCheckbox('Task Dispatch', 'agent-chat-capability-task-dispatch', false)],
+    ['comment_dispatch', createCheckbox('Comment Dispatch', 'agent-chat-capability-comment-dispatch', false)],
     ['flow_dispatch', createCheckbox('Flow Dispatch', 'agent-chat-capability-flow-dispatch', false)],
     ['task_review', createCheckbox('Task Review', 'agent-chat-capability-task-review', false)],
     ['approval_dispatch', createCheckbox('Approval Dispatch', 'agent-chat-capability-approval-dispatch', false)],
@@ -296,6 +300,10 @@ function createCapabilityCard({
   toggleButton.addEventListener('click', () => onToggle?.());
 
   const editButton = createButton('Edit Prompt', null, `Edit ${title} prompt`);
+  editButton.disabled = typeof onEdit !== 'function';
+  if (editButton.disabled) {
+    editButton.title = 'Prompt editing is not available for this dispatch path yet.';
+  }
   editButton.addEventListener('click', () => onEdit?.());
 
   card.append(createInlineActions(toggleButton, editButton));
@@ -364,6 +372,13 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
       description: 'When a concrete ready task targets the bot, Wingmen reuses or creates the delivery session, queues the task prompt, and Night Watch keeps the worker moving.',
       promptKey: 'taskPromptTemplate',
       onEdit: options.onEditTaskTemplate,
+    },
+    {
+      capability: 'comment_dispatch',
+      title: 'Comment Dispatch',
+      description: 'When a task or document comment arrives, Wingmen records the advisory on the comment-specific path. Execution is currently disabled while the loop guard is hardened.',
+      promptKey: 'commentDispatchPromptTemplate',
+      onEdit: null,
     },
     {
       capability: 'flow_dispatch',
