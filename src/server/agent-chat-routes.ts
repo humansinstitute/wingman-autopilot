@@ -13,10 +13,13 @@ import type {
   AgentChatSseEventDiagnostic,
   BackendConnectionRecord,
   ChatInterceptStateRecord,
+  DispatchActivePolicy,
+  DispatchRouteRecord,
+  DispatchTriggerKind,
   WorkspaceSubscriptionRecord,
 } from '../agent-chat/types';
 
-type HttpMethod = 'GET' | 'POST' | 'DELETE';
+type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
 export interface AgentChatApiContext {
   manager: WorkspaceSubscriptionManager;
@@ -88,6 +91,10 @@ function serialiseBackendConnection(record: BackendConnectionRecord) {
       hasHealthUrl: Boolean(record.healthUrl),
     },
   };
+}
+
+function serialiseDispatchRoute(record: DispatchRouteRecord) {
+  return { ...record };
 }
 
 function serialiseSubscription(
@@ -171,6 +178,44 @@ function getOptionalStringArray(value: unknown): string[] {
     .filter((entry) => entry.length > 0);
 }
 
+function parseJsonObjectField(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function parseDispatchTriggerKind(value: unknown): DispatchTriggerKind | null {
+  return value === 'chat' || value === 'task' || value === 'flow' || value === 'task_review' || value === 'approval' || value === 'comment'
+    ? value
+    : null;
+}
+
+function parseDispatchCapability(value: unknown) {
+  return value === 'chat_intercept'
+    || value === 'task_dispatch'
+    || value === 'comment_dispatch'
+    || value === 'flow_dispatch'
+    || value === 'task_review'
+    || value === 'approval_dispatch'
+    ? value
+    : null;
+}
+
+function parseActivePolicy(value: unknown): DispatchActivePolicy | undefined {
+  return value === 'skip' || value === 'queue' || value === 'start_new' ? value : undefined;
+}
+
 export async function handleAgentChatApi(
   request: Request,
   url: URL,
@@ -183,6 +228,7 @@ export async function handleAgentChatApi(
     && !url.pathname.startsWith('/api/agent-chat/agents')
     && !url.pathname.startsWith('/api/agent-chat/backend-connections')
     && !url.pathname.startsWith('/api/agent-chat/agent-connect')
+    && !url.pathname.startsWith('/api/agent-chat/dispatch-routes')
   ) {
     return null;
   }
@@ -221,6 +267,57 @@ export async function handleAgentChatApi(
     return Response.json({
       backendConnections: ctx.manager.listBackendConnectionsForManager(viewerNpub).map(serialiseBackendConnection),
     });
+  }
+
+  if (url.pathname === '/api/agent-chat/dispatch-routes' && method === 'GET') {
+    const subscriptionId = url.searchParams.get('subscriptionId');
+    const routes = subscriptionId
+      ? ctx.manager.listDispatchRoutesForSubscription(subscriptionId, viewerNpub)
+      : ctx.manager.listDispatchRoutesForManager(viewerNpub);
+    return Response.json({ dispatchRoutes: routes.map(serialiseDispatchRoute) });
+  }
+
+  if (url.pathname === '/api/agent-chat/dispatch-routes' && (method === 'POST' || method === 'PATCH')) {
+    let body: Record<string, unknown>;
+    try {
+      body = await request.json() as Record<string, unknown>;
+    } catch {
+      return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+    }
+
+    const routeId = typeof body.routeId === 'string' && body.routeId.trim().length > 0 ? body.routeId.trim() : undefined;
+    const subscriptionId = typeof body.subscriptionId === 'string' ? body.subscriptionId.trim() : '';
+    const triggerKind = parseDispatchTriggerKind(body.triggerKind);
+    const capability = parseDispatchCapability(body.capability);
+    const pipelineDefinitionId = typeof body.pipelineDefinitionId === 'string' ? body.pipelineDefinitionId.trim() : '';
+    if (!subscriptionId || !triggerKind || !capability || !pipelineDefinitionId) {
+      return Response.json(
+        { error: 'subscriptionId, triggerKind, capability, and pipelineDefinitionId are required.' },
+        { status: 400 },
+      );
+    }
+
+    try {
+      const route = ctx.manager.saveDispatchRouteForManager({
+        routeId,
+        managedByNpub: viewerNpub,
+        subscriptionId,
+        triggerKind,
+        capability,
+        pipelineDefinitionId,
+        enabled: body.enabled !== false,
+        priority: Number.isFinite(body.priority) ? Number(body.priority) : undefined,
+        matchJson: parseJsonObjectField(body.matchJson),
+        inputTemplateJson: parseJsonObjectField(body.inputTemplateJson),
+        concurrencyKeyTemplate: typeof body.concurrencyKeyTemplate === 'string' ? body.concurrencyKeyTemplate : undefined,
+        activePolicy: parseActivePolicy(body.activePolicy),
+        dedupeWindowSeconds: Number.isFinite(body.dedupeWindowSeconds) ? Number(body.dedupeWindowSeconds) : undefined,
+      });
+      return Response.json({ dispatchRoute: serialiseDispatchRoute(route) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save dispatch route.';
+      return Response.json({ error: message }, { status: getAgentChatErrorStatus(error, 400) });
+    }
   }
 
   if (url.pathname === '/api/agent-chat/agent-connect/import' && method === 'POST') {
@@ -407,7 +504,16 @@ export async function handleAgentChatApi(
 
   const match = url.pathname.match(/^\/api\/agent-chat\/subscriptions\/([^/]+)$/);
   const agentMatch = url.pathname.match(/^\/api\/agent-chat\/agents\/([^/]+)$/);
+  const dispatchRouteMatch = url.pathname.match(/^\/api\/agent-chat\/dispatch-routes\/([^/]+)$/);
   const actionMatch = url.pathname.match(/^\/api\/agent-chat\/subscriptions\/([^/]+)\/actions\/([^/]+)$/);
+  if (dispatchRouteMatch && method === 'DELETE') {
+    const routeId = decodeURIComponent(dispatchRouteMatch[1]!);
+    const removed = ctx.manager.deleteDispatchRouteForManager(routeId, viewerNpub);
+    if (!removed) {
+      return Response.json({ error: 'Dispatch route not found' }, { status: 404 });
+    }
+    return new Response(null, { status: 204 });
+  }
   if (actionMatch && method === 'POST') {
     const subscriptionId = decodeURIComponent(actionMatch[1]!);
     const action = decodeURIComponent(actionMatch[2]!);

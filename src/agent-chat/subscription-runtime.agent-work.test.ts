@@ -8,10 +8,13 @@ import type { SessionSnapshot } from '../agents/process-manager';
 import type { AgentWorkSessionRuntime } from '../agent-work/session-runtime';
 import type { AgentCommentSessionRuntime } from './comment-session-runtime';
 import type { BotKeyStoreRecord, WorkspaceSubscriptionRecord } from './types';
+import { DispatchPipelineRuntime } from './dispatch-pipelines/runtime';
+import { DispatchRouteStore } from './dispatch-pipelines/route-store';
 import { AgentDefinitionStore } from './agent-definition-store';
 import { WorkspaceSubscriptionManager } from './subscription-runtime';
 import { buildRecordFamilyHash } from './tower-client';
 import { WorkspaceSubscriptionStore } from './workspace-subscription-store';
+import { PipelineStore, type PipelineRunRecord } from '../pipelines/pipeline-store';
 
 function makeTempDb(name: string): string {
   return join(tmpdir(), `${name}-${randomUUID()}.sqlite`);
@@ -109,7 +112,217 @@ function seedRuntime(manager: WorkspaceSubscriptionManager, subscriptionId: stri
   });
 }
 
+function makePipelineRun(id: string, input: Record<string, unknown>): PipelineRunRecord {
+  const now = new Date().toISOString();
+  return {
+    id,
+    definitionId: 'task-pipeline',
+    definitionPath: '/tmp/task-pipeline.json',
+    name: 'Task Pipeline',
+    status: 'ok',
+    ownerNpub: 'npub1manager',
+    ownerAlias: 'manager',
+    scope: 'user',
+    input,
+    current: input,
+    cursorIndex: 0,
+    activeStepId: null,
+    result: input,
+    error: null,
+    startedAt: now,
+    completedAt: now,
+  };
+}
+
 describe('WorkspaceSubscriptionManager agent-work routing', () => {
+  test('starts configured task dispatch pipeline and records run history', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-pipeline-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-pipeline-agents'));
+    const routeStore = new DispatchRouteStore(makeTempDb('agent-work-pipeline-routes'));
+    const pipelineStore = new PipelineStore(makeTempDb('agent-work-pipeline-runs'));
+    const subscription = store.save(makeSubscription());
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-task',
+      label: 'Task Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-work',
+      capabilities: ['task_dispatch'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+
+    const route = routeStore.save({
+      managedByNpub: subscription.managedByNpub!,
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      pipelineDefinitionId: 'task-pipeline',
+      matchJson: { assignedTo: 'bot' },
+    });
+    const runInputs: Record<string, unknown>[] = [];
+    const dispatchPipelineRuntime = new DispatchPipelineRuntime({
+      routeStore,
+      agentStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      loadDefinition: async () => ({
+        id: 'task-pipeline',
+        slug: 'task-pipeline',
+        name: 'Task Pipeline',
+        scope: 'user',
+        ownerAlias: 'manager',
+        path: '/tmp/task-pipeline.json',
+        spec: { name: 'Task Pipeline', input: {}, steps: [] },
+      }),
+      loadFunctions: async () => ({ registry: {}, records: [] }),
+      runPipeline: async (input: any) => {
+        runInputs.push(input.input);
+        return makePipelineRun('pipeline-run-1', input.input);
+      },
+    });
+
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      dispatchPipelineRuntime,
+      agentWorkRuntime: {
+        handleTaskDispatch: async () => {
+          throw new Error('legacy task dispatch should not run when a pipeline route matches');
+        },
+      } as unknown as AgentWorkSessionRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-task-pipeline-1',
+          record_state: 'active',
+          version: 3,
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        task_id: 'task-pipeline-1',
+        title: 'Pipeline task',
+        state: 'ready',
+        assigned_to: 'npub1bot',
+        predecessor_task_ids: [],
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-task-pipeline-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'task'),
+        record_id: 'record-task-pipeline-1',
+      }),
+    );
+
+    expect(runInputs).toHaveLength(1);
+    expect((runInputs[0]?.dispatch as any)?.routeId).toBe(route.routeId);
+    expect((runInputs[0]?.record as any)?.recordId).toBe('record-task-pipeline-1');
+    expect(next.lastPipelineRunId).toBe('pipeline-run-1');
+    expect(next.recentDispatches[0]?.routeId).toBe(route.routeId);
+    expect(next.recentDispatches[0]?.pipelineRunId).toBe('pipeline-run-1');
+    expect(next.recentDispatches[0]?.action).toBe('task_pipeline_dispatch');
+  });
+
+  test('suppresses legacy dispatch when a configured task route is disabled', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-disabled-pipeline-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-disabled-pipeline-agents'));
+    const routeStore = new DispatchRouteStore(makeTempDb('agent-work-disabled-pipeline-routes'));
+    const pipelineStore = new PipelineStore(makeTempDb('agent-work-disabled-pipeline-runs'));
+    const subscription = store.save(makeSubscription());
+
+    const route = routeStore.save({
+      managedByNpub: subscription.managedByNpub!,
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      pipelineDefinitionId: 'task-pipeline',
+      enabled: false,
+    });
+    const dispatchPipelineRuntime = new DispatchPipelineRuntime({
+      routeStore,
+      agentStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      runPipeline: async () => {
+        throw new Error('disabled route should not start a pipeline');
+      },
+    });
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      dispatchPipelineRuntime,
+      agentWorkRuntime: {
+        handleTaskDispatch: async () => {
+          throw new Error('legacy task dispatch should not run when a route is disabled');
+        },
+      } as unknown as AgentWorkSessionRuntime,
+      fetchRecordHistory: async () => [{ record_id: 'record-task-disabled-1', record_state: 'active', version: 1 }],
+      decryptRecordPayload: async () => ({
+        task_id: 'task-disabled-1',
+        title: 'Disabled task',
+        state: 'ready',
+        assigned_to: 'npub1bot',
+        predecessor_task_ids: [],
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-task-disabled-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'task'),
+        record_id: 'record-task-disabled-1',
+      }),
+    );
+
+    expect(next.recentDispatches[0]?.routeId).toBe(route.routeId);
+    expect(next.recentDispatches[0]?.status).toBe('suppressed');
+    expect(next.recentDispatches[0]?.suppressionReason).toBe('route_disabled');
+  });
+
   test('routes task advisories into the agent-work runtime', async () => {
     const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-subscriptions'));
     const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-agents'));

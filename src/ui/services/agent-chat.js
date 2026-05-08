@@ -97,3 +97,27 @@ export async function runAgentChatSubscriptionAction(subscriptionId, action) {
   }
   return payload.subscription ?? null;
 }
+
+export async function listAgentChatDispatchRoutes(subscriptionId = '') {
+  const suffix = subscriptionId ? `?subscriptionId=${encodeURIComponent(subscriptionId)}` : '';
+  const response = await fetch(`/api/agent-chat/dispatch-routes${suffix}`, { credentials: 'include' });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || 'Failed to load Agent Dispatch routes');
+  }
+  return Array.isArray(payload.dispatchRoutes) ? payload.dispatchRoutes : [];
+}
+
+export async function saveAgentChatDispatchRoute(input) {
+  const response = await fetch('/api/agent-chat/dispatch-routes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(input),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || 'Failed to save Agent Dispatch route');
+  }
+  return payload.dispatchRoute;
+}

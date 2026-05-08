@@ -355,3 +355,130 @@ export function createAgentDispatchSetupCards({
 
   return wrapper;
 }
+
+function createRouteSelect(labelText, testId, definitions, selectedId = '') {
+  const row = document.createElement('label');
+  row.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:10px;';
+  row.textContent = labelText;
+
+  const select = document.createElement('select');
+  select.className = 'wm-input';
+  select.setAttribute('aria-label', labelText);
+  select.setAttribute('data-testid', testId);
+
+  const empty = document.createElement('option');
+  empty.value = '';
+  empty.textContent = 'Select a pipeline';
+  select.append(empty);
+
+  definitions.forEach((definition) => {
+    const option = document.createElement('option');
+    option.value = definition.id || '';
+    option.textContent = definition.name || definition.id || 'Pipeline';
+    select.append(option);
+  });
+  select.value = selectedId || '';
+  row.append(select);
+  return { row, select };
+}
+
+function findRoute(routes, triggerKind, capability) {
+  return Array.isArray(routes)
+    ? routes.find((route) => route.triggerKind === triggerKind && route.capability === capability) ?? null
+    : null;
+}
+
+export function createDispatchPipelineRouteCards({
+  subscription,
+  routes = [],
+  definitions = [],
+  onSaveRoute,
+}) {
+  const card = createCard(
+    'Dispatch Pipelines',
+    subscription
+      ? 'Select declarative pipelines for incoming workspace advisories. Legacy prompt dispatch remains active for any capability without a route.'
+      : 'Connect a workspace before choosing dispatch pipelines.',
+  );
+  card.setAttribute('data-testid', 'agent-chat-dispatch-pipelines');
+
+  if (!subscription) {
+    return card;
+  }
+
+  const chatRoute = findRoute(routes, 'chat', 'chat_intercept');
+  const taskRoute = findRoute(routes, 'task', 'task_dispatch');
+  const chatSelect = createRouteSelect('Chat pipeline', 'agent-chat-route-chat-pipeline', definitions, chatRoute?.pipelineDefinitionId || '');
+  const taskSelect = createRouteSelect('Task pipeline', 'agent-chat-route-task-pipeline', definitions, taskRoute?.pipelineDefinitionId || '');
+
+  const enabledField = document.createElement('label');
+  enabledField.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:10px;';
+  const enabledInput = document.createElement('input');
+  enabledInput.type = 'checkbox';
+  enabledInput.checked = true;
+  enabledInput.setAttribute('aria-label', 'Enable saved dispatch routes');
+  enabledInput.setAttribute('data-testid', 'agent-chat-route-enabled');
+  const enabledText = document.createElement('span');
+  enabledText.textContent = 'Enable saved routes';
+  enabledField.append(enabledInput, enabledText);
+
+  const status = document.createElement('p');
+  status.className = 'wm-settings__port-note';
+  status.setAttribute('aria-live', 'polite');
+  status.textContent = routes.length > 0
+    ? `${routes.length} route${routes.length === 1 ? '' : 's'} configured for this subscription.`
+    : 'No pipeline routes configured yet.';
+
+  const saveButton = createActionButton(
+    'Save Pipeline Routes',
+    'agent-chat-save-dispatch-routes',
+    'Save selected Agent Dispatch pipeline routes',
+    async () => {
+      saveButton.disabled = true;
+      status.textContent = 'Saving dispatch pipeline routes...';
+      try {
+        const saves = [];
+        if (chatSelect.select.value) {
+          saves.push(onSaveRoute?.({
+            routeId: chatRoute?.routeId,
+            subscriptionId: subscription.subscriptionId,
+            triggerKind: 'chat',
+            capability: 'chat_intercept',
+            pipelineDefinitionId: chatSelect.select.value,
+            enabled: enabledInput.checked,
+            priority: 10,
+            activePolicy: 'queue',
+          }));
+        }
+        if (taskSelect.select.value) {
+          saves.push(onSaveRoute?.({
+            routeId: taskRoute?.routeId,
+            subscriptionId: subscription.subscriptionId,
+            triggerKind: 'task',
+            capability: 'task_dispatch',
+            pipelineDefinitionId: taskSelect.select.value,
+            enabled: enabledInput.checked,
+            priority: 20,
+            activePolicy: 'skip',
+            matchJson: { assignedTo: 'bot' },
+          }));
+        }
+        await Promise.all(saves.filter(Boolean));
+        status.textContent = 'Dispatch pipeline routes saved.';
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : 'Failed to save dispatch pipeline routes.';
+      } finally {
+        saveButton.disabled = false;
+      }
+    },
+  );
+
+  if (definitions.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'wm-settings__port-note';
+    empty.textContent = 'No pipeline definitions are available yet.';
+    card.append(empty);
+  }
+  card.append(chatSelect.row, taskSelect.row, enabledField, createInlineActions([saveButton]), status);
+  return card;
+}

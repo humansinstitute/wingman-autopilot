@@ -22,6 +22,12 @@ interface RoutingContext {
   participantNpubs: string[];
 }
 
+export interface ChatDispatchRoutingContext extends RoutingContext {
+  messageGroupNpubs: string[];
+  senderNpub: string | null;
+  updaterNpub: string | null;
+}
+
 export interface RoutedChatAssignment {
   agent: AgentDefinitionRecord;
   intercept: ChatInterceptStateRecord;
@@ -65,12 +71,28 @@ export class AgentChatRoutingEvaluator {
     return this.interceptStore.listBySubscriptionId(subscriptionId);
   }
 
+  async buildDispatchContext(input: RoutingEvaluationInput): Promise<ChatDispatchRoutingContext> {
+    const routingContext = this.resolveRoutingContextOverride
+      ? await this.resolveRoutingContextOverride(input)
+      : await this.resolveRoutingContext(input);
+    const messageGroupNpubs = this.extractMessageGroupNpubsOverride
+      ? this.extractMessageGroupNpubsOverride(input.chatRecord, input.chatMessage)
+      : extractMessageGroupNpubs(input.chatRecord, input.chatMessage);
+    const senderNpub = getOptionalString(input.chatMessage.sender_npub);
+    const updaterNpub = getOptionalString(input.chatRecord.signature_npub)
+      ?? getOptionalString(input.chatRecord.owner_npub);
+    return {
+      ...routingContext,
+      messageGroupNpubs,
+      senderNpub,
+      updaterNpub,
+    };
+  }
+
   async evaluate(input: RoutingEvaluationInput): Promise<RoutingEvaluationResult> {
-    let routingContext: RoutingContext;
+    let routingContext: ChatDispatchRoutingContext;
     try {
-      routingContext = this.resolveRoutingContextOverride
-        ? await this.resolveRoutingContextOverride(input)
-        : await this.resolveRoutingContext(input);
+      routingContext = await this.buildDispatchContext(input);
     } catch (error) {
       const detailCode = this.getDetailCode(error, 'thread_unresolved');
       return {
@@ -94,13 +116,10 @@ export class AgentChatRoutingEvaluator {
       .sort((left, right) => left.agentId.localeCompare(right.agentId));
     const enabledAgents = configuredAgents.filter((agent) => agent.enabled);
     const candidateAgents = enabledAgents.filter((agent) => agent.capabilities.includes('chat_intercept'));
-    const messageGroupNpubs = this.extractMessageGroupNpubsOverride
-      ? this.extractMessageGroupNpubsOverride(input.chatRecord, input.chatMessage)
-      : extractMessageGroupNpubs(input.chatRecord, input.chatMessage);
+    const messageGroupNpubs = routingContext.messageGroupNpubs;
     const matchedAgents = candidateAgents.filter((agent) => intersectsSorted(agent.groupNpubs, messageGroupNpubs));
-    const senderNpub = getOptionalString(input.chatMessage.sender_npub);
-    const updaterNpub = getOptionalString(input.chatRecord.signature_npub)
-      ?? getOptionalString(input.chatRecord.owner_npub);
+    const senderNpub = routingContext.senderNpub;
+    const updaterNpub = routingContext.updaterNpub;
 
     const selfSuppressedAgentIds: string[] = [];
     const duplicateSuppressedAgentIds: string[] = [];

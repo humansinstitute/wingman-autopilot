@@ -26,6 +26,7 @@ import {
 } from './agent-connect-import';
 import { backendConnectionStore, type BackendConnectionStore } from './backend-connection-store';
 import { AgentChatRoutingEvaluator } from './routing-evaluator';
+import type { DispatchPipelineRuntime, DispatchPipelineRuntimeResult } from './dispatch-pipelines/runtime';
 import type { AgentChatSessionRuntime } from './session-runtime';
 import { workspaceSubscriptionStore, type WorkspaceSubscriptionStore } from './workspace-subscription-store';
 import { parseSseEvents } from './sse-events';
@@ -59,9 +60,11 @@ import type {
   BackendConnectionRecord,
   BotKeyStoreRecord,
   ChatInterceptStateRecord,
+  CreateDispatchRouteInput,
   InboundApprovalRecord,
   CreateAgentDefinitionInput,
   CreateWorkspaceSubscriptionInput,
+  DispatchRouteRecord,
   InboundCommentRecord,
   InboundTaskRecord,
   RuntimeBotIdentity,
@@ -235,6 +238,7 @@ export interface WorkspaceSubscriptionManagerDependencies {
   agentWorkRuntime?: AgentWorkSessionRuntime | null;
   agentCommentRuntime?: AgentCommentSessionRuntime | null;
   commentDispatchRuntime?: AgentCommentDispatchRuntime | null;
+  dispatchPipelineRuntime?: DispatchPipelineRuntime | null;
   fetchRecordHistory?: typeof fetchRecordHistory;
   decryptRecordPayload?: typeof decryptRecordPayloadWithYoke;
   checkBackendHealth?: typeof checkBackendConnectionHealth;
@@ -314,6 +318,7 @@ export class WorkspaceSubscriptionManager {
   private agentWorkRuntime: AgentWorkSessionRuntime | null;
   private agentCommentRuntime: AgentCommentSessionRuntime | null;
   private commentDispatchRuntime: AgentCommentDispatchRuntime | null;
+  private dispatchPipelineRuntime: DispatchPipelineRuntime | null;
   private readonly fetchRecordHistoryImpl: typeof fetchRecordHistory;
   private readonly decryptRecordPayloadImpl: typeof decryptRecordPayloadWithYoke;
   private readonly checkBackendHealthImpl: typeof checkBackendConnectionHealth;
@@ -329,6 +334,7 @@ export class WorkspaceSubscriptionManager {
     this.agentWorkRuntime = deps.agentWorkRuntime ?? null;
     this.agentCommentRuntime = deps.agentCommentRuntime ?? null;
     this.commentDispatchRuntime = deps.commentDispatchRuntime ?? agentCommentDispatchRuntime;
+    this.dispatchPipelineRuntime = deps.dispatchPipelineRuntime ?? null;
     this.fetchRecordHistoryImpl = deps.fetchRecordHistory ?? fetchRecordHistory;
     this.decryptRecordPayloadImpl = deps.decryptRecordPayload ?? decryptRecordPayloadWithYoke;
     this.checkBackendHealthImpl = deps.checkBackendHealth ?? checkBackendConnectionHealth;
@@ -344,6 +350,10 @@ export class WorkspaceSubscriptionManager {
 
   setAgentCommentRuntime(agentCommentRuntime: AgentCommentSessionRuntime | null): void {
     this.agentCommentRuntime = agentCommentRuntime;
+  }
+
+  setDispatchPipelineRuntime(dispatchPipelineRuntime: DispatchPipelineRuntime | null): void {
+    this.dispatchPipelineRuntime = dispatchPipelineRuntime;
   }
 
   listForManager(npub: string): WorkspaceSubscriptionRecord[] {
@@ -380,6 +390,50 @@ export class WorkspaceSubscriptionManager {
       return [];
     }
     return this.routingEvaluator.listInterceptsForSubscription(subscriptionId);
+  }
+
+  listDispatchRoutesForManager(npub: string): DispatchRouteRecord[] {
+    if (!this.dispatchPipelineRuntime) {
+      return [];
+    }
+    return this.dispatchPipelineRuntime
+      .listRoutesForManager(npub)
+      .filter((route) => this.getForManager(route.subscriptionId, npub));
+  }
+
+  listDispatchRoutesForSubscription(subscriptionId: string, npub: string): DispatchRouteRecord[] {
+    const record = this.getForManager(subscriptionId, npub);
+    if (!record || !this.dispatchPipelineRuntime) {
+      return [];
+    }
+    return this.dispatchPipelineRuntime.listRoutesForSubscription(record.subscriptionId);
+  }
+
+  saveDispatchRouteForManager(input: Omit<CreateDispatchRouteInput, 'managedByNpub' | 'workspaceOwnerNpub' | 'botNpub' | 'sourceAppNpub'> & {
+    routeId?: string;
+    managedByNpub: string;
+  }): DispatchRouteRecord {
+    const record = this.getForManager(input.subscriptionId, input.managedByNpub);
+    if (!record) {
+      throw Object.assign(new Error('Subscription not found'), { statusCode: 404 });
+    }
+    if (!this.dispatchPipelineRuntime) {
+      throw Object.assign(new Error('Dispatch pipelines are not available'), { statusCode: 503 });
+    }
+    return this.dispatchPipelineRuntime.saveRoute({
+      ...input,
+      managedByNpub: input.managedByNpub,
+      workspaceOwnerNpub: record.workspaceOwnerNpub,
+      botNpub: record.botNpub,
+      sourceAppNpub: record.sourceAppNpub,
+    });
+  }
+
+  deleteDispatchRouteForManager(routeId: string, npub: string): boolean {
+    if (!this.dispatchPipelineRuntime) {
+      return false;
+    }
+    return this.dispatchPipelineRuntime.deleteRouteForManager(routeId, npub);
   }
 
   private normaliseAgentCapabilities(
@@ -1178,6 +1232,63 @@ export class WorkspaceSubscriptionManager {
           record_id: recordId,
           channel_id: chatMessage.channel_id ?? null,
         });
+        if (this.dispatchPipelineRuntime) {
+          try {
+            const routingContext = await this.routingEvaluator.buildDispatchContext({
+              subscription: record,
+              wsSession: runtime.wsSession,
+              groupKeys: runtime.groupKeys,
+              chatRecordId: recordId,
+              chatRecord: latest,
+              chatMessage,
+            });
+            const pipelineResult = await this.dispatchPipelineRuntime.dispatch({
+              subscription: record,
+              triggerKind: 'chat',
+              capability: 'chat_intercept',
+              recordId,
+              record: latest,
+              payload: chatMessage,
+              recordFamily: 'chat',
+              recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
+              recordVersion: typeof latest.version === 'number' ? latest.version : Number(latest.version ?? 0),
+              updaterNpub: routingContext.updaterNpub,
+              bindingType: 'thread',
+              bindingId: routingContext.threadId,
+              channelId: routingContext.channelId,
+              threadId: routingContext.threadId,
+              changedFields: [],
+              groupNpubs: routingContext.messageGroupNpubs,
+            });
+            if (pipelineResult.handled) {
+              record.lastRoutingResult = buildSuccessDiagnostic('Chat dispatch pipeline route evaluated.', {
+                subscription_id: record.subscriptionId,
+                record_id: recordId,
+                route_ids: pipelineResult.historyEntries.map((entry) => entry.routeId).filter(Boolean),
+                pipeline_run_ids: pipelineResult.historyEntries.map((entry) => entry.pipelineRunId).filter(Boolean),
+              });
+              record.lastErrorCode = null;
+              record.lastErrorAt = null;
+              this.clearRuntimeFailure(record.subscriptionId, 'chat_pipeline_dispatched');
+              return this.applyDispatchPipelineResult(record, pipelineResult);
+            }
+          } catch (pipelineError) {
+            record = this.appendDispatchHistory(record, {
+              at: new Date().toISOString(),
+              kind: 'chat',
+              action: 'chat_pipeline_failed',
+              agentId: 'pipeline',
+              sessionId: null,
+              recordId,
+              bindingId: recordId,
+              bindingType: 'thread',
+              status: 'failed',
+              details: {
+                diagnostic_summary: pipelineError instanceof Error ? pipelineError.message : String(pipelineError),
+              },
+            });
+          }
+        }
         const routingResult = await this.routingEvaluator.evaluate({
           subscription: record,
           wsSession: runtime.wsSession,
@@ -1367,10 +1478,6 @@ export class WorkspaceSubscriptionManager {
     record: WorkspaceSubscriptionRecord,
     payload: Record<string, unknown>,
   ): Promise<WorkspaceSubscriptionRecord> {
-    if (!this.agentWorkRuntime) {
-      return record;
-    }
-
     const recordId = typeof payload.record_id === 'string' ? payload.record_id : '';
     if (!recordId) {
       return record;
@@ -1420,6 +1527,35 @@ export class WorkspaceSubscriptionManager {
         : task.state === 'review' && task.flowRunId
           ? 'task_review'
           : 'task_dispatch';
+      if (this.dispatchPipelineRuntime) {
+        const triggerKind = dispatchMode === 'flow_dispatch'
+          ? 'flow'
+          : dispatchMode === 'task_review'
+            ? 'task_review'
+            : 'task';
+        const pipelineResult = await this.dispatchPipelineRuntime.dispatch({
+          subscription: record,
+          triggerKind,
+          capability: dispatchMode,
+          recordId,
+          record: latest,
+          payload: decrypted,
+          recordFamily: 'task',
+          recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
+          recordVersion: typeof latest.version === 'number' ? latest.version : Number(latest.version ?? 0),
+          updaterNpub,
+          bindingType: dispatchMode === 'task_dispatch' && task.flowRunId ? 'flow_run' : 'task',
+          bindingId: dispatchMode === 'flow_dispatch' ? task.taskId : (task.flowRunId ?? task.taskId),
+          changedFields,
+          groupNpubs: [],
+        });
+        if (pipelineResult.handled) {
+          return this.applyDispatchPipelineResult(record, pipelineResult);
+        }
+      }
+      if (!this.agentWorkRuntime) {
+        return record;
+      }
       const taskAgents = this.listTaskDispatchAgents(record, dispatchMode);
       if (taskAgents.length === 0) {
         return record;
@@ -2188,6 +2324,20 @@ export class WorkspaceSubscriptionManager {
       MAX_RECENT_DISPATCHES,
     );
     return this.saveRecord(record);
+  }
+
+  private applyDispatchPipelineResult(
+    record: WorkspaceSubscriptionRecord,
+    result: DispatchPipelineRuntimeResult,
+  ): WorkspaceSubscriptionRecord {
+    for (const entry of result.historyEntries) {
+      record = this.appendDispatchHistory(record, entry);
+    }
+    if (result.lastPipelineRunId) {
+      record.lastPipelineRunId = result.lastPipelineRunId;
+      return this.saveRecord(record);
+    }
+    return record;
   }
 
   private markRuntimeFailure(subscriptionId: string, detailCode: string | null, reason: string): void {

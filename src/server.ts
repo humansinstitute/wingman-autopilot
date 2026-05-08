@@ -85,6 +85,7 @@ import { createBotKeyApiHandler } from "./identity/bot-key-api";
 import { createBotCryptoApiHandler } from "./identity/bot-crypto-api";
 import { generateBotKey, clearBotKey, isBotKeyUnlocked, storeBotKeyInMemory, unlockViaEscrow } from "./identity/bot-key-manager";
 import { WorkspaceSubscriptionManager } from './agent-chat/subscription-runtime';
+import { DispatchPipelineRuntime } from './agent-chat/dispatch-pipelines/runtime';
 import { AgentCommentSessionRuntime } from './agent-chat/comment-session-runtime';
 import { AgentChatSessionRuntime } from './agent-chat/session-runtime';
 import { AgentWorkSessionRuntime } from './agent-work/session-runtime';
@@ -557,6 +558,7 @@ const gitWorkflowApiHandler = createGitWorkflowApiHandler({
 const workspaceSubscriptionManager = new WorkspaceSubscriptionManager({
   botKeyStore,
 });
+let sessionApiContextRef: SessionApiContext | null = null;
 
 const APPROVED_WORK_ROLES = new Set(["approved", "onboard"]);
 
@@ -2295,6 +2297,12 @@ const sessionApiContext: SessionApiContext = {
   workspaceDelegationStore,
   AccessActions,
 };
+sessionApiContextRef = sessionApiContext;
+workspaceSubscriptionManager.setDispatchPipelineRuntime(new DispatchPipelineRuntime({
+  pipelineStore,
+  getSessionApiContext: () => sessionApiContextRef,
+  callbackOrigin: `http://127.0.0.1:${config.port}`,
+}));
 
 void resumeRunningPipelineRuns({
   store: pipelineStore,

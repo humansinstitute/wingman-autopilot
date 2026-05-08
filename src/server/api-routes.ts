@@ -423,7 +423,13 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
       }
       return Response.json({ error: "Not found" }, { status: 404 });
     }
-    if (pathname.startsWith('/api/agent-chat/subscriptions') || pathname.startsWith('/api/agent-chat/agents')) {
+    if (
+      pathname.startsWith('/api/agent-chat/subscriptions')
+      || pathname.startsWith('/api/agent-chat/agents')
+      || pathname.startsWith('/api/agent-chat/backend-connections')
+      || pathname.startsWith('/api/agent-chat/agent-connect')
+      || pathname.startsWith('/api/agent-chat/dispatch-routes')
+    ) {
       const agentChatAuthContext = ctx.resolveNip98AuthContext(request, url, authContext);
       const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, agentChatAuthContext);
       if (denied) {
@@ -432,7 +438,13 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
       if (!ctx.agentChatApiContext) {
         return Response.json({ error: 'agent-chat-unavailable' }, { status: 503 });
       }
-      const response = await handleAgentChatApi(request, url, method === 'GET' || method === 'POST' || method === 'DELETE' ? method : 'GET', agentChatAuthContext, ctx.agentChatApiContext);
+      const response = await handleAgentChatApi(
+        request,
+        url,
+        method === 'GET' || method === 'POST' || method === 'PATCH' || method === 'DELETE' ? method : 'GET',
+        agentChatAuthContext,
+        ctx.agentChatApiContext,
+      );
       if (response) {
         return response;
       }

@@ -11,6 +11,8 @@ export type AgentCapability =
   | 'flow_dispatch'
   | 'task_review'
   | 'approval_dispatch';
+export type DispatchTriggerKind = 'chat' | 'task' | 'flow' | 'task_review' | 'approval' | 'comment';
+export type DispatchActivePolicy = 'skip' | 'queue' | 'start_new';
 export type AgentInterceptDecision = 'respond' | 'ignore' | 'pending' | 'failed';
 export type ChatInterceptStateStatus =
   | 'pending'
@@ -69,9 +71,55 @@ export interface AgentChatDispatchHistoryEntry {
   agentId: string;
   sessionId: string | null;
   recordId: string | null;
+  routeId?: string | null;
+  pipelineRunId?: string | null;
+  status?: string | null;
+  concurrencyKey?: string | null;
+  dedupeKey?: string | null;
+  dedupeReason?: string | null;
+  suppressionReason?: string | null;
   bindingId?: string | null;
   bindingType?: 'chat' | 'task' | 'flow_run' | 'flow_orchestration' | 'thread' | null;
   details?: Record<string, unknown> | null;
+}
+
+export interface DispatchRouteRecord {
+  routeId: string;
+  managedByNpub: string;
+  subscriptionId: string;
+  workspaceOwnerNpub: string;
+  botNpub: string;
+  sourceAppNpub: string;
+  triggerKind: DispatchTriggerKind;
+  capability: AgentCapability;
+  pipelineDefinitionId: string;
+  enabled: boolean;
+  priority: number;
+  matchJson: Record<string, unknown>;
+  inputTemplateJson: Record<string, unknown>;
+  concurrencyKeyTemplate: string;
+  activePolicy: DispatchActivePolicy;
+  dedupeWindowSeconds: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateDispatchRouteInput {
+  managedByNpub: string;
+  subscriptionId: string;
+  workspaceOwnerNpub: string;
+  botNpub: string;
+  sourceAppNpub: string;
+  triggerKind: DispatchTriggerKind;
+  capability: AgentCapability;
+  pipelineDefinitionId: string;
+  enabled?: boolean;
+  priority?: number;
+  matchJson?: Record<string, unknown>;
+  inputTemplateJson?: Record<string, unknown>;
+  concurrencyKeyTemplate?: string;
+  activePolicy?: DispatchActivePolicy;
+  dedupeWindowSeconds?: number;
 }
 
 export interface WorkspaceSubscriptionRecord {

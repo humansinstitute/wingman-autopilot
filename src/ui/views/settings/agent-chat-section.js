@@ -3,13 +3,16 @@ import {
   deleteAgentChatAgent,
   deleteAgentChatSubscription,
   importAgentConnectPackage,
+  listAgentChatDispatchRoutes,
   listAgentChatAgents,
   listAgentChatSubscriptions,
   runAgentChatSubscriptionAction,
   saveAgentChatAgent,
+  saveAgentChatDispatchRoute,
   saveAgentChatSubscription,
 } from '../../services/agent-chat.js';
 import { fetchSessionsApi } from '../../services/sessions.js';
+import { fetchPipelineDefinitions } from '../../pipelines/api.js';
 import { createAgentRegistryPanel } from './agent-chat-agent-cards.js';
 import {
   createAgentChatOverview,
@@ -27,21 +30,28 @@ import {
   createStatusLine,
   setPanelVisible,
 } from './agent-chat-shared-ui.js';
-import { createAgentDispatchSetupCards } from './agent-chat-setup-cards.js';
+import { createAgentDispatchSetupCards, createDispatchPipelineRouteCards } from './agent-chat-setup-cards.js';
 import { createAgentConnectImportCard } from './agent-chat-connect-import-card.js';
 
 async function loadOperatorState() {
-  const [subscriptions, agentPayload, sessionPayload] = await Promise.all([
+  const [subscriptions, agentPayload, sessionPayload, definitionPayload] = await Promise.all([
     listAgentChatSubscriptions(),
     listAgentChatAgents(),
     fetchSessionsApi(),
+    fetchPipelineDefinitions().catch(() => ({ definitions: [] })),
   ]);
   const allSessions = Array.isArray(sessionPayload?.sessions) ? sessionPayload.sessions : [];
+  const primarySubscription = subscriptions[0] ?? null;
+  const dispatchRoutes = primarySubscription
+    ? await listAgentChatDispatchRoutes(primarySubscription.subscriptionId).catch(() => [])
+    : [];
   return {
     subscriptions,
     agents: Array.isArray(agentPayload?.agents) ? agentPayload.agents : [],
     defaults: agentPayload?.defaults && typeof agentPayload.defaults === 'object' ? agentPayload.defaults : {},
     chatSessions: filterAgentChatSessions(allSessions),
+    dispatchRoutes,
+    pipelineDefinitions: Array.isArray(definitionPayload?.definitions) ? definitionPayload.definitions : [],
   };
 }
 
@@ -291,7 +301,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
     sessionContainer.replaceChildren();
 
     try {
-      const { subscriptions, agents, defaults, chatSessions } = await loadOperatorState();
+      const { subscriptions, agents, defaults, chatSessions, dispatchRoutes, pipelineDefinitions } = await loadOperatorState();
       promptDefaults = {
         chatPromptTemplate: typeof defaults.chatPromptTemplate === 'string' ? defaults.chatPromptTemplate : promptDefaults.chatPromptTemplate,
         taskPromptTemplate: typeof defaults.taskPromptTemplate === 'string' ? defaults.taskPromptTemplate : promptDefaults.taskPromptTemplate,
@@ -327,6 +337,16 @@ export function createAgentChatSection({ standalone = false } = {}) {
               statusLine.textContent = 'Agent Dispatch view refreshed.';
             }
           });
+        },
+      }));
+      configuredDispatchesContainer.append(createDispatchPipelineRouteCards({
+        subscription: primarySubscription,
+        routes: dispatchRoutes,
+        definitions: pipelineDefinitions,
+        onSaveRoute: async (input) => {
+          const route = await saveAgentChatDispatchRoute(input);
+          await refreshList();
+          return route;
         },
       }));
       agentConnectImportContainer.append(createAgentConnectImportCard({
