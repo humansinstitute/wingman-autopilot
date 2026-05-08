@@ -3,6 +3,7 @@ export type GroupKeyStatus = 'pending' | 'active' | 'refresh_required' | 'revoke
 export type SseStatus = 'disconnected' | 'connecting' | 'connected' | 'backoff' | 'disabled';
 export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy';
 export type BackendConnectionSharePolicy = 'private' | 'selected_users' | 'shared_service';
+export type BackendConnectionGrantKind = 'manager_npub' | 'shared_service';
 export type AgentCapability =
   | 'chat_intercept'
   | 'task_dispatch'
@@ -49,6 +50,14 @@ export interface BackendConnectionRecord {
   sharePolicy: BackendConnectionSharePolicy;
   healthStatus: HealthStatus;
   lastHealthResult: AgentChatDiagnostic | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BackendConnectionGrantRecord {
+  backendConnectionId: string;
+  grantKind: BackendConnectionGrantKind;
+  granteeNpub: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -152,6 +161,7 @@ export interface CreateWorkspaceSubscriptionInput {
   backendBaseUrl: string;
   sourceAppNpub: string;
   backendConnectionId?: string | null;
+  backendConnectionGrantKind?: BackendConnectionGrantKind | null;
   connectionTokenRef?: string | null;
   agentProfileId?: string | null;
   sourceAppSchemaNamespace?: string | null;

@@ -162,6 +162,15 @@ function getAgentChatErrorStatus(error: unknown, fallback: number): number {
     : fallback;
 }
 
+function getOptionalStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+    .filter((entry) => entry.length > 0);
+}
+
 export async function handleAgentChatApi(
   request: Request,
   url: URL,
@@ -232,6 +241,8 @@ export async function handleAgentChatApi(
     const agentProfileId = typeof body.agentProfileId === 'string' && body.agentProfileId.trim().length > 0
       ? body.agentProfileId.trim()
       : null;
+    const allowedManagerNpubs = getOptionalStringArray(body.allowedManagerNpubs);
+    const grantSharedService = body.grantSharedService === true;
 
     if (!rawPackage) {
       return Response.json({ error: 'packageJson or package is required.' }, { status: 400 });
@@ -242,6 +253,8 @@ export async function handleAgentChatApi(
         managedByNpub: viewerNpub,
         packageJson: rawPackage,
         agentProfileId,
+        allowedManagerNpubs,
+        grantSharedService,
       });
       return Response.json({
         backendConnection: serialiseBackendConnection(imported.backendConnection),
@@ -271,6 +284,9 @@ export async function handleAgentChatApi(
     const backendConnectionId = typeof body.backendConnectionId === 'string' && body.backendConnectionId.trim().length > 0
       ? body.backendConnectionId.trim()
       : null;
+    const backendConnectionGrantKind = body.backendConnectionGrantKind === 'shared_service'
+      ? 'shared_service'
+      : null;
     const triggerConfigRecordId = typeof body.triggerConfigRecordId === 'string' && body.triggerConfigRecordId.trim().length > 0
       ? body.triggerConfigRecordId.trim()
       : null;
@@ -292,6 +308,7 @@ export async function handleAgentChatApi(
         backendBaseUrl,
         sourceAppNpub,
         backendConnectionId,
+        backendConnectionGrantKind,
         agentProfileId,
         triggerConfigRecordId,
       });

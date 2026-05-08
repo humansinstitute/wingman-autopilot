@@ -89,6 +89,11 @@ export class WorkspaceSubscriptionAccessError extends Error {
   readonly code = 'backend_connection_forbidden';
 }
 
+export class BackendConnectionNotFoundError extends Error {
+  readonly statusCode = 404;
+  readonly code = 'backend_connection_not_found';
+}
+
 function trimRecentEntries<T>(entries: T[], max: number): T[] {
   return entries.slice(-max);
 }
@@ -277,13 +282,25 @@ function mapFailureState(detailCode: string | null): RuntimeFailureState {
   }
 }
 
-function canUseBackendConnection(record: BackendConnectionRecord, managedByNpub: string): boolean {
+function canUseBackendConnection(
+  record: BackendConnectionRecord,
+  managedByNpub: string,
+  backendStore: BackendConnectionStore,
+  grantKind: CreateWorkspaceSubscriptionInput['backendConnectionGrantKind'] = null,
+): boolean {
   if (record.managedByNpub === managedByNpub) {
     return true;
   }
 
-  // Share policies are closed until the record model has explicit grant fields
-  // that identify which manager npubs may use the backend connection.
+  if (record.sharePolicy === 'selected_users') {
+    return backendStore.hasManagerGrant(record.backendConnectionId, managedByNpub);
+  }
+
+  if (record.sharePolicy === 'shared_service') {
+    return grantKind === 'shared_service'
+      && backendStore.hasSharedServiceGrant(record.backendConnectionId);
+  }
+
   return false;
 }
 
@@ -343,7 +360,7 @@ export class WorkspaceSubscriptionManager {
   }
 
   listBackendConnectionsForManager(npub: string) {
-    return this.backendStore.listForManagerNpub(npub);
+    return this.backendStore.listAvailableForManagerNpub(npub);
   }
 
   getAgentForManager(agentId: string, npub: string): AgentDefinitionRecord | null {
@@ -455,6 +472,8 @@ export class WorkspaceSubscriptionManager {
     managedByNpub: string;
     packageJson: string | Record<string, unknown>;
     agentProfileId?: string | null;
+    allowedManagerNpubs?: string[];
+    grantSharedService?: boolean;
   }): Promise<{
     backendConnection: BackendConnectionRecord;
     subscription: WorkspaceSubscriptionRecord;
@@ -468,7 +487,7 @@ export class WorkspaceSubscriptionManager {
       managedByNpub: input.managedByNpub,
       packageJson: input.packageJson,
     });
-    const backendConnection = await this.createOrReuseBackendConnection({
+    let backendConnection = await this.createOrReuseBackendConnection({
       managedByNpub: input.managedByNpub,
       backendBaseUrl: validation.service.directHttpsUrl,
       serviceNpub: validation.service.serviceNpub,
@@ -478,6 +497,14 @@ export class WorkspaceSubscriptionManager {
       healthUrl: validation.service.healthUrl,
       supportedVersion: validation.supportedVersion,
     });
+    if (input.allowedManagerNpubs || input.grantSharedService !== undefined) {
+      this.backendStore.replaceAvailabilityGrants({
+        backendConnectionId: backendConnection.backendConnectionId,
+        managerNpubs: input.allowedManagerNpubs ?? [],
+        sharedService: input.grantSharedService === true,
+      });
+      backendConnection = this.backendStore.getById(backendConnection.backendConnectionId) ?? backendConnection;
+    }
     const importResult = buildAgentConnectImportResult(validation, backendConnection);
     const subscription = await this.createOrUpdate({
       ...importResult.subscriptionInput,
@@ -528,9 +555,17 @@ export class WorkspaceSubscriptionManager {
           backendBaseUrl,
         });
     if (input.backendConnectionId && !backendConnection) {
-      throw new Error(`Backend connection ${input.backendConnectionId} was not found.`);
+      throw new BackendConnectionNotFoundError(`Backend connection ${input.backendConnectionId} was not found.`);
     }
-    if (backendConnection && !canUseBackendConnection(backendConnection, input.managedByNpub)) {
+    if (
+      backendConnection
+      && !canUseBackendConnection(
+        backendConnection,
+        input.managedByNpub,
+        this.backendStore,
+        input.backendConnectionGrantKind ?? null,
+      )
+    ) {
       throw new WorkspaceSubscriptionAccessError(
         `Backend connection ${backendConnection.backendConnectionId} is not available to this manager.`,
       );

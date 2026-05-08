@@ -331,8 +331,8 @@ export function createAgentChatSection({ standalone = false } = {}) {
       }));
       agentConnectImportContainer.append(createAgentConnectImportCard({
         agents,
-        onImport: async ({ packageJson, agentProfileId }) => {
-          const payload = await importAgentConnectPackage({ packageJson, agentProfileId });
+        onImport: async (input) => {
+          const payload = await importAgentConnectPackage(input);
           statusLine.textContent = 'Agent Connect package imported.';
           await refreshList();
           return payload;

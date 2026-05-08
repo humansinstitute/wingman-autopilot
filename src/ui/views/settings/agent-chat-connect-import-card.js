@@ -1,6 +1,7 @@
 import {
   createButton,
   createCard,
+  createCheckbox,
   createInlineActions,
   createStatusLine,
   createTextarea,
@@ -48,6 +49,13 @@ function formatImportSummary(payload) {
   return `Imported ${workspace} for ${bot}. Backend health is ${backendStatus}.`;
 }
 
+function parseManagerNpubs(value) {
+  return value
+    .split(/[\s,]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 export function createAgentConnectImportCard({
   agents = [],
   onImport,
@@ -64,6 +72,17 @@ export function createAgentConnectImportCard({
     '{ "kind": "coworker_agent_connect", ... }',
     'agent-connect-json',
     8,
+  );
+  const allowedUsersField = createTextarea(
+    'Available to manager NPUBs',
+    'npub1..., npub1...',
+    'agent-connect-allowed-manager-npubs',
+    3,
+  );
+  const sharedServiceField = createCheckbox(
+    'Make available to explicit shared service agent',
+    'agent-connect-shared-service-grant',
+    false,
   );
   const statusLine = createStatusLine();
   statusLine.setAttribute('data-testid', 'agent-connect-import-status');
@@ -90,9 +109,17 @@ export function createAgentConnectImportCard({
     importButton.disabled = true;
     statusLine.textContent = 'Importing Agent Connect package...';
     try {
-      const payload = await onImport?.({ packageJson, agentProfileId });
+      const allowedManagerNpubs = parseManagerNpubs(allowedUsersField.input.value);
+      const payload = await onImport?.({
+        packageJson,
+        agentProfileId,
+        allowedManagerNpubs,
+        grantSharedService: sharedServiceField.input.checked,
+      });
       statusLine.textContent = formatImportSummary(payload);
       packageField.input.value = '';
+      allowedUsersField.input.value = '';
+      sharedServiceField.input.checked = false;
     } catch (error) {
       statusLine.textContent = error instanceof Error ? error.message : 'Agent Connect import failed.';
     } finally {
@@ -103,6 +130,8 @@ export function createAgentConnectImportCard({
   card.append(
     agentSelect.row,
     packageField.row,
+    allowedUsersField.row,
+    sharedServiceField.row,
     createInlineActions(importButton),
     statusLine,
   );

@@ -308,6 +308,117 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(store.listForManagerNpub('npub1manager')).toHaveLength(0);
   });
 
+  test('allows a selected user grant to create a subscription on a managed backend connection', async () => {
+    const dbPath = makeTempDb();
+    const botKeys = new Map([['npub1botone', makeBotKeyRecord('npub1botone')]]);
+    const { manager, agentStore, backendStore } = createTestManager(dbPath, botKeys);
+    saveAgent(agentStore, { agentId: 'wm-one', botNpub: 'npub1botone', managedByNpub: 'npub1manager' });
+    const sharedBackend = saveBackendConnection(backendStore, {
+      managedByNpub: 'npub1owner',
+      backendBaseUrl: 'https://shared-tower.example.com',
+    });
+    backendStore.replaceAvailabilityGrants({
+      backendConnectionId: sharedBackend.backendConnectionId,
+      managerNpubs: ['npub1manager'],
+    });
+
+    const subscription = await manager.createOrUpdate({
+      managedByNpub: 'npub1manager',
+      workspaceOwnerNpub: 'npub1workspace',
+      backendBaseUrl: 'https://ignored-input.example.com',
+      sourceAppNpub: 'npub1sourceapp',
+      backendConnectionId: sharedBackend.backendConnectionId,
+      agentProfileId: 'wm-one',
+    });
+
+    expect(subscription.backendConnectionId).toBe(sharedBackend.backendConnectionId);
+    expect(subscription.backendBaseUrl).toBe('https://shared-tower.example.com');
+    expect(manager.listBackendConnectionsForManager('npub1manager').map((record) => record.backendConnectionId))
+      .toContain(sharedBackend.backendConnectionId);
+  });
+
+  test('rejects an unlisted user for a selected-users backend connection', async () => {
+    const dbPath = makeTempDb();
+    const botKeys = new Map([['npub1botone', makeBotKeyRecord('npub1botone')]]);
+    const { manager, agentStore, backendStore, store } = createTestManager(dbPath, botKeys);
+    saveAgent(agentStore, { agentId: 'wm-one', botNpub: 'npub1botone', managedByNpub: 'npub1manager' });
+    const sharedBackend = saveBackendConnection(backendStore, {
+      managedByNpub: 'npub1owner',
+      backendBaseUrl: 'https://selected-tower.example.com',
+    });
+    backendStore.replaceAvailabilityGrants({
+      backendConnectionId: sharedBackend.backendConnectionId,
+      managerNpubs: ['npub1anothermanager'],
+    });
+
+    await expect(manager.createOrUpdate({
+      managedByNpub: 'npub1manager',
+      workspaceOwnerNpub: 'npub1workspace',
+      backendBaseUrl: 'https://ignored-input.example.com',
+      sourceAppNpub: 'npub1sourceapp',
+      backendConnectionId: sharedBackend.backendConnectionId,
+      agentProfileId: 'wm-one',
+    })).rejects.toThrow('is not available to this manager');
+
+    expect(store.listForManagerNpub('npub1manager')).toHaveLength(0);
+  });
+
+  test('requires the explicit shared-service marker to use a shared-service backend grant', async () => {
+    const dbPath = makeTempDb();
+    const botKeys = new Map([['npub1botone', makeBotKeyRecord('npub1botone')]]);
+    const { manager, agentStore, backendStore } = createTestManager(dbPath, botKeys);
+    saveAgent(agentStore, { agentId: 'wm-one', botNpub: 'npub1botone', managedByNpub: 'npub1manager' });
+    const sharedServiceBackend = saveBackendConnection(backendStore, {
+      managedByNpub: 'npub1owner',
+      backendBaseUrl: 'https://service-tower.example.com',
+    });
+    backendStore.replaceAvailabilityGrants({
+      backendConnectionId: sharedServiceBackend.backendConnectionId,
+      sharedService: true,
+    });
+
+    await expect(manager.createOrUpdate({
+      managedByNpub: 'npub1manager',
+      workspaceOwnerNpub: 'npub1workspace',
+      backendBaseUrl: 'https://ignored-input.example.com',
+      sourceAppNpub: 'npub1sourceapp',
+      backendConnectionId: sharedServiceBackend.backendConnectionId,
+      agentProfileId: 'wm-one',
+    })).rejects.toThrow('is not available to this manager');
+
+    const subscription = await manager.createOrUpdate({
+      managedByNpub: 'npub1manager',
+      workspaceOwnerNpub: 'npub1workspace',
+      backendBaseUrl: 'https://ignored-input.example.com',
+      sourceAppNpub: 'npub1sourceapp',
+      backendConnectionId: sharedServiceBackend.backendConnectionId,
+      backendConnectionGrantKind: 'shared_service',
+      agentProfileId: 'wm-one',
+    });
+
+    expect(subscription.backendConnectionId).toBe(sharedServiceBackend.backendConnectionId);
+    expect(subscription.backendBaseUrl).toBe('https://service-tower.example.com');
+  });
+
+  test('reports missing backend connection ids as not found', async () => {
+    const dbPath = makeTempDb();
+    const botKeys = new Map([['npub1botone', makeBotKeyRecord('npub1botone')]]);
+    const { manager, agentStore } = createTestManager(dbPath, botKeys);
+    saveAgent(agentStore, { agentId: 'wm-one', botNpub: 'npub1botone', managedByNpub: 'npub1manager' });
+
+    await expect(manager.createOrUpdate({
+      managedByNpub: 'npub1manager',
+      workspaceOwnerNpub: 'npub1workspace',
+      backendBaseUrl: 'https://tower.example.com',
+      sourceAppNpub: 'npub1sourceapp',
+      backendConnectionId: 'missing-backend',
+      agentProfileId: 'wm-one',
+    })).rejects.toMatchObject({
+      code: 'backend_connection_not_found',
+      statusCode: 404,
+    });
+  });
+
   test('creates a subscription that references an owned backend connection', async () => {
     const dbPath = makeTempDb();
     const botKeys = new Map([['npub1botone', makeBotKeyRecord('npub1botone')]]);

@@ -6,7 +6,7 @@ import { Database } from 'bun:sqlite';
 import type { SQLQueryBindings } from 'bun:sqlite';
 
 import { databaseFile } from '../storage/message-store';
-import type { BackendConnectionRecord } from './types';
+import type { BackendConnectionGrantRecord, BackendConnectionRecord } from './types';
 
 const DEFAULT_DB_PATH = databaseFile;
 
@@ -52,6 +52,26 @@ class BackendConnectionStore {
 
   listForManagerNpub(npub: string): BackendConnectionRecord[] {
     return this.listWhere('managed_by_npub = ?1', [npub]);
+  }
+
+  listAvailableForManagerNpub(npub: string): BackendConnectionRecord[] {
+    return this.db
+      .query(
+        `SELECT DISTINCT
+           b.backend_connection_id, b.managed_by_npub, b.backend_base_url, b.service_npub,
+           b.relay_urls_json, b.openapi_url, b.docs_url, b.health_url, b.supported_version,
+           b.share_policy, b.health_status, b.last_health_result_json, b.created_at, b.updated_at
+         FROM backend_connections b
+         LEFT JOIN backend_connection_grants g
+           ON g.backend_connection_id = b.backend_connection_id
+          AND g.grant_kind = 'manager_npub'
+          AND g.grantee_npub = ?1
+          AND b.share_policy = 'selected_users'
+         WHERE b.managed_by_npub = ?1 OR g.grantee_npub = ?1
+         ORDER BY b.updated_at DESC`,
+      )
+      .all(npub)
+      .map((row) => this.mapRow(row as Record<string, string | null>));
   }
 
   getById(backendConnectionId: string): BackendConnectionRecord | null {
@@ -150,6 +170,123 @@ class BackendConnectionStore {
     return this.getById(record.backendConnectionId) ?? record;
   }
 
+  listGrants(backendConnectionId: string): BackendConnectionGrantRecord[] {
+    return this.db
+      .query(
+        `SELECT backend_connection_id, grant_kind, grantee_npub, created_at, updated_at
+         FROM backend_connection_grants
+         WHERE backend_connection_id = ?1
+         ORDER BY grant_kind ASC, grantee_npub ASC`,
+      )
+      .all(backendConnectionId)
+      .map((row) => this.mapGrantRow(row as Record<string, string | null>));
+  }
+
+  grantToManager(backendConnectionId: string, granteeNpub: string): BackendConnectionGrantRecord {
+    return this.saveGrant({
+      backendConnectionId,
+      grantKind: 'manager_npub',
+      granteeNpub,
+    });
+  }
+
+  grantToSharedService(backendConnectionId: string): BackendConnectionGrantRecord {
+    return this.saveGrant({
+      backendConnectionId,
+      grantKind: 'shared_service',
+      granteeNpub: null,
+    });
+  }
+
+  replaceAvailabilityGrants(input: {
+    backendConnectionId: string;
+    managerNpubs?: string[];
+    sharedService?: boolean;
+  }): BackendConnectionGrantRecord[] {
+    const managerNpubs = Array.from(new Set((input.managerNpubs ?? [])
+      .map((npub) => npub.trim())
+      .filter((npub) => npub.length > 0)));
+    this.db
+      .query('DELETE FROM backend_connection_grants WHERE backend_connection_id = ?1')
+      .run(input.backendConnectionId);
+    for (const granteeNpub of managerNpubs) {
+      this.grantToManager(input.backendConnectionId, granteeNpub);
+    }
+    if (input.sharedService) {
+      this.grantToSharedService(input.backendConnectionId);
+    }
+    const record = this.getById(input.backendConnectionId);
+    if (record) {
+      this.save({
+        ...record,
+        sharePolicy: input.sharedService
+          ? 'shared_service'
+          : managerNpubs.length > 0
+            ? 'selected_users'
+            : 'private',
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    return this.listGrants(input.backendConnectionId);
+  }
+
+  hasManagerGrant(backendConnectionId: string, granteeNpub: string): boolean {
+    const row = this.db
+      .query(
+        `SELECT 1
+         FROM backend_connection_grants
+         WHERE backend_connection_id = ?1
+           AND grant_kind = 'manager_npub'
+           AND grantee_npub = ?2
+         LIMIT 1`,
+      )
+      .get(backendConnectionId, granteeNpub);
+    return Boolean(row);
+  }
+
+  hasSharedServiceGrant(backendConnectionId: string): boolean {
+    const row = this.db
+      .query(
+        `SELECT 1
+         FROM backend_connection_grants
+         WHERE backend_connection_id = ?1
+           AND grant_kind = 'shared_service'
+         LIMIT 1`,
+      )
+      .get(backendConnectionId);
+    return Boolean(row);
+  }
+
+  private saveGrant(input: {
+    backendConnectionId: string;
+    grantKind: BackendConnectionGrantRecord['grantKind'];
+    granteeNpub: string | null;
+  }): BackendConnectionGrantRecord {
+    const now = new Date().toISOString();
+    this.db.query(
+      `INSERT INTO backend_connection_grants (
+         backend_connection_id, grant_kind, grantee_npub, created_at, updated_at
+       ) VALUES (
+         ?1, ?2, ?3, ?4, ?5
+       )
+       ON CONFLICT(backend_connection_id, grant_kind, grantee_npub) DO UPDATE SET
+         updated_at = excluded.updated_at`,
+    ).run(
+      input.backendConnectionId,
+      input.grantKind,
+      input.granteeNpub ?? '',
+      now,
+      now,
+    );
+    return {
+      backendConnectionId: input.backendConnectionId,
+      grantKind: input.grantKind,
+      granteeNpub: input.grantKind === 'shared_service' ? null : input.granteeNpub,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
   private listWhere(whereClause: string, args: SQLQueryBindings[]): BackendConnectionRecord[] {
     return this.db
       .query(
@@ -199,6 +336,17 @@ class BackendConnectionStore {
     };
   }
 
+  private mapGrantRow(row: Record<string, string | null>): BackendConnectionGrantRecord {
+    const grantKind = row.grant_kind as BackendConnectionGrantRecord['grantKind'];
+    return {
+      backendConnectionId: row.backend_connection_id!,
+      grantKind,
+      granteeNpub: grantKind === 'shared_service' ? null : row.grantee_npub,
+      createdAt: row.created_at!,
+      updatedAt: row.updated_at!,
+    };
+  }
+
   private initialise() {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS backend_connections (
@@ -223,6 +371,21 @@ class BackendConnectionStore {
 
       CREATE UNIQUE INDEX IF NOT EXISTS idx_backend_connections_manager_service
         ON backend_connections(managed_by_npub, backend_base_url, service_npub);
+
+      CREATE TABLE IF NOT EXISTS backend_connection_grants (
+        backend_connection_id TEXT NOT NULL,
+        grant_kind TEXT NOT NULL,
+        grantee_npub TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (backend_connection_id, grant_kind, grantee_npub),
+        FOREIGN KEY (backend_connection_id)
+          REFERENCES backend_connections(backend_connection_id)
+          ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_backend_connection_grants_grantee
+        ON backend_connection_grants(grantee_npub, backend_connection_id);
     `);
   }
 }
