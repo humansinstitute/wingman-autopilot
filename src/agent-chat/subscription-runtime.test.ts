@@ -11,6 +11,7 @@ import { WorkspaceSubscriptionManager } from './subscription-runtime';
 import { WorkspaceSubscriptionStore } from './workspace-subscription-store';
 import type {
   AgentDefinitionRecord,
+  BackendConnectionRecord,
   BotKeyStoreRecord,
   RuntimeBotIdentity,
   WorkspaceSubscriptionRecord,
@@ -149,6 +150,21 @@ function saveAgent(agentStore: AgentDefinitionStore, input: Partial<AgentDefinit
   });
 }
 
+function saveBackendConnection(
+  backendStore: BackendConnectionStore,
+  input: Partial<BackendConnectionRecord> & { managedByNpub: string },
+): BackendConnectionRecord {
+  return backendStore.save({
+    ...backendStore.createDefault({
+      managedByNpub: input.managedByNpub,
+      backendBaseUrl: input.backendBaseUrl ?? 'https://tower.example.com',
+      serviceNpub: input.serviceNpub ?? 'npub1service',
+      healthUrl: input.healthUrl ?? 'https://tower.example.com/health',
+    }),
+    ...input,
+  });
+}
+
 describe('WorkspaceSubscriptionManager', () => {
   test('derives agent groups from refreshed wrapped group keys when none are supplied', () => {
     const dbPath = makeTempDb();
@@ -271,6 +287,49 @@ describe('WorkspaceSubscriptionManager', () => {
     })).rejects.toThrow('owned by another manager');
 
     expect(backendStore.listForManagerNpub('npub1manager')).toHaveLength(0);
+  });
+
+  test('rejects a subscription that references a foreign backend connection', async () => {
+    const dbPath = makeTempDb();
+    const botKeys = new Map([['npub1botone', makeBotKeyRecord('npub1botone')]]);
+    const { manager, agentStore, backendStore, store } = createTestManager(dbPath, botKeys);
+    saveAgent(agentStore, { agentId: 'wm-one', botNpub: 'npub1botone', managedByNpub: 'npub1manager' });
+    const foreignBackend = saveBackendConnection(backendStore, { managedByNpub: 'npub1othermanager' });
+
+    await expect(manager.createOrUpdate({
+      managedByNpub: 'npub1manager',
+      workspaceOwnerNpub: 'npub1workspace',
+      backendBaseUrl: 'https://tower.example.com',
+      sourceAppNpub: 'npub1sourceapp',
+      backendConnectionId: foreignBackend.backendConnectionId,
+      agentProfileId: 'wm-one',
+    })).rejects.toThrow('is not available to this manager');
+
+    expect(store.listForManagerNpub('npub1manager')).toHaveLength(0);
+  });
+
+  test('creates a subscription that references an owned backend connection', async () => {
+    const dbPath = makeTempDb();
+    const botKeys = new Map([['npub1botone', makeBotKeyRecord('npub1botone')]]);
+    const { manager, agentStore, backendStore } = createTestManager(dbPath, botKeys);
+    saveAgent(agentStore, { agentId: 'wm-one', botNpub: 'npub1botone', managedByNpub: 'npub1manager' });
+    const ownedBackend = saveBackendConnection(backendStore, {
+      managedByNpub: 'npub1manager',
+      backendBaseUrl: 'https://owned-tower.example.com',
+    });
+
+    const subscription = await manager.createOrUpdate({
+      managedByNpub: 'npub1manager',
+      workspaceOwnerNpub: 'npub1workspace',
+      backendBaseUrl: 'https://ignored-input.example.com',
+      sourceAppNpub: 'npub1sourceapp',
+      backendConnectionId: ownedBackend.backendConnectionId,
+      agentProfileId: 'wm-one',
+    });
+
+    expect(subscription.backendConnectionId).toBe(ownedBackend.backendConnectionId);
+    expect(subscription.backendBaseUrl).toBe('https://owned-tower.example.com');
+    expect(subscription.managedByNpub).toBe('npub1manager');
   });
 
   test('persists degraded backend health when Agent Connect has no health URL', async () => {

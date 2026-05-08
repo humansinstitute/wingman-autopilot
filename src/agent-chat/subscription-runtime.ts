@@ -84,6 +84,11 @@ type RuntimeFailureState = 'blocked_auth' | 'blocked_decrypt' | null;
 const MAX_RECENT_SSE_EVENTS = 100;
 const MAX_RECENT_DISPATCHES = 10;
 
+export class WorkspaceSubscriptionAccessError extends Error {
+  readonly statusCode = 403;
+  readonly code = 'backend_connection_forbidden';
+}
+
 function trimRecentEntries<T>(entries: T[], max: number): T[] {
   return entries.slice(-max);
 }
@@ -270,6 +275,16 @@ function mapFailureState(detailCode: string | null): RuntimeFailureState {
     default:
       return null;
   }
+}
+
+function canUseBackendConnection(record: BackendConnectionRecord, managedByNpub: string): boolean {
+  if (record.managedByNpub === managedByNpub) {
+    return true;
+  }
+
+  // Share policies are closed until the record model has explicit grant fields
+  // that identify which manager npubs may use the backend connection.
+  return false;
 }
 
 export class WorkspaceSubscriptionManager {
@@ -515,6 +530,12 @@ export class WorkspaceSubscriptionManager {
     if (input.backendConnectionId && !backendConnection) {
       throw new Error(`Backend connection ${input.backendConnectionId} was not found.`);
     }
+    if (backendConnection && !canUseBackendConnection(backendConnection, input.managedByNpub)) {
+      throw new WorkspaceSubscriptionAccessError(
+        `Backend connection ${backendConnection.backendConnectionId} is not available to this manager.`,
+      );
+    }
+    const subscriptionBackendBaseUrl = backendConnection?.backendBaseUrl ?? backendBaseUrl;
 
     const scopedRecord = this.store.getBySubscriptionScope({
       backendConnectionId: backendConnection?.backendConnectionId ?? null,
@@ -530,7 +551,7 @@ export class WorkspaceSubscriptionManager {
       ?? this.store.createDefault({
         managedByNpub: input.managedByNpub,
         workspaceOwnerNpub: input.workspaceOwnerNpub,
-        backendBaseUrl,
+        backendBaseUrl: subscriptionBackendBaseUrl,
         botNpub: botIdentity.botNpub,
         sourceAppNpub: input.sourceAppNpub,
         backendConnectionId: backendConnection?.backendConnectionId ?? null,
@@ -543,7 +564,7 @@ export class WorkspaceSubscriptionManager {
       });
 
     record.backendConnectionId = backendConnection?.backendConnectionId ?? record.backendConnectionId ?? null;
-    record.backendBaseUrl = backendBaseUrl;
+    record.backendBaseUrl = subscriptionBackendBaseUrl;
     record.sourceAppNpub = input.sourceAppNpub;
     record.connectionTokenRef = input.connectionTokenRef ?? record.connectionTokenRef ?? null;
     record.agentProfileId = agentProfile?.agentId ?? input.agentProfileId ?? record.agentProfileId ?? null;

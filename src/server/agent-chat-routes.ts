@@ -155,6 +155,13 @@ function serialiseSubscription(
   };
 }
 
+function getAgentChatErrorStatus(error: unknown, fallback: number): number {
+  const statusCode = (error as { statusCode?: unknown })?.statusCode;
+  return typeof statusCode === 'number' && statusCode >= 400 && statusCode < 600
+    ? statusCode
+    : fallback;
+}
+
 export async function handleAgentChatApi(
   request: Request,
   url: URL,
@@ -297,7 +304,7 @@ export async function handleAgentChatApi(
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Agent Chat bootstrap failed.';
-      return Response.json({ error: message }, { status: 500 });
+      return Response.json({ error: message }, { status: getAgentChatErrorStatus(error, 500) });
     }
   }
 
