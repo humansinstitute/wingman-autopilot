@@ -2097,6 +2097,7 @@ const settingsViewModule = initSettingsView({
   npubProjectsState,
   fetchNpubProjects,
   renderNpubProjectsPanel,
+  openDirectoryBrowser: (...args) => openDirectoryBrowser(...args),
 });
 renderSettings = settingsViewModule.renderSettings;
 

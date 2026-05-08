@@ -33,6 +33,7 @@ export function initSettingsView(deps) {
     npubProjectsState,
     fetchNpubProjects,
     renderNpubProjectsPanel,
+    openDirectoryBrowser,
   } = deps;
 
   function navigateToAgentsSettings() {
@@ -218,7 +219,10 @@ export function initSettingsView(deps) {
         render();
       });
       wrapper.append(backButton);
-      wrapper.append(createAgentChatSection({ standalone: true }));
+      wrapper.append(createAgentChatSection({
+        standalone: true,
+        openDirectoryBrowser,
+      }));
       return wrapper;
     }
 

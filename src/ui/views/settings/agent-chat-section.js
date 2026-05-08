@@ -90,7 +90,7 @@ export function createAgentDispatchLauncher({ onNavigate } = {}) {
   return card;
 }
 
-export function createAgentChatSection({ standalone = false } = {}) {
+export function createAgentChatSection({ standalone = false, openDirectoryBrowser = null } = {}) {
   const container = document.createElement('div');
   container.className = 'wm-settings__agent-chat';
   let currentPrimarySubscription = null;
@@ -113,7 +113,19 @@ export function createAgentChatSection({ standalone = false } = {}) {
   }
   const statusLine = createStatusLine();
   const subscriptionEditor = createSubscriptionEditorCard();
-  const agentEditor = createPrimaryAgentEditorCard();
+  const agentEditor = createPrimaryAgentEditorCard({
+    onBrowseDirectory: typeof openDirectoryBrowser === 'function'
+      ? ({ initialPath, onSelect }) => {
+          void openDirectoryBrowser({
+            initialPath,
+            title: 'Select Primary Agent Directory',
+            confirmLabel: 'Use This Directory',
+            allowCreate: true,
+            onSelect,
+          });
+        }
+      : null,
+  });
   const setupOverviewContainer = document.createElement('div');
   const agentConnectImportContainer = document.createElement('div');
   const configuredDispatchesContainer = document.createElement('div');

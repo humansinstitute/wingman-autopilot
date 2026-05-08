@@ -81,13 +81,38 @@ export function createSubscriptionEditorCard() {
   };
 }
 
-export function createPrimaryAgentEditorCard() {
+export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
   const agentIdField = createInput('Agent ID', 'agent_wm21', 'agent-chat-agent-id');
   const labelField = createInput('Agent Label', 'Wingman 21', 'agent-chat-agent-label', true);
   const agentBotField = createInput('Agent Bot npub', 'npub1bot...', 'agent-chat-agent-bot');
   const agentWorkspaceField = createInput('Agent Workspace Owner npub', 'npub1workspace...', 'agent-chat-agent-workspace-owner');
   const agentGroupsField = createInput('Group npubs', 'Leave blank to use the bot subscription groups', 'agent-chat-agent-groups', true);
   const workingDirectoryField = createInput('Working Directory', '/Users/mini/code/wingmen', 'agent-chat-agent-directory');
+  let browseDirectoryButton = null;
+  if (typeof onBrowseDirectory === 'function') {
+    browseDirectoryButton = createButton(
+      'Browse...',
+      'agent-chat-agent-directory-browse',
+      'Browse for the primary local agent working directory',
+    );
+    const directoryInputRow = document.createElement('div');
+    directoryInputRow.style.cssText = 'display:flex;gap:8px;align-items:center;';
+    workingDirectoryField.input.style.flex = '1 1 auto';
+    workingDirectoryField.input.style.minWidth = '0';
+    directoryInputRow.append(workingDirectoryField.input, browseDirectoryButton);
+    workingDirectoryField.row.append(directoryInputRow);
+    browseDirectoryButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      onBrowseDirectory({
+        initialPath: workingDirectoryField.input.value.trim(),
+        onSelect: (path) => {
+          workingDirectoryField.input.value = path;
+          workingDirectoryField.input.dispatchEvent(new Event('input', { bubbles: true }));
+          workingDirectoryField.input.focus();
+        },
+      });
+    });
+  }
   const chatPromptTemplateField = createTextarea(
     'Chat Prompt Template',
     'Editable chat dispatch prompt with {{placeholders}}',
@@ -342,6 +367,7 @@ export function createPrimaryAgentEditorCard() {
     agentWorkspaceField,
     agentGroupsField,
     workingDirectoryField,
+    browseDirectoryButton,
     chatPromptTemplateField,
     taskPromptTemplateField,
     flowDispatchPromptTemplateField,
