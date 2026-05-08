@@ -374,6 +374,38 @@ export class WorkspaceSubscriptionManager {
     return this.backendStore.listAvailableForManagerNpub(npub);
   }
 
+  listBackendConnectionGrantsForManager(backendConnectionId: string, npub: string) {
+    const record = this.backendStore.getById(backendConnectionId);
+    if (!record || record.managedByNpub !== npub) {
+      return [];
+    }
+    return this.backendStore.listGrants(backendConnectionId);
+  }
+
+  updateBackendConnectionAvailabilityForManager(input: {
+    backendConnectionId: string;
+    managedByNpub: string;
+    managerNpubs?: string[];
+    sharedService?: boolean;
+  }) {
+    const record = this.backendStore.getById(input.backendConnectionId);
+    if (!record) {
+      throw Object.assign(new Error('Backend connection not found'), { statusCode: 404 });
+    }
+    if (record.managedByNpub !== input.managedByNpub) {
+      throw Object.assign(new Error('Only the backend connection owner can manage availability.'), { statusCode: 403 });
+    }
+    const grants = this.backendStore.replaceAvailabilityGrants({
+      backendConnectionId: input.backendConnectionId,
+      managerNpubs: input.managerNpubs,
+      sharedService: input.sharedService,
+    });
+    return {
+      backendConnection: this.backendStore.getById(input.backendConnectionId) ?? record,
+      grants,
+    };
+  }
+
   backfillLegacyBackendConnections(): { backfilled: number; linkedSubscriptions: number } {
     let backfilled = 0;
     let linkedSubscriptions = 0;

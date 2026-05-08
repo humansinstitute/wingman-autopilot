@@ -11,6 +11,7 @@ import type {
   AgentDefinitionRecord,
   AgentChatDiagnostic,
   AgentChatSseEventDiagnostic,
+  BackendConnectionGrantRecord,
   BackendConnectionRecord,
   ChatInterceptStateRecord,
   DispatchActivePolicy,
@@ -83,12 +84,18 @@ function serialiseAgent(record: AgentDefinitionRecord) {
   };
 }
 
-function serialiseBackendConnection(record: BackendConnectionRecord) {
+function serialiseBackendConnection(
+  record: BackendConnectionRecord,
+  viewerNpub?: string | null,
+  grants: BackendConnectionGrantRecord[] = [],
+) {
   return {
     ...record,
+    availabilityGrants: grants,
     operator: {
       relayCount: record.relayUrls.length,
       hasHealthUrl: Boolean(record.healthUrl),
+      canManageAvailability: Boolean(viewerNpub && record.managedByNpub === viewerNpub),
     },
   };
 }
@@ -265,8 +272,47 @@ export async function handleAgentChatApi(
 
   if (url.pathname === '/api/agent-chat/backend-connections' && method === 'GET') {
     return Response.json({
-      backendConnections: ctx.manager.listBackendConnectionsForManager(viewerNpub).map(serialiseBackendConnection),
+      backendConnections: ctx.manager.listBackendConnectionsForManager(viewerNpub).map((record) => (
+        serialiseBackendConnection(
+          record,
+          viewerNpub,
+          ctx.manager.listBackendConnectionGrantsForManager(record.backendConnectionId, viewerNpub),
+        )
+      )),
     });
+  }
+
+  const backendAvailabilityMatch = url.pathname.match(/^\/api\/agent-chat\/backend-connections\/([^/]+)\/availability$/);
+  if (backendAvailabilityMatch && (method === 'POST' || method === 'PATCH')) {
+    let body: Record<string, unknown>;
+    try {
+      body = await request.json() as Record<string, unknown>;
+    } catch {
+      return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+    }
+
+    const backendConnectionId = decodeURIComponent(backendAvailabilityMatch[1]!);
+    const allowedManagerNpubs = getOptionalStringArray(body.allowedManagerNpubs);
+    const grantSharedService = body.grantSharedService === true;
+
+    try {
+      const result = ctx.manager.updateBackendConnectionAvailabilityForManager({
+        backendConnectionId,
+        managedByNpub: viewerNpub,
+        managerNpubs: allowedManagerNpubs,
+        sharedService: grantSharedService,
+      });
+      return Response.json({
+        backendConnection: serialiseBackendConnection(
+          result.backendConnection,
+          viewerNpub,
+          result.grants,
+        ),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update backend connection availability.';
+      return Response.json({ error: message }, { status: getAgentChatErrorStatus(error, 400) });
+    }
   }
 
   if (url.pathname === '/api/agent-chat/dispatch-routes' && method === 'GET') {
@@ -354,7 +400,11 @@ export async function handleAgentChatApi(
         grantSharedService,
       });
       return Response.json({
-        backendConnection: serialiseBackendConnection(imported.backendConnection),
+        backendConnection: serialiseBackendConnection(
+          imported.backendConnection,
+          viewerNpub,
+          ctx.manager.listBackendConnectionGrantsForManager(imported.backendConnection.backendConnectionId, viewerNpub),
+        ),
         subscription: serialiseSubscription(
           imported.subscription,
           ctx.manager.listInterceptsForSubscription(imported.subscription.subscriptionId, viewerNpub),

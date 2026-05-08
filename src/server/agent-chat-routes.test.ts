@@ -146,6 +146,15 @@ describe('agent-chat routes', () => {
   test('returns safe setup hints for available backend connections', async () => {
     const manager = {
       listBackendConnectionsForManager: () => [makeBackendConnection()],
+      listBackendConnectionGrantsForManager: () => [
+        {
+          backendConnectionId: 'backend-owned',
+          grantKind: 'manager_npub',
+          granteeNpub: 'npub1other',
+          createdAt: '2026-05-08T00:00:00.000Z',
+          updatedAt: '2026-05-08T00:00:00.000Z',
+        },
+      ],
     } as unknown as WorkspaceSubscriptionManager;
     const request = new Request('http://localhost/api/agent-chat/backend-connections');
 
@@ -163,5 +172,88 @@ describe('agent-chat routes', () => {
     expect(body.backendConnections[0].setupWorkspaceOwnerNpub).toBe('npub1workspace');
     expect(body.backendConnections[0].setupSourceAppNpub).toBe('npub1sourceapp');
     expect(body.backendConnections[0].setupCapabilityDefaults).toEqual(['chat_intercept']);
+    expect(body.backendConnections[0].availabilityGrants[0].granteeNpub).toBe('npub1other');
+    expect(body.backendConnections[0].operator.canManageAvailability).toBe(true);
+  });
+
+  test('updates backend connection availability grants for the owner', async () => {
+    const manager = {
+      updateBackendConnectionAvailabilityForManager: (input: {
+        backendConnectionId: string;
+        managedByNpub: string;
+        managerNpubs?: string[];
+        sharedService?: boolean;
+      }) => {
+        expect(input.backendConnectionId).toBe('backend-owned');
+        expect(input.managedByNpub).toBe('npub1manager');
+        expect(input.managerNpubs).toEqual(['npub1other']);
+        expect(input.sharedService).toBe(true);
+        return {
+          backendConnection: makeBackendConnection({ sharePolicy: 'shared_service' }),
+          grants: [
+            {
+              backendConnectionId: 'backend-owned',
+              grantKind: 'manager_npub' as const,
+              granteeNpub: 'npub1other',
+              createdAt: '2026-05-08T00:00:00.000Z',
+              updatedAt: '2026-05-08T00:00:00.000Z',
+            },
+            {
+              backendConnectionId: 'backend-owned',
+              grantKind: 'shared_service' as const,
+              granteeNpub: null,
+              createdAt: '2026-05-08T00:00:00.000Z',
+              updatedAt: '2026-05-08T00:00:00.000Z',
+            },
+          ],
+        };
+      },
+    } as unknown as WorkspaceSubscriptionManager;
+    const request = new Request('http://localhost/api/agent-chat/backend-connections/backend-owned/availability', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        allowedManagerNpubs: ['npub1other'],
+        grantSharedService: true,
+      }),
+    });
+
+    const response = await handleAgentChatApi(
+      request,
+      new URL(request.url),
+      'PATCH',
+      authContext,
+      { manager },
+    );
+    const body = await response!.json();
+
+    expect(response?.status).toBe(200);
+    expect(body.backendConnection.sharePolicy).toBe('shared_service');
+    expect(body.backendConnection.availabilityGrants).toHaveLength(2);
+  });
+
+  test('maps backend availability ownership failures to 403', async () => {
+    const manager = {
+      updateBackendConnectionAvailabilityForManager: () => {
+        throw Object.assign(new Error('Only the backend connection owner can manage availability.'), { statusCode: 403 });
+      },
+    } as unknown as WorkspaceSubscriptionManager;
+    const request = new Request('http://localhost/api/agent-chat/backend-connections/backend-foreign/availability', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ allowedManagerNpubs: ['npub1other'] }),
+    });
+
+    const response = await handleAgentChatApi(
+      request,
+      new URL(request.url),
+      'PATCH',
+      authContext,
+      { manager },
+    );
+    const body = await response!.json();
+
+    expect(response?.status).toBe(403);
+    expect(body.error).toContain('Only the backend connection owner');
   });
 });

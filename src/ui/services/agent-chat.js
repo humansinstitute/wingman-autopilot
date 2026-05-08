@@ -28,6 +28,20 @@ export async function listAgentChatBackendConnections() {
   return Array.isArray(payload.backendConnections) ? payload.backendConnections : [];
 }
 
+export async function saveAgentChatBackendConnectionAvailability(backendConnectionId, input) {
+  const response = await fetch(`/api/agent-chat/backend-connections/${encodeURIComponent(backendConnectionId)}/availability`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(input),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || 'Failed to update backend connection availability');
+  }
+  return payload.backendConnection;
+}
+
 export async function saveAgentChatSubscription(input) {
   const response = await fetch('/api/agent-chat/subscriptions', {
     method: 'POST',

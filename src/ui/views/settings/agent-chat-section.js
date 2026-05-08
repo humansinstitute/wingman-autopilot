@@ -9,6 +9,7 @@ import {
   listAgentChatSubscriptions,
   runAgentChatSubscriptionAction,
   saveAgentChatAgent,
+  saveAgentChatBackendConnectionAvailability,
   saveAgentChatDispatchRoute,
   saveAgentChatSubscription,
 } from '../../services/agent-chat.js';
@@ -365,6 +366,11 @@ export function createAgentChatSection({ standalone = false } = {}) {
         onEditSubscription: (subscription) => openSubscriptionEditor(subscription),
         onUseBackendConnection: (backendConnection) => {
           void useBackendConnection(backendConnection);
+        },
+        onSaveBackendAvailability: async (backendConnection, input) => {
+          const updated = await saveAgentChatBackendConnectionAvailability(backendConnection.backendConnectionId, input);
+          await refreshList();
+          return updated;
         },
         onEditAgent: (agent) => openAgentEditor(agent),
         onCreateAgent: () => openAgentEditor(),

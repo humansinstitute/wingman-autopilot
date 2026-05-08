@@ -230,6 +230,88 @@ function createBackendConnectionChoice(backendConnection, onUseBackendConnection
   return wrapper;
 }
 
+function createBackendAvailabilityEditor(backendConnection, onSaveBackendAvailability) {
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'margin-top:12px;padding:12px;border:1px solid var(--border-primary);border-radius:8px;background:rgba(127,127,127,0.04);';
+  wrapper.setAttribute('data-testid', 'agent-chat-backend-availability-editor');
+
+  const title = document.createElement('div');
+  title.style.cssText = 'font-weight:650;';
+  title.textContent = 'Availability';
+
+  const help = document.createElement('p');
+  help.className = 'wm-settings__port-note';
+  help.style.margin = '6px 0 0 0';
+  help.textContent = 'Grant selected Wingman users access to reuse this backend connection. They still create their own subscription, local agent, routes, and dispatch history.';
+
+  const grants = Array.isArray(backendConnection.availabilityGrants)
+    ? backendConnection.availabilityGrants
+    : [];
+  const managerGrants = grants
+    .filter((grant) => grant?.grantKind === 'manager_npub' && grant.granteeNpub)
+    .map((grant) => grant.granteeNpub);
+  const hasSharedServiceGrant = grants.some((grant) => grant?.grantKind === 'shared_service');
+
+  const managerLabel = document.createElement('label');
+  managerLabel.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:10px;';
+  managerLabel.textContent = 'Available to manager NPUBs';
+  const managerInput = document.createElement('textarea');
+  managerInput.className = 'wm-input';
+  managerInput.rows = 3;
+  managerInput.value = managerGrants.join(', ');
+  managerInput.placeholder = 'npub1..., npub1...';
+  managerInput.setAttribute('aria-label', 'Manager NPUBs allowed to reuse this backend connection');
+  managerInput.setAttribute('data-testid', 'agent-chat-backend-availability-managers');
+  managerLabel.append(managerInput);
+
+  const sharedLabel = document.createElement('label');
+  sharedLabel.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:10px;';
+  const sharedInput = document.createElement('input');
+  sharedInput.type = 'checkbox';
+  sharedInput.checked = hasSharedServiceGrant;
+  sharedInput.setAttribute('aria-label', 'Make backend available to explicit shared service agent');
+  sharedInput.setAttribute('data-testid', 'agent-chat-backend-availability-shared-service');
+  const sharedText = document.createElement('span');
+  sharedText.textContent = 'Make available to explicit shared service agent';
+  sharedLabel.append(sharedInput, sharedText);
+
+  const status = document.createElement('p');
+  status.className = 'wm-settings__port-note';
+  status.setAttribute('aria-live', 'polite');
+  status.textContent = grants.length > 0
+    ? `${grants.length} availability grant${grants.length === 1 ? '' : 's'} configured.`
+    : 'This backend is private until grants are saved.';
+
+  const saveButton = createActionButton(
+    'Save Availability',
+    'agent-chat-save-backend-availability',
+    'Save backend connection availability grants',
+    async () => {
+      saveButton.disabled = true;
+      status.textContent = 'Saving backend availability...';
+      try {
+        const allowedManagerNpubs = managerInput.value
+          .split(/[,\n]/)
+          .map((value) => value.trim())
+          .filter(Boolean);
+        const updated = await onSaveBackendAvailability?.(backendConnection, {
+          allowedManagerNpubs,
+          grantSharedService: sharedInput.checked,
+        });
+        const updatedGrants = Array.isArray(updated?.availabilityGrants) ? updated.availabilityGrants : [];
+        status.textContent = `${updatedGrants.length} availability grant${updatedGrants.length === 1 ? '' : 's'} saved.`;
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : 'Failed to save backend availability.';
+      } finally {
+        saveButton.disabled = false;
+      }
+    },
+  );
+
+  wrapper.append(title, help, managerLabel, sharedLabel, createInlineActions([saveButton]), status);
+  return wrapper;
+}
+
 export function createAgentDispatchSetupCards({
   subscription,
   primaryAgent,
@@ -237,6 +319,7 @@ export function createAgentDispatchSetupCards({
   additionalAgentCount = 0,
   onEditSubscription,
   onUseBackendConnection,
+  onSaveBackendAvailability,
   onEditAgent,
   onCreateAgent,
   onRemoveAgent,
@@ -248,6 +331,9 @@ export function createAgentDispatchSetupCards({
   const hasAgent = Boolean(primaryAgent);
   const visibleBackendConnections = getAvailableBackendConnections(availableBackendConnections);
   const setupReadyBackendConnections = getSetupReadyBackendConnections(availableBackendConnections);
+  const subscriptionBackendConnection = hasSubscription && subscription.backendConnectionId
+    ? visibleBackendConnections.find((backendConnection) => backendConnection.backendConnectionId === subscription.backendConnectionId) ?? null
+    : null;
   const hasAvailableBackend = !hasSubscription && visibleBackendConnections.length > 0;
   const hasSetupReadyBackend = setupReadyBackendConnections.length > 0;
   const overviewCard = createCard(
@@ -353,6 +439,9 @@ export function createAgentDispatchSetupCards({
       ['Import', subscription.connectionTokenRef ? 'Agent Connect' : 'Manual'],
       ['Bot', subscription.botNpub || 'Pending'],
     ]));
+    if (subscriptionBackendConnection?.operator?.canManageAvailability) {
+      connectionCard.append(createBackendAvailabilityEditor(subscriptionBackendConnection, onSaveBackendAvailability));
+    }
   } else if (hasAvailableBackend) {
     const note = document.createElement('p');
     note.className = 'wm-settings__port-note';
