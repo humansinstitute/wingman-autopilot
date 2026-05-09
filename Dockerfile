@@ -46,6 +46,13 @@ RUN if [[ "${INSTALL_AGENT_CLIS}" == "true" ]]; then \
       | GOOSE_BIN_DIR=/usr/local/bin CONFIGURE=false bash; \
   fi
 
+ARG GEMINI_PACKAGE=@google/gemini-cli@latest
+ARG PI_PACKAGE=@earendil-works/pi-coding-agent@latest
+
+RUN if [[ "${INSTALL_AGENT_CLIS}" == "true" ]]; then \
+    npm install -g "${GEMINI_PACKAGE}" "${PI_PACKAGE}"; \
+  fi
+
 RUN apt-get update \
   && apt-get install -y --no-install-recommends bubblewrap \
   && rm -rf /var/lib/apt/lists/*

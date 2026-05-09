@@ -86,11 +86,13 @@ codex --login
 claude
 goose configure
 opencode auth login
+gemini
+pi
 ```
 
-The image installs Codex, Claude, Goose, and OpenCode by default. Gemini and Pi
-CLI paths are still pinned to `/usr/local/bin/gemini` and `/usr/local/bin/pi`;
-install those inside the container before selecting those agent types.
+The image installs Codex, Claude, Goose, OpenCode, Gemini, and Pi by default.
+All agent CLI paths are pinned to `/usr/local/bin/*` so Wingman launches the
+authenticated container tools rather than project-local binaries.
 
 Run the readiness checklist any time:
 

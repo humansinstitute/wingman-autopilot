@@ -44,9 +44,6 @@ const commandSpecs: CommandSpec[] = [
   { name: "Claude CLI", command: process.env.CLAUDE_CLI || "/usr/local/bin/claude", args: ["--version"] },
   { name: "Goose CLI", command: process.env.GOOSE_CLI || "/usr/local/bin/goose", args: ["--version"] },
   { name: "OpenCode CLI", command: process.env.OPENCODE_CLI || "/usr/local/bin/opencode", args: ["--version"] },
-];
-
-const optionalCommandSpecs: CommandSpec[] = [
   { name: "Gemini CLI", command: process.env.GEMINI_CLI || "/usr/local/bin/gemini", args: ["--version"] },
   { name: "Pi CLI", command: process.env.PI_CLI || "/usr/local/bin/pi", args: ["--version"] },
 ];
@@ -110,18 +107,6 @@ function runCommand(spec: CommandSpec): CheckResult {
     name: spec.name,
     status: "pass",
     detail: firstLine(result.stdout) || firstLine(result.stderr) || "installed",
-  };
-}
-
-function runOptionalCommand(spec: CommandSpec): CheckResult {
-  const result = runCommand(spec);
-  if (result.status !== "fail") {
-    return result;
-  }
-  return {
-    ...result,
-    status: "warn",
-    detail: `${result.detail}; install this CLI inside the container before selecting this agent`,
   };
 }
 
@@ -232,7 +217,6 @@ async function main(): Promise<void> {
   const strict = args.has("--strict");
 
   const commandChecks = commandSpecs.map(runCommand);
-  const optionalCommandChecks = optionalCommandSpecs.map(runOptionalCommand);
   const directoryChecks = await Promise.all(expectedDirectories.map(directoryWritable));
   const home = process.env.HOME?.trim() || "/home/wingman";
   const authChecks = await Promise.all(authSpecs.map((spec) => authCheck(spec, home)));
@@ -241,7 +225,7 @@ async function main(): Promise<void> {
   const result = {
     ok: [...commandChecks, ...directoryChecks, ...configChecks].every((check) => check.status !== "fail"),
     strict,
-    commandChecks: [...commandChecks, ...optionalCommandChecks],
+    commandChecks,
     directoryChecks,
     authChecks,
     configChecks,
@@ -250,7 +234,7 @@ async function main(): Promise<void> {
   if (outputJson) {
     console.log(JSON.stringify(result, null, 2));
   } else {
-    printTable("Installed tools", [...commandChecks, ...optionalCommandChecks]);
+    printTable("Installed tools", commandChecks);
     printTable("Writable volumes", directoryChecks);
     printTable("CLI authentication", authChecks);
     printTable("Wingman configuration", configChecks);

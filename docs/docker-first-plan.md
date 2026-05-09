@@ -31,10 +31,8 @@ The image should contain the tools that are common to every Wingman:
 - Claude CLI
 - Goose CLI
 - OpenCode CLI
-
-Gemini and Pi should use the same explicit CLI path model when enabled by an
-operator, but they are optional for the first image until their install flow is
-chosen.
+- Gemini CLI
+- Pi CLI
 
 Install the agent CLIs in their default upstream-supported way where possible. The goal is that a running Wingman can use the normal CLI update flow when those tools release updates, rather than requiring a custom package path for every upgrade.
 
@@ -234,7 +232,7 @@ Because a terminal is equivalent to direct access to the Wingman computer, it sh
 - Hosted app routing should follow the existing subdomain/host routing model.
 - The first Docker image installs the common agent CLIs by default.
 - Agent CLIs should be installed in their normal/default manner so they can be updated in-place using their standard update paths.
-- All agent command paths should be explicit in Docker env. Bundled CLIs use `/usr/local/bin/*`; optional CLIs such as Gemini and Pi should warn in readiness checks until installed.
+- All agent command paths should be explicit in Docker env. Bundled CLIs use `/usr/local/bin/*`, and readiness checks should fail if any bundled CLI is missing.
 - A first-run setup workflow should be UI-first, backed by reusable scriptable checks.
 - CLI authentication for subscription tools such as Claude and Codex is handled by operator shell access inside the container for v1.
 - Shell access remains operator-only through Docker commands for now.
