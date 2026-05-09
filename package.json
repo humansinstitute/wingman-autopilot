@@ -16,7 +16,9 @@
     "cli:status": "bun clis/status.ts",
     "cli:deploy": "bun clis/deploy.ts",
     "build:bunker-client": "bun build src/ui/identity/bunker-client.ts --target browser --outfile public/vendor/bunker-client.js",
-    "cleanports": "bun run scripts/clean-ports.ts"
+    "cleanports": "bun run scripts/clean-ports.ts",
+    "docker:check": "bun run scripts/docker-readiness.ts",
+    "docker:provision": "bun run scripts/provision-docker-instance.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",

@@ -1,0 +1,36 @@
+services:
+  wingman:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${WINGMAN_IMAGE:-wingman-autopilot:local}
+    init: true
+    tty: true
+    ports:
+      - "${WINGMAN_HOST_PORT:-3600}:${WINGMAN_CONTAINER_PORT:-3600}"
+    environment:
+      PORT: "${WINGMAN_CONTAINER_PORT:-3600}"
+      HOME: /home/wingman
+      AGENT_PORTS: "${WINGMAN_AGENT_PORTS:-3700}"
+      AGENT_MAX: "${WINGMAN_AGENT_MAX:-10}"
+      DIRECTORY_DEF: "${WINGMAN_DIRECTORY_DEF:-/workspace}"
+      FOLDERACCESS: "${WINGMAN_FOLDERACCESS:-/workspace}"
+      WINGMAN_BASE_URL: "${WINGMAN_BASE_URL:-http://localhost:3600}"
+      APP_ROUTING: "${WINGMAN_APP_ROUTING:-path}"
+      AGENT_SPAWN_MODE: "${WINGMAN_AGENT_SPAWN_MODE:-bun}"
+      AGENTAPI_ALLOWED_HOSTS: "${WINGMAN_AGENTAPI_ALLOWED_HOSTS:-localhost,127.0.0.1,[::1]}"
+      IDENTITY_SESSION_SECRET: "${WINGMAN_IDENTITY_SESSION_SECRET:?Run bun run docker:provision before docker compose up}"
+      ADMIN_NPUB: "${WINGMAN_ADMIN_NPUB:-}"
+      WINGMAN_INSTANCE_NAME: "${WINGMAN_INSTANCE_NAME:-wingman-01}"
+      WINGMAN_SETUP_NONINTERACTIVE: "true"
+    volumes:
+      - wingman-home:/home/wingman
+      - wingman-data:/app/data
+      - wingman-tmp:/app/tmp
+      - wingman-workspace:/workspace
+
+volumes:
+  wingman-home:
+  wingman-data:
+  wingman-tmp:
+  wingman-workspace:

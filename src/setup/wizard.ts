@@ -132,6 +132,36 @@ const loadEnvIntoRuntime = (values: Map<string, string>): void => {
   }
 };
 
+const readConfiguredValue = (values: Map<string, string>, key: string): string => {
+  return values.get(key)?.trim() || process.env[key]?.trim() || "";
+};
+
+const isTruthySetting = (value: string | undefined): boolean => {
+  if (!value) return false;
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+};
+
+const shouldRunNonInteractiveSetup = (values: Map<string, string>): boolean => {
+  return isTruthySetting(readConfiguredValue(values, "WINGMAN_SETUP_NONINTERACTIVE"));
+};
+
+const completeNonInteractiveSetup = (values: Map<string, string>): boolean => {
+  const directory = readConfiguredValue(values, "DIRECTORY_DEF");
+  const sessionSecret = readConfiguredValue(values, "IDENTITY_SESSION_SECRET");
+
+  if (!directory || !sessionSecret) {
+    console.warn(
+      "[setup] WINGMAN_SETUP_NONINTERACTIVE is set, but DIRECTORY_DEF and IDENTITY_SESSION_SECRET are required.",
+    );
+    return false;
+  }
+
+  loadEnvIntoRuntime(values);
+  markWizardComplete();
+  console.log("[setup] Non-interactive setup complete.");
+  return true;
+};
+
 const promptWithDefault = async (
   rl: ReturnType<typeof createInterface>,
   question: string,
@@ -175,12 +205,17 @@ export const runSetupWizard = async (): Promise<boolean> => {
   const envPath = join(projectRoot, ".env");
   const existingEnv = readEnvFile(envPath);
 
+  if (shouldRunNonInteractiveSetup(existingEnv)) {
+    return completeNonInteractiveSetup(existingEnv);
+  }
+
   // Check if essential vars are already set
-  const hasAdminNpub = existingEnv.get("ADMIN_NPUB")?.trim();
-  const hasDirectory = existingEnv.get("DIRECTORY_DEF")?.trim();
+  const hasAdminNpub = readConfiguredValue(existingEnv, "ADMIN_NPUB");
+  const hasDirectory = readConfiguredValue(existingEnv, "DIRECTORY_DEF");
 
   if (hasAdminNpub && hasDirectory) {
     // Essential config exists, mark complete and skip
+    loadEnvIntoRuntime(existingEnv);
     markWizardComplete();
     return true;
   }

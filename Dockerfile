@@ -1,0 +1,82 @@
+FROM node:22-bookworm
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG INSTALL_AGENT_CLIS=true
+ARG CODEX_PACKAGE=@openai/codex@latest
+ARG CLAUDE_PACKAGE=@anthropic-ai/claude-code@latest
+ARG OPENCODE_PACKAGE=opencode-ai@latest
+
+ENV BUN_INSTALL=/usr/local/bun
+ENV PATH=/usr/local/bun/bin:/usr/local/bin:/home/wingman/.local/bin:$PATH
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    bash \
+    bzip2 \
+    ca-certificates \
+    coreutils \
+    curl \
+    file \
+    findutils \
+    g++ \
+    gcc \
+    git \
+    jq \
+    less \
+    make \
+    openssh-client \
+    pkg-config \
+    procps \
+    python3 \
+    tar \
+    unzip \
+    xz-utils \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://bun.sh/install | bash \
+  && ln -sf /usr/local/bun/bin/bun /usr/local/bin/bun \
+  && ln -sf /usr/local/bun/bin/bunx /usr/local/bin/bunx
+
+RUN if [[ "${INSTALL_AGENT_CLIS}" == "true" ]]; then \
+    npm install -g "${CODEX_PACKAGE}" "${CLAUDE_PACKAGE}" "${OPENCODE_PACKAGE}"; \
+    curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh \
+      | GOOSE_BIN_DIR=/usr/local/bin CONFIGURE=false bash; \
+  fi
+
+RUN useradd --create-home --home-dir /home/wingman --shell /bin/bash --uid 10001 wingman \
+  && mkdir -p /app/data /app/tmp /app/out /workspace \
+  && chown -R wingman:wingman \
+    /app \
+    /home/wingman \
+    /usr/local/bin \
+    /usr/local/bun \
+    /usr/local/lib/node_modules \
+    /workspace
+
+WORKDIR /app
+
+COPY --chown=wingman:wingman package.json bun.lock bunfig.toml ./
+RUN bun install --frozen-lockfile
+
+COPY --chown=wingman:wingman . .
+
+USER wingman
+
+ENV HOME=/home/wingman
+ENV PORT=3600
+ENV DIRECTORY_DEF=/workspace
+ENV FOLDERACCESS=/workspace
+ENV APP_ROUTING=path
+ENV AGENT_SPAWN_MODE=bun
+ENV AGENTAPI_ALLOWED_HOSTS=localhost,127.0.0.1,[::1]
+ENV WINGMAN_SETUP_NONINTERACTIVE=true
+
+RUN bun -e "import { ensureAgentApiBinary } from './src/server/bootstrap/agentapi.ts'; await ensureAgentApiBinary({ agentApiBinaryPath: '/app/out/agentapi', projectRootDirectory: '/app' });"
+
+EXPOSE 3600
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+  CMD bun run scripts/docker-readiness.ts --strict --json >/dev/null
+
+CMD ["bun", "start"]

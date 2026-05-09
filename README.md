@@ -54,6 +54,46 @@ Visit:
 - `http://localhost:<PORT>/home` for the session dashboard
 - `http://localhost:<PORT>/live` for the real-time live/session surface
 
+## Docker-First Setup
+
+Generate a Compose `.env` file for the first isolated Wingman instance:
+
+```bash
+bun run docker:provision --admin-npub npub1...
+```
+
+The default instance is `wingman-01`; if Docker already has that Compose project,
+the provisioning script moves to `wingman-02`, `wingman-03`, and so on. It writes
+the Compose project name, host port, persistent-volume paths, base URL, and
+`IDENTITY_SESSION_SECRET` into `.env`.
+
+Build and start the container:
+
+```bash
+docker compose up -d --build
+```
+
+Open a shell in the persistent `/home/wingman` environment and run the CLI login
+flows from inside the container:
+
+```bash
+docker compose exec wingman bash
+codex --login
+claude
+goose configure
+opencode auth login
+```
+
+Run the readiness checklist any time:
+
+```bash
+docker compose exec wingman bun run docker:check
+```
+
+The checklist reports installed tools, writable Docker volumes, configured
+Wingman URLs/workspace values, required secrets, and whether CLI auth files are
+detectable in `/home/wingman`.
+
 ## Runtime Model
 
 Wingmen is a long-running Bun server that:
