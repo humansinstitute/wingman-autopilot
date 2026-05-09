@@ -39,10 +39,10 @@ const commandSpecs: CommandSpec[] = [
   { name: "make", command: "make", args: ["--version"] },
   { name: "gcc", command: "gcc", args: ["--version"] },
   { name: "agentapi", command: "/app/out/agentapi", args: ["--version"] },
-  { name: "Codex CLI", command: "codex", args: ["--version"] },
-  { name: "Claude CLI", command: "claude", args: ["--version"] },
-  { name: "Goose CLI", command: "goose", args: ["--version"] },
-  { name: "OpenCode CLI", command: "opencode", args: ["--version"] },
+  { name: "Codex CLI", command: process.env.CODEX_CLI || "/usr/local/bin/codex", args: ["--version"] },
+  { name: "Claude CLI", command: process.env.CLAUDE_CLI || "/usr/local/bin/claude", args: ["--version"] },
+  { name: "Goose CLI", command: process.env.GOOSE_CLI || "/usr/local/bin/goose", args: ["--version"] },
+  { name: "OpenCode CLI", command: process.env.OPENCODE_CLI || "/usr/local/bin/opencode", args: ["--version"] },
 ];
 
 const authSpecs: AuthSpec[] = [

@@ -13,6 +13,7 @@ import { isAgentRuntimeStatus } from "../types/agent-status";
 import {
   buildAgentUrl,
   fetchAgentMessages,
+  matchesReadyAgentType,
   sendAgentMessage,
   waitForAgentReady,
   type AgentMessage,
@@ -44,6 +45,12 @@ export class AgentApiAdapter implements AgentAdapter {
         return null;
       }
       const data = payload as Record<string, unknown>;
+      const reportedAgentType = typeof data.agent_type === "string" ? data.agent_type.toLowerCase() : "";
+      if (reportedAgentType && !matchesReadyAgentType(this.context.agent, reportedAgentType)) {
+        throw new Error(
+          `agentapi type mismatch: expected ${this.context.agent}, got ${reportedAgentType}`,
+        );
+      }
       return isAgentRuntimeStatus(data.status) ? data.status : null;
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
@@ -92,10 +99,15 @@ export class AgentApiAdapter implements AgentAdapter {
   }
 
   async sendMessage(content: string, type = "user"): Promise<void> {
+    await this.waitForReady({
+      timeoutMs: 8000,
+      pollIntervalMs: 250,
+    });
     await sendAgentMessage(this.host, this.port, content, { type });
   }
 
   async fetchMessages(): Promise<AgentMessage[]> {
+    await this.fetchStatus();
     return fetchAgentMessages(this.host, this.port);
   }
 

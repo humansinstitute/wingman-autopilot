@@ -39,7 +39,9 @@ RUN curl -fsSL https://bun.sh/install | bash \
   && ln -sf /usr/local/bun/bin/bunx /usr/local/bin/bunx
 
 RUN if [[ "${INSTALL_AGENT_CLIS}" == "true" ]]; then \
-    npm install -g "${CODEX_PACKAGE}" "${CLAUDE_PACKAGE}" "${OPENCODE_PACKAGE}"; \
+    bun install -g "${CODEX_PACKAGE}"; \
+    ln -sf /usr/local/bun/bin/codex /usr/local/bin/codex; \
+    npm install -g "${CLAUDE_PACKAGE}" "${OPENCODE_PACKAGE}"; \
     curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh \
       | GOOSE_BIN_DIR=/usr/local/bin CONFIGURE=false bash; \
   fi
@@ -57,9 +59,11 @@ RUN useradd --create-home --home-dir /home/wingman --shell /bin/bash --uid 10001
 WORKDIR /app
 
 COPY --chown=wingman:wingman package.json bun.lock bunfig.toml ./
-RUN bun install --frozen-lockfile
+RUN bun install --frozen-lockfile \
+  && chown -R wingman:wingman /app/node_modules /usr/local/bun
 
 COPY --chown=wingman:wingman . .
+RUN chmod +x scripts/docker-entrypoint.sh
 
 USER wingman
 
@@ -79,4 +83,4 @@ EXPOSE 3600
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
   CMD bun run scripts/docker-readiness.ts --strict --json >/dev/null
 
-CMD ["bun", "start"]
+CMD ["scripts/docker-entrypoint.sh", "bun", "start"]

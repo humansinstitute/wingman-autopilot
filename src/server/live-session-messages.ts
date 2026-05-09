@@ -25,10 +25,9 @@ export async function syncLiveSessionMessages(input: SyncLiveSessionMessagesInpu
   try {
     const hadMessages = messageStore.hasMessages(sessionId);
     const adapter = manager.getAdapter(sessionId);
-    const messages =
-      session.agent === "pi" && adapter
-        ? await adapter.fetchMessages()
-        : await fetchAgentMessages(agentHost, session.port);
+    const messages = adapter
+      ? await adapter.fetchMessages()
+      : await fetchAgentMessages(agentHost, session.port);
     if (messages.length > 0 || !hadMessages) {
       messageStore.replaceMessages(sessionId, messages);
     }

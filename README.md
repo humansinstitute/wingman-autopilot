@@ -103,6 +103,11 @@ so browsers accept the development session cookie. For HTTPS tunnel deployments,
 the provisioning script sets secure cookies when `--base-url` starts with
 `https://`.
 
+Docker provisioning also pins agent CLI paths to `/usr/local/bin/*` so project
+dependencies inside `/app/node_modules/.bin` cannot shadow the authenticated
+container CLIs. Codex sessions trust `/workspace` by default to avoid an
+interactive first-run trust prompt in the web UI.
+
 ## Runtime Model
 
 Wingmen is a long-running Bun server that:

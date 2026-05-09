@@ -362,6 +362,12 @@ export function createSessionEventsHandler(options: SessionEventsOptions) {
     const adapter = manager.getAdapter(sessionId);
     const agentEventsUrl = adapter?.getEventsUrl() ?? null;
     if (agentEventsUrl) {
+      try {
+        await adapter!.fetchStatus(3000);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return Response.json({ error: `Agent stream unavailable: ${message}` }, { status: 502 });
+      }
       return createUpstreamProxyStream(
         sessionId,
         request,

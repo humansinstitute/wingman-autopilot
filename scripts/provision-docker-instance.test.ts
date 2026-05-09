@@ -54,6 +54,8 @@ describe("docker provisioning", () => {
     const content = readFileSync(envPath, "utf8");
     expect(content).toContain("WINGMAN_ADMIN_NPUB=npub1operator");
     expect(content).toContain("WINGMAN_IDENTITY_COOKIE_SECURE=true");
+    expect(content).toContain("WINGMAN_CODEX_CLI=/usr/local/bin/codex");
+    expect(content).toContain("WINGMAN_CODEX_TRUSTED_WORKSPACE=/workspace");
     expect(content).toContain("WINGMAN_SETUP_NONINTERACTIVE=true");
   });
 

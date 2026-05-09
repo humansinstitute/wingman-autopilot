@@ -300,7 +300,9 @@ function createDefaultAgents(
   const openCodeExtraArgs = resolveOpenCodeExtraArgs(readEnvValue(env, "OPENCODE_MODEL"));
 
   return {
-    codex: withAgentCommand(agentApiBinary, "Codex", readEnvValue(env, "CODEX_CLI") ?? "codex", { type: "codex" }),
+    codex: withAgentCommand(agentApiBinary, "Codex", readEnvValue(env, "CODEX_CLI") ?? "codex", {
+      type: "codex",
+    }),
     claude: withAgentCommand(agentApiBinary, "Claude", readEnvValue(env, "CLAUDE_CLI") ?? "claude", {
       extraArgs: claudeExtraArgs,
     }),

@@ -132,6 +132,18 @@ export async function deliverSessionAgentMessage(
     }
   }
 
+  if (input.adapter) {
+    try {
+      await input.adapter.waitForReady({
+        timeoutMs: 8000,
+        pollIntervalMs: 250,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, status: 502, message: `Failed to contact agent: ${message}` };
+    }
+  }
+
   const initialResult = await tryWithTransientRetries(input);
   if (initialResult.ok || !shouldAttemptPm2Recovery(initialResult.status, input.pm2Name)) {
     return initialResult;
