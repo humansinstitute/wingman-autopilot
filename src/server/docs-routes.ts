@@ -94,6 +94,7 @@ const MAX_DOCS_ENTRIES = 500;
 const MAX_DOCS_FILE_SIZE = 2 * 1024 * 1024; // 2MB
 const DOCS_NAME_MAX_LENGTH = 160;
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown"]);
+const DOCS_DISPLAY_ROOT = "Workspace";
 
 function normaliseDocsFileName(value: unknown): string {
   if (typeof value !== "string") {
@@ -152,7 +153,7 @@ function toDocsRelativePath(target: string, scope: WorkspaceScope): string {
 
 function toDocsDisplayPath(target: string, scope: WorkspaceScope): string {
   const relativePath = toDocsRelativePath(target, scope);
-  return relativePath ? `~/${relativePath}` : "~";
+  return relativePath ? `${DOCS_DISPLAY_ROOT}/${relativePath}` : DOCS_DISPLAY_ROOT;
 }
 
 function resolveDocsPath(
@@ -164,7 +165,7 @@ function resolveDocsPath(
   const absolute = isAbsolute(candidate) ? candidate : join(scope.docsRoot, candidate);
   const normalized = normalize(absolute);
   if (!isWithinDocsRoot(normalized, scope)) {
-    throw new Error("Access outside the home directory is not permitted");
+    throw new Error("Access outside the workspace directory is not permitted");
   }
   return normalized;
 }

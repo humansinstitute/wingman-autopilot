@@ -1,9 +1,8 @@
 import { mkdirSync } from "node:fs";
-import { join, normalize, sep } from "node:path";
+import { normalize, sep } from "node:path";
 
 import type { WingmanConfig } from "../config";
 import type { RequestAuthContext } from "../auth/request-context";
-import { generateIdentityAlias } from "../identity/identity-alias";
 import { getEffectiveOwnerNpub } from "../auth/effective-owner";
 
 export type WorkspaceScope = {
@@ -28,34 +27,22 @@ export const resolveWorkspaceScope = (
   config: WingmanConfig,
   context: RequestAuthContext,
   adminNpub: string | null,
-  systemDocsRoot: string,
-  systemDocsBoundary: string,
+  _systemDocsRoot: string,
+  _systemDocsBoundary: string,
 ): WorkspaceScope => {
   const normalizedNpub = getEffectiveOwnerNpub(context);
   const isAdmin = Boolean(adminNpub && normalizedNpub && normalizedNpub === adminNpub);
+  const workspaceRoot = normalize(config.defaultWorkingDirectory);
+  const workspaceBoundary = workspaceRoot.endsWith(sep) ? workspaceRoot : `${workspaceRoot}${sep}`;
 
-  if (!normalizedNpub || isAdmin) {
-    return {
-      allowedDirectories: config.allowedDirectories,
-      defaultDirectory: config.defaultWorkingDirectory,
-      aliasDirectory: null,
-      docsRoot: systemDocsRoot,
-      docsRootBoundary: systemDocsBoundary,
-      isAdmin,
-    };
-  }
-
-  const alias = generateIdentityAlias(normalizedNpub);
-  const aliasDirectory = normalize(join(config.defaultWorkingDirectory, alias));
-  ensureDirectoryExists(aliasDirectory);
-  const aliasBoundary = aliasDirectory.endsWith(sep) ? aliasDirectory : `${aliasDirectory}${sep}`;
+  ensureDirectoryExists(workspaceRoot);
 
   return {
-    allowedDirectories: [aliasDirectory],
-    defaultDirectory: aliasDirectory,
-    aliasDirectory,
-    docsRoot: aliasDirectory,
-    docsRootBoundary: aliasBoundary,
-    isAdmin: false,
+    allowedDirectories: config.allowedDirectories,
+    defaultDirectory: workspaceRoot,
+    aliasDirectory: null,
+    docsRoot: workspaceRoot,
+    docsRootBoundary: workspaceBoundary,
+    isAdmin,
   };
 };

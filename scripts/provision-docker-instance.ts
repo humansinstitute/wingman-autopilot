@@ -197,6 +197,8 @@ function main(): void {
     WINGMAN_CLAUDE_CLI: "/usr/local/bin/claude",
     WINGMAN_GOOSE_CLI: "/usr/local/bin/goose",
     WINGMAN_OPENCODE_CLI: "/usr/local/bin/opencode",
+    WINGMAN_GEMINI_CLI: "/usr/local/bin/gemini",
+    WINGMAN_PI_CLI: "/usr/local/bin/pi",
     WINGMAN_IDENTITY_SESSION_SECRET: secret,
     WINGMAN_ADMIN_NPUB: options.adminNpub,
     WINGMAN_SETUP_NONINTERACTIVE: "true",

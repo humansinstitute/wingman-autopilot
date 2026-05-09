@@ -128,6 +128,20 @@ describe("handleDocsApi file images", () => {
     });
   });
 
+  test("labels the shared files root as Workspace", async () => {
+    await writeFile(join(rootDir, "note.md"), "# Note\n");
+
+    const response = await callDocsApi(ctx, "/api/docs/tree");
+    const body = await response!.json() as {
+      displayPath: string;
+      entries: Array<{ name: string; displayPath: string }>;
+    };
+
+    expect(response!.status).toBe(200);
+    expect(body.displayPath).toBe("Workspace");
+    expect(body.entries.find((entry) => entry.name === "note.md")?.displayPath).toBe("Workspace/note.md");
+  });
+
   test("loads pdf preview metadata without reading file content", async () => {
     const pdfContent = "%PDF-1.7\n";
     await writeFile(join(rootDir, "paper.pdf"), pdfContent);

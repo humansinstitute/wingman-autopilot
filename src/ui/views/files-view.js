@@ -315,7 +315,7 @@ export function initFilesView(deps) {
     headerTitle.textContent = "Files";
     const pathLabel = document.createElement("span");
     pathLabel.className = "wm-files-browser__path";
-    pathLabel.textContent = files.displayPath ?? "~";
+    pathLabel.textContent = files.displayPath ?? "Workspace";
     headerButton.append(headerTitle, pathLabel);
 
     const controls = document.createElement("div");

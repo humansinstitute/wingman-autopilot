@@ -74,6 +74,13 @@ ENV FOLDERACCESS=/workspace
 ENV APP_ROUTING=path
 ENV AGENT_SPAWN_MODE=bun
 ENV AGENTAPI_ALLOWED_HOSTS=localhost,127.0.0.1,[::1]
+ENV CODEX_CLI=/usr/local/bin/codex
+ENV CODEX_TRUSTED_WORKSPACE=/workspace
+ENV CLAUDE_CLI=/usr/local/bin/claude
+ENV GOOSE_CLI=/usr/local/bin/goose
+ENV OPENCODE_CLI=/usr/local/bin/opencode
+ENV GEMINI_CLI=/usr/local/bin/gemini
+ENV PI_CLI=/usr/local/bin/pi
 ENV WINGMAN_SETUP_NONINTERACTIVE=true
 
 RUN bun -e "import { ensureAgentApiBinary } from './src/server/bootstrap/agentapi.ts'; await ensureAgentApiBinary({ agentApiBinaryPath: '/app/out/agentapi', projectRootDirectory: '/app' });"

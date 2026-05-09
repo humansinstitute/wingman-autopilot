@@ -88,6 +88,10 @@ goose configure
 opencode auth login
 ```
 
+The image installs Codex, Claude, Goose, and OpenCode by default. Gemini and Pi
+CLI paths are still pinned to `/usr/local/bin/gemini` and `/usr/local/bin/pi`;
+install those inside the container before selecting those agent types.
+
 Run the readiness checklist any time:
 
 ```bash
@@ -105,8 +109,10 @@ the provisioning script sets secure cookies when `--base-url` starts with
 
 Docker provisioning also pins agent CLI paths to `/usr/local/bin/*` so project
 dependencies inside `/app/node_modules/.bin` cannot shadow the authenticated
-container CLIs. Codex sessions trust `/workspace` by default to avoid an
-interactive first-run trust prompt in the web UI.
+container CLIs. The Files page, launch directory picker, and app file pickers
+all use the configured Wingman workspace root, `/workspace` by default. Codex
+sessions trust `/workspace` by default to avoid an interactive first-run trust
+prompt in the web UI.
 
 ## Runtime Model
 
@@ -168,6 +174,8 @@ Options:
 | `GOOSE_CLI` | Executable invoked for Goose sessions | `goose` |
 | `CODEX_CLI` | Executable invoked for Codex sessions | `codex` |
 | `OPENCODE_CLI` | Executable invoked for OpenCode sessions | `opencode` |
+| `GEMINI_CLI` | Executable invoked for Gemini sessions | `gemini` |
+| `PI_CLI` | Executable invoked for Pi sessions | `pi` |
 | `AGENTAPI_ALLOWED_ORIGINS` | Value passed to AgentAPI `--allowed-origins` | `*` |
 | `AGENTAPI_ALLOWED_HOSTS` | Value passed to AgentAPI `--allowed-hosts` | `localhost,127.0.0.1,[::1]` |
 

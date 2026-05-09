@@ -132,7 +132,7 @@ export function initFilesApi({ state, getCurrentRoute, render, FILES_ROUTE }) {
       const data = await response.json();
       files.currentPath = data?.path ?? targetPath ?? files.currentPath;
       files.relativePath = data?.relativePath ?? "";
-      files.displayPath = data?.displayPath ?? (files.relativePath ? `~/${files.relativePath}` : "~");
+      files.displayPath = data?.displayPath ?? (files.relativePath ? `Workspace/${files.relativePath}` : "Workspace");
       files.parent = data?.parent ?? null;
       files.entries = Array.isArray(data?.entries) ? data.entries : [];
       files.git = data?.git ?? null;
@@ -201,7 +201,9 @@ export function initFilesApi({ state, getCurrentRoute, render, FILES_ROUTE }) {
       const data = await response.json();
       files.previewPath = data?.path ?? path;
       files.previewRelativePath = data?.relativePath ?? "";
-      files.previewDisplayPath = data?.displayPath ?? (files.previewRelativePath ? `~/${files.previewRelativePath}` : "");
+      files.previewDisplayPath = data?.displayPath ?? (
+        files.previewRelativePath ? `Workspace/${files.previewRelativePath}` : ""
+      );
       files.previewName = data?.name ?? null;
       files.previewContent = data?.content ?? "";
       files.previewFormat = data?.format ?? null;
