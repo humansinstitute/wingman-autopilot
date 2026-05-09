@@ -158,7 +158,7 @@ export function createHostedAppRoutingSection({ config, currentOrigin } = {}) {
   const note = document.createElement('p');
   note.className = 'wm-settings__port-note';
   note.style.cssText = 'margin-top:6px;font-size:0.8em;';
-  note.textContent = 'Apply these values in the Docker .env file and restart the container. The Cloudflare tunnel should route both hostnames to the Wingman host port.';
+  note.textContent = 'Apply these values in the Docker .env file and restart the container. The Cloudflare tunnel should route both hostnames to the Wingman host port, and the Cloudflare edge certificate must cover the nested wildcard app hostnames.';
 
   container.append(heading, description, statusList, domainRow, snippet, note);
   return container;

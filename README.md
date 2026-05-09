@@ -121,6 +121,10 @@ port. Then set `WINGMAN_APP_ROUTING=subdomain` and
 Settings -> Workspace shows the current routing mode and can generate the
 matching Docker env snippet.
 
+Cloudflare also needs an edge certificate that covers the nested wildcard app
+hostnames, for example `*.wmd.otherstuff.ai`. A certificate for
+`*.otherstuff.ai` does not cover `rare-zap-horn.wmd.otherstuff.ai`.
+
 ## Runtime Model
 
 Wingmen is a long-running Bun server that:

@@ -160,6 +160,13 @@ WINGMAN_SUBDOMAIN_PROXY_ENABLED=true
 WINGMAN_BASE_URL=https://wmd.otherstuff.ai
 ```
 
+Cloudflare DNS and certificates both have to cover the app wildcard. A tunnel
+hostname for `*.wmd.otherstuff.ai` gets requests to the base machine, but the
+browser TLS handshake also needs an edge certificate that covers
+`*.wmd.otherstuff.ai`. A certificate for `*.otherstuff.ai` is only one label
+deep and will not cover app aliases such as
+`rare-zap-horn.wmd.otherstuff.ai`.
+
 The Settings UI should expose a workspace routing panel that shows the current
 mode, current app domain, expected Cloudflare hostnames, and a copyable Docker
 env snippet. Applying the env still requires editing the Docker `.env` and
