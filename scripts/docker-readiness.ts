@@ -23,10 +23,6 @@ interface AuthSpec {
   validatesContent?: (relativePath: string, content: string) => boolean;
 }
 
-const args = new Set(process.argv.slice(2));
-const outputJson = args.has("--json");
-const strict = args.has("--strict");
-
 const expectedDirectories = [
   "/home/wingman",
   "/app/data",
@@ -192,6 +188,17 @@ function envCheck(name: string, value: string | undefined, required = false): Ch
   };
 }
 
+export function buildConfigChecks(env: NodeJS.ProcessEnv, strictMode = false): CheckResult[] {
+  return [
+    envCheck("WINGMAN_INSTANCE_NAME", env.WINGMAN_INSTANCE_NAME),
+    envCheck("WINGMAN_BASE_URL", env.WINGMAN_BASE_URL),
+    envCheck("DIRECTORY_DEF", env.DIRECTORY_DEF, true),
+    envCheck("FOLDERACCESS", env.FOLDERACCESS, true),
+    envCheck("IDENTITY_SESSION_SECRET", env.IDENTITY_SESSION_SECRET, true),
+    envCheck("ADMIN_NPUB", env.ADMIN_NPUB, strictMode),
+  ];
+}
+
 function printTable(title: string, checks: CheckResult[]): void {
   console.log(`\n${title}`);
   for (const check of checks) {
@@ -200,37 +207,40 @@ function printTable(title: string, checks: CheckResult[]): void {
   }
 }
 
-const commandChecks = commandSpecs.map(runCommand);
-const directoryChecks = await Promise.all(expectedDirectories.map(directoryWritable));
-const home = process.env.HOME?.trim() || "/home/wingman";
-const authChecks = await Promise.all(authSpecs.map((spec) => authCheck(spec, home)));
-const configChecks = [
-  envCheck("WINGMAN_INSTANCE_NAME", process.env.WINGMAN_INSTANCE_NAME),
-  envCheck("WINGMAN_BASE_URL", process.env.WINGMAN_BASE_URL),
-  envCheck("DIRECTORY_DEF", process.env.DIRECTORY_DEF, true),
-  envCheck("FOLDERACCESS", process.env.FOLDERACCESS, true),
-  envCheck("IDENTITY_SESSION_SECRET", process.env.IDENTITY_SESSION_SECRET, true),
-  envCheck("ADMIN_NPUB", process.env.ADMIN_NPUB),
-];
+async function main(): Promise<void> {
+  const args = new Set(process.argv.slice(2));
+  const outputJson = args.has("--json");
+  const strict = args.has("--strict");
 
-const result = {
-  ok: [...commandChecks, ...directoryChecks, ...configChecks].every((check) => check.status !== "fail"),
-  strict,
-  commandChecks,
-  directoryChecks,
-  authChecks,
-  configChecks,
-};
+  const commandChecks = commandSpecs.map(runCommand);
+  const directoryChecks = await Promise.all(expectedDirectories.map(directoryWritable));
+  const home = process.env.HOME?.trim() || "/home/wingman";
+  const authChecks = await Promise.all(authSpecs.map((spec) => authCheck(spec, home)));
+  const configChecks = buildConfigChecks(process.env, strict);
 
-if (outputJson) {
-  console.log(JSON.stringify(result, null, 2));
-} else {
-  printTable("Installed tools", commandChecks);
-  printTable("Writable volumes", directoryChecks);
-  printTable("CLI authentication", authChecks);
-  printTable("Wingman configuration", configChecks);
+  const result = {
+    ok: [...commandChecks, ...directoryChecks, ...configChecks].every((check) => check.status !== "fail"),
+    strict,
+    commandChecks,
+    directoryChecks,
+    authChecks,
+    configChecks,
+  };
+
+  if (outputJson) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    printTable("Installed tools", commandChecks);
+    printTable("Writable volumes", directoryChecks);
+    printTable("CLI authentication", authChecks);
+    printTable("Wingman configuration", configChecks);
+  }
+
+  if (strict && !result.ok) {
+    process.exit(1);
+  }
 }
 
-if (strict && !result.ok) {
-  process.exit(1);
+if (import.meta.main) {
+  await main();
 }

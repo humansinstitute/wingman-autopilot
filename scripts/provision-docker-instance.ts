@@ -70,13 +70,19 @@ function printUsage(): void {
   console.log(`Usage: bun run docker:provision [options]
 
 Options:
-  --admin-npub <npub>       Admin/operator npub to seed into .env
+  --admin-npub <npub>       Required admin/operator npub to seed into .env
   --base-url <url>          Public Wingman URL, defaults to http://localhost:<host-port>
   --env <path>              Env file to write, defaults to .env
   --force                   Overwrite an existing env file
   --host-port <port>        Host port to publish, defaults from instance number
   --instance-name <name>    Compose project/instance name, defaults to wingman-01+
 `);
+}
+
+function validateOptions(options: ProvisionOptions): void {
+  if (!options.adminNpub.trim()) {
+    throw new Error("--admin-npub is required so the first operator whitelist is configured before Docker setup completes");
+  }
 }
 
 function listComposeProjectNames(): Set<string> {
@@ -155,41 +161,48 @@ function readExistingSecret(envPath: string): string {
   return match?.[1]?.replace(/^["']|["']$/g, "").trim() ?? "";
 }
 
-const options = parseArgs(process.argv.slice(2));
+function main(): void {
+  const options = parseArgs(process.argv.slice(2));
+  validateOptions(options);
 
-if (existsSync(options.envPath) && !options.force) {
-  throw new Error(`${options.envPath} already exists; pass --force to overwrite`);
+  if (existsSync(options.envPath) && !options.force) {
+    throw new Error(`${options.envPath} already exists; pass --force to overwrite`);
+  }
+
+  const picked = options.instanceName
+    ? { name: options.instanceName, index: extractInstanceIndex(options.instanceName) }
+    : pickInstanceName(listComposeProjectNames());
+  const hostPort = options.hostPort ?? DEFAULT_CONTAINER_PORT + picked.index - 1;
+  const baseUrl = options.baseUrl || `http://localhost:${hostPort}`;
+  const secret = readExistingSecret(options.envPath) || generateSecret();
+
+  const values: Record<string, string> = {
+    COMPOSE_PROJECT_NAME: picked.name,
+    WINGMAN_INSTANCE_NAME: picked.name,
+    WINGMAN_IMAGE: "wingman-autopilot:local",
+    WINGMAN_HOST_PORT: String(hostPort),
+    WINGMAN_CONTAINER_PORT: String(DEFAULT_CONTAINER_PORT),
+    WINGMAN_AGENT_PORTS: String(DEFAULT_AGENT_PORT_START),
+    WINGMAN_AGENT_MAX: String(DEFAULT_AGENT_MAX),
+    WINGMAN_DIRECTORY_DEF: "/workspace",
+    WINGMAN_FOLDERACCESS: "/workspace",
+    WINGMAN_BASE_URL: baseUrl,
+    WINGMAN_APP_ROUTING: "path",
+    WINGMAN_AGENT_SPAWN_MODE: "bun",
+    WINGMAN_AGENTAPI_ALLOWED_HOSTS: "localhost,127.0.0.1,[::1]",
+    WINGMAN_IDENTITY_SESSION_SECRET: secret,
+    WINGMAN_ADMIN_NPUB: options.adminNpub,
+    WINGMAN_SETUP_NONINTERACTIVE: "true",
+  };
+
+  writeFileSync(options.envPath, buildEnvContent(values), { mode: 0o600 });
+
+  console.log(`Wrote ${options.envPath}`);
+  console.log(`Instance: ${picked.name}`);
+  console.log(`URL: ${baseUrl}`);
+  console.log("Next: docker compose up -d");
 }
 
-const picked = options.instanceName
-  ? { name: options.instanceName, index: extractInstanceIndex(options.instanceName) }
-  : pickInstanceName(listComposeProjectNames());
-const hostPort = options.hostPort ?? DEFAULT_CONTAINER_PORT + picked.index - 1;
-const baseUrl = options.baseUrl || `http://localhost:${hostPort}`;
-const secret = readExistingSecret(options.envPath) || generateSecret();
-
-const values: Record<string, string> = {
-  COMPOSE_PROJECT_NAME: picked.name,
-  WINGMAN_INSTANCE_NAME: picked.name,
-  WINGMAN_IMAGE: "wingman-autopilot:local",
-  WINGMAN_HOST_PORT: String(hostPort),
-  WINGMAN_CONTAINER_PORT: String(DEFAULT_CONTAINER_PORT),
-  WINGMAN_AGENT_PORTS: String(DEFAULT_AGENT_PORT_START),
-  WINGMAN_AGENT_MAX: String(DEFAULT_AGENT_MAX),
-  WINGMAN_DIRECTORY_DEF: "/workspace",
-  WINGMAN_FOLDERACCESS: "/workspace",
-  WINGMAN_BASE_URL: baseUrl,
-  WINGMAN_APP_ROUTING: "path",
-  WINGMAN_AGENT_SPAWN_MODE: "bun",
-  WINGMAN_AGENTAPI_ALLOWED_HOSTS: "localhost,127.0.0.1,[::1]",
-  WINGMAN_IDENTITY_SESSION_SECRET: secret,
-  WINGMAN_ADMIN_NPUB: options.adminNpub,
-  WINGMAN_SETUP_NONINTERACTIVE: "true",
-};
-
-writeFileSync(options.envPath, buildEnvContent(values), { mode: 0o600 });
-
-console.log(`Wrote ${options.envPath}`);
-console.log(`Instance: ${picked.name}`);
-console.log(`URL: ${baseUrl}`);
-console.log("Next: docker compose up -d");
+if (import.meta.main) {
+  main();
+}

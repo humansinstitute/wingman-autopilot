@@ -62,10 +62,14 @@ Generate a Compose `.env` file for the first isolated Wingman instance:
 bun run docker:provision --admin-npub npub1...
 ```
 
+`--admin-npub` is required. Docker noninteractive setup will not mark the
+instance complete until the first operator whitelist is configured.
+
 The default instance is `wingman-01`; if Docker already has that Compose project,
 the provisioning script moves to `wingman-02`, `wingman-03`, and so on. It writes
 the Compose project name, host port, persistent-volume paths, base URL, and
-`IDENTITY_SESSION_SECRET` into `.env`.
+`IDENTITY_SESSION_SECRET` into `.env`. `docker compose up` also fails fast when
+`WINGMAN_ADMIN_NPUB` is absent from the generated environment.
 
 Build and start the container:
 

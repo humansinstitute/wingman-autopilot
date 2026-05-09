@@ -136,6 +136,16 @@ const readConfiguredValue = (values: Map<string, string>, key: string): string =
   return values.get(key)?.trim() || process.env[key]?.trim() || "";
 };
 
+const readFirstConfiguredValue = (values: Map<string, string>, keys: string[]): string => {
+  for (const key of keys) {
+    const value = readConfiguredValue(values, key);
+    if (value) {
+      return value;
+    }
+  }
+  return "";
+};
+
 const isTruthySetting = (value: string | undefined): boolean => {
   if (!value) return false;
   return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
@@ -145,17 +155,48 @@ const shouldRunNonInteractiveSetup = (values: Map<string, string>): boolean => {
   return isTruthySetting(readConfiguredValue(values, "WINGMAN_SETUP_NONINTERACTIVE"));
 };
 
-const completeNonInteractiveSetup = (values: Map<string, string>): boolean => {
-  const directory = readConfiguredValue(values, "DIRECTORY_DEF");
-  const sessionSecret = readConfiguredValue(values, "IDENTITY_SESSION_SECRET");
+export const validateNonInteractiveSetupConfig = (values: Map<string, string>): string[] => {
+  const required = [
+    {
+      name: "DIRECTORY_DEF",
+      value: readFirstConfiguredValue(values, ["DIRECTORY_DEF", "WINGMAN_DIRECTORY_DEF"]),
+    },
+    {
+      name: "IDENTITY_SESSION_SECRET",
+      value: readFirstConfiguredValue(values, ["IDENTITY_SESSION_SECRET", "WINGMAN_IDENTITY_SESSION_SECRET"]),
+    },
+    {
+      name: "ADMIN_NPUB",
+      value: readFirstConfiguredValue(values, ["ADMIN_NPUB", "WINGMAN_ADMIN_NPUB"]),
+    },
+  ];
 
-  if (!directory || !sessionSecret) {
+  return required
+    .filter((entry) => !entry.value)
+    .map((entry) => entry.name);
+};
+
+const normalizeNonInteractiveRuntimeEnv = (values: Map<string, string>): void => {
+  const directory = readFirstConfiguredValue(values, ["DIRECTORY_DEF", "WINGMAN_DIRECTORY_DEF"]);
+  const sessionSecret = readFirstConfiguredValue(values, ["IDENTITY_SESSION_SECRET", "WINGMAN_IDENTITY_SESSION_SECRET"]);
+  const adminNpub = readFirstConfiguredValue(values, ["ADMIN_NPUB", "WINGMAN_ADMIN_NPUB"]);
+
+  if (directory) values.set("DIRECTORY_DEF", directory);
+  if (sessionSecret) values.set("IDENTITY_SESSION_SECRET", sessionSecret);
+  if (adminNpub) values.set("ADMIN_NPUB", adminNpub);
+};
+
+const completeNonInteractiveSetup = (values: Map<string, string>): boolean => {
+  const missing = validateNonInteractiveSetupConfig(values);
+
+  if (missing.length > 0) {
     console.warn(
-      "[setup] WINGMAN_SETUP_NONINTERACTIVE is set, but DIRECTORY_DEF and IDENTITY_SESSION_SECRET are required.",
+      `[setup] WINGMAN_SETUP_NONINTERACTIVE is set, but ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} required.`,
     );
     return false;
   }
 
+  normalizeNonInteractiveRuntimeEnv(values);
   loadEnvIntoRuntime(values);
   markWizardComplete();
   console.log("[setup] Non-interactive setup complete.");
@@ -183,16 +224,6 @@ const promptRequired = async (
     if (trimmed) return trimmed;
     console.log("  This field is required. Please enter a value.");
   }
-};
-
-const promptOptional = async (
-  rl: ReturnType<typeof createInterface>,
-  question: string,
-  hint?: string
-): Promise<string> => {
-  const hintText = hint ? ` (${hint})` : "";
-  const answer = await rl.question(`${question}${hintText}: `);
-  return answer.trim();
 };
 
 export const runSetupWizard = async (): Promise<boolean> => {
@@ -233,14 +264,12 @@ export const runSetupWizard = async (): Promise<boolean> => {
     // ADMIN_NPUB
     console.log("\n--- Admin Identity ---");
     console.log("Your Nostr npub will be the admin account with full access.");
-    const adminNpub = await promptOptional(
+    const adminNpub = await promptRequired(
       rl,
       "Enter your Nostr npub",
-      "leave blank to skip"
+      "required"
     );
-    if (adminNpub) {
-      values.set("ADMIN_NPUB", adminNpub);
-    }
+    values.set("ADMIN_NPUB", adminNpub);
 
     // DIRECTORY_DEF
     console.log("\n--- Code Directory ---");
