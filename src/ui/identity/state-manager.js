@@ -20,7 +20,6 @@ import {
   renderWorkspaceDelegationList,
   revokeWorkspaceDelegation,
 } from "./workspace-delegations.js";
-import * as deviceKeystore from "./device-keystore.js";
 
 export function initIdentityStateManager(deps) {
   const {
@@ -139,12 +138,14 @@ export function initIdentityStateManager(deps) {
       const response = await fetch("/api/bot-keys/me", { credentials: "include" });
       if (!response.ok) return;
       const data = await response.json();
-      if (data && data.hasKey) {
+      if (data) {
         updateIdentityState({
-          botNpub: data.botNpub ?? null,
-          botDisplayName: data.displayName ?? null,
-          botPubkeyHex: data.botPubkeyHex ?? null,
-          botUnlocked: Boolean(data.unlocked),
+          botNpub: data.hasKey ? data.botNpub ?? null : null,
+          botDisplayName: data.hasKey ? data.displayName ?? null : null,
+          botPubkeyHex: data.hasKey ? data.botPubkeyHex ?? null : null,
+          botUnlocked: data.hasKey ? Boolean(data.unlocked) : false,
+          botCanExportNsec: data.hasKey ? Boolean(data.canExportNsec) : false,
+          botKeySource: data.hasKey ? data.source ?? null : null,
         }, { persist: true, emit: true });
       }
     } catch (error) {
@@ -432,10 +433,10 @@ export function initIdentityStateManager(deps) {
 
     // Warn the user before proceeding
     const confirmed = await openConfirmDialog({
-      title: "Export Bot Private Key",
+      title: "Copy Wingman Private Key",
       description:
-        "You are about to copy your bot's private key (nsec) to the clipboard. " +
-        "Anyone with this key can sign events as your bot identity. Only continue if you understand the risk.",
+        "You are about to copy this Wingman's private key (nsec) to the clipboard. " +
+        "Anyone with this key can sign events as this Wingman identity. Only continue if you understand the risk.",
       confirmLabel: "Continue",
       testId: "export-bot-nsec-dialog",
     });
@@ -444,60 +445,17 @@ export function initIdentityStateManager(deps) {
     setButtonState(btn, { state: "loading", label: "Fetching\u2026", disable: true });
 
     try {
-      // 1. Fetch the encrypted blob + sender pubkey
-      const res = await fetch("/api/bot-keys/encrypted", { credentials: "include" });
+      const res = await fetch("/api/bot-keys/admin-nsec", { credentials: "include" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? `Failed to fetch encrypted key (${res.status})`);
+        throw new Error(data.error ?? `Failed to fetch bot nsec (${res.status})`);
       }
-      const { encryptedToUser, senderPubkey } = await res.json();
-      if (!encryptedToUser || !senderPubkey) {
-        throw new Error("Missing encrypted data or sender pubkey from server");
-      }
-
-      // 2. Decrypt using NIP-07 (preferred) or local device keystore (Key Teleport)
-      setButtonState(btn, { state: "loading", label: "Decrypting\u2026", disable: true });
-
-      let nsecHex = null;
-      if (typeof window.nostr?.nip44?.decrypt === "function") {
-        nsecHex = await window.nostr.nip44.decrypt(senderPubkey, encryptedToUser);
-      } else if (deviceKeystore.isAvailable()) {
-        const stored = await deviceKeystore.retrieveNsec();
-        if (!stored?.nsec || !(stored.nsec instanceof Uint8Array) || stored.nsec.length !== 32) {
-          throw new Error("No local key available to decrypt bot nsec export");
-        }
-        const { nip44 } = await import("/vendor/nostr-tools/index.js");
-        let userSecretHex = "";
-        for (const byte of stored.nsec) userSecretHex += byte.toString(16).padStart(2, "0");
-        const conversationKey = nip44.v2.utils.getConversationKey(userSecretHex, senderPubkey);
-        nsecHex = nip44.v2.decrypt(encryptedToUser, conversationKey);
-      } else {
-        throw new Error("No NIP-44 decryption method available to export bot nsec");
+      const { nsec } = await res.json();
+      if (typeof nsec !== "string" || !nsec.startsWith("nsec1")) {
+        throw new Error("Server returned an invalid nsec");
       }
 
-      // NIP-44 decrypt returns a string — trim whitespace and left-pad if a
-      // leading zero was dropped (some NIP-07 extensions do this).
-      if (typeof nsecHex === "string") nsecHex = nsecHex.trim();
-      if (nsecHex && /^[0-9a-fA-F]{63}$/.test(nsecHex)) nsecHex = "0" + nsecHex;
-
-      if (!nsecHex || !/^[0-9a-fA-F]{64}$/.test(nsecHex)) {
-        throw new Error("Decryption returned invalid data");
-      }
-
-      // 3. Convert hex to bech32 nsec
       setButtonState(btn, { state: "loading", label: "Copying\u2026", disable: true });
-
-      const nip19Module = await import("/vendor/nostr-tools/index.js");
-      const secretBytes = new Uint8Array(32);
-      for (let i = 0; i < 64; i += 2) {
-        secretBytes[i / 2] = parseInt(nsecHex.substring(i, i + 2), 16);
-      }
-      const nsec = nip19Module.nip19.nsecEncode(secretBytes);
-
-      // Wipe the byte array
-      secretBytes.fill(0);
-
-      // 4. Copy to clipboard
       await navigator.clipboard.writeText(nsec);
 
       setButtonState(btn, { state: "success", label: "Copied!", disable: false });
@@ -658,6 +616,8 @@ export function initIdentityStateManager(deps) {
       botDisplayName: current.botDisplayName ?? null,
       botPubkeyHex: current.botPubkeyHex ?? null,
       botUnlocked: current.botUnlocked ?? false,
+      botCanExportNsec: Boolean(current.botCanExportNsec),
+      botKeySource: current.botKeySource ?? null,
     };
     const wasAdmin = current.isAdmin;
 
@@ -714,6 +674,8 @@ export function initIdentityStateManager(deps) {
       next.botDisplayName = null;
       next.botPubkeyHex = null;
       next.botUnlocked = false;
+      next.botCanExportNsec = false;
+      next.botKeySource = null;
     }
 
     const configuredAdminNpub = getConfiguredAdminNpub();
@@ -757,6 +719,12 @@ export function initIdentityStateManager(deps) {
     if ("botUnlocked" in partial) {
       next.botUnlocked = Boolean(partial.botUnlocked);
     }
+    if ("botCanExportNsec" in partial) {
+      next.botCanExportNsec = Boolean(partial.botCanExportNsec);
+    }
+    if ("botKeySource" in partial) {
+      next.botKeySource = typeof partial.botKeySource === "string" ? partial.botKeySource : null;
+    }
 
     next.authenticated = Boolean(next.npub);
     const becameAuthenticated = !current.authenticated && next.authenticated;
@@ -779,7 +747,9 @@ export function initIdentityStateManager(deps) {
       next.botNpub !== (current.botNpub ?? null) ||
       next.botDisplayName !== (current.botDisplayName ?? null) ||
       next.botPubkeyHex !== (current.botPubkeyHex ?? null) ||
-      next.botUnlocked !== (current.botUnlocked ?? false);
+      next.botUnlocked !== (current.botUnlocked ?? false) ||
+      next.botCanExportNsec !== Boolean(current.botCanExportNsec) ||
+      next.botKeySource !== (current.botKeySource ?? null);
 
     if (!changed) {
       return current;
@@ -1274,6 +1244,8 @@ export function initIdentityStateManager(deps) {
       botStatus: root.querySelector('[data-role="identity-bot-status"]'),
       botCopyButton: root.querySelector('[data-action="copy-bot-npub"]'),
       botCopyFeedback: root.querySelector('[data-role="identity-bot-copy-feedback"]'),
+      botExportLabel: root.querySelector('[data-role="identity-bot-export-label"]'),
+      botExportRow: root.querySelector('[data-role="identity-bot-export-row"]'),
       botExportButton: root.querySelector('[data-action="export-bot-nsec"]'),
       botExportFeedback: root.querySelector('[data-role="identity-bot-export-feedback"]'),
       botPublishDelegateButton: root.querySelector('[data-action="publish-bot-delegate-kind"]'),

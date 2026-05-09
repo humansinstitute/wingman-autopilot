@@ -258,6 +258,8 @@ export const state = {
     botDisplayName: null,
     botPubkeyHex: null,
     botUnlocked: false,
+    botCanExportNsec: false,
+    botKeySource: null,
   },
   // Private chat state
   chats: {

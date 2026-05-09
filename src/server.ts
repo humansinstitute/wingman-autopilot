@@ -83,6 +83,7 @@ import { createSuperbasedApiHandler } from "./superbased/superbased-api";
 import { BotKeyStore } from "./identity/bot-key-store";
 import { createBotKeyApiHandler } from "./identity/bot-key-api";
 import { createBotCryptoApiHandler } from "./identity/bot-crypto-api";
+import { loadWingmanInstanceIdentity } from "./identity/wingman-instance-identity";
 import { generateBotKey, clearBotKey, isBotKeyUnlocked, storeBotKeyInMemory, unlockViaEscrow } from "./identity/bot-key-manager";
 import { WorkspaceSubscriptionManager } from './agent-chat/subscription-runtime';
 import { DispatchPipelineRuntime } from './agent-chat/dispatch-pipelines/runtime';
@@ -538,6 +539,11 @@ const botKeyApiHandler = createBotKeyApiHandler({
   getStoredSession: (sid: string) => messageStore.getSession(sid),
   onBotKeyUnlocked: onBotKeyUnlockedHook,
   defaultRelays: config.connectRelays,
+  getInstanceIdentity: () => loadWingmanInstanceIdentity(),
+  isAdminNpub: (npub) => {
+    if (!adminNpub) return false;
+    return normaliseNpub(npub ?? null) === adminNpub;
+  },
 });
 const botCryptoApiHandler = createBotCryptoApiHandler({
   getSession: (sid: string) => manager.getSession(sid),

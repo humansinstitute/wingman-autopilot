@@ -97,6 +97,10 @@ The image installs Codex, Claude, Goose, OpenCode, Gemini, and Pi by default.
 All agent CLI paths are pinned to `/usr/local/bin/*` so Wingman launches the
 authenticated container tools rather than project-local binaries.
 
+Set `WINGMAN_PRIV=nsec1...` in the Docker `.env` when you want this instance to
+use a single shared Wingman bot identity. Admins can copy the nsec from the
+identity panel; normal operators only see the public bot identity details.
+
 Run the readiness checklist any time:
 
 ```bash

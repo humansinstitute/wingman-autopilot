@@ -233,6 +233,7 @@ function main(): void {
     WINGMAN_PI_CLI: "/usr/local/bin/pi",
     WINGMAN_IDENTITY_SESSION_SECRET: secret,
     WINGMAN_ADMIN_NPUB: options.adminNpub,
+    WINGMAN_PRIV: "",
     WINGMAN_SETUP_NONINTERACTIVE: "true",
   };
 

@@ -155,6 +155,13 @@ Useful states:
 The UI should never display the full private key after submission. It can show
 the derived npub and a short fingerprint.
 
+Admin visibility:
+
+- admins can see the public Wingman identity details and copy the `nsec`
+- normal approved operators can see only public Wingman identity details such as
+  npub, display name, and hex pubkey
+- private-key export controls should be hidden or unavailable for non-admins
+
 ## Docker Relationship
 
 Docker remains the first milestone.
@@ -205,14 +212,11 @@ migration, but the product model should not retain hidden per-user agent keys.
 6. Update setup/readiness UI around one instance key.
 7. Remove or archive obsolete per-user bot-key UI and API surfaces.
 
-## Open Implementation Questions
+## Implementation Decisions
 
-These are implementation choices, not product direction changes:
-
-- Should setup-managed `WINGMAN_PRIV` be memory-only for v1, or encrypted into
-  `/app/data`?
-- What encryption key should protect a setup-managed private key if persisted?
-- During migration, which existing APIs need temporary compatibility responses
-  so older UI modules do not fail before they are removed?
-- Should readiness fail hard when `WINGMAN_PRIV` is missing, or warn until the
-  setup UI has a chance to collect it?
+- `WINGMAN_PRIV` is provided through the process or Docker environment.
+- Do not otherwise persist `WINGMAN_PRIV` in `/app/data` for this phase.
+- If `WINGMAN_PRIV` is present but invalid, startup/API paths should surface the
+  error instead of silently falling back to another identity.
+- During migration, keep only the minimum compatibility responses needed so older
+  UI modules do not fail before they are removed.

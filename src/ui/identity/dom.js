@@ -252,6 +252,8 @@ export function initIdentityDom(deps) {
           botDisplayName: identity.botDisplayName ?? null,
           botPubkeyHex: identity.botPubkeyHex ?? null,
           botUnlocked: identity.botUnlocked ?? false,
+          botCanExportNsec: Boolean(identity.botCanExportNsec),
+          botKeySource: identity.botKeySource ?? null,
         };
         window.localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify(payload));
       } else {
@@ -354,8 +356,9 @@ export function initIdentityDom(deps) {
       }
     }
     // ── Bot identity display ──────────────────────────────────────
-    const { botNpub, botDisplayName, botPubkeyHex, botUnlocked } = state.identity;
+    const { botNpub, botDisplayName, botPubkeyHex, botUnlocked, botCanExportNsec } = state.identity;
     const hasBotKey = Boolean(botNpub);
+    const canExportBotNsec = Boolean(hasBotKey && botCanExportNsec && state.identity.isAdmin);
     if (entry.botHeader) {
       entry.botHeader.hidden = !authenticated;
       // Also hide the spacer dd (next sibling)
@@ -413,9 +416,16 @@ export function initIdentityDom(deps) {
       delete entry.botCopyFeedback.dataset.state;
     }
     if (entry.botExportButton) {
-      entry.botExportButton.disabled = !hasBotKey;
+      entry.botExportButton.disabled = !canExportBotNsec;
+      entry.botExportButton.hidden = !state.identity.isAdmin;
     }
-    if (entry.botExportFeedback && !hasBotKey) {
+    if (entry.botExportLabel) {
+      entry.botExportLabel.hidden = !state.identity.isAdmin;
+    }
+    if (entry.botExportRow) {
+      entry.botExportRow.hidden = !state.identity.isAdmin;
+    }
+    if (entry.botExportFeedback && !canExportBotNsec) {
       entry.botExportFeedback.hidden = true;
       delete entry.botExportFeedback.dataset.state;
     }

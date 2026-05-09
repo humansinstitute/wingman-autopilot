@@ -59,6 +59,7 @@ describe("docker provisioning", () => {
     expect(content).toContain(`WINGMAN_WORKSPACE_HOST_PATH=${join(homedir(), ".wm-ap99")}`);
     expect(content).toContain("WINGMAN_SUBDOMAIN_BASE_DOMAIN=");
     expect(content).toContain("WINGMAN_PI_CLI=/usr/local/bin/pi");
+    expect(content).toContain("WINGMAN_PRIV=");
     expect(content).toContain("WINGMAN_SETUP_NONINTERACTIVE=true");
   });
 

@@ -25,6 +25,7 @@ import type { SessionSnapshot } from "../agents/process-manager";
 import type { StoredSessionRecord } from "../storage/message-store";
 import { normaliseNpub } from "./npub-utils";
 import { parseBody, jsonError } from "../utils/request-utils";
+import type { WingmanInstanceIdentity } from "./wingman-instance-identity";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -36,6 +37,8 @@ export interface BotKeyApiDependencies {
   getStoredSession?: (sessionId: string) => StoredSessionRecord | null;
   onBotKeyUnlocked?: (npub: string, secretKey: Uint8Array, botPubkeyHex: string) => void;
   defaultRelays?: string[];
+  getInstanceIdentity?: () => WingmanInstanceIdentity | null;
+  isAdminNpub?: (npub: string | null | undefined) => boolean;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -88,6 +91,11 @@ export function createBotKeyApiHandler(deps: BotKeyApiDependencies) {
       // GET /api/bot-keys/encrypted
       if (segments.length === 3 && segments[2] === "encrypted" && method === "GET") {
         return handleGetEncrypted(deps, request);
+      }
+
+      // GET /api/bot-keys/admin-nsec
+      if (segments.length === 3 && segments[2] === "admin-nsec" && method === "GET") {
+        return handleGetAdminNsec(deps, request);
       }
 
       // POST /api/bot-keys/unlock
@@ -293,6 +301,22 @@ function handleGetMe(deps: BotKeyApiDependencies, request: Request): Response {
     return jsonError("Not authenticated — session cookie required", 401);
   }
 
+  const instanceIdentity = deps.getInstanceIdentity?.() ?? null;
+  if (instanceIdentity) {
+    const canExportNsec = Boolean(deps.isAdminNpub?.(npub));
+    return Response.json({
+      hasKey: true,
+      botNpub: instanceIdentity.npub,
+      botPubkeyHex: instanceIdentity.pubkeyHex,
+      displayName: instanceIdentity.displayName,
+      unlocked: true,
+      createdAt: null,
+      source: "wingman_priv",
+      keySource: instanceIdentity.source,
+      canExportNsec,
+    });
+  }
+
   const record = deps.store.getActiveKeyForUser(npub);
   if (!record) {
     return Response.json({ hasKey: false });
@@ -305,6 +329,52 @@ function handleGetMe(deps: BotKeyApiDependencies, request: Request): Response {
     displayName: record.displayName || getBotDisplayName(record.botPubkeyHex),
     unlocked: isBotKeyUnlocked(npub),
     createdAt: record.createdAt,
+    source: "legacy_user_bot_key",
+    canExportNsec: Boolean(deps.isAdminNpub?.(npub)),
+  });
+}
+
+/**
+ * GET /api/bot-keys/admin-nsec
+ *
+ * Copies the configured Wingman instance nsec for administrators.
+ */
+function handleGetAdminNsec(deps: BotKeyApiDependencies, request: Request): Response {
+  const npub = getNpubFromCookie(request);
+  if (!npub) {
+    return jsonError("Not authenticated — session cookie required", 401);
+  }
+  if (!deps.isAdminNpub?.(npub)) {
+    return jsonError("Admin access required", 403);
+  }
+
+  const instanceIdentity = deps.getInstanceIdentity?.() ?? null;
+  if (instanceIdentity) {
+    return Response.json({
+      nsec: instanceIdentity.nsec,
+      nsecHex: instanceIdentity.nsecHex,
+      botPubkeyHex: instanceIdentity.pubkeyHex,
+      botNpub: instanceIdentity.npub,
+      source: "wingman_priv",
+    });
+  }
+
+  const record = deps.store.getActiveKeyForUser(npub);
+  if (!record) {
+    return jsonError("No configured Wingman bot key", 404);
+  }
+
+  const exported = exportBotKeyForUser(npub, record);
+  if (!exported) {
+    return jsonError("Could not resolve bot key", 503);
+  }
+
+  return Response.json({
+    nsec: exported.nsec,
+    nsecHex: exported.nsecHex,
+    botPubkeyHex: exported.botPubkeyHex,
+    botNpub: exported.botNpub,
+    source: exported.source,
   });
 }
 
@@ -317,6 +387,9 @@ async function handleGetEncrypted(deps: BotKeyApiDependencies, request: Request)
   const npub = getNpubFromCookie(request);
   if (!npub) {
     return jsonError("Not authenticated — session cookie required", 401);
+  }
+  if (!deps.isAdminNpub?.(npub)) {
+    return jsonError("Admin access required", 403);
   }
 
   const record = deps.store.getActiveKeyForUser(npub);
