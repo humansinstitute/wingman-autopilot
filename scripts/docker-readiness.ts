@@ -197,6 +197,7 @@ export function buildConfigChecks(env: NodeJS.ProcessEnv, strictMode = false): C
     envCheck("WINGMAN_BASE_URL", env.WINGMAN_BASE_URL),
     envCheck("DIRECTORY_DEF", env.DIRECTORY_DEF, true),
     envCheck("FOLDERACCESS", env.FOLDERACCESS, true),
+    envCheck("WINGMAN_WORKSPACE_HOST_PATH", env.WINGMAN_WORKSPACE_HOST_PATH),
     envCheck("IDENTITY_SESSION_SECRET", env.IDENTITY_SESSION_SECRET, true),
     envCheck("IDENTITY_COOKIE_SECURE", env.IDENTITY_COOKIE_SECURE),
     envCheck("ADMIN_NPUB", env.ADMIN_NPUB, strictMode),

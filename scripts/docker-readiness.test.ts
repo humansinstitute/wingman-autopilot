@@ -11,6 +11,7 @@ const readyEnv = {
   WINGMAN_BASE_URL: "https://wingman.example.test",
   DIRECTORY_DEF: "/workspace",
   FOLDERACCESS: "/workspace",
+  WINGMAN_WORKSPACE_HOST_PATH: "/Users/operator/.wm-ap",
   IDENTITY_SESSION_SECRET: "secret",
   IDENTITY_COOKIE_SECURE: "true",
 };

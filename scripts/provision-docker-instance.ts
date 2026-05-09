@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 interface ProvisionOptions {
   adminNpub: string;
@@ -9,6 +11,7 @@ interface ProvisionOptions {
   force: boolean;
   hostPort: number | null;
   instanceName: string | null;
+  workspaceHostPath: string;
 }
 
 const DEFAULT_ENV_PATH = ".env";
@@ -25,6 +28,7 @@ function parseArgs(argv: string[]): ProvisionOptions {
     force: false,
     hostPort: null,
     instanceName: null,
+    workspaceHostPath: "",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -46,6 +50,9 @@ function parseArgs(argv: string[]): ProvisionOptions {
       index += 1;
     } else if (arg === "--instance-name" && next) {
       options.instanceName = next;
+      index += 1;
+    } else if (arg === "--workspace-host-path" && next) {
+      options.workspaceHostPath = next;
       index += 1;
     } else if (arg === "--help" || arg === "-h") {
       printUsage();
@@ -76,6 +83,8 @@ Options:
   --force                   Overwrite an existing env file
   --host-port <port>        Host port to publish, defaults from instance number
   --instance-name <name>    Compose project/instance name, defaults to wingman-01+
+  --workspace-host-path <path>
+                            Host directory mounted at /workspace
 `);
 }
 
@@ -124,6 +133,24 @@ function extractInstanceIndex(name: string): number {
   }
   const suffix = match[1] ?? "1";
   return Number.parseInt(suffix, 10) || 1;
+}
+
+function defaultWorkspaceHostPath(index: number): string {
+  if (index === 1) {
+    return join(homedir(), ".wm-ap");
+  }
+  return join(homedir(), `.wm-ap${String(index).padStart(2, "0")}`);
+}
+
+function resolveWorkspaceHostPath(input: string, index: number): string {
+  const rawPath = input.trim() || defaultWorkspaceHostPath(index);
+  if (rawPath === "~") {
+    return homedir();
+  }
+  if (rawPath.startsWith("~/")) {
+    return join(homedir(), rawPath.slice(2));
+  }
+  return rawPath;
 }
 
 function generateSecret(): string {
@@ -176,6 +203,8 @@ function main(): void {
   const baseUrl = options.baseUrl || `http://localhost:${hostPort}`;
   const secret = readExistingSecret(options.envPath) || generateSecret();
   const secureCookies = baseUrl.startsWith("https://") ? "true" : "false";
+  const workspaceHostPath = resolveWorkspaceHostPath(options.workspaceHostPath, picked.index);
+  mkdirSync(workspaceHostPath, { recursive: true });
 
   const values: Record<string, string> = {
     COMPOSE_PROJECT_NAME: picked.name,
@@ -187,6 +216,7 @@ function main(): void {
     WINGMAN_AGENT_MAX: String(DEFAULT_AGENT_MAX),
     WINGMAN_DIRECTORY_DEF: "/workspace",
     WINGMAN_FOLDERACCESS: "/workspace",
+    WINGMAN_WORKSPACE_HOST_PATH: workspaceHostPath,
     WINGMAN_BASE_URL: baseUrl,
     WINGMAN_IDENTITY_COOKIE_SECURE: secureCookies,
     WINGMAN_APP_ROUTING: "path",
@@ -211,6 +241,7 @@ function main(): void {
   console.log(`Wrote ${options.envPath}`);
   console.log(`Instance: ${picked.name}`);
   console.log(`URL: ${baseUrl}`);
+  console.log(`Workspace: ${workspaceHostPath} -> /workspace`);
   console.log("Next: docker compose up -d");
 }
 

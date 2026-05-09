@@ -67,9 +67,12 @@ instance complete until the first operator whitelist is configured.
 
 The default instance is `wingman-01`; if Docker already has that Compose project,
 the provisioning script moves to `wingman-02`, `wingman-03`, and so on. It writes
-the Compose project name, host port, persistent-volume paths, base URL, and
-`IDENTITY_SESSION_SECRET` into `.env`. `docker compose up` also fails fast when
-`WINGMAN_ADMIN_NPUB` is absent from the generated environment.
+the Compose project name, host port, host workspace path, base URL, and
+`IDENTITY_SESSION_SECRET` into `.env`. The first instance mounts the base
+machine directory `~/.wm-ap` at `/workspace`; later generated instances use
+numbered directories such as `~/.wm-ap02` and `~/.wm-ap03`. Override this with
+`--workspace-host-path <path>` when provisioning. `docker compose up` also fails
+fast when `WINGMAN_ADMIN_NPUB` is absent from the generated environment.
 
 Build and start the container:
 
@@ -112,9 +115,11 @@ the provisioning script sets secure cookies when `--base-url` starts with
 Docker provisioning also pins agent CLI paths to `/usr/local/bin/*` so project
 dependencies inside `/app/node_modules/.bin` cannot shadow the authenticated
 container CLIs. The Files page, launch directory picker, and app file pickers
-all use the configured Wingman workspace root, `/workspace` by default. Codex
-sessions trust `/workspace` by default to avoid an interactive first-run trust
-prompt in the web UI.
+all use the configured Wingman workspace root, `/workspace` by default. That
+path is a bind mount from `WINGMAN_WORKSPACE_HOST_PATH` on the base machine, so
+the operator can inspect files directly outside Docker. Codex sessions trust
+`/workspace` by default to avoid an interactive first-run trust prompt in the
+web UI.
 
 For hosted app subdomains, configure the base-machine Cloudflare Tunnel with
 both `wmd.otherstuff.ai` and `*.wmd.otherstuff.ai` pointing to the Wingman host

@@ -41,7 +41,9 @@ The container should keep identity, CLI auth, caches, and Wingman state in persi
 - `/home/wingman`
 - `/app/data`
 - `/app/tmp`
-- `/workspace`
+- `/workspace`, bind-mounted from the base machine
+
+The workspace mount should be easy to inspect from the base machine. The default host path is `~/.wm-ap` for the first local instance. Provisioned additional instances should use numbered directories such as `~/.wm-ap02`, `~/.wm-ap03`, and so on, unless an operator supplies an explicit path.
 
 The key assumption is explicit: after the container starts, an operator will open a shell inside it and log in to the required CLIs there. Those login files remain in the persistent `/home/wingman` volume.
 
@@ -65,13 +67,12 @@ services:
       - wingman-home:/home/wingman
       - wingman-data:/app/data
       - wingman-tmp:/app/tmp
-      - wingman-workspace:/workspace
+      - ${WINGMAN_WORKSPACE_HOST_PATH:-${HOME}/.wm-ap}:/workspace
 
 volumes:
   wingman-home:
   wingman-data:
   wingman-tmp:
-  wingman-workspace:
 ```
 
 ## CLI Login Workflow
@@ -197,6 +198,7 @@ The UI workflow should appear when the instance has not completed setup. It shou
 - confirming the Wingman instance name
 - confirming the public base URL
 - confirming the workspace volume
+- confirming the base-machine workspace path mounted at `/workspace`
 - setting or confirming the operator whitelist
 - checking installed CLIs
 - explaining that subscription CLIs such as Claude and Codex require shell login inside the container
@@ -227,6 +229,7 @@ Because a terminal is equivalent to direct access to the Wingman computer, it sh
 
 - The default instance name is `wingman-01`, incrementing to `wingman-02`, `wingman-03`, and onward when names are already taken.
 - Each Wingman instance should be created by a small provisioning script that generates the Compose project name and `.env` file.
+- `/workspace` should be backed by a base-machine bind mount, defaulting to `~/.wm-ap` for the first instance and numbered host directories for additional instances.
 - Cloudflare Tunnel runs on the base machine by default, mapping public URLs to Wingman container ports.
 - Hosted app traffic should enter through the Wingman port and be proxied by Wingman's app routing.
 - Hosted app routing should follow the existing subdomain/host routing model.

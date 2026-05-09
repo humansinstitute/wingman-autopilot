@@ -32,15 +32,15 @@ services:
       IDENTITY_SESSION_SECRET: "${WINGMAN_IDENTITY_SESSION_SECRET:?Run bun run docker:provision before docker compose up}"
       ADMIN_NPUB: "${WINGMAN_ADMIN_NPUB:?Run bun run docker:provision --admin-npub npub1... before docker compose up}"
       WINGMAN_INSTANCE_NAME: "${WINGMAN_INSTANCE_NAME:-wingman-01}"
+      WINGMAN_WORKSPACE_HOST_PATH: "${WINGMAN_WORKSPACE_HOST_PATH:-${HOME}/.wm-ap}"
       WINGMAN_SETUP_NONINTERACTIVE: "true"
     volumes:
       - wingman-home:/home/wingman
       - wingman-data:/app/data
       - wingman-tmp:/app/tmp
-      - wingman-workspace:/workspace
+      - "${WINGMAN_WORKSPACE_HOST_PATH:-${HOME}/.wm-ap}:/workspace"
 
 volumes:
   wingman-home:
   wingman-data:
   wingman-tmp:
-  wingman-workspace:

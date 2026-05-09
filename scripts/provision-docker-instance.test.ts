@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -56,6 +56,7 @@ describe("docker provisioning", () => {
     expect(content).toContain("WINGMAN_IDENTITY_COOKIE_SECURE=true");
     expect(content).toContain("WINGMAN_CODEX_CLI=/usr/local/bin/codex");
     expect(content).toContain("WINGMAN_CODEX_TRUSTED_WORKSPACE=/workspace");
+    expect(content).toContain(`WINGMAN_WORKSPACE_HOST_PATH=${join(homedir(), ".wm-ap99")}`);
     expect(content).toContain("WINGMAN_SUBDOMAIN_BASE_DOMAIN=");
     expect(content).toContain("WINGMAN_PI_CLI=/usr/local/bin/pi");
     expect(content).toContain("WINGMAN_SETUP_NONINTERACTIVE=true");
@@ -79,5 +80,24 @@ describe("docker provisioning", () => {
     expect(result.status).toBe(0);
     const content = readFileSync(envPath, "utf8");
     expect(content).toContain("WINGMAN_IDENTITY_COOKIE_SECURE=false");
+  });
+
+  test("allows overriding the host workspace directory", () => {
+    const envPath = join(makeTempDir(), ".env");
+    const workspacePath = join(makeTempDir(), "workspace");
+    const result = runProvision([
+      "--env",
+      envPath,
+      "--instance-name",
+      "wingman-99",
+      "--workspace-host-path",
+      workspacePath,
+      "--admin-npub",
+      "npub1operator",
+    ]);
+
+    expect(result.status).toBe(0);
+    const content = readFileSync(envPath, "utf8");
+    expect(content).toContain(`WINGMAN_WORKSPACE_HOST_PATH=${workspacePath}`);
   });
 });
