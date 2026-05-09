@@ -148,7 +148,7 @@ async function handleSign(
   }
 
   if (tier === 1) {
-    // Tier 1: sign with user's bot key (preferred) or root key (fallback)
+    // Tier 1: sign with the shared Wingman instance key.
     const result = await signForSession(targetUrl, httpMethod, session.npub ?? null, bodyHash);
     return Response.json(result);
   }

@@ -33,10 +33,8 @@ import {
 } from "./pm2-wrapper";
 import { injectMcpConfig, cleanupMcpConfig } from "./mcp-injector";
 import { stopManagedSubprocess } from "./process-stop";
-import { resolveBotNsecHex } from "../identity/bot-key-export";
-import { isBotKeyUnlocked } from "../identity/bot-key-manager";
+import { buildWingmanIdentityEnv, loadWingmanInstanceIdentity } from "../identity/wingman-instance-identity";
 import { parseAllowedHosts, pickAgentHost, normaliseHostForUrl } from "./agent-client";
-import { BotKeyStore } from "../identity/bot-key-store";
 import { buildSessionGitCredentialEnv } from "../git/credential-env";
 import { resolveGiteaCredentials } from "../gitea/gitea-user-manager";
 
@@ -243,7 +241,6 @@ export class ProcessManager {
   private readonly allocatedPorts = new Set<number>();
   private readonly listeners = new Set<(event: SessionEvent) => void>();
   private readonly adminNpub = normaliseNpub(Bun.env.ADMIN_NPUB ?? null);
-  private botKeyStore: BotKeyStore | null | undefined;
   /** Debounce timers for log-driven session-updated events */
   private readonly logUpdateDebounce = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -251,19 +248,6 @@ export class ProcessManager {
     this.config = config;
     this.resolveBillingLaunchConfig = options.resolveBillingLaunchConfig;
     this.recordAdapterUsage = options.recordAdapterUsage;
-  }
-
-  private getBotKeyStore(): BotKeyStore | null {
-    if (this.botKeyStore !== undefined) {
-      return this.botKeyStore;
-    }
-    try {
-      this.botKeyStore = new BotKeyStore();
-    } catch (error) {
-      this.botKeyStore = null;
-      console.warn(`[manager] bot key store init failed (non-fatal): ${(error as Error).message}`);
-    }
-    return this.botKeyStore;
   }
 
   on(listener: (event: SessionEvent) => void): () => void {
@@ -392,42 +376,21 @@ export class ProcessManager {
     // Inject MCP config so the agent discovers the Wingman MCP server
     try {
       const botKeyLookupStartedAt = Date.now();
-      // Look up bot identity for this user's session
+      // Use the shared Wingman instance identity for every agent session.
+      let wingmanNpub: string | undefined;
       let botPubkeyHex: string | undefined;
       let botNpub: string | undefined;
       let agentNsec: string | undefined;
-      if (npub) {
-        try {
-          const botKeyStore = this.getBotKeyStore();
-          if (!botKeyStore) {
-            this.appendLog(session, `[manager] bot key store unavailable — AGENT_NSEC will not be injected`);
-          }
-          this.appendLog(session, `[manager] bot key lookup for npub=${npub.slice(0, 20)}… (in-memory=${isBotKeyUnlocked(npub)})`);
-          const botKey = botKeyStore?.getActiveKeyForUser(npub) ?? null;
-          if (botKey) {
-            botPubkeyHex = botKey.botPubkeyHex;
-            botNpub = botKey.botNpub;
-            // Resolve nsec hex for AGENT_NSEC env var injection
-            agentNsec = resolveBotNsecHex(npub, botKey) ?? undefined;
-            if (agentNsec) {
-              // Validate: resolved nsec should not be all zeros (wiped key)
-              if (/^0+$/.test(agentNsec)) {
-                this.appendLog(session, `[manager] AGENT_NSEC resolved to all zeros — bot key may have been wiped from memory`);
-                agentNsec = undefined;
-              } else {
-                this.appendLog(session, `[manager] AGENT_NSEC resolved for ${npub.slice(0, 20)}…`);
-              }
-            } else {
-              this.appendLog(session, `[manager] AGENT_NSEC resolution failed for ${npub.slice(0, 20)}… — bot key exists but could not be unlocked (escrow or memory)`);
-            }
-          } else {
-            this.appendLog(session, `[manager] no active bot key for ${npub.slice(0, 20)}… — AGENT_NSEC will not be injected`);
-          }
-        } catch (botKeyError) {
-          this.appendLog(session, `[manager] bot key lookup failed: ${(botKeyError as Error).message}`);
-        }
+      const instanceIdentity = loadWingmanInstanceIdentity();
+      if (instanceIdentity) {
+        const identityEnv = buildWingmanIdentityEnv(instanceIdentity);
+        wingmanNpub = identityEnv.WINGMAN_NPUB;
+        botPubkeyHex = identityEnv.BOT_PUBKEY_HEX;
+        botNpub = identityEnv.BOT_NPUB;
+        agentNsec = identityEnv.AGENT_NSEC;
+        this.appendLog(session, `[manager] using Wingman instance identity ${instanceIdentity.npub.slice(0, 20)}…`);
       } else {
-        this.appendLog(session, `[manager] session has no npub — skipping AGENT_NSEC injection`);
+        this.appendLog(session, `[manager] WINGMAN_PRIV not configured — Wingman identity env will not be injected`);
       }
       botKeyLookupMs = Date.now() - botKeyLookupStartedAt;
       const mcpInjectStartedAt = Date.now();
@@ -436,6 +399,7 @@ export class ProcessManager {
         agent,
         workingDirectory: sessionWorkingDirectory,
         config: this.config,
+        wingmanNpub,
         botPubkeyHex,
         botNpub,
         userNpub: npub,
@@ -829,9 +793,13 @@ export class ProcessManager {
   }
 
   private spawnAgentProcess(session: AgentSession): Bun.Subprocess {
-    // Strip KEYTELEPORT_PRIVKEY from child env — agents must use their
-    // per-user bot key via the bot-crypto API, never the root server key.
-    const { KEYTELEPORT_PRIVKEY: _stripped, ...parentEnv } = Bun.env;
+    // Strip server-only private keys from child env. Agents receive only the
+    // derived compatibility identity vars injected during session setup.
+    const {
+      KEYTELEPORT_PRIVKEY: _strippedKeyTeleport,
+      WINGMAN_PRIV: _strippedWingmanPriv,
+      ...parentEnv
+    } = Bun.env;
     const env = {
       ...parentEnv,
       SESSION_ID: session.id,

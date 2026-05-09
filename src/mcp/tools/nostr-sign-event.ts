@@ -1,7 +1,7 @@
 /**
  * MCP Tool: nostr_sign_event
  *
- * Sign an arbitrary Nostr event using the user's bot key.
+ * Sign an arbitrary Nostr event using the shared Wingman instance key.
  * Routes through the server's bot-crypto API so the MCP child
  * process never touches the private key directly.
  */
@@ -28,9 +28,9 @@ export const nostrSignEventSchema = {
 };
 
 export const nostrSignEventDescription =
-  "Sign an arbitrary Nostr event with the user's bot key. " +
+  "Sign an arbitrary Nostr event with the shared Wingman instance key. " +
   "Returns a fully signed event (with id, pubkey, and sig) ready for relay publishing. " +
-  "The signer pubkey is the bot key, not the user's root key.";
+  "The signer pubkey is the Wingman instance identity, not the user's key.";
 
 interface NostrSignEventParams {
   kind: number;
@@ -82,7 +82,7 @@ export async function handleNostrSignEvent(
         {
           type: "text" as const,
           text: [
-            `Signed by: ${data.signerPubkey} (bot key)`,
+            `Signed by: ${data.signerPubkey} (Wingman instance)`,
             `Event ID: ${data.event.id}`,
             `Kind: ${data.event.kind}`,
             "",

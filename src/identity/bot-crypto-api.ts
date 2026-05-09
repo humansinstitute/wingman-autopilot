@@ -2,18 +2,18 @@
  * Bot Crypto API Handler
  *
  * HTTP handler for /api/mcp/bot-crypto/* routes.
- * Proxies NIP-44 encrypt/decrypt operations using the user's bot key
+ * Proxies NIP-44 encrypt/decrypt operations using the Wingman instance key
  * for MCP child processes that don't have direct access to the key.
  */
 
 import { finalizeEvent } from "nostr-tools";
 
-import { getDecryptedBotKey } from "./bot-key-manager";
 import { nip44Encrypt, nip44Decrypt } from "../superbased/nip44-crypto";
 import type { SessionSnapshot } from "../agents/process-manager";
 import { RateLimiter } from "../security/rate-limiter";
 import { parseBody, jsonError } from "../utils/request-utils";
 import type { StoredSessionRecord } from "../storage/message-store";
+import type { WingmanInstanceIdentity } from "./wingman-instance-identity";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -22,6 +22,7 @@ import type { StoredSessionRecord } from "../storage/message-store";
 export interface BotCryptoApiDependencies {
   getSession: (sessionId: string) => SessionSnapshot | undefined;
   getStoredSession?: (sessionId: string) => StoredSessionRecord | null;
+  getInstanceIdentity?: () => WingmanInstanceIdentity | null;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -178,15 +179,14 @@ async function handleEncrypt(
 
   const result = validateSession(deps, sessionId);
   if ("error" in result) return result.error;
-  const session = result.session;
 
-  const botKey = getDecryptedBotKey(session.npub!);
-  if (!botKey) {
-    return jsonError("Bot key not unlocked for this user", 503);
+  const identity = deps.getInstanceIdentity?.() ?? null;
+  if (!identity) {
+    return jsonError("Wingman instance key not configured. Set WINGMAN_PRIV.", 503);
   }
 
-  const ciphertext = nip44Encrypt(plaintext, botKey.secretKey, recipientPubkey);
-  return Response.json({ ciphertext, senderPubkey: botKey.pubkeyHex });
+  const ciphertext = nip44Encrypt(plaintext, identity.secretKey, recipientPubkey);
+  return Response.json({ ciphertext, senderPubkey: identity.pubkeyHex });
 }
 
 /**
@@ -214,16 +214,15 @@ async function handleDecrypt(
 
   const result = validateSession(deps, sessionId);
   if ("error" in result) return result.error;
-  const session = result.session;
 
-  const botKey = getDecryptedBotKey(session.npub!);
-  if (!botKey) {
-    return jsonError("Bot key not unlocked for this user", 503);
+  const identity = deps.getInstanceIdentity?.() ?? null;
+  if (!identity) {
+    return jsonError("Wingman instance key not configured. Set WINGMAN_PRIV.", 503);
   }
 
   try {
-    const plaintext = nip44Decrypt(ciphertext, botKey.secretKey, senderPubkey);
-    return Response.json({ plaintext, decryptedBy: botKey.pubkeyHex });
+    const plaintext = nip44Decrypt(ciphertext, identity.secretKey, senderPubkey);
+    return Response.json({ plaintext, decryptedBy: identity.pubkeyHex });
   } catch (err) {
     console.error("[bot-crypto-api] Decryption failed:", (err as Error).message);
     return jsonError("Decryption failed", 400);
@@ -267,11 +266,10 @@ async function handleSignEvent(
 
   const result = validateSession(deps, sessionId);
   if ("error" in result) return result.error;
-  const session = result.session;
 
-  const botKey = getDecryptedBotKey(session.npub!);
-  if (!botKey) {
-    return jsonError("Bot key not unlocked for this user", 503);
+  const identity = deps.getInstanceIdentity?.() ?? null;
+  if (!identity) {
+    return jsonError("Wingman instance key not configured. Set WINGMAN_PRIV.", 503);
   }
 
   const template = {
@@ -283,7 +281,7 @@ async function handleSignEvent(
 
   let signedEvent;
   try {
-    signedEvent = finalizeEvent(template, botKey.secretKey);
+    signedEvent = finalizeEvent(template, identity.secretKey);
   } catch (err) {
     console.error("[bot-crypto-api] finalizeEvent failed:", err);
     return jsonError("Event signing failed", 500);
@@ -303,6 +301,6 @@ async function handleSignEvent(
 
   return Response.json({
     event: eventPayload,
-    signerPubkey: botKey.pubkeyHex,
+    signerPubkey: identity.pubkeyHex,
   });
 }

@@ -1,9 +1,8 @@
 /**
  * NIP-44 Utilities for MCP Tools
  *
- * Resolves the agent's bot key identity from environment variables.
- * Runs in the MCP child process — agents use their per-user bot key,
- * never the root server key (KEYTELEPORT_PRIVKEY is stripped from env).
+ * Resolves the shared Wingman bot identity from environment variables.
+ * Runs in the MCP child process; server-only private keys are stripped.
  */
 
 /**
@@ -20,6 +19,10 @@ export function getBotNpub(): string | null {
   return process.env.BOT_NPUB ?? null;
 }
 
+export function getWingmanNpub(): string | null {
+  return process.env.WINGMAN_NPUB ?? process.env.BOT_NPUB ?? null;
+}
+
 /**
  * Get the user's npub from env vars. Returns null if not configured.
  */
@@ -29,10 +32,10 @@ export function getUserNpub(): string | null {
 
 /**
  * Identity preamble for superbased tool responses.
- * Reminds the agent which pubkey is its bot identity (delegate) vs the user (owner).
+ * Reminds the agent which pubkey is its shared Wingman identity.
  */
 export function wingmanIdentityPreamble(): string {
   const pubkey = getBotPubkey();
   if (!pubkey) return "";
-  return `[Wingman bot identity: ${pubkey} — this is your delegate pubkey, never use it as owner_pubkey]\n\n`;
+  return `[Wingman instance identity: ${pubkey}]\n\n`;
 }

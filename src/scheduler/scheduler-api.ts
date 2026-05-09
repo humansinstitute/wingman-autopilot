@@ -8,10 +8,10 @@
 import type { SchedulerStore } from "./scheduler-store";
 import type { SchedulerEngine } from "./scheduler-engine";
 import { wrapEscrowUuid } from "./key-wrapper";
-import type { BotKeyStore } from "../identity/bot-key-store";
 import { getSessionSecretBytes } from "../auth/session-secret";
 import { AGENT_TYPES as VALID_AGENTS, AGENT_TYPE_LIST } from "../agent-types";
 import { PathSchema } from "../utils/validation";
+import type { WingmanInstanceIdentity } from "../identity/wingman-instance-identity";
 
 // ============================================================
 // Types
@@ -20,8 +20,8 @@ import { PathSchema } from "../utils/validation";
 export interface SchedulerApiDependencies {
   store: SchedulerStore;
   engine: SchedulerEngine;
-  botKeyStore: BotKeyStore;
   getNpub: (request: Request) => string | null;
+  getInstanceIdentity?: () => WingmanInstanceIdentity | null;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -69,11 +69,11 @@ function handleListJobs(
 ): Response {
   const jobs = deps.store.listJobs(userNpub);
 
-  // Enrich nostr-type jobs with botPubkeyHex so the UI can display trigger info
-  const botKey = deps.botKeyStore.getActiveKeyForUser(userNpub);
+  // Enrich nostr-type jobs with the Wingman bot pubkey so the UI can display trigger info.
+  const instanceIdentity = deps.getInstanceIdentity?.() ?? null;
   const enriched = jobs.map((job) => {
-    if (job.triggerType === "nostr" && botKey) {
-      return { ...job, botPubkeyHex: botKey.botPubkeyHex };
+    if (job.triggerType === "nostr" && instanceIdentity) {
+      return { ...job, botPubkeyHex: instanceIdentity.pubkeyHex };
     }
     return job;
   });
@@ -152,23 +152,21 @@ async function handleCreateJob(
   }
   // nostr triggers need no cron expression or watch directory
 
-  // Lookup bot key for wrapping
-  const botKey = deps.botKeyStore.getActiveKeyForUser(userNpub);
-  if (!botKey) {
+  const instanceIdentity = deps.getInstanceIdentity?.() ?? null;
+  if (!instanceIdentity) {
     return Response.json(
-      { error: "No bot key found. A bot key is required for triggers." },
+      { error: "WINGMAN_PRIV is not configured. A Wingman instance key is required for scheduled jobs." },
       { status: 400 },
     );
   }
 
-  // Wrap the escrow UUID with session secret
   const sessionSecretBytes = getSessionSecretBytes();
-  const wrapped = wrapEscrowUuid(botKey.escrowUuid, sessionSecretBytes);
+  const wrapped = wrapEscrowUuid("wingman-instance", sessionSecretBytes);
 
   const job = deps.store.createJob({
     name,
     userNpub,
-    botNpub: botKey.botNpub,
+    botNpub: instanceIdentity.npub,
     wrappedKeyCiphertext: wrapped.ciphertext,
     wrappedKeyNonce: wrapped.nonce,
     agent: actionType === "session" ? agent : "codex",
@@ -191,7 +189,7 @@ async function handleCreateJob(
   deps.engine.scheduleJob(job);
 
   // For nostr triggers, include the bot pubkey hex so external apps know where to send events
-  const extra = triggerType === "nostr" ? { botPubkeyHex: botKey.botPubkeyHex } : {};
+  const extra = triggerType === "nostr" ? { botPubkeyHex: instanceIdentity.pubkeyHex } : {};
   return Response.json({ job, ...extra }, { status: 201 });
 }
 
@@ -293,9 +291,9 @@ async function handleUpdateJob(
 
   // Include botPubkeyHex for nostr-type jobs
   if (job.triggerType === "nostr") {
-    const botKey = deps.botKeyStore.getActiveKeyForUser(userNpub);
-    if (botKey) {
-      return Response.json({ job, botPubkeyHex: botKey.botPubkeyHex });
+    const instanceIdentity = deps.getInstanceIdentity?.() ?? null;
+    if (instanceIdentity) {
+      return Response.json({ job, botPubkeyHex: instanceIdentity.pubkeyHex });
     }
   }
 

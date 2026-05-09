@@ -95,14 +95,14 @@ export function initIdentityPanels(deps) {
     // ── Bot identity section ──────────────────────────────────────
     const botHeader = document.createElement("dt");
     botHeader.className = "wm-identity-summary-header";
-    botHeader.textContent = "Bot Identity";
+    botHeader.textContent = "Wingman Identity";
     botHeader.dataset.role = "identity-bot-header";
     const botHeaderSpacer = document.createElement("dd");
     botHeaderSpacer.style.display = "none";
     list.append(botHeader, botHeaderSpacer);
 
     const botNpubLabel = document.createElement("dt");
-    botNpubLabel.textContent = "Bot npub";
+    botNpubLabel.textContent = "Wingman npub";
     const botNpubValue = document.createElement("dd");
     botNpubValue.className = "wm-identity-summary-item";
     const botNpubText = document.createElement("span");
@@ -122,7 +122,7 @@ export function initIdentityPanels(deps) {
     list.append(botNpubLabel, botNpubValue);
 
     const botNameLabel = document.createElement("dt");
-    botNameLabel.textContent = "Bot name";
+    botNameLabel.textContent = "Wingman name";
     const botNameValue = document.createElement("dd");
     botNameValue.className = "wm-identity-summary-item";
     botNameValue.dataset.role = "identity-bot-name";
@@ -130,7 +130,7 @@ export function initIdentityPanels(deps) {
     list.append(botNameLabel, botNameValue);
 
     const botPubkeyLabel = document.createElement("dt");
-    botPubkeyLabel.textContent = "Bot hexpub";
+    botPubkeyLabel.textContent = "Wingman hexpub";
     const botPubkeyValue = document.createElement("dd");
     botPubkeyValue.className = "wm-identity-summary-item wm-identity-mono";
     botPubkeyValue.dataset.role = "identity-bot-pubkey";
@@ -138,7 +138,7 @@ export function initIdentityPanels(deps) {
     list.append(botPubkeyLabel, botPubkeyValue);
 
     const botStatusLabel = document.createElement("dt");
-    botStatusLabel.textContent = "Bot status";
+    botStatusLabel.textContent = "Key source";
     const botStatusValue = document.createElement("dd");
     botStatusValue.className = "wm-identity-summary-item";
     botStatusValue.dataset.role = "identity-bot-status";
@@ -170,7 +170,7 @@ export function initIdentityPanels(deps) {
     botForceSetupButton.type = "button";
     botForceSetupButton.className = "wm-button secondary wm-button--small";
     botForceSetupButton.dataset.action = "force-bot-setup";
-    botForceSetupButton.textContent = "Force Bot Setup";
+    botForceSetupButton.textContent = "Force Legacy Setup";
     botForceSetupButton.disabled = true;
     const botExportFeedback = document.createElement("span");
     botExportFeedback.className = "wm-identity-copy-feedback";

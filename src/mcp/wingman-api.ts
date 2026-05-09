@@ -977,7 +977,7 @@ async function handleSaveMemory(
 
   const wingmanNpub = deps.getWingmanNpub();
   if (!wingmanNpub) {
-    return jsonError("Wingman identity not configured (KEYTELEPORT_PRIVKEY)", 500);
+    return jsonError("Wingman identity not configured (set WINGMAN_PRIV)", 500);
   }
 
   const userNpub = session.npub;

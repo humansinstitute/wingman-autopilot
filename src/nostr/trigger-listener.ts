@@ -1,8 +1,9 @@
 /**
  * Nostr Trigger Listener
  *
- * Subscribes to Nostr relays for kind 9256 events addressed to per-user bot
- * pubkeys. Decrypts NIP-44 payloads and dispatches matching scheduler jobs.
+ * Subscribes to Nostr relays for kind 9256 events addressed to the shared
+ * Wingman instance pubkey. Decrypts NIP-44 payloads and dispatches matching
+ * scheduler jobs.
  *
  * Lifecycle: subscribe() when a bot key is unlocked in memory,
  * unsubscribe() when cleared (last session stops). shutdown() on process exit.
@@ -26,7 +27,6 @@ export interface TriggerListenerDeps {
 }
 
 interface BotSubscription {
-  ownerNpub: string;
   botPubkeyHex: string;
   cleanup: () => void;
 }
@@ -62,7 +62,7 @@ function isValidTriggerPayload(parsed: unknown): parsed is TriggerPayload {
 // ============================================================
 
 function createTriggerListener(deps: TriggerListenerDeps) {
-  const subscriptions = new Map<string, BotSubscription>();
+  let subscription: BotSubscription | null = null;
   const pool = new SimplePool();
 
   // Shared dedup set across all subscriptions
@@ -76,34 +76,26 @@ function createTriggerListener(deps: TriggerListenerDeps) {
   }
 
   /**
-   * Start listening for kind 9256 events addressed to a specific bot pubkey.
-   * Call this when a bot key is unlocked in memory.
+   * Start listening for kind 9256 events addressed to the Wingman instance
+   * pubkey. The owner npub is kept for compatibility with older callers.
    */
   function subscribe(
     ownerNpub: string,
     botSecretKey: Uint8Array,
     botPubkeyHex: string,
   ): void {
-    // Already subscribed for this user
-    if (subscriptions.has(ownerNpub)) return;
+    void ownerNpub;
+    if (subscription) return;
 
     if (deps.relays.length === 0) {
       console.warn("[trigger-listener] No relays configured, skipping subscription");
       return;
     }
 
-    let ownerPubkeyHex: string;
-    try {
-      ownerPubkeyHex = npubToHex(ownerNpub);
-    } catch {
-      console.error(`[trigger-listener] Invalid owner npub: ${ownerNpub.slice(0, 20)}…`);
-      return;
-    }
-
     const since = Math.floor(Date.now() / 1000);
 
     console.log(
-      `[trigger-listener] Subscribing for bot ${botPubkeyHex.slice(0, 12)}… (owner: ${ownerNpub.slice(0, 20)}…) on ${deps.relays.length} relays: ${deps.relays.join(", ")}`,
+      `[trigger-listener] Subscribing for Wingman bot ${botPubkeyHex.slice(0, 12)}… on ${deps.relays.length} relays: ${deps.relays.join(", ")}`,
     );
     console.log(
       `[trigger-listener] Filter: kinds=[9256], #p=[${botPubkeyHex}], since=${since} (${new Date(since * 1000).toISOString()})`,
@@ -129,14 +121,6 @@ function createTriggerListener(deps: TriggerListenerDeps) {
           // Verify event signature
           if (!verifyEvent(event)) {
             console.warn("[trigger-listener] Invalid signature, ignoring event");
-            return;
-          }
-
-          // Authorization: only the bot's owner can trigger
-          if (event.pubkey !== ownerPubkeyHex) {
-            console.warn(
-              `[trigger-listener] Unauthorized sender ${event.pubkey.slice(0, 12)}… (expected owner ${ownerPubkeyHex.slice(0, 12)}…)`,
-            );
             return;
           }
 
@@ -172,9 +156,17 @@ function createTriggerListener(deps: TriggerListenerDeps) {
             return;
           }
 
-          // Validate: job belongs to the owner, is a nostr trigger, and is enabled
-          if (job.userNpub !== ownerNpub) {
-            console.warn(`[trigger-listener] Job ${job.id} does not belong to sender (job owner: ${job.userNpub})`);
+          let jobOwnerPubkeyHex: string;
+          try {
+            jobOwnerPubkeyHex = npubToHex(job.userNpub);
+          } catch {
+            console.warn(`[trigger-listener] Job ${job.id} has invalid owner npub`);
+            return;
+          }
+          if (event.pubkey !== jobOwnerPubkeyHex) {
+            console.warn(
+              `[trigger-listener] Unauthorized sender ${event.pubkey.slice(0, 12)}… for job owner ${jobOwnerPubkeyHex.slice(0, 12)}…`,
+            );
             return;
           }
           if (job.triggerType !== "nostr") {
@@ -213,37 +205,29 @@ function createTriggerListener(deps: TriggerListenerDeps) {
       },
     );
 
-    subscriptions.set(ownerNpub, {
-      ownerNpub,
+    subscription = {
       botPubkeyHex,
       cleanup: () => {
         sub.close();
       },
-    });
+    };
   }
 
   /**
-   * Stop listening for a specific user's bot key.
-   * Call this when a bot key is cleared from memory.
+   * Compatibility no-op. The shared Wingman trigger subscription stays active
+   * until shutdown so jobs for other operators keep working.
    */
   function unsubscribe(ownerNpub: string): void {
-    const entry = subscriptions.get(ownerNpub);
-    if (entry) {
-      console.log(
-        `[trigger-listener] Unsubscribing bot ${entry.botPubkeyHex.slice(0, 12)}…`,
-      );
-      entry.cleanup();
-      subscriptions.delete(ownerNpub);
-    }
+    void ownerNpub;
   }
 
   /**
    * Shut down all subscriptions and close the relay pool.
    */
   function shutdown(): void {
-    for (const [npub, entry] of subscriptions) {
-      entry.cleanup();
-      subscriptions.delete(npub);
+    if (subscription) {
+      subscription.cleanup();
+      subscription = null;
     }
     pool.close(deps.relays);
     console.log("[trigger-listener] Shut down");

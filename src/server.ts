@@ -8,7 +8,6 @@ import { createRequire } from "node:module";
 
 import "./logging/server-logger";
 
-import { getKeyTeleportIdentity } from "./config";
 import { AGENT_TYPES as SUPPORTED_AGENT_TYPES, isAgentType, type AgentType } from "./agent-types";
 import { z } from "zod";
 import { 
@@ -84,14 +83,12 @@ import { BotKeyStore } from "./identity/bot-key-store";
 import { createBotKeyApiHandler } from "./identity/bot-key-api";
 import { createBotCryptoApiHandler } from "./identity/bot-crypto-api";
 import { loadWingmanInstanceIdentity } from "./identity/wingman-instance-identity";
-import { generateBotKey, clearBotKey, isBotKeyUnlocked, storeBotKeyInMemory, unlockViaEscrow } from "./identity/bot-key-manager";
 import { WorkspaceSubscriptionManager } from './agent-chat/subscription-runtime';
 import { DispatchPipelineRuntime } from './agent-chat/dispatch-pipelines/runtime';
 import { AgentCommentSessionRuntime } from './agent-chat/comment-session-runtime';
 import { AgentChatSessionRuntime } from './agent-chat/session-runtime';
 import { AgentWorkSessionRuntime } from './agent-work/session-runtime';
 import { AgentWorkSessionIdleRetention } from './agent-work/session-idle-retention';
-import { browserSubscribers } from "./mcp/browser-subscribers";
 import { MemoryStore } from "./mcp/memory-store";
 import { userSettingsStore } from "./storage/user-settings-store";
 import { artifactsStore } from "./storage/artifacts-store";
@@ -193,7 +190,6 @@ import { ensureWingmanCoreRegistration } from "./server/bootstrap/wingman-core-r
 import { connectPM2 } from "./agents/pm2-wrapper";
 import { createUploadHelpers } from "./server/uploads/helpers";
 import { resolveAndCacheNostrProfile } from "./server/nostr-profile";
-import { shouldKeepBotKeyForNostrTriggers } from "./server/botkey-lifecycle";
 import { waitForSessionPromptReadiness } from "./server/session-readiness";
 import { getSessionPromptReadiness } from "./server/prompt-readiness";
 import { resolveTaskExecutorOwnerNpub } from "./server/task-executor-owner";
@@ -222,6 +218,12 @@ import {
 } from "./server/git-operations";
 
 const config = loadConfig();
+const wingmanInstanceIdentity = loadWingmanInstanceIdentity();
+if (wingmanInstanceIdentity) {
+  console.log(`[identity] Wingman instance identity configured: ${wingmanInstanceIdentity.npub.slice(0, 20)}...`);
+} else {
+  console.warn("[identity] WINGMAN_PRIV not configured; shared Wingman bot identity is missing");
+}
 const migratedUserSettingCount = userSettingsStore.migrateSensitiveValues();
 if (migratedUserSettingCount > 0) {
   console.log(`[config] migrated ${migratedUserSettingCount} sensitive user setting(s) to encrypted storage`);
@@ -404,32 +406,8 @@ function onBotKeyUnlockedHook(npub: string, secretKey: Uint8Array, botPubkeyHex:
   triggerListener.subscribe(npub, secretKey, botPubkeyHex);
 }
 
-function tryAutoUnlockBotKeyViaEscrow(
-  npub: string,
-  reason: "sse-subscribe" | "session-start",
-): boolean {
-  try {
-    if (isBotKeyUnlocked(npub)) return true;
-    const botRecord = botKeyStore.getActiveKeyForUser(npub);
-    if (!botRecord) return false;
-
-    const secretKey = unlockViaEscrow(
-      botRecord.encryptedEscrow,
-      botRecord.botPubkeyHex,
-      botRecord.escrowUuid,
-    );
-    storeBotKeyInMemory(npub, secretKey, botRecord.botPubkeyHex, "escrow");
-    onBotKeyUnlockedHook(npub, secretKey, botRecord.botPubkeyHex);
-    console.log(`[bot-key] Auto-unlocked via escrow on ${reason} for ${npub.slice(0, 20)}…`);
-    return true;
-  } catch (error) {
-    console.warn(`[bot-key] Auto-unlock via escrow failed on ${reason} for ${npub.slice(0, 20)}…:`, error);
-    return false;
-  }
-}
 const schedulerEngine = new SchedulerEngine({
   store: schedulerStore,
-  botKeyStore,
   nightWatchStore,
   createSession: (agent, dir, name, origin, targetFile, explicitNpub, metadata) =>
     manager.createSession(agent, dir, name, origin, targetFile, explicitNpub, metadata),
@@ -474,11 +452,12 @@ const schedulerEngine = new SchedulerEngine({
     return run.id;
   },
   onBotKeyUnlocked: onBotKeyUnlockedHook,
+  getInstanceIdentity: () => wingmanInstanceIdentity,
 });
 const schedulerApiHandler = createSchedulerApiHandler({
   store: schedulerStore,
   engine: schedulerEngine,
-  botKeyStore,
+  getInstanceIdentity: () => wingmanInstanceIdentity,
   getNpub: (request: Request) => {
     const ctx = getRequestContext();
     return ctx?.npub ?? null;
@@ -495,29 +474,6 @@ const memoryStore = new MemoryStore();
 const nip98ApiHandler = createNip98ApiHandler({
   grantsStore: nip98GrantsStore,
   getSession: (sid: string) => manager.getSession(sid) ?? null,
-  onBrowserSubscribe: (npub: string) => {
-    // When browser subscribes to SSE, attempt escrow auto-unlock first.
-    // If that fails, request browser-side decrypt as fallback.
-    try {
-      if (!isBotKeyUnlocked(npub) && !tryAutoUnlockBotKeyViaEscrow(npub, "sse-subscribe")) {
-        const botRecord = botKeyStore.getActiveKeyForUser(npub);
-        if (botRecord) {
-          const rootIdentity = getKeyTeleportIdentity();
-          if (rootIdentity) {
-            browserSubscribers.send(npub, {
-              type: "botkey:decrypt_request",
-              encryptedToUser: botRecord.encryptedToUser,
-              senderPubkey: rootIdentity.pubkey,
-              botPubkeyHex: botRecord.botPubkeyHex,
-            });
-            console.log(`[bot-key] Sent decrypt request on SSE subscribe for ${npub.slice(0, 20)}…`);
-          }
-        }
-      }
-    } catch (error) {
-      console.warn(`[bot-key] Failed to send decrypt request on subscribe:`, error);
-    }
-  },
 });
 const ngitApiHandler = createNgitApiHandler({
   grantsStore: nip98GrantsStore,
@@ -548,6 +504,7 @@ const botKeyApiHandler = createBotKeyApiHandler({
 const botCryptoApiHandler = createBotCryptoApiHandler({
   getSession: (sid: string) => manager.getSession(sid),
   getStoredSession: (sid: string) => messageStore.getSession(sid),
+  getInstanceIdentity: () => wingmanInstanceIdentity,
 });
 const wingmanDataDir = new URL("../data", import.meta.url).pathname;
 const giteaApiHandler = createGiteaApiHandler({
@@ -775,7 +732,7 @@ const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   openRouterApiKey: Bun.env.OPENROUTER_API?.trim() || null,
   findProjectByDirectory: (dir) => npubProjectStore.findByDirectory(dir),
   memoryStore,
-  getWingmanNpub: () => getKeyTeleportIdentity()?.npub ?? null,
+  getWingmanNpub: () => wingmanInstanceIdentity?.npub ?? null,
   setPinnedFile: (sid, filePath) => manager.setPinnedFile(sid, filePath),
 });
 
@@ -857,7 +814,7 @@ const nightWatchDeps = {
 
 // Task assignment listener (receives Nostr kind 9802 events)
 const taskListenerFlag = featureFlagStore.getFlag("task_listener_enabled");
-const taskListenerIdentity = getKeyTeleportIdentity();
+const taskListenerIdentity = wingmanInstanceIdentity;
 if (taskListenerIdentity && config.connectRelays.length > 0 && taskListenerFlag?.state !== "off") {
   const mgBaseUrl = Bun.env.MG_BASE_URL ?? "https://mg.otherstuff.ai";
   const taskExecutorOwnerNpub = resolveTaskExecutorOwnerNpub(adminNpub, taskListenerIdentity.npub);
@@ -889,7 +846,7 @@ if (taskListenerIdentity && config.connectRelays.length > 0 && taskListenerFlag?
 
   console.log(`[task-listener] MG task listener active (relays: ${config.connectRelays.length}, mgBaseUrl: ${mgBaseUrl})`);
 } else if (!taskListenerIdentity) {
-  console.log("[task-listener] No KEYTELEPORT_PRIVKEY configured, MG task listener disabled");
+  console.log("[task-listener] No WINGMAN_PRIV configured, MG task listener disabled");
 } else {
   console.log("[task-listener] No CONNECT_RELAYS configured, MG task listener disabled");
 }
@@ -1157,54 +1114,6 @@ manager.on((event) => {
       } catch (error) {
         console.warn(`[admin] failed to record identity ${sessionOwnerNpub}:`, error);
       }
-      // Auto-generate bot key if user doesn't have one yet
-      try {
-        const existingBotKey = botKeyStore.getActiveKeyForUser(sessionOwnerNpub);
-        if (!existingBotKey) {
-          const decoded = nip19.decode(sessionOwnerNpub);
-          if (decoded.type === "npub") {
-            const userPubkeyHex = decoded.data as string;
-            const generated = generateBotKey(userPubkeyHex);
-            botKeyStore.createKey({
-              userNpub: sessionOwnerNpub,
-              botPubkeyHex: generated.botPubkeyHex,
-              botNpub: generated.botNpub,
-              displayName: generated.displayName,
-              encryptedToUser: generated.encryptedToUser,
-              encryptedEscrow: generated.encryptedEscrow,
-              escrowUuid: generated.escrowUuid,
-            });
-            console.log(`[bot-key] Generated bot key for ${sessionOwnerNpub.slice(0, 20)}…: ${generated.botNpub.slice(0, 20)}…`);
-          }
-        }
-      } catch (error) {
-        console.warn(`[bot-key] Failed to auto-generate bot key for ${sessionOwnerNpub}:`, error);
-      }
-      // Trigger auto-unlock if bot key exists but isn't in memory.
-      // Prefer escrow unlock immediately; if that fails and browser is connected,
-      // request browser-side decrypt.
-      try {
-        if (!isBotKeyUnlocked(sessionOwnerNpub)) {
-          const unlocked = tryAutoUnlockBotKeyViaEscrow(sessionOwnerNpub, "session-start");
-          if (!unlocked) {
-            const botRecord = botKeyStore.getActiveKeyForUser(sessionOwnerNpub);
-            if (botRecord) {
-              const rootIdentity = getKeyTeleportIdentity();
-              if (rootIdentity && browserSubscribers.hasSubscriber(sessionOwnerNpub)) {
-                browserSubscribers.send(sessionOwnerNpub, {
-                  type: "botkey:decrypt_request",
-                  encryptedToUser: botRecord.encryptedToUser,
-                  senderPubkey: rootIdentity.pubkey,
-                  botPubkeyHex: botRecord.botPubkeyHex,
-                });
-                console.log(`[bot-key] Sent decrypt request to browser for ${sessionOwnerNpub.slice(0, 20)}…`);
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.warn(`[bot-key] Failed to send decrypt request:`, error);
-      }
     }
     messageStore.recordSession({
       id: event.session.id,
@@ -1257,22 +1166,8 @@ manager.on((event) => {
       } catch (error) {
         console.warn(`[admin] failed to update identity ${sessionOwnerNpub}:`, error);
       }
-      // Clear bot key from memory when last session for this user stops
       if (event.type === "session-stopped") {
         clearPromptStartupReady(event.session.id);
-        const userNpub = sessionOwnerNpub;
-        const otherActive = manager.listSessions().some(
-          (s) =>
-            resolveSessionOwnerNpub(s.npub ?? null, s.metadata) === userNpub &&
-            s.id !== event.session.id,
-        );
-        const hasEnabledNostrTrigger = shouldKeepBotKeyForNostrTriggers(schedulerStore, userNpub);
-        if (!otherActive && !hasEnabledNostrTrigger) {
-          clearBotKey(userNpub);
-          triggerListener.unsubscribe(userNpub);
-        } else if (!otherActive && hasEnabledNostrTrigger) {
-          console.log(`[trigger-listener] Keeping bot key unlocked for ${userNpub.slice(0, 20)}… (enabled nostr trigger)`);
-        }
       }
     }
     messageStore.recordSession({
@@ -2414,14 +2309,12 @@ const handleApi = createApiRouteHandler({
     },
     adminNpub,
     identityUserStore,
-    botKeyStore,
     mintSessionCookie,
     getSessionCookieName,
     SessionCookieError,
     SESSION_COOKIE_NAME,
     shouldUseSecureCookies,
     generateIdentityAlias,
-    generateBotKey,
     handleKeyTeleport,
     handleKeyTeleportRegistration,
     ensureGiteaUser,

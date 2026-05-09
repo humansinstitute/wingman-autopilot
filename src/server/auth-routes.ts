@@ -3,7 +3,6 @@
  * Extracted from server.ts to reduce file size.
  */
 
-import { nip19 } from "nostr-tools";
 import { normaliseNpub } from "../identity/npub-utils";
 import type { RequestAuthContext } from "../auth/request-context";
 import type { AccessAction } from "../auth/access-control";
@@ -28,19 +27,6 @@ export interface AuthApiContext {
     touch: (npub: string, opts: { alias: string; lastSeenAt: string }) => void;
   };
 
-  botKeyStore: {
-    getActiveKeyForUser: (npub: string) => unknown | null;
-    createKey: (opts: {
-      userNpub: string;
-      botPubkeyHex: string;
-      botNpub: string;
-      displayName: string;
-      encryptedToUser: string;
-      encryptedEscrow: string;
-      escrowUuid: string;
-    }) => void;
-  };
-
   mintSessionCookie: (npub: string, options?: MintSessionCookieOptions) => {
     cookie: string;
     expiresAt: number;
@@ -52,15 +38,6 @@ export interface AuthApiContext {
   shouldUseSecureCookies: () => boolean;
 
   generateIdentityAlias: (npub: string) => string;
-  generateBotKey: (userPubkeyHex: string) => {
-    botPubkeyHex: string;
-    botNpub: string;
-    displayName: string;
-    encryptedToUser: string;
-    encryptedEscrow: string;
-    escrowUuid: string;
-  };
-
   handleKeyTeleport: (request: Request) => Response | Promise<Response>;
   handleKeyTeleportRegistration: (request: Request) => Response | Promise<Response>;
   ensureGiteaUser: (config: any, npub: string, alias: string) => Promise<any>;
@@ -145,30 +122,6 @@ export async function handleAuthApi(
         console.warn(`[admin] failed to record identity ${trimmedNpub}:`, error);
       }
       void ctx.onSessionAuthenticated?.(trimmedNpub);
-
-      // Ensure every authenticated user has a bot key at login time.
-      try {
-        const existingBotKey = ctx.botKeyStore.getActiveKeyForUser(trimmedNpub);
-        if (!existingBotKey) {
-          const decoded = nip19.decode(trimmedNpub);
-          if (decoded.type === "npub") {
-            const userPubkeyHex = decoded.data as string;
-            const generated = ctx.generateBotKey(userPubkeyHex);
-            ctx.botKeyStore.createKey({
-              userNpub: trimmedNpub,
-              botPubkeyHex: generated.botPubkeyHex,
-              botNpub: generated.botNpub,
-              displayName: generated.displayName,
-              encryptedToUser: generated.encryptedToUser,
-              encryptedEscrow: generated.encryptedEscrow,
-              escrowUuid: generated.escrowUuid,
-            });
-            console.log(`[bot-key] Generated bot key at login for ${trimmedNpub.slice(0, 20)}…: ${generated.botNpub.slice(0, 20)}…`);
-          }
-        }
-      } catch (error) {
-        console.warn(`[bot-key] Failed login-time bot generation for ${trimmedNpub}:`, error);
-      }
 
       // Fire-and-forget Gitea user provisioning
       if (ctx.config.giteaUrl && ctx.config.giteaApiToken && ctx.config.giteaOwner) {

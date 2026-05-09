@@ -356,8 +356,9 @@ export function initIdentityDom(deps) {
       }
     }
     // ── Bot identity display ──────────────────────────────────────
-    const { botNpub, botDisplayName, botPubkeyHex, botUnlocked, botCanExportNsec } = state.identity;
+    const { botNpub, botDisplayName, botPubkeyHex, botUnlocked, botCanExportNsec, botKeySource } = state.identity;
     const hasBotKey = Boolean(botNpub);
+    const isWingmanPrivManaged = botKeySource === "wingman_priv";
     const canExportBotNsec = Boolean(hasBotKey && botCanExportNsec && state.identity.isAdmin);
     if (entry.botHeader) {
       entry.botHeader.hidden = !authenticated;
@@ -398,8 +399,11 @@ export function initIdentityDom(deps) {
         entry.botStatus.textContent = "\u2014";
         delete entry.botStatus.dataset.state;
       } else if (!hasBotKey) {
-        entry.botStatus.textContent = "No bot key";
+        entry.botStatus.textContent = "Missing WINGMAN_PRIV";
         entry.botStatus.dataset.state = "inactive";
+      } else if (isWingmanPrivManaged) {
+        entry.botStatus.textContent = "Env managed";
+        entry.botStatus.dataset.state = "active";
       } else if (botUnlocked) {
         entry.botStatus.textContent = "Unlocked";
         entry.botStatus.dataset.state = "active";
@@ -430,10 +434,12 @@ export function initIdentityDom(deps) {
       delete entry.botExportFeedback.dataset.state;
     }
     if (entry.botPublishDelegateButton) {
-      entry.botPublishDelegateButton.disabled = !hasBotKey;
+      entry.botPublishDelegateButton.disabled = !hasBotKey || isWingmanPrivManaged;
+      entry.botPublishDelegateButton.hidden = isWingmanPrivManaged;
     }
     if (entry.botForceSetupButton) {
-      entry.botForceSetupButton.disabled = !authenticated;
+      entry.botForceSetupButton.disabled = !authenticated || isWingmanPrivManaged || !hasBotKey;
+      entry.botForceSetupButton.hidden = isWingmanPrivManaged || !hasBotKey;
     }
     if (entry.botPublishDelegateFeedback && !hasBotKey) {
       entry.botPublishDelegateFeedback.hidden = true;

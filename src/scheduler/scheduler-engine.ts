@@ -2,11 +2,10 @@
  * Scheduler Engine
  *
  * Loads enabled jobs from SQLite, schedules them via croner, and on trigger:
- *   1. Unwraps the escrow UUID from the wrapped key
- *   2. Unlocks the bot key via escrow
- *   3. Creates a session with the explicit npub
- *   4. Injects the initial prompt
- *   5. Enables Night Watchman if configured
+ *   1. Uses the shared Wingman instance identity
+ *   2. Creates a session with the requesting operator npub for audit
+ *   3. Injects the initial prompt
+ *   4. Enables Night Watchman if configured
  */
 
 import { watch as fsWatch, type FSWatcher } from "node:fs";
@@ -16,13 +15,10 @@ import { join } from "node:path";
 import { Cron } from "croner";
 
 import type { SchedulerStore, ScheduledJob } from "./scheduler-store";
-import { unwrapEscrowUuid } from "./key-wrapper";
-import { unlockViaEscrow, storeBotKeyInMemory, isBotKeyUnlocked } from "../identity/bot-key-manager";
-import type { BotKeyStore } from "../identity/bot-key-store";
+import type { WingmanInstanceIdentity } from "../identity/wingman-instance-identity";
 import type { NightWatchStore } from "../nightwatch/nightwatch-store";
 import type { AgentType } from "../config";
 import type { SessionSnapshot, SessionOrigin } from "../agents/process-manager";
-import { getSessionSecretBytes } from "../auth/session-secret";
 import type { SessionMetadataInput } from "../sessions/session-metadata";
 import type { JsonObject } from "../pipelines/pipeline-store";
 
@@ -32,7 +28,6 @@ import type { JsonObject } from "../pipelines/pipeline-store";
 
 export interface SchedulerEngineDeps {
   store: SchedulerStore;
-  botKeyStore: BotKeyStore;
   nightWatchStore: NightWatchStore;
   createSession: (
     agent: AgentType,
@@ -48,6 +43,7 @@ export interface SchedulerEngineDeps {
   awaitSessionReadyForPrompt?: (session: SessionSnapshot, agent: AgentType) => Promise<void>;
   runPipeline?: (job: ScheduledJob, input: JsonObject) => Promise<string>;
   onBotKeyUnlocked?: (npub: string, secretKey: Uint8Array, botPubkeyHex: string) => void;
+  getInstanceIdentity?: () => WingmanInstanceIdentity | null;
 }
 
 export interface SchedulerExecutionResult {
@@ -260,35 +256,14 @@ class SchedulerEngine {
   }
 
   private async ensureNostrTriggerUnlocked(job: ScheduledJob): Promise<void> {
-    if (isBotKeyUnlocked(job.userNpub)) {
+    const identity = this.deps.getInstanceIdentity?.() ?? null;
+    if (identity) {
+      this.deps.onBotKeyUnlocked?.(job.userNpub, identity.secretKey, identity.pubkeyHex);
+      console.log(`[scheduler] Nostr trigger listener armed for job "${job.name}" (${job.id})`);
       return;
     }
 
-    try {
-      const sessionSecretBytes = getSessionSecretBytes();
-      const escrowUuid = unwrapEscrowUuid(
-        { ciphertext: job.wrappedKeyCiphertext, nonce: job.wrappedKeyNonce },
-        sessionSecretBytes,
-      );
-      const botKey = this.deps.botKeyStore.getActiveKeyForUser(job.userNpub);
-      if (!botKey) {
-        console.warn(`[scheduler] No active bot key for nostr job ${job.id}`);
-        return;
-      }
-
-      const secretKey = unlockViaEscrow(
-        botKey.encryptedEscrow,
-        botKey.botPubkeyHex,
-        escrowUuid,
-      );
-      storeBotKeyInMemory(job.userNpub, secretKey, botKey.botPubkeyHex, "escrow");
-      this.deps.onBotKeyUnlocked?.(job.userNpub, secretKey, botKey.botPubkeyHex);
-      console.log(`[scheduler] Nostr trigger listener armed for job "${job.name}" (${job.id})`);
-    } catch (err) {
-      console.warn(
-        `[scheduler] Failed to arm nostr trigger for job "${job.name}" (${job.id}): ${(err as Error).message}`,
-      );
-    }
+    console.warn(`[scheduler] WINGMAN_PRIV not configured; nostr trigger "${job.name}" (${job.id}) is not armed`);
   }
 
   /**
@@ -344,27 +319,9 @@ class SchedulerEngine {
     const runId = this.deps.store.recordRun(jobId);
 
     try {
-      // 1. Unwrap the escrow UUID
-      const sessionSecretBytes = getSessionSecretBytes();
-      const escrowUuid = unwrapEscrowUuid(
-        { ciphertext: job.wrappedKeyCiphertext, nonce: job.wrappedKeyNonce },
-        sessionSecretBytes,
-      );
-
-      // 2. Lookup bot key and unlock via escrow
-      const botKey = this.deps.botKeyStore.getActiveKeyForUser(job.userNpub);
-      if (!botKey) {
-        throw new Error(`No active bot key for user ${job.userNpub}`);
-      }
-
-      if (!isBotKeyUnlocked(job.userNpub)) {
-        const secretKey = unlockViaEscrow(
-          botKey.encryptedEscrow,
-          botKey.botPubkeyHex,
-          escrowUuid,
-        );
-        storeBotKeyInMemory(job.userNpub, secretKey, botKey.botPubkeyHex, "escrow");
-        this.deps.onBotKeyUnlocked?.(job.userNpub, secretKey, botKey.botPubkeyHex);
+      const instanceIdentity = this.deps.getInstanceIdentity?.() ?? null;
+      if (!instanceIdentity) {
+        throw new Error("WINGMAN_PRIV is required to execute scheduled jobs");
       }
 
       if (job.actionType === "pipeline") {

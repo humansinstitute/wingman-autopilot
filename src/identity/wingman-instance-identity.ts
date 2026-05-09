@@ -13,6 +13,13 @@ export interface WingmanInstanceIdentity {
   source: "env";
 }
 
+export interface WingmanIdentityPublicDetails {
+  botNpub: string;
+  botPubkeyHex: string;
+  displayName: string;
+  keySource: WingmanInstanceIdentity["source"];
+}
+
 type ConfigEnvironment = Record<string, string | undefined>;
 
 let cachedIdentity: WingmanInstanceIdentity | null | undefined;
@@ -35,7 +42,12 @@ function decodeWingmanPriv(input: string): Uint8Array {
     return hexToBytes(value);
   }
 
-  const decoded = nip19.decode(value);
+  let decoded: ReturnType<typeof nip19.decode>;
+  try {
+    decoded = nip19.decode(value);
+  } catch (error) {
+    throw new Error(`WINGMAN_PRIV must be an nsec1 private key: ${(error as Error).message}`);
+  }
   if (decoded.type !== "nsec" || !(decoded.data instanceof Uint8Array)) {
     throw new Error("WINGMAN_PRIV must be an nsec1 private key");
   }
@@ -75,3 +87,24 @@ export function loadWingmanInstanceIdentity(
   return identity;
 }
 
+export function getWingmanIdentityPublicDetails(
+  identity: WingmanInstanceIdentity,
+): WingmanIdentityPublicDetails {
+  return {
+    botNpub: identity.npub,
+    botPubkeyHex: identity.pubkeyHex,
+    displayName: identity.displayName,
+    keySource: identity.source,
+  };
+}
+
+export function buildWingmanIdentityEnv(
+  identity: WingmanInstanceIdentity,
+): Record<string, string> {
+  return {
+    WINGMAN_NPUB: identity.npub,
+    BOT_NPUB: identity.npub,
+    BOT_PUBKEY_HEX: identity.pubkeyHex,
+    AGENT_NSEC: identity.nsecHex,
+  };
+}

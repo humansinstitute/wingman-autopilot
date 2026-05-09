@@ -2,17 +2,15 @@
  * Bot Key API Handler
  *
  * HTTP handler for /api/bot-keys/* routes.
- * Manages per-user bot keypair lifecycle: query, unlock, rotate, replace.
+ * Compatibility API for bot identity state during the single-key migration.
  */
 
-import { getPublicKey, nip19 } from "nostr-tools";
+import { getPublicKey } from "nostr-tools";
 
 import { readSessionCookie } from "../auth/session-cookie";
-import type { BotKeyStore, BotKeyRecord } from "./bot-key-store";
+import type { BotKeyStore } from "./bot-key-store";
 import {
-  generateBotKey,
   unlockViaEscrow,
-  rotateEscrowUuid,
   storeBotKeyInMemory,
   getDecryptedBotKey,
   isBotKeyUnlocked,
@@ -25,7 +23,7 @@ import type { SessionSnapshot } from "../agents/process-manager";
 import type { StoredSessionRecord } from "../storage/message-store";
 import { normaliseNpub } from "./npub-utils";
 import { parseBody, jsonError } from "../utils/request-utils";
-import type { WingmanInstanceIdentity } from "./wingman-instance-identity";
+import { getWingmanIdentityPublicDetails, type WingmanInstanceIdentity } from "./wingman-instance-identity";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -304,15 +302,13 @@ function handleGetMe(deps: BotKeyApiDependencies, request: Request): Response {
   const instanceIdentity = deps.getInstanceIdentity?.() ?? null;
   if (instanceIdentity) {
     const canExportNsec = Boolean(deps.isAdminNpub?.(npub));
+    const publicDetails = getWingmanIdentityPublicDetails(instanceIdentity);
     return Response.json({
       hasKey: true,
-      botNpub: instanceIdentity.npub,
-      botPubkeyHex: instanceIdentity.pubkeyHex,
-      displayName: instanceIdentity.displayName,
+      ...publicDetails,
       unlocked: true,
       createdAt: null,
       source: "wingman_priv",
-      keySource: instanceIdentity.source,
       canExportNsec,
     });
   }
@@ -352,7 +348,6 @@ function handleGetAdminNsec(deps: BotKeyApiDependencies, request: Request): Resp
   if (instanceIdentity) {
     return Response.json({
       nsec: instanceIdentity.nsec,
-      nsecHex: instanceIdentity.nsecHex,
       botPubkeyHex: instanceIdentity.pubkeyHex,
       botNpub: instanceIdentity.npub,
       source: "wingman_priv",
@@ -391,6 +386,9 @@ async function handleGetEncrypted(deps: BotKeyApiDependencies, request: Request)
   if (!deps.isAdminNpub?.(npub)) {
     return jsonError("Admin access required", 403);
   }
+  if (deps.getInstanceIdentity?.()) {
+    return jsonError("Browser decrypt is not used for env-managed WINGMAN_PRIV", 410);
+  }
 
   const record = deps.store.getActiveKeyForUser(npub);
   if (!record) {
@@ -423,6 +421,9 @@ async function handleUnlock(deps: BotKeyApiDependencies, request: Request): Prom
   const npub = getNpubFromCookie(request);
   if (!npub) {
     return jsonError("Not authenticated — session cookie required", 401);
+  }
+  if (deps.getInstanceIdentity?.()) {
+    return Response.json({ unlocked: true, source: "wingman_priv" });
   }
 
   const record = deps.store.getActiveKeyForUser(npub);
@@ -459,6 +460,10 @@ async function handleUnlock(deps: BotKeyApiDependencies, request: Request): Prom
  * Body: { sessionId, escrowUuid }
  */
 async function handleUnlockEscrow(deps: BotKeyApiDependencies, request: Request): Promise<Response> {
+  if (deps.getInstanceIdentity?.()) {
+    return Response.json({ unlocked: true, source: "wingman_priv" });
+  }
+
   const body = await parseBody(request);
   const sessionId = body.sessionId as string | undefined;
   const escrowUuid = body.escrowUuid as string | undefined;
@@ -502,6 +507,10 @@ async function handleUnlockEscrow(deps: BotKeyApiDependencies, request: Request)
  * Body: { sessionId }
  */
 async function handleExportNsec(deps: BotKeyApiDependencies, request: Request): Promise<Response> {
+  if (deps.getInstanceIdentity?.()) {
+    return jsonError("Use the admin nsec endpoint for the Wingman instance key", 403);
+  }
+
   const body = await parseBody(request);
   const sessionId = body.sessionId as string | undefined;
 
@@ -539,86 +548,33 @@ async function handleExportNsec(deps: BotKeyApiDependencies, request: Request): 
 /**
  * POST /api/bot-keys/rotate-escrow
  *
- * Rotate the escrow UUID. Returns the new UUID.
- * Body: { currentUuid }
+ * Legacy per-user escrow rotation is disabled in the single-key model.
  */
 async function handleRotateEscrow(deps: BotKeyApiDependencies, request: Request): Promise<Response> {
   const npub = getNpubFromCookie(request);
   if (!npub) {
     return jsonError("Not authenticated — session cookie required", 401);
   }
-
-  const record = deps.store.getActiveKeyForUser(npub);
-  if (!record) {
-    return jsonError("No active bot key for this user", 404);
+  if (deps.getInstanceIdentity?.()) {
+    return jsonError("Per-user bot key escrow is disabled for env-managed WINGMAN_PRIV", 410);
   }
-
-  const body = await parseBody(request);
-  const currentUuid = body.currentUuid as string | undefined;
-  if (!currentUuid) {
-    return jsonError("currentUuid is required", 400);
-  }
-
-  if (currentUuid !== record.escrowUuid) {
-    return jsonError("Invalid current escrow UUID", 403);
-  }
-
-  try {
-    const { newEncryptedEscrow, newEscrowUuid } = rotateEscrowUuid(
-      record.encryptedEscrow,
-      record.botPubkeyHex,
-      currentUuid,
-    );
-    deps.store.updateEscrow(record.id, newEncryptedEscrow, newEscrowUuid);
-    return Response.json({ rotated: true, newEscrowUuid });
-  } catch (err) {
-    return jsonError(`Escrow rotation failed: ${(err as Error).message}`, 500);
-  }
+  return jsonError("WINGMAN_PRIV is not configured. Per-user bot key escrow is disabled.", 400);
 }
 
 /**
  * POST /api/bot-keys/replace
  *
- * Deactivate the old key and generate a new keypair.
- * Body: { userPubkeyHex }
+ * Legacy per-user bot key generation is disabled in the single-key model.
  */
 async function handleReplace(deps: BotKeyApiDependencies, request: Request): Promise<Response> {
   const npub = getNpubFromCookie(request);
   if (!npub) {
     return jsonError("Not authenticated — session cookie required", 401);
   }
-
-  const body = await parseBody(request);
-  const userPubkeyHex = body.userPubkeyHex as string | undefined;
-  if (!userPubkeyHex || !/^[0-9a-fA-F]{64}$/.test(userPubkeyHex)) {
-    return jsonError("userPubkeyHex must be a 64-character hex string", 400);
+  if (deps.getInstanceIdentity?.()) {
+    return jsonError("Per-user bot key replacement is disabled for env-managed WINGMAN_PRIV", 410);
   }
-
-  // Deactivate existing key if any
-  const existing = deps.store.getActiveKeyForUser(npub);
-  if (existing) {
-    deps.store.deactivateKey(existing.id);
-  }
-
-  // Generate new keypair (also signs kind 0 profile event)
-  const generated = generateBotKey(userPubkeyHex);
-  const record = deps.store.createKey({
-    userNpub: npub,
-    botPubkeyHex: generated.botPubkeyHex,
-    botNpub: generated.botNpub,
-    displayName: generated.displayName,
-    encryptedToUser: generated.encryptedToUser,
-    encryptedEscrow: generated.encryptedEscrow,
-    escrowUuid: generated.escrowUuid,
-  });
-
-  return Response.json({
-    replaced: true,
-    botNpub: record.botNpub,
-    botPubkeyHex: record.botPubkeyHex,
-    displayName: generated.displayName,
-    signedProfileEvent: generated.signedProfileEvent,
-  });
+  return jsonError("WINGMAN_PRIV is not configured. Per-user bot key generation is disabled.", 400);
 }
 
 /**
@@ -632,82 +588,23 @@ async function handleForceSync(deps: BotKeyApiDependencies, request: Request): P
   if (!npub) {
     return jsonError("Not authenticated — session cookie required", 401);
   }
-
-  const decode = nip19.decode(npub);
-  if (decode.type !== "npub" || typeof decode.data !== "string") {
-    return jsonError("Invalid npub in session", 400);
-  }
-  const userPubkeyHex = decode.data;
-
-  let record = deps.store.getActiveKeyForUser(npub);
-  let created = false;
-  if (!record) {
-    const generated = generateBotKey(userPubkeyHex);
-    record = deps.store.createKey({
-      userNpub: npub,
-      botPubkeyHex: generated.botPubkeyHex,
-      botNpub: generated.botNpub,
-      displayName: generated.displayName,
-      encryptedToUser: generated.encryptedToUser,
-      encryptedEscrow: generated.encryptedEscrow,
-      escrowUuid: generated.escrowUuid,
+  const instanceIdentity = deps.getInstanceIdentity?.() ?? null;
+  if (instanceIdentity) {
+    return Response.json({
+      ok: true,
+      created: false,
+      unlocked: true,
+      botNpub: instanceIdentity.npub,
+      botPubkeyHex: instanceIdentity.pubkeyHex,
+      displayName: instanceIdentity.displayName,
+      source: "wingman_priv",
+      botProfilePublished: false,
+      botProfileError: null,
+      delegateTemplate: null,
     });
-    created = true;
   }
 
-  let unlocked = isBotKeyUnlocked(npub);
-  if (!unlocked) {
-    const secretKey = unlockViaEscrow(record.encryptedEscrow, record.botPubkeyHex, record.escrowUuid);
-    storeBotKeyInMemory(npub, secretKey, record.botPubkeyHex, "escrow");
-    deps.onBotKeyUnlocked?.(npub, secretKey, record.botPubkeyHex);
-    unlocked = true;
-  }
-
-  const relays = Array.isArray(deps.defaultRelays) ? deps.defaultRelays : [];
-  let botProfilePublished = false;
-  let botProfileError: string | null = null;
-  if (relays.length > 0) {
-    try {
-      const status = await getBotProfileStatus({
-        botPubkeyHex: record.botPubkeyHex,
-        defaultRelays: relays,
-      });
-      if (!status.exists) {
-        const key = getDecryptedBotKey(npub);
-        if (!key || key.pubkeyHex !== record.botPubkeyHex) {
-          throw new Error("Bot key unavailable in memory for profile signing");
-        }
-        const signedEvent = signBotProfileEvent(key.secretKey, record.displayName || getBotDisplayName(record.botPubkeyHex));
-        await publishBotProfileEvent({
-          botPubkeyHex: record.botPubkeyHex,
-          signedEvent,
-          defaultRelays: relays,
-        });
-        botProfilePublished = true;
-      }
-    } catch (error) {
-      botProfileError = error instanceof Error ? error.message : String(error);
-    }
-  }
-
-  const delegateTemplate = buildDelegateRegistryTemplate([
-    {
-      pubkey: record.botPubkeyHex,
-      name: record.displayName || getBotDisplayName(record.botPubkeyHex),
-      active: true,
-    },
-  ]);
-
-  return Response.json({
-    ok: true,
-    created,
-    unlocked,
-    botNpub: record.botNpub,
-    botPubkeyHex: record.botPubkeyHex,
-    botProfilePublished,
-    botProfileError,
-    delegateTemplate,
-  });
+  return jsonError("WINGMAN_PRIV is not configured. Set the Wingman instance key before syncing identity.", 400);
 }
 
 /**

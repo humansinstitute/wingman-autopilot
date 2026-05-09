@@ -7,13 +7,11 @@
  *
  * v3: Append-only versioned records, UUID record IDs, no metadata column.
  *
- * When a per-user bot key is unlocked, uses it for signing and crypto.
- * For user-scoped requests, bot key unlock is required (no root-key fallback).
+ * Uses the shared Wingman instance identity for signing and crypto.
  */
 
 import { signForSession } from "../mcp/wingman-signer";
-import { getKeyTeleportIdentity } from "../config";
-import { getDecryptedBotKey } from "../identity/bot-key-manager";
+import { loadWingmanInstanceIdentity } from "../identity/wingman-instance-identity";
 import { nip44Encrypt, nip44Decrypt, encryptToMultipleRecipients } from "./nip44-crypto";
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex } from "@noble/hashes/utils";
@@ -83,27 +81,18 @@ function resolveUserNpub(
 }
 
 /**
- * Resolve the signing key identity.
- * For user-scoped requests, the user's bot key must be unlocked.
- * Root-key signing is only used when no user session identity is provided.
+ * Resolve the signing key identity from WINGMAN_PRIV.
  */
 function resolveSigningIdentity(userNpub?: string | null): {
   secretKey: Uint8Array;
   pubkey: string;
-  source: "bot" | "root";
+  source: "wingman";
 } {
-  if (userNpub) {
-    const botKey = getDecryptedBotKey(userNpub);
-    if (botKey) {
-      return { secretKey: botKey.secretKey, pubkey: botKey.pubkeyHex, source: "bot" };
-    }
-    throw new Error(`Bot key not unlocked for session user ${userNpub}`);
-  }
-  const identity = getKeyTeleportIdentity();
+  const identity = loadWingmanInstanceIdentity();
   if (!identity) {
-    throw new Error("No signing key available (KEYTELEPORT_PRIVKEY not set, bot key not unlocked)");
+    throw new Error("No Wingman instance key available (set WINGMAN_PRIV)");
   }
-  return { secretKey: identity.secretKey, pubkey: identity.pubkey, source: "root" };
+  return { secretKey: identity.secretKey, pubkey: identity.pubkeyHex, source: "wingman" };
 }
 
 /**

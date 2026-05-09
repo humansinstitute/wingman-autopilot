@@ -187,9 +187,8 @@ function buildProviderEnvBootstrap(
   sessionConfig: SessionConfig,
   runtimeEnv: Record<string, string>,
 ): string {
-  // Always strip the root server key from agent subprocesses — agents must
-  // use their per-user bot key via AGENT_NSEC, never the root server key.
-  const snippets: string[] = ["unset KEYTELEPORT_PRIVKEY"];
+  // Always strip server-only private keys from agent subprocesses.
+  const snippets: string[] = ["unset KEYTELEPORT_PRIVKEY WINGMAN_PRIV"];
   const billingMode = sessionConfig.billingMode ?? "subscription";
   const shouldSanitizeProviderEnv = BILLING_COMPATIBLE_AGENTS.has(sessionConfig.agent);
 
@@ -221,9 +220,13 @@ export function createAppConfig(sessionConfig: SessionConfig): EcosystemApp {
   const { script, args } = buildAgentCommand(sessionConfig);
 
   const command = [script, ...args].map(shellQuote).join(" ");
-  // Build runtime env from session + injected vars. Strip KEYTELEPORT_PRIVKEY
-  // if it leaked through envOverride (agents use AGENT_NSEC instead).
-  const { KEYTELEPORT_PRIVKEY: _stripped, ...cleanEnvOverride } = sessionConfig.envOverride ?? {} as Record<string, string>;
+  // Build runtime env from session + injected vars. Strip server-only private
+  // keys if they leaked through envOverride.
+  const {
+    KEYTELEPORT_PRIVKEY: _strippedKeyTeleport,
+    WINGMAN_PRIV: _strippedWingmanPriv,
+    ...cleanEnvOverride
+  } = sessionConfig.envOverride ?? {} as Record<string, string>;
   const runtimeEnv: Record<string, string> = {
     WINGMAN_PROCESS_KIND: "agent-session",
     SESSION_ID: sessionId,

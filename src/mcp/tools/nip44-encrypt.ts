@@ -2,9 +2,8 @@
  * MCP Tool: nip44_encrypt
  *
  * Encrypt plaintext to a recipient pubkey using NIP-44 v2.
- * When a per-user bot key is active (BOT_PUBKEY_HEX env var set),
- * routes through the server's bot-crypto API. Otherwise falls back
- * to local crypto with the root key.
+ * Routes through the server's bot-crypto API so the shared Wingman
+ * instance key never leaves the server process.
  */
 
 import { z } from "zod";
@@ -20,7 +19,7 @@ export const nip44EncryptSchema = {
 
 export const nip44EncryptDescription =
   "Encrypt plaintext to a recipient pubkey using NIP-44 v2. " +
-  "Uses your per-user bot key as the sender. " +
+  "Uses the shared Wingman instance identity as the sender. " +
   "Returns base64-encoded ciphertext that only the recipient can decrypt.";
 
 interface Nip44EncryptParams {
@@ -78,7 +77,7 @@ export async function handleNip44Encrypt(params: Nip44EncryptParams) {
           {
             type: "text" as const,
             text: [
-              `Encrypted by ${botResult.senderPubkey} (bot key)`,
+              `Encrypted by ${botResult.senderPubkey} (Wingman instance)`,
               `Recipient: ${params.recipient_pubkey}`,
               "",
               botResult.ciphertext,
@@ -93,8 +92,8 @@ export async function handleNip44Encrypt(params: Nip44EncryptParams) {
       content: [
         {
           type: "text" as const,
-          text: "NIP-44 encryption failed: bot key is not available. " +
-            "Ensure the session has a bot key configured and unlocked.",
+          text: "NIP-44 encryption failed: Wingman identity is not available. " +
+            "Set WINGMAN_PRIV and restart this Wingman instance.",
         },
       ],
     };

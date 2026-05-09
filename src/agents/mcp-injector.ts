@@ -38,12 +38,13 @@ export interface McpInjectionContext {
   agent: AgentType;
   workingDirectory: string;
   config: WingmanConfig;
-  /** Per-user bot identity (set when bot key exists for session owner). */
+  /** Shared Wingman bot identity. */
+  wingmanNpub?: string;
   botPubkeyHex?: string;
   botNpub?: string;
-  /** User's npub (for bot key signing in superbased tools). */
+  /** Requesting operator npub, used for audit and owner-scoped data. */
   userNpub?: string;
-  /** Bot key nsec hex — injected as AGENT_NSEC for downstream tools. */
+  /** Wingman instance nsec hex — injected as AGENT_NSEC for downstream tools. */
   agentNsec?: string;
 }
 
@@ -60,7 +61,7 @@ export interface McpInjectionResult {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const IDENTITY_KEYS = ["BOT_PUBKEY_HEX", "BOT_NPUB", "USER_NPUB", "AGENT_NSEC"] as const;
+const IDENTITY_KEYS = ["WINGMAN_NPUB", "BOT_PUBKEY_HEX", "BOT_NPUB", "USER_NPUB", "AGENT_NSEC"] as const;
 
 /** Extract identity-related env vars from baseEnv (only those that are set). */
 function pickIdentityEnv(env: Record<string, string>): Record<string, string> {
@@ -93,6 +94,9 @@ export async function injectMcpConfig(
   };
 
   // Pass bot identity env vars when available
+  if (ctx.wingmanNpub) {
+    baseEnv.WINGMAN_NPUB = ctx.wingmanNpub;
+  }
   if (ctx.botPubkeyHex) {
     baseEnv.BOT_PUBKEY_HEX = ctx.botPubkeyHex;
   }

@@ -2,7 +2,7 @@
  * Shared types for the Wingman MCP NIP-98 signing system.
  *
  * Two-tier authorization:
- *   Tier 1 – Wingman signs with its own server key (KEYTELEPORT_PRIVKEY).
+ *   Tier 1 – Wingman signs with its instance key (WINGMAN_PRIV).
  *   Tier 2 – User delegates signing via browser (ephemeral key or NIP-07).
  */
 

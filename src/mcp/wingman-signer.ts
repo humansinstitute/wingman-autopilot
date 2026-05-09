@@ -1,15 +1,13 @@
 /**
- * Tier 1 NIP-98 signer — signs HTTP auth events using the user's
- * bot key for user-scoped sessions, or the shared Wingman server key
- * only when no user session identity is provided.
+ * Tier 1 NIP-98 signer — signs HTTP auth events using the shared Wingman
+ * instance identity configured with WINGMAN_PRIV.
  *
  * Creates kind 27235 events per the NIP-98 spec:
  *   https://github.com/nostr-protocol/nips/blob/master/98.md
  */
 
 import { finalizeEvent } from "nostr-tools";
-import { getKeyTeleportIdentity } from "../config";
-import { getDecryptedBotKey } from "../identity/bot-key-manager";
+import { loadWingmanInstanceIdentity } from "../identity/wingman-instance-identity";
 import type { SignNip98Response } from "./types";
 
 /** NIP-98 HTTP Auth event kind. */
@@ -51,19 +49,19 @@ function buildNip98Token(
 }
 
 /**
- * Sign a NIP-98 token with the Wingman server key (root identity).
+ * Sign a NIP-98 token with the Wingman instance key.
  *
- * @throws If KEYTELEPORT_PRIVKEY is not configured.
+ * @throws If WINGMAN_PRIV is not configured.
  */
 export async function signWithWingmanKey(
   url: string,
   method: string,
   bodyHash?: string,
 ): Promise<SignNip98Response> {
-  const identity = getKeyTeleportIdentity();
+  const identity = loadWingmanInstanceIdentity();
   if (!identity) {
     throw new Error(
-      "Wingman server key not configured. Set KEYTELEPORT_PRIVKEY to enable Tier 1 NIP-98 signing.",
+      "Wingman instance key not configured. Set WINGMAN_PRIV to enable Tier 1 NIP-98 signing.",
     );
   }
 
@@ -86,17 +84,16 @@ export function signWithBotKey(
 }
 
 export interface SignForSessionResult extends SignNip98Response {
-  signerType: "bot" | "root";
+  signerType: "wingman";
 }
 
 /**
- * Sign a NIP-98 token for a specific user session.
- * For user-scoped sessions, a bot key must be unlocked in memory.
- * Root-key signing is only used when no user session identity is provided.
+ * Sign a NIP-98 token for a session. The user npub is retained for call-site
+ * compatibility and audit context, but the signer is always the instance key.
  *
  * @param url - Target URL for the NIP-98 token
  * @param method - HTTP method
- * @param userNpub - User's npub (optional — if missing, uses root key)
+ * @param userNpub - User's npub retained for audit-oriented call sites.
  * @param bodyHash - SHA-256 hash of the request body (optional)
  */
 export async function signForSession(
@@ -105,24 +102,14 @@ export async function signForSession(
   userNpub?: string | null,
   bodyHash?: string,
 ): Promise<SignForSessionResult> {
-  // User-scoped signing must use the user's unlocked bot key.
-  if (userNpub) {
-    const botKey = getDecryptedBotKey(userNpub);
-    if (botKey) {
-      const result = signWithBotKey(url, method, botKey.secretKey, botKey.npub, bodyHash);
-      return { ...result, signerType: "bot" };
-    }
-    throw new Error(`Bot key not unlocked for session user ${userNpub}`);
-  }
-
-  // Root key is only for non-user-scoped signing.
+  void userNpub;
   const result = await signWithWingmanKey(url, method, bodyHash);
-  return { ...result, signerType: "root" };
+  return { ...result, signerType: "wingman" };
 }
 
 /**
- * Check whether the Wingman server key is available for Tier 1 signing.
+ * Check whether the Wingman instance key is available for Tier 1 signing.
  */
 export function isWingmanKeyAvailable(): boolean {
-  return getKeyTeleportIdentity() !== null;
+  return loadWingmanInstanceIdentity() !== null;
 }
