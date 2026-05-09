@@ -265,6 +265,20 @@ function getErrorDetailCode(error: unknown): string | null {
   return typeof detailCode === 'string' && detailCode.trim().length > 0 ? detailCode.trim() : null;
 }
 
+function getConnectedEventCursor(eventType: string, payload: Record<string, unknown> | null): string | null {
+  if (eventType !== 'connected' || !payload) {
+    return null;
+  }
+  const eventId = payload.event_id;
+  if (typeof eventId === 'string' && eventId.trim().length > 0) {
+    return eventId.trim();
+  }
+  if (typeof eventId === 'number' && Number.isFinite(eventId)) {
+    return String(eventId);
+  }
+  return null;
+}
+
 function mapFailureState(detailCode: string | null): RuntimeFailureState {
   switch (detailCode) {
     case 'workspace_key_register_failed':
@@ -1264,7 +1278,7 @@ export class WorkspaceSubscriptionManager {
     } catch {
       payload = { raw: eventData };
     }
-    record.lastSseEventId = eventId ?? record.lastSseEventId;
+    record.lastSseEventId = eventId ?? getConnectedEventCursor(eventType, payload) ?? record.lastSseEventId;
     const nextEvent: AgentChatSseEventDiagnostic = {
       eventId,
       eventType,

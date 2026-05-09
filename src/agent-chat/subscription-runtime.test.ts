@@ -166,6 +166,37 @@ function saveBackendConnection(
 }
 
 describe('WorkspaceSubscriptionManager', () => {
+  test('uses connected event payload cursor as the SSE resume point', async () => {
+    const dbPath = makeTempDb();
+    const store = new WorkspaceSubscriptionStore(dbPath);
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      botKeyStore: {
+        getActiveKeyForUser: () => null,
+        getActiveKeyForBotNpub: () => null,
+      },
+    });
+    const record = store.save(store.createDefault({
+      managedByNpub: 'npub1manager',
+      workspaceOwnerNpub: 'npub1workspace',
+      backendBaseUrl: 'https://tower.example.com',
+      botNpub: 'npub1bot',
+      sourceAppNpub: 'npub1sourceapp',
+    }));
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(record, null, 'connected', JSON.stringify({ event_id: 1011 }));
+
+    expect(next.lastSseEventId).toBe('1011');
+    expect(store.getBySubscriptionId(record.subscriptionId)?.lastSseEventId).toBe('1011');
+  });
+
   test('derives agent groups from refreshed wrapped group keys when none are supplied', () => {
     const dbPath = makeTempDb();
     const store = new WorkspaceSubscriptionStore(dbPath);
