@@ -1,70 +1,121 @@
 # Single-Key Wingman Plan
 
-## Goal
+## Decision
 
-After the Docker-first setup is usable, simplify Wingman Autopilot to a single bot identity per Wingman instance.
+Wingman Autopilot should move to one bot identity per Wingman instance.
 
-The model should be:
+No matter which approved human logs in, they are operating the same Wingman. The
+human identity controls access, attribution, and audit history. It does not
+select a separate agent key.
 
-- one Wingman instance
-- one bot private key
-- one bot public identity
-- one workspace
-- one memory namespace
-- one pipeline/job namespace
+The instance private key is configured as:
+
+```bash
+WINGMAN_PRIV=nsec1...
+```
+
+Use `WINGMAN_PRIV` in product copy, setup UI, Docker docs, and agent runtime
+code added for this model. `WINGMAN_PRIV` is the Wingman instance private key.
+
+## Product Model
+
+One deployed Wingman means:
+
+- one Wingman bot private key
+- one Wingman bot public identity
+- one shared workspace
+- one shared memory namespace
+- one shared pipeline/job namespace
+- one shared set of CLI credentials inside the container
 - multiple approved human operators
 
-Users authenticate as themselves, but they are operators of the Wingman bot. Their identities are used for access control and audit metadata, not for selecting separate agent private keys.
+If stronger separation is needed, create another Wingman instance with its own
+container, host workspace path, data volume, CLI home volume, `WINGMAN_PRIV`,
+port, and hostname.
 
-## Key Configuration
+## Configuration Contract
 
-Remove the current workaround-heavy dependency on `KEYTELEPORT_PRIVKEY` for runtime bot identity.
+`WINGMAN_PRIV` is the canonical setting.
 
-The single Wingman bot key should be passed explicitly through deployment configuration:
+Supported v1 sources:
 
-```bash
-export WINGMAN_BOT_NSEC="nsec1..."
-bun start
-```
+- process environment:
 
-or through an instance `.env` file:
+  ```bash
+  export WINGMAN_PRIV=nsec1...
+  bun start
+  ```
 
-```bash
-WINGMAN_BOT_NSEC=nsec1...
-```
+- Docker Compose `.env`:
 
-The key may also be accepted as hex if the code needs migration flexibility:
+  ```bash
+  WINGMAN_PRIV=nsec1...
+  ```
 
-```bash
-WINGMAN_BOT_SECRET_HEX=...
-```
+- first-run setup session:
 
-Only one canonical setting should be preferred in docs and setup. `WINGMAN_BOT_NSEC` is the likely default because it matches Nostr operator expectations.
+  The setup UI may accept an `nsec1...` value from an authenticated operator and
+  hand it to the server as the instance key. For v1, this should be treated as
+  instance setup, not as a per-user secret. The implementation should either
+  keep it in memory for the running process or persist it using a deliberate
+  encrypted-at-rest instance secret design.
 
-## Behavior
+Do not bake `WINGMAN_PRIV` into the Docker image.
 
-All agent sessions launched by this Wingman use the same bot identity.
+Do not commit it to the repo.
 
-The runtime should no longer need to decide:
+Do not write it into logs, browser-visible state, session metadata, pipeline
+records, or unencrypted databases.
 
-- which user bot key owns the session
-- whether a per-user bot key is unlocked
-- whether escrow unlock is available
-- whether browser-side decrypt is needed
-- whether the task listener should fall back to a root Wingman key
+The canonical value should be an `nsec1...` string. If migration code accepts
+hex temporarily, it should normalize internally and still expose setup and docs
+as `WINGMAN_PRIV=nsec1...`.
 
-Instead, the app should load one configured bot key at startup and use it consistently for:
+## Runtime Behavior
+
+At startup or setup completion, Wingman should load one configured instance key
+and derive:
+
+- Wingman bot npub
+- Wingman bot hex pubkey
+- signing secret material needed by internal Nostr/NIP-98 code
+- agent subprocess identity environment
+
+All agent sessions launched by the instance use this same Wingman identity,
+regardless of which approved operator requested the session.
+
+Use the configured key consistently for:
 
 - NIP-98 signing
 - MCP identity
 - memory access
 - pipeline/job execution
 - Nostr task or trigger flows
-- agent subprocess identity
+- hosted app and agent subprocess identity
+- any future graph database row-level-security identity
+
+The requesting human npub should still be attached to records as audit metadata,
+for example `requestedByNpub`, `approvedByNpub`, or `operatorNpub`.
+
+## Agent Environment
+
+Agent processes should receive the Wingman identity, not a per-user identity.
+
+The implementation can keep compatibility with existing downstream tools by
+injecting the derived secret into the current agent identity variables, but the
+source of truth must be `WINGMAN_PRIV`.
+
+Target runtime environment:
+
+- `WINGMAN_NPUB`: derived public identity of the Wingman bot
+- `BOT_NPUB`: compatibility alias for the same value where existing tools need it
+- `BOT_PUBKEY_HEX`: derived public key hex
+- `AGENT_NSEC`: compatibility value for existing agent tools that expect it
+
+Legacy root-key environment variables should not be the source of agent identity
+in this model. New code should not introduce new dependencies on them.
 
 ## User Model
-
-Users remain first-class operators.
 
 Keep:
 
@@ -73,70 +124,95 @@ Keep:
 - roles or access levels
 - audit logs showing who requested each action
 - session metadata showing the requesting user
+- UI language that makes it clear multiple people are operating one Wingman
 
 Remove or de-emphasize:
 
 - per-user bot-key generation
 - per-user bot-key escrow
-- per-user `AGENT_NSEC`
+- per-user agent private keys
 - browser decrypt requests for bot keys
-- "bot key locked/unlocked" UI for each user
+- per-user "bot key locked/unlocked" state
+- root-key fallback behavior
+- UI copy that implies every user owns a separate assistant key
 
-The bot identity belongs to the Wingman instance, not to a human user.
+The Wingman identity belongs to the instance.
 
-## Secret Handling
+## Setup UI
 
-For the first single-key implementation, the deployment operator is responsible for providing the bot key via environment.
+The first-run setup UI should show the Wingman identity as an instance-level
+requirement.
 
-Acceptable v1 sources:
+Useful states:
 
-- shell export before starting Wingman
-- Docker Compose `.env`
-- Docker secret mounted into the container and read by startup code
+- `Missing`: `WINGMAN_PRIV` is not configured and no instance key has been saved.
+- `Configured`: the server can derive the Wingman npub.
+- `Env managed`: the key came from process or Docker env and cannot be edited in
+  the UI.
+- `Setup managed`: the key was provided through the setup flow and is available
+  to this instance according to the chosen persistence design.
 
-Do not bake the key into the Docker image.
-
-Do not store the key in the repo.
-
-Avoid writing the plaintext key into app databases unless there is a specific encrypted-at-rest design.
-
-## Migration Direction
-
-The migration should reduce code paths rather than adding another compatibility layer.
-
-Likely removals or simplifications:
-
-- `BotKeyStore` as a per-user key store
-- `bot-key-manager` escrow flows
-- `bot-key-export` as a per-user export path
-- browser bot-key decrypt SSE flow
-- per-user bot profile publishing as a required runtime dependency
-- scheduler wrapped escrow UUID handling
-- task-listener owner fallback behavior based on admin/root key distinctions
-
-Some pieces may remain in a reduced form if they become generic identity utilities, but the product model should not preserve hidden per-user agent keys.
+The UI should never display the full private key after submission. It can show
+the derived npub and a short fingerprint.
 
 ## Docker Relationship
 
-This is intentionally the second milestone.
+Docker remains the first milestone.
 
-First milestone:
+The Docker deployment should make the single-key model straightforward:
 
-- make Wingman Autopilot easy to run in Docker
-- confirm CLI setup works inside the persistent container home
-- confirm hosted app routing works through the base-machine tunnel
+- `.env` contains `WINGMAN_PRIV=nsec1...` when the operator chooses env-managed
+  setup.
+- `/home/wingman` keeps CLI authentication.
+- `/workspace` is mounted from the base machine path such as `~/.wm-ap`.
+- app data remains in `/app/data`.
+- each new Wingman instance gets a separate `.env`, host workspace path, data
+  volume, and `WINGMAN_PRIV`.
 
-Second milestone:
+The readiness checklist should eventually report:
 
-- simplify identity to a single configured Wingman bot key
-- remove per-user bot-key runtime complexity
-- make the first-run UI ask for or validate the one bot identity
+- whether `WINGMAN_PRIV` is configured
+- the derived Wingman npub
+- whether the key source is env-managed or setup-managed
+- whether agent subprocess identity injection is enabled
+
+## Migration Direction
+
+This implementation should delete complexity, not preserve it under new names.
+
+Likely simplifications:
+
+- replace per-user active bot-key lookup with a single instance identity loader
+- remove automatic per-user bot-key generation during session start
+- remove bot-key escrow unlock as a requirement for scheduler and triggers
+- remove browser-side bot-key decrypt flows
+- simplify Nostr trigger listener startup to subscribe as the Wingman instance
+- simplify scheduler identity resolution to use the Wingman instance key
+- simplify agent subprocess identity injection to use the derived Wingman identity
+- keep human npubs only for access control and audit metadata
+
+Some existing modules may remain temporarily as compatibility wrappers during
+migration, but the product model should not retain hidden per-user agent keys.
+
+## Implementation Order
+
+1. Add an instance identity module that loads and validates `WINGMAN_PRIV`.
+2. Derive and expose the Wingman npub/pubkey from that module.
+3. Change agent subprocess identity injection to use the instance identity.
+4. Change scheduler, trigger listener, NIP-98 helpers, and MCP identity to use
+   the instance identity.
+5. Remove per-user bot-key generation and escrow requirements from session start.
+6. Update setup/readiness UI around one instance key.
+7. Remove or archive obsolete per-user bot-key UI and API surfaces.
 
 ## Open Implementation Questions
 
-These should be answered during implementation, not stored as unresolved product direction:
+These are implementation choices, not product direction changes:
 
-- Should the app accept both `WINGMAN_BOT_NSEC` and `WINGMAN_BOT_SECRET_HEX`, or only `WINGMAN_BOT_NSEC`?
-- Should the setup UI generate a new bot key, or only validate a provided key?
-- Should the bot key be held only in memory, or encrypted into the instance data volume after first setup?
-- What is the minimum compatibility bridge needed for existing code that expects `KEYTELEPORT_PRIVKEY`?
+- Should setup-managed `WINGMAN_PRIV` be memory-only for v1, or encrypted into
+  `/app/data`?
+- What encryption key should protect a setup-managed private key if persisted?
+- During migration, which existing APIs need temporary compatibility responses
+  so older UI modules do not fail before they are removed?
+- Should readiness fail hard when `WINGMAN_PRIV` is missing, or warn until the
+  setup UI has a chance to collect it?
