@@ -46,6 +46,10 @@ RUN if [[ "${INSTALL_AGENT_CLIS}" == "true" ]]; then \
       | GOOSE_BIN_DIR=/usr/local/bin CONFIGURE=false bash; \
   fi
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends bubblewrap \
+  && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --create-home --home-dir /home/wingman --shell /bin/bash --uid 10001 wingman \
   && mkdir -p /app/data /app/tmp /app/out /workspace \
   && chown -R wingman:wingman \

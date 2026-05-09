@@ -25,6 +25,7 @@ The image should contain the tools that are common to every Wingman:
 - git
 - bash and core Linux tools
 - build essentials
+- bubblewrap for Codex sandboxing
 - agentapi
 - Codex CLI
 - Claude CLI

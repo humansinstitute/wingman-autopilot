@@ -36,6 +36,7 @@ const commandSpecs: CommandSpec[] = [
   { name: "npm", command: "npm", args: ["--version"] },
   { name: "git", command: "git", args: ["--version"] },
   { name: "bash", command: "bash", args: ["--version"] },
+  { name: "bubblewrap", command: "bwrap", args: ["--version"] },
   { name: "make", command: "make", args: ["--version"] },
   { name: "gcc", command: "gcc", args: ["--version"] },
   { name: "agentapi", command: "/app/out/agentapi", args: ["--version"] },
