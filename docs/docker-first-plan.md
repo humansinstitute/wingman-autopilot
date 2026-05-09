@@ -135,6 +135,14 @@ alpha.example.com -> http://localhost:3600
 beta.example.com  -> http://localhost:3601
 ```
 
+For a Wingman exposed at `wmd.otherstuff.ai`, hosted app subdomains need both
+public hostnames mapped to the same Wingman port:
+
+```text
+wmd.otherstuff.ai   -> http://localhost:3600
+*.wmd.otherstuff.ai -> http://localhost:3600
+```
+
 Each Wingman should set `WINGMAN_BASE_URL` to its public tunnel hostname.
 
 When Wingman hosts apps, external traffic should still enter through the base tunnel and land on the Wingman port. Wingman can then proxy to the hosted app using its own routing layer, either with path routing or subdomain routing.
@@ -142,6 +150,20 @@ When Wingman hosts apps, external traffic should still enter through the base tu
 Bundling `cloudflared` into the Wingman image is not the default plan. It may still be useful for a single-container appliance mode later, but the base-machine tunnel is simpler for the first Docker-first deployment.
 
 Hosted app routing should use the existing Wingman subdomain/host routing model from the current Wingmen implementation.
+
+The Docker env for wildcard app routing is:
+
+```env
+WINGMAN_APP_ROUTING=subdomain
+WINGMAN_SUBDOMAIN_BASE_DOMAIN=wmd.otherstuff.ai
+WINGMAN_SUBDOMAIN_PROXY_ENABLED=true
+WINGMAN_BASE_URL=https://wmd.otherstuff.ai
+```
+
+The Settings UI should expose a workspace routing panel that shows the current
+mode, current app domain, expected Cloudflare hostnames, and a copyable Docker
+env snippet. Applying the env still requires editing the Docker `.env` and
+restarting the container because routing config is read during server startup.
 
 ## Isolation Model
 

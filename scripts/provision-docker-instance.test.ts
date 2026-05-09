@@ -56,6 +56,7 @@ describe("docker provisioning", () => {
     expect(content).toContain("WINGMAN_IDENTITY_COOKIE_SECURE=true");
     expect(content).toContain("WINGMAN_CODEX_CLI=/usr/local/bin/codex");
     expect(content).toContain("WINGMAN_CODEX_TRUSTED_WORKSPACE=/workspace");
+    expect(content).toContain("WINGMAN_SUBDOMAIN_BASE_DOMAIN=");
     expect(content).toContain("WINGMAN_PI_CLI=/usr/local/bin/pi");
     expect(content).toContain("WINGMAN_SETUP_NONINTERACTIVE=true");
   });

@@ -14,16 +14,20 @@ function createHandler(options: {
   authContext?: RequestAuthContext;
   settings?: Record<string, string>;
   onSet?: (npub: string, key: string, value: string) => void;
-}) {
+} = {}) {
   const authContext = options.authContext ?? anonymousAuth;
   const settings = options.settings ?? {};
 
   return createApiRouteHandler({
     config: {
       port: 3000,
+      baseUrl: "http://localhost:3000",
       agentPortStart: 4000,
       agentPortMax: 4999,
       hostUrlBase: null,
+      appRoutingMode: "path",
+      subdomainBaseDomain: null,
+      subdomainProxyEnabled: false,
       connectRelays: [],
       agents: {
         claude: { label: "Claude" },
@@ -126,6 +130,20 @@ describe("createApiRouteHandler config defaults", () => {
     expect(response.status).toBe(200);
     expect(body.defaultAgent).toBe("pi");
     expect(body.systemDefaultAgent).toBe("claude");
+  });
+
+  test("returns hosted app routing config", async () => {
+    const handler = createHandler();
+    const url = new URL("http://localhost:3000/api/config");
+    const response = await handler(new Request(url), url, "GET", anonymousAuth);
+    const body = await response!.json();
+
+    expect(body).toMatchObject({
+      baseUrl: "http://localhost:3000",
+      appRoutingMode: "path",
+      subdomainBaseDomain: null,
+      subdomainProxyEnabled: false,
+    });
   });
 
   test("normalizes and saves a valid default_agent setting", async () => {

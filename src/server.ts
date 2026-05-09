@@ -1626,7 +1626,7 @@ const assetService = createStaticAssetService({
 });
 
 // Asset version — increment to bust browser caches after deploys.
-const ASSET_VERSION = "27";
+const ASSET_VERSION = "28";
 
 const serveIndex = async () => {
   const url = new URL("./ui/index.html", import.meta.url);
@@ -2345,9 +2345,13 @@ const handleApi = createApiRouteHandler({
   getRequestIP: (req) => serverRef.current?.requestIP(req) ?? null,
   config: {
     port: config.port,
+    baseUrl: config.baseUrl,
     agentPortStart: config.agentPortStart,
     agentPortMax: config.agentPortMax,
     hostUrlBase: config.hostUrlBase,
+    appRoutingMode: config.appRoutingMode,
+    subdomainBaseDomain: config.subdomainBaseDomain,
+    subdomainProxyEnabled: config.subdomainProxyEnabled,
     connectRelays: config.connectRelays,
     agents: config.agents,
     defaultAgent: config.defaultAgent,

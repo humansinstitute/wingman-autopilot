@@ -9,6 +9,7 @@ import {
   createApiKeysSection,
   createGitHubSection,
   createGiteaSection,
+  createHostedAppRoutingSection,
 } from './settings/workspace-sections.js';
 import { createDefaultAgentSection } from './settings/profile-sections.js';
 import { createTeamBillingSection } from './settings/admin-billing-section.js';
@@ -55,6 +56,10 @@ export function initSettingsView(deps) {
     if (state.identity.authenticated) {
       wingmanCard.append(createApiKeysSection());
       wingmanCard.append(createGitHubSection());
+      wingmanCard.append(createHostedAppRoutingSection({
+        config: state.config,
+        currentOrigin: window.location.origin,
+      }));
       wingmanCard.append(createAgentDispatchLauncher({ onNavigate: navigateToAgentsSettings }));
       const giteaPlaceholder = document.createElement('div');
       wingmanCard.append(giteaPlaceholder);

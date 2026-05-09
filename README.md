@@ -114,6 +114,13 @@ all use the configured Wingman workspace root, `/workspace` by default. Codex
 sessions trust `/workspace` by default to avoid an interactive first-run trust
 prompt in the web UI.
 
+For hosted app subdomains, configure the base-machine Cloudflare Tunnel with
+both `wmd.otherstuff.ai` and `*.wmd.otherstuff.ai` pointing to the Wingman host
+port. Then set `WINGMAN_APP_ROUTING=subdomain` and
+`WINGMAN_SUBDOMAIN_BASE_DOMAIN=wmd.otherstuff.ai` in the Docker `.env` file.
+Settings -> Workspace shows the current routing mode and can generate the
+matching Docker env snippet.
+
 ## Runtime Model
 
 Wingmen is a long-running Bun server that:
@@ -166,6 +173,9 @@ Options:
 | `HOST_URL_BASE` | Template for app links; `<port>` is replaced with the app's assigned port | `https://host.otherstuff.ai/<port>` |
 | `DIRECTORY_DEF` | Working directory used when launching agent subprocesses | `~/code` |
 | `FOLDERACCESS` | Comma-separated directories exposed to file browsers and pickers | `DIRECTORY_DEF` |
+| `APP_ROUTING` | Hosted app routing mode: `path` or `subdomain` | `subdomain` |
+| `SUBDOMAIN_BASE_DOMAIN` | Base domain for hosted app aliases, e.g. `wmd.otherstuff.ai` | unset |
+| `SUBDOMAIN_PROXY_ENABLED` | Enables wildcard subdomain proxying when a base domain is set | `true` |
 | `AGENT_SPAWN_MODE` | Primary spawn-mode setting: `bun` or `pm2` | `bun` |
 | `AGENT_MODE` | Deprecated compatibility input only | unset |
 | `AGENTAPI_BIN` | Primary binary path for the AgentAPI executable | `./out/agentapi` |

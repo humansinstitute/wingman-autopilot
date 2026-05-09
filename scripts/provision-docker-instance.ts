@@ -190,6 +190,8 @@ function main(): void {
     WINGMAN_BASE_URL: baseUrl,
     WINGMAN_IDENTITY_COOKIE_SECURE: secureCookies,
     WINGMAN_APP_ROUTING: "path",
+    WINGMAN_SUBDOMAIN_BASE_DOMAIN: "",
+    WINGMAN_SUBDOMAIN_PROXY_ENABLED: "true",
     WINGMAN_AGENT_SPAWN_MODE: "bun",
     WINGMAN_AGENTAPI_ALLOWED_HOSTS: "localhost,127.0.0.1,[::1]",
     WINGMAN_CODEX_CLI: "/usr/local/bin/codex",

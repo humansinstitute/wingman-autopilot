@@ -48,6 +48,122 @@ function createActionButton(text) {
   return button;
 }
 
+function normalizeHostname(value) {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (!trimmed) return '';
+  try {
+    return new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`).hostname;
+  } catch {
+    return trimmed.replace(/^https?:\/\//, '').split('/')[0] ?? '';
+  }
+}
+
+function resolveSuggestedRoutingDomain(config, currentOrigin) {
+  const configured = normalizeHostname(config?.subdomainBaseDomain);
+  if (configured) return configured;
+
+  const baseUrlHost = normalizeHostname(config?.baseUrl);
+  if (baseUrlHost && baseUrlHost !== 'localhost') return baseUrlHost;
+
+  const originHost = normalizeHostname(currentOrigin);
+  if (originHost && originHost !== 'localhost') return originHost;
+
+  return 'wmd.otherstuff.ai';
+}
+
+function buildHostedAppEnvSnippet(domain, origin) {
+  const normalizedDomain = normalizeHostname(domain) || 'wmd.otherstuff.ai';
+  const baseUrl = origin && origin.startsWith('https://')
+    ? origin
+    : `https://${normalizedDomain}`;
+  return [
+    'WINGMAN_APP_ROUTING=subdomain',
+    `WINGMAN_SUBDOMAIN_BASE_DOMAIN=${normalizedDomain}`,
+    'WINGMAN_SUBDOMAIN_PROXY_ENABLED=true',
+    `WINGMAN_BASE_URL=${baseUrl}`,
+  ].join('\n');
+}
+
+export function createHostedAppRoutingSection({ config, currentOrigin } = {}) {
+  const container = document.createElement('div');
+  container.className = 'wm-settings__hosted-app-routing';
+  container.style.cssText = 'margin-top:16px;';
+
+  const heading = document.createElement('h3');
+  heading.textContent = 'Hosted App Routing';
+
+  const description = document.createElement('p');
+  description.className = 'wm-settings__port-note';
+  description.textContent = 'Use the main Wingman hostname and wildcard hostname for apps, both routed by Cloudflare Tunnel to the same container port.';
+
+  const currentMode = config?.appRoutingMode ?? 'path';
+  const currentDomain = config?.subdomainBaseDomain ?? '';
+  const proxyEnabled = Boolean(config?.subdomainProxyEnabled);
+  const suggestedDomain = resolveSuggestedRoutingDomain(config, currentOrigin);
+
+  const statusList = document.createElement('dl');
+  statusList.style.cssText = 'display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 12px;margin:10px 0;';
+
+  const addStatus = (labelText, valueText) => {
+    const label = document.createElement('dt');
+    label.style.cssText = 'font-size:0.85em;color:var(--text-muted);';
+    label.textContent = labelText;
+    const value = document.createElement('dd');
+    value.style.cssText = 'margin:0;font-size:0.85em;';
+    const code = document.createElement('code');
+    code.textContent = valueText;
+    value.append(code);
+    statusList.append(label, value);
+  };
+
+  addStatus('Current mode', currentMode);
+  addStatus('Current app domain', currentDomain || 'not set');
+  addStatus('Subdomain proxy', proxyEnabled ? 'enabled' : 'disabled');
+  addStatus('Tunnel hostnames', `${suggestedDomain}, *.${suggestedDomain}`);
+
+  const domainRow = document.createElement('div');
+  domainRow.className = 'wm-settings__key-row';
+  domainRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;';
+
+  const domainLabel = createRowLabel('App domain');
+  const domainInput = createInput('wmd.otherstuff.ai');
+  domainInput.value = suggestedDomain;
+
+  const copyButton = createActionButton('Copy Docker Env');
+  const status = createStatusText();
+  domainRow.append(domainLabel, domainInput, copyButton, status);
+
+  const snippet = document.createElement('pre');
+  snippet.style.cssText = 'white-space:pre-wrap;word-break:break-word;margin:10px 0 0;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);font-size:0.8em;';
+  const snippetCode = document.createElement('code');
+  snippet.append(snippetCode);
+
+  const refreshSnippet = () => {
+    snippetCode.textContent = buildHostedAppEnvSnippet(domainInput.value, currentOrigin);
+  };
+  refreshSnippet();
+
+  domainInput.addEventListener('input', refreshSnippet);
+  copyButton.addEventListener('click', async () => {
+    copyButton.disabled = true;
+    try {
+      await navigator.clipboard.writeText(snippetCode.textContent);
+      setStatus(status, 'Copied', 'var(--success, #4caf50)');
+    } catch {
+      setStatus(status, 'Copy failed', 'var(--error, #f44336)');
+    }
+    copyButton.disabled = false;
+  });
+
+  const note = document.createElement('p');
+  note.className = 'wm-settings__port-note';
+  note.style.cssText = 'margin-top:6px;font-size:0.8em;';
+  note.textContent = 'Apply these values in the Docker .env file and restart the container. The Cloudflare tunnel should route both hostnames to the Wingman host port.';
+
+  container.append(heading, description, statusList, domainRow, snippet, note);
+  return container;
+}
+
 export function createApiKeysSection() {
   const container = document.createElement('div');
   container.className = 'wm-settings__api-keys';

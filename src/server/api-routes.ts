@@ -50,9 +50,13 @@ export interface ApiRoutesContext {
   // Config subset needed by handleApi
   config: {
     port: number;
+    baseUrl: string;
     agentPortStart: number;
     agentPortMax: number;
     hostUrlBase: string | null;
+    appRoutingMode: string;
+    subdomainBaseDomain: string | null;
+    subdomainProxyEnabled: boolean;
     connectRelays: string[];
     agents: Record<string, { label: string }>;
     defaultAgent: string;
@@ -528,9 +532,13 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
       const defaultAgent = resolveViewerDefaultAgent(ctx, viewerNpub);
       return Response.json({
         port: ctx.config.port,
+        baseUrl: ctx.config.baseUrl,
         agentPortStart: ctx.config.agentPortStart,
         agentPortMax: ctx.config.agentPortMax,
         hostUrlBase: ctx.config.hostUrlBase,
+        appRoutingMode: ctx.config.appRoutingMode,
+        subdomainBaseDomain: ctx.config.subdomainBaseDomain,
+        subdomainProxyEnabled: ctx.config.subdomainProxyEnabled,
         defaultDirectory: workspaceScope.defaultDirectory,
         allowedDirectories: workspaceScope.allowedDirectories,
         connectRelays: ctx.config.connectRelays,
