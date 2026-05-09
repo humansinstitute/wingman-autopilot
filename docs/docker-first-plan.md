@@ -16,6 +16,8 @@ If another isolated agent computer is needed, deploy another Wingman instance wi
 
 Start with a single Docker Compose stack per Wingman.
 
+The default generated instance name should be `wingman-01`. If that name is already taken on the base machine, provisioning should continue with `wingman-02`, `wingman-03`, and so on.
+
 The image should contain the tools that are common to every Wingman:
 
 - Bun
@@ -135,6 +137,8 @@ When Wingman hosts apps, external traffic should still enter through the base tu
 
 Bundling `cloudflared` into the Wingman image is not the default plan. It may still be useful for a single-container appliance mode later, but the base-machine tunnel is simpler for the first Docker-first deployment.
 
+Hosted app routing should use the existing Wingman subdomain/host routing model from the current Wingmen implementation.
+
 ## Isolation Model
 
 The Docker container is the trust boundary.
@@ -145,7 +149,7 @@ For stronger separation, create another Wingman container instead of trying to i
 
 ## First-Run Setup
 
-Add a first-run checklist or setup script that walks an operator through container readiness.
+Add a first-run setup workflow that walks an operator through container readiness. The preferred surface is the UI on first run, with scriptable checks underneath so the same logic can be used from the shell.
 
 The checklist should report:
 
@@ -156,7 +160,17 @@ The checklist should report:
 - the configured workspace and folder access
 - whether required Wingman secrets are present
 
-This should be usable from the shell first, then optionally surfaced in the UI.
+The UI workflow should appear when the instance has not completed setup. It should guide the operator through:
+
+- confirming the Wingman instance name
+- confirming the public base URL
+- confirming the workspace volume
+- setting or confirming the operator whitelist
+- checking installed CLIs
+- explaining that subscription CLIs such as Claude and Codex require shell login inside the container
+- marking setup complete only after required configuration is present
+
+Provisioning should also include a small script that generates a Compose project name and `.env` file for each Wingman instance.
 
 ## Terminal Access
 
@@ -179,17 +193,13 @@ Because a terminal is equivalent to direct access to the Wingman computer, it sh
 
 ## Decisions
 
+- The default instance name is `wingman-01`, incrementing to `wingman-02`, `wingman-03`, and onward when names are already taken.
+- Each Wingman instance should be created by a small provisioning script that generates the Compose project name and `.env` file.
 - Cloudflare Tunnel runs on the base machine by default, mapping public URLs to Wingman container ports.
 - Hosted app traffic should enter through the Wingman port and be proxied by Wingman's app routing.
+- Hosted app routing should follow the existing subdomain/host routing model.
 - The first Docker image installs the common agent CLIs by default.
 - Agent CLIs should be installed in their normal/default manner so they can be updated in-place using their standard update paths.
-- A first-run checklist or setup script is part of the deployment plan.
+- A first-run setup workflow should be UI-first, backed by reusable scriptable checks.
+- CLI authentication for subscription tools such as Claude and Codex is handled by operator shell access inside the container for v1.
 - Shell access remains operator-only through Docker commands for now.
-
-## Open Questions
-
-- What exact hostname and port convention should a multi-Wingman base machine use?
-- Should each Wingman instance get a generated Compose project name and `.env` file from a small provisioning script?
-- Should the first-run checklist live as `scripts/check-container-setup.ts`, a UI page, or both?
-- Which CLI auth checks are reliable enough to automate without accidentally starting an interactive login flow?
-- Should hosted app routing start with path routing only, then add subdomain routing once the tunnel/DNS pattern is proven?
