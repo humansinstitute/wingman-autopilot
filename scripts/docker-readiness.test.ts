@@ -12,6 +12,7 @@ const readyEnv = {
   DIRECTORY_DEF: "/workspace",
   FOLDERACCESS: "/workspace",
   IDENTITY_SESSION_SECRET: "secret",
+  IDENTITY_COOKIE_SECURE: "true",
 };
 
 describe("docker readiness config checks", () => {

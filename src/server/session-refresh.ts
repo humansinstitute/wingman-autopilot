@@ -5,7 +5,15 @@ const SESSION_REFRESH_LEEWAY_MS = 24 * 60 * 60 * 1000;
 // Refresh after the session has aged past the leeway so active users keep rolling a full TTL.
 const SESSION_REFRESH_THRESHOLD_MS = SESSION_TTL_MS - SESSION_REFRESH_LEEWAY_MS;
 
-export const maybeRefreshSessionCookie = (response: Response, authContext: RequestAuthContext): Response => {
+export interface SessionRefreshOptions {
+  secureCookie?: boolean;
+}
+
+export const maybeRefreshSessionCookie = (
+  response: Response,
+  authContext: RequestAuthContext,
+  options: SessionRefreshOptions = {},
+): Response => {
   const session = authContext.session;
   if (!session || !session.npub) {
     return response;
@@ -20,7 +28,9 @@ export const maybeRefreshSessionCookie = (response: Response, authContext: Reque
     return response;
   }
 
-  const { cookie, payload } = mintSessionCookie(session.npub);
+  const { cookie, payload } = mintSessionCookie(session.npub, {
+    secure: options.secureCookie ?? true,
+  });
   authContext.session = payload;
   authContext.npub = payload.npub;
   authContext.actorNpub = payload.npub;

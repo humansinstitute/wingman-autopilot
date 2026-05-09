@@ -53,6 +53,27 @@ describe("docker provisioning", () => {
     expect(result.status).toBe(0);
     const content = readFileSync(envPath, "utf8");
     expect(content).toContain("WINGMAN_ADMIN_NPUB=npub1operator");
+    expect(content).toContain("WINGMAN_IDENTITY_COOKIE_SECURE=true");
     expect(content).toContain("WINGMAN_SETUP_NONINTERACTIVE=true");
+  });
+
+  test("disables secure cookies for local http base URLs", () => {
+    const envPath = join(makeTempDir(), ".env");
+    const result = runProvision([
+      "--env",
+      envPath,
+      "--instance-name",
+      "wingman-99",
+      "--host-port",
+      "3999",
+      "--base-url",
+      "http://localhost:3999",
+      "--admin-npub",
+      "npub1operator",
+    ]);
+
+    expect(result.status).toBe(0);
+    const content = readFileSync(envPath, "utf8");
+    expect(content).toContain("WINGMAN_IDENTITY_COOKIE_SECURE=false");
   });
 });

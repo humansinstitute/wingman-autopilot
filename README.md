@@ -98,6 +98,11 @@ The checklist reports installed tools, writable Docker volumes, configured
 Wingman URLs/workspace values, required secrets, and whether CLI auth files are
 detectable in `/home/wingman`.
 
+For local HTTP testing, provisioning sets `WINGMAN_IDENTITY_COOKIE_SECURE=false`
+so browsers accept the development session cookie. For HTTPS tunnel deployments,
+the provisioning script sets secure cookies when `--base-url` starts with
+`https://`.
+
 ## Runtime Model
 
 Wingmen is a long-running Bun server that:

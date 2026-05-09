@@ -9,7 +9,9 @@ export interface SessionCookiePayload {
   expiresAt: number;
 }
 
-export const SESSION_COOKIE_NAME = "__Host-wingman_identity_session";
+export const SECURE_SESSION_COOKIE_NAME = "__Host-wingman_identity_session";
+export const INSECURE_SESSION_COOKIE_NAME = "wingman_identity_session";
+export const SESSION_COOKIE_NAME = SECURE_SESSION_COOKIE_NAME;
 export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 export const SESSION_TTL_MS = SESSION_MAX_AGE_SECONDS * 1000;
 
@@ -99,7 +101,18 @@ const signPayload = (encoded: string): string => {
   return toBase64Url(hmac.digest());
 };
 
-export const mintSessionCookie = (npub: string): { cookie: string; expiresAt: number; payload: SessionCookiePayload } => {
+export interface MintSessionCookieOptions {
+  secure?: boolean;
+}
+
+export const getSessionCookieName = (secure: boolean): string => {
+  return secure ? SECURE_SESSION_COOKIE_NAME : INSECURE_SESSION_COOKIE_NAME;
+};
+
+export const mintSessionCookie = (
+  npub: string,
+  options: MintSessionCookieOptions = {},
+): { cookie: string; expiresAt: number; payload: SessionCookiePayload } => {
   if (!validateNpub(npub)) {
     throw new SessionCookieError("Invalid npub");
   }
@@ -117,14 +130,17 @@ export const mintSessionCookie = (npub: string): { cookie: string; expiresAt: nu
   const signature = signPayload(encodedPayload);
   const value = `${encodedPayload}.${signature}`;
   const expiryDate = new Date(expiresAt).toUTCString();
-  const cookie = `${SESSION_COOKIE_NAME}=${value}; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=${SESSION_MAX_AGE_SECONDS}; Expires=${expiryDate}`;
+  const secure = options.secure ?? true;
+  const cookieName = getSessionCookieName(secure);
+  const secureFlag = secure ? "; Secure" : "";
+  const cookie = `${cookieName}=${value}; Path=/; HttpOnly; SameSite=Strict${secureFlag}; Max-Age=${SESSION_MAX_AGE_SECONDS}; Expires=${expiryDate}`;
 
   return { cookie, expiresAt, payload };
 };
 
 export const readSessionCookie = (cookieHeader: string | null | undefined): SessionCookiePayload | null => {
   const cookies = parseCookies(cookieHeader);
-  const value = cookies[SESSION_COOKIE_NAME];
+  const value = cookies[SECURE_SESSION_COOKIE_NAME] ?? cookies[INSECURE_SESSION_COOKIE_NAME];
   if (!value) return null;
   const [encodedPayload, signature] = value.split(".");
   if (!encodedPayload || !signature) {
@@ -143,5 +159,4 @@ export const readSessionCookie = (cookieHeader: string | null | undefined): Sess
 
   return payload;
 };
-
 

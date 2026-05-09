@@ -132,13 +132,23 @@ const loadEnvIntoRuntime = (values: Map<string, string>): void => {
   }
 };
 
-const readConfiguredValue = (values: Map<string, string>, key: string): string => {
-  return values.get(key)?.trim() || process.env[key]?.trim() || "";
+type SetupEnvironment = Record<string, string | undefined>;
+
+const readConfiguredValue = (
+  values: Map<string, string>,
+  key: string,
+  env: SetupEnvironment = process.env,
+): string => {
+  return values.get(key)?.trim() || env[key]?.trim() || "";
 };
 
-const readFirstConfiguredValue = (values: Map<string, string>, keys: string[]): string => {
+const readFirstConfiguredValue = (
+  values: Map<string, string>,
+  keys: string[],
+  env: SetupEnvironment = process.env,
+): string => {
   for (const key of keys) {
-    const value = readConfiguredValue(values, key);
+    const value = readConfiguredValue(values, key, env);
     if (value) {
       return value;
     }
@@ -155,19 +165,22 @@ const shouldRunNonInteractiveSetup = (values: Map<string, string>): boolean => {
   return isTruthySetting(readConfiguredValue(values, "WINGMAN_SETUP_NONINTERACTIVE"));
 };
 
-export const validateNonInteractiveSetupConfig = (values: Map<string, string>): string[] => {
+export const validateNonInteractiveSetupConfig = (
+  values: Map<string, string>,
+  env: SetupEnvironment = process.env,
+): string[] => {
   const required = [
     {
       name: "DIRECTORY_DEF",
-      value: readFirstConfiguredValue(values, ["DIRECTORY_DEF", "WINGMAN_DIRECTORY_DEF"]),
+      value: readFirstConfiguredValue(values, ["DIRECTORY_DEF", "WINGMAN_DIRECTORY_DEF"], env),
     },
     {
       name: "IDENTITY_SESSION_SECRET",
-      value: readFirstConfiguredValue(values, ["IDENTITY_SESSION_SECRET", "WINGMAN_IDENTITY_SESSION_SECRET"]),
+      value: readFirstConfiguredValue(values, ["IDENTITY_SESSION_SECRET", "WINGMAN_IDENTITY_SESSION_SECRET"], env),
     },
     {
       name: "ADMIN_NPUB",
-      value: readFirstConfiguredValue(values, ["ADMIN_NPUB", "WINGMAN_ADMIN_NPUB"]),
+      value: readFirstConfiguredValue(values, ["ADMIN_NPUB", "WINGMAN_ADMIN_NPUB"], env),
     },
   ];
 

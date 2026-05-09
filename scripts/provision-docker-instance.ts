@@ -175,6 +175,7 @@ function main(): void {
   const hostPort = options.hostPort ?? DEFAULT_CONTAINER_PORT + picked.index - 1;
   const baseUrl = options.baseUrl || `http://localhost:${hostPort}`;
   const secret = readExistingSecret(options.envPath) || generateSecret();
+  const secureCookies = baseUrl.startsWith("https://") ? "true" : "false";
 
   const values: Record<string, string> = {
     COMPOSE_PROJECT_NAME: picked.name,
@@ -187,6 +188,7 @@ function main(): void {
     WINGMAN_DIRECTORY_DEF: "/workspace",
     WINGMAN_FOLDERACCESS: "/workspace",
     WINGMAN_BASE_URL: baseUrl,
+    WINGMAN_IDENTITY_COOKIE_SECURE: secureCookies,
     WINGMAN_APP_ROUTING: "path",
     WINGMAN_AGENT_SPAWN_MODE: "bun",
     WINGMAN_AGENTAPI_ALLOWED_HOSTS: "localhost,127.0.0.1,[::1]",

@@ -7,7 +7,7 @@ import { nip19 } from "nostr-tools";
 import { normaliseNpub } from "../identity/npub-utils";
 import type { RequestAuthContext } from "../auth/request-context";
 import type { AccessAction } from "../auth/access-control";
-import type { SessionCookiePayload } from "../auth/session-cookie";
+import type { MintSessionCookieOptions, SessionCookiePayload } from "../auth/session-cookie";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
@@ -41,11 +41,12 @@ export interface AuthApiContext {
     }) => void;
   };
 
-  mintSessionCookie: (npub: string) => {
+  mintSessionCookie: (npub: string, options?: MintSessionCookieOptions) => {
     cookie: string;
     expiresAt: number;
     payload: SessionCookiePayload;
   };
+  getSessionCookieName: (secure: boolean) => string;
   SessionCookieError: new (...args: any[]) => Error;
   SESSION_COOKIE_NAME: string;
   shouldUseSecureCookies: () => boolean;
@@ -121,7 +122,9 @@ export async function handleAuthApi(
         // Allow overwriting with a new npub, but clear stale signed data by minting a new cookie.
       }
 
-      const { cookie, expiresAt, payload: cookiePayload } = ctx.mintSessionCookie(trimmedNpub);
+      const { cookie, expiresAt, payload: cookiePayload } = ctx.mintSessionCookie(trimmedNpub, {
+        secure: ctx.shouldUseSecureCookies(),
+      });
       authContext.npub = cookiePayload.npub;
       authContext.actorNpub = cookiePayload.npub;
       authContext.signerNpub = cookiePayload.npub;
@@ -193,11 +196,13 @@ export async function handleAuthApi(
     const headers = new Headers({
       "cache-control": "no-store",
     });
-    const secureFlag = ctx.shouldUseSecureCookies() ? "; Secure" : "";
-    headers.append(
-      "set-cookie",
-      `${ctx.SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT${secureFlag}`,
-    );
+    for (const secure of [true, false]) {
+      const secureFlag = secure ? "; Secure" : "";
+      headers.append(
+        "set-cookie",
+        `${ctx.getSessionCookieName(secure)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT${secureFlag}`,
+      );
+    }
     authContext.npub = null;
     authContext.actorNpub = null;
     authContext.signerNpub = null;

@@ -109,7 +109,7 @@ import {
 import { AgentRuntimeStatusPoller } from "./agents/agent-status-poller";
 import { LiveMessagePersistenceLoop } from "./server/live-message-persistence";
 import { syncLiveSessionMessages } from "./server/live-session-messages";
-import { mintSessionCookie, SessionCookieError, SESSION_COOKIE_NAME } from "./auth/session-cookie";
+import { getSessionCookieName, mintSessionCookie, SessionCookieError, SESSION_COOKIE_NAME } from "./auth/session-cookie";
 import {
   resolveRequestAuthContext,
   runWithRequestContext,
@@ -2406,6 +2406,7 @@ const handleApi = createApiRouteHandler({
     identityUserStore,
     botKeyStore,
     mintSessionCookie,
+    getSessionCookieName,
     SessionCookieError,
     SESSION_COOKIE_NAME,
     shouldUseSecureCookies,
@@ -2749,7 +2750,9 @@ const server = Bun.serve({
       return new Response("Not Found", { status: 404 });
     });
 
-    return maybeRefreshSessionCookie(response, authContext);
+    return maybeRefreshSessionCookie(response, authContext, {
+      secureCookie: shouldUseSecureCookies(),
+    });
   },
   error(error: Error): Response {
     console.error("[server] unhandled request error:", error);
