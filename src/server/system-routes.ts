@@ -34,6 +34,7 @@ export interface SystemRoutesContext {
     messageStore: unknown;
     appProcessManager: unknown;
     appRegistry: unknown;
+    requestedBy?: string | null;
   }) => Promise<unknown>;
   messageStore: unknown;
   appProcessManager: unknown;
@@ -153,6 +154,7 @@ export async function handleSystemRoutes(
         messageStore: ctx.messageStore,
         appProcessManager: ctx.appProcessManager,
         appRegistry: ctx.appRegistry,
+        requestedBy: authContext.actorNpub ?? authContext.npub ?? null,
       });
       return Response.json(result);
     } catch (error) {

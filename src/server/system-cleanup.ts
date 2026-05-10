@@ -28,6 +28,7 @@ type AppCleanupDetail = {
 
 export type SystemCleanupResult = {
   timestamp: string;
+  requestedBy?: string | null;
   preservedCoreApp: boolean;
   sessions: {
     total: number;
@@ -51,16 +52,21 @@ export interface SystemCleanupDeps {
   messageStore: MessageStore;
   appProcessManager: AppProcessManager;
   appRegistry: AppRegistry;
+  requestedBy?: string | null;
 }
 
 export async function performSystemCleanup(deps: SystemCleanupDeps): Promise<SystemCleanupResult> {
-  const { manager, messageStore, appProcessManager, appRegistry } = deps;
+  const { manager, messageStore, appProcessManager, appRegistry, requestedBy = null } = deps;
   const snapshotTimestamp = new Date().toISOString();
   const sessionSnapshots = manager.listSessions();
   const sessionDetails: SessionCleanupDetail[] = [];
   let sessionsStopped = 0;
   let sessionsDeleted = 0;
   let sessionFailures = 0;
+
+  console.log(
+    `[system-cleanup] requested by ${requestedBy ?? "unknown"}; stopping ${sessionSnapshots.length} session${sessionSnapshots.length === 1 ? "" : "s"}`,
+  );
 
   for (const snapshot of sessionSnapshots) {
     const detail: SessionCleanupDetail = {
@@ -125,6 +131,10 @@ export async function performSystemCleanup(deps: SystemCleanupDeps): Promise<Sys
   let appSkipped = 0;
   let preservedCoreApp = false;
 
+  console.log(
+    `[system-cleanup] requested by ${requestedBy ?? "unknown"}; stopping/removing ${apps.length} app${apps.length === 1 ? "" : "s"}`,
+  );
+
   for (const app of apps) {
     if (app.id === "wingman-core") {
       preservedCoreApp = true;
@@ -168,8 +178,9 @@ export async function performSystemCleanup(deps: SystemCleanupDeps): Promise<Sys
     appDetails.push(detail);
   }
 
-  return {
+  const result = {
     timestamp: snapshotTimestamp,
+    requestedBy,
     preservedCoreApp,
     sessions: {
       total: sessionDetails.length,
@@ -187,4 +198,10 @@ export async function performSystemCleanup(deps: SystemCleanupDeps): Promise<Sys
       details: appDetails,
     },
   };
+
+  console.log(
+    `[system-cleanup] completed for ${requestedBy ?? "unknown"}; sessions stopped=${sessionsStopped} deleted=${sessionsDeleted} failed=${sessionFailures}; apps killed=${appsKilled} removed=${appsRemoved} failed=${appFailures} skipped=${appSkipped}`,
+  );
+
+  return result;
 }

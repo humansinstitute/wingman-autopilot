@@ -199,11 +199,17 @@ export function initAppCards(deps) {
       const cleanupButton = document.createElement("button");
       cleanupButton.type = "button";
       cleanupButton.className = "wm-button danger";
+      cleanupButton.dataset.testid = "stop-agents-and-apps";
+      cleanupButton.setAttribute("aria-label", "Stop all running agents and apps");
       const cleanupDisabled = cleanupRunning || restartInProgress || appsStore().system.restart.submitting;
       cleanupButton.textContent = cleanupRunning ? "Stopping…" : "Stop Agents & Apps";
       cleanupButton.disabled = cleanupDisabled;
       cleanupButton.addEventListener("click", async () => {
         if (cleanupButton.disabled) return;
+        const confirmed = window.confirm(
+          "Stop all running agents and apps? Active pipeline workers will be stopped.",
+        );
+        if (!confirmed) return;
         cleanupButton.disabled = true;
         cleanupButton.textContent = "Stopping…";
         const success = await runSystemCleanup();
