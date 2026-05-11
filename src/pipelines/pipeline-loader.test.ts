@@ -4,6 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  getPipelineDefinition,
   makePipelineSlug,
   nextVersionedDefinitionPath,
   nextVersionedDefinitionPathForSource,
@@ -12,12 +13,20 @@ import {
 } from "./pipeline-loader";
 
 let tempDir: string;
+let previousPipelineRoot: string | undefined;
 
 beforeEach(async () => {
+  previousPipelineRoot = process.env.WINGMEN_PIPELINES_ROOT;
   tempDir = await mkdtemp(join(tmpdir(), "wingmen-pipeline-loader-test-"));
+  process.env.WINGMEN_PIPELINES_ROOT = tempDir;
 });
 
 afterEach(() => {
+  if (previousPipelineRoot === undefined) {
+    delete process.env.WINGMEN_PIPELINES_ROOT;
+  } else {
+    process.env.WINGMEN_PIPELINES_ROOT = previousPipelineRoot;
+  }
   rmSync(tempDir, { recursive: true, force: true });
 });
 
@@ -51,6 +60,14 @@ describe("pipeline definition version paths", () => {
       "article-review.v3",
       "other-workflow",
     ]);
+  });
+
+  test("resolves seeded dispatch definitions by stable slug", async () => {
+    const definition = await getPipelineDefinition("demo-agent-dispatch-chat-response", "tester");
+
+    expect(definition?.id.startsWith("shared:")).toBe(true);
+    expect(definition?.slug).toBe("demo-agent-dispatch-chat-response");
+    expect(definition?.name).toBe("demo-agent-dispatch-chat-response");
   });
 });
 

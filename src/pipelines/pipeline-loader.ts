@@ -641,8 +641,23 @@ async function ensurePipelineGitRepository(): Promise<void> {
 }
 
 export async function getPipelineDefinition(id: string, ownerAlias: string | null): Promise<PipelineDefinitionRecord | null> {
+  const requestedId = id.trim();
+  if (!requestedId) return null;
   const definitions = await listPipelineDefinitions(ownerAlias);
-  return definitions.find((definition) => definition.id === id) ?? null;
+  return definitions.find((definition) => definition.id === requestedId)
+    ?? definitions.find((definition) => pipelineDefinitionAliases(definition).includes(requestedId))
+    ?? null;
+}
+
+function pipelineDefinitionAliases(definition: PipelineDefinitionRecord): string[] {
+  const fileName = basename(definition.path);
+  return [
+    definition.slug,
+    definition.name,
+    definition.path,
+    fileName,
+    basename(fileName, ".json"),
+  ];
 }
 
 async function readDefinitionDirectory(
