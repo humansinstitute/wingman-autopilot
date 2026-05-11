@@ -22,7 +22,11 @@ import {
   createSubscriptionCard,
   filterAgentChatSessions,
 } from './agent-chat-operator-cards.js';
-import { createPrimaryAgentEditorCard, createSubscriptionEditorCard } from './agent-chat-editor-cards.js';
+import {
+  createPrimaryAgentEditorCard,
+  createPrimaryAgentNameModal,
+  createSubscriptionEditorCard,
+} from './agent-chat-editor-cards.js';
 import {
   createButton,
   createCard,
@@ -135,6 +139,30 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
       statusLine.textContent = 'AgentConnect token imported.';
       await refreshList();
       return payload;
+    },
+  });
+  const agentNameModal = createPrimaryAgentNameModal({
+    onCreate: async (defaults) => {
+      if (!currentPrimarySubscription?.botNpub || !currentPrimarySubscription?.workspaceOwnerNpub) {
+        throw new Error('Connect a workspace before creating the primary agent.');
+      }
+      await saveAgentChatAgent({
+        agentId: defaults.agentId,
+        label: defaults.label,
+        botNpub: currentPrimarySubscription.botNpub,
+        workspaceOwnerNpub: currentPrimarySubscription.workspaceOwnerNpub,
+        groupNpubs: [],
+        workingDirectory: defaults.workingDirectory,
+        capabilities: defaults.capabilities,
+        chatPromptTemplate: promptDefaults.chatPromptTemplate || '',
+        taskPromptTemplate: promptDefaults.taskPromptTemplate || '',
+        flowDispatchPromptTemplate: promptDefaults.flowDispatchPromptTemplate || '',
+        taskReviewPromptTemplate: promptDefaults.taskReviewPromptTemplate || '',
+        approvalDispatchPromptTemplate: promptDefaults.approvalDispatchPromptTemplate || '',
+        enabled: true,
+      });
+      statusLine.textContent = `Primary agent ${defaults.agentId} created.`;
+      await refreshList();
     },
   });
   const setupPanel = document.createElement('div');
@@ -264,7 +292,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
       ),
     });
     updateAgentIdentityFields();
-    setPanelVisible(agentEditor.card, true);
+    agentEditor.open();
 
     if (options.focusField === 'chat-template') {
       agentEditor.chatPromptTemplateField.input.focus();
@@ -387,7 +415,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
           agentConnectImportModal.open();
         },
         onEditAgent: (agent) => openAgentEditor(agent),
-        onCreateAgent: () => openAgentEditor(),
+        onCreateAgent: () => agentNameModal.open(),
         onRemoveAgent: (agent) => {
           void removeAgent(agent);
         },
@@ -488,7 +516,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
         }));
       }
       setPanelVisible(subscriptionEditor.card, false);
-      setPanelVisible(agentEditor.card, Boolean(primarySubscription && agents.length === 0));
+      agentEditor.close();
       overviewContainer.append(createAgentChatOverview(subscriptions, chatSessions));
       sessionContainer.append(createAgentChatSessionPanel(chatSessions));
       if (subscriptions.length === 0) {
@@ -574,7 +602,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
         enabled: agentEditor.enabledField.input.checked,
       });
       statusLine.textContent = 'Local agent saved.';
-      setPanelVisible(agentEditor.card, false);
+      agentEditor.close();
       await refreshList();
     } catch (error) {
       statusLine.textContent = error instanceof Error ? error.message : 'Failed to save primary agent.';
@@ -583,7 +611,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
     }
   });
   subscriptionEditor.closeButton.addEventListener('click', () => setPanelVisible(subscriptionEditor.card, false));
-  agentEditor.closeButton.addEventListener('click', () => setPanelVisible(agentEditor.card, false));
+  agentEditor.closeButton.addEventListener('click', () => agentEditor.close());
   container.append(createSettingsTabs({
     tabDefs: [
       { id: 'setup', label: 'Setup', render: () => setupPanel },
@@ -592,7 +620,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
     activeTabId: 'setup',
     onTabChange: () => {},
   }));
-  container.append(agentConnectImportModal.element);
+  container.append(agentConnectImportModal.element, agentNameModal.element);
   void refreshList();
   return container;
 }

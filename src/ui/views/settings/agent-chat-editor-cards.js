@@ -6,6 +6,7 @@ import {
   createInlineActions,
   createInput,
   createPlaceholderNote,
+  createStatusLine,
   createTextarea,
   setPanelVisible,
 } from './agent-chat-shared-ui.js';
@@ -41,6 +42,62 @@ function createDisclosureSection(title, description, testId) {
       details.open = Boolean(open);
     },
   };
+}
+
+function setModalVisible(overlay, visible) {
+  overlay.hidden = !visible;
+  overlay.style.display = visible ? 'flex' : 'none';
+}
+
+function createModalShell({ testId, labelledBy }) {
+  const overlay = document.createElement('div');
+  overlay.hidden = true;
+  overlay.className = 'wm-modal-backdrop';
+  if (testId) {
+    overlay.setAttribute('data-testid', testId);
+  }
+  overlay.style.cssText = [
+    'position:fixed',
+    'inset:0',
+    'z-index:1000',
+    'display:none',
+    'align-items:center',
+    'justify-content:center',
+    'padding:20px',
+    'background:rgba(0,0,0,0.46)',
+  ].join(';');
+
+  const panel = document.createElement('section');
+  panel.className = 'wm-card';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-modal', 'true');
+  if (labelledBy) {
+    panel.setAttribute('aria-labelledby', labelledBy);
+  }
+  panel.style.cssText = [
+    'width:min(860px,100%)',
+    'max-height:min(86vh,820px)',
+    'overflow:auto',
+    'padding:18px',
+    'border-radius:8px',
+    'box-shadow:0 18px 60px rgba(0,0,0,0.28)',
+  ].join(';');
+
+  overlay.append(panel);
+  return { overlay, panel };
+}
+
+function wireModalClose(overlay, onClose) {
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) {
+      onClose();
+    }
+  });
+  overlay.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      onClose();
+    }
+  });
 }
 
 export function createSubscriptionEditorCard() {
@@ -82,6 +139,10 @@ export function createSubscriptionEditorCard() {
 }
 
 export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
+  const modal = createModalShell({
+    testId: 'agent-chat-agent-editor-modal',
+    labelledBy: 'agent-chat-agent-editor-title',
+  });
   const agentIdField = createInput('Agent ID', 'agent_wm21', 'agent-chat-agent-id');
   const labelField = createInput('Agent Label', 'Wingman 21', 'agent-chat-agent-label', true);
   const agentBotField = createInput('Agent Bot npub', 'npub1bot...', 'agent-chat-agent-bot');
@@ -150,6 +211,11 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
     'Primary Local Agent',
     'Keep one local agent and add capabilities to it. Only the core identity and dispatch roles stay in the main path.',
   );
+  const heading = card.querySelector('h4');
+  if (heading) {
+    heading.id = 'agent-chat-agent-editor-title';
+    heading.textContent = 'Edit Primary Agent';
+  }
 
   const intro = document.createElement('p');
   intro.className = 'wm-settings__port-note';
@@ -307,6 +373,8 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
     'agent-chat-close-agent-editor',
     'Close Agent Dispatch local agent editor',
   );
+  closeButton.addEventListener('click', () => setModalVisible(modal.overlay, false));
+  wireModalClose(modal.overlay, () => setModalVisible(modal.overlay, false));
 
   card.append(
     agentIdField.row,
@@ -325,7 +393,8 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
     approvalDispatchTemplateSection.element,
     createInlineActions(saveButton, closeButton),
   );
-  setPanelVisible(card, false);
+  modal.panel.append(...card.childNodes);
+  setModalVisible(modal.overlay, false);
 
   function applyInheritedIdentity(subscription) {
     const inheritedBot = subscription?.botNpub?.trim() || '';
@@ -358,7 +427,7 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
   }
 
   return {
-    card,
+    card: modal.overlay,
     saveButton,
     closeButton,
     agentIdField,
@@ -377,5 +446,139 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
     enabledField,
     applyInheritedIdentity,
     setFocusState,
+    open() {
+      setModalVisible(modal.overlay, true);
+    },
+    close() {
+      setModalVisible(modal.overlay, false);
+    },
+  };
+}
+
+export function createPrimaryAgentNameModal({ onCreate } = {}) {
+  const modal = createModalShell({
+    testId: 'agent-chat-agent-name-modal',
+    labelledBy: 'agent-chat-agent-name-title',
+  });
+  modal.panel.style.width = 'min(560px,100%)';
+
+  const heading = document.createElement('h3');
+  heading.id = 'agent-chat-agent-name-title';
+  heading.textContent = 'Create Primary Agent';
+
+  const note = document.createElement('p');
+  note.className = 'wm-settings__port-note';
+  note.textContent = 'Enter the agent name. Wingman will generate the local ID, working directory, and default dispatch capabilities.';
+
+  const nameField = createInput('Agent name', 'Lara', 'agent-chat-agent-name');
+  const preview = document.createElement('dl');
+  preview.className = 'wm-settings__detail-list';
+  preview.style.cssText = 'display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 12px;margin:14px 0 0;';
+
+  const statusLine = createStatusLine();
+  statusLine.setAttribute('data-testid', 'agent-chat-agent-name-status');
+
+  const createButtonEl = createButton(
+    'Create Agent',
+    'agent-chat-agent-name-submit',
+    'Create primary Agent Dispatch agent from name',
+  );
+  const cancelButton = createButton(
+    'Cancel',
+    'agent-chat-agent-name-cancel',
+    'Close primary agent creation',
+  );
+
+  function close() {
+    setModalVisible(modal.overlay, false);
+  }
+
+  function deriveDefaults(name) {
+    const label = name.trim();
+    const agentId = label
+      .toLowerCase()
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      || 'agent';
+    return {
+      agentId,
+      label: label || 'Agent',
+      workingDirectory: `/workspace/${agentId}`,
+      capabilities: ['chat_intercept', 'task_dispatch', 'comment_dispatch', 'task_review'],
+    };
+  }
+
+  function renderPreview() {
+    const defaults = deriveDefaults(nameField.input.value);
+    preview.replaceChildren();
+    [
+      ['Agent ID', defaults.agentId],
+      ['Name', defaults.label],
+      ['Working Directory', defaults.workingDirectory],
+      ['Capabilities', 'Chat, Task, Comment, Task Review'],
+    ].forEach(([label, value]) => {
+      const term = document.createElement('dt');
+      term.style.fontWeight = '600';
+      term.textContent = label;
+      const detail = document.createElement('dd');
+      detail.style.margin = '0';
+      detail.textContent = value;
+      preview.append(term, detail);
+    });
+  }
+
+  nameField.input.addEventListener('input', renderPreview);
+  nameField.input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      createButtonEl.click();
+    }
+  });
+  cancelButton.addEventListener('click', close);
+  wireModalClose(modal.overlay, close);
+
+  createButtonEl.addEventListener('click', async () => {
+    const name = nameField.input.value.trim();
+    if (!name) {
+      statusLine.textContent = 'Enter an agent name.';
+      nameField.input.focus();
+      return;
+    }
+    createButtonEl.disabled = true;
+    statusLine.textContent = 'Creating primary agent...';
+    try {
+      const defaults = deriveDefaults(name);
+      await onCreate?.(defaults);
+      statusLine.textContent = 'Primary agent created.';
+      close();
+    } catch (error) {
+      statusLine.textContent = error instanceof Error ? error.message : 'Failed to create primary agent.';
+    } finally {
+      createButtonEl.disabled = false;
+    }
+  });
+
+  modal.panel.append(
+    heading,
+    note,
+    nameField.row,
+    preview,
+    createInlineActions(createButtonEl, cancelButton),
+    statusLine,
+  );
+  renderPreview();
+
+  return {
+    element: modal.overlay,
+    open(defaultName = '') {
+      statusLine.textContent = '';
+      nameField.input.value = defaultName;
+      renderPreview();
+      setModalVisible(modal.overlay, true);
+      nameField.input.focus();
+      nameField.input.select();
+    },
   };
 }
