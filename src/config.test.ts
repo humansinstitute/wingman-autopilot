@@ -8,6 +8,7 @@ const ENV_KEYS = [
   "AGENT_SPAWN_MODE",
   "AGENT_STATUS_POLL_TIMEOUT_MS",
   "AGENTAPI_BIN",
+  "CODEX_YOLO",
   "DEFAULT_AGENT",
   "GLOVES",
   "PI_CLI",
@@ -113,6 +114,7 @@ describe("loadConfig", () => {
       AGENTAPI_BIN: "/tmp/custom-agentapi",
       AGENT_MODE: undefined,
       AGENT_SPAWN_MODE: undefined,
+      CODEX_YOLO: undefined,
       GLOVES: undefined,
     });
 
@@ -133,6 +135,7 @@ describe("loadConfig", () => {
       AGENTAPI_BIN: "/tmp/custom-agentapi",
       AGENT_MODE: undefined,
       AGENT_SPAWN_MODE: undefined,
+      CODEX_YOLO: undefined,
       GLOVES: undefined,
     });
 
@@ -146,6 +149,7 @@ describe("loadConfig", () => {
       AGENTAPI_BIN: "/tmp/custom-agentapi",
       AGENT_MODE: undefined,
       AGENT_SPAWN_MODE: undefined,
+      CODEX_YOLO: undefined,
       GLOVES: undefined,
     });
 
@@ -159,6 +163,36 @@ describe("loadConfig", () => {
     expect(geminiCommand).toContain("--type=gemini");
   });
 
+  test("adds yolo and permission-skip arguments when Docker approval bypasses are enabled", () => {
+    applyEnv({
+      AGENTAPI_BIN: "/tmp/custom-agentapi",
+      AGENT_MODE: undefined,
+      AGENT_SPAWN_MODE: undefined,
+      CODEX_YOLO: "true",
+      GLOVES: "OFF",
+    });
+
+    const config = loadConfig();
+    const codexCommand = config.agents.codex.command({ agent: "codex", config, port: 3701 });
+    const claudeCommand = config.agents.claude.command({ agent: "claude", config, port: 3702 });
+
+    expect(codexCommand).toEqual([
+      "/tmp/custom-agentapi",
+      "server",
+      "--port",
+      "3701",
+      "--allowed-origins",
+      "*",
+      "--allowed-hosts",
+      "localhost,127.0.0.1,[::1]",
+      "--type=codex",
+      "--",
+      "codex",
+      "--yolo",
+    ]);
+    expect(claudeCommand.slice(-3)).toEqual(["--", "claude", "--dangerously-skip-permissions"]);
+  });
+
   test("accepts pi as a configured default agent and launcher target", () => {
     applyEnv({
       DEFAULT_AGENT: "pi",
@@ -166,6 +200,7 @@ describe("loadConfig", () => {
       AGENTAPI_BIN: "/tmp/custom-agentapi",
       AGENT_MODE: undefined,
       AGENT_SPAWN_MODE: undefined,
+      CODEX_YOLO: undefined,
       GLOVES: undefined,
     });
 

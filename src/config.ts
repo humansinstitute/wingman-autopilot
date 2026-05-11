@@ -277,11 +277,16 @@ function withAgentCommand(
 
 function resolveClaudeExtraArgs(glovesValue: string | undefined): string[] {
   const normalized = glovesValue?.trim().toUpperCase();
-  if (!normalized) {
-    return [];
-  }
   if (["OFF", "FALSE", "0", "NO"].includes(normalized)) {
     return ["--dangerously-skip-permissions"];
+  }
+  return [];
+}
+
+function resolveCodexExtraArgs(yoloValue: string | undefined): string[] {
+  const normalized = yoloValue?.trim().toUpperCase();
+  if (["TRUE", "1", "YES", "ON"].includes(normalized ?? "")) {
+    return ["--yolo"];
   }
   return [];
 }
@@ -296,12 +301,14 @@ function createDefaultAgents(
   env: ConfigEnvironment,
   agentApiBinary: string,
 ): Record<AgentType, AgentDefinition> {
+  const codexExtraArgs = resolveCodexExtraArgs(readEnvValue(env, "CODEX_YOLO"));
   const claudeExtraArgs = resolveClaudeExtraArgs(readEnvValue(env, "GLOVES"));
   const openCodeExtraArgs = resolveOpenCodeExtraArgs(readEnvValue(env, "OPENCODE_MODEL"));
 
   return {
     codex: withAgentCommand(agentApiBinary, "Codex", readEnvValue(env, "CODEX_CLI") ?? "codex", {
       type: "codex",
+      extraArgs: codexExtraArgs,
     }),
     claude: withAgentCommand(agentApiBinary, "Claude", readEnvValue(env, "CLAUDE_CLI") ?? "claude", {
       type: "claude",
@@ -378,8 +385,12 @@ export const loadConfig = (): WingmanConfig => {
     ? (defaultAgentInput as AgentType)
     : DEFAULT_AGENT_TYPE;
   console.log(`[Config] Default agent: ${defaultAgent}${defaultAgentInput && defaultAgentInput !== defaultAgent ? ` (DEFAULT_AGENT="${defaultAgentInput}" was invalid)` : ""}`);
+  const codexExtraArgs = resolveCodexExtraArgs(Bun.env.CODEX_YOLO);
   const claudeExtraArgs = resolveClaudeExtraArgs(Bun.env.GLOVES);
   const agents = createDefaultAgents(Bun.env, agentLaunchConfig.agentApiBinary);
+  if (codexExtraArgs.includes("--yolo")) {
+    console.log("[Config] Codex approvals: disabled (CODEX_YOLO=true)");
+  }
   if (claudeExtraArgs.includes("--dangerously-skip-permissions")) {
     console.log("[Config] Claude approvals: disabled (GLOVES=OFF)");
   }
