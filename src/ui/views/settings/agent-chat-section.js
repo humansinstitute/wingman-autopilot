@@ -17,8 +17,6 @@ import { fetchSessionsApi } from '../../services/sessions.js';
 import { fetchPipelineDefinitions } from '../../pipelines/api.js';
 import { createAgentRegistryPanel } from './agent-chat-agent-cards.js';
 import {
-  createAgentChatOverview,
-  createAgentChatSessionPanel,
   createSubscriptionCard,
   filterAgentChatSessions,
 } from './agent-chat-operator-cards.js';
@@ -175,12 +173,9 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
     agentRegistryContainer,
   );
   const operatorPanel = document.createElement('div');
-  const overviewContainer = document.createElement('div');
-  const sessionContainer = document.createElement('div');
-  sessionContainer.setAttribute('data-testid', 'agent-chat-session-list');
   const listContainer = document.createElement('div');
   listContainer.setAttribute('data-testid', 'agent-chat-subscription-list');
-  operatorPanel.append(overviewContainer, sessionContainer, listContainer);
+  operatorPanel.append(listContainer);
   function updateAgentIdentityFields() {
     agentEditor.applyInheritedIdentity(currentPrimarySubscription);
   }
@@ -362,12 +357,10 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
     }
   }
   async function refreshList() {
-    overviewContainer.replaceChildren();
     setupOverviewContainer.replaceChildren();
     configuredDispatchesContainer.replaceChildren();
     agentRegistryContainer.replaceChildren();
     listContainer.replaceChildren();
-    sessionContainer.replaceChildren();
 
     try {
       const {
@@ -516,8 +509,6 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
       }
       setPanelVisible(subscriptionEditor.card, false);
       agentEditor.close();
-      overviewContainer.append(createAgentChatOverview(subscriptions, chatSessions));
-      sessionContainer.append(createAgentChatSessionPanel(chatSessions));
       if (subscriptions.length === 0) {
         const empty = document.createElement('p');
         empty.className = 'wm-settings__port-note';
@@ -546,6 +537,8 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
             statusLine.textContent = error instanceof Error ? error.message : 'Failed to remove subscription.';
           }
         },
+        dispatchRoutes,
+        pipelineDefinitions,
       };
 
       subscriptions.forEach((subscription) => {

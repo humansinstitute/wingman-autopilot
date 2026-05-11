@@ -1,4 +1,5 @@
 import { isAgentChatSession } from '../../sessions/session-classification.js';
+import { createEventStreamPager, resolveWorkspaceName } from './agent-chat-event-stream.js';
 
 function isAgentDispatchSession(session) {
   return isAgentChatSession(session) || session?.metadata?.role === 'agent-work' || session?.origin?.type === 'agent-work';
@@ -872,92 +873,19 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
   card.setAttribute('data-testid', `agent-chat-subscription-${subscription.subscriptionId}`);
 
   const heading = document.createElement('h4');
-  heading.textContent = 'Workspace Subscription';
+  heading.textContent = `Workspace = ${resolveWorkspaceName(subscription)}`;
   card.append(heading);
 
   const identity = document.createElement('p');
   identity.className = 'wm-settings__port-note';
-  identity.textContent = `workspace ${shortenIdentifier(subscription.workspaceOwnerNpub, { head: 18, tail: 10 })} · bot ${shortenIdentifier(subscription.botNpub, { head: 18, tail: 10 })} · source ${shortenIdentifier(subscription.sourceAppNpub, { head: 18, tail: 10 })}`;
+  identity.textContent = `bot ${shortenIdentifier(subscription.botNpub, { head: 18, tail: 10 })} · source ${shortenIdentifier(subscription.sourceAppNpub, { head: 18, tail: 10 })}`;
   identity.title = `${subscription.workspaceOwnerNpub}\n${subscription.botNpub}\n${subscription.sourceAppNpub}`;
   card.append(identity);
 
-  const healthTone = subscription.healthStatus === 'healthy' ? 'success' : 'warning';
-  const sseTone = subscription.sseStatus === 'connected' ? 'success' : 'warning';
-  card.append(createPillRow([
-    createPill(`health ${subscription.healthStatus}`, healthTone),
-    createPill(subscription.operator?.enabled ? 'enabled' : 'disabled', subscription.operator?.enabled ? 'success' : 'warning'),
-    createPill(`ws ${subscription.wsKeyStatus}`),
-    createPill(`groups ${subscription.groupKeyStatus}`),
-    createPill(`sse ${subscription.sseStatus}`, sseTone),
-  ]));
-
-  const recentEvents = Array.isArray(subscription.recentSseEvents) ? subscription.recentSseEvents : [];
-  const recentDispatches = Array.isArray(subscription.recentDispatches) ? subscription.recentDispatches : [];
-  card.append(createMetricGrid([
-    { label: 'Recent Events', value: String(recentEvents.length) },
-    { label: 'Work Signals', value: String(countWhere(recentEvents, isWorkSignalEvent)) },
-    { label: 'Chat Routes', value: String(countWhere(recentDispatches, (entry) => entry.kind === 'chat')) },
-    { label: 'Work Outcomes', value: String(countWhere(recentDispatches, (entry) => entry.kind === 'task' || entry.kind === 'approval')) },
-  ]));
-
-  const definitions = document.createElement('div');
-  definitions.append(createDefinitionGrid([
-    ['Backend', subscription.backendBaseUrl],
-    ['Workspace Key', subscription.wsKeyNpub || 'pending'],
-    ['Latest Routing Trail', formatTrail(subscription)],
-    ['Last SSE Event ID', subscription.diagnostics?.lastSseEventId || 'None'],
-    ['Last Advisory', formatAdvisory(subscription.diagnostics?.advisory)],
-    ['Last Record Pull', formatDiagnostic(subscription.lastRecordPullResult)],
-    ['Last Decrypt', formatDiagnostic(subscription.lastDecryptResult)],
-    ['Last Routing', formatDiagnostic(subscription.lastRoutingResult)],
-    ['Last Auth', formatDiagnostic(subscription.lastAuthResult)],
-    ['Group Refresh', formatDiagnostic(subscription.lastGroupRefreshResult)],
-    ['Startup Reload', subscription.lastSuccessfulStartupReloadAt ? formatTimestamp(subscription.lastSuccessfulStartupReloadAt) : 'None'],
-    ['Last Error', subscription.lastErrorCode ? `${subscription.lastErrorCode} @ ${formatTimestamp(subscription.lastErrorAt)}` : 'None'],
-  ]));
-
-  const liveDetails = document.createElement('div');
-  liveDetails.append(
-    createLatestSsePanel(subscription),
-    createSseHistoryTable(subscription),
-  );
-
-  const routingDetails = document.createElement('div');
-  routingDetails.append(
-    createDispatchHistoryTable(subscription),
-    createSessionTable(
-      'Linked Dispatch Sessions',
-      findLinkedSessions(subscription, chatSessions),
-      `agent-chat-linked-sessions-${subscription.subscriptionId}`,
-    ),
-  );
-
-  const diagnostics = document.createElement('div');
-  diagnostics.append(
-    definitions,
-    createRecommendedList(subscription),
-    createCandidateAgentTable(subscription),
-    createInterceptTable(subscription),
-  );
-
-  card.append(
-    createDisclosureSection(
-      'Workspace Stream',
-      'See whether the subscription is alive, whether events are arriving, and what the latest record changes look like.',
-      liveDetails,
-      { open: true },
-    ),
-    createDisclosureSection(
-      'Dispatch Activity',
-      'See what the runtime actually routed from the stream and which sessions are currently linked.',
-      routingDetails,
-    ),
-    createDisclosureSection(
-      'Routing Diagnostics',
-      'Open this when you need deeper repair guidance, key state, candidate agent matching, or intercept internals.',
-      diagnostics,
-    ),
-  );
+  card.append(createEventStreamPager(subscription, {
+    routes: handlers.dispatchRoutes,
+    definitions: handlers.pipelineDefinitions,
+  }));
 
   const actions = document.createElement('div');
   actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;';

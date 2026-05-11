@@ -1395,11 +1395,22 @@ export class WorkspaceSubscriptionManager {
         });
       }
       try {
-        const chatMessage = helpers.decryptChatRecord({
+        const decryptChatMessage = () => helpers.decryptChatRecord({
           record: latest,
           wsSession: runtime.wsSession,
           groupKeys: runtime.groupKeys,
         });
+        let chatMessage: Record<string, unknown>;
+        try {
+          chatMessage = decryptChatMessage();
+        } catch (decryptError) {
+          const detailCode = getErrorDetailCode(decryptError);
+          if (detailCode !== 'group_key_missing') {
+            throw decryptError;
+          }
+          record = await this.refreshGroupKeys(record, runtime.botIdentity, true);
+          chatMessage = decryptChatMessage();
+        }
         record.lastDecryptResult = buildSuccessDiagnostic('Chat message pulled and decrypted.', {
           record_id: recordId,
           channel_id: chatMessage.channel_id ?? null,

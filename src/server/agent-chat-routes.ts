@@ -104,14 +104,25 @@ function serialiseDispatchRoute(record: DispatchRouteRecord) {
   return { ...record };
 }
 
+function getBackendWorkspaceName(record: BackendConnectionRecord | null | undefined): string | null {
+  const response = record?.lastHealthResult?.details?.response;
+  if (!response || typeof response !== 'object' || Array.isArray(response)) {
+    return null;
+  }
+  const towerName = (response as Record<string, unknown>).tower_name;
+  return typeof towerName === 'string' && towerName.trim().length > 0 ? towerName.trim() : null;
+}
+
 function serialiseSubscription(
   record: WorkspaceSubscriptionRecord,
   intercepts: ChatInterceptStateRecord[],
   candidateAgents: AgentDefinitionRecord[],
+  backendConnection?: BackendConnectionRecord | null,
 ) {
   const recommendations = buildOperatorRecommendations(record, intercepts);
   return {
     ...record,
+    workspaceName: getBackendWorkspaceName(backendConnection),
     backend: record.backendConnectionId
       ? { backendConnectionId: record.backendConnectionId }
       : null,
@@ -246,14 +257,17 @@ export async function handleAgentChatApi(
   }
 
   if (url.pathname === '/api/agent-chat/subscriptions' && method === 'GET') {
+    const backendConnections = ctx.manager.listBackendConnectionsForManager(viewerNpub);
     return Response.json({
-      subscriptions: ctx.manager.listForManager(viewerNpub).map((record) => (
-        serialiseSubscription(
+      subscriptions: ctx.manager.listForManager(viewerNpub).map((record) => {
+        const backendConnection = backendConnections.find((backend) => backend.backendConnectionId === record.backendConnectionId) ?? null;
+        return serialiseSubscription(
           record,
           ctx.manager.listInterceptsForSubscription(record.subscriptionId, viewerNpub),
           ctx.manager.listAgentsForWorkspaceBot(record.workspaceOwnerNpub, record.botNpub, viewerNpub),
-        )
-      )),
+          backendConnection,
+        );
+      }),
     });
   }
 
