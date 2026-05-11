@@ -1,6 +1,7 @@
 import type { ProcessManager, SessionSnapshot } from "./process-manager";
 import type { AgentRuntimeStatus } from "../types/agent-status";
 import { getProcessByName } from "./pm2-wrapper";
+import { hasTmuxWindow } from "./tmux-wrapper";
 
 interface AgentStatusPollerOptions {
   host: string;
@@ -199,6 +200,16 @@ export class AgentRuntimeStatusPoller {
         return "alive";
       }
       return "dead";
+    }
+
+    if (session.tmuxSession && session.tmuxWindow) {
+      try {
+        return await hasTmuxWindow(session.tmuxSession, session.tmuxWindow) ? "alive" : "dead";
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        console.warn(`[agent-status] tmux lookup failed for ${sessionId}: ${reason}`);
+        return "unknown";
+      }
     }
 
     if (typeof session.pid !== "number" || session.pid <= 0) {

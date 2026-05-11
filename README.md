@@ -235,7 +235,8 @@ Options:
 | `APP_ROUTING` | Hosted app routing mode: `path` or `subdomain` | `subdomain` |
 | `SUBDOMAIN_BASE_DOMAIN` | Base domain for hosted app aliases, e.g. `wmd.otherstuff.ai` | unset |
 | `SUBDOMAIN_PROXY_ENABLED` | Enables wildcard subdomain proxying when a base domain is set | `true` |
-| `AGENT_SPAWN_MODE` | Primary spawn-mode setting: `bun` or `pm2` | `bun` |
+| `AGENT_SPAWN_MODE` | Primary spawn-mode setting: `bun`, `pm2`, or `tmux` | `bun` |
+| `AGENT_TMUX_SESSION` | Tmux session used for tmux-spawned agent windows | `wm-ap-agents` |
 | `AGENT_MODE` | Deprecated compatibility input only | unset |
 | `AGENTAPI_BIN` | Primary binary path for the AgentAPI executable | `./out/agentapi` |
 | `CLAUDE_CLI` | Executable invoked for Claude sessions | `claude` |
@@ -260,7 +261,13 @@ Refer to [docs/architecture.md](/Users/mini/code/wingmen/docs/architecture.md) f
 
 ## Session Persistence
 
-For persistence across Wingman restarts, use PM2-backed spawning:
+For persistence across Wingman restarts, use tmux-backed spawning or PM2-backed spawning:
+
+```bash
+AGENT_SPAWN_MODE=tmux AGENT_TMUX_SESSION=wm-ap-agents bun start
+```
+
+Tmux mode creates one tmux session and one window per Wingman agent session while still running the standard `AGENTAPI_BIN` binary.
 
 ```bash
 AGENT_SPAWN_MODE=pm2 bun start
@@ -274,7 +281,7 @@ AGENT_MODE=pm2 bun start
 
 Active contract:
 
-- use `AGENT_SPAWN_MODE` to choose `bun` or `pm2`
+- use `AGENT_SPAWN_MODE` to choose `bun`, `pm2`, or `tmux`
 - use `AGENTAPI_BIN` to choose which `agentapi` binary Wingman launches
 - `AGENT_MODE` is deprecated compatibility only
 

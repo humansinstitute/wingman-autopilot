@@ -35,6 +35,8 @@ export interface SessionRecordInput {
   port?: number;
   pid?: number;
   pm2Name?: string;
+  tmuxSession?: string;
+  tmuxWindow?: string;
   logsDir?: string;
   workingDirectory?: string;
   command?: string[];
@@ -57,6 +59,8 @@ export interface StoredSessionRecord {
   port: number | null;
   pid: number | null;
   pm2Name: string | null;
+  tmuxSession?: string | null;
+  tmuxWindow?: string | null;
   logsDir: string | null;
   workingDirectory: string | null;
   command: string | null;
@@ -159,6 +163,8 @@ export class MessageStore {
       typeof session.port === "number" ? session.port : null,
       typeof session.pid === "number" ? session.pid : null,
       session.pm2Name ?? null,
+      session.tmuxSession ?? null,
+      session.tmuxWindow ?? null,
       session.logsDir ?? null,
       session.workingDirectory ?? null,
       Array.isArray(session.command) ? JSON.stringify(session.command) : null,
@@ -213,6 +219,8 @@ export class MessageStore {
         port,
         pid,
         pm2_name as pm2Name,
+        tmux_session as tmuxSession,
+        tmux_window as tmuxWindow,
         logs_dir as logsDir,
         working_directory as workingDirectory,
         command,
@@ -273,6 +281,8 @@ export class MessageStore {
         port,
         pid,
         pm2_name as pm2Name,
+        tmux_session as tmuxSession,
+        tmux_window as tmuxWindow,
         logs_dir as logsDir,
         working_directory as workingDirectory,
         command,
@@ -285,7 +295,7 @@ export class MessageStore {
         metadata_json as metadataJson
       FROM sessions
       WHERE port IS NOT NULL
-        AND pid IS NOT NULL
+        AND (pid IS NOT NULL OR (tmux_session IS NOT NULL AND tmux_window IS NOT NULL))
         AND started_at >= ?1
       ORDER BY started_at DESC
     `);
@@ -314,6 +324,8 @@ export class MessageStore {
         port INTEGER,
         pid INTEGER,
         pm2_name TEXT,
+        tmux_session TEXT,
+        tmux_window TEXT,
         logs_dir TEXT,
         working_directory TEXT,
         command TEXT,
@@ -347,6 +359,8 @@ export class MessageStore {
     ensureColumn("port", "INTEGER");
     ensureColumn("pid", "INTEGER");
     ensureColumn("pm2_name", "TEXT");
+    ensureColumn("tmux_session", "TEXT");
+    ensureColumn("tmux_window", "TEXT");
     ensureColumn("logs_dir", "TEXT");
     ensureColumn("working_directory", "TEXT");
     ensureColumn("command", "TEXT");
@@ -370,8 +384,8 @@ export class MessageStore {
 
   private prepareInsertSession() {
     return this.db.prepare(
-      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, pm2_name, logs_dir, working_directory, command, runtime_status, origin, model, target_file, agent_flag, billing_mode, metadata_json)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, pm2_name, tmux_session, tmux_window, logs_dir, working_directory, command, runtime_status, origin, model, target_file, agent_flag, billing_mode, metadata_json)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
        ON CONFLICT(id) DO UPDATE SET
          agent = excluded.agent,
          started_at = excluded.started_at,
@@ -380,6 +394,8 @@ export class MessageStore {
          port = excluded.port,
          pid = excluded.pid,
          pm2_name = excluded.pm2_name,
+         tmux_session = excluded.tmux_session,
+         tmux_window = excluded.tmux_window,
          logs_dir = excluded.logs_dir,
          working_directory = excluded.working_directory,
          command = excluded.command,
@@ -408,6 +424,8 @@ export class MessageStore {
          port,
          pid,
          pm2_name as pm2Name,
+         tmux_session as tmuxSession,
+         tmux_window as tmuxWindow,
          logs_dir as logsDir,
          working_directory as workingDirectory,
          command,

@@ -199,6 +199,8 @@ const recordLiveSession = async (
     runtimeStatus: session.agentRuntimeStatus ?? null,
     origin: session.origin ?? null,
     pm2Name: session.pm2Name,
+    tmuxSession: session.tmuxSession,
+    tmuxWindow: session.tmuxWindow,
     targetFile: session.targetFile,
     metadata: session.metadata,
   });
@@ -348,6 +350,8 @@ const persistStoredSessionMetadata = (
     port: storedSession.port ?? undefined,
     pid: storedSession.pid ?? undefined,
     pm2Name: storedSession.pm2Name ?? undefined,
+    tmuxSession: storedSession.tmuxSession ?? undefined,
+    tmuxWindow: storedSession.tmuxWindow ?? undefined,
     logsDir: storedSession.logsDir ?? undefined,
     workingDirectory: storedSession.workingDirectory ?? undefined,
     command: parsedCommand,
@@ -379,7 +383,7 @@ const serializeStoredSession = (
   storedSession: StoredSessionRecord,
 ): Record<string, unknown> => {
   const ownerNpub = resolveSessionOwnerNpub(storedSession.npub, storedSession.metadata);
-  return {
+  const serialized: Record<string, unknown> = {
     id: storedSession.id,
     agent: storedSession.agent,
     status: storedSession.runtimeStatus ?? "running",
@@ -396,6 +400,16 @@ const serializeStoredSession = (
     targetFile: storedSession.targetFile,
     metadata: storedSession.metadata,
   };
+  if (storedSession.pm2Name) {
+    serialized.pm2Name = storedSession.pm2Name;
+  }
+  if (storedSession.tmuxSession) {
+    serialized.tmuxSession = storedSession.tmuxSession;
+  }
+  if (storedSession.tmuxWindow) {
+    serialized.tmuxWindow = storedSession.tmuxWindow;
+  }
+  return serialized;
 };
 
 const rehydrateStoredSession = (
@@ -425,6 +439,8 @@ const rehydrateStoredSession = (
     agentRuntimeStatus: storedSession.runtimeStatus ?? null,
     origin: storedSession.origin ?? null,
     pm2Name: storedSession.pm2Name ?? undefined,
+    tmuxSession: storedSession.tmuxSession ?? undefined,
+    tmuxWindow: storedSession.tmuxWindow ?? undefined,
     targetFile: storedSession.targetFile ?? undefined,
     metadata: storedSession.metadata,
   });
@@ -1071,6 +1087,8 @@ export async function handleSessionApi(
             port: updated.port,
             pid: updated.pid ?? undefined,
             pm2Name: updated.pm2Name,
+            tmuxSession: updated.tmuxSession,
+            tmuxWindow: updated.tmuxWindow,
             workingDirectory: updated.workingDirectory ?? undefined,
             command: updated.command,
             runtimeStatus: updated.agentRuntimeStatus ?? null,
@@ -1491,6 +1509,8 @@ export async function handleSessionApi(
             port: updated.port,
             pid: updated.pid ?? undefined,
             pm2Name: updated.pm2Name,
+            tmuxSession: updated.tmuxSession,
+            tmuxWindow: updated.tmuxWindow,
             workingDirectory: updated.workingDirectory ?? undefined,
             command: updated.command,
             runtimeStatus: updated.agentRuntimeStatus ?? null,
@@ -1985,6 +2005,8 @@ async function handleForkToWorktree(
       runtimeStatus: newSession.agentRuntimeStatus ?? null,
       origin: newSession.origin ?? null,
       pm2Name: newSession.pm2Name,
+      tmuxSession: newSession.tmuxSession,
+      tmuxWindow: newSession.tmuxWindow,
       metadata: newSession.metadata,
     });
     await ctx.syncSessionMessages(newSession.id, true);

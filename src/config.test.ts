@@ -7,7 +7,9 @@ const ENV_KEYS = [
   "AGENT_MODE",
   "AGENT_SPAWN_MODE",
   "AGENT_STATUS_POLL_TIMEOUT_MS",
+  "AGENT_TMUX_SESSION",
   "AGENTAPI_BIN",
+  "CODEX_CLI",
   "DEFAULT_AGENT",
   "GLOVES",
   "PI_CLI",
@@ -68,15 +70,15 @@ describe("resolveAgentLaunchConfig", () => {
     expect(result.warnings).toContain("AGENT_MODE=pm2 is deprecated; use AGENT_SPAWN_MODE=pm2.");
   });
 
-  test("keeps AGENT_MODE=tmux only as a deprecated binary-selection bridge", () => {
+  test("keeps AGENT_MODE=tmux as a deprecated spawn-mode compatibility bridge", () => {
     const result = resolveAgentLaunchConfig({ AGENT_MODE: "tmux" });
 
-    expect(result.agentApiBinarySource).toBe("legacy_agent_mode_tmux");
-    expect(result.agentApiBinary.endsWith(join("out", "agentapi-tmux"))).toBe(true);
-    expect(result.agentSpawnMode).toBe("bun");
-    expect(result.agentSpawnModeSource).toBe("default");
+    expect(result.agentApiBinarySource).toBe("default");
+    expect(result.agentApiBinary.endsWith(join("out", "agentapi"))).toBe(true);
+    expect(result.agentSpawnMode).toBe("tmux");
+    expect(result.agentSpawnModeSource).toBe("legacy_agent_mode_tmux");
     expect(result.warnings).toContain(
-      "AGENT_MODE=tmux is deprecated; set AGENTAPI_BIN to the tmux agentapi binary path instead.",
+      "AGENT_MODE=tmux is deprecated; use AGENT_SPAWN_MODE=tmux.",
     );
   });
 
@@ -93,7 +95,17 @@ describe("resolveAgentLaunchConfig", () => {
     );
   });
 
-  test("prefers AGENTAPI_BIN over the deprecated AGENT_MODE=tmux binary alias", () => {
+  test("accepts AGENT_SPAWN_MODE=tmux with the standard agentapi binary", () => {
+    const result = resolveAgentLaunchConfig({ AGENT_SPAWN_MODE: "tmux" });
+
+    expect(result.agentApiBinarySource).toBe("default");
+    expect(result.agentApiBinary.endsWith(join("out", "agentapi"))).toBe(true);
+    expect(result.agentSpawnMode).toBe("tmux");
+    expect(result.agentSpawnModeSource).toBe("agent_spawn_mode");
+    expect(result.warnings).toEqual([]);
+  });
+
+  test("keeps AGENTAPI_BIN independent from the deprecated AGENT_MODE=tmux alias", () => {
     const result = resolveAgentLaunchConfig({
       AGENT_MODE: "tmux",
       AGENTAPI_BIN: " /tmp/custom-agentapi ",
@@ -101,8 +113,9 @@ describe("resolveAgentLaunchConfig", () => {
 
     expect(result.agentApiBinary).toBe("/tmp/custom-agentapi");
     expect(result.agentApiBinarySource).toBe("agentapi_bin");
+    expect(result.agentSpawnMode).toBe("tmux");
     expect(result.warnings).toContain(
-      "AGENT_MODE=tmux is deprecated and ignored because AGENTAPI_BIN is set; configure the binary path with AGENTAPI_BIN only.",
+      "AGENT_MODE=tmux is deprecated; use AGENT_SPAWN_MODE=tmux.",
     );
   });
 });
@@ -111,6 +124,7 @@ describe("loadConfig", () => {
   test("builds agent commands from the resolved AGENTAPI_BIN path", () => {
     applyEnv({
       AGENTAPI_BIN: "/tmp/custom-agentapi",
+      CODEX_CLI: undefined,
       AGENT_MODE: undefined,
       AGENT_SPAWN_MODE: undefined,
       GLOVES: undefined,
@@ -127,10 +141,26 @@ describe("loadConfig", () => {
     expect(config.agentSpawnMode).toBe("bun");
   });
 
+  test("loads tmux spawn mode and session name", () => {
+    applyEnv({
+      AGENT_SPAWN_MODE: "tmux",
+      AGENT_TMUX_SESSION: "custom-agents",
+      AGENT_MODE: undefined,
+      AGENTAPI_BIN: "/tmp/custom-agentapi",
+      GLOVES: undefined,
+    });
+
+    const config = loadConfig();
+
+    expect(config.agentSpawnMode).toBe("tmux");
+    expect(config.agentTmuxSession).toBe("custom-agents");
+  });
+
   test("defaults to codex when DEFAULT_AGENT is not set", () => {
     applyEnv({
       DEFAULT_AGENT: undefined,
       AGENTAPI_BIN: "/tmp/custom-agentapi",
+      CODEX_CLI: undefined,
       AGENT_MODE: undefined,
       AGENT_SPAWN_MODE: undefined,
       GLOVES: undefined,
@@ -144,6 +174,7 @@ describe("loadConfig", () => {
   test("passes explicit agentapi type flags for command-backed agents", () => {
     applyEnv({
       AGENTAPI_BIN: "/tmp/custom-agentapi",
+      CODEX_CLI: undefined,
       AGENT_MODE: undefined,
       AGENT_SPAWN_MODE: undefined,
       GLOVES: undefined,
@@ -162,6 +193,7 @@ describe("loadConfig", () => {
   test("uses GLOVES=OFF as the single approval bypass for Codex and Claude", () => {
     applyEnv({
       AGENTAPI_BIN: "/tmp/custom-agentapi",
+      CODEX_CLI: undefined,
       AGENT_MODE: undefined,
       AGENT_SPAWN_MODE: undefined,
       GLOVES: "OFF",
@@ -193,6 +225,7 @@ describe("loadConfig", () => {
       DEFAULT_AGENT: "pi",
       PI_CLI: "/opt/bin/pi",
       AGENTAPI_BIN: "/tmp/custom-agentapi",
+      CODEX_CLI: undefined,
       AGENT_MODE: undefined,
       AGENT_SPAWN_MODE: undefined,
       GLOVES: undefined,

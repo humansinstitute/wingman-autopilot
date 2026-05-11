@@ -655,6 +655,8 @@ async function recordLiveSession(ctx: SessionApiContext, session: SessionSnapsho
     runtimeStatus: session.agentRuntimeStatus ?? null,
     origin: session.origin ?? null,
     pm2Name: session.pm2Name,
+    tmuxSession: session.tmuxSession,
+    tmuxWindow: session.tmuxWindow,
     targetFile: session.targetFile,
     metadata: session.metadata,
   });

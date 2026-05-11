@@ -1124,6 +1124,8 @@ manager.on((event) => {
       runtimeStatus: event.session.agentRuntimeStatus ?? null,
       origin: event.session.origin ?? null,
       pm2Name: event.session.pm2Name,
+      tmuxSession: event.session.tmuxSession,
+      tmuxWindow: event.session.tmuxWindow,
       metadata: event.session.metadata,
     });
     messageStore.replaceMessages(event.session.id, []);
@@ -1179,6 +1181,8 @@ manager.on((event) => {
       runtimeStatus: event.session.agentRuntimeStatus ?? null,
       origin: event.session.origin ?? null,
       pm2Name: event.session.pm2Name,
+      tmuxSession: event.session.tmuxSession,
+      tmuxWindow: event.session.tmuxWindow,
       metadata: event.session.metadata,
     });
     void maybeAutoDispatchQueuedPrompt(event.session);
@@ -2670,8 +2674,10 @@ const server = Bun.serve({
 serverRef.current = server;
 
 const stopAllSessions = async () => {
-  if (preserveSessionsOnShutdown || config.agentSpawnMode === "pm2") {
-    const reason = preserveSessionsOnShutdown ? "warm restart" : "pm2 agent spawn mode";
+  if (preserveSessionsOnShutdown || config.agentSpawnMode === "pm2" || config.agentSpawnMode === "tmux") {
+    const reason = preserveSessionsOnShutdown
+      ? "warm restart"
+      : `${config.agentSpawnMode} agent spawn mode`;
     console.log(`[shutdown] preserving running agent sessions (${reason})`);
     return;
   }

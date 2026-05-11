@@ -34,12 +34,20 @@ import {
 import { injectMcpConfig, cleanupMcpConfig } from "./mcp-injector";
 import { stopManagedSubprocess } from "./process-stop";
 import { buildWingmanIdentityEnv, loadWingmanInstanceIdentity } from "../identity/wingman-instance-identity";
-import { parseAllowedHosts, pickAgentHost, normaliseHostForUrl } from "./agent-client";
+import { parseAllowedHosts, pickAgentHost, normaliseHostForUrl, waitForAgentReady } from "./agent-client";
 import { buildSessionGitCredentialEnv } from "../git/credential-env";
 import { resolveGiteaCredentials } from "../gitea/gitea-user-manager";
+import {
+  buildTmuxLogFile,
+  hasTmuxWindow,
+  startTmuxProcess,
+  stopTmuxWindow,
+} from "./tmux-wrapper";
 
 const MAX_LOG_LINES = 500;
 const DEFAULT_PM2_AGENT_START_TIMEOUT_MS = 60_000;
+const TMUX_AGENT_START_TIMEOUT_MS = 60_000;
+const projectRootDirectory = normalize(new URL("../..", import.meta.url).pathname);
 
 export type SessionStatus = "starting" | "running" | "stopped" | "error";
 
@@ -69,6 +77,10 @@ export interface SessionSnapshot {
   isAdmin?: boolean;
   /** PM2 process name if spawned via PM2 */
   pm2Name?: string;
+  /** Tmux session name if spawned in tmux */
+  tmuxSession?: string;
+  /** Tmux window name if spawned in tmux */
+  tmuxWindow?: string;
   /** Target file for writer-mode sessions */
   targetFile?: string;
   /** File pinned as artifact in the UI right-hand panel */
@@ -97,6 +109,10 @@ export interface RehydrateSessionInput {
   origin?: SessionOrigin | null;
   /** PM2 process name if this was a PM2-managed session */
   pm2Name?: string;
+  /** Tmux session name if this was a tmux-managed session */
+  tmuxSession?: string;
+  /** Tmux window name if this was a tmux-managed session */
+  tmuxWindow?: string;
   /** Target file for writer-mode sessions */
   targetFile?: string;
   /** File pinned as artifact in the UI right-hand panel */
@@ -154,6 +170,12 @@ interface AgentSession {
   isAdmin?: boolean;
   /** PM2 process name when spawned via PM2 */
   pm2Name?: string;
+  /** Tmux session name when spawned in tmux */
+  tmuxSession?: string;
+  /** Tmux window name when spawned in tmux */
+  tmuxWindow?: string;
+  /** Log file populated by tmux pipe-pane. */
+  tmuxLogFile?: string;
   /** Target file for writer-mode sessions */
   targetFile?: string;
   /** File pinned as artifact in the UI right-hand panel */
@@ -524,6 +546,8 @@ export class ProcessManager {
       const spawnStartedAt = Date.now();
       if (this.config.agentSpawnMode === "pm2") {
         await this.spawnAgentProcessViaPM2(session);
+      } else if (this.config.agentSpawnMode === "tmux") {
+        await this.spawnAgentProcessViaTmux(session);
       } else {
         session.process = this.spawnAgentProcess(session);
         await this.monitorSession(session);
@@ -551,6 +575,11 @@ export class ProcessManager {
           `botKey=${botKeyLookupMs}ms mcp=${mcpInjectMs}ms gitea=${giteaInjectMs}ms billing=${billingInjectMs}ms spawn=${spawnMs}ms`,
       );
     } catch (error) {
+      if (session.tmuxSession && session.tmuxWindow) {
+        await stopTmuxWindow(session.tmuxSession, session.tmuxWindow).catch(() => false);
+        session.tmuxSession = undefined;
+        session.tmuxWindow = undefined;
+      }
       session.status = "error";
       this.appendLog(session, `[manager] failed to launch session: ${(error as Error).message}`);
       this.releasePort(session.port);
@@ -611,6 +640,8 @@ export class ProcessManager {
       userAlias,
       isAdmin,
       pm2Name: input.pm2Name,
+      tmuxSession: input.tmuxSession,
+      tmuxWindow: input.tmuxWindow,
       targetFile: input.targetFile,
       pinnedFile: input.pinnedFile,
       metadata: normaliseSessionMetadata(input.metadata),
@@ -689,6 +720,18 @@ export class ProcessManager {
         this.appendLog(session, `[manager] PM2 cleanup failed — session NOT marked stopped, port NOT released`);
         throw new Error(`PM2 process ${pm2Name} still present after stop/delete — session ${session.id} not marked stopped`);
       }
+      session.detachedPid = undefined;
+    } else if (session.tmuxSession && session.tmuxWindow) {
+      const stopped = await stopTmuxWindow(session.tmuxSession, session.tmuxWindow);
+      if (!stopped) {
+        const exists = await hasTmuxWindow(session.tmuxSession, session.tmuxWindow).catch(() => true);
+        if (exists) {
+          this.appendLog(session, `[manager] tmux window ${session.tmuxSession}:${session.tmuxWindow} still present after stop`);
+          throw new Error(`tmux window ${session.tmuxSession}:${session.tmuxWindow} still present after stop`);
+        }
+      }
+      session.tmuxWindow = undefined;
+      session.tmuxSession = undefined;
       session.detachedPid = undefined;
     } else if (session.process) {
       const stopResult = await stopManagedSubprocess(session.process);
@@ -792,7 +835,7 @@ export class ProcessManager {
     return snapshot;
   }
 
-  private spawnAgentProcess(session: AgentSession): Bun.Subprocess {
+  private buildAgentProcessEnv(session: AgentSession): Record<string, string | undefined> {
     // Strip server-only private keys from child env. Agents receive only the
     // derived compatibility identity vars injected during session setup.
     const {
@@ -800,7 +843,7 @@ export class ProcessManager {
       WINGMAN_PRIV: _strippedWingmanPriv,
       ...parentEnv
     } = Bun.env;
-    const env = {
+    return {
       ...parentEnv,
       SESSION_ID: session.id,
       SESSION_AGENT: session.agent,
@@ -809,6 +852,10 @@ export class ProcessManager {
       SESSION_NAME: session.name,
       ...(session.definition.env ?? {}),
     };
+  }
+
+  private spawnAgentProcess(session: AgentSession): Bun.Subprocess {
+    const env = this.buildAgentProcessEnv(session);
 
     const proc = Bun.spawn(session.command, {
       cwd: session.workingDirectory,
@@ -845,6 +892,39 @@ export class ProcessManager {
     });
 
     return proc;
+  }
+
+  private buildTmuxWindowName(session: AgentSession): string {
+    return `${session.id.slice(0, 8)}-${session.port}`.replace(/[^A-Za-z0-9_.-]/g, "-");
+  }
+
+  private async spawnAgentProcessViaTmux(session: AgentSession): Promise<void> {
+    const tmuxSession = this.config.agentTmuxSession;
+    const tmuxWindow = this.buildTmuxWindowName(session);
+    const logFile = buildTmuxLogFile(projectRootDirectory, session.id);
+    const launch = await startTmuxProcess({
+      sessionName: tmuxSession,
+      windowName: tmuxWindow,
+      workingDirectory: session.workingDirectory,
+      command: session.command,
+      env: this.buildAgentProcessEnv(session),
+      logFile,
+    });
+    session.tmuxSession = launch.sessionName;
+    session.tmuxWindow = launch.windowName;
+    session.tmuxLogFile = launch.logFile;
+    this.appendLog(session, `[manager] tmux window ${launch.target} started`);
+
+    await waitForAgentReady(
+      normaliseHostForUrl(pickAgentHost(parseAllowedHosts(this.config.allowedHosts))),
+      session.port,
+      session.agent,
+      {
+        timeoutMs: TMUX_AGENT_START_TIMEOUT_MS,
+        pollIntervalMs: 250,
+      },
+    );
+    this.appendLog(session, `[manager] tmux agent ready on port ${session.port}`);
   }
 
   private async spawnAgentProcessViaPM2(session: AgentSession): Promise<void> {
@@ -1086,6 +1166,8 @@ export class ProcessManager {
       userAlias: session.userAlias,
       isAdmin: session.isAdmin,
       pm2Name: session.pm2Name,
+      tmuxSession: session.tmuxSession,
+      tmuxWindow: session.tmuxWindow,
       targetFile: session.targetFile,
       pinnedFile: session.pinnedFile,
       metadata: session.metadata,

@@ -4,6 +4,7 @@ import type { MessageStore } from "../../storage/message-store";
 import { isAgentRuntimeStatus } from "../../types/agent-status";
 import type { AgentType } from "../../config";
 import { waitForAgentReady as waitForAgentReadyCore } from "../../agents/agent-client";
+import { hasTmuxWindow } from "../../agents/tmux-wrapper";
 
 export type WarmRestartMarker = {
   createdAt: string;
@@ -139,7 +140,16 @@ export const rehydrateWarmSessions = async (
     }
 
     const storedPid = typeof record.pid === "number" ? record.pid : null;
-    if (storedPid && !isProcessAlive(storedPid)) {
+    const tmuxSession = record.tmuxSession ?? null;
+    const tmuxWindow = record.tmuxWindow ?? null;
+    if (tmuxSession && tmuxWindow) {
+      const tmuxExists = await hasTmuxWindow(tmuxSession, tmuxWindow).catch(() => false);
+      if (!tmuxExists) {
+        console.warn(`[restart] tmux window ${tmuxSession}:${tmuxWindow} for session ${record.id} is not present; skipping rehydration`);
+        failed.push(record.id);
+        continue;
+      }
+    } else if (storedPid && !isProcessAlive(storedPid)) {
       console.warn(`[restart] stored pid ${storedPid} for session ${record.id} is not running; skipping rehydration`);
       failed.push(record.id);
       continue;
@@ -172,6 +182,8 @@ export const rehydrateWarmSessions = async (
       agentRuntimeStatus: isAgentRuntimeStatus(record.runtimeStatus) ? record.runtimeStatus : null,
       origin: record.origin ?? null,
       pm2Name: record.pm2Name ?? undefined,
+      tmuxSession: record.tmuxSession ?? undefined,
+      tmuxWindow: record.tmuxWindow ?? undefined,
       targetFile: record.targetFile ?? undefined,
       metadata: record.metadata,
     });
@@ -198,6 +210,8 @@ export const rehydrateWarmSessions = async (
       runtimeStatus: snapshot.agentRuntimeStatus ?? null,
       origin: snapshot.origin ?? null,
       pm2Name: record.pm2Name ?? undefined,
+      tmuxSession: record.tmuxSession ?? undefined,
+      tmuxWindow: record.tmuxWindow ?? undefined,
       metadata: snapshot.metadata,
     });
     restored += 1;
@@ -274,15 +288,24 @@ export const rehydrateOrphanedSessions = async (
     }
 
     const storedPid = typeof record.pid === "number" ? record.pid : null;
-    if (!storedPid) {
+    const tmuxSession = record.tmuxSession ?? null;
+    const tmuxWindow = record.tmuxWindow ?? null;
+    if (!storedPid && (!tmuxSession || !tmuxWindow)) {
       continue;
     }
 
     checked += 1;
 
-    // First check: is the process still alive?
-    if (!isProcessAlive(storedPid)) {
-      continue;
+    if (tmuxSession && tmuxWindow) {
+      const tmuxExists = await hasTmuxWindow(tmuxSession, tmuxWindow).catch(() => false);
+      if (!tmuxExists) {
+        continue;
+      }
+    } else {
+      // First check: is the process still alive?
+      if (!isProcessAlive(storedPid)) {
+        continue;
+      }
     }
 
     // Second check: is the agent responding?
@@ -306,12 +329,14 @@ export const rehydrateOrphanedSessions = async (
       startedAt: record.startedAt,
       workingDirectory: record.workingDirectory ?? defaultWorkingDirectory,
       command,
-      pid: storedPid,
+      pid: storedPid ?? undefined,
       logs: undefined,
       npub: record.npub ?? undefined,
       agentRuntimeStatus: isAgentRuntimeStatus(record.runtimeStatus) ? record.runtimeStatus : null,
       origin: record.origin ?? null,
       pm2Name: record.pm2Name ?? undefined,
+      tmuxSession: record.tmuxSession ?? undefined,
+      tmuxWindow: record.tmuxWindow ?? undefined,
       targetFile: record.targetFile ?? undefined,
       metadata: record.metadata,
     });
@@ -336,6 +361,9 @@ export const rehydrateOrphanedSessions = async (
       command: snapshot.command,
       runtimeStatus: snapshot.agentRuntimeStatus ?? null,
       origin: snapshot.origin ?? null,
+      pm2Name: record.pm2Name ?? undefined,
+      tmuxSession: record.tmuxSession ?? undefined,
+      tmuxWindow: record.tmuxWindow ?? undefined,
       metadata: snapshot.metadata,
     });
 

@@ -3,8 +3,8 @@ import { AGENT_TYPES, DEFAULT_AGENT_TYPE, type AgentType } from "./agent-types";
 
 export type { AgentType } from "./agent-types";
 
-/** How agent processes are spawned - "bun" for direct child process, "pm2" for PM2 managed */
-export type AgentSpawnMode = "bun" | "pm2";
+/** How agent processes are spawned. */
+export type AgentSpawnMode = "bun" | "pm2" | "tmux";
 
 /** How apps are routed - "path" for /host/<alias>, "subdomain" for <alias>.domain.com */
 export type AppRoutingMode = "path" | "subdomain";
@@ -48,8 +48,10 @@ export interface WingmanConfig {
   subdomainProxyEnabled: boolean;
   /** Interval for SSE keepalive messages (prevents idle timeout) */
   sseKeepaliveIntervalMs: number;
-  /** How agent processes are spawned - "bun" for direct child process, "pm2" for PM2 managed */
+  /** How agent processes are spawned. */
   agentSpawnMode: AgentSpawnMode;
+  /** Tmux session used when agentSpawnMode is "tmux". */
+  agentTmuxSession: string;
   /** How apps are routed - "path" for /host/<alias>, "subdomain" for <alias>.domain.com */
   appRoutingMode: AppRoutingMode;
   /** Maple Proxy base URL for private chat AI completion */
@@ -90,13 +92,13 @@ const DEFAULT_STATUS_POLL_MAX_INTERVAL_MS = 30000;
 const DEFAULT_STATUS_POLL_TIMEOUT_MS = 1000;
 const DEFAULT_SSE_KEEPALIVE_INTERVAL_MS = 30000;
 const DEFAULT_AGENTAPI_RELATIVE_PATH = "../out/agentapi";
-const DEFAULT_AGENTAPI_TMUX_RELATIVE_PATH = "../out/agentapi-tmux";
+const DEFAULT_AGENT_TMUX_SESSION = "wm-ap-agents";
 
 type ConfigEnvironment = Record<string, string | undefined>;
 
-type AgentApiBinarySource = "default" | "agentapi_bin" | "legacy_agent_mode_tmux";
+type AgentApiBinarySource = "default" | "agentapi_bin";
 
-type AgentSpawnModeSource = "default" | "agent_spawn_mode" | "legacy_agent_mode_pm2";
+type AgentSpawnModeSource = "default" | "agent_spawn_mode" | "legacy_agent_mode_pm2" | "legacy_agent_mode_tmux";
 
 export interface AgentLaunchConfigResolution {
   agentApiBinary: string;
@@ -180,22 +182,11 @@ export function resolveAgentLaunchConfig(env: ConfigEnvironment = Bun.env): Agen
   if (agentApiBinInput) {
     agentApiBinarySource = "agentapi_bin";
     agentApiBinary = agentApiBinInput;
-    if (legacyModeInput === "tmux") {
-      warnings.push(
-        "AGENT_MODE=tmux is deprecated and ignored because AGENTAPI_BIN is set; configure the binary path with AGENTAPI_BIN only.",
-      );
-    }
-  } else if (legacyModeInput === "tmux") {
-    agentApiBinarySource = "legacy_agent_mode_tmux";
-    agentApiBinary = resolveDefaultAgentApiPath(DEFAULT_AGENTAPI_TMUX_RELATIVE_PATH);
-    warnings.push(
-      "AGENT_MODE=tmux is deprecated; set AGENTAPI_BIN to the tmux agentapi binary path instead.",
-    );
   }
 
   let agentSpawnModeSource: AgentSpawnModeSource = "default";
   let agentSpawnMode: AgentSpawnMode = "bun";
-  const validSpawnModes: AgentSpawnMode[] = ["bun", "pm2"];
+  const validSpawnModes: AgentSpawnMode[] = ["bun", "pm2", "tmux"];
   if (spawnModeInput && validSpawnModes.includes(spawnModeInput as AgentSpawnMode)) {
     agentSpawnModeSource = "agent_spawn_mode";
     agentSpawnMode = spawnModeInput as AgentSpawnMode;
@@ -210,7 +201,7 @@ export function resolveAgentLaunchConfig(env: ConfigEnvironment = Bun.env): Agen
     }
   } else if (spawnModeInput) {
     warnings.push(
-      `Ignoring unrecognized AGENT_SPAWN_MODE="${spawnModeInput}"; expected "bun" or "pm2".`,
+      `Ignoring unrecognized AGENT_SPAWN_MODE="${spawnModeInput}"; expected "bun", "pm2", or "tmux".`,
     );
     if (legacyModeInput === "pm2") {
       agentSpawnModeSource = "legacy_agent_mode_pm2";
@@ -221,6 +212,10 @@ export function resolveAgentLaunchConfig(env: ConfigEnvironment = Bun.env): Agen
     agentSpawnModeSource = "legacy_agent_mode_pm2";
     agentSpawnMode = "pm2";
     warnings.push("AGENT_MODE=pm2 is deprecated; use AGENT_SPAWN_MODE=pm2.");
+  } else if (legacyModeInput === "tmux") {
+    agentSpawnModeSource = "legacy_agent_mode_tmux";
+    agentSpawnMode = "tmux";
+    warnings.push("AGENT_MODE=tmux is deprecated; use AGENT_SPAWN_MODE=tmux.");
   }
 
   if (legacyModeInput === "standard") {
@@ -400,7 +395,10 @@ export const loadConfig = (): WingmanConfig => {
   }
   if (agentLaunchConfig.agentSpawnMode === "pm2") {
     console.log("[Config] Agent spawn mode: pm2 (sessions persist across restarts)");
+  } else if (agentLaunchConfig.agentSpawnMode === "tmux") {
+    console.log("[Config] Agent spawn mode: tmux (sessions run in tmux windows)");
   }
+  const agentTmuxSession = parseEnvironmentString(Bun.env.AGENT_TMUX_SESSION, DEFAULT_AGENT_TMUX_SESSION);
 
   // App routing mode - "path" for /host/<alias>, "subdomain" for <alias>.domain.com
   const validRoutingModes: AppRoutingMode[] = ["path", "subdomain"];
@@ -473,6 +471,7 @@ export const loadConfig = (): WingmanConfig => {
     subdomainProxyEnabled,
     sseKeepaliveIntervalMs,
     agentSpawnMode: agentLaunchConfig.agentSpawnMode,
+    agentTmuxSession,
     appRoutingMode,
     mapleProxyUrl,
     mapleDefaultModel,
