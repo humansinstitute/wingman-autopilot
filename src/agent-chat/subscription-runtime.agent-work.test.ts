@@ -323,6 +323,104 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(next.recentDispatches[0]?.suppressionReason).toBe('route_disabled');
   });
 
+  test('starts configured comment dispatch pipeline before the disabled comment stub', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-comment-pipeline-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-comment-pipeline-agents'));
+    const routeStore = new DispatchRouteStore(makeTempDb('agent-comment-pipeline-routes'));
+    const pipelineStore = new PipelineStore(makeTempDb('agent-comment-pipeline-runs'));
+    const subscription = store.save(makeSubscription());
+
+    const route = routeStore.save({
+      managedByNpub: subscription.managedByNpub!,
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'comment',
+      capability: 'comment_dispatch',
+      pipelineDefinitionId: 'comment-pipeline',
+    });
+    const runInputs: Record<string, unknown>[] = [];
+    const dispatchPipelineRuntime = new DispatchPipelineRuntime({
+      routeStore,
+      agentStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      loadDefinition: async () => ({
+        id: 'comment-pipeline',
+        slug: 'comment-pipeline',
+        name: 'Comment Pipeline',
+        scope: 'user',
+        ownerAlias: 'manager',
+        path: '/tmp/comment-pipeline.json',
+        spec: { name: 'Comment Pipeline', input: {}, steps: [] },
+      }),
+      loadFunctions: async () => ({ registry: {}, records: [] }),
+      runPipeline: async (input: any) => {
+        runInputs.push(input.input);
+        return makePipelineRun('comment-pipeline-run-1', input.input);
+      },
+    });
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      dispatchPipelineRuntime,
+      commentDispatchRuntime: {
+        handleDisabledDispatch: () => {
+          throw new Error('disabled comment stub should not run when a pipeline route matches');
+        },
+      } as never,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-comment-pipeline-1',
+          record_state: 'active',
+          version: 2,
+          group_npubs: ['npub1group'],
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        comment_id: 'comment-pipeline-1',
+        target_record_id: 'task-pipeline-1',
+        target_record_family_hash: `${subscription.sourceAppNpub}:task`,
+        sender_npub: 'npub1reviewer',
+        body: 'Can you clarify the current blocker?',
+        comment_status: 'open',
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-comment-pipeline-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'comment'),
+        record_id: 'record-comment-pipeline-1',
+      }),
+    );
+
+    expect(runInputs).toHaveLength(1);
+    expect((runInputs[0]?.dispatch as any)?.routeId).toBe(route.routeId);
+    expect((runInputs[0]?.record as any)?.recordId).toBe('record-comment-pipeline-1');
+    expect((runInputs[0]?.record as any)?.payload?.commentId).toBe('comment-pipeline-1');
+    expect(next.lastPipelineRunId).toBe('comment-pipeline-run-1');
+    expect(next.recentDispatches[0]?.routeId).toBe(route.routeId);
+    expect(next.recentDispatches[0]?.action).toBe('comment_pipeline_dispatch');
+  });
+
   test('routes task advisories into the agent-work runtime', async () => {
     const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-subscriptions'));
     const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-agents'));

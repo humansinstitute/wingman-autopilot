@@ -13,6 +13,7 @@ import { AgentCommentSessionRuntime } from './comment-session-runtime';
 import {
   isDocumentCommentTarget,
   isTaskCommentTarget,
+  extractCommentGroupNpubs,
   normaliseInboundCommentRecord,
   selectDocumentCommentAgents,
 } from './comment-records';
@@ -2159,10 +2160,32 @@ export class WorkspaceSubscriptionManager {
   private async handleTaskCommentDispatch(
     record: WorkspaceSubscriptionRecord,
     recordId: string,
-    _latest: Record<string, unknown>,
+    latest: Record<string, unknown>,
     comment: InboundCommentRecord,
     updaterNpub: string | null,
   ): Promise<WorkspaceSubscriptionRecord> {
+    if (this.dispatchPipelineRuntime) {
+      const pipelineResult = await this.dispatchPipelineRuntime.dispatch({
+        subscription: record,
+        triggerKind: 'comment',
+        capability: 'comment_dispatch',
+        recordId,
+        record: latest,
+        payload: { ...comment },
+        recordFamily: 'comment',
+        recordState: comment.recordState,
+        recordVersion: typeof latest.version === 'number' ? latest.version : Number(latest.version ?? 0),
+        updaterNpub,
+        bindingType: 'task',
+        bindingId: comment.targetRecordId,
+        changedFields: [],
+        groupNpubs: extractCommentGroupNpubs(latest),
+      });
+      if (pipelineResult.handled) {
+        return this.applyDispatchPipelineResult(record, pipelineResult);
+      }
+    }
+
     const commentAgents = this.listCommentDispatchAgents(record);
     if (commentAgents.length === 0) {
       return this.appendDispatchHistory(record, {
@@ -2237,6 +2260,28 @@ export class WorkspaceSubscriptionManager {
     comment: InboundCommentRecord,
     updaterNpub: string | null,
   ): Promise<WorkspaceSubscriptionRecord> {
+    if (this.dispatchPipelineRuntime) {
+      const pipelineResult = await this.dispatchPipelineRuntime.dispatch({
+        subscription: record,
+        triggerKind: 'comment',
+        capability: 'comment_dispatch',
+        recordId,
+        record: latest,
+        payload: { ...comment },
+        recordFamily: 'comment',
+        recordState: comment.recordState,
+        recordVersion: typeof latest.version === 'number' ? latest.version : Number(latest.version ?? 0),
+        updaterNpub,
+        bindingType: 'thread',
+        bindingId: comment.parentCommentId ?? comment.commentId,
+        changedFields: [],
+        groupNpubs: extractCommentGroupNpubs(latest),
+      });
+      if (pipelineResult.handled) {
+        return this.applyDispatchPipelineResult(record, pipelineResult);
+      }
+    }
+
     const agents = this.listDocumentCommentAgents(record, latest);
     if (agents.length === 0) {
       return this.appendDispatchHistory(record, {

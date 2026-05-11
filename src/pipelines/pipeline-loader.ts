@@ -163,6 +163,161 @@ const GRAPH_CONTEXT_MEMORY_DEMO_DEFINITION = {
   ],
 };
 
+const AGENT_DISPATCH_CHAT_DEMO_DEFINITION = {
+  name: "demo-agent-dispatch-chat-response",
+  description: "Demo dispatch pipeline for chat advisories. It asks one agent step to prepare a concise chat response from the dispatch envelope.",
+  input: {
+    dispatch: { triggerKind: "chat" },
+    workspace: { workspaceOwnerNpub: "npub1workspace", sourceAppNpub: "npub1source" },
+    agent: { agentId: "primary", label: "Primary Wingman", workingDirectory: "/workspace", defaultAgent: "codex" },
+    record: {
+      recordId: "chat-message-demo",
+      recordFamily: "chat",
+      payload: {
+        body: "Can you give me the current status and next action?",
+        sender_npub: "npub1user",
+      },
+    },
+    routing: { channelId: "channel-demo", threadId: "thread-demo", bindingType: "thread" },
+  },
+  steps: [
+    {
+      name: "draft-chat-response",
+      type: "agent",
+      agent: "$.agent.defaultAgent",
+      directory: "$.agent.workingDirectory",
+      input: {
+        pick: {
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+        },
+      },
+      prompt: "You are handling a Wingman chat dispatch. Read the dispatch envelope and produce a response that could be posted back to the same chat thread. This demo pipeline does not publish the reply itself; return JSON fields: shouldRespond boolean, responseDraft string, reasoningSummary string, followUpActions array of short strings, confidence number from 0 to 1.",
+    },
+  ],
+};
+
+const AGENT_DISPATCH_TASK_DEMO_DEFINITION = {
+  name: "demo-agent-dispatch-task-response",
+  description: "Demo dispatch pipeline for task advisories. It asks one agent step to acknowledge the task and propose execution steps.",
+  input: {
+    dispatch: { triggerKind: "task" },
+    workspace: { workspaceOwnerNpub: "npub1workspace", sourceAppNpub: "npub1source" },
+    agent: { agentId: "primary", label: "Primary Wingman", workingDirectory: "/workspace", defaultAgent: "codex" },
+    record: {
+      recordId: "task-demo",
+      recordFamily: "task",
+      recordState: "ready",
+      payload: {
+        task_id: "task-demo",
+        title: "Implement a small UI fix",
+        description: "Review the request, make the smallest viable change, test it, and report back.",
+        state: "ready",
+        assigned_to: "npub1bot",
+      },
+    },
+    routing: { bindingId: "task-demo", bindingType: "task", changedFields: ["state"] },
+  },
+  steps: [
+    {
+      name: "draft-task-response",
+      type: "agent",
+      agent: "$.agent.defaultAgent",
+      directory: "$.agent.workingDirectory",
+      input: {
+        pick: {
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+        },
+      },
+      prompt: "You are handling a Wingman task dispatch. Read the task payload and produce the response the primary Wingman should use to start work. This demo pipeline does not update the task itself; return JSON fields: accepted boolean, taskSummary string, executionPlan array of short steps, firstAction string, risks array, suggestedStatus string, confidence number from 0 to 1.",
+    },
+  ],
+};
+
+const AGENT_DISPATCH_COMMENT_DEMO_DEFINITION = {
+  name: "demo-agent-dispatch-comment-response",
+  description: "Demo dispatch pipeline for task/document comment advisories. It asks one agent step to draft a thread reply.",
+  input: {
+    dispatch: { triggerKind: "comment" },
+    workspace: { workspaceOwnerNpub: "npub1workspace", sourceAppNpub: "npub1source" },
+    agent: { agentId: "primary", label: "Primary Wingman", workingDirectory: "/workspace", defaultAgent: "codex" },
+    record: {
+      recordId: "comment-demo",
+      recordFamily: "comment",
+      payload: {
+        commentId: "comment-demo",
+        targetRecordId: "task-demo",
+        targetRecordFamilyHash: "npub1source:task",
+        body: "Can you clarify whether this is blocked?",
+        senderNpub: "npub1user",
+      },
+    },
+    routing: { bindingId: "task-demo", bindingType: "task" },
+  },
+  steps: [
+    {
+      name: "draft-comment-response",
+      type: "agent",
+      agent: "$.agent.defaultAgent",
+      directory: "$.agent.workingDirectory",
+      input: {
+        pick: {
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+        },
+      },
+      prompt: "You are handling a Wingman comment dispatch. Read the comment payload and draft a reply for the existing comment thread. This demo pipeline does not publish the reply itself; return JSON fields: replyDraft string, targetNeedsWork boolean, blockers array, nextAction string, confidence number from 0 to 1.",
+    },
+  ],
+};
+
+const AGENT_DISPATCH_TASK_REVIEW_DEMO_DEFINITION = {
+  name: "demo-agent-dispatch-task-review-response",
+  description: "Demo dispatch pipeline for task review advisories. It asks one agent step to review completion evidence and return a decision.",
+  input: {
+    dispatch: { triggerKind: "task_review" },
+    workspace: { workspaceOwnerNpub: "npub1workspace", sourceAppNpub: "npub1source" },
+    agent: { agentId: "primary", label: "Primary Wingman", workingDirectory: "/workspace", defaultAgent: "codex" },
+    record: {
+      recordId: "task-review-demo",
+      recordFamily: "task",
+      recordState: "review",
+      payload: {
+        task_id: "task-review-demo",
+        title: "Review completed UI fix",
+        description: "Check the implementation and decide whether it is ready to accept.",
+        state: "review",
+        assigned_to: "npub1bot",
+      },
+    },
+    routing: { bindingId: "task-review-demo", bindingType: "task", changedFields: ["state"] },
+  },
+  steps: [
+    {
+      name: "draft-task-review-response",
+      type: "agent",
+      agent: "$.agent.defaultAgent",
+      directory: "$.agent.workingDirectory",
+      input: {
+        pick: {
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+        },
+      },
+      prompt: "You are handling a Wingman task review dispatch. Review the task payload and decide whether the work should be accepted, rejected, or sent back for changes. This demo pipeline does not update the task itself; return JSON fields: decision as accept/reject/changes_requested, reviewSummary string, evidenceChecked array, requiredChanges array, replyDraft string, confidence number from 0 to 1.",
+    },
+  ],
+};
+
 const LOOPED_DESIGN_REVIEW_DEMO_DEFINITION = {
   name: "demo-looped-design-review",
   description: "Runs Critic and Response agents in a loop over a design document, then a Tidy Up agent makes final judgement calls.",
@@ -318,6 +473,18 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
   const loopedReviewDemoPath = join(getSharedPipelineDefinitionsDirectory(), "demo-looped-design-review.json");
   if (!existsSync(loopedReviewDemoPath)) {
     await writeFile(loopedReviewDemoPath, `${JSON.stringify(LOOPED_DESIGN_REVIEW_DEMO_DEFINITION, null, 2)}\n`);
+  }
+  const dispatchDemos = [
+    ["demo-agent-dispatch-chat-response.json", AGENT_DISPATCH_CHAT_DEMO_DEFINITION],
+    ["demo-agent-dispatch-task-response.json", AGENT_DISPATCH_TASK_DEMO_DEFINITION],
+    ["demo-agent-dispatch-comment-response.json", AGENT_DISPATCH_COMMENT_DEMO_DEFINITION],
+    ["demo-agent-dispatch-task-review-response.json", AGENT_DISPATCH_TASK_REVIEW_DEMO_DEFINITION],
+  ] as const;
+  for (const [fileName, definition] of dispatchDemos) {
+    const demoPath = join(getSharedPipelineDefinitionsDirectory(), fileName);
+    if (!existsSync(demoPath)) {
+      await writeFile(demoPath, `${JSON.stringify(definition, null, 2)}\n`);
+    }
   }
 }
 
