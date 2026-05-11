@@ -215,7 +215,7 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(store.getBySubscriptionId(record.subscriptionId)?.lastSseEventId).toBe('1011');
   });
 
-  test('derives agent groups from refreshed wrapped group keys when none are supplied', () => {
+  test('derives agent groups from refreshed wrapped group keys when none are supplied', async () => {
     const dbPath = makeTempDb();
     const store = new WorkspaceSubscriptionStore(dbPath);
     const agentStore = new AgentDefinitionStore(dbPath);
@@ -267,7 +267,7 @@ describe('WorkspaceSubscriptionManager', () => {
       lastSuccessfulStartupReloadAt: null,
     });
 
-    const record = manager.saveAgentForManager({
+    const record = await manager.saveAgentForManager({
       managedByNpub: 'npub1manager',
       agentId: 'agent_auto',
       label: 'Auto Agent',

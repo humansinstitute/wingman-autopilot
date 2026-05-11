@@ -533,7 +533,7 @@ export async function handleAgentChatApi(
     }
 
     try {
-      const agent = ctx.manager.saveAgentForManager({
+      const agent = await ctx.manager.saveAgentForManager({
         managedByNpub: viewerNpub,
         agentId,
         label,

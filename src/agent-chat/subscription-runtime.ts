@@ -535,16 +535,13 @@ export class WorkspaceSubscriptionManager {
     return set.size > 0 ? [...set] : ['chat_intercept'];
   }
 
-  saveAgentForManager(input: CreateAgentDefinitionInput): AgentDefinitionRecord {
+  async saveAgentForManager(input: CreateAgentDefinitionInput): Promise<AgentDefinitionRecord> {
     const agentId = input.agentId.trim();
     const label = input.label.trim() || agentId;
     const botNpub = input.botNpub.trim();
     const workspaceOwnerNpub = input.workspaceOwnerNpub.trim();
     const workingDirectory = input.workingDirectory.trim();
     const requestedGroupNpubs = [...new Set(input.groupNpubs.map((value) => value.trim()).filter((value) => value.length > 0))].sort();
-    const groupNpubs = requestedGroupNpubs.length > 0
-      ? requestedGroupNpubs
-      : this.deriveAgentGroupNpubs(workspaceOwnerNpub, botNpub);
     const capabilities = this.normaliseAgentCapabilities(input.capabilities);
     const chatPromptTemplate = normalisePromptTemplate(input.chatPromptTemplate, DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE);
     const taskPromptTemplate = normalisePromptTemplate(input.taskPromptTemplate, DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE);
@@ -564,8 +561,15 @@ export class WorkspaceSubscriptionManager {
     if (!agentId || !botNpub || !workspaceOwnerNpub || !workingDirectory) {
       throw new Error('agentId, botNpub, workspaceOwnerNpub, and workingDirectory are required.');
     }
+
+    const groupNpubs = await this.resolveAgentGroupNpubs({
+      requestedGroupNpubs,
+      workspaceOwnerNpub,
+      botNpub,
+      managedByNpub: input.managedByNpub,
+    });
     if (groupNpubs.length === 0) {
-      throw new Error('At least one group npub is required, or a healthy subscription must already have refreshed readable bot group keys.');
+      throw new Error('No readable Flight Deck groups are available for this bot. Add the Wingman bot to at least one workspace group, then try again; Wingman will refresh groups automatically.');
     }
 
     const existing = this.agentStore.getByAgentId(agentId);
@@ -2606,5 +2610,39 @@ export class WorkspaceSubscriptionManager {
     } catch {
       return [];
     }
+  }
+
+  private async resolveAgentGroupNpubs(input: {
+    requestedGroupNpubs: string[];
+    workspaceOwnerNpub: string;
+    botNpub: string;
+    managedByNpub: string;
+  }): Promise<string[]> {
+    if (input.requestedGroupNpubs.length > 0) {
+      return input.requestedGroupNpubs;
+    }
+
+    const cachedGroupNpubs = this.deriveAgentGroupNpubs(input.workspaceOwnerNpub, input.botNpub);
+    if (cachedGroupNpubs.length > 0) {
+      return cachedGroupNpubs;
+    }
+
+    const subscription = this.store
+      .listForManagerNpub(input.managedByNpub)
+      .find((record) => (
+        record.workspaceOwnerNpub === input.workspaceOwnerNpub
+        && record.botNpub === input.botNpub
+      ));
+    if (!subscription) {
+      return [];
+    }
+
+    await this.repairSubscription(subscription, {
+      refreshWorkspaceKey: false,
+      reconnect: subscription.sseStatus !== 'disabled',
+      allowRegisterWhenInactive: true,
+      reason: 'agent_create_refresh_groups',
+    });
+    return this.deriveAgentGroupNpubs(input.workspaceOwnerNpub, input.botNpub);
   }
 }
