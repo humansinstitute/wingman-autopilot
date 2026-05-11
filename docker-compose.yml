@@ -35,6 +35,7 @@ services:
       REGISTER: "${WINGMAN_REGISTER:-false}"
       WINGMAN_INSTANCE_NAME: "${WINGMAN_INSTANCE_NAME:-wingman-01}"
       WINGMAN_WORKSPACE_HOST_PATH: "${WINGMAN_WORKSPACE_HOST_PATH:-${HOME}/.wm-ap}"
+      WINGMAN_SHARED_INSTANCE: "${WINGMAN_SHARED_INSTANCE:-true}"
       WINGMAN_SETUP_NONINTERACTIVE: "true"
     volumes:
       - wingman-home:/home/wingman

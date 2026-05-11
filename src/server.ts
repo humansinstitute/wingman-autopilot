@@ -83,6 +83,7 @@ import { BotKeyStore } from "./identity/bot-key-store";
 import { createBotKeyApiHandler } from "./identity/bot-key-api";
 import { createBotCryptoApiHandler } from "./identity/bot-crypto-api";
 import { loadWingmanInstanceIdentity } from "./identity/wingman-instance-identity";
+import { isSharedInstanceAccessEnabled } from "./shared-instance";
 import { WorkspaceSubscriptionManager } from './agent-chat/subscription-runtime';
 import { DispatchPipelineRuntime } from './agent-chat/dispatch-pipelines/runtime';
 import { AgentCommentSessionRuntime } from './agent-chat/comment-session-runtime';
@@ -702,6 +703,8 @@ const manager = new ProcessManager(config, {
   },
 });
 
+const sharedInstanceAccessEnabled = isSharedInstanceAccessEnabled();
+
 const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   getSession: (sid: string) => manager.getSession(sid) ?? null,
   listSessions: () => manager.listSessions(),
@@ -956,7 +959,7 @@ const buildIdentitySummaries = (
   viewerNormalizedNpub: string | null,
   options?: { includeAll?: boolean },
 ): IdentitySummary[] => {
-  const includeAll = Boolean(options?.includeAll);
+  const includeAll = sharedInstanceAccessEnabled || Boolean(options?.includeAll);
   if (!includeAll && !viewerNormalizedNpub) {
     return [];
   }
@@ -1082,6 +1085,9 @@ const sessionBelongsToViewer = (
   viewerNormalizedNpub: string | null,
   viewerIsAdmin: boolean,
 ): boolean => {
+  if (sharedInstanceAccessEnabled && viewerNormalizedNpub) {
+    return true;
+  }
   return sessionOwnerMatchesViewer(sessionNpub, sessionMetadata, viewerNormalizedNpub, viewerIsAdmin);
 };
 
@@ -2429,12 +2435,14 @@ const handleApi = createApiRouteHandler({
       if (canAccessAppOverride) {
         return canAccessAppOverride(app);
       }
+      if (sharedInstanceAccessEnabled && appsViewerNpub) return true;
       if (appsWorkspaceScope.isAdmin) return true;
       if (!appsViewerNpub) return false;
       return app.ownerNpub === appsViewerNpub;
     };
     return {
       adminNpub,
+      sharedInstanceAccess: sharedInstanceAccessEnabled,
       workspaceScope: appsWorkspaceScope,
       viewerNpub: appsViewerNpub,
       AccessActions,

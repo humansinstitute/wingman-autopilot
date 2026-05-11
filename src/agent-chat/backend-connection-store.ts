@@ -75,7 +75,9 @@ class BackendConnectionStore {
           AND g.grant_kind = 'manager_npub'
           AND g.grantee_npub = ?1
           AND b.share_policy = 'selected_users'
-         WHERE b.managed_by_npub = ?1 OR g.grantee_npub = ?1
+         WHERE b.managed_by_npub = ?1
+            OR g.grantee_npub = ?1
+            OR b.share_policy = 'shared_service'
          ORDER BY b.updated_at DESC`,
       )
       .all(npub)
@@ -412,7 +414,7 @@ class BackendConnectionStore {
     return {
       backendConnectionId: row.backend_connection_id!,
       grantKind,
-      granteeNpub: grantKind === 'shared_service' ? null : row.grantee_npub,
+      granteeNpub: grantKind === 'shared_service' ? null : row.grantee_npub ?? null,
       createdAt: row.created_at!,
       updatedAt: row.updated_at!,
     };

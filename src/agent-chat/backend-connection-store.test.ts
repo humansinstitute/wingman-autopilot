@@ -41,7 +41,7 @@ describe('BackendConnectionStore grants', () => {
     expect(store.getById(granted.backendConnectionId)?.sharePolicy).toBe('selected_users');
   });
 
-  test('persists the shared service marker without exposing it as a user grant', () => {
+  test('persists the shared service marker and exposes it to other managers', () => {
     const store = new BackendConnectionStore(makeTempDb());
     const backend = store.save(store.createDefault({
       managedByNpub: 'npub1owner',
@@ -61,7 +61,9 @@ describe('BackendConnectionStore grants', () => {
       }),
     ]);
     expect(store.hasSharedServiceGrant(backend.backendConnectionId)).toBe(true);
-    expect(store.listAvailableForManagerNpub('npub1manager')).toEqual([]);
+    expect(store.listAvailableForManagerNpub('npub1manager').map((record) => record.backendConnectionId)).toEqual([
+      backend.backendConnectionId,
+    ]);
     expect(store.getById(backend.backendConnectionId)?.sharePolicy).toBe('shared_service');
   });
 });

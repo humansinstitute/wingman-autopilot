@@ -756,15 +756,11 @@ export function initIdentityStateManager(deps) {
       const viewerNormalized = normaliseNpubValue(next.npub);
       const ss = sessionsStore();
       ss.filters.initialized = false;
-      if (!next.isAdmin && viewerNormalized) {
-        ss.filters.npub = viewerNormalized;
-      } else if (!next.isAdmin && !viewerNormalized) {
-        ss.filters.npub = "all";
-      }
+      ss.filters.npub = "all";
       const as = appsStore();
       as.filters.initialized = false;
       as.filters.options = [];
-      as.filters.npub = viewerNormalized ?? "all";
+      as.filters.npub = "all";
     }
 
     if (persist) {

@@ -133,24 +133,15 @@ export function initAppsStore({
      * @param {number} [options.tail] - Number of log preview lines
      */
     async sync(options = {}) {
-      const identity = getIdentity();
-      const viewerNormalized = normaliseNpub(identity.npub);
       const tail = options.tail ?? DEFAULT_TAIL;
 
-      // Apply filter defaults based on role
-      if (identity.isAdmin) {
-        if (!this.filters.initialized && viewerNormalized) {
-          this.filters.npub = viewerNormalized;
-        }
-      } else if (viewerNormalized) {
-        this.filters.npub = viewerNormalized;
-      } else {
+      if (!this.filters.initialized) {
         this.filters.npub = "all";
       }
 
       this.loading = true;
       try {
-        const npubParam = identity.isAdmin && this.filters.npub !== "all"
+        const npubParam = this.filters.npub !== "all"
           ? this.filters.npub
           : undefined;
 
@@ -179,7 +170,7 @@ export function initAppsStore({
         this.items = items;
 
         // Process filter options (admin only)
-        this._processFilters(payload, identity);
+        this._processFilters(payload);
 
         this.error = null;
         console.log(`[apps-store] Synced ${items.length} apps from API`);
@@ -218,13 +209,7 @@ export function initAppsStore({
     },
 
     /** Process filter options from API response. */
-    _processFilters(payload, identity) {
-      if (!identity.isAdmin) {
-        this.filters.options = [];
-        this.filters.initialized = true;
-        return;
-      }
-
+    _processFilters(payload) {
       const filterPayload = payload?.filters && typeof payload.filters === "object" ? payload.filters : null;
       const ownerOptions =
         filterPayload && Array.isArray(filterPayload.npubs) ? filterPayload.npubs : [];

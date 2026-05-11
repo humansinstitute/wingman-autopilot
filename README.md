@@ -83,6 +83,9 @@ docker compose up -d --build
 Docker setup defaults to `REGISTER=false`: unknown users cannot self-register.
 The configured admin npub can bootstrap the first login, then add approved users
 from Settings -> Users.
+It also defaults to `WINGMAN_SHARED_INSTANCE=true`, so whitelisted users see the
+same apps, sessions, workspace connection, and dispatch activity for the single
+Wingman bot.
 
 The default instance is `wingman-01`; if Docker already has that Compose project,
 the wizard moves to `wingman-02`, `wingman-03`, and so on. The first instance

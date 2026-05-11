@@ -115,13 +115,8 @@ export function initSessionsStore({
       const identity = getIdentity();
       const viewerNormalized = normaliseNpub(identity.npub);
 
-      // Apply filter defaults based on role
-      if (!identity.isAdmin) {
-        if (viewerNormalized && this.filters.npub !== viewerNormalized) {
-          this.filters.npub = viewerNormalized;
-        }
-      } else if (!this.filters.initialized && viewerNormalized) {
-        this.filters.npub = viewerNormalized;
+      if (!this.filters.initialized) {
+        this.filters.npub = "all";
       }
 
       try {
@@ -161,7 +156,7 @@ export function initSessionsStore({
         }
 
         // Process filter options
-        this._processFilters(data, identity, viewerNormalized);
+        this._processFilters(data);
 
         // Clean up stale lastActiveSessionId
         const sessionIds = new Set(sessions.map((s) => s.id));
@@ -207,7 +202,7 @@ export function initSessionsStore({
     },
 
     /** Process filter options from API response. */
-    _processFilters(data, identity, viewerNormalized) {
+    _processFilters(data) {
       const filterPayload = data.filters && typeof data.filters === "object" ? data.filters : null;
       const npubOptions =
         filterPayload && Array.isArray(filterPayload.npubs) ? filterPayload.npubs : [];
@@ -221,9 +216,7 @@ export function initSessionsStore({
       ]);
 
       let nextFilter = this.filters.npub;
-      if (!identity.isAdmin) {
-        nextFilter = viewerNormalized ?? "all";
-      } else if (
+      if (
         filterPayload &&
         typeof filterPayload.active === "string" &&
         optionValues.has(filterPayload.active)
@@ -232,7 +225,7 @@ export function initSessionsStore({
       } else if (filterPayload && filterPayload.active === null) {
         nextFilter = "all";
       } else if (!optionValues.has(nextFilter)) {
-        nextFilter = viewerNormalized ?? "all";
+        nextFilter = "all";
       }
       this.filters.npub = nextFilter;
       this.filters.initialized = true;

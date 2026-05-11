@@ -14,6 +14,7 @@ type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEA
 
 export interface AppsApiContext {
   adminNpub: string | null;
+  sharedInstanceAccess: boolean;
   workspaceScope: WorkspaceScope;
   viewerNpub: string | null;
 
@@ -226,13 +227,14 @@ export async function handleAppsApi(
     };
     try {
       const [apps, statuses] = await Promise.all([ctx.appRegistry.listApps(), ctx.appProcessManager.listStatuses()]);
-      const visibleApps = ctx.workspaceScope.isAdmin ? apps : apps.filter((app) => ctx.canAccessApp(app));
-      const ownerFilters = ctx.workspaceScope.isAdmin ? ctx.buildAppOwnerFilters(visibleApps, ownerAliasCache) : [];
-      const hasFilterParam = ctx.workspaceScope.isAdmin ? url.searchParams.has('npub') : Boolean(viewerNormalizedNpub);
+      const canSeeAllApps = ctx.sharedInstanceAccess || ctx.workspaceScope.isAdmin;
+      const visibleApps = canSeeAllApps ? apps : apps.filter((app) => ctx.canAccessApp(app));
+      const ownerFilters = canSeeAllApps ? ctx.buildAppOwnerFilters(visibleApps, ownerAliasCache) : [];
+      const hasFilterParam = url.searchParams.has('npub');
       let ownerFilter: string | null | '__anonymous__' =
-        ctx.workspaceScope.isAdmin ? normalizeOwnerFilter(url.searchParams.get('npub')) : viewerNormalizedNpub ?? null;
-      if (ctx.workspaceScope.isAdmin && !hasFilterParam && viewerNormalizedNpub) {
-        ownerFilter = viewerNormalizedNpub;
+        canSeeAllApps ? normalizeOwnerFilter(url.searchParams.get('npub')) : viewerNormalizedNpub ?? null;
+      if (canSeeAllApps && !hasFilterParam) {
+        ownerFilter = null;
       }
       const filteredApps =
         ownerFilter === null

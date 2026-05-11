@@ -257,7 +257,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
   }
   async function useBackendConnection(backendConnection) {
     selectedBackendConnection = backendConnection;
-    statusLine.textContent = 'Creating a user-scoped subscription from the shared backend...';
+    statusLine.textContent = 'Creating a subscription from the workspace connection...';
     try {
       await saveAgentChatSubscription({
         backendConnectionId: backendConnection.backendConnectionId,
@@ -267,10 +267,10 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
         sourceAppNpub: backendConnection.setupSourceAppNpub || '',
         sourceAppSchemaNamespace: backendConnection.setupSourceAppSchemaNamespace || null,
       });
-      statusLine.textContent = 'Shared backend reused for your subscription.';
+      statusLine.textContent = 'Workspace connection is ready.';
       await refreshList();
     } catch (error) {
-      statusLine.textContent = error instanceof Error ? error.message : 'Failed to reuse shared backend.';
+      statusLine.textContent = error instanceof Error ? error.message : 'Failed to use workspace connection.';
     }
   }
   function openAgentEditor(agent = null, options = {}) {

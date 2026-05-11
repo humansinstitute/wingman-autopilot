@@ -105,27 +105,6 @@ function createCapabilityList(capabilities = []) {
   return wrapper;
 }
 
-function createMetricRow(items) {
-  const row = document.createElement('div');
-  row.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-top:12px;';
-  items.forEach(({ label, value }) => {
-    const tile = document.createElement('div');
-    tile.style.cssText = 'padding:10px 12px;border-radius:12px;border:1px solid var(--border-primary);background:rgba(127,127,127,0.04);';
-
-    const labelEl = document.createElement('div');
-    labelEl.className = 'wm-settings__port-note';
-    labelEl.textContent = label;
-
-    const valueEl = document.createElement('div');
-    valueEl.style.cssText = 'margin-top:4px;font-weight:650;';
-    valueEl.textContent = value;
-
-    tile.append(labelEl, valueEl);
-    row.append(tile);
-  });
-  return row;
-}
-
 function formatTimestamp(value) {
   if (typeof value !== 'string' || !value) {
     return 'None';
@@ -193,19 +172,19 @@ function createBackendConnectionChoice(backendConnection, onUseBackendConnection
   const title = document.createElement('div');
   title.style.cssText = 'font-weight:650;';
   title.textContent = backendConnection.serviceNpub
-    ? `Backend service ${backendConnection.serviceNpub}`
-    : `Backend managed by ${backendConnection.managedByNpub || 'another user'}`;
+    ? `Workspace connection ${backendConnection.serviceNpub}`
+    : 'Workspace connection';
 
   const statusRow = document.createElement('div');
   statusRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;margin-bottom:10px;';
   statusRow.append(
-    createTonePill(backendConnection.sharePolicy === 'selected_users' ? 'Granted Backend' : 'Shared Service', 'success'),
+    createTonePill('Available to users and bot', 'success'),
     createTonePill(backendConnection.healthStatus === 'healthy' ? 'Healthy' : backendConnection.healthStatus || 'Unknown', backendConnection.healthStatus === 'healthy' ? 'success' : 'warning'),
   );
 
   const canUseBackend = Boolean(backendConnection.setupWorkspaceOwnerNpub && backendConnection.setupSourceAppNpub);
   const actionButton = createActionButton(
-    canUseBackend ? 'Use Shared Backend' : 'Missing Setup Hints',
+    canUseBackend ? 'Use Workspace Connection' : 'Missing Setup Hints',
     `agent-chat-use-backend-${backendConnection.backendConnectionId}`,
     `Create your Agent Dispatch subscription from backend ${backendConnection.backendConnectionId}`,
     () => {
@@ -223,7 +202,6 @@ function createBackendConnectionChoice(backendConnection, onUseBackendConnection
       ['Workspace', backendConnection.setupWorkspaceOwnerNpub || 'None'],
       ['Backend', backendConnection.backendBaseUrl || 'None'],
       ['Source App', backendConnection.setupSourceAppNpub || 'None'],
-      ['Manager', backendConnection.managedByNpub || 'None'],
     ]),
     createInlineActions([actionButton]),
   );
@@ -242,64 +220,36 @@ function createBackendAvailabilityEditor(backendConnection, onSaveBackendAvailab
   const help = document.createElement('p');
   help.className = 'wm-settings__port-note';
   help.style.margin = '6px 0 0 0';
-  help.textContent = 'Grant selected Wingman users access to reuse this backend connection. They still create their own subscription, local agent, routes, and dispatch history.';
+  help.textContent = 'This workspace connection is available to every whitelisted user on this Wingman instance and to the shared Wingman bot.';
 
   const grants = Array.isArray(backendConnection.availabilityGrants)
     ? backendConnection.availabilityGrants
     : [];
-  const managerGrants = grants
-    .filter((grant) => grant?.grantKind === 'manager_npub' && grant.granteeNpub)
-    .map((grant) => grant.granteeNpub);
   const hasSharedServiceGrant = grants.some((grant) => grant?.grantKind === 'shared_service');
-
-  const managerLabel = document.createElement('label');
-  managerLabel.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:10px;';
-  managerLabel.textContent = 'Available to manager NPUBs';
-  const managerInput = document.createElement('textarea');
-  managerInput.className = 'wm-input';
-  managerInput.rows = 3;
-  managerInput.value = managerGrants.join(', ');
-  managerInput.placeholder = 'npub1..., npub1...';
-  managerInput.setAttribute('aria-label', 'Manager NPUBs allowed to reuse this backend connection');
-  managerInput.setAttribute('data-testid', 'agent-chat-backend-availability-managers');
-  managerLabel.append(managerInput);
-
-  const sharedLabel = document.createElement('label');
-  sharedLabel.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:10px;';
-  const sharedInput = document.createElement('input');
-  sharedInput.type = 'checkbox';
-  sharedInput.checked = hasSharedServiceGrant;
-  sharedInput.setAttribute('aria-label', 'Make backend available to explicit shared service agent');
-  sharedInput.setAttribute('data-testid', 'agent-chat-backend-availability-shared-service');
-  const sharedText = document.createElement('span');
-  sharedText.textContent = 'Make available to explicit shared service agent';
-  sharedLabel.append(sharedInput, sharedText);
 
   const status = document.createElement('p');
   status.className = 'wm-settings__port-note';
   status.setAttribute('aria-live', 'polite');
-  status.textContent = grants.length > 0
-    ? `${grants.length} availability grant${grants.length === 1 ? '' : 's'} configured.`
-    : 'This backend is private until grants are saved.';
+  status.textContent = hasSharedServiceGrant
+    ? 'Shared availability is enabled.'
+    : 'Apply shared availability to make this connection visible to all users.';
 
   const saveButton = createActionButton(
-    'Save Availability',
+    hasSharedServiceGrant ? 'Reapply Availability' : 'Apply Availability',
     'agent-chat-save-backend-availability',
-    'Save backend connection availability grants',
+    'Apply shared workspace connection availability',
     async () => {
       saveButton.disabled = true;
       status.textContent = 'Saving backend availability...';
       try {
-        const allowedManagerNpubs = managerInput.value
-          .split(/[,\n]/)
-          .map((value) => value.trim())
-          .filter(Boolean);
         const updated = await onSaveBackendAvailability?.(backendConnection, {
-          allowedManagerNpubs,
-          grantSharedService: sharedInput.checked,
+          allowedManagerNpubs: [],
+          grantSharedService: true,
         });
         const updatedGrants = Array.isArray(updated?.availabilityGrants) ? updated.availabilityGrants : [];
-        status.textContent = `${updatedGrants.length} availability grant${updatedGrants.length === 1 ? '' : 's'} saved.`;
+        status.textContent = updatedGrants.some((grant) => grant?.grantKind === 'shared_service')
+          ? 'Shared availability is enabled.'
+          : 'Availability was saved, but the shared grant was not returned.';
       } catch (error) {
         status.textContent = error instanceof Error ? error.message : 'Failed to save backend availability.';
       } finally {
@@ -308,7 +258,7 @@ function createBackendAvailabilityEditor(backendConnection, onSaveBackendAvailab
     },
   );
 
-  wrapper.append(title, help, managerLabel, sharedLabel, createInlineActions([saveButton]), status);
+  wrapper.append(title, help, createInlineActions([saveButton]), status);
   return wrapper;
 }
 
@@ -338,19 +288,19 @@ export function createAgentDispatchSetupCards({
   const hasAvailableBackend = !hasSubscription && visibleBackendConnections.length > 0;
   const hasSetupReadyBackend = setupReadyBackendConnections.length > 0;
   const overviewCard = createCard(
-    'Guided Setup',
-    'Paste one AgentConnect token, keep one Wingman bot identity, and route workspace events to dispatch pipelines from the same setup surface.',
+    'Setup',
+    'Connect one workspace, create one local agent, then route events to pipelines.',
   );
 
   appendStep(
     overviewCard,
     '1. Connect the workspace',
     hasSubscription
-      ? `Workspace ${subscription.workspaceOwnerNpub || 'unknown'} is already connected to ${subscription.backendBaseUrl || 'the backend'}.`
+      ? 'Workspace connection is ready.'
       : hasSetupReadyBackend
-        ? `${setupReadyBackendConnections.length} shared backend${setupReadyBackendConnections.length === 1 ? ' is' : 's are'} available. Create your own subscription from one without retyping backend details.`
+        ? `${setupReadyBackendConnections.length} workspace connection${setupReadyBackendConnections.length === 1 ? ' is' : 's are'} available.`
         : hasAvailableBackend
-          ? 'A shared backend is available, but it does not include all setup hints yet. Use the manual connection fields for the missing workspace facts.'
+          ? 'A workspace connection is available, but it does not include all setup hints yet. Use the manual connection fields for the missing workspace facts.'
       : 'Paste the AgentConnect token from Flight Deck so Wingman can read the service, workspace, app, and connection token values.',
     hasSubscription || hasAvailableBackend,
   );
@@ -362,21 +312,12 @@ export function createAgentDispatchSetupCards({
       : 'Save one local agent identity. The shared subscription will supply the bot and workspace values automatically.',
     hasAgent,
   );
-  appendStep(
-    overviewCard,
-    '3. Expand capabilities over time',
-    hasAgent
-      ? 'Add or remove delivery and orchestration roles on the same agent as new runtime features arrive.'
-      : 'Once the first agent exists, turn on chat, delivery, and orchestration capabilities without creating a second identity.',
-    hasAgent && countEnabledCapabilities(primaryAgent) > 0,
-  );
-
   const overviewActions = [];
   if (!hasSubscription && hasSetupReadyBackend) {
     overviewActions.push(createActionButton(
-      'Use Shared Backend',
+      'Use Workspace Connection',
       'agent-chat-guided-use-backend',
-      'Create Agent Dispatch subscription from an available shared backend',
+      'Create Agent Dispatch subscription from an available workspace connection',
       () => onUseBackendConnection?.(setupReadyBackendConnections[0]),
     ));
   } else if (!hasSubscription) {
@@ -411,11 +352,11 @@ export function createAgentDispatchSetupCards({
   wrapper.append(overviewCard);
 
   const connectionCard = createCard(
-    'Shared Connection',
+    'Workspace Connection',
     hasSubscription
-      ? 'All dispatch paths reuse this single Tower connection.'
+      ? 'All dispatch paths reuse this workspace connection.'
       : hasAvailableBackend
-        ? 'A backend managed by another user is available. Reuse it to create your own subscription and local agent state.'
+        ? 'A workspace connection is available on this Wingman instance.'
       : 'No subscription is configured yet. AgentConnect import is the preferred setup path.',
   );
   if (hasSubscription) {
@@ -427,18 +368,12 @@ export function createAgentDispatchSetupCards({
       createTonePill(subscription.botNpub ? 'Bot Bound' : 'Bot Pending', subscription.botNpub ? 'success' : 'warning'),
     );
     connectionCard.append(statusRow);
-    connectionCard.append(createMetricRow([
-      { label: 'Recent Events', value: String(Array.isArray(subscription.recentSseEvents) ? subscription.recentSseEvents.length : 0) },
-      { label: 'Dispatches', value: String(Array.isArray(subscription.recentDispatches) ? subscription.recentDispatches.length : 0) },
-      { label: 'Last Event', value: formatTimestamp(subscription.lastSseEvent?.at || '') },
-    ]));
     connectionCard.append(createDetailList([
       ['Workspace', subscription.workspaceOwnerNpub || 'None'],
       ['Backend', subscription.backendBaseUrl || 'None'],
-      ['Backend Connection', subscription.backendConnectionId || 'Legacy direct URL'],
       ['Source App', subscription.sourceAppNpub || 'None'],
-      ['Import', subscription.connectionTokenRef ? 'Agent Connect' : 'Manual'],
       ['Bot', subscription.botNpub || 'Pending'],
+      ['Last Event', formatTimestamp(subscription.lastSseEvent?.at || '')],
     ]));
     if (subscriptionBackendConnection?.operator?.canManageAvailability) {
       connectionCard.append(createBackendAvailabilityEditor(subscriptionBackendConnection, onSaveBackendAvailability));
@@ -447,8 +382,8 @@ export function createAgentDispatchSetupCards({
     const note = document.createElement('p');
     note.className = 'wm-settings__port-note';
     note.textContent = hasSetupReadyBackend
-      ? 'Using a shared backend copies only non-secret setup facts into your user-scoped subscription. Bot identity, route state, diagnostics, and dispatch history stay separate.'
-      : 'The shared backend record is visible, but it is missing workspace owner or source app setup hints. Use the manual connection fields until those hints are added.';
+      ? 'Use the shared workspace connection to configure this Wingman without retyping backend details.'
+      : 'The workspace connection is visible, but it is missing workspace owner or source app setup hints. Use the manual connection fields until those hints are added.';
     connectionCard.append(note);
     const renderedBackendConnections = hasSetupReadyBackend ? setupReadyBackendConnections : visibleBackendConnections;
     renderedBackendConnections.forEach((backendConnection) => {
@@ -475,7 +410,7 @@ export function createAgentDispatchSetupCards({
   const agentCard = createCard(
     'Primary Agent',
     hasAgent
-      ? 'This is the one local identity that should accumulate dispatch roles.'
+      ? 'This local agent handles dispatch roles for the shared Wingman bot.'
       : 'No local agent is configured yet.',
   );
   if (hasAgent) {
@@ -493,16 +428,14 @@ export function createAgentDispatchSetupCards({
       ['Agent', primaryAgent.label || primaryAgent.agentId || 'None'],
       ['Agent ID', primaryAgent.agentId || 'None'],
       ['Working Directory', primaryAgent.workingDirectory || 'None'],
-      ['Bot', subscription?.botNpub || primaryAgent.botNpub || 'None'],
-      ['Workspace', subscription?.workspaceOwnerNpub || primaryAgent.workspaceOwnerNpub || 'None'],
     ]));
     agentCard.append(createCapabilityList(primaryAgent.capabilities));
     const note = document.createElement('p');
     note.className = 'wm-settings__port-note';
     note.style.marginTop = '10px';
     note.textContent = additionalAgentCount > 0
-      ? 'Additional agents still exist below, but this page is optimized around one primary identity with role toggles.'
-      : 'Use the Dispatch Capabilities section below to turn individual roles on and off for this same agent.';
+      ? 'Additional agents still exist below; this setup path prefers one primary identity.'
+      : 'Use Dispatch Capabilities below to turn roles on and off.';
     agentCard.append(note);
   } else {
     const empty = document.createElement('p');
@@ -510,7 +443,7 @@ export function createAgentDispatchSetupCards({
     empty.textContent = hasSubscription
       ? 'The connection is ready. Save one local agent and reuse the subscription bot/workspace automatically.'
       : hasSetupReadyBackend
-        ? 'Use the shared backend first, then save your local agent against the new user-scoped subscription.'
+        ? 'Use the workspace connection first, then save the local agent.'
       : 'Create the shared connection first, then save the primary local agent once.';
     agentCard.append(empty);
   }

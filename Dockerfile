@@ -98,6 +98,7 @@ ENV GOOSE_CLI=/usr/local/bin/goose
 ENV OPENCODE_CLI=/usr/local/bin/opencode
 ENV GEMINI_CLI=/usr/local/bin/gemini
 ENV PI_CLI=/usr/local/bin/pi
+ENV WINGMAN_SHARED_INSTANCE=true
 ENV WINGMAN_SETUP_NONINTERACTIVE=true
 ENV AGENT_CHAT_YOKE_HELPERS_PATH=/opt/flightdeck-cli/src/bot-helpers.js
 ENV AGENT_CHAT_YOKE_TRANSLATORS_PATH=/opt/flightdeck-cli/src/translators.js
