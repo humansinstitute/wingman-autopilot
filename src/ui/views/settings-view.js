@@ -13,7 +13,7 @@ import {
 } from './settings/workspace-sections.js';
 import { createDefaultAgentSection } from './settings/profile-sections.js';
 import { createTeamBillingSection } from './settings/admin-billing-section.js';
-import { createAgentChatSection, createAgentDispatchLauncher } from './settings/agent-chat-section.js';
+import { createAgentChatSection } from './settings/agent-chat-section.js';
 
 export function initSettingsView(deps) {
   const {
@@ -37,11 +37,6 @@ export function initSettingsView(deps) {
     openDirectoryBrowser,
   } = deps;
 
-  function navigateToAgentsSettings() {
-    window.history.pushState({ route: 'settings' }, '', '/settings/agents');
-    render();
-  }
-
   function renderWorkspaceTab() {
     const fragment = document.createDocumentFragment();
     const wingmanCard = document.createElement('section');
@@ -60,7 +55,6 @@ export function initSettingsView(deps) {
         config: state.config,
         currentOrigin: window.location.origin,
       }));
-      wingmanCard.append(createAgentDispatchLauncher({ onNavigate: navigateToAgentsSettings }));
       const giteaPlaceholder = document.createElement('div');
       wingmanCard.append(giteaPlaceholder);
       fetch('/api/config')
@@ -141,6 +135,23 @@ export function initSettingsView(deps) {
     return fragment;
   }
 
+  function renderAgentsTab() {
+    const fragment = document.createDocumentFragment();
+    if (state.identity.authenticated) {
+      fragment.append(createAgentChatSection({
+        standalone: true,
+        openDirectoryBrowser,
+      }));
+      return fragment;
+    }
+
+    const note = document.createElement('section');
+    note.className = 'wm-card';
+    note.innerHTML = '<h2>Agents</h2><p>Sign in to configure Agent Dispatch.</p>';
+    fragment.append(note);
+    return fragment;
+  }
+
   function renderProjectsTab() {
     const fragment = document.createDocumentFragment();
     if (state.identity.authenticated) {
@@ -209,28 +220,6 @@ export function initSettingsView(deps) {
     const wrapper = document.createElement('div');
     wrapper.className = 'wm-settings';
 
-    const path = typeof window !== 'undefined' ? window.location.pathname : '/settings';
-    if (path.startsWith('/settings/agents')) {
-      const pageTitle = document.createElement('h1');
-      pageTitle.textContent = 'Settings';
-      wrapper.append(pageTitle);
-
-      const backButton = document.createElement('button');
-      backButton.type = 'button';
-      backButton.className = 'wm-button secondary';
-      backButton.textContent = 'Back To Settings';
-      backButton.addEventListener('click', () => {
-        window.history.pushState({ route: 'settings' }, '', '/settings');
-        render();
-      });
-      wrapper.append(backButton);
-      wrapper.append(createAgentChatSection({
-        standalone: true,
-        openDirectoryBrowser,
-      }));
-      return wrapper;
-    }
-
     const pageTitle = document.createElement('h1');
     pageTitle.textContent = 'Settings';
     wrapper.append(pageTitle);
@@ -238,6 +227,7 @@ export function initSettingsView(deps) {
     const tabDefs = [
       { id: 'profile', label: 'Profile', render: renderProfileTab },
       { id: 'workspace', label: 'Workspace', render: renderWorkspaceTab },
+      { id: 'agents', label: 'Agents', render: renderAgentsTab },
       { id: 'users', label: 'Users', render: renderUsersTab },
       { id: 'projects', label: 'Projects', render: renderProjectsTab },
     ];
@@ -246,12 +236,20 @@ export function initSettingsView(deps) {
       tabDefs.push({ id: 'admin', label: 'Admin', render: renderAdminTab });
     }
 
+    const path = typeof window !== 'undefined' ? window.location.pathname : '/settings';
+    const activeTabId = path.startsWith('/settings/agents')
+      ? 'agents'
+      : state.ui?.settingsActiveTabId ?? tabDefs[0]?.id;
+
     wrapper.append(createSettingsTabs({
       tabDefs,
-      activeTabId: state.ui?.settingsActiveTabId ?? tabDefs[0]?.id,
+      activeTabId,
       onTabChange: (tabId) => {
         if (!state.ui) state.ui = {};
         state.ui.settingsActiveTabId = tabId;
+        if (path.startsWith('/settings/agents') && tabId !== 'agents') {
+          window.history.replaceState({ route: 'settings' }, '', '/settings');
+        }
       },
     }));
     return wrapper;

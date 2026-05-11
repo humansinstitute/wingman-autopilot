@@ -1,4 +1,3 @@
-import { createSettingsTabs } from '../settings-tabs.js';
 import {
   deleteAgentChatAgent,
   deleteAgentChatSubscription,
@@ -26,10 +25,7 @@ import {
   createSubscriptionEditorCard,
 } from './agent-chat-editor-cards.js';
 import {
-  createButton,
-  createCard,
   createConfiguredDispatchesPanel,
-  createInlineActions,
   formatCapability,
   createStatusLine,
   setPanelVisible,
@@ -72,24 +68,6 @@ function normaliseAgentCapabilities(agent) {
   return Array.isArray(agent?.capabilities) && agent.capabilities.length > 0
     ? [...new Set(agent.capabilities)]
     : ['chat_intercept'];
-}
-
-export function createAgentDispatchLauncher({ onNavigate } = {}) {
-  const card = createCard(
-    'Agent Dispatch',
-    'Open the dedicated agent page to manage one shared connection, one primary local agent, SSE activity, and dispatch history.',
-  );
-  const openButton = createButton('Open Agent Dispatch', 'agent-dispatch-open', 'Open Agent Dispatch settings');
-  openButton.addEventListener('click', () => {
-    if (typeof onNavigate === 'function') {
-      onNavigate();
-      return;
-    }
-    window.history.pushState({ route: 'settings' }, '', '/settings/agents');
-    window.dispatchEvent(new PopStateEvent('popstate'));
-  });
-  card.append(createInlineActions(openButton));
-  return card;
 }
 
 export function createAgentChatSection({ standalone = false, openDirectoryBrowser = null } = {}) {
@@ -164,6 +142,10 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
     },
   });
   const setupPanel = document.createElement('div');
+  setupPanel.setAttribute('data-testid', 'agent-chat-setup-panel');
+  const setupHeading = document.createElement('h3');
+  setupHeading.textContent = 'Setup';
+  setupPanel.append(setupHeading);
   setupPanel.append(
     setupOverviewContainer,
     subscriptionEditor.card,
@@ -173,9 +155,12 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
     agentRegistryContainer,
   );
   const operatorPanel = document.createElement('div');
+  operatorPanel.setAttribute('data-testid', 'agent-chat-live-panel');
+  const liveHeading = document.createElement('h3');
+  liveHeading.textContent = 'Live';
   const listContainer = document.createElement('div');
   listContainer.setAttribute('data-testid', 'agent-chat-subscription-list');
-  operatorPanel.append(listContainer);
+  operatorPanel.append(liveHeading, listContainer);
   function updateAgentIdentityFields() {
     agentEditor.applyInheritedIdentity(currentPrimarySubscription);
   }
@@ -512,7 +497,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
       if (subscriptions.length === 0) {
         const empty = document.createElement('p');
         empty.className = 'wm-settings__port-note';
-        empty.textContent = 'No workspace subscriptions yet. Create one from the Setup tab first.';
+        empty.textContent = 'No workspace subscriptions yet. Create one from the setup section below.';
         listContainer.append(empty);
         return;
       }
@@ -604,14 +589,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
   });
   subscriptionEditor.closeButton.addEventListener('click', () => setPanelVisible(subscriptionEditor.card, false));
   agentEditor.closeButton.addEventListener('click', () => agentEditor.close());
-  container.append(createSettingsTabs({
-    tabDefs: [
-      { id: 'setup', label: 'Setup', render: () => setupPanel },
-      { id: 'operator', label: 'Live', render: () => operatorPanel },
-    ],
-    activeTabId: 'setup',
-    onTabChange: () => {},
-  }));
+  container.append(operatorPanel, setupPanel);
   container.append(agentConnectImportModal.element, agentNameModal.element);
   void refreshList();
   return container;
