@@ -61,6 +61,7 @@ describe("docker provisioning", () => {
     const content = readFileSync(envPath, "utf8");
     expect(content).toContain("WINGMAN_ADMIN_NPUB=npub1operator");
     expect(content).toContain("WINGMAN_IDENTITY_COOKIE_SECURE=true");
+    expect(content).not.toContain("WINGMAN_CONTAINER_PORT=");
     expect(content).toContain("WINGMAN_CODEX_CLI=/usr/local/bin/codex");
     expect(content).toContain("WINGMAN_CODEX_TRUSTED_WORKSPACE=/workspace");
     expect(content).toContain("WINGMAN_GLOVES=OFF");
@@ -70,6 +71,27 @@ describe("docker provisioning", () => {
     expect(content).toContain("WINGMAN_PRIV=");
     expect(content).toContain("WINGMAN_REGISTER=false");
     expect(content).toContain("WINGMAN_SETUP_NONINTERACTIVE=true");
+  });
+
+  test("normalizes bare public hostnames to https base URLs", () => {
+    const envPath = join(makeTempDir(), ".env");
+    const result = runProvision([
+      "--env",
+      envPath,
+      "--instance-name",
+      "wingman-99",
+      "--host-port",
+      "3999",
+      "--base-url",
+      "mw.runwingman.com",
+      "--admin-npub",
+      "npub1operator",
+    ]);
+
+    expect(result.status).toBe(0);
+    const content = readFileSync(envPath, "utf8");
+    expect(content).toContain("WINGMAN_BASE_URL=https://mw.runwingman.com");
+    expect(content).toContain("WINGMAN_IDENTITY_COOKIE_SECURE=true");
   });
 
   test("defaults Docker env files to the selected instance name", () => {

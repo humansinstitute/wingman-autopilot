@@ -152,6 +152,17 @@ function resolveWorkspaceHostPath(input: string, index: number): string {
   return rawPath;
 }
 
+function normalizeBaseUrl(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed.replace(/\/+$/, "");
+  }
+  return `https://${trimmed.replace(/\/+$/, "")}`;
+}
+
 function generateSecret(): string {
   return randomBytes(48).toString("base64url");
 }
@@ -202,7 +213,7 @@ function main(): void {
   }
 
   const hostPort = options.hostPort ?? DEFAULT_CONTAINER_PORT + picked.index - 1;
-  const baseUrl = options.baseUrl || `http://localhost:${hostPort}`;
+  const baseUrl = normalizeBaseUrl(options.baseUrl || `http://localhost:${hostPort}`);
   const secret = readExistingSecret(envPath) || generateSecret();
   const secureCookies = baseUrl.startsWith("https://") ? "true" : "false";
   const workspaceHostPath = resolveWorkspaceHostPath(options.workspaceHostPath, picked.index);
@@ -213,7 +224,6 @@ function main(): void {
     WINGMAN_INSTANCE_NAME: picked.name,
     WINGMAN_IMAGE: "wingman-autopilot:local",
     WINGMAN_HOST_PORT: String(hostPort),
-    WINGMAN_CONTAINER_PORT: String(DEFAULT_CONTAINER_PORT),
     WINGMAN_AGENT_PORTS: String(DEFAULT_AGENT_PORT_START),
     WINGMAN_AGENT_MAX: String(DEFAULT_AGENT_MAX),
     WINGMAN_DIRECTORY_DEF: "/workspace",

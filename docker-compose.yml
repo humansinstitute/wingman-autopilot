@@ -8,9 +8,9 @@ services:
     restart: unless-stopped
     tty: true
     ports:
-      - "${WINGMAN_HOST_PORT:-3600}:${WINGMAN_CONTAINER_PORT:-3600}"
+      - "${WINGMAN_HOST_PORT:-3600}:3600"
     environment:
-      PORT: "${WINGMAN_CONTAINER_PORT:-3600}"
+      PORT: "3600"
       HOME: /home/wingman
       AGENT_PORTS: "${WINGMAN_AGENT_PORTS:-3700}"
       AGENT_MAX: "${WINGMAN_AGENT_MAX:-10}"

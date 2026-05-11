@@ -111,6 +111,16 @@ expand_path() {
   fi
 }
 
+normalize_base_url() {
+  local value="$1"
+  value="${value%/}"
+  if [[ "$value" == http://* || "$value" == https://* ]]; then
+    printf '%s' "$value"
+  else
+    printf 'https://%s' "$value"
+  fi
+}
+
 write_env() {
   local index key value
   : >"$ENV_FILE"
@@ -168,7 +178,7 @@ fi
 host_port="$(prompt "Host port" "$default_host_port")"
 [[ "$host_port" =~ ^[0-9]+$ && "$host_port" -ge 1 && "$host_port" -le 65535 ]] || fail "host port must be 1-65535"
 
-base_url="$(prompt "Public base URL" "http://localhost:$host_port")"
+base_url="$(normalize_base_url "$(prompt "Public base URL" "http://localhost:$host_port")")"
 workspace_host_path="$(expand_path "$(prompt "Host workspace path mounted at /workspace" "$default_workspace")")"
 
 routing_mode="$(prompt "Hosted app routing mode: path or subdomain" "path")"
@@ -201,7 +211,6 @@ add_env "COMPOSE_PROJECT_NAME" "$instance_name"
 add_env "WINGMAN_INSTANCE_NAME" "$instance_name"
 add_env "WINGMAN_IMAGE" "$DEFAULT_IMAGE"
 add_env "WINGMAN_HOST_PORT" "$host_port"
-add_env "WINGMAN_CONTAINER_PORT" "$DEFAULT_CONTAINER_PORT"
 add_env "WINGMAN_AGENT_PORTS" "$DEFAULT_AGENT_PORTS"
 add_env "WINGMAN_AGENT_MAX" "$DEFAULT_AGENT_MAX"
 add_env "WINGMAN_DIRECTORY_DEF" "/workspace"

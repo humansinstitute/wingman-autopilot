@@ -68,7 +68,7 @@ chmod +x setupwizard.sh
 The setup wizard prompts for:
 
 - admin npub
-- instance name and host port
+- instance name and host port on the base machine
 - public base URL
 - host workspace directory mounted at `/workspace`
 - path or subdomain app routing
@@ -96,6 +96,27 @@ The default instance is `wingman-01`; if Docker already has that Compose project
 the wizard moves to `wingman-02`, `wingman-03`, and so on. The first instance
 mounts the base-machine directory `~/.wm-ap` at `/workspace`; later generated
 instances use numbered directories such as `~/.wm-ap02` and `~/.wm-ap03`.
+The generated `WINGMAN_HOST_PORT` is the base-machine port published by Docker.
+The container keeps its internal Wingman port at `3600`, so a host value such as
+`3321` maps `localhost:3321` on the base machine to `3600` inside the container.
+Cloudflare should point at the host port, for example `http://localhost:3321`;
+do not set a separate container port per instance.
+
+Use the restart helper to operate local or Docker envs without remembering the
+Compose incantation:
+
+```bash
+chmod +x restart_wingman.sh
+./restart_wingman.sh
+./restart_wingman.sh --env .env.wingman-01 --restart
+./restart_wingman.sh --env .env.wingman-01 --reload-env
+./restart_wingman.sh --env .env.wingman-01 --rebuild
+./restart_wingman.sh .env.wingman-01 status
+```
+
+`restart` only restarts the existing container. `reload-env` recreates the
+container from the selected `.env.<instance>` file. `rebuild` rebuilds the image
+and recreates the container.
 
 Open a shell in the persistent `/home/wingman` environment and run the CLI login
 flows from inside the container:
