@@ -224,6 +224,7 @@ function main(): void {
     WINGMAN_SUBDOMAIN_PROXY_ENABLED: "true",
     WINGMAN_AGENT_SPAWN_MODE: "bun",
     WINGMAN_AGENTAPI_ALLOWED_HOSTS: "localhost,127.0.0.1,[::1]",
+    WINGMAN_DEFAULT_AGENT: "codex",
     WINGMAN_CODEX_CLI: "/usr/local/bin/codex",
     WINGMAN_CODEX_TRUSTED_WORKSPACE: "/workspace",
     WINGMAN_CLAUDE_CLI: "/usr/local/bin/claude",

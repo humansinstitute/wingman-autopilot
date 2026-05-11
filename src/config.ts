@@ -304,14 +304,19 @@ function createDefaultAgents(
       type: "codex",
     }),
     claude: withAgentCommand(agentApiBinary, "Claude", readEnvValue(env, "CLAUDE_CLI") ?? "claude", {
+      type: "claude",
       extraArgs: claudeExtraArgs,
     }),
-    goose: withAgentCommand(agentApiBinary, "Goose", readEnvValue(env, "GOOSE_CLI") ?? "goose"),
+    goose: withAgentCommand(agentApiBinary, "Goose", readEnvValue(env, "GOOSE_CLI") ?? "goose", {
+      type: "goose",
+    }),
     opencode: withAgentCommand(agentApiBinary, "OpenCode", readEnvValue(env, "OPENCODE_CLI") ?? "opencode", {
       type: "opencode",
       extraArgs: openCodeExtraArgs,
     }),
-    gemini: withAgentCommand(agentApiBinary, "Gemini", readEnvValue(env, "GEMINI_CLI") ?? "gemini"),
+    gemini: withAgentCommand(agentApiBinary, "Gemini", readEnvValue(env, "GEMINI_CLI") ?? "gemini", {
+      type: "gemini",
+    }),
     pi: withAgentCommand(agentApiBinary, "Pi", readEnvValue(env, "PI_CLI") ?? "pi"),
   };
 }

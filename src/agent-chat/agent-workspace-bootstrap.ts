@@ -1,6 +1,6 @@
 import { constants, existsSync } from 'node:fs';
-import { access, chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { access, appendFile, chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join, relative, resolve } from 'node:path';
 
 import type { AgentDefinitionRecord } from './types';
 
@@ -78,6 +78,7 @@ export async function bootstrapAgentWorkspace(
   }
 
   await mkdir(workingDirectory, { recursive: true });
+  await ensureCodexTrust(workingDirectory);
   const values = templateValues(input);
   const createdFiles: string[] = [];
   const skippedFiles: string[] = [];
@@ -103,6 +104,43 @@ export async function bootstrapAgentWorkspace(
     createdFiles,
     skippedFiles,
   };
+}
+
+function isWithinDirectory(childPath: string, parentPath: string): boolean {
+  const relativePath = relative(resolve(parentPath), resolve(childPath));
+  return relativePath === '' || (!relativePath.startsWith('..') && !relativePath.startsWith('/'));
+}
+
+function tomlString(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+async function ensureCodexTrust(workingDirectory: string): Promise<void> {
+  const trustedRoot = Bun.env.CODEX_TRUSTED_WORKSPACE?.trim();
+  if (!trustedRoot || !isWithinDirectory(workingDirectory, trustedRoot)) {
+    return;
+  }
+
+  const home = Bun.env.HOME?.trim();
+  if (!home) {
+    return;
+  }
+  const codexHome = Bun.env.CODEX_HOME?.trim() || join(home, '.codex');
+  const configPath = join(codexHome, 'config.toml');
+  const projectHeader = `[projects.${tomlString(resolve(workingDirectory))}]`;
+
+  await mkdir(codexHome, { recursive: true });
+  let existing = '';
+  try {
+    existing = await readFile(configPath, 'utf8');
+  } catch {
+    existing = '';
+  }
+  if (existing.split(/\r?\n/).some((line) => line.trim() === projectHeader)) {
+    return;
+  }
+  const prefix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
+  await appendFile(configPath, `${prefix}\n${projectHeader}\ntrust_level = "trusted"\n`);
 }
 
 export async function bootstrapAgentDefinitionWorkspace(

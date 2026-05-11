@@ -2,13 +2,35 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 
 import { bootstrapAgentWorkspace } from './agent-workspace-bootstrap';
 
 async function makeTempWorkspace(): Promise<string> {
   return await mkdtemp(join(tmpdir(), 'wingman-agent-workspace-'));
 }
+
+const originalHome = Bun.env.HOME;
+const originalCodexHome = Bun.env.CODEX_HOME;
+const originalCodexTrustedWorkspace = Bun.env.CODEX_TRUSTED_WORKSPACE;
+
+afterEach(() => {
+  if (originalHome === undefined) {
+    delete Bun.env.HOME;
+  } else {
+    Bun.env.HOME = originalHome;
+  }
+  if (originalCodexHome === undefined) {
+    delete Bun.env.CODEX_HOME;
+  } else {
+    Bun.env.CODEX_HOME = originalCodexHome;
+  }
+  if (originalCodexTrustedWorkspace === undefined) {
+    delete Bun.env.CODEX_TRUSTED_WORKSPACE;
+  } else {
+    Bun.env.CODEX_TRUSTED_WORKSPACE = originalCodexTrustedWorkspace;
+  }
+});
 
 describe('bootstrapAgentWorkspace', () => {
   test('creates a generic local agent workspace from templates', async () => {
@@ -57,6 +79,31 @@ describe('bootstrapAgentWorkspace', () => {
       expect(existsSync(join(dir, 'CLAUDE.md'))).toBe(true);
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('marks generated workspaces trusted for Codex when under the trusted root', async () => {
+    const root = await makeTempWorkspace();
+    const home = await makeTempWorkspace();
+    const codexHome = join(home, '.codex');
+    try {
+      Bun.env.HOME = home;
+      Bun.env.CODEX_HOME = codexHome;
+      Bun.env.CODEX_TRUSTED_WORKSPACE = root;
+      await bootstrapAgentWorkspace({
+        agentId: 'lara',
+        label: 'Lara',
+        botNpub: 'npub1bot',
+        workspaceOwnerNpub: 'npub1workspace',
+        workingDirectory: join(root, 'lara'),
+      });
+
+      const config = await readFile(join(codexHome, 'config.toml'), 'utf8');
+      expect(config).toContain(`[projects."${join(root, 'lara')}"]`);
+      expect(config).toContain('trust_level = "trusted"');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
     }
   });
 });

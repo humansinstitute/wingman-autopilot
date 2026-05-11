@@ -80,7 +80,7 @@ export function initQuickLauncher(deps) {
     closeQuickLauncherMenu();
     const sessionId = getNextSessionId(project.id);
     const sessionName = `${project.name}-${sessionId}`;
-    const agentId = state.config?.defaultAgent ?? "claude";
+    const agentId = state.config?.defaultAgent ?? "codex";
     const directory = project.directoryPath;
 
     try {

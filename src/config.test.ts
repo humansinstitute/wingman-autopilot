@@ -127,6 +127,38 @@ describe("loadConfig", () => {
     expect(config.agentSpawnMode).toBe("bun");
   });
 
+  test("defaults to codex when DEFAULT_AGENT is not set", () => {
+    applyEnv({
+      DEFAULT_AGENT: undefined,
+      AGENTAPI_BIN: "/tmp/custom-agentapi",
+      AGENT_MODE: undefined,
+      AGENT_SPAWN_MODE: undefined,
+      GLOVES: undefined,
+    });
+
+    const config = loadConfig();
+
+    expect(config.defaultAgent).toBe("codex");
+  });
+
+  test("passes explicit agentapi type flags for command-backed agents", () => {
+    applyEnv({
+      AGENTAPI_BIN: "/tmp/custom-agentapi",
+      AGENT_MODE: undefined,
+      AGENT_SPAWN_MODE: undefined,
+      GLOVES: undefined,
+    });
+
+    const config = loadConfig();
+    const claudeCommand = config.agents.claude.command({ agent: "claude", config, port: 3701 });
+    const gooseCommand = config.agents.goose.command({ agent: "goose", config, port: 3702 });
+    const geminiCommand = config.agents.gemini.command({ agent: "gemini", config, port: 3703 });
+
+    expect(claudeCommand).toContain("--type=claude");
+    expect(gooseCommand).toContain("--type=goose");
+    expect(geminiCommand).toContain("--type=gemini");
+  });
+
   test("accepts pi as a configured default agent and launcher target", () => {
     applyEnv({
       DEFAULT_AGENT: "pi",

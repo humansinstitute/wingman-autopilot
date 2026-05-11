@@ -201,7 +201,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       pipelineStore,
       getSessionApiContext: () => ({} as never),
       callbackOrigin: 'http://localhost',
-      defaultAgent: 'claude',
+      defaultAgent: 'codex',
       loadDefinition: async () => ({
         id: 'chat-pipeline',
         slug: 'chat-pipeline',
@@ -248,7 +248,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect((runInputs[0]?.chat as any)?.messageText).toBe('Can you see this message?');
     expect((runInputs[0]?.chat as any)?.channelId).toBe('channel-1');
     expect((runInputs[0]?.chat as any)?.threadId).toBe('thread-1');
-    expect((runInputs[0]?.agent as any)?.defaultAgent).toBe('claude');
+    expect((runInputs[0]?.agent as any)?.defaultAgent).toBe('codex');
   });
 
   test('starts configured task dispatch pipeline and records run history', async () => {

@@ -2,7 +2,7 @@ export const AGENT_TYPES = ["claude", "codex", "goose", "opencode", "gemini", "p
 
 export type AgentType = (typeof AGENT_TYPES)[number];
 
-export const DEFAULT_AGENT_TYPE: AgentType = "claude";
+export const DEFAULT_AGENT_TYPE: AgentType = "codex";
 
 export const AGENT_TYPE_LABELS: Record<AgentType, string> = {
   claude: "Claude",

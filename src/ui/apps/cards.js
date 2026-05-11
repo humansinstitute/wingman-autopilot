@@ -479,7 +479,7 @@ export function initAppCards(deps) {
         showToast("App root directory is unavailable for this app.", { type: "warning" });
         return;
       }
-      const agentId = state.config?.defaultAgent ?? "claude";
+      const agentId = state.config?.defaultAgent ?? "codex";
       const configuredAgents = Array.isArray(state.config?.agents) ? state.config.agents : null;
       if (configuredAgents && !configuredAgents.some((agent) => agent && typeof agent.id === "string" && agent.id === agentId)) {
         showToast(`${agentId} agent is not available. Update your configuration and try again.`, {
@@ -526,7 +526,7 @@ export function initAppCards(deps) {
         showToast("App root directory is unavailable for this app.", { type: "warning" });
         return;
       }
-      const agentId = state.config?.defaultAgent ?? "claude";
+      const agentId = state.config?.defaultAgent ?? "codex";
       const configuredAgents = Array.isArray(state.config?.agents) ? state.config.agents : null;
       if (configuredAgents && !configuredAgents.some((agent) => agent && typeof agent.id === "string" && agent.id === agentId)) {
         showToast(`${agentId} agent is not available. Update your configuration and try again.`, {

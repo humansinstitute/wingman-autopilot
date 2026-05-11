@@ -90,7 +90,7 @@ export function initSessionRuntimeSync({
       agentSelect.append(option);
     });
 
-    const defaultAgentId = state.config.defaultAgent ?? "claude";
+    const defaultAgentId = state.config.defaultAgent ?? "codex";
     if (state.config.agents.some((agent) => agent.id === defaultAgentId)) {
       agentSelect.value = defaultAgentId;
     }
