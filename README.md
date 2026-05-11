@@ -49,6 +49,21 @@ Launch the orchestration server:
 bun start
 ```
 
+Run the local orchestration server under PM2:
+
+```bash
+pm2 start ecosystem.config.cjs --only wingman-autopilot-local
+pm2 logs wingman-autopilot-local
+pm2 restart wingman-autopilot-local --update-env
+pm2 stop wingman-autopilot-local
+```
+
+The PM2 ecosystem config loads `.env`, runs `bun run src/index.ts`, and sets the
+local process-supervision defaults to `AGENT_SPAWN_MODE=tmux` with
+`AGENT_TMUX_SESSION=wm-ap-agents`. Override those by passing environment
+variables to `pm2 start` when needed. That keeps PM2 responsible for the Wingman
+server while agent sessions live in tmux-backed windows.
+
 Visit:
 
 - `http://localhost:<PORT>/home` for the session dashboard
