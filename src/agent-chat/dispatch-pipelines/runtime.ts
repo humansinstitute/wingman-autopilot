@@ -1,8 +1,9 @@
 import { generateIdentityAlias } from '../../identity/identity-alias';
+import type { FunctionRegistry } from '../../pipelines/declarative';
 import { loadPipelineFunctionRegistry } from '../../pipelines/function-loader';
 import { builtinPipelineFunctions } from '../../pipelines/functions';
 import { getPipelineDefinition } from '../../pipelines/pipeline-loader';
-import { runDeclarativePipeline } from '../../pipelines/pipeline-runner';
+import { runDeclarativePipeline, startDeclarativePipeline } from '../../pipelines/pipeline-runner';
 import { type JsonObject, PipelineStore } from '../../pipelines/pipeline-store';
 import type { SessionApiContext } from '../../server/session-api-routes';
 import { agentDefinitionStore, type AgentDefinitionStore } from '../agent-definition-store';
@@ -202,20 +203,20 @@ export class DispatchPipelineRuntime {
       flightDeckRuntime,
       defaultAgent: this.defaultAgent,
     });
-    const functions = await this.loadFunctions(ownerAlias, builtinPipelineFunctions);
-    if (pipelineNeedsFlightDeckPublisher(definition.spec)) {
-      functions.registry['dispatch.publishFlightDeckResponse'] = createDispatchFlightDeckPublisher({
-        eventInput: input,
-        agent,
-        botIdentity: input.botIdentity ?? null,
-        runtime: flightDeckRuntime,
-      });
-    }
+    const functions = await this.loadRuntimeFunctions({
+      ownerAlias,
+      ownerNpub,
+      sessionApiContext,
+      eventInput: input,
+      agent,
+      flightDeckRuntime,
+      definitionNeedsPublisher: pipelineNeedsFlightDeckPublisher(definition.spec),
+    });
     const run = await this.runPipeline({
       store: this.pipelineStore,
       sessionApiContext,
       definition,
-      registry: functions.registry,
+      registry: functions,
       input: envelope,
       ownerNpub,
       ownerAlias,
@@ -235,6 +236,92 @@ export class DispatchPipelineRuntime {
         }),
       ],
       lastPipelineRunId: run.id,
+    };
+  }
+
+  private async loadRuntimeFunctions(input: {
+    ownerAlias: string;
+    ownerNpub: string;
+    sessionApiContext: SessionApiContext;
+    eventInput: DispatchPipelineEventInput;
+    agent: AgentDefinitionRecord | null;
+    flightDeckRuntime: DispatchPipelineFlightDeckRuntime;
+    definitionNeedsPublisher: boolean;
+  }): Promise<FunctionRegistry> {
+    const functions = await this.loadFunctions(input.ownerAlias, builtinPipelineFunctions);
+    const registry: FunctionRegistry = { ...functions.registry };
+    if (input.definitionNeedsPublisher) {
+      registry['dispatch.publishFlightDeckResponse'] = createDispatchFlightDeckPublisher({
+        eventInput: input.eventInput,
+        agent: input.agent,
+        botIdentity: input.eventInput.botIdentity ?? null,
+        runtime: input.flightDeckRuntime,
+      });
+    }
+    registry['dispatch.startChildPipeline'] = this.createChildPipelineStarter(input);
+    return registry;
+  }
+
+  private createChildPipelineStarter(input: {
+    ownerAlias: string;
+    ownerNpub: string;
+    sessionApiContext: SessionApiContext;
+    eventInput: DispatchPipelineEventInput;
+    agent: AgentDefinitionRecord | null;
+    flightDeckRuntime: DispatchPipelineFlightDeckRuntime;
+  }) {
+    return async (payload: JsonObject): Promise<JsonObject> => {
+      const workPlan = objectValue(payload.workPlan ?? payload.agentResponse ?? payload);
+      const pipelineDefinitionId = getText(payload.pipelineDefinitionId)
+        ?? getText(payload.definitionId)
+        ?? getText(workPlan.childPipelineDefinitionId)
+        ?? getText(workPlan.recommendedPipeline);
+      if (!pipelineDefinitionId) {
+        return {
+          started: false,
+          status: 'failed',
+          reason: 'No child pipeline definition id was provided.',
+        };
+      }
+      const childDefinition = await this.loadDefinition(pipelineDefinitionId, input.ownerAlias);
+      if (!childDefinition) {
+        return {
+          started: false,
+          status: 'failed',
+          pipelineDefinitionId,
+          reason: `Pipeline definition not found: ${pipelineDefinitionId}`,
+        };
+      }
+      const childFunctions = await this.loadRuntimeFunctions({
+        ...input,
+        definitionNeedsPublisher: pipelineNeedsFlightDeckPublisher(childDefinition.spec),
+      });
+      const childInput = objectValue(payload.childInput ?? payload.input);
+      const run = startDeclarativePipeline({
+        store: this.pipelineStore,
+        sessionApiContext: input.sessionApiContext,
+        definition: childDefinition,
+        registry: childFunctions,
+        input: {
+          ...childInput,
+          workPlan,
+          parentDispatch: {
+            routeId: getText(payload.routeId) ?? getText(input.eventInput.recordId),
+            triggerKind: input.eventInput.triggerKind,
+            recordId: input.eventInput.recordId,
+          },
+        },
+        ownerNpub: input.ownerNpub,
+        ownerAlias: input.ownerAlias,
+        callbackOrigin: this.callbackOrigin,
+      });
+      return {
+        started: true,
+        status: run.status,
+        pipelineRunId: run.id,
+        pipelineDefinitionId: childDefinition.id,
+        pipelineName: childDefinition.name,
+      };
     };
   }
 
@@ -427,6 +514,12 @@ function routeMatchesEvent(route: DispatchRouteRecord, input: DispatchPipelineEv
 
 function getText(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 function getStringArray(value: unknown): string[] {

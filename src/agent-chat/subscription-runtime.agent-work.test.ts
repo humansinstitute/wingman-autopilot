@@ -364,6 +364,119 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(next.recentDispatches[0]?.action).toBe('task_pipeline_dispatch');
   });
 
+  test('task dispatch pipelines can start a longer child pipeline', async () => {
+    const routeStore = new DispatchRouteStore(makeTempDb('agent-work-child-pipeline-routes'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-child-pipeline-agents'));
+    const pipelineStore = new PipelineStore(makeTempDb('agent-work-child-pipeline-runs'));
+    const subscription = makeSubscription();
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-task',
+      label: 'Task Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-work',
+      capabilities: ['task_dispatch'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+    routeStore.save({
+      managedByNpub: subscription.managedByNpub!,
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      pipelineDefinitionId: 'parent-pipeline',
+    });
+    const dispatchPipelineRuntime = new DispatchPipelineRuntime({
+      routeStore,
+      agentStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      loadDefinition: async (id) => id === 'parent-pipeline'
+        ? {
+            id: 'parent-pipeline',
+            slug: 'parent-pipeline',
+            name: 'Parent Pipeline',
+            scope: 'user',
+            ownerAlias: 'manager',
+            path: '/tmp/parent-pipeline.json',
+            spec: {
+              name: 'Parent Pipeline',
+              input: {},
+              steps: [
+                {
+                  name: 'start-child',
+                  type: 'code',
+                  function: 'dispatch.startChildPipeline',
+                  input: {
+                    value: {
+                      pipelineDefinitionId: 'child-pipeline',
+                      workPlan: { childPipelineDefinitionId: 'child-pipeline', taskSummary: 'Do the child work' },
+                      childInput: { source: 'parent' },
+                    },
+                  },
+                  assign: '$.childPipeline',
+                },
+              ],
+            },
+          }
+        : id === 'child-pipeline'
+          ? {
+              id: 'child-pipeline',
+              slug: 'child-pipeline',
+              name: 'Child Pipeline',
+              scope: 'user',
+              ownerAlias: 'manager',
+              path: '/tmp/child-pipeline.json',
+              spec: {
+                name: 'Child Pipeline',
+                input: {},
+                steps: [{ name: 'finish', type: 'code', function: 'test.finish' }],
+              },
+            }
+          : null,
+      loadFunctions: async () => ({
+        records: [],
+        registry: {
+          async 'test.finish'(input) {
+            return { ...input, completed: true };
+          },
+        },
+      }),
+    });
+
+    const result = await dispatchPipelineRuntime.dispatch({
+      subscription,
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      recordId: 'task-1',
+      record: {},
+      payload: { task_id: 'task-1', state: 'ready', assigned_to: subscription.botNpub },
+      recordFamily: 'task',
+      recordState: 'ready',
+      recordVersion: 1,
+      updaterNpub: 'npub1user',
+      bindingType: 'task',
+      bindingId: 'task-1',
+      groupNpubs: ['npub1group'],
+    });
+
+    expect(result.handled).toBe(true);
+    const runs = pipelineStore.listRuns();
+    expect(runs.map((run) => run.definitionId).sort()).toEqual(['child-pipeline', 'parent-pipeline']);
+    expect(runs.find((run) => run.definitionId === 'child-pipeline')?.input.workPlan).toMatchObject({
+      taskSummary: 'Do the child work',
+    });
+  });
+
   test('suppresses legacy dispatch when a configured task route is disabled', async () => {
     const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-disabled-pipeline-subscriptions'));
     const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-disabled-pipeline-agents'));

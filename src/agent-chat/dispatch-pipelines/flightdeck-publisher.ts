@@ -180,33 +180,54 @@ async function publishTaskUpdate(
   const state = mode === 'task_review'
     ? normaliseReviewState(response)
     : normaliseTaskState(response);
-  const updateResult = await runYokeJson(context, [
-    'tasks',
-    'update',
-    taskId,
-    '--state',
-    state,
-    '--json',
-  ]);
-  const commentBody = buildTaskCommentBody(mode, state, response);
-  const commentResult = await runYokeJson(context, [
-    'tasks',
-    'comment',
-    taskId,
-    '--body',
-    commentBody,
-    '--json',
-  ]);
+  let updateResult: unknown = null;
+  let updateError: string | null = null;
+  try {
+    updateResult = await runYokeJson(context, [
+      'tasks',
+      'update',
+      taskId,
+      '--state',
+      state,
+      '--json',
+    ]);
+  } catch (error) {
+    updateError = error instanceof Error ? error.message : String(error);
+  }
+  const publishSummary = {
+    ...response,
+    childPipeline: objectValue(input.childPipeline ?? input.launchResult ?? response.childPipeline),
+    updateError,
+  };
+  const commentBody = buildTaskCommentBody(mode, state, publishSummary);
+  let commentResult: unknown = null;
+  let commentError: string | null = null;
+  try {
+    commentResult = await runYokeJson(context, [
+      'tasks',
+      'comment',
+      taskId,
+      '--body',
+      commentBody,
+      '--json',
+    ]);
+  } catch (error) {
+    commentError = error instanceof Error ? error.message : String(error);
+  }
+  const updateRejected = updateError !== null || syncResultRejected(updateResult);
+  const commentRejected = commentError !== null || syncResultRejected(commentResult);
 
   return {
-    published: true,
-    status: 'ok',
+    published: !commentRejected,
+    status: commentRejected ? 'failed' : updateRejected ? 'partial' : 'ok',
     operation: mode === 'task_review' ? 'tasks.update-review' : 'tasks.update',
     taskId,
     state,
     updateResult,
+    updateError,
     commentResult,
-    agentResponse: response,
+    commentError,
+    agentResponse: publishSummary,
   };
 }
 
@@ -347,7 +368,11 @@ function buildTaskCommentBody(
       summary: getText(response.taskSummary) ?? '',
       firstAction: getText(response.firstAction) ?? '',
       executionPlan: getStringArray(response.executionPlan),
+      managerChecklist: getStringArray(response.managerChecklist),
+      taskUpdatePlan: getStringArray(response.taskUpdatePlan),
+      childPipeline: objectValue(response.childPipeline),
       risks: getStringArray(response.risks),
+      updateError: getText(response.updateError),
       confidence: typeof response.confidence === 'number' ? response.confidence : null,
     };
   return [
@@ -376,6 +401,11 @@ function normaliseReviewState(response: Record<string, unknown>): string {
     return 'blocked';
   }
   return 'in_progress';
+}
+
+function syncResultRejected(value: unknown): boolean {
+  const result = objectValue(value);
+  return Array.isArray(result.rejected) && result.rejected.length > 0;
 }
 
 function getRecordId(eventInput: DispatchPipelineEventInput): string | null {

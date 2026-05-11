@@ -247,7 +247,7 @@ const AGENT_DISPATCH_CHAT_DEMO_DEFINITION = {
 
 const AGENT_DISPATCH_TASK_DEMO_DEFINITION = {
   name: "demo-agent-dispatch-task-response",
-  description: "Demo dispatch pipeline for task advisories. It asks one agent step to acknowledge the task, then updates the source Flight Deck task record.",
+  description: "Task intake dispatch pipeline. It investigates the task, chooses a longer-running software implementation or generic do-and-review child pipeline, starts it, then comments back with the launched work plan.",
   input: {
     dispatch: { triggerKind: "task" },
     workspace: { workspaceOwnerNpub: "npub1workspace", sourceAppNpub: "npub1source" },
@@ -268,7 +268,7 @@ const AGENT_DISPATCH_TASK_DEMO_DEFINITION = {
   },
   steps: [
     {
-      name: "draft-task-response",
+      name: "investigate-and-route-task",
       type: "agent",
       agent: "$.agent.defaultAgent",
       directory: "$.agent.workingDirectory",
@@ -278,13 +278,179 @@ const AGENT_DISPATCH_TASK_DEMO_DEFINITION = {
           agent: "$.agent",
           record: "$.record",
           routing: "$.routing",
+          runtime: "$.runtime",
         },
       },
-      prompt: "You are handling a Wingman task dispatch. Read the task payload and produce the response the primary Wingman should use to start work. Do not run any Flight Deck/Yoke CLI commands yourself; the next deterministic pipeline step will update the task. Return JSON fields: accepted boolean, taskSummary string, executionPlan array of short steps, firstAction string, risks array, suggestedStatus string, confidence number from 0 to 1.",
+      prompt: "You are stage 1 of a Wingman task intake pipeline. Do an initial investigation from the task payload and available runtime commands, then choose how the longer work should run. Choose workStyle as either software_implementation for repo/code/build/test work, or do_and_review for generic work such as internet research, planning, writing, booking research, or operational tasks. Return JSON fields: accepted boolean, workStyle string, taskSummary string, initialFindings array, executionPlan array, managerChecklist array, taskUpdatePlan array, risks array, confidence number from 0 to 1. The executionPlan must explicitly say when the child worker and manager should update the Flight Deck task.",
       assign: "$.agentResponse",
     },
     {
+      name: "normalise-work-plan",
+      type: "code",
+      function: "dispatch.normaliseTaskWorkPlan",
+      input: {
+        pick: {
+          agentResponse: "$.agentResponse",
+          record: "$.record",
+          routing: "$.routing",
+        },
+      },
+      assign: "$.workPlan",
+    },
+    {
+      name: "start-follow-up-pipeline",
+      type: "code",
+      function: "dispatch.startChildPipeline",
+      input: {
+        pick: {
+          pipelineDefinitionId: "$.workPlan.childPipelineDefinitionId",
+          workPlan: "$.workPlan",
+          childInput: "$",
+        },
+      },
+      assign: "$.childPipeline",
+    },
+    {
       name: "publish-task-update",
+      type: "code",
+      function: "dispatch.publishFlightDeckResponse",
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          agentResponse: "$.workPlan",
+          childPipeline: "$.childPipeline",
+        },
+      },
+    },
+  ],
+};
+
+const SOFTWARE_IMPLEMENTATION_MANAGER_REVIEW_DEFINITION = {
+  name: "demo-software-implementation-manager-review",
+  description: "Long-running software work pipeline. A worker implements the task, then a manager reviews the result and publishes a task update.",
+  input: {
+    workPlan: {
+      taskSummary: "Implement the requested software change.",
+      executionPlan: ["Inspect the repo", "Implement", "Run focused tests", "Report evidence"],
+      managerChecklist: ["Diff is scoped", "Tests or verification are present", "Task status was updated"],
+    },
+  },
+  steps: [
+    {
+      name: "implementation-worker",
+      type: "agent",
+      agent: "$.agent.defaultAgent",
+      directory: "$.agent.workingDirectory",
+      timeoutMs: 1800000,
+      input: {
+        pick: {
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          workPlan: "$.workPlan",
+        },
+      },
+      prompt: "You are the worker in a Wingman software implementation pipeline. Use the full task context and workPlan. Make the required code changes in the working directory, run focused verification, and update the Flight Deck task at meaningful milestones using runtime.commands when available. Do not stop at analysis. Return JSON fields: completed boolean, summary string, changedFiles array, testsRun array, evidence array, blockers array, taskUpdateComment string, recommendedState string, confidence number.",
+      assign: "$.workerResult",
+    },
+    {
+      name: "manager-review",
+      type: "agent",
+      agent: "$.agent.defaultAgent",
+      directory: "$.agent.workingDirectory",
+      timeoutMs: 1200000,
+      input: {
+        pick: {
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          workPlan: "$.workPlan",
+          workerResult: "$.workerResult",
+        },
+      },
+      prompt: "You are the manager reviewer in a Wingman software implementation pipeline. Review workerResult against workPlan.managerChecklist and the original task. Inspect changed files and evidence where relevant. Confirm the task was or should be updated at appropriate stages. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, executionPlan array, managerChecklist array, requiredChanges array, risks array, suggestedStatus string, confidence number.",
+      assign: "$.agentResponse",
+    },
+    {
+      name: "publish-manager-review",
+      type: "code",
+      function: "dispatch.publishFlightDeckResponse",
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          agentResponse: "$.agentResponse",
+        },
+      },
+    },
+  ],
+};
+
+const DO_AND_REVIEW_DEFINITION = {
+  name: "demo-do-and-review",
+  description: "Long-running generic task pipeline. A worker completes non-code work such as research or planning, then a manager reviews evidence and publishes a task update.",
+  input: {
+    workPlan: {
+      taskSummary: "Complete the requested task.",
+      executionPlan: ["Investigate", "Do the work", "Review evidence", "Report result"],
+      managerChecklist: ["Sources or evidence are recorded", "The answer matches the task", "Task status was updated"],
+    },
+  },
+  steps: [
+    {
+      name: "do-work",
+      type: "agent",
+      agent: "$.agent.defaultAgent",
+      directory: "$.agent.workingDirectory",
+      timeoutMs: 1800000,
+      input: {
+        pick: {
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          workPlan: "$.workPlan",
+        },
+      },
+      prompt: "You are the worker in a Wingman do-and-review pipeline. Complete the generic task using the full task context and workPlan. For current-world facts, use internet research and record sources. Update the Flight Deck task at meaningful milestones using runtime.commands when available. Return JSON fields: completed boolean, summary string, sources array, evidence array, result string, blockers array, taskUpdateComment string, recommendedState string, confidence number.",
+      assign: "$.workerResult",
+    },
+    {
+      name: "manager-review",
+      type: "agent",
+      agent: "$.agent.defaultAgent",
+      directory: "$.agent.workingDirectory",
+      timeoutMs: 1200000,
+      input: {
+        pick: {
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          workPlan: "$.workPlan",
+          workerResult: "$.workerResult",
+        },
+      },
+      prompt: "You are the manager reviewer in a Wingman do-and-review pipeline. Check workerResult against workPlan.managerChecklist and the original task. Verify sources/evidence are sufficient, decide whether the work is complete, and ensure the task update plan has been followed or clearly report what remains. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, executionPlan array, managerChecklist array, requiredChanges array, risks array, suggestedStatus string, confidence number.",
+      assign: "$.agentResponse",
+    },
+    {
+      name: "publish-manager-review",
       type: "code",
       function: "dispatch.publishFlightDeckResponse",
       input: {
@@ -576,6 +742,8 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
     ["demo-agent-dispatch-task-response.json", AGENT_DISPATCH_TASK_DEMO_DEFINITION],
     ["demo-agent-dispatch-comment-response.json", AGENT_DISPATCH_COMMENT_DEMO_DEFINITION],
     ["demo-agent-dispatch-task-review-response.json", AGENT_DISPATCH_TASK_REVIEW_DEMO_DEFINITION],
+    ["demo-software-implementation-manager-review.json", SOFTWARE_IMPLEMENTATION_MANAGER_REVIEW_DEFINITION],
+    ["demo-do-and-review.json", DO_AND_REVIEW_DEFINITION],
   ] as const;
   for (const [fileName, definition] of dispatchDemos) {
     const demoPath = join(getSharedPipelineDefinitionsDirectory(), fileName);

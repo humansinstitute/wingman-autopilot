@@ -124,6 +124,64 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     };
   },
 
+  async "dispatch.normaliseTaskWorkPlan"(input) {
+    const response = objectValue(input.agentResponse ?? input.workPlan ?? input);
+    const record = objectValue(input.record);
+    const payload = objectValue(record.payload ?? input.payload);
+    const title = String(payload.title ?? response.title ?? "").toLowerCase();
+    const description = String(payload.description ?? response.description ?? "").toLowerCase();
+    const requestedStyle = String(
+      response.workStyle
+        ?? response.pipelineStyle
+        ?? response.recommendedPipeline
+        ?? response.childPipelineDefinitionId
+        ?? "",
+    ).toLowerCase();
+    const combined = `${requestedStyle} ${title} ${description}`;
+    const softwareLikely = /\b(code|software|implementation|bug|fix|repo|repository|test|typescript|javascript|frontend|backend|api|database|migration|build|deploy|ui|server)\b/.test(combined);
+    const workStyle = requestedStyle.includes("do_and_review") || requestedStyle.includes("generic")
+      ? "do_and_review"
+      : softwareLikely
+        ? "software_implementation"
+        : "do_and_review";
+    const childPipelineDefinitionId = workStyle === "software_implementation"
+      ? "demo-software-implementation-manager-review"
+      : "demo-do-and-review";
+    const executionPlan = getStringArray(response.executionPlan);
+    const managerChecklist = getStringArray(response.managerChecklist);
+    const taskUpdatePlan = getStringArray(response.taskUpdatePlan);
+    return {
+      accepted: response.accepted !== false,
+      workStyle,
+      childPipelineDefinitionId,
+      taskSummary: typeof response.taskSummary === "string"
+        ? response.taskSummary
+        : typeof response.summary === "string"
+          ? response.summary
+          : String(payload.title ?? "Task accepted for dispatch."),
+      initialFindings: getStringArray(response.initialFindings),
+      executionPlan: executionPlan.length > 0 ? executionPlan : [
+        "Confirm the latest task context and constraints.",
+        "Complete the worker pass using the selected child pipeline.",
+        "Run manager review against the task requirements and evidence.",
+        "Update the task with progress, result, and any remaining blockers.",
+      ],
+      managerChecklist: managerChecklist.length > 0 ? managerChecklist : [
+        "The worker used the full task context.",
+        "The result addresses the requested outcome.",
+        "Evidence and sources or verification steps are recorded.",
+        "The task has been updated at appropriate milestones.",
+      ],
+      taskUpdatePlan: taskUpdatePlan.length > 0 ? taskUpdatePlan : [
+        "Comment when the child pipeline is launched.",
+        "Comment after worker completion with evidence.",
+        "Move the task to review or done only after manager review.",
+      ],
+      suggestedStatus: "in_progress",
+      confidence: clampConfidence(response.confidence),
+    };
+  },
+
   async "object.finalise"(input) {
     return {
       text: input.normalised,
