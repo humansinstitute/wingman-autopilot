@@ -56,29 +56,38 @@ Visit:
 
 ## Docker-First Setup
 
-Generate a Compose `.env` file for the first isolated Wingman instance:
+On a fresh server with Docker and Docker Compose installed:
 
 ```bash
-bun run docker:provision --admin-npub npub1...
+git clone https://github.com/humansinstitute/wingman-autopilot.git
+cd wingman-autopilot
+chmod +x setupwizard.sh
+./setupwizard.sh
 ```
 
-`--admin-npub` is required. Docker noninteractive setup will not mark the
-instance complete until the first operator whitelist is configured.
+The setup wizard prompts for:
 
-The default instance is `wingman-01`; if Docker already has that Compose project,
-the provisioning script moves to `wingman-02`, `wingman-03`, and so on. It writes
-the Compose project name, host port, host workspace path, base URL, and
-`IDENTITY_SESSION_SECRET` into `.env`. The first instance mounts the base
-machine directory `~/.wm-ap` at `/workspace`; later generated instances use
-numbered directories such as `~/.wm-ap02` and `~/.wm-ap03`. Override this with
-`--workspace-host-path <path>` when provisioning. `docker compose up` also fails
-fast when `WINGMAN_ADMIN_NPUB` is absent from the generated environment.
+- admin npub
+- instance name and host port
+- public base URL
+- host workspace directory mounted at `/workspace`
+- path or subdomain app routing
+- optional `WINGMAN_PRIV`
 
-Build and start the container:
+It writes `.env`, creates the host workspace directory, and can immediately run:
 
 ```bash
 docker compose up -d --build
 ```
+
+Docker setup defaults to `REGISTER=false`: unknown users cannot self-register.
+The configured admin npub can bootstrap the first login, then add approved users
+from Settings -> Users.
+
+The default instance is `wingman-01`; if Docker already has that Compose project,
+the wizard moves to `wingman-02`, `wingman-03`, and so on. The first instance
+mounts the base-machine directory `~/.wm-ap` at `/workspace`; later generated
+instances use numbered directories such as `~/.wm-ap02` and `~/.wm-ap03`.
 
 Open a shell in the persistent `/home/wingman` environment and run the CLI login
 flows from inside the container:
@@ -111,10 +120,9 @@ The checklist reports installed tools, writable Docker volumes, configured
 Wingman URLs/workspace values, required secrets, and whether CLI auth files are
 detectable in `/home/wingman`.
 
-For local HTTP testing, provisioning sets `WINGMAN_IDENTITY_COOKIE_SECURE=false`
-so browsers accept the development session cookie. For HTTPS tunnel deployments,
-the provisioning script sets secure cookies when `--base-url` starts with
-`https://`.
+For local HTTP testing, setup sets `WINGMAN_IDENTITY_COOKIE_SECURE=false` so
+browsers accept the development session cookie. For HTTPS tunnel deployments,
+setup sets secure cookies when the public base URL starts with `https://`.
 
 Docker provisioning also pins agent CLI paths to `/usr/local/bin/*` so project
 dependencies inside `/app/node_modules/.bin` cannot shadow the authenticated
@@ -135,6 +143,13 @@ matching Docker env snippet.
 Cloudflare also needs an edge certificate that covers the nested wildcard app
 hostnames, for example `*.wmd.otherstuff.ai`. A certificate for
 `*.otherstuff.ai` does not cover `rare-zap-horn.wmd.otherstuff.ai`.
+
+For noninteractive provisioning, the underlying helper is still available:
+
+```bash
+bun run docker:provision --admin-npub npub1...
+docker compose up -d --build
+```
 
 ## Runtime Model
 

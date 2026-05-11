@@ -234,6 +234,7 @@ function main(): void {
     WINGMAN_IDENTITY_SESSION_SECRET: secret,
     WINGMAN_ADMIN_NPUB: options.adminNpub,
     WINGMAN_PRIV: "",
+    WINGMAN_REGISTER: "false",
     WINGMAN_SETUP_NONINTERACTIVE: "true",
   };
 
