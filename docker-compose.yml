@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
     image: ${WINGMAN_IMAGE:-wingman-autopilot:local}
     init: true
+    restart: unless-stopped
     tty: true
     ports:
       - "${WINGMAN_HOST_PORT:-3600}:${WINGMAN_CONTAINER_PORT:-3600}"
