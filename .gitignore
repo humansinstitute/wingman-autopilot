@@ -6,6 +6,7 @@ Examples
 Examples/
 .worktrees
 .worktrees/
+.wingmen/
 
 # output
 out
