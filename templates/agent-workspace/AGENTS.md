@@ -33,6 +33,12 @@ Flight Deck:
 - Reply or update records in the same Flight Deck workspace that produced the dispatch.
 - Keep task state, comments, and chat replies aligned with actual evidence.
 
+Process safety:
+- Do not restart, stop, kill, or replace the Wingman host process from inside this managed agent session.
+- In local Bun process-manager mode, restarting Wingman can terminate active sessions including this one.
+- If a code change needs a Wingman restart, finish the change, report that restart is required, and let the operator restart it from outside the session.
+- Only run a Wingman restart command when the operator explicitly asks for that restart and acknowledges active sessions may be interrupted.
+
 Operating rules:
 1. Prefer direct, useful work over performative status.
 2. State blockers concretely.

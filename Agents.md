@@ -41,6 +41,10 @@ Wingman V2 centers on Bun services in `src/`. `src/server.ts` exposes the HTTP A
 
 Run `bun install` after pulling dependencies. Start the orchestrator locally with `bun start` (alias `bun run src/index.ts`), which respects environment settings from `src/config.ts`. Use `bun run --watch src/index.ts` while iterating to reload on change. Execute `bun test` to run TypeScript tests; add focused runs with `bun test path/to/file.test.ts`. The browser-side bunker client is pre-bundled; when applesauce dependencies change, regenerate it with `bun run build:bunker-client` before serving the dashboard.
 
+## Process Safety
+
+Do not restart, stop, kill, or replace the running Wingman Bun process from inside an agent session. In local Bun process-manager mode, the agent session is a child of the same Wingman host; restarting `bun start`, `bun run src/index.ts`, killing the parent PID, or running local restart scripts can terminate active sessions including your own. If code changes require a server restart, finish the change, state that a restart is required, and let the operator restart Wingman from outside the managed session. Only use `/api/system/restart`, `bun clis/status.ts restart`, or any restart script when the user explicitly asks for a restart and acknowledges active sessions may be interrupted.
+
 ## Coding Style & Naming Conventions
 
 **YOU SHOULD GIT COMMIT EACH CHANGE YOU MAKE WITH A DESCRIPTIVE NAME**
