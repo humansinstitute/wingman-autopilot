@@ -165,7 +165,7 @@ const GRAPH_CONTEXT_MEMORY_DEMO_DEFINITION = {
 
 const AGENT_DISPATCH_CHAT_DEMO_DEFINITION = {
   name: "demo-agent-dispatch-chat-response",
-  description: "Demo dispatch pipeline for chat advisories. It asks one agent step to prepare a concise chat response, then publishes it to the source Flight Deck thread.",
+  description: "Demo dispatch pipeline for chat advisories. It first determines intent and needed context, then drafts the response or action result, then publishes back to the source Flight Deck thread.",
   input: {
     dispatch: { triggerKind: "chat" },
     workspace: { workspaceOwnerNpub: "npub1workspace", sourceAppNpub: "npub1source" },
@@ -178,23 +178,52 @@ const AGENT_DISPATCH_CHAT_DEMO_DEFINITION = {
         sender_npub: "npub1user",
       },
     },
+    chat: {
+      messageText: "Can you give me the current status and next action?",
+      senderNpub: "npub1user",
+      channelId: "channel-demo",
+      threadId: "thread-demo",
+    },
     routing: { channelId: "channel-demo", threadId: "thread-demo", bindingType: "thread" },
   },
   steps: [
     {
-      name: "draft-chat-response",
+      name: "intent-and-information",
       type: "agent",
       agent: "$.agent.defaultAgent",
       directory: "$.agent.workingDirectory",
       input: {
         pick: {
+          dispatch: "$.dispatch",
           workspace: "$.workspace",
           agent: "$.agent",
+          chat: "$.chat",
           record: "$.record",
           routing: "$.routing",
+          runtime: "$.runtime",
         },
       },
-      prompt: "You are handling a Wingman chat dispatch. Read the dispatch envelope and produce a response that could be posted back to the same chat thread. Do not run any Flight Deck/Yoke CLI commands yourself; the next deterministic pipeline step will publish the reply. Return JSON fields: shouldRespond boolean, responseDraft string, reasoningSummary string, followUpActions array of short strings, confidence number from 0 to 1.",
+      prompt: "You are stage 1 of a Wingman chat dispatch pipeline: Intent and Information. Read chat.messageText and the dispatch envelope. If runtime.commands.context or runtime.commands.history is available, use it to inspect the thread before deciding. Decide whether the message asks for: a direct chat reply, task creation/update in Flight Deck, local pipeline dispatch, implementation work, or no response. Do not publish a reply. Return JSON with: intent string, messageSummary string, threadSummary string, relevantFacts array, requiredActions array, recommendedPipeline string|null, shouldRespond boolean, responseDirection string, confidence number from 0 to 1.",
+      assign: "$.intentAndInformation",
+    },
+    {
+      name: "chat-response",
+      type: "agent",
+      agent: "$.agent.defaultAgent",
+      directory: "$.agent.workingDirectory",
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          chat: "$.chat",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          intentAndInformation: "$.intentAndInformation",
+        },
+      },
+      prompt: "You are stage 2 of a Wingman chat dispatch pipeline: Chat Response. Follow intentAndInformation.responseDirection. If requiredActions says to create/update Flight Deck records or dispatch another local pipeline and runtime commands make that possible, take the action before drafting the response; otherwise explain the intended action clearly. Do not publish the chat yourself; the next deterministic step will publish. Return JSON fields: shouldRespond boolean, responseDraft string, reasoningSummary string, actionsTaken array of short strings, followUpActions array of short strings, confidence number from 0 to 1.",
       assign: "$.agentResponse",
     },
     {
@@ -550,8 +579,9 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
   ] as const;
   for (const [fileName, definition] of dispatchDemos) {
     const demoPath = join(getSharedPipelineDefinitionsDirectory(), fileName);
-    if (!existsSync(demoPath)) {
-      await writeFile(demoPath, `${JSON.stringify(definition, null, 2)}\n`);
+    const nextJson = `${JSON.stringify(definition, null, 2)}\n`;
+    if (!existsSync(demoPath) || await readFile(demoPath, "utf8").catch(() => "") !== nextJson) {
+      await writeFile(demoPath, nextJson);
     }
   }
 }

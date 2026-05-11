@@ -1,3 +1,5 @@
+import { fetchPipelineRun } from '../../pipelines/api.js';
+
 function formatTimestamp(value) {
   if (typeof value !== 'string' || !value) {
     return 'None';
@@ -316,10 +318,42 @@ function createEventDetailsModal({ subscription, event, eventIndex, dispatch, di
   );
 
   const promptSection = createSection('Pipeline Input');
-  promptSection.append(createDisclosure(
+  const previewHost = document.createElement('div');
+  previewHost.append(createDisclosure(
     'Show first-step input object',
     JSON.stringify(buildPipelineInputPreview(subscription, event, dispatch, route), null, 2),
   ));
+  promptSection.append(previewHost);
+  if (dispatch?.pipelineRunId) {
+    previewHost.replaceChildren();
+    const loading = document.createElement('p');
+    loading.className = 'wm-settings__port-note';
+    loading.textContent = 'Loading actual pipeline run input...';
+    previewHost.append(loading);
+    void fetchPipelineRun(dispatch.pipelineRunId, {
+      includeRunPayload: true,
+      includeStepPayload: true,
+      forceFresh: true,
+    }).then((payload) => {
+      const firstStep = Array.isArray(payload.steps) ? payload.steps[0] : null;
+      previewHost.replaceChildren(
+        createDisclosure('Show run input object', JSON.stringify(payload.run?.input ?? null, null, 2)),
+        createDisclosure('Show first-step input object', JSON.stringify(firstStep?.input ?? null, null, 2)),
+      );
+    }).catch((error) => {
+      previewHost.replaceChildren();
+      const failed = document.createElement('p');
+      failed.className = 'wm-settings__port-note';
+      failed.textContent = error instanceof Error ? error.message : 'Failed to load actual pipeline input.';
+      previewHost.append(
+        failed,
+        createDisclosure(
+          'Show reconstructed input object',
+          JSON.stringify(buildPipelineInputPreview(subscription, event, dispatch, route), null, 2),
+        ),
+      );
+    });
+  }
 
   const rawSection = createSection('Raw Event');
   rawSection.append(createDisclosure('Show event payload', JSON.stringify(event ?? null, null, 2)));

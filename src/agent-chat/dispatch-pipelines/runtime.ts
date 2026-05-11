@@ -323,6 +323,18 @@ function buildDispatchEnvelope(input: {
       updaterNpub: eventInput.updaterNpub,
       payload: eventInput.payload,
     },
+    ...(eventInput.triggerKind === 'chat'
+      ? {
+          chat: {
+            messageText: getText(eventInput.payload.body) ?? '',
+            senderNpub: getText(eventInput.payload.sender_npub) ?? null,
+            channelId: eventInput.channelId ?? getText(eventInput.payload.channel_id),
+            threadId: eventInput.threadId ?? getText(eventInput.payload.thread_id),
+            parentMessageId: getText(eventInput.payload.parent_message_id),
+            attachments: Array.isArray(eventInput.payload.attachments) ? eventInput.payload.attachments : [],
+          },
+        }
+      : {}),
     routing: {
       bindingId: eventInput.bindingId,
       bindingType: eventInput.bindingType,
@@ -380,6 +392,10 @@ function routeMatchesEvent(route: DispatchRouteRecord, input: DispatchPipelineEv
   }
 
   return true;
+}
+
+function getText(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
 function getStringArray(value: unknown): string[] {
