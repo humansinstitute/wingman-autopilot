@@ -80,13 +80,13 @@ volumes:
 Start the stack:
 
 ```bash
-docker compose up -d
+docker compose --env-file .env.wingman-01 up -d
 ```
 
 Open a shell in the running container:
 
 ```bash
-docker compose exec wingman bash
+docker compose --env-file .env.wingman-01 exec wingman bash
 ```
 
 Then log in or configure the CLIs from inside the container:
@@ -107,7 +107,7 @@ SSH is usually not needed for Docker containers.
 Use Docker's built-in shell access instead:
 
 ```bash
-docker compose exec wingman bash
+docker compose --env-file .env.wingman-01 exec wingman bash
 ```
 
 or, without Compose:
@@ -119,10 +119,10 @@ docker exec -it <container-name> bash
 If the image does not include bash:
 
 ```bash
-docker compose exec wingman sh
+docker compose --env-file .env.wingman-01 exec wingman sh
 ```
 
-Running an SSH server inside the container is possible, but it adds keys, ports, packages, and another network service to secure. For this project, `docker exec` should be the default. Other useful options are VS Code Dev Containers, `docker compose logs -f wingman`, and `docker cp` for one-off file movement.
+Running an SSH server inside the container is possible, but it adds keys, ports, packages, and another network service to secure. For this project, `docker exec` should be the default. Other useful options are VS Code Dev Containers, `docker compose --env-file .env.wingman-01 logs -f wingman`, and `docker cp` for one-off file movement.
 
 ## Cloudflare Tunnel
 
@@ -169,7 +169,7 @@ deep and will not cover app aliases such as
 
 The Settings UI should expose a workspace routing panel that shows the current
 mode, current app domain, expected Cloudflare hostnames, and a copyable Docker
-env snippet. Applying the env still requires editing the Docker `.env` and
+env snippet. Applying the env still requires editing the instance Docker env file and
 restarting the container because routing config is read during server startup.
 
 ## Isolation Model
@@ -204,14 +204,14 @@ The UI workflow should appear when the instance has not completed setup. It shou
 - explaining that subscription CLIs such as Claude and Codex require shell login inside the container
 - marking setup complete only after required configuration is present
 
-Provisioning should also include a small script that generates a Compose project name and `.env` file for each Wingman instance.
+Provisioning should also include a small script that generates a Compose project name and `.env.<instance-name>` file for each Wingman instance. The plain `.env` file should remain available for local `bun start` development.
 
 ## Terminal Access
 
 Shell access should remain operator-only for now through Docker:
 
 ```bash
-docker compose exec wingman bash
+docker compose --env-file .env.wingman-01 exec wingman bash
 ```
 
 A future browser terminal route is possible, but it is a separate security-sensitive feature. It would need:
@@ -228,7 +228,7 @@ Because a terminal is equivalent to direct access to the Wingman computer, it sh
 ## Decisions
 
 - The default instance name is `wingman-01`, incrementing to `wingman-02`, `wingman-03`, and onward when names are already taken.
-- Each Wingman instance should be created by a small provisioning script that generates the Compose project name and `.env` file.
+- Each Wingman instance should be created by a small provisioning script that generates the Compose project name and `.env.<instance-name>` file.
 - `/workspace` should be backed by a base-machine bind mount, defaulting to `~/.wm-ap` for the first instance and numbered host directories for additional instances.
 - Cloudflare Tunnel runs on the base machine by default, mapping public URLs to Wingman container ports.
 - Hosted app traffic should enter through the Wingman port and be proxied by Wingman's app routing.

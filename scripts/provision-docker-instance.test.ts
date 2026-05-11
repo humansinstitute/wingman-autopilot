@@ -20,6 +20,13 @@ function runProvision(args: string[]) {
   });
 }
 
+function runProvisionFrom(cwd: string, args: string[]) {
+  return spawnSync("bun", ["run", join(repoRoot, "scripts/provision-docker-instance.ts"), ...args], {
+    cwd,
+    encoding: "utf8",
+  });
+}
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -63,6 +70,22 @@ describe("docker provisioning", () => {
     expect(content).toContain("WINGMAN_PRIV=");
     expect(content).toContain("WINGMAN_REGISTER=false");
     expect(content).toContain("WINGMAN_SETUP_NONINTERACTIVE=true");
+  });
+
+  test("defaults Docker env files to the selected instance name", () => {
+    const cwd = makeTempDir();
+    const result = runProvisionFrom(cwd, [
+      "--instance-name",
+      "wingman-42",
+      "--admin-npub",
+      "npub1operator",
+    ]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Wrote .env.wingman-42");
+    expect(result.stdout).toContain("docker compose --env-file .env.wingman-42 up -d");
+    const content = readFileSync(join(cwd, ".env.wingman-42"), "utf8");
+    expect(content).toContain("COMPOSE_PROJECT_NAME=wingman-42");
   });
 
   test("disables secure cookies for local http base URLs", () => {

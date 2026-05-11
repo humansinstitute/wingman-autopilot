@@ -74,11 +74,16 @@ The setup wizard prompts for:
 - path or subdomain app routing
 - optional `WINGMAN_PRIV`
 
-It writes `.env`, creates the host workspace directory, and can immediately run:
+It writes an instance Docker env file such as `.env.wingman-01`, creates the
+host workspace directory, and can immediately run:
 
 ```bash
-docker compose up -d --build
+docker compose --env-file .env.wingman-01 up -d --build
 ```
+
+The plain `.env` file is reserved for local `bun start` development. Docker
+instances should use `.env.wingman-01`, `.env.wingman-02`, and so on so local
+and container settings do not overlap.
 
 Docker setup defaults to `REGISTER=false`: unknown users cannot self-register.
 The configured admin npub can bootstrap the first login, then add approved users
@@ -96,7 +101,7 @@ Open a shell in the persistent `/home/wingman` environment and run the CLI login
 flows from inside the container:
 
 ```bash
-docker compose exec wingman bash
+docker compose --env-file .env.wingman-01 exec wingman bash
 codex --login
 claude
 goose configure
@@ -109,14 +114,14 @@ The image installs Codex, Claude, Goose, OpenCode, Gemini, and Pi by default.
 All agent CLI paths are pinned to `/usr/local/bin/*` so Wingman launches the
 authenticated container tools rather than project-local binaries.
 
-Set `WINGMAN_PRIV=nsec1...` in the Docker `.env` when you want this instance to
+Set `WINGMAN_PRIV=nsec1...` in the instance Docker env file when you want this instance to
 use a single shared Wingman bot identity. Admins can copy the nsec from the
 identity panel; normal operators only see the public bot identity details.
 
 Run the readiness checklist any time:
 
 ```bash
-docker compose exec wingman bun run docker:check
+docker compose --env-file .env.wingman-01 exec wingman bun run docker:check
 ```
 
 The checklist reports installed tools, writable Docker volumes, configured
@@ -139,7 +144,7 @@ web UI.
 For hosted app subdomains, configure the base-machine Cloudflare Tunnel with
 both `wmd.otherstuff.ai` and `*.wmd.otherstuff.ai` pointing to the Wingman host
 port. Then set `WINGMAN_APP_ROUTING=subdomain` and
-`WINGMAN_SUBDOMAIN_BASE_DOMAIN=wmd.otherstuff.ai` in the Docker `.env` file.
+`WINGMAN_SUBDOMAIN_BASE_DOMAIN=wmd.otherstuff.ai` in the instance Docker env file.
 Settings -> Workspace shows the current routing mode and can generate the
 matching Docker env snippet.
 
@@ -151,7 +156,7 @@ For noninteractive provisioning, the underlying helper is still available:
 
 ```bash
 bun run docker:provision --admin-npub npub1...
-docker compose up -d --build
+docker compose --env-file .env.wingman-01 up -d --build
 ```
 
 ## Runtime Model
