@@ -1,5 +1,5 @@
 /**
- * Admin user management — CRUD, selection state, picture cache, balance/ports tools.
+ * Admin user management — CRUD, selection state, picture cache, and ports tools.
  *
  * Depends on: state.adminUsers, state.identity, fetchAdminUserProfile, render (via DI).
  */
@@ -13,7 +13,6 @@ export function initAdminUsersApi(deps) {
     render,
     normaliseNpubValue,
     isFiniteNumber,
-    formatSatoshis,
     ADMIN_PICTURE_CACHE_TTL_MS,
   } = deps;
 
@@ -303,7 +302,7 @@ export function initAdminUsersApi(deps) {
     }
   };
 
-  const toggleUserOnboarding = async (npub, onboarded) => {
+  const toggleUserOnboarding = async (npub, approved) => {
     if (!state.identity.isAdmin || typeof npub !== "string" || npub.length === 0) {
       return;
     }
@@ -315,7 +314,7 @@ export function initAdminUsersApi(deps) {
       const response = await fetch("/api/admin/users", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ npub, onboarded }),
+        body: JSON.stringify({ npub, approved }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
@@ -525,74 +524,35 @@ export function initAdminUsersApi(deps) {
     }
   };
 
-  // ── Balance tool ────────────────────────────────────────────────
-
-  const ensureAdminBalanceToolState = () => {
-    if (!state.adminUsers.balanceTool) {
-      state.adminUsers.balanceTool = {
-        identifier: "",
-        amount: "",
-        busy: false,
-        error: null,
-        success: null,
-      };
-    }
-  };
-
-  const submitAdminBalanceUpdate = async () => {
+  const addAdminUser = async (npub) => {
     if (!state.identity.isAdmin) {
       return;
     }
-    ensureAdminBalanceToolState();
-    const tool = state.adminUsers.balanceTool;
-    const identifier = typeof tool.identifier === "string" ? tool.identifier.trim() : "";
-    const amountInput = typeof tool.amount === "string" ? tool.amount.trim() : "";
-
-    if (!identifier) {
-      tool.error = "Enter a user alias or npub.";
-      tool.success = null;
+    const npubInput = typeof npub === "string" ? npub.trim() : "";
+    if (!npubInput) {
+      state.adminUsers.addError = "Enter a user npub.";
       renderIfSettings();
       return;
     }
 
-    const parsedAmount = Number.parseInt(amountInput, 10);
-    if (!Number.isFinite(parsedAmount) || parsedAmount < 0) {
-      tool.error = "Enter a non-negative sats amount.";
-      tool.success = null;
-      renderIfSettings();
-      return;
-    }
-
-    const payload = {
-      balance: parsedAmount,
-    };
-
-    if (identifier.toLowerCase().startsWith("npub")) {
-      payload.npub = identifier;
-    } else {
-      payload.alias = identifier;
-    }
-
-    tool.busy = true;
-    tool.error = null;
-    tool.success = null;
+    state.adminUsers.addBusy = true;
+    state.adminUsers.addError = null;
     renderIfSettings();
 
     try {
-      const response = await fetch("/api/admin/users/balance", {
+      const response = await fetch("/api/admin/users", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ npub: npubInput }),
       });
       const data = await response.json().catch(() => null);
       if (!response.ok) {
         const message =
           data && typeof data === "object" && typeof data.error === "string" && data.error.length > 0
             ? data.error
-            : response.statusText || "Failed to update balance";
+            : response.statusText || "Failed to add user";
         throw new Error(message);
       }
-
       const users = Array.isArray(data?.users) ? data.users : null;
       const user = data && typeof data === "object" ? data.user : null;
       if (Array.isArray(users)) {
@@ -600,18 +560,12 @@ export function initAdminUsersApi(deps) {
       } else if (user && typeof user === "object") {
         upsertAdminUser(user);
       }
-
-      const updatedBalance =
-        user && typeof user === "object" && Number.isFinite(user.balance) ? user.balance : parsedAmount;
-      tool.success = `Balance set to ${formatSatoshis(updatedBalance)} sats.`;
-      tool.identifier = "";
-      tool.amount = "";
+      state.adminUsers.addDraft = "";
+      state.adminUsers.addError = null;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to update balance";
-      tool.error = message;
-      tool.success = null;
+      state.adminUsers.addError = error instanceof Error ? error.message : "Failed to add user";
     } finally {
-      tool.busy = false;
+      state.adminUsers.addBusy = false;
       renderIfSettings();
     }
   };
@@ -761,11 +715,10 @@ export function initAdminUsersApi(deps) {
     deleteAdminUser,
     deleteSelectedAdminUsers,
     updateAdminUserNickname,
+    addAdminUser,
     // Picture cache
     primeAdminUserPictures,
     // Tools
-    ensureAdminBalanceToolState,
-    submitAdminBalanceUpdate,
     ensureAdminPortsToolState,
     submitAdminPortsAssignment,
     generateAdminPorts,

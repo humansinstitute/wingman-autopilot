@@ -38,7 +38,7 @@ export const resolveWorkspaceScope = (
   ensureDirectoryExists(workspaceRoot);
 
   return {
-    allowedDirectories: config.allowedDirectories,
+    allowedDirectories: [workspaceRoot],
     defaultDirectory: workspaceRoot,
     aliasDirectory: null,
     docsRoot: workspaceRoot,

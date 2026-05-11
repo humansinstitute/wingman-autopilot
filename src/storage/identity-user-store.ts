@@ -382,10 +382,6 @@ class IdentityUserStore {
     const alias = aliasInput && aliasInput.length > 0 ? aliasInput : npub;
     const ports = this.allocatePorts();
 
-    // Workshop mode: grant 100,000 sats to new users on first login
-    const workshopMode = (Bun.env.WORKSHOP_MODE ?? "").trim().toUpperCase() === "TRUE";
-    const initialBalance = workshopMode ? 100_000 : 0;
-
     const insert = this.db.prepare(
       `INSERT INTO identity_users (
          normalized_npub,
@@ -402,11 +398,7 @@ class IdentityUserStore {
          balance
        ) VALUES (?1, ?2, ?3, NULL, NULL, '[]', NULL, ?4, ?5, ?5, ?6, ?7)`,
     );
-    insert.run(normalized, npub, alias, lastSeenIso, now, JSON.stringify(ports), initialBalance);
-
-    if (workshopMode && initialBalance > 0) {
-      console.log(`[identity] Workshop mode: granted ${initialBalance.toLocaleString()} sats to new user ${npub.slice(0, 12)}...`);
-    }
+    insert.run(normalized, npub, alias, lastSeenIso, now, JSON.stringify(ports), 0);
 
     return this.getOrThrow(normalized);
   }
@@ -467,16 +459,6 @@ class IdentityUserStore {
        WHERE normalized_npub = ?1`,
     );
     update.run(normalized, updatedRoles, onboardedAt, now);
-
-    // Workshop mode: grant 100,000 sats when onboarding a user
-    if (role === "onboard" && enabled) {
-      const workshopMode = (Bun.env.WORKSHOP_MODE ?? "").trim().toUpperCase() === "TRUE";
-      if (workshopMode) {
-        const WORKSHOP_SATS = 100_000;
-        this.setBalance(normalized, WORKSHOP_SATS);
-        console.log(`[identity] Workshop mode: granted ${WORKSHOP_SATS.toLocaleString()} sats to ${npub.slice(0, 12)}...`);
-      }
-    }
 
     return this.getOrThrow(normalized);
   }

@@ -941,7 +941,6 @@ type IdentitySummary = {
   segment: string;
   alias: string;
   ports: number[];
-  balance: number;
   sessionIds: string[];
   activeSessionIds: string[];
   lastSeenAt: string | null;
@@ -965,10 +964,6 @@ const buildIdentitySummaries = (
   const portsByNormalized = new Map<string, number[]>(
     storedUsers.map((record) => [record.normalizedNpub, record.ports] as const),
   );
-  const balanceByNormalized = new Map<string, number>(
-    storedUsers.map((record) => [record.normalizedNpub, record.balance] as const),
-  );
-
   const activeSessionMap = new Map(activeSessions.map((session) => [session.id, session] as const));
   type Accumulator = {
     npub: string | null;
@@ -976,7 +971,6 @@ const buildIdentitySummaries = (
     segment: string;
     alias: string;
     ports: number[];
-    balance: number;
     dataRoot: string;
     logsRoot: string;
     attachmentsRoot: string;
@@ -1016,7 +1010,6 @@ const buildIdentitySummaries = (
         segment,
         alias: generateIdentityAlias(ownerNpub),
         ports: [],
-        balance: normalized ? balanceByNormalized.get(normalized) ?? 0 : 0,
         dataRoot,
         logsRoot,
         attachmentsRoot,
@@ -1031,9 +1024,6 @@ const buildIdentitySummaries = (
       const storedPorts = portsByNormalized.get(normalized);
       if (storedPorts) {
         accumulator.ports = storedPorts;
-      }
-      if (balanceByNormalized.has(normalized)) {
-        accumulator.balance = balanceByNormalized.get(normalized) ?? accumulator.balance;
       }
     }
 
@@ -1072,7 +1062,6 @@ const buildIdentitySummaries = (
       attachmentsRoot: entry.attachmentsRoot,
       imagesRoot: entry.imagesRoot,
       alias: entry.alias,
-      balance: entry.balance,
     }))
     .sort((a, b) => {
       const left = a.normalizedNpub ?? "";
@@ -2737,8 +2726,5 @@ console.log(
 
 // Start scheduler engine (loads enabled jobs from DB)
 schedulerEngine.start();
-
-// Ensure admin has balance after all env vars are loaded (important for first-run wizard)
-identityUserStore.ensureAdminBalance();
 
 export { server, manager, config };

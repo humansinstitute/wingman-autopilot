@@ -49,7 +49,6 @@ export type IdentitySummary = {
   segment: string;
   alias: string;
   ports: number[];
-  balance: number;
   sessionIds: string[];
   activeSessionIds: string[];
   lastSeenAt: string | null;
@@ -70,10 +69,10 @@ export interface SessionApiContext {
   messageStore: typeof MessageStoreInstance;
   sessionArchiveStore: typeof SessionArchiveStoreInstance;
   identityUserStore: {
-    touch: (npub: string) => { balance?: number };
-    listUsers: () => Array<{ normalizedNpub: string; ports: number[]; balance: number }>;
+    touch: (npub: string) => unknown;
+    listUsers: () => Array<{ normalizedNpub: string; ports: number[] }>;
     ensurePortsFor: (npub: string) => number[];
-    getByNormalized: (normalizedNpub: string) => { ports?: number[]; balance?: number } | null;
+    getByNormalized: (normalizedNpub: string) => { ports?: number[] } | null;
   };
   promptQueueStore: {
     getSessionQueue: (id: string) => unknown[];
@@ -1187,7 +1186,6 @@ export async function handleSessionApi(
       const imagesRoot = normalize(join(ctx.imageRoot, segment));
       const viewerRecord = ctx.identityUserStore.getByNormalized(viewerNormalizedNpub);
       const ports = viewerRecord?.ports ?? ctx.identityUserStore.ensurePortsFor(identityNpub);
-      const balance = viewerRecord?.balance ?? 0;
       identitySummaries = [
         {
           npub: identityNpub,
@@ -1195,7 +1193,6 @@ export async function handleSessionApi(
           segment,
           alias: generateIdentityAlias(identityNpub),
           ports,
-          balance,
           sessionIds: [],
           activeSessionIds: [],
           lastSeenAt: null,
@@ -1594,7 +1591,7 @@ async function handlePostMessage(
 
   const userNpub = resolveSessionChargeNpub(ownedSession.metadata, authContext.npub ?? null);
   if (!userNpub) {
-    return Response.json({ error: "Sign in to send messages", balance: 0 }, { status: 403 });
+    return Response.json({ error: "Sign in to send messages" }, { status: 403 });
   }
 
   const adapter = ctx.manager.getAdapter(id);
@@ -1616,8 +1613,6 @@ async function handlePostMessage(
     return Response.json({ id, ok: true });
   }
 
-  let currentBalance: number | null = null;
-
   try {
     const initialCount = ctx.messageStore.listSessionMessages(id).length;
     const result = await deliverSessionAgentMessage({
@@ -1633,16 +1628,16 @@ async function handlePostMessage(
     if (!result.ok) {
       const normalizedResult = await normalizeBusySessionMessageFailure(ownedSession, result, adapter);
       return Response.json(
-        { error: normalizedResult.message, balance: currentBalance },
+        { error: normalizedResult.message },
         { status: normalizedResult.status },
       );
     }
 
     const messages = await ctx.waitForMessageUpdate(id, initialCount);
-    return Response.json({ id, messages, balance: currentBalance });
+    return Response.json({ id, messages });
   } catch (error) {
     return Response.json(
-      { error: `Failed to contact agent: ${(error as Error).message}`, balance: currentBalance },
+      { error: `Failed to contact agent: ${(error as Error).message}` },
       { status: 502 },
     );
   }
@@ -1680,7 +1675,7 @@ async function handleDelegatedQueuedMessage(
 
   const userNpub = resolveSessionChargeNpub(ownedSession.metadata, authContext.npub ?? null);
   if (!userNpub) {
-    return Response.json({ error: "Sign in to send messages", balance: 0 }, { status: 403 });
+    return Response.json({ error: "Sign in to send messages" }, { status: 403 });
   }
 
   let prompt: unknown;

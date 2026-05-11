@@ -170,7 +170,7 @@ export async function setPinnedArtifactApi(sessionId, filePath) {
  * @param {string} sessionId - The session ID
  * @param {string} content - Message content
  * @param {string} [type="user"] - Message type ("user" or "raw")
- * @returns {Promise<{messages?: Array, balance?: number}>}
+ * @returns {Promise<{messages?: Array}>}
  * @throws {Error} If the request fails
  */
 export async function postSessionMessageApi(sessionId, content, type = "user") {
@@ -198,10 +198,6 @@ export async function postSessionMessageApi(sessionId, content, type = "user") {
         : response.statusText || "Agent request failed"
     );
     error.status = response.status;
-    // Attach balance to error for caller to handle
-    if (body && typeof body === "object" && typeof body.balance === "number") {
-      error.balance = body.balance;
-    }
     throw error;
   }
 

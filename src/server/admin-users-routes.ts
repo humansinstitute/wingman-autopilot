@@ -18,6 +18,7 @@ export type AdminUserRecord = {
   alias: string;
   nickname: string | null;
   pictureUrl: string | null;
+  approved: boolean;
   onboarded: boolean;
   onboardedAt: string | null;
   roles: string[];
@@ -25,7 +26,6 @@ export type AdminUserRecord = {
   sessionCount: number;
   activeSessionCount: number;
   ports: number[];
-  balance: number;
 };
 
 // ---------- Context supplied by server.ts ----------
@@ -46,12 +46,10 @@ export interface AdminUsersApiContext {
       lastSeenAt: string | null;
       updatedAt: string | null;
       ports: number[];
-      balance: number;
     }>;
     setRole: (npub: string, role: string, value: boolean) => void;
     deleteUser: (npub: string) => boolean;
     setNickname: (npub: string, nickname: string | null) => { normalizedNpub: string };
-    setBalance: (npub: string, balance: number) => { normalizedNpub: string };
     addPortsToUser: (npub: string, count: number) => { normalizedNpub: string; ports: number[] };
     touchExisting: (npub: string, opts: { lastSeenAt: string | null }) => void;
   };
@@ -110,14 +108,14 @@ function buildAdminUserList(ctx: AdminUsersApiContext): AdminUserRecord[] {
       alias: record.alias,
       nickname: record.nickname ?? null,
       pictureUrl: record.pictureUrl ?? null,
-      onboarded: record.roles.includes("onboard"),
+      approved: record.roles.includes("approved") || record.roles.includes("onboard"),
+      onboarded: record.roles.includes("approved") || record.roles.includes("onboard"),
       onboardedAt: record.onboardedAt,
       roles: [...record.roles],
       lastSeenAt,
       sessionCount,
       activeSessionCount,
       ports: record.ports,
-      balance: record.balance,
     };
   });
 
@@ -150,6 +148,37 @@ export async function handleAdminUsersApi(
     return Response.json({ users });
   }
 
+  if (pathname === "/api/admin/users" && method === "POST") {
+    const denied = await ctx.ensureApiAccess(ctx.AccessActions.AdminUsers, request, url, authContext);
+    if (denied) return denied;
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    if (!payload || typeof payload !== "object") {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    const npubInput = ctx.normaliseOptionalString((payload as Record<string, unknown>).npub);
+    if (!npubInput) {
+      return Response.json({ error: "npub is required" }, { status: 400 });
+    }
+    const normalized = normaliseNpub(npubInput);
+    if (!normalized) {
+      return Response.json({ error: "Invalid npub" }, { status: 400 });
+    }
+    try {
+      ctx.identityUserStore.setRole(npubInput, "approved", true);
+      const users = buildAdminUserList(ctx);
+      const user = users.find((entry) => entry.normalizedNpub === normalized) ?? null;
+      return Response.json({ user, users }, { status: 201 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status: 400 });
+    }
+  }
+
   if (pathname === "/api/admin/users" && method === "PATCH") {
     const denied = await ctx.ensureApiAccess(ctx.AccessActions.AdminUsers, request, url, authContext);
     if (denied) return denied;
@@ -163,15 +192,16 @@ export async function handleAdminUsersApi(
       return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
     }
     const npubInput = ctx.normaliseOptionalString((payload as Record<string, unknown>).npub);
-    const onboardedValue = (payload as Record<string, unknown>).onboarded;
+    const record = payload as Record<string, unknown>;
+    const accessValue = typeof record.approved === "boolean" ? record.approved : record.onboarded;
     if (!npubInput) {
       return Response.json({ error: "npub is required" }, { status: 400 });
     }
-    if (typeof onboardedValue !== "boolean") {
-      return Response.json({ error: "onboarded flag is required" }, { status: 400 });
+    if (typeof accessValue !== "boolean") {
+      return Response.json({ error: "approved flag is required" }, { status: 400 });
     }
     try {
-      ctx.identityUserStore.setRole(npubInput, "onboard", onboardedValue);
+      ctx.identityUserStore.setRole(npubInput, "approved", accessValue);
       const users = buildAdminUserList(ctx);
       const normalizedNpub = normaliseNpub(npubInput);
       const user = normalizedNpub
@@ -342,85 +372,6 @@ export async function handleAdminUsersApi(
       const users = buildAdminUserList(ctx);
       const user = users.find((entry) => entry.normalizedNpub === normalized) ?? null;
       return Response.json({ user, users, pictureUrl: user?.pictureUrl ?? null }, { status: 200 });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
-    }
-  }
-
-  if (pathname === "/api/admin/users/balance" && method === "POST") {
-    const denied = await ctx.ensureApiAccess(ctx.AccessActions.AdminUsers, request, url, authContext);
-    if (denied) return denied;
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-    if (!payload || typeof payload !== "object") {
-      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
-    }
-
-    const record = payload as Record<string, unknown>;
-    const npubInput = ctx.normaliseOptionalString(record.npub);
-    const aliasInput = ctx.normaliseOptionalString(record.alias);
-    const balanceValue = record.balance;
-
-    if (!npubInput && !aliasInput) {
-      return Response.json({ error: "Provide an npub or alias" }, { status: 400 });
-    }
-
-    const parsedBalance =
-      typeof balanceValue === "number"
-        ? balanceValue
-        : typeof balanceValue === "string" && balanceValue.trim().length > 0
-          ? Number.parseInt(balanceValue, 10)
-          : NaN;
-
-    if (!Number.isFinite(parsedBalance) || parsedBalance < 0) {
-      return Response.json({ error: "Balance must be a non-negative number" }, { status: 400 });
-    }
-    const desiredBalance = Math.max(0, Math.trunc(parsedBalance));
-
-    let targetNpub: string | null = null;
-    let targetNormalized: string | null = null;
-
-    if (npubInput) {
-      const normalized = normaliseNpub(npubInput);
-      if (!normalized) {
-        return Response.json({ error: "Invalid npub" }, { status: 400 });
-      }
-      targetNpub = npubInput;
-      targetNormalized = normalized;
-    } else if (aliasInput) {
-      const aliasLookup = aliasInput.toLowerCase();
-      const records = ctx.identityUserStore.listUsers();
-      const found = records.find(
-        (entry) => typeof entry.alias === "string" && entry.alias.toLowerCase() === aliasLookup,
-      );
-      if (!found) {
-        return Response.json({ error: `No user found for alias "${aliasInput}"` }, { status: 404 });
-      }
-      targetNpub = found.npub;
-      targetNormalized = found.normalizedNpub;
-    }
-
-    if (!targetNpub || !targetNormalized) {
-      return Response.json({ error: "Unable to resolve user" }, { status: 400 });
-    }
-
-    try {
-      const updatedRecord = ctx.identityUserStore.setBalance(targetNpub, desiredBalance);
-      const users = buildAdminUserList(ctx);
-      const user =
-        users.find((entry) => entry.normalizedNpub === updatedRecord.normalizedNpub) ?? null;
-      return Response.json(
-        {
-          user,
-          users,
-        },
-        { status: 200 },
-      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Response.json({ error: message }, { status: 400 });

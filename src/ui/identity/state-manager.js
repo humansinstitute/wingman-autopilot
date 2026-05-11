@@ -611,7 +611,6 @@ export function initIdentityStateManager(deps) {
       picture: current.picture ?? null,
       isAdmin: current.isAdmin,
       ports: Array.isArray(current.ports) ? [...current.ports] : [],
-      balance: typeof current.balance === "number" ? current.balance : 0,
       botNpub: current.botNpub ?? null,
       botDisplayName: current.botDisplayName ?? null,
       botPubkeyHex: current.botPubkeyHex ?? null,
@@ -669,7 +668,6 @@ export function initIdentityStateManager(deps) {
       next.alias = null;
       next.picture = null;
       next.ports = [];
-      next.balance = 0;
       next.botNpub = null;
       next.botDisplayName = null;
       next.botPubkeyHex = null;
@@ -695,15 +693,6 @@ export function initIdentityStateManager(deps) {
         next.picture = partial.picture.trim();
       } else if (partial.picture === null) {
         next.picture = null;
-      }
-    }
-
-    if ("balance" in partial) {
-      const candidate = partial.balance;
-      if (typeof candidate === "number" && Number.isFinite(candidate)) {
-        next.balance = Math.max(0, Math.trunc(candidate));
-      } else if (candidate === null) {
-        next.balance = 0;
       }
     }
 
@@ -743,7 +732,6 @@ export function initIdentityStateManager(deps) {
       next.alias !== current.alias ||
       next.picture !== current.picture ||
       portsChanged ||
-      next.balance !== (current.balance ?? 0) ||
       next.botNpub !== (current.botNpub ?? null) ||
       next.botDisplayName !== (current.botDisplayName ?? null) ||
       next.botPubkeyHex !== (current.botPubkeyHex ?? null) ||
@@ -1105,7 +1093,7 @@ export function initIdentityStateManager(deps) {
   const forceIdentityLogoutState = () => {
     clearCachedIdentity();
     updateIdentityState(
-      { npub: null, method: "none", expiresAt: null, isAuthenticated: false, alias: null, balance: 0 },
+      { npub: null, method: "none", expiresAt: null, isAuthenticated: false, alias: null },
       { persist: true, emit: true },
     );
     if (typeof window !== "undefined") {
@@ -1229,7 +1217,6 @@ export function initIdentityStateManager(deps) {
       details: root.querySelector('[data-role="identity-details"]'),
       registerSection: root.querySelector('[data-role="identity-register"]'),
       method: root.querySelector('[data-role="identity-method"]'),
-      balance: root.querySelector('[data-role="identity-balance"]'),
       expiry: root.querySelector('[data-role="identity-expiry"]'),
       copyFeedback: root.querySelector('[data-role="identity-copy-feedback"]'),
       copyButton: root.querySelector('[data-action="copy-active-npub"]'),

@@ -89,7 +89,8 @@ export async function handleAuthApi(
       if (!ctx.config.registrationEnabled) {
         const normalized = normaliseNpub(trimmedNpub);
         const existingUser = normalized ? ctx.identityUserStore.getByNormalized(normalized) : null;
-        if (!existingUser) {
+        const isConfiguredAdmin = Boolean(ctx.adminNpub && normalized && normalized === ctx.adminNpub);
+        if (!existingUser && !isConfiguredAdmin) {
           return Response.json({ error: "Registration is currently disabled" }, { status: 403 });
         }
       }

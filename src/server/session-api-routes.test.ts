@@ -958,7 +958,7 @@ describe("handleSessionApi", () => {
           return { id: "prompt-1", ...prompt };
         },
       } as any,
-      dispatchNextQueuedPromptForSession: async () => ({ id: "session-1", messages, sentPrompt: { content: "ping" }, balance: 100 }),
+      dispatchNextQueuedPromptForSession: async () => ({ id: "session-1", messages, sentPrompt: { content: "ping" } }),
     });
 
     const url = new URL("http://localhost:3021/api/delegate-sessions/session-1/messages");
@@ -1048,7 +1048,7 @@ describe("handleSessionApi", () => {
 
   test("POST /api/sessions/:id/queue/next dispatches the queued prompt", async () => {
     const ctx = buildCtx({
-      dispatchNextQueuedPromptForSession: async () => ({ id: "session-1", sentPrompt: { content: "queued" }, messages: [], balance: 100 }),
+      dispatchNextQueuedPromptForSession: async () => ({ id: "session-1", sentPrompt: { content: "queued" }, messages: [] }),
     });
 
     const url = new URL("http://localhost:3021/api/sessions/session-1/queue/next");
@@ -1065,7 +1065,7 @@ describe("handleSessionApi", () => {
 
   test("POST /api/sessions/:id/queue/dispatch aliases to the queued prompt dispatcher", async () => {
     const ctx = buildCtx({
-      dispatchNextQueuedPromptForSession: async () => ({ id: "session-1", sentPrompt: { content: "queued" }, messages: [], balance: 100 }),
+      dispatchNextQueuedPromptForSession: async () => ({ id: "session-1", sentPrompt: { content: "queued" }, messages: [] }),
     });
 
     const url = new URL("http://localhost:3021/api/sessions/session-1/queue/dispatch");

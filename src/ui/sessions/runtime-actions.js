@@ -157,18 +157,7 @@ export function createSessionRuntimeActions(deps) {
   }
 
   async function postSessionMessage(sessionId, content, type = "user") {
-    try {
-      const result = await postSessionMessageApi(sessionId, content, type);
-      if (result && typeof result === "object" && typeof result.balance === "number") {
-        updateIdentityState({ balance: result.balance }, { persist: true, emit: true });
-      }
-      return result;
-    } catch (error) {
-      if (error && typeof error.balance === "number") {
-        updateIdentityState({ balance: error.balance }, { persist: true, emit: true });
-      }
-      throw error;
-    }
+    return postSessionMessageApi(sessionId, content, type);
   }
 
   async function sendMessage(sessionId, content) {

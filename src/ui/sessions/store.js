@@ -175,7 +175,7 @@ export function initSessionsStore({
       }
     },
 
-    /** Extract identity updates (alias, ports, balance) from session data. */
+    /** Extract identity updates (alias and ports) from session data. */
     _processIdentityUpdates(identity, identities, sessions) {
       const viewerNpub = normaliseNpub(identity.npub);
       if (!viewerNpub) return;
@@ -201,17 +201,6 @@ export function initSessionsStore({
 
       if (viewerSummary && Object.prototype.hasOwnProperty.call(viewerSummary, "ports")) {
         update.ports = Array.isArray(viewerSummary.ports) ? viewerSummary.ports : [];
-      }
-
-      if (
-        viewerSummary &&
-        Object.prototype.hasOwnProperty.call(viewerSummary, "balance") &&
-        typeof viewerSummary.balance === "number" &&
-        Number.isFinite(viewerSummary.balance)
-      ) {
-        update.balance = Math.max(0, Math.trunc(viewerSummary.balance));
-      } else {
-        update.balance = 0;
       }
 
       onIdentityUpdate(update);

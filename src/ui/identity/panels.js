@@ -60,14 +60,6 @@ export function initIdentityPanels(deps) {
     npubValue.append(npubText, copyButton, feedback);
     list.append(npubLabel, npubValue);
 
-    const balanceLabel = document.createElement("dt");
-    balanceLabel.textContent = "Balance";
-    const balanceValue = document.createElement("dd");
-    balanceValue.className = "wm-identity-summary-item";
-    balanceValue.dataset.role = "identity-balance";
-    balanceValue.textContent = "-";
-    list.append(balanceLabel, balanceValue);
-
     const portsLabel = document.createElement("dt");
     portsLabel.textContent = "Ports";
     const portsValue = document.createElement("dd");

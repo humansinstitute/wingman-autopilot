@@ -28,13 +28,6 @@ export const abbreviateNpub = (npub) => {
   return `${trimmed.slice(0, 8)}...${trimmed.slice(-6)}`;
 };
 
-export const formatSatoshis = (value) => {
-  const numeric = typeof value === "number" && Number.isFinite(value) ? value : 0;
-  const truncated = Math.trunc(numeric);
-  const positive = truncated < 0 ? 0 : truncated;
-  return positive.toLocaleString(undefined, { maximumFractionDigits: 0 });
-};
-
 export const normaliseNpubValue = (npub) => {
   if (typeof npub !== "string") return null;
   const trimmed = npub.trim();
@@ -247,7 +240,6 @@ export function initIdentityDom(deps) {
           alias: identity.alias ?? null,
           picture: identity.picture ?? null,
           ports: Array.isArray(identity.ports) ? [...identity.ports] : [],
-          balance: typeof identity.balance === "number" ? identity.balance : 0,
           botNpub: identity.botNpub ?? null,
           botDisplayName: identity.botDisplayName ?? null,
           botPubkeyHex: identity.botPubkeyHex ?? null,
@@ -267,7 +259,7 @@ export function initIdentityDom(deps) {
   // ── display sync ────────────────────────────────────────────────
 
   function syncIdentityDisplayForEntry(entry) {
-    const { npub, method, authenticated, expiresAt, alias, balance } = state.identity;
+    const { npub, method, authenticated, expiresAt, alias } = state.identity;
     if (entry.root) {
       if (authenticated) {
         entry.root.dataset.authenticated = "true";
@@ -313,13 +305,6 @@ export function initIdentityDom(deps) {
     }
     if (entry.method) {
       entry.method.textContent = authenticated ? (identityMethodLabels[method] ?? method ?? "Unknown") : "\u2014";
-    }
-    if (entry.balance) {
-      if (!authenticated) {
-        entry.balance.textContent = "\u2014";
-      } else {
-        entry.balance.textContent = `${formatSatoshis(balance)} sats`;
-      }
     }
     if (entry.copyButton) {
       entry.copyButton.disabled = !npub;

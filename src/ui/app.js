@@ -136,7 +136,7 @@ import { initFilesView } from "./views/files-view.js";
 import { initFilesApi } from "./files/api.js";
 import { initLiveView } from "./views/live-view.js";
 import { initDirectoryBrowser } from "./modals/directory-browser.js";
-import { abbreviateNpub, formatSatoshis, normaliseNpubValue, isFiniteNumber, initIdentityDom } from "./identity/dom.js";
+import { abbreviateNpub, normaliseNpubValue, isFiniteNumber, initIdentityDom } from "./identity/dom.js";
 import { initIdentityStateManager } from "./identity/state-manager.js";
 import { createNavigation } from "./navigation/navigation.js";
 import { createSessionRouting } from "./sessions/session-routing.js";
@@ -457,8 +457,7 @@ let deleteAdminUser = async () => {};
 let deleteSelectedAdminUsers = async () => {};
 let updateAdminUserNickname = async () => {};
 let primeAdminUserPictures = () => {};
-let ensureAdminBalanceToolState = () => {};
-let submitAdminBalanceUpdate = async () => {};
+let addAdminUser = async () => {};
 let ensureAdminPortsToolState = () => {};
 let submitAdminPortsAssignment = async () => {};
 let generateAdminPorts = async () => {};
@@ -1989,7 +1988,6 @@ const adminUsersModule = initAdminUsersApi({
   render,
   normaliseNpubValue,
   isFiniteNumber,
-  formatSatoshis,
   ADMIN_PICTURE_CACHE_TTL_MS,
 });
 getAdminUserKey = adminUsersModule.getAdminUserKey;
@@ -2005,8 +2003,7 @@ deleteAdminUser = adminUsersModule.deleteAdminUser;
 deleteSelectedAdminUsers = adminUsersModule.deleteSelectedAdminUsers;
 updateAdminUserNickname = adminUsersModule.updateAdminUserNickname;
 primeAdminUserPictures = adminUsersModule.primeAdminUserPictures;
-ensureAdminBalanceToolState = adminUsersModule.ensureAdminBalanceToolState;
-submitAdminBalanceUpdate = adminUsersModule.submitAdminBalanceUpdate;
+addAdminUser = adminUsersModule.addAdminUser;
 ensureAdminPortsToolState = adminUsersModule.ensureAdminPortsToolState;
 submitAdminPortsAssignment = adminUsersModule.submitAdminPortsAssignment;
 generateAdminPorts = adminUsersModule.generateAdminPorts;
@@ -2019,8 +2016,6 @@ const adminUsersPanelsModule = initAdminUsersPanels({
   abbreviateNpub,
   normaliseNpubValue,
   matchesAdminUserFilter,
-  ensureAdminBalanceToolState,
-  submitAdminBalanceUpdate,
   ensureAdminPortsToolState,
   submitAdminPortsAssignment,
   ensureAdminSelectionState,
@@ -2032,6 +2027,7 @@ const adminUsersPanelsModule = initAdminUsersPanels({
   deleteAdminUser,
   deleteSelectedAdminUsers,
   updateAdminUserNickname,
+  addAdminUser,
 });
 renderAdminUsersPanel = adminUsersPanelsModule.renderAdminUsersPanel;
 

@@ -62,16 +62,12 @@ export function createAdminUsersState() {
     pictureCache: new Map(),
     filter: "",
     filterDraft: "",
+    addDraft: "",
+    addBusy: false,
+    addError: null,
     nicknameDrafts: new Map(),
     selection: new Set(),
     bulkDeleteBusy: false,
-    balanceTool: {
-      identifier: "",
-      amount: "",
-      busy: false,
-      error: null,
-      success: null,
-    },
   };
 }
 
@@ -99,7 +95,6 @@ export const state = {
     error: null,
   },
   settingsPanels: {
-    adminBalanceCollapsed: false,
     adminPortsCollapsed: false,
     adminUsersCollapsed: false,
     featureFlagsCollapsed: false,
@@ -253,7 +248,6 @@ export const state = {
     picture: null,
     isAdmin: false,
     ports: [],
-    balance: 0,
     botNpub: null,
     botDisplayName: null,
     botPubkeyHex: null,

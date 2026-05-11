@@ -1,5 +1,5 @@
 /**
- * Admin user panel renderers — balance tool, ports tool, user management,
+ * Admin user panel renderers — ports tool, user management,
  * selection controls, and filter.
  *
  * Depends on: state, admin API module functions, utility helpers (via DI).
@@ -17,8 +17,6 @@ export function initAdminUsersPanels(deps) {
     normaliseNpubValue,
     matchesAdminUserFilter,
     // Admin API module functions
-    ensureAdminBalanceToolState,
-    submitAdminBalanceUpdate,
     ensureAdminPortsToolState,
     submitAdminPortsAssignment,
     ensureAdminSelectionState,
@@ -30,6 +28,7 @@ export function initAdminUsersPanels(deps) {
     deleteAdminUser,
     deleteSelectedAdminUsers,
     updateAdminUserNickname,
+    addAdminUser,
   } = deps;
 
   // ── Helpers ────────────────────────────────────────────────────
@@ -39,101 +38,6 @@ export function initAdminUsersPanels(deps) {
       render();
     }
   };
-
-  // ── Balance card ───────────────────────────────────────────────
-
-  function buildAdminBalanceCard() {
-    ensureAdminBalanceToolState();
-    const balanceTool = state.adminUsers.balanceTool;
-    const { card, body } = createCollapsibleCard({
-      title: "Set Balance",
-      className: "wm-admin-users wm-admin-users--balance",
-      collapsed: state.settingsPanels.adminBalanceCollapsed,
-      onToggle(collapsed) {
-        state.settingsPanels.adminBalanceCollapsed = collapsed;
-      },
-    });
-
-    const balanceLayout = document.createElement("div");
-    balanceLayout.className = "wm-admin-users__balance";
-
-    const balanceIntro = document.createElement("p");
-    balanceIntro.className = "wm-admin-users__balance-help";
-    balanceIntro.textContent = "Provide a user's npub or alias and the new target balance.";
-    balanceLayout.append(balanceIntro);
-
-    const balanceForm = document.createElement("form");
-    balanceForm.className = "wm-admin-users__balance-form";
-    balanceForm.addEventListener("submit", (event) => {
-      event.preventDefault();
-      if (balanceTool.busy) return;
-      void submitAdminBalanceUpdate();
-    });
-
-    const identifierField = document.createElement("label");
-    identifierField.className = "wm-admin-users__balance-field";
-    const identifierSpan = document.createElement("span");
-    identifierSpan.textContent = "User npub or alias";
-    const identifierInput = document.createElement("input");
-    identifierInput.type = "text";
-    identifierInput.placeholder = "npub1\u2026 or alias";
-    identifierInput.value = typeof balanceTool.identifier === "string" ? balanceTool.identifier : "";
-    identifierInput.autocomplete = "off";
-    identifierInput.disabled = balanceTool.busy;
-    identifierInput.addEventListener("input", (event) => {
-      ensureAdminBalanceToolState();
-      balanceTool.identifier = event.target.value;
-      balanceTool.error = null;
-      balanceTool.success = null;
-    });
-    identifierField.append(identifierSpan, identifierInput);
-
-    const amountField = document.createElement("label");
-    amountField.className = "wm-admin-users__balance-field";
-    const amountSpan = document.createElement("span");
-    amountSpan.textContent = "Balance (sats)";
-    const amountInput = document.createElement("input");
-    amountInput.type = "number";
-    amountInput.min = "0";
-    amountInput.step = "1";
-    amountInput.placeholder = "e.g. 1000";
-    amountInput.value = typeof balanceTool.amount === "string" || typeof balanceTool.amount === "number" ? balanceTool.amount : "";
-    amountInput.disabled = balanceTool.busy;
-    amountInput.addEventListener("input", (event) => {
-      ensureAdminBalanceToolState();
-      balanceTool.amount = event.target.value;
-      balanceTool.error = null;
-      balanceTool.success = null;
-    });
-    amountField.append(amountSpan, amountInput);
-
-    const balanceControls = document.createElement("div");
-    balanceControls.className = "wm-admin-users__balance-controls";
-    const submitButton = document.createElement("button");
-    submitButton.type = "submit";
-    submitButton.className = "wm-button";
-    submitButton.disabled = balanceTool.busy;
-    submitButton.textContent = balanceTool.busy ? "Updating\u2026" : "Set Balance";
-    balanceControls.append(submitButton);
-
-    if (balanceTool.error || balanceTool.success) {
-      const statusMessage = document.createElement("p");
-      statusMessage.className = "wm-admin-users__balance-status";
-      if (balanceTool.error) {
-        statusMessage.dataset.state = "error";
-        statusMessage.textContent = balanceTool.error;
-      } else if (balanceTool.success) {
-        statusMessage.dataset.state = "success";
-        statusMessage.textContent = balanceTool.success;
-      }
-      balanceControls.append(statusMessage);
-    }
-
-    balanceForm.append(identifierField, amountField, balanceControls);
-    balanceLayout.append(balanceForm);
-    body.append(balanceLayout);
-    return card;
-  }
 
   // ── Ports card ─────────────────────────────────────────────────
 
@@ -150,15 +54,15 @@ export function initAdminUsersPanels(deps) {
     });
 
     const portsLayout = document.createElement("div");
-    portsLayout.className = "wm-admin-users__balance";
+    portsLayout.className = "wm-admin-users__tool";
 
     const portsIntro = document.createElement("p");
-    portsIntro.className = "wm-admin-users__balance-help";
+    portsIntro.className = "wm-admin-users__tool-help";
     portsIntro.textContent = "Assign additional ports to a specific user by providing their npub and the number of ports to add.";
     portsLayout.append(portsIntro);
 
     const portsForm = document.createElement("form");
-    portsForm.className = "wm-admin-users__balance-form";
+    portsForm.className = "wm-admin-users__tool-form";
     portsForm.addEventListener("submit", (event) => {
       event.preventDefault();
       if (portsTool.busy) return;
@@ -166,7 +70,7 @@ export function initAdminUsersPanels(deps) {
     });
 
     const npubField = document.createElement("label");
-    npubField.className = "wm-admin-users__balance-field";
+    npubField.className = "wm-admin-users__tool-field";
     const npubSpan = document.createElement("span");
     npubSpan.textContent = "User npub";
     const npubInput = document.createElement("input");
@@ -184,7 +88,7 @@ export function initAdminUsersPanels(deps) {
     npubField.append(npubSpan, npubInput);
 
     const countField = document.createElement("label");
-    countField.className = "wm-admin-users__balance-field";
+    countField.className = "wm-admin-users__tool-field";
     const countSpan = document.createElement("span");
     countSpan.textContent = "Number of ports";
     const countInput = document.createElement("input");
@@ -204,7 +108,7 @@ export function initAdminUsersPanels(deps) {
     countField.append(countSpan, countInput);
 
     const portsControls = document.createElement("div");
-    portsControls.className = "wm-admin-users__balance-controls";
+    portsControls.className = "wm-admin-users__tool-controls";
     const submitButton = document.createElement("button");
     submitButton.type = "submit";
     submitButton.className = "wm-button";
@@ -214,7 +118,7 @@ export function initAdminUsersPanels(deps) {
 
     if (portsTool.error || portsTool.success) {
       const statusMessage = document.createElement("p");
-      statusMessage.className = "wm-admin-users__balance-status";
+      statusMessage.className = "wm-admin-users__tool-status";
       if (portsTool.error) {
         statusMessage.dataset.state = "error";
         statusMessage.textContent = portsTool.error;
@@ -245,6 +149,7 @@ export function initAdminUsersPanels(deps) {
 
     const controls = document.createElement("div");
     controls.className = "wm-admin-users__controls";
+    controls.append(buildAdminAddUserForm());
     controls.append(buildAdminUsersFilter());
     body.append(controls);
 
@@ -350,8 +255,7 @@ export function initAdminUsersPanels(deps) {
 
       const status = document.createElement("span");
       status.className = "wm-admin-users__status";
-      const balance = typeof user.balance === "number" ? `${user.balance} sats` : "Unknown balance";
-      status.textContent = `Balance: ${balance}`;
+      status.textContent = user.approved || user.onboarded ? "Access: allowed" : "Access: blocked";
 
       const nicknameForm = document.createElement("form");
       nicknameForm.className = "wm-admin-users__nickname";
@@ -399,7 +303,7 @@ export function initAdminUsersPanels(deps) {
 
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
-      checkbox.checked = Boolean(user.onboarded);
+      checkbox.checked = Boolean(user.approved || user.onboarded);
       checkbox.disabled = userPending || state.adminUsers.loading;
       checkbox.addEventListener("change", () => {
         if (checkbox.disabled) return;
@@ -407,7 +311,7 @@ export function initAdminUsersPanels(deps) {
       });
 
       const label = document.createElement("span");
-      label.textContent = "Onboarded";
+      label.textContent = "Allowed";
 
       toggle.append(checkbox, label);
 
@@ -432,6 +336,55 @@ export function initAdminUsersPanels(deps) {
   }
 
   // ── Selection controls ─────────────────────────────────────────
+
+  function buildAdminAddUserForm() {
+    const form = document.createElement("form");
+    form.className = "wm-admin-users__filter";
+    form.dataset.testid = "admin-add-user-form";
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (state.adminUsers.addBusy) return;
+      void addAdminUser(state.adminUsers.addDraft);
+    });
+
+    const field = document.createElement("label");
+    field.className = "wm-admin-users__filter-field";
+
+    const label = document.createElement("span");
+    label.textContent = "Add npub";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = "npub1...";
+    input.autocomplete = "off";
+    input.value = typeof state.adminUsers.addDraft === "string" ? state.adminUsers.addDraft : "";
+    input.disabled = Boolean(state.adminUsers.addBusy);
+    input.addEventListener("input", (event) => {
+      state.adminUsers.addDraft = event.target.value;
+      state.adminUsers.addError = null;
+    });
+    field.append(label, input);
+
+    const actions = document.createElement("div");
+    actions.className = "wm-admin-users__filter-actions";
+    const submit = document.createElement("button");
+    submit.type = "submit";
+    submit.className = "wm-button";
+    submit.disabled = Boolean(state.adminUsers.addBusy);
+    submit.textContent = state.adminUsers.addBusy ? "Adding..." : "Add User";
+    actions.append(submit);
+
+    if (state.adminUsers.addError) {
+      const error = document.createElement("p");
+      error.className = "wm-admin-users__bulk-status";
+      error.dataset.state = "error";
+      error.textContent = state.adminUsers.addError;
+      actions.append(error);
+    }
+
+    form.append(field, actions);
+    return form;
+  }
 
   function buildAdminUsersSelectionControls(filteredUsers) {
     if (!Array.isArray(filteredUsers) || filteredUsers.length === 0) {
@@ -565,10 +518,6 @@ export function initAdminUsersPanels(deps) {
 
   function renderAdminUsersPanel() {
     const container = document.createDocumentFragment();
-
-    ensureAdminBalanceToolState();
-    const balanceCard = buildAdminBalanceCard();
-    container.append(balanceCard);
 
     ensureAdminPortsToolState();
     const portsCard = buildAdminPortsCard();

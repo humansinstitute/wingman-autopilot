@@ -6427,18 +6427,18 @@ dialog textarea {
   color: var(--text-tertiary);
 }
 
-.wm-admin-users__balance {
+.wm-admin-users__tool {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
 }
 
-.wm-admin-users__balance-form {
+.wm-admin-users__tool-form {
   display: grid;
   gap: 1rem;
 }
 
-.wm-admin-users__balance-field {
+.wm-admin-users__tool-field {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
@@ -6446,7 +6446,7 @@ dialog textarea {
   color: var(--text-secondary);
 }
 
-.wm-admin-users__balance-field input {
+.wm-admin-users__tool-field input {
   font-weight: 500;
   padding: 0.6rem 0.75rem;
   border-radius: 0.5rem;
@@ -6455,24 +6455,24 @@ dialog textarea {
   color: var(--text-primary);
 }
 
-.wm-admin-users__balance-controls {
+.wm-admin-users__tool-controls {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   align-items: flex-start;
 }
 
-.wm-admin-users__balance-status {
+.wm-admin-users__tool-status {
   margin: 0;
   font-size: 0.85rem;
   color: var(--text-secondary);
 }
 
-.wm-admin-users__balance-status[data-state="success"] {
+.wm-admin-users__tool-status[data-state="success"] {
   color: var(--accent-primary);
 }
 
-.wm-admin-users__balance-status[data-state="error"] {
+.wm-admin-users__tool-status[data-state="error"] {
   color: rgba(248, 113, 113, 0.95);
 }
 
@@ -6857,7 +6857,7 @@ dialog textarea {
 }
 
 @media (min-width: 720px) {
-  .wm-admin-users__balance-form {
+  .wm-admin-users__tool-form {
     grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
     align-items: end;
   }

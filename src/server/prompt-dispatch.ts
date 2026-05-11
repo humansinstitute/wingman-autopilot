@@ -64,7 +64,6 @@ export interface PromptDispatchEngine {
   dispatchNextQueuedPromptForSession: (session: SessionSnapshot, userNpub: string | null) => Promise<{
     id: string;
     messages: unknown[];
-    balance: number | null;
     sentPrompt: { content: string };
   }>;
   maybeAutoDispatchQueuedPrompt: (session: SessionSnapshot | null) => Promise<void>;
@@ -93,7 +92,6 @@ function logQueueDispatchTiming(params: {
   status: "sent" | "failed";
   totalMs: number;
   readinessMs: number;
-  billingMs: number;
   deliveryMs: number;
   messageSyncMs: number;
   errorStatus?: number;
@@ -104,7 +102,7 @@ function logQueueDispatchTiming(params: {
   const message =
     `[queue] dispatch ${params.status} session=${params.sessionId} agent=${params.agent}`
     + ` total=${params.totalMs}ms readiness=${params.readinessMs}ms`
-    + ` billing=${params.billingMs}ms delivery=${params.deliveryMs}ms`
+    + ` delivery=${params.deliveryMs}ms`
     + ` messageSync=${params.messageSyncMs}ms`
     + (params.errorStatus ? ` status=${params.errorStatus}` : "");
   if (params.status === "sent") {
@@ -183,12 +181,11 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
   async function dispatchNextQueuedPromptForSession(session: SessionSnapshot, userNpub: string | null) {
     const dispatchStartedAt = Date.now();
     let readinessMs = 0;
-    let billingMs = 0;
     let deliveryMs = 0;
     let messageSyncMs = 0;
 
     if (!userNpub) {
-      throw new QueueDispatchError("Sign in to send messages", 403, { balance: 0 });
+      throw new QueueDispatchError("Sign in to send messages", 403);
     }
     if (ctx.isUserApprovedForWork && !ctx.isUserApprovedForWork(userNpub)) {
       throw new QueueDispatchError("User is not approved to use Wingman", 403, {
@@ -212,8 +209,6 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
       throw new QueueDispatchError("No prompts in queue", 404);
     }
 
-    let currentBalance: number | null = null;
-
     try {
       const initialCount = ctx.messageStore.listSessionMessages(session.id).length;
       const deliveryStartedAt = Date.now();
@@ -231,7 +226,6 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
 
       if (!result.ok) {
         throw new QueueDispatchError(result.message, result.status, {
-          balance: currentBalance,
           failedPrompt: nextPrompt,
         });
       }
@@ -247,11 +241,10 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
         status: "sent",
         totalMs: elapsedSince(dispatchStartedAt),
         readinessMs,
-        billingMs,
         deliveryMs,
         messageSyncMs,
       });
-      return { id: session.id, messages, balance: currentBalance, sentPrompt: nextPrompt };
+      return { id: session.id, messages, sentPrompt: nextPrompt };
     } catch (error) {
       if (error instanceof QueueDispatchError) {
         logQueueDispatchTiming({
@@ -260,7 +253,6 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
           status: "failed",
           totalMs: elapsedSince(dispatchStartedAt),
           readinessMs,
-          billingMs,
           deliveryMs,
           messageSyncMs,
           errorStatus: error.status,
@@ -273,13 +265,11 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
         status: "failed",
         totalMs: elapsedSince(dispatchStartedAt),
         readinessMs,
-        billingMs,
         deliveryMs,
         messageSyncMs,
         errorStatus: 502,
       });
       throw new QueueDispatchError(`Failed to contact agent: ${(error as Error).message}`, 502, {
-        balance: currentBalance,
         failedPrompt: nextPrompt,
       });
     }

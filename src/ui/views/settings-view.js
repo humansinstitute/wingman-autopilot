@@ -181,7 +181,7 @@ export function initSettingsView(deps) {
 
     const note = document.createElement('section');
     note.className = 'wm-card';
-    note.innerHTML = '<h2>Users</h2><p>Admin access is required to view user management and balance tools.</p>';
+    note.innerHTML = '<h2>Users</h2><p>Admin access is required to manage approved users.</p>';
     fragment.append(note);
     return fragment;
   }
