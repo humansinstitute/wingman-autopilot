@@ -27,6 +27,7 @@ import {
 } from './agent-connect-import';
 import { backendConnectionStore, type BackendConnectionStore } from './backend-connection-store';
 import { AgentChatRoutingEvaluator } from './routing-evaluator';
+import { bootstrapAgentWorkspace } from './agent-workspace-bootstrap';
 import type { DispatchPipelineRuntime, DispatchPipelineRuntimeResult } from './dispatch-pipelines/runtime';
 import type { AgentChatSessionRuntime } from './session-runtime';
 import { workspaceSubscriptionStore, type WorkspaceSubscriptionStore } from './workspace-subscription-store';
@@ -576,6 +577,13 @@ export class WorkspaceSubscriptionManager {
     if (existing && existing.managedByNpub && existing.managedByNpub !== input.managedByNpub) {
       throw new Error(`Agent ${agentId} is owned by another manager.`);
     }
+    await bootstrapAgentWorkspace({
+      agentId,
+      label,
+      botNpub,
+      workspaceOwnerNpub,
+      workingDirectory,
+    });
 
     const now = new Date().toISOString();
     return this.agentStore.save({

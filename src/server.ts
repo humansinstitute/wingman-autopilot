@@ -2200,6 +2200,7 @@ workspaceSubscriptionManager.setDispatchPipelineRuntime(new DispatchPipelineRunt
   getSessionApiContext: () => sessionApiContextRef,
   callbackOrigin: `http://127.0.0.1:${config.port}`,
   requirePipelineRoutes: true,
+  defaultAgent: config.defaultAgent,
 }));
 
 void resumeRunningPipelineRuns({

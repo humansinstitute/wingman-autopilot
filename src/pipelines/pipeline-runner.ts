@@ -379,17 +379,32 @@ async function executePipelineStep(input: PipelineRunnerInput & {
     store.setStepCallbackToken(stepRecord.id, token);
   }
   setActiveStep(input, stepRecord.id);
-  const result = await runOrResumeAgentStep({
-    ...input,
-    stepName,
-    stepId: stepRecord.id,
-    selectedInput: selected,
-    prompt: step.prompt,
-    callbackToken: token,
-    agent: resolveStringTemplate(input.current, step.agent),
-    directory: resolveStringTemplate(input.current, step.directory),
-    callbackTimeoutMs: resolveDurationMs(input.current, step.timeoutMs, CALLBACK_TIMEOUT_MS),
-  });
+  let result: JsonObject;
+  try {
+    result = await runOrResumeAgentStep({
+      ...input,
+      stepName,
+      stepId: stepRecord.id,
+      selectedInput: selected,
+      prompt: step.prompt,
+      callbackToken: token,
+      agent: resolveStringTemplate(input.current, step.agent),
+      directory: resolveStringTemplate(input.current, step.directory),
+      callbackTimeoutMs: resolveDurationMs(input.current, step.timeoutMs, CALLBACK_TIMEOUT_MS),
+    });
+  } catch (error) {
+    const latest = store.getStep(stepRecord.id);
+    if (latest?.status === "running") {
+      store.completeStep({
+        id: stepRecord.id,
+        status: "error",
+        result: null,
+        error: error instanceof Error ? error.message : String(error),
+        wingmanSessionId: latest.wingmanSessionId,
+      });
+    }
+    throw error;
+  }
   const current = assignOutput(input.current, result, step.assign);
   store.completeStep({
     id: stepRecord.id,

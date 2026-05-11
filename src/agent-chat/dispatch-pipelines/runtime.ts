@@ -15,6 +15,7 @@ import type {
   RuntimeBotIdentity,
   WorkspaceSubscriptionRecord,
 } from '../types';
+import { bootstrapAgentDefinitionWorkspace } from '../agent-workspace-bootstrap';
 import {
   createDispatchFlightDeckPublisher,
   pipelineNeedsFlightDeckPublisher,
@@ -59,6 +60,7 @@ export interface DispatchPipelineRuntimeDependencies {
   loadDefinition?: typeof getPipelineDefinition;
   loadFunctions?: typeof loadPipelineFunctionRegistry;
   requirePipelineRoutes?: boolean;
+  defaultAgent?: string;
 }
 
 export class DispatchPipelineRuntime {
@@ -71,6 +73,7 @@ export class DispatchPipelineRuntime {
   private readonly loadDefinition: typeof getPipelineDefinition;
   private readonly loadFunctions: typeof loadPipelineFunctionRegistry;
   private readonly requirePipelineRoutes: boolean;
+  private readonly defaultAgent: string;
 
   constructor(deps: DispatchPipelineRuntimeDependencies) {
     this.routeStore = deps.routeStore ?? dispatchRouteStore;
@@ -82,6 +85,7 @@ export class DispatchPipelineRuntime {
     this.loadDefinition = deps.loadDefinition ?? getPipelineDefinition;
     this.loadFunctions = deps.loadFunctions ?? loadPipelineFunctionRegistry;
     this.requirePipelineRoutes = deps.requirePipelineRoutes ?? false;
+    this.defaultAgent = normaliseDefaultAgent(deps.defaultAgent);
   }
 
   listRoutesForManager(managedByNpub: string): DispatchRouteRecord[] {
@@ -163,6 +167,22 @@ export class DispatchPipelineRuntime {
         lastPipelineRunId: null,
       };
     }
+    try {
+      await ensureAgentWorkingDirectory(agent);
+    } catch (error) {
+      return {
+        handled: true,
+        historyEntries: [
+          this.buildHistoryEntry(input, route, {
+            action: `${input.triggerKind}_pipeline_failed`,
+            status: 'failed',
+            pipelineRunId: null,
+            diagnosticSummary: `Agent working directory is not usable: ${error instanceof Error ? error.message : String(error)}`,
+          }),
+        ],
+        lastPipelineRunId: null,
+      };
+    }
 
     const dedupeKey = buildDedupeKey(input, route);
     const flightDeckRuntime = pipelineNeedsFlightDeckPublisher(definition.spec)
@@ -180,6 +200,7 @@ export class DispatchPipelineRuntime {
       agent,
       dedupeKey,
       flightDeckRuntime,
+      defaultAgent: this.defaultAgent,
     });
     const functions = await this.loadFunctions(ownerAlias, builtinPipelineFunctions);
     if (pipelineNeedsFlightDeckPublisher(definition.spec)) {
@@ -292,6 +313,7 @@ function buildDispatchEnvelope(input: {
   agent: AgentDefinitionRecord | null;
   dedupeKey: string;
   flightDeckRuntime: DispatchPipelineFlightDeckRuntime;
+  defaultAgent: string;
 }): JsonObject {
   const { route, input: eventInput, agent, flightDeckRuntime } = input;
   return {
@@ -313,7 +335,7 @@ function buildDispatchEnvelope(input: {
       label: agent?.label ?? null,
       botNpub: eventInput.subscription.botNpub,
       workingDirectory: agent?.workingDirectory ?? null,
-      defaultAgent: null,
+      defaultAgent: input.defaultAgent,
     },
     record: {
       recordId: eventInput.recordId,
@@ -349,6 +371,15 @@ function buildDispatchEnvelope(input: {
       error: flightDeckRuntime.error,
     },
   };
+}
+
+async function ensureAgentWorkingDirectory(agent: AgentDefinitionRecord | null): Promise<void> {
+  await bootstrapAgentDefinitionWorkspace(agent);
+}
+
+function normaliseDefaultAgent(value: string | undefined): string {
+  const trimmed = value?.trim().toLowerCase();
+  return trimmed && trimmed.length > 0 ? trimmed : 'codex';
 }
 
 function emptyFlightDeckRuntime(): DispatchPipelineFlightDeckRuntime {

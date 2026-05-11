@@ -468,7 +468,7 @@ export function createPrimaryAgentNameModal({ onCreate } = {}) {
 
   const note = document.createElement('p');
   note.className = 'wm-settings__port-note';
-  note.textContent = 'Enter the agent name. Wingman will generate the local ID, working directory, and default dispatch capabilities.';
+  note.textContent = 'Enter the agent name. Wingman will generate the local ID, working directory, default dispatch capabilities, and starter agent files.';
 
   const nameField = createInput('Agent name', 'Lara', 'agent-chat-agent-name');
   const preview = document.createElement('dl');
@@ -517,6 +517,7 @@ export function createPrimaryAgentNameModal({ onCreate } = {}) {
       ['Agent ID', defaults.agentId],
       ['Name', defaults.label],
       ['Working Directory', defaults.workingDirectory],
+      ['Starter Files', 'AGENTS.md, CLAUDE.md, goals.md, personality.md'],
       ['Capabilities', 'Chat, Task, Comment, Task Review'],
     ].forEach(([label, value]) => {
       const term = document.createElement('dt');
