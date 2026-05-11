@@ -34,6 +34,19 @@ function objectValue(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function getStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => typeof item === "string" ? item.trim() : "")
+      .filter(Boolean);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  return [];
+}
+
 export const builtinPipelineFunctions: FunctionRegistry = {
   async "text.normalise"(input) {
     const text = String(input.text ?? "").trim();

@@ -12,6 +12,34 @@ describe("memory pipeline functions", () => {
     expect(result.agentResponse).toEqual({ responseDraft: "hello" });
   });
 
+  test("dispatch.normaliseTaskWorkPlan normalises list fields", async () => {
+    const result = await builtinPipelineFunctions["dispatch.normaliseTaskWorkPlan"]!({
+      agentResponse: {
+        accepted: true,
+        workStyle: "do_and_review",
+        taskSummary: "Research a booking option.",
+        initialFindings: ["Context loaded", ""],
+        executionPlan: ["Check availability", "Report options"],
+        managerChecklist: "Confirm sources",
+        taskUpdatePlan: ["Comment after launch"],
+        risks: ["Availability may change"],
+        confidence: 0.8,
+      },
+      record: {
+        payload: {
+          title: "Book Kyoto museum tickets",
+          description: "Research and recommend options.",
+        },
+      },
+    });
+
+    expect(result.workStyle).toBe("do_and_review");
+    expect(result.childPipelineDefinitionId).toBe("demo-do-and-review");
+    expect(result.initialFindings).toEqual(["Context loaded"]);
+    expect(result.managerChecklist).toEqual(["Confirm sources"]);
+    expect(result.executionPlan).toEqual(["Check availability", "Report options"]);
+  });
+
   test("memory.searchEntities returns an empty graphContext source set when graph memory is not configured", async () => {
     const previous = {
       PIPELINE_MEMORY_NEO4J_HTTP_URL: process.env.PIPELINE_MEMORY_NEO4J_HTTP_URL,

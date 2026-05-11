@@ -4,7 +4,7 @@ import { loadPipelineFunctionRegistry } from '../../pipelines/function-loader';
 import { builtinPipelineFunctions } from '../../pipelines/functions';
 import { getPipelineDefinition } from '../../pipelines/pipeline-loader';
 import { runDeclarativePipeline, startDeclarativePipeline } from '../../pipelines/pipeline-runner';
-import { type JsonObject, PipelineStore } from '../../pipelines/pipeline-store';
+import { type JsonObject, PipelineStore, type PipelineRunRecord } from '../../pipelines/pipeline-store';
 import type { SessionApiContext } from '../../server/session-api-routes';
 import { agentDefinitionStore, type AgentDefinitionStore } from '../agent-definition-store';
 import type {
@@ -147,6 +147,32 @@ export class DispatchPipelineRuntime {
     }
 
     const route = enabledMatches[0]!;
+    const dedupeKey = buildDedupeKey(input, route);
+    const concurrencyKey = renderTemplate(route.concurrencyKeyTemplate, {
+      route,
+      workspace: input.subscription,
+      record: input,
+      routing: input,
+    }) || dedupeKey;
+    const suppressedRun = this.findSuppressedDispatchRun(route, dedupeKey, concurrencyKey);
+    if (suppressedRun) {
+      return {
+        handled: true,
+        historyEntries: [
+          this.buildHistoryEntry(input, route, {
+            action: `${input.triggerKind}_pipeline_suppressed`,
+            status: 'suppressed',
+            pipelineRunId: suppressedRun.run.id,
+            concurrencyKey,
+            dedupeKey,
+            dedupeReason: suppressedRun.dedupeReason,
+            suppressionReason: suppressedRun.suppressionReason,
+            diagnosticSummary: suppressedRun.diagnosticSummary,
+          }),
+        ],
+        lastPipelineRunId: suppressedRun.run.id,
+      };
+    }
     const agent = this.selectAgent(input);
     const ownerNpub = input.subscription.managedByNpub ?? route.managedByNpub;
     const ownerAlias = generateIdentityAlias(ownerNpub);
@@ -185,21 +211,15 @@ export class DispatchPipelineRuntime {
       };
     }
 
-    const dedupeKey = buildDedupeKey(input, route);
     const flightDeckRuntime = pipelineNeedsFlightDeckPublisher(definition.spec)
       ? await prepareDispatchPipelineFlightDeckRuntime({ eventInput: input, agent })
       : emptyFlightDeckRuntime();
-    const concurrencyKey = renderTemplate(route.concurrencyKeyTemplate, {
-      route,
-      workspace: input.subscription,
-      record: input,
-      routing: input,
-    }) || dedupeKey;
     const envelope = buildDispatchEnvelope({
       route,
       input,
       agent,
       dedupeKey,
+      concurrencyKey,
       flightDeckRuntime,
       defaultAgent: this.defaultAgent,
     });
@@ -325,6 +345,53 @@ export class DispatchPipelineRuntime {
     };
   }
 
+  private findSuppressedDispatchRun(
+    route: DispatchRouteRecord,
+    dedupeKey: string,
+    concurrencyKey: string,
+  ): {
+    run: PipelineRunRecord;
+    suppressionReason: string;
+    dedupeReason: string;
+    diagnosticSummary: string;
+  } | null {
+    if (route.activePolicy === 'skip') {
+      const activeRun = this.pipelineStore
+        .listRunningRuns()
+        .filter((run) => dispatchRunMatchesRoute(run, route))
+        .find((run) => getDispatchRunConcurrencyKey(run) === concurrencyKey);
+      if (activeRun) {
+        return {
+          run: activeRun,
+          suppressionReason: 'active_run',
+          dedupeReason: 'active_policy_skip',
+          diagnosticSummary: `Dispatch route already has an active pipeline run: ${activeRun.id}.`,
+        };
+      }
+    }
+
+    if (route.dedupeWindowSeconds > 0) {
+      const cutoffMs = Date.now() - (route.dedupeWindowSeconds * 1000);
+      const recentRun = this.pipelineStore
+        .listRuns({ limit: 500 })
+        .filter((run) => dispatchRunMatchesRoute(run, route))
+        .find((run) => (
+          getDispatchRunDedupeKey(run) === dedupeKey
+          && getRunLastActivityMs(run) >= cutoffMs
+        ));
+      if (recentRun) {
+        return {
+          run: recentRun,
+          suppressionReason: 'dedupe_window',
+          dedupeReason: 'recent_duplicate',
+          diagnosticSummary: `Dispatch route already handled this advisory within ${route.dedupeWindowSeconds}s: ${recentRun.id}.`,
+        };
+      }
+    }
+
+    return null;
+  }
+
   private selectAgent(input: DispatchPipelineEventInput): AgentDefinitionRecord | null {
     const agents = this.agentStore
       .listByWorkspaceAndBot(input.subscription.workspaceOwnerNpub, input.subscription.botNpub)
@@ -365,6 +432,7 @@ export class DispatchPipelineRuntime {
       pipelineRunId: string | null;
       concurrencyKey?: string | null;
       dedupeKey?: string | null;
+      dedupeReason?: string | null;
       suppressionReason?: string | null;
       diagnosticSummary: string;
     },
@@ -381,6 +449,7 @@ export class DispatchPipelineRuntime {
       status: outcome.status,
       concurrencyKey: outcome.concurrencyKey ?? null,
       dedupeKey: outcome.dedupeKey ?? null,
+      dedupeReason: outcome.dedupeReason ?? null,
       suppressionReason: outcome.suppressionReason ?? null,
       bindingId: input.bindingId,
       bindingType: input.bindingType,
@@ -399,6 +468,7 @@ function buildDispatchEnvelope(input: {
   input: DispatchPipelineEventInput;
   agent: AgentDefinitionRecord | null;
   dedupeKey: string;
+  concurrencyKey: string;
   flightDeckRuntime: DispatchPipelineFlightDeckRuntime;
   defaultAgent: string;
 }): JsonObject {
@@ -410,6 +480,7 @@ function buildDispatchEnvelope(input: {
       triggerKind: eventInput.triggerKind,
       receivedAt: new Date().toISOString(),
       dedupeKey: input.dedupeKey,
+      concurrencyKey: input.concurrencyKey,
     },
     workspace: {
       workspaceOwnerNpub: eventInput.subscription.workspaceOwnerNpub,
@@ -520,6 +591,28 @@ function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+function getDispatchRunDedupeKey(run: PipelineRunRecord): string | null {
+  return getText(objectValue(run.input.dispatch).dedupeKey);
+}
+
+function getDispatchRunConcurrencyKey(run: PipelineRunRecord): string | null {
+  return getText(objectValue(run.input.dispatch).concurrencyKey);
+}
+
+function getDispatchRunRouteId(run: PipelineRunRecord): string | null {
+  return getText(objectValue(run.input.dispatch).routeId);
+}
+
+function dispatchRunMatchesRoute(run: PipelineRunRecord, route: DispatchRouteRecord): boolean {
+  return run.definitionId === route.pipelineDefinitionId
+    && getDispatchRunRouteId(run) === route.routeId;
+}
+
+function getRunLastActivityMs(run: PipelineRunRecord): number {
+  const timestamp = Date.parse(run.completedAt ?? run.startedAt);
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function getStringArray(value: unknown): string[] {

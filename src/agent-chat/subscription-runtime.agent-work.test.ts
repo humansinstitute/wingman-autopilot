@@ -251,6 +251,135 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect((runInputs[0]?.agent as any)?.defaultAgent).toBe('codex');
   });
 
+  test('suppresses duplicate task dispatches inside the route dedupe window', async () => {
+    const routeStore = new DispatchRouteStore(makeTempDb('agent-work-dedupe-pipeline-routes'));
+    const pipelineStore = new PipelineStore(makeTempDb('agent-work-dedupe-pipeline-runs'));
+    const subscription = makeSubscription();
+    const route = routeStore.save({
+      managedByNpub: subscription.managedByNpub!,
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      pipelineDefinitionId: 'task-pipeline',
+      dedupeWindowSeconds: 300,
+    });
+    const runtime = new DispatchPipelineRuntime({
+      routeStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      loadDefinition: async () => ({
+        id: 'task-pipeline',
+        slug: 'task-pipeline',
+        name: 'Task Pipeline',
+        scope: 'user',
+        ownerAlias: 'manager',
+        path: '/tmp/task-pipeline.json',
+        spec: { name: 'Task Pipeline', input: {}, steps: [] },
+      }),
+      loadFunctions: async () => ({ registry: {}, records: [] }),
+    });
+    const dispatchInput = {
+      subscription,
+      triggerKind: 'task' as const,
+      capability: 'task_dispatch' as const,
+      recordId: 'record-task-dedupe-1',
+      record: {},
+      payload: {
+        task_id: 'task-dedupe-1',
+        state: 'ready',
+        assigned_to: subscription.botNpub,
+      },
+      recordFamily: 'task',
+      recordState: 'active',
+      recordVersion: 1,
+      updaterNpub: 'npub1user',
+      bindingType: 'task' as const,
+      bindingId: 'record-task-dedupe-1',
+      groupNpubs: ['npub1group'],
+    };
+
+    const first = await runtime.dispatch(dispatchInput);
+    const second = await runtime.dispatch(dispatchInput);
+
+    expect(first.historyEntries[0]?.action).toBe('task_pipeline_dispatch');
+    expect(second.historyEntries[0]?.action).toBe('task_pipeline_suppressed');
+    expect(second.historyEntries[0]?.suppressionReason).toBe('dedupe_window');
+    expect(second.historyEntries[0]?.dedupeReason).toBe('recent_duplicate');
+    expect(second.historyEntries[0]?.pipelineRunId).toBe(first.lastPipelineRunId);
+    expect(pipelineStore.listRuns().filter((run) => run.definitionId === route.pipelineDefinitionId)).toHaveLength(1);
+  });
+
+  test('suppresses task dispatch when active policy skip has a running route instance', async () => {
+    const routeStore = new DispatchRouteStore(makeTempDb('agent-work-active-policy-pipeline-routes'));
+    const pipelineStore = new PipelineStore(makeTempDb('agent-work-active-policy-pipeline-runs'));
+    const subscription = makeSubscription();
+    const route = routeStore.save({
+      managedByNpub: subscription.managedByNpub!,
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      pipelineDefinitionId: 'task-pipeline',
+      activePolicy: 'skip',
+    });
+    const concurrencyKey = `${subscription.subscriptionId}:record-task-active-1:${route.routeId}`;
+    const activeRun = pipelineStore.createRun({
+      definitionId: route.pipelineDefinitionId,
+      definitionPath: '/tmp/task-pipeline.json',
+      name: 'Task Pipeline',
+      ownerNpub: subscription.managedByNpub,
+      ownerAlias: 'manager',
+      scope: 'user',
+      input: {
+        dispatch: {
+          routeId: route.routeId,
+          concurrencyKey,
+        },
+      },
+    });
+    const runtime = new DispatchPipelineRuntime({
+      routeStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      loadDefinition: async () => {
+        throw new Error('active duplicate should not load a definition');
+      },
+    });
+
+    const result = await runtime.dispatch({
+      subscription,
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      recordId: 'record-task-active-1',
+      record: {},
+      payload: {
+        task_id: 'task-active-1',
+        state: 'ready',
+        assigned_to: subscription.botNpub,
+      },
+      recordFamily: 'task',
+      recordState: 'active',
+      recordVersion: 2,
+      updaterNpub: 'npub1user',
+      bindingType: 'task',
+      bindingId: 'record-task-active-1',
+      groupNpubs: ['npub1group'],
+    });
+
+    expect(result.historyEntries[0]?.action).toBe('task_pipeline_suppressed');
+    expect(result.historyEntries[0]?.suppressionReason).toBe('active_run');
+    expect(result.historyEntries[0]?.dedupeReason).toBe('active_policy_skip');
+    expect(result.historyEntries[0]?.pipelineRunId).toBe(activeRun.id);
+    expect(pipelineStore.listRuns().filter((run) => run.definitionId === route.pipelineDefinitionId)).toHaveLength(1);
+  });
+
   test('starts configured task dispatch pipeline and records run history', async () => {
     const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-pipeline-subscriptions'));
     const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-pipeline-agents'));

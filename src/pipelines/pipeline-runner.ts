@@ -109,14 +109,34 @@ async function executeDeclarativePipeline(input: PipelineRunnerInput, runId: str
 
     return store.completeRun(runId, "ok", current);
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     if (error instanceof PipelineHalt) {
       return store.completeRun(runId, error.status, error.result, error.message);
     }
+    completeActiveStepOnError(store, runId, current, message);
     store.setRunActiveStep(runId, null);
-    return store.completeRun(runId, "error", current, error instanceof Error ? error.message : String(error));
+    return store.completeRun(runId, "error", current, message);
   } finally {
     activeRunExecutions.delete(runId);
   }
+}
+
+function completeActiveStepOnError(
+  store: PipelineStore,
+  runId: string,
+  current: JsonObject,
+  message: string,
+): void {
+  const activeStepId = store.getRun(runId)?.activeStepId;
+  if (!activeStepId) return;
+  const activeStep = store.getStep(activeStepId);
+  if (!activeStep || activeStep.status !== "running") return;
+  store.completeStep({
+    id: activeStep.id,
+    status: "error",
+    result: current,
+    error: message,
+  });
 }
 
 async function executePipelineStep(input: PipelineRunnerInput & {
