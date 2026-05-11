@@ -839,7 +839,7 @@ if (taskListenerIdentity && config.connectRelays.length > 0 && taskListenerFlag?
 
   startTaskListener({
     secretKey: taskListenerIdentity.secretKey,
-    pubkeyHex: taskListenerIdentity.pubkey,
+    pubkeyHex: taskListenerIdentity.pubkeyHex,
     relays: config.connectRelays,
     onTaskAssigned: executor,
   });

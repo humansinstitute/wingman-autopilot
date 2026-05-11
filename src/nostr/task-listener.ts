@@ -27,12 +27,20 @@ export interface TaskListenerDeps {
   onTaskAssigned: (task: TaskAssignment) => Promise<void>;
 }
 
+export function assertTaskListenerPubkeyHex(pubkeyHex: string): void {
+  if (!/^[0-9a-f]{64}$/i.test(pubkeyHex)) {
+    throw new Error("[task-listener] pubkeyHex must be a 64-character hex public key");
+  }
+}
+
 // ============================================================
 // Main
 // ============================================================
 
 export function startTaskListener(deps: TaskListenerDeps): () => void {
   const { secretKey, pubkeyHex, relays, onTaskAssigned } = deps;
+
+  assertTaskListenerPubkeyHex(pubkeyHex);
 
   if (relays.length === 0) {
     console.warn("[task-listener] No relays configured, skipping");
