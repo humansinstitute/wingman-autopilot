@@ -2199,6 +2199,7 @@ workspaceSubscriptionManager.setDispatchPipelineRuntime(new DispatchPipelineRunt
   pipelineStore,
   getSessionApiContext: () => sessionApiContextRef,
   callbackOrigin: `http://127.0.0.1:${config.port}`,
+  requirePipelineRoutes: true,
 }));
 
 void resumeRunningPipelineRuns({

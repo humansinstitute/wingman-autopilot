@@ -144,14 +144,3 @@ export async function saveAgentChatDispatchRoute(input) {
   }
   return payload.dispatchRoute;
 }
-
-export async function deleteAgentChatDispatchRoute(routeId) {
-  const response = await fetch(`/api/agent-chat/dispatch-routes/${encodeURIComponent(routeId)}`, {
-    method: 'DELETE',
-    credentials: 'include',
-  });
-  if (!response.ok && response.status !== 204) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || 'Failed to delete Agent Dispatch route');
-  }
-}

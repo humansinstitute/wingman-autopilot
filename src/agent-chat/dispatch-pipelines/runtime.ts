@@ -58,6 +58,7 @@ export interface DispatchPipelineRuntimeDependencies {
   runPipeline?: typeof runDeclarativePipeline;
   loadDefinition?: typeof getPipelineDefinition;
   loadFunctions?: typeof loadPipelineFunctionRegistry;
+  requirePipelineRoutes?: boolean;
 }
 
 export class DispatchPipelineRuntime {
@@ -69,6 +70,7 @@ export class DispatchPipelineRuntime {
   private readonly runPipeline: typeof runDeclarativePipeline;
   private readonly loadDefinition: typeof getPipelineDefinition;
   private readonly loadFunctions: typeof loadPipelineFunctionRegistry;
+  private readonly requirePipelineRoutes: boolean;
 
   constructor(deps: DispatchPipelineRuntimeDependencies) {
     this.routeStore = deps.routeStore ?? dispatchRouteStore;
@@ -79,6 +81,7 @@ export class DispatchPipelineRuntime {
     this.runPipeline = deps.runPipeline ?? runDeclarativePipeline;
     this.loadDefinition = deps.loadDefinition ?? getPipelineDefinition;
     this.loadFunctions = deps.loadFunctions ?? loadPipelineFunctionRegistry;
+    this.requirePipelineRoutes = deps.requirePipelineRoutes ?? false;
   }
 
   listRoutesForManager(managedByNpub: string): DispatchRouteRecord[] {
@@ -104,6 +107,13 @@ export class DispatchPipelineRuntime {
       capability: input.capability,
     });
     if (configuredRoutes.length === 0) {
+      if (this.requirePipelineRoutes) {
+        return {
+          handled: true,
+          historyEntries: [this.buildMissingRouteHistoryEntry(input)],
+          lastPipelineRunId: null,
+        };
+      }
       return { handled: false, historyEntries: [], lastPipelineRunId: null };
     }
 
@@ -214,6 +224,28 @@ export class DispatchPipelineRuntime {
       .filter((agent) => agent.enabled)
       .sort((left, right) => left.agentId.localeCompare(right.agentId));
     return agents.find((agent) => agent.capabilities.includes(input.capability)) ?? agents[0] ?? null;
+  }
+
+  private buildMissingRouteHistoryEntry(input: DispatchPipelineEventInput): AgentChatDispatchHistoryEntry {
+    return {
+      at: new Date().toISOString(),
+      kind: input.triggerKind === 'task_review' ? 'review' : input.triggerKind,
+      action: `${input.triggerKind}_pipeline_route_missing`,
+      agentId: 'pipeline',
+      sessionId: null,
+      recordId: input.recordId,
+      routeId: null,
+      pipelineRunId: null,
+      status: 'suppressed',
+      suppressionReason: 'pipeline_route_required',
+      bindingId: input.bindingId,
+      bindingType: input.bindingType,
+      details: {
+        capability: input.capability,
+        trigger_kind: input.triggerKind,
+        diagnostic_summary: 'No pipeline route is configured for this dispatch capability.',
+      },
+    };
   }
 
   private buildHistoryEntry(

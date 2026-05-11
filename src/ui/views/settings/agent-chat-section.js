@@ -1,7 +1,6 @@
 import { createSettingsTabs } from '../settings-tabs.js';
 import {
   deleteAgentChatAgent,
-  deleteAgentChatDispatchRoute,
   deleteAgentChatSubscription,
   importAgentConnectPackage,
   listAgentChatBackendConnections,
@@ -438,10 +437,6 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
           const route = await saveAgentChatDispatchRoute(input);
           await refreshList();
           return route;
-        },
-        onDeleteRoute: async (routeId) => {
-          await deleteAgentChatDispatchRoute(routeId);
-          await refreshList();
         },
         onEditChatTemplate: (agent) => {
           if (agent) {

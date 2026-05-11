@@ -239,7 +239,18 @@ function findDispatchRoute(routes, triggerKind, capability) {
     : null;
 }
 
-function createPipelineSelect({ title, definitions, selectedId }) {
+function findDefaultPipelineId(definitions, defaultName) {
+  const list = Array.isArray(definitions) ? definitions : [];
+  if (defaultName) {
+    const exact = list.find((definition) => definition?.name === defaultName || definition?.slug === defaultName);
+    if (exact?.id) {
+      return exact.id;
+    }
+  }
+  return list[0]?.id || '';
+}
+
+function createPipelineSelect({ title, definitions, selectedId, defaultName }) {
   const label = document.createElement('label');
   label.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:12px;';
   label.textContent = `${title} pipeline`;
@@ -251,7 +262,7 @@ function createPipelineSelect({ title, definitions, selectedId }) {
 
   const empty = document.createElement('option');
   empty.value = '';
-  empty.textContent = 'Use prompt dispatch';
+  empty.textContent = 'Select a pipeline';
   select.append(empty);
 
   definitions.forEach((definition) => {
@@ -260,9 +271,47 @@ function createPipelineSelect({ title, definitions, selectedId }) {
     option.textContent = definition.name || definition.id || 'Pipeline';
     select.append(option);
   });
-  select.value = selectedId || '';
+  select.value = selectedId || findDefaultPipelineId(definitions, defaultName);
   label.append(select);
   return { label, select };
+}
+
+function createInputObjectEditor({ title, value }) {
+  const label = document.createElement('label');
+  label.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:12px;';
+  label.textContent = `${title} input object`;
+
+  const textarea = document.createElement('textarea');
+  textarea.className = 'wm-input';
+  textarea.rows = 8;
+  textarea.spellcheck = false;
+  textarea.value = JSON.stringify(value, null, 2);
+  textarea.setAttribute('aria-label', `${title} input object`);
+  textarea.setAttribute('data-testid', `agent-chat-capability-input-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`);
+  textarea.style.cssText = 'font-family:var(--wm-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);font-size:0.86em;line-height:1.45;';
+  label.append(textarea);
+  return { label, textarea };
+}
+
+function parseInputObject(textarea) {
+  const parsed = JSON.parse(textarea.value || '{}');
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Pipeline input object must be a JSON object.');
+  }
+  return parsed;
+}
+
+function defaultInputObject({ title, promptPreview }) {
+  const prompt = promptPreview && !promptPreview.startsWith('No ')
+    ? promptPreview
+    : `Handle this ${title.toLowerCase()} event. Use the dispatch, workspace, agent, record, routing, and runtime fields in this pipeline input.`;
+  return {
+    entry: {
+      type: 'prompt',
+      prompt,
+    },
+    prompt,
+  };
 }
 
 function createPromptPreview({ sourceLabel, promptPreview }) {
@@ -294,7 +343,6 @@ function createCapabilityCard({
   onEdit,
   onToggle,
   onSaveRoute,
-  onDeleteRoute,
   toggleLabel,
   toggleDisabled = false,
   toggleDisabledReason = '',
@@ -351,13 +399,20 @@ function createCapabilityCard({
       title,
       definitions: pipelineDefinitions,
       selectedId: route?.pipelineDefinitionId || '',
+      defaultName: routeConfig.defaultPipelineName,
+    });
+    const inputObjectEditor = createInputObjectEditor({
+      title,
+      value: route?.inputTemplateJson && Object.keys(route.inputTemplateJson).length > 0
+        ? route.inputTemplateJson
+        : defaultInputObject({ title, promptPreview }),
     });
     const routeStatus = document.createElement('p');
     routeStatus.className = 'wm-settings__port-note';
     routeStatus.setAttribute('aria-live', 'polite');
     routeStatus.textContent = route
       ? `Pipeline route saved${route.enabled === false ? ' but disabled' : ''}.`
-      : 'No pipeline route saved. Prompt dispatch will be used.';
+      : 'Pipeline route required before this capability can dispatch.';
 
     const savePipelineButton = createButton(
       route ? 'Update Pipeline' : 'Save Pipeline',
@@ -370,9 +425,10 @@ function createCapabilityCard({
       routeStatus.textContent = 'Saving pipeline route...';
       try {
         if (!pipelineSelect.select.value) {
-          routeStatus.textContent = 'Select a pipeline first, or use the prompt dispatch action.';
+          routeStatus.textContent = 'Select a pipeline first.';
           return;
         }
+        const inputTemplateJson = parseInputObject(inputObjectEditor.textarea);
         await onSaveRoute?.({
           routeId: route?.routeId,
           subscriptionId: subscription.subscriptionId,
@@ -383,6 +439,7 @@ function createCapabilityCard({
           priority: routeConfig.priority,
           activePolicy: routeConfig.activePolicy,
           matchJson: routeConfig.matchJson,
+          inputTemplateJson,
         });
         routeStatus.textContent = 'Pipeline route saved.';
       } catch (error) {
@@ -392,27 +449,10 @@ function createCapabilityCard({
       }
     });
 
-    const removePipelineButton = createButton('Use Prompt Dispatch', null, `Remove ${title} pipeline route`);
-    removePipelineButton.disabled = !route || typeof onDeleteRoute !== 'function';
-    removePipelineButton.addEventListener('click', async () => {
-      if (!route?.routeId) {
-        return;
-      }
-      removePipelineButton.disabled = true;
-      routeStatus.textContent = 'Removing pipeline route...';
-      try {
-        await onDeleteRoute(route.routeId);
-        routeStatus.textContent = 'Pipeline route removed. Prompt dispatch will be used.';
-      } catch (error) {
-        routeStatus.textContent = error instanceof Error ? error.message : 'Failed to remove pipeline route.';
-      } finally {
-        removePipelineButton.disabled = false;
-      }
-    });
-
     card.append(
       pipelineSelect.label,
-      createInlineActions(savePipelineButton, removePipelineButton),
+      inputObjectEditor.label,
+      createInlineActions(savePipelineButton),
       routeStatus,
     );
   }
@@ -493,6 +533,7 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
       triggerKind: 'chat',
       priority: 10,
       activePolicy: 'queue',
+      defaultPipelineName: 'demo-agent-dispatch-chat-response',
       title: 'Chat Dispatch',
       description: 'When a workspace chat advisory matches a local agent, Wingmen reuses or creates the routed session and the agent must decide whether to respond in-thread or ignore.',
       promptKey: 'chatPromptTemplate',
@@ -504,6 +545,7 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
       priority: 20,
       activePolicy: 'skip',
       matchJson: { assignedTo: 'bot' },
+      defaultPipelineName: 'demo-agent-dispatch-task-response',
       title: 'Task Dispatch',
       description: 'When a concrete ready task targets the bot, Wingmen reuses or creates the delivery session, queues the task prompt, and Night Watch keeps the worker moving.',
       promptKey: 'taskPromptTemplate',
@@ -514,6 +556,7 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
       triggerKind: 'comment',
       priority: 60,
       activePolicy: 'queue',
+      defaultPipelineName: 'demo-agent-dispatch-comment-response',
       title: 'Comment Dispatch',
       description: 'When a task or document comment arrives, Wingmen records the advisory on the comment-specific path. Execution is currently disabled while the loop guard is hardened.',
       promptKey: 'commentDispatchPromptTemplate',
@@ -524,6 +567,7 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
       triggerKind: 'flow',
       priority: 30,
       activePolicy: 'skip',
+      defaultPipelineName: 'demo-agent-dispatch-task-response',
       title: 'Flow Dispatch',
       description: 'When a kickoff task is new, assigned to the bot, and has a flow without a flow run, Wingmen routes it into a short-lived orchestration session.',
       promptKey: 'flowDispatchPromptTemplate',
@@ -534,6 +578,7 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
       triggerKind: 'task_review',
       priority: 40,
       activePolicy: 'skip',
+      defaultPipelineName: 'demo-agent-dispatch-task-review-response',
       title: 'Task Review',
       description: 'When a flow-run task moves to review, Wingmen routes it into orchestration so newly-unblocked downstream tasks can be promoted in one pass.',
       promptKey: 'taskReviewPromptTemplate',
@@ -544,6 +589,7 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
       triggerKind: 'approval',
       priority: 50,
       activePolicy: 'queue',
+      defaultPipelineName: 'demo-agent-dispatch-task-response',
       title: 'Approval Dispatch',
       description: 'When an approval record transitions to approved for a live flow run, Wingmen routes it into orchestration so downstream tasks can continue.',
       promptKey: 'approvalDispatchPromptTemplate',
@@ -584,7 +630,6 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
         ? () => options.onToggleCapability(primaryAgent, cardConfig.capability, enabled)
         : null,
       onSaveRoute: options.onSaveRoute,
-      onDeleteRoute: options.onDeleteRoute,
       toggleLabel: enabled ? 'Turn Off' : 'Turn On',
       toggleDisabled: primaryAgent.enabled === false || (lastEnabledCapability && enabled),
       toggleDisabledReason: primaryAgent.enabled === false

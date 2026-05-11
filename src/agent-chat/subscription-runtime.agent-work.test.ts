@@ -135,6 +135,36 @@ function makePipelineRun(id: string, input: Record<string, unknown>): PipelineRu
 }
 
 describe('WorkspaceSubscriptionManager agent-work routing', () => {
+  test('suppresses legacy dispatch when pipeline routes are required but missing', async () => {
+    const runtime = new DispatchPipelineRuntime({
+      routeStore: new DispatchRouteStore(makeTempDb('agent-pipeline-required-routes')),
+      pipelineStore: new PipelineStore(makeTempDb('agent-pipeline-required-runs')),
+      getSessionApiContext: () => null as any,
+      callbackOrigin: 'http://localhost:3600',
+      requirePipelineRoutes: true,
+    });
+
+    const result = await runtime.dispatch({
+      subscription: makeSubscription(),
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      recordId: 'task-without-route',
+      record: {},
+      payload: { task_id: 'task-without-route' },
+      recordFamily: 'task',
+      recordState: 'ready',
+      recordVersion: 1,
+      updaterNpub: 'npub1user',
+      bindingType: 'task',
+      bindingId: 'task-without-route',
+      groupNpubs: ['npub1group'],
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.historyEntries[0]?.action).toBe('task_pipeline_route_missing');
+    expect(result.historyEntries[0]?.suppressionReason).toBe('pipeline_route_required');
+  });
+
   test('starts configured task dispatch pipeline and records run history', async () => {
     const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-pipeline-subscriptions'));
     const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-pipeline-agents'));
