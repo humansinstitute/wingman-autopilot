@@ -156,13 +156,25 @@ function isSelfUpdater(subscription: WorkspaceSubscriptionRecord, agent: AgentDe
   return updaterNpub === agent.botNpub || updaterNpub === subscription.wsKeyNpub;
 }
 
+function isSelfCommentEvent(
+  subscription: WorkspaceSubscriptionRecord,
+  comment: InboundCommentRecord,
+  updaterNpub: string | null,
+): boolean {
+  const selfNpubs = new Set([subscription.botNpub, subscription.wsKeyNpub].filter((value): value is string => Boolean(value)));
+  return Boolean(
+    (updaterNpub && selfNpubs.has(updaterNpub))
+    || (comment.senderNpub && selfNpubs.has(comment.senderNpub)),
+  );
+}
+
 function isSelfCommentAuthor(
   subscription: WorkspaceSubscriptionRecord,
   agent: AgentDefinitionRecord,
   comment: InboundCommentRecord,
   updaterNpub: string | null,
 ): boolean {
-  if (isSelfUpdater(subscription, agent, updaterNpub)) {
+  if (isSelfUpdater(subscription, agent, updaterNpub) || isSelfCommentEvent(subscription, comment, updaterNpub)) {
     return true;
   }
   return Boolean(comment.senderNpub && comment.senderNpub === agent.botNpub);
@@ -2267,6 +2279,26 @@ export class WorkspaceSubscriptionManager {
     comment: InboundCommentRecord,
     updaterNpub: string | null,
   ): Promise<WorkspaceSubscriptionRecord> {
+    if (isSelfCommentEvent(record, comment, updaterNpub)) {
+      return this.appendDispatchHistory(record, {
+        at: new Date().toISOString(),
+        kind: 'comment',
+        action: 'task_comment_skip_self_update',
+        agentId: 'pipeline',
+        sessionId: null,
+        recordId,
+        bindingId: comment.targetRecordId,
+        bindingType: 'task',
+        details: {
+          comment_id: comment.commentId,
+          updater_npub: updaterNpub,
+          sender_npub: comment.senderNpub,
+          target_record_family_hash: comment.targetRecordFamilyHash,
+          is_me: true,
+        },
+      });
+    }
+
     if (this.dispatchPipelineRuntime) {
       const pipelineResult = await this.dispatchPipelineRuntime.dispatch({
         subscription: record,
@@ -2364,6 +2396,27 @@ export class WorkspaceSubscriptionManager {
     comment: InboundCommentRecord,
     updaterNpub: string | null,
   ): Promise<WorkspaceSubscriptionRecord> {
+    if (isSelfCommentEvent(record, comment, updaterNpub)) {
+      return this.appendDispatchHistory(record, {
+        at: new Date().toISOString(),
+        kind: 'comment',
+        action: 'document_comment_skip_self_update',
+        agentId: 'pipeline',
+        sessionId: null,
+        recordId,
+        bindingId: comment.parentCommentId ?? comment.commentId,
+        bindingType: 'thread',
+        details: {
+          comment_id: comment.commentId,
+          updater_npub: updaterNpub,
+          sender_npub: comment.senderNpub,
+          target_record_id: comment.targetRecordId,
+          target_record_family_hash: comment.targetRecordFamilyHash,
+          is_me: true,
+        },
+      });
+    }
+
     if (this.dispatchPipelineRuntime) {
       const pipelineResult = await this.dispatchPipelineRuntime.dispatch({
         subscription: record,

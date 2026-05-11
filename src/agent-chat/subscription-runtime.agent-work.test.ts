@@ -537,6 +537,97 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(next.recentDispatches[0]?.action).toBe('comment_pipeline_dispatch');
   });
 
+  test('skips workspace-key-authored comments before configured comment pipelines', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-comment-pipeline-self-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-comment-pipeline-self-agents'));
+    const routeStore = new DispatchRouteStore(makeTempDb('agent-comment-pipeline-self-routes'));
+    const pipelineStore = new PipelineStore(makeTempDb('agent-comment-pipeline-self-runs'));
+    const subscription = store.save(makeSubscription());
+
+    routeStore.save({
+      managedByNpub: subscription.managedByNpub!,
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'comment',
+      capability: 'comment_dispatch',
+      pipelineDefinitionId: 'comment-pipeline',
+    });
+    const runInputs: Record<string, unknown>[] = [];
+    const dispatchPipelineRuntime = new DispatchPipelineRuntime({
+      routeStore,
+      agentStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      loadDefinition: async () => ({
+        id: 'comment-pipeline',
+        slug: 'comment-pipeline',
+        name: 'Comment Pipeline',
+        scope: 'user',
+        ownerAlias: 'manager',
+        path: '/tmp/comment-pipeline.json',
+        spec: { name: 'Comment Pipeline', input: {}, steps: [] },
+      }),
+      loadFunctions: async () => ({ registry: {}, records: [] }),
+      runPipeline: async (input: any) => {
+        runInputs.push(input.input);
+        return makePipelineRun('comment-pipeline-run-1', input.input);
+      },
+    });
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      dispatchPipelineRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-comment-pipeline-self-1',
+          record_state: 'active',
+          version: 1,
+          signature_npub: subscription.wsKeyNpub,
+          group_npubs: ['npub1group'],
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        comment_id: 'comment-pipeline-self-1',
+        target_record_id: 'task-pipeline-1',
+        target_record_family_hash: `${subscription.sourceAppNpub}:task`,
+        sender_npub: 'npub1reviewer',
+        body: 'Agent-created task comment.',
+        comment_status: 'open',
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-comment-pipeline-self-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'comment'),
+        record_id: 'record-comment-pipeline-self-1',
+      }),
+    );
+
+    expect(runInputs).toEqual([]);
+    expect(next.recentDispatches[0]?.kind).toBe('comment');
+    expect(next.recentDispatches[0]?.action).toBe('task_comment_skip_self_update');
+    expect(next.recentDispatches[0]?.details?.is_me).toBe(true);
+  });
+
   test('routes task advisories into the agent-work runtime', async () => {
     const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-subscriptions'));
     const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-agents'));
