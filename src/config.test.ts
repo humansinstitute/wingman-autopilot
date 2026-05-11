@@ -8,7 +8,6 @@ const ENV_KEYS = [
   "AGENT_SPAWN_MODE",
   "AGENT_STATUS_POLL_TIMEOUT_MS",
   "AGENTAPI_BIN",
-  "CODEX_YOLO",
   "DEFAULT_AGENT",
   "GLOVES",
   "PI_CLI",
@@ -114,7 +113,6 @@ describe("loadConfig", () => {
       AGENTAPI_BIN: "/tmp/custom-agentapi",
       AGENT_MODE: undefined,
       AGENT_SPAWN_MODE: undefined,
-      CODEX_YOLO: undefined,
       GLOVES: undefined,
     });
 
@@ -135,7 +133,6 @@ describe("loadConfig", () => {
       AGENTAPI_BIN: "/tmp/custom-agentapi",
       AGENT_MODE: undefined,
       AGENT_SPAWN_MODE: undefined,
-      CODEX_YOLO: undefined,
       GLOVES: undefined,
     });
 
@@ -149,7 +146,6 @@ describe("loadConfig", () => {
       AGENTAPI_BIN: "/tmp/custom-agentapi",
       AGENT_MODE: undefined,
       AGENT_SPAWN_MODE: undefined,
-      CODEX_YOLO: undefined,
       GLOVES: undefined,
     });
 
@@ -163,12 +159,11 @@ describe("loadConfig", () => {
     expect(geminiCommand).toContain("--type=gemini");
   });
 
-  test("adds yolo and permission-skip arguments when Docker approval bypasses are enabled", () => {
+  test("uses GLOVES=OFF as the single approval bypass for Codex and Claude", () => {
     applyEnv({
       AGENTAPI_BIN: "/tmp/custom-agentapi",
       AGENT_MODE: undefined,
       AGENT_SPAWN_MODE: undefined,
-      CODEX_YOLO: "true",
       GLOVES: "OFF",
     });
 
@@ -200,7 +195,6 @@ describe("loadConfig", () => {
       AGENTAPI_BIN: "/tmp/custom-agentapi",
       AGENT_MODE: undefined,
       AGENT_SPAWN_MODE: undefined,
-      CODEX_YOLO: undefined,
       GLOVES: undefined,
     });
 

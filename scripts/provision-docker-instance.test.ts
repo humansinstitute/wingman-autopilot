@@ -55,7 +55,6 @@ describe("docker provisioning", () => {
     expect(content).toContain("WINGMAN_ADMIN_NPUB=npub1operator");
     expect(content).toContain("WINGMAN_IDENTITY_COOKIE_SECURE=true");
     expect(content).toContain("WINGMAN_CODEX_CLI=/usr/local/bin/codex");
-    expect(content).toContain("WINGMAN_CODEX_YOLO=true");
     expect(content).toContain("WINGMAN_CODEX_TRUSTED_WORKSPACE=/workspace");
     expect(content).toContain("WINGMAN_GLOVES=OFF");
     expect(content).toContain(`WINGMAN_WORKSPACE_HOST_PATH=${join(homedir(), ".wm-ap99")}`);

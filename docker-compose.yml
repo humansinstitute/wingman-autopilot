@@ -24,7 +24,6 @@ services:
       AGENTAPI_ALLOWED_HOSTS: "${WINGMAN_AGENTAPI_ALLOWED_HOSTS:-localhost,127.0.0.1,[::1]}"
       DEFAULT_AGENT: "${WINGMAN_DEFAULT_AGENT:-codex}"
       CODEX_CLI: "${WINGMAN_CODEX_CLI:-/usr/local/bin/codex}"
-      CODEX_YOLO: "${WINGMAN_CODEX_YOLO:-true}"
       CODEX_TRUSTED_WORKSPACE: "${WINGMAN_CODEX_TRUSTED_WORKSPACE:-/workspace}"
       CLAUDE_CLI: "${WINGMAN_CLAUDE_CLI:-/usr/local/bin/claude}"
       GLOVES: "${WINGMAN_GLOVES:-OFF}"
