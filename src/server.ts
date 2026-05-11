@@ -1684,8 +1684,6 @@ void new AgentWorkSessionIdleRetention({
   idleRetentionMinutes: 60,
 });
 
-await workspaceSubscriptionManager.startupReload();
-
 const APP_ACTIONS: AppLifecycleAction[] = ["start", "stop", "restart", "setup", "build"];
 
 const parseAppScripts = (input: unknown): AppLifecycleScripts => {
@@ -2202,6 +2200,8 @@ workspaceSubscriptionManager.setDispatchPipelineRuntime(new DispatchPipelineRunt
   requirePipelineRoutes: true,
   defaultAgent: config.defaultAgent,
 }));
+
+await workspaceSubscriptionManager.startupReload();
 
 void resumeRunningPipelineRuns({
   store: pipelineStore,

@@ -90,6 +90,33 @@ type RuntimeFailureState = 'blocked_auth' | 'blocked_decrypt' | null;
 const MAX_RECENT_SSE_EVENTS = 100;
 const MAX_RECENT_DISPATCHES = 10;
 
+const DEFAULT_DISPATCH_PIPELINE_ROUTES: Array<{
+  triggerKind: CreateDispatchRouteInput['triggerKind'];
+  capability: CreateDispatchRouteInput['capability'];
+  pipelineDefinitionId: string;
+}> = [
+  {
+    triggerKind: 'chat',
+    capability: 'chat_intercept',
+    pipelineDefinitionId: 'demo-agent-dispatch-chat-response',
+  },
+  {
+    triggerKind: 'task',
+    capability: 'task_dispatch',
+    pipelineDefinitionId: 'demo-agent-dispatch-task-response',
+  },
+  {
+    triggerKind: 'comment',
+    capability: 'comment_dispatch',
+    pipelineDefinitionId: 'demo-agent-dispatch-comment-response',
+  },
+  {
+    triggerKind: 'task_review',
+    capability: 'task_review',
+    pipelineDefinitionId: 'demo-agent-dispatch-task-review-response',
+  },
+];
+
 export class WorkspaceSubscriptionAccessError extends Error {
   readonly statusCode = 403;
   readonly code = 'backend_connection_forbidden';
@@ -267,20 +294,6 @@ function getErrorDetailCode(error: unknown): string | null {
   }
   const detailCode = (error as { detailCode?: unknown }).detailCode;
   return typeof detailCode === 'string' && detailCode.trim().length > 0 ? detailCode.trim() : null;
-}
-
-function getConnectedEventCursor(eventType: string, payload: Record<string, unknown> | null): string | null {
-  if (eventType !== 'connected' || !payload) {
-    return null;
-  }
-  const eventId = payload.event_id;
-  if (typeof eventId === 'string' && eventId.trim().length > 0) {
-    return eventId.trim();
-  }
-  if (typeof eventId === 'number' && Number.isFinite(eventId)) {
-    return String(eventId);
-  }
-  return null;
 }
 
 function mapFailureState(detailCode: string | null): RuntimeFailureState {
@@ -510,6 +523,60 @@ export class WorkspaceSubscriptionManager {
     });
   }
 
+  private ensureDefaultDispatchRoutesForSubscription(
+    subscription: WorkspaceSubscriptionRecord,
+    capabilities: Array<CreateDispatchRouteInput['capability']>,
+  ): DispatchRouteRecord[] {
+    if (!this.dispatchPipelineRuntime || !subscription.managedByNpub) {
+      return [];
+    }
+    const enabledCapabilities = new Set(capabilities);
+    const existingRoutes = this.dispatchPipelineRuntime.listRoutesForSubscription(subscription.subscriptionId);
+    const created: DispatchRouteRecord[] = [];
+    for (const routeConfig of DEFAULT_DISPATCH_PIPELINE_ROUTES) {
+      if (!enabledCapabilities.has(routeConfig.capability)) {
+        continue;
+      }
+      const hasRoute = existingRoutes.some((route) => (
+        route.triggerKind === routeConfig.triggerKind
+        && route.capability === routeConfig.capability
+      ));
+      if (hasRoute) {
+        continue;
+      }
+      const route = this.dispatchPipelineRuntime.saveRoute({
+        managedByNpub: subscription.managedByNpub,
+        subscriptionId: subscription.subscriptionId,
+        workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+        botNpub: subscription.botNpub,
+        sourceAppNpub: subscription.sourceAppNpub,
+        triggerKind: routeConfig.triggerKind,
+        capability: routeConfig.capability,
+        pipelineDefinitionId: routeConfig.pipelineDefinitionId,
+        enabled: true,
+        priority: 100,
+      });
+      existingRoutes.push(route);
+      created.push(route);
+    }
+    return created;
+  }
+
+  private ensureDefaultDispatchRoutesForAgent(agent: AgentDefinitionRecord): void {
+    if (!agent.managedByNpub) {
+      return;
+    }
+    for (const subscription of this.store.listForManagerNpub(agent.managedByNpub)) {
+      if (
+        subscription.workspaceOwnerNpub !== agent.workspaceOwnerNpub
+        || subscription.botNpub !== agent.botNpub
+      ) {
+        continue;
+      }
+      this.ensureDefaultDispatchRoutesForSubscription(subscription, agent.capabilities);
+    }
+  }
+
   deleteDispatchRouteForManager(routeId: string, npub: string): boolean {
     if (!this.dispatchPipelineRuntime) {
       return false;
@@ -586,7 +653,7 @@ export class WorkspaceSubscriptionManager {
     });
 
     const now = new Date().toISOString();
-    return this.agentStore.save({
+    const saved = this.agentStore.save({
       agentId,
       label,
       botNpub,
@@ -604,6 +671,8 @@ export class WorkspaceSubscriptionManager {
       updatedAt: now,
       managedByNpub: input.managedByNpub,
     });
+    this.ensureDefaultDispatchRoutesForAgent(saved);
+    return saved;
   }
 
   removeAgentForManager(agentId: string, npub: string): boolean {
@@ -793,7 +862,16 @@ export class WorkspaceSubscriptionManager {
 
     record = await this.refreshGroupKeys(record, botIdentity, true);
     await this.ensureConnected(record, botIdentity, false);
-    return this.store.getBySubscriptionId(record.subscriptionId) ?? record;
+    const saved = this.store.getBySubscriptionId(record.subscriptionId) ?? record;
+    const subscriptionAgents = this.agentStore
+      .listByWorkspaceAndBot(saved.workspaceOwnerNpub, saved.botNpub)
+      .filter((agent) => agent.managedByNpub === saved.managedByNpub)
+      .filter((agent) => agent.enabled);
+    const routeCapabilities = subscriptionAgents.length > 0
+      ? [...new Set(subscriptionAgents.flatMap((agent) => agent.capabilities))]
+      : saved.capabilityDefaults ?? [];
+    this.ensureDefaultDispatchRoutesForSubscription(saved, routeCapabilities);
+    return saved;
   }
 
   async startupReload(): Promise<void> {
@@ -1330,7 +1408,7 @@ export class WorkspaceSubscriptionManager {
     } catch {
       payload = { raw: eventData };
     }
-    record.lastSseEventId = eventId ?? getConnectedEventCursor(eventType, payload) ?? record.lastSseEventId;
+    record.lastSseEventId = eventId ?? record.lastSseEventId;
     const nextEvent: AgentChatSseEventDiagnostic = {
       eventId,
       eventType,

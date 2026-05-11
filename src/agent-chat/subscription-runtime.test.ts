@@ -7,8 +7,11 @@ import { describe, expect, test } from 'bun:test';
 
 import { AgentDefinitionStore } from './agent-definition-store';
 import { BackendConnectionStore } from './backend-connection-store';
+import { DispatchPipelineRuntime } from './dispatch-pipelines/runtime';
+import { DispatchRouteStore } from './dispatch-pipelines/route-store';
 import { WorkspaceSubscriptionManager } from './subscription-runtime';
 import { WorkspaceSubscriptionStore } from './workspace-subscription-store';
+import { PipelineStore } from '../pipelines/pipeline-store';
 import type {
   AgentDefinitionRecord,
   BackendConnectionRecord,
@@ -87,6 +90,7 @@ function createTestManager(
   botKeys: Map<string, BotKeyStoreRecord>,
   checkBackendHealth?: ConstructorParameters<typeof WorkspaceSubscriptionManager>[0]['checkBackendHealth'],
   instanceIdentity: WingmanInstanceIdentity | null = null,
+  dispatchPipelineRuntime?: ConstructorParameters<typeof WorkspaceSubscriptionManager>[0]['dispatchPipelineRuntime'],
 ) {
   const store = new WorkspaceSubscriptionStore(dbPath);
   const agentStore = new AgentDefinitionStore(dbPath);
@@ -110,6 +114,7 @@ function createTestManager(
       getActiveKeyForBotNpub: (botNpub) => botKeys.get(botNpub) ?? null,
     },
     getInstanceIdentity: () => instanceIdentity,
+    dispatchPipelineRuntime,
   });
 
   const managerInternals = manager as unknown as {
@@ -184,7 +189,7 @@ function saveBackendConnection(
 }
 
 describe('WorkspaceSubscriptionManager', () => {
-  test('uses connected event payload cursor as the SSE resume point', async () => {
+  test('does not advance the SSE resume point from connected event payload cursors', async () => {
     const dbPath = makeTempDb();
     const store = new WorkspaceSubscriptionStore(dbPath);
     const manager = new WorkspaceSubscriptionManager({
@@ -211,8 +216,8 @@ describe('WorkspaceSubscriptionManager', () => {
       ) => Promise<WorkspaceSubscriptionRecord>;
     }).handleSseEvent(record, null, 'connected', JSON.stringify({ event_id: 1011 }));
 
-    expect(next.lastSseEventId).toBe('1011');
-    expect(store.getBySubscriptionId(record.subscriptionId)?.lastSseEventId).toBe('1011');
+    expect(next.lastSseEventId).toBeNull();
+    expect(store.getBySubscriptionId(record.subscriptionId)?.lastSseEventId).toBeNull();
   });
 
   test('derives agent groups from refreshed wrapped group keys when none are supplied', async () => {
@@ -338,6 +343,40 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(imported.subscription.sseStatus).toBe('connected');
     expect(store.listForManagerNpub('npub1manager')).toHaveLength(1);
     expect(backendStore.listForManagerNpub('npub1manager')[0]?.healthStatus).toBe('healthy');
+  });
+
+  test('seeds default dispatch routes from Agent Connect capability defaults', async () => {
+    const dbPath = makeTempDb();
+    const routeStore = new DispatchRouteStore(dbPath);
+    const dispatchPipelineRuntime = new DispatchPipelineRuntime({
+      routeStore,
+      pipelineStore: new PipelineStore(makeTempDb()),
+      getSessionApiContext: () => null,
+      callbackOrigin: 'http://localhost:3600',
+      requirePipelineRoutes: true,
+    });
+    const { manager } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      makeInstanceIdentity(),
+      dispatchPipelineRuntime,
+    );
+
+    const imported = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackage({ capabilities: ['chat_intercept', 'task_dispatch'] }),
+    });
+
+    const routes = routeStore.listForSubscription(imported.subscription.subscriptionId);
+    expect(routes.map((route) => `${route.triggerKind}:${route.capability}`).sort()).toEqual([
+      'chat:chat_intercept',
+      'task:task_dispatch',
+    ]);
+    expect(routes.map((route) => route.pipelineDefinitionId).sort()).toEqual([
+      'demo-agent-dispatch-chat-response',
+      'demo-agent-dispatch-task-response',
+    ]);
   });
 
   test('rejects missing or foreign Agent Profile ids before importing Agent Connect packages', async () => {
