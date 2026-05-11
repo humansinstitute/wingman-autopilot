@@ -317,6 +317,7 @@ export function createAgentDispatchSetupCards({
   primaryAgent,
   availableBackendConnections = [],
   additionalAgentCount = 0,
+  onConnectWorkspace,
   onEditSubscription,
   onUseBackendConnection,
   onSaveBackendAvailability,
@@ -338,7 +339,7 @@ export function createAgentDispatchSetupCards({
   const hasSetupReadyBackend = setupReadyBackendConnections.length > 0;
   const overviewCard = createCard(
     'Guided Setup',
-    'Connect the workspace once, keep one local Wingman identity, and layer new dispatch roles onto that same agent instead of repeating the same values across multiple forms.',
+    'Paste one AgentConnect token, keep one Wingman bot identity, and route workspace events to dispatch pipelines from the same setup surface.',
   );
 
   appendStep(
@@ -350,7 +351,7 @@ export function createAgentDispatchSetupCards({
         ? `${setupReadyBackendConnections.length} shared backend${setupReadyBackendConnections.length === 1 ? ' is' : 's are'} available. Create your own subscription from one without retyping backend details.`
         : hasAvailableBackend
           ? 'A shared backend is available, but it does not include all setup hints yet. Use the manual connection fields for the missing workspace facts.'
-      : 'Save the workspace owner, backend URL, and source app once so dispatch can reuse the same live connection.',
+      : 'Paste the AgentConnect token from Flight Deck so Wingman can read the service, workspace, app, and connection token values.',
     hasSubscription || hasAvailableBackend,
   );
   appendStep(
@@ -383,7 +384,7 @@ export function createAgentDispatchSetupCards({
       'Connect Workspace',
       'agent-chat-guided-connect',
       'Connect Agent Dispatch workspace',
-      () => onEditSubscription?.(null),
+      () => onConnectWorkspace?.(),
     ));
   } else if (!hasAgent) {
     overviewActions.push(createActionButton(
@@ -415,7 +416,7 @@ export function createAgentDispatchSetupCards({
       ? 'All dispatch paths reuse this single Tower connection.'
       : hasAvailableBackend
         ? 'A backend managed by another user is available. Reuse it to create your own subscription and local agent state.'
-      : 'No subscription is configured yet. This is the only required connection form.',
+      : 'No subscription is configured yet. AgentConnect import is the preferred setup path.',
   );
   if (hasSubscription) {
     const statusRow = document.createElement('div');
@@ -456,13 +457,13 @@ export function createAgentDispatchSetupCards({
   } else {
     const empty = document.createElement('p');
     empty.className = 'wm-settings__port-note';
-    empty.textContent = 'Set the workspace owner npub, backend base URL, and source app npub here once. The agent editor should not have to repeat them.';
+    empty.textContent = 'Use Connect Workspace to paste the AgentConnect token. Manual connection remains available for recovery or older workspaces.';
     connectionCard.append(empty);
   }
   if (hasSubscription || !hasSetupReadyBackend) {
     connectionCard.append(createInlineActions([
       createActionButton(
-        hasSubscription ? 'Edit Connection' : 'Create Connection',
+        hasSubscription ? 'Edit Connection' : 'Manual Connection',
         'agent-chat-setup-edit-subscription',
         'Edit Agent Dispatch connection',
         () => onEditSubscription?.(subscription ?? null),
@@ -592,10 +593,65 @@ export function createDispatchPipelineRouteCards({
     return card;
   }
 
-  const chatRoute = findRoute(routes, 'chat', 'chat_intercept');
-  const taskRoute = findRoute(routes, 'task', 'task_dispatch');
-  const chatSelect = createRouteSelect('Chat pipeline', 'agent-chat-route-chat-pipeline', definitions, chatRoute?.pipelineDefinitionId || '');
-  const taskSelect = createRouteSelect('Task pipeline', 'agent-chat-route-task-pipeline', definitions, taskRoute?.pipelineDefinitionId || '');
+  const routeConfigs = [
+    {
+      label: 'Chat pipeline',
+      testId: 'agent-chat-route-chat-pipeline',
+      triggerKind: 'chat',
+      capability: 'chat_intercept',
+      priority: 10,
+      activePolicy: 'queue',
+    },
+    {
+      label: 'Task pipeline',
+      testId: 'agent-chat-route-task-pipeline',
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      priority: 20,
+      activePolicy: 'skip',
+      matchJson: { assignedTo: 'bot' },
+    },
+    {
+      label: 'Flow pipeline',
+      testId: 'agent-chat-route-flow-pipeline',
+      triggerKind: 'flow',
+      capability: 'flow_dispatch',
+      priority: 30,
+      activePolicy: 'skip',
+    },
+    {
+      label: 'Task review pipeline',
+      testId: 'agent-chat-route-task-review-pipeline',
+      triggerKind: 'task_review',
+      capability: 'task_review',
+      priority: 40,
+      activePolicy: 'skip',
+    },
+    {
+      label: 'Approval pipeline',
+      testId: 'agent-chat-route-approval-pipeline',
+      triggerKind: 'approval',
+      capability: 'approval_dispatch',
+      priority: 50,
+      activePolicy: 'queue',
+    },
+    {
+      label: 'Comment pipeline',
+      testId: 'agent-chat-route-comment-pipeline',
+      triggerKind: 'comment',
+      capability: 'comment_dispatch',
+      priority: 60,
+      activePolicy: 'queue',
+    },
+  ];
+  const routeFields = routeConfigs.map((config) => {
+    const route = findRoute(routes, config.triggerKind, config.capability);
+    return {
+      ...config,
+      route,
+      select: createRouteSelect(config.label, config.testId, definitions, route?.pipelineDefinitionId || ''),
+    };
+  });
 
   const enabledField = document.createElement('label');
   enabledField.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:10px;';
@@ -623,32 +679,19 @@ export function createDispatchPipelineRouteCards({
       saveButton.disabled = true;
       status.textContent = 'Saving dispatch pipeline routes...';
       try {
-        const saves = [];
-        if (chatSelect.select.value) {
-          saves.push(onSaveRoute?.({
-            routeId: chatRoute?.routeId,
+        const saves = routeFields
+          .filter((field) => field.select.select.value)
+          .map((field) => onSaveRoute?.({
+            routeId: field.route?.routeId,
             subscriptionId: subscription.subscriptionId,
-            triggerKind: 'chat',
-            capability: 'chat_intercept',
-            pipelineDefinitionId: chatSelect.select.value,
+            triggerKind: field.triggerKind,
+            capability: field.capability,
+            pipelineDefinitionId: field.select.select.value,
             enabled: enabledInput.checked,
-            priority: 10,
-            activePolicy: 'queue',
+            priority: field.priority,
+            activePolicy: field.activePolicy,
+            matchJson: field.matchJson,
           }));
-        }
-        if (taskSelect.select.value) {
-          saves.push(onSaveRoute?.({
-            routeId: taskRoute?.routeId,
-            subscriptionId: subscription.subscriptionId,
-            triggerKind: 'task',
-            capability: 'task_dispatch',
-            pipelineDefinitionId: taskSelect.select.value,
-            enabled: enabledInput.checked,
-            priority: 20,
-            activePolicy: 'skip',
-            matchJson: { assignedTo: 'bot' },
-          }));
-        }
         await Promise.all(saves.filter(Boolean));
         status.textContent = 'Dispatch pipeline routes saved.';
       } catch (error) {
@@ -665,6 +708,11 @@ export function createDispatchPipelineRouteCards({
     empty.textContent = 'No pipeline definitions are available yet.';
     card.append(empty);
   }
-  card.append(chatSelect.row, taskSelect.row, enabledField, createInlineActions([saveButton]), status);
+  card.append(
+    ...routeFields.map((field) => field.select.row),
+    enabledField,
+    createInlineActions([saveButton]),
+    status,
+  );
   return card;
 }

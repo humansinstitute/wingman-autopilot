@@ -1,139 +1,140 @@
 import {
   createButton,
-  createCard,
-  createCheckbox,
   createInlineActions,
   createStatusLine,
   createTextarea,
 } from './agent-chat-shared-ui.js';
-
-function createAgentOption(agent) {
-  const option = document.createElement('option');
-  option.value = agent.agentId || '';
-  option.textContent = agent.label && agent.label !== agent.agentId
-    ? `${agent.label} (${agent.agentId})`
-    : agent.agentId || 'Unnamed agent';
-  return option;
-}
-
-function createAgentSelect(agents) {
-  const row = document.createElement('label');
-  row.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:10px;';
-  row.textContent = 'Local Agent Profile';
-
-  const select = document.createElement('select');
-  select.className = 'wm-input';
-  select.setAttribute('aria-label', 'Local Agent Profile');
-  select.setAttribute('data-testid', 'agent-connect-agent-profile');
-
-  if (!Array.isArray(agents) || agents.length === 0) {
-    const option = document.createElement('option');
-    option.value = '';
-    option.textContent = 'Create an Agent Profile first';
-    select.append(option);
-    select.disabled = true;
-  } else {
-    agents.forEach((agent) => select.append(createAgentOption(agent)));
-  }
-
-  row.append(select);
-  return { row, select };
-}
 
 function formatImportSummary(payload) {
   const backend = payload?.backendConnection;
   const subscription = payload?.subscription;
   const backendStatus = backend?.healthStatus || 'unknown';
   const workspace = subscription?.workspaceOwnerNpub || 'workspace';
-  const bot = subscription?.botNpub || 'selected bot';
-  return `Imported ${workspace} for ${bot}. Backend health is ${backendStatus}.`;
+  const bot = subscription?.botNpub || 'Wingman bot';
+  return `Connected ${workspace} for ${bot}. Backend health is ${backendStatus}.`;
 }
 
-function parseManagerNpubs(value) {
-  return value
-    .split(/[\s,]+/)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
+function setModalVisible(overlay, visible) {
+  overlay.hidden = !visible;
+  overlay.style.display = visible ? 'flex' : 'none';
 }
 
-export function createAgentConnectImportCard({
-  agents = [],
+export function createAgentConnectImportModal({
   onImport,
 }) {
-  const card = createCard(
-    'Agent Connect Import',
-    'Paste the Flight Deck Agent Connect package, select the local Agent Profile whose bot identity should subscribe, then import the workspace connection.',
-  );
-  card.setAttribute('data-testid', 'agent-connect-import-card');
+  const overlay = document.createElement('div');
+  overlay.hidden = true;
+  overlay.className = 'wm-modal-backdrop';
+  overlay.setAttribute('data-testid', 'agent-connect-import-modal');
+  overlay.style.cssText = [
+    'position:fixed',
+    'inset:0',
+    'z-index:1000',
+    'display:none',
+    'align-items:center',
+    'justify-content:center',
+    'padding:20px',
+    'background:rgba(0,0,0,0.46)',
+  ].join(';');
 
-  const agentSelect = createAgentSelect(agents);
+  const panel = document.createElement('section');
+  panel.className = 'wm-card';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-modal', 'true');
+  panel.setAttribute('aria-labelledby', 'agent-connect-import-title');
+  panel.style.cssText = [
+    'width:min(860px,100%)',
+    'max-height:min(86vh,820px)',
+    'overflow:auto',
+    'padding:18px',
+    'border-radius:8px',
+    'box-shadow:0 18px 60px rgba(0,0,0,0.28)',
+  ].join(';');
+
+  const heading = document.createElement('h3');
+  heading.id = 'agent-connect-import-title';
+  heading.textContent = 'Connect Workspace';
+
+  const note = document.createElement('p');
+  note.className = 'wm-settings__port-note';
+  note.textContent = 'Paste the full AgentConnect token. Wingman will read the service, workspace, app, and connection token values from it and subscribe with the configured Wingman bot identity.';
+
   const packageField = createTextarea(
-    'Agent Connect JSON',
-    '{ "kind": "coworker_agent_connect", ... }',
+    'AgentConnect token',
+    '======AGENTCONNECT-TOKEN======\n{ "kind": "coworker_agent_connect", ... }\n======AGENTCONNECT-TOKEN======',
     'agent-connect-json',
-    8,
+    16,
   );
-  const allowedUsersField = createTextarea(
-    'Available to manager NPUBs',
-    'npub1..., npub1...',
-    'agent-connect-allowed-manager-npubs',
-    3,
-  );
-  const sharedServiceField = createCheckbox(
-    'Make available to explicit shared service agent',
-    'agent-connect-shared-service-grant',
-    false,
-  );
+  packageField.input.spellcheck = false;
+  packageField.input.style.fontFamily = 'var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)';
+  packageField.input.style.minHeight = '340px';
+
   const statusLine = createStatusLine();
   statusLine.setAttribute('data-testid', 'agent-connect-import-status');
 
   const importButton = createButton(
-    'Import Workspace',
+    'Connect Workspace',
     'agent-connect-import-submit',
-    'Import Agent Connect workspace',
+    'Import AgentConnect workspace token',
   );
-  importButton.disabled = agentSelect.select.disabled;
+  const cancelButton = createButton(
+    'Cancel',
+    'agent-connect-import-cancel',
+    'Close AgentConnect import',
+    'secondary',
+  );
+
+  cancelButton.addEventListener('click', () => {
+    setModalVisible(overlay, false);
+  });
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) {
+      setModalVisible(overlay, false);
+    }
+  });
+  overlay.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      setModalVisible(overlay, false);
+    }
+  });
+
   importButton.addEventListener('click', async () => {
     const packageJson = packageField.input.value.trim();
-    const agentProfileId = agentSelect.select.value.trim();
-    if (!agentProfileId) {
-      statusLine.textContent = 'Select a local Agent Profile before importing.';
-      return;
-    }
     if (!packageJson) {
-      statusLine.textContent = 'Paste Agent Connect JSON before importing.';
+      statusLine.textContent = 'Paste an AgentConnect token before connecting.';
       packageField.input.focus();
       return;
     }
 
     importButton.disabled = true;
-    statusLine.textContent = 'Importing Agent Connect package...';
+    statusLine.textContent = 'Connecting workspace...';
     try {
-      const allowedManagerNpubs = parseManagerNpubs(allowedUsersField.input.value);
-      const payload = await onImport?.({
-        packageJson,
-        agentProfileId,
-        allowedManagerNpubs,
-        grantSharedService: sharedServiceField.input.checked,
-      });
+      const payload = await onImport?.({ packageJson });
       statusLine.textContent = formatImportSummary(payload);
       packageField.input.value = '';
-      allowedUsersField.input.value = '';
-      sharedServiceField.input.checked = false;
+      setModalVisible(overlay, false);
     } catch (error) {
-      statusLine.textContent = error instanceof Error ? error.message : 'Agent Connect import failed.';
+      statusLine.textContent = error instanceof Error ? error.message : 'AgentConnect import failed.';
     } finally {
-      importButton.disabled = agentSelect.select.disabled;
+      importButton.disabled = false;
     }
   });
 
-  card.append(
-    agentSelect.row,
+  panel.append(
+    heading,
+    note,
     packageField.row,
-    allowedUsersField.row,
-    sharedServiceField.row,
-    createInlineActions(importButton),
+    createInlineActions(importButton, cancelButton),
     statusLine,
   );
-  return card;
+  overlay.append(panel);
+
+  return {
+    element: overlay,
+    open() {
+      statusLine.textContent = '';
+      setModalVisible(overlay, true);
+      packageField.input.focus();
+    },
+  };
 }

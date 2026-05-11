@@ -33,7 +33,7 @@ import {
   setPanelVisible,
 } from './agent-chat-shared-ui.js';
 import { createAgentDispatchSetupCards, createDispatchPipelineRouteCards } from './agent-chat-setup-cards.js';
-import { createAgentConnectImportCard } from './agent-chat-connect-import-card.js';
+import { createAgentConnectImportModal } from './agent-chat-connect-import-card.js';
 
 async function loadOperatorState() {
   const [subscriptions, agentPayload, backendConnections, sessionPayload, definitionPayload] = await Promise.all([
@@ -127,13 +127,19 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
       : null,
   });
   const setupOverviewContainer = document.createElement('div');
-  const agentConnectImportContainer = document.createElement('div');
   const configuredDispatchesContainer = document.createElement('div');
   const agentRegistryContainer = document.createElement('div');
+  const agentConnectImportModal = createAgentConnectImportModal({
+    onImport: async (input) => {
+      const payload = await importAgentConnectPackage(input);
+      statusLine.textContent = 'AgentConnect token imported.';
+      await refreshList();
+      return payload;
+    },
+  });
   const setupPanel = document.createElement('div');
   setupPanel.append(
     setupOverviewContainer,
-    agentConnectImportContainer,
     subscriptionEditor.card,
     agentEditor.card,
     statusLine,
@@ -330,7 +336,6 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
   async function refreshList() {
     overviewContainer.replaceChildren();
     setupOverviewContainer.replaceChildren();
-    agentConnectImportContainer.replaceChildren();
     configuredDispatchesContainer.replaceChildren();
     agentRegistryContainer.replaceChildren();
     listContainer.replaceChildren();
@@ -361,12 +366,6 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
       };
       const primarySubscription = subscriptions[0] ?? null;
       const primaryAgent = getPrimaryAgent(agents);
-      const hasReusableBackendConnection = backendConnections.some((backendConnection) => (
-        backendConnection?.backendConnectionId
-        && backendConnection?.backendBaseUrl
-        && backendConnection?.setupWorkspaceOwnerNpub
-        && backendConnection?.setupSourceAppNpub
-      ));
       currentPrimarySubscription = primarySubscription;
       prefillFieldsFromSubscription(primarySubscription);
       updateAgentIdentityFields();
@@ -383,6 +382,9 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
           const updated = await saveAgentChatBackendConnectionAvailability(backendConnection.backendConnectionId, input);
           await refreshList();
           return updated;
+        },
+        onConnectWorkspace: () => {
+          agentConnectImportModal.open();
         },
         onEditAgent: (agent) => openAgentEditor(agent),
         onCreateAgent: () => openAgentEditor(),
@@ -406,15 +408,6 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
           const route = await saveAgentChatDispatchRoute(input);
           await refreshList();
           return route;
-        },
-      }));
-      agentConnectImportContainer.append(createAgentConnectImportCard({
-        agents,
-        onImport: async (input) => {
-          const payload = await importAgentConnectPackage(input);
-          statusLine.textContent = 'Agent Connect package imported.';
-          await refreshList();
-          return payload;
         },
       }));
       configuredDispatchesContainer.append(createConfiguredDispatchesPanel(primaryAgent, promptDefaults, {
@@ -494,7 +487,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
           emptyMessage: 'The primary flow is designed around one local agent.',
         }));
       }
-      setPanelVisible(subscriptionEditor.card, !primarySubscription && !hasReusableBackendConnection);
+      setPanelVisible(subscriptionEditor.card, false);
       setPanelVisible(agentEditor.card, Boolean(primarySubscription && agents.length === 0));
       overviewContainer.append(createAgentChatOverview(subscriptions, chatSessions));
       sessionContainer.append(createAgentChatSessionPanel(chatSessions));
@@ -599,6 +592,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
     activeTabId: 'setup',
     onTabChange: () => {},
   }));
+  container.append(agentConnectImportModal.element);
   void refreshList();
   return container;
 }

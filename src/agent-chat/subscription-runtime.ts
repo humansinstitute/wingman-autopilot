@@ -31,6 +31,7 @@ import type { AgentChatSessionRuntime } from './session-runtime';
 import { workspaceSubscriptionStore, type WorkspaceSubscriptionStore } from './workspace-subscription-store';
 import { parseSseEvents } from './sse-events';
 import { chatInterceptStateStore } from './chat-intercept-state-store';
+import type { WingmanInstanceIdentity } from '../identity/wingman-instance-identity';
 import {
   buildChatMessageFamilyHash,
   buildRecordFamilyHash,
@@ -255,6 +256,7 @@ export interface WorkspaceSubscriptionManagerDependencies {
       escrowUuid: string;
     }) => BotKeyStoreRecord;
   };
+  getInstanceIdentity?: () => WingmanInstanceIdentity | null;
 }
 
 function getErrorDetailCode(error: unknown): string | null {
@@ -328,6 +330,7 @@ export class WorkspaceSubscriptionManager {
   private readonly backendStore: BackendConnectionStore;
   private readonly routingEvaluator: AgentChatRoutingEvaluator;
   private readonly botKeyStore: WorkspaceSubscriptionManagerDependencies['botKeyStore'];
+  private readonly getInstanceIdentity: () => WingmanInstanceIdentity | null;
   private chatRuntime: AgentChatSessionRuntime | null;
   private agentWorkRuntime: AgentWorkSessionRuntime | null;
   private agentCommentRuntime: AgentCommentSessionRuntime | null;
@@ -344,6 +347,7 @@ export class WorkspaceSubscriptionManager {
     this.backendStore = deps.backendStore ?? backendConnectionStore;
     this.routingEvaluator = deps.routingEvaluator ?? new AgentChatRoutingEvaluator({ agentStore: this.agentStore });
     this.botKeyStore = deps.botKeyStore;
+    this.getInstanceIdentity = deps.getInstanceIdentity ?? (() => null);
     this.chatRuntime = deps.chatRuntime ?? null;
     this.agentWorkRuntime = deps.agentWorkRuntime ?? null;
     this.agentCommentRuntime = deps.agentCommentRuntime ?? null;
@@ -608,14 +612,14 @@ export class WorkspaceSubscriptionManager {
     subscription: WorkspaceSubscriptionRecord;
   }> {
     const agentProfileId = input.agentProfileId?.trim() || null;
-    if (!agentProfileId) {
-      throw new Error('Agent Connect import requires a selected Agent Profile.');
-    }
-    this.resolveOwnedAgentProfile(agentProfileId, input.managedByNpub);
+    const agentProfile = agentProfileId
+      ? this.resolveOwnedAgentProfile(agentProfileId, input.managedByNpub)
+      : null;
     const validation = validateAgentConnectPackage({
       managedByNpub: input.managedByNpub,
       packageJson: input.packageJson,
     });
+    this.resolveCreateBotIdentity(input.managedByNpub, agentProfile);
     let backendConnection = await this.createOrReuseBackendConnection({
       managedByNpub: input.managedByNpub,
       backendBaseUrl: validation.service.directHttpsUrl,
@@ -696,33 +700,7 @@ export class WorkspaceSubscriptionManager {
     const agentProfile = input.agentProfileId
       ? this.resolveOwnedAgentProfile(input.agentProfileId, input.managedByNpub)
       : null;
-    let botRecord = agentProfile
-      ? this.botKeyStore.getActiveKeyForBotNpub(agentProfile.botNpub)
-      : this.botKeyStore.getActiveKeyForUser(input.managedByNpub);
-    if (!botRecord) {
-      if (agentProfile) {
-        throw new Error(`No active bot key exists for Agent Profile ${agentProfile.agentId}.`);
-      }
-      if (!this.botKeyStore.createKey) {
-        throw new Error('No active bot key exists for this user.');
-      }
-      const decoded = nip19.decode(input.managedByNpub);
-      if (decoded.type !== 'npub' || typeof decoded.data !== 'string') {
-        throw new Error('Cannot create agent-chat bot key for invalid manager npub.');
-      }
-      const generated = generateBotKey(decoded.data);
-      botRecord = this.botKeyStore.createKey({
-        userNpub: input.managedByNpub,
-        botPubkeyHex: generated.botPubkeyHex,
-        botNpub: generated.botNpub,
-        displayName: generated.displayName,
-        encryptedToUser: generated.encryptedToUser,
-        encryptedEscrow: generated.encryptedEscrow,
-        escrowUuid: generated.escrowUuid,
-      });
-    }
-
-    const botIdentity = this.unlockBotIdentity(botRecord);
+    const botIdentity = this.resolveCreateBotIdentity(input.managedByNpub, agentProfile);
     if (agentProfile && botIdentity.botNpub !== agentProfile.botNpub) {
       throw new Error(`Agent Profile ${agentProfile.agentId} bot key does not match its botNpub.`);
     }
@@ -809,8 +787,8 @@ export class WorkspaceSubscriptionManager {
     const records = this.store.listStartupCandidates();
     for (const record of records) {
       try {
-        const botRecord = this.botKeyStore.getActiveKeyForBotNpub(record.botNpub);
-        if (!botRecord) {
+        const botIdentity = this.resolveStoredBotIdentity(record.botNpub);
+        if (!botIdentity) {
           const failed = {
             ...record,
             wsKeyStatus: 'failed' as const,
@@ -828,7 +806,6 @@ export class WorkspaceSubscriptionManager {
           continue;
         }
 
-        const botIdentity = this.unlockBotIdentity(botRecord);
         const prepared = await this.prepareWorkspaceSession(record, botIdentity);
         const refreshed = await this.refreshGroupKeys(prepared, botIdentity, false);
         refreshed.lastSuccessfulStartupReloadAt = new Date().toISOString();
@@ -944,6 +921,68 @@ export class WorkspaceSubscriptionManager {
       throw new Error(`Agent Profile ${agentProfileId} does not have a bot NPUB.`);
     }
     return agent;
+  }
+
+  private getInstanceRuntimeBotIdentity(expectedBotNpub?: string | null): RuntimeBotIdentity | null {
+    const identity = this.getInstanceIdentity();
+    if (!identity) {
+      return null;
+    }
+    if (expectedBotNpub && identity.npub !== expectedBotNpub) {
+      return null;
+    }
+    return {
+      botNpub: identity.npub,
+      botPubkeyHex: identity.pubkeyHex,
+      botSecret: identity.secretKey,
+    };
+  }
+
+  private resolveCreateBotIdentity(
+    managedByNpub: string,
+    agentProfile: AgentDefinitionRecord | null,
+  ): RuntimeBotIdentity {
+    const instanceIdentity = this.getInstanceRuntimeBotIdentity(agentProfile?.botNpub ?? null);
+    if (instanceIdentity) {
+      return instanceIdentity;
+    }
+
+    let botRecord = agentProfile
+      ? this.botKeyStore.getActiveKeyForBotNpub(agentProfile.botNpub)
+      : this.botKeyStore.getActiveKeyForUser(managedByNpub);
+    if (!botRecord) {
+      if (agentProfile) {
+        throw new Error(`No active bot key exists for Agent Profile ${agentProfile.agentId}.`);
+      }
+      if (!this.botKeyStore.createKey) {
+        throw new Error('No active bot key exists for this user.');
+      }
+      const decoded = nip19.decode(managedByNpub);
+      if (decoded.type !== 'npub' || typeof decoded.data !== 'string') {
+        throw new Error('Cannot create agent-chat bot key for invalid manager npub.');
+      }
+      const generated = generateBotKey(decoded.data);
+      botRecord = this.botKeyStore.createKey({
+        userNpub: managedByNpub,
+        botPubkeyHex: generated.botPubkeyHex,
+        botNpub: generated.botNpub,
+        displayName: generated.displayName,
+        encryptedToUser: generated.encryptedToUser,
+        encryptedEscrow: generated.encryptedEscrow,
+        escrowUuid: generated.escrowUuid,
+      });
+    }
+
+    return this.unlockBotIdentity(botRecord);
+  }
+
+  private resolveStoredBotIdentity(botNpub: string): RuntimeBotIdentity | null {
+    const instanceIdentity = this.getInstanceRuntimeBotIdentity(botNpub);
+    if (instanceIdentity) {
+      return instanceIdentity;
+    }
+    const botRecord = this.botKeyStore.getActiveKeyForBotNpub(botNpub);
+    return botRecord ? this.unlockBotIdentity(botRecord) : null;
   }
 
   private async createOrReuseBackendConnection(input: {
@@ -2289,12 +2328,11 @@ export class WorkspaceSubscriptionManager {
       reason: string;
     },
   ): Promise<WorkspaceSubscriptionRecord> {
-    const botRecord = this.botKeyStore.getActiveKeyForBotNpub(record.botNpub);
-    if (!botRecord) {
+    const botIdentity = this.resolveStoredBotIdentity(record.botNpub);
+    if (!botIdentity) {
       throw new Error(`Bot key record not found for ${record.botNpub}.`);
     }
 
-    const botIdentity = this.unlockBotIdentity(botRecord);
     const prepared = await this.prepareWorkspaceSession(record, botIdentity, {
       forceNew: options.refreshWorkspaceKey,
     });

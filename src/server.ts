@@ -520,6 +520,7 @@ const gitWorkflowApiHandler = createGitWorkflowApiHandler({
 });
 const workspaceSubscriptionManager = new WorkspaceSubscriptionManager({
   botKeyStore,
+  getInstanceIdentity: () => wingmanInstanceIdentity,
 });
 let sessionApiContextRef: SessionApiContext | null = null;
 

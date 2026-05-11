@@ -65,12 +65,22 @@ function normaliseCapabilities(value: unknown): AgentCapability[] {
   return [...set];
 }
 
+export function extractAgentConnectJsonText(rawText: string): string {
+  const trimmed = rawText.trim();
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return trimmed.slice(firstBrace, lastBrace + 1);
+  }
+  return trimmed;
+}
+
 function parseJsonPayload(rawJson: string | Record<string, unknown>): Record<string, unknown> {
   if (typeof rawJson !== 'string') {
     return rawJson;
   }
   try {
-    const parsed = JSON.parse(rawJson) as unknown;
+    const parsed = JSON.parse(extractAgentConnectJsonText(rawJson)) as unknown;
     const object = getObject(parsed);
     if (!object) {
       throw new Error('Agent Connect package must be a JSON object.');

@@ -16,6 +16,7 @@ import type {
   RuntimeBotIdentity,
   WorkspaceSubscriptionRecord,
 } from './types';
+import type { WingmanInstanceIdentity } from '../identity/wingman-instance-identity';
 
 function makeTempDb(): string {
   return join(tmpdir(), `agent-chat-subscription-runtime-${randomUUID()}.sqlite`);
@@ -66,10 +67,26 @@ function makeBotKeyRecord(botNpub: string): BotKeyStoreRecord {
   };
 }
 
+function makeInstanceIdentity(overrides: Partial<WingmanInstanceIdentity> = {}): WingmanInstanceIdentity {
+  const secretKey = new Uint8Array(32);
+  secretKey[0] = 1;
+  return {
+    nsec: 'nsec1wingman',
+    nsecHex: '01'.padEnd(64, '0'),
+    secretKey,
+    pubkeyHex: 'f'.repeat(64),
+    npub: 'npub1wingmanbot',
+    displayName: 'wingman-bot',
+    source: 'env',
+    ...overrides,
+  };
+}
+
 function createTestManager(
   dbPath: string,
   botKeys: Map<string, BotKeyStoreRecord>,
   checkBackendHealth?: ConstructorParameters<typeof WorkspaceSubscriptionManager>[0]['checkBackendHealth'],
+  instanceIdentity: WingmanInstanceIdentity | null = null,
 ) {
   const store = new WorkspaceSubscriptionStore(dbPath);
   const agentStore = new AgentDefinitionStore(dbPath);
@@ -92,6 +109,7 @@ function createTestManager(
       getActiveKeyForUser: () => null,
       getActiveKeyForBotNpub: (botNpub) => botKeys.get(botNpub) ?? null,
     },
+    getInstanceIdentity: () => instanceIdentity,
   });
 
   const managerInternals = manager as unknown as {
@@ -294,6 +312,34 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(backendStore.listForManagerNpub('npub1manager')[0]?.healthStatus).toBe('healthy');
   });
 
+  test('imports wrapped Agent Connect text without a profile when WINGMAN_PRIV is configured', async () => {
+    const dbPath = makeTempDb();
+    const instanceIdentity = makeInstanceIdentity();
+    const { manager, store, backendStore } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      instanceIdentity,
+    );
+
+    const tokenText = [
+      '======AGENTCONNECT-TOKEN======',
+      JSON.stringify(makeConnectPackage(), null, 2),
+      '======AGENTCONNECT-TOKEN======',
+    ].join('\n');
+
+    const imported = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: tokenText,
+    });
+
+    expect(imported.subscription.botNpub).toBe(instanceIdentity.npub);
+    expect(imported.subscription.agentProfileId).toBeNull();
+    expect(imported.subscription.sseStatus).toBe('connected');
+    expect(store.listForManagerNpub('npub1manager')).toHaveLength(1);
+    expect(backendStore.listForManagerNpub('npub1manager')[0]?.healthStatus).toBe('healthy');
+  });
+
   test('rejects missing or foreign Agent Profile ids before importing Agent Connect packages', async () => {
     const dbPath = makeTempDb();
     const botKeys = new Map([['npub1botone', makeBotKeyRecord('npub1botone')]]);
@@ -303,7 +349,7 @@ describe('WorkspaceSubscriptionManager', () => {
     await expect(manager.importAgentConnectPackage({
       managedByNpub: 'npub1manager',
       packageJson: makeConnectPackage(),
-    })).rejects.toThrow('requires a selected Agent Profile');
+    })).rejects.toThrow('No active bot key exists for this user');
 
     await expect(manager.importAgentConnectPackage({
       managedByNpub: 'npub1manager',
