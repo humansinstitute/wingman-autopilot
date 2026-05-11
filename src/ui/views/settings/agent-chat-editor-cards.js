@@ -455,7 +455,7 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
   };
 }
 
-export function createPrimaryAgentNameModal({ onCreate } = {}) {
+export function createPrimaryAgentNameModal({ onCreate, onBrowseDirectory } = {}) {
   const modal = createModalShell({
     testId: 'agent-chat-agent-name-modal',
     labelledBy: 'agent-chat-agent-name-title',
@@ -471,6 +471,45 @@ export function createPrimaryAgentNameModal({ onCreate } = {}) {
   note.textContent = 'Enter the agent name. Wingman will generate the local ID, working directory, default dispatch capabilities, and starter agent files.';
 
   const nameField = createInput('Agent name', 'Lara', 'agent-chat-agent-name');
+  const workingDirectoryField = createInput('Working Directory', '/workspace/lara', 'agent-chat-agent-working-directory');
+  const advancedPanel = document.createElement('div');
+  advancedPanel.setAttribute('data-testid', 'agent-chat-agent-name-advanced-panel');
+  advancedPanel.style.cssText = 'display:none;margin-top:12px;padding:12px;border:1px solid var(--wm-border-muted, rgba(255,255,255,0.14));border-radius:8px;background:rgba(127,127,127,0.04);';
+
+  const advancedNote = document.createElement('p');
+  advancedNote.className = 'wm-settings__port-note';
+  advancedNote.style.margin = '0 0 8px 0';
+  advancedNote.textContent = 'Choose an existing project folder or a custom workspace folder for this agent.';
+
+  let browseDirectoryButton = null;
+  if (typeof onBrowseDirectory === 'function') {
+    browseDirectoryButton = createButton(
+      'Browse...',
+      'agent-chat-agent-name-directory-browse',
+      'Browse for the primary agent working directory',
+    );
+    const directoryInputRow = document.createElement('div');
+    directoryInputRow.style.cssText = 'display:flex;gap:8px;align-items:center;';
+    workingDirectoryField.input.style.flex = '1 1 auto';
+    workingDirectoryField.input.style.minWidth = '0';
+    directoryInputRow.append(workingDirectoryField.input, browseDirectoryButton);
+    workingDirectoryField.row.append(directoryInputRow);
+    browseDirectoryButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      onBrowseDirectory({
+        initialPath: workingDirectoryField.input.value.trim(),
+        onSelect: (path) => {
+          directoryTouched = true;
+          workingDirectoryField.input.value = path;
+          workingDirectoryField.input.dispatchEvent(new Event('input', { bubbles: true }));
+          workingDirectoryField.input.focus();
+        },
+      });
+    });
+  }
+
+  advancedPanel.append(advancedNote, workingDirectoryField.row);
+
   const preview = document.createElement('dl');
   preview.className = 'wm-settings__detail-list';
   preview.style.cssText = 'display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 12px;margin:14px 0 0;';
@@ -488,12 +527,24 @@ export function createPrimaryAgentNameModal({ onCreate } = {}) {
     'agent-chat-agent-name-cancel',
     'Close primary agent creation',
   );
+  const advancedButton = createButton(
+    'Advanced',
+    'agent-chat-agent-name-advanced-toggle',
+    'Show advanced primary agent creation fields',
+  );
+
+  let advancedOpen = false;
+  let directoryTouched = false;
 
   function close() {
     setModalVisible(modal.overlay, false);
   }
 
-  function deriveDefaults(name) {
+  function deriveDefaultWorkingDirectory(agentId) {
+    return `/workspace/${agentId}`;
+  }
+
+  function deriveDefaults(name, options = {}) {
     const label = name.trim();
     const agentId = label
       .toLowerCase()
@@ -502,16 +553,44 @@ export function createPrimaryAgentNameModal({ onCreate } = {}) {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '')
       || 'agent';
+    const customWorkingDirectory = typeof options.workingDirectory === 'string'
+      ? options.workingDirectory.trim()
+      : '';
     return {
       agentId,
       label: label || 'Agent',
-      workingDirectory: `/workspace/${agentId}`,
+      workingDirectory: customWorkingDirectory || deriveDefaultWorkingDirectory(agentId),
       capabilities: ['chat_intercept', 'task_dispatch', 'comment_dispatch', 'task_review'],
     };
   }
 
-  function renderPreview() {
+  function syncAdvancedDirectoryToName() {
+    if (directoryTouched) {
+      return;
+    }
     const defaults = deriveDefaults(nameField.input.value);
+    workingDirectoryField.input.value = defaults.workingDirectory;
+  }
+
+  function setAdvancedOpen(open) {
+    advancedOpen = Boolean(open);
+    advancedPanel.style.display = advancedOpen ? '' : 'none';
+    advancedButton.textContent = advancedOpen ? 'Hide Advanced' : 'Advanced';
+    advancedButton.setAttribute(
+      'aria-label',
+      advancedOpen ? 'Hide advanced primary agent creation fields' : 'Show advanced primary agent creation fields',
+    );
+    advancedButton.setAttribute('aria-expanded', String(advancedOpen));
+    if (advancedOpen) {
+      syncAdvancedDirectoryToName();
+    }
+    renderPreview();
+  }
+
+  function renderPreview() {
+    const defaults = deriveDefaults(nameField.input.value, {
+      workingDirectory: advancedOpen ? workingDirectoryField.input.value : '',
+    });
     preview.replaceChildren();
     [
       ['Agent ID', defaults.agentId],
@@ -530,11 +609,24 @@ export function createPrimaryAgentNameModal({ onCreate } = {}) {
     });
   }
 
-  nameField.input.addEventListener('input', renderPreview);
+  nameField.input.addEventListener('input', () => {
+    syncAdvancedDirectoryToName();
+    renderPreview();
+  });
+  workingDirectoryField.input.addEventListener('input', () => {
+    directoryTouched = true;
+    renderPreview();
+  });
   nameField.input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
       event.preventDefault();
       createButtonEl.click();
+    }
+  });
+  advancedButton.addEventListener('click', () => {
+    setAdvancedOpen(!advancedOpen);
+    if (advancedOpen) {
+      workingDirectoryField.input.focus();
     }
   });
   cancelButton.addEventListener('click', close);
@@ -550,7 +642,9 @@ export function createPrimaryAgentNameModal({ onCreate } = {}) {
     createButtonEl.disabled = true;
     statusLine.textContent = 'Creating primary agent...';
     try {
-      const defaults = deriveDefaults(name);
+      const defaults = deriveDefaults(name, {
+        workingDirectory: advancedOpen ? workingDirectoryField.input.value : '',
+      });
       await onCreate?.(defaults);
       statusLine.textContent = 'Primary agent created.';
       close();
@@ -565,8 +659,9 @@ export function createPrimaryAgentNameModal({ onCreate } = {}) {
     heading,
     note,
     nameField.row,
+    advancedPanel,
     preview,
-    createInlineActions(createButtonEl, cancelButton),
+    createInlineActions(advancedButton, createButtonEl, cancelButton),
     statusLine,
   );
   renderPreview();
@@ -576,6 +671,9 @@ export function createPrimaryAgentNameModal({ onCreate } = {}) {
     open(defaultName = '') {
       statusLine.textContent = '';
       nameField.input.value = defaultName;
+      directoryTouched = false;
+      workingDirectoryField.input.value = deriveDefaults(defaultName).workingDirectory;
+      setAdvancedOpen(false);
       renderPreview();
       setModalVisible(modal.overlay, true);
       nameField.input.focus();

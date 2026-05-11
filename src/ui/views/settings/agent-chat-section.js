@@ -93,18 +93,19 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
   }
   const statusLine = createStatusLine();
   const subscriptionEditor = createSubscriptionEditorCard();
+  const browsePrimaryAgentDirectory = typeof openDirectoryBrowser === 'function'
+    ? ({ initialPath, onSelect }) => {
+        void openDirectoryBrowser({
+          initialPath,
+          title: 'Select Primary Agent Directory',
+          confirmLabel: 'Use This Directory',
+          allowCreate: true,
+          onSelect,
+        });
+      }
+    : null;
   const agentEditor = createPrimaryAgentEditorCard({
-    onBrowseDirectory: typeof openDirectoryBrowser === 'function'
-      ? ({ initialPath, onSelect }) => {
-          void openDirectoryBrowser({
-            initialPath,
-            title: 'Select Primary Agent Directory',
-            confirmLabel: 'Use This Directory',
-            allowCreate: true,
-            onSelect,
-          });
-        }
-      : null,
+    onBrowseDirectory: browsePrimaryAgentDirectory,
   });
   const setupOverviewContainer = document.createElement('div');
   const configuredDispatchesContainer = document.createElement('div');
@@ -118,6 +119,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
     },
   });
   const agentNameModal = createPrimaryAgentNameModal({
+    onBrowseDirectory: browsePrimaryAgentDirectory,
     onCreate: async (defaults) => {
       if (!currentPrimarySubscription?.botNpub || !currentPrimarySubscription?.workspaceOwnerNpub) {
         throw new Error('Connect a workspace before creating the primary agent.');
