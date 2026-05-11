@@ -15,7 +15,9 @@ import {
   type FlowBoard,
 } from './flow-orchestration';
 
-const YOKE_CLI_PATH = new URL('../../../wingmanbefree/wingman-yoke/src/cli.js', import.meta.url).pathname;
+const YOKE_CLI_PATH = compactText(Bun.env.AGENT_CHAT_YOKE_CLI_PATH)
+  || compactText(Bun.env.FLIGHTDECK_CLI_PATH)
+  || new URL('../../../wingman-yoke/src/cli.js', import.meta.url).pathname;
 const EXPORT_BOT_KEY_CLI = new URL('../../clis/export-bot-key.ts', import.meta.url).pathname;
 const DEFAULT_CONFIG_RELATIVE_PATH = join('.wingmen', 'board.json');
 
@@ -472,7 +474,7 @@ export class YokeBoardClient implements FlowBoard {
     ]);
     if (exitCode !== 0) {
       const detail = stderr.trim() || stdout.trim() || 'Unknown error';
-      throw new Error(`wingman-yoke ${args.join(' ')} failed (${exitCode}): ${detail}`);
+      throw new Error(`flightdeck-cli ${args.join(' ')} failed (${exitCode}): ${detail}`);
     }
     return stdout.trim();
   }

@@ -18,7 +18,7 @@ function resolveYokeTranslatorsUrl(): string {
   if (override) {
     return pathToFileURL(override).href;
   }
-  return new URL('../../../wingmanbefree/wingman-yoke/src/translators.js', import.meta.url).href;
+  return new URL('../../../wingman-yoke/src/translators.js', import.meta.url).href;
 }
 
 async function loadYokeTranslators(): Promise<YokeTranslatorModule> {

@@ -9,7 +9,7 @@ function resolveYokeBotHelpersUrl(): string {
   if (override) {
     return pathToFileURL(override).href;
   }
-  return new URL('../../../wingmanbefree/wingman-yoke/src/bot-helpers.js', import.meta.url).href;
+  return new URL('../../../wingman-yoke/src/bot-helpers.js', import.meta.url).href;
 }
 
 export async function loadYokeBotHelpers(): Promise<YokeBotHelpersModule> {

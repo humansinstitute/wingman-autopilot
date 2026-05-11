@@ -6,7 +6,7 @@ In the current stack:
 
 - `wingman-tower` is the workspace authority for auth, groups, encrypted record sync, storage, and service discovery
 - `wingman-fd` is Flight Deck, the human-first local-first browser workspace
-- `wingman-yoke` is the agent/operator CLI workspace client
+- `@runwingman/flightdeck-cli` is the agent/operator CLI workspace client
 - `wingman-flightlog` is the optional memory/history layer
 - `wingmen` is the session harness that launches, supervises, and connects agents to the rest of the suite
 
