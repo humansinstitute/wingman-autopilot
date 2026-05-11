@@ -1,6 +1,7 @@
 import { createSettingsTabs } from '../settings-tabs.js';
 import {
   deleteAgentChatAgent,
+  deleteAgentChatDispatchRoute,
   deleteAgentChatSubscription,
   importAgentConnectPackage,
   listAgentChatBackendConnections,
@@ -36,7 +37,7 @@ import {
   createStatusLine,
   setPanelVisible,
 } from './agent-chat-shared-ui.js';
-import { createAgentDispatchSetupCards, createDispatchPipelineRouteCards } from './agent-chat-setup-cards.js';
+import { createAgentDispatchSetupCards } from './agent-chat-setup-cards.js';
 import { createAgentConnectImportModal } from './agent-chat-connect-import-card.js';
 
 async function loadOperatorState() {
@@ -401,7 +402,6 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
         subscription: primarySubscription,
         primaryAgent,
         availableBackendConnections: backendConnections,
-        additionalAgentCount: Math.max(0, agents.length - (primaryAgent ? 1 : 0)),
         onEditSubscription: (subscription) => openSubscriptionEditor(subscription),
         onUseBackendConnection: (backendConnection) => {
           void useBackendConnection(backendConnection);
@@ -416,9 +416,6 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
         },
         onEditAgent: (agent) => openAgentEditor(agent),
         onCreateAgent: () => agentNameModal.open(),
-        onRemoveAgent: (agent) => {
-          void removeAgent(agent);
-        },
         onRefresh: () => {
           statusLine.textContent = 'Refreshing Agent Dispatch view...';
           void refreshList().then(() => {
@@ -428,17 +425,24 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
           });
         },
       }));
-      configuredDispatchesContainer.append(createDispatchPipelineRouteCards({
+      configuredDispatchesContainer.append(createConfiguredDispatchesPanel(primaryAgent, promptDefaults, {
         subscription: primarySubscription,
-        routes: dispatchRoutes,
-        definitions: pipelineDefinitions,
+        dispatchRoutes,
+        pipelineDefinitions,
+        onCreateAgent: () => agentNameModal.open(),
+        onEditAgent: (agent) => openAgentEditor(agent),
+        onRemoveAgent: (agent) => {
+          void removeAgent(agent);
+        },
         onSaveRoute: async (input) => {
           const route = await saveAgentChatDispatchRoute(input);
           await refreshList();
           return route;
         },
-      }));
-      configuredDispatchesContainer.append(createConfiguredDispatchesPanel(primaryAgent, promptDefaults, {
+        onDeleteRoute: async (routeId) => {
+          await deleteAgentChatDispatchRoute(routeId);
+          await refreshList();
+        },
         onEditChatTemplate: (agent) => {
           if (agent) {
             openAgentEditor(agent, { focusField: 'chat-template' });

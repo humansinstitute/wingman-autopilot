@@ -233,6 +233,38 @@ function normaliseAgentCapabilities(agent) {
     : ['chat_intercept'];
 }
 
+function findDispatchRoute(routes, triggerKind, capability) {
+  return Array.isArray(routes)
+    ? routes.find((route) => route.triggerKind === triggerKind && route.capability === capability) ?? null
+    : null;
+}
+
+function createPipelineSelect({ title, definitions, selectedId }) {
+  const label = document.createElement('label');
+  label.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:12px;';
+  label.textContent = `${title} pipeline`;
+
+  const select = document.createElement('select');
+  select.className = 'wm-input';
+  select.setAttribute('aria-label', `${title} pipeline`);
+  select.setAttribute('data-testid', `agent-chat-capability-pipeline-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`);
+
+  const empty = document.createElement('option');
+  empty.value = '';
+  empty.textContent = 'Use prompt dispatch';
+  select.append(empty);
+
+  definitions.forEach((definition) => {
+    const option = document.createElement('option');
+    option.value = definition.id || '';
+    option.textContent = definition.name || definition.id || 'Pipeline';
+    select.append(option);
+  });
+  select.value = selectedId || '';
+  label.append(select);
+  return { label, select };
+}
+
 function createPromptPreview({ sourceLabel, promptPreview }) {
   const details = document.createElement('details');
   details.style.marginTop = '10px';
@@ -253,10 +285,16 @@ function createCapabilityCard({
   title,
   description,
   enabled,
+  subscription,
+  routeConfig,
+  route,
+  pipelineDefinitions = [],
   promptSource,
   promptPreview,
   onEdit,
   onToggle,
+  onSaveRoute,
+  onDeleteRoute,
   toggleLabel,
   toggleDisabled = false,
   toggleDisabledReason = '',
@@ -307,6 +345,78 @@ function createCapabilityCard({
   editButton.addEventListener('click', () => onEdit?.());
 
   card.append(createInlineActions(toggleButton, editButton));
+
+  if (enabled && subscription && routeConfig) {
+    const pipelineSelect = createPipelineSelect({
+      title,
+      definitions: pipelineDefinitions,
+      selectedId: route?.pipelineDefinitionId || '',
+    });
+    const routeStatus = document.createElement('p');
+    routeStatus.className = 'wm-settings__port-note';
+    routeStatus.setAttribute('aria-live', 'polite');
+    routeStatus.textContent = route
+      ? `Pipeline route saved${route.enabled === false ? ' but disabled' : ''}.`
+      : 'No pipeline route saved. Prompt dispatch will be used.';
+
+    const savePipelineButton = createButton(
+      route ? 'Update Pipeline' : 'Save Pipeline',
+      null,
+      `Save ${title} pipeline route`,
+    );
+    savePipelineButton.disabled = pipelineDefinitions.length === 0;
+    savePipelineButton.addEventListener('click', async () => {
+      savePipelineButton.disabled = true;
+      routeStatus.textContent = 'Saving pipeline route...';
+      try {
+        if (!pipelineSelect.select.value) {
+          routeStatus.textContent = 'Select a pipeline first, or use the prompt dispatch action.';
+          return;
+        }
+        await onSaveRoute?.({
+          routeId: route?.routeId,
+          subscriptionId: subscription.subscriptionId,
+          triggerKind: routeConfig.triggerKind,
+          capability: routeConfig.capability,
+          pipelineDefinitionId: pipelineSelect.select.value,
+          enabled: true,
+          priority: routeConfig.priority,
+          activePolicy: routeConfig.activePolicy,
+          matchJson: routeConfig.matchJson,
+        });
+        routeStatus.textContent = 'Pipeline route saved.';
+      } catch (error) {
+        routeStatus.textContent = error instanceof Error ? error.message : 'Failed to save pipeline route.';
+      } finally {
+        savePipelineButton.disabled = false;
+      }
+    });
+
+    const removePipelineButton = createButton('Use Prompt Dispatch', null, `Remove ${title} pipeline route`);
+    removePipelineButton.disabled = !route || typeof onDeleteRoute !== 'function';
+    removePipelineButton.addEventListener('click', async () => {
+      if (!route?.routeId) {
+        return;
+      }
+      removePipelineButton.disabled = true;
+      routeStatus.textContent = 'Removing pipeline route...';
+      try {
+        await onDeleteRoute(route.routeId);
+        routeStatus.textContent = 'Pipeline route removed. Prompt dispatch will be used.';
+      } catch (error) {
+        routeStatus.textContent = error instanceof Error ? error.message : 'Failed to remove pipeline route.';
+      } finally {
+        removePipelineButton.disabled = false;
+      }
+    });
+
+    card.append(
+      pipelineSelect.label,
+      createInlineActions(savePipelineButton, removePipelineButton),
+      routeStatus,
+    );
+  }
+
   return card;
 }
 
@@ -315,13 +425,13 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
   wrapper.style.marginTop = '12px';
 
   const heading = document.createElement('h4');
-  heading.textContent = 'Dispatch Capabilities';
+  heading.textContent = 'Primary Agent';
   wrapper.append(heading);
 
   const note = document.createElement('p');
   note.className = 'wm-settings__port-note';
   note.textContent = primaryAgent
-    ? 'Turn roles on or off for the primary agent and edit the prompt contract for each runtime without digging through a long stack of forms.'
+    ? 'Manage the shared agent identity, enabled dispatch roles, and the pipeline route for each capability.'
     : 'Create the primary agent first, then enable the dispatch roles it should handle.';
   wrapper.append(note);
 
@@ -330,6 +440,11 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
     empty.className = 'wm-settings__port-note';
     empty.textContent = 'No primary agent is configured yet.';
     wrapper.append(empty);
+    if (typeof options.onCreateAgent === 'function') {
+      const createAgentButton = createButton('Create Agent', 'agent-chat-capabilities-create-agent', 'Create primary Agent Dispatch agent');
+      createAgentButton.addEventListener('click', () => options.onCreateAgent());
+      wrapper.append(createInlineActions(createAgentButton));
+    }
     return wrapper;
   }
 
@@ -352,7 +467,21 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
     createTonePill(primaryAgent.enabled === false ? 'Agent Disabled' : 'Agent Enabled', primaryAgent.enabled === false ? 'warning' : 'success'),
     createTonePill(`${normaliseAgentCapabilities(primaryAgent).length} Capabilities`, 'muted'),
   );
+  const summaryActions = [];
+  if (typeof options.onEditAgent === 'function') {
+    const editButton = createButton('Edit Agent', 'agent-chat-capabilities-edit-agent', 'Edit primary Agent Dispatch agent');
+    editButton.addEventListener('click', () => options.onEditAgent(primaryAgent));
+    summaryActions.push(editButton);
+  }
+  if (typeof options.onRemoveAgent === 'function') {
+    const removeButton = createButton('Remove Agent', 'agent-chat-capabilities-remove-agent', 'Remove primary Agent Dispatch agent');
+    removeButton.addEventListener('click', () => options.onRemoveAgent(primaryAgent));
+    summaryActions.push(removeButton);
+  }
   summary.append(summaryHeading, summaryNote, summaryPills);
+  if (summaryActions.length > 0) {
+    summary.append(createInlineActions(...summaryActions));
+  }
   wrapper.append(summary);
 
   const grid = document.createElement('div');
@@ -361,6 +490,9 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
   const dispatchCards = [
     {
       capability: 'chat_intercept',
+      triggerKind: 'chat',
+      priority: 10,
+      activePolicy: 'queue',
       title: 'Chat Dispatch',
       description: 'When a workspace chat advisory matches a local agent, Wingmen reuses or creates the routed session and the agent must decide whether to respond in-thread or ignore.',
       promptKey: 'chatPromptTemplate',
@@ -368,6 +500,10 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
     },
     {
       capability: 'task_dispatch',
+      triggerKind: 'task',
+      priority: 20,
+      activePolicy: 'skip',
+      matchJson: { assignedTo: 'bot' },
       title: 'Task Dispatch',
       description: 'When a concrete ready task targets the bot, Wingmen reuses or creates the delivery session, queues the task prompt, and Night Watch keeps the worker moving.',
       promptKey: 'taskPromptTemplate',
@@ -375,6 +511,9 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
     },
     {
       capability: 'comment_dispatch',
+      triggerKind: 'comment',
+      priority: 60,
+      activePolicy: 'queue',
       title: 'Comment Dispatch',
       description: 'When a task or document comment arrives, Wingmen records the advisory on the comment-specific path. Execution is currently disabled while the loop guard is hardened.',
       promptKey: 'commentDispatchPromptTemplate',
@@ -382,6 +521,9 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
     },
     {
       capability: 'flow_dispatch',
+      triggerKind: 'flow',
+      priority: 30,
+      activePolicy: 'skip',
       title: 'Flow Dispatch',
       description: 'When a kickoff task is new, assigned to the bot, and has a flow without a flow run, Wingmen routes it into a short-lived orchestration session.',
       promptKey: 'flowDispatchPromptTemplate',
@@ -389,6 +531,9 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
     },
     {
       capability: 'task_review',
+      triggerKind: 'task_review',
+      priority: 40,
+      activePolicy: 'skip',
       title: 'Task Review',
       description: 'When a flow-run task moves to review, Wingmen routes it into orchestration so newly-unblocked downstream tasks can be promoted in one pass.',
       promptKey: 'taskReviewPromptTemplate',
@@ -396,6 +541,9 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
     },
     {
       capability: 'approval_dispatch',
+      triggerKind: 'approval',
+      priority: 50,
+      activePolicy: 'queue',
       title: 'Approval Dispatch',
       description: 'When an approval record transitions to approved for a live flow run, Wingmen routes it into orchestration so downstream tasks can continue.',
       promptKey: 'approvalDispatchPromptTemplate',
@@ -419,17 +567,24 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
         : 'Missing';
     const enabled = primaryAgent.enabled !== false && selectedCapabilities.has(cardConfig.capability);
     const lastEnabledCapability = selectedCapabilities.size === 1 && selectedCapabilities.has(cardConfig.capability);
+    const route = findDispatchRoute(options.dispatchRoutes, cardConfig.triggerKind, cardConfig.capability);
 
     return createCapabilityCard({
       title: cardConfig.title,
       description: cardConfig.description,
       enabled,
+      subscription: options.subscription,
+      routeConfig: cardConfig,
+      route,
+      pipelineDefinitions: Array.isArray(options.pipelineDefinitions) ? options.pipelineDefinitions : [],
       promptSource,
       promptPreview: preview,
       onEdit: typeof cardConfig.onEdit === 'function' ? () => cardConfig.onEdit(primaryAgent) : null,
       onToggle: typeof options.onToggleCapability === 'function'
         ? () => options.onToggleCapability(primaryAgent, cardConfig.capability, enabled)
         : null,
+      onSaveRoute: options.onSaveRoute,
+      onDeleteRoute: options.onDeleteRoute,
       toggleLabel: enabled ? 'Turn Off' : 'Turn On',
       toggleDisabled: primaryAgent.enabled === false || (lastEnabledCapability && enabled),
       toggleDisabledReason: primaryAgent.enabled === false
