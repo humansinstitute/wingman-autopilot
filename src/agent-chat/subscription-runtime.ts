@@ -1427,6 +1427,7 @@ export class WorkspaceSubscriptionManager {
               threadId: routingContext.threadId,
               changedFields: [],
               groupNpubs: routingContext.messageGroupNpubs,
+              botIdentity: runtime.botIdentity,
             });
             if (pipelineResult.handled) {
               record.lastRoutingResult = buildSuccessDiagnostic('Chat dispatch pipeline route evaluated.', {
@@ -1716,6 +1717,7 @@ export class WorkspaceSubscriptionManager {
           bindingId: dispatchMode === 'flow_dispatch' ? task.taskId : (task.flowRunId ?? task.taskId),
           changedFields,
           groupNpubs: [],
+          botIdentity: this.getRuntime(record.subscriptionId)?.botIdentity ?? null,
         });
         if (pipelineResult.handled) {
           return this.applyDispatchPipelineResult(record, pipelineResult);
@@ -2180,6 +2182,7 @@ export class WorkspaceSubscriptionManager {
         bindingId: comment.targetRecordId,
         changedFields: [],
         groupNpubs: extractCommentGroupNpubs(latest),
+        botIdentity: this.getRuntime(record.subscriptionId)?.botIdentity ?? null,
       });
       if (pipelineResult.handled) {
         return this.applyDispatchPipelineResult(record, pipelineResult);
@@ -2276,6 +2279,7 @@ export class WorkspaceSubscriptionManager {
         bindingId: comment.parentCommentId ?? comment.commentId,
         changedFields: [],
         groupNpubs: extractCommentGroupNpubs(latest),
+        botIdentity: this.getRuntime(record.subscriptionId)?.botIdentity ?? null,
       });
       if (pipelineResult.handled) {
         return this.applyDispatchPipelineResult(record, pipelineResult);

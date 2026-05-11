@@ -165,7 +165,7 @@ const GRAPH_CONTEXT_MEMORY_DEMO_DEFINITION = {
 
 const AGENT_DISPATCH_CHAT_DEMO_DEFINITION = {
   name: "demo-agent-dispatch-chat-response",
-  description: "Demo dispatch pipeline for chat advisories. It asks one agent step to prepare a concise chat response from the dispatch envelope.",
+  description: "Demo dispatch pipeline for chat advisories. It asks one agent step to prepare a concise chat response, then publishes it to the source Flight Deck thread.",
   input: {
     dispatch: { triggerKind: "chat" },
     workspace: { workspaceOwnerNpub: "npub1workspace", sourceAppNpub: "npub1source" },
@@ -194,14 +194,31 @@ const AGENT_DISPATCH_CHAT_DEMO_DEFINITION = {
           routing: "$.routing",
         },
       },
-      prompt: "You are handling a Wingman chat dispatch. Read the dispatch envelope and produce a response that could be posted back to the same chat thread. This demo pipeline does not publish the reply itself; return JSON fields: shouldRespond boolean, responseDraft string, reasoningSummary string, followUpActions array of short strings, confidence number from 0 to 1.",
+      prompt: "You are handling a Wingman chat dispatch. Read the dispatch envelope and produce a response that could be posted back to the same chat thread. Do not run any Flight Deck/Yoke CLI commands yourself; the next deterministic pipeline step will publish the reply. Return JSON fields: shouldRespond boolean, responseDraft string, reasoningSummary string, followUpActions array of short strings, confidence number from 0 to 1.",
+      assign: "$.agentResponse",
+    },
+    {
+      name: "publish-chat-response",
+      type: "code",
+      function: "dispatch.publishFlightDeckResponse",
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          agentResponse: "$.agentResponse",
+        },
+      },
     },
   ],
 };
 
 const AGENT_DISPATCH_TASK_DEMO_DEFINITION = {
   name: "demo-agent-dispatch-task-response",
-  description: "Demo dispatch pipeline for task advisories. It asks one agent step to acknowledge the task and propose execution steps.",
+  description: "Demo dispatch pipeline for task advisories. It asks one agent step to acknowledge the task, then updates the source Flight Deck task record.",
   input: {
     dispatch: { triggerKind: "task" },
     workspace: { workspaceOwnerNpub: "npub1workspace", sourceAppNpub: "npub1source" },
@@ -234,14 +251,31 @@ const AGENT_DISPATCH_TASK_DEMO_DEFINITION = {
           routing: "$.routing",
         },
       },
-      prompt: "You are handling a Wingman task dispatch. Read the task payload and produce the response the primary Wingman should use to start work. This demo pipeline does not update the task itself; return JSON fields: accepted boolean, taskSummary string, executionPlan array of short steps, firstAction string, risks array, suggestedStatus string, confidence number from 0 to 1.",
+      prompt: "You are handling a Wingman task dispatch. Read the task payload and produce the response the primary Wingman should use to start work. Do not run any Flight Deck/Yoke CLI commands yourself; the next deterministic pipeline step will update the task. Return JSON fields: accepted boolean, taskSummary string, executionPlan array of short steps, firstAction string, risks array, suggestedStatus string, confidence number from 0 to 1.",
+      assign: "$.agentResponse",
+    },
+    {
+      name: "publish-task-update",
+      type: "code",
+      function: "dispatch.publishFlightDeckResponse",
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          agentResponse: "$.agentResponse",
+        },
+      },
     },
   ],
 };
 
 const AGENT_DISPATCH_COMMENT_DEMO_DEFINITION = {
   name: "demo-agent-dispatch-comment-response",
-  description: "Demo dispatch pipeline for task/document comment advisories. It asks one agent step to draft a thread reply.",
+  description: "Demo dispatch pipeline for task/document comment advisories. It asks one agent step to draft a reply, then publishes it to the source Flight Deck comment thread.",
   input: {
     dispatch: { triggerKind: "comment" },
     workspace: { workspaceOwnerNpub: "npub1workspace", sourceAppNpub: "npub1source" },
@@ -273,14 +307,31 @@ const AGENT_DISPATCH_COMMENT_DEMO_DEFINITION = {
           routing: "$.routing",
         },
       },
-      prompt: "You are handling a Wingman comment dispatch. Read the comment payload and draft a reply for the existing comment thread. This demo pipeline does not publish the reply itself; return JSON fields: replyDraft string, targetNeedsWork boolean, blockers array, nextAction string, confidence number from 0 to 1.",
+      prompt: "You are handling a Wingman comment dispatch. Read the comment payload and draft a reply for the existing comment thread. Do not run any Flight Deck/Yoke CLI commands yourself; the next deterministic pipeline step will publish the reply. Return JSON fields: replyDraft string, targetNeedsWork boolean, blockers array, nextAction string, confidence number from 0 to 1.",
+      assign: "$.agentResponse",
+    },
+    {
+      name: "publish-comment-reply",
+      type: "code",
+      function: "dispatch.publishFlightDeckResponse",
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          agentResponse: "$.agentResponse",
+        },
+      },
     },
   ],
 };
 
 const AGENT_DISPATCH_TASK_REVIEW_DEMO_DEFINITION = {
   name: "demo-agent-dispatch-task-review-response",
-  description: "Demo dispatch pipeline for task review advisories. It asks one agent step to review completion evidence and return a decision.",
+  description: "Demo dispatch pipeline for task review advisories. It asks one agent step to review completion evidence, then updates the source Flight Deck task record.",
   input: {
     dispatch: { triggerKind: "task_review" },
     workspace: { workspaceOwnerNpub: "npub1workspace", sourceAppNpub: "npub1source" },
@@ -313,7 +364,24 @@ const AGENT_DISPATCH_TASK_REVIEW_DEMO_DEFINITION = {
           routing: "$.routing",
         },
       },
-      prompt: "You are handling a Wingman task review dispatch. Review the task payload and decide whether the work should be accepted, rejected, or sent back for changes. This demo pipeline does not update the task itself; return JSON fields: decision as accept/reject/changes_requested, reviewSummary string, evidenceChecked array, requiredChanges array, replyDraft string, confidence number from 0 to 1.",
+      prompt: "You are handling a Wingman task review dispatch. Review the task payload and decide whether the work should be accepted, rejected, or sent back for changes. Do not run any Flight Deck/Yoke CLI commands yourself; the next deterministic pipeline step will update the task. Return JSON fields: decision as accept/reject/changes_requested, reviewSummary string, evidenceChecked array, requiredChanges array, replyDraft string, confidence number from 0 to 1.",
+      assign: "$.agentResponse",
+    },
+    {
+      name: "publish-task-review",
+      type: "code",
+      function: "dispatch.publishFlightDeckResponse",
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          agentResponse: "$.agentResponse",
+        },
+      },
     },
   ],
 };

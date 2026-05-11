@@ -141,7 +141,7 @@ interface PrepareYokeRuntimeOptions {
   minSyncIntervalMs?: number;
 }
 
-interface RunYokeCommandInput {
+export interface RunYokeCommandInput {
   args: string[];
   workingDirectory: string;
   stateDir: string;
@@ -529,6 +529,10 @@ async function runYokeCommand(input: RunYokeCommandInput): Promise<string> {
     throw new Error(`wingman-yoke ${input.args.join(' ')} failed (${exitCode}): ${detail}`);
   }
   return stdout.trim();
+}
+
+export async function runAgentWorkspaceYokeCommand(input: RunYokeCommandInput): Promise<string> {
+  return await runYokeCommand(input);
 }
 
 async function initialiseYokeState(

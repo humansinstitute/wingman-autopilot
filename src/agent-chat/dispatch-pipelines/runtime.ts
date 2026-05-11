@@ -12,8 +12,15 @@ import type {
   AgentDefinitionRecord,
   DispatchRouteRecord,
   DispatchTriggerKind,
+  RuntimeBotIdentity,
   WorkspaceSubscriptionRecord,
 } from '../types';
+import {
+  createDispatchFlightDeckPublisher,
+  pipelineNeedsFlightDeckPublisher,
+  prepareDispatchPipelineFlightDeckRuntime,
+  type DispatchPipelineFlightDeckRuntime,
+} from './flightdeck-publisher';
 import { dispatchRouteStore, type DispatchRouteStore } from './route-store';
 
 export interface DispatchPipelineEventInput {
@@ -33,6 +40,7 @@ export interface DispatchPipelineEventInput {
   threadId?: string | null;
   changedFields?: string[];
   groupNpubs?: string[];
+  botIdentity?: RuntimeBotIdentity | null;
 }
 
 export interface DispatchPipelineRuntimeResult {
@@ -147,6 +155,9 @@ export class DispatchPipelineRuntime {
     }
 
     const dedupeKey = buildDedupeKey(input, route);
+    const flightDeckRuntime = pipelineNeedsFlightDeckPublisher(definition.spec)
+      ? await prepareDispatchPipelineFlightDeckRuntime({ eventInput: input, agent })
+      : emptyFlightDeckRuntime();
     const concurrencyKey = renderTemplate(route.concurrencyKeyTemplate, {
       route,
       workspace: input.subscription,
@@ -158,8 +169,17 @@ export class DispatchPipelineRuntime {
       input,
       agent,
       dedupeKey,
+      flightDeckRuntime,
     });
     const functions = await this.loadFunctions(ownerAlias, builtinPipelineFunctions);
+    if (pipelineNeedsFlightDeckPublisher(definition.spec)) {
+      functions.registry['dispatch.publishFlightDeckResponse'] = createDispatchFlightDeckPublisher({
+        eventInput: input,
+        agent,
+        botIdentity: input.botIdentity ?? null,
+        runtime: flightDeckRuntime,
+      });
+    }
     const run = await this.runPipeline({
       store: this.pipelineStore,
       sessionApiContext,
@@ -239,8 +259,9 @@ function buildDispatchEnvelope(input: {
   input: DispatchPipelineEventInput;
   agent: AgentDefinitionRecord | null;
   dedupeKey: string;
+  flightDeckRuntime: DispatchPipelineFlightDeckRuntime;
 }): JsonObject {
-  const { route, input: eventInput, agent } = input;
+  const { route, input: eventInput, agent, flightDeckRuntime } = input;
   return {
     ...route.inputTemplateJson,
     dispatch: {
@@ -278,9 +299,20 @@ function buildDispatchEnvelope(input: {
       changedFields: eventInput.changedFields ?? [],
     },
     runtime: {
-      yokeStateDir: null,
-      commands: {},
+      yokeStateDir: flightDeckRuntime.yokeStateDir,
+      commandPrefix: flightDeckRuntime.commandPrefix,
+      commands: flightDeckRuntime.commands,
+      error: flightDeckRuntime.error,
     },
+  };
+}
+
+function emptyFlightDeckRuntime(): DispatchPipelineFlightDeckRuntime {
+  return {
+    yokeStateDir: null,
+    commandPrefix: null,
+    commands: {},
+    error: null,
   };
 }
 

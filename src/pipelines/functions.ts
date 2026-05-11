@@ -114,6 +114,16 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     };
   },
 
+  async "dispatch.publishFlightDeckResponse"(input) {
+    return {
+      published: false,
+      status: "not_configured",
+      operation: "flightdeck_publish",
+      reason: "This function only publishes when the pipeline is launched by a Wingman dispatch route.",
+      agentResponse: input.agentResponse ?? null,
+    };
+  },
+
   async "object.finalise"(input) {
     return {
       text: input.normalised,

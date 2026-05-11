@@ -2,6 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { builtinPipelineFunctions } from "./functions";
 
 describe("memory pipeline functions", () => {
+  test("dispatch.publishFlightDeckResponse is a dry-run outside dispatch routes", async () => {
+    const result = await builtinPipelineFunctions["dispatch.publishFlightDeckResponse"]!({
+      agentResponse: { responseDraft: "hello" },
+    });
+
+    expect(result.published).toBe(false);
+    expect(result.status).toBe("not_configured");
+    expect(result.agentResponse).toEqual({ responseDraft: "hello" });
+  });
+
   test("memory.searchEntities returns an empty graphContext source set when graph memory is not configured", async () => {
     const previous = {
       PIPELINE_MEMORY_NEO4J_HTTP_URL: process.env.PIPELINE_MEMORY_NEO4J_HTTP_URL,
