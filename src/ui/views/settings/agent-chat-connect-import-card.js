@@ -11,12 +11,48 @@ function formatImportSummary(payload) {
   const backendStatus = backend?.healthStatus || 'unknown';
   const workspace = subscription?.workspaceOwnerNpub || 'workspace';
   const bot = subscription?.botNpub || 'Wingman bot';
+  if (subscription?.wsKeyStatus && subscription.wsKeyStatus !== 'active') {
+    const reason = subscription?.lastAuthResult?.message
+      || subscription?.lastErrorCode
+      || 'workspace authorization did not complete';
+    return `Imported ${workspace} for ${bot}, but workspace auth is ${subscription.wsKeyStatus}: ${reason}. Backend health is ${backendStatus}.`;
+  }
   return `Connected ${workspace} for ${bot}. Backend health is ${backendStatus}.`;
 }
 
 function setModalVisible(overlay, visible) {
   overlay.hidden = !visible;
   overlay.style.display = visible ? 'flex' : 'none';
+}
+
+function extractAgentConnectJsonText(rawText) {
+  const trimmed = rawText.trim();
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return trimmed.slice(firstBrace, lastBrace + 1);
+  }
+  return trimmed;
+}
+
+function parseAgentConnectPackage(rawText) {
+  const jsonText = extractAgentConnectJsonText(rawText);
+  let payload;
+  try {
+    payload = JSON.parse(jsonText);
+  } catch {
+    throw new Error('AgentConnect token is not valid JSON.');
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('AgentConnect token must be a JSON object.');
+  }
+  if (payload.kind !== 'coworker_agent_connect') {
+    throw new Error('AgentConnect token kind must be coworker_agent_connect.');
+  }
+  if (!payload.service?.direct_https_url || !payload.workspace?.owner_npub || !payload.app?.app_npub || !payload.connection_token) {
+    throw new Error('AgentConnect token is missing service.direct_https_url, workspace.owner_npub, app.app_npub, or connection_token.');
+  }
+  return jsonText;
 }
 
 export function createAgentConnectImportModal({
@@ -109,12 +145,14 @@ export function createAgentConnectImportModal({
     importButton.disabled = true;
     statusLine.textContent = 'Connecting workspace...';
     try {
-      const payload = await onImport?.({ packageJson });
+      const payload = await onImport?.({ packageJson: parseAgentConnectPackage(packageJson) });
       statusLine.textContent = formatImportSummary(payload);
-      packageField.input.value = '';
-      setModalVisible(overlay, false);
+      if (!payload?.subscription?.wsKeyStatus || payload.subscription.wsKeyStatus === 'active') {
+        packageField.input.value = '';
+        setModalVisible(overlay, false);
+      }
     } catch (error) {
-      statusLine.textContent = error instanceof Error ? error.message : 'AgentConnect import failed.';
+      statusLine.textContent = error instanceof Error ? error.message : String(error || 'AgentConnect import failed.');
     } finally {
       importButton.disabled = false;
     }

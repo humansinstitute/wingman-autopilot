@@ -2,16 +2,27 @@ import { Buffer } from 'node:buffer';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Database } from 'bun:sqlite';
 
 import type { RuntimeBotIdentity, WorkspaceSubscriptionRecord } from './types';
 
-const YOKE_CLI_PATH = new URL('../../../wingmanbefree/wingman-yoke/src/cli.js', import.meta.url).pathname;
+function resolveYokePath(envName: string, fallbackRelativePath: string): string {
+  const override = Bun.env[envName]?.trim();
+  return override || new URL(fallbackRelativePath, import.meta.url).pathname;
+}
+
+function resolveYokeUrl(envName: string, fallbackRelativePath: string): string {
+  const override = Bun.env[envName]?.trim();
+  return override ? pathToFileURL(override).href : new URL(fallbackRelativePath, import.meta.url).href;
+}
+
+const YOKE_CLI_PATH = resolveYokePath('AGENT_CHAT_YOKE_CLI_PATH', '../../../wingmanbefree/wingman-yoke/src/cli.js');
 const YOKE_STATE_ROOT = new URL('../../data/agent-chat-yoke', import.meta.url).pathname;
-const YOKE_TRANSLATORS_URL = new URL('../../../wingmanbefree/wingman-yoke/src/translators.js', import.meta.url).href;
-const YOKE_CLIENT_URL = new URL('../../../wingmanbefree/wingman-yoke/src/client.js', import.meta.url).href;
-const YOKE_WORKSPACE_KEYS_URL = new URL('../../../wingmanbefree/wingman-yoke/src/workspace-keys.js', import.meta.url).href;
-const YOKE_NOSTR_URL = new URL('../../../wingmanbefree/wingman-yoke/src/nostr.js', import.meta.url).href;
+const YOKE_TRANSLATORS_URL = resolveYokeUrl('AGENT_CHAT_YOKE_TRANSLATORS_PATH', '../../../wingmanbefree/wingman-yoke/src/translators.js');
+const YOKE_CLIENT_URL = resolveYokeUrl('AGENT_CHAT_YOKE_CLIENT_PATH', '../../../wingmanbefree/wingman-yoke/src/client.js');
+const YOKE_WORKSPACE_KEYS_URL = resolveYokeUrl('AGENT_CHAT_YOKE_WORKSPACE_KEYS_PATH', '../../../wingmanbefree/wingman-yoke/src/workspace-keys.js');
+const YOKE_NOSTR_URL = resolveYokeUrl('AGENT_CHAT_YOKE_NOSTR_PATH', '../../../wingmanbefree/wingman-yoke/src/nostr.js');
 const YOKE_CONFIG_FILE = 'config.json';
 const YOKE_DB_FILE = 'yoke.db';
 const YOKE_RUNTIME_STATE_FILE = 'runtime-state.json';

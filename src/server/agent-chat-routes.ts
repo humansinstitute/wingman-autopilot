@@ -412,7 +412,7 @@ export async function handleAgentChatApi(
         ),
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Agent Connect import failed.';
+      const message = error instanceof Error ? error.message : String(error || 'Agent Connect import failed.');
       return Response.json({ error: message }, { status: 400 });
     }
   }
