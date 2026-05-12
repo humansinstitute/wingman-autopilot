@@ -55,6 +55,7 @@ import { dispatchJobRun, fetchJobDefinitions } from "./jobs/api.js";
 import { initPipelinesPage } from "./pipelines/page.js";
 import { initSessionsStore } from "./sessions/store.js";
 import { initAppsStore } from "./apps/store.js";
+import { syncAuthenticatedStartupStores } from "./startup/protected-store-sync.js";
 import { createSessionRuntimeActions } from "./sessions/runtime-actions.js";
 import { initSessionRuntimeSync } from "./sessions/runtime-sync.js";
 import { startSigningListener, stopSigningListener } from "./nip98/signing-listener.js";
@@ -2734,9 +2735,9 @@ jobDialog?.addEventListener("cancel", (event) => {
   initLiveModule().catch((err) => console.warn("[app] Live module init failed:", err));
 
   // Initialize Night Watch Alpine store (Dexie-backed, must register before Alpine.start)
-  initNightWatchStore({ showToast });
-  initSchedulerStore({ showToast });
-  initJobsStore({ showToast });
+  initNightWatchStore({ showToast, syncOnInit: false });
+  initSchedulerStore({ showToast, syncOnInit: false });
+  initJobsStore({ showToast, syncOnInit: false });
 
   // Initialize Sessions Alpine store (Dexie-backed, must register before Alpine.start)
   initSessionsStore({
@@ -2810,7 +2811,12 @@ jobDialog?.addEventListener("cancel", (event) => {
   render();
 
   // ── Sequential auth chain (each step depends on the previous) ──
-  await fetchConfig();
+  try {
+    await fetchConfig();
+  } catch (err) {
+    console.warn("[app] Config fetch failed:", err);
+    showToast("Failed to load app configuration", { type: "error" });
+  }
 
   // Try to restore session from device keystore first
   if (typeof wingmanIdentity?.restoreFromDeviceKeystore === "function") {
@@ -2843,6 +2849,7 @@ jobDialog?.addEventListener("cancel", (event) => {
   if (state.identity.authenticated) {
     dataFetches.push(fetchApps({ tail: APP_LOG_PREVIEW_LINES }));
     dataFetches.push(fetchNpubProjects().catch(() => {}));
+    dataFetches.push(syncAuthenticatedStartupStores());
   } else if (currentRoute === "apps") {
     dataFetches.push(fetchApps({ tail: APP_LOG_PREVIEW_LINES }));
   }

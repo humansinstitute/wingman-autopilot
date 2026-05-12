@@ -19,7 +19,7 @@ import {
  * Initialize the Autopilot Jobs Alpine store.
  * Call once during app bootstrap (before Alpine.start).
  */
-export function initJobsStore({ showToast }) {
+export function initJobsStore({ showToast, syncOnInit = true }) {
   Alpine.store("autopilotJobs", {
     // ----- State -----
     definitions: [],
@@ -34,7 +34,9 @@ export function initJobsStore({ showToast }) {
       if (this.initialized) return;
       this.loading = true;
       try {
-        await this.syncDefinitions();
+        if (syncOnInit) {
+          await this.syncDefinitions();
+        }
         this.initialized = true;
       } catch (err) {
         console.error("[jobs-store] init failed:", err);

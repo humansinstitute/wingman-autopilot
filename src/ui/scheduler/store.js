@@ -20,7 +20,7 @@ import {
  * Initialize the Scheduler Alpine store.
  * Call once during app bootstrap (before Alpine.start).
  */
-export function initSchedulerStore({ showToast }) {
+export function initSchedulerStore({ showToast, syncOnInit = true }) {
   Alpine.store("scheduler", {
     // ----- State -----
     jobs: [],
@@ -40,7 +40,9 @@ export function initSchedulerStore({ showToast }) {
         this._setupLiveQuery();
         this.initialized = true;
         this.loading = false;
-        this.sync();
+        if (syncOnInit) {
+          void this.sync();
+        }
       } catch (err) {
         console.error("[scheduler-store] init failed:", err);
         this.loading = false;

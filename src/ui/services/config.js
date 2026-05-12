@@ -29,7 +29,15 @@ export function normaliseConnectRelays(candidate) {
  */
 export async function fetchConfigApi() {
   const response = await fetch("/api/config");
-  return response.json();
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message =
+      payload && typeof payload === "object" && typeof payload.error === "string"
+        ? payload.error
+        : response.statusText || "Failed to fetch configuration";
+    throw new Error(message);
+  }
+  return payload;
 }
 
 /**

@@ -196,13 +196,14 @@ function isLocalhostRequest(request: Request, ctx: ApiRoutesContext): boolean {
 }
 
 function resolveViewerDefaultAgent(ctx: ApiRoutesContext, viewerNpub: string | null): string {
+  const agents = ctx.config.agents ?? {};
   if (!viewerNpub) {
     return ctx.config.defaultAgent;
   }
 
   const storedAgent = ctx.userSettingsStore.getAll(viewerNpub)[DEFAULT_AGENT_SETTING_KEY];
   const normalizedAgent = typeof storedAgent === "string" ? storedAgent.trim().toLowerCase() : "";
-  if (normalizedAgent && normalizedAgent in ctx.config.agents) {
+  if (normalizedAgent && normalizedAgent in agents) {
     return normalizedAgent;
   }
   return ctx.config.defaultAgent;
@@ -530,6 +531,10 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
 
     if (pathname === "/api/config" && method === "GET") {
       const defaultAgent = resolveViewerDefaultAgent(ctx, viewerNpub);
+      const agents = Object.entries(ctx.config.agents ?? {}).map(([key, definition]) => ({
+        id: key,
+        label: definition.label,
+      }));
       return Response.json({
         port: ctx.config.port,
         baseUrl: ctx.config.baseUrl,
@@ -543,10 +548,7 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
         allowedDirectories: workspaceScope.allowedDirectories,
         connectRelays: ctx.config.connectRelays,
         adminNpub: ctx.adminNpub,
-        agents: Object.entries(ctx.config.agents).map(([key, definition]) => ({
-          id: key,
-          label: definition.label,
-        })),
+        agents,
         defaultAgent,
         systemDefaultAgent: ctx.config.defaultAgent,
         featureFlags: ctx.serialiseFeatureFlagsForViewer(workspaceScope.isAdmin),

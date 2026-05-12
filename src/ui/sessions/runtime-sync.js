@@ -73,7 +73,10 @@ export function initSessionRuntimeSync({
     const configData = await fetchConfigApi();
     const adminNpubNormalized = normaliseNpubValue(configData?.adminNpub ?? null);
     const connectRelays = normaliseConnectRelays(configData?.connectRelays);
-    state.config = { ...configData, adminNpub: adminNpubNormalized ?? null, connectRelays };
+    const agents = Array.isArray(configData?.agents)
+      ? configData.agents.filter((agent) => agent && typeof agent.id === "string" && typeof agent.label === "string")
+      : [];
+    state.config = { ...configData, adminNpub: adminNpubNormalized ?? null, connectRelays, agents };
 
     if (typeof globalThis !== "undefined" && globalThis.wingmanIdentity) {
       globalThis.wingmanIdentity.connectRelays = connectRelays;
@@ -83,7 +86,7 @@ export function initSessionRuntimeSync({
     }
 
     agentSelect.innerHTML = "";
-    state.config.agents.forEach((agent) => {
+    agents.forEach((agent) => {
       const option = document.createElement("option");
       option.value = agent.id;
       option.textContent = agent.label;
@@ -91,7 +94,7 @@ export function initSessionRuntimeSync({
     });
 
     const defaultAgentId = state.config.defaultAgent ?? "codex";
-    if (state.config.agents.some((agent) => agent.id === defaultAgentId)) {
+    if (agents.some((agent) => agent.id === defaultAgentId)) {
       agentSelect.value = defaultAgentId;
     }
 

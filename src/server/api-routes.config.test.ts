@@ -14,6 +14,7 @@ function createHandler(options: {
   authContext?: RequestAuthContext;
   settings?: Record<string, string>;
   onSet?: (npub: string, key: string, value: string) => void;
+  config?: Record<string, unknown>;
 } = {}) {
   const authContext = options.authContext ?? anonymousAuth;
   const settings = options.settings ?? {};
@@ -39,6 +40,7 @@ function createHandler(options: {
       },
       defaultAgent: "claude",
       giteaUrl: null,
+      ...options.config,
     },
     adminNpub: null,
     todoApiHandler: async () => null,
@@ -144,6 +146,17 @@ describe("createApiRouteHandler config defaults", () => {
       subdomainBaseDomain: null,
       subdomainProxyEnabled: false,
     });
+  });
+
+  test("returns an empty agent list when agent config is unavailable", async () => {
+    const handler = createHandler({ config: { agents: undefined } });
+    const url = new URL("http://localhost:3000/api/config");
+    const response = await handler(new Request(url), url, "GET", anonymousAuth);
+    const body = await response!.json();
+
+    expect(response.status).toBe(200);
+    expect(body.agents).toEqual([]);
+    expect(body.defaultAgent).toBe("claude");
   });
 
   test("normalizes and saves a valid default_agent setting", async () => {

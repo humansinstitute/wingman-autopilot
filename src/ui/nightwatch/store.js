@@ -20,7 +20,7 @@ import { STATUS_COLORS, STATUS_LABELS } from "./helpers.js";
  * Initialize the Night Watch Alpine store.
  * Call once during app bootstrap (before Alpine.start).
  */
-export function initNightWatchStore({ showToast }) {
+export function initNightWatchStore({ showToast, syncOnInit = true }) {
   Alpine.store("nightwatch", {
     // ----- State -----
     reports: [],
@@ -53,8 +53,10 @@ export function initNightWatchStore({ showToast }) {
         this.initialized = true;
         this.loading = false;
 
-        // 3. Background-sync from server (non-blocking)
-        this.sync();
+        // 3. Background-sync from server unless bootstrap owns auth sequencing.
+        if (syncOnInit) {
+          void this.sync();
+        }
       } catch (err) {
         console.error("[nightwatch-store] init failed:", err);
         this.loading = false;
