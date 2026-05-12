@@ -28,6 +28,12 @@ export const abbreviateNpub = (npub) => {
   return `${trimmed.slice(0, 8)}...${trimmed.slice(-6)}`;
 };
 
+export const formatSatoshis = (value) => {
+  const satoshis = isFiniteNumber(value) ? Math.max(0, Math.trunc(value)) : 0;
+  const formatted = satoshis.toLocaleString();
+  return `${formatted} ${satoshis === 1 ? "sat" : "sats"}`;
+};
+
 export const normaliseNpubValue = (npub) => {
   if (typeof npub !== "string") return null;
   const trimmed = npub.trim();
