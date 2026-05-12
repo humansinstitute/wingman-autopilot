@@ -78,6 +78,15 @@ describe("pipeline definition version paths", () => {
       "prepare-chat-response",
       "publish-chat-response",
     ]);
+    expect(definition?.spec.steps.find((step) => step.name === "analyse-intent")).toMatchObject({
+      when: { path: "$.chatContext.shouldProceed", equals: true },
+    });
+    expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
+      "One valid intent is ignore",
+    );
+    expect(definition?.spec.steps.find((step) => step.name === "publish-chat-response")).toMatchObject({
+      when: { path: "$.chatContext.shouldProceed", equals: true },
+    });
   });
 
   test("seeds task pipeline handoff steps explicitly", async () => {

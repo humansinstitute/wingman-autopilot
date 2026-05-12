@@ -261,7 +261,98 @@ export const builtinPipelineFunctions: FunctionRegistry = {
   },
 
   async "dispatch.normaliseChatDispatchDecision"(input) {
+    const chatContext = objectValue(input.chatContext);
+    if (chatContext.shouldProceed === false) {
+      const reason = getText(chatContext.suppressionReason) ?? "chat_dispatch_suppressed";
+      return {
+        dispatchTask: false,
+        requestedDispatchTask: false,
+        pipelineDefinitionId: null,
+        scopeId: null,
+        workdir: null,
+        missing: [],
+        clarifyingQuestion: null,
+        responseDraft: "",
+        shouldRespond: false,
+        suppressed: true,
+        suppressionReason: reason,
+        taskDraft: {
+          title: "",
+          instructions: "",
+          acceptanceCriteria: [],
+          executionPlan: [],
+          managerChecklist: [],
+          assignerNpub: null,
+          reviewerNpub: null,
+        },
+        workPlan: {
+          childPipelineDefinitionId: null,
+          pipelineDefinitionId: null,
+          taskSummary: "",
+          instructions: "",
+          acceptanceCriteria: [],
+          executionPlan: [],
+          managerChecklist: [],
+          scopeId: null,
+          workdir: null,
+          assignerNpub: null,
+          reviewerNpub: null,
+          origin: {
+            triggerKind: getText(objectValue(input.dispatch).triggerKind) ?? "chat",
+            channelId: getText(objectValue(input.chat).channelId),
+            threadId: getText(objectValue(input.chat).threadId),
+            messageId: getText(objectValue(input.record).recordId),
+          },
+        },
+        confidence: 1,
+      };
+    }
     const raw = objectValue(input.agentDecision ?? input.decision ?? input.agentResponse ?? input);
+    const intent = getText(raw.intent ?? raw.classification ?? raw.action)?.toLowerCase();
+    if (intent === "ignore") {
+      return {
+        dispatchTask: false,
+        requestedDispatchTask: false,
+        pipelineDefinitionId: null,
+        scopeId: null,
+        workdir: null,
+        missing: [],
+        clarifyingQuestion: null,
+        responseDraft: "",
+        shouldRespond: false,
+        suppressed: true,
+        suppressionReason: "agent_intent_ignore",
+        taskDraft: {
+          title: "",
+          instructions: "",
+          acceptanceCriteria: [],
+          executionPlan: [],
+          managerChecklist: [],
+          assignerNpub: null,
+          reviewerNpub: null,
+        },
+        workPlan: {
+          childPipelineDefinitionId: null,
+          pipelineDefinitionId: null,
+          taskSummary: "",
+          instructions: "",
+          acceptanceCriteria: [],
+          executionPlan: [],
+          managerChecklist: [],
+          scopeId: null,
+          workdir: null,
+          assignerNpub: null,
+          reviewerNpub: null,
+          origin: {
+            triggerKind: getText(objectValue(input.dispatch).triggerKind) ?? "chat",
+            channelId: getText(objectValue(input.chat).channelId),
+            threadId: getText(objectValue(input.chat).threadId),
+            messageId: getText(objectValue(input.record).recordId),
+          },
+        },
+        confidence: clampConfidence(raw.confidence),
+      };
+    }
     const chat = objectValue(input.chat);
     const record = objectValue(input.record);
     const payload = objectValue(record.payload);
@@ -349,6 +440,15 @@ export const builtinPipelineFunctions: FunctionRegistry = {
 
   async "dispatch.prepareChatDispatchResponse"(input) {
     const decision = objectValue(input.decision);
+    if (decision.shouldRespond === false || decision.suppressed === true) {
+      return {
+        shouldRespond: false,
+        responseDraft: "",
+        reasoningSummary: getText(decision.suppressionReason) ?? "Chat dispatch was suppressed.",
+        actionsTaken: [],
+        confidence: clampConfidence(decision.confidence),
+      };
+    }
     const createdTask = objectValue(input.createdTask);
     const childPipeline = objectValue(input.childPipeline);
     const taskId = getText(createdTask.taskId);

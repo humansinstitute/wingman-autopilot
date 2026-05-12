@@ -209,6 +209,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
     {
       name: "analyse-intent",
       type: "agent",
+      when: { path: "$.chatContext.shouldProceed", equals: true },
       agent: "$.agent.defaultAgent",
       directory: "$.agent.workingDirectory",
       input: {
@@ -223,13 +224,14 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           chatContext: "$.chatContext",
         },
       },
-      prompt: "You are stage 1 of agent-dispatch-chat: Analyse Intent. Use chatContext.thread as the authoritative latest thread and chatContext.referencedRecords as the referenced Flight Deck context. Use chatContext.scopes to choose a scope when dispatching work. Use runtime.availablePipelines or chatContext.availablePipelines to choose a currently installed pipeline id or slug; do not invent pipeline names. Choose a downstream work pipeline such as do-and-review, software-implementation-manager-review, or research-and-report. Do not choose this chat dispatch pipeline or another dispatch/intake pipeline as the child pipeline. Decide whether this chat needs extended task-backed work. If it can be answered directly or needs clarification before work starts, set dispatchTask false. If it needs research, implementation, document generation, graph-memory review, or an explicitly requested pipeline, set dispatchTask true only when you can select the pipeline, scope, workdir, task title, instructions, and acceptance criteria. Return JSON only with: dispatchTask boolean, recommendedPipelineId string|null, scopeId string|null, workdir string|null, taskDraft object with title string, instructions string, acceptanceCriteria array, executionPlan array, managerChecklist array, assignerNpub string|null, reviewerNpub string|null, chatResponse object with body string, clarifyingQuestion string|null, confidence number from 0 to 1. There is always a chat response; do not include responseOnly.",
+      prompt: "You are stage 1 of agent-dispatch-chat: Analyse Intent. Use chatContext.thread as the authoritative latest thread and chatContext.referencedRecords as the referenced Flight Deck context. Use chatContext.scopes to choose a scope when dispatching work. Use runtime.availablePipelines or chatContext.availablePipelines to choose a currently installed pipeline id or slug; do not invent pipeline names. Choose a downstream work pipeline such as do-and-review, software-implementation-manager-review, or research-and-report. Do not choose this chat dispatch pipeline or another dispatch/intake pipeline as the child pipeline. One valid intent is ignore: if the triggering message or latest relevant thread message is authored by this agent, its bot npub, or its workspace signing npub, set intent to ignore, dispatchTask false, and return an empty chatResponse.body so no reply is published. Decide whether this chat needs extended task-backed work. If it can be answered directly or needs clarification before work starts, set dispatchTask false. If it needs research, implementation, document generation, graph-memory review, or an explicitly requested pipeline, set dispatchTask true only when you can select the pipeline, scope, workdir, task title, instructions, and acceptance criteria. Return JSON only with: intent string, dispatchTask boolean, recommendedPipelineId string|null, scopeId string|null, workdir string|null, taskDraft object with title string, instructions string, acceptanceCriteria array, executionPlan array, managerChecklist array, assignerNpub string|null, reviewerNpub string|null, chatResponse object with body string, clarifyingQuestion string|null, confidence number from 0 to 1. There is always a chat response; for ignore use intent ignore, an empty body, and confidence 1. Do not include responseOnly.",
       assign: "$.agentDecision",
     },
     {
       name: "normalise-decision",
       type: "code",
       function: "dispatch.normaliseChatDispatchDecision",
+      when: { path: "$.chatContext.shouldProceed", equals: true },
       input: {
         pick: {
           dispatch: "$.dispatch",
@@ -303,6 +305,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
       name: "prepare-chat-response",
       type: "code",
       function: "dispatch.prepareChatDispatchResponse",
+      when: { path: "$.chatContext.shouldProceed", equals: true },
       input: {
         pick: {
           decision: "$.decision",
@@ -317,6 +320,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
       name: "publish-chat-response",
       type: "code",
       function: "dispatch.publishFlightDeckResponse",
+      when: { path: "$.chatContext.shouldProceed", equals: true },
       input: {
         pick: {
           dispatch: "$.dispatch",

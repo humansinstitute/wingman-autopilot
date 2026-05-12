@@ -159,20 +159,28 @@ export function createDispatchChatContextHydrator(
       '--format',
       'json',
     ]);
+    const selfAuthored = detectSelfAuthoredChatDispatch(context, input, thread);
     let scopes: unknown = [];
-    try {
-      scopes = await runYokeJson(context, ['scopes', 'list', '--json']);
-    } catch (error) {
-      scopes = {
-        error: error instanceof Error ? error.message : String(error),
-      };
+    let referencedRecords: Array<Record<string, unknown>> = [];
+    if (!selfAuthored.selfAuthored) {
+      try {
+        scopes = await runYokeJson(context, ['scopes', 'list', '--json']);
+      } catch (error) {
+        scopes = {
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+      referencedRecords = await loadMentionedFlightDeckRecords(context, thread);
     }
-    const referencedRecords = await loadMentionedFlightDeckRecords(context, thread);
 
     return {
       hydrated: true,
-      status: 'ok',
+      status: selfAuthored.selfAuthored ? 'skipped' : 'ok',
       operation: 'chat.hydrate-context',
+      shouldProceed: !selfAuthored.selfAuthored,
+      selfAuthored: selfAuthored.selfAuthored,
+      suppressionReason: selfAuthored.reason,
+      matchedSelfNpub: selfAuthored.matchedSelfNpub,
       channelId,
       threadId,
       thread,
@@ -181,6 +189,85 @@ export function createDispatchChatContextHydrator(
       availablePipelines: Array.isArray(input.availablePipelines) ? input.availablePipelines : [],
     };
   };
+}
+
+function detectSelfAuthoredChatDispatch(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  input: JsonObject,
+  thread: unknown,
+): {
+  selfAuthored: boolean;
+  reason: string | null;
+  matchedSelfNpub: string | null;
+} {
+  const selfNpubs = new Set(
+    [
+      context.eventInput.subscription.botNpub,
+      context.eventInput.subscription.wsKeyNpub,
+      context.agent?.botNpub,
+      context.botIdentity?.botNpub,
+    ].filter((value): value is string => Boolean(value)),
+  );
+  if (selfNpubs.size === 0) {
+    return { selfAuthored: false, reason: null, matchedSelfNpub: null };
+  }
+
+  const inputRecord = objectValue(input.record);
+  const inputPayload = objectValue(inputRecord.payload ?? context.eventInput.payload);
+  const inputChat = objectValue(input.chat);
+  const threadMessage = findThreadMessageById(thread, context.eventInput.recordId);
+  const threadSender = getText(threadMessage?.sender_npub);
+  const senderCandidates = [
+    getText(context.eventInput.payload.sender_npub),
+    getText(inputPayload.sender_npub),
+    getText(inputChat.senderNpub),
+    threadSender,
+  ];
+  const updaterCandidates = [
+    context.eventInput.updaterNpub,
+    getText(inputRecord.updaterNpub),
+    getText(inputPayload.signature_npub),
+    getText(inputPayload.owner_npub),
+  ];
+  const matchedSender = senderCandidates.find((value) => Boolean(value && selfNpubs.has(value))) ?? null;
+  if (matchedSender) {
+    return {
+      selfAuthored: true,
+      reason: threadSender === matchedSender ? 'trigger_thread_message_sender_is_self' : 'trigger_sender_is_self',
+      matchedSelfNpub: matchedSender,
+    };
+  }
+  const matchedUpdater = updaterCandidates.find((value) => Boolean(value && selfNpubs.has(value))) ?? null;
+  if (matchedUpdater) {
+    return {
+      selfAuthored: true,
+      reason: 'trigger_updater_is_self',
+      matchedSelfNpub: matchedUpdater,
+    };
+  }
+  return { selfAuthored: false, reason: null, matchedSelfNpub: null };
+}
+
+function findThreadMessageById(thread: unknown, messageId: string): Record<string, unknown> | null {
+  const root = objectValue(thread);
+  const nestedThread = objectValue(root.thread);
+  const candidates = [
+    root.recent_messages,
+    root.messages,
+    nestedThread.recent_messages,
+    nestedThread.messages,
+  ];
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+    for (const entry of candidate) {
+      const message = objectValue(entry);
+      const id = getText(message.message_id) ?? getText(message.record_id);
+      if (id === messageId) {
+        return message;
+      }
+    }
+  }
+  return null;
 }
 
 export function createDispatchChatTaskCreator(

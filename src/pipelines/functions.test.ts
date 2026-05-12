@@ -85,6 +85,64 @@ describe("memory pipeline functions", () => {
     expect("responseOnly" in result).toBe(false);
   });
 
+  test("dispatch.normaliseChatDispatchDecision suppresses self-authored chat dispatches", async () => {
+    const result = await builtinPipelineFunctions["dispatch.normaliseChatDispatchDecision"]!({
+      chatContext: {
+        shouldProceed: false,
+        selfAuthored: true,
+        suppressionReason: "trigger_thread_message_sender_is_self",
+      },
+      chat: { channelId: "channel-1", threadId: "thread-1" },
+      record: { recordId: "message-1" },
+      dispatch: { triggerKind: "chat" },
+    });
+
+    expect(result).toMatchObject({
+      dispatchTask: false,
+      shouldRespond: false,
+      suppressed: true,
+      suppressionReason: "trigger_thread_message_sender_is_self",
+    });
+  });
+
+  test("dispatch.normaliseChatDispatchDecision honors ignore intent without a fallback reply", async () => {
+    const result = await builtinPipelineFunctions["dispatch.normaliseChatDispatchDecision"]!({
+      chat: { channelId: "channel-1", threadId: "thread-1" },
+      record: { recordId: "message-1" },
+      dispatch: { triggerKind: "chat" },
+      agentDecision: {
+        intent: "ignore",
+        dispatchTask: false,
+        chatResponse: { body: "" },
+        confidence: 1,
+      },
+    });
+
+    expect(result).toMatchObject({
+      dispatchTask: false,
+      shouldRespond: false,
+      suppressed: true,
+      suppressionReason: "agent_intent_ignore",
+      responseDraft: "",
+    });
+  });
+
+  test("dispatch.prepareChatDispatchResponse skips suppressed chat dispatches", async () => {
+    const result = await builtinPipelineFunctions["dispatch.prepareChatDispatchResponse"]!({
+      decision: {
+        shouldRespond: false,
+        suppressed: true,
+        suppressionReason: "trigger_sender_is_self",
+      },
+    });
+
+    expect(result).toMatchObject({
+      shouldRespond: false,
+      responseDraft: "",
+      actionsTaken: [],
+    });
+  });
+
   test("memory.searchEntities returns an empty graphContext source set when graph memory is not configured", async () => {
     const previous = {
       PIPELINE_MEMORY_NEO4J_HTTP_URL: process.env.PIPELINE_MEMORY_NEO4J_HTTP_URL,
