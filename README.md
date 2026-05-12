@@ -58,11 +58,9 @@ pm2 restart wm-ap --update-env
 pm2 stop wm-ap
 ```
 
-The PM2 ecosystem config loads `.env`, runs `bun run src/index.ts`, and sets the
-local process-supervision defaults to `AGENT_SPAWN_MODE=tmux` with
-`AGENT_TMUX_SESSION=wm-ap-agents`. Override those by passing environment
-variables to `pm2 start` when needed. That keeps PM2 responsible for the Wingman
-server while agent sessions live in tmux-backed windows.
+The PM2 ecosystem config runs `bun run src/index.ts` from this checkout. It does
+not define Wingman environment variables; Bun uses the `.env` file in this
+directory for runtime configuration.
 
 Visit:
 
