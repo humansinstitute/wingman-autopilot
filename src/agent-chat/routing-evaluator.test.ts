@@ -326,4 +326,60 @@ describe('AgentChatRoutingEvaluator', () => {
     expect(result.diagnostic.details?.self_suppressed_agent_ids).toEqual(['agent_alpha']);
     expect(result.diagnostic.details?.updater_npub).toBe('npub1workspacekey');
   });
+
+  test('suppresses chat messages whose sender matches the workspace key even when the updater is external', async () => {
+    const dbPath = makeTempDb();
+    const agentStore = new AgentDefinitionStore(dbPath);
+    const interceptStore = new ChatInterceptStateStore(dbPath);
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent_alpha',
+      label: 'Alpha',
+      botNpub: 'npub1botshared',
+      workspaceOwnerNpub: 'npub1workspace',
+      groupNpubs: ['npub1group-chat'],
+      workingDirectory: '/tmp/alpha',
+      capabilities: ['chat_intercept'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: 'npub1manager',
+    });
+
+    const evaluator = new AgentChatRoutingEvaluator({
+      agentStore,
+      interceptStore,
+      resolveRoutingContext: async () => ({
+        recordId: 'msg-5',
+        channelId: 'chan-1',
+        threadId: 'thread-1',
+        participantNpubs: ['npub1human'],
+      }),
+      extractMessageGroupNpubs: () => ['npub1group-chat'],
+    });
+
+    const subscription = createSubscription();
+    subscription.wsKeyNpub = 'npub1workspacekey';
+    const result = await evaluator.evaluate({
+      subscription,
+      wsSession: {
+        npub: 'npub1workspacekey',
+        secret: new Uint8Array([1]),
+      },
+      groupKeys: {},
+      chatRecordId: 'msg-5',
+      chatRecord: {
+        signature_npub: 'npub1human',
+      },
+      chatMessage: {
+        record_id: 'msg-5',
+        sender_npub: 'npub1workspacekey',
+      },
+    });
+
+    expect(result.assignments).toHaveLength(0);
+    expect(result.diagnostic.details?.self_suppressed_agent_ids).toEqual(['agent_alpha']);
+    expect(result.diagnostic.details?.sender_npub).toBe('npub1workspacekey');
+  });
 });

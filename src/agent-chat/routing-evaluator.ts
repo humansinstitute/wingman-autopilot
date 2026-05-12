@@ -128,6 +128,7 @@ export class AgentChatRoutingEvaluator {
     for (const agent of matchedAgents) {
       const isSelfAuthored = Boolean(
         (senderNpub && senderNpub === agent.botNpub)
+        || (senderNpub && senderNpub === input.subscription.wsKeyNpub)
         || (updaterNpub && (updaterNpub === agent.botNpub || updaterNpub === input.subscription.wsKeyNpub))
       );
       if (isSelfAuthored) {

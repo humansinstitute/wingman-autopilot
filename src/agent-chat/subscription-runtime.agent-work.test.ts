@@ -268,6 +268,96 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect((runInputs[0]?.agent as any)?.defaultAgent).toBe('codex');
   });
 
+  test('suppresses chat pipeline dispatch for messages authored by the workspace key', async () => {
+    const routeStore = new DispatchRouteStore(makeTempDb('agent-chat-self-pipeline-routes'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-chat-self-pipeline-agents'));
+    const pipelineStore = new PipelineStore(makeTempDb('agent-chat-self-pipeline-runs'));
+    const subscription = makeSubscription();
+    const now = new Date().toISOString();
+    agentStore.save({
+      agentId: 'agent-chat',
+      label: 'Chat Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-chat',
+      capabilities: ['chat_intercept'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+    routeStore.save({
+      managedByNpub: subscription.managedByNpub!,
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'chat',
+      capability: 'chat_intercept',
+      pipelineDefinitionId: 'chat-pipeline',
+    });
+    const startedInputs: Record<string, unknown>[] = [];
+    const runtime = new DispatchPipelineRuntime({
+      routeStore,
+      agentStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      loadDefinition: async () => ({
+        id: 'chat-pipeline',
+        slug: 'chat-pipeline',
+        name: 'Chat Pipeline',
+        scope: 'user',
+        ownerAlias: 'manager',
+        path: '/tmp/chat-pipeline.json',
+        spec: { name: 'Chat Pipeline', input: {}, steps: [] },
+      }),
+      loadFunctions: async () => ({ registry: {}, records: [] }),
+      startPipeline: (input: any) => {
+        startedInputs.push(input.input);
+        return input.store.createRun({
+          definitionId: input.definition.id,
+          definitionPath: input.definition.path,
+          name: input.definition.spec.name,
+          ownerNpub: input.ownerNpub,
+          ownerAlias: input.ownerAlias,
+          scope: input.definition.scope,
+          input: input.input,
+        });
+      },
+    });
+
+    const result = await runtime.dispatch({
+      subscription,
+      triggerKind: 'chat',
+      capability: 'chat_intercept',
+      recordId: 'chat-self-1',
+      record: {},
+      payload: {
+        body: 'Bot status update.',
+        sender_npub: subscription.wsKeyNpub,
+        channel_id: 'channel-1',
+        parent_message_id: 'thread-1',
+        attachments: [],
+      },
+      recordFamily: 'chat',
+      recordState: 'active',
+      recordVersion: 1,
+      updaterNpub: 'npub1human',
+      bindingType: 'thread',
+      bindingId: 'thread-1',
+      channelId: 'channel-1',
+      threadId: 'thread-1',
+      groupNpubs: ['npub1group'],
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.historyEntries[0]?.status).toBe('suppressed');
+    expect(result.historyEntries[0]?.suppressionReason).toBe('self_authored');
+    expect(startedInputs).toHaveLength(0);
+  });
+
   test('starts dispatch pipelines without awaiting full execution by default', async () => {
     const routeStore = new DispatchRouteStore(makeTempDb('agent-chat-background-pipeline-routes'));
     const pipelineStore = new PipelineStore(makeTempDb('agent-chat-background-pipeline-runs'));

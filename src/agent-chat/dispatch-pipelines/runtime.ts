@@ -157,6 +157,23 @@ export class DispatchPipelineRuntime {
     }
 
     const route = enabledMatches[0]!;
+    const agent = this.selectAgent(input);
+    if (isSelfAuthoredChatEvent(input, agent)) {
+      return {
+        handled: true,
+        historyEntries: [
+          this.buildHistoryEntry(input, route, {
+            action: `${input.triggerKind}_pipeline_suppressed`,
+            status: 'suppressed',
+            pipelineRunId: null,
+            suppressionReason: 'self_authored',
+            diagnosticSummary: 'Chat dispatch suppressed because the advisory message was authored by this Wingman.',
+          }),
+        ],
+        lastPipelineRunId: null,
+      };
+    }
+
     const dedupeKey = buildDedupeKey(input, route);
     const concurrencyKey = renderTemplate(route.concurrencyKeyTemplate, {
       route,
@@ -183,7 +200,6 @@ export class DispatchPipelineRuntime {
         lastPipelineRunId: suppressedRun.run.id,
       };
     }
-    const agent = this.selectAgent(input);
     const ownerNpub = input.subscription.managedByNpub ?? route.managedByNpub;
     const ownerAlias = generateIdentityAlias(ownerNpub);
     const definition = await this.loadDefinition(route.pipelineDefinitionId, ownerAlias)
@@ -653,6 +669,27 @@ function routeMatchesEvent(route: DispatchRouteRecord, input: DispatchPipelineEv
   }
 
   return true;
+}
+
+function isSelfAuthoredChatEvent(
+  input: DispatchPipelineEventInput,
+  agent: AgentDefinitionRecord | null,
+): boolean {
+  if (input.triggerKind !== 'chat') return false;
+  const selfNpubs = new Set(
+    [
+      input.subscription.botNpub,
+      input.subscription.wsKeyNpub,
+      agent?.botNpub,
+    ].filter((value): value is string => Boolean(value)),
+  );
+  if (selfNpubs.size === 0) return false;
+  const senderNpub = getText(input.payload.sender_npub);
+  const updaterNpub = input.updaterNpub;
+  return Boolean(
+    (senderNpub && selfNpubs.has(senderNpub))
+    || (updaterNpub && selfNpubs.has(updaterNpub)),
+  );
 }
 
 function fallbackPipelineDefinitionId(route: DispatchRouteRecord): string | null {
