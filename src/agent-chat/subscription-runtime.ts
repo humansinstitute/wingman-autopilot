@@ -271,6 +271,101 @@ function diffTaskDispatchSnapshots(
   return changed;
 }
 
+type TaskDispatchMode = 'task_dispatch' | 'flow_dispatch' | 'task_review';
+type TaskDispatchEligibility =
+  | 'dispatch'
+  | 'skip_terminal'
+  | 'skip_assignment'
+  | 'skip_not_ready'
+  | 'skip_not_kickoff'
+  | 'skip_not_review';
+
+function resolveTaskDispatchMode(task: InboundTaskRecord): TaskDispatchMode {
+  if (task.state === 'new' && task.flowId && !task.flowRunId) {
+    return 'flow_dispatch';
+  }
+  if (task.state === 'review') {
+    return 'task_review';
+  }
+  return 'task_dispatch';
+}
+
+function dispatchModeToTriggerKind(mode: TaskDispatchMode): CreateDispatchRouteInput['triggerKind'] {
+  if (mode === 'flow_dispatch') {
+    return 'flow';
+  }
+  if (mode === 'task_review') {
+    return 'task_review';
+  }
+  return 'task';
+}
+
+function dispatchModeToHistoryKind(mode: TaskDispatchMode): AgentChatDispatchHistoryEntry['kind'] {
+  if (mode === 'flow_dispatch') {
+    return 'flow';
+  }
+  if (mode === 'task_review') {
+    return 'review';
+  }
+  return 'task';
+}
+
+function dispatchModeToBindingId(mode: TaskDispatchMode, task: InboundTaskRecord): string {
+  if (mode === 'flow_dispatch') {
+    return task.taskId;
+  }
+  return task.flowRunId ?? task.taskId;
+}
+
+function dispatchModeToBindingType(mode: TaskDispatchMode, task: InboundTaskRecord): AgentChatDispatchHistoryEntry['bindingType'] {
+  return mode === 'task_dispatch' && task.flowRunId ? 'flow_run' : 'task';
+}
+
+function dispatchModeToAction(mode: TaskDispatchMode): AgentChatDispatchHistoryEntry['action'] {
+  if (mode === 'flow_dispatch') {
+    return 'flow_dispatch';
+  }
+  if (mode === 'task_review') {
+    return 'task_review';
+  }
+  return 'task_dispatch';
+}
+
+function dispatchModeToSelfSkipAction(mode: TaskDispatchMode): AgentChatDispatchHistoryEntry['action'] {
+  if (mode === 'flow_dispatch') {
+    return 'flow_dispatch_skip_self_update';
+  }
+  if (mode === 'task_review') {
+    return 'task_review_skip_self_update';
+  }
+  return 'task_skip_self_update';
+}
+
+function dispatchModeToNullSkipAction(mode: TaskDispatchMode): AgentChatDispatchHistoryEntry['action'] {
+  if (mode === 'flow_dispatch') {
+    return 'flow_dispatch_skip_runtime_returned_null';
+  }
+  if (mode === 'task_review') {
+    return 'task_review_skip_runtime_returned_null';
+  }
+  return 'task_skip_runtime_returned_null';
+}
+
+function evaluateTaskPipelineEligibility(input: {
+  task: InboundTaskRecord;
+  recordState: string | null;
+  mode: TaskDispatchMode;
+  agent: AgentDefinitionRecord;
+}): TaskDispatchEligibility {
+  if (input.mode === 'flow_dispatch') {
+    return evaluateFlowDispatchEligibility(input);
+  }
+  if (input.mode === 'task_review') {
+    return evaluateTaskReviewEligibility(input);
+  }
+  return evaluateTaskDispatchEligibility(input);
+}
+
 export interface WorkspaceSubscriptionManagerDependencies {
   store?: WorkspaceSubscriptionStore;
   agentStore?: AgentDefinitionStore;
@@ -1804,17 +1899,51 @@ export class WorkspaceSubscriptionManager {
         previousTask ? buildTaskDispatchSnapshot(previousTask) : null,
       );
 
-      const dispatchMode = task.state === 'new' && task.flowId && !task.flowRunId
-        ? 'flow_dispatch'
-        : task.state === 'review' && task.flowRunId
-          ? 'task_review'
-          : 'task_dispatch';
+      const dispatchMode = resolveTaskDispatchMode(task);
+      const historyKind = dispatchModeToHistoryKind(dispatchMode);
+      const bindingId = dispatchModeToBindingId(dispatchMode, task);
+      const bindingType = dispatchModeToBindingType(dispatchMode, task);
       if (this.dispatchPipelineRuntime) {
-        const triggerKind = dispatchMode === 'flow_dispatch'
-          ? 'flow'
-          : dispatchMode === 'task_review'
-            ? 'task_review'
-            : 'task';
+        const routeAgent = {
+          agentId: 'dispatch-pipeline',
+          label: 'Dispatch Pipeline',
+          botNpub: record.botNpub,
+          workspaceOwnerNpub: record.workspaceOwnerNpub,
+          managedByNpub: record.managedByNpub,
+          workingDirectory: '',
+          capabilities: [],
+          enabled: true,
+          groupNpubs: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } satisfies AgentDefinitionRecord;
+        const pipelineEligibility = evaluateTaskPipelineEligibility({
+          task,
+          recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
+          mode: dispatchMode,
+          agent: routeAgent,
+        });
+        if (pipelineEligibility !== 'dispatch') {
+          return this.appendDispatchHistory(record, {
+            at: new Date().toISOString(),
+            kind: historyKind,
+            action: pipelineEligibility,
+            agentId: routeAgent.agentId,
+            sessionId: null,
+            recordId,
+            bindingId,
+            bindingType,
+            details: {
+              task_id: task.taskId,
+              updater_npub: updaterNpub,
+              changed_fields: changedFields,
+              assigned_to: task.assignedTo,
+              state: task.state,
+              predecessor_task_ids: task.predecessorTaskIds,
+            },
+          });
+        }
+        const triggerKind = dispatchModeToTriggerKind(dispatchMode);
         const pipelineResult = await this.dispatchPipelineRuntime.dispatch({
           subscription: record,
           triggerKind,
@@ -1826,8 +1955,8 @@ export class WorkspaceSubscriptionManager {
           recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
           recordVersion: typeof latest.version === 'number' ? latest.version : Number(latest.version ?? 0),
           updaterNpub,
-          bindingType: dispatchMode === 'task_dispatch' && task.flowRunId ? 'flow_run' : 'task',
-          bindingId: dispatchMode === 'flow_dispatch' ? task.taskId : (task.flowRunId ?? task.taskId),
+          bindingType,
+          bindingId,
           changedFields,
           groupNpubs: [],
           botIdentity: this.getRuntime(record.subscriptionId)?.botIdentity ?? null,
@@ -1845,22 +1974,7 @@ export class WorkspaceSubscriptionManager {
       }
 
       for (const agent of taskAgents) {
-        const historyKind = dispatchMode === 'flow_dispatch'
-          ? 'flow'
-          : dispatchMode === 'task_review'
-            ? 'review'
-            : 'task';
-        const bindingId = dispatchMode === 'flow_dispatch'
-          ? task.taskId
-          : (task.flowRunId ?? task.taskId);
-        const bindingType = dispatchMode === 'task_dispatch' && task.flowRunId
-          ? 'flow_run'
-          : 'task';
-        const skipSelfAction = dispatchMode === 'flow_dispatch'
-          ? 'flow_dispatch_skip_self_update'
-          : dispatchMode === 'task_review'
-            ? 'task_review_skip_self_update'
-            : 'task_skip_self_update';
+        const skipSelfAction = dispatchModeToSelfSkipAction(dispatchMode);
         if (isSelfUpdater(record, agent, updaterNpub) && !changedFields.includes('new_task') && changedFields.length === 0) {
           record = this.appendDispatchHistory(record, {
             at: new Date().toISOString(),
@@ -1881,23 +1995,12 @@ export class WorkspaceSubscriptionManager {
           });
           continue;
         }
-        const eligibility = dispatchMode === 'flow_dispatch'
-          ? evaluateFlowDispatchEligibility({
-              task,
-              recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
-              agent,
-            })
-          : dispatchMode === 'task_review'
-            ? evaluateTaskReviewEligibility({
-                task,
-                recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
-                agent,
-              })
-            : evaluateTaskDispatchEligibility({
-                task,
-                recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
-                agent,
-              });
+        const eligibility = evaluateTaskPipelineEligibility({
+          task,
+          recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
+          mode: dispatchMode,
+          agent,
+        });
         if (eligibility !== 'dispatch') {
           record = this.appendDispatchHistory(record, {
             at: new Date().toISOString(),
@@ -1946,11 +2049,7 @@ export class WorkspaceSubscriptionManager {
           record = this.appendDispatchHistory(record, {
             at: new Date().toISOString(),
             kind: historyKind,
-            action: dispatchMode === 'flow_dispatch'
-              ? 'flow_dispatch'
-              : dispatchMode === 'task_review'
-                ? 'task_review'
-                : 'task_dispatch',
+            action: dispatchModeToAction(dispatchMode),
             agentId: agent.agentId,
             sessionId: session.id,
             recordId,
@@ -1969,11 +2068,7 @@ export class WorkspaceSubscriptionManager {
         record = this.appendDispatchHistory(record, {
           at: new Date().toISOString(),
           kind: historyKind,
-          action: dispatchMode === 'flow_dispatch'
-            ? 'flow_dispatch_skip_runtime_returned_null'
-            : dispatchMode === 'task_review'
-              ? 'task_review_skip_runtime_returned_null'
-              : 'task_skip_runtime_returned_null',
+          action: dispatchModeToNullSkipAction(dispatchMode),
           agentId: agent.agentId,
           sessionId: null,
           recordId,

@@ -326,9 +326,30 @@ export function createDispatchTaskStateUpdater(
     }
     updateArgs.push('--json');
 
-    const updateResult = await runYokeJson(context, updateArgs);
+    await syncFlightDeckRuntime(context);
+    let updateResult = await runYokeJson(context, updateArgs);
+    let updateFallback: unknown = null;
+    let updateStatus: 'ok' | 'fallback' | 'idempotent' = 'ok';
     if (syncResultRejected(updateResult)) {
-      throw new Error(`Task ${taskId} update to ${targetState} was rejected.`);
+      const currentTask = await loadFlightDeckTask(context, taskId);
+      const currentState = getText(currentTask.state)?.toLowerCase() ?? null;
+      if (currentState === targetState) {
+        updateStatus = 'idempotent';
+      } else if (targetState === 'review' && reviewerNpub) {
+        updateFallback = await runYokeJson(context, ['tasks', 'update', taskId, '--state', targetState, '--json']);
+        if (syncResultRejected(updateFallback)) {
+          const fallbackTask = await loadFlightDeckTask(context, taskId);
+          if ((getText(fallbackTask.state)?.toLowerCase() ?? null) !== targetState) {
+            throw new Error(`Task ${taskId} update to ${targetState} was rejected: ${summariseSyncRejection(updateFallback)}`);
+          }
+          updateStatus = 'idempotent';
+        } else {
+          updateResult = updateFallback;
+          updateStatus = 'fallback';
+        }
+      } else {
+        throw new Error(`Task ${taskId} update to ${targetState} was rejected: ${summariseSyncRejection(updateResult)}`);
+      }
     }
 
     const commentBody = targetState === 'review'
@@ -356,7 +377,9 @@ export function createDispatchTaskStateUpdater(
       taskId,
       state: targetState,
       assignedToNpub: reviewerNpub,
+      updateStatus,
       updateResult,
+      updateFallback,
       commentResult,
       commentError,
     };
@@ -657,6 +680,45 @@ function normaliseReviewState(response: Record<string, unknown>): string {
 function syncResultRejected(value: unknown): boolean {
   const result = objectValue(value);
   return Array.isArray(result.rejected) && result.rejected.length > 0;
+}
+
+function summariseSyncRejection(value: unknown): string {
+  const result = objectValue(value);
+  const rejected = Array.isArray(result.rejected) ? result.rejected : [];
+  if (rejected.length === 0) {
+    return 'unknown rejection';
+  }
+  return rejected
+    .map((entry) => {
+      if (typeof entry === 'string') {
+        return entry;
+      }
+      const record = objectValue(entry);
+      return getText(record.reason)
+        ?? getText(record.error)
+        ?? getText(record.message)
+        ?? JSON.stringify(record);
+    })
+    .join('; ');
+}
+
+async function syncFlightDeckRuntime(context: DispatchPipelineFlightDeckPublisherContext): Promise<void> {
+  try {
+    await runYokeJson(context, ['sync', '--json']);
+  } catch {
+    // The following task update still performs its own refresh through Yoke.
+  }
+}
+
+async function loadFlightDeckTask(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  taskId: string,
+): Promise<Record<string, unknown>> {
+  try {
+    return objectValue(await runYokeJson(context, ['tasks', 'show', taskId, '--json']));
+  } catch {
+    return {};
+  }
 }
 
 function resolveRequesterNpub(

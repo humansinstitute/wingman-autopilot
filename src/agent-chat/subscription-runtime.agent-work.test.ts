@@ -662,6 +662,87 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(next.recentDispatches[0]?.action).toBe('task_pipeline_dispatch');
   });
 
+  test('task dispatch pipeline routes wait until a bot-assigned task is ready', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-pipeline-not-ready-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-pipeline-not-ready-agents'));
+    const routeStore = new DispatchRouteStore(makeTempDb('agent-work-pipeline-not-ready-routes'));
+    const pipelineStore = new PipelineStore(makeTempDb('agent-work-pipeline-not-ready-runs'));
+    const subscription = store.save(makeSubscription());
+
+    routeStore.save({
+      managedByNpub: subscription.managedByNpub!,
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      pipelineDefinitionId: 'task-pipeline',
+    });
+    const dispatchPipelineRuntime = new DispatchPipelineRuntime({
+      routeStore,
+      agentStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      runPipeline: async () => {
+        throw new Error('pipeline route should not run until task is ready');
+      },
+    });
+
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      dispatchPipelineRuntime,
+      agentWorkRuntime: {
+        handleTaskDispatch: async () => {
+          throw new Error('legacy task dispatch should not run until task is ready');
+        },
+      } as unknown as AgentWorkSessionRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-task-pipeline-not-ready-1',
+          record_state: 'active',
+          version: 1,
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        task_id: 'task-pipeline-not-ready-1',
+        title: 'Pipeline task not ready',
+        state: 'in_progress',
+        assigned_to: subscription.botNpub,
+        predecessor_task_ids: [],
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-task-pipeline-not-ready-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'task'),
+        record_id: 'record-task-pipeline-not-ready-1',
+      }),
+    );
+
+    expect(next.recentDispatches[0]?.kind).toBe('task');
+    expect(next.recentDispatches[0]?.action).toBe('skip_not_ready');
+    expect(next.lastPipelineRunId).toBeNull();
+  });
+
   test('task dispatch pipelines can start a longer child pipeline', async () => {
     const routeStore = new DispatchRouteStore(makeTempDb('agent-work-child-pipeline-routes'));
     const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-child-pipeline-agents'));

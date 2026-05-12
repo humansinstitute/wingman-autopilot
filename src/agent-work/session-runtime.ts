@@ -363,7 +363,7 @@ function isKickoffTask(task: InboundTaskRecord): boolean {
 }
 
 function isReviewTask(task: InboundTaskRecord): boolean {
-  return task.state === 'review' && Boolean(task.flowRunId);
+  return task.state === 'review';
 }
 
 function getFlowOrchestrationBinding(
