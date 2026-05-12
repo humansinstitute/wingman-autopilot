@@ -187,15 +187,12 @@ describe("memory pipeline functions", () => {
           id: "shared:b7c038e9cf55",
           slug: "research-and-report",
         },
-        {
-          id: "shared:90e8752d9b94",
-          slug: "demo-declarative-pipeline",
-          description: null,
-        },
       ],
     });
     expect(JSON.stringify(result)).not.toContain("commandPrefix");
     expect(JSON.stringify(result)).not.toContain("group_ids");
+    expect(JSON.stringify(result)).not.toContain("l1_id");
+    expect(JSON.stringify(result)).not.toContain("demo-declarative-pipeline");
     expect(JSON.stringify(result)).not.toContain("agent-dispatch-chat");
   });
 

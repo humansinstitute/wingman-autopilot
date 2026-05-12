@@ -60,13 +60,49 @@ function isDispatchPipelineIdentifier(value: string | null): boolean {
     || normalized.includes("/demo-agent-dispatch-");
 }
 
+const coreChatChildPipelineSlugs = new Set([
+  "do-and-review",
+  "implementation-review-loop.v2",
+  "research-and-report",
+  "software-implementation-manager-review",
+]);
+
 function compactText(value: unknown, maxLength: number): string | null {
   const text = getText(value);
   if (!text) return null;
   return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
 }
 
-function compactPipelineDefinition(value: unknown): JsonObject | null {
+function tokenizeForMatch(value: unknown): Set<string> {
+  const text = typeof value === "string" ? value.toLowerCase() : "";
+  const ignored = new Set([
+    "about", "after", "again", "also", "and", "are", "can", "for", "from", "has", "into", "please", "report", "run", "runs",
+    "send", "that", "the", "this", "was", "will", "with", "work", "you",
+  ]);
+  return new Set(
+    text
+      .split(/[^a-z0-9]+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length >= 3 && !ignored.has(token)),
+  );
+}
+
+function scorePipelineRelevance(pipeline: Record<string, unknown>, promptTokens: Set<string>): number {
+  if (promptTokens.size === 0) return 0;
+  const text = [
+    getText(pipeline.slug),
+    getText(pipeline.name),
+    getText(pipeline.description),
+  ].filter(Boolean).join(" ");
+  const pipelineTokens = tokenizeForMatch(text);
+  let score = 0;
+  for (const token of promptTokens) {
+    if (pipelineTokens.has(token)) score += 1;
+  }
+  return score;
+}
+
+function compactPipelineDefinition(value: unknown, promptTokens: Set<string>): JsonObject | null {
   const pipeline = objectValue(value);
   const id = getText(pipeline.id);
   const slug = getText(pipeline.slug);
@@ -74,12 +110,18 @@ function compactPipelineDefinition(value: unknown): JsonObject | null {
   if (isDispatchPipelineIdentifier(id) || isDispatchPipelineIdentifier(slug) || isDispatchPipelineIdentifier(name)) {
     return null;
   }
+  const normalizedSlug = slug?.toLowerCase() ?? "";
+  const relevance = scorePipelineRelevance(pipeline, promptTokens);
+  const isCorePipeline = coreChatChildPipelineSlugs.has(normalizedSlug);
+  if (!isCorePipeline && relevance < 2) {
+    return null;
+  }
   return {
     id,
     slug,
     name,
     scope: getText(pipeline.scope),
-    description: compactText(pipeline.description, 280),
+    description: compactText(pipeline.description, isCorePipeline ? 220 : 160),
   };
 }
 
@@ -90,9 +132,6 @@ function compactScope(value: unknown): JsonObject {
     title: getText(scope.title),
     level: getText(scope.level),
     parentId: getText(scope.parent_id),
-    l1Id: getText(scope.l1_id),
-    l2Id: getText(scope.l2_id),
-    l3Id: getText(scope.l3_id),
   };
 }
 
@@ -239,14 +278,23 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         ? thread.recentMessages
         : [];
     const latestThread = recentMessages.slice(-8).map(compactThreadMessage);
+    const promptTokens = tokenizeForMatch(latestThread.map((message) => getText(message.body)).filter(Boolean).join(" "));
     const rawPipelines = Array.isArray(runtime.availablePipelines)
       ? runtime.availablePipelines
       : Array.isArray(chatContext.availablePipelines)
         ? chatContext.availablePipelines
         : [];
     const validChildPipelines = rawPipelines
-      .map(compactPipelineDefinition)
-      .filter((pipeline): pipeline is JsonObject => Boolean(pipeline));
+      .map((pipeline) => compactPipelineDefinition(pipeline, promptTokens))
+      .filter((pipeline): pipeline is JsonObject => Boolean(pipeline))
+      .sort((a, b) => {
+        const aSlug = getText(a.slug)?.toLowerCase() ?? "";
+        const bSlug = getText(b.slug)?.toLowerCase() ?? "";
+        const aCore = coreChatChildPipelineSlugs.has(aSlug) ? 0 : 1;
+        const bCore = coreChatChildPipelineSlugs.has(bSlug) ? 0 : 1;
+        return aCore - bCore || aSlug.localeCompare(bSlug);
+      })
+      .slice(0, 8);
     const scopes = Array.isArray(chatContext.scopes)
       ? chatContext.scopes.map(compactScope)
       : [];
