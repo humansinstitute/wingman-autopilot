@@ -115,6 +115,13 @@ describe("memory pipeline functions", () => {
             scope: "shared",
             description: "Long-running research pipeline.",
           },
+          {
+            id: "shared:90e8752d9b94",
+            slug: "demo-declarative-pipeline",
+            name: "demo-declarative-pipeline",
+            scope: "shared",
+            description: null,
+          },
         ],
       },
       chatContext: {
@@ -179,6 +186,11 @@ describe("memory pipeline functions", () => {
         {
           id: "shared:b7c038e9cf55",
           slug: "research-and-report",
+        },
+        {
+          id: "shared:90e8752d9b94",
+          slug: "demo-declarative-pipeline",
+          description: null,
         },
       ],
     });

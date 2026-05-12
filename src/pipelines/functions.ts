@@ -60,7 +60,7 @@ function isDispatchPipelineIdentifier(value: string | null): boolean {
     || normalized.includes("/demo-agent-dispatch-");
 }
 
-function truncateText(value: unknown, maxLength: number): string | null {
+function compactText(value: unknown, maxLength: number): string | null {
   const text = getText(value);
   if (!text) return null;
   return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
@@ -79,7 +79,7 @@ function compactPipelineDefinition(value: unknown): JsonObject | null {
     slug,
     name,
     scope: getText(pipeline.scope),
-    description: truncateText(pipeline.description, 280),
+    description: compactText(pipeline.description, 280),
   };
 }
 
@@ -102,7 +102,7 @@ function compactThreadMessage(value: unknown): JsonObject {
     messageId: getText(message.message_id ?? message.record_id),
     parentMessageId: getText(message.parent_message_id),
     senderNpub: getText(message.sender_npub ?? message.senderNpub),
-    body: truncateText(message.body ?? message.messageText, 3000) ?? "",
+    body: compactText(message.body ?? message.messageText, 3000) ?? "",
     attachments: Array.isArray(message.attachments) ? message.attachments : [],
     updatedAt: getText(message.updated_at ?? message.updatedAt),
   };
@@ -116,8 +116,8 @@ function compactReferencedRecord(value: unknown): JsonObject {
     recordId: getText(record.record_id ?? record.recordId ?? payload.record_id),
     family: getText(record.record_family ?? record.recordFamily ?? record.family),
     state: getText(record.record_state ?? record.recordState ?? payload.record_state),
-    title: truncateText(record.title ?? payload.title ?? data.title, 240),
-    summary: truncateText(record.summary ?? payload.summary ?? data.summary ?? payload.description ?? data.description ?? payload.body, 900),
+    title: compactText(record.title ?? payload.title ?? data.title, 240),
+    summary: compactText(record.summary ?? payload.summary ?? data.summary ?? payload.description ?? data.description ?? payload.body, 900),
     url: getText(record.url ?? payload.url ?? data.url),
     updatedAt: getText(record.updated_at ?? record.updatedAt ?? payload.updated_at),
   };
