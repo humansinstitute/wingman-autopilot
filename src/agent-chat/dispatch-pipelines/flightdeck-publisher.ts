@@ -120,6 +120,249 @@ export function createDispatchFlightDeckPublisher(
   };
 }
 
+export function createDispatchChatContextHydrator(
+  context: DispatchPipelineFlightDeckPublisherContext,
+): DeclarativeFunction {
+  return async (input) => {
+    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+      return {
+        hydrated: false,
+        status: 'failed',
+        operation: 'chat.hydrate-context',
+        reason: context.runtime.error ?? 'Flight Deck runtime was not prepared.',
+      };
+    }
+    if (context.eventInput.triggerKind !== 'chat') {
+      return {
+        hydrated: false,
+        status: 'skipped',
+        operation: 'chat.hydrate-context',
+        reason: `Unsupported dispatch trigger kind: ${context.eventInput.triggerKind}`,
+      };
+    }
+
+    const channelId = context.eventInput.channelId ?? getText(context.eventInput.payload.channel_id);
+    const threadId = context.eventInput.threadId ?? getText(context.eventInput.payload.thread_id);
+    if (!channelId || !threadId) {
+      throw new Error('Chat hydration requires channelId and threadId.');
+    }
+
+    const thread = await runYokeJson(context, [
+      'chat',
+      'context',
+      '--channel',
+      channelId,
+      '--thread',
+      threadId,
+      '--limit',
+      '20',
+      '--format',
+      'json',
+    ]);
+    let scopes: unknown = [];
+    try {
+      scopes = await runYokeJson(context, ['scopes', 'list', '--json']);
+    } catch (error) {
+      scopes = {
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+    const referencedRecords = await loadMentionedFlightDeckRecords(context, thread);
+
+    return {
+      hydrated: true,
+      status: 'ok',
+      operation: 'chat.hydrate-context',
+      channelId,
+      threadId,
+      thread,
+      scopes,
+      referencedRecords,
+      availablePipelines: Array.isArray(input.availablePipelines) ? input.availablePipelines : [],
+    };
+  };
+}
+
+export function createDispatchChatTaskCreator(
+  context: DispatchPipelineFlightDeckPublisherContext,
+): DeclarativeFunction {
+  return async (input) => {
+    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+      throw new Error(context.runtime.error ?? 'Flight Deck runtime was not prepared.');
+    }
+    const decision = objectValue(input.decision ?? input.agentResponse ?? input);
+    if (decision.dispatchTask !== true) {
+      return {
+        created: false,
+        status: 'skipped',
+        operation: 'tasks.create-from-chat',
+        reason: 'Decision does not require task-backed work.',
+      };
+    }
+
+    const taskDraft = objectValue(decision.taskDraft);
+    const workPlan = objectValue(decision.workPlan);
+    const title = getText(taskDraft.title) ?? getText(workPlan.taskSummary) ?? 'Chat-requested Wingman task';
+    const description = buildChatCreatedTaskDescription(context, decision);
+    const scopeId = getText(decision.scopeId ?? workPlan.scopeId);
+    const assignedTo = context.eventInput.subscription.botNpub;
+    const previousTaskIds = await listMatchingTaskIds(context, {
+      title,
+      state: 'in_progress',
+      assignedTo,
+    });
+    const args = [
+      'tasks',
+      'create',
+      '--title',
+      title,
+      '--description',
+      description,
+      '--state',
+      'in_progress',
+      '--assign',
+      assignedTo,
+    ];
+    if (scopeId) {
+      args.push('--scope', scopeId);
+    }
+    args.push('--json');
+    const createResult = await runYokeJson(context, args);
+    const taskId = getCreatedRecordId(createResult)
+      ?? await findNewlyCreatedTaskId(context, {
+        title,
+        state: 'in_progress',
+        assignedTo,
+        previousTaskIds,
+      });
+    if (!taskId) {
+      throw new Error('Task creation succeeded but no created task id was returned.');
+    }
+    const nextWorkPlan = {
+      ...workPlan,
+      taskId,
+      scopeId,
+      assignedToNpub: assignedTo,
+      childPipelineDefinitionId: getText(workPlan.childPipelineDefinitionId ?? decision.pipelineDefinitionId),
+      pipelineDefinitionId: getText(workPlan.pipelineDefinitionId ?? decision.pipelineDefinitionId),
+    };
+    return {
+      created: true,
+      status: 'ok',
+      operation: 'tasks.create-from-chat',
+      taskId,
+      scopeId,
+      assignedToNpub: assignedTo,
+      pipelineDefinitionId: nextWorkPlan.pipelineDefinitionId,
+      workPlan: nextWorkPlan,
+      createResult,
+    };
+  };
+}
+
+export function createDispatchCreatedTaskBlocker(
+  context: DispatchPipelineFlightDeckPublisherContext,
+): DeclarativeFunction {
+  return async (input) => {
+    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+      throw new Error(context.runtime.error ?? 'Flight Deck runtime was not prepared.');
+    }
+    const childPipeline = objectValue(input.childPipeline);
+    if (childPipeline.started !== false && getText(childPipeline.status) !== 'failed') {
+      return {
+        updated: false,
+        status: 'skipped',
+        operation: 'tasks.block-on-pipeline-launch-failure',
+      };
+    }
+    const taskId = resolveTaskId(context, input);
+    if (!taskId) {
+      throw new Error('Cannot block task after pipeline launch failure without a task id.');
+    }
+    const reason = getText(childPipeline.reason) ?? getText(childPipeline.error) ?? 'Selected pipeline failed to start.';
+    const updateResult = await runYokeJson(context, [
+      'tasks',
+      'update',
+      taskId,
+      '--state',
+      'blocked',
+      '--json',
+    ]);
+    const commentResult = await runYokeJson(context, [
+      'tasks',
+      'comment',
+      taskId,
+      '--body',
+      `Pipeline launch failed: ${reason}`,
+      '--json',
+    ]);
+    return {
+      updated: true,
+      status: 'ok',
+      operation: 'tasks.block-on-pipeline-launch-failure',
+      taskId,
+      updateResult,
+      commentResult,
+    };
+  };
+}
+
+export function createDispatchTaskStateUpdater(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  targetState: 'in_progress' | 'review',
+): DeclarativeFunction {
+  return async (input) => {
+    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+      throw new Error(context.runtime.error ?? 'Flight Deck runtime was not prepared.');
+    }
+    const taskId = resolveTaskId(context, input);
+    if (!taskId) {
+      throw new Error('Task update requires a task record id.');
+    }
+    const reviewerNpub = targetState === 'review' ? resolveRequesterNpub(context, input) : null;
+    const updateArgs = ['tasks', 'update', taskId, '--state', targetState];
+    if (reviewerNpub) {
+      updateArgs.push('--assign', reviewerNpub);
+    }
+    updateArgs.push('--json');
+
+    const updateResult = await runYokeJson(context, updateArgs);
+    if (syncResultRejected(updateResult)) {
+      throw new Error(`Task ${taskId} update to ${targetState} was rejected.`);
+    }
+
+    const commentBody = targetState === 'review'
+      ? buildReadyForReviewComment(input, reviewerNpub)
+      : buildInProgressComment(input);
+    let commentResult: unknown = null;
+    let commentError: string | null = null;
+    try {
+      commentResult = await runYokeJson(context, [
+        'tasks',
+        'comment',
+        taskId,
+        '--body',
+        commentBody,
+        '--json',
+      ]);
+    } catch (error) {
+      commentError = error instanceof Error ? error.message : String(error);
+    }
+
+    return {
+      published: true,
+      status: commentError ? 'partial' : 'ok',
+      operation: targetState === 'review' ? 'tasks.move-to-review' : 'tasks.move-to-in-progress',
+      taskId,
+      state: targetState,
+      assignedToNpub: reviewerNpub,
+      updateResult,
+      commentResult,
+      commentError,
+    };
+  };
+}
+
 async function publishChatReply(
   context: DispatchPipelineFlightDeckPublisherContext,
   input: JsonObject,
@@ -293,7 +536,17 @@ async function runYokeJson(
 }
 
 function stepNeedsFlightDeckPublisher(step: DeclarativeStep): boolean {
-  if (step.type === 'code' && step.function === 'dispatch.publishFlightDeckResponse') {
+  if (
+    step.type === 'code'
+    && (
+      step.function === 'dispatch.publishFlightDeckResponse'
+      || step.function === 'dispatch.hydrateChatContext'
+      || step.function === 'dispatch.createChatTask'
+      || step.function === 'dispatch.blockTaskIfPipelineLaunchFailed'
+      || step.function === 'dispatch.markTaskInProgress'
+      || step.function === 'dispatch.markTaskReadyForReview'
+    )
+  ) {
     return true;
   }
   if (step.type === 'loop') {
@@ -351,37 +604,35 @@ function buildTaskCommentBody(
   state: string,
   response: Record<string, unknown>,
 ): string {
-  const payload = mode === 'task_review'
-    ? {
-      type: 'wingman_task_review',
-      status: state,
-      decision: getText(response.decision) ?? 'changes_requested',
-      summary: getText(response.reviewSummary) ?? getText(response.replyDraft) ?? '',
-      evidenceChecked: getStringArray(response.evidenceChecked),
-      requiredChanges: getStringArray(response.requiredChanges),
-      confidence: typeof response.confidence === 'number' ? response.confidence : null,
-    }
-    : {
-      type: 'wingman_task_update',
-      status: state,
-      accepted: response.accepted !== false,
-      summary: getText(response.taskSummary) ?? '',
-      firstAction: getText(response.firstAction) ?? '',
-      executionPlan: getStringArray(response.executionPlan),
-      managerChecklist: getStringArray(response.managerChecklist),
-      taskUpdatePlan: getStringArray(response.taskUpdatePlan),
-      childPipeline: objectValue(response.childPipeline),
-      risks: getStringArray(response.risks),
-      updateError: getText(response.updateError),
-      confidence: typeof response.confidence === 'number' ? response.confidence : null,
-    };
-  return [
-    `Wingman pipeline ${mode === 'task_review' ? 'review' : 'update'}: ${state}`,
-    '',
-    '```json',
-    JSON.stringify(payload, null, 2),
-    '```',
-  ].join('\n');
+  const lines = [`Wingman pipeline ${mode === 'task_review' ? 'review' : 'update'}: ${state}`];
+  const summary = getText(response.taskSummary)
+    ?? getText(response.reviewSummary)
+    ?? getText(response.summary)
+    ?? getText(response.replyDraft);
+  if (summary) {
+    lines.push(`Summary: ${summary}`);
+  }
+  const childPipeline = objectValue(response.childPipeline);
+  const childRunId = getText(childPipeline.pipelineRunId);
+  if (childRunId) {
+    lines.push(`Started child pipeline: ${childRunId}`);
+  }
+  const requiredChanges = getStringArray(response.requiredChanges);
+  if (requiredChanges.length > 0) {
+    lines.push(`Required changes: ${requiredChanges.join('; ')}`);
+  }
+  const risks = getStringArray(response.risks);
+  if (risks.length > 0) {
+    lines.push(`Risks: ${risks.join('; ')}`);
+  }
+  const updateError = getText(response.updateError);
+  if (updateError) {
+    lines.push(`Update warning: ${updateError}`);
+  }
+  if (typeof response.confidence === 'number' && Number.isFinite(response.confidence)) {
+    lines.push(`Confidence: ${Math.round(response.confidence * 100)}%`);
+  }
+  return lines.join('\n');
 }
 
 function normaliseTaskState(response: Record<string, unknown>): string {
@@ -406,6 +657,298 @@ function normaliseReviewState(response: Record<string, unknown>): string {
 function syncResultRejected(value: unknown): boolean {
   const result = objectValue(value);
   return Array.isArray(result.rejected) && result.rejected.length > 0;
+}
+
+function resolveRequesterNpub(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  input: JsonObject,
+): string | null {
+  const record = objectValue(input.record);
+  const payload = objectValue(record.payload ?? context.eventInput.payload);
+  const data = objectValue(payload.data);
+  const workPlan = objectValue(input.workPlan);
+  const createdTask = objectValue(input.createdTask);
+  return firstExternalNpub([
+    input.reviewerNpub,
+    input.requesterNpub,
+    workPlan.reviewerNpub,
+    workPlan.assignerNpub,
+    createdTask.reviewerNpub,
+    createdTask.assignerNpub,
+    record.updaterNpub,
+    context.eventInput.updaterNpub,
+    payload.signature_npub,
+    data.signature_npub,
+    data.created_by_npub,
+    data.owner_npub,
+    payload.owner_npub,
+    context.eventInput.subscription.managedByNpub,
+  ], [
+    context.eventInput.subscription.botNpub,
+    context.eventInput.subscription.wsKeyNpub,
+  ]);
+}
+
+async function loadMentionedFlightDeckRecords(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  thread: unknown,
+): Promise<Array<Record<string, unknown>>> {
+  const mentions = extractMentionRefs(thread).slice(0, 20);
+  const records: Array<Record<string, unknown>> = [];
+  for (const mention of mentions) {
+    const command = commandForMention(mention);
+    if (!command) continue;
+    try {
+      const record = await runYokeJson(context, command);
+      records.push({
+        type: mention.type,
+        id: mention.id,
+        status: 'ok',
+        record,
+      });
+    } catch (error) {
+      records.push({
+        type: mention.type,
+        id: mention.id,
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return records;
+}
+
+function commandForMention(mention: { type: string; id: string }): string[] | null {
+  const type = mention.type.toLowerCase();
+  if (type === 'task') return ['tasks', 'show', mention.id, '--json'];
+  if (type === 'doc' || type === 'document') return ['docs', 'show', mention.id, '--json'];
+  if (type === 'flow') return ['flows', 'get', mention.id, '--json'];
+  if (type === 'scope') return ['scopes', 'show', mention.id, '--json'];
+  return null;
+}
+
+function extractMentionRefs(value: unknown): Array<{ type: string; id: string }> {
+  const seen = new Set<string>();
+  const refs: Array<{ type: string; id: string }> = [];
+  const visit = (entry: unknown) => {
+    if (typeof entry === 'string') {
+      const re = /@\[.*?\]\(mention:(\w+):([^)]+)\)/g;
+      let match: RegExpExecArray | null;
+      while ((match = re.exec(entry)) !== null) {
+        const type = match[1]?.trim();
+        const id = match[2]?.trim();
+        if (!type || !id || type === 'person') continue;
+        const key = `${type}:${id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        refs.push({ type, id });
+      }
+      return;
+    }
+    if (Array.isArray(entry)) {
+      for (const item of entry) visit(item);
+      return;
+    }
+    if (entry && typeof entry === 'object') {
+      for (const item of Object.values(entry as Record<string, unknown>)) visit(item);
+    }
+  };
+  visit(value);
+  return refs;
+}
+
+function buildChatCreatedTaskDescription(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  decision: Record<string, unknown>,
+): string {
+  const workPlan = objectValue(decision.workPlan);
+  const taskDraft = objectValue(decision.taskDraft);
+  const channelId = context.eventInput.channelId ?? getText(context.eventInput.payload.channel_id);
+  const threadId = context.eventInput.threadId ?? getText(context.eventInput.payload.thread_id);
+  const requestMessageId = context.eventInput.recordId;
+  const lines = [
+    getText(taskDraft.instructions) ?? getText(workPlan.instructions) ?? getText(workPlan.taskSummary) ?? 'Task created from chat dispatch.',
+    '',
+    'Dispatch context:',
+    channelId ? `- Channel: ${mention('channel', channelId, 'Flight Deck chat')}` : '',
+    threadId ? `- Thread: ${mention('message', threadId, 'thread root')}` : '',
+    requestMessageId ? `- Request message: ${mention('message', requestMessageId, 'dispatch request')}` : '',
+    getText(workPlan.pipelineDefinitionId ?? workPlan.childPipelineDefinitionId) ? `- Pipeline: ${getText(workPlan.pipelineDefinitionId ?? workPlan.childPipelineDefinitionId)}` : '',
+    getText(workPlan.scopeId) ? `- Scope: ${mention('scope', getText(workPlan.scopeId)!, 'selected scope')}` : '',
+    getText(workPlan.workdir) ? `- Workdir: ${getText(workPlan.workdir)}` : '',
+    getText(workPlan.assignerNpub) ? `- Assigner: ${getText(workPlan.assignerNpub)}` : '',
+    getText(workPlan.reviewerNpub) ? `- Reviewer: ${getText(workPlan.reviewerNpub)}` : '',
+    '',
+    ...formatList('Acceptance criteria', getStringArray(workPlan.acceptanceCriteria)),
+    ...formatList('Execution plan', getStringArray(workPlan.executionPlan)),
+    ...formatList('Manager checklist', getStringArray(workPlan.managerChecklist)),
+  ].filter((line) => line !== '');
+  return lines.join('\n');
+}
+
+function formatList(title: string, items: string[]): string[] {
+  if (items.length === 0) return [];
+  return ['', `${title}:`, ...items.map((item) => `- ${item}`)];
+}
+
+function mention(type: string, id: string, label: string): string {
+  return `@[${label}](mention:${type}:${id})`;
+}
+
+function getCreatedRecordId(value: unknown): string | null {
+  const result = objectValue(value);
+  const direct = getText(result.record_id)
+    ?? getText(result.task_id)
+    ?? getText(result.recordId)
+    ?? getText(result.taskId);
+  if (direct) return direct;
+
+  const createdRecordIds = getStringArray(result.created_record_ids ?? result.createdRecordIds);
+  if (createdRecordIds.length > 0) return createdRecordIds[0]!;
+
+  const accepted = Array.isArray(result.accepted) ? result.accepted : [];
+  for (const record of accepted) {
+    const id = getText(objectValue(record).record_id) ?? getText(objectValue(record).recordId);
+    if (id) return id;
+  }
+
+  const records = Array.isArray(result.records) ? result.records : [];
+  for (const record of records) {
+    const id = getText(objectValue(record).record_id);
+    if (id) return id;
+  }
+  return null;
+}
+
+async function listMatchingTaskIds(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  input: {
+    title: string;
+    state: string;
+    assignedTo: string;
+  },
+): Promise<Set<string>> {
+  const rows = await listTasks(context);
+  return new Set(rows
+    .filter((row) => taskMatchesCreatedChatTask(row, input))
+    .map((row) => getText(row.record_id))
+    .filter((id): id is string => Boolean(id)));
+}
+
+async function findNewlyCreatedTaskId(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  input: {
+    title: string;
+    state: string;
+    assignedTo: string;
+    previousTaskIds: Set<string>;
+  },
+): Promise<string | null> {
+  const rows = await listTasks(context);
+  const candidates = rows
+    .filter((row) => taskMatchesCreatedChatTask(row, input))
+    .filter((row) => {
+      const id = getText(row.record_id);
+      return id && !input.previousTaskIds.has(id);
+    })
+    .sort((left, right) => parseTime(right.updated_at) - parseTime(left.updated_at));
+  return getText(candidates[0]?.record_id);
+}
+
+async function listTasks(
+  context: DispatchPipelineFlightDeckPublisherContext,
+): Promise<Array<Record<string, unknown>>> {
+  const result = await runYokeJson(context, ['tasks', 'list', '--json']);
+  return Array.isArray(result)
+    ? result.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === 'object' && !Array.isArray(entry)))
+    : [];
+}
+
+function taskMatchesCreatedChatTask(
+  row: Record<string, unknown>,
+  input: {
+    title: string;
+    state: string;
+    assignedTo: string;
+  },
+): boolean {
+  return getText(row.title) === input.title
+    && getText(row.state) === input.state
+    && getText(row.assigned_to_npub) === input.assignedTo;
+}
+
+function parseTime(value: unknown): number {
+  const timestamp = Date.parse(typeof value === 'string' ? value : '');
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function resolveTaskId(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  input: JsonObject,
+): string | null {
+  const workPlan = objectValue(input.workPlan);
+  const createdTask = objectValue(input.createdTask);
+  const record = objectValue(input.record);
+  const payload = objectValue(record.payload ?? context.eventInput.payload);
+  return getText(input.taskId)
+    ?? getText(workPlan.taskId)
+    ?? getText(createdTask.taskId)
+    ?? getText(payload.taskId)
+    ?? getText(payload.task_id)
+    ?? getText(payload.record_id)
+    ?? (context.eventInput.triggerKind === 'task' || context.eventInput.triggerKind === 'task_review'
+      ? getRecordId(context.eventInput)
+      : null);
+}
+
+function firstExternalNpub(values: unknown[], excludedNpubs: Array<string | null | undefined>): string | null {
+  const excluded = new Set(excludedNpubs.filter((value): value is string => typeof value === 'string' && value.length > 0));
+  for (const value of values) {
+    const npub = getText(value);
+    if (npub && !excluded.has(npub)) {
+      return npub;
+    }
+  }
+  return null;
+}
+
+function buildInProgressComment(input: JsonObject): string {
+  const workPlan = objectValue(input.workPlan ?? input.agentResponse ?? input);
+  const summary = getText(workPlan.taskSummary) ?? getText(workPlan.summary) ?? 'Task accepted for pipeline dispatch.';
+  const workStyle = getText(workPlan.workStyle);
+  return [
+    'Pipeline intake: moved task to in_progress before dispatch.',
+    `Summary: ${summary}`,
+    ...(workStyle ? [`Dispatch target: ${workStyle}`] : []),
+  ].join('\n');
+}
+
+function buildReadyForReviewComment(input: JsonObject, reviewerNpub: string | null): string {
+  const response = objectValue(input.agentResponse ?? input.response ?? input);
+  const workerResult = objectValue(input.workerResult);
+  const summary = getText(response.reviewSummary)
+    ?? getText(response.summary)
+    ?? getText(workerResult.summary)
+    ?? getText(workerResult.result)
+    ?? 'Pipeline work is ready for review.';
+  const lines = [
+    reviewerNpub
+      ? `Pipeline handoff: moved task to review and assigned it to ${reviewerNpub}.`
+      : 'Pipeline handoff: moved task to review.',
+    `Summary: ${summary}`,
+  ];
+  const requiredChanges = getStringArray(response.requiredChanges);
+  if (requiredChanges.length > 0) {
+    lines.push(`Required changes: ${requiredChanges.join('; ')}`);
+  }
+  const risks = getStringArray(response.risks);
+  if (risks.length > 0) {
+    lines.push(`Risks: ${risks.join('; ')}`);
+  }
+  if (typeof response.confidence === 'number' && Number.isFinite(response.confidence)) {
+    lines.push(`Confidence: ${Math.round(response.confidence * 100)}%`);
+  }
+  return lines.join('\n');
 }
 
 function getRecordId(eventInput: DispatchPipelineEventInput): string | null {

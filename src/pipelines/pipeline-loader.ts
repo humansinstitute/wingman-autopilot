@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -163,9 +163,9 @@ const GRAPH_CONTEXT_MEMORY_DEMO_DEFINITION = {
   ],
 };
 
-const AGENT_DISPATCH_CHAT_DEMO_DEFINITION = {
-  name: "demo-agent-dispatch-chat-response",
-  description: "Demo dispatch pipeline for chat advisories. It first determines intent and needed context, then drafts the response or action result, then publishes back to the source Flight Deck thread.",
+const AGENT_DISPATCH_CHAT_DEFINITION = {
+  name: "agent-dispatch-chat",
+  description: "Default dispatch pipeline for chat advisories. It hydrates the source thread, classifies whether task-backed work is needed, optionally creates an in-progress task and starts the selected pipeline, then replies to the source Flight Deck thread.",
   input: {
     dispatch: { triggerKind: "chat" },
     workspace: { workspaceOwnerNpub: "npub1workspace", sourceAppNpub: "npub1source" },
@@ -188,10 +188,10 @@ const AGENT_DISPATCH_CHAT_DEMO_DEFINITION = {
   },
   steps: [
     {
-      name: "intent-and-information",
-      type: "agent",
-      agent: "$.agent.defaultAgent",
-      directory: "$.agent.workingDirectory",
+      name: "hydrate-chat-context",
+      description: "Fetch the latest thread, referenced Flight Deck records, visible scopes, and available pipeline definitions before asking the agent to classify intent.",
+      type: "code",
+      function: "dispatch.hydrateChatContext",
       input: {
         pick: {
           dispatch: "$.dispatch",
@@ -201,13 +201,13 @@ const AGENT_DISPATCH_CHAT_DEMO_DEFINITION = {
           record: "$.record",
           routing: "$.routing",
           runtime: "$.runtime",
+          availablePipelines: "$.runtime.availablePipelines",
         },
       },
-      prompt: "You are stage 1 of a Wingman chat dispatch pipeline: Intent and Information. Read chat.messageText and the dispatch envelope. If runtime.commands.context or runtime.commands.history is available, use it to inspect the thread before deciding. Decide whether the message asks for: a direct chat reply, task creation/update in Flight Deck, local pipeline dispatch, implementation work, or no response. Do not publish a reply. Return JSON with: intent string, messageSummary string, threadSummary string, relevantFacts array, requiredActions array, recommendedPipeline string|null, shouldRespond boolean, responseDirection string, confidence number from 0 to 1.",
-      assign: "$.intentAndInformation",
+      assign: "$.chatContext",
     },
     {
-      name: "chat-response",
+      name: "analyse-intent",
       type: "agent",
       agent: "$.agent.defaultAgent",
       directory: "$.agent.workingDirectory",
@@ -220,10 +220,97 @@ const AGENT_DISPATCH_CHAT_DEMO_DEFINITION = {
           record: "$.record",
           routing: "$.routing",
           runtime: "$.runtime",
-          intentAndInformation: "$.intentAndInformation",
+          chatContext: "$.chatContext",
         },
       },
-      prompt: "You are stage 2 of a Wingman chat dispatch pipeline: Chat Response. Follow intentAndInformation.responseDirection. If requiredActions says to create/update Flight Deck records or dispatch another local pipeline and runtime commands make that possible, take the action before drafting the response; otherwise explain the intended action clearly. Do not publish the chat yourself; the next deterministic step will publish. Return JSON fields: shouldRespond boolean, responseDraft string, reasoningSummary string, actionsTaken array of short strings, followUpActions array of short strings, confidence number from 0 to 1.",
+      prompt: "You are stage 1 of agent-dispatch-chat: Analyse Intent. Use chatContext.thread as the authoritative latest thread and chatContext.referencedRecords as the referenced Flight Deck context. Use chatContext.scopes to choose a scope when dispatching work. Use runtime.availablePipelines or chatContext.availablePipelines to choose a currently installed pipeline id or slug; do not invent pipeline names. Choose a downstream work pipeline such as do-and-review, software-implementation-manager-review, or research-and-report. Do not choose this chat dispatch pipeline or another dispatch/intake pipeline as the child pipeline. Decide whether this chat needs extended task-backed work. If it can be answered directly or needs clarification before work starts, set dispatchTask false. If it needs research, implementation, document generation, graph-memory review, or an explicitly requested pipeline, set dispatchTask true only when you can select the pipeline, scope, workdir, task title, instructions, and acceptance criteria. Return JSON only with: dispatchTask boolean, recommendedPipelineId string|null, scopeId string|null, workdir string|null, taskDraft object with title string, instructions string, acceptanceCriteria array, executionPlan array, managerChecklist array, assignerNpub string|null, reviewerNpub string|null, chatResponse object with body string, clarifyingQuestion string|null, confidence number from 0 to 1. There is always a chat response; do not include responseOnly.",
+      assign: "$.agentDecision",
+    },
+    {
+      name: "normalise-decision",
+      type: "code",
+      function: "dispatch.normaliseChatDispatchDecision",
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          chat: "$.chat",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          chatContext: "$.chatContext",
+          agentDecision: "$.agentDecision",
+        },
+      },
+      assign: "$.decision",
+    },
+    {
+      name: "create-in-progress-task",
+      type: "code",
+      function: "dispatch.createChatTask",
+      when: { path: "$.decision.dispatchTask", equals: true },
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          chat: "$.chat",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          decision: "$.decision",
+          chatContext: "$.chatContext",
+        },
+      },
+      assign: "$.createdTask",
+    },
+    {
+      name: "start-selected-pipeline",
+      type: "code",
+      function: "dispatch.startChildPipeline",
+      when: { path: "$.decision.dispatchTask", equals: true },
+      input: {
+        pick: {
+          pipelineDefinitionId: "$.createdTask.pipelineDefinitionId",
+          workPlan: "$.createdTask.workPlan",
+          childInput: "$",
+        },
+      },
+      assign: "$.childPipeline",
+    },
+    {
+      name: "block-task-on-launch-failure",
+      type: "code",
+      function: "dispatch.blockTaskIfPipelineLaunchFailed",
+      when: { path: "$.childPipeline.started", equals: false },
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          workPlan: "$.createdTask.workPlan",
+          createdTask: "$.createdTask",
+          childPipeline: "$.childPipeline",
+        },
+      },
+      assign: "$.launchFailureUpdate",
+    },
+    {
+      name: "prepare-chat-response",
+      type: "code",
+      function: "dispatch.prepareChatDispatchResponse",
+      input: {
+        pick: {
+          decision: "$.decision",
+          createdTask: "$.createdTask",
+          childPipeline: "$.childPipeline",
+          launchFailureUpdate: "$.launchFailureUpdate",
+        },
+      },
       assign: "$.agentResponse",
     },
     {
@@ -293,9 +380,28 @@ const AGENT_DISPATCH_TASK_DEMO_DEFINITION = {
           agentResponse: "$.agentResponse",
           record: "$.record",
           routing: "$.routing",
+          agent: "$.agent",
         },
       },
       assign: "$.workPlan",
+    },
+    {
+      name: "move-task-to-in-progress",
+      description: "Persist the Ready -> In progress transition before any child work is dispatched.",
+      type: "code",
+      function: "dispatch.markTaskInProgress",
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          workPlan: "$.workPlan",
+        },
+      },
+      assign: "$.taskStartUpdate",
     },
     {
       name: "start-follow-up-pipeline",
@@ -331,11 +437,18 @@ const AGENT_DISPATCH_TASK_DEMO_DEFINITION = {
 };
 
 const SOFTWARE_IMPLEMENTATION_MANAGER_REVIEW_DEFINITION = {
-  name: "demo-software-implementation-manager-review",
-  description: "Long-running software work pipeline. A worker implements the task, then a manager reviews the result and publishes a task update.",
+  name: "software-implementation-manager-review",
+  description: "Long-running task-backed software work pipeline. A worker implements the task, then a manager reviews the result and the final step moves the originating task to review.",
   input: {
+    taskId: "task-demo",
+    scopeId: "scope-demo",
+    workdir: "/workspace",
+    assignerNpub: "npub1requester",
+    reviewerNpub: "npub1requester",
     workPlan: {
       taskSummary: "Implement the requested software change.",
+      instructions: "Use the task and chat context to make the requested change.",
+      acceptanceCriteria: ["The requested behavior is implemented", "Focused verification has been run"],
       executionPlan: ["Inspect the repo", "Implement", "Run focused tests", "Report evidence"],
       managerChecklist: ["Diff is scoped", "Tests or verification are present", "Task status was updated"],
     },
@@ -345,7 +458,7 @@ const SOFTWARE_IMPLEMENTATION_MANAGER_REVIEW_DEFINITION = {
       name: "implementation-worker",
       type: "agent",
       agent: "$.agent.defaultAgent",
-      directory: "$.agent.workingDirectory",
+      directory: "$.workPlan.workdir",
       timeoutMs: 1800000,
       input: {
         pick: {
@@ -354,17 +467,18 @@ const SOFTWARE_IMPLEMENTATION_MANAGER_REVIEW_DEFINITION = {
           record: "$.record",
           routing: "$.routing",
           runtime: "$.runtime",
+          createdTask: "$.createdTask",
           workPlan: "$.workPlan",
         },
       },
-      prompt: "You are the worker in a Wingman software implementation pipeline. Use the full task context and workPlan. Make the required code changes in the working directory, run focused verification, and update the Flight Deck task at meaningful milestones using runtime.commands when available. Do not stop at analysis. Return JSON fields: completed boolean, summary string, changedFiles array, testsRun array, evidence array, blockers array, taskUpdateComment string, recommendedState string, confidence number.",
+      prompt: "You are the worker in a Wingman software implementation pipeline. This pipeline must be started with task-backed context: taskId, scopeId, workPlan.workdir, assigner/reviewer npub, instructions, acceptanceCriteria, executionPlan, and managerChecklist. Use the full task, originating chat context, and referenced records. Make the required code changes in the working directory and run focused verification. The task is already in_progress; the final pipeline step will move it to review. Do not stop at analysis. Return JSON fields: completed boolean, summary string, changedFiles array, testsRun array, evidence array, blockers array, taskUpdateComment string, confidence number.",
       assign: "$.workerResult",
     },
     {
       name: "manager-review",
       type: "agent",
       agent: "$.agent.defaultAgent",
-      directory: "$.agent.workingDirectory",
+      directory: "$.workPlan.workdir",
       timeoutMs: 1200000,
       input: {
         pick: {
@@ -373,17 +487,19 @@ const SOFTWARE_IMPLEMENTATION_MANAGER_REVIEW_DEFINITION = {
           record: "$.record",
           routing: "$.routing",
           runtime: "$.runtime",
+          createdTask: "$.createdTask",
           workPlan: "$.workPlan",
           workerResult: "$.workerResult",
         },
       },
-      prompt: "You are the manager reviewer in a Wingman software implementation pipeline. Review workerResult against workPlan.managerChecklist and the original task. Inspect changed files and evidence where relevant. Confirm the task was or should be updated at appropriate stages. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, executionPlan array, managerChecklist array, requiredChanges array, risks array, suggestedStatus string, confidence number.",
+      prompt: "You are the manager reviewer in a Wingman software implementation pipeline. Review workerResult against workPlan.instructions, workPlan.acceptanceCriteria, workPlan.executionPlan, workPlan.managerChecklist, and the original task/chat context. Inspect changed files and evidence where relevant. Be strict about missing tests, unscoped diffs, and unverifiable claims. The final pipeline step will update the Flight Deck task to review and assign it to the requester. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, executionPlan array, managerChecklist array, requiredChanges array, risks array, confidence number.",
       assign: "$.agentResponse",
     },
     {
-      name: "publish-manager-review",
+      name: "move-task-to-review",
+      description: "Move the originating Flight Deck task to Review and assign it back to the requester.",
       type: "code",
-      function: "dispatch.publishFlightDeckResponse",
+      function: "dispatch.markTaskReadyForReview",
       input: {
         pick: {
           dispatch: "$.dispatch",
@@ -392,19 +508,30 @@ const SOFTWARE_IMPLEMENTATION_MANAGER_REVIEW_DEFINITION = {
           record: "$.record",
           routing: "$.routing",
           runtime: "$.runtime",
+          createdTask: "$.createdTask",
+          workPlan: "$.workPlan",
+          workerResult: "$.workerResult",
           agentResponse: "$.agentResponse",
         },
       },
+      assign: "$.taskReviewUpdate",
     },
   ],
 };
 
 const DO_AND_REVIEW_DEFINITION = {
-  name: "demo-do-and-review",
-  description: "Long-running generic task pipeline. A worker completes non-code work such as research or planning, then a manager reviews evidence and publishes a task update.",
+  name: "do-and-review",
+  description: "Long-running task-backed generic delivery pipeline. A worker completes non-code work such as research, planning, writing, or operations, then a manager reviews evidence and the final step moves the originating task to review.",
   input: {
+    taskId: "task-demo",
+    scopeId: "scope-demo",
+    workdir: "/workspace",
+    assignerNpub: "npub1requester",
+    reviewerNpub: "npub1requester",
     workPlan: {
       taskSummary: "Complete the requested task.",
+      instructions: "Use the task and chat context to complete the requested non-code work.",
+      acceptanceCriteria: ["The requested outcome is complete", "Evidence or sources are recorded"],
       executionPlan: ["Investigate", "Do the work", "Review evidence", "Report result"],
       managerChecklist: ["Sources or evidence are recorded", "The answer matches the task", "Task status was updated"],
     },
@@ -414,7 +541,7 @@ const DO_AND_REVIEW_DEFINITION = {
       name: "do-work",
       type: "agent",
       agent: "$.agent.defaultAgent",
-      directory: "$.agent.workingDirectory",
+      directory: "$.workPlan.workdir",
       timeoutMs: 1800000,
       input: {
         pick: {
@@ -423,17 +550,18 @@ const DO_AND_REVIEW_DEFINITION = {
           record: "$.record",
           routing: "$.routing",
           runtime: "$.runtime",
+          createdTask: "$.createdTask",
           workPlan: "$.workPlan",
         },
       },
-      prompt: "You are the worker in a Wingman do-and-review pipeline. Complete the generic task using the full task context and workPlan. For current-world facts, use internet research and record sources. Update the Flight Deck task at meaningful milestones using runtime.commands when available. Return JSON fields: completed boolean, summary string, sources array, evidence array, result string, blockers array, taskUpdateComment string, recommendedState string, confidence number.",
+      prompt: "You are the worker in a Wingman do-and-review pipeline. This is task-backed board work. Complete the task using the full task, originating chat context, referenced records, and workPlan instructions/acceptanceCriteria/executionPlan. For current-world facts, use internet research and record sources. The task is already in_progress; the final pipeline step will move it to review. Return JSON fields: completed boolean, summary string, sources array, evidence array, result string, blockers array, taskUpdateComment string, confidence number.",
       assign: "$.workerResult",
     },
     {
       name: "manager-review",
       type: "agent",
       agent: "$.agent.defaultAgent",
-      directory: "$.agent.workingDirectory",
+      directory: "$.workPlan.workdir",
       timeoutMs: 1200000,
       input: {
         pick: {
@@ -442,17 +570,19 @@ const DO_AND_REVIEW_DEFINITION = {
           record: "$.record",
           routing: "$.routing",
           runtime: "$.runtime",
+          createdTask: "$.createdTask",
           workPlan: "$.workPlan",
           workerResult: "$.workerResult",
         },
       },
-      prompt: "You are the manager reviewer in a Wingman do-and-review pipeline. Check workerResult against workPlan.managerChecklist and the original task. Verify sources/evidence are sufficient, decide whether the work is complete, and ensure the task update plan has been followed or clearly report what remains. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, executionPlan array, managerChecklist array, requiredChanges array, risks array, suggestedStatus string, confidence number.",
+      prompt: "You are the manager reviewer in a Wingman do-and-review pipeline. Check workerResult against workPlan.instructions, workPlan.acceptanceCriteria, workPlan.executionPlan, workPlan.managerChecklist, and the original task/chat context. Verify sources/evidence are sufficient and decide whether the work is complete. The final pipeline step will update the Flight Deck task to review and assign it to the requester. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, executionPlan array, managerChecklist array, requiredChanges array, risks array, confidence number.",
       assign: "$.agentResponse",
     },
     {
-      name: "publish-manager-review",
+      name: "move-task-to-review",
+      description: "Move the originating Flight Deck task to Review and assign it back to the requester.",
       type: "code",
-      function: "dispatch.publishFlightDeckResponse",
+      function: "dispatch.markTaskReadyForReview",
       input: {
         pick: {
           dispatch: "$.dispatch",
@@ -461,9 +591,121 @@ const DO_AND_REVIEW_DEFINITION = {
           record: "$.record",
           routing: "$.routing",
           runtime: "$.runtime",
+          createdTask: "$.createdTask",
+          workPlan: "$.workPlan",
+          workerResult: "$.workerResult",
           agentResponse: "$.agentResponse",
         },
       },
+      assign: "$.taskReviewUpdate",
+    },
+  ],
+};
+
+const RESEARCH_AND_REPORT_DEFINITION = {
+  name: "research-and-report",
+  description: "Long-running task-backed research pipeline. A researcher gathers evidence, a report writer creates a Flight Deck document when possible, then a manager reviews and moves the originating task to review.",
+  input: {
+    taskId: "task-demo",
+    scopeId: "scope-demo",
+    workdir: "/workspace",
+    assignerNpub: "npub1requester",
+    reviewerNpub: "npub1requester",
+    workPlan: {
+      taskSummary: "Research the requested subject and produce a report.",
+      instructions: "Research the subject from the task and chat context, then write a concise report.",
+      acceptanceCriteria: ["The report answers the research question", "Sources are cited", "Open questions are clearly listed"],
+      executionPlan: ["Clarify research questions from the thread", "Gather sources and evidence", "Write a report document", "Review the result"],
+      managerChecklist: ["Sources are credible and cited", "The report matches the task scope", "Limitations and open questions are stated"],
+    },
+  },
+  steps: [
+    {
+      name: "research-worker",
+      type: "agent",
+      agent: "$.agent.defaultAgent",
+      directory: "$.workPlan.workdir",
+      timeoutMs: 2400000,
+      input: {
+        pick: {
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          createdTask: "$.createdTask",
+          chatContext: "$.chatContext",
+          workPlan: "$.workPlan",
+        },
+      },
+      prompt: "You are the researcher in a Wingman research-and-report pipeline. Use the task, originating chat thread, referenced Flight Deck records, and workPlan. For current-world facts, use internet research and cite sources. Produce structured research notes, not a polished final report. Return JSON fields: completed boolean, researchQuestion string, findings array, sources array of objects or strings, contradictions array, openQuestions array, evidence array, blockers array, confidence number.",
+      assign: "$.researchResult",
+    },
+    {
+      name: "report-writer",
+      type: "agent",
+      agent: "$.agent.defaultAgent",
+      directory: "$.workPlan.workdir",
+      timeoutMs: 1800000,
+      input: {
+        pick: {
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          createdTask: "$.createdTask",
+          chatContext: "$.chatContext",
+          workPlan: "$.workPlan",
+          researchResult: "$.researchResult",
+        },
+      },
+      prompt: "You are the report writer in a Wingman research-and-report pipeline. Turn researchResult into a concise Flight Deck report. If runtime.commandPrefix is available, create a Flight Deck doc using the yoke docs create command with the selected scope. Include source links/citations and limitations. Do not hide uncertainty. Return JSON fields: completed boolean, reportTitle string, reportSummary string, reportBody string, documentId string|null, sources array, blockers array, taskUpdateComment string, confidence number.",
+      assign: "$.workerResult",
+    },
+    {
+      name: "manager-review",
+      type: "agent",
+      agent: "$.agent.defaultAgent",
+      directory: "$.workPlan.workdir",
+      timeoutMs: 1200000,
+      input: {
+        pick: {
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          createdTask: "$.createdTask",
+          workPlan: "$.workPlan",
+          researchResult: "$.researchResult",
+          workerResult: "$.workerResult",
+        },
+      },
+      prompt: "You are the manager reviewer in a Wingman research-and-report pipeline. Check the research notes and report against workPlan.instructions, workPlan.acceptanceCriteria, and workPlan.managerChecklist. Verify that sources, limitations, and open questions are represented. The final pipeline step will update the Flight Deck task to review and assign it to the requester. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, requiredChanges array, risks array, confidence number.",
+      assign: "$.agentResponse",
+    },
+    {
+      name: "move-task-to-review",
+      description: "Move the originating Flight Deck task to Review and assign it back to the requester.",
+      type: "code",
+      function: "dispatch.markTaskReadyForReview",
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          createdTask: "$.createdTask",
+          workPlan: "$.workPlan",
+          researchResult: "$.researchResult",
+          workerResult: "$.workerResult",
+          agentResponse: "$.agentResponse",
+        },
+      },
+      assign: "$.taskReviewUpdate",
     },
   ],
 };
@@ -738,13 +980,22 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
     await writeFile(loopedReviewDemoPath, `${JSON.stringify(LOOPED_DESIGN_REVIEW_DEMO_DEFINITION, null, 2)}\n`);
   }
   const dispatchDemos = [
-    ["demo-agent-dispatch-chat-response.json", AGENT_DISPATCH_CHAT_DEMO_DEFINITION],
+    ["agent-dispatch-chat.json", AGENT_DISPATCH_CHAT_DEFINITION],
     ["demo-agent-dispatch-task-response.json", AGENT_DISPATCH_TASK_DEMO_DEFINITION],
     ["demo-agent-dispatch-comment-response.json", AGENT_DISPATCH_COMMENT_DEMO_DEFINITION],
     ["demo-agent-dispatch-task-review-response.json", AGENT_DISPATCH_TASK_REVIEW_DEMO_DEFINITION],
-    ["demo-software-implementation-manager-review.json", SOFTWARE_IMPLEMENTATION_MANAGER_REVIEW_DEFINITION],
-    ["demo-do-and-review.json", DO_AND_REVIEW_DEFINITION],
+    ["software-implementation-manager-review.json", SOFTWARE_IMPLEMENTATION_MANAGER_REVIEW_DEFINITION],
+    ["do-and-review.json", DO_AND_REVIEW_DEFINITION],
+    ["research-and-report.json", RESEARCH_AND_REPORT_DEFINITION],
   ] as const;
+  const renamedBuiltIns = [
+    "demo-agent-dispatch-chat-response.json",
+    "demo-software-implementation-manager-review.json",
+    "demo-do-and-review.json",
+  ];
+  for (const fileName of renamedBuiltIns) {
+    await rm(join(getSharedPipelineDefinitionsDirectory(), fileName), { force: true }).catch(() => undefined);
+  }
   for (const [fileName, definition] of dispatchDemos) {
     const demoPath = join(getSharedPipelineDefinitionsDirectory(), fileName);
     const nextJson = `${JSON.stringify(definition, null, 2)}\n`;

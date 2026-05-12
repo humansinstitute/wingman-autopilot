@@ -63,11 +63,51 @@ describe("pipeline definition version paths", () => {
   });
 
   test("resolves seeded dispatch definitions by stable slug", async () => {
-    const definition = await getPipelineDefinition("demo-agent-dispatch-chat-response", "tester");
+    const definition = await getPipelineDefinition("agent-dispatch-chat", "tester");
 
     expect(definition?.id.startsWith("shared:")).toBe(true);
-    expect(definition?.slug).toBe("demo-agent-dispatch-chat-response");
-    expect(definition?.name).toBe("demo-agent-dispatch-chat-response");
+    expect(definition?.slug).toBe("agent-dispatch-chat");
+    expect(definition?.name).toBe("agent-dispatch-chat");
+    expect(definition?.spec.steps.map((step) => step.name)).toEqual([
+      "hydrate-chat-context",
+      "analyse-intent",
+      "normalise-decision",
+      "create-in-progress-task",
+      "start-selected-pipeline",
+      "block-task-on-launch-failure",
+      "prepare-chat-response",
+      "publish-chat-response",
+    ]);
+  });
+
+  test("seeds task pipeline handoff steps explicitly", async () => {
+    const intake = await getPipelineDefinition("demo-agent-dispatch-task-response", "tester");
+    const software = await getPipelineDefinition("software-implementation-manager-review", "tester");
+    const generic = await getPipelineDefinition("do-and-review", "tester");
+    const research = await getPipelineDefinition("research-and-report", "tester");
+
+    expect(intake?.spec.steps.map((step) => step.name)).toEqual([
+      "investigate-and-route-task",
+      "normalise-work-plan",
+      "move-task-to-in-progress",
+      "start-follow-up-pipeline",
+      "publish-task-update",
+    ]);
+    expect(software?.spec.steps.at(-1)).toMatchObject({
+      name: "move-task-to-review",
+      type: "code",
+      function: "dispatch.markTaskReadyForReview",
+    });
+    expect(generic?.spec.steps.at(-1)).toMatchObject({
+      name: "move-task-to-review",
+      type: "code",
+      function: "dispatch.markTaskReadyForReview",
+    });
+    expect(research?.spec.steps.at(-1)).toMatchObject({
+      name: "move-task-to-review",
+      type: "code",
+      function: "dispatch.markTaskReadyForReview",
+    });
   });
 });
 

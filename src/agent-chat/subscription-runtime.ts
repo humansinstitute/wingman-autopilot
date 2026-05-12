@@ -98,7 +98,7 @@ const DEFAULT_DISPATCH_PIPELINE_ROUTES: Array<{
   {
     triggerKind: 'chat',
     capability: 'chat_intercept',
-    pipelineDefinitionId: 'demo-agent-dispatch-chat-response',
+    pipelineDefinitionId: 'agent-dispatch-chat',
   },
   {
     triggerKind: 'task',

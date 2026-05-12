@@ -12,6 +12,21 @@ describe("memory pipeline functions", () => {
     expect(result.agentResponse).toEqual({ responseDraft: "hello" });
   });
 
+  test("dispatch task state functions are dry-runs outside dispatch routes", async () => {
+    await expect(builtinPipelineFunctions["dispatch.markTaskInProgress"]!({ taskId: "task-1" })).resolves.toMatchObject({
+      published: false,
+      status: "not_configured",
+      operation: "tasks.move-to-in-progress",
+      taskId: "task-1",
+    });
+    await expect(builtinPipelineFunctions["dispatch.markTaskReadyForReview"]!({ taskId: "task-1" })).resolves.toMatchObject({
+      published: false,
+      status: "not_configured",
+      operation: "tasks.move-to-review",
+      taskId: "task-1",
+    });
+  });
+
   test("dispatch.normaliseTaskWorkPlan normalises list fields", async () => {
     const result = await builtinPipelineFunctions["dispatch.normaliseTaskWorkPlan"]!({
       agentResponse: {
@@ -34,10 +49,40 @@ describe("memory pipeline functions", () => {
     });
 
     expect(result.workStyle).toBe("do_and_review");
-    expect(result.childPipelineDefinitionId).toBe("demo-do-and-review");
+    expect(result.childPipelineDefinitionId).toBe("do-and-review");
     expect(result.initialFindings).toEqual(["Context loaded"]);
     expect(result.managerChecklist).toEqual(["Confirm sources"]);
     expect(result.executionPlan).toEqual(["Check availability", "Report options"]);
+  });
+
+  test("dispatch.normaliseChatDispatchDecision uses dispatchTask as the single routing switch", async () => {
+    const result = await builtinPipelineFunctions["dispatch.normaliseChatDispatchDecision"]!({
+      agent: { workingDirectory: "/repo" },
+      chat: { senderNpub: "npub1requester", channelId: "channel-1", threadId: "thread-1" },
+      record: { recordId: "message-1", updaterNpub: "npub1requester", payload: {} },
+      dispatch: { triggerKind: "chat" },
+      agentDecision: {
+        dispatchTask: true,
+        recommendedPipelineId: "do-and-review",
+        scopeId: "scope-1",
+        taskDraft: {
+          title: "Research the thing",
+          instructions: "Do the research.",
+          acceptanceCriteria: ["Report the answer"],
+        },
+        chatResponse: { body: "Starting the research." },
+        confidence: 0.9,
+      },
+    });
+
+    expect(result.dispatchTask).toBe(true);
+    expect(result.pipelineDefinitionId).toBe("do-and-review");
+    expect(result.workPlan).toMatchObject({
+      workdir: "/repo",
+      reviewerNpub: "npub1requester",
+      acceptanceCriteria: ["Report the answer"],
+    });
+    expect("responseOnly" in result).toBe(false);
   });
 
   test("memory.searchEntities returns an empty graphContext source set when graph memory is not configured", async () => {

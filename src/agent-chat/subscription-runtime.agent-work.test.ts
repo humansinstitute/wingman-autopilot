@@ -313,6 +313,84 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(pipelineStore.listRuns().filter((run) => run.definitionId === route.pipelineDefinitionId)).toHaveLength(1);
   });
 
+  test('suppresses duplicate route dispatches after a pipeline definition rename', async () => {
+    const routeStore = new DispatchRouteStore(makeTempDb('agent-route-rename-dedupe-routes'));
+    const pipelineStore = new PipelineStore(makeTempDb('agent-route-rename-dedupe-runs'));
+    const subscription = makeSubscription();
+    const route = routeStore.save({
+      managedByNpub: subscription.managedByNpub!,
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'chat',
+      capability: 'chat_intercept',
+      pipelineDefinitionId: 'renamed-chat-pipeline',
+      activePolicy: 'queue',
+    });
+    const dedupeKey = [
+      subscription.workspaceOwnerNpub,
+      subscription.sourceAppNpub,
+      'chat-record-rename-1',
+      2,
+      'thread-rename-1',
+      route.routeId,
+    ].join(':');
+    const concurrencyKey = `${subscription.subscriptionId}:thread-rename-1:${route.routeId}`;
+    const previousRun = pipelineStore.createRun({
+      definitionId: 'old-chat-pipeline',
+      definitionPath: '/tmp/old-chat-pipeline.json',
+      name: 'Old Chat Pipeline',
+      ownerNpub: subscription.managedByNpub,
+      ownerAlias: 'manager',
+      scope: 'user',
+      input: {
+        dispatch: {
+          routeId: route.routeId,
+          dedupeKey,
+          concurrencyKey,
+        },
+      },
+    });
+    pipelineStore.completeRun(
+      previousRun.id,
+      'error',
+      {},
+      'previous route run failed after creating a side effect',
+    );
+    const runtime = new DispatchPipelineRuntime({
+      routeStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      loadDefinition: async () => {
+        throw new Error('duplicate dispatch should not load a definition');
+      },
+    });
+
+    const result = await runtime.dispatch({
+      subscription,
+      triggerKind: 'chat',
+      capability: 'chat_intercept',
+      recordId: 'chat-record-rename-1',
+      record: {},
+      payload: { body: 'Please create work', channel_id: 'channel-rename-1' },
+      recordFamily: 'chat',
+      recordState: 'active',
+      recordVersion: 2,
+      updaterNpub: 'npub1user',
+      bindingType: 'thread',
+      bindingId: 'thread-rename-1',
+      channelId: 'channel-rename-1',
+      threadId: 'thread-rename-1',
+      groupNpubs: ['npub1group'],
+    });
+
+    expect(result.historyEntries[0]?.action).toBe('chat_pipeline_suppressed');
+    expect(result.historyEntries[0]?.suppressionReason).toBe('dedupe_window');
+    expect(result.historyEntries[0]?.pipelineRunId).toBe(previousRun.id);
+  });
+
   test('suppresses task dispatch when active policy skip has a running route instance', async () => {
     const routeStore = new DispatchRouteStore(makeTempDb('agent-work-active-policy-pipeline-routes'));
     const pipelineStore = new PipelineStore(makeTempDb('agent-work-active-policy-pipeline-runs'));

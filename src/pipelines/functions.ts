@@ -34,6 +34,10 @@ function objectValue(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function getText(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
 function getStringArray(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value
@@ -45,6 +49,15 @@ function getStringArray(value: unknown): string[] {
     return trimmed ? [trimmed] : [];
   }
   return [];
+}
+
+function isDispatchPipelineIdentifier(value: string | null): boolean {
+  if (!value) return false;
+  const normalized = value.toLowerCase();
+  return normalized === "agent-dispatch-chat"
+    || normalized.startsWith("demo-agent-dispatch-")
+    || normalized.includes("/agent-dispatch-chat.json")
+    || normalized.includes("/demo-agent-dispatch-");
 }
 
 export const builtinPipelineFunctions: FunctionRegistry = {
@@ -137,9 +150,60 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     };
   },
 
+  async "dispatch.hydrateChatContext"(input) {
+    return {
+      hydrated: false,
+      status: "not_configured",
+      operation: "chat.hydrate-context",
+      reason: "This function only hydrates chat context when the pipeline is launched by a Wingman dispatch route.",
+      chat: input.chat ?? null,
+    };
+  },
+
+  async "dispatch.createChatTask"(input) {
+    return {
+      created: false,
+      status: "not_configured",
+      operation: "tasks.create-from-chat",
+      reason: "This function only creates Flight Deck tasks when the pipeline is launched by a Wingman dispatch route.",
+      decision: input.decision ?? null,
+    };
+  },
+
+  async "dispatch.blockTaskIfPipelineLaunchFailed"(input) {
+    return {
+      updated: false,
+      status: "not_configured",
+      operation: "tasks.block-on-pipeline-launch-failure",
+      reason: "This function only updates Flight Deck tasks when the pipeline is launched by a Wingman dispatch route.",
+      childPipeline: input.childPipeline ?? null,
+    };
+  },
+
+  async "dispatch.markTaskInProgress"(input) {
+    return {
+      published: false,
+      status: "not_configured",
+      operation: "tasks.move-to-in-progress",
+      reason: "This function only updates Flight Deck tasks when the pipeline is launched by a Wingman dispatch route.",
+      taskId: input.taskId ?? null,
+    };
+  },
+
+  async "dispatch.markTaskReadyForReview"(input) {
+    return {
+      published: false,
+      status: "not_configured",
+      operation: "tasks.move-to-review",
+      reason: "This function only updates Flight Deck tasks when the pipeline is launched by a Wingman dispatch route.",
+      taskId: input.taskId ?? null,
+    };
+  },
+
   async "dispatch.normaliseTaskWorkPlan"(input) {
     const response = objectValue(input.agentResponse ?? input.workPlan ?? input);
     const record = objectValue(input.record);
+    const agent = objectValue(input.agent);
     const payload = objectValue(record.payload ?? input.payload);
     const title = String(payload.title ?? response.title ?? "").toLowerCase();
     const description = String(payload.description ?? response.description ?? "").toLowerCase();
@@ -158,8 +222,8 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         ? "software_implementation"
         : "do_and_review";
     const childPipelineDefinitionId = workStyle === "software_implementation"
-      ? "demo-software-implementation-manager-review"
-      : "demo-do-and-review";
+      ? "software-implementation-manager-review"
+      : "do-and-review";
     const executionPlan = getStringArray(response.executionPlan);
     const managerChecklist = getStringArray(response.managerChecklist);
     const taskUpdatePlan = getStringArray(response.taskUpdatePlan);
@@ -190,8 +254,126 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         "Comment after worker completion with evidence.",
         "Move the task to review or done only after manager review.",
       ],
+      workdir: getText(response.workdir ?? response.workingDirectory ?? agent.workingDirectory),
       suggestedStatus: "in_progress",
       confidence: clampConfidence(response.confidence),
+    };
+  },
+
+  async "dispatch.normaliseChatDispatchDecision"(input) {
+    const raw = objectValue(input.agentDecision ?? input.decision ?? input.agentResponse ?? input);
+    const chat = objectValue(input.chat);
+    const record = objectValue(input.record);
+    const payload = objectValue(record.payload);
+    const agent = objectValue(input.agent);
+    const dispatchTask = raw.dispatchTask === true;
+    const pipelineDefinitionId = getText(
+      raw.recommendedPipelineId
+        ?? raw.recommendedPipelineDefinitionId
+        ?? raw.pipelineDefinitionId
+        ?? raw.recommendedPipeline,
+    );
+    const taskDraft = objectValue(raw.taskDraft);
+    const scopeId = getText(raw.scopeId ?? taskDraft.scopeId);
+    const workdir = getText(raw.workdir ?? taskDraft.workdir ?? agent.workingDirectory);
+    const assignerNpub = getText(raw.assignerNpub ?? taskDraft.assignerNpub ?? chat.senderNpub ?? payload.sender_npub ?? record.updaterNpub);
+    const reviewerNpub = getText(raw.reviewerNpub ?? taskDraft.reviewerNpub ?? assignerNpub);
+    const title = getText(taskDraft.title ?? raw.title) ?? "Chat-requested Wingman task";
+    const instructions = getText(taskDraft.instructions ?? raw.instructions ?? raw.taskInstructions ?? raw.messageSummary);
+    const acceptanceCriteria = getStringArray(taskDraft.acceptanceCriteria ?? raw.acceptanceCriteria);
+    const executionPlan = getStringArray(taskDraft.executionPlan ?? raw.executionPlan);
+    const managerChecklist = getStringArray(taskDraft.managerChecklist ?? raw.managerChecklist);
+    const clarifyingQuestion = getText(raw.clarifyingQuestion);
+    const selectedDispatchPipeline = isDispatchPipelineIdentifier(pipelineDefinitionId);
+    const chatResponseBody = getText(objectValue(raw.chatResponse).body)
+      ?? getText(raw.responseDraft)
+      ?? getText(raw.replyDraft)
+      ?? getText(raw.answer);
+    const missing = dispatchTask
+      ? [
+          !pipelineDefinitionId ? "pipeline" : "",
+          selectedDispatchPipeline ? "downstream work pipeline" : "",
+          !scopeId ? "scope" : "",
+          !workdir ? "workdir" : "",
+          !instructions ? "instructions" : "",
+        ].filter(Boolean)
+      : [];
+    const shouldDispatchTask = dispatchTask && missing.length === 0 && !clarifyingQuestion;
+    const responseDraft = shouldDispatchTask
+      ? (chatResponseBody ?? "I have the request and am starting the right pipeline-backed task now.")
+      : clarifyingQuestion
+        ?? chatResponseBody
+        ?? (missing.length > 0
+          ? `I need one clarification before starting work: ${missing.join(", ")}.`
+          : "I can handle this directly in chat.");
+    return {
+      dispatchTask: shouldDispatchTask,
+      requestedDispatchTask: dispatchTask,
+      pipelineDefinitionId: shouldDispatchTask ? pipelineDefinitionId : null,
+      scopeId: shouldDispatchTask ? scopeId : null,
+      workdir: shouldDispatchTask ? workdir : null,
+      missing,
+      clarifyingQuestion,
+      responseDraft,
+      taskDraft: {
+        title,
+        instructions: instructions ?? "",
+        acceptanceCriteria,
+        executionPlan,
+        managerChecklist,
+        assignerNpub,
+        reviewerNpub,
+      },
+      workPlan: {
+        childPipelineDefinitionId: shouldDispatchTask ? pipelineDefinitionId : null,
+        pipelineDefinitionId: shouldDispatchTask ? pipelineDefinitionId : null,
+        taskSummary: title,
+        instructions: instructions ?? "",
+        acceptanceCriteria,
+        executionPlan,
+        managerChecklist,
+        scopeId: shouldDispatchTask ? scopeId : null,
+        workdir: shouldDispatchTask ? workdir : null,
+        assignerNpub,
+        reviewerNpub,
+        origin: {
+          triggerKind: getText(objectValue(input.dispatch).triggerKind) ?? "chat",
+          channelId: getText(chat.channelId),
+          threadId: getText(chat.threadId),
+          messageId: getText(record.recordId),
+        },
+      },
+      confidence: clampConfidence(raw.confidence),
+    };
+  },
+
+  async "dispatch.prepareChatDispatchResponse"(input) {
+    const decision = objectValue(input.decision);
+    const createdTask = objectValue(input.createdTask);
+    const childPipeline = objectValue(input.childPipeline);
+    const taskId = getText(createdTask.taskId);
+    const pipelineName = getText(childPipeline.pipelineName) ?? getText(decision.pipelineDefinitionId);
+    const pipelineRunId = getText(childPipeline.pipelineRunId);
+    const launchFailed = childPipeline.started === false || getText(childPipeline.status) === "failed";
+    let responseDraft = getText(decision.responseDraft) ?? "Done.";
+    if (decision.dispatchTask === true && taskId) {
+      responseDraft = launchFailed
+        ? `I created task ${taskId}, but the selected pipeline did not start: ${getText(childPipeline.reason) ?? "unknown error"}. I marked the task blocked for review.`
+        : `I created task ${taskId} and started ${pipelineName ?? "the selected pipeline"}${pipelineRunId ? ` (${pipelineRunId})` : ""}. I will hand it back for review when the pipeline finishes.`;
+    }
+    return {
+      shouldRespond: true,
+      responseDraft,
+      reasoningSummary: getText(decision.clarifyingQuestion)
+        ? "Asked a clarifying question instead of dispatching work."
+        : decision.dispatchTask === true
+          ? "Created a task and started the selected pipeline."
+          : "Responded directly without dispatching task-backed work.",
+      actionsTaken: [
+        ...(taskId ? [`created task ${taskId}`] : []),
+        ...(pipelineRunId ? [`started pipeline run ${pipelineRunId}`] : []),
+      ],
+      confidence: clampConfidence(decision.confidence),
     };
   },
 

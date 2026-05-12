@@ -374,7 +374,7 @@ describe('WorkspaceSubscriptionManager', () => {
       'task:task_dispatch',
     ]);
     expect(routes.map((route) => route.pipelineDefinitionId).sort()).toEqual([
-      'demo-agent-dispatch-chat-response',
+      'agent-dispatch-chat',
       'demo-agent-dispatch-task-response',
     ]);
   });

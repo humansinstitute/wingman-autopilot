@@ -2,7 +2,7 @@ import { generateIdentityAlias } from '../../identity/identity-alias';
 import type { FunctionRegistry } from '../../pipelines/declarative';
 import { loadPipelineFunctionRegistry } from '../../pipelines/function-loader';
 import { builtinPipelineFunctions } from '../../pipelines/functions';
-import { getPipelineDefinition } from '../../pipelines/pipeline-loader';
+import { getPipelineDefinition, listLatestPipelineDefinitions, type PipelineDefinitionRecord } from '../../pipelines/pipeline-loader';
 import { runDeclarativePipeline, startDeclarativePipeline } from '../../pipelines/pipeline-runner';
 import { type JsonObject, PipelineStore, type PipelineRunRecord } from '../../pipelines/pipeline-store';
 import type { SessionApiContext } from '../../server/session-api-routes';
@@ -19,6 +19,10 @@ import type {
 import { bootstrapAgentDefinitionWorkspace } from '../agent-workspace-bootstrap';
 import {
   createDispatchFlightDeckPublisher,
+  createDispatchChatContextHydrator,
+  createDispatchChatTaskCreator,
+  createDispatchCreatedTaskBlocker,
+  createDispatchTaskStateUpdater,
   pipelineNeedsFlightDeckPublisher,
   prepareDispatchPipelineFlightDeckRuntime,
   type DispatchPipelineFlightDeckRuntime,
@@ -59,6 +63,7 @@ export interface DispatchPipelineRuntimeDependencies {
   callbackOrigin: string;
   runPipeline?: typeof runDeclarativePipeline;
   loadDefinition?: typeof getPipelineDefinition;
+  listDefinitions?: typeof listLatestPipelineDefinitions;
   loadFunctions?: typeof loadPipelineFunctionRegistry;
   requirePipelineRoutes?: boolean;
   defaultAgent?: string;
@@ -72,6 +77,7 @@ export class DispatchPipelineRuntime {
   private readonly callbackOrigin: string;
   private readonly runPipeline: typeof runDeclarativePipeline;
   private readonly loadDefinition: typeof getPipelineDefinition;
+  private readonly listDefinitions: typeof listLatestPipelineDefinitions;
   private readonly loadFunctions: typeof loadPipelineFunctionRegistry;
   private readonly requirePipelineRoutes: boolean;
   private readonly defaultAgent: string;
@@ -84,6 +90,7 @@ export class DispatchPipelineRuntime {
     this.callbackOrigin = deps.callbackOrigin;
     this.runPipeline = deps.runPipeline ?? runDeclarativePipeline;
     this.loadDefinition = deps.loadDefinition ?? getPipelineDefinition;
+    this.listDefinitions = deps.listDefinitions ?? listLatestPipelineDefinitions;
     this.loadFunctions = deps.loadFunctions ?? loadPipelineFunctionRegistry;
     this.requirePipelineRoutes = deps.requirePipelineRoutes ?? false;
     this.defaultAgent = normaliseDefaultAgent(deps.defaultAgent);
@@ -176,7 +183,8 @@ export class DispatchPipelineRuntime {
     const agent = this.selectAgent(input);
     const ownerNpub = input.subscription.managedByNpub ?? route.managedByNpub;
     const ownerAlias = generateIdentityAlias(ownerNpub);
-    const definition = await this.loadDefinition(route.pipelineDefinitionId, ownerAlias);
+    const definition = await this.loadDefinition(route.pipelineDefinitionId, ownerAlias)
+      ?? await this.loadFallbackDefinitionForRoute(route, ownerAlias);
     const sessionApiContext = this.getSessionApiContext();
     if (!definition || !sessionApiContext) {
       return {
@@ -214,6 +222,7 @@ export class DispatchPipelineRuntime {
     const flightDeckRuntime = pipelineNeedsFlightDeckPublisher(definition.spec)
       ? await prepareDispatchPipelineFlightDeckRuntime({ eventInput: input, agent })
       : emptyFlightDeckRuntime();
+    const availablePipelines = await this.listDefinitions(ownerAlias).catch(() => []);
     const envelope = buildDispatchEnvelope({
       route,
       input,
@@ -222,6 +231,7 @@ export class DispatchPipelineRuntime {
       concurrencyKey,
       flightDeckRuntime,
       defaultAgent: this.defaultAgent,
+      availablePipelines,
     });
     const functions = await this.loadRuntimeFunctions({
       ownerAlias,
@@ -277,9 +287,47 @@ export class DispatchPipelineRuntime {
         botIdentity: input.eventInput.botIdentity ?? null,
         runtime: input.flightDeckRuntime,
       });
+      registry['dispatch.hydrateChatContext'] = createDispatchChatContextHydrator({
+        eventInput: input.eventInput,
+        agent: input.agent,
+        botIdentity: input.eventInput.botIdentity ?? null,
+        runtime: input.flightDeckRuntime,
+      });
+      registry['dispatch.createChatTask'] = createDispatchChatTaskCreator({
+        eventInput: input.eventInput,
+        agent: input.agent,
+        botIdentity: input.eventInput.botIdentity ?? null,
+        runtime: input.flightDeckRuntime,
+      });
+      registry['dispatch.blockTaskIfPipelineLaunchFailed'] = createDispatchCreatedTaskBlocker({
+        eventInput: input.eventInput,
+        agent: input.agent,
+        botIdentity: input.eventInput.botIdentity ?? null,
+        runtime: input.flightDeckRuntime,
+      });
+      registry['dispatch.markTaskInProgress'] = createDispatchTaskStateUpdater({
+        eventInput: input.eventInput,
+        agent: input.agent,
+        botIdentity: input.eventInput.botIdentity ?? null,
+        runtime: input.flightDeckRuntime,
+      }, 'in_progress');
+      registry['dispatch.markTaskReadyForReview'] = createDispatchTaskStateUpdater({
+        eventInput: input.eventInput,
+        agent: input.agent,
+        botIdentity: input.eventInput.botIdentity ?? null,
+        runtime: input.flightDeckRuntime,
+      }, 'review');
     }
     registry['dispatch.startChildPipeline'] = this.createChildPipelineStarter(input);
     return registry;
+  }
+
+  private async loadFallbackDefinitionForRoute(
+    route: DispatchRouteRecord,
+    ownerAlias: string,
+  ): Promise<PipelineDefinitionRecord | null> {
+    const fallbackId = fallbackPipelineDefinitionId(route);
+    return fallbackId ? await this.loadDefinition(fallbackId, ownerAlias) : null;
   }
 
   private createChildPipelineStarter(input: {
@@ -317,31 +365,41 @@ export class DispatchPipelineRuntime {
         definitionNeedsPublisher: pipelineNeedsFlightDeckPublisher(childDefinition.spec),
       });
       const childInput = objectValue(payload.childInput ?? payload.input);
-      const run = startDeclarativePipeline({
-        store: this.pipelineStore,
-        sessionApiContext: input.sessionApiContext,
-        definition: childDefinition,
-        registry: childFunctions,
-        input: {
-          ...childInput,
-          workPlan,
-          parentDispatch: {
-            routeId: getText(payload.routeId) ?? getText(input.eventInput.recordId),
-            triggerKind: input.eventInput.triggerKind,
-            recordId: input.eventInput.recordId,
+      try {
+        const run = startDeclarativePipeline({
+          store: this.pipelineStore,
+          sessionApiContext: input.sessionApiContext,
+          definition: childDefinition,
+          registry: childFunctions,
+          input: {
+            ...childInput,
+            workPlan,
+            parentDispatch: {
+              routeId: getText(payload.routeId) ?? getText(input.eventInput.recordId),
+              triggerKind: input.eventInput.triggerKind,
+              recordId: input.eventInput.recordId,
+            },
           },
-        },
-        ownerNpub: input.ownerNpub,
-        ownerAlias: input.ownerAlias,
-        callbackOrigin: this.callbackOrigin,
-      });
-      return {
-        started: true,
-        status: run.status,
-        pipelineRunId: run.id,
-        pipelineDefinitionId: childDefinition.id,
-        pipelineName: childDefinition.name,
-      };
+          ownerNpub: input.ownerNpub,
+          ownerAlias: input.ownerAlias,
+          callbackOrigin: this.callbackOrigin,
+        });
+        return {
+          started: true,
+          status: run.status,
+          pipelineRunId: run.id,
+          pipelineDefinitionId: childDefinition.id,
+          pipelineName: childDefinition.name,
+        };
+      } catch (error) {
+        return {
+          started: false,
+          status: 'failed',
+          pipelineDefinitionId: childDefinition.id,
+          pipelineName: childDefinition.name,
+          reason: error instanceof Error ? error.message : String(error),
+        };
+      }
     };
   }
 
@@ -471,6 +529,7 @@ function buildDispatchEnvelope(input: {
   concurrencyKey: string;
   flightDeckRuntime: DispatchPipelineFlightDeckRuntime;
   defaultAgent: string;
+  availablePipelines: PipelineDefinitionRecord[];
 }): JsonObject {
   const { route, input: eventInput, agent, flightDeckRuntime } = input;
   return {
@@ -527,6 +586,13 @@ function buildDispatchEnvelope(input: {
       commandPrefix: flightDeckRuntime.commandPrefix,
       commands: flightDeckRuntime.commands,
       error: flightDeckRuntime.error,
+      availablePipelines: input.availablePipelines.map((definition) => ({
+        id: definition.id,
+        slug: definition.slug,
+        name: definition.name,
+        scope: definition.scope,
+        description: definition.spec.description ?? null,
+      })),
     },
   };
 }
@@ -583,6 +649,22 @@ function routeMatchesEvent(route: DispatchRouteRecord, input: DispatchPipelineEv
   return true;
 }
 
+function fallbackPipelineDefinitionId(route: DispatchRouteRecord): string | null {
+  if (route.triggerKind === 'chat' && route.capability === 'chat_intercept') {
+    return 'agent-dispatch-chat';
+  }
+  if (route.triggerKind === 'task' && route.capability === 'task_dispatch') {
+    return 'demo-agent-dispatch-task-response';
+  }
+  if (route.triggerKind === 'comment' && route.capability === 'comment_dispatch') {
+    return 'demo-agent-dispatch-comment-response';
+  }
+  if (route.triggerKind === 'task_review' && route.capability === 'task_review') {
+    return 'demo-agent-dispatch-task-review-response';
+  }
+  return null;
+}
+
 function getText(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
@@ -606,8 +688,11 @@ function getDispatchRunRouteId(run: PipelineRunRecord): string | null {
 }
 
 function dispatchRunMatchesRoute(run: PipelineRunRecord, route: DispatchRouteRecord): boolean {
-  return run.definitionId === route.pipelineDefinitionId
-    && getDispatchRunRouteId(run) === route.routeId;
+  const routeId = getDispatchRunRouteId(run);
+  if (routeId) {
+    return routeId === route.routeId;
+  }
+  return run.definitionId === route.pipelineDefinitionId;
 }
 
 function getRunLastActivityMs(run: PipelineRunRecord): number {

@@ -533,7 +533,7 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
       triggerKind: 'chat',
       priority: 10,
       activePolicy: 'queue',
-      defaultPipelineName: 'demo-agent-dispatch-chat-response',
+      defaultPipelineName: 'agent-dispatch-chat',
       title: 'Chat Dispatch',
       description: 'When a workspace chat advisory matches a local agent, Wingmen reuses or creates the routed session and the agent must decide whether to respond in-thread or ignore.',
       promptKey: 'chatPromptTemplate',
