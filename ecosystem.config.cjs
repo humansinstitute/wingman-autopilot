@@ -44,7 +44,7 @@ const agentTmuxSession = process.env.AGENT_TMUX_SESSION || 'wm-ap-agents';
 module.exports = {
   apps: [
     {
-      name: 'wingman-autopilot-local',
+      name: 'wm-ap',
       cwd: rootDir,
       script: bunBin,
       args: 'run src/index.ts',

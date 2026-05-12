@@ -52,10 +52,10 @@ bun start
 Run the local orchestration server under PM2:
 
 ```bash
-pm2 start ecosystem.config.cjs --only wingman-autopilot-local
-pm2 logs wingman-autopilot-local
-pm2 restart wingman-autopilot-local --update-env
-pm2 stop wingman-autopilot-local
+pm2 start ecosystem.config.cjs --only wm-ap
+pm2 logs wm-ap
+pm2 restart wm-ap --update-env
+pm2 stop wm-ap
 ```
 
 The PM2 ecosystem config loads `.env`, runs `bun run src/index.ts`, and sets the
