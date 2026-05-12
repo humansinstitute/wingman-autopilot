@@ -55,6 +55,28 @@ describe("memory pipeline functions", () => {
     expect(result.executionPlan).toEqual(["Check availability", "Report options"]);
   });
 
+  test("dispatch.normaliseTaskWorkPlan honors explicit software routing for nested task payloads", async () => {
+    const result = await builtinPipelineFunctions["dispatch.normaliseTaskWorkPlan"]!({
+      agentResponse: {
+        accepted: true,
+        workStyle: "software_implementation",
+        taskSummary: "Fix the rendered task links.",
+        confidence: 0.9,
+      },
+      record: {
+        payload: {
+          data: {
+            title: "Ensure links click through",
+            description: "Please send this to an implementation pipeline.",
+          },
+        },
+      },
+    });
+
+    expect(result.workStyle).toBe("software_implementation");
+    expect(result.childPipelineDefinitionId).toBe("software-implementation-manager-review");
+  });
+
   test("dispatch.normaliseChatDispatchDecision uses dispatchTask as the single routing switch", async () => {
     const result = await builtinPipelineFunctions["dispatch.normaliseChatDispatchDecision"]!({
       agent: { workingDirectory: "/repo" },

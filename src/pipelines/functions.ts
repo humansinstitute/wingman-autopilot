@@ -205,8 +205,9 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const record = objectValue(input.record);
     const agent = objectValue(input.agent);
     const payload = objectValue(record.payload ?? input.payload);
-    const title = String(payload.title ?? response.title ?? "").toLowerCase();
-    const description = String(payload.description ?? response.description ?? "").toLowerCase();
+    const payloadData = objectValue(payload.data);
+    const title = String(payload.title ?? payloadData.title ?? response.title ?? "").toLowerCase();
+    const description = String(payload.description ?? payloadData.description ?? response.description ?? "").toLowerCase();
     const requestedStyle = String(
       response.workStyle
         ?? response.pipelineStyle
@@ -218,7 +219,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const softwareLikely = /\b(code|software|implementation|bug|fix|repo|repository|test|typescript|javascript|frontend|backend|api|database|migration|build|deploy|ui|server)\b/.test(combined);
     const workStyle = requestedStyle.includes("do_and_review") || requestedStyle.includes("generic")
       ? "do_and_review"
-      : softwareLikely
+      : requestedStyle.includes("software") || requestedStyle.includes("implementation") || softwareLikely
         ? "software_implementation"
         : "do_and_review";
     const childPipelineDefinitionId = workStyle === "software_implementation"

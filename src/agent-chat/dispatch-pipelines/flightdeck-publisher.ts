@@ -416,7 +416,8 @@ export function createDispatchTaskStateUpdater(
     await syncFlightDeckRuntime(context);
     let updateResult = await runYokeJson(context, updateArgs);
     let updateFallback: unknown = null;
-    let updateStatus: 'ok' | 'fallback' | 'idempotent' = 'ok';
+    let updateStatus: 'ok' | 'fallback' | 'idempotent' | 'rejected' = 'ok';
+    let updateRejectedReason: string | null = null;
     if (syncResultRejected(updateResult)) {
       const currentTask = await loadFlightDeckTask(context, taskId);
       const currentState = getText(currentTask.state)?.toLowerCase() ?? null;
@@ -427,15 +428,18 @@ export function createDispatchTaskStateUpdater(
         if (syncResultRejected(updateFallback)) {
           const fallbackTask = await loadFlightDeckTask(context, taskId);
           if ((getText(fallbackTask.state)?.toLowerCase() ?? null) !== targetState) {
-            throw new Error(`Task ${taskId} update to ${targetState} was rejected: ${summariseSyncRejection(updateFallback)}`);
+            updateStatus = 'rejected';
+            updateRejectedReason = summariseSyncRejection(updateFallback);
+          } else {
+            updateStatus = 'idempotent';
           }
-          updateStatus = 'idempotent';
         } else {
           updateResult = updateFallback;
           updateStatus = 'fallback';
         }
       } else {
-        throw new Error(`Task ${taskId} update to ${targetState} was rejected: ${summariseSyncRejection(updateResult)}`);
+        updateStatus = 'rejected';
+        updateRejectedReason = summariseSyncRejection(updateResult);
       }
     }
 
@@ -459,12 +463,13 @@ export function createDispatchTaskStateUpdater(
 
     return {
       published: true,
-      status: commentError ? 'partial' : 'ok',
+      status: commentError || updateStatus === 'rejected' ? 'partial' : 'ok',
       operation: targetState === 'review' ? 'tasks.move-to-review' : 'tasks.move-to-in-progress',
       taskId,
       state: targetState,
       assignedToNpub: reviewerNpub,
       updateStatus,
+      updateRejectedReason,
       updateResult,
       updateFallback,
       commentResult,
