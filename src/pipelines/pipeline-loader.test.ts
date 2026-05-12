@@ -70,6 +70,7 @@ describe("pipeline definition version paths", () => {
     expect(definition?.name).toBe("agent-dispatch-chat");
     expect(definition?.spec.steps.map((step) => step.name)).toEqual([
       "hydrate-chat-context",
+      "prepare-intent-input",
       "analyse-intent",
       "normalise-decision",
       "create-in-progress-task",

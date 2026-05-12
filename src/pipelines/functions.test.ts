@@ -77,6 +77,116 @@ describe("memory pipeline functions", () => {
     expect(result.childPipelineDefinitionId).toBe("software-implementation-manager-review");
   });
 
+  test("dispatch.prepareChatIntentInput compacts chat context for intent analysis", async () => {
+    const result = await builtinPipelineFunctions["dispatch.prepareChatIntentInput"]!({
+      dispatch: { routeId: "route-1", triggerKind: "chat" },
+      workspace: {
+        workspaceOwnerNpub: "npub1owner",
+        sourceAppNpub: "npub1source",
+        backendBaseUrl: "https://example.invalid",
+      },
+      agent: {
+        botNpub: "npub1bot",
+        workingDirectory: "/repo",
+        defaultAgent: "codex",
+      },
+      chat: {
+        senderNpub: "npub1requester",
+        channelId: "channel-1",
+        threadId: "thread-1",
+      },
+      record: {
+        recordId: "message-1",
+        payload: { sender_npub: "npub1payload" },
+      },
+      runtime: {
+        commandPrefix: "do not pass this through",
+        availablePipelines: [
+          {
+            id: "shared:63d40fd2a6c3",
+            slug: "agent-dispatch-chat",
+            name: "agent-dispatch-chat",
+            description: "Dispatch pipeline",
+          },
+          {
+            id: "shared:b7c038e9cf55",
+            slug: "research-and-report",
+            name: "research-and-report",
+            scope: "shared",
+            description: "Long-running research pipeline.",
+          },
+        ],
+      },
+      chatContext: {
+        shouldProceed: true,
+        selfAuthored: false,
+        thread: {
+          recent_messages: [
+            {
+              message_id: "message-1",
+              sender_npub: "npub1requester",
+              body: "Please research this and write a report.",
+              updated_at: "2026-05-12T00:00:00.000Z",
+            },
+          ],
+        },
+        scopes: [
+          {
+            record_id: "scope-1",
+            title: "Marketing",
+            level: "l1",
+            group_ids: ["not-needed"],
+            updated_at: "2026-05-12T00:00:00.000Z",
+          },
+        ],
+        referencedRecords: [
+          {
+            recordId: "doc-1",
+            recordFamily: "document",
+            payload: {
+              title: "Reference doc",
+              body: "Useful context",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(result).toMatchObject({
+      source: {
+        routeId: "route-1",
+        requesterNpub: "npub1requester",
+      },
+      defaults: {
+        workdir: "/repo",
+        assignerNpub: "npub1requester",
+        reviewerNpub: "npub1requester",
+      },
+      latestThread: [
+        {
+          messageId: "message-1",
+          body: "Please research this and write a report.",
+        },
+      ],
+      scopes: [
+        {
+          id: "scope-1",
+          title: "Marketing",
+          level: "l1",
+        },
+      ],
+      validChildPipelines: [
+        {
+          id: "shared:b7c038e9cf55",
+          slug: "research-and-report",
+        },
+      ],
+    });
+    expect(JSON.stringify(result)).not.toContain("commandPrefix");
+    expect(JSON.stringify(result)).not.toContain("group_ids");
+    expect(JSON.stringify(result)).not.toContain("agent-dispatch-chat");
+  });
+
   test("dispatch.normaliseChatDispatchDecision uses dispatchTask as the single routing switch", async () => {
     const result = await builtinPipelineFunctions["dispatch.normaliseChatDispatchDecision"]!({
       agent: { workingDirectory: "/repo" },

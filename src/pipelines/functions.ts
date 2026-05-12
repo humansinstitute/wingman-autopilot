@@ -60,6 +60,69 @@ function isDispatchPipelineIdentifier(value: string | null): boolean {
     || normalized.includes("/demo-agent-dispatch-");
 }
 
+function truncateText(value: unknown, maxLength: number): string | null {
+  const text = getText(value);
+  if (!text) return null;
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+function compactPipelineDefinition(value: unknown): JsonObject | null {
+  const pipeline = objectValue(value);
+  const id = getText(pipeline.id);
+  const slug = getText(pipeline.slug);
+  const name = getText(pipeline.name);
+  if (isDispatchPipelineIdentifier(id) || isDispatchPipelineIdentifier(slug) || isDispatchPipelineIdentifier(name)) {
+    return null;
+  }
+  return {
+    id,
+    slug,
+    name,
+    scope: getText(pipeline.scope),
+    description: truncateText(pipeline.description, 280),
+  };
+}
+
+function compactScope(value: unknown): JsonObject {
+  const scope = objectValue(value);
+  return {
+    id: getText(scope.record_id ?? scope.id),
+    title: getText(scope.title),
+    level: getText(scope.level),
+    parentId: getText(scope.parent_id),
+    l1Id: getText(scope.l1_id),
+    l2Id: getText(scope.l2_id),
+    l3Id: getText(scope.l3_id),
+  };
+}
+
+function compactThreadMessage(value: unknown): JsonObject {
+  const message = objectValue(value);
+  return {
+    messageId: getText(message.message_id ?? message.record_id),
+    parentMessageId: getText(message.parent_message_id),
+    senderNpub: getText(message.sender_npub ?? message.senderNpub),
+    body: truncateText(message.body ?? message.messageText, 3000) ?? "",
+    attachments: Array.isArray(message.attachments) ? message.attachments : [],
+    updatedAt: getText(message.updated_at ?? message.updatedAt),
+  };
+}
+
+function compactReferencedRecord(value: unknown): JsonObject {
+  const record = objectValue(value);
+  const payload = objectValue(record.payload);
+  const data = objectValue(payload.data);
+  return {
+    recordId: getText(record.record_id ?? record.recordId ?? payload.record_id),
+    family: getText(record.record_family ?? record.recordFamily ?? record.family),
+    state: getText(record.record_state ?? record.recordState ?? payload.record_state),
+    title: truncateText(record.title ?? payload.title ?? data.title, 240),
+    summary: truncateText(record.summary ?? payload.summary ?? data.summary ?? payload.description ?? data.description ?? payload.body, 900),
+    url: getText(record.url ?? payload.url ?? data.url),
+    updatedAt: getText(record.updated_at ?? record.updatedAt ?? payload.updated_at),
+  };
+}
+
 export const builtinPipelineFunctions: FunctionRegistry = {
   async "text.normalise"(input) {
     const text = String(input.text ?? "").trim();
@@ -157,6 +220,78 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       operation: "chat.hydrate-context",
       reason: "This function only hydrates chat context when the pipeline is launched by a Wingman dispatch route.",
       chat: input.chat ?? null,
+    };
+  },
+
+  async "dispatch.prepareChatIntentInput"(input) {
+    const dispatch = objectValue(input.dispatch);
+    const workspace = objectValue(input.workspace);
+    const agent = objectValue(input.agent);
+    const chat = objectValue(input.chat);
+    const record = objectValue(input.record);
+    const routing = objectValue(input.routing);
+    const runtime = objectValue(input.runtime);
+    const chatContext = objectValue(input.chatContext);
+    const thread = objectValue(chatContext.thread);
+    const recentMessages = Array.isArray(thread.recent_messages)
+      ? thread.recent_messages
+      : Array.isArray(thread.recentMessages)
+        ? thread.recentMessages
+        : [];
+    const latestThread = recentMessages.slice(-8).map(compactThreadMessage);
+    const rawPipelines = Array.isArray(runtime.availablePipelines)
+      ? runtime.availablePipelines
+      : Array.isArray(chatContext.availablePipelines)
+        ? chatContext.availablePipelines
+        : [];
+    const validChildPipelines = rawPipelines
+      .map(compactPipelineDefinition)
+      .filter((pipeline): pipeline is JsonObject => Boolean(pipeline));
+    const scopes = Array.isArray(chatContext.scopes)
+      ? chatContext.scopes.map(compactScope)
+      : [];
+    const referencedRecords = Array.isArray(chatContext.referencedRecords)
+      ? chatContext.referencedRecords.slice(0, 12).map(compactReferencedRecord)
+      : [];
+    const requesterNpub = getText(chat.senderNpub)
+      ?? getText(objectValue(record.payload).sender_npub)
+      ?? getText(record.updaterNpub);
+
+    return {
+      objective: "Classify the latest chat request and decide whether to start a downstream work pipeline.",
+      source: {
+        routeId: getText(dispatch.routeId),
+        triggerKind: getText(dispatch.triggerKind) ?? "chat",
+        channelId: getText(chat.channelId ?? routing.channelId ?? chatContext.channelId),
+        threadId: getText(chat.threadId ?? routing.threadId ?? chatContext.threadId),
+        messageId: getText(record.recordId),
+        requesterNpub,
+      },
+      selfCheck: {
+        shouldProceed: chatContext.shouldProceed !== false,
+        selfAuthored: chatContext.selfAuthored === true,
+        suppressionReason: getText(chatContext.suppressionReason),
+        matchedSelfNpub: getText(chatContext.matchedSelfNpub),
+        botNpub: getText(agent.botNpub),
+        workspaceOwnerNpub: getText(workspace.workspaceOwnerNpub),
+        sourceAppNpub: getText(workspace.sourceAppNpub),
+      },
+      defaults: {
+        workdir: getText(agent.workingDirectory),
+        defaultAgent: getText(agent.defaultAgent),
+        assignerNpub: requesterNpub,
+        reviewerNpub: requesterNpub,
+      },
+      latestThread,
+      referencedRecords,
+      scopes,
+      validChildPipelines,
+      notes: [
+        "Use latestThread as the authoritative current conversation.",
+        "Use referencedRecords only as supporting Flight Deck context.",
+        "Choose only a pipeline listed in validChildPipelines.",
+        "Choose a scope from scopes when dispatchTask is true.",
+      ],
     };
   },
 
