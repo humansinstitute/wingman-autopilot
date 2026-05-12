@@ -62,6 +62,7 @@ export interface DispatchPipelineRuntimeDependencies {
   getSessionApiContext: () => SessionApiContext | null;
   callbackOrigin: string;
   runPipeline?: typeof runDeclarativePipeline;
+  startPipeline?: typeof startDeclarativePipeline;
   loadDefinition?: typeof getPipelineDefinition;
   listDefinitions?: typeof listLatestPipelineDefinitions;
   loadFunctions?: typeof loadPipelineFunctionRegistry;
@@ -75,7 +76,8 @@ export class DispatchPipelineRuntime {
   private readonly pipelineStore: PipelineStore;
   private readonly getSessionApiContext: () => SessionApiContext | null;
   private readonly callbackOrigin: string;
-  private readonly runPipeline: typeof runDeclarativePipeline;
+  private readonly runPipeline: typeof runDeclarativePipeline | null;
+  private readonly startPipeline: typeof startDeclarativePipeline;
   private readonly loadDefinition: typeof getPipelineDefinition;
   private readonly listDefinitions: typeof listLatestPipelineDefinitions;
   private readonly loadFunctions: typeof loadPipelineFunctionRegistry;
@@ -88,7 +90,8 @@ export class DispatchPipelineRuntime {
     this.pipelineStore = deps.pipelineStore;
     this.getSessionApiContext = deps.getSessionApiContext;
     this.callbackOrigin = deps.callbackOrigin;
-    this.runPipeline = deps.runPipeline ?? runDeclarativePipeline;
+    this.runPipeline = deps.runPipeline ?? null;
+    this.startPipeline = deps.startPipeline ?? startDeclarativePipeline;
     this.loadDefinition = deps.loadDefinition ?? getPipelineDefinition;
     this.listDefinitions = deps.listDefinitions ?? listLatestPipelineDefinitions;
     this.loadFunctions = deps.loadFunctions ?? loadPipelineFunctionRegistry;
@@ -242,7 +245,7 @@ export class DispatchPipelineRuntime {
       flightDeckRuntime,
       definitionNeedsPublisher: pipelineNeedsFlightDeckPublisher(definition.spec),
     });
-    const run = await this.runPipeline({
+    const runnerInput = {
       store: this.pipelineStore,
       sessionApiContext,
       definition,
@@ -251,7 +254,10 @@ export class DispatchPipelineRuntime {
       ownerNpub,
       ownerAlias,
       callbackOrigin: this.callbackOrigin,
-    });
+    };
+    const run = this.runPipeline
+      ? await this.runPipeline(runnerInput)
+      : this.startPipeline(runnerInput);
 
     return {
       handled: true,
