@@ -479,16 +479,11 @@ const SOFTWARE_IMPLEMENTATION_MANAGER_REVIEW_DEFINITION = {
       timeoutMs: 1800000,
       input: {
         pick: {
-          workspace: "$.workspace",
-          agent: "$.agent",
-          record: "$.record",
-          routing: "$.routing",
-          runtime: "$.runtime",
           createdTask: "$.createdTask",
           workPlan: "$.workPlan",
         },
       },
-      prompt: "You are the worker in a Wingman software implementation pipeline. This pipeline must be started with task-backed context: taskId, scopeId, workPlan.workdir, assigner/reviewer npub, instructions, acceptanceCriteria, executionPlan, and managerChecklist. Use the full task, originating chat context, and referenced records. Make the required code changes in the working directory and run focused verification. The task is already in_progress; the final pipeline step will move it to review. Do not stop at analysis. Return JSON fields: completed boolean, summary string, changedFiles array, testsRun array, evidence array, blockers array, taskUpdateComment string, confidence number.",
+      prompt: "You are the worker in a Wingman software implementation pipeline. Use only the selected input: createdTask and workPlan. workPlan includes the task plan, workdir, assigner/reviewer npubs, originalPrompt, originThread, referencedRecords, instructions, acceptanceCriteria, executionPlan, and managerChecklist. Make the required code changes in the working directory and run focused verification. The task is already in_progress; the final pipeline step will move it to review. Do not stop at analysis. Return JSON fields: completed boolean, summary string, changedFiles array, testsRun array, evidence array, blockers array, taskUpdateComment string, confidence number.",
       assign: "$.workerResult",
     },
     {
@@ -499,17 +494,12 @@ const SOFTWARE_IMPLEMENTATION_MANAGER_REVIEW_DEFINITION = {
       timeoutMs: 1200000,
       input: {
         pick: {
-          workspace: "$.workspace",
-          agent: "$.agent",
-          record: "$.record",
-          routing: "$.routing",
-          runtime: "$.runtime",
           createdTask: "$.createdTask",
           workPlan: "$.workPlan",
           workerResult: "$.workerResult",
         },
       },
-      prompt: "You are the manager reviewer in a Wingman software implementation pipeline. Review workerResult against workPlan.instructions, workPlan.acceptanceCriteria, workPlan.executionPlan, workPlan.managerChecklist, and the original task/chat context. Inspect changed files and evidence where relevant. Be strict about missing tests, unscoped diffs, and unverifiable claims. The final pipeline step will update the Flight Deck task to review and assign it to the requester. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, executionPlan array, managerChecklist array, requiredChanges array, risks array, confidence number.",
+      prompt: "You are the manager reviewer in a Wingman software implementation pipeline. Use only the selected input: createdTask, workPlan, and workerResult. Review workerResult against workPlan.instructions, workPlan.acceptanceCriteria, workPlan.executionPlan, workPlan.managerChecklist, originalPrompt, originThread, and referencedRecords. Inspect changed files and evidence where relevant. Be strict about missing tests, unscoped diffs, and unverifiable claims. The final pipeline step will update the Flight Deck task to review and assign it to the requester. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, executionPlan array, managerChecklist array, requiredChanges array, risks array, confidence number.",
       assign: "$.agentResponse",
     },
     {
@@ -562,16 +552,11 @@ const DO_AND_REVIEW_DEFINITION = {
       timeoutMs: 1800000,
       input: {
         pick: {
-          workspace: "$.workspace",
-          agent: "$.agent",
-          record: "$.record",
-          routing: "$.routing",
-          runtime: "$.runtime",
           createdTask: "$.createdTask",
           workPlan: "$.workPlan",
         },
       },
-      prompt: "You are the worker in a Wingman do-and-review pipeline. This is task-backed board work. Complete the task using the full task, originating chat context, referenced records, and workPlan instructions/acceptanceCriteria/executionPlan. For current-world facts, use internet research and record sources. The task is already in_progress; the final pipeline step will move it to review. Return JSON fields: completed boolean, summary string, sources array, evidence array, result string, blockers array, taskUpdateComment string, confidence number.",
+      prompt: "You are the worker in a Wingman do-and-review pipeline. Use only the selected input: createdTask and workPlan. workPlan includes the task plan, originalPrompt, originThread, referencedRecords, instructions, acceptanceCriteria, executionPlan, and managerChecklist. For current-world facts, use internet research and record sources. The task is already in_progress; the final pipeline step will move it to review. Return JSON fields: completed boolean, summary string, sources array, evidence array, result string, blockers array, taskUpdateComment string, confidence number.",
       assign: "$.workerResult",
     },
     {
@@ -582,17 +567,12 @@ const DO_AND_REVIEW_DEFINITION = {
       timeoutMs: 1200000,
       input: {
         pick: {
-          workspace: "$.workspace",
-          agent: "$.agent",
-          record: "$.record",
-          routing: "$.routing",
-          runtime: "$.runtime",
           createdTask: "$.createdTask",
           workPlan: "$.workPlan",
           workerResult: "$.workerResult",
         },
       },
-      prompt: "You are the manager reviewer in a Wingman do-and-review pipeline. Check workerResult against workPlan.instructions, workPlan.acceptanceCriteria, workPlan.executionPlan, workPlan.managerChecklist, and the original task/chat context. Verify sources/evidence are sufficient and decide whether the work is complete. The final pipeline step will update the Flight Deck task to review and assign it to the requester. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, executionPlan array, managerChecklist array, requiredChanges array, risks array, confidence number.",
+      prompt: "You are the manager reviewer in a Wingman do-and-review pipeline. Use only the selected input: createdTask, workPlan, and workerResult. Check workerResult against workPlan.instructions, workPlan.acceptanceCriteria, workPlan.executionPlan, workPlan.managerChecklist, originalPrompt, originThread, and referencedRecords. Verify sources/evidence are sufficient and decide whether the work is complete. The final pipeline step will update the Flight Deck task to review and assign it to the requester. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, executionPlan array, managerChecklist array, requiredChanges array, risks array, confidence number.",
       assign: "$.agentResponse",
     },
     {
@@ -645,17 +625,11 @@ const RESEARCH_AND_REPORT_DEFINITION = {
       timeoutMs: 2400000,
       input: {
         pick: {
-          workspace: "$.workspace",
-          agent: "$.agent",
-          record: "$.record",
-          routing: "$.routing",
-          runtime: "$.runtime",
           createdTask: "$.createdTask",
-          chatContext: "$.chatContext",
           workPlan: "$.workPlan",
         },
       },
-      prompt: "You are the researcher in a Wingman research-and-report pipeline. Use the task, originating chat thread, referenced Flight Deck records, and workPlan. For current-world facts, use internet research and cite sources. Produce structured research notes, not a polished final report. Return JSON fields: completed boolean, researchQuestion string, findings array, sources array of objects or strings, contradictions array, openQuestions array, evidence array, blockers array, confidence number.",
+      prompt: "You are the researcher in a Wingman research-and-report pipeline. Use only the selected input: createdTask and workPlan. workPlan includes the task plan, originalPrompt, originThread, referencedRecords, instructions, acceptanceCriteria, executionPlan, and managerChecklist. For current-world facts, use internet research and cite sources. Produce structured research notes, not a polished final report. Return JSON fields: completed boolean, researchQuestion string, findings array, sources array of objects or strings, contradictions array, openQuestions array, evidence array, blockers array, confidence number.",
       assign: "$.researchResult",
     },
     {
@@ -666,18 +640,13 @@ const RESEARCH_AND_REPORT_DEFINITION = {
       timeoutMs: 1800000,
       input: {
         pick: {
-          workspace: "$.workspace",
-          agent: "$.agent",
-          record: "$.record",
-          routing: "$.routing",
-          runtime: "$.runtime",
+          commandPrefix: "$.runtime.commandPrefix",
           createdTask: "$.createdTask",
-          chatContext: "$.chatContext",
           workPlan: "$.workPlan",
           researchResult: "$.researchResult",
         },
       },
-      prompt: "You are the report writer in a Wingman research-and-report pipeline. Turn researchResult into a concise Flight Deck report. If runtime.commandPrefix is available, create a Flight Deck doc using the yoke docs create command with the selected scope. Include source links/citations and limitations. Do not hide uncertainty. Return JSON fields: completed boolean, reportTitle string, reportSummary string, reportBody string, documentId string|null, sources array, blockers array, taskUpdateComment string, confidence number.",
+      prompt: "You are the report writer in a Wingman research-and-report pipeline. Use only the selected input: commandPrefix, createdTask, workPlan, and researchResult. Turn researchResult into a concise Flight Deck report. If commandPrefix is available, create a Flight Deck doc using the yoke docs create command with the selected scope. Include source links/citations and limitations. Do not hide uncertainty. Return JSON fields: completed boolean, reportTitle string, reportSummary string, reportBody string, documentId string|null, sources array, blockers array, taskUpdateComment string, confidence number.",
       assign: "$.workerResult",
     },
     {
@@ -688,18 +657,13 @@ const RESEARCH_AND_REPORT_DEFINITION = {
       timeoutMs: 1200000,
       input: {
         pick: {
-          workspace: "$.workspace",
-          agent: "$.agent",
-          record: "$.record",
-          routing: "$.routing",
-          runtime: "$.runtime",
           createdTask: "$.createdTask",
           workPlan: "$.workPlan",
           researchResult: "$.researchResult",
           workerResult: "$.workerResult",
         },
       },
-      prompt: "You are the manager reviewer in a Wingman research-and-report pipeline. Check the research notes and report against workPlan.instructions, workPlan.acceptanceCriteria, and workPlan.managerChecklist. Verify that sources, limitations, and open questions are represented. The final pipeline step will update the Flight Deck task to review and assign it to the requester. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, requiredChanges array, risks array, confidence number.",
+      prompt: "You are the manager reviewer in a Wingman research-and-report pipeline. Use only the selected input: createdTask, workPlan, researchResult, and workerResult. Check the research notes and report against workPlan.instructions, workPlan.acceptanceCriteria, workPlan.managerChecklist, originalPrompt, originThread, and referencedRecords. Verify that sources, limitations, and open questions are represented. The final pipeline step will update the Flight Deck task to review and assign it to the requester. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, requiredChanges array, risks array, confidence number.",
       assign: "$.agentResponse",
     },
     {

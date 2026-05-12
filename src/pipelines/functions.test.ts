@@ -193,6 +193,24 @@ describe("memory pipeline functions", () => {
       chat: { senderNpub: "npub1requester", channelId: "channel-1", threadId: "thread-1" },
       record: { recordId: "message-1", updaterNpub: "npub1requester", payload: {} },
       dispatch: { triggerKind: "chat" },
+      chatContext: {
+        thread: {
+          recent_messages: [
+            {
+              message_id: "message-1",
+              sender_npub: "npub1requester",
+              body: "Please research the thing.",
+            },
+          ],
+        },
+        referencedRecords: [
+          {
+            recordId: "doc-1",
+            recordFamily: "document",
+            payload: { title: "Reference doc", body: "Useful background." },
+          },
+        ],
+      },
       agentDecision: {
         dispatchTask: true,
         recommendedPipelineId: "do-and-review",
@@ -213,6 +231,20 @@ describe("memory pipeline functions", () => {
       workdir: "/repo",
       reviewerNpub: "npub1requester",
       acceptanceCriteria: ["Report the answer"],
+      originalPrompt: "Please research the thing.",
+      originThread: [
+        {
+          messageId: "message-1",
+          body: "Please research the thing.",
+        },
+      ],
+      referencedRecords: [
+        {
+          recordId: "doc-1",
+          title: "Reference doc",
+          summary: "Useful background.",
+        },
+      ],
     });
     expect("responseOnly" in result).toBe(false);
   });

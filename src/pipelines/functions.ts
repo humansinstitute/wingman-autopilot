@@ -494,6 +494,20 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const payload = objectValue(record.payload);
     const agent = objectValue(input.agent);
     const dispatchTask = raw.dispatchTask === true;
+    const thread = objectValue(chatContext.thread);
+    const recentMessages = Array.isArray(thread.recent_messages)
+      ? thread.recent_messages
+      : Array.isArray(thread.recentMessages)
+        ? thread.recentMessages
+        : [];
+    const originThread = recentMessages.slice(-8).map(compactThreadMessage);
+    const latestOriginMessage = originThread[originThread.length - 1] ?? {};
+    const originalPrompt = getText(latestOriginMessage.body)
+      ?? getText(chat.messageText)
+      ?? getText(payload.body);
+    const referencedRecords = Array.isArray(chatContext.referencedRecords)
+      ? chatContext.referencedRecords.slice(0, 12).map(compactReferencedRecord)
+      : [];
     const pipelineDefinitionId = getText(
       raw.recommendedPipelineId
         ?? raw.recommendedPipelineDefinitionId
@@ -563,6 +577,9 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         workdir: shouldDispatchTask ? workdir : null,
         assignerNpub,
         reviewerNpub,
+        originalPrompt,
+        originThread,
+        referencedRecords,
         origin: {
           triggerKind: getText(objectValue(input.dispatch).triggerKind) ?? "chat",
           channelId: getText(chat.channelId),

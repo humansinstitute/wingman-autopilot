@@ -118,6 +118,26 @@ describe("pipeline definition version paths", () => {
       type: "code",
       function: "dispatch.markTaskReadyForReview",
     });
+    expect(software?.spec.steps.find((step) => step.name === "implementation-worker")?.input).toEqual({
+      pick: {
+        createdTask: "$.createdTask",
+        workPlan: "$.workPlan",
+      },
+    });
+    expect(generic?.spec.steps.find((step) => step.name === "do-work")?.input).toEqual({
+      pick: {
+        createdTask: "$.createdTask",
+        workPlan: "$.workPlan",
+      },
+    });
+    expect(research?.spec.steps.find((step) => step.name === "report-writer")?.input).toEqual({
+      pick: {
+        commandPrefix: "$.runtime.commandPrefix",
+        createdTask: "$.createdTask",
+        workPlan: "$.workPlan",
+        researchResult: "$.researchResult",
+      },
+    });
   });
 });
 
