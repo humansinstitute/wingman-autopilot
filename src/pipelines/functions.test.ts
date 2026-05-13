@@ -328,6 +328,32 @@ describe("memory pipeline functions", () => {
     });
   });
 
+  test("dispatch.prepareChatDispatchResponse links created tasks with Flight Deck mentions", async () => {
+    const result = await builtinPipelineFunctions["dispatch.prepareChatDispatchResponse"]!({
+      decision: {
+        dispatchTask: true,
+        pipelineDefinitionId: "research-and-report",
+        confidence: 0.9,
+      },
+      createdTask: {
+        taskId: "task-1",
+        workPlan: {
+          taskSummary: "Good Soccer Drills report",
+        },
+      },
+      childPipeline: {
+        started: true,
+        pipelineName: "research-and-report",
+        pipelineRunId: "run-1",
+      },
+    });
+
+    expect(result.responseDraft).toContain(
+      "I created task @[Good Soccer Drills report](mention:task:task-1) and started research-and-report (run-1).",
+    );
+    expect(result.actionsTaken).toEqual(["created task task-1", "started pipeline run run-1"]);
+  });
+
   test("memory.searchEntities returns an empty graphContext source set when graph memory is not configured", async () => {
     const previous = {
       PIPELINE_MEMORY_NEO4J_HTTP_URL: process.env.PIPELINE_MEMORY_NEO4J_HTTP_URL,

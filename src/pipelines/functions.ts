@@ -51,6 +51,11 @@ function getStringArray(value: unknown): string[] {
   return [];
 }
 
+function mention(type: string, id: string, label: string): string {
+  const safeLabel = label.replace(/[\[\]\n\r]+/g, " ").replace(/\s+/g, " ").trim() || type;
+  return `@[${safeLabel}](mention:${type}:${id})`;
+}
+
 function isDispatchPipelineIdentifier(value: string | null): boolean {
   if (!value) return false;
   const normalized = value.toLowerCase();
@@ -673,14 +678,19 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const createdTask = objectValue(input.createdTask);
     const childPipeline = objectValue(input.childPipeline);
     const taskId = getText(createdTask.taskId);
+    const createdTaskWorkPlan = objectValue(createdTask.workPlan);
+    const taskLabel = getText(createdTaskWorkPlan.taskSummary)
+      ?? getText(createdTask.title)
+      ?? "created task";
+    const taskMention = taskId ? mention("task", taskId, taskLabel) : null;
     const pipelineName = getText(childPipeline.pipelineName) ?? getText(decision.pipelineDefinitionId);
     const pipelineRunId = getText(childPipeline.pipelineRunId);
     const launchFailed = childPipeline.started === false || getText(childPipeline.status) === "failed";
     let responseDraft = getText(decision.responseDraft) ?? "Done.";
     if (decision.dispatchTask === true && taskId) {
       responseDraft = launchFailed
-        ? `I created task ${taskId}, but the selected pipeline did not start: ${getText(childPipeline.reason) ?? "unknown error"}. I marked the task blocked for review.`
-        : `I created task ${taskId} and started ${pipelineName ?? "the selected pipeline"}${pipelineRunId ? ` (${pipelineRunId})` : ""}. I will hand it back for review when the pipeline finishes.`;
+        ? `I created task ${taskMention}, but the selected pipeline did not start: ${getText(childPipeline.reason) ?? "unknown error"}. I marked the task blocked for review.`
+        : `I created task ${taskMention} and started ${pipelineName ?? "the selected pipeline"}${pipelineRunId ? ` (${pipelineRunId})` : ""}. I will hand it back for review when the pipeline finishes.`;
     }
     return {
       shouldRespond: true,
