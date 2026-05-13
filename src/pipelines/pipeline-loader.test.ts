@@ -95,6 +95,7 @@ describe("pipeline definition version paths", () => {
     const software = await getPipelineDefinition("software-implementation-manager-review", "tester");
     const generic = await getPipelineDefinition("do-and-review", "tester");
     const research = await getPipelineDefinition("research-and-report", "tester");
+    const implementationLoop = await getPipelineDefinition("implementation-review-loop.v2", "tester");
 
     expect(intake?.spec.steps.map((step) => step.name)).toEqual([
       "investigate-and-route-task",
@@ -115,6 +116,20 @@ describe("pipeline definition version paths", () => {
     });
     expect(research?.spec.steps.at(-1)).toMatchObject({
       name: "move-task-to-review",
+      type: "code",
+      function: "dispatch.markTaskReadyForReview",
+    });
+    expect(implementationLoop?.spec.steps[0]).toMatchObject({
+      name: "ensure-review-loop-task",
+      type: "code",
+      function: "dispatch.ensureImplementationReviewTask",
+    });
+    expect(implementationLoop?.spec.steps.find((step) => step.name === "comment-manager-progress")).toMatchObject({
+      type: "code",
+      function: "dispatch.commentImplementationReviewProgress",
+    });
+    expect(implementationLoop?.spec.steps.at(-1)).toMatchObject({
+      name: "close-review-task",
       type: "code",
       function: "dispatch.markTaskReadyForReview",
     });

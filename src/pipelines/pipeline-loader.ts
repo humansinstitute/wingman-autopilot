@@ -960,6 +960,7 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
   if (!existsSync(loopedReviewDemoPath)) {
     await writeFile(loopedReviewDemoPath, `${JSON.stringify(LOOPED_DESIGN_REVIEW_DEMO_DEFINITION, null, 2)}\n`);
   }
+  const implementationReviewLoopDefinition = await readBundledDefaultDefinition("implementation-review-loop.v2.json");
   const dispatchDemos = [
     ["agent-dispatch-chat.json", AGENT_DISPATCH_CHAT_DEFINITION],
     ["demo-agent-dispatch-task-response.json", AGENT_DISPATCH_TASK_DEMO_DEFINITION],
@@ -968,6 +969,7 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
     ["software-implementation-manager-review.json", SOFTWARE_IMPLEMENTATION_MANAGER_REVIEW_DEFINITION],
     ["do-and-review.json", DO_AND_REVIEW_DEFINITION],
     ["research-and-report.json", RESEARCH_AND_REPORT_DEFINITION],
+    ["implementation-review-loop.v2.json", implementationReviewLoopDefinition],
   ] as const;
   const renamedBuiltIns = [
     "demo-agent-dispatch-chat-response.json",
@@ -984,6 +986,11 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
       await writeFile(demoPath, nextJson);
     }
   }
+}
+
+async function readBundledDefaultDefinition(fileName: string): Promise<DeclarativePipeline> {
+  const url = new URL(`./default-definitions/${fileName}`, import.meta.url);
+  return JSON.parse(await readFile(url, "utf8")) as DeclarativePipeline;
 }
 
 export async function listPipelineDefinitions(ownerAlias: string | null): Promise<PipelineDefinitionRecord[]> {

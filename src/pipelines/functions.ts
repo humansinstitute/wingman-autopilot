@@ -383,6 +383,26 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     };
   },
 
+  async "dispatch.ensureImplementationReviewTask"(input) {
+    return {
+      published: false,
+      status: "not_configured",
+      operation: "tasks.ensure-implementation-review-loop",
+      reason: "This function only creates or updates Flight Deck tasks when the pipeline is launched by a Wingman dispatch route.",
+      taskId: input.taskId ?? null,
+    };
+  },
+
+  async "dispatch.commentImplementationReviewProgress"(input) {
+    return {
+      published: false,
+      status: "not_configured",
+      operation: "tasks.comment-implementation-review-progress",
+      reason: "This function only comments on Flight Deck tasks when the pipeline is launched by a Wingman dispatch route.",
+      taskId: input.taskId ?? null,
+    };
+  },
+
   async "dispatch.normaliseTaskWorkPlan"(input) {
     const response = objectValue(input.agentResponse ?? input.workPlan ?? input);
     const record = objectValue(input.record);

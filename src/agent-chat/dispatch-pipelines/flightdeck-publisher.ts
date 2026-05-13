@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { DeclarativeFunction, DeclarativePipeline, DeclarativeStep } from '../../pipelines/declarative';
 import type { JsonObject } from '../../pipelines/pipeline-store';
 import type { AgentDefinitionRecord, RuntimeBotIdentity } from '../types';
@@ -394,6 +396,171 @@ export function createDispatchCreatedTaskBlocker(
   };
 }
 
+export function createDispatchImplementationReviewTaskEnsurer(
+  context: DispatchPipelineFlightDeckPublisherContext,
+): DeclarativeFunction {
+  return async (input) => {
+    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+      throw new Error(context.runtime.error ?? 'Flight Deck runtime was not prepared.');
+    }
+
+    const existingTaskId = resolveTaskId(context, input);
+    const workPlan = objectValue(input.workPlan ?? objectValue(input.createdTask).workPlan);
+    const scopeId = getText(input.scopeId ?? workPlan.scopeId);
+    const assignedTo = context.eventInput.subscription.botNpub;
+    let taskId = existingTaskId;
+    let createResult: unknown = null;
+
+    await syncFlightDeckRuntime(context);
+
+    if (!taskId) {
+      const title = buildImplementationReviewTaskTitle(input, workPlan);
+      const description = buildImplementationReviewTaskDescription(context, input, workPlan);
+      const previousTaskIds = await listMatchingTaskIds(context, {
+        title,
+        state: 'in_progress',
+        assignedTo,
+      });
+      const args = [
+        'tasks',
+        'create',
+        '--title',
+        title,
+        '--description',
+        description,
+        '--state',
+        'in_progress',
+        '--assign',
+        assignedTo,
+      ];
+      if (scopeId) {
+        args.push('--scope', scopeId);
+      }
+      args.push('--json');
+      createResult = await runYokeJson(context, args);
+      taskId = getCreatedRecordId(createResult)
+        ?? await findNewlyCreatedTaskId(context, {
+          title,
+          state: 'in_progress',
+          assignedTo,
+          previousTaskIds,
+        });
+      if (!taskId) {
+        throw new Error('Implementation review task creation succeeded but no task id was returned.');
+      }
+    }
+
+    let updateResult: unknown = null;
+    let updateError: string | null = null;
+    try {
+      updateResult = await runYokeJson(context, [
+        'tasks',
+        'update',
+        taskId,
+        '--state',
+        'in_progress',
+        '--assign',
+        assignedTo,
+        '--json',
+      ]);
+    } catch (error) {
+      updateError = error instanceof Error ? error.message : String(error);
+    }
+
+    let commentResult: unknown = null;
+    let commentError: string | null = null;
+    try {
+      commentResult = await runYokeJson(context, [
+        'tasks',
+        'comment',
+        taskId,
+        '--body',
+        buildImplementationReviewStartedComment(input, taskId),
+        '--json',
+      ]);
+    } catch (error) {
+      commentError = error instanceof Error ? error.message : String(error);
+    }
+
+    const nextWorkPlan = {
+      ...workPlan,
+      taskId,
+      scopeId,
+      taskSummary: getText(workPlan.taskSummary)
+        ?? getText(input.taskTitle)
+        ?? compactSingleLine(getText(input.implementationPrompt), 140)
+        ?? 'Implementation review loop',
+      instructions: getText(workPlan.instructions)
+        ?? getText(input.implementationPrompt)
+        ?? 'Run the implementation review loop.',
+      workdir: getText(workPlan.workdir ?? workPlan.workingDirectory)
+        ?? getText(input.workingDirectory)
+        ?? context.agent.workingDirectory,
+      designDocumentUrl: getText(workPlan.designDocumentUrl) ?? getText(input.designDocumentUrl),
+      assignedToNpub: assignedTo,
+      reviewerNpub: getText(workPlan.reviewerNpub) ?? resolveRequesterNpub(context, input),
+      origin: {
+        ...objectValue(workPlan.origin),
+        channelId: getText(objectValue(workPlan.origin).channelId)
+          ?? context.eventInput.channelId
+          ?? getText(context.eventInput.payload.channel_id),
+        threadId: getText(objectValue(workPlan.origin).threadId)
+          ?? context.eventInput.threadId
+          ?? getText(context.eventInput.payload.thread_id),
+        messageId: getText(objectValue(workPlan.origin).messageId)
+          ?? context.eventInput.recordId,
+      },
+    };
+
+    return {
+      published: true,
+      status: updateError || commentError ? 'partial' : 'ok',
+      operation: 'tasks.ensure-implementation-review-loop',
+      taskId,
+      created: !existingTaskId,
+      state: 'in_progress',
+      assignedToNpub: assignedTo,
+      scopeId,
+      createResult,
+      updateResult,
+      updateError,
+      commentResult,
+      commentError,
+      workPlan: nextWorkPlan,
+    };
+  };
+}
+
+export function createDispatchImplementationReviewProgressCommenter(
+  context: DispatchPipelineFlightDeckPublisherContext,
+): DeclarativeFunction {
+  return async (input) => {
+    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+      throw new Error(context.runtime.error ?? 'Flight Deck runtime was not prepared.');
+    }
+    const taskId = resolveTaskId(context, input);
+    if (!taskId) {
+      throw new Error('Implementation review progress comment requires a task id.');
+    }
+    const body = buildImplementationReviewProgressComment(input);
+    const commentResult = await runYokeJson(context, [
+      'tasks',
+      'comment',
+      taskId,
+      '--body',
+      body,
+      '--json',
+    ]);
+    return {
+      published: true,
+      status: 'ok',
+      operation: 'tasks.comment-implementation-review-progress',
+      taskId,
+      commentResult,
+    };
+  };
+}
+
 export function createDispatchTaskStateUpdater(
   context: DispatchPipelineFlightDeckPublisherContext,
   targetState: 'in_progress' | 'review',
@@ -491,16 +658,25 @@ async function publishReadyForReviewChatNotification(
   error: string | null;
   skippedReason: string | null;
 }> {
-  const channelId = context.eventInput.channelId ?? getText(objectValue(objectValue(input.workPlan).origin).channelId);
-  const threadId = context.eventInput.threadId ?? getText(objectValue(objectValue(input.workPlan).origin).threadId);
-  if (!channelId || !threadId) {
+  const workPlan = objectValue(input.workPlan);
+  const origin = objectValue(workPlan.origin);
+  const reportTarget = objectValue(input.reportTarget);
+  const channelId = context.eventInput.channelId
+    ?? getText(origin.channelId)
+    ?? getText(reportTarget.flightDeckChannelId)
+    ?? getText(reportTarget.channelId);
+  const existingThreadId = context.eventInput.threadId
+    ?? getText(origin.threadId)
+    ?? getText(reportTarget.threadId);
+  if (!channelId) {
     return {
       notified: false,
       result: null,
       error: null,
-      skippedReason: 'missing_origin_chat_context',
+      skippedReason: 'missing_origin_chat_channel',
     };
   }
+  const threadId = existingThreadId ?? randomUUID();
 
   try {
     const result = await runYokeJson(context, [
@@ -518,7 +694,10 @@ async function publishReadyForReviewChatNotification(
     ]);
     return {
       notified: true,
-      result,
+      result: {
+        ...(objectValue(result)),
+        createdNewThread: !existingThreadId,
+      },
       error: null,
       skippedReason: null,
     };
@@ -714,6 +893,8 @@ function stepNeedsFlightDeckPublisher(step: DeclarativeStep): boolean {
       || step.function === 'dispatch.blockTaskIfPipelineLaunchFailed'
       || step.function === 'dispatch.markTaskInProgress'
       || step.function === 'dispatch.markTaskReadyForReview'
+      || step.function === 'dispatch.ensureImplementationReviewTask'
+      || step.function === 'dispatch.commentImplementationReviewProgress'
     )
   ) {
     return true;
@@ -1131,6 +1312,91 @@ function buildInProgressComment(input: JsonObject): string {
   ].join('\n');
 }
 
+function buildImplementationReviewTaskTitle(
+  input: JsonObject,
+  workPlan: Record<string, unknown>,
+): string {
+  return getText(input.taskTitle)
+    ?? getText(workPlan.taskSummary)
+    ?? getText(workPlan.title)
+    ?? compactSingleLine(getText(input.implementationPrompt), 90)
+    ?? 'Implementation review loop';
+}
+
+function buildImplementationReviewTaskDescription(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  input: JsonObject,
+  workPlan: Record<string, unknown>,
+): string {
+  const lines = [
+    getText(input.implementationPrompt)
+      ?? getText(workPlan.instructions)
+      ?? getText(workPlan.taskSummary)
+      ?? 'Run the implementation review loop.',
+    '',
+    'Implementation review loop context:',
+    getText(input.designDocumentUrl ?? workPlan.designDocumentUrl)
+      ? `- Design: ${getText(input.designDocumentUrl ?? workPlan.designDocumentUrl)}`
+      : '',
+    getText(input.workingDirectory ?? workPlan.workdir ?? workPlan.workingDirectory)
+      ? `- Working directory: ${getText(input.workingDirectory ?? workPlan.workdir ?? workPlan.workingDirectory)}`
+      : '',
+    context.eventInput.channelId ? `- Source channel: ${mention('channel', context.eventInput.channelId, 'Flight Deck chat')}` : '',
+    context.eventInput.threadId ? `- Source thread: ${mention('message', context.eventInput.threadId, 'thread root')}` : '',
+  ].filter((line) => line !== '');
+  return lines.join('\n');
+}
+
+function buildImplementationReviewStartedComment(input: JsonObject, taskId: string): string {
+  const workPlan = objectValue(input.workPlan ?? objectValue(input.createdTask).workPlan);
+  const summary = getText(workPlan.taskSummary)
+    ?? getText(input.implementationPrompt)
+    ?? 'Implementation review loop started.';
+  const lines = [
+    'Pipeline intake: implementation review loop started.',
+    `Task: ${mention('task', taskId, 'implementation task')}`,
+    `Summary: ${summary}`,
+  ];
+  const maxIterations = Number(input.maxReviewIterations ?? workPlan.maxReviewIterations);
+  if (Number.isFinite(maxIterations) && maxIterations > 0) {
+    lines.push(`Review loop limit: ${Math.floor(maxIterations)} manager pass(es).`);
+  }
+  return lines.join('\n');
+}
+
+function buildImplementationReviewProgressComment(input: JsonObject): string {
+  const loop = objectValue(input.reviewLoop);
+  const managerReview = objectValue(input.managerReview);
+  const iteration = Number(loop.iteration ?? loop.completed ?? 1);
+  const done = managerReview.done === true;
+  const summary = getText(managerReview.managerSummary)
+    ?? getText(managerReview.reviewSummary)
+    ?? (done ? 'Manager accepted the implementation.' : 'Manager requested follow-up work.');
+  const lines = [
+    `Manager review iteration ${Number.isFinite(iteration) ? iteration : 1}: ${done ? 'approved' : 'changes requested'}.`,
+    `Summary: ${summary}`,
+  ];
+  const pickups = Array.isArray(managerReview.pickups) ? managerReview.pickups : [];
+  if (pickups.length > 0) {
+    lines.push('Pickups:');
+    for (const pickup of pickups.slice(0, 5)) {
+      const record = objectValue(pickup);
+      const title = getText(record.title) ?? 'Untitled pickup';
+      const action = getText(record.action);
+      lines.push(`- ${title}${action ? `: ${action}` : ''}`);
+    }
+  }
+  const risks = getStringArray(managerReview.risks);
+  if (risks.length > 0) {
+    lines.push(`Risks: ${risks.join('; ')}`);
+  }
+  const nextWorkerPrompt = getText(managerReview.nextWorkerPrompt);
+  if (!done && nextWorkerPrompt) {
+    lines.push(`Next worker prompt: ${compactSingleLine(nextWorkerPrompt, 500)}`);
+  }
+  return lines.join('\n');
+}
+
 function buildReadyForReviewComment(input: JsonObject, reviewerNpub: string | null): string {
   const response = objectValue(input.agentResponse ?? input.response ?? input);
   const workerResult = objectValue(input.workerResult);
@@ -1223,6 +1489,17 @@ function getStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.map((entry) => (typeof entry === 'string' ? entry.trim() : '')).filter(Boolean)
     : [];
+}
+
+function compactSingleLine(value: string | null, maxLength: number): string | null {
+  if (!value) {
+    return null;
+  }
+  const compacted = value.replace(/\s+/g, ' ').trim();
+  if (!compacted) {
+    return null;
+  }
+  return compacted.length > maxLength ? `${compacted.slice(0, Math.max(0, maxLength - 3))}...` : compacted;
 }
 
 function objectValue(value: unknown): Record<string, unknown> {

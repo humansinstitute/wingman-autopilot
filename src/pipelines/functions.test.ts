@@ -25,6 +25,18 @@ describe("memory pipeline functions", () => {
       operation: "tasks.move-to-review",
       taskId: "task-1",
     });
+    await expect(builtinPipelineFunctions["dispatch.ensureImplementationReviewTask"]!({ taskId: "task-1" })).resolves.toMatchObject({
+      published: false,
+      status: "not_configured",
+      operation: "tasks.ensure-implementation-review-loop",
+      taskId: "task-1",
+    });
+    await expect(builtinPipelineFunctions["dispatch.commentImplementationReviewProgress"]!({ taskId: "task-1" })).resolves.toMatchObject({
+      published: false,
+      status: "not_configured",
+      operation: "tasks.comment-implementation-review-progress",
+      taskId: "task-1",
+    });
   });
 
   test("dispatch.normaliseTaskWorkPlan normalises list fields", async () => {

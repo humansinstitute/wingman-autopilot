@@ -8,6 +8,15 @@ const yokeCommandCalls: string[][] = [];
 
 const runAgentWorkspaceYokeCommandMock = mock(async (input: { args: string[] }) => {
   yokeCommandCalls.push(input.args);
+  if (input.args[0] === 'tasks' && input.args[1] === 'create') {
+    return JSON.stringify({
+      record_id: 'task-created-1',
+      synced: 1,
+      created: 1,
+      rejected: [],
+      warnings: [],
+    });
+  }
   if (input.args[0] === 'chat' && input.args[1] === 'reply-current') {
     return JSON.stringify({
       channel_id: input.args[input.args.indexOf('--channel') + 1],
@@ -37,7 +46,11 @@ mock.module('../yoke-runtime', () => ({
   runAgentWorkspaceYokeCommand: runAgentWorkspaceYokeCommandMock,
 }));
 
-const { createDispatchTaskStateUpdater } = await import('./flightdeck-publisher');
+const {
+  createDispatchImplementationReviewProgressCommenter,
+  createDispatchImplementationReviewTaskEnsurer,
+  createDispatchTaskStateUpdater,
+} = await import('./flightdeck-publisher');
 const { DispatchPipelineRuntime } = await import('./runtime');
 const { PipelineStore } = await import('../../pipelines/pipeline-store');
 
@@ -136,6 +149,122 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     expect(chatCall).toContain('thread-1');
   });
 
+  test('implementation review loop creates a task, comments manager progress, and closes out to chat', async () => {
+    const context = {
+      eventInput: {
+        subscription: {
+          subscriptionId: 'sub-1',
+          workspaceOwnerNpub: 'npub1workspace',
+          sourceAppNpub: 'npub1source',
+          backendBaseUrl: 'https://tower.example.com',
+          botNpub: 'npub1bot',
+          wsKeyNpub: 'npub1wskey',
+        },
+        triggerKind: 'chat',
+        capability: 'chat_intercept',
+        recordId: 'chat-message-1',
+        record: {},
+        payload: { channel_id: 'channel-1' },
+        recordFamily: 'chat',
+        recordState: null,
+        recordVersion: 1,
+        updaterNpub: 'npub1requester',
+        bindingType: 'thread',
+        bindingId: null,
+        channelId: 'channel-1',
+        threadId: null,
+      },
+      agent: {
+        agentId: 'agent-1',
+        workingDirectory: '/tmp/agent-work',
+      },
+      botIdentity: {
+        botNpub: 'npub1bot',
+        botPubkeyHex: 'ab'.repeat(32),
+        botSecret: new Uint8Array(32),
+      },
+      runtime: {
+        yokeStateDir: '/tmp/yoke-state',
+        commandPrefix: 'node yoke',
+        commands: {},
+        error: null,
+      },
+    } as never;
+    const ensureTask = createDispatchImplementationReviewTaskEnsurer(context);
+    const commentProgress = createDispatchImplementationReviewProgressCommenter(context);
+    const closeTask = createDispatchTaskStateUpdater(context, 'review');
+
+    const createdTask = await ensureTask({
+      implementationPrompt: 'Implement the editor design.',
+      workingDirectory: '/repo/app',
+      workPlan: {
+        taskSummary: 'Implement editor design',
+        reviewerNpub: 'npub1requester',
+        origin: {
+          channelId: 'channel-1',
+        },
+      },
+      maxReviewIterations: 3,
+    });
+    await commentProgress({
+      createdTask,
+      workPlan: (createdTask as any).workPlan,
+      reviewLoop: { iteration: 1 },
+      managerReview: {
+        done: false,
+        managerSummary: 'The first pass needs one follow-up.',
+        pickups: [
+          { title: 'Add regression test', action: 'Cover the closeout path.' },
+        ],
+      },
+    });
+    const closeout = await closeTask({
+      createdTask,
+      workPlan: (createdTask as any).workPlan,
+      workerResult: {
+        summary: 'Implementation loop finished after manager review.',
+        taskUpdateComment: 'Final report: implementation reviewed and ready.',
+      },
+      agentResponse: {
+        accepted: true,
+        reviewSummary: 'Manager accepted the final implementation.',
+        requiredChanges: [],
+        risks: [],
+      },
+      reportTarget: {
+        flightDeckChannelId: 'channel-1',
+      },
+    });
+
+    expect(createdTask).toMatchObject({
+      published: true,
+      operation: 'tasks.ensure-implementation-review-loop',
+      taskId: 'task-created-1',
+      created: true,
+      state: 'in_progress',
+    });
+    expect(closeout).toMatchObject({
+      published: true,
+      operation: 'tasks.move-to-review',
+      taskId: 'task-created-1',
+      chatNotified: true,
+    });
+
+    const createCall = yokeCommandCalls.find((args) => args[0] === 'tasks' && args[1] === 'create');
+    expect(createCall).toContain('--state');
+    expect(createCall).toContain('in_progress');
+
+    const progressComment = yokeCommandCalls
+      .filter((args) => args[0] === 'tasks' && args[1] === 'comment')
+      .find((args) => args[args.indexOf('--body') + 1]?.includes('Manager review iteration 1'));
+    expect(progressComment?.[progressComment.indexOf('--body') + 1]).toContain('Add regression test');
+
+    const chatCall = yokeCommandCalls.find((args) => args[0] === 'chat' && args[1] === 'reply-current');
+    expect(chatCall?.[chatCall.indexOf('--body') + 1]).toContain('Task: @[review task](mention:task:task-created-1)');
+    expect(chatCall).toContain('--thread');
+    expect(chatCall?.[chatCall.indexOf('--thread') + 1]).toBeTruthy();
+  });
+
   test('stored dispatch child runs resume with Flight Deck publishing functions', async () => {
     const pipelineStore = new PipelineStore(join(tmpdir(), `pipeline-resume-${randomUUID()}.sqlite`));
     const runtime = new DispatchPipelineRuntime({
@@ -163,6 +292,11 @@ describe('dispatch pipeline Flight Deck publisher', () => {
           name: 'research-and-report',
           input: {},
           steps: [
+            {
+              name: 'ensure-review-loop-task',
+              type: 'code',
+              function: 'dispatch.ensureImplementationReviewTask',
+            },
             {
               name: 'move-task-to-review',
               type: 'code',
@@ -224,6 +358,8 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     });
 
     expect(registry?.['dispatch.markTaskReadyForReview']).toBeFunction();
+    expect(registry?.['dispatch.ensureImplementationReviewTask']).toBeFunction();
+    expect(registry?.['dispatch.commentImplementationReviewProgress']).toBeFunction();
     const result = await registry!['dispatch.markTaskReadyForReview']!({
       workPlan: {
         taskId: 'task-1',

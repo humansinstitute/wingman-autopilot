@@ -22,6 +22,8 @@ import {
   createDispatchChatContextHydrator,
   createDispatchChatTaskCreator,
   createDispatchCreatedTaskBlocker,
+  createDispatchImplementationReviewProgressCommenter,
+  createDispatchImplementationReviewTaskEnsurer,
   createDispatchTaskStateUpdater,
   pipelineNeedsFlightDeckPublisher,
   prepareDispatchPipelineFlightDeckRuntime,
@@ -362,6 +364,18 @@ export class DispatchPipelineRuntime {
         botIdentity: input.eventInput.botIdentity ?? null,
         runtime: input.flightDeckRuntime,
       }, 'review');
+      registry['dispatch.ensureImplementationReviewTask'] = createDispatchImplementationReviewTaskEnsurer({
+        eventInput: input.eventInput,
+        agent: input.agent,
+        botIdentity: input.eventInput.botIdentity ?? null,
+        runtime: input.flightDeckRuntime,
+      });
+      registry['dispatch.commentImplementationReviewProgress'] = createDispatchImplementationReviewProgressCommenter({
+        eventInput: input.eventInput,
+        agent: input.agent,
+        botIdentity: input.eventInput.botIdentity ?? null,
+        runtime: input.flightDeckRuntime,
+      });
     }
     registry['dispatch.startChildPipeline'] = this.createChildPipelineStarter(input);
     return registry;
