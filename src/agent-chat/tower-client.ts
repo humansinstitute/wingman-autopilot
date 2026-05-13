@@ -114,6 +114,36 @@ export async function fetchGroupsForViewer(
   return Array.isArray(payload?.groups) ? payload.groups : [];
 }
 
+export interface WorkspaceKeyMapping {
+  workspace_owner_npub: string;
+  ws_key_npub: string;
+  user_npub: string;
+  workspace_service_npub?: string;
+  workspace_user_key_npub?: string;
+}
+
+export async function fetchWorkspaceKeyMappings(
+  backendBaseUrl: string,
+  workspaceOwnerNpub: string,
+  wsSession: YokeWorkspaceSession,
+): Promise<WorkspaceKeyMapping[]> {
+  const helpers = await loadYokeBotHelpers();
+  const path = `/api/v4/user/workspace-key-mappings?workspace_owner_npub=${encodeURIComponent(workspaceOwnerNpub)}`;
+  const url = new URL(path, backendBaseUrl).toString();
+  const authorization = helpers.signWorkspaceRequest({ wsSession, url, method: 'GET' });
+  const response = await fetch(url, {
+    headers: {
+      Authorization: authorization,
+    },
+  });
+  if (!response.ok) {
+    const error = await parseTowerError(response, 'workspace_key_mappings');
+    throw Object.assign(new Error(error.message), error);
+  }
+  const payload = await response.json() as { mappings?: WorkspaceKeyMapping[] };
+  return Array.isArray(payload?.mappings) ? payload.mappings : [];
+}
+
 export async function registerWorkspaceKeyWithTower(params: {
   backendBaseUrl: string;
   workspaceOwnerNpub: string;

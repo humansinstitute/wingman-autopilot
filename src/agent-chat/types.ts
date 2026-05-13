@@ -84,7 +84,7 @@ export interface AgentChatDispatchHistoryEntry {
   dedupeReason?: string | null;
   suppressionReason?: string | null;
   bindingId?: string | null;
-  bindingType?: 'chat' | 'task' | 'flow_run' | 'flow_orchestration' | 'thread' | null;
+  bindingType?: 'chat' | 'task' | 'document' | 'flow_run' | 'flow_orchestration' | 'thread' | null;
   details?: Record<string, unknown> | null;
 }
 

@@ -13,6 +13,7 @@ import { AgentCommentSessionRuntime } from './comment-session-runtime';
 import {
   isDocumentCommentTarget,
   isTaskCommentTarget,
+  commentMentionsAgent,
   extractCommentGroupNpubs,
   normaliseInboundCommentRecord,
   selectDocumentCommentAgents,
@@ -41,6 +42,7 @@ import {
   buildStreamUrl,
   buildSuccessDiagnostic,
   checkBackendConnectionHealth,
+  fetchWorkspaceKeyMappings,
   fetchRecordHistory,
   normaliseBackendBaseUrl,
   parseTowerError,
@@ -89,6 +91,7 @@ interface RuntimeContext {
 type RuntimeFailureState = 'blocked_auth' | 'blocked_decrypt' | null;
 const MAX_RECENT_SSE_EVENTS = 100;
 const MAX_RECENT_DISPATCHES = 10;
+const WORKSPACE_KEY_MAPPING_CACHE_MS = 30_000;
 
 const DEFAULT_DISPATCH_PIPELINE_ROUTES: Array<{
   triggerKind: CreateDispatchRouteInput['triggerKind'];
@@ -377,6 +380,7 @@ export interface WorkspaceSubscriptionManagerDependencies {
   commentDispatchRuntime?: AgentCommentDispatchRuntime | null;
   dispatchPipelineRuntime?: DispatchPipelineRuntime | null;
   fetchRecordHistory?: typeof fetchRecordHistory;
+  fetchWorkspaceKeyMappings?: typeof fetchWorkspaceKeyMappings;
   decryptRecordPayload?: typeof decryptRecordPayloadWithYoke;
   checkBackendHealth?: typeof checkBackendConnectionHealth;
   botKeyStore: {
@@ -459,9 +463,11 @@ export class WorkspaceSubscriptionManager {
   private commentDispatchRuntime: AgentCommentDispatchRuntime | null;
   private dispatchPipelineRuntime: DispatchPipelineRuntime | null;
   private readonly fetchRecordHistoryImpl: typeof fetchRecordHistory;
+  private readonly fetchWorkspaceKeyMappingsImpl: typeof fetchWorkspaceKeyMappings;
   private readonly decryptRecordPayloadImpl: typeof decryptRecordPayloadWithYoke;
   private readonly checkBackendHealthImpl: typeof checkBackendConnectionHealth;
   private readonly runtimes = new Map<string, RuntimeContext>();
+  private readonly workspaceKeyOwnerCache = new Map<string, { fetchedAt: number; owners: Map<string, string> }>();
 
   constructor(deps: WorkspaceSubscriptionManagerDependencies) {
     this.store = deps.store ?? workspaceSubscriptionStore;
@@ -476,6 +482,7 @@ export class WorkspaceSubscriptionManager {
     this.commentDispatchRuntime = deps.commentDispatchRuntime ?? agentCommentDispatchRuntime;
     this.dispatchPipelineRuntime = deps.dispatchPipelineRuntime ?? null;
     this.fetchRecordHistoryImpl = deps.fetchRecordHistory ?? fetchRecordHistory;
+    this.fetchWorkspaceKeyMappingsImpl = deps.fetchWorkspaceKeyMappings ?? fetchWorkspaceKeyMappings;
     this.decryptRecordPayloadImpl = deps.decryptRecordPayload ?? decryptRecordPayloadWithYoke;
     this.checkBackendHealthImpl = deps.checkBackendHealth ?? checkBackendConnectionHealth;
   }
@@ -2382,7 +2389,7 @@ export class WorkspaceSubscriptionManager {
     comment: InboundCommentRecord,
     updaterNpub: string | null,
   ): Promise<WorkspaceSubscriptionRecord> {
-    if (isSelfCommentEvent(record, comment, updaterNpub)) {
+    if (await this.isSelfCommentEvent(record, comment, updaterNpub)) {
       return this.appendDispatchHistory(record, {
         at: new Date().toISOString(),
         kind: 'comment',
@@ -2398,6 +2405,47 @@ export class WorkspaceSubscriptionManager {
           sender_npub: comment.senderNpub,
           target_record_family_hash: comment.targetRecordFamilyHash,
           is_me: true,
+        },
+      });
+    }
+
+    const commentAgents = this.listCommentDispatchAgents(record);
+    if (commentAgents.length === 0) {
+      return this.appendDispatchHistory(record, {
+        at: new Date().toISOString(),
+        kind: 'comment',
+        action: 'task_comment_skip_no_comment_dispatch_agent',
+        agentId: 'unknown',
+        sessionId: null,
+        recordId,
+        bindingId: comment.targetRecordId,
+        bindingType: 'task',
+        details: {
+          comment_id: comment.commentId,
+          updater_npub: updaterNpub,
+          sender_npub: comment.senderNpub,
+          target_record_family_hash: comment.targetRecordFamilyHash,
+        },
+      });
+    }
+
+    const mentionedAgents = commentAgents.filter((agent) => commentMentionsAgent(comment, agent));
+    if (mentionedAgents.length === 0) {
+      return this.appendDispatchHistory(record, {
+        at: new Date().toISOString(),
+        kind: 'comment',
+        action: 'task_comment_skip_no_agent_mention',
+        agentId: 'unknown',
+        sessionId: null,
+        recordId,
+        bindingId: comment.targetRecordId,
+        bindingType: 'task',
+        details: {
+          comment_id: comment.commentId,
+          updater_npub: updaterNpub,
+          sender_npub: comment.senderNpub,
+          target_record_family_hash: comment.targetRecordFamilyHash,
+          eligible_agent_ids: commentAgents.map((agent) => agent.agentId),
         },
       });
     }
@@ -2425,27 +2473,7 @@ export class WorkspaceSubscriptionManager {
       }
     }
 
-    const commentAgents = this.listCommentDispatchAgents(record);
-    if (commentAgents.length === 0) {
-      return this.appendDispatchHistory(record, {
-        at: new Date().toISOString(),
-        kind: 'comment',
-        action: 'task_comment_skip_no_comment_dispatch_agent',
-        agentId: 'unknown',
-        sessionId: null,
-        recordId,
-        bindingId: comment.targetRecordId,
-        bindingType: 'task',
-        details: {
-          comment_id: comment.commentId,
-          updater_npub: updaterNpub,
-          sender_npub: comment.senderNpub,
-          target_record_family_hash: comment.targetRecordFamilyHash,
-        },
-      });
-    }
-
-    for (const agent of commentAgents) {
+    for (const agent of mentionedAgents) {
       if (isSelfCommentAuthor(record, agent, comment, updaterNpub)) {
         record = this.appendDispatchHistory(record, {
           at: new Date().toISOString(),
@@ -2499,7 +2527,7 @@ export class WorkspaceSubscriptionManager {
     comment: InboundCommentRecord,
     updaterNpub: string | null,
   ): Promise<WorkspaceSubscriptionRecord> {
-    if (isSelfCommentEvent(record, comment, updaterNpub)) {
+    if (await this.isSelfCommentEvent(record, comment, updaterNpub)) {
       return this.appendDispatchHistory(record, {
         at: new Date().toISOString(),
         kind: 'comment',
@@ -2520,6 +2548,44 @@ export class WorkspaceSubscriptionManager {
       });
     }
 
+    const agents = this.listDocumentCommentAgents(record, latest);
+    if (agents.length === 0) {
+      return this.appendDispatchHistory(record, {
+        at: new Date().toISOString(),
+        kind: 'comment',
+        action: 'document_comment_skip_no_comment_dispatch_agent',
+        agentId: 'unknown',
+        sessionId: null,
+        recordId,
+        bindingId: comment.targetRecordId,
+        bindingType: 'document',
+        details: {
+          comment_id: comment.commentId,
+          target_record_id: comment.targetRecordId,
+        },
+      });
+    }
+
+    const mentionedAgents = agents.filter((agent) => commentMentionsAgent(comment, agent));
+    if (mentionedAgents.length === 0) {
+      return this.appendDispatchHistory(record, {
+        at: new Date().toISOString(),
+        kind: 'comment',
+        action: 'document_comment_skip_no_agent_mention',
+        agentId: 'unknown',
+        sessionId: null,
+        recordId,
+        bindingId: comment.targetRecordId,
+        bindingType: 'document',
+        details: {
+          comment_id: comment.commentId,
+          target_record_id: comment.targetRecordId,
+          target_record_family_hash: comment.targetRecordFamilyHash,
+          eligible_agent_ids: agents.map((agent) => agent.agentId),
+        },
+      });
+    }
+
     if (this.dispatchPipelineRuntime) {
       const pipelineResult = await this.dispatchPipelineRuntime.dispatch({
         subscription: record,
@@ -2532,8 +2598,8 @@ export class WorkspaceSubscriptionManager {
         recordState: comment.recordState,
         recordVersion: typeof latest.version === 'number' ? latest.version : Number(latest.version ?? 0),
         updaterNpub,
-        bindingType: 'thread',
-        bindingId: comment.parentCommentId ?? comment.commentId,
+        bindingType: 'document',
+        bindingId: comment.targetRecordId,
         changedFields: [],
         groupNpubs: extractCommentGroupNpubs(latest),
         botIdentity: this.getRuntime(record.subscriptionId)?.botIdentity ?? null,
@@ -2543,25 +2609,7 @@ export class WorkspaceSubscriptionManager {
       }
     }
 
-    const agents = this.listDocumentCommentAgents(record, latest);
-    if (agents.length === 0) {
-      return this.appendDispatchHistory(record, {
-        at: new Date().toISOString(),
-        kind: 'comment',
-        action: 'document_comment_skip_no_comment_dispatch_agent',
-        agentId: 'unknown',
-        sessionId: null,
-        recordId,
-        bindingId: comment.parentCommentId ?? comment.commentId,
-        bindingType: 'thread',
-        details: {
-          comment_id: comment.commentId,
-          target_record_id: comment.targetRecordId,
-        },
-      });
-    }
-
-    for (const agent of agents) {
+    for (const agent of mentionedAgents) {
       if (isSelfCommentAuthor(record, agent, comment, updaterNpub)) {
         record = this.appendDispatchHistory(record, {
           at: new Date().toISOString(),
@@ -2570,8 +2618,8 @@ export class WorkspaceSubscriptionManager {
           agentId: agent.agentId,
           sessionId: null,
           recordId,
-          bindingId: comment.parentCommentId ?? comment.commentId,
-          bindingType: 'thread',
+          bindingId: comment.targetRecordId,
+          bindingType: 'document',
           details: {
             comment_id: comment.commentId,
             updater_npub: updaterNpub,
@@ -2593,8 +2641,8 @@ export class WorkspaceSubscriptionManager {
         agentId: agent.agentId,
         sessionId: null,
         recordId,
-        bindingId: comment.parentCommentId ?? comment.commentId,
-        bindingType: 'thread',
+        bindingId: comment.targetRecordId,
+        bindingType: 'document',
         details: decision?.details ?? {
           comment_id: comment.commentId,
           updater_npub: updaterNpub,
@@ -2764,6 +2812,62 @@ export class WorkspaceSubscriptionManager {
       || intercept.state === 'active'
       || intercept.state === 'interrupting'
       || intercept.state === 'interrupt_failed';
+  }
+
+  private async isSelfCommentEvent(
+    record: WorkspaceSubscriptionRecord,
+    comment: InboundCommentRecord,
+    updaterNpub: string | null,
+  ): Promise<boolean> {
+    if (isSelfCommentEvent(record, comment, updaterNpub)) {
+      return true;
+    }
+
+    const senderNpub = comment.senderNpub ?? null;
+    if (!senderNpub || !updaterNpub || senderNpub !== updaterNpub) {
+      return false;
+    }
+
+    const resolvedOwner = await this.resolveWorkspaceKeyOwnerNpub(record, senderNpub);
+    return resolvedOwner === record.botNpub;
+  }
+
+  private async resolveWorkspaceKeyOwnerNpub(
+    record: WorkspaceSubscriptionRecord,
+    workspaceKeyNpub: string,
+  ): Promise<string | null> {
+    const cacheKey = `${record.subscriptionId}:${record.workspaceOwnerNpub}`;
+    const now = Date.now();
+    const cached = this.workspaceKeyOwnerCache.get(cacheKey);
+    if (cached && now - cached.fetchedAt < WORKSPACE_KEY_MAPPING_CACHE_MS) {
+      return cached.owners.get(workspaceKeyNpub) ?? null;
+    }
+
+    const runtime = this.runtimes.get(record.subscriptionId);
+    if (!runtime?.wsSession) {
+      return cached?.owners.get(workspaceKeyNpub) ?? null;
+    }
+
+    try {
+      const mappings = await this.fetchWorkspaceKeyMappingsImpl(
+        record.backendBaseUrl,
+        record.workspaceOwnerNpub,
+        runtime.wsSession,
+      );
+      const owners = new Map<string, string>();
+      for (const mapping of mappings) {
+        if (typeof mapping?.ws_key_npub === 'string' && typeof mapping?.user_npub === 'string') {
+          owners.set(mapping.ws_key_npub, mapping.user_npub);
+        }
+      }
+      this.workspaceKeyOwnerCache.set(cacheKey, { fetchedAt: now, owners });
+      return owners.get(workspaceKeyNpub) ?? null;
+    } catch (error) {
+      if (!cached) {
+        this.workspaceKeyOwnerCache.set(cacheKey, { fetchedAt: now, owners: new Map() });
+      }
+      return cached?.owners.get(workspaceKeyNpub) ?? null;
+    }
   }
 
   private getRuntime(subscriptionId: string): RuntimeContext {

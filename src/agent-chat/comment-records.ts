@@ -149,3 +149,58 @@ export function selectDocumentCommentAgents(params: {
     )
     .sort((left, right) => left.agentId.localeCompare(right.agentId));
 }
+
+const MENTION_TOKEN_RE = /@\[([^\]]+)\]\(mention:(\w+):([^)]+)\)/g;
+
+function normaliseMentionValue(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function plainMentionMatches(body: string, value: string): boolean {
+  const token = normaliseMentionValue(value);
+  if (!token || token.includes(' ')) {
+    return false;
+  }
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^\\w-])@${escaped}(?![\\w-])`, 'i').test(body);
+}
+
+export function commentMentionsAgent(comment: InboundCommentRecord, agent: AgentDefinitionRecord): boolean {
+  const body = comment.body ?? '';
+  const structuredMentionIds = new Set<string>();
+  const structuredMentionLabels = new Set<string>();
+  let match;
+  const re = new RegExp(MENTION_TOKEN_RE.source, 'g');
+  while ((match = re.exec(body)) !== null) {
+    const label = normaliseMentionValue(match[1] ?? '');
+    const type = normaliseMentionValue(match[2] ?? '');
+    const id = normaliseMentionValue(match[3] ?? '');
+    if (!id) {
+      continue;
+    }
+    if (type === 'person') {
+      structuredMentionIds.add(id);
+      continue;
+    }
+    if (type === 'agent' || type === 'wingman' || type === 'bot') {
+      structuredMentionIds.add(id);
+      if (label) {
+        structuredMentionLabels.add(label);
+      }
+    }
+  }
+
+  const agentId = normaliseMentionValue(agent.agentId);
+  const label = normaliseMentionValue(agent.label);
+  const botNpub = normaliseMentionValue(agent.botNpub);
+  if (
+    structuredMentionIds.has(botNpub)
+    || structuredMentionIds.has(agentId)
+    || structuredMentionLabels.has(label)
+    || structuredMentionLabels.has(agentId)
+  ) {
+    return true;
+  }
+
+  return plainMentionMatches(body, agent.agentId) || plainMentionMatches(body, agent.label);
+}

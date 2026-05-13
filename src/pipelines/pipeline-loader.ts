@@ -483,7 +483,7 @@ const SOFTWARE_IMPLEMENTATION_MANAGER_REVIEW_DEFINITION = {
           workPlan: "$.workPlan",
         },
       },
-      prompt: "You are the worker in a Wingman software implementation pipeline. Use only the selected input: createdTask and workPlan. workPlan includes the task plan, workdir, assigner/reviewer npubs, originalPrompt, originThread, referencedRecords, instructions, acceptanceCriteria, executionPlan, and managerChecklist. Make the required code changes in the working directory and run focused verification. The task is already in_progress; the final pipeline step will move it to review. Do not stop at analysis. Return JSON fields: completed boolean, summary string, changedFiles array, testsRun array, evidence array, blockers array, taskUpdateComment string, confidence number.",
+      prompt: "You are the worker in a Wingman software implementation pipeline. Use only the selected input: createdTask and workPlan. workPlan includes the task plan, workdir, assigner/reviewer npubs, originalPrompt, originThread, referencedRecords, instructions, acceptanceCriteria, executionPlan, and managerChecklist. Make the required code changes in the working directory and run focused verification. The task is already in_progress; the final deterministic pipeline step will move it to review and publish any Flight Deck task comment or chat handoff. Do not run Flight Deck task update, task comment, chat reply, chat reply-current, docs comment, or any command that changes task state, task comments, document comments, or chat messages. Do not stop at analysis. Return JSON fields: completed boolean, summary string, changedFiles array, testsRun array, evidence array, blockers array, taskUpdateComment string, confidence number.",
       assign: "$.workerResult",
     },
     {
@@ -556,7 +556,7 @@ const DO_AND_REVIEW_DEFINITION = {
           workPlan: "$.workPlan",
         },
       },
-      prompt: "You are the worker in a Wingman do-and-review pipeline. Use only the selected input: createdTask and workPlan. workPlan includes the task plan, originalPrompt, originThread, referencedRecords, instructions, acceptanceCriteria, executionPlan, and managerChecklist. For current-world facts, use internet research and record sources. The task is already in_progress; the final pipeline step will move it to review. Return JSON fields: completed boolean, summary string, sources array, evidence array, result string, blockers array, taskUpdateComment string, confidence number.",
+      prompt: "You are the worker in a Wingman do-and-review pipeline. Use only the selected input: createdTask and workPlan. workPlan includes the task plan, originalPrompt, originThread, referencedRecords, instructions, acceptanceCriteria, executionPlan, and managerChecklist. For current-world facts, use internet research and record sources. The task is already in_progress; the final deterministic pipeline step will move it to review and publish any Flight Deck task comment or chat handoff. Do not run Flight Deck task update, task comment, chat reply, chat reply-current, docs comment, or any command that changes task state, task comments, document comments, or chat messages. Return JSON fields: completed boolean, summary string, sources array, evidence array, result string, blockers array, taskUpdateComment string, confidence number.",
       assign: "$.workerResult",
     },
     {
@@ -646,7 +646,7 @@ const RESEARCH_AND_REPORT_DEFINITION = {
           researchResult: "$.researchResult",
         },
       },
-      prompt: "You are the report writer in a Wingman research-and-report pipeline. Use only the selected input: commandPrefix, createdTask, workPlan, and researchResult. Turn researchResult into a concise Flight Deck report. If commandPrefix is available, create a Flight Deck doc using the yoke docs create command with the selected scope. Include source links/citations and limitations. Do not hide uncertainty. Return JSON fields: completed boolean, reportTitle string, reportSummary string, reportBody string, documentId string|null, sources array, blockers array, taskUpdateComment string, confidence number.",
+      prompt: "You are the report writer in a Wingman research-and-report pipeline. Use only the selected input: commandPrefix, createdTask, workPlan, and researchResult. Turn researchResult into a concise Flight Deck report. If commandPrefix is available, use it only for yoke docs create/show commands needed to create or verify the report document in the selected scope. Do not run task update, task comment, chat reply, chat reply-current, docs comment, or any command that changes task state, task comments, document comments, or chat messages. The final deterministic pipeline step owns all Flight Deck task state, task comment, and chat handoff publishing. Include source links/citations and limitations. Do not hide uncertainty. Return JSON fields: completed boolean, reportTitle string, reportSummary string, reportBody string, documentId string|null, sources array, blockers array, taskUpdateComment string, confidence number.",
       assign: "$.workerResult",
     },
     {
