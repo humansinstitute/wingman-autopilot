@@ -456,10 +456,13 @@ export function createDispatchTaskStateUpdater(
     } catch (error) {
       commentError = error instanceof Error ? error.message : String(error);
     }
+    const chatNotification = targetState === 'review'
+      ? await publishReadyForReviewChatNotification(context, input, taskId, reviewerNpub)
+      : { notified: false, result: null, error: null, skippedReason: 'not_review_handoff' };
 
     return {
       published: true,
-      status: commentError ? 'partial' : 'ok',
+      status: commentError || chatNotification.error ? 'partial' : 'ok',
       operation: targetState === 'review' ? 'tasks.move-to-review' : 'tasks.move-to-in-progress',
       taskId,
       state: targetState,
@@ -469,8 +472,64 @@ export function createDispatchTaskStateUpdater(
       updateFallback,
       commentResult,
       commentError,
+      chatNotified: chatNotification.notified,
+      chatResult: chatNotification.result,
+      chatError: chatNotification.error,
+      chatSkippedReason: chatNotification.skippedReason,
     };
   };
+}
+
+async function publishReadyForReviewChatNotification(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  input: JsonObject,
+  taskId: string,
+  reviewerNpub: string | null,
+): Promise<{
+  notified: boolean;
+  result: unknown;
+  error: string | null;
+  skippedReason: string | null;
+}> {
+  const channelId = context.eventInput.channelId ?? getText(objectValue(objectValue(input.workPlan).origin).channelId);
+  const threadId = context.eventInput.threadId ?? getText(objectValue(objectValue(input.workPlan).origin).threadId);
+  if (!channelId || !threadId) {
+    return {
+      notified: false,
+      result: null,
+      error: null,
+      skippedReason: 'missing_origin_chat_context',
+    };
+  }
+
+  try {
+    const result = await runYokeJson(context, [
+      'chat',
+      'reply-current',
+      '--body',
+      buildReadyForReviewChatReply(input, taskId, reviewerNpub),
+      '--skip-refresh',
+      '--channel',
+      channelId,
+      '--thread',
+      threadId,
+      '--format',
+      'json',
+    ]);
+    return {
+      notified: true,
+      result,
+      error: null,
+      skippedReason: null,
+    };
+  } catch (error) {
+    return {
+      notified: false,
+      result: null,
+      error: error instanceof Error ? error.message : String(error),
+      skippedReason: null,
+    };
+  }
 }
 
 async function publishChatReply(
@@ -1077,15 +1136,21 @@ function buildReadyForReviewComment(input: JsonObject, reviewerNpub: string | nu
   const workerResult = objectValue(input.workerResult);
   const summary = getText(response.reviewSummary)
     ?? getText(response.summary)
+    ?? getText(workerResult.reportSummary)
     ?? getText(workerResult.summary)
     ?? getText(workerResult.result)
     ?? 'Pipeline work is ready for review.';
+  const taskUpdateComment = getText(workerResult.taskUpdateComment);
   const lines = [
     reviewerNpub
       ? `Pipeline handoff: moved task to review and assigned it to ${reviewerNpub}.`
       : 'Pipeline handoff: moved task to review.',
     `Summary: ${summary}`,
   ];
+  if (taskUpdateComment && taskUpdateComment !== summary) {
+    lines.push(taskUpdateComment);
+  }
+  lines.push(...buildReviewDocumentLines(input));
   const requiredChanges = getStringArray(response.requiredChanges);
   if (requiredChanges.length > 0) {
     lines.push(`Required changes: ${requiredChanges.join('; ')}`);
@@ -1098,6 +1163,48 @@ function buildReadyForReviewComment(input: JsonObject, reviewerNpub: string | nu
     lines.push(`Confidence: ${Math.round(response.confidence * 100)}%`);
   }
   return lines.join('\n');
+}
+
+function buildReadyForReviewChatReply(
+  input: JsonObject,
+  taskId: string,
+  reviewerNpub: string | null,
+): string {
+  const response = objectValue(input.agentResponse ?? input.response ?? input);
+  const workerResult = objectValue(input.workerResult);
+  const summary = getText(workerResult.reportSummary)
+    ?? getText(response.reviewSummary)
+    ?? getText(response.summary)
+    ?? 'The pipeline work is ready for review.';
+  const lines = [
+    'Done: the pipeline work is ready for review.',
+    `Task: ${mention('task', taskId, 'review task')}`,
+    ...buildReviewDocumentLines(input),
+    `Summary: ${summary}`,
+  ];
+  const taskUpdateComment = getText(workerResult.taskUpdateComment);
+  if (taskUpdateComment && taskUpdateComment !== summary) {
+    lines.push(taskUpdateComment);
+  }
+  if (reviewerNpub) {
+    lines.push(`Assigned back to: ${reviewerNpub}`);
+  }
+  return lines.join('\n');
+}
+
+function buildReviewDocumentLines(input: JsonObject): string[] {
+  const workerResult = objectValue(input.workerResult);
+  const documentId = getText(workerResult.documentId)
+    ?? getText(workerResult.document_id)
+    ?? getText(workerResult.reportDocumentId)
+    ?? getText(workerResult.report_document_id);
+  if (!documentId) {
+    return [];
+  }
+  const title = getText(workerResult.reportTitle)
+    ?? getText(workerResult.documentTitle)
+    ?? 'report document';
+  return [`Document: ${mention('document', documentId, title)}`];
 }
 
 function getRecordId(eventInput: DispatchPipelineEventInput): string | null {
