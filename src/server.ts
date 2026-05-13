@@ -2197,13 +2197,16 @@ const sessionApiContext: SessionApiContext = {
   AccessActions,
 };
 sessionApiContextRef = sessionApiContext;
-workspaceSubscriptionManager.setDispatchPipelineRuntime(new DispatchPipelineRuntime({
+const dispatchPipelineRuntime = new DispatchPipelineRuntime({
   pipelineStore,
   getSessionApiContext: () => sessionApiContextRef,
+  getBotIdentityForSubscription: (subscriptionId) =>
+    workspaceSubscriptionManager.getRuntimeBotIdentity(subscriptionId),
   callbackOrigin: `http://127.0.0.1:${config.port}`,
   requirePipelineRoutes: true,
   defaultAgent: config.defaultAgent,
-}));
+});
+workspaceSubscriptionManager.setDispatchPipelineRuntime(dispatchPipelineRuntime);
 
 await workspaceSubscriptionManager.startupReload();
 
@@ -2211,6 +2214,8 @@ void resumeRunningPipelineRuns({
   store: pipelineStore,
   sessionApiContext,
   callbackOrigin: `http://127.0.0.1:${config.port}`,
+  loadRegistryForRun: ({ run, definition }) =>
+    dispatchPipelineRuntime.loadRegistryForStoredRun({ run, definition, sessionApiContext }),
   ensureApiAccess,
   AccessActions,
 }, `http://127.0.0.1:${config.port}`).catch((error) => {
@@ -2391,6 +2396,8 @@ const handleApi = createApiRouteHandler({
     store: pipelineStore,
     sessionApiContext,
     callbackOrigin: `http://127.0.0.1:${config.port}`,
+    loadRegistryForRun: ({ run, definition }) =>
+      dispatchPipelineRuntime.loadRegistryForStoredRun({ run, definition, sessionApiContext }),
     ensureApiAccess,
     AccessActions,
   },

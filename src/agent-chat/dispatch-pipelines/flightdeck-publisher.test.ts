@@ -1,3 +1,7 @@
+import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 
 const yokeCommandCalls: string[][] = [];
@@ -34,6 +38,8 @@ mock.module('../yoke-runtime', () => ({
 }));
 
 const { createDispatchTaskStateUpdater } = await import('./flightdeck-publisher');
+const { DispatchPipelineRuntime } = await import('./runtime');
+const { PipelineStore } = await import('../../pipelines/pipeline-store');
 
 describe('dispatch pipeline Flight Deck publisher', () => {
   beforeEach(() => {
@@ -128,5 +134,111 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     expect(chatCall).toContain('--skip-refresh');
     expect(chatCall).toContain('channel-1');
     expect(chatCall).toContain('thread-1');
+  });
+
+  test('stored dispatch child runs resume with Flight Deck publishing functions', async () => {
+    const pipelineStore = new PipelineStore(join(tmpdir(), `pipeline-resume-${randomUUID()}.sqlite`));
+    const runtime = new DispatchPipelineRuntime({
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      getBotIdentityForSubscription: () => ({
+        botNpub: 'npub1bot',
+        botPubkeyHex: 'ab'.repeat(32),
+        botSecret: new Uint8Array(32),
+      }),
+      callbackOrigin: 'http://localhost',
+      loadFunctions: async () => ({ records: [], registry: {} }),
+    });
+
+    const registry = await runtime.loadRegistryForStoredRun({
+      sessionApiContext: {} as never,
+      definition: {
+        id: 'research-and-report',
+        slug: 'research-and-report',
+        name: 'research-and-report',
+        scope: 'shared',
+        ownerAlias: null,
+        path: '/tmp/research-and-report.json',
+        spec: {
+          name: 'research-and-report',
+          input: {},
+          steps: [
+            {
+              name: 'move-task-to-review',
+              type: 'code',
+              function: 'dispatch.markTaskReadyForReview',
+            },
+          ],
+        },
+      },
+      run: {
+        id: 'run-1',
+        definitionId: 'research-and-report',
+        definitionPath: '/tmp/research-and-report.json',
+        name: 'research-and-report',
+        status: 'running',
+        ownerNpub: 'npub1manager',
+        ownerAlias: 'manager',
+        scope: 'shared',
+        input: {
+          dispatch: {
+            routeId: 'route-1',
+            triggerKind: 'chat',
+          },
+          workspace: {
+            subscriptionId: 'sub-1',
+            workspaceOwnerNpub: 'npub1workspace',
+            sourceAppNpub: 'npub1source',
+            backendBaseUrl: 'https://tower.example.com',
+          },
+          agent: {
+            agentId: 'agent-1',
+            botNpub: 'npub1bot',
+            workingDirectory: '/tmp/agent-work',
+          },
+          record: {
+            recordId: 'message-1',
+            recordFamily: 'chat',
+            payload: {},
+          },
+          routing: {
+            bindingType: 'thread',
+            bindingId: 'thread-1',
+            channelId: 'channel-1',
+            threadId: 'thread-1',
+          },
+          runtime: {
+            yokeStateDir: '/tmp/yoke-state',
+            commandPrefix: 'node yoke',
+            commands: {},
+          },
+        },
+        current: {},
+        cursorIndex: 0,
+        activeStepId: null,
+        result: null,
+        error: null,
+        startedAt: new Date().toISOString(),
+        completedAt: null,
+      },
+    });
+
+    expect(registry?.['dispatch.markTaskReadyForReview']).toBeFunction();
+    const result = await registry!['dispatch.markTaskReadyForReview']!({
+      workPlan: {
+        taskId: 'task-1',
+        reviewerNpub: 'npub1requester',
+      },
+      workerResult: {
+        reportTitle: 'Report',
+        documentId: 'doc-1',
+      },
+    });
+
+    expect(result).toMatchObject({
+      published: true,
+      operation: 'tasks.move-to-review',
+      chatNotified: true,
+    });
   });
 });

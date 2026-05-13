@@ -60,6 +60,7 @@ export interface DispatchPipelineRuntimeDependencies {
   agentStore?: AgentDefinitionStore;
   pipelineStore: PipelineStore;
   getSessionApiContext: () => SessionApiContext | null;
+  getBotIdentityForSubscription?: (subscriptionId: string) => RuntimeBotIdentity | null;
   callbackOrigin: string;
   runPipeline?: typeof runDeclarativePipeline;
   startPipeline?: typeof startDeclarativePipeline;
@@ -75,6 +76,7 @@ export class DispatchPipelineRuntime {
   private readonly agentStore: AgentDefinitionStore;
   private readonly pipelineStore: PipelineStore;
   private readonly getSessionApiContext: () => SessionApiContext | null;
+  private readonly getBotIdentityForSubscription: (subscriptionId: string) => RuntimeBotIdentity | null;
   private readonly callbackOrigin: string;
   private readonly runPipeline: typeof runDeclarativePipeline | null;
   private readonly startPipeline: typeof startDeclarativePipeline;
@@ -89,6 +91,7 @@ export class DispatchPipelineRuntime {
     this.agentStore = deps.agentStore ?? agentDefinitionStore;
     this.pipelineStore = deps.pipelineStore;
     this.getSessionApiContext = deps.getSessionApiContext;
+    this.getBotIdentityForSubscription = deps.getBotIdentityForSubscription ?? (() => null);
     this.callbackOrigin = deps.callbackOrigin;
     this.runPipeline = deps.runPipeline ?? null;
     this.startPipeline = deps.startPipeline ?? startDeclarativePipeline;
@@ -289,6 +292,26 @@ export class DispatchPipelineRuntime {
       ],
       lastPipelineRunId: run.id,
     };
+  }
+
+  async loadRegistryForStoredRun(input: {
+    run: PipelineRunRecord;
+    definition: PipelineDefinitionRecord;
+    sessionApiContext: SessionApiContext;
+  }): Promise<FunctionRegistry | null> {
+    const stored = buildStoredRunDispatchContext(input.run, this.getBotIdentityForSubscription);
+    if (!stored) {
+      return null;
+    }
+    return await this.loadRuntimeFunctions({
+      ownerAlias: input.run.ownerAlias ?? '',
+      ownerNpub: input.run.ownerNpub ?? '',
+      sessionApiContext: input.sessionApiContext,
+      eventInput: stored.eventInput,
+      agent: stored.agent,
+      flightDeckRuntime: stored.flightDeckRuntime,
+      definitionNeedsPublisher: pipelineNeedsFlightDeckPublisher(input.definition.spec),
+    });
   }
 
   private async loadRuntimeFunctions(input: {
@@ -637,6 +660,83 @@ function emptyFlightDeckRuntime(): DispatchPipelineFlightDeckRuntime {
   };
 }
 
+function buildStoredRunDispatchContext(
+  run: PipelineRunRecord,
+  getBotIdentityForSubscription: (subscriptionId: string) => RuntimeBotIdentity | null,
+): {
+  eventInput: DispatchPipelineEventInput;
+  agent: AgentDefinitionRecord | null;
+  flightDeckRuntime: DispatchPipelineFlightDeckRuntime;
+} | null {
+  const runInput = objectValue(run.input);
+  const dispatch = objectValue(runInput.dispatch);
+  const workspace = objectValue(runInput.workspace);
+  const agentInput = objectValue(runInput.agent);
+  const record = objectValue(runInput.record);
+  const payload = objectValue(record.payload);
+  const routing = objectValue(runInput.routing);
+  const runtime = objectValue(runInput.runtime);
+  const subscriptionId = getText(workspace.subscriptionId);
+  if (!getText(dispatch.routeId) || !subscriptionId) {
+    return null;
+  }
+
+  const botIdentity = getBotIdentityForSubscription(subscriptionId);
+  const botNpub = getText(agentInput.botNpub) ?? botIdentity?.botNpub ?? '';
+  const triggerKind = normaliseStoredTriggerKind(getText(dispatch.triggerKind));
+  const flightDeckRuntime = {
+    yokeStateDir: getText(runtime.yokeStateDir),
+    commandPrefix: getText(runtime.commandPrefix),
+    commands: objectValue(runtime.commands) as Record<string, string>,
+    error: getText(runtime.error),
+  };
+  const agent = {
+    agentId: getText(agentInput.agentId) ?? 'pipeline-agent',
+    label: getText(agentInput.label) ?? null,
+    botNpub,
+    workspaceOwnerNpub: getText(workspace.workspaceOwnerNpub) ?? '',
+    groupNpubs: [],
+    workingDirectory: getText(agentInput.workingDirectory) ?? process.cwd(),
+    capabilities: [],
+    enabled: true,
+    createdAt: '',
+    updatedAt: '',
+    managedByNpub: run.ownerNpub,
+  } as AgentDefinitionRecord;
+
+  return {
+    eventInput: {
+      subscription: {
+        subscriptionId,
+        workspaceOwnerNpub: getText(workspace.workspaceOwnerNpub) ?? '',
+        sourceAppNpub: getText(workspace.sourceAppNpub) ?? '',
+        backendBaseUrl: getText(workspace.backendBaseUrl) ?? '',
+        botNpub,
+        wsKeyNpub: '',
+        managedByNpub: run.ownerNpub,
+      } as WorkspaceSubscriptionRecord,
+      triggerKind,
+      capability: capabilityForStoredTrigger(triggerKind),
+      recordId: getText(record.recordId) ?? getText(payload.record_id) ?? run.id,
+      record: {},
+      payload,
+      recordFamily: getText(record.recordFamily) ?? triggerKind,
+      recordState: getText(record.recordState),
+      recordVersion: Number.isFinite(Number(record.version)) ? Number(record.version) : null,
+      updaterNpub: getText(record.updaterNpub),
+      bindingType: normaliseStoredBindingType(getText(routing.bindingType)),
+      bindingId: getText(routing.bindingId),
+      channelId: getText(routing.channelId),
+      threadId: getText(routing.threadId),
+      changedFields: getStringArray(routing.changedFields),
+      groupNpubs: [],
+      botIdentity,
+    },
+    agent,
+    flightDeckRuntime,
+  };
+}
+
 function routeMatchesEvent(route: DispatchRouteRecord, input: DispatchPipelineEventInput): boolean {
   const match = route.matchJson ?? {};
   const groups = getStringArray(match.groupNpubs);
@@ -710,6 +810,42 @@ function fallbackPipelineDefinitionId(route: DispatchRouteRecord): string | null
 
 function getText(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function normaliseStoredTriggerKind(value: string | null): DispatchTriggerKind {
+  if (
+    value === 'chat'
+    || value === 'task'
+    || value === 'flow'
+    || value === 'task_review'
+    || value === 'approval'
+    || value === 'comment'
+  ) {
+    return value;
+  }
+  return 'task';
+}
+
+function capabilityForStoredTrigger(triggerKind: DispatchTriggerKind): AgentCapability {
+  if (triggerKind === 'chat') return 'chat_intercept';
+  if (triggerKind === 'comment') return 'comment_dispatch';
+  if (triggerKind === 'approval') return 'approval_dispatch';
+  if (triggerKind === 'flow') return 'flow_dispatch';
+  if (triggerKind === 'task_review') return 'task_review';
+  return 'task_dispatch';
+}
+
+function normaliseStoredBindingType(value: string | null): AgentChatDispatchHistoryEntry['bindingType'] {
+  if (
+    value === 'chat'
+    || value === 'task'
+    || value === 'flow_run'
+    || value === 'flow_orchestration'
+    || value === 'thread'
+  ) {
+    return value;
+  }
+  return null;
 }
 
 function objectValue(value: unknown): Record<string, unknown> {

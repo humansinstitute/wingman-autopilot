@@ -25,7 +25,8 @@ import {
   type PipelineDefinitionRecord,
 } from "./pipeline-loader";
 import { acceptAgentCallback, resumeDeclarativePipeline, runDeclarativePipeline, startDeclarativePipeline } from "./pipeline-runner";
-import { type JsonObject, PipelineStore } from "./pipeline-store";
+import type { FunctionRegistry } from "./declarative";
+import { type JsonObject, PipelineStore, type PipelineRunRecord } from "./pipeline-store";
 import { startPipelineWizardSession } from "./pipeline-wizard";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
@@ -34,6 +35,10 @@ export interface PipelineApiContext {
   store: PipelineStore;
   sessionApiContext: SessionApiContext;
   callbackOrigin?: string;
+  loadRegistryForRun?: (input: {
+    run: PipelineRunRecord;
+    definition: PipelineDefinitionRecord;
+  }) => Promise<FunctionRegistry | null>;
   ensureApiAccess: (action: AccessAction, request: Request, url: URL, authContext: RequestAuthContext) => Promise<Response | null>;
   AccessActions: { SessionsManage: AccessAction };
 }
@@ -298,12 +303,13 @@ export async function resumeStoredPipelineRun(
     ctx.store.completeRun(run.id, "error", run.current, `Pipeline definition not found: ${run.definitionId}`);
     return;
   }
-  const functions = await loadPipelineFunctionRegistry(ownerAlias, builtinPipelineFunctions);
+  const registry = await ctx.loadRegistryForRun?.({ run, definition })
+    ?? (await loadPipelineFunctionRegistry(ownerAlias, builtinPipelineFunctions)).registry;
   await resumeDeclarativePipeline({
     store: ctx.store,
     sessionApiContext: ctx.sessionApiContext,
     definition,
-    registry: functions.registry,
+    registry,
     input: run.input,
     ownerNpub: run.ownerNpub,
     ownerAlias,

@@ -496,6 +496,14 @@ export class WorkspaceSubscriptionManager {
     this.dispatchPipelineRuntime = dispatchPipelineRuntime;
   }
 
+  getRuntimeBotIdentity(subscriptionId: string): RuntimeBotIdentity | null {
+    try {
+      return this.getRuntime(subscriptionId).botIdentity;
+    } catch {
+      return null;
+    }
+  }
+
   listForManager(npub: string): WorkspaceSubscriptionRecord[] {
     return this.store.listForManagerNpub(npub);
   }
