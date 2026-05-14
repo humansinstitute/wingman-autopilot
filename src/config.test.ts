@@ -9,10 +9,16 @@ const ENV_KEYS = [
   "AGENT_STATUS_POLL_TIMEOUT_MS",
   "AGENT_TMUX_SESSION",
   "AGENTAPI_BIN",
+  "APP_ROUTING",
   "CODEX_CLI",
   "DEFAULT_AGENT",
   "GLOVES",
   "PI_CLI",
+  "SUBDOMAIN_BASE_DOMAIN",
+  "SUBDOMAIN_PROXY_ENABLED",
+  "WINGMAN_APP_ROUTING",
+  "WINGMAN_SUBDOMAIN_BASE_DOMAIN",
+  "WINGMAN_SUBDOMAIN_PROXY_ENABLED",
 ] as const;
 
 const originalEnv = new Map<string, string | undefined>(
@@ -261,5 +267,22 @@ describe("loadConfig", () => {
     const config = loadConfig();
 
     expect(config.agentStatusPollTimeoutMs).toBe(2500);
+  });
+
+  test("uses Wingman-prefixed app routing settings over Docker defaults", () => {
+    applyEnv({
+      APP_ROUTING: "path",
+      SUBDOMAIN_BASE_DOMAIN: undefined,
+      SUBDOMAIN_PROXY_ENABLED: undefined,
+      WINGMAN_APP_ROUTING: "subdomain",
+      WINGMAN_SUBDOMAIN_BASE_DOMAIN: "rick.runwingman.com",
+      WINGMAN_SUBDOMAIN_PROXY_ENABLED: "true",
+    });
+
+    const config = loadConfig();
+
+    expect(config.appRoutingMode).toBe("subdomain");
+    expect(config.subdomainBaseDomain).toBe("rick.runwingman.com");
+    expect(config.subdomainProxyEnabled).toBe(true);
   });
 });

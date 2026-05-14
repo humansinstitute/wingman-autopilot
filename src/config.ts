@@ -167,6 +167,10 @@ function readLowerCaseEnvValue(env: ConfigEnvironment, key: string): string | nu
   return trimmed ? trimmed.toLowerCase() : null;
 }
 
+function readWingmanOverrideEnvValue(env: ConfigEnvironment, key: string): string | null {
+  return readTrimmedEnvValue(env, `WINGMAN_${key}`) ?? readTrimmedEnvValue(env, key);
+}
+
 function resolveDefaultAgentApiPath(relativePath: string): string {
   return new URL(relativePath, import.meta.url).pathname;
 }
@@ -362,12 +366,9 @@ export const loadConfig = (): WingmanConfig => {
   const connectRelays = parseRelayList(Bun.env.CONNECT_RELAYS);
 
   // Subdomain proxy configuration
-  const subdomainBaseDomainInput = Bun.env.SUBDOMAIN_BASE_DOMAIN?.trim();
-  const subdomainBaseDomain = subdomainBaseDomainInput && subdomainBaseDomainInput.length > 0
-    ? subdomainBaseDomainInput
-    : null;
+  const subdomainBaseDomain = readWingmanOverrideEnvValue(Bun.env, "SUBDOMAIN_BASE_DOMAIN");
   const subdomainProxyEnabled = subdomainBaseDomain !== null &&
-    Bun.env.SUBDOMAIN_PROXY_ENABLED !== "false";
+    readWingmanOverrideEnvValue(Bun.env, "SUBDOMAIN_PROXY_ENABLED") !== "false";
 
   const sseKeepaliveIntervalMs = clampPositiveInteger(
     sanitizeInteger(Bun.env.SSE_KEEPALIVE_INTERVAL_MS, DEFAULT_SSE_KEEPALIVE_INTERVAL_MS),
@@ -402,7 +403,7 @@ export const loadConfig = (): WingmanConfig => {
 
   // App routing mode - "path" for /host/<alias>, "subdomain" for <alias>.domain.com
   const validRoutingModes: AppRoutingMode[] = ["path", "subdomain"];
-  const routingModeInput = Bun.env.APP_ROUTING?.trim().toLowerCase();
+  const routingModeInput = readWingmanOverrideEnvValue(Bun.env, "APP_ROUTING")?.toLowerCase();
   const appRoutingMode: AppRoutingMode = routingModeInput && validRoutingModes.includes(routingModeInput as AppRoutingMode)
     ? (routingModeInput as AppRoutingMode)
     : "subdomain";
