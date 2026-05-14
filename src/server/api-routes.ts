@@ -29,6 +29,7 @@ import { handleSystemRoutes, type SystemRoutesContext } from "./system-routes";
 import { handleAgentChatApi, type AgentChatApiContext } from './agent-chat-routes';
 import { handleDelegationApi, type DelegationRoutesContext } from "./delegation-routes";
 import { handleOwnerSpaceApi } from "./owner-space-routes";
+import { handleWappsApi, type WappsApiContext } from "./wapps-api-routes";
 import { handlePipelineApi, type PipelineApiContext } from "../pipelines/pipeline-api-routes";
 import type { WorkspaceDelegationStore } from "../storage/workspace-delegation-store";
 import { getEffectiveOwnerNpub } from "../auth/effective-owner";
@@ -178,6 +179,7 @@ export interface ApiRoutesContext {
     viewerNpub: string | null,
     viewerIsAdmin: boolean,
   ) => ChatApiContext;
+  buildWappsContext?: (authContext: RequestAuthContext) => WappsApiContext;
 }
 
 // ---------- Factory ----------
@@ -350,6 +352,21 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
       const response = await runWithRequestContext(
         jobsAuthContext,
         () => ctx.autopilotJobsApiHandler(request, url, method, jobsAuthContext),
+      );
+      if (response) {
+        return response;
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }
+    if (pathname.startsWith("/api/wapps")) {
+      const wappsAuthContext = ctx.resolveNip98AuthContext(request, url, authContext);
+      if (!ctx.buildWappsContext) {
+        return Response.json({ error: "wapps-unavailable" }, { status: 503 });
+      }
+      const wappsApiContext = ctx.buildWappsContext(wappsAuthContext);
+      const response = await runWithRequestContext(
+        wappsAuthContext,
+        () => handleWappsApi(request, url, method, wappsAuthContext, wappsApiContext),
       );
       if (response) {
         return response;

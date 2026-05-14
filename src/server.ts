@@ -174,6 +174,8 @@ import { SchedulerStore } from "./scheduler/scheduler-store";
 import { SchedulerEngine } from "./scheduler/scheduler-engine";
 import { createSchedulerApiHandler } from "./scheduler/scheduler-api";
 import { createAutopilotJobsApiHandler } from "./jobs-api";
+import { wappStore } from "./wapps/wapp-store";
+import { LocalPayloadWappPublisher } from "./wapps/wapp-publisher";
 import { createTriggerListener, type TriggerListener } from "./nostr/trigger-listener";
 import {
   clearWarmRestartMarker,
@@ -220,6 +222,7 @@ import {
 
 const config = loadConfig();
 const wingmanInstanceIdentity = loadWingmanInstanceIdentity();
+const wappPublisher = new LocalPayloadWappPublisher();
 if (wingmanInstanceIdentity) {
   console.log(`[identity] Wingman instance identity configured: ${wingmanInstanceIdentity.npub.slice(0, 20)}...`);
 } else {
@@ -2508,6 +2511,39 @@ const handleApi = createApiRouteHandler({
       });
     },
   }),
+  buildWappsContext: (wappsAuthContext) => {
+    const effectiveAuthContext = getEffectiveOwnerAuthContext(wappsAuthContext);
+    const appsWorkspaceScope = resolveWorkspace(effectiveAuthContext);
+    const appsViewerNpub = getEffectiveOwnerNpub(effectiveAuthContext);
+    const canAccessAppForRequest = (app: AppRecord): boolean => {
+      if (sharedInstanceAccessEnabled && appsViewerNpub) return true;
+      if (appsWorkspaceScope.isAdmin) return true;
+      if (!appsViewerNpub) return false;
+      return app.ownerNpub === appsViewerNpub;
+    };
+    return {
+      adminNpub,
+      viewerNpub: appsViewerNpub,
+      sourceWingmanUrl: config.baseUrl,
+      flightDeckAppNamespace: wingmanInstanceIdentity?.npub ?? adminNpub ?? "autopilot",
+      AccessActions,
+      ensureApiAccess,
+      ensureDirectory: (root: string) => ensureDirectory(root, appsWorkspaceScope),
+      canAccessApp: canAccessAppForRequest,
+      appRegistry,
+      appAliasRegistry,
+      wappStore,
+      publisher: wappPublisher,
+      buildLaunchUrl: (alias, app) => {
+        const aliasUrl = buildAppHostUrl(alias);
+        if (aliasUrl) {
+          return aliasUrl.startsWith("http") ? aliasUrl : new URL(aliasUrl, config.baseUrl).toString();
+        }
+        const fallbackUrl = app.webApp && app.webAppPort ? buildHostedWebAppUrl(app.webAppPort) : null;
+        return fallbackUrl ?? config.baseUrl;
+      },
+    };
+  },
 });
 
 const server = Bun.serve({

@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 
 import type { AgentType, WingmanConfig } from "../config";
 import type { AppRecord } from "../apps/app-registry";
+import { getWappRuntimeEnvForApp } from "../wapps/runtime-env";
 
 export interface EcosystemApp {
   name: string;
@@ -177,6 +178,12 @@ function buildAgentCommand(sessionConfig: SessionConfig): { script: string; args
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function shellExport(env: Record<string, string>): string {
+  return Object.entries(env)
+    .map(([key, value]) => `${key}=${shellQuote(value)}`)
+    .join(" ");
 }
 
 function toLockedProviderEnvVarName(key: ProviderAuthEnvKey): string {
@@ -414,6 +421,11 @@ export async function createUserAppEcosystemConfig(config: UserAppConfig): Promi
   ];
   if (app.webApp && app.webAppPort) {
     meta.push(`PORT=${app.webAppPort}`);
+  }
+  const wappEnv = getWappRuntimeEnvForApp(app.id, app.root);
+  const wappExport = shellExport(wappEnv);
+  if (wappExport) {
+    meta.push(wappExport);
   }
 
   // Prefer Redshift if configured, fall back to sourcing .env
