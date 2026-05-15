@@ -887,35 +887,37 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
     definitions: handlers.pipelineDefinitions,
   }));
 
-  const actions = document.createElement('div');
-  actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;';
-  actions.append(
-    createActionButton(
-      'Reconnect',
-      `Reconnect Agent Chat subscription for ${subscription.workspaceOwnerNpub}`,
-      `agent-chat-reconnect-${subscription.subscriptionId}`,
-      () => handlers.runAction(subscription, 'reconnect'),
-    ),
-    createActionButton(
-      'Refresh Keys',
-      `Refresh Agent Chat keys for ${subscription.workspaceOwnerNpub}`,
-      `agent-chat-refresh-keys-${subscription.subscriptionId}`,
-      () => handlers.runAction(subscription, 'refresh-keys'),
-    ),
-    createActionButton(
-      subscription.operator?.enabled ? 'Disable' : 'Enable',
-      `${subscription.operator?.enabled ? 'Disable' : 'Enable'} Agent Chat subscription for ${subscription.workspaceOwnerNpub}`,
-      `agent-chat-toggle-enabled-${subscription.subscriptionId}`,
-      () => handlers.runAction(subscription, subscription.operator?.enabled ? 'disable' : 'enable'),
-    ),
-    createActionButton(
-      'Remove',
-      `Remove Agent Chat subscription for ${subscription.workspaceOwnerNpub}`,
-      `agent-chat-remove-${subscription.subscriptionId}`,
-      () => handlers.remove(subscription),
-    ),
-  );
-  card.append(actions);
+  if (subscription.operator?.canManage !== false) {
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;';
+    actions.append(
+      createActionButton(
+        'Reconnect',
+        `Reconnect Agent Chat subscription for ${subscription.workspaceOwnerNpub}`,
+        `agent-chat-reconnect-${subscription.subscriptionId}`,
+        () => handlers.runAction(subscription, 'reconnect'),
+      ),
+      createActionButton(
+        'Refresh Keys',
+        `Refresh Agent Chat keys for ${subscription.workspaceOwnerNpub}`,
+        `agent-chat-refresh-keys-${subscription.subscriptionId}`,
+        () => handlers.runAction(subscription, 'refresh-keys'),
+      ),
+      createActionButton(
+        subscription.operator?.enabled ? 'Disable' : 'Enable',
+        `${subscription.operator?.enabled ? 'Disable' : 'Enable'} Agent Chat subscription for ${subscription.workspaceOwnerNpub}`,
+        `agent-chat-toggle-enabled-${subscription.subscriptionId}`,
+        () => handlers.runAction(subscription, subscription.operator?.enabled ? 'disable' : 'enable'),
+      ),
+      createActionButton(
+        'Remove',
+        `Remove Agent Chat subscription for ${subscription.workspaceOwnerNpub}`,
+        `agent-chat-remove-${subscription.subscriptionId}`,
+        () => handlers.remove(subscription),
+      ),
+    );
+    card.append(actions);
+  }
 
   return card;
 }

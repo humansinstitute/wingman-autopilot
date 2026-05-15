@@ -4,7 +4,11 @@ export async function listAgentChatSubscriptions() {
   if (!response.ok) {
     throw new Error(payload.error || 'Failed to load Agent Chat subscriptions');
   }
-  return Array.isArray(payload.subscriptions) ? payload.subscriptions : [];
+  const subscriptions = Array.isArray(payload.subscriptions) ? payload.subscriptions : [];
+  subscriptions.permissions = payload.permissions && typeof payload.permissions === 'object'
+    ? payload.permissions
+    : { shared: false, canManage: true };
+  return subscriptions;
 }
 
 export async function listAgentChatAgents() {
@@ -15,6 +19,9 @@ export async function listAgentChatAgents() {
   }
   return {
     agents: Array.isArray(payload.agents) ? payload.agents : [],
+    permissions: payload.permissions && typeof payload.permissions === 'object'
+      ? payload.permissions
+      : { shared: false, canManage: true },
     defaults: payload.defaults && typeof payload.defaults === 'object' ? payload.defaults : {},
   };
 }

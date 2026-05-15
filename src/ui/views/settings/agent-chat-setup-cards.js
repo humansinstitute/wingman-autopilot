@@ -228,6 +228,8 @@ function createBackendAvailabilityEditor(backendConnection, onSaveBackendAvailab
 export function createAgentDispatchSetupCards({
   subscription,
   primaryAgent,
+  canManage = true,
+  shared = false,
   availableBackendConnections = [],
   onConnectWorkspace,
   onEditSubscription,
@@ -250,7 +252,9 @@ export function createAgentDispatchSetupCards({
   const hasSetupReadyBackend = setupReadyBackendConnections.length > 0;
   const overviewCard = createCard(
     'Setup',
-    'Connect one workspace, create one local agent, then route events to pipelines.',
+    shared && !canManage
+      ? 'Agent Dispatch setup is shared across approved users on this Wingman instance.'
+      : 'Connect one workspace, create one local agent, then route events to pipelines.',
   );
 
   appendStep(
@@ -274,7 +278,14 @@ export function createAgentDispatchSetupCards({
     hasAgent,
   );
   const overviewActions = [];
-  if (!hasSubscription && hasSetupReadyBackend) {
+  if (!canManage) {
+    overviewActions.push(createActionButton(
+      'Refresh View',
+      'agent-chat-guided-refresh',
+      'Refresh Agent Dispatch setup view',
+      () => onRefresh?.(),
+    ));
+  } else if (!hasSubscription && hasSetupReadyBackend) {
     overviewActions.push(createActionButton(
       'Use Workspace Connection',
       'agent-chat-guided-use-backend',
@@ -303,12 +314,14 @@ export function createAgentDispatchSetupCards({
       () => onEditAgent?.(primaryAgent),
     ));
   }
-  overviewActions.push(createActionButton(
-    'Refresh View',
-    'agent-chat-guided-refresh',
-    'Refresh Agent Dispatch setup view',
-    () => onRefresh?.(),
-  ));
+  if (canManage) {
+    overviewActions.push(createActionButton(
+      'Refresh View',
+      'agent-chat-guided-refresh',
+      'Refresh Agent Dispatch setup view',
+      () => onRefresh?.(),
+    ));
+  }
   overviewCard.append(createInlineActions(overviewActions));
   wrapper.append(overviewCard);
 
@@ -336,7 +349,7 @@ export function createAgentDispatchSetupCards({
       ['Bot', subscription.botNpub || 'Pending'],
       ['Last Event', formatTimestamp(subscription.lastSseEvent?.at || '')],
     ]));
-    if (subscriptionBackendConnection?.operator?.canManageAvailability) {
+    if (canManage && subscriptionBackendConnection?.operator?.canManageAvailability) {
       connectionCard.append(createBackendAvailabilityEditor(subscriptionBackendConnection, onSaveBackendAvailability));
     }
   } else if (hasAvailableBackend) {
@@ -356,7 +369,7 @@ export function createAgentDispatchSetupCards({
     empty.textContent = 'Use Connect Workspace to paste the AgentConnect token. Manual connection remains available for recovery or older workspaces.';
     connectionCard.append(empty);
   }
-  if (hasSubscription || !hasSetupReadyBackend) {
+  if (canManage && (hasSubscription || !hasSetupReadyBackend)) {
     connectionCard.append(createInlineActions([
       createActionButton(
         hasSubscription ? 'Edit Connection' : 'Manual Connection',

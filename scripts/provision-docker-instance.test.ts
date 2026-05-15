@@ -70,6 +70,7 @@ describe("docker provisioning", () => {
     expect(content).toContain("WINGMAN_PI_CLI=/usr/local/bin/pi");
     expect(content).toContain("WINGMAN_PRIV=");
     expect(content).toContain("WINGMAN_REGISTER=false");
+    expect(content).toContain("WINGMAN_SHARED_AGENT_DISPATCH=true");
     expect(content).toContain("WINGMAN_SETUP_NONINTERACTIVE=true");
   });
 

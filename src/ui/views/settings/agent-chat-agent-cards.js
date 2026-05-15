@@ -105,21 +105,25 @@ export function createAgentRegistryPanel(agents, handlers, options = {}) {
 
     const actions = document.createElement('div');
     actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;';
-    actions.append(
-      createActionButton(
+    if (typeof handlers.edit === 'function') {
+      actions.append(createActionButton(
         'Edit',
         `Edit Agent Chat agent ${agent.agentId}`,
         `agent-chat-edit-agent-${agent.agentId}`,
         () => handlers.edit(agent),
-      ),
-      createActionButton(
+      ));
+    }
+    if (typeof handlers.remove === 'function') {
+      actions.append(createActionButton(
         'Remove',
         `Remove Agent Chat agent ${agent.agentId}`,
         `agent-chat-remove-agent-${agent.agentId}`,
         () => handlers.remove(agent),
-      ),
-    );
-    card.append(actions);
+      ));
+    }
+    if (actions.childElementCount > 0) {
+      card.append(actions);
+    }
     wrapper.append(card);
   });
 

@@ -379,8 +379,11 @@ function createCapabilityCard({
   card.append(createPromptPreview({ sourceLabel: promptSource, promptPreview }));
 
   const toggleButton = createButton(toggleLabel, null, toggleLabel);
-  toggleButton.disabled = toggleDisabled;
-  if (toggleDisabledReason) {
+  const canToggle = typeof onToggle === 'function';
+  toggleButton.disabled = toggleDisabled || !canToggle;
+  if (!canToggle) {
+    toggleButton.title = 'Agent Dispatch setup is shared and can only be changed by an administrator.';
+  } else if (toggleDisabledReason) {
     toggleButton.title = toggleDisabledReason;
   }
   toggleButton.addEventListener('click', () => onToggle?.());
@@ -395,6 +398,7 @@ function createCapabilityCard({
   card.append(createInlineActions(toggleButton, editButton));
 
   if (enabled && subscription && routeConfig) {
+    const canSaveRoute = typeof onSaveRoute === 'function';
     const pipelineSelect = createPipelineSelect({
       title,
       definitions: pipelineDefinitions,
@@ -412,7 +416,7 @@ function createCapabilityCard({
     routeStatus.className = 'wm-settings__port-note';
     routeStatus.setAttribute('aria-live', 'polite');
     routeStatus.textContent = route
-      ? `Pipeline route saved${route.enabled === false ? ' but disabled' : ''}.`
+      ? `Pipeline route saved${route.enabled === false ? ' but disabled' : ''}${canSaveRoute ? '' : ' and shared read-only'}.`
       : 'Pipeline route required before this capability can dispatch.';
 
     const savePipelineButton = createButton(
@@ -420,8 +424,17 @@ function createCapabilityCard({
       null,
       `Save ${title} pipeline route`,
     );
-    savePipelineButton.disabled = pipelineDefinitions.length === 0;
+    pipelineSelect.select.disabled = !canSaveRoute;
+    inputObjectEditor.textarea.disabled = !canSaveRoute;
+    savePipelineButton.disabled = !canSaveRoute || pipelineDefinitions.length === 0;
+    if (!canSaveRoute) {
+      savePipelineButton.title = 'Agent Dispatch pipeline routes are shared and can only be changed by an administrator.';
+    }
     savePipelineButton.addEventListener('click', async () => {
+      if (!canSaveRoute) {
+        routeStatus.textContent = 'Agent Dispatch pipeline routes are shared and can only be changed by an administrator.';
+        return;
+      }
       savePipelineButton.disabled = true;
       routeStatus.textContent = 'Saving pipeline route...';
       try {

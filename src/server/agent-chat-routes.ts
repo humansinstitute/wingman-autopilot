@@ -7,6 +7,7 @@ import {
   DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE,
   DEFAULT_TASK_REVIEW_PROMPT_TEMPLATE,
 } from '../agent-chat/prompt-templates';
+import { normaliseNpub } from '../identity/npub-utils';
 import type {
   AgentDefinitionRecord,
   AgentChatDiagnostic,
@@ -24,6 +25,16 @@ type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
 export interface AgentChatApiContext {
   manager: WorkspaceSubscriptionManager;
+  adminNpub?: string | null;
+  sharedAgentDispatch?: boolean;
+  isAdminContext?: (authContext: RequestAuthContext) => boolean;
+}
+
+interface AgentChatRequestScope {
+  viewerNpub: string;
+  managerNpub: string;
+  shared: boolean;
+  canManage: boolean;
 }
 
 function getDetailString(
@@ -118,6 +129,7 @@ function serialiseSubscription(
   intercepts: ChatInterceptStateRecord[],
   candidateAgents: AgentDefinitionRecord[],
   backendConnection?: BackendConnectionRecord | null,
+  options: { canManage?: boolean; shared?: boolean } = {},
 ) {
   const recommendations = buildOperatorRecommendations(record, intercepts);
   return {
@@ -130,6 +142,8 @@ function serialiseSubscription(
     candidateAgents: candidateAgents.map(serialiseAgent),
     operator: {
       enabled: record.sseStatus !== 'disabled',
+      canManage: options.canManage !== false,
+      shared: options.shared === true,
       blockedInterceptCount: intercepts.filter((intercept) => (
         intercept.state === 'blocked_auth' || intercept.state === 'blocked_decrypt'
       )).length,
@@ -185,6 +199,33 @@ function getAgentChatErrorStatus(error: unknown, fallback: number): number {
   return typeof statusCode === 'number' && statusCode >= 400 && statusCode < 600
     ? statusCode
     : fallback;
+}
+
+function resolveAgentChatScope(authContext: RequestAuthContext, ctx: AgentChatApiContext): AgentChatRequestScope | null {
+  const viewerNpub = normaliseNpub(authContext.session?.npub ?? authContext.npub ?? null);
+  if (!viewerNpub) {
+    return null;
+  }
+
+  const adminNpub = normaliseNpub(ctx.adminNpub ?? null);
+  const shared = Boolean(ctx.sharedAgentDispatch && adminNpub);
+  const isAdmin = Boolean(ctx.isAdminContext?.(authContext) || (adminNpub && viewerNpub === adminNpub));
+  return {
+    viewerNpub,
+    managerNpub: shared ? adminNpub! : viewerNpub,
+    shared,
+    canManage: !shared || isAdmin,
+  };
+}
+
+function requireAgentChatManagement(scope: AgentChatRequestScope): Response | null {
+  if (scope.canManage) {
+    return null;
+  }
+  return Response.json(
+    { error: 'Agent Dispatch subscriptions are shared on this Wingman instance. Ask an administrator to change them.' },
+    { status: 403 },
+  );
 }
 
 function getOptionalStringArray(value: unknown): string[] {
@@ -251,21 +292,26 @@ export async function handleAgentChatApi(
     return null;
   }
 
-  const viewerNpub = authContext.session?.npub ?? authContext.npub ?? null;
-  if (!viewerNpub) {
+  const scope = resolveAgentChatScope(authContext, ctx);
+  if (!scope) {
     return Response.json({ error: 'Authentication required' }, { status: 401 });
   }
 
   if (url.pathname === '/api/agent-chat/subscriptions' && method === 'GET') {
-    const backendConnections = ctx.manager.listBackendConnectionsForManager(viewerNpub);
+    const backendConnections = ctx.manager.listBackendConnectionsForManager(scope.managerNpub);
     return Response.json({
-      subscriptions: ctx.manager.listForManager(viewerNpub).map((record) => {
+      permissions: {
+        shared: scope.shared,
+        canManage: scope.canManage,
+      },
+      subscriptions: ctx.manager.listForManager(scope.managerNpub).map((record) => {
         const backendConnection = backendConnections.find((backend) => backend.backendConnectionId === record.backendConnectionId) ?? null;
         return serialiseSubscription(
           record,
-          ctx.manager.listInterceptsForSubscription(record.subscriptionId, viewerNpub),
-          ctx.manager.listAgentsForWorkspaceBot(record.workspaceOwnerNpub, record.botNpub, viewerNpub),
+          ctx.manager.listInterceptsForSubscription(record.subscriptionId, scope.managerNpub),
+          ctx.manager.listAgentsForWorkspaceBot(record.workspaceOwnerNpub, record.botNpub, scope.managerNpub),
           backendConnection,
+          { canManage: scope.canManage, shared: scope.shared },
         );
       }),
     });
@@ -273,7 +319,11 @@ export async function handleAgentChatApi(
 
   if (url.pathname === '/api/agent-chat/agents' && method === 'GET') {
     return Response.json({
-      agents: ctx.manager.listAgentsForManager(viewerNpub).map(serialiseAgent),
+      permissions: {
+        shared: scope.shared,
+        canManage: scope.canManage,
+      },
+      agents: ctx.manager.listAgentsForManager(scope.managerNpub).map(serialiseAgent),
       defaults: {
         chatPromptTemplate: DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE,
         taskPromptTemplate: DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE,
@@ -286,11 +336,17 @@ export async function handleAgentChatApi(
 
   if (url.pathname === '/api/agent-chat/backend-connections' && method === 'GET') {
     return Response.json({
-      backendConnections: ctx.manager.listBackendConnectionsForManager(viewerNpub).map((record) => (
+      permissions: {
+        shared: scope.shared,
+        canManage: scope.canManage,
+      },
+      backendConnections: ctx.manager.listBackendConnectionsForManager(scope.managerNpub).map((record) => (
         serialiseBackendConnection(
           record,
-          viewerNpub,
-          ctx.manager.listBackendConnectionGrantsForManager(record.backendConnectionId, viewerNpub),
+          scope.viewerNpub,
+          scope.canManage
+            ? ctx.manager.listBackendConnectionGrantsForManager(record.backendConnectionId, scope.managerNpub)
+            : [],
         )
       )),
     });
@@ -298,6 +354,10 @@ export async function handleAgentChatApi(
 
   const backendAvailabilityMatch = url.pathname.match(/^\/api\/agent-chat\/backend-connections\/([^/]+)\/availability$/);
   if (backendAvailabilityMatch && (method === 'POST' || method === 'PATCH')) {
+    const denied = requireAgentChatManagement(scope);
+    if (denied) {
+      return denied;
+    }
     let body: Record<string, unknown>;
     try {
       body = await request.json() as Record<string, unknown>;
@@ -312,14 +372,14 @@ export async function handleAgentChatApi(
     try {
       const result = ctx.manager.updateBackendConnectionAvailabilityForManager({
         backendConnectionId,
-        managedByNpub: viewerNpub,
+        managedByNpub: scope.managerNpub,
         managerNpubs: allowedManagerNpubs,
         sharedService: grantSharedService,
       });
       return Response.json({
         backendConnection: serialiseBackendConnection(
           result.backendConnection,
-          viewerNpub,
+          scope.viewerNpub,
           result.grants,
         ),
       });
@@ -332,12 +392,22 @@ export async function handleAgentChatApi(
   if (url.pathname === '/api/agent-chat/dispatch-routes' && method === 'GET') {
     const subscriptionId = url.searchParams.get('subscriptionId');
     const routes = subscriptionId
-      ? ctx.manager.listDispatchRoutesForSubscription(subscriptionId, viewerNpub)
-      : ctx.manager.listDispatchRoutesForManager(viewerNpub);
-    return Response.json({ dispatchRoutes: routes.map(serialiseDispatchRoute) });
+      ? ctx.manager.listDispatchRoutesForSubscription(subscriptionId, scope.managerNpub)
+      : ctx.manager.listDispatchRoutesForManager(scope.managerNpub);
+    return Response.json({
+      permissions: {
+        shared: scope.shared,
+        canManage: scope.canManage,
+      },
+      dispatchRoutes: routes.map(serialiseDispatchRoute),
+    });
   }
 
   if (url.pathname === '/api/agent-chat/dispatch-routes' && (method === 'POST' || method === 'PATCH')) {
+    const denied = requireAgentChatManagement(scope);
+    if (denied) {
+      return denied;
+    }
     let body: Record<string, unknown>;
     try {
       body = await request.json() as Record<string, unknown>;
@@ -360,7 +430,7 @@ export async function handleAgentChatApi(
     try {
       const route = ctx.manager.saveDispatchRouteForManager({
         routeId,
-        managedByNpub: viewerNpub,
+        managedByNpub: scope.managerNpub,
         subscriptionId,
         triggerKind,
         capability,
@@ -381,6 +451,10 @@ export async function handleAgentChatApi(
   }
 
   if (url.pathname === '/api/agent-chat/agent-connect/import' && method === 'POST') {
+    const denied = requireAgentChatManagement(scope);
+    if (denied) {
+      return denied;
+    }
     let body: Record<string, unknown>;
     try {
       body = await request.json() as Record<string, unknown>;
@@ -407,7 +481,7 @@ export async function handleAgentChatApi(
 
     try {
       const imported = await ctx.manager.importAgentConnectPackage({
-        managedByNpub: viewerNpub,
+        managedByNpub: scope.managerNpub,
         packageJson: rawPackage,
         agentProfileId,
         allowedManagerNpubs,
@@ -416,13 +490,15 @@ export async function handleAgentChatApi(
       return Response.json({
         backendConnection: serialiseBackendConnection(
           imported.backendConnection,
-          viewerNpub,
-          ctx.manager.listBackendConnectionGrantsForManager(imported.backendConnection.backendConnectionId, viewerNpub),
+          scope.viewerNpub,
+          ctx.manager.listBackendConnectionGrantsForManager(imported.backendConnection.backendConnectionId, scope.managerNpub),
         ),
         subscription: serialiseSubscription(
           imported.subscription,
-          ctx.manager.listInterceptsForSubscription(imported.subscription.subscriptionId, viewerNpub),
-          ctx.manager.listAgentsForWorkspaceBot(imported.subscription.workspaceOwnerNpub, imported.subscription.botNpub, viewerNpub),
+          ctx.manager.listInterceptsForSubscription(imported.subscription.subscriptionId, scope.managerNpub),
+          ctx.manager.listAgentsForWorkspaceBot(imported.subscription.workspaceOwnerNpub, imported.subscription.botNpub, scope.managerNpub),
+          null,
+          { canManage: scope.canManage, shared: scope.shared },
         ),
       });
     } catch (error) {
@@ -432,6 +508,10 @@ export async function handleAgentChatApi(
   }
 
   if (url.pathname === '/api/agent-chat/subscriptions' && method === 'POST') {
+    const denied = requireAgentChatManagement(scope);
+    if (denied) {
+      return denied;
+    }
     let body: Record<string, unknown>;
     try {
       body = await request.json() as Record<string, unknown>;
@@ -467,7 +547,7 @@ export async function handleAgentChatApi(
 
     try {
       const subscription = await ctx.manager.createOrUpdate({
-        managedByNpub: viewerNpub,
+        managedByNpub: scope.managerNpub,
         workspaceOwnerNpub,
         backendBaseUrl,
         sourceAppNpub,
@@ -480,8 +560,10 @@ export async function handleAgentChatApi(
       return Response.json({
         subscription: serialiseSubscription(
           subscription,
-          ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, viewerNpub),
-          ctx.manager.listAgentsForWorkspaceBot(subscription.workspaceOwnerNpub, subscription.botNpub, viewerNpub),
+          ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, scope.managerNpub),
+          ctx.manager.listAgentsForWorkspaceBot(subscription.workspaceOwnerNpub, subscription.botNpub, scope.managerNpub),
+          null,
+          { canManage: scope.canManage, shared: scope.shared },
         ),
       });
     } catch (error) {
@@ -491,6 +573,10 @@ export async function handleAgentChatApi(
   }
 
   if (url.pathname === '/api/agent-chat/agents' && method === 'POST') {
+    const denied = requireAgentChatManagement(scope);
+    if (denied) {
+      return denied;
+    }
     let body: Record<string, unknown>;
     try {
       body = await request.json() as Record<string, unknown>;
@@ -548,7 +634,7 @@ export async function handleAgentChatApi(
 
     try {
       const agent = await ctx.manager.saveAgentForManager({
-        managedByNpub: viewerNpub,
+        managedByNpub: scope.managerNpub,
         agentId,
         label,
         botNpub,
@@ -575,26 +661,34 @@ export async function handleAgentChatApi(
   const dispatchRouteMatch = url.pathname.match(/^\/api\/agent-chat\/dispatch-routes\/([^/]+)$/);
   const actionMatch = url.pathname.match(/^\/api\/agent-chat\/subscriptions\/([^/]+)\/actions\/([^/]+)$/);
   if (dispatchRouteMatch && method === 'DELETE') {
+    const denied = requireAgentChatManagement(scope);
+    if (denied) {
+      return denied;
+    }
     const routeId = decodeURIComponent(dispatchRouteMatch[1]!);
-    const removed = ctx.manager.deleteDispatchRouteForManager(routeId, viewerNpub);
+    const removed = ctx.manager.deleteDispatchRouteForManager(routeId, scope.managerNpub);
     if (!removed) {
       return Response.json({ error: 'Dispatch route not found' }, { status: 404 });
     }
     return new Response(null, { status: 204 });
   }
   if (actionMatch && method === 'POST') {
+    const denied = requireAgentChatManagement(scope);
+    if (denied) {
+      return denied;
+    }
     const subscriptionId = decodeURIComponent(actionMatch[1]!);
     const action = decodeURIComponent(actionMatch[2]!);
     try {
       let subscription: WorkspaceSubscriptionRecord | null = null;
       if (action === 'reconnect') {
-        subscription = await ctx.manager.reconnectForManager(subscriptionId, viewerNpub);
+        subscription = await ctx.manager.reconnectForManager(subscriptionId, scope.managerNpub);
       } else if (action === 'refresh-keys') {
-        subscription = await ctx.manager.refreshKeysForManager(subscriptionId, viewerNpub);
+        subscription = await ctx.manager.refreshKeysForManager(subscriptionId, scope.managerNpub);
       } else if (action === 'disable') {
-        subscription = await ctx.manager.setEnabledForManager(subscriptionId, viewerNpub, false);
+        subscription = await ctx.manager.setEnabledForManager(subscriptionId, scope.managerNpub, false);
       } else if (action === 'enable') {
-        subscription = await ctx.manager.setEnabledForManager(subscriptionId, viewerNpub, true);
+        subscription = await ctx.manager.setEnabledForManager(subscriptionId, scope.managerNpub, true);
       } else {
         return Response.json({ error: 'Unknown Agent Chat action' }, { status: 404 });
       }
@@ -606,8 +700,10 @@ export async function handleAgentChatApi(
       return Response.json({
         subscription: serialiseSubscription(
           subscription,
-          ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, viewerNpub),
-          ctx.manager.listAgentsForWorkspaceBot(subscription.workspaceOwnerNpub, subscription.botNpub, viewerNpub),
+          ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, scope.managerNpub),
+          ctx.manager.listAgentsForWorkspaceBot(subscription.workspaceOwnerNpub, subscription.botNpub, scope.managerNpub),
+          null,
+          { canManage: scope.canManage, shared: scope.shared },
         ),
       });
     } catch (error) {
@@ -617,8 +713,12 @@ export async function handleAgentChatApi(
   }
 
   if (match && method === 'DELETE') {
+    const denied = requireAgentChatManagement(scope);
+    if (denied) {
+      return denied;
+    }
     const subscriptionId = decodeURIComponent(match[1]!);
-    const removed = ctx.manager.removeForManager(subscriptionId, viewerNpub);
+    const removed = ctx.manager.removeForManager(subscriptionId, scope.managerNpub);
     if (!removed) {
       return Response.json({ error: 'Subscription not found' }, { status: 404 });
     }
@@ -627,22 +727,28 @@ export async function handleAgentChatApi(
 
   if (match && method === 'GET') {
     const subscriptionId = decodeURIComponent(match[1]!);
-    const subscription = ctx.manager.getForManager(subscriptionId, viewerNpub);
+    const subscription = ctx.manager.getForManager(subscriptionId, scope.managerNpub);
     if (!subscription) {
       return Response.json({ error: 'Subscription not found' }, { status: 404 });
     }
     return Response.json({
       subscription: serialiseSubscription(
         subscription,
-        ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, viewerNpub),
-        ctx.manager.listAgentsForWorkspaceBot(subscription.workspaceOwnerNpub, subscription.botNpub, viewerNpub),
+        ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, scope.managerNpub),
+        ctx.manager.listAgentsForWorkspaceBot(subscription.workspaceOwnerNpub, subscription.botNpub, scope.managerNpub),
+        null,
+        { canManage: scope.canManage, shared: scope.shared },
       ),
     });
   }
 
   if (agentMatch && method === 'DELETE') {
+    const denied = requireAgentChatManagement(scope);
+    if (denied) {
+      return denied;
+    }
     const agentId = decodeURIComponent(agentMatch[1]!);
-    const removed = ctx.manager.removeAgentForManager(agentId, viewerNpub);
+    const removed = ctx.manager.removeAgentForManager(agentId, scope.managerNpub);
     if (!removed) {
       return Response.json({ error: 'Agent not found' }, { status: 404 });
     }

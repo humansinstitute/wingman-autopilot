@@ -83,7 +83,7 @@ import { BotKeyStore } from "./identity/bot-key-store";
 import { createBotKeyApiHandler } from "./identity/bot-key-api";
 import { createBotCryptoApiHandler } from "./identity/bot-crypto-api";
 import { loadWingmanInstanceIdentity } from "./identity/wingman-instance-identity";
-import { isSharedInstanceAccessEnabled } from "./shared-instance";
+import { isSharedAgentDispatchEnabled, isSharedInstanceAccessEnabled } from "./shared-instance";
 import { WorkspaceSubscriptionManager } from './agent-chat/subscription-runtime';
 import { DispatchPipelineRuntime } from './agent-chat/dispatch-pipelines/runtime';
 import { AgentCommentSessionRuntime } from './agent-chat/comment-session-runtime';
@@ -713,6 +713,7 @@ const manager = new ProcessManager(config, {
 });
 
 const sharedInstanceAccessEnabled = isSharedInstanceAccessEnabled();
+const sharedAgentDispatchEnabled = isSharedAgentDispatchEnabled();
 
 const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   getSession: (sid: string) => manager.getSession(sid) ?? null,
@@ -2381,6 +2382,9 @@ const handleApi = createApiRouteHandler({
   },
   agentChatApiContext: {
     manager: workspaceSubscriptionManager,
+    adminNpub,
+    sharedAgentDispatch: sharedAgentDispatchEnabled,
+    isAdminContext,
   },
   voiceNoteUploadApiContext: {
     imageRoot,

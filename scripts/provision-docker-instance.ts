@@ -249,6 +249,7 @@ function main(): void {
     WINGMAN_ADMIN_NPUB: options.adminNpub,
     WINGMAN_PRIV: "",
     WINGMAN_REGISTER: "false",
+    WINGMAN_SHARED_AGENT_DISPATCH: "true",
     WINGMAN_SETUP_NONINTERACTIVE: "true",
   };
 

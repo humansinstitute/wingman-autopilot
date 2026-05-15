@@ -236,6 +236,7 @@ add_env "WINGMAN_IDENTITY_SESSION_SECRET" "$(generate_secret)"
 add_env "WINGMAN_ADMIN_NPUB" "$admin_npub"
 add_env "WINGMAN_PRIV" "$wingman_priv"
 add_env "WINGMAN_REGISTER" "false"
+add_env "WINGMAN_SHARED_AGENT_DISPATCH" "true"
 add_env "WINGMAN_SETUP_NONINTERACTIVE" "true"
 
 write_env

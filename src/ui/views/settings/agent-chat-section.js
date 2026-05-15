@@ -49,6 +49,7 @@ async function loadOperatorState() {
   return {
     subscriptions,
     agents: Array.isArray(agentPayload?.agents) ? agentPayload.agents : [],
+    permissions: subscriptions.permissions || agentPayload?.permissions || { shared: false, canManage: true },
     backendConnections: Array.isArray(backendConnections) ? backendConnections : [],
     defaults: agentPayload?.defaults && typeof agentPayload.defaults === 'object' ? agentPayload.defaults : {},
     chatSessions: filterAgentChatSessions(allSessions),
@@ -353,6 +354,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
       const {
         subscriptions,
         agents,
+        permissions,
         backendConnections,
         defaults,
         chatSessions,
@@ -380,6 +382,8 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
       setupOverviewContainer.append(createAgentDispatchSetupCards({
         subscription: primarySubscription,
         primaryAgent,
+        canManage: permissions?.canManage !== false,
+        shared: permissions?.shared === true,
         availableBackendConnections: backendConnections,
         onEditSubscription: (subscription) => openSubscriptionEditor(subscription),
         onUseBackendConnection: (backendConnection) => {
@@ -408,17 +412,17 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
         subscription: primarySubscription,
         dispatchRoutes,
         pipelineDefinitions,
-        onCreateAgent: () => agentNameModal.open(),
-        onEditAgent: (agent) => openAgentEditor(agent),
-        onRemoveAgent: (agent) => {
+        onCreateAgent: permissions?.canManage === false ? null : () => agentNameModal.open(),
+        onEditAgent: permissions?.canManage === false ? null : (agent) => openAgentEditor(agent),
+        onRemoveAgent: permissions?.canManage === false ? null : (agent) => {
           void removeAgent(agent);
         },
-        onSaveRoute: async (input) => {
+        onSaveRoute: permissions?.canManage === false ? null : async (input) => {
           const route = await saveAgentChatDispatchRoute(input);
           await refreshList();
           return route;
         },
-        onEditChatTemplate: (agent) => {
+        onEditChatTemplate: permissions?.canManage === false ? null : (agent) => {
           if (agent) {
             openAgentEditor(agent, { focusField: 'chat-template' });
             statusLine.textContent = `Editing chat dispatch template for ${agent.agentId}.`;
@@ -430,7 +434,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
           });
           statusLine.textContent = 'Create a local agent to save a chat dispatch template.';
         },
-        onEditTaskTemplate: (agent) => {
+        onEditTaskTemplate: permissions?.canManage === false ? null : (agent) => {
           if (agent) {
             openAgentEditor(agent, { focusField: 'task-template' });
             statusLine.textContent = `Editing task dispatch template for ${agent.agentId}.`;
@@ -442,7 +446,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
           });
           statusLine.textContent = 'Create a local agent to save a task dispatch template.';
         },
-        onEditFlowDispatchTemplate: (agent) => {
+        onEditFlowDispatchTemplate: permissions?.canManage === false ? null : (agent) => {
           if (agent) {
             openAgentEditor(agent, { focusField: 'flow-template' });
             statusLine.textContent = `Editing flow dispatch template for ${agent.agentId}.`;
@@ -454,7 +458,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
           });
           statusLine.textContent = 'Create a local agent to save a flow dispatch template.';
         },
-        onEditTaskReviewTemplate: (agent) => {
+        onEditTaskReviewTemplate: permissions?.canManage === false ? null : (agent) => {
           if (agent) {
             openAgentEditor(agent, { focusField: 'review-template' });
             statusLine.textContent = `Editing task review template for ${agent.agentId}.`;
@@ -466,7 +470,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
           });
           statusLine.textContent = 'Create a local agent to save a task review template.';
         },
-        onEditApprovalDispatchTemplate: (agent) => {
+        onEditApprovalDispatchTemplate: permissions?.canManage === false ? null : (agent) => {
           if (agent) {
             openAgentEditor(agent, { focusField: 'approval-template' });
             statusLine.textContent = `Editing approval dispatch template for ${agent.agentId}.`;
@@ -478,15 +482,15 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
           });
           statusLine.textContent = 'Create a local agent to save an approval dispatch template.';
         },
-        onToggleCapability: (agent, capability, currentlyEnabled) => {
+        onToggleCapability: permissions?.canManage === false ? null : (agent, capability, currentlyEnabled) => {
           void toggleCapability(agent, capability, currentlyEnabled);
         },
       }));
       const additionalAgents = primaryAgent ? agents.slice(1) : agents;
       if (additionalAgents.length > 0) {
         agentRegistryContainer.append(createAgentRegistryPanel(additionalAgents, {
-          edit: (agent) => openAgentEditor(agent),
-          remove: (agent) => {
+          edit: permissions?.canManage === false ? null : (agent) => openAgentEditor(agent),
+          remove: permissions?.canManage === false ? null : (agent) => {
             void removeAgent(agent);
           },
         }, {

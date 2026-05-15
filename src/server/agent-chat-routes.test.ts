@@ -14,6 +14,11 @@ const authContext: RequestAuthContext = {
   session: null,
 };
 
+const adminAuthContext: RequestAuthContext = {
+  npub: 'npub1admin',
+  session: null,
+};
+
 function makeSubscription(overrides: Partial<WorkspaceSubscriptionRecord> = {}): WorkspaceSubscriptionRecord {
   const now = new Date().toISOString();
   return {
@@ -104,6 +109,33 @@ async function postSubscription(manager: WorkspaceSubscriptionManager, backendCo
     'POST',
     authContext,
     { manager },
+  );
+}
+
+async function postSharedSubscription(
+  manager: WorkspaceSubscriptionManager,
+  auth: RequestAuthContext,
+) {
+  const request = new Request('http://localhost/api/agent-chat/subscriptions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      workspaceOwnerNpub: 'npub1workspace',
+      backendBaseUrl: 'https://tower.example.com',
+      sourceAppNpub: 'npub1sourceapp',
+    }),
+  });
+  return await handleAgentChatApi(
+    request,
+    new URL(request.url),
+    'POST',
+    auth,
+    {
+      manager,
+      adminNpub: 'npub1admin',
+      sharedAgentDispatch: true,
+      isAdminContext: (context) => context.npub === 'npub1admin',
+    },
   );
 }
 
@@ -255,5 +287,80 @@ describe('agent-chat routes', () => {
 
     expect(response?.status).toBe(403);
     expect(body.error).toContain('Only the backend connection owner');
+  });
+
+  test('shared agent dispatch lists admin-managed subscriptions for non-admin viewers', async () => {
+    const manager = {
+      listBackendConnectionsForManager: (npub: string) => {
+        expect(npub).toBe('npub1admin');
+        return [makeBackendConnection({ managedByNpub: 'npub1admin' })];
+      },
+      listForManager: (npub: string) => {
+        expect(npub).toBe('npub1admin');
+        return [makeSubscription({ managedByNpub: 'npub1admin' })];
+      },
+      listInterceptsForSubscription: (_subscriptionId: string, npub: string) => {
+        expect(npub).toBe('npub1admin');
+        return [];
+      },
+      listAgentsForWorkspaceBot: (_workspaceOwnerNpub: string, _botNpub: string, npub: string) => {
+        expect(npub).toBe('npub1admin');
+        return [];
+      },
+      listBackendConnectionGrantsForManager: () => {
+        throw new Error('non-admin viewers should not receive backend availability grants');
+      },
+    } as unknown as WorkspaceSubscriptionManager;
+    const request = new Request('http://localhost/api/agent-chat/subscriptions');
+
+    const response = await handleAgentChatApi(
+      request,
+      new URL(request.url),
+      'GET',
+      authContext,
+      {
+        manager,
+        adminNpub: 'npub1admin',
+        sharedAgentDispatch: true,
+        isAdminContext: () => false,
+      },
+    );
+    const body = await response!.json();
+
+    expect(response?.status).toBe(200);
+    expect(body.permissions).toEqual({ shared: true, canManage: false });
+    expect(body.subscriptions).toHaveLength(1);
+    expect(body.subscriptions[0].managedByNpub).toBe('npub1admin');
+    expect(body.subscriptions[0].operator.canManage).toBe(false);
+    expect(body.subscriptions[0].operator.shared).toBe(true);
+  });
+
+  test('shared agent dispatch blocks non-admin subscription writes', async () => {
+    const manager = {
+      createOrUpdate: () => {
+        throw new Error('non-admin writes should be blocked before manager calls');
+      },
+    } as unknown as WorkspaceSubscriptionManager;
+
+    const response = await postSharedSubscription(manager, authContext);
+    const body = await response!.json();
+
+    expect(response?.status).toBe(403);
+    expect(body.error).toContain('shared');
+  });
+
+  test('shared agent dispatch writes as the admin manager for admins', async () => {
+    const manager = buildManager(async (input) => {
+      expect(input.managedByNpub).toBe('npub1admin');
+      return makeSubscription({ managedByNpub: 'npub1admin' });
+    });
+
+    const response = await postSharedSubscription(manager, adminAuthContext);
+    const body = await response!.json();
+
+    expect(response?.status).toBe(200);
+    expect(body.subscription.managedByNpub).toBe('npub1admin');
+    expect(body.subscription.operator.canManage).toBe(true);
+    expect(body.subscription.operator.shared).toBe(true);
   });
 });
