@@ -47,8 +47,10 @@ mock.module('../yoke-runtime', () => ({
 }));
 
 const {
+  createDispatchChatTaskCreator,
   createDispatchImplementationReviewProgressCommenter,
   createDispatchImplementationReviewTaskEnsurer,
+  createDispatchNeedsInputPublisher,
   createDispatchTaskStateUpdater,
 } = await import('./flightdeck-publisher');
 const { DispatchPipelineRuntime } = await import('./runtime');
@@ -147,6 +149,157 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     expect(chatCall).toContain('--skip-refresh');
     expect(chatCall).toContain('channel-1');
     expect(chatCall).toContain('thread-1');
+  });
+
+  test('chat-created task descriptions include the compact origin thread details', async () => {
+    const createTask = createDispatchChatTaskCreator({
+      eventInput: {
+        subscription: {
+          subscriptionId: 'sub-1',
+          workspaceOwnerNpub: 'npub1workspace',
+          sourceAppNpub: 'npub1source',
+          backendBaseUrl: 'https://tower.example.com',
+          botNpub: 'npub1bot',
+          wsKeyNpub: 'npub1wskey',
+        },
+        triggerKind: 'chat',
+        capability: 'chat_intercept',
+        recordId: 'chat-message-2',
+        record: {},
+        payload: {},
+        recordFamily: 'chat',
+        recordState: null,
+        recordVersion: 1,
+        updaterNpub: 'npub1requester',
+        bindingType: 'thread',
+        bindingId: 'thread-1',
+        channelId: 'channel-1',
+        threadId: 'thread-1',
+      },
+      agent: {
+        agentId: 'agent-1',
+        workingDirectory: '/tmp/agent-work',
+      },
+      botIdentity: {
+        botNpub: 'npub1bot',
+        botPubkeyHex: 'ab'.repeat(32),
+        botSecret: new Uint8Array(32),
+      },
+      runtime: {
+        yokeStateDir: '/tmp/yoke-state',
+        commandPrefix: 'node yoke',
+        commands: {},
+        error: null,
+      },
+    } as never);
+
+    const result = await createTask({
+      dispatchTask: true,
+      pipelineDefinitionId: 'do-and-review',
+      taskDraft: {
+        title: 'Create requested image asset',
+        instructions: 'Create an image of a red kite over Perth city at sunset.',
+      },
+      workPlan: {
+        taskSummary: 'Create requested image asset',
+        instructions: 'Create an image of a red kite over Perth city at sunset.',
+        originThread: [
+          {
+            messageId: 'msg-1',
+            senderNpub: 'npub1requester',
+            body: 'Can you make an image of a red kite over Perth city at sunset?',
+          },
+          {
+            messageId: 'msg-2',
+            senderNpub: 'npub1requester',
+            body: 'Use do-and-review for it.',
+          },
+        ],
+      },
+    });
+
+    expect(result).toMatchObject({
+      created: true,
+      taskId: 'task-created-1',
+    });
+    const createCall = yokeCommandCalls.find((args) => args[0] === 'tasks' && args[1] === 'create');
+    const description = createCall?.[createCall.indexOf('--description') + 1] ?? '';
+    expect(description).toContain('Originating chat context:');
+    expect(description).toContain('red kite over Perth city at sunset');
+    expect(description).toContain('Use do-and-review for it.');
+  });
+
+  test('needs-input publisher comments on the task and asks in the source chat', async () => {
+    const publishNeedsInput = createDispatchNeedsInputPublisher({
+      eventInput: {
+        subscription: {
+          subscriptionId: 'sub-1',
+          workspaceOwnerNpub: 'npub1workspace',
+          sourceAppNpub: 'npub1source',
+          backendBaseUrl: 'https://tower.example.com',
+          botNpub: 'npub1bot',
+          wsKeyNpub: 'npub1wskey',
+        },
+        triggerKind: 'chat',
+        capability: 'chat_intercept',
+        recordId: 'chat-message-1',
+        record: {},
+        payload: {},
+        recordFamily: 'chat',
+        recordState: null,
+        recordVersion: 1,
+        updaterNpub: 'npub1requester',
+        bindingType: 'thread',
+        bindingId: 'thread-1',
+        channelId: 'channel-1',
+        threadId: 'thread-1',
+      },
+      agent: {
+        agentId: 'agent-1',
+        workingDirectory: '/tmp/agent-work',
+      },
+      botIdentity: {
+        botNpub: 'npub1bot',
+        botPubkeyHex: 'ab'.repeat(32),
+        botSecret: new Uint8Array(32),
+      },
+      runtime: {
+        yokeStateDir: '/tmp/yoke-state',
+        commandPrefix: 'node yoke',
+        commands: {},
+        error: null,
+      },
+    } as never);
+
+    const result = await publishNeedsInput({
+      createdTask: {
+        taskId: 'task-1',
+      },
+      workPlan: {
+        taskId: 'task-1',
+      },
+      workerResult: {
+        completed: false,
+        summary: 'Image requirements are missing.',
+        result: 'needs_input: image requirements are missing.',
+        blockers: ['Missing image prompt.'],
+        taskUpdateComment: 'What should the image show, and are there any required style or size constraints?',
+      },
+    });
+
+    expect(result).toMatchObject({
+      published: true,
+      operation: 'tasks.needs-input',
+      taskId: 'task-1',
+      chatNotified: true,
+    });
+
+    const commentCall = yokeCommandCalls.find((args) => args[0] === 'tasks' && args[1] === 'comment');
+    expect(commentCall?.[commentCall.indexOf('--body') + 1]).toContain('Question: What should the image show');
+
+    const chatCall = yokeCommandCalls.find((args) => args[0] === 'chat' && args[1] === 'reply-current');
+    expect(chatCall?.[chatCall.indexOf('--body') + 1]).toContain('Task: @[needs-input task](mention:task:task-1)');
+    expect(chatCall?.[chatCall.indexOf('--body') + 1]).toContain('Question: What should the image show');
   });
 
   test('implementation review loop creates a task, comments manager progress, and closes out to chat', async () => {
@@ -360,6 +513,7 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     expect(registry?.['dispatch.markTaskReadyForReview']).toBeFunction();
     expect(registry?.['dispatch.ensureImplementationReviewTask']).toBeFunction();
     expect(registry?.['dispatch.commentImplementationReviewProgress']).toBeFunction();
+    expect(registry?.['dispatch.publishNeedsInput']).toBeFunction();
     const result = await registry!['dispatch.markTaskReadyForReview']!({
       workPlan: {
         taskId: 'task-1',

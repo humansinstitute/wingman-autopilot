@@ -448,6 +448,38 @@ describe("memory pipeline functions", () => {
     expect(result.actionsTaken).toEqual(["created task task-1", "started pipeline run run-1"]);
   });
 
+  test("dispatch.prepareChatDispatchResponse suppresses duplicate reply when needs input was already posted", async () => {
+    const result = await builtinPipelineFunctions["dispatch.prepareChatDispatchResponse"]!({
+      decision: {
+        dispatchTask: true,
+        pipelineDefinitionId: "do-and-review",
+        confidence: 0.9,
+      },
+      createdTask: {
+        taskId: "task-1",
+        workPlan: {
+          taskSummary: "Create requested image asset",
+        },
+      },
+      childPipeline: {
+        started: true,
+        status: "needs_input",
+        pipelineName: "do-and-review",
+        pipelineRunId: "run-1",
+        needsInputUpdate: {
+          chatNotified: true,
+          question: "What should the image show?",
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      shouldRespond: false,
+      reasoningSummary: "The child pipeline needs input; a clarification question was published.",
+    });
+    expect(result.responseDraft).toContain("Question: What should the image show?");
+  });
+
   test("memory.searchEntities returns an empty graphContext source set when graph memory is not configured", async () => {
     const previous = {
       PIPELINE_MEMORY_NEO4J_HTTP_URL: process.env.PIPELINE_MEMORY_NEO4J_HTTP_URL,

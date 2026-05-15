@@ -24,6 +24,7 @@ import {
   createDispatchCreatedTaskBlocker,
   createDispatchImplementationReviewProgressCommenter,
   createDispatchImplementationReviewTaskEnsurer,
+  createDispatchNeedsInputPublisher,
   createDispatchTaskStateUpdater,
   pipelineNeedsFlightDeckPublisher,
   prepareDispatchPipelineFlightDeckRuntime,
@@ -279,6 +280,18 @@ export class DispatchPipelineRuntime {
     const run = this.runPipeline
       ? await this.runPipeline(runnerInput)
       : this.startPipeline(runnerInput);
+    const needsInputUpdate = run.status === 'needs_input'
+      ? await publishNeedsInputForRun(functions, {
+          ...envelope,
+          workerResult: objectValue(run.result),
+          agentResponse: objectValue(run.result),
+          pipelineRun: {
+            id: run.id,
+            definitionId: run.definitionId,
+            status: run.status,
+          },
+        })
+      : null;
 
     return {
       handled: true,
@@ -289,7 +302,9 @@ export class DispatchPipelineRuntime {
           pipelineRunId: run.id,
           concurrencyKey,
           dedupeKey,
-          diagnosticSummary: `Started dispatch pipeline ${route.pipelineDefinitionId}.`,
+          diagnosticSummary: needsInputUpdate
+            ? `Started dispatch pipeline ${route.pipelineDefinitionId}; needs-input question published.`
+            : `Started dispatch pipeline ${route.pipelineDefinitionId}.`,
         }),
       ],
       lastPipelineRunId: run.id,
@@ -347,6 +362,12 @@ export class DispatchPipelineRuntime {
         runtime: input.flightDeckRuntime,
       });
       registry['dispatch.blockTaskIfPipelineLaunchFailed'] = createDispatchCreatedTaskBlocker({
+        eventInput: input.eventInput,
+        agent: input.agent,
+        botIdentity: input.eventInput.botIdentity ?? null,
+        runtime: input.flightDeckRuntime,
+      });
+      registry['dispatch.publishNeedsInput'] = createDispatchNeedsInputPublisher({
         eventInput: input.eventInput,
         agent: input.agent,
         botIdentity: input.eventInput.botIdentity ?? null,
@@ -443,12 +464,28 @@ export class DispatchPipelineRuntime {
           ownerAlias: input.ownerAlias,
           callbackOrigin: this.callbackOrigin,
         });
+        const needsInputUpdate = run.status === 'needs_input'
+          ? await publishNeedsInputForRun(childFunctions, {
+              ...childInput,
+              workPlan,
+              createdTask: objectValue(payload.createdTask ?? childInput.createdTask),
+              workerResult: objectValue(run.result),
+              agentResponse: objectValue(run.result),
+              childPipeline: {
+                status: run.status,
+                pipelineRunId: run.id,
+                pipelineDefinitionId: childDefinition.id,
+                pipelineName: childDefinition.name,
+              },
+            })
+          : null;
         return {
           started: true,
           status: run.status,
           pipelineRunId: run.id,
           pipelineDefinitionId: childDefinition.id,
           pipelineName: childDefinition.name,
+          needsInputUpdate,
         };
       } catch (error) {
         return {
@@ -576,6 +613,26 @@ export class DispatchPipelineRuntime {
         pipeline_definition_id: route.pipelineDefinitionId,
         diagnostic_summary: outcome.diagnosticSummary,
       },
+    };
+  }
+}
+
+async function publishNeedsInputForRun(
+  registry: FunctionRegistry,
+  input: JsonObject,
+): Promise<JsonObject | null> {
+  const publishNeedsInput = registry['dispatch.publishNeedsInput'];
+  if (!publishNeedsInput) {
+    return null;
+  }
+  try {
+    return objectValue(await publishNeedsInput(input)) as JsonObject;
+  } catch (error) {
+    return {
+      published: false,
+      status: 'failed',
+      operation: 'tasks.needs-input',
+      reason: error instanceof Error ? error.message : String(error),
     };
   }
 }

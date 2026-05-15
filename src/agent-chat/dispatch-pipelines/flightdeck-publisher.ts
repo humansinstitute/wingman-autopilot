@@ -396,6 +396,56 @@ export function createDispatchCreatedTaskBlocker(
   };
 }
 
+export function createDispatchNeedsInputPublisher(
+  context: DispatchPipelineFlightDeckPublisherContext,
+): DeclarativeFunction {
+  return async (input) => {
+    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+      return {
+        published: false,
+        status: 'failed',
+        operation: 'tasks.needs-input',
+        reason: context.runtime.error ?? 'Flight Deck runtime was not prepared.',
+      };
+    }
+
+    const question = buildNeedsInputQuestion(input);
+    const taskId = resolveTaskId(context, input);
+    let commentResult: unknown = null;
+    let commentError: string | null = null;
+    if (taskId) {
+      try {
+        commentResult = await runYokeJson(context, [
+          'tasks',
+          'comment',
+          taskId,
+          '--body',
+          buildNeedsInputTaskComment(input, question),
+          '--json',
+        ]);
+      } catch (error) {
+        commentError = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    const chatNotification = await publishNeedsInputChatNotification(context, input, taskId, question);
+
+    return {
+      published: !commentError && (Boolean(commentResult) || chatNotification.notified),
+      status: commentError || chatNotification.error ? 'partial' : 'ok',
+      operation: 'tasks.needs-input',
+      taskId,
+      question,
+      commentResult,
+      commentError,
+      chatNotified: chatNotification.notified,
+      chatResult: chatNotification.result,
+      chatError: chatNotification.error,
+      chatSkippedReason: chatNotification.skippedReason,
+    };
+  };
+}
+
 export function createDispatchImplementationReviewTaskEnsurer(
   context: DispatchPipelineFlightDeckPublisherContext,
 ): DeclarativeFunction {
@@ -891,6 +941,7 @@ function stepNeedsFlightDeckPublisher(step: DeclarativeStep): boolean {
       || step.function === 'dispatch.hydrateChatContext'
       || step.function === 'dispatch.createChatTask'
       || step.function === 'dispatch.blockTaskIfPipelineLaunchFailed'
+      || step.function === 'dispatch.publishNeedsInput'
       || step.function === 'dispatch.markTaskInProgress'
       || step.function === 'dispatch.markTaskReadyForReview'
       || step.function === 'dispatch.ensureImplementationReviewTask'
@@ -1167,12 +1218,48 @@ function buildChatCreatedTaskDescription(
     getText(workPlan.workdir) ? `- Workdir: ${getText(workPlan.workdir)}` : '',
     getText(workPlan.assignerNpub) ? `- Assigner: ${getText(workPlan.assignerNpub)}` : '',
     getText(workPlan.reviewerNpub) ? `- Reviewer: ${getText(workPlan.reviewerNpub)}` : '',
+    ...formatOriginThreadContext(workPlan.originThread),
+    ...formatReferencedRecordsContext(workPlan.referencedRecords),
     '',
     ...formatList('Acceptance criteria', getStringArray(workPlan.acceptanceCriteria)),
     ...formatList('Execution plan', getStringArray(workPlan.executionPlan)),
     ...formatList('Manager checklist', getStringArray(workPlan.managerChecklist)),
   ].filter((line) => line !== '');
   return lines.join('\n');
+}
+
+function formatOriginThreadContext(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    return [];
+  }
+  const lines = ['', 'Originating chat context:'];
+  for (const entry of value.slice(-8)) {
+    const message = objectValue(entry);
+    const body = compactSingleLine(getText(message.body), 700);
+    if (!body) continue;
+    const sender = compactSingleLine(getText(message.senderNpub), 24) ?? 'unknown sender';
+    const messageId = getText(message.messageId);
+    lines.push(`- ${sender}${messageId ? ` (${messageId})` : ''}: ${body}`);
+  }
+  return lines.length > 2 ? lines : [];
+}
+
+function formatReferencedRecordsContext(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    return [];
+  }
+  const lines = ['', 'Referenced Flight Deck records:'];
+  for (const entry of value.slice(0, 8)) {
+    const record = objectValue(entry);
+    const label = getText(record.title)
+      ?? getText(record.recordId)
+      ?? getText(record.id)
+      ?? 'Untitled record';
+    const family = getText(record.family) ?? 'record';
+    const summary = compactSingleLine(getText(record.summary), 500);
+    lines.push(`- ${family}: ${label}${summary ? ` - ${summary}` : ''}`);
+  }
+  return lines.length > 2 ? lines : [];
 }
 
 function formatList(title: string, items: string[]): string[] {
@@ -1310,6 +1397,115 @@ function buildInProgressComment(input: JsonObject): string {
     `Summary: ${summary}`,
     ...(workStyle ? [`Dispatch target: ${workStyle}`] : []),
   ].join('\n');
+}
+
+async function publishNeedsInputChatNotification(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  input: JsonObject,
+  taskId: string | null,
+  question: string,
+): Promise<{
+  notified: boolean;
+  result: unknown;
+  error: string | null;
+  skippedReason: string | null;
+}> {
+  const workPlan = objectValue(input.workPlan);
+  const origin = objectValue(workPlan.origin);
+  const channelId = context.eventInput.channelId
+    ?? getText(origin.channelId)
+    ?? getText(objectValue(input.routing).channelId);
+  const threadId = context.eventInput.threadId
+    ?? getText(origin.threadId)
+    ?? getText(objectValue(input.routing).threadId);
+  if (!channelId || !threadId) {
+    return {
+      notified: false,
+      result: null,
+      error: null,
+      skippedReason: 'missing_origin_chat_thread',
+    };
+  }
+
+  try {
+    const result = await runYokeJson(context, [
+      'chat',
+      'reply-current',
+      '--body',
+      buildNeedsInputChatReply(input, taskId, question),
+      '--skip-refresh',
+      '--channel',
+      channelId,
+      '--thread',
+      threadId,
+      '--format',
+      'json',
+    ]);
+    return {
+      notified: true,
+      result,
+      error: null,
+      skippedReason: null,
+    };
+  } catch (error) {
+    return {
+      notified: false,
+      result: null,
+      error: error instanceof Error ? error.message : String(error),
+      skippedReason: null,
+    };
+  }
+}
+
+function buildNeedsInputTaskComment(input: JsonObject, question: string): string {
+  const workerResult = extractNeedsInputPayload(input);
+  const summary = getText(workerResult.summary) ?? 'The pipeline needs input before it can continue.';
+  const lines = [
+    'Pipeline needs input before it can continue.',
+    `Summary: ${summary}`,
+    `Question: ${question}`,
+  ];
+  const blockers = getStringArray(workerResult.blockers);
+  if (blockers.length > 0) {
+    lines.push(`Blockers: ${blockers.join('; ')}`);
+  }
+  return lines.join('\n');
+}
+
+function buildNeedsInputChatReply(input: JsonObject, taskId: string | null, question: string): string {
+  const lines = [
+    'I need more information before I can continue.',
+    ...(taskId ? [`Task: ${mention('task', taskId, 'needs-input task')}`] : []),
+    `Question: ${question}`,
+  ];
+  const blockers = getStringArray(extractNeedsInputPayload(input).blockers);
+  if (blockers.length > 0) {
+    lines.push(`Blockers: ${blockers.join('; ')}`);
+  }
+  return lines.join('\n');
+}
+
+function buildNeedsInputQuestion(input: JsonObject): string {
+  const workerResult = extractNeedsInputPayload(input);
+  const result = getText(workerResult.result);
+  const resultQuestion = result?.replace(/^needs_input:\s*/i, '').trim();
+  const blockers = getStringArray(workerResult.blockers);
+  return getText(workerResult.taskUpdateComment)
+    ?? getText(workerResult.clarifyingQuestion)
+    ?? getText(workerResult.question)
+    ?? (resultQuestion && resultQuestion.length > 0 ? resultQuestion : null)
+    ?? (blockers.length > 0 ? `Please resolve: ${blockers.join('; ')}` : null)
+    ?? 'What information should I use to continue this task?';
+}
+
+function extractNeedsInputPayload(input: JsonObject): Record<string, unknown> {
+  for (const candidate of [input.workerResult, input.agentResponse, input.result]) {
+    const value = objectValue(candidate);
+    if (Object.keys(value).length > 0) {
+      return value;
+    }
+  }
+  return input;
 }
 
 function buildImplementationReviewTaskTitle(

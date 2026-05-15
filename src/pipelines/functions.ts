@@ -373,6 +373,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         "For generic or miscellaneous chat-created tasks, choose do-and-review.",
         "Use software-implementation-review-loop only for code, repository, build, test, deployment, or implementation work.",
         "Use research-and-report when the requested output is explicitly research with a report or document.",
+        "When dispatching a task, include the concrete visible request details in taskDraft.instructions instead of telling the worker to go inspect the thread.",
         "Choose a scope from scopes when one fits; if scopes is empty or no scope fits, set scopeId to null and continue.",
       ],
     };
@@ -395,6 +396,16 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       operation: "tasks.block-on-pipeline-launch-failure",
       reason: "This function only updates Flight Deck tasks when the pipeline is launched by a Wingman dispatch route.",
       childPipeline: input.childPipeline ?? null,
+    };
+  },
+
+  async "dispatch.publishNeedsInput"(input) {
+    return {
+      published: false,
+      status: "not_configured",
+      operation: "tasks.needs-input",
+      reason: "This function only publishes needs-input questions when the pipeline is launched by a Wingman dispatch route.",
+      workerResult: input.workerResult ?? input.agentResponse ?? null,
     };
   },
 
@@ -715,17 +726,23 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const pipelineName = getText(childPipeline.pipelineName) ?? getText(decision.pipelineDefinitionId);
     const pipelineRunId = getText(childPipeline.pipelineRunId);
     const launchFailed = childPipeline.started === false || getText(childPipeline.status) === "failed";
+    const needsInput = getText(childPipeline.status) === "needs_input";
+    const needsInputUpdate = objectValue(childPipeline.needsInputUpdate);
     let responseDraft = getText(decision.responseDraft) ?? "Done.";
     if (decision.dispatchTask === true && taskId) {
-      responseDraft = launchFailed
+      responseDraft = needsInput
+        ? `I created task ${taskMention} and started ${pipelineName ?? "the selected pipeline"}${pipelineRunId ? ` (${pipelineRunId})` : ""}, but it needs input before it can continue.${getText(needsInputUpdate.question) ? `\nQuestion: ${getText(needsInputUpdate.question)}` : ""}`
+        : launchFailed
         ? `I created task ${taskMention}, but the selected pipeline did not start: ${getText(childPipeline.reason) ?? "unknown error"}. I marked the task blocked for review.`
         : `I created task ${taskMention} and started ${pipelineName ?? "the selected pipeline"}${pipelineRunId ? ` (${pipelineRunId})` : ""}. I will hand it back for review when the pipeline finishes.`;
     }
     return {
-      shouldRespond: true,
+      shouldRespond: !(needsInput && needsInputUpdate.chatNotified === true),
       responseDraft,
       reasoningSummary: getText(decision.clarifyingQuestion)
         ? "Asked a clarifying question instead of dispatching work."
+        : needsInput
+          ? "The child pipeline needs input; a clarification question was published."
         : decision.dispatchTask === true
           ? "Created a task and started the selected pipeline."
           : "Responded directly without dispatching task-backed work.",
