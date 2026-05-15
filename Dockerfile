@@ -1,4 +1,4 @@
-FROM node:22-bookworm
+FROM node:22-trixie
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -25,6 +25,7 @@ RUN apt-get update \
     git \
     jq \
     less \
+    libvulkan1 \
     make \
     openssh-client \
     pkg-config \
