@@ -206,6 +206,7 @@ if [[ "$base_url" == https://* ]]; then
 fi
 
 mkdir -p "$workspace_host_path"
+chmod 0777 "$workspace_host_path"
 
 add_env "COMPOSE_PROJECT_NAME" "$instance_name"
 add_env "WINGMAN_INSTANCE_NAME" "$instance_name"

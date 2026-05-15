@@ -129,6 +129,11 @@ The wizard prompts for:
 - app routing mode
 - optional `WINGMAN_PRIV`
 
+The wizard creates the host workspace directory and makes it writable by the
+container user. This matters on Linux hosts because the container runs as the
+non-root `wingman` user, while the bind-mounted host directory is usually owned
+by the SSH user.
+
 At the end, let the wizard build and start Docker, or run:
 
 ```bash
@@ -169,6 +174,9 @@ bun run docker:provision \
   --base-url https://wingman.example.com \
   --workspace-host-path "$HOME/.wm-ap-mw"
 ```
+
+`docker:provision` creates the host workspace directory and sets mode `0777` so
+the non-root container user can create agent workdirs below `/workspace`.
 
 Build and start:
 
@@ -211,7 +219,8 @@ Use the correct env file for the instance you are updating. Do not use the plain
 ## Notes
 
 - The Docker image defaults to `wingman-autopilot:local`.
-- `/workspace` inside the container is a bind mount from `WINGMAN_WORKSPACE_HOST_PATH` on the host.
+- `/workspace` inside the container is a bind mount from `WINGMAN_WORKSPACE_HOST_PATH` on the host. If agent setup fails with `EACCES: permission denied, mkdir '/workspace/<agent>'`, fix the host path permissions and recreate the container:
+  `chmod 0777 "$WINGMAN_WORKSPACE_HOST_PATH" && docker compose --env-file .env.<instance-name> up -d --force-recreate wingman`.
 - `/home/wingman`, `/app/data`, and `/app/tmp` are persistent Docker volumes.
 - `WINGMAN_ADMIN_NPUB` is required for Docker startup.
 - `WINGMAN_PRIV` is optional but recommended when the instance should use one shared Wingman bot identity.

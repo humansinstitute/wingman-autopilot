@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -148,5 +148,23 @@ describe("docker provisioning", () => {
     expect(result.status).toBe(0);
     const content = readFileSync(envPath, "utf8");
     expect(content).toContain(`WINGMAN_WORKSPACE_HOST_PATH=${workspacePath}`);
+  });
+
+  test("makes the host workspace writable by the container user", () => {
+    const envPath = join(makeTempDir(), ".env");
+    const workspacePath = join(makeTempDir(), "workspace");
+    const result = runProvision([
+      "--env",
+      envPath,
+      "--instance-name",
+      "wingman-99",
+      "--workspace-host-path",
+      workspacePath,
+      "--admin-npub",
+      "npub1operator",
+    ]);
+
+    expect(result.status).toBe(0);
+    expect(statSync(workspacePath).mode & 0o777).toBe(0o777);
   });
 });

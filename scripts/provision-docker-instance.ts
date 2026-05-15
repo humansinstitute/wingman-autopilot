@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -218,6 +218,7 @@ function main(): void {
   const secureCookies = baseUrl.startsWith("https://") ? "true" : "false";
   const workspaceHostPath = resolveWorkspaceHostPath(options.workspaceHostPath, picked.index);
   mkdirSync(workspaceHostPath, { recursive: true });
+  chmodSync(workspaceHostPath, 0o777);
 
   const values: Record<string, string> = {
     COMPOSE_PROJECT_NAME: picked.name,
