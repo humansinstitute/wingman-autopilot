@@ -16,153 +16,6 @@ export interface PipelineDefinitionRecord {
   spec: DeclarativePipeline;
 }
 
-const DEMO_DEFINITION = {
-  name: "demo-declarative-pipeline",
-  input: {
-    text: "Pete wants declarative JSON pipelines where each step takes an object and returns an object.",
-  },
-  steps: [
-    {
-      name: "normalise",
-      type: "code",
-      function: "text.normalise",
-      input: { pick: { text: "$.text" } },
-      assign: "$.normalised",
-    },
-    {
-      name: "extract-features",
-      type: "code",
-      function: "text.features",
-      input: { pick: { text: "$.normalised.text", words: "$.normalised.words" } },
-      assign: "$.features",
-    },
-    {
-      name: "classify",
-      type: "agent",
-      input: {
-        pick: {
-          text: "$.normalised.text",
-          features: "$.features",
-          allowedKinds: "$.normalised.allowedKinds",
-        },
-      },
-      prompt: "Classify this pipeline input for the next software step. Return result.kind as one of allowedKinds, result.reason as a short sentence, and result.confidence as a number from 0 to 1.",
-      assign: "$.agentRaw",
-    },
-    {
-      name: "parse-agent-output",
-      type: "code",
-      function: "agent.parseClassification",
-      input: { pick: { raw: "$.agentRaw", allowedKinds: "$.normalised.allowedKinds" } },
-      assign: "$.classification",
-    },
-    {
-      name: "route",
-      type: "code",
-      function: "route.byKind",
-      input: { pick: { kind: "$.classification.kind" } },
-      assign: "$.route",
-    },
-    {
-      name: "finalise",
-      type: "code",
-      function: "object.finalise",
-    },
-  ],
-};
-
-const PARAGRAPH_ANALYSIS_DEMO_DEFINITION = {
-  name: "demo-paragraph-two-agent-analysis",
-  input: {
-    targetParagraphNumber: 2,
-    text: [
-      "The first paragraph introduces the pipeline idea. It explains that most of the work should happen in deterministic TypeScript steps before an agent is asked to help.",
-      "The second paragraph is the one we want the Wingman agent to analyse. It contains a decision point: should the pipeline continue automatically, ask for clarification, or hand structured context to another job?",
-      "The third paragraph closes the example. It exists so the paragraph splitter has more than one surrounding paragraph and the UI can show how the selected paragraph moved through the run.",
-    ].join("\n\n"),
-  },
-  steps: [
-    {
-      name: "split-paragraphs",
-      type: "code",
-      function: "text.paragraphs",
-      input: {
-        pick: {
-          text: "$.text",
-          targetParagraphNumber: "$.targetParagraphNumber",
-        },
-      },
-      assign: "$.document",
-    },
-    {
-      name: "analyse-paragraph-two",
-      type: "agent",
-      agent: "codex",
-      directory: "/Users/mini/wingmen/wingman21",
-      input: {
-        pick: {
-          paragraphNumber: "$.document.selectedParagraph.number",
-          paragraph: "$.document.selectedParagraph.text",
-          paragraphCount: "$.document.paragraphCount",
-        },
-      },
-      prompt: "Analyse the selected paragraph for a software pipeline handoff. Post the webhook result object with these fields: summary as a short sentence, sentiment as one of positive/neutral/negative/mixed, keyPoints as an array of short strings, actionRequired as a boolean, and confidence as a number from 0 to 1.",
-      assign: "$.agentRaw",
-    },
-    {
-      name: "parse-analysis",
-      type: "code",
-      function: "agent.parseParagraphAnalysis",
-      input: {
-        pick: {
-          raw: "$.agentRaw",
-          paragraph: "$.document.selectedParagraph",
-        },
-      },
-      assign: "$.analysis",
-    },
-    {
-      name: "finalise-paragraph-analysis",
-      type: "code",
-      function: "object.finaliseParagraphAnalysis",
-    },
-  ],
-};
-
-const GRAPH_CONTEXT_MEMORY_DEMO_DEFINITION = {
-  name: "demo-memory-graph-context",
-  description: "Extracts searchable entities from a prompt, searches graph memory, and returns graphContext for later agent steps.",
-  input: {
-    prompt: "How should Wingmen declarative pipelines use Redshift context when reviewing a design?",
-    topKPerEntity: 3,
-    maxEntities: 8,
-    maxMatches: 12,
-    graphContextMaxChars: 4000,
-    memoryAgent: "codex",
-    workingDirectory: "/Users/mini/wingmen/wingman21",
-  },
-  steps: [
-    {
-      name: "recall-graph-memory",
-      description: "Reusable memory recall block: extract entities, search graph memory, consolidate graphContext.",
-      type: "block",
-      block: "memory.graphContext",
-      input: {
-        pick: {
-          prompt: "$.prompt",
-          topKPerEntity: "$.topKPerEntity",
-          maxEntities: "$.maxEntities",
-          maxMatches: "$.maxMatches",
-          maxChars: "$.graphContextMaxChars",
-          agent: "$.memoryAgent",
-          directory: "$.workingDirectory",
-        },
-      },
-      assign: "$.memory.graph",
-    },
-  ],
-};
-
 const AGENT_DISPATCH_CHAT_DEFINITION = {
   name: "agent-dispatch-chat",
   description: "Default dispatch pipeline for chat advisories. It hydrates the source thread, classifies whether task-backed work is needed, optionally creates an in-progress task and starts the selected pipeline, then replies to the source Flight Deck thread.",
@@ -349,8 +202,8 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
   ],
 };
 
-const AGENT_DISPATCH_TASK_DEMO_DEFINITION = {
-  name: "demo-agent-dispatch-task-response",
+const AGENT_DISPATCH_TASK_DEFINITION = {
+  name: "agent-dispatch-task-response",
   description: "Task intake dispatch pipeline. It investigates the task, chooses a longer-running software implementation or generic do-and-review child pipeline, starts it, then comments back with the launched work plan.",
   input: {
     dispatch: { triggerKind: "task" },
@@ -691,9 +544,9 @@ const RESEARCH_AND_REPORT_DEFINITION = {
   ],
 };
 
-const AGENT_DISPATCH_COMMENT_DEMO_DEFINITION = {
-  name: "demo-agent-dispatch-comment-response",
-  description: "Demo dispatch pipeline for task/document comment advisories. It asks one agent step to draft a reply, then publishes it to the source Flight Deck comment thread.",
+const AGENT_DISPATCH_COMMENT_DEFINITION = {
+  name: "agent-dispatch-comment-response",
+  description: "Default dispatch pipeline for task/document comment advisories. It asks one agent step to draft a reply, then publishes it to the source Flight Deck comment thread.",
   input: {
     dispatch: { triggerKind: "comment" },
     workspace: { workspaceOwnerNpub: "npub1workspace", sourceAppNpub: "npub1source" },
@@ -747,65 +600,8 @@ const AGENT_DISPATCH_COMMENT_DEMO_DEFINITION = {
   ],
 };
 
-const AGENT_DISPATCH_TASK_REVIEW_DEMO_DEFINITION = {
-  name: "demo-agent-dispatch-task-review-response",
-  description: "Demo dispatch pipeline for task review advisories. It asks one agent step to review completion evidence, then updates the source Flight Deck task record.",
-  input: {
-    dispatch: { triggerKind: "task_review" },
-    workspace: { workspaceOwnerNpub: "npub1workspace", sourceAppNpub: "npub1source" },
-    agent: { agentId: "primary", label: "Primary Wingman", workingDirectory: "/workspace", defaultAgent: "codex" },
-    record: {
-      recordId: "task-review-demo",
-      recordFamily: "task",
-      recordState: "review",
-      payload: {
-        task_id: "task-review-demo",
-        title: "Review completed UI fix",
-        description: "Check the implementation and decide whether it is ready to accept.",
-        state: "review",
-        assigned_to: "npub1bot",
-      },
-    },
-    routing: { bindingId: "task-review-demo", bindingType: "task", changedFields: ["state"] },
-  },
-  steps: [
-    {
-      name: "draft-task-review-response",
-      type: "agent",
-      agent: "$.agent.defaultAgent",
-      directory: "$.agent.workingDirectory",
-      input: {
-        pick: {
-          workspace: "$.workspace",
-          agent: "$.agent",
-          record: "$.record",
-          routing: "$.routing",
-        },
-      },
-      prompt: "You are handling a Wingman task review dispatch. Review the task payload and decide whether the work should be accepted, rejected, or sent back for changes. Do not run any Flight Deck/Yoke CLI commands yourself; the next deterministic pipeline step will update the task. Return JSON fields: decision as accept/reject/changes_requested, reviewSummary string, evidenceChecked array, requiredChanges array, replyDraft string, confidence number from 0 to 1.",
-      assign: "$.agentResponse",
-    },
-    {
-      name: "publish-task-review",
-      type: "code",
-      function: "dispatch.publishFlightDeckResponse",
-      input: {
-        pick: {
-          dispatch: "$.dispatch",
-          workspace: "$.workspace",
-          agent: "$.agent",
-          record: "$.record",
-          routing: "$.routing",
-          runtime: "$.runtime",
-          agentResponse: "$.agentResponse",
-        },
-      },
-    },
-  ],
-};
-
-const LOOPED_DESIGN_REVIEW_DEMO_DEFINITION = {
-  name: "demo-looped-design-review",
+const DESIGN_REVIEW_DEFINITION = {
+  name: "design-review",
   description: "Runs Critic and Response agents in a loop over a design document, then a Tidy Up agent makes final judgement calls.",
   input: {
     documentUrl: "https://example.com/design-document.md",
@@ -944,28 +740,15 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
     await mkdir(getUserPipelineFunctionsDirectory(ownerAlias), { recursive: true });
   }
   await ensurePipelineGitRepository();
-  const demoPath = join(getSharedPipelineDefinitionsDirectory(), "demo-declarative-pipeline.json");
-  if (!existsSync(demoPath)) {
-    await writeFile(demoPath, `${JSON.stringify(DEMO_DEFINITION, null, 2)}\n`);
-  }
-  const paragraphDemoPath = join(getSharedPipelineDefinitionsDirectory(), "demo-paragraph-two-agent-analysis.json");
-  if (!existsSync(paragraphDemoPath)) {
-    await writeFile(paragraphDemoPath, `${JSON.stringify(PARAGRAPH_ANALYSIS_DEMO_DEFINITION, null, 2)}\n`);
-  }
-  const graphContextDemoPath = join(getSharedPipelineDefinitionsDirectory(), "demo-memory-graph-context.json");
-  if (!existsSync(graphContextDemoPath)) {
-    await writeFile(graphContextDemoPath, `${JSON.stringify(GRAPH_CONTEXT_MEMORY_DEMO_DEFINITION, null, 2)}\n`);
-  }
-  const loopedReviewDemoPath = join(getSharedPipelineDefinitionsDirectory(), "demo-looped-design-review.json");
-  if (!existsSync(loopedReviewDemoPath)) {
-    await writeFile(loopedReviewDemoPath, `${JSON.stringify(LOOPED_DESIGN_REVIEW_DEMO_DEFINITION, null, 2)}\n`);
+  const designReviewPath = join(getSharedPipelineDefinitionsDirectory(), "design-review.json");
+  if (!existsSync(designReviewPath)) {
+    await writeFile(designReviewPath, `${JSON.stringify(DESIGN_REVIEW_DEFINITION, null, 2)}\n`);
   }
   const implementationReviewLoopDefinition = await readBundledDefaultDefinition("implementation-review-loop.v2.json");
-  const dispatchDemos = [
+  const defaultDefinitions = [
     ["agent-dispatch-chat.json", AGENT_DISPATCH_CHAT_DEFINITION],
-    ["demo-agent-dispatch-task-response.json", AGENT_DISPATCH_TASK_DEMO_DEFINITION],
-    ["demo-agent-dispatch-comment-response.json", AGENT_DISPATCH_COMMENT_DEMO_DEFINITION],
-    ["demo-agent-dispatch-task-review-response.json", AGENT_DISPATCH_TASK_REVIEW_DEMO_DEFINITION],
+    ["agent-dispatch-task-response.json", AGENT_DISPATCH_TASK_DEFINITION],
+    ["agent-dispatch-comment-response.json", AGENT_DISPATCH_COMMENT_DEFINITION],
     ["software-implementation-manager-review.json", SOFTWARE_IMPLEMENTATION_MANAGER_REVIEW_DEFINITION],
     ["do-and-review.json", DO_AND_REVIEW_DEFINITION],
     ["research-and-report.json", RESEARCH_AND_REPORT_DEFINITION],
@@ -973,13 +756,20 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
   ] as const;
   const renamedBuiltIns = [
     "demo-agent-dispatch-chat-response.json",
+    "demo-agent-dispatch-comment-response.json",
+    "demo-agent-dispatch-task-response.json",
+    "demo-agent-dispatch-task-review-response.json",
+    "demo-declarative-pipeline.json",
+    "demo-looped-design-review.json",
+    "demo-memory-graph-context.json",
+    "demo-paragraph-two-agent-analysis.json",
     "demo-software-implementation-manager-review.json",
     "demo-do-and-review.json",
   ];
   for (const fileName of renamedBuiltIns) {
     await rm(join(getSharedPipelineDefinitionsDirectory(), fileName), { force: true }).catch(() => undefined);
   }
-  for (const [fileName, definition] of dispatchDemos) {
+  for (const [fileName, definition] of defaultDefinitions) {
     const demoPath = join(getSharedPipelineDefinitionsDirectory(), fileName);
     const nextJson = `${JSON.stringify(definition, null, 2)}\n`;
     if (!existsSync(demoPath) || await readFile(demoPath, "utf8").catch(() => "") !== nextJson) {

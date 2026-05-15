@@ -91,7 +91,7 @@ describe("pipeline definition version paths", () => {
   });
 
   test("seeds task pipeline handoff steps explicitly", async () => {
-    const intake = await getPipelineDefinition("demo-agent-dispatch-task-response", "tester");
+    const intake = await getPipelineDefinition("agent-dispatch-task-response", "tester");
     const software = await getPipelineDefinition("software-implementation-manager-review", "tester");
     const generic = await getPipelineDefinition("do-and-review", "tester");
     const research = await getPipelineDefinition("research-and-report", "tester");

@@ -60,8 +60,10 @@ function isDispatchPipelineIdentifier(value: string | null): boolean {
   if (!value) return false;
   const normalized = value.toLowerCase();
   return normalized === "agent-dispatch-chat"
+    || normalized.startsWith("agent-dispatch-")
     || normalized.startsWith("demo-agent-dispatch-")
     || normalized.includes("/agent-dispatch-chat.json")
+    || normalized.includes("/agent-dispatch-")
     || normalized.includes("/demo-agent-dispatch-");
 }
 

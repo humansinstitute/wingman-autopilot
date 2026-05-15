@@ -88,7 +88,7 @@ export function hasRunPayload(run) {
 }
 
 export function pickDefaultDefinitionId(state) {
-  return state.definitions.find((definition) => definition.name === "demo-paragraph-two-agent-analysis")?.id
+  return state.definitions.find((definition) => definition.name === "do-and-review")?.id
     ?? state.definitions[0]?.id
     ?? "";
 }

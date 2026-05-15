@@ -811,13 +811,10 @@ function fallbackPipelineDefinitionId(route: DispatchRouteRecord): string | null
     return 'agent-dispatch-chat';
   }
   if (route.triggerKind === 'task' && route.capability === 'task_dispatch') {
-    return 'demo-agent-dispatch-task-response';
+    return 'agent-dispatch-task-response';
   }
   if (route.triggerKind === 'comment' && route.capability === 'comment_dispatch') {
-    return 'demo-agent-dispatch-comment-response';
-  }
-  if (route.triggerKind === 'task_review' && route.capability === 'task_review') {
-    return 'demo-agent-dispatch-task-review-response';
+    return 'agent-dispatch-comment-response';
   }
   return null;
 }

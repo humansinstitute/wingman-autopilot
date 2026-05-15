@@ -239,7 +239,7 @@ function findDispatchRoute(routes, triggerKind, capability) {
     : null;
 }
 
-function findDefaultPipelineId(definitions, defaultName) {
+function findDefaultPipelineId(definitions, defaultName, fallbackToFirst = true) {
   const list = Array.isArray(definitions) ? definitions : [];
   if (defaultName) {
     const exact = list.find((definition) => definition?.name === defaultName || definition?.slug === defaultName);
@@ -247,10 +247,10 @@ function findDefaultPipelineId(definitions, defaultName) {
       return exact.id;
     }
   }
-  return list[0]?.id || '';
+  return fallbackToFirst ? list[0]?.id || '' : '';
 }
 
-function createPipelineSelect({ title, definitions, selectedId, defaultName }) {
+function createPipelineSelect({ title, definitions, selectedId, defaultName, fallbackToFirst = true }) {
   const label = document.createElement('label');
   label.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:12px;';
   label.textContent = `${title} pipeline`;
@@ -271,7 +271,7 @@ function createPipelineSelect({ title, definitions, selectedId, defaultName }) {
     option.textContent = definition.name || definition.id || 'Pipeline';
     select.append(option);
   });
-  select.value = selectedId || findDefaultPipelineId(definitions, defaultName);
+  select.value = selectedId || findDefaultPipelineId(definitions, defaultName, fallbackToFirst);
   label.append(select);
   return { label, select };
 }
@@ -400,6 +400,7 @@ function createCapabilityCard({
       definitions: pipelineDefinitions,
       selectedId: route?.pipelineDefinitionId || '',
       defaultName: routeConfig.defaultPipelineName,
+      fallbackToFirst: routeConfig.defaultPipelineName !== '',
     });
     const inputObjectEditor = createInputObjectEditor({
       title,
@@ -545,7 +546,7 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
       priority: 20,
       activePolicy: 'skip',
       matchJson: { assignedTo: 'bot' },
-      defaultPipelineName: 'demo-agent-dispatch-task-response',
+      defaultPipelineName: 'agent-dispatch-task-response',
       title: 'Task Dispatch',
       description: 'When a concrete ready task targets the bot, Wingmen reuses or creates the delivery session, queues the task prompt, and Night Watch keeps the worker moving.',
       promptKey: 'taskPromptTemplate',
@@ -556,9 +557,9 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
       triggerKind: 'comment',
       priority: 60,
       activePolicy: 'queue',
-      defaultPipelineName: 'demo-agent-dispatch-comment-response',
+      defaultPipelineName: 'agent-dispatch-comment-response',
       title: 'Comment Dispatch',
-      description: 'When a task or document comment arrives, Wingmen records the advisory on the comment-specific path. Execution is currently disabled while the loop guard is hardened.',
+      description: 'When a task or document comment arrives, Wingmen routes the update through the comment dispatch pipeline.',
       promptKey: 'commentDispatchPromptTemplate',
       onEdit: null,
     },
@@ -567,7 +568,7 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
       triggerKind: 'flow',
       priority: 30,
       activePolicy: 'skip',
-      defaultPipelineName: 'demo-agent-dispatch-task-response',
+      defaultPipelineName: 'agent-dispatch-task-response',
       title: 'Flow Dispatch',
       description: 'When a kickoff task is new, assigned to the bot, and has a flow without a flow run, Wingmen routes it into a short-lived orchestration session.',
       promptKey: 'flowDispatchPromptTemplate',
@@ -578,7 +579,7 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
       triggerKind: 'task_review',
       priority: 40,
       activePolicy: 'skip',
-      defaultPipelineName: 'demo-agent-dispatch-task-review-response',
+      defaultPipelineName: '',
       title: 'Task Review',
       description: 'When a flow-run task moves to review, Wingmen routes it into orchestration so newly-unblocked downstream tasks can be promoted in one pass.',
       promptKey: 'taskReviewPromptTemplate',
@@ -589,7 +590,7 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
       triggerKind: 'approval',
       priority: 50,
       activePolicy: 'queue',
-      defaultPipelineName: 'demo-agent-dispatch-task-response',
+      defaultPipelineName: 'agent-dispatch-task-response',
       title: 'Approval Dispatch',
       description: 'When an approval record transitions to approved for a live flow run, Wingmen routes it into orchestration so downstream tasks can continue.',
       promptKey: 'approvalDispatchPromptTemplate',

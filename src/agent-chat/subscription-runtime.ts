@@ -106,17 +106,12 @@ const DEFAULT_DISPATCH_PIPELINE_ROUTES: Array<{
   {
     triggerKind: 'task',
     capability: 'task_dispatch',
-    pipelineDefinitionId: 'demo-agent-dispatch-task-response',
+    pipelineDefinitionId: 'agent-dispatch-task-response',
   },
   {
     triggerKind: 'comment',
     capability: 'comment_dispatch',
-    pipelineDefinitionId: 'demo-agent-dispatch-comment-response',
-  },
-  {
-    triggerKind: 'task_review',
-    capability: 'task_review',
-    pipelineDefinitionId: 'demo-agent-dispatch-task-review-response',
+    pipelineDefinitionId: 'agent-dispatch-comment-response',
   },
 ];
 

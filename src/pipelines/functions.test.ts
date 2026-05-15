@@ -129,10 +129,10 @@ describe("memory pipeline functions", () => {
           },
           {
             id: "shared:90e8752d9b94",
-            slug: "demo-declarative-pipeline",
-            name: "demo-declarative-pipeline",
+            slug: "agent-dispatch-comment-response",
+            name: "agent-dispatch-comment-response",
             scope: "shared",
-            description: null,
+            description: "Comment dispatch pipeline.",
           },
         ],
       },
@@ -204,7 +204,7 @@ describe("memory pipeline functions", () => {
     expect(JSON.stringify(result)).not.toContain("commandPrefix");
     expect(JSON.stringify(result)).not.toContain("group_ids");
     expect(JSON.stringify(result)).not.toContain("l1_id");
-    expect(JSON.stringify(result)).not.toContain("demo-declarative-pipeline");
+    expect(JSON.stringify(result)).not.toContain("agent-dispatch-comment-response");
     expect(JSON.stringify(result)).not.toContain("agent-dispatch-chat");
   });
 
