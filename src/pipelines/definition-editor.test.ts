@@ -25,6 +25,8 @@ describe("manual pipeline definition edits", () => {
     const result = await writeManualDefinitionVersion(makeDefinition(sourcePath), {
       name: "Edited Content Review",
       description: "Updated by hand.",
+      default: true,
+      tags: ["Review", "content", "review"],
       input: { documentUrl: "file.md" },
       steps: [{ name: "critic-pass", type: "agent", prompt: "Review it." }],
     });
@@ -35,6 +37,8 @@ describe("manual pipeline definition edits", () => {
     expect(spec.description).toBe("Updated by hand.");
     expect(spec.version).toBe(3);
     expect(spec.supersedes).toBe("content-review.v2.json");
+    expect(spec.default).toBe(true);
+    expect(spec.tags).toEqual(["content", "review"]);
     expect(spec.input).toEqual({ documentUrl: "file.md" });
     expect(spec.steps).toHaveLength(1);
   });

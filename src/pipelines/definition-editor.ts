@@ -32,6 +32,8 @@ function buildEditedDefinition(
 ): DeclarativePipeline {
   const name = requireString(body.name, "name");
   const description = optionalString(body.description, "description");
+  const tags = optionalTags(body.tags);
+  const isDefault = body.default === true;
   const input = requireJsonObject(body.input, "input");
   const steps = requireSteps(body.steps);
   const version = versionFromPath(targetPath) ?? nextNumericVersion(definition.spec.version);
@@ -40,6 +42,8 @@ function buildEditedDefinition(
     name,
     version,
     supersedes: basename(definition.path),
+    default: isDefault,
+    tags,
     input,
     steps,
   };
@@ -49,6 +53,17 @@ function buildEditedDefinition(
     delete spec.description;
   }
   return spec;
+}
+
+function optionalTags(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error("tags must be an array");
+  }
+  return [...new Set(value
+    .map((entry) => typeof entry === "string" ? entry.trim().toLowerCase() : "")
+    .filter(Boolean))]
+    .sort();
 }
 
 function requireString(value: unknown, label: string): string {

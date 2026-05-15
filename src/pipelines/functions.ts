@@ -69,7 +69,7 @@ function isDispatchPipelineIdentifier(value: string | null): boolean {
 
 const coreChatChildPipelineSlugs = new Set([
   "do-and-review",
-  "implementation-review-loop.v2",
+  "software-implementation-review-loop",
   "research-and-report",
 ]);
 
@@ -432,7 +432,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         ? "software_implementation"
         : "do_and_review";
     const childPipelineDefinitionId = workStyle === "software_implementation"
-      ? "implementation-review-loop.v2"
+      ? "software-implementation-review-loop"
       : "do-and-review";
     const executionPlan = getStringArray(response.executionPlan);
     const managerChecklist = getStringArray(response.managerChecklist);

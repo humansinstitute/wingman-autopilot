@@ -95,7 +95,8 @@ describe("pipeline definition version paths", () => {
     const software = await getPipelineDefinition("software-implementation-manager-review", "tester");
     const generic = await getPipelineDefinition("do-and-review", "tester");
     const research = await getPipelineDefinition("research-and-report", "tester");
-    const implementationLoop = await getPipelineDefinition("implementation-review-loop.v2", "tester");
+    const implementationLoop = await getPipelineDefinition("software-implementation-review-loop", "tester");
+    const implementationLoopAlias = await getPipelineDefinition("implementation-review-loop.v2", "tester");
 
     expect(intake?.spec.steps.map((step) => step.name)).toEqual([
       "investigate-and-route-task",
@@ -120,6 +121,9 @@ describe("pipeline definition version paths", () => {
       type: "code",
       function: "dispatch.ensureImplementationReviewTask",
     });
+    expect(implementationLoopAlias?.slug).toBe("software-implementation-review-loop");
+    expect(implementationLoop?.spec.default).toBe(true);
+    expect(implementationLoop?.spec.tags).toContain("software");
     expect(implementationLoop?.spec.steps.find((step) => step.name === "comment-manager-progress")).toMatchObject({
       type: "code",
       function: "dispatch.commentImplementationReviewProgress",

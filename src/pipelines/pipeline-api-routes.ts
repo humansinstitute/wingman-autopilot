@@ -26,7 +26,7 @@ import {
 } from "./pipeline-loader";
 import { acceptAgentCallback, resumeDeclarativePipeline, runDeclarativePipeline, startDeclarativePipeline } from "./pipeline-runner";
 import type { FunctionRegistry } from "./declarative";
-import { type JsonObject, PipelineStore, type PipelineRunRecord } from "./pipeline-store";
+import { type JsonObject, PipelineStore, type PipelineRunRecord, type PipelineRunSummary } from "./pipeline-store";
 import { startPipelineWizardSession } from "./pipeline-wizard";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
@@ -247,7 +247,9 @@ export async function handlePipelineApi(
   }
 
   if (pathname === "/api/pipelines/runs" && method === "GET") {
-    return Response.json({ runs: ctx.store.listRunSummaries({ ownerNpub }) });
+    const runs = ctx.store.listRunSummaries({ ownerNpub });
+    const definitions = await listLatestPipelineDefinitions(ownerAlias);
+    return Response.json({ runs: runs.map((run) => serializeRunSummary(run, definitions)) });
   }
 
   const runStepsMatch = pathname.match(/^\/api\/pipelines\/runs\/([^/]+)\/steps$/);
@@ -334,12 +336,45 @@ function serializeDefinitionSummary(definition: PipelineDefinitionRecord): JsonO
     description: typeof definition.spec.description === "string" ? definition.spec.description : "",
     version: definition.spec.version ?? null,
     supersedes: typeof definition.spec.supersedes === "string" ? definition.spec.supersedes : null,
+    default: definition.spec.default === true,
+    tags: normalizeTags(definition.spec.tags),
     scope: definition.scope,
     ownerAlias: definition.ownerAlias,
     path: definition.path,
     input: definition.spec.input ?? {},
     steps: definition.spec.steps,
   };
+}
+
+function serializeRunSummary(
+  run: PipelineRunSummary,
+  definitions: PipelineDefinitionRecord[],
+): JsonObject {
+  const definition = definitions.find((entry) => (
+    entry.id === run.definitionId
+    || entry.slug === run.definitionId
+    || entry.name === run.definitionId
+    || entry.path === run.definitionPath
+    || pipelineSupersedes(entry, run.definitionId)
+  ));
+  return {
+    ...run,
+    definitionSlug: definition?.slug ?? null,
+    definitionDefault: definition?.spec.default === true,
+    tags: definition ? normalizeTags(definition.spec.tags) : [],
+  };
+}
+
+function pipelineSupersedes(definition: PipelineDefinitionRecord, id: string): boolean {
+  return typeof definition.spec.supersedes === "string" && definition.spec.supersedes === id;
+}
+
+function normalizeTags(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value
+    .map((entry) => typeof entry === "string" ? entry.trim().toLowerCase() : "")
+    .filter(Boolean))]
+    .sort();
 }
 
 async function readAllowedPipelineFunctionSource(path: string, ownerAlias: string, allowBuiltin: boolean): Promise<string> {

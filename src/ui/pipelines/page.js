@@ -370,9 +370,15 @@ export function initPipelinesPage({ showToast }) {
     state.error = null;
     updatePage(page);
     try {
+      const tags = String(form.tagsText ?? "")
+        .split(",")
+        .map((tag) => tag.trim().toLowerCase())
+        .filter(Boolean);
       state.manualEditResult = await saveManualPipelineEdit(id, {
         name,
         description: String(form.description ?? ""),
+        default: form.default === true,
+        tags,
         input,
         steps,
       });

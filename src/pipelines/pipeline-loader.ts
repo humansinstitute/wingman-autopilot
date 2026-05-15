@@ -19,6 +19,8 @@ export interface PipelineDefinitionRecord {
 const AGENT_DISPATCH_CHAT_DEFINITION = {
   name: "agent-dispatch-chat",
   description: "Default dispatch pipeline for chat advisories. It hydrates the source thread, classifies whether task-backed work is needed, optionally creates an in-progress task and starts the selected pipeline, then replies to the source Flight Deck thread.",
+  default: true,
+  tags: ["default", "dispatch", "chat", "flight-deck"],
   input: {
     dispatch: { triggerKind: "chat" },
     workspace: { workspaceOwnerNpub: "npub1workspace", sourceAppNpub: "npub1source" },
@@ -205,6 +207,8 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
 const AGENT_DISPATCH_TASK_DEFINITION = {
   name: "agent-dispatch-task-response",
   description: "Task intake dispatch pipeline. It investigates the task, chooses a longer-running software implementation or generic do-and-review child pipeline, starts it, then comments back with the launched work plan.",
+  default: true,
+  tags: ["default", "dispatch", "task", "intake", "flight-deck"],
   input: {
     dispatch: { triggerKind: "task" },
     workspace: { workspaceOwnerNpub: "npub1workspace", sourceAppNpub: "npub1source" },
@@ -309,6 +313,8 @@ const AGENT_DISPATCH_TASK_DEFINITION = {
 const DO_AND_REVIEW_DEFINITION = {
   name: "do-and-review",
   description: "Long-running task-backed generic delivery pipeline. A worker completes non-code work such as research, planning, writing, or operations, then a manager reviews evidence and the final step moves the originating task to review.",
+  default: true,
+  tags: ["default", "generic", "delivery", "review", "task-backed"],
   input: {
     taskId: "task-demo",
     scopeId: "scope-demo",
@@ -382,6 +388,8 @@ const DO_AND_REVIEW_DEFINITION = {
 const RESEARCH_AND_REPORT_DEFINITION = {
   name: "research-and-report",
   description: "Long-running task-backed research pipeline. A researcher gathers evidence, a report writer creates a Flight Deck document when possible, then a manager reviews and moves the originating task to review.",
+  default: true,
+  tags: ["default", "research", "report", "review", "task-backed"],
   input: {
     taskId: "task-demo",
     scopeId: "scope-demo",
@@ -474,6 +482,8 @@ const RESEARCH_AND_REPORT_DEFINITION = {
 const AGENT_DISPATCH_COMMENT_DEFINITION = {
   name: "agent-dispatch-comment-response",
   description: "Default dispatch pipeline for task/document comment advisories. It asks one agent step to draft a reply, then publishes it to the source Flight Deck comment thread.",
+  default: true,
+  tags: ["default", "dispatch", "comment", "flight-deck"],
   input: {
     dispatch: { triggerKind: "comment" },
     workspace: { workspaceOwnerNpub: "npub1workspace", sourceAppNpub: "npub1source" },
@@ -530,6 +540,8 @@ const AGENT_DISPATCH_COMMENT_DEFINITION = {
 const DESIGN_REVIEW_DEFINITION = {
   name: "design-review",
   description: "Runs Critic and Response agents in a loop over a design document, then a Tidy Up agent makes final judgement calls.",
+  default: true,
+  tags: ["default", "design", "review", "loop"],
   input: {
     documentUrl: "https://example.com/design-document.md",
     reviewIterations: 5,
@@ -667,18 +679,15 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
     await mkdir(getUserPipelineFunctionsDirectory(ownerAlias), { recursive: true });
   }
   await ensurePipelineGitRepository();
-  const designReviewPath = join(getSharedPipelineDefinitionsDirectory(), "design-review.json");
-  if (!existsSync(designReviewPath)) {
-    await writeFile(designReviewPath, `${JSON.stringify(DESIGN_REVIEW_DEFINITION, null, 2)}\n`);
-  }
-  const implementationReviewLoopDefinition = await readBundledDefaultDefinition("implementation-review-loop.v2.json");
+  const softwareImplementationReviewLoopDefinition = await readBundledDefaultDefinition("software-implementation-review-loop.json");
   const defaultDefinitions = [
     ["agent-dispatch-chat.json", AGENT_DISPATCH_CHAT_DEFINITION],
     ["agent-dispatch-task-response.json", AGENT_DISPATCH_TASK_DEFINITION],
     ["agent-dispatch-comment-response.json", AGENT_DISPATCH_COMMENT_DEFINITION],
+    ["design-review.json", DESIGN_REVIEW_DEFINITION],
     ["do-and-review.json", DO_AND_REVIEW_DEFINITION],
     ["research-and-report.json", RESEARCH_AND_REPORT_DEFINITION],
-    ["implementation-review-loop.v2.json", implementationReviewLoopDefinition],
+    ["software-implementation-review-loop.json", softwareImplementationReviewLoopDefinition],
   ] as const;
   const renamedBuiltIns = [
     "demo-agent-dispatch-chat-response.json",
@@ -691,6 +700,8 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
     "demo-paragraph-two-agent-analysis.json",
     "demo-software-implementation-manager-review.json",
     "demo-do-and-review.json",
+    "implementation-review-loop.v1.json",
+    "implementation-review-loop.v2.json",
     "software-implementation-manager-review.json",
   ];
   for (const fileName of renamedBuiltIns) {
@@ -781,6 +792,7 @@ function pipelineDefinitionAliases(definition: PipelineDefinitionRecord): string
     definition.path,
     fileName,
     basename(fileName, ".json"),
+    typeof definition.spec.supersedes === "string" ? definition.spec.supersedes : "",
   ];
 }
 

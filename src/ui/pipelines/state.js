@@ -15,6 +15,8 @@ export function createPipelinesState() {
     definitionFilter: "all",
     runSearch: "",
     definitionSearch: "",
+    runTagFilter: "",
+    definitionTagFilter: "",
     launcherOpen: false,
     creatorOpen: false,
     wizardPrompt: "",
@@ -28,6 +30,8 @@ export function createPipelinesState() {
     manualEditForm: {
       name: "",
       description: "",
+      tagsText: "",
+      default: false,
       inputText: "{}",
       stepsText: "[]",
     },

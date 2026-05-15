@@ -1,5 +1,6 @@
 import {
   RUN_FILTERS,
+  collectTags,
   escapeAttribute,
   escapeHtml,
   formatBytes,
@@ -10,6 +11,7 @@ import {
   renderEmptyState,
   renderJsonBlock,
   renderJsonTransformBlock,
+  renderTagPills,
   statusLabel,
 } from "./view-utils.js";
 import { hasRunPayload } from "./state.js";
@@ -71,6 +73,7 @@ export function renderRunDetailPage(state, runId) {
 }
 
 function renderRunControls(state) {
+  const tags = collectTags(state.runs);
   return `
     <div class="wm-pipeline-toolbar">
       <label>
@@ -84,6 +87,13 @@ function renderRunControls(state) {
           </button>
         `).join("")}
       </div>
+      <label class="wm-pipeline-filter-field">
+        <span class="wm-sr-only">Filter runs by tag</span>
+        <select data-action="run-tag-filter" data-testid="pipeline-run-tag-filter" aria-label="Filter runs by tag">
+          <option value="">All tags</option>
+          ${tags.map((tag) => `<option value="${escapeAttribute(tag)}" ${state.runTagFilter === tag ? "selected" : ""}>${escapeHtml(tag)}</option>`).join("")}
+        </select>
+      </label>
     </div>
   `;
 }
@@ -97,6 +107,7 @@ function renderRunList(state, runs) {
           <span class="wm-pipeline-run-main">
             <strong>${escapeHtml(run.name)}</strong>
             <small>${escapeHtml(formatRunMeta(run))}</small>
+            ${renderTagPills(run.tags)}
           </span>
           <code>${escapeHtml(run.id.slice(0, 8))}</code>
         </button>
@@ -114,6 +125,7 @@ function renderRunDetail(state) {
         <div>
           <h2 id="pipeline-run-detail-title">${escapeHtml(run.name)}</h2>
           <p><code>${escapeHtml(run.id)}</code></p>
+          ${renderTagPills(run.tags)}
         </div>
         <span class="wm-pipeline-status-chip" data-status="${escapeAttribute(run.status)}">${escapeHtml(statusLabel(run.status))}</span>
       </header>
@@ -121,6 +133,9 @@ function renderRunDetail(state) {
         <div><dt>Started</dt><dd>${escapeHtml(formatDateTime(run.startedAt ?? run.started_at))}</dd></div>
         <div><dt>Completed</dt><dd>${escapeHtml(formatDateTime(run.completedAt ?? run.completed_at))}</dd></div>
         <div><dt>Duration</dt><dd>${escapeHtml(formatDuration(run.startedAt ?? run.started_at, run.completedAt ?? run.completed_at))}</dd></div>
+        <div><dt>Definition</dt><dd>${escapeHtml(run.definitionSlug ?? run.definitionId ?? "--")}</dd></div>
+        <div><dt>Default</dt><dd>${run.definitionDefault ? "Yes" : "No"}</dd></div>
+        <div><dt>Tags</dt><dd>${escapeHtml((run.tags ?? []).join(", ") || "--")}</dd></div>
         <div><dt>Steps</dt><dd>${steps.length}</dd></div>
       </dl>
       <div class="wm-pipeline-detail-tabs" role="tablist" aria-label="Run detail">
@@ -259,9 +274,13 @@ function renderCollapsedJsonBlock(title, value) {
 
 function getFilteredRuns(state) {
   const query = state.runSearch.trim().toLowerCase();
+  const tag = state.runTagFilter;
   return state.runs.filter((run) => {
-    const statusMatches = state.runFilter === "all" || run.status === state.runFilter;
-    const textMatches = !query || `${run.name} ${run.id} ${run.status}`.toLowerCase().includes(query);
-    return statusMatches && textMatches;
+    const statusMatches = state.runFilter === "all"
+      || (state.runFilter === "default" ? run.definitionDefault === true : run.status === state.runFilter);
+    const tags = Array.isArray(run.tags) ? run.tags : [];
+    const tagMatches = !tag || tags.includes(tag);
+    const textMatches = !query || `${run.name} ${run.id} ${run.status} ${run.definitionSlug ?? ""} ${tags.join(" ")}`.toLowerCase().includes(query);
+    return statusMatches && tagMatches && textMatches;
   });
 }

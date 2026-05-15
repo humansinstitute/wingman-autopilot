@@ -47,6 +47,7 @@ export function createPipelineActionHandlers(deps) {
     closeLauncher: (page) => updateField(page, "launcherOpen", false),
     updateRunSearch: (page, value) => updateSearch(page, "runSearch", value, '[data-action="run-search"]'),
     setRunFilter: (page, value) => updateField(page, "runFilter", value),
+    setRunTagFilter: (page, value) => updateField(page, "runTagFilter", value),
     openRun: (page, id) => navigateToPipelinePath(page, makePipelinePath("runs", id)),
     setRunTab: async (page, value) => {
       state.selectedRunTab = value;
@@ -63,6 +64,7 @@ export function createPipelineActionHandlers(deps) {
     closeStepDetail: (page) => updateField(page, "selectedStep", null),
     updateDefinitionSearch: (page, value) => updateSearch(page, "definitionSearch", value, '[data-action="definition-search"]'),
     setDefinitionFilter: (page, value) => updateField(page, "definitionFilter", value),
+    setDefinitionTagFilter: (page, value) => updateField(page, "definitionTagFilter", value),
     openDefinition: async (page, id) => {
       if (!id) return;
       state.selectedDefinitionId = id;
@@ -121,6 +123,8 @@ export function createPipelineActionHandlers(deps) {
       state.manualEditForm = {
         name: definition.name ?? "",
         description: definition.description ?? "",
+        tagsText: Array.isArray(definition.tags) ? definition.tags.join(", ") : "",
+        default: definition.default === true,
         inputText: JSON.stringify(definition.input ?? {}, null, 2),
         stepsText: JSON.stringify(definition.steps ?? [], null, 2),
       };
@@ -134,6 +138,10 @@ export function createPipelineActionHandlers(deps) {
     updateManualEditField: (field, value) => {
       if (!state.manualEditForm) state.manualEditForm = {};
       state.manualEditForm[field] = value;
+    },
+    updateManualEditDefault: (value) => {
+      if (!state.manualEditForm) state.manualEditForm = {};
+      state.manualEditForm.default = value === true;
     },
     saveManualEdit,
     startSelectedRun,

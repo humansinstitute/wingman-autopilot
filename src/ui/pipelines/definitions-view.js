@@ -1,12 +1,14 @@
 import { renderCreator, renderEditWizard } from "./launcher-view.js";
 import {
   DEFINITION_FILTERS,
+  collectTags,
   countSteps,
   escapeAttribute,
   escapeHtml,
   expandPreviewSteps,
   renderEmptyDetail,
   renderEmptyState,
+  renderTagPills,
   statusLabel,
 } from "./view-utils.js";
 
@@ -75,6 +77,7 @@ function renderMissingDefinition() {
 }
 
 function renderDefinitionControls(state) {
+  const tags = collectTags(state.definitions);
   return `
     <div class="wm-pipeline-toolbar">
       <label>
@@ -88,6 +91,13 @@ function renderDefinitionControls(state) {
           </button>
         `).join("")}
       </div>
+      <label class="wm-pipeline-filter-field">
+        <span class="wm-sr-only">Filter definitions by tag</span>
+        <select data-action="definition-tag-filter" data-testid="pipeline-definition-tag-filter" aria-label="Filter definitions by tag">
+          <option value="">All tags</option>
+          ${tags.map((tag) => `<option value="${escapeAttribute(tag)}" ${state.definitionTagFilter === tag ? "selected" : ""}>${escapeHtml(tag)}</option>`).join("")}
+        </select>
+      </label>
     </div>
   `;
 }
@@ -100,8 +110,10 @@ function renderDefinitionList(state, definitions) {
           <span>
             <strong>${escapeHtml(definition.name)}</strong>
             <small>${escapeHtml(definition.description || "No description")}</small>
+            ${renderTagPills(definition.tags)}
           </span>
           <span class="wm-pipeline-definition-meta">
+            ${definition.default ? `<span>Default</span>` : ""}
             <span>${escapeHtml(definition.scope)}</span>
             <span>${escapeHtml(`${countSteps(definition)} steps`)}</span>
           </span>
@@ -119,8 +131,9 @@ function renderDefinitionDetail(state, definition) {
           <h2 id="pipeline-definition-detail-title">${escapeHtml(definition.name)}</h2>
           ${definition.description ? `<p>${escapeHtml(definition.description)}</p>` : `<p class="wm-muted">No description.</p>`}
           <p><code>${escapeHtml(definition.id)}</code></p>
+          ${renderTagPills(definition.tags)}
         </div>
-        <span class="wm-pipeline-status-chip" data-status="${escapeAttribute(definition.scope)}">${escapeHtml(definition.scope)}</span>
+        <span class="wm-pipeline-status-chip" data-status="${escapeAttribute(definition.default ? "default" : definition.scope)}">${escapeHtml(definition.default ? "Default" : definition.scope)}</span>
       </header>
       <div class="wm-pipeline-definition-actions">
         <button type="button" data-action="open-launcher-for-definition" data-id="${escapeAttribute(definition.id)}" aria-label="Run pipeline definition">Run</button>
@@ -130,6 +143,8 @@ function renderDefinitionDetail(state, definition) {
       ${definition.scope !== "user" ? `<p class="wm-muted">Shared definitions cannot be edited directly. Create a user-owned version before changing them.</p>` : ""}
       <dl class="wm-pipeline-facts">
         <div><dt>Version</dt><dd>${escapeHtml(definition.version ?? "--")}</dd></div>
+        <div><dt>Default</dt><dd>${definition.default ? "Yes" : "No"}</dd></div>
+        <div><dt>Tags</dt><dd>${escapeHtml((definition.tags ?? []).join(", ") || "--")}</dd></div>
         <div><dt>Steps</dt><dd>${countSteps(definition)}</dd></div>
         <div><dt>Scope</dt><dd>${escapeHtml(definition.scope)}</dd></div>
         <div><dt>Path</dt><dd><code>${escapeHtml(definition.path)}</code></dd></div>
@@ -164,6 +179,14 @@ function renderManualEditPanel(state, definition) {
       <label class="wm-pipeline-field">
         <span>Description</span>
         <textarea data-action="manual-edit-field" data-field="description" rows="3" aria-label="Pipeline description">${escapeHtml(form.description ?? definition.description ?? "")}</textarea>
+      </label>
+      <label class="wm-pipeline-field">
+        <span>Tags</span>
+        <input type="text" data-action="manual-edit-field" data-field="tagsText" value="${escapeAttribute(form.tagsText ?? (definition.tags ?? []).join(", "))}" aria-label="Pipeline tags">
+      </label>
+      <label class="wm-pipeline-checkbox-field">
+        <input type="checkbox" data-action="manual-edit-default" ${(form.default ?? definition.default) ? "checked" : ""} aria-label="Mark pipeline as default">
+        <span>Mark as default pipeline</span>
       </label>
       <label class="wm-pipeline-field">
         <span>Default input JSON</span>
@@ -222,9 +245,13 @@ function renderDefinitionStep(step, index) {
 
 function getFilteredDefinitions(state) {
   const query = state.definitionSearch.trim().toLowerCase();
+  const tag = state.definitionTagFilter;
   return state.definitions.filter((definition) => {
-    const scopeMatches = state.definitionFilter === "all" || definition.scope === state.definitionFilter;
-    const textMatches = !query || `${definition.name} ${definition.description ?? ""} ${definition.id}`.toLowerCase().includes(query);
-    return scopeMatches && textMatches;
+    const scopeMatches = state.definitionFilter === "all"
+      || (state.definitionFilter === "default" ? definition.default === true : definition.scope === state.definitionFilter);
+    const tags = Array.isArray(definition.tags) ? definition.tags : [];
+    const tagMatches = !tag || tags.includes(tag);
+    const textMatches = !query || `${definition.name} ${definition.description ?? ""} ${definition.id} ${tags.join(" ")}`.toLowerCase().includes(query);
+    return scopeMatches && tagMatches && textMatches;
   });
 }

@@ -10782,7 +10782,9 @@ textarea.wm-input {
 }
 
 .wm-pipeline-toolbar input,
+.wm-pipeline-toolbar select,
 .wm-pipeline-field select,
+.wm-pipeline-field input,
 .wm-pipeline-field textarea {
   width: 100%;
   min-width: 0;
@@ -10792,6 +10794,34 @@ textarea.wm-input {
   color: var(--text-primary);
   padding: 0.55rem 0.65rem;
   font: inherit;
+}
+
+.wm-pipeline-checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.wm-pipeline-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.35rem;
+}
+
+.wm-pipeline-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.35rem;
+  padding: 0.08rem 0.42rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 35%, var(--border-primary));
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+  font-size: 0.74rem;
+  font-weight: 650;
 }
 
 .wm-pipeline-field {
@@ -11013,6 +11043,11 @@ textarea.wm-input {
 .wm-pipeline-status-chip[data-status="shared"] {
   border-color: color-mix(in srgb, #5c7cfa 65%, var(--border-primary));
   color: #5c7cfa;
+}
+
+.wm-pipeline-status-chip[data-status="default"] {
+  border-color: color-mix(in srgb, #0ca678 65%, var(--border-primary));
+  color: #0ca678;
 }
 
 .wm-pipeline-status-chip[data-status="shadowed"] {

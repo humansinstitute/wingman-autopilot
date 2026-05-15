@@ -1,5 +1,5 @@
-export const RUN_FILTERS = ["all", "running", "ok", "needs_input", "error"];
-export const DEFINITION_FILTERS = ["all", "user", "shared"];
+export const RUN_FILTERS = ["all", "default", "running", "ok", "needs_input", "error"];
+export const DEFINITION_FILTERS = ["all", "default", "user", "shared"];
 
 export function escapeHtml(value) {
   return String(value ?? "")
@@ -24,6 +24,32 @@ export function statusLabel(value) {
   if (value === "error") return "Failed";
   if (value === "needs_input") return "Needs Input";
   return titleCase(value);
+}
+
+export function normalizeTags(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value
+    .map((entry) => String(entry ?? "").trim().toLowerCase())
+    .filter(Boolean))]
+    .sort();
+}
+
+export function collectTags(records) {
+  const tags = new Set();
+  (Array.isArray(records) ? records : []).forEach((record) => {
+    normalizeTags(record?.tags).forEach((tag) => tags.add(tag));
+  });
+  return [...tags].sort();
+}
+
+export function renderTagPills(tags) {
+  const normalized = normalizeTags(tags);
+  if (normalized.length === 0) return "";
+  return `
+    <span class="wm-pipeline-tag-list">
+      ${normalized.map((tag) => `<span class="wm-pipeline-tag">${escapeHtml(tag)}</span>`).join("")}
+    </span>
+  `;
 }
 
 export function formatDateTime(value) {

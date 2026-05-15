@@ -33,6 +33,9 @@ function bindRunActions(root, page, actions) {
   root.querySelector('[data-action="run-search"]')?.addEventListener("input", (event) => {
     actions.updateRunSearch(page, event.target?.value ?? "");
   });
+  root.querySelector('[data-action="run-tag-filter"]')?.addEventListener("change", (event) => {
+    actions.setRunTagFilter(page, event.target?.value ?? "");
+  });
   root.querySelectorAll('[data-action="set-run-filter"]').forEach((button) => {
     button.addEventListener("click", () => actions.setRunFilter(page, button.dataset.filter ?? "all"));
   });
@@ -59,6 +62,9 @@ function bindRunActions(root, page, actions) {
 function bindDefinitionActions(root, page, actions) {
   root.querySelector('[data-action="definition-search"]')?.addEventListener("input", (event) => {
     actions.updateDefinitionSearch(page, event.target?.value ?? "");
+  });
+  root.querySelector('[data-action="definition-tag-filter"]')?.addEventListener("change", (event) => {
+    actions.setDefinitionTagFilter(page, event.target?.value ?? "");
   });
   root.querySelectorAll('[data-action="set-definition-filter"]').forEach((button) => {
     button.addEventListener("click", () => actions.setDefinitionFilter(page, button.dataset.filter ?? "all"));
@@ -105,6 +111,9 @@ function bindWizardActions(root, page, actions) {
     input.addEventListener("input", (event) => {
       actions.updateManualEditField(event.target?.dataset?.field ?? "", event.target?.value ?? "");
     });
+  });
+  root.querySelector('[data-action="manual-edit-default"]')?.addEventListener("change", (event) => {
+    actions.updateManualEditDefault(event.target?.checked === true);
   });
   root.querySelector('[data-action="save-manual-edit"]')?.addEventListener("click", async (event) => {
     await actions.saveManualEdit(page, event.currentTarget?.dataset?.id ?? "");

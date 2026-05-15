@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { buildOutputDiff, renderJsonBlock, renderJsonTransformBlock } from "./view-utils.js";
+import { buildOutputDiff, collectTags, renderJsonBlock, renderJsonTransformBlock, renderTagPills } from "./view-utils.js";
 
 describe("pipeline JSON rendering", () => {
   test("renders objects as expandable tree nodes", () => {
@@ -62,5 +62,14 @@ describe("pipeline JSON rendering", () => {
     expect(html).toContain("line one");
     expect(html).toContain("line two");
     expect(html).not.toContain("carried");
+  });
+
+  test("normalises and renders pipeline tags", () => {
+    expect(collectTags([{ tags: ["software", "Default"] }, { tags: ["review", "software"] }])).toEqual([
+      "default",
+      "review",
+      "software",
+    ]);
+    expect(renderTagPills(["software"])).toContain("wm-pipeline-tag");
   });
 });

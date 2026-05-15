@@ -1,8 +1,10 @@
 {
-  "name": "implementation-review-loop",
-  "description": "Runs a focused implementation worker, manager review, and looped pickup resolution with compact worker prompts.",
+  "name": "software-implementation-review-loop",
+  "description": "Runs a focused software implementation worker, manager review, and looped pickup resolution with compact worker prompts.",
   "version": 2,
-  "supersedes": "implementation-review-loop.v1",
+  "supersedes": "implementation-review-loop.v2",
+  "default": true,
+  "tags": ["default", "software", "implementation", "review", "loop", "task-backed"],
   "input": {
     "taskId": "",
     "taskTitle": "",

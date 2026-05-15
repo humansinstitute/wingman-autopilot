@@ -86,6 +86,8 @@ export interface DeclarativePipeline {
   description?: string;
   version?: string | number;
   supersedes?: string;
+  default?: boolean;
+  tags?: string[];
   input?: JsonObject;
   steps: DeclarativeStep[];
 }
