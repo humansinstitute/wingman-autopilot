@@ -35,6 +35,7 @@ export interface PipelineApiContext {
   store: PipelineStore;
   sessionApiContext: SessionApiContext;
   callbackOrigin?: string;
+  sharedInstanceAccess?: boolean;
   loadRegistryForRun?: (input: {
     run: PipelineRunRecord;
     definition: PipelineDefinitionRecord;
@@ -247,7 +248,10 @@ export async function handlePipelineApi(
   }
 
   if (pathname === "/api/pipelines/runs" && method === "GET") {
-    const runs = ctx.store.listRunSummaries({ ownerNpub });
+    const runs = ctx.store.listRunSummaries({
+      ownerNpub,
+      includeShared: Boolean(ctx.sharedInstanceAccess),
+    });
     const definitions = await listLatestPipelineDefinitions(ownerAlias);
     return Response.json({ runs: runs.map((run) => serializeRunSummary(run, definitions)) });
   }
@@ -255,7 +259,7 @@ export async function handlePipelineApi(
   const runStepsMatch = pathname.match(/^\/api\/pipelines\/runs\/([^/]+)\/steps$/);
   if (runStepsMatch && method === "GET") {
     const run = ctx.store.getRun(decodeURIComponent(runStepsMatch[1]!));
-    if (!run || run.ownerNpub !== ownerNpub) {
+    if (!run || !canAccessPipelineRun(run, ownerNpub, ctx)) {
       return Response.json({ error: "Pipeline run not found" }, { status: 404 });
     }
     const includePayload = url.searchParams.get("includePayload") === "1";
@@ -266,7 +270,7 @@ export async function handlePipelineApi(
   if (stepMatch && method === "GET") {
     const run = ctx.store.getRun(decodeURIComponent(stepMatch[1]!));
     const step = ctx.store.getStep(decodeURIComponent(stepMatch[2]!));
-    if (!run || !step || step.runId !== run.id || run.ownerNpub !== ownerNpub) {
+    if (!run || !step || step.runId !== run.id || !canAccessPipelineRun(run, ownerNpub, ctx)) {
       return Response.json({ error: "Pipeline step not found" }, { status: 404 });
     }
     return Response.json({
@@ -282,7 +286,7 @@ export async function handlePipelineApi(
     const id = decodeURIComponent(runMatch[1]!);
     const includeRunPayload = url.searchParams.get("includeRunPayload") === "1" || url.searchParams.get("includePayload") === "1";
     const run = includeRunPayload ? ctx.store.getRun(id) : ctx.store.getRunSummary(id);
-    if (!run || run.ownerNpub !== ownerNpub) {
+    if (!run || !canAccessPipelineRun(run, ownerNpub, ctx)) {
       return Response.json({ error: "Pipeline run not found" }, { status: 404 });
     }
     const includePayload = url.searchParams.get("includePayload") === "1";
@@ -344,6 +348,15 @@ function serializeDefinitionSummary(definition: PipelineDefinitionRecord): JsonO
     input: definition.spec.input ?? {},
     steps: definition.spec.steps,
   };
+}
+
+function canAccessPipelineRun(
+  run: Pick<PipelineRunRecord | PipelineRunSummary, "ownerNpub" | "scope">,
+  ownerNpub: string,
+  ctx: PipelineApiContext,
+): boolean {
+  if (run.ownerNpub === ownerNpub) return true;
+  return Boolean(ctx.sharedInstanceAccess && run.scope === "shared");
 }
 
 function serializeRunSummary(

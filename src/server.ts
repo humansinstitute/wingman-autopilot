@@ -2409,6 +2409,7 @@ const handleApi = createApiRouteHandler({
     store: pipelineStore,
     sessionApiContext,
     callbackOrigin: `http://127.0.0.1:${config.port}`,
+    sharedInstanceAccess: sharedInstanceAccessEnabled,
     loadRegistryForRun: ({ run, definition }) =>
       dispatchPipelineRuntime.loadRegistryForStoredRun({ run, definition, sessionApiContext }),
     ensureApiAccess,
