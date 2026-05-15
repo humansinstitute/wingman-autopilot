@@ -330,6 +330,40 @@ describe("memory pipeline functions", () => {
     expect("responseOnly" in result).toBe(false);
   });
 
+  test("dispatch.normaliseChatDispatchDecision allows chat task dispatch without a scope", async () => {
+    const result = await builtinPipelineFunctions["dispatch.normaliseChatDispatchDecision"]!({
+      agent: { workingDirectory: "/repo" },
+      chat: { senderNpub: "npub1requester", channelId: "channel-1", threadId: "thread-1" },
+      record: { recordId: "message-1", updaterNpub: "npub1requester", payload: {} },
+      dispatch: { triggerKind: "chat" },
+      agentDecision: {
+        dispatchTask: true,
+        recommendedPipelineId: "do-and-review",
+        scopeId: null,
+        taskDraft: {
+          title: "Handle the image task",
+          instructions: "Complete the generic image task.",
+          acceptanceCriteria: ["The requested image task is complete"],
+        },
+        chatResponse: { body: "Starting a generic task." },
+        confidence: 0.8,
+      },
+    });
+
+    expect(result).toMatchObject({
+      dispatchTask: true,
+      pipelineDefinitionId: "do-and-review",
+      scopeId: null,
+      missing: [],
+      responseDraft: "Starting a generic task.",
+    });
+    expect(result.workPlan).toMatchObject({
+      scopeId: null,
+      workdir: "/repo",
+      instructions: "Complete the generic image task.",
+    });
+  });
+
   test("dispatch.normaliseChatDispatchDecision suppresses self-authored chat dispatches", async () => {
     const result = await builtinPipelineFunctions["dispatch.normaliseChatDispatchDecision"]!({
       chatContext: {

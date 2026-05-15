@@ -373,7 +373,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         "For generic or miscellaneous chat-created tasks, choose do-and-review.",
         "Use software-implementation-review-loop only for code, repository, build, test, deployment, or implementation work.",
         "Use research-and-report when the requested output is explicitly research with a report or document.",
-        "Choose a scope from scopes when dispatchTask is true.",
+        "Choose a scope from scopes when one fits; if scopes is empty or no scope fits, set scopeId to null and continue.",
       ],
     };
   },
@@ -637,7 +637,6 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       ? [
           !pipelineDefinitionId ? "pipeline" : "",
           selectedDispatchPipeline ? "downstream work pipeline" : "",
-          !scopeId ? "scope" : "",
           !workdir ? "workdir" : "",
           !instructions ? "instructions" : "",
         ].filter(Boolean)

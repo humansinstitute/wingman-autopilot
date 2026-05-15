@@ -90,6 +90,9 @@ describe("pipeline definition version paths", () => {
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
       "choose do-and-review",
     );
+    expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
+      "set scopeId null and continue",
+    );
     expect(definition?.spec.steps.find((step) => step.name === "publish-chat-response")).toMatchObject({
       when: { path: "$.chatContext.shouldProceed", equals: true },
     });
