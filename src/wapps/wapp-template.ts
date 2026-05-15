@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 const files: Record<string, string> = {
@@ -134,7 +134,46 @@ Bun.serve({
 `,
 };
 
-export async function createWappTemplate(root: string): Promise<{ root: string; files: string[] }> {
+export interface CreateWappTemplateOptions {
+  force?: boolean;
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function findTemplateConflicts(root: string): Promise<string[]> {
+  const conflicts = new Set<string>();
+  if (await exists(root)) {
+    const entries = await readdir(root);
+    for (const entry of entries) {
+      conflicts.add(entry);
+    }
+  }
+  for (const relativePath of Object.keys(files)) {
+    if (await exists(join(root, relativePath))) {
+      conflicts.add(relativePath);
+    }
+  }
+  return Array.from(conflicts.values()).sort();
+}
+
+export async function createWappTemplate(
+  root: string,
+  options: CreateWappTemplateOptions = {},
+): Promise<{ root: string; files: string[] }> {
+  if (!options.force) {
+    const conflicts = await findTemplateConflicts(root);
+    if (conflicts.length > 0) {
+      throw new Error(`WApp template target is not empty: ${conflicts.join(", ")}`);
+    }
+  }
   const written: string[] = [];
   for (const [relativePath, content] of Object.entries(files)) {
     const target = join(root, relativePath);

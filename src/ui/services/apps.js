@@ -93,3 +93,21 @@ export async function removeAppApi(appId, killSession = false) {
   }
   return { success: true };
 }
+
+/**
+ * Removes a WApp assignment and publishes its Flight Deck delete record.
+ * @param {string} wappId - The WApp record ID
+ * @returns {Promise<{success: boolean, error?: string, data?: Object}>}
+ */
+export async function removeWappApi(wappId) {
+  const response = await fetch(`/api/wapps/${encodeURIComponent(wappId)}`, { method: "DELETE" });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message =
+      payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+        ? payload.error
+        : response.statusText || "Failed to remove WApp";
+    return { success: false, error: message, data: payload };
+  }
+  return { success: true, data: payload };
+}

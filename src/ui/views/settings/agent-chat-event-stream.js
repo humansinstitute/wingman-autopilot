@@ -1,4 +1,17 @@
 import { fetchPipelineRun } from '../../pipelines/api.js';
+import {
+  getEventRecordId,
+  getRecentEventRows,
+  resolveEventFamily,
+  resolveEventState,
+} from './agent-chat-event-stream-state.js';
+
+export {
+  getEventRecordId,
+  getRecentEventRows,
+  resolveEventFamily,
+  resolveEventState,
+} from './agent-chat-event-stream-state.js';
 
 function formatTimestamp(value) {
   if (typeof value !== 'string' || !value) {
@@ -16,15 +29,6 @@ function shortenIdentifier(value, { head = 10, tail = 6 } = {}) {
     return value;
   }
   return `${value.slice(0, head)}...${value.slice(-tail)}`;
-}
-
-function resolveEventFamily(event) {
-  const familyHash = typeof event?.payload?.family_hash === 'string' ? event.payload.family_hash : '';
-  if (!familyHash) {
-    return 'unknown-family';
-  }
-  const parts = familyHash.split(':').filter(Boolean);
-  return parts[parts.length - 1] || familyHash;
 }
 
 function createPill(text, tone = 'default') {
@@ -112,35 +116,6 @@ function createDisclosure(label, value) {
   return details;
 }
 
-function buildEventFingerprint(event) {
-  return JSON.stringify({
-    eventType: event?.eventType || 'unknown',
-    family: resolveEventFamily(event),
-    recordId: typeof event?.payload?.record_id === 'string' ? event.payload.record_id : null,
-    version: typeof event?.payload?.version === 'number' ? event.payload.version : null,
-    eventId: event?.eventId || null,
-  });
-}
-
-function dedupeEvents(events) {
-  const seen = new Map();
-  const deduped = [];
-
-  events.forEach((event) => {
-    const key = buildEventFingerprint(event);
-    const existing = seen.get(key);
-    if (existing) {
-      existing.repeatCount += 1;
-      return;
-    }
-    const entry = { ...event, repeatCount: 1 };
-    seen.set(key, entry);
-    deduped.push(entry);
-  });
-
-  return deduped;
-}
-
 export function resolveWorkspaceName(subscription) {
   const name = typeof subscription.workspaceName === 'string' ? subscription.workspaceName.trim() : '';
   if (name) {
@@ -149,64 +124,9 @@ export function resolveWorkspaceName(subscription) {
   return shortenIdentifier(subscription.workspaceOwnerNpub, { head: 18, tail: 10 });
 }
 
-function getEventRecordId(event) {
-  return typeof event?.payload?.record_id === 'string' ? event.payload.record_id : null;
-}
-
 function getEventNumber(event, fallbackIndex) {
   const eventId = event?.eventId ?? event?.payload?.event_id ?? event?.payload?.id ?? null;
   return eventId ? String(eventId) : String(fallbackIndex + 1);
-}
-
-function getEventSortTime(event) {
-  const timestamp = Date.parse(event?.at || '');
-  return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
-function getRecentEventRows(subscription) {
-  const events = Array.isArray(subscription.recentSseEvents) ? subscription.recentSseEvents : [];
-  return dedupeEvents(events)
-    .sort((left, right) => getEventSortTime(right) - getEventSortTime(left))
-    .filter((event) => event?.eventType !== 'heartbeat');
-}
-
-function findDispatchForEvent(subscription, event) {
-  const recordId = getEventRecordId(event);
-  if (!recordId || !Array.isArray(subscription.recentDispatches)) {
-    return null;
-  }
-  return [...subscription.recentDispatches]
-    .reverse()
-    .find((entry) => entry.recordId === recordId || entry.bindingId === recordId) ?? null;
-}
-
-function diagnosticMatchesEvent(diagnostic, recordId) {
-  if (!diagnostic || !recordId) {
-    return false;
-  }
-  return diagnostic.details?.record_id === recordId;
-}
-
-function findErrorDiagnosticForEvent(subscription, event) {
-  const recordId = getEventRecordId(event);
-  const diagnostics = [
-    subscription.lastRoutingResult,
-    subscription.lastDecryptResult,
-    subscription.lastRecordPullResult,
-  ];
-  return diagnostics.find((diagnostic) => diagnosticMatchesEvent(diagnostic, recordId) && diagnostic.ok === false) ?? null;
-}
-
-function resolveEventState(subscription, event) {
-  const dispatch = findDispatchForEvent(subscription, event);
-  if (dispatch?.pipelineRunId && String(dispatch.action || '').includes('pipeline_dispatch')) {
-    return { label: 'Pipeline Dispatched', tone: 'success', dispatch, diagnostic: null };
-  }
-  const diagnostic = findErrorDiagnosticForEvent(subscription, event);
-  if (diagnostic || dispatch?.status === 'failed' || dispatch?.status === 'suppressed') {
-    return { label: 'Error', tone: 'danger', dispatch, diagnostic };
-  }
-  return { label: 'New', tone: 'muted', dispatch, diagnostic: null };
 }
 
 function findRouteForDispatch(dispatch, routes) {

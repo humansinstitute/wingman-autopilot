@@ -214,6 +214,7 @@ let triggerAppAction = async () => false;
 let triggerWarmRestart = async () => false;
 let runSystemCleanup = async () => false;
 let removeApp = async () => {};
+let removeWapp = async () => false;
 let deriveAppWindowName = () => "app";
 let appendVariableUrlRow = () => {};
 let appendVariablePubkeyRow = () => {};
@@ -1760,6 +1761,7 @@ triggerAppAction = (...args) => appsRuntime.triggerAppAction(...args);
 triggerWarmRestart = (...args) => appsRuntime.triggerWarmRestart(...args);
 runSystemCleanup = (...args) => appsRuntime.runSystemCleanup(...args);
 removeApp = (...args) => appsRuntime.removeApp(...args);
+removeWapp = (...args) => appsRuntime.removeWapp(...args);
 deriveAppWindowName = (...args) => appsRuntime.deriveAppWindowName(...args);
 appendVariableUrlRow = (...args) => appsRuntime.appendVariableUrlRow(...args);
 appendVariablePubkeyRow = (...args) => appsRuntime.appendVariablePubkeyRow(...args);
@@ -2046,6 +2048,7 @@ const appCardsModule = initAppCards({
   launchSession: (...args) => launchSession(...args),
   fetchAppLogsApi,
   removeApp: (...args) => removeApp(...args),
+  removeWapp: (...args) => removeWapp(...args),
   state,
   formatAppTimestamp,
   formatAppActionLabel,

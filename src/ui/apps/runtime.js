@@ -1,6 +1,6 @@
 import { openConfirmDialog } from "../common/dialog-prompts.js";
 import { createCopyIconButton } from "../utils/clipboard.js";
-import { removeAppApi, triggerAppActionApi } from "../services/apps.js";
+import { removeAppApi, removeWappApi, triggerAppActionApi } from "../services/apps.js";
 import { runSystemCleanupApi, triggerWarmRestartApi } from "../services/config.js";
 
 export const APP_STATUS_LABELS = {
@@ -229,6 +229,28 @@ export function initAppsRuntime({
     await refreshApps({ skipRender: false });
   }
 
+  async function removeWapp(wapp) {
+    const wappId = typeof wapp?.id === "string" ? wapp.id : null;
+    if (!wappId) return false;
+    const label = typeof wapp?.title === "string" && wapp.title.trim().length > 0 ? wapp.title.trim() : wappId;
+    const confirmed = await openConfirmDialog({
+      title: "Remove WApp",
+      description: `Remove "${label}" from Flight Deck? This publishes a deleted WApp record.`,
+      confirmLabel: "Remove WApp",
+      testId: "remove-wapp-dialog",
+    });
+    if (!confirmed) return false;
+
+    const result = await removeWappApi(wappId);
+    if (!result.success) {
+      showToast(result.error, { type: "error" });
+      return false;
+    }
+    showToast("WApp removed");
+    await refreshApps({ skipRender: false });
+    return true;
+  }
+
   function deriveAppWindowName(labelValue, rootValue) {
     const label = (labelValue ?? "").trim();
     const root = (rootValue ?? "").trim();
@@ -332,6 +354,7 @@ export function initAppsRuntime({
     triggerWarmRestart,
     runSystemCleanup,
     removeApp,
+    removeWapp,
     deriveAppWindowName,
     appendVariableUrlRow,
     appendVariablePubkeyRow,

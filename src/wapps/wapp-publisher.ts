@@ -1,3 +1,10 @@
+import { nip19 } from "nostr-tools";
+
+import {
+  syncSuperbasedPlaintextRecords,
+  type SuperbasedApiDependencies,
+  type SuperbasedSyncPlaintextResult,
+} from "../superbased/superbased-api";
 import type { WappRecord } from "./types";
 
 export interface FlightDeckWappRecordPayload {
@@ -56,11 +63,97 @@ export function buildFlightDeckWappRecordPayload(
 }
 
 export interface WappPublisher {
-  publish(payload: FlightDeckWappRecordPayload): Promise<{ published: boolean; reference?: string | null }>;
+  publish(payload: FlightDeckWappRecordPayload): Promise<{
+    published: boolean;
+    reference?: string | null;
+    error?: string | null;
+    status?: number;
+  }>;
 }
 
-export class LocalPayloadWappPublisher implements WappPublisher {
-  async publish(payload: FlightDeckWappRecordPayload): Promise<{ published: boolean; reference: string }> {
-    return { published: false, reference: `local-payload:${payload.record_id}` };
+export type SuperbasedSyncRecords = (
+  deps: SuperbasedApiDependencies,
+  input: {
+    owner_pubkey: string;
+    records: Array<{
+      record_id: string;
+      collection: string;
+      plaintext_payload: string;
+      delegate_pubkeys: string[];
+    }>;
+    user_npub?: string;
+  },
+) => Promise<SuperbasedSyncPlaintextResult>;
+
+function npubToPubkeyHex(npub: string): string | null {
+  const trimmed = npub.trim();
+  if (/^[0-9a-f]{64}$/i.test(trimmed)) return trimmed.toLowerCase();
+  try {
+    const decoded = nip19.decode(trimmed);
+    return decoded.type === "npub" && typeof decoded.data === "string" ? decoded.data : null;
+  } catch {
+    return null;
+  }
+}
+
+export class SuperbasedWappPublisher implements WappPublisher {
+  constructor(
+    private readonly deps: SuperbasedApiDependencies,
+    private readonly syncRecords: SuperbasedSyncRecords = syncSuperbasedPlaintextRecords,
+  ) {}
+
+  async publish(payload: FlightDeckWappRecordPayload): Promise<{
+    published: boolean;
+    reference?: string | null;
+    error?: string | null;
+    status?: number;
+  }> {
+    if (!this.deps.defaultBaseUrl) {
+      return {
+        published: false,
+        error: "wapp-publish-transport-unavailable",
+        status: 503,
+      };
+    }
+
+    const ownerPubkey = npubToPubkeyHex(payload.data.workspace_owner_npub);
+    if (!ownerPubkey) {
+      return {
+        published: false,
+        error: "wapp-publish-invalid-workspace-owner",
+        status: 400,
+      };
+    }
+
+    const delegatePubkeys = Array.from(
+      new Set(
+        payload.encrypt_to_npubs
+          .map(npubToPubkeyHex)
+          .filter((pubkey): pubkey is string => Boolean(pubkey && pubkey !== ownerPubkey)),
+      ),
+    ).sort();
+
+    try {
+      const result = await this.syncRecords(this.deps, {
+        owner_pubkey: ownerPubkey,
+        user_npub: payload.data.owner_npub,
+        records: [{
+          record_id: payload.record_id,
+          collection: payload.collection_space,
+          plaintext_payload: JSON.stringify(payload),
+          delegate_pubkeys: delegatePubkeys,
+        }],
+      });
+      const reference = result.synced[0]
+        ? `superbased:${result.synced[0].record_id}:v${result.synced[0].version}`
+        : `superbased:${payload.record_id}`;
+      return { published: true, reference };
+    } catch (error) {
+      return {
+        published: false,
+        error: (error as Error).message,
+        status: 502,
+      };
+    }
   }
 }

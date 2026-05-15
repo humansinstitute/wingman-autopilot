@@ -2,7 +2,10 @@ import type { RequestAuthContext } from "../auth/request-context";
 import type { AccessAction } from "../auth/access-control";
 import type { AppRecord } from "../apps/app-registry";
 import { normaliseNpub } from "../identity/npub-utils";
-import { resolveWappAllowedNpubs, normalizeWappScopeLineage } from "../wapps/scope-access";
+import {
+  WappScopeAccessError,
+  type WappScopeAccessResolver,
+} from "../wapps/scope-access";
 import { buildFlightDeckWappRecordPayload, type WappPublisher } from "../wapps/wapp-publisher";
 import { createWappTemplate } from "../wapps/wapp-template";
 import type { WappRecord } from "../wapps/types";
@@ -29,6 +32,7 @@ export interface WappsApiContext {
   };
   wappStore: WappStore;
   publisher: WappPublisher;
+  scopeAccessResolver: WappScopeAccessResolver;
   buildLaunchUrl: (alias: string | null, app: AppRecord) => string;
 }
 
@@ -44,6 +48,14 @@ function canAccessWapp(ctx: WappsApiContext, wapp: WappRecord): boolean {
 async function parseBody(request: Request): Promise<Record<string, unknown> | null> {
   const body = await request.json().catch(() => null);
   return body && typeof body === "object" ? body as Record<string, unknown> : null;
+}
+
+function scopeAccessErrorResponse(error: unknown): Response {
+  if (error instanceof WappScopeAccessError) {
+    const status = error.code === "scope-access-unavailable" ? 503 : 400;
+    return Response.json({ error: error.code, message: error.message }, { status });
+  }
+  return Response.json({ error: (error as Error).message }, { status: 400 });
 }
 
 export async function handleWappsApi(
@@ -81,11 +93,13 @@ export async function handleWappsApi(
     const createdByNpub = normaliseNpub(ctx.viewerNpub);
     if (!ownerNpub || !createdByNpub) return Response.json({ error: "Unable to resolve WApp owner" }, { status: 403 });
     const alias = (await ctx.appAliasRegistry.getByAppId(app.id))?.alias ?? null;
-    const allowedNpubs = resolveWappAllowedNpubs({
+    const scopeAccess = await ctx.scopeAccessResolver.resolveWappScopeAccess({
+      workspaceOwnerNpub,
       scopeId,
       ownerNpub,
-      allowedNpubs: body.allowedNpubs ?? body.allowed_npubs,
-    });
+      appRoot: app.root,
+    }).catch((error) => error);
+    if (scopeAccess instanceof Error) return scopeAccessErrorResponse(scopeAccess);
     const wapp = ctx.wappStore.create({
       appId: app.id,
       title,
@@ -93,9 +107,9 @@ export async function handleWappsApi(
       ownerNpub,
       createdByNpub,
       workspaceOwnerNpub,
-      scopeId,
-      scopeLineage: body.scopeLineage as Record<string, string | null> | null,
-      allowedNpubs,
+      scopeId: scopeAccess.scopeId,
+      scopeLineage: scopeAccess.scopeLineage,
+      allowedNpubs: scopeAccess.allowedNpubs,
       launchUrl: ctx.buildLaunchUrl(alias, app),
       sourceWingmanUrl: ctx.sourceWingmanUrl,
       subdomainAlias: alias,
@@ -110,7 +124,7 @@ export async function handleWappsApi(
     if (!root) return Response.json({ error: "root is required" }, { status: 400 });
     try {
       const resolvedRoot = await ctx.ensureDirectory(root);
-      return Response.json({ template: await createWappTemplate(resolvedRoot) }, { status: 201 });
+      return Response.json({ template: await createWappTemplate(resolvedRoot, { force: body.force === true }) }, { status: 201 });
     } catch (error) {
       return Response.json({ error: (error as Error).message }, { status: 400 });
     }
@@ -131,41 +145,81 @@ export async function handleWappsApi(
     const body = await parseBody(request);
     if (!body) return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
     const nextScopeId = text(body.scopeId ?? body.scope_id) ?? wapp.scopeId;
-    const ownerNpub = wapp.ownerNpub;
-    const allowedNpubs =
-      body.allowedNpubs !== undefined || body.allowed_npubs !== undefined
-        ? resolveWappAllowedNpubs({ scopeId: nextScopeId, ownerNpub, allowedNpubs: body.allowedNpubs ?? body.allowed_npubs })
-        : undefined;
+    const nextWorkspaceOwnerNpub = normaliseNpub(text(body.workspaceOwnerNpub ?? body.workspace_owner_npub)) ?? wapp.workspaceOwnerNpub;
+    const requestedAllowlist = body.allowedNpubs !== undefined || body.allowed_npubs !== undefined;
+    const requestedLineage = body.scopeLineage !== undefined || body.scope_lineage !== undefined;
+    const shouldRefreshScope = requestedAllowlist || requestedLineage || nextScopeId !== wapp.scopeId || nextWorkspaceOwnerNpub !== wapp.workspaceOwnerNpub;
+    const app = shouldRefreshScope ? await ctx.appRegistry.getApp(wapp.appId) : undefined;
+    const scopeAccess = shouldRefreshScope
+      ? await ctx.scopeAccessResolver.resolveWappScopeAccess({
+        workspaceOwnerNpub: nextWorkspaceOwnerNpub,
+        scopeId: nextScopeId,
+        ownerNpub: wapp.ownerNpub,
+        appRoot: app?.root ?? null,
+      }).catch((error) => error)
+      : null;
+    if (scopeAccess instanceof Error) return scopeAccessErrorResponse(scopeAccess);
     const updated = ctx.wappStore.update(id, {
       title: text(body.title) ?? undefined,
       description: body.description === null ? null : text(body.description) ?? undefined,
-      workspaceOwnerNpub: normaliseNpub(text(body.workspaceOwnerNpub ?? body.workspace_owner_npub)) ?? undefined,
+      workspaceOwnerNpub: nextWorkspaceOwnerNpub,
       scopeId: nextScopeId,
-      scopeLineage: body.scopeLineage ? normalizeWappScopeLineage(nextScopeId, body.scopeLineage as Record<string, string | null>) : undefined,
-      allowedNpubs,
+      scopeLineage: scopeAccess ? scopeAccess.scopeLineage : undefined,
+      allowedNpubs: scopeAccess ? scopeAccess.allowedNpubs : undefined,
     });
     return Response.json({ wapp: updated });
   }
 
   if (!action && method === "DELETE") {
-    const archived = ctx.wappStore.archive(id);
-    return Response.json({ wapp: archived });
+    const deletedAt = new Date().toISOString();
+    const deletedWapp: WappRecord = {
+      ...wapp,
+      recordState: "deleted",
+      updatedAt: deletedAt,
+      lastPublishedAt: deletedAt,
+    };
+    const payload = buildFlightDeckWappRecordPayload(deletedWapp, ctx.flightDeckAppNamespace);
+    const result = await ctx.publisher.publish(payload);
+    if (!result.published) {
+      return Response.json({
+        error: result.error ?? "wapp-delete-publish-unavailable",
+        published: false,
+        reference: result.reference ?? null,
+        payload,
+      }, { status: result.status ?? 503 });
+    }
+    const deleted = ctx.wappStore.update(id, { recordState: "deleted", lastPublishedAt: deletedAt });
+    return Response.json({ wapp: deleted, published: true, reference: result.reference ?? null, payload });
   }
 
   if (action === "refresh-allowlist" && method === "POST") {
-    const body = await parseBody(request) ?? {};
-    const allowedNpubs = resolveWappAllowedNpubs({
+    const app = await ctx.appRegistry.getApp(wapp.appId);
+    const scopeAccess = await ctx.scopeAccessResolver.resolveWappScopeAccess({
+      workspaceOwnerNpub: wapp.workspaceOwnerNpub,
       scopeId: wapp.scopeId,
       ownerNpub: wapp.ownerNpub,
-      allowedNpubs: body.allowedNpubs ?? body.allowed_npubs ?? wapp.allowedNpubs,
+      appRoot: app?.root ?? null,
+      scopeLineage: wapp.scopeLineage,
+    }).catch((error) => error);
+    if (scopeAccess instanceof Error) return scopeAccessErrorResponse(scopeAccess);
+    const updated = ctx.wappStore.update(id, {
+      scopeLineage: scopeAccess.scopeLineage,
+      allowedNpubs: scopeAccess.allowedNpubs,
     });
-    const updated = ctx.wappStore.update(id, { allowedNpubs });
     return Response.json({ wapp: updated });
   }
 
   if (action === "publish" && method === "POST") {
     const payload = buildFlightDeckWappRecordPayload(wapp, ctx.flightDeckAppNamespace);
     const result = await ctx.publisher.publish(payload);
+    if (!result.published) {
+      return Response.json({
+        error: result.error ?? "wapp-publish-unavailable",
+        published: false,
+        reference: result.reference ?? null,
+        payload,
+      }, { status: result.status ?? 503 });
+    }
     const updated = ctx.wappStore.update(id, { lastPublishedAt: new Date().toISOString() });
     return Response.json({ wapp: updated, published: result.published, reference: result.reference ?? null, payload });
   }

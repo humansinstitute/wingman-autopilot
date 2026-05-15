@@ -18,13 +18,13 @@ import {
   deleteProcess,
   getProcessByName,
   getProcessRuntimeInfo,
-  restartProcess,
   startProcessFromConfig,
   stopProcess,
 } from "../agents/pm2-wrapper";
 import { readCombinedLogs } from "../agents/log-reader";
 import { runtimePortRegistry } from "./runtime-port-registry";
 import { waitForListeningPort } from "../utils/port-utils";
+import { wappStore, type WappStore } from "../wapps/wapp-store";
 
 export type AppRuntimeStatus =
   | "idle"
@@ -107,10 +107,12 @@ export class AppProcessManager {
   private readonly states = new Map<string, AppRuntimeState>();
   private readonly config = loadConfig();
   private readonly adminNpub: string | null;
+  private readonly wappStore: WappStore;
 
-  constructor(registry: AppRegistry = appRegistry, adminNpub?: string | null) {
+  constructor(registry: AppRegistry = appRegistry, adminNpub?: string | null, store: WappStore = wappStore) {
     this.registry = registry;
     this.adminNpub = adminNpub ?? null;
+    this.wappStore = store;
   }
 
   async getStatus(appId: string): Promise<AppProcessStatus> {
@@ -135,6 +137,7 @@ export class AppProcessManager {
         userAlias,
         userRootDir,
         isAdmin,
+        wappStore: this.wappStore,
       });
 
       // Update app record with PM2 info
@@ -203,19 +206,29 @@ export class AppProcessManager {
 
       const processName = app.pm2Name;
       if (processName) {
-        // Try PM2 restart first
         try {
           const proc = await getProcessByName(processName);
           if (proc) {
-            await restartProcess(processName);
+            const { userAlias, userRootDir, isAdmin } = this.resolveUserContext(app);
+            const { ecosystemPath, processName: refreshedProcessName, logsDir } = await addUserAppToEcosystem({
+              app,
+              userAlias,
+              userRootDir,
+              isAdmin,
+              wappStore: this.wappStore,
+            });
+
+            await this.registry.updateApp(app.id, { pm2Name: refreshedProcessName, logsDir });
+            await deleteProcess(processName);
+            await startProcessFromConfig(ecosystemPath, refreshedProcessName);
 
             // Register runtime port after restart
-            await this.registerRuntimePort(app, processName);
+            await this.registerRuntimePort(app, refreshedProcessName);
 
             return {
               finalStatus: "running" as AppRuntimeStatus,
               exitCode: 0,
-              message: `Restarted PM2 process ${processName}`,
+              message: `Restarted PM2 process ${refreshedProcessName}`,
             };
           }
         } catch {
@@ -230,6 +243,7 @@ export class AppProcessManager {
         userAlias,
         userRootDir,
         isAdmin,
+        wappStore: this.wappStore,
       });
 
       await this.registry.updateApp(app.id, { pm2Name: newProcessName, logsDir });

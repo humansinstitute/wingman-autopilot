@@ -9,6 +9,7 @@ import type { AppLifecycleAction, AppLifecycleScripts, AppRecord } from '../apps
 import type { AppProcessStatus } from '../apps/app-process-manager';
 import { AppActionInProgressError, AppScriptMissingError } from '../apps/app-process-manager';
 import type { CaproverClient, CaproverStore } from '../caprover';
+import type { WappRecord } from '../wapps/types';
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD';
 
@@ -102,6 +103,10 @@ export interface AppsApiContext {
     getByAppId: (id: string) => Promise<{ alias: string } | undefined>;
   };
 
+  wappStore?: {
+    list: () => WappRecord[];
+  };
+
   npubProjectStore: {
     getByPath: (ownerNpub: string, root: string) => { id: string } | null;
     setAppId: (projectId: string, appId: string) => void;
@@ -125,6 +130,49 @@ function withCaproverDeploymentInfo(
     caproverName: trackedApp?.caproverName ?? null,
     caproverLiveUrl: trackedApp?.liveUrl ?? null,
     caproverDeployedVersion: trackedApp?.deployedVersion ?? null,
+  };
+}
+
+function canAccessWapp(ctx: AppsApiContext, wapp: WappRecord): boolean {
+  if (ctx.adminNpub && ctx.viewerNpub === ctx.adminNpub) return true;
+  if (ctx.workspaceScope.isAdmin) return true;
+  return Boolean(ctx.viewerNpub && (wapp.ownerNpub === ctx.viewerNpub || wapp.allowedNpubs.includes(ctx.viewerNpub)));
+}
+
+function buildWappsByAppId(ctx: AppsApiContext): Map<string, WappRecord[]> {
+  const rows = ctx.wappStore?.list?.() ?? [];
+  const byAppId = new Map<string, WappRecord[]>();
+  for (const wapp of rows) {
+    if (!wapp || wapp.recordState !== 'active' || !canAccessWapp(ctx, wapp)) continue;
+    const existing = byAppId.get(wapp.appId) ?? [];
+    existing.push(wapp);
+    byAppId.set(wapp.appId, existing);
+  }
+  for (const entries of byAppId.values()) {
+    entries.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+  return byAppId;
+}
+
+function withWappAssignments(
+  appResponse: Record<string, unknown>,
+  appId: string,
+  wappsByAppId: Map<string, WappRecord[]>,
+): Record<string, unknown> {
+  const wapps = wappsByAppId.get(appId) ?? [];
+  return {
+    ...appResponse,
+    wapps: wapps.map((wapp) => ({
+      id: wapp.id,
+      appId: wapp.appId,
+      title: wapp.title,
+      workspaceOwnerNpub: wapp.workspaceOwnerNpub,
+      scopeId: wapp.scopeId,
+      launchUrl: wapp.launchUrl,
+      recordState: wapp.recordState,
+      lastPublishedAt: wapp.lastPublishedAt,
+      updatedAt: wapp.updatedAt,
+    })),
   };
 }
 
@@ -247,16 +295,21 @@ export async function handleAppsApi(
               return normalizedOwner === ownerFilter;
             });
       const statusMap = new Map(statuses.map((status) => [status.appId, status]));
+      const wappsByAppId = buildWappsByAppId(ctx);
       const data = await Promise.all(
         filteredApps.map(async (app) => {
           const status = statusMap.get(app.id) ?? ctx.defaultAppProcessStatus(app.id);
           const ownerAlias = ctx.resolveOwnerAliasCached(app.ownerNpub, ownerAliasCache);
           const aliasRecord = await ctx.appAliasRegistry.getByAppId(app.id);
           const subdomainAlias = aliasRecord?.alias ?? null;
-          const record = withCaproverDeploymentInfo(
-            ctx.buildAppResponse(app, status, { ownerAlias, subdomainAlias }),
+          const record = withWappAssignments(
+            withCaproverDeploymentInfo(
+              ctx.buildAppResponse(app, status, { ownerAlias, subdomainAlias }),
+              app.id,
+              ctx.caproverStore,
+            ),
             app.id,
-            ctx.caproverStore,
+            wappsByAppId,
           );
           if (includeLogs) {
             try {
@@ -429,10 +482,14 @@ export async function handleAppsApi(
       const status = await ctx.appProcessManager.getStatus(id);
       const aliasRecord = await ctx.appAliasRegistry.getByAppId(id);
       const subdomainAlias = aliasRecord?.alias ?? null;
-      const appResponse = withCaproverDeploymentInfo(
-        ctx.buildAppResponse(app, status, { subdomainAlias }),
+      const appResponse = withWappAssignments(
+        withCaproverDeploymentInfo(
+          ctx.buildAppResponse(app, status, { subdomainAlias }),
+          app.id,
+          ctx.caproverStore,
+        ),
         app.id,
-        ctx.caproverStore,
+        buildWappsByAppId(ctx),
       );
       return Response.json({
         app: appResponse,
@@ -538,10 +595,14 @@ export async function handleAppsApi(
         const aliasRecord = await ctx.appAliasRegistry.getByAppId(id);
         const subdomainAlias = aliasRecord?.alias ?? null;
         return Response.json({
-          app: withCaproverDeploymentInfo(
-            ctx.buildAppResponse(updated, status, { subdomainAlias }),
+          app: withWappAssignments(
+            withCaproverDeploymentInfo(
+              ctx.buildAppResponse(updated, status, { subdomainAlias }),
+              updated.id,
+              ctx.caproverStore,
+            ),
             updated.id,
-            ctx.caproverStore,
+            buildWappsByAppId(ctx),
           ),
         });
       } catch (error) {
@@ -629,10 +690,14 @@ export async function handleAppsApi(
           const status = await ctx.appProcessManager.getStatus(id);
           const aliasRecord = await ctx.appAliasRegistry.getByAppId(id);
           const subdomainAlias = aliasRecord?.alias ?? null;
-          const appResponse = withCaproverDeploymentInfo(
-            ctx.buildAppResponse(app, status, { subdomainAlias }),
+          const appResponse = withWappAssignments(
+            withCaproverDeploymentInfo(
+              ctx.buildAppResponse(app, status, { subdomainAlias }),
+              app.id,
+              ctx.caproverStore,
+            ),
             app.id,
-            ctx.caproverStore,
+            buildWappsByAppId(ctx),
           );
           return Response.json({
             app: appResponse,
@@ -669,10 +734,14 @@ export async function handleAppsApi(
         }
         const aliasRecord = await ctx.appAliasRegistry.getByAppId(id);
         const subdomainAlias = aliasRecord?.alias ?? null;
-        const appResponse = withCaproverDeploymentInfo(
-          ctx.buildAppResponse(app, status, { subdomainAlias }),
+        const appResponse = withWappAssignments(
+          withCaproverDeploymentInfo(
+            ctx.buildAppResponse(app, status, { subdomainAlias }),
+            app.id,
+            ctx.caproverStore,
+          ),
           app.id,
-          ctx.caproverStore,
+          buildWappsByAppId(ctx),
         );
         return Response.json({
           app: appResponse,

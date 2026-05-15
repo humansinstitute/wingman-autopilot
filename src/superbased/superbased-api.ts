@@ -28,6 +28,28 @@ export interface SuperbasedApiDependencies {
   getSession?: (sessionId: string) => { npub?: string | null } | null;
 }
 
+export interface SuperbasedPlaintextRecordInput {
+  record_id?: string;
+  collection?: string;
+  plaintext_payload: string;
+  delegate_pubkeys?: string[];
+}
+
+export interface SuperbasedSyncPlaintextInput {
+  base_url?: string;
+  owner_pubkey: string;
+  records: SuperbasedPlaintextRecordInput[];
+  user_npub?: string;
+  session_id?: string;
+}
+
+export interface SuperbasedSyncPlaintextResult {
+  synced: Array<{ record_id: string; version: number }>;
+  created: number;
+  updated: number;
+  rejected: unknown[];
+}
+
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 type NamespaceMode = "default";
 
@@ -93,6 +115,93 @@ function resolveSigningIdentity(userNpub?: string | null): {
     throw new Error("No Wingman instance key available (set WINGMAN_PRIV)");
   }
   return { secretKey: identity.secretKey, pubkey: identity.pubkeyHex, source: "wingman" };
+}
+
+export async function syncSuperbasedPlaintextRecords(
+  deps: SuperbasedApiDependencies,
+  input: SuperbasedSyncPlaintextInput,
+): Promise<SuperbasedSyncPlaintextResult> {
+  const baseUrl = resolveBaseUrl(input.base_url, deps.defaultBaseUrl);
+  const effectiveUserNpub = resolveUserNpub(deps, input.user_npub, input.session_id);
+  const signingIdentity = resolveSigningIdentity(effectiveUserNpub);
+
+  if (!input.owner_pubkey) {
+    throw new Error("owner_pubkey is required");
+  }
+  if (!input.records || !Array.isArray(input.records) || input.records.length === 0) {
+    throw new Error("records array is required and must be non-empty");
+  }
+
+  const encryptedRecords = input.records.map((record, index) => {
+    const plaintext = record.plaintext_payload;
+    if (!plaintext) {
+      throw new Error(`Record ${index}: plaintext_payload is required`);
+    }
+
+    let recordId = record.record_id;
+    if (!recordId) {
+      recordId = crypto.randomUUID();
+    } else if (!UUID_RE.test(recordId)) {
+      throw new Error(
+        `Record ${index}: record_id "${recordId}" is not a valid UUID. ` +
+        `Use UUID format or omit to auto-generate.`,
+      );
+    }
+
+    const collection = record.collection || "default";
+    const delegatePubkeys = record.delegate_pubkeys;
+    const encryptedData = nip44Encrypt(plaintext, signingIdentity.secretKey, input.owner_pubkey);
+
+    const delegatePayloads: Record<string, string> = {};
+    if (delegatePubkeys && delegatePubkeys.length > 0) {
+      const delegateEncrypted = encryptToMultipleRecipients(
+        plaintext,
+        signingIdentity.secretKey,
+        delegatePubkeys,
+      );
+      for (const [pubkey, ciphertext] of Object.entries(delegateEncrypted)) {
+        delegatePayloads[pubkey] = ciphertext;
+      }
+    }
+
+    return {
+      record_id: recordId,
+      owner_pubkey: input.owner_pubkey,
+      collection,
+      encrypted_data: encryptedData,
+      encrypted_from: signingIdentity.pubkey,
+      delegate_payloads: Object.keys(delegatePayloads).length > 0 ? delegatePayloads : undefined,
+    };
+  });
+
+  const syncUrl = `${baseUrl}/records/sync`;
+  const response = await authenticatedPost(syncUrl, { records: encryptedRecords }, effectiveUserNpub);
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Upstream sync error (${response.status}): ${text}`);
+  }
+
+  const result = await response.json() as {
+    synced?: Array<{ record_id: string; version: number }>;
+    created?: number;
+    updated?: number;
+    rejected?: unknown[];
+  };
+
+  console.log(
+    `[superbased-api] Synced ${encryptedRecords.length} records to default namespace`,
+  );
+
+  return {
+    synced: result.synced ?? encryptedRecords.map(r => ({
+      record_id: r.record_id,
+      version: 1,
+    })),
+    created: result.created ?? 0,
+    updated: result.updated ?? 0,
+    rejected: result.rejected ?? [],
+  };
 }
 
 /**
@@ -372,98 +481,21 @@ async function handleSyncRecords(
 
   const userNpub = body.user_npub as string | undefined;
   const sessionId = body.session_id as string | undefined;
-  const effectiveUserNpub = resolveUserNpub(deps, userNpub, sessionId);
 
-  let signingIdentity: { secretKey: Uint8Array; pubkey: string; source: string };
   try {
-    signingIdentity = resolveSigningIdentity(effectiveUserNpub);
-  } catch (err) {
-    return jsonError((err as Error).message, 500);
-  }
-
-  // Encrypt each record and build v3 upstream payload
-  const encryptedRecords = records.map((record, index) => {
-    const plaintext = record.plaintext_payload as string | undefined;
-    if (!plaintext) {
-      throw new Error(`Record ${index}: plaintext_payload is required`);
-    }
-
-    // Auto-generate UUID if not provided; validate format when provided
-    let recordId = record.record_id as string | undefined;
-    if (!recordId) {
-      recordId = crypto.randomUUID();
-    } else if (!UUID_RE.test(recordId)) {
-      throw new Error(
-        `Record ${index}: record_id "${recordId}" is not a valid UUID. ` +
-        `Use UUID format or omit to auto-generate.`,
-      );
-    }
-
-    const collection = (record.collection as string) || "default";
-    const delegatePubkeys = record.delegate_pubkeys as string[] | undefined;
-
-    // Encrypt to owner
-    const encryptedData = nip44Encrypt(plaintext, signingIdentity.secretKey, ownerPubkey);
-
-    // Encrypt to each delegate (if any) — do NOT auto-add Wingman
-    const delegatePayloads: Record<string, string> = {};
-    if (delegatePubkeys && delegatePubkeys.length > 0) {
-      const delegateEncrypted = encryptToMultipleRecipients(
-        plaintext,
-        signingIdentity.secretKey,
-        delegatePubkeys,
-      );
-      for (const [pubkey, ciphertext] of Object.entries(delegateEncrypted)) {
-        delegatePayloads[pubkey] = ciphertext;
-      }
-    }
-
-    return {
-      record_id: recordId,
+    const result = await syncSuperbasedPlaintextRecords(deps, {
+      base_url: baseUrl,
       owner_pubkey: ownerPubkey,
-      collection,
-      encrypted_data: encryptedData,
-      encrypted_from: signingIdentity.pubkey,
-      delegate_payloads: Object.keys(delegatePayloads).length > 0 ? delegatePayloads : undefined,
-    };
-  });
-
-  const syncUrl = `${baseUrl}/records/sync`;
-
-  try {
-    const response = await authenticatedPost(syncUrl, {
-      records: encryptedRecords,
-    }, effectiveUserNpub);
-
-    if (!response.ok) {
-      const text = await response.text();
-      return jsonError(`Upstream sync error (${response.status}): ${text}`, response.status);
-    }
-
-    const result = await response.json() as {
-      synced?: Array<{ record_id: string; version: number }>;
-      created?: number;
-      updated?: number;
-      rejected?: unknown[];
-    };
-
-    console.log(
-      `[superbased-api] Synced ${encryptedRecords.length} records to default namespace`,
-    );
-
-    // Return per-record record_id + version from upstream,
-    // falling back to our generated IDs if upstream doesn't return synced array
-    const synced = result.synced ?? encryptedRecords.map(r => ({
-      record_id: r.record_id,
-      version: 1,
-    }));
-
-    return Response.json({
-      synced,
-      created: result.created ?? 0,
-      updated: result.updated ?? 0,
-      rejected: result.rejected ?? [],
+      records: records.map((record) => ({
+        record_id: record.record_id as string | undefined,
+        collection: record.collection as string | undefined,
+        plaintext_payload: record.plaintext_payload as string,
+        delegate_pubkeys: record.delegate_pubkeys as string[] | undefined,
+      })),
+      user_npub: userNpub,
+      session_id: sessionId,
     });
+    return Response.json(result);
   } catch (err) {
     console.warn(`[superbased-api] Sync records failed: ${(err as Error).message}`);
     return jsonError(`Sync records failed: ${(err as Error).message}`, 502);

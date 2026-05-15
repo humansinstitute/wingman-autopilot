@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import type { AgentType, WingmanConfig } from "../config";
 import type { AppRecord } from "../apps/app-registry";
 import { getWappRuntimeEnvForApp } from "../wapps/runtime-env";
+import type { WappStore } from "../wapps/wapp-store";
 
 export interface EcosystemApp {
   name: string;
@@ -380,6 +381,7 @@ export interface UserAppConfig {
   userAlias: string;
   userRootDir: string;
   isAdmin: boolean;
+  wappStore?: WappStore;
 }
 
 /**
@@ -422,7 +424,7 @@ export async function createUserAppEcosystemConfig(config: UserAppConfig): Promi
   if (app.webApp && app.webAppPort) {
     meta.push(`PORT=${app.webAppPort}`);
   }
-  const wappEnv = getWappRuntimeEnvForApp(app.id, app.root);
+  const wappEnv = getWappRuntimeEnvForApp(app.id, app.root, config.wappStore);
   const wappExport = shellExport(wappEnv);
   if (wappExport) {
     meta.push(wappExport);

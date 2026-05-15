@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
 
 import { resolveWappAllowedNpubs } from "./scope-access";
-import { buildFlightDeckWappRecordPayload } from "./wapp-publisher";
+import { buildFlightDeckWappRecordPayload, SuperbasedWappPublisher } from "./wapp-publisher";
 import { buildWappRuntimeEnv } from "./runtime-env";
 import { WappStore } from "./wapp-store";
 
@@ -45,7 +45,7 @@ describe("WApp store and helpers", () => {
     expect(resolveWappAllowedNpubs({
       scopeId: "scope-1",
       ownerNpub: "npub1owner",
-      allowedNpubs: ["npub1member", "npub1owner", ""],
+      memberNpubs: ["npub1member", "npub1owner", ""],
     })).toEqual(["npub1member", "npub1owner"]);
   });
 
@@ -95,4 +95,85 @@ describe("WApp store and helpers", () => {
       WAPP_DB_PATH: "/tmp/wapp/data/db.sqlite",
     });
   }));
+
+  test("publishes WApp payload through configured SuperBased sync", async () => {
+    const ownerHex = "a".repeat(64);
+    const delegateHex = "b".repeat(64);
+    const calls: unknown[] = [];
+    const publisher = new SuperbasedWappPublisher(
+      { defaultBaseUrl: "https://superbased.example" },
+      async (_deps, input) => {
+        calls.push(input);
+        return {
+          synced: [{ record_id: input.records[0]!.record_id, version: 7 }],
+          created: 1,
+          updated: 0,
+          rejected: [],
+        };
+      },
+    );
+    const payload = buildFlightDeckWappRecordPayload({
+      id: "00000000-0000-4000-8000-000000000001",
+      appId: "app-4",
+      title: "Publishing",
+      description: null,
+      ownerNpub: ownerHex,
+      createdByNpub: ownerHex,
+      workspaceOwnerNpub: ownerHex,
+      scopeId: "scope-4",
+      scopeLineage: { scopeId: "scope-4", l1Id: null, l2Id: null, l3Id: null, l4Id: null, l5Id: null },
+      allowedNpubs: [ownerHex, delegateHex],
+      launchUrl: "https://apps.example/publishing",
+      sourceWingmanUrl: null,
+      subdomainAlias: null,
+      recordState: "active",
+      createdAt: "2026-05-14T00:00:00.000Z",
+      updatedAt: "2026-05-14T00:00:00.000Z",
+      lastPublishedAt: null,
+    }, ownerHex);
+
+    const result = await publisher.publish(payload);
+    expect(result).toMatchObject({ published: true, reference: "superbased:00000000-0000-4000-8000-000000000001:v7" });
+    expect(calls).toEqual([expect.objectContaining({
+      owner_pubkey: ownerHex,
+      records: [expect.objectContaining({
+        record_id: "00000000-0000-4000-8000-000000000001",
+        collection: "wapp",
+        delegate_pubkeys: [delegateHex],
+      })],
+    })]);
+  });
+
+  test("publisher fails clearly when SuperBased transport is unavailable", async () => {
+    const publisher = new SuperbasedWappPublisher({ defaultBaseUrl: null });
+    const result = await publisher.publish({
+      app_namespace: "autopilot",
+      collection_space: "wapp",
+      schema_version: 1,
+      record_id: "00000000-0000-4000-8000-000000000002",
+      data: {
+        title: "No Transport",
+        description: null,
+        owner_npub: "a".repeat(64),
+        wapp_id: "00000000-0000-4000-8000-000000000002",
+        app_id: "app-5",
+        launch_url: "https://apps.example/no-transport",
+        source_wingman_url: null,
+        workspace_owner_npub: "a".repeat(64),
+        scope_id: "scope-5",
+        scope_l1_id: null,
+        scope_l2_id: null,
+        scope_l3_id: null,
+        scope_l4_id: null,
+        scope_l5_id: null,
+        record_state: "active",
+      },
+      encrypt_to_npubs: ["a".repeat(64)],
+    });
+    expect(result).toMatchObject({
+      published: false,
+      error: "wapp-publish-transport-unavailable",
+      status: 503,
+    });
+  });
 });

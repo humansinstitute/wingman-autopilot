@@ -9,6 +9,8 @@ The MVP should let an operator create a WApp from an existing app card, assign i
 ## Product Rules
 
 - WApps are Nostr-authenticated apps.
+- A WApp must be backed by a registered Wingman app. Register the runtime app through the Wingman CLI/API first, for example `bun clis/appctl.ts register "Hello World WApp" --directory /path/to/wapp --web-app`, then use the returned app id as `WappRecord.appId`.
+- Do not create a WApp by hand-editing `data/apps.json`, `data/app-aliases.json`, or `data/wapps.sqlite`. Direct file edits do not update the live app registry, alias registry, runtime port registry, or process manager.
 - No Flight Deck auth handoff is required for the MVP.
 - No NIP-98 requirement is needed for the WApp login gate.
 - Users authenticate in the WApp using a Nostr browser extension.
@@ -75,6 +77,8 @@ src/server/wapps-api-routes.ts
 ```
 
 Do not add WApp fields to `AppRecord` beyond what is already needed for runtime apps.
+
+`WappRecord.appId` must reference a real registered app from `src/apps/app-registry.ts`. The publish step should reject missing or stale app ids, because Flight Deck can show a WApp link even when the subdomain proxy cannot route it.
 
 ## Scope Allowlist Resolution
 
@@ -196,9 +200,21 @@ App card -> Create WApp -> Select workspace -> Select scope -> Review allowed us
 
 The review step should show the derived npub allowlist before publishing.
 
+For CLI-driven creation, the minimum operator flow is:
+
+```txt
+appctl register <label> --directory <wapp root> --web-app
+appctl start <returned app id>
+create/update WApp assignment with that app id
+publish the Flight Deck wapp record
+```
+
+Use the CLI/API response app id, not a caller-invented id, so the app registry, alias registry, runtime port registry, and WApp metadata stay aligned.
+
 ## Acceptance Criteria
 
 - Existing app registration and lifecycle behavior remains unchanged.
+- WApp creation fails clearly unless the referenced app id exists in the live Wingman app registry.
 - A WApp can be created from an existing web app.
 - A WApp can be assigned to a workspace and scope.
 - The allowed npub list is derived from the selected scope and owner.

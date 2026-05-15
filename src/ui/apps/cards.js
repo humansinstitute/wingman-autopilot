@@ -11,6 +11,7 @@
  * @param {Function} deps.launchSession              - launches an agent session
  * @param {Function} deps.fetchAppLogsApi            - fetches app logs from API
  * @param {Function} deps.removeApp                  - removes an app by id
+ * @param {Function} deps.removeWapp                 - removes a WApp assignment by id
  * @param {object} deps.state                        - global UI state
  * @param {Function} deps.formatAppTimestamp         - formats a timestamp for display
  * @param {Function} deps.formatAppActionLabel       - formats an action label
@@ -39,6 +40,7 @@ export function initAppCards(deps) {
     launchSession,
     fetchAppLogsApi,
     removeApp,
+    removeWapp,
     state,
     formatAppTimestamp,
     formatAppActionLabel,
@@ -262,6 +264,9 @@ export function initAppCards(deps) {
     meta.append(rootRow);
 
     const isWebApp = Boolean(app.webApp);
+    const activeWapps = Array.isArray(app.wapps)
+      ? app.wapps.filter((wapp) => wapp && (wapp.recordState ?? "active") === "active")
+      : [];
     const webAppRow = document.createElement("div");
     webAppRow.className = "wm-app-meta-row";
     const webAppLabel = document.createElement("span");
@@ -343,6 +348,22 @@ export function initAppCards(deps) {
         deployRow.append(deployLabel, deployValue);
         meta.append(deployRow);
       }
+    }
+
+    if (activeWapps.length > 0) {
+      const wappRow = document.createElement("div");
+      wappRow.className = "wm-app-meta-row";
+      const wappLabel = document.createElement("span");
+      wappLabel.className = "wm-app-meta-label";
+      wappLabel.textContent = activeWapps.length === 1 ? "WApp" : "WApps";
+      const wappValue = document.createElement("span");
+      wappValue.className = "wm-app-meta-value";
+      wappValue.textContent = activeWapps
+        .map((wapp) => wapp.title || wapp.id)
+        .filter(Boolean)
+        .join(", ");
+      wappRow.append(wappLabel, wappValue);
+      meta.append(wappRow);
     }
 
     const windowRow = document.createElement("div");
@@ -658,6 +679,23 @@ export function initAppCards(deps) {
       openAppDialog(app.id);
     });
     linkBar.append(editLink);
+
+    activeWapps.forEach((wapp) => {
+      const removeWappLink = document.createElement("a");
+      removeWappLink.href = "#";
+      removeWappLink.textContent = activeWapps.length === 1 ? "Remove WApp" : `Remove WApp: ${wapp.title || wapp.id}`;
+      removeWappLink.dataset.testid = "app-card-remove-wapp";
+      removeWappLink.addEventListener("click", async (event) => {
+        event.preventDefault();
+        if (removeWappLink.getAttribute("aria-disabled") === "true") return;
+        removeWappLink.setAttribute("aria-disabled", "true");
+        const success = await removeWapp(wapp);
+        if (!success && removeWappLink.isConnected) {
+          removeWappLink.removeAttribute("aria-disabled");
+        }
+      });
+      linkBar.append(removeWappLink);
+    });
 
     const removeLink = document.createElement("a");
     removeLink.href = "#";

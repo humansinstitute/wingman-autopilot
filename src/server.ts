@@ -175,7 +175,9 @@ import { SchedulerEngine } from "./scheduler/scheduler-engine";
 import { createSchedulerApiHandler } from "./scheduler/scheduler-api";
 import { createAutopilotJobsApiHandler } from "./jobs-api";
 import { wappStore } from "./wapps/wapp-store";
-import { LocalPayloadWappPublisher } from "./wapps/wapp-publisher";
+import { SuperbasedWappPublisher } from "./wapps/wapp-publisher";
+import { FlightDeckScopeAccessResolver } from "./wapps/scope-access";
+import { createBoardClient } from "./board/yoke-board";
 import { createTriggerListener, type TriggerListener } from "./nostr/trigger-listener";
 import {
   clearWarmRestartMarker,
@@ -222,7 +224,11 @@ import {
 
 const config = loadConfig();
 const wingmanInstanceIdentity = loadWingmanInstanceIdentity();
-const wappPublisher = new LocalPayloadWappPublisher();
+const wappPublisher = new SuperbasedWappPublisher({ defaultBaseUrl: config.superbasedUrl });
+const wappScopeAccessResolver = new FlightDeckScopeAccessResolver(async (input) => {
+  const board = createBoardClient(input.appRoot ?? config.defaultWorkingDirectory);
+  return await board.getScopeAccess(input.scopeId);
+});
 if (wingmanInstanceIdentity) {
   console.log(`[identity] Wingman instance identity configured: ${wingmanInstanceIdentity.npub.slice(0, 20)}...`);
 } else {
@@ -2483,6 +2489,7 @@ const handleApi = createApiRouteHandler({
       appRegistry,
       appProcessManager,
       appAliasRegistry,
+      wappStore,
       npubProjectStore,
       createCaproverClientFromEnv,
       createAppTarball,
@@ -2534,6 +2541,7 @@ const handleApi = createApiRouteHandler({
       appAliasRegistry,
       wappStore,
       publisher: wappPublisher,
+      scopeAccessResolver: wappScopeAccessResolver,
       buildLaunchUrl: (alias, app) => {
         const aliasUrl = buildAppHostUrl(alias);
         if (aliasUrl) {

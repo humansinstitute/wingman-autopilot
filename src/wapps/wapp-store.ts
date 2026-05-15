@@ -174,6 +174,10 @@ export class WappStore {
   archive(id: string): WappRecord | null {
     return this.update(id, { recordState: "archived" });
   }
+
+  markDeleted(id: string): WappRecord | null {
+    return this.update(id, { recordState: "deleted" });
+  }
 }
 
 export const wappStore = new WappStore();

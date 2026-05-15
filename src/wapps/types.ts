@@ -7,7 +7,7 @@ export interface WappScopeLineage {
   l5Id: string | null;
 }
 
-export type WappRecordState = "active" | "archived";
+export type WappRecordState = "active" | "archived" | "deleted";
 
 export interface WappRecord {
   id: string;

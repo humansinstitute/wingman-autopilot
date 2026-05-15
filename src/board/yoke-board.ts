@@ -14,6 +14,7 @@ import {
   type BoardTaskRecord,
   type FlowBoard,
 } from './flow-orchestration';
+import { collectWappScopeGroupRefs } from '../wapps/scope-access';
 
 const YOKE_CLI_PATH = compactText(Bun.env.AGENT_CHAT_YOKE_CLI_PATH)
   || compactText(Bun.env.FLIGHTDECK_CLI_PATH)
@@ -244,6 +245,37 @@ function parseApprovalRecord(raw: Record<string, unknown>): BoardApprovalRecord 
   };
 }
 
+function parseMaybeJsonObject(value: unknown): Record<string, unknown> | null {
+  const text = compactText(value);
+  if (!text) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseGroupAccessRow(row: Record<string, unknown>): Record<string, unknown> {
+  const raw = parseMaybeJsonObject(row.raw_json) ?? {};
+  return {
+    ...raw,
+    group_id: compactText(row.group_id) || compactText(raw.group_id),
+    current_group_npub: compactText(row.current_group_npub) || compactText(raw.current_group_npub),
+    current_epoch: Number.isFinite(Number(row.current_epoch)) ? Number(row.current_epoch) : raw.current_epoch,
+    owner_npub: compactText(row.owner_npub) || compactText(raw.owner_npub),
+    name: compactText(row.name) || compactText(raw.name),
+    group_kind: compactText(row.group_kind) || compactText(raw.group_kind),
+    private_member_npub: compactText(row.private_member_npub) || compactText(raw.private_member_npub),
+    member_npubs: compactStringArrayMaybeJson(row.member_npubs_json ?? raw.member_npubs),
+    member_npubs_json: compactText(row.member_npubs_json),
+  };
+}
+
 function encodeTaskPatchFlags(patch: Partial<BoardTaskRecord> & { predecessorTaskIds?: string[]; tags?: string[] }): string[] {
   const args: string[] = [];
   if (patch.title !== undefined) args.push('--title', patch.title);
@@ -400,6 +432,23 @@ export class YokeBoardClient implements FlowBoard {
 
   async getScope(scopeId: string): Promise<Record<string, unknown>> {
     return await this.runYokeJson<Record<string, unknown>>(['scopes', 'show', scopeId, '--json']);
+  }
+
+  async getScopeAccess(scopeId: string): Promise<Record<string, unknown>> {
+    const scope = await this.getScope(scopeId);
+    const groupRefs = collectWappScopeGroupRefs(scope);
+    if (groupRefs.length === 0) {
+      return { ...scope, accessGroups: [] };
+    }
+    const placeholders = groupRefs.map(() => '?').join(', ');
+    const db = this.openDb();
+    const rows = db.prepare(
+      `SELECT * FROM groups_cache WHERE group_id IN (${placeholders}) OR current_group_npub IN (${placeholders})`,
+    ).all(...groupRefs, ...groupRefs) as Array<Record<string, unknown>>;
+    return {
+      ...scope,
+      accessGroups: rows.map((row) => parseGroupAccessRow(row)),
+    };
   }
 
   async getChatContext(input: { channelId?: string; threadId?: string; messageId?: string; limit?: number } = {}): Promise<Record<string, unknown>> {

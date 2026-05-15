@@ -6,7 +6,7 @@ import { Database } from "bun:sqlite";
 import { normaliseNpub } from "../identity/npub-utils";
 
 const PORT_START = 41000;
-const PORTS_PER_USER = 10;
+const PORTS_PER_USER = 1000;
 const MAX_INT32 = 2_147_483_647;
 
 export class InsufficientBalanceError extends Error {
@@ -89,7 +89,7 @@ const toIsoString = (value: string | Date | null | undefined): string | null => 
   return date.toISOString();
 };
 
-class IdentityUserStore {
+export class IdentityUserStore {
   private readonly db: Database;
   private nextPort: number = PORT_START;
 
@@ -210,27 +210,45 @@ class IdentityUserStore {
     return left.every((value, index) => value === right[index]);
   }
 
-  private buildPortRange(start: number, count: number): number[] {
-    const safeCount = Math.max(0, Math.trunc(Number.isFinite(count) ? count : 0));
-    const ports: number[] = [];
-    for (let index = 0; index < safeCount; index += 1) {
-      ports.push(start + index);
+  private collectAssignedPorts(): Set<number> {
+    const rows = this.db.query<{ ports: string | null }>("SELECT ports FROM identity_users").all();
+    const assigned = new Set<number>();
+    for (const row of rows) {
+      for (const port of this.parsePorts(row.ports)) {
+        assigned.add(port);
+      }
     }
-    return ports;
+    return assigned;
   }
 
   private calculateNextPort(): number {
-    const rows = this.db.query<{ ports: string | null }>("SELECT ports FROM identity_users").all();
+    const assigned = this.collectAssignedPorts();
     let maxAssignedPort = PORT_START - 1;
-    for (const row of rows) {
-      const ports = this.parsePorts(row.ports);
-      for (const port of ports) {
-        if (port > maxAssignedPort) {
-          maxAssignedPort = port;
-        }
+    for (const port of assigned) {
+      if (port > maxAssignedPort) {
+        maxAssignedPort = port;
       }
     }
     return maxAssignedPort >= PORT_START ? maxAssignedPort + 1 : PORT_START;
+  }
+
+  private allocateAvailablePorts(count: number, assigned: Set<number> = this.collectAssignedPorts()): number[] {
+    const safeCount = Math.max(0, Math.trunc(Number.isFinite(count) ? count : 0));
+    const ports: number[] = [];
+    let candidate = Number.isInteger(this.nextPort) && this.nextPort >= PORT_START
+      ? this.nextPort
+      : this.calculateNextPort();
+
+    while (ports.length < safeCount) {
+      if (!assigned.has(candidate)) {
+        assigned.add(candidate);
+        ports.push(candidate);
+      }
+      candidate += 1;
+    }
+
+    this.nextPort = candidate;
+    return ports;
   }
 
   private synchronisePortAssignments() {
@@ -258,16 +276,20 @@ class IdentityUserStore {
     );
     const now = new Date().toISOString();
 
-    let next = PORT_START;
+    let next = this.calculateNextPort();
+    const assigned = this.collectAssignedPorts();
     for (const row of rows) {
       const currentPorts = this.parsePorts(row.ports);
-      const allocationSize = Math.max(PORTS_PER_USER, currentPorts.length);
-      const expected = this.buildPortRange(next, allocationSize);
-      next += allocationSize;
-      if (this.portsEqual(currentPorts, expected)) {
+      if (currentPorts.length >= PORTS_PER_USER) {
         continue;
       }
-      update.run(row.normalizedNpub, JSON.stringify(expected), now);
+      this.nextPort = next;
+      const extraPorts = this.allocateAvailablePorts(PORTS_PER_USER - currentPorts.length, assigned);
+      next = this.nextPort;
+      const expected = [...currentPorts, ...extraPorts].sort((a, b) => a - b);
+      if (!this.portsEqual(currentPorts, expected)) {
+        update.run(row.normalizedNpub, JSON.stringify(expected), now);
+      }
     }
 
     this.nextPort = next;
@@ -277,21 +299,14 @@ class IdentityUserStore {
     if (!Number.isInteger(this.nextPort) || this.nextPort < PORT_START) {
       this.nextPort = this.calculateNextPort();
     }
-    const start = this.nextPort;
-    this.nextPort = start + PORTS_PER_USER;
-    return this.buildPortRange(start, PORTS_PER_USER);
+    return this.allocateAvailablePorts(PORTS_PER_USER);
   }
 
   private allocateExtraPorts(count: number): number[] {
     if (!Number.isInteger(this.nextPort) || this.nextPort < PORT_START) {
       this.nextPort = this.calculateNextPort();
     }
-    const ports: number[] = [];
-    for (let i = 0; i < count; i++) {
-      ports.push(this.nextPort + i);
-    }
-    this.nextPort += count;
-    return ports;
+    return this.allocateAvailablePorts(count);
   }
 
   addPortsToUser(npub: string, count: number = PORTS_PER_USER): IdentityUserRecord {
@@ -300,7 +315,7 @@ class IdentityUserStore {
       throw new Error("A valid npub is required");
     }
     const record = this.touch(npub);
-    const portCount = Math.max(1, Math.min(100, Math.trunc(Number.isFinite(count) ? count : PORTS_PER_USER)));
+    const portCount = Math.max(1, Math.min(PORTS_PER_USER, Math.trunc(Number.isFinite(count) ? count : PORTS_PER_USER)));
 
     const currentPorts = record.ports;
     const newPorts = this.allocateExtraPorts(portCount);
