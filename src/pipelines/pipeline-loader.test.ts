@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   getPipelineDefinition,
+  getSharedPipelineDefinitionsDirectory,
+  listLatestPipelineDefinitions,
   makePipelineSlug,
   nextVersionedDefinitionPath,
   nextVersionedDefinitionPathForSource,
@@ -85,9 +87,22 @@ describe("pipeline definition version paths", () => {
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
       "One valid intent is ignore",
     );
+    expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
+      "choose do-and-review",
+    );
     expect(definition?.spec.steps.find((step) => step.name === "publish-chat-response")).toMatchObject({
       when: { path: "$.chatContext.shouldProceed", equals: true },
     });
+  });
+
+  test("skips invalid definition files instead of failing the whole definitions list", async () => {
+    await getPipelineDefinition("agent-dispatch-chat", "tester");
+    writeFileSync(join(getSharedPipelineDefinitionsDirectory(), "broken.json"), "{ not valid json\n");
+
+    const definitions = await listLatestPipelineDefinitions("tester");
+
+    expect(definitions.some((definition) => definition.slug === "agent-dispatch-chat")).toBe(true);
+    expect(definitions.some((definition) => definition.slug === "broken")).toBe(false);
   });
 
   test("seeds task pipeline handoff steps explicitly", async () => {

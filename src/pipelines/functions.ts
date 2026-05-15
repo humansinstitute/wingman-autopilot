@@ -141,6 +141,32 @@ function compactScope(value: unknown): JsonObject {
   };
 }
 
+function extractScopeRecords(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  const object = objectValue(value);
+  const candidates = [
+    object.scopes,
+    object.records,
+    object.items,
+    object.data,
+    object.results,
+  ];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate;
+  }
+  const nestedData = objectValue(object.data);
+  const nestedCandidates = [
+    nestedData.scopes,
+    nestedData.records,
+    nestedData.items,
+    nestedData.results,
+  ];
+  for (const candidate of nestedCandidates) {
+    if (Array.isArray(candidate)) return candidate;
+  }
+  return [];
+}
+
 function compactThreadMessage(value: unknown): JsonObject {
   const message = objectValue(value);
   return {
@@ -301,9 +327,9 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         return aCore - bCore || aSlug.localeCompare(bSlug);
       })
       .slice(0, 8);
-    const scopes = Array.isArray(chatContext.scopes)
-      ? chatContext.scopes.map(compactScope)
-      : [];
+    const scopes = extractScopeRecords(chatContext.scopes)
+      .map(compactScope)
+      .filter((scope) => Boolean(scope.id));
     const referencedRecords = Array.isArray(chatContext.referencedRecords)
       ? chatContext.referencedRecords.slice(0, 12).map(compactReferencedRecord)
       : [];
@@ -344,6 +370,9 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         "Use latestThread as the authoritative current conversation.",
         "Use referencedRecords only as supporting Flight Deck context.",
         "Choose only a pipeline listed in validChildPipelines.",
+        "For generic or miscellaneous chat-created tasks, choose do-and-review.",
+        "Use software-implementation-review-loop only for code, repository, build, test, deployment, or implementation work.",
+        "Use research-and-report when the requested output is explicitly research with a report or document.",
         "Choose a scope from scopes when dispatchTask is true.",
       ],
     };

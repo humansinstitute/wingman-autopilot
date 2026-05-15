@@ -208,6 +208,66 @@ describe("memory pipeline functions", () => {
     expect(JSON.stringify(result)).not.toContain("agent-dispatch-chat");
   });
 
+  test("dispatch.prepareChatIntentInput accepts wrapped scope list payloads", async () => {
+    const result = await builtinPipelineFunctions["dispatch.prepareChatIntentInput"]!({
+      dispatch: { routeId: "route-1", triggerKind: "chat" },
+      workspace: { workspaceOwnerNpub: "npub1owner", sourceAppNpub: "npub1source" },
+      agent: { workingDirectory: "/repo", defaultAgent: "codex" },
+      chat: { senderNpub: "npub1requester", channelId: "channel-1", threadId: "thread-1" },
+      record: { recordId: "message-1", payload: {} },
+      runtime: {
+        availablePipelines: [
+          {
+            id: "shared:12b50cd8ba58",
+            slug: "do-and-review",
+            name: "do-and-review",
+            scope: "shared",
+            description: "Generic delivery pipeline.",
+          },
+        ],
+      },
+      chatContext: {
+        shouldProceed: true,
+        thread: {
+          recent_messages: [
+            {
+              message_id: "message-1",
+              body: "Please handle this generic image task.",
+            },
+          ],
+        },
+        scopes: {
+          scopes: [
+            {
+              id: "scope-1",
+              title: "Big Dawgs",
+              level: "workspace",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(result.scopes).toEqual([
+      {
+        id: "scope-1",
+        title: "Big Dawgs",
+        level: "workspace",
+        parentId: null,
+      },
+    ]);
+    expect(result.validChildPipelines).toEqual([
+      {
+        id: "shared:12b50cd8ba58",
+        slug: "do-and-review",
+        name: "do-and-review",
+        scope: "shared",
+        description: "Generic delivery pipeline.",
+      },
+    ]);
+    expect(result.notes).toContain("For generic or miscellaneous chat-created tasks, choose do-and-review.");
+  });
+
   test("dispatch.normaliseChatDispatchDecision uses dispatchTask as the single routing switch", async () => {
     const result = await builtinPipelineFunctions["dispatch.normaliseChatDispatchDecision"]!({
       agent: { workingDirectory: "/repo" },
