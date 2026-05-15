@@ -71,7 +71,6 @@ const coreChatChildPipelineSlugs = new Set([
   "do-and-review",
   "implementation-review-loop.v2",
   "research-and-report",
-  "software-implementation-manager-review",
 ]);
 
 function compactText(value: unknown, maxLength: number): string | null {
@@ -433,7 +432,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         ? "software_implementation"
         : "do_and_review";
     const childPipelineDefinitionId = workStyle === "software_implementation"
-      ? "software-implementation-manager-review"
+      ? "implementation-review-loop.v2"
       : "do-and-review";
     const executionPlan = getStringArray(response.executionPlan);
     const managerChecklist = getStringArray(response.managerChecklist);

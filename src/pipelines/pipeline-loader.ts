@@ -306,79 +306,6 @@ const AGENT_DISPATCH_TASK_DEFINITION = {
   ],
 };
 
-const SOFTWARE_IMPLEMENTATION_MANAGER_REVIEW_DEFINITION = {
-  name: "software-implementation-manager-review",
-  description: "Long-running task-backed software work pipeline. A worker implements the task, then a manager reviews the result and the final step moves the originating task to review.",
-  input: {
-    taskId: "task-demo",
-    scopeId: "scope-demo",
-    workdir: "/workspace",
-    assignerNpub: "npub1requester",
-    reviewerNpub: "npub1requester",
-    workPlan: {
-      taskSummary: "Implement the requested software change.",
-      instructions: "Use the task and chat context to make the requested change.",
-      acceptanceCriteria: ["The requested behavior is implemented", "Focused verification has been run"],
-      executionPlan: ["Inspect the repo", "Implement", "Run focused tests", "Report evidence"],
-      managerChecklist: ["Diff is scoped", "Tests or verification are present", "Task status was updated"],
-    },
-  },
-  steps: [
-    {
-      name: "implementation-worker",
-      type: "agent",
-      agent: "$.agent.defaultAgent",
-      directory: "$.workPlan.workdir",
-      timeoutMs: 1800000,
-      input: {
-        pick: {
-          createdTask: "$.createdTask",
-          workPlan: "$.workPlan",
-        },
-      },
-      prompt: "You are the worker in a Wingman software implementation pipeline. Use only the selected input: createdTask and workPlan. workPlan includes the task plan, workdir, assigner/reviewer npubs, originalPrompt, originThread, referencedRecords, instructions, acceptanceCriteria, executionPlan, and managerChecklist. Make the required code changes in the working directory and run focused verification. The task is already in_progress; the final deterministic pipeline step will move it to review and publish any Flight Deck task comment or chat handoff. Do not run Flight Deck task update, task comment, chat reply, chat reply-current, docs comment, or any command that changes task state, task comments, document comments, or chat messages. Do not stop at analysis. Return JSON fields: completed boolean, summary string, changedFiles array, testsRun array, evidence array, blockers array, taskUpdateComment string, confidence number.",
-      assign: "$.workerResult",
-    },
-    {
-      name: "manager-review",
-      type: "agent",
-      agent: "$.agent.defaultAgent",
-      directory: "$.workPlan.workdir",
-      timeoutMs: 1200000,
-      input: {
-        pick: {
-          createdTask: "$.createdTask",
-          workPlan: "$.workPlan",
-          workerResult: "$.workerResult",
-        },
-      },
-      prompt: "You are the manager reviewer in a Wingman software implementation pipeline. Use only the selected input: createdTask, workPlan, and workerResult. Review workerResult against workPlan.instructions, workPlan.acceptanceCriteria, workPlan.executionPlan, workPlan.managerChecklist, originalPrompt, originThread, and referencedRecords. Inspect changed files and evidence where relevant. Be strict about missing tests, unscoped diffs, and unverifiable claims. The final pipeline step will update the Flight Deck task to review and assign it to the requester. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, executionPlan array, managerChecklist array, requiredChanges array, risks array, confidence number.",
-      assign: "$.agentResponse",
-    },
-    {
-      name: "move-task-to-review",
-      description: "Move the originating Flight Deck task to Review and assign it back to the requester.",
-      type: "code",
-      function: "dispatch.markTaskReadyForReview",
-      input: {
-        pick: {
-          dispatch: "$.dispatch",
-          workspace: "$.workspace",
-          agent: "$.agent",
-          record: "$.record",
-          routing: "$.routing",
-          runtime: "$.runtime",
-          createdTask: "$.createdTask",
-          workPlan: "$.workPlan",
-          workerResult: "$.workerResult",
-          agentResponse: "$.agentResponse",
-        },
-      },
-      assign: "$.taskReviewUpdate",
-    },
-  ],
-};
-
 const DO_AND_REVIEW_DEFINITION = {
   name: "do-and-review",
   description: "Long-running task-backed generic delivery pipeline. A worker completes non-code work such as research, planning, writing, or operations, then a manager reviews evidence and the final step moves the originating task to review.",
@@ -749,7 +676,6 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
     ["agent-dispatch-chat.json", AGENT_DISPATCH_CHAT_DEFINITION],
     ["agent-dispatch-task-response.json", AGENT_DISPATCH_TASK_DEFINITION],
     ["agent-dispatch-comment-response.json", AGENT_DISPATCH_COMMENT_DEFINITION],
-    ["software-implementation-manager-review.json", SOFTWARE_IMPLEMENTATION_MANAGER_REVIEW_DEFINITION],
     ["do-and-review.json", DO_AND_REVIEW_DEFINITION],
     ["research-and-report.json", RESEARCH_AND_REPORT_DEFINITION],
     ["implementation-review-loop.v2.json", implementationReviewLoopDefinition],
@@ -765,6 +691,7 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
     "demo-paragraph-two-agent-analysis.json",
     "demo-software-implementation-manager-review.json",
     "demo-do-and-review.json",
+    "software-implementation-manager-review.json",
   ];
   for (const fileName of renamedBuiltIns) {
     await rm(join(getSharedPipelineDefinitionsDirectory(), fileName), { force: true }).catch(() => undefined);

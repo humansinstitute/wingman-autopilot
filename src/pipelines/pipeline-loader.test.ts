@@ -104,11 +104,7 @@ describe("pipeline definition version paths", () => {
       "start-follow-up-pipeline",
       "publish-task-update",
     ]);
-    expect(software?.spec.steps.at(-1)).toMatchObject({
-      name: "move-task-to-review",
-      type: "code",
-      function: "dispatch.markTaskReadyForReview",
-    });
+    expect(software).toBeNull();
     expect(generic?.spec.steps.at(-1)).toMatchObject({
       name: "move-task-to-review",
       type: "code",
@@ -132,12 +128,6 @@ describe("pipeline definition version paths", () => {
       name: "close-review-task",
       type: "code",
       function: "dispatch.markTaskReadyForReview",
-    });
-    expect(software?.spec.steps.find((step) => step.name === "implementation-worker")?.input).toEqual({
-      pick: {
-        createdTask: "$.createdTask",
-        workPlan: "$.workPlan",
-      },
     });
     expect(generic?.spec.steps.find((step) => step.name === "do-work")?.input).toEqual({
       pick: {

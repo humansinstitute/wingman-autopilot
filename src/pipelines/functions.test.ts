@@ -86,7 +86,7 @@ describe("memory pipeline functions", () => {
     });
 
     expect(result.workStyle).toBe("software_implementation");
-    expect(result.childPipelineDefinitionId).toBe("software-implementation-manager-review");
+    expect(result.childPipelineDefinitionId).toBe("implementation-review-loop.v2");
   });
 
   test("dispatch.prepareChatIntentInput compacts chat context for intent analysis", async () => {
