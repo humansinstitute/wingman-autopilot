@@ -56,6 +56,11 @@ export function initAppsStore({
     pendingOpenDialog: null,
     pendingFocusId: null,
     viewMode: "table",
+    filterText: "",
+    sort: {
+      key: "title",
+      direction: "asc",
+    },
     filters: {
       npub: "all",
       options: [],

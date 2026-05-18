@@ -1,5 +1,5 @@
 import { showAppCardModal } from "../apps/card-modal.js";
-import { renderAppsTable } from "../apps/table.js";
+import { filterAndSortApps, renderAppsTable } from "../apps/table.js";
 
 export function buildAppFilterOptions({
   isAdmin,
@@ -118,6 +118,48 @@ export function initAppsView({
     });
 
     return toggle;
+  }
+
+  function renderAppsFilterControl({ totalCount, visibleCount }) {
+    const filterWrap = document.createElement("div");
+    filterWrap.className = "wm-apps-filter";
+
+    const label = document.createElement("label");
+    label.className = "wm-apps-filter__label";
+    label.setAttribute("for", "apps-filter-input");
+    label.textContent = "Filter apps";
+
+    const input = document.createElement("input");
+    input.id = "apps-filter-input";
+    input.className = "wm-apps-filter__input";
+    input.type = "search";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.placeholder = "Name, port, or description";
+    input.value = appsStore().filterText ?? "";
+    input.setAttribute("aria-label", "Filter apps by name, port, or description");
+    input.dataset.testid = "apps-filter-input";
+    input.addEventListener("input", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement)) return;
+      const cursor = target.selectionStart ?? target.value.length;
+      appsStore().filterText = target.value;
+      render();
+      requestAnimationFrame(() => {
+        const nextInput = document.getElementById("apps-filter-input");
+        if (!(nextInput instanceof HTMLInputElement)) return;
+        nextInput.focus();
+        nextInput.setSelectionRange(cursor, cursor);
+      });
+    });
+
+    const meta = document.createElement("span");
+    meta.className = "wm-apps-filter__meta";
+    meta.setAttribute("aria-live", "polite");
+    meta.textContent = `${visibleCount} of ${totalCount}`;
+
+    filterWrap.append(label, input, meta);
+    return filterWrap;
   }
 
   function renderAppsCardGrid(apps) {
@@ -266,16 +308,41 @@ export function initAppsView({
       return wrapper;
     }
 
+    const sort = appsStore().sort && typeof appsStore().sort === "object"
+      ? appsStore().sort
+      : { key: "title", direction: "asc" };
+    const visibleApps = filterAndSortApps(apps, appsStore().filterText, sort);
+    mainArea.append(renderAppsFilterControl({
+      totalCount: apps.length,
+      visibleCount: visibleApps.length,
+    }));
+
+    if (visibleApps.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "wm-apps-empty";
+      empty.textContent = "No apps match the current filter.";
+      mainArea.append(empty);
+      splitContainer.append(mainArea);
+      wrapper.append(splitContainer);
+      schedulePendingAppDialog();
+      return wrapper;
+    }
+
     const openAppDetails = (app) => {
       showAppCardModal({ app, renderAppCard });
     };
     const table = renderAppsTable({
-      apps,
+      apps: visibleApps,
       appStatusLabels,
       formatAppTimestamp,
       onOpenAppDetails: openAppDetails,
+      sort,
+      onSortChange: (nextSort) => {
+        appsStore().sort = nextSort;
+        render();
+      },
     });
-    const grid = renderAppsCardGrid(apps);
+    const grid = renderAppsCardGrid(visibleApps);
 
     mainArea.append(table, grid);
     splitContainer.append(mainArea);

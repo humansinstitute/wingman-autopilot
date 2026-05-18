@@ -24,11 +24,74 @@ export function getAppOpenUrl(app) {
   return null;
 }
 
+export function getAppPortValue(app) {
+  if (typeof app?.webAppPort === "number" && Number.isFinite(app.webAppPort)) {
+    return app.webAppPort;
+  }
+  return null;
+}
+
+export function getAppUpdatedTime(app) {
+  const timestamp = typeof app?.status?.updatedAt === "string" ? app.status.updatedAt : null;
+  if (!timestamp) return 0;
+  const time = Date.parse(timestamp);
+  return Number.isFinite(time) ? time : 0;
+}
+
+export function getAppSearchText(app) {
+  return [
+    getAppDisplayName(app),
+    app?.id,
+    app?.notes,
+    app?.description,
+    app?.status?.message,
+    app?.root,
+    getAppPortValue(app),
+  ]
+    .filter((value) => value !== undefined && value !== null)
+    .join(" ")
+    .toLowerCase();
+}
+
+export function filterApps(apps, filterText) {
+  if (!Array.isArray(apps)) return [];
+  const terms = typeof filterText === "string"
+    ? filterText.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    : [];
+  if (terms.length === 0) return [...apps];
+
+  return apps.filter((app) => {
+    const searchText = getAppSearchText(app);
+    return terms.every((term) => searchText.includes(term));
+  });
+}
+
+export function sortApps(apps, sort) {
+  if (!Array.isArray(apps)) return [];
+  const key = typeof sort?.key === "string" ? sort.key : "title";
+  const direction = sort?.direction === "desc" ? "desc" : "asc";
+
+  return [...apps].sort((left, right) => {
+    const comparison = compareApps(left, right, key, direction);
+    if (comparison !== 0) return comparison;
+    return getAppDisplayName(left).localeCompare(getAppDisplayName(right), undefined, {
+      numeric: true,
+      sensitivity: "base",
+    });
+  });
+}
+
+export function filterAndSortApps(apps, filterText, sort) {
+  return sortApps(filterApps(apps, filterText), sort);
+}
+
 export function renderAppsTable({
   apps,
   appStatusLabels = {},
   formatAppTimestamp,
   onOpenAppDetails,
+  sort,
+  onSortChange,
 }) {
   const tableWrapper = document.createElement("div");
   tableWrapper.className = "wm-apps-table-wrapper wm-card";
@@ -39,11 +102,16 @@ export function renderAppsTable({
 
   const thead = document.createElement("thead");
   const headerRow = document.createElement("tr");
-  ["App", "Status", "Type", "Port", "Updated", "Root", ""].forEach((label) => {
-    const th = document.createElement("th");
-    th.scope = "col";
-    th.textContent = label;
-    headerRow.append(th);
+  [
+    { label: "Title", key: "title" },
+    { label: "Status", key: "status" },
+    { label: "Type" },
+    { label: "Port", key: "port" },
+    { label: "Updated", key: "updated" },
+    { label: "Root" },
+    { label: "" },
+  ].forEach((column) => {
+    headerRow.append(renderAppsTableHeader(column, sort, onSortChange));
   });
   thead.append(headerRow);
   table.append(thead);
@@ -61,6 +129,66 @@ export function renderAppsTable({
   tableWrapper.append(table);
 
   return tableWrapper;
+}
+
+function compareApps(left, right, key, direction) {
+  if (key === "port") {
+    return compareNullableNumbers(getAppPortValue(left), getAppPortValue(right), direction);
+  }
+  if (key === "updated") {
+    return compareNullableNumbers(getAppUpdatedTime(left), getAppUpdatedTime(right), direction);
+  }
+  const factor = direction === "desc" ? -1 : 1;
+  if (key === "status") {
+    return getAppStatusValue(left).localeCompare(getAppStatusValue(right), undefined, {
+      numeric: true,
+      sensitivity: "base",
+    }) * factor;
+  }
+  return getAppDisplayName(left).localeCompare(getAppDisplayName(right), undefined, {
+    numeric: true,
+    sensitivity: "base",
+  }) * factor;
+}
+
+function compareNullableNumbers(left, right, direction) {
+  const leftMissing = left === null || left === undefined || left === 0;
+  const rightMissing = right === null || right === undefined || right === 0;
+  if (leftMissing && rightMissing) return 0;
+  if (leftMissing) return 1;
+  if (rightMissing) return -1;
+  const comparison = left - right;
+  return direction === "desc" ? comparison * -1 : comparison;
+}
+
+function renderAppsTableHeader(column, sort, onSortChange) {
+  const th = document.createElement("th");
+  th.scope = "col";
+  if (!column.key) {
+    th.textContent = column.label;
+    return th;
+  }
+
+  const active = sort?.key === column.key;
+  const direction = active && sort?.direction === "desc" ? "desc" : "asc";
+  const nextDirection = active && direction === "asc" ? "desc" : "asc";
+  th.setAttribute("aria-sort", active ? (direction === "asc" ? "ascending" : "descending") : "none");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "wm-apps-table__sort";
+  button.setAttribute("aria-label", `Sort by ${column.label} ${nextDirection === "asc" ? "ascending" : "descending"}`);
+  button.dataset.testid = `apps-sort-${column.key}`;
+  button.textContent = column.label;
+  const indicator = document.createElement("span");
+  indicator.className = "wm-apps-table__sort-indicator";
+  indicator.setAttribute("aria-hidden", "true");
+  indicator.textContent = active ? (direction === "asc" ? "↑" : "↓") : "↕";
+  button.append(indicator);
+  button.addEventListener("click", () => {
+    onSortChange?.({ key: column.key, direction: nextDirection });
+  });
+  th.append(button);
+  return th;
 }
 
 function renderAppsTableRow({
