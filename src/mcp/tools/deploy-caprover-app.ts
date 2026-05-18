@@ -23,6 +23,10 @@ export const deployCaproverAppSchema = {
     .string()
     .optional()
     .describe('CapRover target name to deploy to, or "all" for every configured target. Defaults to all.'),
+  enable_https: z
+    .boolean()
+    .optional()
+    .describe("Enable HTTPS on the CapRover default subdomain after deployment"),
 };
 
 export const deployCaproverAppDescription =
@@ -35,6 +39,7 @@ interface DeployCaproverAppParams {
   docker_image?: string;
   git_hash?: string;
   caprover_target?: string;
+  enable_https?: boolean;
 }
 
 export async function handleDeployCaproverApp(
@@ -42,7 +47,7 @@ export async function handleDeployCaproverApp(
   wingmanUrl: string,
   sessionId: string,
 ) {
-  const { app_id, docker_image, git_hash, caprover_target } = params;
+  const { app_id, docker_image, git_hash, caprover_target, enable_https } = params;
 
   try {
     const response = await fetch(
@@ -56,6 +61,7 @@ export async function handleDeployCaproverApp(
           dockerImage: docker_image,
           gitHash: git_hash,
           caproverTarget: caprover_target,
+          enableHttps: enable_https,
         }),
       },
     );
@@ -78,6 +84,9 @@ export async function handleDeployCaproverApp(
     const targets = Array.isArray(result.targets)
       ? `  Targets: ${result.targets.map((target: { targetName: string; success: boolean }) => `${target.targetName}:${target.success ? "ok" : "failed"}`).join(", ")}`
       : null;
+    const https = Array.isArray(result.targets)
+      ? `  HTTPS: ${result.targets.map((target: { targetName: string; httpsEnabled?: boolean; httpsError?: string | null }) => `${target.targetName}:${target.httpsEnabled ? "enabled" : target.httpsError ? "failed" : "skipped"}`).join(", ")}`
+      : null;
     return {
       content: [
         {
@@ -87,6 +96,7 @@ export async function handleDeployCaproverApp(
             `  App: ${result.caproverName}`,
             result.dockerImage ? `  Image: ${result.dockerImage}` : `  Files: ${result.fileCount ?? "unknown"}`,
             targets,
+            https,
             `  Version: ${result.deployedVersion ?? "unknown"}`,
           ].filter(Boolean).join("\n"),
         },

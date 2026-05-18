@@ -174,6 +174,8 @@ interface CaproverDeployTargetResult {
   success: boolean;
   liveUrl: string | null;
   deployedVersion: number | null;
+  httpsEnabled: boolean;
+  httpsError: string | null;
   error: string | null;
 }
 
@@ -914,6 +916,7 @@ export async function handleAppsApi(
           { status: resolvedTargets.status },
         );
       }
+      const enableHttps = record.enableHttps === true;
 
       let tracked = ctx.caproverStore.getAppByLocalAppId(id);
       if (!tracked) {
@@ -952,6 +955,17 @@ export async function handleAppsApi(
 
           const remoteApp = await target.client.getApp(tracked.caproverName);
           const version = remoteApp?.deployedVersion ?? null;
+          let httpsEnabled = false;
+          let httpsError: string | null = null;
+
+          if (enableHttps) {
+            try {
+              await target.client.enableSsl(tracked.caproverName);
+              httpsEnabled = true;
+            } catch (httpsFailure) {
+              httpsError = httpsFailure instanceof Error ? httpsFailure.message : String(httpsFailure);
+            }
+          }
 
           ctx.caproverStore.updateDeployment(deployment.id, {
             status: 'success',
@@ -962,6 +976,7 @@ export async function handleAppsApi(
           tracked = ctx.caproverStore.updateApp(tracked.id, {
             liveUrl: tracked.liveUrl ?? liveUrl,
             deployedVersion: version,
+            hasSsl: tracked.hasSsl || httpsEnabled,
           });
 
           targetResults.push({
@@ -970,6 +985,8 @@ export async function handleAppsApi(
             success: true,
             liveUrl,
             deployedVersion: version,
+            httpsEnabled,
+            httpsError,
             error: null,
           });
         } catch (error) {
@@ -985,6 +1002,8 @@ export async function handleAppsApi(
             success: false,
             liveUrl: null,
             deployedVersion: null,
+            httpsEnabled: false,
+            httpsError: null,
             error: message,
           });
         }

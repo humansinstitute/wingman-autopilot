@@ -22,13 +22,14 @@ export async function fetchCaproverStatus() {
  * @param {string} appId - The local app ID
  * @param {string} caproverName - The CapRover app name to deploy to
  * @param {string} caproverTarget - The CapRover target name, or "all"
+ * @param {boolean} enableHttps - Whether to enable HTTPS after deployment
  * @returns {Promise<{success: boolean, liveUrl?: string, caproverName?: string, error?: string}>}
  */
-export async function deployAppToCaprover(appId, caproverName, caproverTarget = "all") {
+export async function deployAppToCaprover(appId, caproverName, caproverTarget = "all", enableHttps = false) {
   const response = await fetch(`/api/apps/${encodeURIComponent(appId)}/deploy-to-caprover`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ caproverName, caproverTarget }),
+    body: JSON.stringify({ caproverName, caproverTarget, enableHttps }),
   });
 
   const data = await response.json();

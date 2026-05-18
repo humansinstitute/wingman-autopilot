@@ -9766,6 +9766,20 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   color: var(--text-tertiary);
 }
 
+.wm-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-secondary);
+}
+
+.wm-checkbox-row input {
+  width: 1rem;
+  height: 1rem;
+}
+
 /* ── Webview split panel ────────────────────────────── */
 
 .wm-header-webview-toggle {

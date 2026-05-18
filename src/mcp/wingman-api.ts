@@ -588,6 +588,7 @@ async function handleDeployCaproverApp(
   const dockerImage = body.dockerImage as string | undefined;
   const gitHash = body.gitHash as string | undefined;
   const caproverTarget = body.caproverTarget ?? body.targetName;
+  const enableHttps = body.enableHttps === true;
 
   const denied = requireSessionId(deps, sessionId);
   if (denied) return denied;
@@ -623,6 +624,17 @@ async function handleDeployCaproverApp(
 
         const remoteApp = await target.client.getApp(app.caproverName);
         const version = remoteApp?.deployedVersion ?? null;
+        let httpsEnabled = false;
+        let httpsError: string | null = null;
+
+        if (enableHttps) {
+          try {
+            await target.client.enableSsl(app.caproverName);
+            httpsEnabled = true;
+          } catch (httpsFailure) {
+            httpsError = (httpsFailure as Error).message;
+          }
+        }
 
         deps.caproverStore.updateDeployment(deployment.id, {
           status: "success",
@@ -630,8 +642,11 @@ async function handleDeployCaproverApp(
           completedAt: new Date().toISOString(),
         });
 
-        deps.caproverStore.updateApp(appId, { deployedVersion: version });
-        results.push({ targetName: target.name, success: true, deployedVersion: version, error: null });
+        deps.caproverStore.updateApp(appId, {
+          deployedVersion: version,
+          ...(httpsEnabled ? { hasSsl: true } : {}),
+        });
+        results.push({ targetName: target.name, success: true, deployedVersion: version, httpsEnabled, httpsError, error: null });
       } catch (err) {
         const message = (err as Error).message;
         deps.caproverStore.updateDeployment(deployment.id, {
@@ -639,7 +654,7 @@ async function handleDeployCaproverApp(
           completedAt: new Date().toISOString(),
           errorMessage: message,
         });
-        results.push({ targetName: target.name, success: false, deployedVersion: null, error: message });
+        results.push({ targetName: target.name, success: false, deployedVersion: null, httpsEnabled: false, httpsError: null, error: message });
       }
     }
 
@@ -697,6 +712,17 @@ async function handleDeployCaproverApp(
 
       const remoteApp = await target.client.getApp(app.caproverName);
       const version = remoteApp?.deployedVersion ?? null;
+      let httpsEnabled = false;
+      let httpsError: string | null = null;
+
+      if (enableHttps) {
+        try {
+          await target.client.enableSsl(app.caproverName);
+          httpsEnabled = true;
+        } catch (httpsFailure) {
+          httpsError = (httpsFailure as Error).message;
+        }
+      }
 
       deps.caproverStore.updateDeployment(deployment.id, {
         status: "success",
@@ -704,8 +730,11 @@ async function handleDeployCaproverApp(
         completedAt: new Date().toISOString(),
       });
 
-      deps.caproverStore.updateApp(appId, { deployedVersion: version });
-      results.push({ targetName: target.name, success: true, deployedVersion: version, error: null });
+      deps.caproverStore.updateApp(appId, {
+        deployedVersion: version,
+        ...(httpsEnabled ? { hasSsl: true } : {}),
+      });
+      results.push({ targetName: target.name, success: true, deployedVersion: version, httpsEnabled, httpsError, error: null });
     } catch (err) {
       const message = (err as Error).message;
       deps.caproverStore.updateDeployment(deployment.id, {
@@ -713,7 +742,7 @@ async function handleDeployCaproverApp(
         completedAt: new Date().toISOString(),
         errorMessage: message,
       });
-      results.push({ targetName: target.name, success: false, deployedVersion: null, error: message });
+      results.push({ targetName: target.name, success: false, deployedVersion: null, httpsEnabled: false, httpsError: null, error: message });
     }
   }
 

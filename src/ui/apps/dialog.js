@@ -1091,6 +1091,7 @@ export const initAppDialogs = ({
   const appDeployTitle = document.getElementById("app-deploy-title");
   const appDeployNameInput = document.getElementById("app-deploy-name");
   const appDeployTargetSelect = document.getElementById("app-deploy-target");
+  const appDeployEnableHttpsInput = document.getElementById("app-deploy-enable-https");
   const appDeployStatus = document.getElementById("app-deploy-status");
   const appDeployMessage = document.getElementById("app-deploy-message");
   const appDeployUrl = document.getElementById("app-deploy-url");
@@ -1117,6 +1118,9 @@ export const initAppDialogs = ({
     }
     if (appDeployTargetSelect) {
       appDeployTargetSelect.disabled = completed;
+    }
+    if (appDeployEnableHttpsInput) {
+      appDeployEnableHttpsInput.disabled = completed;
     }
     if (appDeployCancelButton) {
       appDeployCancelButton.hidden = completed;
@@ -1166,7 +1170,11 @@ export const initAppDialogs = ({
 
     const successful = targets.filter((target) => target.success);
     const failed = targets.filter((target) => !target.success);
+    const httpsFailed = targets.filter((target) => target.success && target.httpsError);
     if (failed.length === 0) {
+      if (httpsFailed.length > 0) {
+        return `Deployment successful on ${successful.map((target) => target.targetName).join(", ")}. HTTPS failed on ${httpsFailed.map((target) => target.targetName).join(", ")}.`;
+      }
       return `Deployment successful on ${successful.map((target) => target.targetName).join(", ")}.`;
     }
 
@@ -1224,6 +1232,9 @@ export const initAppDialogs = ({
     deployDialogState.targets = [];
     if (appDeployTargetSelect) {
       appDeployTargetSelect.disabled = false;
+    }
+    if (appDeployEnableHttpsInput) {
+      appDeployEnableHttpsInput.disabled = false;
     }
     setDeployDialogCompletionState(false);
   };
@@ -1312,6 +1323,7 @@ export const initAppDialogs = ({
     }
 
     const caproverTarget = appDeployTargetSelect?.value || "all";
+    const enableHttps = appDeployEnableHttpsInput?.checked === true;
 
     // Validate format
     if (!/^[a-z][a-z0-9-]*$/.test(caproverName)) {
@@ -1337,7 +1349,7 @@ export const initAppDialogs = ({
       const response = await fetch(`/api/apps/${encodeURIComponent(appId)}/deploy-to-caprover`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ caproverName, caproverTarget }),
+        body: JSON.stringify({ caproverName, caproverTarget, enableHttps }),
       });
 
       let data;
