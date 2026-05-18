@@ -77,9 +77,9 @@ If you omit `docker_image` and the tracked app is linked to a local Wingman app 
 
 1. Package the local app directory into a tarball
 2. Upload it to CapRover
-3. CapRover builds from the `captain-definition.json` or `Dockerfile`
+3. CapRover builds from the `captain-definition` or `Dockerfile`
 
-The local app **must** have a `captain-definition.json` at its root:
+The local app **must** have a `captain-definition` at its root. Wingman also accepts the legacy `captain-definition.json` filename:
 
 ```json
 {

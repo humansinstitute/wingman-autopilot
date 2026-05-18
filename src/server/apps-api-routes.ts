@@ -13,6 +13,25 @@ import type { WappRecord } from '../wapps/types';
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD';
 
+const CAPTAIN_DEFINITION_FILES = ['captain-definition', 'captain-definition.json'] as const;
+
+async function readCaptainDefinition(appRoot: string): Promise<{ fileName: string; content: string } | null> {
+  for (const fileName of CAPTAIN_DEFINITION_FILES) {
+    try {
+      return {
+        fileName,
+        content: await readFile(join(appRoot, fileName), 'utf8'),
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+    }
+  }
+
+  return null;
+}
+
 export interface AppsApiContext {
   adminNpub: string | null;
   sharedInstanceAccess: boolean;
@@ -796,13 +815,21 @@ export async function handleAppsApi(
         return Response.json({ error: 'caproverName must be 50 characters or less' }, { status: 400 });
       }
 
-      const captainDefPath = join(app.root, 'captain-definition.json');
       let captainDefContent: string;
+      let captainDefFileName: string;
       try {
-        captainDefContent = await readFile(captainDefPath, 'utf8');
+        const captainDef = await readCaptainDefinition(app.root);
+        if (!captainDef) {
+          return Response.json(
+            { error: `captain-definition or captain-definition.json not found in ${app.root}` },
+            { status: 400 },
+          );
+        }
+        captainDefContent = captainDef.content;
+        captainDefFileName = captainDef.fileName;
       } catch {
         return Response.json(
-          { error: `captain-definition.json not found in ${app.root}` },
+          { error: `Unable to read captain definition in ${app.root}` },
           { status: 400 },
         );
       }
@@ -811,15 +838,15 @@ export async function handleAppsApi(
       try {
         captainDef = JSON.parse(captainDefContent);
       } catch {
-        return Response.json({ error: 'Invalid captain-definition.json format' }, { status: 400 });
+        return Response.json({ error: `Invalid ${captainDefFileName} format` }, { status: 400 });
       }
 
       if (!captainDef || typeof captainDef !== 'object') {
-        return Response.json({ error: 'captain-definition.json must be a valid object' }, { status: 400 });
+        return Response.json({ error: `${captainDefFileName} must be a valid object` }, { status: 400 });
       }
       const defRecord = captainDef as Record<string, unknown>;
       if (defRecord.schemaVersion !== 2) {
-        return Response.json({ error: 'captain-definition.json must have schemaVersion: 2' }, { status: 400 });
+        return Response.json({ error: `${captainDefFileName} must have schemaVersion: 2` }, { status: 400 });
       }
 
       if (!defRecord.imageName && !defRecord.dockerfileLines && !defRecord.templateId) {
@@ -830,7 +857,7 @@ export async function handleAppsApi(
           return Response.json(
             {
               error:
-                'captain-definition.json requires imageName, dockerfileLines, or a Dockerfile in the app root. ' +
+                `${captainDefFileName} requires imageName, dockerfileLines, or a Dockerfile in the app root. ` +
                 'See https://caprover.com/docs/captain-definition-file.html',
             },
             { status: 400 },

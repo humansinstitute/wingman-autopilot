@@ -18,7 +18,7 @@ export async function fetchCaproverStatus() {
 }
 
 /**
- * Deploy an app to CapRover using its captain-definition.json.
+ * Deploy an app to CapRover using its captain-definition file.
  * @param {string} appId - The local app ID
  * @param {string} caproverName - The CapRover app name to deploy to
  * @returns {Promise<{success: boolean, liveUrl?: string, caproverName?: string, error?: string}>}

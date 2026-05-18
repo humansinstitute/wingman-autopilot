@@ -9,6 +9,8 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { spawn } from "node:child_process";
 
+const CAPTAIN_DEFINITION_FILES = ["captain-definition", "captain-definition.json"] as const;
+
 /** Default patterns to exclude from deployment tarballs */
 const DEFAULT_EXCLUDES = [
   ".git",
@@ -117,6 +119,27 @@ async function collectFiles(
   return files;
 }
 
+function findCaptainDefinitionFile(files: string[]): string | null {
+  return CAPTAIN_DEFINITION_FILES.find((file) => files.includes(file)) ?? null;
+}
+
+async function readCaptainDefinition(appRoot: string): Promise<{ fileName: string; content: string } | null> {
+  for (const fileName of CAPTAIN_DEFINITION_FILES) {
+    try {
+      return {
+        fileName,
+        content: await readFile(join(appRoot, fileName), "utf8"),
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw err;
+      }
+    }
+  }
+
+  return null;
+}
+
 export interface CreateTarballOptions {
   /** Additional patterns to exclude */
   additionalExcludes?: string[];
@@ -174,9 +197,9 @@ export async function createAppTarball(
     throw new Error("No files to include in tarball");
   }
 
-  // Verify captain-definition.json exists
-  if (!files.includes("captain-definition.json")) {
-    throw new Error("captain-definition.json is required but was not found or is excluded");
+  // Verify a CapRover captain definition exists.
+  if (!findCaptainDefinitionFile(files)) {
+    throw new Error("captain-definition or captain-definition.json is required but was not found or is excluded");
   }
 
   // Create tarball using system tar command
@@ -239,34 +262,32 @@ export async function verifyDeployableApp(appRoot: string): Promise<{
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  // Check captain-definition.json exists
-  const captainDefPath = join(appRoot, "captain-definition.json");
   try {
-    const content = await readFile(captainDefPath, "utf8");
-    const def = JSON.parse(content);
+    const captainDef = await readCaptainDefinition(appRoot);
+    if (!captainDef) {
+      errors.push("captain-definition or captain-definition.json not found");
+    } else {
+      const def = JSON.parse(captainDef.content);
 
-    if (def.schemaVersion !== 2) {
-      errors.push("captain-definition.json must have schemaVersion: 2");
-    }
+      if (def.schemaVersion !== 2) {
+        errors.push(`${captainDef.fileName} must have schemaVersion: 2`);
+      }
 
-    // Check if it specifies a build method
-    if (!def.imageName && !def.dockerfileLines && !def.templateId) {
-      // Need a Dockerfile
-      const dockerfilePath = join(appRoot, "Dockerfile");
-      try {
-        await stat(dockerfilePath);
-      } catch {
-        errors.push(
-          "No build method specified. captain-definition.json needs imageName, dockerfileLines, or a Dockerfile must exist",
-        );
+      // Check if it specifies a build method
+      if (!def.imageName && !def.dockerfileLines && !def.templateId) {
+        // Need a Dockerfile
+        const dockerfilePath = join(appRoot, "Dockerfile");
+        try {
+          await stat(dockerfilePath);
+        } catch {
+          errors.push(
+            `No build method specified. ${captainDef.fileName} needs imageName, dockerfileLines, or a Dockerfile must exist`,
+          );
+        }
       }
     }
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      errors.push("captain-definition.json not found");
-    } else {
-      errors.push(`Invalid captain-definition.json: ${(err as Error).message}`);
-    }
+    errors.push(`Invalid captain definition: ${(err as Error).message}`);
   }
 
   // Check for common issues

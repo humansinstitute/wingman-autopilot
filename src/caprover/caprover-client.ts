@@ -143,7 +143,7 @@ export class CaproverClient {
 
   /**
    * Deploy app from a tarball containing source code.
-   * The tarball must contain a captain-definition.json at the root,
+   * The tarball must contain a captain-definition or captain-definition.json at the root,
    * and either a Dockerfile or the captain-definition must specify
    * imageName or dockerfileLines.
    */
