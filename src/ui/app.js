@@ -2390,6 +2390,8 @@ const appsViewModule = initAppsView({
   refreshApps: (...args) => refreshApps(...args),
   fetchApps: (...args) => fetchApps(...args),
   logPreviewLines: APP_LOG_PREVIEW_LINES,
+  appStatusLabels: APP_STATUS_LABELS,
+  formatAppTimestamp: (...args) => formatAppTimestamp(...args),
   normaliseNpubValue,
   abbreviateNpub,
 });

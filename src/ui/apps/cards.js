@@ -176,6 +176,7 @@ export function initAppCards(deps) {
     viewLogsButton.type = "button";
     viewLogsButton.className = "wm-button secondary";
     viewLogsButton.textContent = "View Logs";
+    viewLogsButton.dataset.appCardOpensDialog = "true";
     viewLogsButton.addEventListener("click", () => void openAppLogsDialog(app.id));
     actions.append(viewLogsButton);
 
@@ -620,6 +621,7 @@ export function initAppCards(deps) {
       deployButton.type = "button";
       deployButton.className = "wm-button secondary";
       deployButton.textContent = "Deploy";
+      deployButton.dataset.appCardOpensDialog = "true";
       deployButton.addEventListener("click", () => {
         openDeployDialog(app.id);
       });

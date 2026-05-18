@@ -1,3 +1,6 @@
+import { showAppCardModal } from "../apps/card-modal.js";
+import { renderAppsTable } from "../apps/table.js";
+
 export function buildAppFilterOptions({
   isAdmin,
   viewerNpub,
@@ -48,6 +51,8 @@ export function initAppsView({
   refreshApps,
   fetchApps,
   logPreviewLines,
+  appStatusLabels,
+  formatAppTimestamp,
   normaliseNpubValue,
   abbreviateNpub,
 }) {
@@ -60,32 +65,78 @@ export function initAppsView({
     }
   }
 
-  function focusPendingAppCard(grid) {
+  function focusPendingApp(container) {
     if (!appsStore().pendingFocusId) {
       return;
     }
     const targetId = appsStore().pendingFocusId;
     appsStore().pendingFocusId = null;
     requestAnimationFrame(() => {
-      const escape = typeof CSS?.escape === "function" ? CSS.escape : (value) => value.replace(/"/g, '\\"');
+      const escape =
+        typeof CSS !== "undefined" && typeof CSS.escape === "function"
+          ? CSS.escape
+          : (value) => value.replace(/"/g, '\\"');
       const selector = `[data-app-id="${escape(targetId)}"]`;
-      const card = grid.querySelector(selector);
-      if (!card) {
+      const candidates = Array.from(container.querySelectorAll(selector));
+      const target =
+        candidates.find((candidate) => candidate instanceof HTMLElement && candidate.offsetParent !== null) ??
+        candidates[0];
+      if (!target) {
         return;
       }
-      card.classList.add("wm-app-card--highlight");
-      card.scrollIntoView({ block: "center", behavior: "smooth" });
+      target.classList.add("wm-app-card--highlight");
+      target.scrollIntoView({ block: "center", behavior: "smooth" });
       window.setTimeout(() => {
-        if (card.isConnected) {
-          card.classList.remove("wm-app-card--highlight");
+        if (target.isConnected) {
+          target.classList.remove("wm-app-card--highlight");
         }
       }, 1600);
     });
   }
 
+  function renderAppsViewToggle(viewMode) {
+    const toggle = document.createElement("div");
+    toggle.className = "wm-apps-view-toggle";
+    toggle.setAttribute("role", "group");
+    toggle.setAttribute("aria-label", "Apps view");
+
+    [
+      { mode: "table", label: "Table" },
+      { mode: "cards", label: "Cards" },
+    ].forEach((option) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = option.label;
+      button.setAttribute("aria-pressed", viewMode === option.mode ? "true" : "false");
+      button.dataset.testid = `apps-view-${option.mode}`;
+      button.addEventListener("click", () => {
+        const appState = appsStore();
+        appState.viewMode = option.mode;
+        render();
+      });
+      toggle.append(button);
+    });
+
+    return toggle;
+  }
+
+  function renderAppsCardGrid(apps) {
+    const grid = document.createElement("div");
+    grid.className = "wm-apps-grid";
+    grid.dataset.testid = "apps-card-view";
+
+    apps.forEach((app) => {
+      grid.append(renderAppCard(app));
+    });
+
+    return grid;
+  }
+
   function renderApps() {
     const wrapper = document.createElement("div");
     wrapper.className = "wm-apps";
+    const viewMode = appsStore().viewMode === "cards" ? "cards" : "table";
+    wrapper.dataset.viewMode = viewMode;
 
     const header = document.createElement("div");
     header.className = "wm-apps-header";
@@ -155,7 +206,7 @@ export function initAppsView({
     addButton.textContent = "Add App";
     addButton.addEventListener("click", () => openAppDialog());
 
-    headerActions.append(refreshButton, addButton);
+    headerActions.append(renderAppsViewToggle(viewMode), refreshButton, addButton);
     header.append(headerActions);
     wrapper.append(header);
 
@@ -215,18 +266,22 @@ export function initAppsView({
       return wrapper;
     }
 
-    const grid = document.createElement("div");
-    grid.className = "wm-apps-grid";
-
-    apps.forEach((app) => {
-      grid.append(renderAppCard(app));
+    const openAppDetails = (app) => {
+      showAppCardModal({ app, renderAppCard });
+    };
+    const table = renderAppsTable({
+      apps,
+      appStatusLabels,
+      formatAppTimestamp,
+      onOpenAppDetails: openAppDetails,
     });
+    const grid = renderAppsCardGrid(apps);
 
-    mainArea.append(grid);
+    mainArea.append(table, grid);
     splitContainer.append(mainArea);
     wrapper.append(splitContainer);
 
-    focusPendingAppCard(grid);
+    focusPendingApp(wrapper);
     schedulePendingAppDialog();
 
     return wrapper;

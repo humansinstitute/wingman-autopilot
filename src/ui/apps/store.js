@@ -55,6 +55,7 @@ export function initAppsStore({
     error: null,
     pendingOpenDialog: null,
     pendingFocusId: null,
+    viewMode: "table",
     filters: {
       npub: "all",
       options: [],
