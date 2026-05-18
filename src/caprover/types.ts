@@ -106,6 +106,8 @@ export interface CaproverDeploymentRecord {
   id: string;
   /** Link to caprover_apps record */
   caproverAppId: string;
+  /** CapRover target name that received this deployment */
+  targetName: string;
   /** Deployment version number */
   version: number | null;
   /** Deployment status */

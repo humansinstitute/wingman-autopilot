@@ -7,7 +7,8 @@
 
 import type { RequestAuthContext } from "../auth/request-context";
 import { normaliseNpub } from "../identity/npub-utils";
-import { CaproverClient, CaproverClientError, createCaproverClientFromEnv } from "./caprover-client";
+import { CaproverClient, CaproverClientError } from "./caprover-client";
+import type { CaproverTargetClient } from "./caprover-client";
 import type { CaproverStore } from "./caprover-store";
 import type {
   CaptainDefinition,
@@ -23,6 +24,7 @@ import type {
 export interface CaproverApiDependencies {
   store: CaproverStore;
   getClient: () => CaproverClient | null;
+  getTargets?: () => CaproverTargetClient[];
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -92,6 +94,7 @@ const serializeApp = (app: CaproverAppRecord) => ({
 const serializeDeployment = (deployment: CaproverDeploymentRecord) => ({
   id: deployment.id,
   caproverAppId: deployment.caproverAppId,
+  targetName: deployment.targetName,
   version: deployment.version,
   status: deployment.status,
   deployMethod: deployment.deployMethod,
@@ -100,6 +103,11 @@ const serializeDeployment = (deployment: CaproverDeploymentRecord) => ({
   startedAt: deployment.startedAt,
   completedAt: deployment.completedAt,
   errorMessage: deployment.errorMessage,
+});
+
+const serializeTarget = (target: CaproverTargetClient) => ({
+  name: target.name,
+  serverUrl: target.serverUrl,
 });
 
 // ============================================================
@@ -474,6 +482,21 @@ const handleRemoteApps = async (deps: CaproverApiDependencies): Promise<Response
 };
 
 /**
+ * GET /api/caprover/targets - List configured CapRover targets
+ */
+const handleTargets = (deps: CaproverApiDependencies): Response => {
+  const targets = deps.getTargets?.() ?? [];
+  if (targets.length === 0) {
+    const client = deps.getClient();
+    return Response.json({
+      targets: client ? [{ name: "primary", serverUrl: null }] : [],
+    });
+  }
+
+  return Response.json({ targets: targets.map(serializeTarget) });
+};
+
+/**
  * GET /api/caprover/status - Check CapRover connection status
  */
 const handleStatus = async (deps: CaproverApiDependencies): Promise<Response> => {
@@ -527,6 +550,14 @@ export const createCaproverApiHandler = (dependencies: CaproverApiDependencies) 
     if (segments.length === 3 && segments[2] === "status") {
       if (method === "GET") {
         return handleStatus(deps);
+      }
+      return Response.json({ error: "Method not allowed" }, { status: 405 });
+    }
+
+    // /api/caprover/targets
+    if (segments.length === 3 && segments[2] === "targets") {
+      if (method === "GET") {
+        return handleTargets(deps);
       }
       return Response.json({ error: "Method not allowed" }, { status: 405 });
     }

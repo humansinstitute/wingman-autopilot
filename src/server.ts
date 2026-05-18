@@ -61,7 +61,13 @@ import { ProjectStore } from "./projects/project-store";
 import { createProjectApiHandler } from "./projects/project-api";
 import { createNpubProjectApiHandler } from "./projects/npub-project-api";
 import { npubProjectStore } from "./projects/npub-project-store";
-import { CaproverStore, createCaproverApiHandler, createCaproverClientFromEnv, createAppTarball } from "./caprover";
+import {
+  CaproverStore,
+  createCaproverApiHandler,
+  createCaproverClientFromEnv,
+  createCaproverTargetClientsFromEnv,
+  createAppTarball,
+} from "./caprover";
 import { NightWatchStore } from "./nightwatch/nightwatch-store";
 import { maybeTriggerNightWatch, NIGHTWATCH_FEATURE_FLAG_KEY } from "./nightwatch/nightwatch-engine";
 import { CODEX_NATIVE_SDK_FLAG, OPENCODE_NATIVE_SDK_FLAG } from "./agents/agent-adapter";
@@ -396,6 +402,7 @@ const caproverStore = new CaproverStore();
 const caproverApiHandler = createCaproverApiHandler({
   store: caproverStore,
   getClient: createCaproverClientFromEnv,
+  getTargets: createCaproverTargetClientsFromEnv,
 });
 const nightWatchStore = new NightWatchStore();
 const nightWatchApiHandler = createNightWatchApiHandler({
@@ -739,6 +746,7 @@ const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   tailAppLogs: (appId, lines) => appProcessManager.tailLogs(appId, lines),
   caproverStore,
   getCaproverClient: createCaproverClientFromEnv,
+  getCaproverTargets: createCaproverTargetClientsFromEnv,
   userSkillsRoot: join(homeDirectory, ".wingmen", "skills"),
   defaultSkillsRoot: join(projectRoot, "skills"),
   userSettingsStore,
@@ -2496,7 +2504,7 @@ const handleApi = createApiRouteHandler({
       appAliasRegistry,
       wappStore,
       npubProjectStore,
-      createCaproverClientFromEnv,
+      createCaproverTargetClientsFromEnv,
       createAppTarball,
       caproverStore,
     };

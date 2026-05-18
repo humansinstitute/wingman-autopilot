@@ -1090,6 +1090,7 @@ export const initAppDialogs = ({
   const appDeployForm = appDeployDialog?.querySelector("form") ?? null;
   const appDeployTitle = document.getElementById("app-deploy-title");
   const appDeployNameInput = document.getElementById("app-deploy-name");
+  const appDeployTargetSelect = document.getElementById("app-deploy-target");
   const appDeployStatus = document.getElementById("app-deploy-status");
   const appDeployMessage = document.getElementById("app-deploy-message");
   const appDeployUrl = document.getElementById("app-deploy-url");
@@ -1100,6 +1101,7 @@ export const initAppDialogs = ({
     appId: null,
     deploying: false,
     completed: false,
+    targets: [],
   };
 
   const setDeployConfirmButtonState = (label, disabled) => {
@@ -1113,9 +1115,62 @@ export const initAppDialogs = ({
     if (appDeployNameInput) {
       appDeployNameInput.disabled = completed;
     }
+    if (appDeployTargetSelect) {
+      appDeployTargetSelect.disabled = completed;
+    }
     if (appDeployCancelButton) {
       appDeployCancelButton.hidden = completed;
     }
+  };
+
+  const renderCaproverTargetOptions = (targets) => {
+    if (!appDeployTargetSelect) return;
+    appDeployTargetSelect.replaceChildren();
+
+    if (targets.length > 1) {
+      const allOption = document.createElement("option");
+      allOption.value = "all";
+      allOption.textContent = "All configured targets";
+      appDeployTargetSelect.append(allOption);
+    }
+
+    for (const target of targets) {
+      const option = document.createElement("option");
+      option.value = target.name;
+      option.textContent = target.name;
+      appDeployTargetSelect.append(option);
+    }
+
+    appDeployTargetSelect.disabled = targets.length <= 1;
+    appDeployTargetSelect.value = targets.length > 1 ? "all" : targets[0]?.name ?? "all";
+  };
+
+  const loadCaproverTargets = async () => {
+    try {
+      const response = await fetch("/api/caprover/targets");
+      const data = await response.json();
+      const targets = Array.isArray(data.targets) ? data.targets : [];
+      deployDialogState.targets = targets;
+      renderCaproverTargetOptions(targets);
+      return targets;
+    } catch {
+      deployDialogState.targets = [];
+      renderCaproverTargetOptions([]);
+      return [];
+    }
+  };
+
+  const formatDeployResultMessage = (data) => {
+    const targets = Array.isArray(data?.targets) ? data.targets : [];
+    if (targets.length === 0) return "Deployment successful!";
+
+    const successful = targets.filter((target) => target.success);
+    const failed = targets.filter((target) => !target.success);
+    if (failed.length === 0) {
+      return `Deployment successful on ${successful.map((target) => target.targetName).join(", ")}.`;
+    }
+
+    return `Deployed to ${successful.map((target) => target.targetName).join(", ")}. Failed on ${failed.map((target) => target.targetName).join(", ")}.`;
   };
 
   const resolveInitialCaproverName = (app) => {
@@ -1166,6 +1221,10 @@ export const initAppDialogs = ({
     setDeployConfirmButtonState("Deploy", false);
     deployDialogState.appId = null;
     deployDialogState.deploying = false;
+    deployDialogState.targets = [];
+    if (appDeployTargetSelect) {
+      appDeployTargetSelect.disabled = false;
+    }
     setDeployDialogCompletionState(false);
   };
 
@@ -1202,6 +1261,14 @@ export const initAppDialogs = ({
 
     if (appDeployNameInput) {
       appDeployNameInput.value = resolveInitialCaproverName(app);
+    }
+
+    const targets = await loadCaproverTargets();
+    if (targets.length === 0 && appDeployMessage && appDeployStatus) {
+      appDeployStatus.hidden = false;
+      appDeployMessage.textContent = "No CapRover targets are configured.";
+      appDeployMessage.className = "wm-deploy-error";
+      setDeployConfirmButtonState("Deploy", true);
     }
 
     if (appDeployDialog.open) {
@@ -1244,6 +1311,8 @@ export const initAppDialogs = ({
       return;
     }
 
+    const caproverTarget = appDeployTargetSelect?.value || "all";
+
     // Validate format
     if (!/^[a-z][a-z0-9-]*$/.test(caproverName)) {
       showToast("Invalid CapRover name format", { type: "error" });
@@ -1268,7 +1337,7 @@ export const initAppDialogs = ({
       const response = await fetch(`/api/apps/${encodeURIComponent(appId)}/deploy-to-caprover`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ caproverName }),
+        body: JSON.stringify({ caproverName, caproverTarget }),
       });
 
       let data;
@@ -1287,7 +1356,7 @@ export const initAppDialogs = ({
       syncDeployedAppDetails(appId, data);
       void refreshApps({ skipRender: true });
       if (appDeployMessage) {
-        appDeployMessage.textContent = "Deployment successful!";
+        appDeployMessage.textContent = formatDeployResultMessage(data);
         appDeployMessage.className = "wm-deploy-success";
       }
       if (appDeployUrl && data.liveUrl) {

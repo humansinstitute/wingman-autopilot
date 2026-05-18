@@ -15,7 +15,7 @@ import { AGENT_TYPES, AGENT_TYPE_LIST, type AgentType } from "../agent-types";
 import type { AppRecord, AppLifecycleAction } from "../apps/app-registry";
 import type { AppProcessStatus } from "../apps/app-process-manager";
 import type { CaproverStore } from "../caprover/caprover-store";
-import type { CaproverClient } from "../caprover/caprover-client";
+import type { CaproverClient, CaproverTargetClient } from "../caprover/caprover-client";
 import { createAppTarball } from "../caprover/tarball";
 import { listSkills, loadSkill } from "./skill-loader";
 import { generateAndSaveImages } from "./services/image-generator";
@@ -58,6 +58,7 @@ export interface WingmanMcpApiDependencies {
   tailAppLogs: (appId: string, lines?: number) => Promise<string[]>;
   caproverStore: CaproverStore;
   getCaproverClient: () => CaproverClient | null;
+  getCaproverTargets?: () => CaproverTargetClient[];
   userSkillsRoot: string;
   defaultSkillsRoot: string;
   userSettingsStore: UserSettingsStore;
@@ -91,6 +92,44 @@ function requireSessionId(
     return jsonError("Unknown session", 404);
   }
   return null; // valid
+}
+
+function normaliseCaproverTargetName(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return /^[a-z][a-z0-9-]*$/.test(normalized) ? normalized : null;
+}
+
+function resolveCaproverTargets(
+  deps: WingmanMcpApiDependencies,
+  requestedTarget: unknown,
+): CaproverTargetClient[] | Response {
+  const configuredTargets = deps.getCaproverTargets?.() ?? [];
+  const targets = configuredTargets.length > 0
+    ? configuredTargets
+    : (() => {
+        const client = deps.getCaproverClient();
+        return client ? [{ name: "primary", serverUrl: "", client }] : [];
+      })();
+
+  if (targets.length === 0) {
+    return jsonError("CapRover is not configured — set CAPROVER_URL and LOGIN_CODE", 503);
+  }
+
+  const requested = requestedTarget === undefined ? "all" : normaliseCaproverTargetName(requestedTarget);
+  if (!requested) {
+    return jsonError('caproverTarget must be "all" or a configured target name', 400);
+  }
+  if (requested === "all") {
+    return targets;
+  }
+
+  const target = targets.find((candidate) => candidate.name === requested);
+  if (!target) {
+    return jsonError(`Unknown CapRover target: ${requested}`, 400);
+  }
+
+  return [target];
 }
 
 // ---------------------------------------------------------------------------
@@ -548,6 +587,7 @@ async function handleDeployCaproverApp(
   const appId = body.appId as string | undefined;
   const dockerImage = body.dockerImage as string | undefined;
   const gitHash = body.gitHash as string | undefined;
+  const caproverTarget = body.caproverTarget ?? body.targetName;
 
   const denied = requireSessionId(deps, sessionId);
   if (denied) return denied;
@@ -561,50 +601,61 @@ async function handleDeployCaproverApp(
     return jsonError("CapRover app not found", 404);
   }
 
-  const client = deps.getCaproverClient();
-  if (!client) {
-    return jsonError("CapRover is not configured — set CAPROVER_URL and CAPROVER_PASSWORD", 503);
+  const targets = resolveCaproverTargets(deps, caproverTarget);
+  if (!Array.isArray(targets)) {
+    return targets;
   }
 
   // Docker image deployment
   if (dockerImage) {
-    const deployment = deps.caproverStore.createDeployment({
-      caproverAppId: appId,
-      deployMethod: "docker_image",
-      dockerImage,
-      gitHash: gitHash ?? null,
-    });
-
-    try {
-      await client.deployFromImage(app.caproverName, dockerImage);
-
-      const remoteApp = await client.getApp(app.caproverName);
-      const version = remoteApp?.deployedVersion ?? null;
-
-      deps.caproverStore.updateDeployment(deployment.id, {
-        status: "success",
-        version,
-        completedAt: new Date().toISOString(),
-      });
-
-      deps.caproverStore.updateApp(appId, { deployedVersion: version });
-
-      return jsonOk({
-        success: true,
-        appId,
-        caproverName: app.caproverName,
+    const results = [];
+    for (const target of targets) {
+      const deployment = deps.caproverStore.createDeployment({
+        caproverAppId: appId,
+        targetName: target.name,
         deployMethod: "docker_image",
         dockerImage,
-        deployedVersion: version,
+        gitHash: gitHash ?? null,
       });
-    } catch (err) {
-      deps.caproverStore.updateDeployment(deployment.id, {
-        status: "failed",
-        completedAt: new Date().toISOString(),
-        errorMessage: (err as Error).message,
-      });
-      return jsonError(`Deployment failed: ${(err as Error).message}`, 502);
+
+      try {
+        await target.client.deployFromImage(app.caproverName, dockerImage);
+
+        const remoteApp = await target.client.getApp(app.caproverName);
+        const version = remoteApp?.deployedVersion ?? null;
+
+        deps.caproverStore.updateDeployment(deployment.id, {
+          status: "success",
+          version,
+          completedAt: new Date().toISOString(),
+        });
+
+        deps.caproverStore.updateApp(appId, { deployedVersion: version });
+        results.push({ targetName: target.name, success: true, deployedVersion: version, error: null });
+      } catch (err) {
+        const message = (err as Error).message;
+        deps.caproverStore.updateDeployment(deployment.id, {
+          status: "failed",
+          completedAt: new Date().toISOString(),
+          errorMessage: message,
+        });
+        results.push({ targetName: target.name, success: false, deployedVersion: null, error: message });
+      }
     }
+
+    if (!results.some((result) => result.success)) {
+      return jsonError(`Deployment failed: ${results.map((result) => `${result.targetName}: ${result.error}`).join("; ")}`, 502);
+    }
+
+    return jsonOk({
+      success: true,
+      appId,
+      caproverName: app.caproverName,
+      deployMethod: "docker_image",
+      dockerImage,
+      targets: results,
+      deployedVersion: results.find((result) => result.success)?.deployedVersion ?? null,
+    });
   }
 
   // Tarball deployment from linked local app
@@ -631,43 +682,54 @@ async function handleDeployCaproverApp(
     return jsonError(`Failed to create tarball from ${appRoot}: ${(err as Error).message}`, 400);
   }
 
-  const deployment = deps.caproverStore.createDeployment({
-    caproverAppId: appId,
-    deployMethod: "tar_upload",
-    dockerImage: null,
-    gitHash: gitHash ?? null,
-  });
-
-  try {
-    await client.deployFromTarball(app.caproverName, tarResult.buffer, gitHash);
-
-    const remoteApp = await client.getApp(app.caproverName);
-    const version = remoteApp?.deployedVersion ?? null;
-
-    deps.caproverStore.updateDeployment(deployment.id, {
-      status: "success",
-      version,
-      completedAt: new Date().toISOString(),
-    });
-
-    deps.caproverStore.updateApp(appId, { deployedVersion: version });
-
-    return jsonOk({
-      success: true,
-      appId,
-      caproverName: app.caproverName,
+  const results = [];
+  for (const target of targets) {
+    const deployment = deps.caproverStore.createDeployment({
+      caproverAppId: appId,
+      targetName: target.name,
       deployMethod: "tar_upload",
-      fileCount: tarResult.fileCount,
-      deployedVersion: version,
+      dockerImage: null,
+      gitHash: gitHash ?? null,
     });
-  } catch (err) {
-    deps.caproverStore.updateDeployment(deployment.id, {
-      status: "failed",
-      completedAt: new Date().toISOString(),
-      errorMessage: (err as Error).message,
-    });
-    return jsonError(`Tarball deployment failed: ${(err as Error).message}`, 502);
+
+    try {
+      await target.client.deployFromTarball(app.caproverName, tarResult.buffer, gitHash);
+
+      const remoteApp = await target.client.getApp(app.caproverName);
+      const version = remoteApp?.deployedVersion ?? null;
+
+      deps.caproverStore.updateDeployment(deployment.id, {
+        status: "success",
+        version,
+        completedAt: new Date().toISOString(),
+      });
+
+      deps.caproverStore.updateApp(appId, { deployedVersion: version });
+      results.push({ targetName: target.name, success: true, deployedVersion: version, error: null });
+    } catch (err) {
+      const message = (err as Error).message;
+      deps.caproverStore.updateDeployment(deployment.id, {
+        status: "failed",
+        completedAt: new Date().toISOString(),
+        errorMessage: message,
+      });
+      results.push({ targetName: target.name, success: false, deployedVersion: null, error: message });
+    }
   }
+
+  if (!results.some((result) => result.success)) {
+    return jsonError(`Tarball deployment failed: ${results.map((result) => `${result.targetName}: ${result.error}`).join("; ")}`, 502);
+  }
+
+  return jsonOk({
+    success: true,
+    appId,
+    caproverName: app.caproverName,
+    deployMethod: "tar_upload",
+    fileCount: tarResult.fileCount,
+    targets: results,
+    deployedVersion: results.find((result) => result.success)?.deployedVersion ?? null,
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -19,6 +19,10 @@ export const deployCaproverAppSchema = {
     .string()
     .optional()
     .describe("Git commit hash to associate with this deployment"),
+  caprover_target: z
+    .string()
+    .optional()
+    .describe('CapRover target name to deploy to, or "all" for every configured target. Defaults to all.'),
 };
 
 export const deployCaproverAppDescription =
@@ -30,6 +34,7 @@ interface DeployCaproverAppParams {
   app_id: string;
   docker_image?: string;
   git_hash?: string;
+  caprover_target?: string;
 }
 
 export async function handleDeployCaproverApp(
@@ -37,7 +42,7 @@ export async function handleDeployCaproverApp(
   wingmanUrl: string,
   sessionId: string,
 ) {
-  const { app_id, docker_image, git_hash } = params;
+  const { app_id, docker_image, git_hash, caprover_target } = params;
 
   try {
     const response = await fetch(
@@ -50,6 +55,7 @@ export async function handleDeployCaproverApp(
           appId: app_id,
           dockerImage: docker_image,
           gitHash: git_hash,
+          caproverTarget: caprover_target,
         }),
       },
     );
@@ -69,6 +75,9 @@ export async function handleDeployCaproverApp(
 
     const result = await response.json();
     const method = result.deployMethod === "tar_upload" ? "tarball" : "image";
+    const targets = Array.isArray(result.targets)
+      ? `  Targets: ${result.targets.map((target: { targetName: string; success: boolean }) => `${target.targetName}:${target.success ? "ok" : "failed"}`).join(", ")}`
+      : null;
     return {
       content: [
         {
@@ -77,8 +86,9 @@ export async function handleDeployCaproverApp(
             `Deployment successful (${method})`,
             `  App: ${result.caproverName}`,
             result.dockerImage ? `  Image: ${result.dockerImage}` : `  Files: ${result.fileCount ?? "unknown"}`,
+            targets,
             `  Version: ${result.deployedVersion ?? "unknown"}`,
-          ].join("\n"),
+          ].filter(Boolean).join("\n"),
         },
       ],
     };

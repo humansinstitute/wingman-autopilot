@@ -21,13 +21,14 @@ export async function fetchCaproverStatus() {
  * Deploy an app to CapRover using its captain-definition file.
  * @param {string} appId - The local app ID
  * @param {string} caproverName - The CapRover app name to deploy to
+ * @param {string} caproverTarget - The CapRover target name, or "all"
  * @returns {Promise<{success: boolean, liveUrl?: string, caproverName?: string, error?: string}>}
  */
-export async function deployAppToCaprover(appId, caproverName) {
+export async function deployAppToCaprover(appId, caproverName, caproverTarget = "all") {
   const response = await fetch(`/api/apps/${encodeURIComponent(appId)}/deploy-to-caprover`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ caproverName }),
+    body: JSON.stringify({ caproverName, caproverTarget }),
   });
 
   const data = await response.json();
@@ -43,6 +44,7 @@ export async function deployAppToCaprover(appId, caproverName) {
     success: true,
     liveUrl: data.liveUrl,
     caproverName: data.caproverName,
+    targets: data.targets,
   };
 }
 

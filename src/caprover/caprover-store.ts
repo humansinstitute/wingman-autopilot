@@ -44,6 +44,7 @@ export interface UpdateCaproverAppRecordInput {
 
 export interface CreateDeploymentInput {
   caproverAppId: string;
+  targetName?: string;
   deployMethod: DeployMethod;
   dockerImage?: string | null;
   gitHash?: string | null;
@@ -282,6 +283,7 @@ class CaproverStore {
           `SELECT
              id,
              caprover_app_id as caproverAppId,
+             target_name as targetName,
              version,
              status,
              deploy_method as deployMethod,
@@ -304,6 +306,7 @@ class CaproverStore {
         `SELECT
            id,
            caprover_app_id as caproverAppId,
+           target_name as targetName,
            version,
            status,
            deploy_method as deployMethod,
@@ -326,6 +329,7 @@ class CaproverStore {
         `SELECT
            id,
            caprover_app_id as caproverAppId,
+           target_name as targetName,
            version,
            status,
            deploy_method as deployMethod,
@@ -348,6 +352,7 @@ class CaproverStore {
         `SELECT
            id,
            caprover_app_id as caproverAppId,
+           target_name as targetName,
            version,
            status,
            deploy_method as deployMethod,
@@ -373,14 +378,15 @@ class CaproverStore {
     this.db
       .query(
         `INSERT INTO caprover_deployments (
-           id, caprover_app_id, version, status, deploy_method,
+           id, caprover_app_id, target_name, version, status, deploy_method,
            docker_image, git_hash, started_at, completed_at,
            error_message, logs_encrypted
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
       )
       .run(
         id,
         input.caproverAppId,
+        input.targetName ?? "primary",
         null, // version - set when deployment completes
         "pending",
         input.deployMethod,
@@ -461,6 +467,7 @@ class CaproverStore {
       CREATE TABLE IF NOT EXISTS caprover_deployments (
         id TEXT PRIMARY KEY,
         caprover_app_id TEXT NOT NULL,
+        target_name TEXT NOT NULL DEFAULT 'primary',
         version INTEGER,
         status TEXT NOT NULL DEFAULT 'pending',
         deploy_method TEXT NOT NULL,
@@ -472,9 +479,19 @@ class CaproverStore {
         logs_encrypted TEXT,
         FOREIGN KEY (caprover_app_id) REFERENCES caprover_apps(id) ON DELETE CASCADE
       );
+    `);
 
+    const deploymentColumns = this.db
+      .query<{ name: string }, []>("PRAGMA table_info(caprover_deployments)")
+      .all();
+    if (!deploymentColumns.some((column) => column.name === "target_name")) {
+      this.db.exec("ALTER TABLE caprover_deployments ADD COLUMN target_name TEXT NOT NULL DEFAULT 'primary'");
+    }
+
+    this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_caprover_deployments_app ON caprover_deployments(caprover_app_id);
       CREATE INDEX IF NOT EXISTS idx_caprover_deployments_status ON caprover_deployments(status);
+      CREATE INDEX IF NOT EXISTS idx_caprover_deployments_target ON caprover_deployments(target_name);
     `);
   }
 }

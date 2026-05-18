@@ -650,6 +650,11 @@
         <input id="app-deploy-name" type="text" pattern="[a-z][a-z0-9-]*" autocomplete="off" required />
         <p class="wm-field-note">Lowercase letters, numbers, and hyphens only. Must start with a letter.</p>
 
+        <label for="app-deploy-target">CapRover Target</label>
+        <select id="app-deploy-target" aria-label="CapRover deployment target" data-testid="app-deploy-target">
+          <option value="all">All configured targets</option>
+        </select>
+
         <div id="app-deploy-status" class="wm-deploy-status" hidden>
           <p id="app-deploy-message"></p>
           <a id="app-deploy-url" href="#" target="_blank" rel="noopener noreferrer" hidden>Open App</a>

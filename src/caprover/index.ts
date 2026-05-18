@@ -4,7 +4,13 @@
  * Provides deployment management to CapRover from Wingman.
  */
 
-export { CaproverClient, CaproverClientError, createCaproverClientFromEnv } from "./caprover-client";
+export {
+  CaproverClient,
+  CaproverClientError,
+  createCaproverClientFromEnv,
+  createCaproverTargetClientsFromEnv,
+} from "./caprover-client";
+export type { CaproverTargetClient } from "./caprover-client";
 export { CaproverStore } from "./caprover-store";
 export { createCaproverApiHandler } from "./caprover-api";
 export { createAppTarball, verifyDeployableApp } from "./tarball";

@@ -8,7 +8,7 @@ import type { TreeNode } from '../apps/app-detector';
 import type { AppLifecycleAction, AppLifecycleScripts, AppRecord } from '../apps/app-registry';
 import type { AppProcessStatus } from '../apps/app-process-manager';
 import { AppActionInProgressError, AppScriptMissingError } from '../apps/app-process-manager';
-import type { CaproverClient, CaproverStore } from '../caprover';
+import type { CaproverStore, CaproverTargetClient } from '../caprover';
 import type { WappRecord } from '../wapps/types';
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD';
@@ -30,6 +30,36 @@ async function readCaptainDefinition(appRoot: string): Promise<{ fileName: strin
   }
 
   return null;
+}
+
+function normaliseCaproverTargetName(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return /^[a-z][a-z0-9-]*$/.test(normalized) ? normalized : null;
+}
+
+function resolveCaproverTargets(
+  targets: CaproverTargetClient[],
+  requestedTarget: unknown,
+): CaproverTargetClient[] | { error: string; status: number } {
+  if (targets.length === 0) {
+    return { error: 'CapRover is not configured. Set CAPROVER_URL and LOGIN_CODE environment variables.', status: 503 };
+  }
+
+  const requested = requestedTarget === undefined ? 'all' : normaliseCaproverTargetName(requestedTarget);
+  if (!requested) {
+    return { error: 'caproverTarget must be "all" or a configured target name', status: 400 };
+  }
+  if (requested === 'all') {
+    return targets;
+  }
+
+  const target = targets.find((candidate) => candidate.name === requested);
+  if (!target) {
+    return { error: `Unknown CapRover target: ${requested}`, status: 400 };
+  }
+
+  return [target];
 }
 
 export interface AppsApiContext {
@@ -133,9 +163,18 @@ export interface AppsApiContext {
     clearAppIdByAppId: (appId: string) => void;
   };
 
-  createCaproverClientFromEnv: () => CaproverClient | null;
+  createCaproverTargetClientsFromEnv: () => CaproverTargetClient[];
   createAppTarball: (rootPath: string) => Promise<{ buffer: Uint8Array; fileCount: number }>;
   caproverStore: CaproverStore;
+}
+
+interface CaproverDeployTargetResult {
+  targetName: string;
+  serverUrl: string;
+  success: boolean;
+  liveUrl: string | null;
+  deployedVersion: number | null;
+  error: string | null;
 }
 
 function withCaproverDeploymentInfo(
@@ -865,76 +904,113 @@ export async function handleAppsApi(
         }
       }
 
-      const caproverClient = ctx.createCaproverClientFromEnv();
-      if (!caproverClient) {
+      const resolvedTargets = resolveCaproverTargets(
+        ctx.createCaproverTargetClientsFromEnv(),
+        record.caproverTarget,
+      );
+      if (!Array.isArray(resolvedTargets)) {
         return Response.json(
-          { error: 'CapRover is not configured. Set CAPROVER_URL and LOGIN_CODE environment variables.' },
-          { status: 503 },
+          { error: resolvedTargets.error },
+          { status: resolvedTargets.status },
         );
       }
 
+      let tracked = ctx.caproverStore.getAppByLocalAppId(id);
+      if (!tracked) {
+        tracked = ctx.caproverStore.createApp({
+          caproverName,
+          appId: id,
+          liveUrl: null,
+        });
+      }
+
+      let tarResult;
       try {
-        let tracked = ctx.caproverStore.getAppByLocalAppId(id);
+        tarResult = await ctx.createAppTarball(app.root);
+        console.log(`[caprover] Created tarball with ${tarResult.fileCount} files for ${caproverName}`);
+      } catch (tarError) {
+        const tarMessage = tarError instanceof Error ? tarError.message : String(tarError);
+        return Response.json({ error: `Failed to create tarball: ${tarMessage}` }, { status: 400 });
+      }
 
-        if (!tracked) {
-          const existingRemote = await caproverClient.getApp(caproverName);
-          if (!existingRemote) {
-            await caproverClient.createApp(caproverName, false);
-          }
-
-          const liveUrl = await caproverClient.getAppUrl(caproverName);
-
-          tracked = ctx.caproverStore.createApp({
-            caproverName,
-            appId: id,
-            liveUrl,
-          });
-        }
-
+      const targetResults: CaproverDeployTargetResult[] = [];
+      for (const target of resolvedTargets) {
         const deployment = ctx.caproverStore.createDeployment({
           caproverAppId: tracked.id,
+          targetName: target.name,
           deployMethod: 'tar_upload',
         });
 
-        let tarResult;
         try {
-          tarResult = await ctx.createAppTarball(app.root);
-          console.log(`[caprover] Created tarball with ${tarResult.fileCount} files for ${caproverName}`);
-        } catch (tarError) {
-          const tarMessage = tarError instanceof Error ? tarError.message : String(tarError);
+          const existingRemote = await target.client.getApp(tracked.caproverName);
+          if (!existingRemote) {
+            await target.client.createApp(tracked.caproverName, false);
+          }
+
+          const liveUrl = await target.client.getAppUrl(tracked.caproverName);
+          await target.client.deployFromTarball(tracked.caproverName, Buffer.from(tarResult.buffer));
+
+          const remoteApp = await target.client.getApp(tracked.caproverName);
+          const version = remoteApp?.deployedVersion ?? null;
+
+          ctx.caproverStore.updateDeployment(deployment.id, {
+            status: 'success',
+            version,
+            completedAt: new Date().toISOString(),
+          });
+
+          tracked = ctx.caproverStore.updateApp(tracked.id, {
+            liveUrl: tracked.liveUrl ?? liveUrl,
+            deployedVersion: version,
+          });
+
+          targetResults.push({
+            targetName: target.name,
+            serverUrl: target.serverUrl,
+            success: true,
+            liveUrl,
+            deployedVersion: version,
+            error: null,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
           ctx.caproverStore.updateDeployment(deployment.id, {
             status: 'failed',
             completedAt: new Date().toISOString(),
-            errorMessage: `Failed to create tarball: ${tarMessage}`,
+            errorMessage: message,
           });
-          return Response.json({ error: `Failed to create tarball: ${tarMessage}` }, { status: 400 });
+          targetResults.push({
+            targetName: target.name,
+            serverUrl: target.serverUrl,
+            success: false,
+            liveUrl: null,
+            deployedVersion: null,
+            error: message,
+          });
         }
-
-        await caproverClient.deployFromTarball(tracked.caproverName, Buffer.from(tarResult.buffer));
-
-        const remoteApp = await caproverClient.getApp(tracked.caproverName);
-        const version = remoteApp?.deployedVersion ?? null;
-
-        ctx.caproverStore.updateDeployment(deployment.id, {
-          status: 'success',
-          version,
-          completedAt: new Date().toISOString(),
-        });
-
-        const updatedTracked = ctx.caproverStore.updateApp(tracked.id, {
-          deployedVersion: version,
-        });
-
-        return Response.json({
-          success: true,
-          liveUrl: updatedTracked.liveUrl,
-          caproverName: updatedTracked.caproverName,
-          deployedVersion: version,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return Response.json({ error: message }, { status: 502 });
       }
+
+      const successfulTargets = targetResults.filter((result) => result.success);
+      const firstSuccess = successfulTargets[0] ?? null;
+      if (!firstSuccess) {
+        return Response.json(
+          {
+            success: false,
+            caproverName: tracked.caproverName,
+            targets: targetResults,
+            error: targetResults.map((result) => `${result.targetName}: ${result.error}`).join('; '),
+          },
+          { status: 502 },
+        );
+      }
+
+      return Response.json({
+        success: true,
+        liveUrl: tracked.liveUrl ?? firstSuccess.liveUrl,
+        caproverName: tracked.caproverName,
+        deployedVersion: firstSuccess.deployedVersion,
+        targets: targetResults,
+      });
     }
   }
 

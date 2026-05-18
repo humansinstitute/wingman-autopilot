@@ -67,6 +67,31 @@ Visit:
 - `http://localhost:<PORT>/home` for the session dashboard
 - `http://localhost:<PORT>/live` for the real-time live/session surface
 
+## CapRover Targets
+
+The app deploy dialog can deploy to one or more CapRover instances. Existing
+single-target configuration still works:
+
+```env
+CAPROVER_URL=https://captain.example.com
+LOGIN_CODE=...
+```
+
+To keep a warm standby CapRover on a second VPS, add:
+
+```env
+CAPROVER_SECONDARY_URL=https://captain-standby.example.com
+CAPROVER_SECONDARY_LOGIN_CODE=...
+```
+
+When both targets are configured, the deploy dialog defaults to all targets.
+Failures are tracked per target, so a failed primary deploy does not stop the
+secondary deploy. Operators can also choose a single target from the dialog.
+
+For custom names, set `CAPROVER_TARGETS=primary,backup` and provide
+`CAPROVER_BACKUP_URL` plus `CAPROVER_BACKUP_PASSWORD` or
+`CAPROVER_BACKUP_LOGIN_CODE`.
+
 ## Docker-First Setup
 
 On a fresh server with Docker and Docker Compose installed:
