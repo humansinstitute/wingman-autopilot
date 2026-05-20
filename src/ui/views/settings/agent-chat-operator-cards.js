@@ -1,5 +1,6 @@
 import { isAgentChatSession } from '../../sessions/session-classification.js';
 import { createEventStreamPager, resolveWorkspaceName } from './agent-chat-event-stream.js';
+import { createTonePill } from './agent-chat-shared-ui.js';
 
 function isAgentDispatchSession(session) {
   return isAgentChatSession(session) || session?.metadata?.role === 'agent-work' || session?.origin?.type === 'agent-work';

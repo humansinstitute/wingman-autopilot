@@ -24,6 +24,7 @@ const YOKE_CLIENT_URL = resolveYokeUrl('AGENT_CHAT_YOKE_CLIENT_PATH', '../../../
 const YOKE_WORKSPACE_KEYS_URL = resolveYokeUrl('AGENT_CHAT_YOKE_WORKSPACE_KEYS_PATH', '../../../wingman-yoke/src/workspace-keys.js');
 const YOKE_NOSTR_URL = resolveYokeUrl('AGENT_CHAT_YOKE_NOSTR_PATH', '../../../wingman-yoke/src/nostr.js');
 const YOKE_CONFIG_FILE = 'config.json';
+const FLIGHTDECK_CLI_DB_FILE = 'flightdeck-cli.db';
 const YOKE_DB_FILE = 'yoke.db';
 const YOKE_RUNTIME_STATE_FILE = 'runtime-state.json';
 const DEFAULT_LAZY_SYNC_MIN_INTERVAL_MS = 5_000;
@@ -206,6 +207,10 @@ function getYokeRuntimeStatePath(stateDir: string): string {
 }
 
 function getYokeDbPath(stateDir: string): string {
+  const preferredPath = join(stateDir, FLIGHTDECK_CLI_DB_FILE);
+  if (existsSync(preferredPath)) {
+    return preferredPath;
+  }
   return join(stateDir, YOKE_DB_FILE);
 }
 
@@ -217,6 +222,92 @@ function readJsonFile(path: string): Record<string, unknown> | null {
     return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
   } catch {
     return null;
+  }
+}
+
+function parseWorkspaceKeyBlob(subscription: WorkspaceSubscriptionRecord): Record<string, unknown> | null {
+  if (!subscription.wsKeyBlobJson) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(subscription.wsKeyBlobJson) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function reconcileCachedWorkspaceKey(stateDir: string, subscription: WorkspaceSubscriptionRecord): boolean {
+  const blob = parseWorkspaceKeyBlob(subscription);
+  const workspaceOwnerNpub = typeof blob?.workspace_owner_npub === 'string'
+    ? blob.workspace_owner_npub
+    : subscription.workspaceOwnerNpub;
+  const wsKeyNpub = typeof blob?.ws_key_npub === 'string'
+    ? blob.ws_key_npub
+    : subscription.wsKeyNpub;
+  if (!blob || !workspaceOwnerNpub || !wsKeyNpub) {
+    return false;
+  }
+
+  const dbPath = getYokeDbPath(stateDir);
+  if (!existsSync(dbPath)) {
+    return false;
+  }
+  const db = new Database(dbPath);
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS workspace_keys (
+        workspace_owner_npub TEXT PRIMARY KEY,
+        user_npub TEXT NOT NULL,
+        ws_key_npub TEXT NOT NULL,
+        ws_key_epoch INTEGER NOT NULL DEFAULT 1,
+        encrypted_blob TEXT NOT NULL,
+        cached_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS workspace_key_mappings (
+        ws_key_npub TEXT PRIMARY KEY,
+        user_npub TEXT NOT NULL,
+        cached_at TEXT NOT NULL
+      );
+    `);
+    const current = db
+      .query('SELECT ws_key_npub, encrypted_blob FROM workspace_keys WHERE workspace_owner_npub = ?')
+      .get(workspaceOwnerNpub) as { ws_key_npub?: string; encrypted_blob?: string } | null;
+    const encryptedBlob = JSON.stringify(blob);
+    if (current?.ws_key_npub === wsKeyNpub && current.encrypted_blob === encryptedBlob) {
+      return false;
+    }
+    const now = new Date().toISOString();
+    db.query(`
+      INSERT INTO workspace_keys (workspace_owner_npub, user_npub, ws_key_npub, ws_key_epoch, encrypted_blob, cached_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(workspace_owner_npub) DO UPDATE SET
+        user_npub = excluded.user_npub,
+        ws_key_npub = excluded.ws_key_npub,
+        ws_key_epoch = excluded.ws_key_epoch,
+        encrypted_blob = excluded.encrypted_blob,
+        cached_at = excluded.cached_at
+    `).run(
+      workspaceOwnerNpub,
+      subscription.botNpub,
+      wsKeyNpub,
+      typeof blob.ws_key_epoch === 'number' ? blob.ws_key_epoch : 1,
+      encryptedBlob,
+      now,
+    );
+    db.query(`
+      INSERT INTO workspace_key_mappings (ws_key_npub, user_npub, cached_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(ws_key_npub) DO UPDATE SET
+        user_npub = excluded.user_npub,
+        cached_at = excluded.cached_at
+    `).run(wsKeyNpub, subscription.botNpub, now);
+    directPublishContextCache.delete(stateDir);
+    return true;
+  } finally {
+    db.close();
   }
 }
 
@@ -544,6 +635,14 @@ async function initialiseYokeState(
   await mkdir(stateDir, { recursive: true });
   const token = buildConnectionToken(subscription);
   if (hasMatchingYokeConfig(stateDir, token)) {
+    if (reconcileCachedWorkspaceKey(stateDir, subscription)) {
+      const runtimeState = loadYokeRuntimeState(stateDir);
+      await saveYokeRuntimeState(stateDir, {
+        token,
+        lastSyncedAt: runtimeState.lastSyncedAt,
+        cachedChatContext: null,
+      });
+    }
     return;
   }
   await runYokeCommand({
@@ -552,6 +651,7 @@ async function initialiseYokeState(
     stateDir,
     botIdentity,
   });
+  reconcileCachedWorkspaceKey(stateDir, subscription);
   const runtimeState = loadYokeRuntimeState(stateDir);
   await saveYokeRuntimeState(stateDir, {
     token,

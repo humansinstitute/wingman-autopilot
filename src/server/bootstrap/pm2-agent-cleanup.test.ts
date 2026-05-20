@@ -14,11 +14,11 @@ describe("isWingmanAgentPm2Process", () => {
     expect(isWingmanAgentPm2Process(makeProc({ namespace: PM2_NAMESPACE_AGENTS }))).toBe(true);
   });
 
-  test("recognizes marked agent session processes", () => {
+  test("does not trust inherited agent markers on default-namespace processes", () => {
     expect(isWingmanAgentPm2Process(makeProc({
       namespace: "default",
       env: { WINGMAN_PROCESS_KIND: "agent-session" },
-    }))).toBe(true);
+    }))).toBe(false);
   });
 
   test("recognizes legacy default-namespace agent wrappers", () => {
@@ -29,12 +29,28 @@ describe("isWingmanAgentPm2Process", () => {
         "unset KEYTELEPORT_PRIVKEY; exec '/repo/out/agentapi' 'server' '--port' '3700' < /dev/null",
       ],
       env: {
+        WINGMAN_PROCESS_KIND: "agent-session",
         SESSION_ID: "session-1",
         SESSION_PORT: "3700",
         SESSION_AGENT: "codex",
         SESSION_DIRECTORY: "/tmp/project",
       },
     }))).toBe(true);
+  });
+
+  test("does not classify the core autopilot process with inherited agent env", () => {
+    expect(isWingmanAgentPm2Process(makeProc({
+      namespace: "default",
+      pm_exec_path: "/Users/mini/.bun/bin/bun",
+      args: ["run", "src/index.ts"],
+      env: {
+        WINGMAN_PROCESS_KIND: "agent-session",
+        SESSION_ID: "session-1",
+        SESSION_PORT: "3700",
+        SESSION_AGENT: "codex",
+        SESSION_DIRECTORY: "/tmp/project",
+      },
+    }))).toBe(false);
   });
 
   test("does not classify inherited session env on the core process", () => {

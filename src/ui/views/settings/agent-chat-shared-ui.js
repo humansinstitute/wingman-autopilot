@@ -192,7 +192,7 @@ export function createCapabilityPicker() {
   const note = document.createElement('p');
   note.className = 'wm-settings__port-note';
   note.style.margin = '0 0 4px 0';
-  note.textContent = 'Use one local agent identity and add dispatch roles to it as new features arrive.';
+  note.textContent = 'Enable only the dispatch roles this workspace should send to the backend agent.';
   fieldset.append(note);
 
   const capabilityControls = [
@@ -479,23 +479,23 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
   wrapper.style.marginTop = '12px';
 
   const heading = document.createElement('h4');
-  heading.textContent = 'Selected Workspace Agent';
+  heading.textContent = 'Selected Workspace Binding';
   wrapper.append(heading);
 
   const note = document.createElement('p');
   note.className = 'wm-settings__port-note';
   note.textContent = primaryAgent
-    ? 'Manage the local agent identity, enabled dispatch roles, and pipeline routes for the selected subscription.'
-    : 'Create a local agent for the selected subscription, then enable the dispatch roles it should handle.';
+    ? 'This binding tells the shared backend agent which roles to handle for the selected workspace subscription.'
+    : 'Create a binding for the shared backend agent, then enable the dispatch roles it should handle in this workspace.';
   wrapper.append(note);
 
   if (!primaryAgent) {
     const empty = document.createElement('p');
     empty.className = 'wm-settings__port-note';
-    empty.textContent = 'No local agent is configured for the selected subscription yet.';
+    empty.textContent = 'No agent binding is configured for the selected workspace yet.';
     wrapper.append(empty);
     if (typeof options.onCreateAgent === 'function') {
-      const createAgentButton = createButton('Create Agent', 'agent-chat-capabilities-create-agent', 'Create primary Agent Dispatch agent');
+      const createAgentButton = createButton('Create Binding', 'agent-chat-capabilities-create-agent', 'Create Agent Dispatch workspace binding');
       createAgentButton.addEventListener('click', () => options.onCreateAgent());
       wrapper.append(createInlineActions(createAgentButton));
     }
@@ -513,7 +513,7 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
   const summaryNote = document.createElement('p');
   summaryNote.className = 'wm-settings__port-note';
   summaryNote.style.margin = '8px 0 0 0';
-  summaryNote.textContent = `Working directory: ${primaryAgent.workingDirectory || 'Not set'}`;
+  summaryNote.textContent = `Backend agent directory: ${primaryAgent.workingDirectory || 'Not set'}`;
 
   const summaryPills = document.createElement('div');
   summaryPills.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;';
@@ -523,12 +523,12 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
   );
   const summaryActions = [];
   if (typeof options.onEditAgent === 'function') {
-    const editButton = createButton('Edit Agent', 'agent-chat-capabilities-edit-agent', 'Edit primary Agent Dispatch agent');
+    const editButton = createButton('Edit Binding', 'agent-chat-capabilities-edit-agent', 'Edit Agent Dispatch workspace binding');
     editButton.addEventListener('click', () => options.onEditAgent(primaryAgent));
     summaryActions.push(editButton);
   }
   if (typeof options.onRemoveAgent === 'function') {
-    const removeButton = createButton('Remove Agent', 'agent-chat-capabilities-remove-agent', 'Remove primary Agent Dispatch agent');
+    const removeButton = createButton('Remove Binding', 'agent-chat-capabilities-remove-agent', 'Remove Agent Dispatch workspace binding');
     removeButton.addEventListener('click', () => options.onRemoveAgent(primaryAgent));
     summaryActions.push(removeButton);
   }

@@ -9,6 +9,7 @@ import type { AgentChatYokeContext } from './yoke-runtime';
 import {
   appendReplyToCachedChatContext,
   publishAgentChatReplyDirect,
+  reconcileCachedWorkspaceKey,
   shouldReuseCachedChatContext,
 } from './yoke-runtime';
 
@@ -113,6 +114,71 @@ describe('appendReplyToCachedChatContext', () => {
       attachments: [],
       updated_at: '2026-04-23T10:00:01.000Z',
     });
+  });
+});
+
+describe('reconcileCachedWorkspaceKey', () => {
+  test('replaces stale cached workspace key material with the subscription key', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'agent-chat-yoke-state-'));
+    try {
+      const db = new Database(join(stateDir, 'flightdeck-cli.db'));
+      db.exec(`
+        CREATE TABLE workspace_keys (
+          workspace_owner_npub TEXT PRIMARY KEY,
+          user_npub TEXT NOT NULL,
+          ws_key_npub TEXT NOT NULL,
+          ws_key_epoch INTEGER NOT NULL DEFAULT 1,
+          encrypted_blob TEXT NOT NULL,
+          cached_at TEXT NOT NULL
+        );
+        CREATE TABLE workspace_key_mappings (
+          ws_key_npub TEXT PRIMARY KEY,
+          user_npub TEXT NOT NULL,
+          cached_at TEXT NOT NULL
+        );
+      `);
+      db.query(`
+        INSERT INTO workspace_keys (workspace_owner_npub, user_npub, ws_key_npub, ws_key_epoch, encrypted_blob, cached_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        'npub1owner',
+        'npub1bot',
+        'npub1oldws',
+        1,
+        JSON.stringify({ workspace_owner_npub: 'npub1owner', ws_key_npub: 'npub1oldws' }),
+        '2026-05-17T00:00:00.000Z',
+      );
+      db.close();
+
+      const changed = reconcileCachedWorkspaceKey(stateDir, {
+        workspaceOwnerNpub: 'npub1owner',
+        botNpub: 'npub1bot',
+        wsKeyNpub: 'npub1newws',
+        wsKeyBlobJson: JSON.stringify({
+          workspace_owner_npub: 'npub1owner',
+          ws_key_npub: 'npub1newws',
+          ws_key_epoch: 2,
+          encrypted_blob: 'ciphertext',
+        }),
+      } as never);
+
+      const verifyDb = new Database(join(stateDir, 'flightdeck-cli.db'));
+      try {
+        expect(changed).toBe(true);
+        expect(verifyDb.query('SELECT ws_key_npub, user_npub, ws_key_epoch FROM workspace_keys WHERE workspace_owner_npub = ?')
+          .get('npub1owner')).toMatchObject({
+            ws_key_npub: 'npub1newws',
+            user_npub: 'npub1bot',
+            ws_key_epoch: 2,
+          });
+        expect(verifyDb.query('SELECT user_npub FROM workspace_key_mappings WHERE ws_key_npub = ?')
+          .get('npub1newws')).toMatchObject({ user_npub: 'npub1bot' });
+      } finally {
+        verifyDb.close();
+      }
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 });
 

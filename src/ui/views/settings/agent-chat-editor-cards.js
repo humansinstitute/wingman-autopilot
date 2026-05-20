@@ -154,7 +154,7 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
     browseDirectoryButton = createButton(
       'Browse...',
       'agent-chat-agent-directory-browse',
-      'Browse for the primary local agent working directory',
+      'Browse for the backend agent working directory',
     );
     const directoryInputRow = document.createElement('div');
     directoryInputRow.style.cssText = 'display:flex;gap:8px;align-items:center;';
@@ -208,18 +208,18 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
   const enabledField = createCheckbox('Enabled', 'agent-chat-agent-enabled', true);
 
   const card = createCard(
-    'Primary Local Agent',
-    'Keep one local agent and add capabilities to it. Only the core identity and dispatch roles stay in the main path.',
+    'Workspace Agent Binding',
+    'Bind the selected workspace to a backend agent directory and choose which dispatch roles it should handle here.',
   );
   const heading = card.querySelector('h4');
   if (heading) {
     heading.id = 'agent-chat-agent-editor-title';
-    heading.textContent = 'Edit Primary Agent';
+    heading.textContent = 'Edit Workspace Binding';
   }
 
   const intro = document.createElement('p');
   intro.className = 'wm-settings__port-note';
-  intro.textContent = 'Use the short form below for the primary setup. Open the advanced sections only when you need routing overrides or prompt customization.';
+  intro.textContent = 'Use the short form below for this workspace binding. Open the advanced sections only when you need routing overrides or prompt customization.';
 
   const identityNote = document.createElement('p');
   identityNote.className = 'wm-settings__port-note';
@@ -464,11 +464,11 @@ export function createPrimaryAgentNameModal({ onCreate, onBrowseDirectory } = {}
 
   const heading = document.createElement('h3');
   heading.id = 'agent-chat-agent-name-title';
-  heading.textContent = 'Create Primary Agent';
+  heading.textContent = 'Create Workspace Binding';
 
   const note = document.createElement('p');
   note.className = 'wm-settings__port-note';
-  note.textContent = 'Enter the agent name. Wingman will generate the local ID, working directory, default dispatch capabilities, and starter agent files.';
+  note.textContent = 'Name the binding for this workspace. It can point at the same backend agent directory as another workspace; if the binding ID already exists elsewhere, Wingman will add a workspace suffix.';
 
   const nameField = createInput('Agent name', 'Lara', 'agent-chat-agent-name');
   const workingDirectoryField = createInput('Working Directory', '/workspace/lara', 'agent-chat-agent-working-directory');
@@ -479,14 +479,14 @@ export function createPrimaryAgentNameModal({ onCreate, onBrowseDirectory } = {}
   const advancedNote = document.createElement('p');
   advancedNote.className = 'wm-settings__port-note';
   advancedNote.style.margin = '0 0 8px 0';
-  advancedNote.textContent = 'Choose an existing project folder or a custom workspace folder for this agent.';
+  advancedNote.textContent = 'Choose the backend agent directory. Use the same directory when this workspace should be handled by the same local agent process.';
 
   let browseDirectoryButton = null;
   if (typeof onBrowseDirectory === 'function') {
     browseDirectoryButton = createButton(
       'Browse...',
       'agent-chat-agent-name-directory-browse',
-      'Browse for the primary agent working directory',
+      'Browse for the backend agent working directory',
     );
     const directoryInputRow = document.createElement('div');
     directoryInputRow.style.cssText = 'display:flex;gap:8px;align-items:center;';
@@ -518,19 +518,19 @@ export function createPrimaryAgentNameModal({ onCreate, onBrowseDirectory } = {}
   statusLine.setAttribute('data-testid', 'agent-chat-agent-name-status');
 
   const createButtonEl = createButton(
-    'Create Agent',
+    'Create Binding',
     'agent-chat-agent-name-submit',
-    'Create primary Agent Dispatch agent from name',
+    'Create Agent Dispatch workspace binding from name',
   );
   const cancelButton = createButton(
     'Cancel',
     'agent-chat-agent-name-cancel',
-    'Close primary agent creation',
+    'Close workspace binding creation',
   );
   const advancedButton = createButton(
     'Advanced',
     'agent-chat-agent-name-advanced-toggle',
-    'Show advanced primary agent creation fields',
+    'Show advanced workspace binding fields',
   );
 
   let advancedOpen = false;
@@ -578,7 +578,7 @@ export function createPrimaryAgentNameModal({ onCreate, onBrowseDirectory } = {}
     advancedButton.textContent = advancedOpen ? 'Hide Advanced' : 'Advanced';
     advancedButton.setAttribute(
       'aria-label',
-      advancedOpen ? 'Hide advanced primary agent creation fields' : 'Show advanced primary agent creation fields',
+      advancedOpen ? 'Hide advanced workspace binding fields' : 'Show advanced workspace binding fields',
     );
     advancedButton.setAttribute('aria-expanded', String(advancedOpen));
     if (advancedOpen) {
@@ -593,9 +593,9 @@ export function createPrimaryAgentNameModal({ onCreate, onBrowseDirectory } = {}
     });
     preview.replaceChildren();
     [
-      ['Agent ID', defaults.agentId],
-      ['Name', defaults.label],
-      ['Working Directory', defaults.workingDirectory],
+      ['Binding ID', defaults.agentId],
+      ['Label', defaults.label],
+      ['Backend Directory', defaults.workingDirectory],
       ['Starter Files', 'AGENTS.md, CLAUDE.md, goals.md, personality.md'],
       ['Capabilities', 'Chat, Task, Comment, Task Review'],
     ].forEach(([label, value]) => {
@@ -640,16 +640,16 @@ export function createPrimaryAgentNameModal({ onCreate, onBrowseDirectory } = {}
       return;
     }
     createButtonEl.disabled = true;
-    statusLine.textContent = 'Creating primary agent...';
+    statusLine.textContent = 'Creating workspace binding...';
     try {
       const defaults = deriveDefaults(name, {
         workingDirectory: advancedOpen ? workingDirectoryField.input.value : '',
       });
       await onCreate?.(defaults);
-      statusLine.textContent = 'Primary agent created.';
+      statusLine.textContent = 'Workspace binding created.';
       close();
     } catch (error) {
-      statusLine.textContent = error instanceof Error ? error.message : 'Failed to create primary agent.';
+      statusLine.textContent = error instanceof Error ? error.message : 'Failed to create workspace binding.';
     } finally {
       createButtonEl.disabled = false;
     }

@@ -69,16 +69,15 @@ export function isWingmanAgentPm2Process(proc: PM2ProcessDescription): boolean {
     return true;
   }
 
-  if (getEnvValue(pm2Env, "WINGMAN_PROCESS_KIND") === "agent-session") {
-    return true;
-  }
-
-  // Older PM2 records were written with agent session env vars, but PM2 still
-  // reported them in the default namespace. Match the shell wrapper shape from
-  // createAppConfig so inherited SESSION_* env on the core Wingman process or
-  // user apps is not enough to classify a process as an agent session.
+  // Current agent sessions are launched in the dedicated PM2 namespace above.
+  // Older PM2 records were written in the default namespace and may carry the
+  // agent marker/env. Only trust those inherited values when the process also
+  // has the shell wrapper shape from createAppConfig; otherwise a core Wingman
+  // server or user app started from an agent shell can inherit WINGMAN_PROCESS_KIND
+  // and accidentally delete itself during cleanup.
   return (
     namespace === PM2_DEFAULT_NAMESPACE &&
+    getEnvValue(pm2Env, "WINGMAN_PROCESS_KIND") === "agent-session" &&
     hasAgentSessionEnv(pm2Env) &&
     hasLegacyAgentWrapperShape(pm2Env) &&
     getEnvValue(pm2Env, "APP_ID") === undefined

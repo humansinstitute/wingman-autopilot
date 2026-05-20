@@ -78,6 +78,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
   const container = document.createElement('div');
   container.className = 'wm-settings__agent-chat';
   let currentSelectedSubscription = null;
+  let currentAgents = [];
   let selectedSubscriptionId = null;
   let selectedBackendConnection = null;
   let promptDefaults = {
@@ -93,7 +94,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
     container.append(heading);
     const description = document.createElement('p');
     description.className = 'wm-settings__port-note';
-    description.textContent = 'Manage the workspace subscription once, reuse one local agent identity, and inspect the rolling SSE stream and recent dispatch activity without wading through raw diagnostic dumps.';
+    description.textContent = 'Connect each workspace separately. The same local agent can serve more than one workspace, while each subscription keeps its own source workspace, thread, task, and routes.';
     container.append(description);
   }
   const statusLine = createStatusLine();
@@ -128,10 +129,11 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
     onBrowseDirectory: browsePrimaryAgentDirectory,
     onCreate: async (defaults) => {
       if (!currentSelectedSubscription?.botNpub || !currentSelectedSubscription?.workspaceOwnerNpub) {
-        throw new Error('Connect a workspace before creating the local agent.');
+        throw new Error('Connect a workspace before binding the local agent.');
       }
+      const agentId = resolveWorkspaceBindingAgentId(defaults.agentId, currentSelectedSubscription);
       await saveAgentChatAgent({
-        agentId: defaults.agentId,
+        agentId,
         label: defaults.label,
         botNpub: currentSelectedSubscription.botNpub,
         workspaceOwnerNpub: currentSelectedSubscription.workspaceOwnerNpub,
@@ -145,7 +147,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
         approvalDispatchPromptTemplate: promptDefaults.approvalDispatchPromptTemplate || '',
         enabled: true,
       });
-      statusLine.textContent = `Local agent ${defaults.agentId} created.`;
+      statusLine.textContent = `Local agent binding ${agentId} created for this workspace.`;
       await refreshList();
     },
   });
@@ -199,6 +201,31 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
       subscriptionEditor.sourceAppField.input.value = subscription.sourceAppNpub || '';
     }
   }
+  function resolveWorkspaceBindingAgentId(agentId, subscription) {
+    const baseId = String(agentId || 'agent').trim() || 'agent';
+    const collidesOutsideSelectedWorkspace = currentAgents.some((agent) => (
+      agent.agentId === baseId
+      && (
+        agent.workspaceOwnerNpub !== subscription.workspaceOwnerNpub
+        || agent.botNpub !== subscription.botNpub
+      )
+    ));
+    if (!collidesOutsideSelectedWorkspace) {
+      return baseId;
+    }
+
+    const workspaceSuffix = String(subscription.workspaceOwnerNpub || 'workspace')
+      .replace(/[^a-zA-Z0-9]+/g, '')
+      .slice(-8)
+      .toLowerCase() || 'workspace';
+    let candidate = `${baseId}-${workspaceSuffix}`;
+    let counter = 2;
+    while (currentAgents.some((agent) => agent.agentId === candidate)) {
+      candidate = `${baseId}-${workspaceSuffix}-${counter}`;
+      counter += 1;
+    }
+    return candidate;
+  }
   function populateAgentForm(agent) {
     agentEditor.agentIdField.input.value = agent.agentId || '';
     agentEditor.labelField.input.value = agent.label || '';
@@ -216,7 +243,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
     agentEditor.setFocusState(null, {
       openAdvanced: Array.isArray(agent.groupNpubs) && agent.groupNpubs.length > 0,
     });
-    statusLine.textContent = `Editing local agent ${agent.agentId}. Add capabilities and save to keep the same identity.`;
+    statusLine.textContent = `Editing workspace binding ${agent.agentId}. The same backend agent can be bound to other workspaces separately.`;
     updateAgentIdentityFields();
   }
   function clearAgentForm() {
@@ -270,7 +297,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
       if (Array.isArray(options.capabilities) && options.capabilities.length > 0) {
         agentEditor.capabilityPicker.setSelectedCapabilities(options.capabilities);
       }
-      statusLine.textContent = 'Creating a local agent. Add capabilities to the same agent over time.';
+      statusLine.textContent = 'Creating a workspace binding for the local agent. Add the roles this workspace should dispatch.';
     }
 
     agentEditor.setFocusState(options.focusField || null, {
@@ -306,13 +333,13 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
     agentEditor.agentIdField.input.focus();
   }
   async function removeAgent(agent) {
-    statusLine.textContent = `Removing local agent ${agent.agentId}...`;
+    statusLine.textContent = `Removing workspace binding ${agent.agentId}...`;
     try {
       await deleteAgentChatAgent(agent.agentId);
-      statusLine.textContent = `Removed local agent ${agent.agentId}.`;
+      statusLine.textContent = `Removed workspace binding ${agent.agentId}.`;
       await refreshList();
     } catch (error) {
-      statusLine.textContent = error instanceof Error ? error.message : 'Failed to remove local agent.';
+      statusLine.textContent = error instanceof Error ? error.message : 'Failed to remove workspace binding.';
     }
   }
   async function toggleCapability(agent, capability, currentlyEnabled) {
@@ -383,6 +410,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
           ? defaults.approvalDispatchPromptTemplate
           : promptDefaults.approvalDispatchPromptTemplate,
       };
+      currentAgents = agents;
       selectedSubscriptionId = effectiveSelectedSubscriptionId;
       const selectedAgent = getAgentForSubscription(agents, selectedSubscription);
       currentSelectedSubscription = selectedSubscription;
@@ -503,8 +531,8 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
             void removeAgent(agent);
           },
         }, {
-          heading: 'Additional Local Agents',
-          emptyMessage: 'The selected workspace flow is designed around one local agent.',
+          heading: 'Other Workspace Bindings',
+          emptyMessage: 'Each workspace subscription can bind to the same backend agent separately.',
         }));
       }
       setPanelVisible(subscriptionEditor.card, false);
@@ -580,7 +608,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
   });
   agentEditor.saveButton.addEventListener('click', async () => {
     agentEditor.saveButton.disabled = true;
-    statusLine.textContent = 'Saving local agent...';
+    statusLine.textContent = 'Saving workspace binding...';
     try {
       const effectiveBotNpub = currentSelectedSubscription?.botNpub?.trim() || agentEditor.agentBotField.input.value.trim();
       const effectiveWorkspaceOwner = currentSelectedSubscription?.workspaceOwnerNpub?.trim() || agentEditor.agentWorkspaceField.input.value.trim();
@@ -602,11 +630,11 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
         approvalDispatchPromptTemplate: agentEditor.approvalDispatchPromptTemplateField.input.value,
         enabled: agentEditor.enabledField.input.checked,
       });
-      statusLine.textContent = 'Local agent saved.';
+      statusLine.textContent = 'Workspace binding saved.';
       agentEditor.close();
       await refreshList();
     } catch (error) {
-      statusLine.textContent = error instanceof Error ? error.message : 'Failed to save local agent.';
+      statusLine.textContent = error instanceof Error ? error.message : 'Failed to save workspace binding.';
     } finally {
       agentEditor.saveButton.disabled = false;
     }

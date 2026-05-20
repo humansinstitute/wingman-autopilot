@@ -264,7 +264,7 @@ export function createAgentDispatchSetupCards({
     'Setup',
     shared && !canManage
       ? 'Agent Dispatch setup is shared across approved users on this Wingman instance.'
-      : 'Connect one workspace, create one local agent, then route events to pipelines.',
+      : 'Connect workspaces, bind this backend agent to each workspace, then route events to pipelines.',
   );
 
   appendStep(
@@ -281,10 +281,10 @@ export function createAgentDispatchSetupCards({
   );
   appendStep(
     overviewCard,
-    '2. Configure the local agent',
+    '2. Bind the agent to this workspace',
     hasAgent
       ? `${primaryAgent.label || primaryAgent.agentId} is using ${countEnabledCapabilities(primaryAgent)} dispatch capability${countEnabledCapabilities(primaryAgent) === 1 ? '' : 'ies'}.`
-      : 'Save one local agent identity for the selected workspace. The subscription supplies the bot and workspace values automatically.',
+      : 'Create a workspace binding for the same backend agent. The selected subscription supplies the workspace and bot values.',
     hasAgent,
   );
   const overviewActions = [];
@@ -313,14 +313,14 @@ export function createAgentDispatchSetupCards({
     overviewActions.push(createActionButton(
       'Configure Agent',
       'agent-chat-guided-agent',
-      'Configure primary Agent Dispatch agent',
+      'Configure Agent Dispatch workspace binding',
       () => onCreateAgent?.(),
     ));
   } else {
     overviewActions.push(createActionButton(
       'Edit Agent Setup',
       'agent-chat-guided-edit-agent',
-      'Edit primary Agent Dispatch agent',
+      'Edit Agent Dispatch workspace binding',
       () => onEditAgent?.(primaryAgent),
     ));
   }
@@ -346,7 +346,7 @@ export function createAgentDispatchSetupCards({
   const connectionCard = createCard(
     'Workspace Connection',
     hasSubscription
-      ? 'All dispatch paths reuse this workspace connection.'
+      ? 'This selected workspace is where matching source events are read and where replies or task updates are published.'
       : hasAvailableBackend
         ? 'A workspace connection is available on this Wingman instance.'
       : 'No subscription is configured yet. AgentConnect import is the preferred setup path.',
@@ -377,7 +377,7 @@ export function createAgentDispatchSetupCards({
 
       const secondaryNote = document.createElement('p');
       secondaryNote.className = 'wm-settings__port-note';
-      secondaryNote.textContent = 'Use an available connection to add another workspace subscription without changing the selected one.';
+      secondaryNote.textContent = 'Use an available connection to add another place this same backend agent can work, without changing the selected workspace.';
 
       connectionCard.append(secondaryTitle, secondaryNote);
       secondarySetupReadyBackendConnections.forEach((backendConnection) => {

@@ -91,6 +91,10 @@ interface RuntimeContext {
 type RuntimeFailureState = 'blocked_auth' | 'blocked_decrypt' | null;
 const MAX_RECENT_SSE_EVENTS = 100;
 const MAX_RECENT_DISPATCHES = 10;
+const CHAT_ADVISORY_RECORD_PULL_TIMEOUT_MS = 15_000;
+const CHAT_ADVISORY_DECRYPT_TIMEOUT_MS = 15_000;
+const CHAT_ADVISORY_ROUTING_TIMEOUT_MS = 20_000;
+const CHAT_ADVISORY_PIPELINE_TIMEOUT_MS = 60_000;
 const WORKSPACE_KEY_MAPPING_CACHE_MS = 30_000;
 
 const DEFAULT_DISPATCH_PIPELINE_ROUTES: Array<{
@@ -400,6 +404,22 @@ function getErrorDetailCode(error: unknown): string | null {
   }
   const detailCode = (error as { detailCode?: unknown }).detailCode;
   return typeof detailCode === 'string' && detailCode.trim().length > 0 ? detailCode.trim() : null;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, detailCode: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(Object.assign(new Error(`${detailCode} after ${timeoutMs}ms`), { detailCode }));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 function mapFailureState(detailCode: string | null): RuntimeFailureState {
@@ -1571,6 +1591,24 @@ export class WorkspaceSubscriptionManager {
       return await this.handleCommentRecordChanged(record, payload);
     }
 
+    if (eventType === 'record-changed') {
+      record.lastRoutingResult = buildFailureDiagnostic(
+        'record_family_unhandled',
+        'Record-changed advisory did not match a configured dispatch family.',
+        'record_family_unhandled',
+        {
+          subscription_id: record.subscriptionId,
+          event_id: eventId,
+          event_family_hash: payload?.family_hash ?? null,
+          expected_chat_family_hash: buildChatMessageFamilyHash(record.sourceAppNpub),
+          expected_task_family_hash: buildRecordFamilyHash(record.sourceAppNpub, 'task'),
+          expected_approval_family_hash: buildRecordFamilyHash(record.sourceAppNpub, 'approval'),
+          expected_comment_family_hash: buildRecordFamilyHash(record.sourceAppNpub, 'comment'),
+        },
+      );
+      return this.saveRecord(record);
+    }
+
     return record;
   }
 
@@ -1580,16 +1618,31 @@ export class WorkspaceSubscriptionManager {
   ): Promise<WorkspaceSubscriptionRecord> {
     const recordId = typeof payload.record_id === 'string' ? payload.record_id : '';
     if (!recordId) {
-      return record;
+      record.lastRecordPullResult = buildFailureDiagnostic(
+        'record_pull_failed',
+        'Chat message advisory did not include a record_id.',
+        'record_id_missing',
+        { subscription_id: record.subscriptionId },
+      );
+      return this.saveRecord(record);
     }
 
     const runtime = this.getRuntime(record.subscriptionId);
     try {
-      const versions = await fetchRecordHistory(
-        record.backendBaseUrl,
-        record.workspaceOwnerNpub,
-        recordId,
-        runtime.wsSession,
+      record.lastRecordPullResult = buildSuccessDiagnostic('Chat message advisory pull started.', {
+        subscription_id: record.subscriptionId,
+        record_id: recordId,
+      });
+      record = this.saveRecord(record);
+      const versions = await withTimeout(
+        fetchRecordHistory(
+          record.backendBaseUrl,
+          record.workspaceOwnerNpub,
+          recordId,
+          runtime.wsSession,
+        ),
+        CHAT_ADVISORY_RECORD_PULL_TIMEOUT_MS,
+        'chat_record_pull_timeout',
       );
       const latest = versions.sort((left, right) => Number(right.version ?? 0) - Number(left.version ?? 0))[0];
       if (!latest) {
@@ -1600,6 +1653,7 @@ export class WorkspaceSubscriptionManager {
         version: typeof latest.version === 'number' ? latest.version : Number(latest.version ?? 0),
         record_state: typeof latest.record_state === 'string' ? latest.record_state : null,
       });
+      record = this.saveRecord(record);
       const helpers = await loadYokeBotHelpers();
       if (!runtime.groupKeys && runtime.wrappedKeyRows.length > 0) {
         runtime.groupKeys = helpers.loadBotGroupKeys({
@@ -1616,49 +1670,84 @@ export class WorkspaceSubscriptionManager {
           groupKeys: runtime.groupKeys,
         });
         let chatMessage: Record<string, unknown>;
+        record.lastDecryptResult = buildSuccessDiagnostic('Chat message decrypt started.', {
+          subscription_id: record.subscriptionId,
+          record_id: recordId,
+        });
+        record = this.saveRecord(record);
         try {
-          chatMessage = decryptChatMessage();
+          chatMessage = await withTimeout(
+            Promise.resolve().then(decryptChatMessage),
+            CHAT_ADVISORY_DECRYPT_TIMEOUT_MS,
+            'chat_record_decrypt_timeout',
+          );
         } catch (decryptError) {
           const detailCode = getErrorDetailCode(decryptError);
           if (detailCode !== 'group_key_missing') {
             throw decryptError;
           }
           record = await this.refreshGroupKeys(record, runtime.botIdentity, true);
-          chatMessage = decryptChatMessage();
+          chatMessage = await withTimeout(
+            Promise.resolve().then(decryptChatMessage),
+            CHAT_ADVISORY_DECRYPT_TIMEOUT_MS,
+            'chat_record_decrypt_timeout',
+          );
         }
         record.lastDecryptResult = buildSuccessDiagnostic('Chat message pulled and decrypted.', {
           record_id: recordId,
           channel_id: chatMessage.channel_id ?? null,
         });
+        record = this.saveRecord(record);
         if (this.dispatchPipelineRuntime) {
           try {
-            const routingContext = await this.routingEvaluator.buildDispatchContext({
-              subscription: record,
-              wsSession: runtime.wsSession,
-              groupKeys: runtime.groupKeys,
-              chatRecordId: recordId,
-              chatRecord: latest,
-              chatMessage,
+            record.lastRoutingResult = buildSuccessDiagnostic('Chat dispatch routing context started.', {
+              subscription_id: record.subscriptionId,
+              record_id: recordId,
             });
-            const pipelineResult = await this.dispatchPipelineRuntime.dispatch({
-              subscription: record,
-              triggerKind: 'chat',
-              capability: 'chat_intercept',
-              recordId,
-              record: latest,
-              payload: chatMessage,
-              recordFamily: 'chat',
-              recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
-              recordVersion: typeof latest.version === 'number' ? latest.version : Number(latest.version ?? 0),
-              updaterNpub: routingContext.updaterNpub,
-              bindingType: 'thread',
-              bindingId: routingContext.threadId,
-              channelId: routingContext.channelId,
-              threadId: routingContext.threadId,
-              changedFields: [],
-              groupNpubs: routingContext.messageGroupNpubs,
-              botIdentity: runtime.botIdentity,
+            record = this.saveRecord(record);
+            const routingContext = await withTimeout(
+              this.routingEvaluator.buildDispatchContext({
+                subscription: record,
+                wsSession: runtime.wsSession,
+                groupKeys: runtime.groupKeys,
+                chatRecordId: recordId,
+                chatRecord: latest,
+                chatMessage,
+              }),
+              CHAT_ADVISORY_ROUTING_TIMEOUT_MS,
+              'chat_routing_context_timeout',
+            );
+            record.lastRoutingResult = buildSuccessDiagnostic('Chat dispatch pipeline start requested.', {
+              subscription_id: record.subscriptionId,
+              record_id: recordId,
+              channel_id: routingContext.channelId,
+              thread_id: routingContext.threadId,
+              message_group_npubs: routingContext.messageGroupNpubs,
             });
+            record = this.saveRecord(record);
+            const pipelineResult = await withTimeout(
+              this.dispatchPipelineRuntime.dispatch({
+                subscription: record,
+                triggerKind: 'chat',
+                capability: 'chat_intercept',
+                recordId,
+                record: latest,
+                payload: chatMessage,
+                recordFamily: 'chat',
+                recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
+                recordVersion: typeof latest.version === 'number' ? latest.version : Number(latest.version ?? 0),
+                updaterNpub: routingContext.updaterNpub,
+                bindingType: 'thread',
+                bindingId: routingContext.threadId,
+                channelId: routingContext.channelId,
+                threadId: routingContext.threadId,
+                changedFields: [],
+                groupNpubs: routingContext.messageGroupNpubs,
+                botIdentity: runtime.botIdentity,
+              }),
+              CHAT_ADVISORY_PIPELINE_TIMEOUT_MS,
+              'chat_pipeline_dispatch_timeout',
+            );
             if (pipelineResult.handled) {
               record.lastRoutingResult = buildSuccessDiagnostic('Chat dispatch pipeline route evaluated.', {
                 subscription_id: record.subscriptionId,
@@ -1671,7 +1760,30 @@ export class WorkspaceSubscriptionManager {
               this.clearRuntimeFailure(record.subscriptionId, 'chat_pipeline_dispatched');
               return this.applyDispatchPipelineResult(record, pipelineResult);
             }
+            record.lastRoutingResult = buildFailureDiagnostic(
+              'chat_pipeline_not_handled',
+              'No chat dispatch pipeline route handled this advisory.',
+              'chat_pipeline_not_handled',
+              {
+                subscription_id: record.subscriptionId,
+                record_id: recordId,
+                channel_id: routingContext.channelId,
+                thread_id: routingContext.threadId,
+              },
+            );
+            record = this.saveRecord(record);
           } catch (pipelineError) {
+            const detailCode = getErrorDetailCode(pipelineError) ?? 'chat_pipeline_failed';
+            record.lastRoutingResult = buildFailureDiagnostic(
+              'chat_pipeline_failed',
+              pipelineError instanceof Error ? pipelineError.message : String(pipelineError),
+              detailCode,
+              {
+                subscription_id: record.subscriptionId,
+                record_id: recordId,
+              },
+            );
+            this.markRuntimeFailure(record.subscriptionId, detailCode, 'chat_pipeline_failed');
             record = this.appendDispatchHistory(record, {
               at: new Date().toISOString(),
               kind: 'chat',
@@ -1684,18 +1796,23 @@ export class WorkspaceSubscriptionManager {
               status: 'failed',
               details: {
                 diagnostic_summary: pipelineError instanceof Error ? pipelineError.message : String(pipelineError),
+                detail_code: detailCode,
               },
             });
           }
         }
-        const routingResult = await this.routingEvaluator.evaluate({
-          subscription: record,
-          wsSession: runtime.wsSession,
-          groupKeys: runtime.groupKeys,
-          chatRecordId: recordId,
-          chatRecord: latest,
-          chatMessage,
-        });
+        const routingResult = await withTimeout(
+          this.routingEvaluator.evaluate({
+            subscription: record,
+            wsSession: runtime.wsSession,
+            groupKeys: runtime.groupKeys,
+            chatRecordId: recordId,
+            chatRecord: latest,
+            chatMessage,
+          }),
+          CHAT_ADVISORY_ROUTING_TIMEOUT_MS,
+          'chat_legacy_routing_timeout',
+        );
         record.lastRoutingResult = routingResult.diagnostic;
         record.lastErrorCode = null;
         record.lastErrorAt = null;

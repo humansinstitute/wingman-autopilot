@@ -61,6 +61,10 @@ export async function prepareDispatchPipelineFlightDeckRuntime(input: {
       workingDirectory,
       subscription: input.eventInput.subscription,
       botIdentity,
+      options: {
+        syncMode: 'lazy',
+        minSyncIntervalMs: 5 * 60 * 1000,
+      },
     });
     return {
       yokeStateDir: workspace.stateDir,
