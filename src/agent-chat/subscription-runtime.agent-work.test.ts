@@ -487,6 +487,15 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     const second = await runtime.dispatch(dispatchInput);
 
     expect(first.historyEntries[0]?.action).toBe('task_pipeline_dispatch');
+    expect(first.historyEntries[0]?.dedupeKey).toBe([
+      subscription.subscriptionId,
+      subscription.workspaceOwnerNpub,
+      subscription.sourceAppNpub,
+      'record-task-dedupe-1',
+      1,
+      'record-task-dedupe-1',
+      route.routeId,
+    ].join(':'));
     expect(second.historyEntries[0]?.action).toBe('task_pipeline_suppressed');
     expect(second.historyEntries[0]?.suppressionReason).toBe('dedupe_window');
     expect(second.historyEntries[0]?.dedupeReason).toBe('recent_duplicate');
@@ -510,6 +519,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       activePolicy: 'queue',
     });
     const dedupeKey = [
+      subscription.subscriptionId,
       subscription.workspaceOwnerNpub,
       subscription.sourceAppNpub,
       'chat-record-rename-1',

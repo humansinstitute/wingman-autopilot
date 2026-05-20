@@ -271,10 +271,10 @@ export function createAgentDispatchSetupCards({
   );
   appendStep(
     overviewCard,
-    '2. Configure the primary agent',
+    '2. Configure the local agent',
     hasAgent
       ? `${primaryAgent.label || primaryAgent.agentId} is using ${countEnabledCapabilities(primaryAgent)} dispatch capability${countEnabledCapabilities(primaryAgent) === 1 ? '' : 'ies'}.`
-      : 'Save one local agent identity. The shared subscription will supply the bot and workspace values automatically.',
+      : 'Save one local agent identity for the selected workspace. The subscription supplies the bot and workspace values automatically.',
     hasAgent,
   );
   const overviewActions = [];
@@ -312,6 +312,14 @@ export function createAgentDispatchSetupCards({
       'agent-chat-guided-edit-agent',
       'Edit primary Agent Dispatch agent',
       () => onEditAgent?.(primaryAgent),
+    ));
+  }
+  if (canManage && hasSubscription) {
+    overviewActions.push(createActionButton(
+      'Add Workspace Subscription',
+      'agent-chat-guided-add-subscription',
+      'Add an Agent Dispatch workspace subscription',
+      () => onConnectWorkspace?.(),
     ));
   }
   if (canManage) {
@@ -370,14 +378,23 @@ export function createAgentDispatchSetupCards({
     connectionCard.append(empty);
   }
   if (canManage && (hasSubscription || !hasSetupReadyBackend)) {
-    connectionCard.append(createInlineActions([
+    const connectionActions = [
       createActionButton(
         hasSubscription ? 'Edit Connection' : 'Manual Connection',
         'agent-chat-setup-edit-subscription',
         'Edit Agent Dispatch connection',
         () => onEditSubscription?.(subscription ?? null),
       ),
-    ]));
+    ];
+    if (hasSubscription) {
+      connectionActions.push(createActionButton(
+        'Manual Subscription',
+        'agent-chat-setup-add-manual-subscription',
+        'Create a secondary Agent Dispatch subscription from manual fields',
+        () => onEditSubscription?.(null),
+      ));
+    }
+    connectionCard.append(createInlineActions(connectionActions));
   }
   wrapper.append(connectionCard);
 

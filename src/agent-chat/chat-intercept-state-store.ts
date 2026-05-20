@@ -127,6 +127,7 @@ class ChatInterceptStateStore {
 
   upsertMessage(input: {
     routingKey: string;
+    legacyRoutingKey?: string | null;
     subscriptionId: string;
     agentId: string;
     workspaceOwnerNpub: string;
@@ -138,10 +139,29 @@ class ChatInterceptStateStore {
     at?: string;
   }): { record: ChatInterceptStateRecord; wasDuplicate: boolean } {
     const now = input.at ?? new Date().toISOString();
-    const existing = this.getByRoutingKey(input.routingKey);
+    const canonical = this.getByRoutingKey(input.routingKey);
+    const legacy = !canonical && input.legacyRoutingKey
+      ? this.getByRoutingKey(input.legacyRoutingKey)
+      : null;
+    const existing = canonical
+      ?? (legacy?.subscriptionId === input.subscriptionId ? legacy : null);
+    const shouldMigrateLegacy = Boolean(
+      existing
+      && existing.routingKey !== input.routingKey
+      && existing.routingKey === input.legacyRoutingKey,
+    );
     const wasDuplicate = existing?.lastMessageIdSeen === input.messageId;
     if (existing && wasDuplicate) {
-      return { record: existing, wasDuplicate: true };
+      if (!shouldMigrateLegacy) {
+        return { record: existing, wasDuplicate: true };
+      }
+      const migrated = this.save({
+        ...existing,
+        routingKey: input.routingKey,
+        updatedAt: now,
+      });
+      this.deleteByRoutingKey(existing.routingKey);
+      return { record: migrated, wasDuplicate: true };
     }
     const nextCount = existing
       ? existing.pendingMessageCount + 1
@@ -166,7 +186,14 @@ class ChatInterceptStateStore {
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     });
+    if (shouldMigrateLegacy) {
+      this.deleteByRoutingKey(existing!.routingKey);
+    }
     return { record, wasDuplicate };
+  }
+
+  private deleteByRoutingKey(routingKey: string): void {
+    this.db.query('DELETE FROM chat_intercept_state WHERE routing_key = ?1').run(routingKey);
   }
 
   private listWhere(whereClause: string, args: SQLQueryBindings[]): ChatInterceptStateRecord[] {

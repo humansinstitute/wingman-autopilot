@@ -479,20 +479,20 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
   wrapper.style.marginTop = '12px';
 
   const heading = document.createElement('h4');
-  heading.textContent = 'Primary Agent';
+  heading.textContent = 'Selected Workspace Agent';
   wrapper.append(heading);
 
   const note = document.createElement('p');
   note.className = 'wm-settings__port-note';
   note.textContent = primaryAgent
-    ? 'Manage the shared agent identity, enabled dispatch roles, and the pipeline route for each capability.'
-    : 'Create the primary agent first, then enable the dispatch roles it should handle.';
+    ? 'Manage the local agent identity, enabled dispatch roles, and pipeline routes for the selected subscription.'
+    : 'Create a local agent for the selected subscription, then enable the dispatch roles it should handle.';
   wrapper.append(note);
 
   if (!primaryAgent) {
     const empty = document.createElement('p');
     empty.className = 'wm-settings__port-note';
-    empty.textContent = 'No primary agent is configured yet.';
+    empty.textContent = 'No local agent is configured for the selected subscription yet.';
     wrapper.append(empty);
     if (typeof options.onCreateAgent === 'function') {
       const createAgentButton = createButton('Create Agent', 'agent-chat-capabilities-create-agent', 'Create primary Agent Dispatch agent');
@@ -508,7 +508,7 @@ export function createConfiguredDispatchesPanel(primaryAgent, defaults = {}, opt
 
   const summaryHeading = document.createElement('h5');
   summaryHeading.style.cssText = 'margin:0;';
-  summaryHeading.textContent = primaryAgent.label || primaryAgent.agentId || 'Primary agent';
+  summaryHeading.textContent = primaryAgent.label || primaryAgent.agentId || 'Local agent';
 
   const summaryNote = document.createElement('p');
   summaryNote.className = 'wm-settings__port-note';

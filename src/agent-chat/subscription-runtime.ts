@@ -924,8 +924,20 @@ export class WorkspaceSubscriptionManager {
       agentProfileId: agentProfile?.agentId ?? input.agentProfileId ?? null,
     });
     const legacyRecord = this.store.getByWorkspaceAndBot(workspaceOwnerNpub, botIdentity.botNpub);
+    const canReuseLegacyRecord = Boolean(
+      legacyRecord
+      && (!legacyRecord.managedByNpub || legacyRecord.managedByNpub === input.managedByNpub)
+      && legacyRecord.sourceAppNpub === sourceAppNpub
+      && (
+        legacyRecord.backendConnectionId === (backendConnection?.backendConnectionId ?? null)
+        || (
+          !legacyRecord.backendConnectionId
+          && normaliseBackendBaseUrl(legacyRecord.backendBaseUrl) === subscriptionBackendBaseUrl
+        )
+      ),
+    );
     let record = scopedRecord
-      ?? (legacyRecord && (!legacyRecord.managedByNpub || legacyRecord.managedByNpub === input.managedByNpub) ? legacyRecord : null)
+      ?? (canReuseLegacyRecord ? legacyRecord : null)
       ?? this.store.createDefault({
         managedByNpub: input.managedByNpub,
         workspaceOwnerNpub,

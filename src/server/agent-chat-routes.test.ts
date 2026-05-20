@@ -335,6 +335,167 @@ describe('agent-chat routes', () => {
     expect(body.subscriptions[0].operator.shared).toBe(true);
   });
 
+  test('lists every subscription with backend display information', async () => {
+    const manager = {
+      listBackendConnectionsForManager: () => [
+        makeBackendConnection({
+          backendConnectionId: 'backend-one',
+          backendBaseUrl: 'https://tower-one.example.com',
+          serviceNpub: 'npub1serviceone',
+          lastHealthResult: {
+            ok: true,
+            code: 'backend_healthy',
+            message: 'ok',
+            at: '2026-05-20T00:00:00.000Z',
+            details: { response: { tower_name: 'Tower One' } },
+          },
+        }),
+        makeBackendConnection({
+          backendConnectionId: 'backend-two',
+          backendBaseUrl: 'https://tower-two.example.com',
+          serviceNpub: 'npub1servicetwo',
+        }),
+      ],
+      listForManager: () => [
+        makeSubscription({
+          subscriptionId: 'sub-one',
+          backendConnectionId: 'backend-one',
+          backendBaseUrl: 'https://tower-one.example.com',
+        }),
+        makeSubscription({
+          subscriptionId: 'sub-two',
+          backendConnectionId: 'backend-two',
+          backendBaseUrl: 'https://tower-two.example.com',
+        }),
+      ],
+      listInterceptsForSubscription: () => [],
+      listAgentsForWorkspaceBot: () => [],
+    } as unknown as WorkspaceSubscriptionManager;
+    const request = new Request('http://localhost/api/agent-chat/subscriptions');
+
+    const response = await handleAgentChatApi(
+      request,
+      new URL(request.url),
+      'GET',
+      authContext,
+      { manager },
+    );
+    const body = await response!.json();
+
+    expect(response?.status).toBe(200);
+    expect(body.subscriptions).toHaveLength(2);
+    expect(body.subscriptions.map((subscription: any) => subscription.subscriptionId)).toEqual(['sub-one', 'sub-two']);
+    expect(body.subscriptions[0].backend).toMatchObject({
+      backendConnectionId: 'backend-one',
+      backendBaseUrl: 'https://tower-one.example.com',
+      serviceNpub: 'npub1serviceone',
+      workspaceName: 'Tower One',
+    });
+    expect(body.subscriptions[1].backend).toMatchObject({
+      backendConnectionId: 'backend-two',
+      backendBaseUrl: 'https://tower-two.example.com',
+      serviceNpub: 'npub1servicetwo',
+    });
+  });
+
+  test('lists dispatch routes scoped to the requested subscription', async () => {
+    const manager = {
+      listDispatchRoutesForSubscription: (subscriptionId: string, npub: string) => {
+        expect(subscriptionId).toBe('sub-two');
+        expect(npub).toBe('npub1manager');
+        return [
+          {
+            routeId: 'route-two',
+            managedByNpub: 'npub1manager',
+            subscriptionId: 'sub-two',
+            workspaceOwnerNpub: 'npub1workspace',
+            botNpub: 'npub1bot',
+            sourceAppNpub: 'npub1sourceapp',
+            triggerKind: 'chat',
+            capability: 'chat_intercept',
+            pipelineDefinitionId: 'pipeline-two',
+            enabled: true,
+            priority: 100,
+            matchJson: {},
+            inputTemplateJson: {},
+            concurrencyKeyTemplate: '${workspace.subscriptionId}:${routing.threadId}:${route.routeId}',
+            activePolicy: 'queue',
+            dedupeWindowSeconds: 60,
+            createdAt: '2026-05-20T00:00:00.000Z',
+            updatedAt: '2026-05-20T00:00:00.000Z',
+          },
+        ];
+      },
+    } as unknown as WorkspaceSubscriptionManager;
+    const request = new Request('http://localhost/api/agent-chat/dispatch-routes?subscriptionId=sub-two');
+
+    const response = await handleAgentChatApi(
+      request,
+      new URL(request.url),
+      'GET',
+      authContext,
+      { manager },
+    );
+    const body = await response!.json();
+
+    expect(response?.status).toBe(200);
+    expect(body.dispatchRoutes).toHaveLength(1);
+    expect(body.dispatchRoutes[0].subscriptionId).toBe('sub-two');
+  });
+
+  test('saves dispatch routes through the requested subscription scope', async () => {
+    const manager = {
+      saveDispatchRouteForManager: (input: any) => {
+        expect(input.managedByNpub).toBe('npub1manager');
+        expect(input.subscriptionId).toBe('sub-two');
+        expect(input.triggerKind).toBe('task');
+        expect(input.capability).toBe('task_dispatch');
+        return {
+          routeId: 'route-two',
+          managedByNpub: input.managedByNpub,
+          subscriptionId: input.subscriptionId,
+          workspaceOwnerNpub: 'npub1workspace',
+          botNpub: 'npub1bot',
+          sourceAppNpub: 'npub1sourceapp',
+          triggerKind: input.triggerKind,
+          capability: input.capability,
+          pipelineDefinitionId: input.pipelineDefinitionId,
+          enabled: true,
+          priority: 100,
+          matchJson: {},
+          inputTemplateJson: {},
+          concurrencyKeyTemplate: '${workspace.subscriptionId}:${record.recordId}:${route.routeId}',
+          activePolicy: 'skip',
+          dedupeWindowSeconds: 60,
+          createdAt: '2026-05-20T00:00:00.000Z',
+          updatedAt: '2026-05-20T00:00:00.000Z',
+        };
+      },
+    } as unknown as WorkspaceSubscriptionManager;
+    const request = new Request('http://localhost/api/agent-chat/dispatch-routes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subscriptionId: 'sub-two',
+        triggerKind: 'task',
+        capability: 'task_dispatch',
+        pipelineDefinitionId: 'pipeline-two',
+      }),
+    });
+
+    const response = await handleAgentChatApi(
+      request,
+      new URL(request.url),
+      'POST',
+      authContext,
+      { manager },
+    );
+    const body = await response!.json();
+
+    expect(response?.status).toBe(200);
+    expect(body.dispatchRoute.subscriptionId).toBe('sub-two');
+  });
+
   test('shared agent dispatch blocks non-admin subscription writes', async () => {
     const manager = {
       createOrUpdate: () => {

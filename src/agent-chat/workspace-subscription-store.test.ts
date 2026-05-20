@@ -50,4 +50,41 @@ describe('WorkspaceSubscriptionStore', () => {
       botNpub: 'npub1botshared',
     })?.subscriptionId).toBe(second.subscriptionId);
   });
+
+  test('allows one manager to subscribe to the same workspace app on separate towers', () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb());
+    const first = store.save(store.createDefault({
+      managedByNpub: 'npub1manager',
+      backendConnectionId: 'backend-tower-1',
+      workspaceOwnerNpub: 'npub1workspace',
+      backendBaseUrl: 'https://tower-one.example.com',
+      botNpub: 'npub1botshared',
+      sourceAppNpub: 'npub1app',
+    }));
+    const second = store.save(store.createDefault({
+      managedByNpub: 'npub1manager',
+      backendConnectionId: 'backend-tower-2',
+      workspaceOwnerNpub: 'npub1workspace',
+      backendBaseUrl: 'https://tower-two.example.com',
+      botNpub: 'npub1botshared',
+      sourceAppNpub: 'npub1app',
+    }));
+
+    expect(first.subscriptionId).not.toBe(second.subscriptionId);
+    expect(store.listForManagerNpub('npub1manager')).toHaveLength(2);
+    expect(store.getBySubscriptionScope({
+      managedByNpub: 'npub1manager',
+      backendConnectionId: 'backend-tower-1',
+      workspaceOwnerNpub: 'npub1workspace',
+      sourceAppNpub: 'npub1app',
+      botNpub: 'npub1botshared',
+    })?.subscriptionId).toBe(first.subscriptionId);
+    expect(store.getBySubscriptionScope({
+      managedByNpub: 'npub1manager',
+      backendConnectionId: 'backend-tower-2',
+      workspaceOwnerNpub: 'npub1workspace',
+      sourceAppNpub: 'npub1app',
+      botNpub: 'npub1botshared',
+    })?.subscriptionId).toBe(second.subscriptionId);
+  });
 });

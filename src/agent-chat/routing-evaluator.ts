@@ -137,6 +137,14 @@ export class AgentChatRoutingEvaluator {
       }
 
       const routingKey = buildCanonicalRoutingKey({
+        subscriptionId: input.subscription.subscriptionId,
+        workspaceOwnerNpub: input.subscription.workspaceOwnerNpub,
+        sourceAppNpub: input.subscription.sourceAppNpub,
+        channelId: routingContext.channelId,
+        threadId: routingContext.threadId,
+        agentId: agent.agentId,
+      });
+      const legacyRoutingKey = buildLegacyRoutingKey({
         workspaceOwnerNpub: input.subscription.workspaceOwnerNpub,
         sourceAppNpub: input.subscription.sourceAppNpub,
         channelId: routingContext.channelId,
@@ -145,6 +153,7 @@ export class AgentChatRoutingEvaluator {
       });
       const upsertResult = this.interceptStore.upsertMessage({
         routingKey,
+        legacyRoutingKey,
         subscriptionId: input.subscription.subscriptionId,
         agentId: agent.agentId,
         workspaceOwnerNpub: input.subscription.workspaceOwnerNpub,
@@ -358,6 +367,26 @@ function extractMessageGroupNpubs(
 }
 
 export function buildCanonicalRoutingKey(input: {
+  subscriptionId: string;
+  workspaceOwnerNpub: string;
+  sourceAppNpub: string;
+  channelId: string;
+  threadId: string;
+  agentId: string;
+}): string {
+  return [
+    'agent-chat',
+    'v2',
+    input.subscriptionId,
+    input.workspaceOwnerNpub,
+    input.sourceAppNpub,
+    input.channelId,
+    input.threadId,
+    input.agentId,
+  ].join(':');
+}
+
+export function buildLegacyRoutingKey(input: {
   workspaceOwnerNpub: string;
   sourceAppNpub: string;
   channelId: string;

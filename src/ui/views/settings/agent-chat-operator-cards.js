@@ -867,23 +867,35 @@ export function createAgentChatOverview(subscriptions, chatSessions) {
 }
 
 export function createSubscriptionCard(subscription, chatSessions, handlers) {
+  const routes = typeof handlers.getDispatchRoutes === 'function'
+    ? handlers.getDispatchRoutes(subscription)
+    : handlers.dispatchRoutes;
+  const routeCount = Array.isArray(routes) ? routes.length : 0;
+  const enabledRouteCount = Array.isArray(routes) ? routes.filter((route) => route.enabled !== false).length : 0;
+  const isSelected = handlers.selectedSubscriptionId === subscription.subscriptionId;
   const card = document.createElement('article');
   card.className = 'wm-card';
-  card.style.cssText = 'margin-top:12px;padding:14px;';
+  card.style.cssText = `margin-top:12px;padding:14px;${isSelected ? 'border-color:var(--accent-primary);' : ''}`;
   card.setAttribute('data-testid', `agent-chat-subscription-${subscription.subscriptionId}`);
 
   const heading = document.createElement('h4');
-  heading.textContent = `Workspace = ${resolveWorkspaceName(subscription)}`;
+  heading.textContent = `${isSelected ? 'Selected workspace = ' : 'Workspace = '}${resolveWorkspaceName(subscription)}`;
   card.append(heading);
 
   const identity = document.createElement('p');
   identity.className = 'wm-settings__port-note';
-  identity.textContent = `bot ${shortenIdentifier(subscription.botNpub, { head: 18, tail: 10 })} · source ${shortenIdentifier(subscription.sourceAppNpub, { head: 18, tail: 10 })}`;
-  identity.title = `${subscription.workspaceOwnerNpub}\n${subscription.botNpub}\n${subscription.sourceAppNpub}`;
+  identity.textContent = `tower ${subscription.backendBaseUrl || 'unknown'} · bot ${shortenIdentifier(subscription.botNpub, { head: 18, tail: 10 })} · source ${shortenIdentifier(subscription.sourceAppNpub, { head: 18, tail: 10 })}`;
+  identity.title = `${subscription.backendBaseUrl}\n${subscription.workspaceOwnerNpub}\n${subscription.botNpub}\n${subscription.sourceAppNpub}`;
   card.append(identity);
+  card.append(createPillRow([
+    createTonePill(subscription.sseStatus === 'connected' ? 'SSE Connected' : `SSE ${subscription.sseStatus || 'unknown'}`, subscription.sseStatus === 'connected' ? 'success' : 'warning'),
+    createTonePill(subscription.healthStatus === 'healthy' ? 'Healthy' : subscription.healthStatus || 'Unknown', subscription.healthStatus === 'healthy' ? 'success' : 'warning'),
+    createTonePill(`${subscription.operator?.candidateAgentCount ?? 0} Agents`, subscription.operator?.candidateAgentCount > 0 ? 'success' : 'warning'),
+    createTonePill(`${enabledRouteCount}/${routeCount} Routes`, enabledRouteCount > 0 ? 'success' : 'warning'),
+  ]));
 
   card.append(createEventStreamPager(subscription, {
-    routes: handlers.dispatchRoutes,
+    routes,
     definitions: handlers.pipelineDefinitions,
   }));
 
@@ -891,6 +903,18 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
     const actions = document.createElement('div');
     actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;';
     actions.append(
+      createActionButton(
+        isSelected ? 'Selected' : 'Select',
+        `Select Agent Dispatch subscription for ${subscription.workspaceOwnerNpub}`,
+        `agent-chat-select-${subscription.subscriptionId}`,
+        () => handlers.select?.(subscription),
+      ),
+      createActionButton(
+        'Edit Connection',
+        `Edit Agent Dispatch subscription for ${subscription.workspaceOwnerNpub}`,
+        `agent-chat-edit-${subscription.subscriptionId}`,
+        () => handlers.edit?.(subscription),
+      ),
       createActionButton(
         'Reconnect',
         `Reconnect Agent Chat subscription for ${subscription.workspaceOwnerNpub}`,

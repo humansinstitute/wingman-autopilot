@@ -6,14 +6,14 @@ import { describe, expect, test } from 'bun:test';
 
 import { AgentDefinitionStore } from './agent-definition-store';
 import { ChatInterceptStateStore } from './chat-intercept-state-store';
-import { AgentChatRoutingEvaluator } from './routing-evaluator';
+import { AgentChatRoutingEvaluator, buildLegacyRoutingKey } from './routing-evaluator';
 import type { WorkspaceSubscriptionRecord } from './types';
 
 function makeTempDb(): string {
   return join(tmpdir(), `agent-chat-routing-${randomUUID()}.sqlite`);
 }
 
-function createSubscription(): WorkspaceSubscriptionRecord {
+function createSubscription(overrides: Partial<WorkspaceSubscriptionRecord> = {}): WorkspaceSubscriptionRecord {
   const now = new Date().toISOString();
   return {
     subscriptionId: 'sub-1',
@@ -46,6 +46,7 @@ function createSubscription(): WorkspaceSubscriptionRecord {
     recentSseEvents: [],
     recentDispatches: [],
     lastSuccessfulStartupReloadAt: null,
+    ...overrides,
   };
 }
 
@@ -126,11 +127,157 @@ describe('AgentChatRoutingEvaluator', () => {
     expect(result.assignments).toHaveLength(2);
     expect(result.assignments.map((entry) => entry.agent.agentId)).toEqual(['agent_alpha', 'agent_beta']);
     expect(result.assignments.map((entry) => entry.intercept.routingKey)).toEqual([
-      'npub1workspace+npub1sourceapp+chan-1+thread-1+agent_alpha',
-      'npub1workspace+npub1sourceapp+chan-1+thread-1+agent_beta',
+      'agent-chat:v2:sub-1:npub1workspace:npub1sourceapp:chan-1:thread-1:agent_alpha',
+      'agent-chat:v2:sub-1:npub1workspace:npub1sourceapp:chan-1:thread-1:agent_beta',
     ]);
     expect(result.assignments.every((entry) => entry.intercept.lastDecision === 'pending')).toBe(true);
     expect(interceptStore.listBySubscriptionId('sub-1')).toHaveLength(2);
+  });
+
+  test('separates matching chat threads from different subscriptions', async () => {
+    const dbPath = makeTempDb();
+    const agentStore = new AgentDefinitionStore(dbPath);
+    const interceptStore = new ChatInterceptStateStore(dbPath);
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent_alpha',
+      label: 'Alpha',
+      botNpub: 'npub1botshared',
+      workspaceOwnerNpub: 'npub1workspace',
+      groupNpubs: ['npub1group-chat'],
+      workingDirectory: '/tmp/alpha',
+      capabilities: ['chat_intercept'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: 'npub1manager',
+    });
+
+    const evaluator = new AgentChatRoutingEvaluator({
+      agentStore,
+      interceptStore,
+      resolveRoutingContext: async () => ({
+        recordId: 'msg-1',
+        channelId: 'chan-1',
+        threadId: 'thread-1',
+        participantNpubs: ['npub1human'],
+      }),
+      extractMessageGroupNpubs: () => ['npub1group-chat'],
+    });
+    const sharedInput = {
+      wsSession: {
+        npub: 'npub1workspacekey',
+        secret: new Uint8Array([1]),
+      },
+      groupKeys: {},
+      chatRecordId: 'msg-1',
+      chatRecord: {},
+      chatMessage: {
+        record_id: 'msg-1',
+        sender_npub: 'npub1human',
+      },
+    };
+
+    const first = await evaluator.evaluate({
+      ...sharedInput,
+      subscription: createSubscription({ subscriptionId: 'sub-1', backendBaseUrl: 'https://tower-one.example.com' }),
+    });
+    const second = await evaluator.evaluate({
+      ...sharedInput,
+      subscription: createSubscription({ subscriptionId: 'sub-2', backendBaseUrl: 'https://tower-two.example.com' }),
+    });
+
+    expect(first.assignments).toHaveLength(1);
+    expect(second.assignments).toHaveLength(1);
+    expect(first.assignments[0]?.intercept.routingKey).toBe(
+      'agent-chat:v2:sub-1:npub1workspace:npub1sourceapp:chan-1:thread-1:agent_alpha',
+    );
+    expect(second.assignments[0]?.intercept.routingKey).toBe(
+      'agent-chat:v2:sub-2:npub1workspace:npub1sourceapp:chan-1:thread-1:agent_alpha',
+    );
+    expect(interceptStore.listAll()).toHaveLength(2);
+  });
+
+  test('migrates matching legacy routing keys only for the same subscription', async () => {
+    const dbPath = makeTempDb();
+    const agentStore = new AgentDefinitionStore(dbPath);
+    const interceptStore = new ChatInterceptStateStore(dbPath);
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent_alpha',
+      label: 'Alpha',
+      botNpub: 'npub1botshared',
+      workspaceOwnerNpub: 'npub1workspace',
+      groupNpubs: ['npub1group-chat'],
+      workingDirectory: '/tmp/alpha',
+      capabilities: ['chat_intercept'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: 'npub1manager',
+    });
+    interceptStore.save({
+      routingKey: buildLegacyRoutingKey({
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1sourceapp',
+        channelId: 'chan-1',
+        threadId: 'thread-1',
+        agentId: 'agent_alpha',
+      }),
+      subscriptionId: 'sub-1',
+      agentId: 'agent_alpha',
+      sessionId: 'session-legacy',
+      sessionClass: 'chat',
+      workspaceOwnerNpub: 'npub1workspace',
+      sourceAppNpub: 'npub1sourceapp',
+      channelId: 'chan-1',
+      threadId: 'thread-1',
+      botNpub: 'npub1botshared',
+      lastMessageIdSeen: 'msg-0',
+      pendingMessageCount: 1,
+      state: 'active',
+      lastDecision: 'respond',
+      lastActivityAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const evaluator = new AgentChatRoutingEvaluator({
+      agentStore,
+      interceptStore,
+      resolveRoutingContext: async () => ({
+        recordId: 'msg-2',
+        channelId: 'chan-1',
+        threadId: 'thread-1',
+        participantNpubs: ['npub1human'],
+      }),
+      extractMessageGroupNpubs: () => ['npub1group-chat'],
+    });
+
+    const result = await evaluator.evaluate({
+      subscription: createSubscription({ subscriptionId: 'sub-1' }),
+      wsSession: {
+        npub: 'npub1workspacekey',
+        secret: new Uint8Array([1]),
+      },
+      groupKeys: {},
+      chatRecordId: 'msg-2',
+      chatRecord: {},
+      chatMessage: {
+        record_id: 'msg-2',
+        sender_npub: 'npub1human',
+      },
+    });
+
+    expect(result.assignments).toHaveLength(1);
+    expect(result.assignments[0]?.intercept.sessionId).toBe('session-legacy');
+    expect(result.assignments[0]?.intercept.routingKey).toBe(
+      'agent-chat:v2:sub-1:npub1workspace:npub1sourceapp:chan-1:thread-1:agent_alpha',
+    );
+    expect(interceptStore.getByRoutingKey('npub1workspace+npub1sourceapp+chan-1+thread-1+agent_alpha')).toBeNull();
+    expect(interceptStore.listBySubscriptionId('sub-1')).toHaveLength(1);
   });
 
   test('suppresses same-agent duplicates and self-authored bot messages', async () => {

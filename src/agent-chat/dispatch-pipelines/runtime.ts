@@ -955,6 +955,7 @@ function getStringArray(value: unknown): string[] {
 
 function buildDedupeKey(input: DispatchPipelineEventInput, route: DispatchRouteRecord): string {
   return [
+    input.subscription.subscriptionId,
     input.subscription.workspaceOwnerNpub,
     input.subscription.sourceAppNpub,
     input.recordId,

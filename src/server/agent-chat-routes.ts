@@ -135,8 +135,16 @@ function serialiseSubscription(
   return {
     ...record,
     workspaceName: getBackendWorkspaceName(backendConnection),
-    backend: record.backendConnectionId
-      ? { backendConnectionId: record.backendConnectionId }
+    backend: backendConnection
+      ? {
+          backendConnectionId: backendConnection.backendConnectionId,
+          backendBaseUrl: backendConnection.backendBaseUrl,
+          serviceNpub: backendConnection.serviceNpub,
+          healthStatus: backendConnection.healthStatus,
+          workspaceName: getBackendWorkspaceName(backendConnection),
+        }
+      : record.backendConnectionId
+        ? { backendConnectionId: record.backendConnectionId }
       : null,
     intercepts,
     candidateAgents: candidateAgents.map(serialiseAgent),
