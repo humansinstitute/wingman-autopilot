@@ -127,6 +127,15 @@ function getAvailableBackendConnections(backendConnections = []) {
     : [];
 }
 
+function getSecondarySetupReadyBackendConnections(setupReadyBackendConnections, subscription) {
+  if (!subscription?.backendConnectionId) {
+    return setupReadyBackendConnections;
+  }
+  return setupReadyBackendConnections.filter((backendConnection) => (
+    backendConnection.backendConnectionId !== subscription.backendConnectionId
+  ));
+}
+
 function createBackendConnectionChoice(backendConnection, onUseBackendConnection) {
   const wrapper = document.createElement('div');
   wrapper.style.cssText = 'margin-top:12px;padding:12px;border:1px solid var(--border-primary);border-radius:8px;background:rgba(127,127,127,0.04);';
@@ -245,6 +254,7 @@ export function createAgentDispatchSetupCards({
   const hasAgent = Boolean(primaryAgent);
   const visibleBackendConnections = getAvailableBackendConnections(availableBackendConnections);
   const setupReadyBackendConnections = getSetupReadyBackendConnections(availableBackendConnections);
+  const secondarySetupReadyBackendConnections = getSecondarySetupReadyBackendConnections(setupReadyBackendConnections, subscription);
   const subscriptionBackendConnection = hasSubscription && subscription.backendConnectionId
     ? visibleBackendConnections.find((backendConnection) => backendConnection.backendConnectionId === subscription.backendConnectionId) ?? null
     : null;
@@ -359,6 +369,20 @@ export function createAgentDispatchSetupCards({
     ]));
     if (canManage && subscriptionBackendConnection?.operator?.canManageAvailability) {
       connectionCard.append(createBackendAvailabilityEditor(subscriptionBackendConnection, onSaveBackendAvailability));
+    }
+    if (canManage && secondarySetupReadyBackendConnections.length > 0) {
+      const secondaryTitle = document.createElement('div');
+      secondaryTitle.style.cssText = 'font-weight:650;margin-top:16px;';
+      secondaryTitle.textContent = 'Available Workspace Connections';
+
+      const secondaryNote = document.createElement('p');
+      secondaryNote.className = 'wm-settings__port-note';
+      secondaryNote.textContent = 'Use an available connection to add another workspace subscription without changing the selected one.';
+
+      connectionCard.append(secondaryTitle, secondaryNote);
+      secondarySetupReadyBackendConnections.forEach((backendConnection) => {
+        connectionCard.append(createBackendConnectionChoice(backendConnection, onUseBackendConnection));
+      });
     }
   } else if (hasAvailableBackend) {
     const note = document.createElement('p');
