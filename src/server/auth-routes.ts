@@ -35,7 +35,7 @@ export interface AuthApiContext {
   getSessionCookieName: (secure: boolean) => string;
   SessionCookieError: new (...args: any[]) => Error;
   SESSION_COOKIE_NAME: string;
-  shouldUseSecureCookies: () => boolean;
+  shouldUseSecureCookies: (request: Request) => boolean;
 
   generateIdentityAlias: (npub: string) => string;
   handleKeyTeleport: (request: Request) => Response | Promise<Response>;
@@ -101,7 +101,7 @@ export async function handleAuthApi(
       }
 
       const { cookie, expiresAt, payload: cookiePayload } = ctx.mintSessionCookie(trimmedNpub, {
-        secure: ctx.shouldUseSecureCookies(),
+        secure: ctx.shouldUseSecureCookies(request),
       });
       authContext.npub = cookiePayload.npub;
       authContext.actorNpub = cookiePayload.npub;

@@ -151,6 +151,7 @@ import {
 } from "./server/path-utils";
 import { createStaticAssetService, compressResponse } from "./server/static-assets";
 import { maybeRefreshSessionCookie } from "./server/session-refresh";
+import { shouldUseSecureCookies } from "./server/cookie-security";
 import { handleSubdomainRequest, resolveAliasToPort, proxyRequestToApp, type SubdomainProxyConfig } from "./server/subdomain-proxy";
 import { isAgentRuntimeStatus } from "./types/agent-status";
 import { scheduleCleanup } from "./uploads/cleanup";
@@ -890,13 +891,6 @@ const {
   attachmentRoot,
   imageRoot,
 });
-
-const shouldUseSecureCookies = () => {
-  const flag = (Bun.env.IDENTITY_COOKIE_SECURE ?? Bun.env.COOKIE_SECURE ?? "").trim().toLowerCase();
-  if (flag === "false" || flag === "0") return false;
-  if (flag === "true" || flag === "1") return true;
-  return Bun.env.NODE_ENV === "production";
-};
 
 fileWatcherStore.ensureStopSessionWatcher();
 fileWatcherStore.ensureStartSessionWatcher();
@@ -2722,7 +2716,7 @@ const server = Bun.serve({
     });
 
     return maybeRefreshSessionCookie(response, authContext, {
-      secureCookie: shouldUseSecureCookies(),
+      secureCookie: shouldUseSecureCookies(request),
     });
   },
   error(error: Error): Response {
