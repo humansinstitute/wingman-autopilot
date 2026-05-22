@@ -836,11 +836,13 @@ export class ProcessManager {
   }
 
   private buildAgentProcessEnv(session: AgentSession): Record<string, string | undefined> {
-    // Strip server-only private keys from child env. Agents receive only the
+    // Strip server-only secrets from child env. Agents receive only the
     // derived compatibility identity vars injected during session setup.
     const {
       KEYTELEPORT_PRIVKEY: _strippedKeyTeleport,
       WINGMAN_PRIV: _strippedWingmanPriv,
+      WINGMAN_SIGNING_SECRET: _strippedSigningSecret,
+      WINGMAN_SIGNING_TOKEN: _strippedSigningToken,
       ...parentEnv
     } = Bun.env;
     return {

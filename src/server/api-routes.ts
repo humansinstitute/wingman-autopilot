@@ -33,6 +33,7 @@ import { handleWappsApi, type WappsApiContext } from "./wapps-api-routes";
 import { handlePipelineApi, type PipelineApiContext } from "../pipelines/pipeline-api-routes";
 import type { WorkspaceDelegationStore } from "../storage/workspace-delegation-store";
 import { getEffectiveOwnerNpub } from "../auth/effective-owner";
+import { handleSigningApi, type SigningApiContext } from "../signing/signing-api";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
@@ -100,6 +101,7 @@ export interface ApiRoutesContext {
   agentChatApiContext?: AgentChatApiContext;
   delegationRoutesContext: DelegationRoutesContext;
   pipelineApiContext?: PipelineApiContext;
+  signingApiContext?: SigningApiContext;
   workspaceDelegationStore: WorkspaceDelegationStore;
 
   // Stores accessed directly by handleApi
@@ -368,6 +370,21 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
         wappsAuthContext,
         () => handleWappsApi(request, url, method, wappsAuthContext, wappsApiContext),
       );
+      if (response) {
+        return response;
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }
+    // Internal signing API — called by external runner scripts through the
+    // wingman-sign CLI. Requires localhost plus a scoped bearer capability.
+    if (pathname.startsWith("/api/internal/signing")) {
+      if (!isLocalhostRequest(request, ctx)) {
+        return Response.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (!ctx.signingApiContext) {
+        return Response.json({ error: "Runner signing is not configured" }, { status: 503 });
+      }
+      const response = await handleSigningApi(request, url, method, ctx.signingApiContext);
       if (response) {
         return response;
       }

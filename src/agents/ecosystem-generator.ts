@@ -195,8 +195,10 @@ function buildProviderEnvBootstrap(
   sessionConfig: SessionConfig,
   runtimeEnv: Record<string, string>,
 ): string {
-  // Always strip server-only private keys from agent subprocesses.
-  const snippets: string[] = ["unset KEYTELEPORT_PRIVKEY WINGMAN_PRIV"];
+  // Always strip server-only secrets from agent subprocesses.
+  const snippets: string[] = [
+    "unset KEYTELEPORT_PRIVKEY WINGMAN_PRIV WINGMAN_SIGNING_SECRET WINGMAN_SIGNING_TOKEN",
+  ];
   const billingMode = sessionConfig.billingMode ?? "subscription";
   const shouldSanitizeProviderEnv = BILLING_COMPATIBLE_AGENTS.has(sessionConfig.agent);
 
@@ -228,11 +230,13 @@ export function createAppConfig(sessionConfig: SessionConfig): EcosystemApp {
   const { script, args } = buildAgentCommand(sessionConfig);
 
   const command = [script, ...args].map(shellQuote).join(" ");
-  // Build runtime env from session + injected vars. Strip server-only private
-  // keys if they leaked through envOverride.
+  // Build runtime env from session + injected vars. Strip server-only secrets
+  // if they leaked through envOverride.
   const {
     KEYTELEPORT_PRIVKEY: _strippedKeyTeleport,
     WINGMAN_PRIV: _strippedWingmanPriv,
+    WINGMAN_SIGNING_SECRET: _strippedSigningSecret,
+    WINGMAN_SIGNING_TOKEN: _strippedSigningToken,
     ...cleanEnvOverride
   } = sessionConfig.envOverride ?? {} as Record<string, string>;
   const runtimeEnv: Record<string, string> = {

@@ -2417,6 +2417,11 @@ const handleApi = createApiRouteHandler({
     ensureApiAccess,
     AccessActions,
   },
+  signingApiContext: {
+    signingSecret: Bun.env.WINGMAN_SIGNING_SECRET?.trim() || null,
+    getSession: (sid: string) => manager.getSession(sid),
+    getInstanceIdentity: () => loadWingmanInstanceIdentity(),
+  },
   workspaceDelegationStore,
 
   // Stores accessed directly

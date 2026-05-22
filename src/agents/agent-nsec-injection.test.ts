@@ -249,17 +249,25 @@ describe("AGENT_NSEC injection flow", () => {
       expect(runtimeEnv.SESSION_ID).toBe("test-session-1");
     });
 
-    test("KEYTELEPORT_PRIVKEY should not be in agent subprocess env", () => {
-      // Direct spawn path strips it (line 773 of process-manager.ts)
+    test("server-only secrets should not be in agent subprocess env", () => {
+      // Direct spawn path strips these before building the child process env.
       const parentEnv = {
         PATH: "/usr/bin",
         KEYTELEPORT_PRIVKEY: "nsec1fake",
+        WINGMAN_SIGNING_SECRET: "server-secret",
+        WINGMAN_SIGNING_TOKEN: "runner-token",
         AGENT_NSEC: bytesToHex(botSecret),
       };
 
-      // Simulate the stripping
-      const { KEYTELEPORT_PRIVKEY: _stripped, ...cleanEnv } = parentEnv;
+      const {
+        KEYTELEPORT_PRIVKEY: _strippedKeyTeleport,
+        WINGMAN_SIGNING_SECRET: _strippedSigningSecret,
+        WINGMAN_SIGNING_TOKEN: _strippedSigningToken,
+        ...cleanEnv
+      } = parentEnv;
       expect(cleanEnv.KEYTELEPORT_PRIVKEY).toBeUndefined();
+      expect(cleanEnv.WINGMAN_SIGNING_SECRET).toBeUndefined();
+      expect(cleanEnv.WINGMAN_SIGNING_TOKEN).toBeUndefined();
       expect(cleanEnv.AGENT_NSEC).toBe(bytesToHex(botSecret));
     });
   });
