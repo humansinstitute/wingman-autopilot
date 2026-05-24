@@ -46,10 +46,10 @@ export function renderDefinitionsListPage(state) {
           </div>
           <button type="button" data-action="open-creator" data-testid="pipeline-new-action">New Pipeline</button>
         </div>
+        ${state.creatorOpen ? renderCreator(state) : ""}
         ${renderDefinitionControls(state)}
         ${definitions.length ? renderDefinitionList(state, definitions) : renderEmptyState("No pipeline definitions match this view.", "New Pipeline", "open-creator")}
       </div>
-      ${state.creatorOpen ? `<div class="wm-pipeline-panel">${renderCreator(state)}</div>` : ""}
     </section>
   `;
 }

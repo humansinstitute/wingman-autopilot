@@ -92,6 +92,10 @@ export function createPipelineActionHandlers(deps) {
       state.manualEditDefinitionId = "";
       state.wizardResult = null;
       await navigateToPipelinePath(page, makePipelinePath("definitions"));
+      const prompt = page.querySelector('[data-action="wizard-prompt"]');
+      if (prompt && typeof prompt.focus === "function") {
+        prompt.focus({ preventScroll: false });
+      }
     },
     closeCreator: (page) => updateField(page, "creatorOpen", false),
     updateWizardPrompt: (value) => { state.wizardPrompt = value; },
