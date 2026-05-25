@@ -58,7 +58,6 @@ function createHandler(options: {
     superbasedApiHandler: async () => null,
     wingmanMcpApiHandler: async () => null,
     schedulerApiHandler: async () => null,
-    autopilotJobsApiHandler: async () => null,
     sessionApiContext: {} as any,
     docsApiContext: {} as any,
     providerProxyApiContext: {} as any,

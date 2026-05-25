@@ -180,7 +180,6 @@ import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import { SchedulerStore } from "./scheduler/scheduler-store";
 import { SchedulerEngine } from "./scheduler/scheduler-engine";
 import { createSchedulerApiHandler } from "./scheduler/scheduler-api";
-import { createAutopilotJobsApiHandler } from "./jobs-api";
 import { wappStore } from "./wapps/wapp-store";
 import { SuperbasedWappPublisher } from "./wapps/wapp-publisher";
 import { FlightDeckScopeAccessResolver } from "./wapps/scope-access";
@@ -485,12 +484,6 @@ const schedulerApiHandler = createSchedulerApiHandler({
     return ctx?.npub ?? null;
   },
 });
-const autopilotJobsApiHandler = (
-  request: Request,
-  url: URL,
-  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
-  authContext: RequestAuthContext,
-) => createAutopilotJobsApiHandler({ sessionApiContext })(request, url, method, authContext);
 const nip98GrantsStore = new Nip98GrantStore();
 const memoryStore = new MemoryStore();
 const nip98ApiHandler = createNip98ApiHandler({
@@ -2298,7 +2291,6 @@ const handleApi = createApiRouteHandler({
   superbasedApiHandler,
   wingmanMcpApiHandler,
   schedulerApiHandler,
-  autopilotJobsApiHandler,
 
   // Pre-built route contexts (request-independent)
   sessionApiContext,

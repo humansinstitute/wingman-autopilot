@@ -87,7 +87,6 @@ export interface ApiRoutesContext {
   superbasedApiHandler: SimpleApiHandler;
   wingmanMcpApiHandler: SimpleApiHandler;
   schedulerApiHandler: SimpleApiHandler;
-  autopilotJobsApiHandler: SimpleApiHandler;
 
   // Pre-built route contexts (request-independent)
   sessionApiContext: SessionApiContext;
@@ -340,22 +339,6 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
         return denied;
       }
       const response = await ctx.schedulerApiHandler(request, url, method);
-      if (response) {
-        return response;
-      }
-      return Response.json({ error: "Not found" }, { status: 404 });
-    }
-    // Autopilot Jobs API — job definitions and runs management.
-    if (pathname.startsWith("/api/autopilot-jobs")) {
-      const jobsAuthContext = ctx.resolveNip98AuthContext(request, url, authContext);
-      const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, jobsAuthContext);
-      if (denied) {
-        return denied;
-      }
-      const response = await runWithRequestContext(
-        jobsAuthContext,
-        () => ctx.autopilotJobsApiHandler(request, url, method, jobsAuthContext),
-      );
       if (response) {
         return response;
       }

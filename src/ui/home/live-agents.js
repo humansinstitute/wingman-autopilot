@@ -182,7 +182,6 @@ export function createLiveAgentsSection(deps) {
     render,
     navigateToChat,
     openDialog,
-    openJobDialog,
     isFeatureEnabledForViewer,
     buildSessionFilterOptions,
     fetchSessions,
@@ -282,14 +281,6 @@ export function createLiveAgentsSection(deps) {
   launchBtn.textContent = "Launch Agent Session";
   launchBtn.addEventListener("click", openDialog);
   actions.append(launchBtn);
-
-  const launchJobBtn = document.createElement("button");
-  launchJobBtn.className = "wm-button secondary";
-  launchJobBtn.textContent = "Launch Job";
-  launchJobBtn.addEventListener("click", () => {
-    void openJobDialog();
-  });
-  actions.append(launchJobBtn);
 
   if (isFeatureEnabledForViewer("private_chats_enabled")) {
     const privateChatBtn = document.createElement("button");
