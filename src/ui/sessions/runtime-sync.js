@@ -72,11 +72,16 @@ export function initSessionRuntimeSync({
   async function fetchConfig() {
     const configData = await fetchConfigApi();
     const adminNpubNormalized = normaliseNpubValue(configData?.adminNpub ?? null);
+    const adminNpubs = Array.isArray(configData?.adminNpubs)
+      ? configData.adminNpubs.map((npub) => normaliseNpubValue(npub)).filter(Boolean)
+      : adminNpubNormalized
+        ? [adminNpubNormalized]
+        : [];
     const connectRelays = normaliseConnectRelays(configData?.connectRelays);
     const agents = Array.isArray(configData?.agents)
       ? configData.agents.filter((agent) => agent && typeof agent.id === "string" && typeof agent.label === "string")
       : [];
-    state.config = { ...configData, adminNpub: adminNpubNormalized ?? null, connectRelays, agents };
+    state.config = { ...configData, adminNpub: adminNpubNormalized ?? null, adminNpubs, connectRelays, agents };
 
     if (typeof globalThis !== "undefined" && globalThis.wingmanIdentity) {
       globalThis.wingmanIdentity.connectRelays = connectRelays;

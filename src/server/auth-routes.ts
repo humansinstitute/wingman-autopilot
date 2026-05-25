@@ -10,6 +10,14 @@ import type { MintSessionCookieOptions, SessionCookiePayload } from "../auth/ses
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
+function isConfiguredAdminNpub(ctx: AuthApiContext, npub: string | null | undefined): boolean {
+  if (ctx.isAdminNpub) {
+    return ctx.isAdminNpub(npub);
+  }
+  const normalized = normaliseNpub(npub);
+  return Boolean(ctx.adminNpub && normalized && ctx.adminNpub === normalized);
+}
+
 // ---------- Context supplied by server.ts ----------
 
 export interface AuthApiContext {
@@ -21,6 +29,7 @@ export interface AuthApiContext {
     giteaOwner: string | null;
   };
   adminNpub: string | null;
+  isAdminNpub?: (npub: string | null | undefined) => boolean;
 
   identityUserStore: {
     getByNormalized: (npub: string) => { npub: string; pictureUrl: string | null } | null;
@@ -89,7 +98,7 @@ export async function handleAuthApi(
       if (!ctx.config.registrationEnabled) {
         const normalized = normaliseNpub(trimmedNpub);
         const existingUser = normalized ? ctx.identityUserStore.getByNormalized(normalized) : null;
-        const isConfiguredAdmin = Boolean(ctx.adminNpub && normalized && normalized === ctx.adminNpub);
+        const isConfiguredAdmin = isConfiguredAdminNpub(ctx, normalized);
         if (!existingUser && !isConfiguredAdmin) {
           return Response.json({ error: "Registration is currently disabled" }, { status: 403 });
         }
@@ -199,7 +208,7 @@ export async function handleAuthApi(
       return denied;
     }
     const viewerNormalized = ctx.getViewerNormalizedNpub(authContext);
-    const viewerIsAdmin = Boolean(ctx.adminNpub && viewerNormalized && ctx.adminNpub === viewerNormalized);
+    const viewerIsAdmin = isConfiguredAdminNpub(ctx, viewerNormalized);
     const targetInput = ctx.normaliseOptionalString(url.searchParams.get("npub")) ?? authContext.npub;
     const refresh = url.searchParams.get("refresh") === "1" || url.searchParams.get("force") === "1";
     if (!targetInput) {

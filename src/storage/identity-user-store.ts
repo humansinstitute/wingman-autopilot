@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 
 import { Database } from "bun:sqlite";
 
-import { normaliseNpub } from "../identity/npub-utils";
+import { normaliseNpub, normaliseNpubList } from "../identity/npub-utils";
 
 const PORT_START = 41000;
 const PORTS_PER_USER = 1000;
@@ -160,26 +160,30 @@ export class IdentityUserStore {
   }
 
   ensureAdminBalance() {
-    const adminNpub = (Bun.env.ADMIN_NPUB ?? "").trim();
-    if (!adminNpub) {
+    const adminNpubs = normaliseNpubList(
+      Bun.env.ADMIN_NPUB?.trim() ? Bun.env.ADMIN_NPUB : Bun.env.WINGMAN_ADMIN_NPUB,
+    );
+    if (adminNpubs.length === 0) {
       return;
     }
-    const normalized = normaliseNpub(adminNpub);
-    if (!normalized) {
-      return;
+    for (const adminNpub of adminNpubs) {
+      const normalized = normaliseNpub(adminNpub);
+      if (!normalized) {
+        continue;
+      }
+      const ADMIN_MIN_BALANCE = 10_000;
+      const ADMIN_TARGET_BALANCE = 1_000_000;
+      const existing = this.get(normalized);
+      const currentBalance = existing?.balance ?? 0;
+      if (currentBalance >= ADMIN_MIN_BALANCE) {
+        continue;
+      }
+      if (!existing) {
+        this.touch(adminNpub);
+      }
+      this.setBalance(normalized, ADMIN_TARGET_BALANCE);
+      console.log(`[identity] Topped up admin ${adminNpub.slice(0, 12)}... to ${ADMIN_TARGET_BALANCE.toLocaleString()} sats`);
     }
-    const ADMIN_MIN_BALANCE = 10_000;
-    const ADMIN_TARGET_BALANCE = 1_000_000;
-    const existing = this.get(normalized);
-    const currentBalance = existing?.balance ?? 0;
-    if (currentBalance >= ADMIN_MIN_BALANCE) {
-      return;
-    }
-    if (!existing) {
-      this.touch(adminNpub);
-    }
-    this.setBalance(normalized, ADMIN_TARGET_BALANCE);
-    console.log(`[identity] Topped up admin ${adminNpub.slice(0, 12)}... to ${ADMIN_TARGET_BALANCE.toLocaleString()} sats`);
   }
 
   private parsePorts(value: string | null | undefined): number[] {

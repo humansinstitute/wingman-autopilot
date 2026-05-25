@@ -123,7 +123,7 @@ import {
 } from "./auth/request-context";
 import { getEffectiveOwnerAuthContext, getEffectiveOwnerNpub } from "./auth/effective-owner";
 import { resolveNip98AuthContext } from "./auth/nip98-auth";
-import { deriveNpubSegment, normaliseNpub } from "./identity/npub-utils";
+import { deriveNpubSegment, isNpubInList, normaliseNpub, normaliseNpubList } from "./identity/npub-utils";
 import { generateIdentityAlias } from "./identity/identity-alias";
 import { resolveSessionOwnerNpub, sessionBelongsToViewer as sessionOwnerMatchesViewer } from "./sessions/session-ownership";
 import { resolveWorkspaceScope, type WorkspaceScope } from "./workspaces/workspace-scope";
@@ -245,7 +245,11 @@ const migratedUserSettingCount = userSettingsStore.migrateSensitiveValues();
 if (migratedUserSettingCount > 0) {
   console.log(`[config] migrated ${migratedUserSettingCount} sensitive user setting(s) to encrypted storage`);
 }
-const adminNpub = normaliseNpub(Bun.env.ADMIN_NPUB ?? null);
+const configuredAdminNpubs = normaliseNpubList(
+  Bun.env.ADMIN_NPUB?.trim() ? Bun.env.ADMIN_NPUB : Bun.env.WINGMAN_ADMIN_NPUB,
+);
+const adminNpub = configuredAdminNpubs[0] ?? null;
+const isConfiguredAdminNpub = (npub: string | null | undefined): boolean => isNpubInList(npub, configuredAdminNpubs);
 const agentHosts = parseAllowedHosts(config.allowedHosts);
 const agentHost = normaliseHostForUrl(pickAgentHost(agentHosts));
 
@@ -514,10 +518,7 @@ const botKeyApiHandler = createBotKeyApiHandler({
   onBotKeyUnlocked: onBotKeyUnlockedHook,
   defaultRelays: config.connectRelays,
   getInstanceIdentity: () => loadWingmanInstanceIdentity(),
-  isAdminNpub: (npub) => {
-    if (!adminNpub) return false;
-    return normaliseNpub(npub ?? null) === adminNpub;
-  },
+  isAdminNpub: isConfiguredAdminNpub,
 });
 const botCryptoApiHandler = createBotCryptoApiHandler({
   getSession: (sid: string) => manager.getSession(sid),
@@ -549,7 +550,7 @@ const isUserApprovedForWork = (npub: string | null | undefined): boolean => {
   if (!normalized) {
     return false;
   }
-  if (adminNpub && normalized === adminNpub) {
+  if (isConfiguredAdminNpub(normalized)) {
     return true;
   }
   const record = identityUserStore.getByNormalized(normalized);
@@ -668,7 +669,7 @@ const warmRestartMarker = await loadWarmRestartMarker(restartMarkerPath);
 
 const resolveWorkspace = (context?: RequestAuthContext): WorkspaceScope => {
   const activeContext = context ?? getRequestContext();
-  return resolveWorkspaceScope(config, activeContext, adminNpub, systemDocsRoot, systemDocsRootBoundary);
+  return resolveWorkspaceScope(config, activeContext, configuredAdminNpubs, systemDocsRoot, systemDocsRootBoundary);
 };
 
 const {
@@ -2027,9 +2028,8 @@ void ensureWingmanCoreRegistration(appRegistry, {
 });
 
 const isAdminContext = (authContext: RequestAuthContext): boolean => {
-  if (!adminNpub) return false;
   const normalized = normaliseNpub(authContext.npub ?? null);
-  return normalized === adminNpub;
+  return isConfiguredAdminNpub(normalized);
 };
 
 /**
@@ -2157,6 +2157,8 @@ const resolveFeatureFlagStateForViewer = (
 const sessionApiContext: SessionApiContext = {
   manager,
   adminNpub,
+  adminNpubs: configuredAdminNpubs,
+  isAdminNpub: isConfiguredAdminNpub,
   agentHost,
   messageStore,
   sessionArchiveStore,
@@ -2278,6 +2280,7 @@ const handleApi = createApiRouteHandler({
     giteaUrl: config.giteaUrl,
   },
   adminNpub,
+  adminNpubs: configuredAdminNpubs,
 
   // Pre-instantiated API handlers
   todoApiHandler,
@@ -2327,6 +2330,7 @@ const handleApi = createApiRouteHandler({
       giteaOwner: config.giteaOwner,
     },
     adminNpub,
+    isAdminNpub: isConfiguredAdminNpub,
     identityUserStore,
     mintSessionCookie,
     getSessionCookieName,
@@ -2358,6 +2362,7 @@ const handleApi = createApiRouteHandler({
   },
   adminUsersApiContext: {
     adminNpub,
+    isAdminNpub: isConfiguredAdminNpub,
     config: { connectRelays: config.connectRelays },
     identityUserStore,
     manager,

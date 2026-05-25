@@ -14,6 +14,39 @@ export const normaliseNpub = (input: string | null | undefined): string | null =
   return trimmed.length > 0 ? trimmed : null;
 };
 
+export const normaliseNpubList = (
+  input: string | string[] | null | undefined,
+): string[] => {
+  const values = Array.isArray(input) ? input : typeof input === "string" ? input.split(",") : [];
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const value of values) {
+    const npub = normaliseNpub(value);
+    if (!npub || seen.has(npub)) {
+      continue;
+    }
+    seen.add(npub);
+    normalized.push(npub);
+  }
+
+  return normalized;
+};
+
+export const isNpubInList = (
+  npub: string | null | undefined,
+  npubs: Iterable<string>,
+): boolean => {
+  const normalized = normaliseNpub(npub);
+  if (!normalized) return false;
+  for (const candidate of npubs) {
+    if (normalized === normaliseNpub(candidate)) {
+      return true;
+    }
+  }
+  return false;
+};
+
 export const deriveNpubSegment = (input: string | null | undefined): string => {
   const normalized = normaliseNpub(input);
   if (!normalized) return DEFAULT_SEGMENT;

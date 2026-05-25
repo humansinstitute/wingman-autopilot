@@ -4,6 +4,7 @@ import { normalize, sep } from "node:path";
 import type { WingmanConfig } from "../config";
 import type { RequestAuthContext } from "../auth/request-context";
 import { getEffectiveOwnerNpub } from "../auth/effective-owner";
+import { isNpubInList } from "../identity/npub-utils";
 
 export type WorkspaceScope = {
   allowedDirectories: string[];
@@ -26,12 +27,13 @@ const ensureDirectoryExists = (directory: string) => {
 export const resolveWorkspaceScope = (
   config: WingmanConfig,
   context: RequestAuthContext,
-  adminNpub: string | null,
+  adminNpubs: string | Iterable<string> | null,
   _systemDocsRoot: string,
   _systemDocsBoundary: string,
 ): WorkspaceScope => {
   const normalizedNpub = getEffectiveOwnerNpub(context);
-  const isAdmin = Boolean(adminNpub && normalizedNpub && normalizedNpub === adminNpub);
+  const configuredAdmins = typeof adminNpubs === "string" ? [adminNpubs] : adminNpubs ?? [];
+  const isAdmin = isNpubInList(normalizedNpub, configuredAdmins);
   const workspaceRoot = normalize(config.defaultWorkingDirectory);
   const workspaceBoundary = workspaceRoot.endsWith(sep) ? workspaceRoot : `${workspaceRoot}${sep}`;
 

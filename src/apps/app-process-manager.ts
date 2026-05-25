@@ -6,7 +6,7 @@ import { appRegistry } from "./app-registry";
 import type { AppLifecycleAction, AppRecord, AppRegistry } from "./app-registry";
 import { clearAppLogFiles } from "./app-log-files";
 import { generateIdentityAlias } from "../identity/identity-alias";
-import { normaliseNpub } from "../identity/npub-utils";
+import { isNpubInList, normaliseNpub, normaliseNpubList } from "../identity/npub-utils";
 import {
   addUserAppToEcosystem,
   generateAppProcessName,
@@ -106,12 +106,14 @@ export class AppProcessManager {
   private readonly registry: AppRegistry;
   private readonly states = new Map<string, AppRuntimeState>();
   private readonly config = loadConfig();
-  private readonly adminNpub: string | null;
+  private readonly adminNpubs: string[];
   private readonly wappStore: WappStore;
 
-  constructor(registry: AppRegistry = appRegistry, adminNpub?: string | null, store: WappStore = wappStore) {
+  constructor(registry: AppRegistry = appRegistry, adminNpubs?: string | string[] | null, store: WappStore = wappStore) {
     this.registry = registry;
-    this.adminNpub = adminNpub ?? null;
+    this.adminNpubs = normaliseNpubList(
+      adminNpubs ?? (Bun.env.ADMIN_NPUB?.trim() ? Bun.env.ADMIN_NPUB : Bun.env.WINGMAN_ADMIN_NPUB),
+    );
     this.wappStore = store;
   }
 
@@ -455,7 +457,7 @@ export class AppProcessManager {
 
   private resolveUserContext(app: AppRecord): { userAlias: string; userRootDir: string; isAdmin: boolean } {
     const ownerNpub = normaliseNpub(app.ownerNpub);
-    const isAdmin = Boolean(this.adminNpub && ownerNpub && ownerNpub === this.adminNpub);
+    const isAdmin = isNpubInList(ownerNpub, this.adminNpubs);
 
     // Derive alias from owner or use a fallback
     const userAlias = ownerNpub

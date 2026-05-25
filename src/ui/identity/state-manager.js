@@ -58,9 +58,15 @@ export function initIdentityStateManager(deps) {
 
   // ── helpers ─────────────────────────────────────────────────────
 
-  const getConfiguredAdminNpub = () => {
+  const getConfiguredAdminNpubs = () => {
+    if (Array.isArray(state.config?.adminNpubs)) {
+      return state.config.adminNpubs
+        .map((npub) => normaliseNpubValue(npub))
+        .filter(Boolean);
+    }
     const configured = state.config?.adminNpub;
-    return typeof configured === "string" && configured.trim().length > 0 ? configured.trim() : null;
+    const normalized = normaliseNpubValue(configured);
+    return normalized ? [normalized] : [];
   };
 
   // ── post-auth scheduling ────────────────────────────────────────
@@ -676,9 +682,9 @@ export function initIdentityStateManager(deps) {
       next.botKeySource = null;
     }
 
-    const configuredAdminNpub = getConfiguredAdminNpub();
+    const configuredAdminNpubs = getConfiguredAdminNpubs();
     const normalizedNextNpub = normaliseNpubValue(next.npub);
-    next.isAdmin = Boolean(configuredAdminNpub && normalizedNextNpub && normalizedNextNpub === configuredAdminNpub);
+    next.isAdmin = Boolean(normalizedNextNpub && configuredAdminNpubs.includes(normalizedNextNpub));
 
     if ("alias" in partial) {
       if (typeof partial.alias === "string" && partial.alias.trim().length > 0) {

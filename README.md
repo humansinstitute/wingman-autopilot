@@ -124,7 +124,7 @@ instances should use `.env.wingman-01`, `.env.wingman-02`, and so on so local
 and container settings do not overlap.
 
 Docker setup defaults to `REGISTER=false`: unknown users cannot self-register.
-The configured admin npub can bootstrap the first login, then add approved users
+The configured admin npub, or comma-separated admin npubs, can bootstrap the first login, then add approved users
 from Settings -> Users.
 It also defaults to `WINGMAN_SHARED_INSTANCE=true`, so whitelisted users see the
 same apps, sessions, workspace connection, and dispatch activity for the single

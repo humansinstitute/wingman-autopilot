@@ -65,6 +65,7 @@ export interface ApiRoutesContext {
     giteaUrl: string | null;
   };
   adminNpub: string | null;
+  adminNpubs?: string[];
 
   // Callback to retrieve the remote IP for a request.
   // Optional — if omitted, localhost checks are skipped (e.g. in tests).
@@ -582,6 +583,7 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
         allowedDirectories: workspaceScope.allowedDirectories,
         connectRelays: ctx.config.connectRelays,
         adminNpub: ctx.adminNpub,
+        adminNpubs: ctx.adminNpubs ?? (ctx.adminNpub ? [ctx.adminNpub] : []),
         agents,
         defaultAgent,
         systemDefaultAgent: ctx.config.defaultAgent,

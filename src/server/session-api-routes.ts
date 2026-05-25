@@ -63,6 +63,8 @@ export type IdentitySummary = {
 export interface SessionApiContext {
   manager: ProcessManager;
   adminNpub: string | null;
+  adminNpubs?: string[];
+  isAdminNpub?: (npub: string | null | undefined) => boolean;
   agentHost: string;
 
   // Stores
@@ -143,6 +145,14 @@ export interface SessionApiContext {
   // Access action
   AccessActions: { SessionsManage: AccessAction };
 }
+
+const isConfiguredAdminNpub = (ctx: SessionApiContext, npub: string | null | undefined): boolean => {
+  if (ctx.isAdminNpub) {
+    return ctx.isAdminNpub(npub);
+  }
+  const normalized = normaliseNpub(npub);
+  return Boolean(ctx.adminNpub && normalized && ctx.adminNpub === normalized);
+};
 
 const isDelegatedBotAuth = (authContext: RequestAuthContext): boolean => {
   return Boolean(
@@ -1163,7 +1173,7 @@ export async function handleSessionApi(
     if (denied) return denied;
 
     const viewerNormalizedNpub = resolveSelfSpaceViewerNpub(authContext, ctx);
-    const viewerIsAdmin = Boolean(ctx.adminNpub && viewerNormalizedNpub && viewerNormalizedNpub === ctx.adminNpub);
+    const viewerIsAdmin = isConfiguredAdminNpub(ctx, viewerNormalizedNpub);
     const allSessions = ctx.manager.listSessions();
     const accessibleSessions = viewerIsAdmin
       ? allSessions
@@ -1347,7 +1357,7 @@ export async function handleSessionApi(
 
       const liveSession = ctx.manager.getSession(id);
       const viewerNormalizedNpub = resolveSelfSpaceViewerNpub(authContext, ctx);
-      const viewerIsAdmin = Boolean(ctx.adminNpub && viewerNormalizedNpub && viewerNormalizedNpub === ctx.adminNpub);
+      const viewerIsAdmin = isConfiguredAdminNpub(ctx, viewerNormalizedNpub);
       const ownedSession =
         liveSession && ctx.sessionBelongsToViewer(liveSession.npub ?? null, liveSession.metadata, viewerNormalizedNpub, viewerIsAdmin)
           ? liveSession
@@ -1366,7 +1376,7 @@ export async function handleSessionApi(
     }
 
     const viewerNormalizedNpub = resolveSelfSpaceViewerNpub(authContext, ctx);
-    const viewerIsAdmin = Boolean(ctx.adminNpub && viewerNormalizedNpub && viewerNormalizedNpub === ctx.adminNpub);
+    const viewerIsAdmin = isConfiguredAdminNpub(ctx, viewerNormalizedNpub);
     if (!viewerIsAdmin && !viewerNormalizedNpub) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
