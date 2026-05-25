@@ -1773,7 +1773,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     });
 
     const taskDispatches: Array<{ recordId: string; taskId: string; agentId: string }> = [];
-    const approvalDispatches: Array<{ recordId: string; flowRunId: string; agentId: string }> = [];
     const manager = new WorkspaceSubscriptionManager({
       store,
       agentStore,
@@ -1782,14 +1781,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           taskDispatches.push({
             recordId: input.recordId,
             taskId: input.task.taskId,
-            agentId: input.agent.agentId,
-          });
-          return null;
-        },
-        handleApprovalDispatch: async (input: any) => {
-          approvalDispatches.push({
-            recordId: input.recordId,
-            flowRunId: input.approval.flowRunId ?? '',
             agentId: input.agent.agentId,
           });
           return null;
@@ -1845,11 +1836,10 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
         agentId: 'agent-task',
       },
     ]);
-    expect(approvalDispatches).toEqual([]);
     expect(next.lastSseEventId).toBe('evt-task-1');
   });
 
-  test('routes approval advisories into the agent-work runtime without creating task dispatches', async () => {
+  test('does not route approval advisories into the agent-work runtime', async () => {
     const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-approval-subscriptions'));
     const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-approval-agents'));
     const subscription = store.save(makeSubscription());
@@ -1870,7 +1860,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     });
 
     const taskDispatches: Array<{ recordId: string; taskId: string; agentId: string }> = [];
-    const approvalDispatches: Array<{ recordId: string; flowRunId: string; agentId: string }> = [];
     const manager = new WorkspaceSubscriptionManager({
       store,
       agentStore,
@@ -1879,14 +1868,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           taskDispatches.push({
             recordId: input.recordId,
             taskId: input.task.taskId,
-            agentId: input.agent.agentId,
-          });
-          return null;
-        },
-        handleApprovalDispatch: async (input: any) => {
-          approvalDispatches.push({
-            recordId: input.recordId,
-            flowRunId: input.approval.flowRunId ?? '',
             agentId: input.agent.agentId,
           });
           return null;
@@ -1932,18 +1913,11 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     );
 
     expect(taskDispatches).toEqual([]);
-    expect(approvalDispatches).toEqual([
-      {
-        recordId: 'record-approval-1',
-        flowRunId: 'run-1',
-        agentId: 'agent-task',
-      },
-    ]);
   });
 
-  test('routes kickoff tasks into flow dispatch instead of ordinary task dispatch', async () => {
-    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-flow-dispatch-subscriptions'));
-    const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-flow-dispatch-agents'));
+  test('does not route kickoff tasks into the agent-work runtime', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-kickoff-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-kickoff-agents'));
     const subscription = store.save(makeSubscription());
     const now = new Date().toISOString();
 
@@ -1961,7 +1935,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       managedByNpub: subscription.managedByNpub,
     });
 
-    const flowDispatches: Array<{ recordId: string; taskId: string; agentId: string }> = [];
     const manager = new WorkspaceSubscriptionManager({
       store,
       agentStore,
@@ -1969,15 +1942,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
         handleTaskDispatch: async () => {
           throw new Error('handleTaskDispatch should not run for kickoff tasks');
         },
-        handleFlowDispatch: async (input: any) => {
-          flowDispatches.push({
-            recordId: input.recordId,
-            taskId: input.task.taskId,
-            agentId: input.agent.agentId,
-          });
-          return makeSession('flow-session-1');
-        },
-        handleApprovalDispatch: async () => null,
       } as unknown as AgentWorkSessionRuntime,
       fetchRecordHistory: async () => [
         {
@@ -2022,18 +1986,10 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       }),
     );
 
-    expect(flowDispatches).toEqual([
-      {
-        recordId: 'record-kickoff-1',
-        taskId: 'kickoff-1',
-        agentId: 'agent-flow',
-      },
-    ]);
-    expect(next.recentDispatches[0]?.kind).toBe('flow');
-    expect(next.recentDispatches[0]?.action).toBe('flow_dispatch');
+    expect(next.recentDispatches).toEqual([]);
   });
 
-  test('routes review tasks into task review instead of delivery dispatch', async () => {
+  test('does not route review tasks into the agent-work runtime', async () => {
     const store = new WorkspaceSubscriptionStore(makeTempDb('agent-work-review-subscriptions'));
     const agentStore = new AgentDefinitionStore(makeTempDb('agent-work-review-agents'));
     const subscription = store.save(makeSubscription());
@@ -2053,7 +2009,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       managedByNpub: subscription.managedByNpub,
     });
 
-    const reviewDispatches: Array<{ recordId: string; taskId: string; agentId: string }> = [];
     const manager = new WorkspaceSubscriptionManager({
       store,
       agentStore,
@@ -2061,15 +2016,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
         handleTaskDispatch: async () => {
           throw new Error('handleTaskDispatch should not run for review tasks');
         },
-        handleTaskReview: async (input: any) => {
-          reviewDispatches.push({
-            recordId: input.recordId,
-            taskId: input.task.taskId,
-            agentId: input.agent.agentId,
-          });
-          return makeSession('review-session-1');
-        },
-        handleApprovalDispatch: async () => null,
       } as unknown as AgentWorkSessionRuntime,
       fetchRecordHistory: async () => [
         {
@@ -2084,7 +2030,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
         flow_run_id: 'run-1',
         flow_step: 3,
         title: 'Review work',
-        description: 'Continue orchestration',
+        description: 'Continue review',
         state: 'review',
         assigned_to: 'npub1bot',
         predecessor_task_ids: [],
@@ -2114,15 +2060,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       }),
     );
 
-    expect(reviewDispatches).toEqual([
-      {
-        recordId: 'record-review-1',
-        taskId: 'review-1',
-        agentId: 'agent-review',
-      },
-    ]);
-    expect(next.recentDispatches[0]?.kind).toBe('review');
-    expect(next.recentDispatches[0]?.action).toBe('task_review');
+    expect(next.recentDispatches).toEqual([]);
   });
 
   test('records task skip reasons when task advisories are not actionable', async () => {
@@ -2152,7 +2090,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
         handleTaskDispatch: async () => {
           throw new Error('handleTaskDispatch should not run for skipped task');
         },
-        handleApprovalDispatch: async () => null,
       } as unknown as AgentWorkSessionRuntime,
       fetchRecordHistory: async () => [
         {
@@ -2226,7 +2163,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
         handleTaskDispatch: async () => {
           throw new Error('handleTaskDispatch should not run until the task is ready');
         },
-        handleApprovalDispatch: async () => null,
       } as unknown as AgentWorkSessionRuntime,
       fetchRecordHistory: async () => [
         {
@@ -2301,7 +2237,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
         handleTaskDispatch: async () => {
           throw new Error('handleTaskDispatch should not run for bot-authored task rewrites');
         },
-        handleApprovalDispatch: async () => null,
       } as unknown as AgentWorkSessionRuntime,
       fetchRecordHistory: async () => [
         {
@@ -2387,7 +2322,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
         handleTaskDispatch: async () => {
           throw new Error('handleTaskDispatch should not run for workspace-key-authored task rewrites');
         },
-        handleApprovalDispatch: async () => null,
       } as unknown as AgentWorkSessionRuntime,
       fetchRecordHistory: async () => [
         {
@@ -2478,7 +2412,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           });
           return null;
         },
-        handleApprovalDispatch: async () => null,
       } as unknown as AgentWorkSessionRuntime,
       fetchRecordHistory: async () => [
         {
@@ -2567,7 +2500,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           });
           return null;
         },
-        handleApprovalDispatch: async () => null,
       } as unknown as AgentWorkSessionRuntime,
       fetchRecordHistory: async () => [
         {
@@ -2651,7 +2583,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       agentStore,
       agentWorkRuntime: {
         handleTaskDispatch: async () => null,
-        handleApprovalDispatch: async () => null,
         handleTaskCommentDispatch: async (input: any) => {
           taskCommentDispatches.push({
             recordId: input.recordId,
@@ -2734,7 +2665,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       agentStore,
       agentWorkRuntime: {
         handleTaskDispatch: async () => null,
-        handleApprovalDispatch: async () => null,
         handleTaskCommentDispatch: async (input: any) => {
           taskCommentDispatches.push({
             recordId: input.recordId,
@@ -2817,7 +2747,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       agentStore,
       agentWorkRuntime: {
         handleTaskDispatch: async () => null,
-        handleApprovalDispatch: async () => null,
         handleTaskCommentDispatch: async (input: any) => {
           taskCommentDispatches.push(input.recordId);
           return null;
@@ -3140,7 +3069,6 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           });
           return null;
         },
-        handleApprovalDispatch: async () => null,
       } as unknown as AgentWorkSessionRuntime,
       fetchRecordHistory: async () => [
         {

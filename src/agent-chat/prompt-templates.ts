@@ -66,15 +66,10 @@ export const DEFAULT_FLOW_DISPATCH_PROMPT_TEMPLATE = [
   'Title: {{title}}',
   'Description: {{description}}',
   'Instructions:',
-  '- Run the stable wrapper from the Wingmen repo: `cd /Users/mini/code/wingmen && bun clis/wingman.ts board flow-dispatch {{task_id}}`.',
-  '- If the repo-local board wrapper is not initialised, initialise it once and continue rather than exploring alternate code paths.',
-  '- Claim the kickoff task exactly once and treat it as the parent task for the run.',
-  '- Use the stable board wrapper, not ad hoc Yoke commands, for run instantiation.',
-  '- Stamp one shared flow_run_id across the parent, child tasks, and approval records.',
-  '- Materialise the run contract up front: resolve the concrete repo/workdir, expand placeholders, and stamp explicit artifact paths into every child task and approval brief.',
-  '- Create all child tasks and approval records up front, then leave blocked work in new and actionable work in ready.',
-  '- Approval steps are approval-prep tasks first: assign them to the agent, prepare the review package, then hand them to the human approver during task review.',
-  '- Stop after the run graph and kickoff evidence are on the board.',
+  '- Let the configured dispatch pipeline instantiate and advance the run.',
+  '- Treat the task record and pipeline payload as the source of truth.',
+  '- Do not run legacy board wrappers or create ad hoc agent sessions from this prompt.',
+  '- Stop if the pipeline payload is missing required repo, workdir, task, or approval context.',
 ].join('\n');
 
 export const DEFAULT_TASK_REVIEW_PROMPT_TEMPLATE = [
@@ -88,12 +83,10 @@ export const DEFAULT_TASK_REVIEW_PROMPT_TEMPLATE = [
   'Title: {{title}}',
   'Description: {{description}}',
   'Instructions:',
-  '- Inspect the flow-run graph through the stable board wrapper.',
-  '- If the reviewed task is an approval-prep task, do not promote downstream work yet. Reassign that task to the human approver and leave it in review.',
-  '- Promote every newly-unblocked downstream task from new to ready in one pass.',
-  '- Respect fan-out and fan-in by using predecessor completion, not step-number guesses.',
-  '- Post concise board evidence describing which successors changed state.',
-  '- Stop when no further downstream task can be promoted.',
+  '- Let the configured review pipeline decide downstream promotion.',
+  '- Treat predecessor state and explicit pipeline payload fields as the source of truth.',
+  '- Do not run legacy review wrappers or create ad hoc agent sessions from this prompt.',
+  '- Stop if the pipeline payload lacks the linked task or flow-run context needed for review.',
 ].join('\n');
 
 export const DEFAULT_APPROVAL_DISPATCH_PROMPT_TEMPLATE = [
@@ -106,10 +99,10 @@ export const DEFAULT_APPROVAL_DISPATCH_PROMPT_TEMPLATE = [
   'Approval state: {{approval_state}}',
   'Instructions:',
   '- Continue only when the approval transition is approved and part of a live flow run.',
-  '- Use the stable board wrapper to inspect the approval, linked tasks, and downstream graph.',
-  '- Treat the linked approval task as the human-reviewed gate that is now satisfied; mark it done and only then promote newly-unblocked downstream work.',
-  '- Promote newly-unblocked downstream tasks from new to ready and record evidence on the board.',
-  '- Stop if no further task is actionable after the approval decision.',
+  '- Let the configured approval pipeline inspect the linked task and advance downstream work.',
+  '- Treat the approval record and pipeline payload as the source of truth.',
+  '- Do not run legacy approval wrappers or create ad hoc agent sessions from this prompt.',
+  '- Stop if the payload lacks the linked approval or flow-run context needed for approval handling.',
 ].join('\n');
 
 export function getDefaultDispatchPromptTemplate(capability: string): string {

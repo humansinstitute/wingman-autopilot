@@ -3,17 +3,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { Database } from 'bun:sqlite';
 
-import {
-  continueFlowAfterApproval,
-  continueFlowAfterTaskReview,
-  instantiateFlowRun,
-  normaliseFlowRecord,
-  type BoardApprovalRecord,
-  type BoardFlowRecord,
-  type BoardTaskCreateInput,
-  type BoardTaskRecord,
-  type FlowBoard,
-} from './flow-orchestration';
 import { collectWappScopeGroupRefs } from '../wapps/scope-access';
 
 const YOKE_CLI_PATH = compactText(Bun.env.AGENT_CHAT_YOKE_CLI_PATH)
@@ -33,6 +22,34 @@ export interface RepoBoardConfigWithPaths extends RepoBoardConfig {
   repoRoot: string;
   configPath: string;
   stateDir: string;
+}
+
+export interface BoardTaskRecord {
+  taskId: string;
+  title: string;
+  description: string;
+  state: string | null;
+  assignedTo: string | null;
+  parentTaskId: string | null;
+  flowId: string | null;
+  flowRunId: string | null;
+  flowStep: number | null;
+  predecessorTaskIds: string[];
+  scopeId: string | null;
+  scopeLineage: Array<string | null>;
+  references: Array<{ type: string; id: string }>;
+  tags: string[];
+}
+
+export interface BoardTaskCreateInput {
+  title: string;
+  description?: string | null;
+  state?: string | null;
+  assignedTo?: string | null;
+  parentTaskId?: string | null;
+  predecessorTaskIds?: string[];
+  scopeId?: string | null;
+  tags?: string[];
 }
 
 function compactText(value: unknown): string {
@@ -230,21 +247,6 @@ function parseTaskRecord(raw: Record<string, unknown>): BoardTaskRecord {
   };
 }
 
-function parseApprovalRecord(raw: Record<string, unknown>): BoardApprovalRecord {
-  return {
-    approvalId: compactText(raw.record_id),
-    title: compactText(raw.title),
-    flowId: compactText(raw.flow_id) || null,
-    flowRunId: compactText(raw.flow_run_id) || null,
-    flowStep: Number.isFinite(Number(raw.flow_step)) ? Number(raw.flow_step) : null,
-    status: compactText(raw.status) || null,
-    approvalMode: compactText(raw.approval_mode) === 'agent' ? 'agent' : 'manual',
-    taskIds: compactStringArrayMaybeJson(raw.task_ids ?? raw.task_ids_json),
-    brief: compactText(raw.brief),
-    approverWhitelist: compactStringArrayMaybeJson(raw.approver_whitelist ?? raw.approver_whitelist_json),
-  };
-}
-
 function parseMaybeJsonObject(value: unknown): Record<string, unknown> | null {
   const text = compactText(value);
   if (!text) {
@@ -301,13 +303,10 @@ function encodeTaskPatchFlags(patch: Partial<BoardTaskRecord> & { predecessorTas
   if (patch.predecessorTaskIds !== undefined) {
     args.push('--predecessor', ...patch.predecessorTaskIds);
   }
-  if (patch.flowId !== undefined && patch.flowId !== null) args.push('--flow-id', patch.flowId);
-  if (patch.flowRunId !== undefined && patch.flowRunId !== null) args.push('--flow-run-id', patch.flowRunId);
-  if (patch.flowStep !== undefined && patch.flowStep !== null) args.push('--flow-step', String(patch.flowStep));
   return args;
 }
 
-export class YokeBoardClient implements FlowBoard {
+export class YokeBoardClient {
   readonly config: RepoBoardConfigWithPaths;
 
   constructor(config: RepoBoardConfigWithPaths) {
@@ -326,11 +325,6 @@ export class YokeBoardClient implements FlowBoard {
 
   async status(): Promise<unknown> {
     return await this.runYokeJson(['status', '--json']);
-  }
-
-  async getFlow(flowId: string): Promise<BoardFlowRecord> {
-    const flow = await this.runYokeJson<Record<string, unknown>>(['flows', 'get', flowId, '--json']);
-    return normaliseFlowRecord(flow);
   }
 
   async getTask(taskId: string): Promise<BoardTaskRecord> {
@@ -356,9 +350,6 @@ export class YokeBoardClient implements FlowBoard {
     if (input.predecessorTaskIds && input.predecessorTaskIds.length > 0) {
       args.push('--predecessor', ...input.predecessorTaskIds);
     }
-    if (input.flowId) args.push('--flow-id', input.flowId);
-    if (input.flowRunId) args.push('--flow-run-id', input.flowRunId);
-    if (input.flowStep != null) args.push('--flow-step', String(input.flowStep));
     if (input.scopeId) args.push('--scope', input.scopeId);
     if (input.tags && input.tags.length > 0) args.push('--tags', input.tags.join(','));
     args.push('--json');
@@ -369,57 +360,7 @@ export class YokeBoardClient implements FlowBoard {
     if (created?.record_id) {
       return await this.getTask(compactText(created.record_id));
     }
-    await this.sync();
-    const rows = await this.listFlowRunTasks(compactText(input.flowRunId));
-    const match = rows.find((task) => task.title === input.title && task.parentTaskId === (input.parentTaskId ?? null));
-    if (!match) {
-      throw new Error(`Unable to locate created task "${input.title}".`);
-    }
-    return match;
-  }
-
-  async createApproval(input: {
-    title: string;
-    flowId?: string | null;
-    flowRunId?: string | null;
-    flowStep?: number | null;
-    taskIds?: string[];
-    approvalMode?: 'manual' | 'agent';
-    brief?: string;
-    approverWhitelist?: string[];
-  }): Promise<BoardApprovalRecord> {
-    const args = ['approvals', 'create', '--title', input.title];
-    if (input.flowId) args.push('--flow-id', input.flowId);
-    if (input.flowRunId) args.push('--flow-run-id', input.flowRunId);
-    if (input.flowStep != null) args.push('--flow-step', String(input.flowStep));
-    if (input.taskIds && input.taskIds.length > 0) args.push('--task-ids', ...input.taskIds);
-    if (input.brief) args.push('--brief', input.brief);
-    if (input.approvalMode) args.push('--approval-mode', input.approvalMode);
-    if (input.approverWhitelist && input.approverWhitelist.length > 0) {
-      args.push('--approver-whitelist', ...input.approverWhitelist);
-    }
-    args.push('--json');
-    const result = await this.runYokeJson<Record<string, unknown>>(args);
-    const created = Array.isArray((result as { records?: unknown[] }).records)
-      ? ((result as { records: Array<Record<string, unknown>> }).records[0] ?? null)
-      : null;
-    if (created?.record_id) {
-      return await this.getApproval(compactText(created.record_id));
-    }
-    await this.sync();
-    const db = this.openDb();
-    const row = db.prepare(
-      `SELECT * FROM approvals WHERE flow_run_id = ? ORDER BY updated_at DESC LIMIT 1`,
-    ).get(input.flowRunId ?? null) as Record<string, unknown> | null;
-    if (!row) {
-      throw new Error(`Unable to locate created approval "${input.title}".`);
-    }
-    return parseApprovalRecord(row);
-  }
-
-  async getApproval(approvalId: string): Promise<BoardApprovalRecord> {
-    const approval = await this.runYokeJson<Record<string, unknown>>(['approvals', 'get', approvalId, '--json']);
-    return parseApprovalRecord(approval);
+    throw new Error(`Unable to locate created task "${input.title}".`);
   }
 
   async getDocument(documentId: string): Promise<Record<string, unknown>> {
@@ -459,46 +400,6 @@ export class YokeBoardClient implements FlowBoard {
     if (input.limit != null) args.push('--limit', String(input.limit));
     args.push('--format', 'json');
     return await this.runYokeJson<Record<string, unknown>>(args);
-  }
-
-  async listFlowRunTasks(flowRunId: string): Promise<BoardTaskRecord[]> {
-    const db = this.openDb();
-    const rows = db.prepare(
-      `SELECT * FROM tasks WHERE record_state != 'deleted' AND flow_run_id = ? ORDER BY flow_step ASC, updated_at ASC`,
-    ).all(flowRunId) as Array<Record<string, unknown>>;
-    return rows.map((row) => parseTaskRecord(parseJsonOutput<Record<string, unknown>>(String(row.raw_json ?? '{}'))));
-  }
-
-  async listFlowRunApprovals(flowRunId: string): Promise<BoardApprovalRecord[]> {
-    const db = this.openDb();
-    const rows = db.prepare(
-      `SELECT * FROM approvals WHERE record_state != 'deleted' AND flow_run_id = ? ORDER BY flow_step ASC, updated_at ASC`,
-    ).all(flowRunId) as Array<Record<string, unknown>>;
-    return rows.map((row) => {
-      const rawJson = compactText(row.raw_json);
-      return parseApprovalRecord(rawJson ? parseJsonOutput<Record<string, unknown>>(rawJson) : row);
-    });
-  }
-
-  async approve(approvalId: string, note = ''): Promise<BoardApprovalRecord> {
-    const args = ['approvals', 'approve', approvalId];
-    if (note) args.push('--note', note);
-    args.push('--json');
-    await this.runYoke(args);
-    return await this.getApproval(approvalId);
-  }
-
-  async runFlowDispatch(kickoffTaskId: string) {
-    return await instantiateFlowRun(this, kickoffTaskId);
-  }
-
-  async runTaskReview(taskId: string) {
-    return await continueFlowAfterTaskReview(this, taskId);
-  }
-
-  async runApprovalDispatch(approvalId: string) {
-    const approval = await this.getApproval(approvalId);
-    return await continueFlowAfterApproval(this, approval);
   }
 
   async runYoke(args: string[]): Promise<string> {
@@ -555,7 +456,6 @@ export function describeBoardContract(config: RepoBoardConfigWithPaths): string 
     `- bun clis/wingman.ts board task patch <task-id> --state <state>`,
     `- bun clis/wingman.ts board task comment <task-id> --body "<text>"`,
     `- bun clis/wingman.ts board task create --title "<title>"`,
-    `- bun clis/wingman.ts board approval create --title "<title>"`,
     `- bun clis/wingman.ts board scope list`,
     `- bun clis/wingman.ts board doc show <doc-id>`,
     `- bun clis/wingman.ts board chat context --channel <channel-id> --thread <message-id>`,

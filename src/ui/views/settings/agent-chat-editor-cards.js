@@ -302,7 +302,7 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
 
   const flowDispatchTemplateSection = createDisclosureSection(
     'Flow Dispatch Template',
-    'Open this only when the kickoff orchestration prompt needs an override for this local agent.',
+    'Open this only when the kickoff pipeline prompt needs an override for this local agent.',
     'agent-chat-flow-template-section',
   );
   flowDispatchTemplateSection.body.append(
@@ -323,7 +323,7 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
 
   const taskReviewTemplateSection = createDisclosureSection(
     'Task Review Template',
-    'Open this only when the review-orchestration prompt needs an override for this local agent.',
+    'Open this only when the review pipeline prompt needs an override for this local agent.',
     'agent-chat-task-review-template-section',
   );
   taskReviewTemplateSection.body.append(

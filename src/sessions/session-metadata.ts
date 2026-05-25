@@ -40,7 +40,6 @@ export const SESSION_METADATA_BINDING_TYPES = [
   "thread",
   "task",
   "flow_run",
-  "flow_orchestration",
 ] as const;
 
 export type SessionBindingType =
