@@ -12,17 +12,26 @@ function loadUserSettings() {
   return fetchUserSettings().catch(() => ({}));
 }
 
-function createRowLabel(text, minWidth = 140) {
+function createRowLabel(text, minWidth = 140, htmlFor = '') {
   const label = document.createElement('label');
   label.textContent = text;
+  if (htmlFor) {
+    label.htmlFor = htmlFor;
+  }
   label.style.cssText = `font-size:0.85em;font-weight:500;min-width:${minWidth}px;`;
   return label;
 }
 
-function createInput(placeholder, type = 'text') {
+function createInput(placeholder, type = 'text', ariaLabel = '', testId = '') {
   const input = document.createElement('input');
   input.type = type;
   input.placeholder = placeholder;
+  if (ariaLabel) {
+    input.setAttribute('aria-label', ariaLabel);
+  }
+  if (testId) {
+    input.dataset.testid = testId;
+  }
   input.className = 'wm-input';
   input.style.cssText = 'flex:1;font-family:monospace;font-size:0.85em;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary);color:var(--text);';
   return input;
@@ -30,6 +39,7 @@ function createInput(placeholder, type = 'text') {
 
 function createStatusText() {
   const status = document.createElement('span');
+  status.setAttribute('aria-live', 'polite');
   status.style.cssText = 'font-size:0.8em;color:var(--text-muted);';
   return status;
 }
@@ -184,7 +194,11 @@ export function createApiKeysSection() {
   const label = createRowLabel('OpenRouter API Key');
   const input = createInput('sk-or-...', 'password');
   const saveBtn = createActionButton('Save');
+  saveBtn.setAttribute('aria-label', 'Save GitHub credentials');
+  saveBtn.dataset.testid = 'settings-github-save';
   const clearBtn = createActionButton('Clear');
+  clearBtn.setAttribute('aria-label', 'Clear GitHub credentials');
+  clearBtn.dataset.testid = 'settings-github-clear';
   const status = createStatusText();
 
   loadUserSettings().then((settings) => {
@@ -257,17 +271,37 @@ export function createGitHubSection() {
   usernameRow.className = 'wm-settings__key-row';
   usernameRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
 
-  const usernameLabel = createRowLabel('GitHub Username');
-  const usernameInput = createInput('x-access-token');
+  const usernameLabel = createRowLabel('GitHub Username', 140, 'github-username-input');
+  const usernameInput = createInput('x-access-token', 'text', 'GitHub username', 'settings-github-username');
+  usernameInput.id = 'github-username-input';
   usernameRow.append(usernameLabel, usernameInput);
 
   const tokenRow = document.createElement('div');
   tokenRow.className = 'wm-settings__key-row';
   tokenRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
 
-  const tokenLabel = createRowLabel('Personal Access Token');
-  const tokenInput = createInput('ghp_...', 'password');
+  const tokenLabel = createRowLabel('Personal Access Token', 140, 'github-token-input');
+  const tokenInput = createInput('ghp_...', 'password', 'GitHub personal access token', 'settings-github-token');
+  tokenInput.id = 'github-token-input';
   tokenRow.append(tokenLabel, tokenInput);
+
+  const authorNameRow = document.createElement('div');
+  authorNameRow.className = 'wm-settings__key-row';
+  authorNameRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
+
+  const authorNameLabel = createRowLabel('Commit Name', 140, 'github-author-name-input');
+  const authorNameInput = createInput('Your GitHub name', 'text', 'Git commit author name', 'settings-github-author-name');
+  authorNameInput.id = 'github-author-name-input';
+  authorNameRow.append(authorNameLabel, authorNameInput);
+
+  const authorEmailRow = document.createElement('div');
+  authorEmailRow.className = 'wm-settings__key-row';
+  authorEmailRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
+
+  const authorEmailLabel = createRowLabel('Commit Email', 140, 'github-author-email-input');
+  const authorEmailInput = createInput('you@users.noreply.github.com', 'email', 'Git commit author email', 'settings-github-author-email');
+  authorEmailInput.id = 'github-author-email-input';
+  authorEmailRow.append(authorEmailLabel, authorEmailInput);
 
   const actionsRow = document.createElement('div');
   actionsRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
@@ -277,6 +311,7 @@ export function createGitHubSection() {
   const status = createStatusText();
 
   let currentUsername = 'x-access-token';
+  let hasStoredToken = false;
 
   loadUserSettings().then((settings) => {
     const storedUsername = typeof settings.github_username === 'string' ? settings.github_username.trim() : '';
@@ -287,7 +322,16 @@ export function createGitHubSection() {
       usernameInput.value = storedUsername;
     }
 
+    if (typeof settings.github_git_name === 'string' && settings.github_git_name.trim()) {
+      authorNameInput.value = settings.github_git_name.trim();
+    }
+
+    if (typeof settings.github_git_email === 'string' && settings.github_git_email.trim()) {
+      authorEmailInput.value = settings.github_git_email.trim();
+    }
+
     if (tokenMasked) {
+      hasStoredToken = true;
       tokenInput.placeholder = tokenMasked;
       setStatus(status, 'Credential set', 'var(--success, #4caf50)');
     }
@@ -296,9 +340,16 @@ export function createGitHubSection() {
   saveBtn.addEventListener('click', async () => {
     const token = tokenInput.value.trim();
     const username = usernameInput.value.trim() || currentUsername || 'x-access-token';
+    const authorName = authorNameInput.value.trim() || (username !== 'x-access-token' ? username : '');
+    const authorEmail = authorEmailInput.value.trim();
 
-    if (!token) {
+    if (!token && !hasStoredToken) {
       setStatus(status, 'Token is required', 'var(--error, #f44336)');
+      return;
+    }
+
+    if (!authorEmail) {
+      setStatus(status, 'Commit email is required', 'var(--error, #f44336)');
       return;
     }
 
@@ -306,14 +357,25 @@ export function createGitHubSection() {
     saveBtn.textContent = 'Saving...';
 
     try {
-      await Promise.all([
+      const saves = [
         saveUserSetting('github_username', username),
-        saveUserSetting('github_api_key', token),
-      ]);
+        saveUserSetting('github_git_name', authorName),
+        saveUserSetting('github_git_email', authorEmail),
+      ];
+      if (token) {
+        saves.push(saveUserSetting('github_api_key', token));
+      }
+
+      await Promise.all(saves);
       currentUsername = username;
       usernameInput.value = username;
-      tokenInput.value = '';
-      tokenInput.placeholder = token.slice(0, 4) + '..' + token.slice(-4);
+      authorNameInput.value = authorName;
+      authorEmailInput.value = authorEmail;
+      if (token) {
+        hasStoredToken = true;
+        tokenInput.value = '';
+        tokenInput.placeholder = token.slice(0, 4) + '..' + token.slice(-4);
+      }
       setStatus(status, 'Saved', 'var(--success, #4caf50)');
     } catch (error) {
       setStatus(status, error.message || 'Save failed', 'var(--error, #f44336)');
@@ -331,11 +393,18 @@ export function createGitHubSection() {
         deleteUserSetting('github_token'),
         deleteUserSetting('github_username'),
         deleteUserSetting('github_user'),
+        deleteUserSetting('github_git_name'),
+        deleteUserSetting('github_git_email'),
+        deleteUserSetting('github_name'),
+        deleteUserSetting('github_email'),
       ]);
 
       currentUsername = 'x-access-token';
+      hasStoredToken = false;
       usernameInput.value = '';
       usernameInput.placeholder = 'x-access-token';
+      authorNameInput.value = '';
+      authorEmailInput.value = '';
       tokenInput.value = '';
       tokenInput.placeholder = 'ghp_...';
       setStatus(status, 'Cleared');
@@ -350,9 +419,9 @@ export function createGitHubSection() {
   const helpText = document.createElement('p');
   helpText.className = 'wm-settings__port-note';
   helpText.style.cssText = 'margin-top:6px;font-size:0.8em;';
-  helpText.innerHTML = 'Create a token at <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">github.com/settings/tokens</a>. Works with HTTPS remotes on <code>github.com</code>.';
+  helpText.innerHTML = 'Create a token at <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">github.com/settings/tokens</a>. Use a GitHub-verified commit email, such as your no-reply address, so pushed commits attribute to you.';
 
-  container.append(usernameRow, tokenRow, actionsRow, helpText);
+  container.append(usernameRow, tokenRow, authorNameRow, authorEmailRow, actionsRow, helpText);
   return container;
 }
 

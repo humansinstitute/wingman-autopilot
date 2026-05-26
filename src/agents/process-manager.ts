@@ -469,7 +469,13 @@ export class ProcessManager {
         Object.assign(nextEnv, gitCredentialEnv);
       }
 
-      if (giteaCreds) {
+      const hasGitAuthorIdentity =
+        Boolean(nextEnv.GIT_AUTHOR_NAME) &&
+        Boolean(nextEnv.GIT_AUTHOR_EMAIL) &&
+        Boolean(nextEnv.GIT_COMMITTER_NAME) &&
+        Boolean(nextEnv.GIT_COMMITTER_EMAIL);
+
+      if (giteaCreds && !hasGitAuthorIdentity) {
         Object.assign(nextEnv, {
           GIT_AUTHOR_NAME: giteaCreds.owner,
           GIT_AUTHOR_EMAIL: `${giteaCreds.owner}@wingman-os.ai`,

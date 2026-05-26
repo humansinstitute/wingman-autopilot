@@ -44,21 +44,66 @@ function ensureGitHubCredentialHelper(dataDir: string): string | null {
   }
 }
 
+export type GitHubUserCredentials = {
+  username: string;
+  token: string;
+  authorName: string | null;
+  authorEmail: string | null;
+};
+
+function normalizeSetting(value: string | null | undefined): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function getUserGitHubCredentials(
   npub: string,
-): { username: string; token: string } | null {
+): GitHubUserCredentials | null {
   const token =
-    userSettingsStore.get(npub, "github_api_key")?.trim() ||
-    userSettingsStore.get(npub, "github_token")?.trim() ||
+    normalizeSetting(userSettingsStore.get(npub, "github_api_key")) ||
+    normalizeSetting(userSettingsStore.get(npub, "github_token")) ||
     "";
   if (!token) return null;
 
   const username =
-    userSettingsStore.get(npub, "github_username")?.trim() ||
-    userSettingsStore.get(npub, "github_user")?.trim() ||
+    normalizeSetting(userSettingsStore.get(npub, "github_username")) ||
+    normalizeSetting(userSettingsStore.get(npub, "github_user")) ||
     "x-access-token";
 
-  return { username, token };
+  const authorEmail =
+    normalizeSetting(userSettingsStore.get(npub, "github_git_email")) ||
+    normalizeSetting(userSettingsStore.get(npub, "github_email")) ||
+    null;
+  const authorName =
+    normalizeSetting(userSettingsStore.get(npub, "github_git_name")) ||
+    normalizeSetting(userSettingsStore.get(npub, "github_name")) ||
+    (username !== "x-access-token" ? username : null);
+
+  return { username, token, authorName, authorEmail };
+}
+
+export function buildGitHubGitEnv(
+  creds: GitHubUserCredentials,
+  helperPath: string,
+): Record<string, string> {
+  const env: Record<string, string> = {
+    WINGMAN_GITHUB_USERNAME: creds.username,
+    WINGMAN_GITHUB_TOKEN: creds.token,
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "credential.https://github.com.helper",
+    GIT_CONFIG_VALUE_0: helperPath,
+  };
+
+  if (creds.authorEmail) {
+    const authorName = creds.authorName || creds.authorEmail.split("@")[0] || "GitHub User";
+    Object.assign(env, {
+      GIT_AUTHOR_NAME: authorName,
+      GIT_AUTHOR_EMAIL: creds.authorEmail,
+      GIT_COMMITTER_NAME: authorName,
+      GIT_COMMITTER_EMAIL: creds.authorEmail,
+    });
+  }
+
+  return env;
 }
 
 export function getGitHubGitEnvForUser(
@@ -74,11 +119,5 @@ export function getGitHubGitEnvForUser(
   const helperPath = ensureGitHubCredentialHelper(dataDir);
   if (!helperPath) return null;
 
-  return {
-    WINGMAN_GITHUB_USERNAME: creds.username,
-    WINGMAN_GITHUB_TOKEN: creds.token,
-    GIT_CONFIG_COUNT: "1",
-    GIT_CONFIG_KEY_0: "credential.https://github.com.helper",
-    GIT_CONFIG_VALUE_0: helperPath,
-  };
+  return buildGitHubGitEnv(creds, helperPath);
 }
