@@ -182,6 +182,9 @@ Run the readiness checklist any time:
 docker compose --env-file .env.wingman-01 exec wingman bun run docker:check
 ```
 
+For CapRover branch deploys with persistent app state, see
+`docs/caprover-deploy.md`.
+
 The checklist reports installed tools, writable Docker volumes, configured
 Wingman URLs/workspace values, required secrets, and whether CLI auth files are
 detectable in `/home/wingman`.
