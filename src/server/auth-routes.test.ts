@@ -8,8 +8,9 @@ import { handleAuthApi, type AuthApiContext } from "./auth-routes";
 
 const makeNpub = () => nip19.npubEncode(getPublicKey(generateSecretKey()));
 
-function createAuthContext(adminNpub: string): AuthApiContext {
+function createAuthContext(adminNpub: string, adminNpubs: string[] = [adminNpub]): AuthApiContext {
   const knownUsers = new Set<string>();
+  const normalizedAdmins = adminNpubs.map((npub) => normaliseNpub(npub)).filter((npub): npub is string => Boolean(npub));
   return {
     config: {
       registrationEnabled: false,
@@ -19,6 +20,10 @@ function createAuthContext(adminNpub: string): AuthApiContext {
       giteaOwner: null,
     },
     adminNpub: normaliseNpub(adminNpub),
+    isAdminNpub: (npub) => {
+      const normalized = normaliseNpub(npub ?? null);
+      return Boolean(normalized && normalizedAdmins.includes(normalized));
+    },
     identityUserStore: {
       getByNormalized: (npub) => knownUsers.has(npub) ? { npub, pictureUrl: null } : null,
       touch: (npub) => {
@@ -67,6 +72,25 @@ describe("auth routes", () => {
       "POST",
       requestAuthContext(),
       createAuthContext(adminNpub),
+    );
+
+    expect(response?.status).toBe(200);
+  });
+
+  test("allows any configured admin to bootstrap when registration is disabled", async () => {
+    const primaryAdminNpub = makeNpub();
+    const secondaryAdminNpub = makeNpub();
+    const request = new Request("http://localhost/api/auth/session", {
+      method: "POST",
+      body: JSON.stringify({ npub: secondaryAdminNpub }),
+    });
+
+    const response = await handleAuthApi(
+      request,
+      new URL(request.url),
+      "POST",
+      requestAuthContext(),
+      createAuthContext(primaryAdminNpub, [primaryAdminNpub, secondaryAdminNpub]),
     );
 
     expect(response?.status).toBe(200);

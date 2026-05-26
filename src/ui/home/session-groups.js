@@ -34,8 +34,7 @@ export function isTaskDispatchSession(session) {
     originType === 'agent-work' ||
     metadata.role === 'agent-work' ||
     metadata.bindingType === 'task' ||
-    metadata.bindingType === 'flow_run' ||
-    metadata.bindingType === 'flow_orchestration'
+    metadata.bindingType === 'flow_run'
   );
 }
 

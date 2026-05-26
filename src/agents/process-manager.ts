@@ -5,7 +5,7 @@ import { join, normalize, resolve } from "node:path";
 import type { AgentDefinition, AgentType, WingmanConfig } from "../config";
 import { getAuthenticatedNpub } from "../auth/request-context";
 import { generateIdentityAlias } from "../identity/identity-alias";
-import { normaliseNpub } from "../identity/npub-utils";
+import { isNpubInList, normaliseNpub, normaliseNpubList } from "../identity/npub-utils";
 import { isPortAvailable } from "../utils/port-utils.js";
 import { sanitizeLogEntry } from "../logging/log-sanitizer";
 import { trackProjectForSession } from "../projects/npub-project-tracker";
@@ -262,7 +262,10 @@ export class ProcessManager {
   private readonly sessions = new Map<string, AgentSession>();
   private readonly allocatedPorts = new Set<number>();
   private readonly listeners = new Set<(event: SessionEvent) => void>();
-  private readonly adminNpub = normaliseNpub(Bun.env.ADMIN_NPUB ?? null);
+  private readonly adminNpubs = normaliseNpubList(
+    Bun.env.ADMIN_NPUB?.trim() ? Bun.env.ADMIN_NPUB : Bun.env.WINGMAN_ADMIN_NPUB,
+  );
+  private readonly adminNpub = this.adminNpubs[0] ?? null;
   /** Debounce timers for log-driven session-updated events */
   private readonly logUpdateDebounce = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -466,7 +469,13 @@ export class ProcessManager {
         Object.assign(nextEnv, gitCredentialEnv);
       }
 
-      if (giteaCreds) {
+      const hasGitAuthorIdentity =
+        Boolean(nextEnv.GIT_AUTHOR_NAME) &&
+        Boolean(nextEnv.GIT_AUTHOR_EMAIL) &&
+        Boolean(nextEnv.GIT_COMMITTER_NAME) &&
+        Boolean(nextEnv.GIT_COMMITTER_EMAIL);
+
+      if (giteaCreds && !hasGitAuthorIdentity) {
         Object.assign(nextEnv, {
           GIT_AUTHOR_NAME: giteaCreds.owner,
           GIT_AUTHOR_EMAIL: `${giteaCreds.owner}@wingman-os.ai`,
@@ -836,11 +845,13 @@ export class ProcessManager {
   }
 
   private buildAgentProcessEnv(session: AgentSession): Record<string, string | undefined> {
-    // Strip server-only private keys from child env. Agents receive only the
+    // Strip server-only secrets from child env. Agents receive only the
     // derived compatibility identity vars injected during session setup.
     const {
       KEYTELEPORT_PRIVKEY: _strippedKeyTeleport,
       WINGMAN_PRIV: _strippedWingmanPriv,
+      WINGMAN_SIGNING_SECRET: _strippedSigningSecret,
+      WINGMAN_SIGNING_TOKEN: _strippedSigningToken,
       ...parentEnv
     } = Bun.env;
     return {
@@ -1078,7 +1089,7 @@ export class ProcessManager {
     if (!npub) {
       return this.config.defaultWorkingDirectory;
     }
-    if (this.adminNpub && npub === this.adminNpub) {
+    if (this.isAdminUser(npub)) {
       return this.config.defaultWorkingDirectory;
     }
     const alias = generateIdentityAlias(npub);
@@ -1110,10 +1121,7 @@ export class ProcessManager {
   }
 
   private isAdminUser(npub: string | undefined): boolean {
-    if (!npub || !this.adminNpub) {
-      return false;
-    }
-    return normaliseNpub(npub) === this.adminNpub;
+    return isNpubInList(npub, this.adminNpubs);
   }
 
   private resolveUserAlias(npub: string | undefined): string {

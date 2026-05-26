@@ -2,9 +2,7 @@ import { nip19 } from 'nostr-tools';
 import { generateBotKey, unlockViaEscrow } from '../identity/bot-key-manager';
 import {
   AgentWorkSessionRuntime,
-  evaluateFlowDispatchEligibility,
   evaluateTaskDispatchEligibility,
-  evaluateTaskReviewEligibility,
   normaliseInboundApprovalRecord,
   normaliseInboundTaskRecord,
 } from '../agent-work/session-runtime';
@@ -282,6 +280,47 @@ type TaskDispatchEligibility =
   | 'skip_not_kickoff'
   | 'skip_not_review';
 
+const TERMINAL_TASK_STATES = new Set([
+  'done',
+  'complete',
+  'completed',
+  'cancelled',
+  'canceled',
+  'archived',
+  'deleted',
+]);
+
+function normaliseTaskIdentity(value: string | null): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim().toLowerCase() : null;
+}
+
+function decodeNpubToHex(npub: string | null): string | null {
+  if (!npub) {
+    return null;
+  }
+  try {
+    const decoded = nip19.decode(npub);
+    return decoded.type === 'npub' && typeof decoded.data === 'string' ? decoded.data.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+function isAssignedToAgent(task: InboundTaskRecord, agent: AgentDefinitionRecord): boolean {
+  const assignedTo = normaliseTaskIdentity(task.assignedTo);
+  if (!assignedTo) {
+    return false;
+  }
+  return assignedTo === normaliseTaskIdentity(agent.botNpub) || assignedTo === decodeNpubToHex(agent.botNpub);
+}
+
+function isTerminalTask(task: InboundTaskRecord, recordState: string | null): boolean {
+  if (recordState === 'deleted' || task.deleted || task.done) {
+    return true;
+  }
+  return Boolean(task.state && TERMINAL_TASK_STATES.has(task.state));
+}
+
 function resolveTaskDispatchMode(task: InboundTaskRecord): TaskDispatchMode {
   if (task.state === 'new' && task.flowId && !task.flowRunId) {
     return 'flow_dispatch';
@@ -359,11 +398,19 @@ function evaluateTaskPipelineEligibility(input: {
   mode: TaskDispatchMode;
   agent: AgentDefinitionRecord;
 }): TaskDispatchEligibility {
+  if (isTerminalTask(input.task, input.recordState)) {
+    return 'skip_terminal';
+  }
+  if (!isAssignedToAgent(input.task, input.agent)) {
+    return 'skip_assignment';
+  }
   if (input.mode === 'flow_dispatch') {
-    return evaluateFlowDispatchEligibility(input);
+    return input.task.state === 'new' && Boolean(input.task.flowId) && !input.task.flowRunId
+      ? 'dispatch'
+      : 'skip_not_kickoff';
   }
   if (input.mode === 'task_review') {
-    return evaluateTaskReviewEligibility(input);
+    return input.task.state === 'review' ? 'dispatch' : 'skip_not_review';
   }
   return evaluateTaskDispatchEligibility(input);
 }
@@ -2104,10 +2151,10 @@ export class WorkspaceSubscriptionManager {
           return this.applyDispatchPipelineResult(record, pipelineResult);
         }
       }
-      if (!this.agentWorkRuntime) {
+      if (!this.agentWorkRuntime || dispatchMode !== 'task_dispatch') {
         return record;
       }
-      const taskAgents = this.listTaskDispatchAgents(record, dispatchMode);
+      const taskAgents = this.listTaskDispatchAgents(record, 'task_dispatch');
       if (taskAgents.length === 0) {
         return record;
       }
@@ -2161,29 +2208,13 @@ export class WorkspaceSubscriptionManager {
           });
           continue;
         }
-        const session = dispatchMode === 'flow_dispatch'
-          ? await this.agentWorkRuntime.handleFlowDispatch({
-              subscription: record,
-              agent,
-              recordId,
-              recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
-              task,
-            })
-          : dispatchMode === 'task_review'
-            ? await this.agentWorkRuntime.handleTaskReview({
-                subscription: record,
-                agent,
-                recordId,
-                recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
-                task,
-              })
-            : await this.agentWorkRuntime.handleTaskDispatch({
-                subscription: record,
-                agent,
-                recordId,
-                recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
-                task,
-              });
+        const session = await this.agentWorkRuntime.handleTaskDispatch({
+          subscription: record,
+          agent,
+          recordId,
+          recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
+          task,
+        });
         if (session) {
           record = this.appendDispatchHistory(record, {
             at: new Date().toISOString(),
@@ -2234,14 +2265,6 @@ export class WorkspaceSubscriptionManager {
     record: WorkspaceSubscriptionRecord,
     payload: Record<string, unknown>,
   ): Promise<WorkspaceSubscriptionRecord> {
-    if (!this.agentWorkRuntime) {
-      return record;
-    }
-    const taskAgents = this.listTaskDispatchAgents(record, 'approval_dispatch');
-    if (taskAgents.length === 0) {
-      return record;
-    }
-
     const recordId = typeof payload.record_id === 'string' ? payload.record_id : '';
     if (!recordId) {
       return record;
@@ -2261,7 +2284,7 @@ export class WorkspaceSubscriptionManager {
           at: new Date().toISOString(),
           kind: 'approval',
           action: 'approval_skip_invalid_payload',
-          agentId: taskAgents[0]?.agentId ?? 'unknown',
+          agentId: 'dispatch-pipeline',
           sessionId: null,
           recordId,
           bindingId: recordId,
@@ -2286,7 +2309,7 @@ export class WorkspaceSubscriptionManager {
           at: new Date().toISOString(),
           kind: 'approval',
           action: 'approval_dispatch_skip_not_approved',
-          agentId: taskAgents[0]?.agentId ?? 'unknown',
+          agentId: 'dispatch-pipeline',
           sessionId: null,
           recordId,
           bindingId: approval.flowRunId,
@@ -2305,7 +2328,7 @@ export class WorkspaceSubscriptionManager {
           at: new Date().toISOString(),
           kind: 'approval',
           action: 'approval_dispatch_skip_already_approved',
-          agentId: taskAgents[0]?.agentId ?? 'unknown',
+          agentId: 'dispatch-pipeline',
           sessionId: null,
           recordId,
           bindingId: approval.flowRunId,
@@ -2319,68 +2342,45 @@ export class WorkspaceSubscriptionManager {
           },
         });
       }
-      for (const agent of taskAgents) {
-        if (isSelfUpdater(record, agent, updaterNpub)) {
-          record = this.appendDispatchHistory(record, {
-            at: new Date().toISOString(),
-            kind: 'approval',
-            action: 'approval_dispatch_skip_self_update',
-            agentId: agent.agentId,
-            sessionId: null,
-            recordId,
-            bindingId: approval.flowRunId,
-            bindingType: 'flow_run',
-            details: {
-              approval_id: approval.approvalId,
-              flow_run_id: approval.flowRunId,
-              flow_id: approval.flowId,
-              updater_npub: updaterNpub,
-            },
-          });
-          continue;
-        }
-        const session = await this.agentWorkRuntime.handleApprovalDispatch({
-          subscription: record,
-          agent,
-          recordId,
-          approval,
-        });
-        if (session) {
-          record = this.appendDispatchHistory(record, {
-            at: new Date().toISOString(),
-            kind: 'approval',
-            action: 'approval_dispatch',
-            agentId: agent.agentId,
-            sessionId: session.id,
-            recordId,
-            bindingId: approval.flowRunId,
-            bindingType: 'flow_run',
-            details: {
-              approval_id: approval.approvalId,
-              flow_run_id: approval.flowRunId,
-              flow_id: approval.flowId,
-              updater_npub: updaterNpub,
-            },
-          });
-          continue;
-        }
-        record = this.appendDispatchHistory(record, {
-          at: new Date().toISOString(),
-          kind: 'approval',
-          action: 'approval_dispatch_skip_runtime_returned_null',
-          agentId: agent.agentId,
-          sessionId: null,
-          recordId,
-          bindingId: approval.flowRunId,
-          bindingType: 'flow_run',
-          details: {
-            approval_id: approval.approvalId,
-            flow_run_id: approval.flowRunId,
-            flow_id: approval.flowId,
-            updater_npub: updaterNpub,
-          },
-        });
+      if (!this.dispatchPipelineRuntime) {
+        return record;
       }
+      const pipelineResult = await this.dispatchPipelineRuntime.dispatch({
+        subscription: record,
+        triggerKind: 'approval',
+        capability: 'approval_dispatch',
+        recordId,
+        record: latest,
+        payload: decrypted,
+        recordFamily: 'approval',
+        recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
+        recordVersion: typeof latest.version === 'number' ? latest.version : Number(latest.version ?? 0),
+        updaterNpub,
+        bindingType: 'flow_run',
+        bindingId: approval.flowRunId,
+        changedFields: [],
+        groupNpubs: [],
+        botIdentity: this.getRuntime(record.subscriptionId)?.botIdentity ?? null,
+      });
+      if (pipelineResult.handled) {
+        return this.applyDispatchPipelineResult(record, pipelineResult);
+      }
+      return this.appendDispatchHistory(record, {
+        at: new Date().toISOString(),
+        kind: 'approval',
+        action: 'approval_dispatch_skip_runtime_returned_null',
+        agentId: 'dispatch-pipeline',
+        sessionId: null,
+        recordId,
+        bindingId: approval.flowRunId,
+        bindingType: 'flow_run',
+        details: {
+          approval_id: approval.approvalId,
+          flow_run_id: approval.flowRunId,
+          flow_id: approval.flowId,
+          updater_npub: updaterNpub,
+        },
+      });
     } catch (error) {
       console.warn(
         `[agent-work] approval advisory failed for subscription ${record.subscriptionId}: ${

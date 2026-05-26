@@ -6,10 +6,11 @@
  */
 
 import { readFile, readdir, stat } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { isAbsolute, join, normalize, relative } from "node:path";
 import { spawn } from "node:child_process";
 
 const CAPTAIN_DEFINITION_FILES = ["captain-definition", "captain-definition.json"] as const;
+const CAPROVER_INCLUDE_FILE = ".caproverinclude";
 
 /** Default patterns to exclude from deployment tarballs */
 const DEFAULT_EXCLUDES = [
@@ -39,6 +40,18 @@ const DEFAULT_EXCLUDES = [
 async function parseGitignore(gitignorePath: string): Promise<string[]> {
   try {
     const content = await readFile(gitignorePath, "utf8");
+    return content
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"));
+  } catch {
+    return [];
+  }
+}
+
+async function parseIncludeFile(includePath: string): Promise<string[]> {
+  try {
+    const content = await readFile(includePath, "utf8");
     return content
       .split("\n")
       .map((line) => line.trim())
@@ -84,6 +97,16 @@ function shouldExclude(relativePath: string, patterns: string[]): boolean {
         return true;
       }
     }
+
+    // Simple glob anywhere in the path (e.g., deploy-seed/*.seed)
+    if (normalizedPattern.includes("*")) {
+      const regex = new RegExp(
+        "^" + normalizedPattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$",
+      );
+      if (regex.test(normalizedPath)) {
+        return true;
+      }
+    }
   }
 
   return false;
@@ -113,6 +136,38 @@ async function collectFiles(
       files.push(...subFiles);
     } else if (entry.isFile()) {
       files.push(relativePath);
+    }
+  }
+
+  return files;
+}
+
+async function collectForcedIncludes(appRoot: string, entries: string[]): Promise<string[]> {
+  const files: string[] = [];
+
+  for (const entry of entries) {
+    const normalizedEntry = normalize(entry).replace(/\\/g, "/");
+    if (
+      isAbsolute(normalizedEntry) ||
+      normalizedEntry === ".." ||
+      normalizedEntry.startsWith("../") ||
+      normalizedEntry.includes("/../")
+    ) {
+      throw new Error(`${CAPROVER_INCLUDE_FILE} contains an unsafe path: ${entry}`);
+    }
+
+    const fullPath = join(appRoot, normalizedEntry);
+    let fileStat;
+    try {
+      fileStat = await stat(fullPath);
+    } catch {
+      continue;
+    }
+
+    if (fileStat.isDirectory()) {
+      files.push(...await collectFiles(fullPath, appRoot, []));
+    } else if (fileStat.isFile()) {
+      files.push(relative(appRoot, fullPath));
     }
   }
 
@@ -192,6 +247,15 @@ export async function createAppTarball(
 
   // Collect files to include
   const files = await collectFiles(appRoot, appRoot, excludePatterns);
+  const forcedIncludes = await collectForcedIncludes(
+    appRoot,
+    await parseIncludeFile(join(appRoot, CAPROVER_INCLUDE_FILE)),
+  );
+  for (const forcedFile of forcedIncludes) {
+    if (!files.includes(forcedFile)) {
+      files.push(forcedFile);
+    }
+  }
 
   if (files.length === 0) {
     throw new Error("No files to include in tarball");
@@ -274,14 +338,14 @@ export async function verifyDeployableApp(appRoot: string): Promise<{
       }
 
       // Check if it specifies a build method
-      if (!def.imageName && !def.dockerfileLines && !def.templateId) {
+      if (!def.imageName && !def.dockerfilePath && !def.dockerfileLines && !def.templateId) {
         // Need a Dockerfile
         const dockerfilePath = join(appRoot, "Dockerfile");
         try {
           await stat(dockerfilePath);
         } catch {
           errors.push(
-            `No build method specified. ${captainDef.fileName} needs imageName, dockerfileLines, or a Dockerfile must exist`,
+            `No build method specified. ${captainDef.fileName} needs imageName, dockerfilePath, dockerfileLines, or a Dockerfile must exist`,
           );
         }
       }

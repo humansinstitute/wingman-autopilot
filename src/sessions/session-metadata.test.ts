@@ -51,7 +51,7 @@ describe("normaliseSessionMetadata", () => {
     });
   });
 
-  test("accepts flow orchestration binding metadata", () => {
+  test("drops legacy flow orchestration binding metadata", () => {
     expect(
       normaliseSessionMetadata({
         AGENT: true,
@@ -62,8 +62,14 @@ describe("normaliseSessionMetadata", () => {
     ).toMatchObject({
       AGENT: true,
       billingMode: "subscription",
-      bindingType: "flow_orchestration",
-      bindingId: "run-42",
     });
+    expect(
+      normaliseSessionMetadata({
+        AGENT: true,
+        billingMode: "subscription",
+        bindingType: "FLOW_ORCHESTRATION" as never,
+        bindingId: "  run-42  ",
+      }).bindingType,
+    ).toBeUndefined();
   });
 });

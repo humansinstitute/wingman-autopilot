@@ -7,7 +7,7 @@
  */
 
 import { finalizeEvent } from "nostr-tools";
-import { loadWingmanInstanceIdentity } from "../identity/wingman-instance-identity";
+import { loadWingmanInstanceIdentity, type WingmanInstanceIdentity } from "../identity/wingman-instance-identity";
 import type { SignNip98Response } from "./types";
 
 /** NIP-98 HTTP Auth event kind. */
@@ -65,6 +65,15 @@ export async function signWithWingmanKey(
     );
   }
 
+  return buildNip98Token(url, method, identity.secretKey, identity.npub, bodyHash);
+}
+
+export function signWithWingmanIdentity(
+  identity: WingmanInstanceIdentity,
+  url: string,
+  method: string,
+  bodyHash?: string,
+): SignNip98Response {
   return buildNip98Token(url, method, identity.secretKey, identity.npub, bodyHash);
 }
 

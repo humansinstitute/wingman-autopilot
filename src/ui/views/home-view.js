@@ -23,7 +23,6 @@ export function initHomeView(deps) {
     navigateToApps,
     navigateToChat,
     openDialog,
-    openJobDialog,
     ensureFeatureFlagsLoaded,
     isFeatureEnabledForViewer,
     // Session helpers
@@ -309,7 +308,6 @@ export function initHomeView(deps) {
         render,
         navigateToChat,
         openDialog,
-        openJobDialog,
         isFeatureEnabledForViewer,
         isSessionActive,
         resumeSession,

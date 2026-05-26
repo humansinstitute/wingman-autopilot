@@ -170,6 +170,7 @@ export interface DeployAppInput {
 export interface CaptainDefinition {
   schemaVersion: 2;
   imageName?: string;
+  dockerfilePath?: string;
   dockerfileLines?: string[];
   templateId?: string;
 }
@@ -181,6 +182,8 @@ export interface UpdateAppConfigInput {
   containerHttpPort?: number;
   /** Environment variables */
   envVars?: CaproverEnvVar[];
+  /** Persistent directory mappings */
+  volumes?: CaproverVolume[];
   /** Enable/disable SSL on default subdomain */
   enableSsl?: boolean;
   /** Add custom domain */

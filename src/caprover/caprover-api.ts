@@ -13,6 +13,7 @@ import type { CaproverStore } from "./caprover-store";
 import type {
   CaptainDefinition,
   CaproverAppRecord,
+  CaproverAppDefinition,
   CaproverDeploymentRecord,
   DeployMethod,
 } from "./types";
@@ -76,6 +77,68 @@ const ensureClient = (deps: CaproverApiDependencies): CaproverClient => {
   }
   return client;
 };
+
+const resolveTargetClient = (
+  deps: CaproverApiDependencies,
+  requestedTarget: string | null,
+): CaproverTargetClient | { error: string; status: number } => {
+  const targets = deps.getTargets?.() ?? [];
+  if (targets.length > 0) {
+    const normalized = requestedTarget?.trim().toLowerCase() || targets[0]?.name || "primary";
+    const target = targets.find((candidate) => candidate.name === normalized);
+    if (!target) {
+      return { error: `Unknown CapRover target: ${normalized}`, status: 400 };
+    }
+    return target;
+  }
+
+  const client = deps.getClient();
+  if (!client) {
+    return {
+      error: "CapRover is not configured. Set CAPROVER_URL and LOGIN_CODE environment variables.",
+      status: 503,
+    };
+  }
+
+  return {
+    name: "primary",
+    serverUrl: "",
+    client,
+  };
+};
+
+const buildWebhookUrl = (target: CaproverTargetClient, app: CaproverAppDefinition): string | null => {
+  const token = app.appPushWebhook?.pushWebhookToken;
+  if (!token || !target.serverUrl) return null;
+  return `${target.serverUrl.replace(/\/+$/, "")}/api/v2/user/apps/webhooks/triggerbuild?namespace=captain&token=${encodeURIComponent(token)}`;
+};
+
+const serializeRemoteApp = (app: CaproverAppDefinition, target: CaproverTargetClient) => ({
+  appName: app.appName,
+  hasPersistentData: app.hasPersistentData,
+  hasDefaultSubDomainSsl: app.hasDefaultSubDomainSsl,
+  containerHttpPort: app.containerHttpPort,
+  notExposeAsWebApp: app.notExposeAsWebApp,
+  instanceCount: app.instanceCount,
+  captainDefinitionRelativeFilePath: app.captainDefinitionRelativeFilePath,
+  envVars: app.envVars ?? [],
+  volumes: app.volumes ?? [],
+  ports: app.ports ?? [],
+  customDomain: app.customDomain ?? [],
+  isAppBuilding: app.isAppBuilding ?? false,
+  deployedVersion: app.deployedVersion ?? null,
+  gitDeploy: app.appPushWebhook
+    ? {
+        repo: app.appPushWebhook.repoInfo?.repo ?? "",
+        branch: app.appPushWebhook.repoInfo?.branch ?? "",
+        user: app.appPushWebhook.repoInfo?.user ?? "",
+        hasPassword: Boolean(app.appPushWebhook.repoInfo?.password),
+        hasSshKey: Boolean(app.appPushWebhook.repoInfo?.sshKey),
+        hasWebhook: Boolean(app.appPushWebhook.pushWebhookToken),
+        webhookUrl: buildWebhookUrl(target, app),
+      }
+    : null,
+});
 
 const serializeApp = (app: CaproverAppRecord) => ({
   id: app.id,
@@ -468,11 +531,18 @@ const handleDeployments = async (
 /**
  * GET /api/caprover/remote/apps - List all apps from CapRover server
  */
-const handleRemoteApps = async (deps: CaproverApiDependencies): Promise<Response> => {
+const handleRemoteApps = async (deps: CaproverApiDependencies, url: URL): Promise<Response> => {
   try {
-    const client = ensureClient(deps);
-    const { apps, rootDomain } = await client.getAllApps();
-    return Response.json({ apps, rootDomain });
+    const resolved = resolveTargetClient(deps, url.searchParams.get("target"));
+    if ("error" in resolved) {
+      return Response.json({ error: resolved.error }, { status: resolved.status });
+    }
+    const { apps, rootDomain } = await resolved.client.getAllApps();
+    return Response.json({
+      target: serializeTarget(resolved),
+      apps: apps.map((app) => serializeRemoteApp(app, resolved)),
+      rootDomain,
+    });
   } catch (error) {
     if (error instanceof CaproverClientError) {
       return Response.json({ error: error.message }, { status: 502 });
@@ -578,7 +648,7 @@ export const createCaproverApiHandler = (dependencies: CaproverApiDependencies) 
     // /api/caprover/remote/apps
     if (segments.length === 4 && segments[2] === "remote" && segments[3] === "apps") {
       if (method === "GET") {
-        return handleRemoteApps(deps);
+        return handleRemoteApps(deps, url);
       }
       return Response.json({ error: "Method not allowed" }, { status: 405 });
     }

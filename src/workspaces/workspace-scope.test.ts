@@ -60,4 +60,16 @@ describe("resolveWorkspaceScope", () => {
     expect(scope.aliasDirectory).toBeNull();
     expect(scope.isAdmin).toBe(true);
   });
+
+  test("recognizes any configured admin npub", () => {
+    const scope = resolveWorkspaceScope(
+      createConfig(workspaceRoot),
+      createAuthContext("npub1secondadmin"),
+      ["npub1admin", "npub1secondadmin"],
+      "/home/wingman",
+      `/home/wingman${sep}`,
+    );
+
+    expect(scope.isAdmin).toBe(true);
+  });
 });

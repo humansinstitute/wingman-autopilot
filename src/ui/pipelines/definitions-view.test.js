@@ -1,0 +1,47 @@
+import { describe, expect, test } from "bun:test";
+
+import { renderDefinitionsListPage } from "./definitions-view.js";
+
+function makeState(overrides = {}) {
+  return {
+    definitions: [
+      {
+        id: "one",
+        name: "One",
+        description: "First pipeline",
+        scope: "user",
+        default: false,
+        tags: [],
+        steps: [],
+      },
+      {
+        id: "two",
+        name: "Two",
+        description: "Second pipeline",
+        scope: "shared",
+        default: true,
+        tags: ["default"],
+        steps: [{ name: "Step", type: "code" }],
+      },
+    ],
+    definitionSearch: "",
+    definitionFilter: "all",
+    definitionTagFilter: "",
+    creatorOpen: false,
+    wizardPrompt: "",
+    wizardBusy: false,
+    wizardResult: null,
+    ...overrides,
+  };
+}
+
+describe("pipeline definition list rendering", () => {
+  test("renders the new pipeline creator before the definition list", () => {
+    const html = renderDefinitionsListPage(makeState({ creatorOpen: true }));
+
+    expect(html).toContain('data-testid="pipeline-creator"');
+    expect(html.indexOf('data-testid="pipeline-creator"')).toBeLessThan(
+      html.indexOf('data-testid="pipeline-definition-list"'),
+    );
+  });
+});

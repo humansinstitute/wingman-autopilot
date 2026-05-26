@@ -100,7 +100,7 @@ function makeSubscription(): WorkspaceSubscriptionRecord {
 }
 
 describe('AgentWorkSessionRuntime', () => {
-  test('chooses task binding first, then flow binding, then creates a session', async () => {
+  test('chooses task binding first, then creates task sessions', async () => {
     const bindingStore = new AgentWorkSessionBindingStore(makeTempDb());
     const sessions = new Map<string, SessionSnapshot>();
     sessions.set('task-session', makeSession('task-session'));
@@ -143,19 +143,6 @@ describe('AgentWorkSessionRuntime', () => {
       createdAt: now,
       updatedAt: now,
     });
-    bindingStore.save({
-      subscriptionId: subscription.subscriptionId,
-      agentId: agent.agentId,
-      bindingType: 'flow_orchestration',
-      bindingId: 'flow-1',
-      sessionId: 'flow-session',
-      lastRecordIdSeen: 'record-2',
-      state: 'active',
-      lastActivityAt: now,
-      createdAt: now,
-      updatedAt: now,
-    });
-
     const taskFirst = await runtime.handleTaskDispatch({
       subscription,
       agent,
@@ -221,7 +208,7 @@ describe('AgentWorkSessionRuntime', () => {
     expect(createCount).toBe(2);
   });
 
-  test('keeps delivery task-bound and reuses a dedicated orchestration session for review and approval', async () => {
+  test('keeps delivery tasks bound to their own sessions', async () => {
     const bindingStore = new AgentWorkSessionBindingStore(makeTempDb());
     const sessions = new Map<string, SessionSnapshot>();
     const prompts: Array<{ sessionId: string; content: string }> = [];
@@ -317,50 +304,9 @@ describe('AgentWorkSessionRuntime', () => {
     expect(createCount).toBe(2);
     expect(bindingStore.getByBinding(subscription.subscriptionId, agent.agentId, 'task', 'task-2')?.sessionId).toBe('session-2');
 
-    const review = await runtime.handleTaskReview({
-      subscription,
-      agent,
-      recordId: 'record-review-1',
-      recordState: null,
-      task: {
-        taskId: 'task-2',
-        flowId: 'flow-a',
-        flowRunId: 'run-1',
-        flowStep: 'step-2',
-        title: 'Second task',
-        description: 'Ready for orchestration',
-        state: 'review',
-        assignedTo: agent.botNpub,
-        deleted: false,
-        done: false,
-        predecessorTaskIds: [],
-      },
-    });
-
-    expect(review?.id).toBe('session-3');
-    expect(createCount).toBe(3);
-    expect(bindingStore.getByBinding(subscription.subscriptionId, agent.agentId, 'flow_orchestration', 'run-1')?.sessionId).toBe('session-3');
-    expect(bindingStore.getByBinding(subscription.subscriptionId, agent.agentId, 'task', 'task-2')?.sessionId).toBe('session-3');
-
-    const approval = await runtime.handleApprovalDispatch({
-      subscription,
-      agent,
-      recordId: 'record-approval-1',
-      approval: {
-        approvalId: 'approval-1',
-        flowId: 'flow-a',
-        flowRunId: 'run-1',
-        flowStep: 'step-2',
-        state: 'approved',
-      },
-    });
-
-    expect(approval?.id).toBe('session-3');
-    expect(createCount).toBe(3);
-    expect(prompts).toHaveLength(4);
-    expect(prompts[2]?.content).toContain('Dispatch reason: task ready for review.');
-    expect(prompts[3]?.content).toContain('Dispatch reason: approval updated.');
-    expect(dispatches).toEqual(['session-1', 'session-2', 'session-3', 'session-3']);
+    expect(createCount).toBe(2);
+    expect(prompts).toHaveLength(2);
+    expect(dispatches).toEqual(['session-1', 'session-2']);
     expect(nightWatch).toEqual([]);
   });
 

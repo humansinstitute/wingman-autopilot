@@ -114,25 +114,6 @@ bun clis/scheduler.ts trigger <job-id>
 bun clis/scheduler.ts runs <job-id>
 ```
 
-### jobs / jobs-dispatch / jobs-manager — Autopilot jobs
-
-```bash
-bun clis/jobs.ts create --id movie-research --name "Movie Research" \
-  --worker-agent codex --manager-agent claude \
-  --worker-prompt "Research the assigned movie topic" \
-  --manager-prompt "Manage the worker and approve the output" \
-  --manager-goal "Deliver a solid brief" \
-  --manager-dir /tmp/movie-research
-
-bun clis/jobs-dispatch.ts start movie-research \
-  --worker-agent goose --manager-agent gemini \
-  --worker-dir /tmp/movie-research --manager-dir /tmp/movie-review \
-  --goal "Research the best Korean thrillers of the 2000s" \
-  --nightwatch true --nightwatch-interval 10
-
-bun clis/jobs-manager.ts read-worker <run-id> --bot-crypto
-```
-
 ## Common flags
 
 | Flag | Description |

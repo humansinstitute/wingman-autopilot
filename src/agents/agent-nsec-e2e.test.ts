@@ -244,10 +244,12 @@ describe("AGENT_NSEC end-to-end export and injection", () => {
       expect((appConfig.env as Record<string, string>).AGENT_NSEC).toBe(nsecHex);
     });
 
-    test("KEYTELEPORT_PRIVKEY is stripped from envOverride in PM2 app config", () => {
+    test("server-only secrets are stripped from envOverride in PM2 app config", () => {
       const config = makeSessionConfig({
         envOverride: {
           KEYTELEPORT_PRIVKEY: "nsec1should-not-appear",
+          WINGMAN_SIGNING_SECRET: "signing-secret-should-not-appear",
+          WINGMAN_SIGNING_TOKEN: "runner-token-should-not-appear",
           AGENT_NSEC: bytesToHex(botSecret),
         },
       });
@@ -255,10 +257,12 @@ describe("AGENT_NSEC end-to-end export and injection", () => {
       const appConfig = createAppConfig(config);
       const env = appConfig.env as Record<string, string>;
       expect(env.KEYTELEPORT_PRIVKEY).toBeUndefined();
+      expect(env.WINGMAN_SIGNING_SECRET).toBeUndefined();
+      expect(env.WINGMAN_SIGNING_TOKEN).toBeUndefined();
       expect(env.AGENT_NSEC).toBe(bytesToHex(botSecret));
     });
 
-    test("PM2 bash preamble unsets KEYTELEPORT_PRIVKEY", () => {
+    test("PM2 bash preamble unsets server-only secrets", () => {
       const config = makeSessionConfig({
         envOverride: {
           AGENT_NSEC: bytesToHex(botSecret),
@@ -266,9 +270,10 @@ describe("AGENT_NSEC end-to-end export and injection", () => {
       });
 
       const appConfig = createAppConfig(config);
-      // The args contain a bash -lc command with unset KEYTELEPORT_PRIVKEY
       const bashCommand = appConfig.args?.join(" ") ?? "";
       expect(bashCommand).toContain("unset KEYTELEPORT_PRIVKEY");
+      expect(bashCommand).toContain("WINGMAN_SIGNING_SECRET");
+      expect(bashCommand).toContain("WINGMAN_SIGNING_TOKEN");
     });
 
     test("SESSION_ID is always present in PM2 app env", () => {

@@ -147,7 +147,15 @@ export const executeGitCommand = async (options: {
       if (!message) {
         throw new Error("Commit message is required");
       }
-      return runCommand("git", ["commit", "-m", message], { cwd: directory });
+      const commandGitEnv = await resolveGitCommandEnv({
+        directory,
+        action,
+        remote: null,
+        viewerNpub: options.viewerNpub,
+        gitEnv: options.gitEnv,
+        expectedRemoteHost: options.expectedRemoteHost,
+      });
+      return runCommand("git", ["commit", "-m", message], { cwd: directory, env: commandGitEnv ?? undefined });
     }
     case "switchBranch": {
       const branch = options.branch?.trim();

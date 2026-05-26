@@ -35,7 +35,6 @@ import { showDialogElement } from "./common/dialog-element.js";
 import { openConfirmDialog, openTextPromptDialog } from "./common/dialog-prompts.js";
 import { populateAgentSelect } from "./common/agent-options.js";
 import { createSessionDialogController } from "./common/session-dialog.js";
-import { createJobDialogController } from "./common/job-dialog.js";
 import { initAppDialogs } from "./apps/dialog.js";
 import { initWorkspaceTree } from "./apps/tree.js";
 import { initAppCards } from "./apps/cards.js";
@@ -49,9 +48,6 @@ import { initNightWatchPage } from "./nightwatch/page.js";
 import { initNightWatchStore } from "./nightwatch/store.js";
 import { initSchedulerStore } from "./scheduler/store.js";
 import { initSchedulerPage } from "./scheduler/page.js";
-import { initJobsStore } from "./jobs/store.js";
-import { initJobsPage } from "./jobs/page.js";
-import { dispatchJobRun, fetchJobDefinitions } from "./jobs/api.js";
 import { initPipelinesPage } from "./pipelines/page.js";
 import { initSessionsStore } from "./sessions/store.js";
 import { initAppsStore } from "./apps/store.js";
@@ -164,7 +160,6 @@ const sessionsStore = () => window.Alpine?.store("sessions");
 const appsStore = () => window.Alpine?.store("apps");
 const sessionMessageSendInFlight = new Set();
 let sessionDialogController = null;
-let jobDialogController = null;
 let liveRefreshController = null;
 let loadChats = async () => {};
 let loadChatMessages = async () => {};
@@ -192,6 +187,7 @@ let openAppDialog = () => {};
 let closeAppDialog = () => {};
 let openAppLogsDialog = () => {};
 let openDeployDialog = () => {};
+let openCaproverDialog = () => {};
 let refreshAppLogs = async () => {};
 let resetAppDialog = () => {};
 let createWorkspaceTreeSidebar = () => null;
@@ -231,8 +227,6 @@ let renderNightWatchPage = () => document.createDocumentFragment();
 let ensureNightWatchPageLoaded = () => {};
 let renderSchedulerPage = () => document.createDocumentFragment();
 let ensureSchedulerPageLoaded = () => {};
-let renderJobsPage = () => document.createDocumentFragment();
-let ensureJobsPageLoaded = () => {};
 let renderPipelinesPage = () => document.createDocumentFragment();
 let ensurePipelinesPageLoaded = () => {};
 let projectsFeatureEnabledForViewer = () => true;
@@ -472,7 +466,6 @@ const PROJECTS_ROUTE = "/projects";
 const NIGHTWATCH_ROUTE = "/nightwatch";
 const SCHEDULER_ROUTE = "/scheduler";
 const TRIGGERS_ROUTE = "/triggers";
-const JOBS_ROUTE = "/jobs";
 const PIPELINES_ROUTE = "/pipelines";
 const HOME_ROUTE = "/home";
 const PRIVACY_ROUTE = "/privacy";
@@ -500,9 +493,6 @@ const getRouteFromPath = (pathname) => {
   }
   if (pathname === SCHEDULER_ROUTE || pathname === TRIGGERS_ROUTE) {
     return "scheduler";
-  }
-  if (pathname === JOBS_ROUTE) {
-    return "jobs";
   }
   if (pathname === PIPELINES_ROUTE || pathname.startsWith(`${PIPELINES_ROUTE}/`)) {
     return "pipelines";
@@ -609,27 +599,6 @@ const agentSelect = document.getElementById("agent-select");
 const confirmButton = document.getElementById("confirm-session");
 const cancelButton = document.getElementById("cancel-session");
 const sessionForm = dialog?.querySelector("form");
-const jobDialog = document.getElementById("job-dialog");
-const jobForm = jobDialog?.querySelector("form");
-const jobSelect = document.getElementById("job-select");
-const jobWorkerAgentSelect = document.getElementById("job-worker-agent");
-const jobManagerAgentSelect = document.getElementById("job-manager-agent");
-const jobWorkerDirectoryInput = document.getElementById("job-worker-directory");
-const jobManagerDirectoryInput = document.getElementById("job-manager-directory");
-const jobGoalInput = document.getElementById("job-goal");
-const jobWorkerGoalInput = document.getElementById("job-worker-goal");
-const jobManagerGoalInput = document.getElementById("job-manager-goal");
-const jobExtraPromptInput = document.getElementById("job-extra-prompt");
-const jobRefsInput = document.getElementById("job-refs");
-const confirmJobButton = document.getElementById("confirm-job-launch");
-const cancelJobButton = document.getElementById("cancel-job-launch");
-const jobDefaultManagerDir = document.getElementById("job-default-manager-dir");
-const jobDefaultWorkerAgent = document.getElementById("job-default-worker-agent");
-const jobDefaultManagerAgent = document.getElementById("job-default-manager-agent");
-const jobCheckInterval = document.getElementById("job-check-interval");
-const jobDefaultManagerGoal = document.getElementById("job-default-manager-goal");
-const jobDefaultWorkerPrompt = document.getElementById("job-default-worker-prompt");
-const jobDefaultManagerPrompt = document.getElementById("job-default-manager-prompt");
 const appRoot = document.getElementById("app");
 const navLinks = Array.from(document.querySelectorAll("nav a[data-route]"));
 const projectsNavLink = navLinks.find((link) => link.dataset.route === "projects");
@@ -1249,8 +1218,6 @@ const updateDocumentTitle = () => {
     title = "Night Watchman - Wingman";
   } else if (currentRoute === "scheduler") {
     title = "Triggers - Wingman";
-  } else if (currentRoute === "jobs") {
-    title = "Jobs - Wingman";
   } else if (currentRoute === "pipelines") {
     title = "Pipelines - Wingman";
   } else if (currentRoute === "home") {
@@ -1501,30 +1468,6 @@ const closeDialog = () => {
   }
 };
 
-const openJobDialog = async () => {
-  if (!jobDialogController) {
-    return;
-  }
-  try {
-    await jobDialogController.open();
-  } catch (error) {
-    console.error("Failed to open job dialog", error);
-    showToast(`Failed to load jobs: ${error instanceof Error ? error.message : String(error)}`, {
-      type: "error",
-    });
-  }
-};
-
-const closeJobDialog = () => {
-  if (jobDialogController) {
-    jobDialogController.close();
-    return;
-  }
-  if (jobDialog?.open) {
-    jobDialog.close();
-  }
-};
-
 const handleSessionStart = createSessionStartHandler({
   getCurrentRoute: () => currentRoute,
   setCurrentRoute: (route) => {
@@ -1553,43 +1496,6 @@ const launchSession = createSessionLauncher({
   liveRoutePrefix: LIVE_ROUTE_PREFIX,
   notify: (message, options) => showToast(message, options),
 });
-
-const launchJob = async ({
-  jobId,
-  workerAgent,
-  managerAgent,
-  workerDir,
-  managerDir,
-  goal,
-  workerGoal,
-  managerGoal,
-  prompt,
-  refs,
-}) => {
-  const payload = {
-    job_id: jobId,
-    worker_agent: workerAgent,
-    manager_agent: managerAgent,
-    worker_dir: workerDir,
-    manager_dir: managerDir,
-    goal,
-    worker_goal: workerGoal,
-    manager_goal: managerGoal,
-    prompt,
-    refs,
-  };
-  const result = await dispatchJobRun(payload);
-  if (result?.manager_session) {
-    await handleSessionStart(result.manager_session);
-    return;
-  }
-  await fetchSessions();
-  render();
-  showToast(`Launched ${jobId}`);
-};
-
-populateAgentSelect(jobWorkerAgentSelect);
-populateAgentSelect(jobManagerAgentSelect);
 
 sessionDialogController = createSessionDialogController({
   dialog,
@@ -1625,44 +1531,6 @@ sessionDialogController = createSessionDialogController({
   },
 });
 sessionDialogController.resetFormState();
-
-jobDialogController = createJobDialogController({
-  dialog: jobDialog,
-  jobSelect,
-  workerAgentSelect: jobWorkerAgentSelect,
-  managerAgentSelect: jobManagerAgentSelect,
-  workerDirInput: jobWorkerDirectoryInput,
-  managerDirInput: jobManagerDirectoryInput,
-  goalInput: jobGoalInput,
-  workerGoalInput: jobWorkerGoalInput,
-  managerGoalInput: jobManagerGoalInput,
-  extraPromptInput: jobExtraPromptInput,
-  refsInput: jobRefsInput,
-  confirmButton: confirmJobButton,
-  isAuthenticated: () => Boolean(state.identity.authenticated),
-  onRequireAuth: openIdentityLoginDialog,
-  loadJobDefinitions: () => fetchJobDefinitions(),
-  onSubmit: (values) =>
-    launchJob({
-      jobId: values.jobId,
-      workerDir: values.workerDir,
-      managerDir: values.managerDir,
-      goal: values.goal,
-      workerGoal: values.workerGoal,
-      managerGoal: values.managerGoal,
-      prompt: values.prompt,
-      refs: values.refs,
-    }),
-  onDirectoryInput: (...args) => scheduleDirectorySuggestions(...args),
-  defaultManagerDirOutput: jobDefaultManagerDir,
-  defaultWorkerAgentOutput: jobDefaultWorkerAgent,
-  defaultManagerAgentOutput: jobDefaultManagerAgent,
-  checkIntervalOutput: jobCheckInterval,
-  managerGoalOutput: jobDefaultManagerGoal,
-  workerPromptOutput: jobDefaultWorkerPrompt,
-  managerPromptOutput: jobDefaultManagerPrompt,
-  showToast,
-});
 
 const sessionRuntimeSync = initSessionRuntimeSync({
   state,
@@ -1826,9 +1694,6 @@ const appRenderer = createAppRenderer({
     }
     if (route === "scheduler") {
       return renderSchedulerPage();
-    }
-    if (route === "jobs") {
-      return renderJobsPage();
     }
     if (route === "pipelines") {
       return renderPipelinesPage();
@@ -2065,6 +1930,7 @@ const appCardsModule = initAppCards({
   buildSessionOrigin,
   openAppLogsDialog: (...args) => openAppLogsDialog(...args),
   openDeployDialog: (...args) => openDeployDialog(...args),
+  openCaproverDialog: (...args) => openCaproverDialog(...args),
   openAppDialog: (...args) => openAppDialog(...args),
 });
 renderAppCard = appCardsModule.renderAppCard;
@@ -2112,7 +1978,6 @@ const homeViewModule = initHomeView({
   navigateToApps: (...args) => navigateToApps(...args),
   navigateToChat: (...args) => navigateToChat(...args),
   openDialog,
-  openJobDialog,
   ensureFeatureFlagsLoaded: (...args) => ensureFeatureFlagsLoaded(...args),
   isFeatureEnabledForViewer: (...args) => isFeatureEnabledForViewer(...args),
   isSessionActive,
@@ -2370,6 +2235,7 @@ openAppLogsDialog = appDialogs.openAppLogsDialog;
 refreshAppLogs = appDialogs.refreshAppLogs;
 resetAppDialog = appDialogs.resetAppDialog;
 openDeployDialog = appDialogs.openDeployDialog;
+openCaproverDialog = appDialogs.openCaproverDialog;
 
 const workspaceTree = initWorkspaceTree({
   state,
@@ -2421,10 +2287,6 @@ ensureNightWatchPageLoaded = nightWatchPageUI.ensureLoaded;
 const schedulerPageUI = initSchedulerPage({ showToast });
 renderSchedulerPage = schedulerPageUI.renderPage;
 ensureSchedulerPageLoaded = schedulerPageUI.ensureLoaded;
-
-const jobsPageUI = initJobsPage({ showToast });
-renderJobsPage = jobsPageUI.renderPage;
-ensureJobsPageLoaded = jobsPageUI.ensureLoaded;
 
 const pipelinesPageUI = initPipelinesPage({ showToast });
 renderPipelinesPage = pipelinesPageUI.renderPage;
@@ -2499,7 +2361,6 @@ const {
   navigateToProjects,
   navigateToNightWatch,
   navigateToScheduler,
-  navigateToJobs,
   navigateToSettings,
   setupNavListeners,
 } = createNavigation({
@@ -2521,7 +2382,6 @@ const {
   get projectFeature() { return projectFeature; },
   ensureNightWatchPageLoaded: (...args) => ensureNightWatchPageLoaded(...args),
   ensureSchedulerPageLoaded: (...args) => ensureSchedulerPageLoaded(...args),
-  ensureJobsPageLoaded: (...args) => ensureJobsPageLoaded(...args),
   ensurePipelinesPageLoaded: (...args) => ensurePipelinesPageLoaded(...args),
   loadFilesTree: (...args) => loadFilesTree(...args),
   updateFilesUrl: (...args) => updateFilesUrl(...args),
@@ -2533,7 +2393,6 @@ const {
   NIGHTWATCH_ROUTE,
   TRIGGERS_ROUTE,
   SCHEDULER_ROUTE,
-  JOBS_ROUTE,
   PIPELINES_ROUTE,
   SETTINGS_ROUTE,
   PRIVACY_ROUTE,
@@ -2657,15 +2516,6 @@ window.addEventListener("popstate", () => {
     } else {
       void ensureSchedulerPageLoaded();
     }
-  } else if (currentRoute === "jobs") {
-    if (!state.identity.isAdmin) {
-      currentRoute = "home";
-      if (window.location.pathname !== HOME_ROUTE) {
-        window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
-      }
-    } else {
-      void ensureJobsPageLoaded();
-    }
   } else if (currentRoute === "pipelines") {
     void ensurePipelinesPageLoaded();
   }
@@ -2696,19 +2546,9 @@ sessionForm?.addEventListener("submit", (event) => {
   handleSessionLaunchRequest();
 });
 
-jobForm?.addEventListener("submit", (event) => {
-  event.preventDefault();
-  void jobDialogController?.handleSubmit();
-});
-
 confirmButton.addEventListener("click", (event) => {
   event.preventDefault();
   handleSessionLaunchRequest();
-});
-
-confirmJobButton?.addEventListener("click", (event) => {
-  event.preventDefault();
-  void jobDialogController?.handleSubmit();
 });
 
 cancelButton.addEventListener("click", (event) => {
@@ -2716,19 +2556,9 @@ cancelButton.addEventListener("click", (event) => {
   closeDialog();
 });
 
-cancelJobButton?.addEventListener("click", (event) => {
-  event.preventDefault();
-  closeJobDialog();
-});
-
 dialog.addEventListener("cancel", (event) => {
   event.preventDefault();
   closeDialog();
-});
-
-jobDialog?.addEventListener("cancel", (event) => {
-  event.preventDefault();
-  closeJobDialog();
 });
 
 (async () => {
@@ -2742,7 +2572,6 @@ jobDialog?.addEventListener("cancel", (event) => {
   // Initialize Night Watch Alpine store (Dexie-backed, must register before Alpine.start)
   initNightWatchStore({ showToast, syncOnInit: false });
   initSchedulerStore({ showToast, syncOnInit: false });
-  initJobsStore({ showToast, syncOnInit: false });
 
   // Initialize Sessions Alpine store (Dexie-backed, must register before Alpine.start)
   initSessionsStore({

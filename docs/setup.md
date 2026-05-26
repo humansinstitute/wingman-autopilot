@@ -222,6 +222,6 @@ Use the correct env file for the instance you are updating. Do not use the plain
 - `/workspace` inside the container is a bind mount from `WINGMAN_WORKSPACE_HOST_PATH` on the host. If agent setup fails with `EACCES: permission denied, mkdir '/workspace/<agent>'`, fix the host path permissions and recreate the container:
   `chmod 0777 "$WINGMAN_WORKSPACE_HOST_PATH" && docker compose --env-file .env.<instance-name> up -d --force-recreate wingman`.
 - `/home/wingman`, `/app/data`, and `/app/tmp` are persistent Docker volumes.
-- `WINGMAN_ADMIN_NPUB` is required for Docker startup.
+- `WINGMAN_ADMIN_NPUB` is required for Docker startup and may contain a comma-separated list for multiple admins.
 - `WINGMAN_PRIV` is optional but recommended when the instance should use one shared Wingman bot identity.
 - CLI auth state is intentionally not baked into the image. Authenticate CLIs inside the running container.

@@ -26,7 +26,6 @@
  * @param {object|null} deps.projectFeature               - project feature module (may be null)
  * @param {Function} deps.ensureNightWatchPageLoaded      - lazy loader for night watch page
  * @param {Function} deps.ensureSchedulerPageLoaded       - lazy loader for scheduler page
- * @param {Function} deps.ensureJobsPageLoaded            - lazy loader for jobs page
  * @param {Function} deps.ensurePipelinesPageLoaded       - lazy loader for pipelines page
  * @param {Function} deps.loadFilesTree                   - loads the files tree
  * @param {Function} deps.updateFilesUrl                  - updates the URL for the files view
@@ -38,7 +37,6 @@
  * @param {string} deps.NIGHTWATCH_ROUTE                  - route path constant
  * @param {string} deps.TRIGGERS_ROUTE                    - route path constant
  * @param {string} deps.SCHEDULER_ROUTE                   - route path constant
- * @param {string} deps.JOBS_ROUTE                        - route path constant
  * @param {string} deps.PIPELINES_ROUTE                   - route path constant
  * @param {string} deps.SETTINGS_ROUTE                    - route path constant
  * @param {string} deps.PRIVACY_ROUTE                     - route path constant
@@ -72,7 +70,6 @@ export function createNavigation(deps) {
     projectFeature,
     ensureNightWatchPageLoaded,
     ensureSchedulerPageLoaded,
-    ensureJobsPageLoaded,
     ensurePipelinesPageLoaded,
     loadFilesTree,
     updateFilesUrl,
@@ -84,7 +81,6 @@ export function createNavigation(deps) {
     NIGHTWATCH_ROUTE,
     TRIGGERS_ROUTE,
     SCHEDULER_ROUTE,
-    JOBS_ROUTE,
     PIPELINES_ROUTE,
     SETTINGS_ROUTE,
     PRIVACY_ROUTE,
@@ -213,29 +209,6 @@ export function createNavigation(deps) {
     render();
   }
 
-  function navigateToJobs({ skipMenuClose = false } = {}) {
-    if (!state.identity.authenticated) {
-      openIdentityLoginDialog();
-      return;
-    }
-    if (!state.identity.isAdmin) {
-      showToast?.("Jobs is admin-only", { variant: "info" });
-      return;
-    }
-    if (!skipMenuClose) {
-      closeMenu();
-    }
-    closeIdentityLoginDialog();
-    deactivateLiveSessionRefresh();
-    setCurrentRoute("jobs");
-    setLastLoggedSessionId(null);
-    if (window.location.pathname !== JOBS_ROUTE) {
-      window.history.pushState({ route: "jobs" }, "", JOBS_ROUTE);
-    }
-    void ensureJobsPageLoaded();
-    render();
-  }
-
   function navigateToPipelines({ skipMenuClose = false } = {}) {
     if (!state.identity.authenticated) {
       openIdentityLoginDialog();
@@ -305,9 +278,6 @@ export function createNavigation(deps) {
           return;
         } else if (targetRoute === "scheduler") {
           navigateToScheduler({ skipMenuClose: true });
-          return;
-        } else if (targetRoute === "jobs") {
-          navigateToJobs({ skipMenuClose: true });
           return;
         } else if (targetRoute === "pipelines") {
           navigateToPipelines({ skipMenuClose: true });
@@ -422,7 +392,6 @@ export function createNavigation(deps) {
     navigateToProjects,
     navigateToNightWatch,
     navigateToScheduler,
-    navigateToJobs,
     navigateToPipelines,
     navigateToSettings,
     setupNavListeners,

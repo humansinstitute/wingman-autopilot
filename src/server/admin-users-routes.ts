@@ -32,6 +32,7 @@ export type AdminUserRecord = {
 
 export interface AdminUsersApiContext {
   adminNpub: string | null;
+  isAdminNpub?: (npub: string | null | undefined) => boolean;
   config: { connectRelays: string[] };
 
   identityUserStore: {
@@ -128,6 +129,14 @@ function buildAdminUserList(ctx: AdminUsersApiContext): AdminUserRecord[] {
     return left.localeCompare(right);
   });
   return users;
+}
+
+function isConfiguredAdminNpub(ctx: AdminUsersApiContext, npub: string | null | undefined): boolean {
+  if (ctx.isAdminNpub) {
+    return ctx.isAdminNpub(npub);
+  }
+  const normalized = normaliseNpub(npub);
+  return Boolean(ctx.adminNpub && normalized && ctx.adminNpub === normalized);
 }
 
 // ---------- Main handler ----------
@@ -245,7 +254,7 @@ export async function handleAdminUsersApi(
     const skippedAdmin: string[] = [];
     let deletedCount = 0;
     for (const [normalized, original] of targets) {
-      if (ctx.adminNpub && normalized === ctx.adminNpub) {
+      if (isConfiguredAdminNpub(ctx, normalized)) {
         skippedAdmin.push(original);
         continue;
       }

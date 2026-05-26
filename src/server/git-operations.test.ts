@@ -95,4 +95,31 @@ describe('executeGitCommand', () => {
       rmSync(repoDir, { recursive: true, force: true });
     }
   });
+
+  test('commit uses the provided git author environment', async () => {
+    const repoDir = createRepo();
+    try {
+      writeFileSync(join(repoDir, 'notes.txt'), 'attributed change\n');
+      runGit(repoDir, ['add', 'notes.txt']);
+
+      const result = await executeGitCommand({
+        directory: repoDir,
+        action: 'commit',
+        message: 'Add attributed notes',
+        gitEnv: {
+          GIT_AUTHOR_NAME: 'GitHub User',
+          GIT_AUTHOR_EMAIL: 'github-user@users.noreply.github.com',
+          GIT_COMMITTER_NAME: 'GitHub User',
+          GIT_COMMITTER_EMAIL: 'github-user@users.noreply.github.com',
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(runGit(repoDir, ['log', '-1', '--format=%an <%ae>|%cn <%ce>'])).toBe(
+        'GitHub User <github-user@users.noreply.github.com>|GitHub User <github-user@users.noreply.github.com>',
+      );
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
 });

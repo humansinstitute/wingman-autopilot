@@ -28,6 +28,7 @@
  * @param {Function} deps.buildSessionOrigin         - builds session origin metadata
  * @param {Function} deps.openAppLogsDialog          - opens the app logs dialog
  * @param {Function} deps.openDeployDialog           - opens the deploy dialog
+ * @param {Function} deps.openCaproverDialog         - opens the CapRover setup dialog
  * @param {Function} deps.openAppDialog              - opens the app edit dialog
  */
 import { openConfirmDialog } from "../common/dialog-prompts.js";
@@ -57,6 +58,7 @@ export function initAppCards(deps) {
     buildSessionOrigin,
     openAppLogsDialog,
     openDeployDialog,
+    openCaproverDialog,
     openAppDialog,
   } = deps;
 
@@ -615,15 +617,15 @@ export function initAppCards(deps) {
     });
     controls.append(fixWithAiButton);
 
-    // Deploy button (web apps only)
+    // CapRover deployments (web apps only)
     if (isWebApp) {
       const deployButton = document.createElement("button");
       deployButton.type = "button";
       deployButton.className = "wm-button secondary";
-      deployButton.textContent = "Deploy";
+      deployButton.textContent = "Deployments";
       deployButton.dataset.appCardOpensDialog = "true";
       deployButton.addEventListener("click", () => {
-        openDeployDialog(app.id);
+        openCaproverDialog(app.id);
       });
       controls.append(deployButton);
     }

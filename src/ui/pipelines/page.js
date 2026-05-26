@@ -49,7 +49,7 @@ export function initPipelinesPage({ showToast }) {
     const page = document.createElement("div");
     page.className = "wm-page wm-pipelines-page";
     state.loading = true;
-    page.append(renderShell());
+    page.append(renderShell(page));
     void loadAll({ force: true }).then(() => hydrateRouteDetail()).then(() => updatePage(page)).catch((error) => renderError(page, error));
     return page;
   }
@@ -105,7 +105,7 @@ export function initPipelinesPage({ showToast }) {
 
   function updatePage(page) {
     page.innerHTML = "";
-    page.append(renderShell());
+    page.append(renderShell(page));
   }
 
   function renderError(page, error) {
@@ -114,7 +114,7 @@ export function initPipelinesPage({ showToast }) {
     updatePage(page);
   }
 
-  function renderShell() {
+  function renderShell(page) {
     const route = getCurrentRoute();
     applyRoute(route);
     const wrap = document.createElement("main");
@@ -130,7 +130,7 @@ export function initPipelinesPage({ showToast }) {
       ${state.launcherOpen ? renderRunLauncher(state, getSelectedDefinition(state)) : ""}
       ${renderRouteContent(route, selected)}
     `;
-    bindActions(wrap);
+    bindActions(wrap, page);
     return wrap;
   }
 
@@ -274,8 +274,7 @@ export function initPipelinesPage({ showToast }) {
     }
   }
 
-  function bindActions(root) {
-    const page = root.closest(".wm-pipelines-page") ?? root;
+  function bindActions(root, page) {
     bindPipelinesPageActions(root, page, createPipelineActionHandlers({
       state,
       loadAll,

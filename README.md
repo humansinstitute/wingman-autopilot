@@ -18,21 +18,20 @@ Wingmen does not replace Tower as the source of truth for workspace data. It sit
 - Provide browser control surfaces such as `/home` and `/live`
 - Broker MCP tools and agent-side capabilities back into Wingman over HTTP
 - Manage per-user bot keys, session identity, and delegated NIP-98 flows
-- Expose operational APIs for apps, git/Gitea, jobs, memories, Nostr, and SuperBased/Flux operations
+- Expose operational APIs for apps, git/Gitea, pipelines, triggers, memories, Nostr, and SuperBased/Flux operations
 - Inject agent-local environment and MCP configuration, including bot-key material when available
 
 ## Terminology Notes
 
 Some internal routes and modules still use older naming:
 
-- `autopilot-jobs` is the current internal/API path for the Jobs subsystem
 - `AGENT_NSEC` is the environment variable used to inject a session bot key into an agent process
 - some `wm21` references are deployment-specific defaults or admin fallbacks, not product concepts
 
 Those names are still real implementation details, but the current product framing is:
 
-- Wingman = orchestration platform
-- Jobs = reusable job definitions and runs
+- Wingman = agent runtime and control plane
+- Pipelines = reusable automation definitions and runs
 - Delegate sessions / agent sessions = the programmable session layer around agents
 
 ## Getting Started
@@ -124,7 +123,7 @@ instances should use `.env.wingman-01`, `.env.wingman-02`, and so on so local
 and container settings do not overlap.
 
 Docker setup defaults to `REGISTER=false`: unknown users cannot self-register.
-The configured admin npub can bootstrap the first login, then add approved users
+The configured admin npub, or comma-separated admin npubs, can bootstrap the first login, then add approved users
 from Settings -> Users.
 It also defaults to `WINGMAN_SHARED_INSTANCE=true`, so whitelisted users see the
 same apps, sessions, workspace connection, and dispatch activity for the single
@@ -183,6 +182,9 @@ Run the readiness checklist any time:
 docker compose --env-file .env.wingman-01 exec wingman bun run docker:check
 ```
 
+For CapRover branch deploys with persistent app state, see
+`docs/caprover-deploy.md`.
+
 The checklist reports installed tools, writable Docker volumes, configured
 Wingman URLs/workspace values, required secrets, and whether CLI auth files are
 detectable in `/home/wingman`.
@@ -226,19 +228,7 @@ Wingmen is a long-running Bun server that:
 2. allocates ports and spawns agent runtimes
 3. tracks sessions, logs, messages, and status
 4. injects MCP config and per-session identity/env context
-5. exposes higher-level app, git, job, memory, and Nostr tooling to agents and operators
-
-## Jobs
-
-The current Jobs subsystem is user-facing as “Jobs”, but internally still uses `autopilot-jobs` in API paths and some module names.
-
-Examples:
-
-- `/api/autopilot-jobs/definitions`
-- `/api/autopilot-jobs/runs`
-- `src/jobs-api.ts`
-
-Treat this as a naming-compatibility layer rather than a separate product.
+5. exposes higher-level app, git, pipeline, trigger, memory, and Nostr tooling to agents and operators
 
 ## App Lifecycle CLI (NIP-98)
 
@@ -291,7 +281,7 @@ Options:
 
 - `Home` lists sessions and lets operators start or stop agents.
 - `Live` shows running sessions, conversation state, logs, and prompt dispatch.
-- Jobs let operators define reusable manager/worker execution patterns.
+- Pipelines let operators define reusable automation patterns.
 - App management controls registered local apps.
 - MCP tooling exposes memories, git, Nostr, image generation, SuperBased access, and more to agents.
 
@@ -327,4 +317,4 @@ Active contract:
 
 - `docs/architecture.md` is the main current technical map
 - `docs/asbuilt/` and `docs/as_built/` contain historical snapshots and implementation notes
-- design docs may still mention older internal names such as `autopilot-jobs`; treat those as implementation compatibility unless they explicitly propose a new contract
+- design docs may still mention removed internals such as legacy Jobs; treat those as historical unless current code implements them

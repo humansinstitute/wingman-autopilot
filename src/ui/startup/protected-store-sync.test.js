@@ -5,11 +5,9 @@ import { syncAuthenticatedStartupStores } from "./protected-store-sync.js";
 describe("syncAuthenticatedStartupStores", () => {
   test("syncs authenticated startup stores and leaves Night Watch idle", async () => {
     const schedulerSync = mock(async () => {});
-    const syncDefinitions = mock(async () => {});
     const nightWatchSync = mock(async () => {});
     const stores = {
       scheduler: { sync: schedulerSync },
-      autopilotJobs: { syncDefinitions },
       nightwatch: { sync: nightWatchSync },
     };
 
@@ -22,7 +20,6 @@ describe("syncAuthenticatedStartupStores", () => {
     });
 
     expect(schedulerSync).toHaveBeenCalledTimes(1);
-    expect(syncDefinitions).toHaveBeenCalledTimes(1);
     expect(nightWatchSync).not.toHaveBeenCalled();
   });
 });

@@ -12,7 +12,10 @@ import type {
   CaproverAppsResponse,
   CaproverClientConfig,
   CaproverEnvVar,
+  CaproverPortMapping,
   CaproverLoginResponse,
+  CaproverRepoInfo,
+  CaproverVolume,
 } from "./types";
 
 export class CaproverClientError extends Error {
@@ -199,6 +202,13 @@ export class CaproverClient {
       instanceCount?: number;
       containerHttpPort?: number;
       envVars?: CaproverEnvVar[];
+      volumes?: CaproverVolume[];
+      ports?: CaproverPortMapping[];
+      repoInfo?: CaproverRepoInfo;
+      appPushWebhook?: {
+        repoInfo: CaproverRepoInfo;
+        pushWebhookToken: string;
+      };
       notExposeAsWebApp?: boolean;
       forceSsl?: boolean;
       nodeId?: string;
