@@ -65,14 +65,13 @@ RUN npm install -g "${FLIGHTDECK_CLI_PACKAGE}" \
   && ln -sfn "${FLIGHTDECK_CLI_ROOT}" /opt/flightdeck-cli
 
 RUN useradd --create-home --home-dir /home/wingman --shell /bin/bash --uid 10001 wingman \
-  && mkdir -p /app/data /app/tmp /app/out /workspace \
+  && mkdir -p /app/data /app/tmp /app/out \
   && chown -R wingman:wingman \
     /app \
     /home/wingman \
     /usr/local/bin \
     /usr/local/bun \
-    /usr/local/lib/node_modules \
-    /workspace
+    /usr/local/lib/node_modules
 
 WORKDIR /app
 
