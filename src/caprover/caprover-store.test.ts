@@ -21,6 +21,23 @@ afterEach(() => {
 });
 
 describe("CaproverStore deployment targets", () => {
+  test("updates tracked CapRover app name for relinking", () => {
+    const store = createTempStore();
+    const app = store.createApp({
+      caproverName: "old-app",
+      appId: "local-demo",
+    });
+
+    const updated = store.updateApp(app.id, {
+      caproverName: "new-app",
+      liveUrl: "https://new-app.example.test",
+    });
+
+    expect(updated.caproverName).toBe("new-app");
+    expect(updated.liveUrl).toBe("https://new-app.example.test");
+    expect(store.getAppByCaproverName("new-app")?.appId).toBe("local-demo");
+  });
+
   test("records target name on deployments", () => {
     const store = createTempStore();
     const app = store.createApp({

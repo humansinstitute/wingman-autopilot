@@ -187,6 +187,7 @@ let openAppDialog = () => {};
 let closeAppDialog = () => {};
 let openAppLogsDialog = () => {};
 let openDeployDialog = () => {};
+let openCaproverDialog = () => {};
 let refreshAppLogs = async () => {};
 let resetAppDialog = () => {};
 let createWorkspaceTreeSidebar = () => null;
@@ -1929,6 +1930,7 @@ const appCardsModule = initAppCards({
   buildSessionOrigin,
   openAppLogsDialog: (...args) => openAppLogsDialog(...args),
   openDeployDialog: (...args) => openDeployDialog(...args),
+  openCaproverDialog: (...args) => openCaproverDialog(...args),
   openAppDialog: (...args) => openAppDialog(...args),
 });
 renderAppCard = appCardsModule.renderAppCard;
@@ -2233,6 +2235,7 @@ openAppLogsDialog = appDialogs.openAppLogsDialog;
 refreshAppLogs = appDialogs.refreshAppLogs;
 resetAppDialog = appDialogs.resetAppDialog;
 openDeployDialog = appDialogs.openDeployDialog;
+openCaproverDialog = appDialogs.openCaproverDialog;
 
 const workspaceTree = initWorkspaceTree({
   state,

@@ -1097,12 +1097,61 @@ export const initAppDialogs = ({
   const appDeployUrl = document.getElementById("app-deploy-url");
   const appDeployCancelButton = document.getElementById("app-deploy-cancel");
   const appDeployConfirmButton = document.getElementById("app-deploy-confirm");
+  const appCaproverDialog = document.getElementById("app-caprover-dialog");
+  const appCaproverForm = appCaproverDialog?.querySelector("form") ?? null;
+  const appCaproverTitle = document.getElementById("app-caprover-title");
+  const appCaproverNameInput = document.getElementById("app-caprover-name");
+  const appCaproverDeployments = document.getElementById("app-caprover-deployments");
+  const appCaproverTargetSelect = document.getElementById("app-caprover-target");
+  const appCaproverCopySourceSelect = document.getElementById("app-caprover-copy-source");
+  const appCaproverRefreshButton = document.getElementById("app-caprover-refresh");
+  const appCaproverRepoInput = document.getElementById("app-caprover-repo");
+  const appCaproverBranchInput = document.getElementById("app-caprover-branch");
+  const appCaproverEnableHttpsInput = document.getElementById("app-caprover-enable-https");
+  const appCaproverEnvVarsInput = document.getElementById("app-caprover-env-vars");
+  const appCaproverUserInput = document.getElementById("app-caprover-user");
+  const appCaproverPasswordInput = document.getElementById("app-caprover-password");
+  const appCaproverSshKeyInput = document.getElementById("app-caprover-ssh-key");
+  const appCaproverStatus = document.getElementById("app-caprover-status");
+  const appCaproverMessage = document.getElementById("app-caprover-message");
+  const appCaproverWebhookRow = document.getElementById("app-caprover-webhook-row");
+  const appCaproverWebhookInput = document.getElementById("app-caprover-webhook");
+  const appCaproverCopyWebhookButton = document.getElementById("app-caprover-copy-webhook");
+  const appCaproverUrl = document.getElementById("app-caprover-url");
+  const appCaproverCancelButton = document.getElementById("app-caprover-cancel");
+  const appCaproverReplicateButton = document.getElementById("app-caprover-replicate");
+  const appCaproverSaveButton = document.getElementById("app-caprover-save");
 
   const deployDialogState = {
     appId: null,
     deploying: false,
     completed: false,
     targets: [],
+  };
+
+  const caproverDialogState = {
+    appId: null,
+    targets: [],
+    deployments: [],
+    saving: false,
+    preferredName: "",
+  };
+
+  const readJsonResponse = async (response, fallbackMessage) => {
+    const contentType = response.headers.get("content-type") || "";
+    const text = await response.text();
+    const trimmed = text.trim();
+    if (contentType.includes("application/json")) {
+      try {
+        return text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(response.ok ? "Invalid JSON response from server" : fallbackMessage);
+      }
+    }
+    if (!response.ok) {
+      throw new Error(trimmed ? `${fallbackMessage}: ${trimmed.slice(0, 220)}` : `${fallbackMessage}: ${response.status}`);
+    }
+    throw new Error(trimmed ? trimmed.slice(0, 220) : "Server returned a non-JSON response");
   };
 
   const setDeployConfirmButtonState = (label, disabled) => {
@@ -1149,11 +1198,18 @@ export const initAppDialogs = ({
     appDeployTargetSelect.value = targets.length > 1 ? "all" : targets[0]?.name ?? "all";
   };
 
+  const fetchCaproverTargets = async () => {
+    const response = await fetch("/api/caprover/targets");
+    const data = await readJsonResponse(response, "Failed to load CapRover targets");
+    if (!response.ok) {
+      throw new Error(data.error || response.statusText || "Failed to load CapRover targets");
+    }
+    return Array.isArray(data.targets) ? data.targets : [];
+  };
+
   const loadCaproverTargets = async () => {
     try {
-      const response = await fetch("/api/caprover/targets");
-      const data = await response.json();
-      const targets = Array.isArray(data.targets) ? data.targets : [];
+      const targets = await fetchCaproverTargets();
       deployDialogState.targets = targets;
       renderCaproverTargetOptions(targets);
       return targets;
@@ -1205,6 +1261,489 @@ export const initAppDialogs = ({
     }
     if (typeof deployment.deployedVersion === "number") {
       app.caproverDeployedVersion = deployment.deployedVersion;
+    }
+  };
+
+  const syncCaproverSetupDetails = (appId, data) => {
+    const app = getAppById(appId);
+    if (!app || !data || typeof data !== "object") return;
+    const caprover = data.caprover && typeof data.caprover === "object" ? data.caprover : null;
+    if (caprover?.appName) {
+      app.caproverName = caprover.appName;
+    }
+    if (caprover?.liveUrl) {
+      app.caproverLiveUrl = caprover.liveUrl;
+    }
+    if (typeof caprover?.deployedVersion === "number") {
+      app.caproverDeployedVersion = caprover.deployedVersion;
+    }
+  };
+
+  const setCaproverStatus = (message, type = "pending") => {
+    if (appCaproverStatus) {
+      appCaproverStatus.hidden = !message;
+    }
+    if (appCaproverMessage) {
+      appCaproverMessage.textContent = message || "";
+      appCaproverMessage.className =
+        type === "error" ? "wm-deploy-error" : type === "success" ? "wm-deploy-success" : "wm-deploy-pending";
+    }
+  };
+
+  const setCaproverWebhook = (url) => {
+    const hasUrl = typeof url === "string" && url.trim().length > 0;
+    if (appCaproverWebhookRow) {
+      appCaproverWebhookRow.hidden = !hasUrl;
+    }
+    if (appCaproverWebhookInput) {
+      appCaproverWebhookInput.value = hasUrl ? url.trim() : "";
+    }
+  };
+
+  const getCaproverReplicationDestination = () => appCaproverTargetSelect?.value || "";
+  const getCaproverReplicationSource = () => appCaproverCopySourceSelect?.value || "";
+
+  const updateCaproverReplicateButton = () => {
+    if (!appCaproverReplicateButton) return;
+    const destination = getCaproverReplicationDestination();
+    const source = getCaproverReplicationSource();
+    appCaproverReplicateButton.disabled = !source || !destination || source === destination || caproverDialogState.saving;
+  };
+
+  const renderCaproverSetupTargets = (targets) => {
+    if (!appCaproverTargetSelect) return;
+    appCaproverTargetSelect.replaceChildren();
+    for (const target of targets) {
+      const option = document.createElement("option");
+      option.value = target.name;
+      option.textContent = target.name;
+      appCaproverTargetSelect.append(option);
+    }
+    appCaproverTargetSelect.disabled = targets.length <= 1;
+    appCaproverTargetSelect.value = targets.find((target) => target.name !== "primary")?.name ?? targets[0]?.name ?? "";
+
+    if (appCaproverCopySourceSelect) {
+      appCaproverCopySourceSelect.replaceChildren();
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "Select source target";
+      appCaproverCopySourceSelect.append(placeholder);
+      for (const target of targets) {
+        const option = document.createElement("option");
+        option.value = target.name;
+        option.textContent = target.name;
+        appCaproverCopySourceSelect.append(option);
+      }
+      appCaproverCopySourceSelect.disabled = targets.length <= 1;
+      appCaproverCopySourceSelect.value = targets.find((target) => target.name === "primary")?.name ?? targets[0]?.name ?? "";
+    }
+    updateCaproverReplicateButton();
+  };
+
+  const renderCaproverDeploymentSummary = (deployments) => {
+    if (!appCaproverDeployments) return;
+    appCaproverDeployments.replaceChildren();
+    if (!Array.isArray(deployments) || deployments.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "wm-field-note";
+      empty.textContent = "No CapRover targets are configured.";
+      appCaproverDeployments.append(empty);
+      return;
+    }
+
+    for (const deployment of deployments) {
+      const row = document.createElement("div");
+      row.className = "wm-caprover-deployment-row";
+      row.dataset.state = deployment.error ? "error" : deployment.linked ? "linked" : "missing";
+
+      const main = document.createElement("div");
+      main.className = "wm-caprover-deployment-main";
+      const title = document.createElement("strong");
+      title.textContent = deployment.name;
+      const detail = document.createElement("span");
+      if (deployment.error) {
+        detail.textContent = deployment.error;
+      } else if (deployment.linked) {
+        const branch = deployment.app?.gitDeploy?.branch ? `branch ${deployment.app.gitDeploy.branch}` : "GitHub deploy not configured";
+        const version = deployment.app?.deployedVersion !== null && deployment.app?.deployedVersion !== undefined
+          ? `v${deployment.app.deployedVersion}`
+          : "no build yet";
+        detail.textContent = `${branch} - ${version}`;
+      } else {
+        detail.textContent = "Not registered";
+      }
+      main.append(title, detail);
+
+      const badge = document.createElement("span");
+      badge.className = "wm-app-status";
+      badge.dataset.state = deployment.error ? "failed" : deployment.linked ? "running" : "idle";
+      badge.textContent = deployment.error ? "Error" : deployment.linked ? "Registered" : "Missing";
+      row.append(main, badge);
+
+      if (deployment.liveUrl) {
+        const link = document.createElement("a");
+        link.href = deployment.liveUrl;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "Open";
+        row.append(link);
+      }
+
+      appCaproverDeployments.append(row);
+    }
+  };
+
+  const loadCaproverDeploymentSummary = async () => {
+    const appId = caproverDialogState.appId;
+    if (!appId) return [];
+    const caproverName = appCaproverNameInput?.value?.trim() || caproverDialogState.preferredName;
+    if (!caproverName) {
+      renderCaproverDeploymentSummary([]);
+      return [];
+    }
+    try {
+      const response = await fetch(
+        `/api/apps/${encodeURIComponent(appId)}/caprover/deployments?caproverName=${encodeURIComponent(caproverName)}`,
+      );
+      const data = await readJsonResponse(response, "Failed to load CapRover deployments");
+      if (!response.ok) {
+        throw new Error(data.error || response.statusText || "Failed to load CapRover deployments");
+      }
+      caproverDialogState.deployments = Array.isArray(data.targets) ? data.targets : [];
+      renderCaproverDeploymentSummary(caproverDialogState.deployments);
+      applyDeploymentForSelectedTarget();
+      return caproverDialogState.deployments;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load CapRover deployments";
+      renderCaproverDeploymentSummary([{ name: "CapRover", linked: false, app: null, liveUrl: null, error: message }]);
+      setCaproverStatus(message, "error");
+      return [];
+    }
+  };
+
+  const applyDeploymentForSelectedTarget = () => {
+    const targetName = appCaproverTargetSelect?.value || "";
+    const deployment = caproverDialogState.deployments.find((entry) => entry?.name === targetName);
+    if (deployment?.app) {
+      applyRemoteCaproverAppToForm(deployment.app);
+    }
+  };
+
+  const applyRemoteCaproverAppToForm = (remoteApp) => {
+    if (!remoteApp) return;
+    const gitDeploy = remoteApp.gitDeploy && typeof remoteApp.gitDeploy === "object" ? remoteApp.gitDeploy : null;
+    if (appCaproverRepoInput) {
+      appCaproverRepoInput.value = typeof gitDeploy?.repo === "string" ? gitDeploy.repo : "";
+    }
+    if (appCaproverBranchInput) {
+      appCaproverBranchInput.value = typeof gitDeploy?.branch === "string" && gitDeploy.branch ? gitDeploy.branch : "";
+    }
+    if (appCaproverEnableHttpsInput) {
+      appCaproverEnableHttpsInput.checked = remoteApp.hasDefaultSubDomainSsl === true;
+    }
+    if (appCaproverEnvVarsInput) {
+      const envVars = Array.isArray(remoteApp.envVars) ? remoteApp.envVars : [];
+      appCaproverEnvVarsInput.value = envVars
+        .filter((entry) => entry && typeof entry.key === "string")
+        .map((entry) => `${entry.key}=${entry.value ?? ""}`)
+        .join("\n");
+    }
+    if (appCaproverUserInput) {
+      appCaproverUserInput.value = typeof gitDeploy?.user === "string" ? gitDeploy.user : "";
+    }
+    if (appCaproverPasswordInput) {
+      appCaproverPasswordInput.value = "";
+    }
+    if (appCaproverSshKeyInput) {
+      appCaproverSshKeyInput.value = "";
+    }
+    setCaproverWebhook(gitDeploy?.webhookUrl || null);
+    if (gitDeploy?.webhookUrl) {
+      setCaproverStatus("Git deploy webhook is configured.", "success");
+    } else {
+      setCaproverStatus("");
+    }
+  };
+
+  const loadCaproverSetupTargets = async () => {
+    try {
+      const targets = await fetchCaproverTargets();
+      caproverDialogState.targets = targets;
+      renderCaproverSetupTargets(targets);
+      return targets;
+    } catch (error) {
+      caproverDialogState.targets = [];
+      renderCaproverSetupTargets([]);
+      setCaproverStatus(error instanceof Error ? error.message : "Failed to load CapRover targets", "error");
+      return [];
+    }
+  };
+
+  const resetCaproverDialog = () => {
+    appCaproverForm?.reset();
+    caproverDialogState.appId = null;
+    caproverDialogState.targets = [];
+    caproverDialogState.deployments = [];
+    caproverDialogState.saving = false;
+    caproverDialogState.preferredName = "";
+    setCaproverStatus("");
+    setCaproverWebhook(null);
+    if (appCaproverUrl) {
+      appCaproverUrl.hidden = true;
+      appCaproverUrl.href = "#";
+    }
+    if (appCaproverSaveButton) {
+      appCaproverSaveButton.disabled = false;
+      appCaproverSaveButton.textContent = "Register GitHub Deploy";
+    }
+    renderCaproverDeploymentSummary([]);
+    updateCaproverReplicateButton();
+  };
+
+  const closeCaproverDialog = () => {
+    if (!appCaproverDialog) return;
+    if (appCaproverDialog.open) {
+      appCaproverDialog.close();
+    }
+    resetCaproverDialog();
+  };
+
+  const openCaproverDialog = async (appId) => {
+    if (!appCaproverDialog) return;
+    const app = getAppById(appId);
+    if (!app) {
+      showToast("App not found", { type: "error" });
+      return;
+    }
+    if (!app.webApp) {
+      showToast("Only web apps can be linked to CapRover", { type: "error" });
+      return;
+    }
+
+    resetCaproverDialog();
+    caproverDialogState.appId = appId;
+    const preferredName = resolveInitialCaproverName(app);
+    caproverDialogState.preferredName = preferredName;
+    if (appCaproverNameInput) {
+      appCaproverNameInput.value = preferredName;
+    }
+    if (appCaproverTitle) {
+      appCaproverTitle.textContent = `CapRover ${app.label?.trim() || String(appId)}`;
+    }
+    if (appCaproverDialog.open) {
+      appCaproverDialog.close();
+    }
+    appCaproverDialog.showModal();
+
+    const targets = await loadCaproverSetupTargets();
+    if (targets.length === 0) {
+      setCaproverStatus("No CapRover targets are configured.", "error");
+      return;
+    }
+    await loadCaproverDeploymentSummary();
+  };
+
+  const resolveCaproverReplicationName = () => {
+    const inputName = appCaproverNameInput?.value?.trim();
+    if (inputName) return inputName;
+    if (caproverDialogState.preferredName) return caproverDialogState.preferredName;
+    const app = getAppById(caproverDialogState.appId);
+    return resolveInitialCaproverName(app);
+  };
+
+  const selectedCaproverSetupPayload = () => {
+    const caproverTarget = appCaproverTargetSelect?.value || "";
+    const caproverName = appCaproverNameInput?.value?.trim() || "";
+    if (!caproverTarget) {
+      throw new Error("Select a CapRover target");
+    }
+    if (!caproverName) {
+      throw new Error("Select a CapRover app");
+    }
+    return { caproverTarget, caproverName };
+  };
+
+  const handleCaproverReplicate = async () => {
+    if (caproverDialogState.saving) return;
+    const appId = caproverDialogState.appId;
+    if (!appId) {
+      showToast("No app selected", { type: "error" });
+      return;
+    }
+    const sourceTarget = getCaproverReplicationSource();
+    const destinationTarget = getCaproverReplicationDestination();
+    const caproverName = resolveCaproverReplicationName();
+    if (!sourceTarget || !destinationTarget || sourceTarget === destinationTarget) {
+      const message = "Select different source and destination targets.";
+      setCaproverStatus(message, "error");
+      showToast(message, { type: "error" });
+      return;
+    }
+    if (!caproverName) {
+      const message = "CapRover app name is required.";
+      setCaproverStatus(message, "error");
+      showToast(message, { type: "error" });
+      return;
+    }
+
+    caproverDialogState.saving = true;
+    updateCaproverReplicateButton();
+    if (appCaproverReplicateButton) {
+      appCaproverReplicateButton.textContent = "Replicating...";
+    }
+    setCaproverStatus(`Copying ${caproverName} from ${sourceTarget} to ${destinationTarget}...`);
+    try {
+      const response = await fetch(`/api/apps/${encodeURIComponent(appId)}/caprover/replicate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          caproverName,
+          sourceTarget,
+          destinationTarget,
+        }),
+      });
+      const data = await readJsonResponse(response, "Failed to copy CapRover deployment");
+      if (!response.ok) {
+        throw new Error(data.error || response.statusText || "Failed to copy CapRover deployment");
+      }
+      syncCaproverSetupDetails(appId, data);
+      void refreshApps({ skipRender: true });
+      await loadCaproverDeploymentSummary();
+      setCaproverWebhook(data.webhookUrl || data.caprover?.gitDeploy?.webhookUrl || null);
+      if (appCaproverUrl && data.caprover?.liveUrl) {
+        appCaproverUrl.href = data.caprover.liveUrl;
+        appCaproverUrl.textContent = data.caprover.liveUrl;
+        appCaproverUrl.hidden = false;
+      }
+      const sslNote = data.sslError ? ` SSL setup failed: ${data.sslError}` : "";
+      const warning = data.warning ? ` ${data.warning}` : "";
+      setCaproverStatus(`Replicated to ${destinationTarget}.${sslNote}${warning}`, data.sslError ? "error" : "success");
+      showToast(`Copied to ${destinationTarget}`, { type: "success" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to replicate CapRover app";
+      setCaproverStatus(message, "error");
+      showToast(message, { type: "error" });
+    } finally {
+      caproverDialogState.saving = false;
+      if (appCaproverReplicateButton) {
+        appCaproverReplicateButton.textContent = "Copy Deployment";
+      }
+      updateCaproverReplicateButton();
+    }
+  };
+
+  const parseCaproverEnvVars = (text) => {
+    const envVars = [];
+    const lines = String(text || "").split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const equalsIndex = trimmed.indexOf("=");
+      if (equalsIndex <= 0) {
+        throw new Error(`Invalid environment variable line: ${trimmed}`);
+      }
+      const key = trimmed.slice(0, equalsIndex).trim();
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+        throw new Error(`Invalid environment variable key: ${key}`);
+      }
+      envVars.push({
+        key,
+        value: trimmed.slice(equalsIndex + 1),
+      });
+    }
+    return envVars;
+  };
+
+  const handleCaproverGitSave = async () => {
+    if (caproverDialogState.saving) return;
+    const appId = caproverDialogState.appId;
+    if (!appId) {
+      showToast("No app selected", { type: "error" });
+      return;
+    }
+    let payload;
+    try {
+      payload = selectedCaproverSetupPayload();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid CapRover app selection";
+      setCaproverStatus(message, "error");
+      showToast(message, { type: "error" });
+      return;
+    }
+
+    const repo = appCaproverRepoInput?.value?.trim() || "";
+    const branch = appCaproverBranchInput?.value?.trim() || "";
+    const user = appCaproverUserInput?.value?.trim() || "";
+    const password = appCaproverPasswordInput?.value || "";
+    const sshKey = appCaproverSshKeyInput?.value?.trim() || "";
+    let envVars = [];
+    try {
+      envVars = parseCaproverEnvVars(appCaproverEnvVarsInput?.value || "");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid environment variables";
+      setCaproverStatus(message, "error");
+      showToast(message, { type: "error" });
+      return;
+    }
+    if (!repo || !branch || (!sshKey && (!user || !password))) {
+      const message = "Repository, branch, and either SSH key or username/password are required.";
+      setCaproverStatus(message, "error");
+      showToast(message, { type: "error" });
+      return;
+    }
+
+    caproverDialogState.saving = true;
+    if (appCaproverSaveButton) {
+      appCaproverSaveButton.disabled = true;
+      appCaproverSaveButton.textContent = "Registering...";
+    }
+    setCaproverStatus("Registering GitHub deploy...");
+    try {
+      const response = await fetch(`/api/apps/${encodeURIComponent(appId)}/caprover/git-deploy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...payload,
+          repo,
+          branch,
+          user,
+          password,
+          sshKey,
+          envVars,
+          enableSsl: appCaproverEnableHttpsInput?.checked === true,
+        }),
+      });
+      const data = await readJsonResponse(response, "Failed to register GitHub deploy");
+      if (!response.ok) {
+        throw new Error(data.error || response.statusText || "Failed to register GitHub deploy");
+      }
+      syncCaproverSetupDetails(appId, data);
+      void refreshApps({ skipRender: true });
+      await loadCaproverDeploymentSummary();
+      setCaproverWebhook(data.webhookUrl || data.caprover?.gitDeploy?.webhookUrl || null);
+      if (appCaproverUrl && data.caprover?.liveUrl) {
+        appCaproverUrl.href = data.caprover.liveUrl;
+        appCaproverUrl.textContent = data.caprover.liveUrl;
+        appCaproverUrl.hidden = false;
+      }
+      if (appCaproverPasswordInput) {
+        appCaproverPasswordInput.value = "";
+      }
+      if (appCaproverSshKeyInput) {
+        appCaproverSshKeyInput.value = "";
+      }
+      setCaproverStatus("GitHub deploy registered. Use the webhook URL in GitHub.", "success");
+      showToast("CapRover GitHub deploy registered", { type: "success" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to save Git deploy settings";
+      setCaproverStatus(message, "error");
+      showToast(message, { type: "error" });
+    } finally {
+      caproverDialogState.saving = false;
+      if (appCaproverSaveButton) {
+        appCaproverSaveButton.disabled = false;
+        appCaproverSaveButton.textContent = "Register GitHub Deploy";
+      }
     }
   };
 
@@ -1408,6 +1947,66 @@ export const initAppDialogs = ({
     resetDeployDialog();
   });
 
+  appCaproverForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+  });
+
+  appCaproverTargetSelect?.addEventListener("change", () => {
+    updateCaproverReplicateButton();
+    applyDeploymentForSelectedTarget();
+  });
+
+  appCaproverCopySourceSelect?.addEventListener("change", () => {
+    updateCaproverReplicateButton();
+  });
+
+  appCaproverNameInput?.addEventListener("change", () => {
+    void loadCaproverDeploymentSummary();
+  });
+
+  appCaproverRefreshButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    void loadCaproverDeploymentSummary();
+  });
+
+  appCaproverReplicateButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    void handleCaproverReplicate();
+  });
+
+  appCaproverSaveButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    void handleCaproverGitSave();
+  });
+
+  appCaproverCopyWebhookButton?.addEventListener("click", async (event) => {
+    event.preventDefault();
+    const value = appCaproverWebhookInput?.value || "";
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      showToast("Webhook URL copied", { type: "success" });
+    } catch {
+      appCaproverWebhookInput?.focus();
+      appCaproverWebhookInput?.select();
+      showToast("Select the webhook URL to copy it", { type: "info" });
+    }
+  });
+
+  appCaproverCancelButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    closeCaproverDialog();
+  });
+
+  appCaproverDialog?.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeCaproverDialog();
+  });
+
+  appCaproverDialog?.addEventListener("close", () => {
+    resetCaproverDialog();
+  });
+
   return {
     openAppDialog,
     closeAppDialog,
@@ -1415,5 +2014,6 @@ export const initAppDialogs = ({
     refreshAppLogs,
     resetAppDialog,
     openDeployDialog,
+    openCaproverDialog,
   };
 };

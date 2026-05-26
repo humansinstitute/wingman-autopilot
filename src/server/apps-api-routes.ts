@@ -8,7 +8,7 @@ import type { TreeNode } from '../apps/app-detector';
 import type { AppLifecycleAction, AppLifecycleScripts, AppRecord } from '../apps/app-registry';
 import type { AppProcessStatus } from '../apps/app-process-manager';
 import { AppActionInProgressError, AppScriptMissingError } from '../apps/app-process-manager';
-import type { CaproverStore, CaproverTargetClient } from '../caprover';
+import type { CaproverAppDefinition, CaproverRepoInfo, CaproverStore, CaproverTargetClient } from '../caprover';
 import type { WappRecord } from '../wapps/types';
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD';
@@ -36,6 +36,13 @@ function normaliseCaproverTargetName(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase();
   return /^[a-z][a-z0-9-]*$/.test(normalized) ? normalized : null;
+}
+
+function normaliseCaproverAppName(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (!/^[a-z][a-z0-9-]*$/.test(normalized)) return null;
+  return normalized.length <= 50 ? normalized : null;
 }
 
 function resolveCaproverTargets(
@@ -177,6 +184,188 @@ interface CaproverDeployTargetResult {
   httpsEnabled: boolean;
   httpsError: string | null;
   error: string | null;
+}
+
+function resolveSingleCaproverTarget(
+  targets: CaproverTargetClient[],
+  requestedTarget: unknown,
+): CaproverTargetClient | { error: string; status: number } {
+  const resolvedTargets = resolveCaproverTargets(targets, requestedTarget);
+  if (!Array.isArray(resolvedTargets)) {
+    return resolvedTargets;
+  }
+  if (resolvedTargets.length !== 1) {
+    return { error: 'Select one CapRover target for app linking and Git deploy setup', status: 400 };
+  }
+  return resolvedTargets[0]!;
+}
+
+function buildCaproverWebhookUrl(target: CaproverTargetClient, remoteApp: CaproverAppDefinition): string | null {
+  const token = remoteApp.appPushWebhook?.pushWebhookToken;
+  if (!token) return null;
+  const serverUrl = target.serverUrl.replace(/\/+$/, '');
+  if (!serverUrl) return null;
+  return `${serverUrl}/api/v2/user/apps/webhooks/triggerbuild?namespace=captain&token=${encodeURIComponent(token)}`;
+}
+
+function serializeCaproverRemoteApp(remoteApp: CaproverAppDefinition, target: CaproverTargetClient) {
+  return {
+    appName: remoteApp.appName,
+    hasPersistentData: remoteApp.hasPersistentData,
+    hasDefaultSubDomainSsl: remoteApp.hasDefaultSubDomainSsl,
+    containerHttpPort: remoteApp.containerHttpPort,
+    notExposeAsWebApp: remoteApp.notExposeAsWebApp,
+    instanceCount: remoteApp.instanceCount,
+    deployedVersion: remoteApp.deployedVersion ?? null,
+    customDomain: remoteApp.customDomain ?? [],
+    volumes: remoteApp.volumes ?? [],
+    ports: remoteApp.ports ?? [],
+    gitDeploy: remoteApp.appPushWebhook
+      ? {
+          repo: remoteApp.appPushWebhook.repoInfo?.repo ?? '',
+          branch: remoteApp.appPushWebhook.repoInfo?.branch ?? '',
+          user: remoteApp.appPushWebhook.repoInfo?.user ?? '',
+          hasPassword: Boolean(remoteApp.appPushWebhook.repoInfo?.password),
+          hasSshKey: Boolean(remoteApp.appPushWebhook.repoInfo?.sshKey),
+          webhookUrl: buildCaproverWebhookUrl(target, remoteApp),
+        }
+      : null,
+  };
+}
+
+function buildReplicatedCaproverConfig(sourceApp: CaproverAppDefinition, destinationApp: CaproverAppDefinition | null) {
+  const repoInfo = sourceApp.appPushWebhook?.repoInfo;
+  const config: Parameters<CaproverTargetClient['client']['updateAppConfig']>[1] = {
+    instanceCount: sourceApp.instanceCount,
+    containerHttpPort: sourceApp.containerHttpPort,
+    notExposeAsWebApp: sourceApp.notExposeAsWebApp,
+    envVars: sourceApp.envVars ?? [],
+    volumes: sourceApp.volumes ?? [],
+    ports: sourceApp.ports ?? [],
+  };
+
+  if (repoInfo?.repo && repoInfo.branch) {
+    config.appPushWebhook = {
+      repoInfo,
+      pushWebhookToken: destinationApp?.appPushWebhook?.pushWebhookToken ?? '',
+    };
+  }
+
+  return config;
+}
+
+function buildCaproverTrackingNotes(targetName: string, existingNotes?: string | null): string {
+  const preserved = existingNotes?.trim();
+  const marker = `caproverTarget=${targetName}`;
+  if (!preserved) return marker;
+  if (/^caproverTarget=/.test(preserved)) return marker;
+  return preserved.includes(marker) ? preserved : `${preserved}\n${marker}`;
+}
+
+async function upsertLocalCaproverTracking(
+  ctx: AppsApiContext,
+  appId: string,
+  target: CaproverTargetClient,
+  remoteApp: CaproverAppDefinition,
+) {
+  const caproverName = remoteApp.appName;
+  const liveUrl = await target.client.getAppUrl(caproverName, remoteApp.hasDefaultSubDomainSsl !== false);
+  const customDomain = remoteApp.customDomain?.[0]?.publicDomain ?? null;
+  const trackedByName = ctx.caproverStore.getAppByCaproverName(caproverName);
+  const trackedByLocalApp = ctx.caproverStore.getAppByLocalAppId(appId);
+  if (trackedByName && trackedByLocalApp && trackedByName.id !== trackedByLocalApp.id) {
+    ctx.caproverStore.updateApp(trackedByLocalApp.id, { appId: null });
+  }
+  const base = trackedByName ?? trackedByLocalApp;
+  if (base) {
+    return ctx.caproverStore.updateApp(base.id, {
+      appId,
+      caproverName,
+      liveUrl,
+      deployedVersion: remoteApp.deployedVersion ?? null,
+      hasSsl: remoteApp.hasDefaultSubDomainSsl,
+      customDomain,
+      notes: buildCaproverTrackingNotes(target.name, base.notes),
+    });
+  }
+
+  return ctx.caproverStore.createApp({
+    appId,
+    caproverName,
+    liveUrl,
+    hasSsl: remoteApp.hasDefaultSubDomainSsl,
+    customDomain,
+    notes: buildCaproverTrackingNotes(target.name),
+  });
+}
+
+function readCaproverRepoInfo(record: Record<string, unknown>): CaproverRepoInfo | { error: string } {
+  const repo = typeof record.repo === 'string' ? record.repo.trim() : '';
+  const branch = typeof record.branch === 'string' ? record.branch.trim() : '';
+  const user = typeof record.user === 'string' ? record.user.trim() : '';
+  const password = typeof record.password === 'string' ? record.password : '';
+  const sshKey = typeof record.sshKey === 'string' ? record.sshKey.trim() : '';
+
+  if (!repo) {
+    return { error: 'Repository URL is required' };
+  }
+  if (!branch) {
+    return { error: 'Branch is required' };
+  }
+  if (!sshKey && (!user || !password)) {
+    return { error: 'Provide either an SSH private key, or both username and password/token' };
+  }
+
+  return {
+    repo,
+    branch,
+    user,
+    password,
+    sshKey,
+  };
+}
+
+function readCaproverEnvVars(input: unknown): Array<{ key: string; value: string }> | { error: string } | undefined {
+  if (input === undefined || input === null) return undefined;
+
+  if (typeof input === 'string') {
+    const envVars: Array<{ key: string; value: string }> = [];
+    const lines = input.split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const equalsIndex = trimmed.indexOf('=');
+      if (equalsIndex <= 0) {
+        return { error: `Invalid environment variable line: ${trimmed}` };
+      }
+      const key = trimmed.slice(0, equalsIndex).trim();
+      const value = trimmed.slice(equalsIndex + 1);
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+        return { error: `Invalid environment variable key: ${key}` };
+      }
+      envVars.push({ key, value });
+    }
+    return envVars;
+  }
+
+  if (!Array.isArray(input)) {
+    return { error: 'envVars must be an array or KEY=value text' };
+  }
+
+  const envVars: Array<{ key: string; value: string }> = [];
+  for (const entry of input) {
+    if (!entry || typeof entry !== 'object') {
+      return { error: 'envVars entries must be objects with key and value' };
+    }
+    const record = entry as Record<string, unknown>;
+    const key = typeof record.key === 'string' ? record.key.trim() : '';
+    const value = typeof record.value === 'string' ? record.value : String(record.value ?? '');
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      return { error: `Invalid environment variable key: ${key}` };
+    }
+    envVars.push({ key, value });
+  }
+  return envVars;
 }
 
 function withCaproverDeploymentInfo(
@@ -817,6 +1006,314 @@ export async function handleAppsApi(
       }
     }
 
+    if (parts[4] === 'caprover' && method === 'GET' && parts[5] === 'deployments') {
+      const app = await ctx.appRegistry.getApp(id);
+      if (!app) {
+        return Response.json({ error: 'Not found' }, { status: 404 });
+      }
+      if (!ctx.canAccessApp(app)) {
+        return Response.json({ error: 'Not found' }, { status: 404 });
+      }
+      if (!app.webApp) {
+        return Response.json({ error: 'Only web apps can have CapRover deployments' }, { status: 400 });
+      }
+
+      const tracked = ctx.caproverStore.getAppByLocalAppId(id);
+      const requestedName = normaliseCaproverAppName(url.searchParams.get('caproverName'));
+      const trackedName = normaliseCaproverAppName(tracked?.caproverName ?? null);
+      const caproverName = requestedName ?? trackedName;
+      const targets = ctx.createCaproverTargetClientsFromEnv();
+
+      const summaries = [];
+      for (const target of targets) {
+        if (!caproverName) {
+          summaries.push({
+            name: target.name,
+            serverUrl: target.serverUrl,
+            linked: false,
+            app: null,
+            liveUrl: null,
+            error: null,
+          });
+          continue;
+        }
+        try {
+          const remoteApp = await target.client.getApp(caproverName);
+          summaries.push({
+            name: target.name,
+            serverUrl: target.serverUrl,
+            linked: Boolean(remoteApp),
+            app: remoteApp ? serializeCaproverRemoteApp(remoteApp, target) : null,
+            liveUrl: remoteApp ? await target.client.getAppUrl(caproverName, remoteApp.hasDefaultSubDomainSsl !== false) : null,
+            error: null,
+          });
+        } catch (error) {
+          summaries.push({
+            name: target.name,
+            serverUrl: target.serverUrl,
+            linked: false,
+            app: null,
+            liveUrl: null,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      return Response.json({
+        caproverName,
+        targets: summaries,
+      });
+    }
+
+    if (parts[4] === 'caprover' && method === 'POST' && parts[5] === 'link') {
+      const app = await ctx.appRegistry.getApp(id);
+      if (!app) {
+        return Response.json({ error: 'Not found' }, { status: 404 });
+      }
+      if (!ctx.canAccessApp(app)) {
+        return Response.json({ error: 'Not found' }, { status: 404 });
+      }
+      if (!app.webApp) {
+        return Response.json({ error: 'Only web apps can be linked to CapRover app cards' }, { status: 400 });
+      }
+
+      let payload: unknown;
+      try {
+        payload = await request.json();
+      } catch {
+        return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+      }
+      if (!payload || typeof payload !== 'object') {
+        return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+      }
+
+      const record = payload as Record<string, unknown>;
+      const caproverName = normaliseCaproverAppName(record.caproverName);
+      if (!caproverName) {
+        return Response.json(
+          { error: 'caproverName must be lowercase, start with a letter, and contain only letters, numbers, and hyphens' },
+          { status: 400 },
+        );
+      }
+      const target = resolveSingleCaproverTarget(ctx.createCaproverTargetClientsFromEnv(), record.caproverTarget);
+      if ('error' in target) {
+        return Response.json({ error: target.error }, { status: target.status });
+      }
+
+      try {
+        const remoteApp = await target.client.getApp(caproverName);
+        if (!remoteApp) {
+          return Response.json({ error: `CapRover app not found on ${target.name}: ${caproverName}` }, { status: 404 });
+        }
+        const tracked = await upsertLocalCaproverTracking(ctx, id, target, remoteApp);
+        return Response.json({
+          success: true,
+          target: { name: target.name, serverUrl: target.serverUrl },
+          app: withCaproverDeploymentInfo(
+            ctx.buildAppResponse(app, await ctx.appProcessManager.getStatus(id)),
+            id,
+            ctx.caproverStore,
+          ),
+          caprover: {
+            ...serializeCaproverRemoteApp(remoteApp, target),
+            liveUrl: tracked.liveUrl,
+          },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return Response.json({ error: message }, { status: 502 });
+      }
+    }
+
+    if (parts[4] === 'caprover' && method === 'POST' && parts[5] === 'git-deploy') {
+      const app = await ctx.appRegistry.getApp(id);
+      if (!app) {
+        return Response.json({ error: 'Not found' }, { status: 404 });
+      }
+      if (!ctx.canAccessApp(app)) {
+        return Response.json({ error: 'Not found' }, { status: 404 });
+      }
+      if (!app.webApp) {
+        return Response.json({ error: 'Only web apps can be configured for CapRover Git deploys' }, { status: 400 });
+      }
+
+      let payload: unknown;
+      try {
+        payload = await request.json();
+      } catch {
+        return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+      }
+      if (!payload || typeof payload !== 'object') {
+        return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+      }
+
+      const record = payload as Record<string, unknown>;
+      const caproverName = normaliseCaproverAppName(record.caproverName);
+      if (!caproverName) {
+        return Response.json(
+          { error: 'caproverName must be lowercase, start with a letter, and contain only letters, numbers, and hyphens' },
+          { status: 400 },
+        );
+      }
+      const repoInfo = readCaproverRepoInfo(record);
+      if ('error' in repoInfo) {
+        return Response.json({ error: repoInfo.error }, { status: 400 });
+      }
+      const envVars = readCaproverEnvVars(record.envVars);
+      if (envVars && 'error' in envVars) {
+        return Response.json({ error: envVars.error }, { status: 400 });
+      }
+      const target = resolveSingleCaproverTarget(ctx.createCaproverTargetClientsFromEnv(), record.caproverTarget);
+      if ('error' in target) {
+        return Response.json({ error: target.error }, { status: target.status });
+      }
+
+      try {
+        let before = await target.client.getApp(caproverName);
+        const created = !before;
+        if (!before) {
+          await target.client.createApp(caproverName, false);
+          before = await target.client.getApp(caproverName);
+        }
+        await target.client.updateAppConfig(caproverName, {
+          appPushWebhook: {
+            repoInfo,
+            pushWebhookToken: before?.appPushWebhook?.pushWebhookToken ?? '',
+          },
+          ...(Array.isArray(envVars) ? { envVars } : {}),
+        });
+        if (record.enableSsl === true) {
+          await target.client.enableSsl(caproverName);
+        }
+        const remoteApp = await target.client.getApp(caproverName);
+        if (!remoteApp) {
+          return Response.json({ error: `CapRover app disappeared after update: ${caproverName}` }, { status: 502 });
+        }
+        const tracked = await upsertLocalCaproverTracking(ctx, id, target, remoteApp);
+        return Response.json({
+          success: true,
+          created,
+          target: { name: target.name, serverUrl: target.serverUrl },
+          webhookUrl: buildCaproverWebhookUrl(target, remoteApp),
+          app: withCaproverDeploymentInfo(
+            ctx.buildAppResponse(app, await ctx.appProcessManager.getStatus(id)),
+            id,
+            ctx.caproverStore,
+          ),
+          caprover: {
+            ...serializeCaproverRemoteApp(remoteApp, target),
+            liveUrl: tracked.liveUrl,
+          },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return Response.json({ error: message }, { status: 502 });
+      }
+    }
+
+    if (parts[4] === 'caprover' && method === 'POST' && parts[5] === 'replicate') {
+      const app = await ctx.appRegistry.getApp(id);
+      if (!app) {
+        return Response.json({ error: 'Not found' }, { status: 404 });
+      }
+      if (!ctx.canAccessApp(app)) {
+        return Response.json({ error: 'Not found' }, { status: 404 });
+      }
+      if (!app.webApp) {
+        return Response.json({ error: 'Only web apps can be replicated to CapRover' }, { status: 400 });
+      }
+
+      let payload: unknown;
+      try {
+        payload = await request.json();
+      } catch {
+        return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+      }
+      if (!payload || typeof payload !== 'object') {
+        return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+      }
+
+      const record = payload as Record<string, unknown>;
+      const caproverName = normaliseCaproverAppName(record.caproverName);
+      if (!caproverName) {
+        return Response.json(
+          { error: 'caproverName must be lowercase, start with a letter, and contain only letters, numbers, and hyphens' },
+          { status: 400 },
+        );
+      }
+
+      const source = resolveSingleCaproverTarget(ctx.createCaproverTargetClientsFromEnv(), record.sourceTarget);
+      if ('error' in source) {
+        return Response.json({ error: `Source target: ${source.error}` }, { status: source.status });
+      }
+      const destination = resolveSingleCaproverTarget(ctx.createCaproverTargetClientsFromEnv(), record.destinationTarget);
+      if ('error' in destination) {
+        return Response.json({ error: `Destination target: ${destination.error}` }, { status: destination.status });
+      }
+      if (source.name === destination.name) {
+        return Response.json({ error: 'Source and destination targets must be different' }, { status: 400 });
+      }
+
+      try {
+        const sourceApp = await source.client.getApp(caproverName);
+        if (!sourceApp) {
+          return Response.json({ error: `CapRover app not found on ${source.name}: ${caproverName}` }, { status: 404 });
+        }
+
+        let destinationApp = await destination.client.getApp(caproverName);
+        const created = !destinationApp;
+        if (!destinationApp) {
+          await destination.client.createApp(caproverName, sourceApp.hasPersistentData);
+          destinationApp = await destination.client.getApp(caproverName);
+        }
+
+        await destination.client.updateAppConfig(
+          caproverName,
+          buildReplicatedCaproverConfig(sourceApp, destinationApp),
+        );
+
+        let sslError: string | null = null;
+        if (sourceApp.hasDefaultSubDomainSsl) {
+          try {
+            await destination.client.enableSsl(caproverName);
+          } catch (error) {
+            sslError = error instanceof Error ? error.message : String(error);
+          }
+        }
+
+        const replicatedApp = await destination.client.getApp(caproverName);
+        if (!replicatedApp) {
+          return Response.json({ error: `CapRover app disappeared after replication: ${caproverName}` }, { status: 502 });
+        }
+
+        const tracked = await upsertLocalCaproverTracking(ctx, id, destination, replicatedApp);
+        const hasGitDeploy = Boolean(replicatedApp.appPushWebhook?.repoInfo?.repo && replicatedApp.appPushWebhook?.repoInfo?.branch);
+        return Response.json({
+          success: true,
+          created,
+          source: { name: source.name, serverUrl: source.serverUrl },
+          destination: { name: destination.name, serverUrl: destination.serverUrl },
+          webhookUrl: buildCaproverWebhookUrl(destination, replicatedApp),
+          warning: hasGitDeploy
+            ? null
+            : 'Config replicated, but the source app does not have Git deploy settings to build future versions.',
+          sslError,
+          app: withCaproverDeploymentInfo(
+            ctx.buildAppResponse(app, await ctx.appProcessManager.getStatus(id)),
+            id,
+            ctx.caproverStore,
+          ),
+          caprover: {
+            ...serializeCaproverRemoteApp(replicatedApp, destination),
+            liveUrl: tracked.liveUrl,
+          },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return Response.json({ error: message }, { status: 502 });
+      }
+    }
+
     if (method === 'POST' && parts[4] === 'deploy-to-caprover') {
       const app = await ctx.appRegistry.getApp(id);
       if (!app) {
@@ -890,7 +1387,7 @@ export async function handleAppsApi(
         return Response.json({ error: `${captainDefFileName} must have schemaVersion: 2` }, { status: 400 });
       }
 
-      if (!defRecord.imageName && !defRecord.dockerfileLines && !defRecord.templateId) {
+      if (!defRecord.imageName && !defRecord.dockerfilePath && !defRecord.dockerfileLines && !defRecord.templateId) {
         const dockerfilePath = join(app.root, 'Dockerfile');
         try {
           await stat(dockerfilePath);
@@ -898,7 +1395,7 @@ export async function handleAppsApi(
           return Response.json(
             {
               error:
-                `${captainDefFileName} requires imageName, dockerfileLines, or a Dockerfile in the app root. ` +
+                `${captainDefFileName} requires imageName, dockerfilePath, dockerfileLines, or a Dockerfile in the app root. ` +
                 'See https://caprover.com/docs/captain-definition-file.html',
             },
             { status: 400 },

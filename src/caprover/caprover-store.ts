@@ -35,6 +35,7 @@ export interface CreateCaproverAppRecordInput {
 export interface UpdateCaproverAppRecordInput {
   appId?: string | null;
   projectId?: string | null;
+  caproverName?: string;
   liveUrl?: string | null;
   customDomain?: string | null;
   hasSsl?: boolean;
@@ -240,18 +241,20 @@ class CaproverStore {
         `UPDATE caprover_apps SET
            app_id = ?2,
            project_id = ?3,
-           live_url = ?4,
-           custom_domain = ?5,
-           has_ssl = ?6,
-           deployed_version = ?7,
-           notes = ?8,
-           updated_at = ?9
+           caprover_name = ?4,
+           live_url = ?5,
+           custom_domain = ?6,
+           has_ssl = ?7,
+           deployed_version = ?8,
+           notes = ?9,
+           updated_at = ?10
          WHERE id = ?1`,
       )
       .run(
         id,
         input.appId !== undefined ? input.appId : existing.appId,
         input.projectId !== undefined ? input.projectId : existing.projectId,
+        input.caproverName !== undefined ? input.caproverName : existing.caproverName,
         input.liveUrl !== undefined ? input.liveUrl : existing.liveUrl,
         input.customDomain !== undefined ? input.customDomain : existing.customDomain,
         input.hasSsl !== undefined ? (input.hasSsl ? 1 : 0) : (existing.hasSsl ? 1 : 0),
