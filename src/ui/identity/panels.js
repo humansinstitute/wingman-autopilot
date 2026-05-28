@@ -9,6 +9,37 @@
 import { applyAvatarImage } from "../utils/avatar.js";
 import { renderWorkspaceDelegationPanel } from "./workspace-delegation-panel.js";
 
+function copyTextWithFallback(text) {
+  if (!text) {
+    return Promise.resolve(false);
+  }
+
+  const fallbackCopy = () => {
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "absolute";
+      textarea.style.left = "-9999px";
+      document.body.append(textarea);
+      textarea.select();
+      const copied = document.execCommand("copy");
+      textarea.remove();
+      return copied;
+    } catch {
+      return false;
+    }
+  };
+
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text)
+      .then(() => true)
+      .catch(() => fallbackCopy());
+  }
+
+  return Promise.resolve(fallbackCopy());
+}
+
 export function initIdentityPanels(deps) {
   const {
     state,
@@ -636,7 +667,10 @@ export function initIdentityPanels(deps) {
               throw new Error(regData.error ?? "Failed to generate registration code");
             }
 
-            await navigator.clipboard.writeText(regData.blob);
+            const copied = await copyTextWithFallback(regData.blob);
+            if (!copied) {
+              throw new Error("Generated registration code, but browser clipboard access failed");
+            }
 
             showKeyTeleportSetupModal(regData.appNpub);
 

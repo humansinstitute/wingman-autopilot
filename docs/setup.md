@@ -128,6 +128,8 @@ The wizard prompts for:
 - host workspace directory mounted at `/workspace`
 - app routing mode
 - optional `WINGMAN_PRIV`
+- optional Key Teleport settings (`WINGMAN_KEYTELEPORT_PRIVKEY`,
+  `WINGMAN_KEYTELEPORT_WELCOME_PUBKEY`)
 
 The wizard creates the host workspace directory and makes it writable by the
 container user. This matters on Linux hosts because the container runs as the

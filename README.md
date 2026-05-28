@@ -268,6 +268,9 @@ Options:
 | `AGENT_MODE` | Deprecated compatibility input only | unset |
 | `AGENTAPI_BIN` | Primary binary path for the AgentAPI executable | `./out/agentapi` |
 | `AGENT_CLI_AUTOUPDATE` | Set to `true` to allow Codex/Claude CLI background update checks in new sessions | `false` |
+| `KEYTELEPORT_PRIVKEY` | App private key used to decrypt Key Teleport blobs | unset |
+| `KEYTELEPORT_WELCOME_PUBKEY` | Trusted Welcome pubkey for Key Teleport event verification | unset |
+| `KEYTELEPORT_WELCOME_URL` | Welcome Key Teleport app URL | `https://welcome.nostr.com` |
 | `CLAUDE_CLI` | Executable invoked for Claude sessions | `claude` |
 | `GLOVES` | Claude approval mode; `OFF` adds skip-permissions | unset |
 | `GOOSE_CLI` | Executable invoked for Goose sessions | `goose` |
