@@ -5,6 +5,7 @@ import { loadConfig, resolveAgentLaunchConfig } from "./config";
 
 const ENV_KEYS = [
   "AGENT_MODE",
+  "AGENT_CLI_AUTOUPDATE",
   "AGENT_SPAWN_MODE",
   "AGENT_STATUS_POLL_TIMEOUT_MS",
   "AGENT_TMUX_SESSION",
@@ -199,6 +200,7 @@ describe("loadConfig", () => {
   test("uses GLOVES=OFF as the single approval bypass for Codex and Claude", () => {
     applyEnv({
       AGENTAPI_BIN: "/tmp/custom-agentapi",
+      AGENT_CLI_AUTOUPDATE: "true",
       CODEX_CLI: undefined,
       AGENT_MODE: undefined,
       AGENT_SPAWN_MODE: undefined,
@@ -224,6 +226,50 @@ describe("loadConfig", () => {
       "--yolo",
     ]);
     expect(claudeCommand.slice(-3)).toEqual(["--", "claude", "--dangerously-skip-permissions"]);
+  });
+
+  test("disables Codex and Claude background update checks by default", () => {
+    applyEnv({
+      AGENTAPI_BIN: "/tmp/custom-agentapi",
+      AGENT_CLI_AUTOUPDATE: undefined,
+      AGENT_MODE: undefined,
+      AGENT_SPAWN_MODE: undefined,
+      GLOVES: undefined,
+    });
+
+    const config = loadConfig();
+
+    expect(config.agents.codex.env).toEqual({
+      NO_UPDATE_NOTIFIER: "1",
+      npm_config_update_notifier: "false",
+    });
+    expect(config.agents.claude.env).toEqual({
+      DISABLE_AUTOUPDATER: "1",
+    });
+
+    const codexCommand = config.agents.codex.command({ agent: "codex", config, port: 3701 });
+    expect(codexCommand.slice(-2)).toEqual([
+      "-c",
+      "check_for_update_on_startup=false",
+    ]);
+  });
+
+  test("allows explicit Codex and Claude CLI auto-update opt-in", () => {
+    applyEnv({
+      AGENTAPI_BIN: "/tmp/custom-agentapi",
+      AGENT_CLI_AUTOUPDATE: "true",
+      AGENT_MODE: undefined,
+      AGENT_SPAWN_MODE: undefined,
+      GLOVES: undefined,
+    });
+
+    const config = loadConfig();
+
+    expect(config.agents.codex.env).toEqual({});
+    expect(config.agents.claude.env).toEqual({});
+
+    const codexCommand = config.agents.codex.command({ agent: "codex", config, port: 3701 });
+    expect(codexCommand).not.toContain("check_for_update_on_startup=false");
   });
 
   test("accepts pi as a configured default agent and launcher target", () => {

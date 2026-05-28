@@ -1,4 +1,9 @@
 import { isAbsolute, normalize, resolve } from "node:path";
+import {
+  buildAgentCliUpdateArgs,
+  buildAgentCliUpdateEnv,
+  isAgentCliAutoUpdateEnabled,
+} from "./agent-cli-update-policy";
 import { AGENT_TYPES, DEFAULT_AGENT_TYPE, type AgentType } from "./agent-types";
 
 export type { AgentType } from "./agent-types";
@@ -256,10 +261,11 @@ function withAgentCommand(
   agentApiBinary: string,
   label: string,
   agentCli: string,
-  options?: { type?: string; extraArgs?: string[] },
+  options?: { type?: string; extraArgs?: string[]; env?: Record<string, string> },
 ): AgentDefinition {
   return {
     label,
+    env: options?.env,
     command: (ctx) => {
       const args = baseCommand(agentApiBinary, ctx);
       if (options?.type) {
@@ -300,18 +306,24 @@ function createDefaultAgents(
   env: ConfigEnvironment,
   agentApiBinary: string,
 ): Record<AgentType, AgentDefinition> {
-  const codexExtraArgs = resolveCodexExtraArgs(readEnvValue(env, "GLOVES"));
-  const claudeExtraArgs = resolveClaudeExtraArgs(readEnvValue(env, "GLOVES"));
   const openCodeExtraArgs = resolveOpenCodeExtraArgs(readEnvValue(env, "OPENCODE_MODEL"));
+  const cliAutoUpdateEnabled = isAgentCliAutoUpdateEnabled(env);
+  const codexExtraArgs = [
+    ...resolveCodexExtraArgs(readEnvValue(env, "GLOVES")),
+    ...buildAgentCliUpdateArgs("codex", cliAutoUpdateEnabled),
+  ];
+  const claudeExtraArgs = resolveClaudeExtraArgs(readEnvValue(env, "GLOVES"));
 
   return {
     codex: withAgentCommand(agentApiBinary, "Codex", readEnvValue(env, "CODEX_CLI") ?? "codex", {
       type: "codex",
       extraArgs: codexExtraArgs,
+      env: buildAgentCliUpdateEnv("codex", cliAutoUpdateEnabled),
     }),
     claude: withAgentCommand(agentApiBinary, "Claude", readEnvValue(env, "CLAUDE_CLI") ?? "claude", {
       type: "claude",
       extraArgs: claudeExtraArgs,
+      env: buildAgentCliUpdateEnv("claude", cliAutoUpdateEnabled),
     }),
     goose: withAgentCommand(agentApiBinary, "Goose", readEnvValue(env, "GOOSE_CLI") ?? "goose", {
       type: "goose",
