@@ -1149,7 +1149,13 @@ export const initAppDialogs = ({
       }
     }
     if (!response.ok) {
+      if (/^<!doctype html/i.test(trimmed) || /^<html[\s>]/i.test(trimmed)) {
+        throw new Error(`${fallbackMessage}: server returned HTML instead of JSON. Check the request origin and backend route.`);
+      }
       throw new Error(trimmed ? `${fallbackMessage}: ${trimmed.slice(0, 220)}` : `${fallbackMessage}: ${response.status}`);
+    }
+    if (/^<!doctype html/i.test(trimmed) || /^<html[\s>]/i.test(trimmed)) {
+      throw new Error("Server returned HTML instead of JSON. The request likely hit the wrong origin or an old backend route.");
     }
     throw new Error(trimmed ? trimmed.slice(0, 220) : "Server returned a non-JSON response");
   };
@@ -1307,11 +1313,20 @@ export const initAppDialogs = ({
     if (!appCaproverReplicateButton) return;
     const destination = getCaproverReplicationDestination();
     const source = getCaproverReplicationSource();
-    appCaproverReplicateButton.disabled = !source || !destination || source === destination || caproverDialogState.saving;
+    const sourceDeployment = caproverDialogState.deployments.find((entry) => entry?.name === source);
+    appCaproverReplicateButton.disabled =
+      !source ||
+      !destination ||
+      source === destination ||
+      !sourceDeployment?.linked ||
+      Boolean(sourceDeployment?.error) ||
+      caproverDialogState.saving;
   };
 
   const renderCaproverSetupTargets = (targets) => {
     if (!appCaproverTargetSelect) return;
+    const previousDestination = appCaproverTargetSelect.value;
+    const previousSource = appCaproverCopySourceSelect?.value || "";
     appCaproverTargetSelect.replaceChildren();
     for (const target of targets) {
       const option = document.createElement("option");
@@ -1320,7 +1335,11 @@ export const initAppDialogs = ({
       appCaproverTargetSelect.append(option);
     }
     appCaproverTargetSelect.disabled = targets.length <= 1;
-    appCaproverTargetSelect.value = targets.find((target) => target.name !== "primary")?.name ?? targets[0]?.name ?? "";
+    const destinationTarget =
+      targets.find((target) => target.name === previousDestination) ??
+      targets.find((target) => target.name !== "primary") ??
+      targets[0];
+    appCaproverTargetSelect.value = destinationTarget?.name ?? "";
 
     if (appCaproverCopySourceSelect) {
       appCaproverCopySourceSelect.replaceChildren();
@@ -1328,14 +1347,26 @@ export const initAppDialogs = ({
       placeholder.value = "";
       placeholder.textContent = "Select source target";
       appCaproverCopySourceSelect.append(placeholder);
+      const sourceTargetNames = new Set(
+        caproverDialogState.deployments
+          .filter((entry) => entry?.linked && !entry?.error)
+          .map((entry) => entry.name),
+      );
       for (const target of targets) {
         const option = document.createElement("option");
         option.value = target.name;
         option.textContent = target.name;
+        option.disabled = sourceTargetNames.size > 0 && !sourceTargetNames.has(target.name);
         appCaproverCopySourceSelect.append(option);
       }
       appCaproverCopySourceSelect.disabled = targets.length <= 1;
-      appCaproverCopySourceSelect.value = targets.find((target) => target.name === "primary")?.name ?? targets[0]?.name ?? "";
+      const preferredSource =
+        targets.find((target) => target.name === previousSource && (sourceTargetNames.size === 0 || sourceTargetNames.has(target.name))) ??
+        targets.find((target) => target.name === "primary" && sourceTargetNames.has(target.name)) ??
+        targets.find((target) => sourceTargetNames.has(target.name)) ??
+        targets.find((target) => target.name === "primary") ??
+        targets[0];
+      appCaproverCopySourceSelect.value = preferredSource?.name ?? "";
     }
     updateCaproverReplicateButton();
   };
@@ -1410,6 +1441,7 @@ export const initAppDialogs = ({
         throw new Error(data.error || response.statusText || "Failed to load CapRover deployments");
       }
       caproverDialogState.deployments = Array.isArray(data.targets) ? data.targets : [];
+      renderCaproverSetupTargets(caproverDialogState.targets);
       renderCaproverDeploymentSummary(caproverDialogState.deployments);
       applyDeploymentForSelectedTarget();
       return caproverDialogState.deployments;
@@ -1575,6 +1607,15 @@ export const initAppDialogs = ({
     const caproverName = resolveCaproverReplicationName();
     if (!sourceTarget || !destinationTarget || sourceTarget === destinationTarget) {
       const message = "Select different source and destination targets.";
+      setCaproverStatus(message, "error");
+      showToast(message, { type: "error" });
+      return;
+    }
+    const sourceDeployment = caproverDialogState.deployments.find((entry) => entry?.name === sourceTarget);
+    if (!sourceDeployment?.linked || sourceDeployment?.error) {
+      const message = sourceDeployment?.error
+        ? `Cannot copy from ${sourceTarget}: ${sourceDeployment.error}`
+        : `Cannot copy from ${sourceTarget}: no registered deployment found.`;
       setCaproverStatus(message, "error");
       showToast(message, { type: "error" });
       return;

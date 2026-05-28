@@ -240,14 +240,15 @@ const promptRequired = async (
 };
 
 export const runSetupWizard = async (): Promise<boolean> => {
-  // Check if wizard already completed
-  if (isWizardComplete()) {
-    return true;
-  }
-
   const projectRoot = findProjectRoot();
   const envPath = join(projectRoot, ".env");
   const existingEnv = readEnvFile(envPath);
+
+  // Check if wizard already completed
+  if (isWizardComplete()) {
+    loadEnvIntoRuntime(existingEnv);
+    return true;
+  }
 
   if (shouldRunNonInteractiveSetup(existingEnv)) {
     return completeNonInteractiveSetup(existingEnv);

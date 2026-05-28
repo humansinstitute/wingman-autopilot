@@ -139,7 +139,7 @@ export const createStaticAssetService = (options: StaticAssetServiceOptions) => 
     return new Response(file, {
       headers: {
         ...(type ? { "content-type": type } : {}),
-        "cache-control": "public, max-age=60",
+        "cache-control": "no-cache",
       },
     });
   };
