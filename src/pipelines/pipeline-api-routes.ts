@@ -77,6 +77,46 @@ export async function handlePipelineApi(
     return Response.json(result.body, { status: result.status });
   }
 
+  const httpTriggerMatch = pathname.match(/^\/api\/pipelines\/triggers\/http\/([^/]+)$/);
+  if (httpTriggerMatch && method === "POST") {
+    const triggerTokenAuthorized = isHttpPipelineTriggerTokenAuthorized(request);
+    if (!triggerTokenAuthorized) {
+      const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, authContext);
+      if (denied) return denied;
+    }
+    const key = decodeURIComponent(httpTriggerMatch[1]!);
+    const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+    const submittedInput = body.input && typeof body.input === "object" && !Array.isArray(body.input)
+      ? body.input as JsonObject
+      : {};
+    const ownerNpub = triggerTokenAuthorized
+      ? normaliseOptionalString(body.ownerNpub)
+      : getEffectiveOwnerNpub(authContext);
+    const ownerAlias = triggerTokenAuthorized
+      ? normaliseOptionalString(body.ownerAlias)
+      : ownerNpub ? generateIdentityAlias(ownerNpub) : null;
+    const definition = await getHttpTriggerPipelineDefinition(key, ownerAlias);
+    if (!definition) return Response.json({ error: "Pipeline definition not found" }, { status: 404 });
+    const input = { ...(definition.spec.input ?? {}), ...submittedInput };
+    const functions = await loadPipelineFunctionRegistry(ownerAlias, builtinPipelineFunctions);
+    const run = startDeclarativePipeline({
+      store: ctx.store,
+      sessionApiContext: ctx.sessionApiContext,
+      definition,
+      registry: functions.registry,
+      input,
+      ownerNpub,
+      ownerAlias,
+      callbackOrigin: ctx.callbackOrigin ?? url.origin,
+    });
+    return Response.json({
+      ok: true,
+      trigger: "http",
+      definition: serializeDefinitionSummary(definition),
+      run,
+    }, { status: 202 });
+  }
+
   if (!pathname.startsWith("/api/pipelines")) return null;
 
   const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, authContext);
@@ -330,6 +370,29 @@ export async function resumeRunningPipelineRuns(
   for (const run of ctx.store.listRunningRuns()) {
     await resumeStoredPipelineRun(ctx, run.id, callbackOrigin);
   }
+}
+
+function isHttpPipelineTriggerTokenAuthorized(request: Request): boolean {
+  const configured = process.env.WINGMEN_PIPELINE_HTTP_TRIGGER_TOKEN?.trim();
+  if (!configured) return process.env.WINGMEN_PIPELINE_HTTP_TRIGGER_ALLOW_UNAUTH === "1";
+  const authorization = request.headers.get("authorization") ?? "";
+  const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  const headerToken = request.headers.get("x-wingmen-pipeline-trigger-token")?.trim();
+  return bearer === configured || headerToken === configured;
+}
+
+async function getHttpTriggerPipelineDefinition(key: string, ownerAlias: string | null): Promise<PipelineDefinitionRecord | null> {
+  const definitions = await listPipelineDefinitions(ownerAlias);
+  return definitions.find((definition) =>
+    definition.id === key ||
+    definition.slug === key ||
+    definition.name === key ||
+    definition.spec.name === key
+  ) ?? null;
+}
+
+function normaliseOptionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function serializeDefinitionSummary(definition: PipelineDefinitionRecord): JsonObject {
