@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
-import { buildAppFilterOptions } from "./apps-view.js";
+import { APPS_FILTER_FOCUS_KEY, buildAppFilterOptions } from "./apps-view.js";
 
 describe("buildAppFilterOptions", () => {
+  test("uses a stable focus key for the app filter input", () => {
+    expect(APPS_FILTER_FOCUS_KEY).toBe("apps-filter-input");
+  });
+
   test("returns no options for non-admin viewers", () => {
     const options = buildAppFilterOptions({
       isAdmin: false,

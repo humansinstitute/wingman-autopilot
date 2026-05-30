@@ -1,6 +1,8 @@
 import { showAppCardModal } from "../apps/card-modal.js";
 import { filterAndSortApps, renderAppsTable } from "../apps/table.js";
 
+export const APPS_FILTER_FOCUS_KEY = "apps-filter-input";
+
 export function buildAppFilterOptions({
   isAdmin,
   viewerNpub,
@@ -138,6 +140,7 @@ export function initAppsView({
     input.placeholder = "Name, port, or description";
     input.value = appsStore().filterText ?? "";
     input.setAttribute("aria-label", "Filter apps by name, port, or description");
+    input.dataset.focusKey = APPS_FILTER_FOCUS_KEY;
     input.dataset.testid = "apps-filter-input";
     input.addEventListener("input", (event) => {
       const target = event.target;
