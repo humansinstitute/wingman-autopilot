@@ -12,6 +12,7 @@ import { showToast } from "../utils/toast.js";
 import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
 import { fetchSessionHistoryApi, forkSessionToWorktreeApi, setPinnedArtifactApi } from "../services/sessions.js";
 import { showRunningAppsModal } from "../apps/running-apps-modal.js";
+import { showRunningPipelinesModal } from "../pipelines/running-pipelines-modal.js";
 import { isAlpineChatEnabled, getChatTemplate, Alpine, MessageStore } from "../live/index.js";
 import { attachPathMentionAutocomplete } from "../live/path-mention-autocomplete.js";
 import { findAppForSession, findWebAppForSession, createWebviewPanel, createLayoutToolbar } from "../live/webview-panel.js";
@@ -906,6 +907,9 @@ export function initLiveView(deps) {
         triggerAppAction,
         showToast,
       });
+    });
+    addCommand("Running Pipelines", () => {
+      showRunningPipelinesModal({ showToast });
     });
     addCommandDivider();
     addGitCommandSubmenus({
