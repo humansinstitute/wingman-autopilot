@@ -11,7 +11,7 @@ import { attachCopyButton, copyConversationToClipboard } from "../utils/clipboar
 import { showToast } from "../utils/toast.js";
 import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
 import { fetchSessionHistoryApi, forkSessionToWorktreeApi, setPinnedArtifactApi } from "../services/sessions.js";
-import { triggerAppActionApi } from "../services/apps.js";
+import { showRunningAppsModal } from "../apps/running-apps-modal.js";
 import { isAlpineChatEnabled, getChatTemplate, Alpine, MessageStore } from "../live/index.js";
 import { attachPathMentionAutocomplete } from "../live/path-mention-autocomplete.js";
 import { findAppForSession, findWebAppForSession, createWebviewPanel, createLayoutToolbar } from "../live/webview-panel.js";
@@ -97,6 +97,8 @@ export function initLiveView(deps) {
     isFeatureEnabledForViewer,
     showToast,
     renderAppCard,
+    refreshApps,
+    triggerAppAction,
   } = deps;
 
   // Track active writer panel cleanup function
@@ -896,6 +898,15 @@ export function initLiveView(deps) {
     addCommand(drawerVisible ? "Hide Session Drawer" : "Show Session Drawer", () => {
       toggleLiveDrawer();
     });
+    addCommand("Running Apps", () => {
+      showRunningAppsModal({
+        appsStore,
+        renderAppCard,
+        refreshApps,
+        triggerAppAction,
+        showToast,
+      });
+    });
     addCommandDivider();
     addGitCommandSubmenus({
       addSubmenu,
@@ -939,11 +950,13 @@ export function initLiveView(deps) {
         appItems.push({
           label: "Restart",
           handler: async () => {
-            const result = await triggerAppActionApi(matchingApp.id, "restart");
-            if (result.success) {
+            const success = typeof triggerAppAction === "function"
+              ? await triggerAppAction(matchingApp.id, "restart")
+              : false;
+            if (success) {
               showToast(`Restarting ${matchingApp.label}...`, { type: "success" });
             } else {
-              showToast(result.error || "Failed to restart app", { type: "error" });
+              showToast("Failed to restart app", { type: "error" });
             }
           },
         });
@@ -953,11 +966,13 @@ export function initLiveView(deps) {
         appItems.push({
           label: "Stop",
           handler: async () => {
-            const result = await triggerAppActionApi(matchingApp.id, "stop");
-            if (result.success) {
+            const success = typeof triggerAppAction === "function"
+              ? await triggerAppAction(matchingApp.id, "stop")
+              : false;
+            if (success) {
               showToast(`Stopped ${matchingApp.label}`, { type: "success" });
             } else {
-              showToast(result.error || "Failed to stop app", { type: "error" });
+              showToast("Failed to stop app", { type: "error" });
             }
           },
         });

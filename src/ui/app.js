@@ -2127,6 +2127,8 @@ const liveViewModule = initLiveView({
   isFeatureEnabledForViewer: (...args) => isFeatureEnabledForViewer(...args),
   showToast,
   renderAppCard: (...args) => renderAppCard(...args),
+  refreshApps: (...args) => refreshApps(...args),
+  triggerAppAction: (...args) => triggerAppAction(...args),
 });
 renderLive = liveViewModule.renderLive;
 renderSessionTabs = liveViewModule.renderSessionTabs;
