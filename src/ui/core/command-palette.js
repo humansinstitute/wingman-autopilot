@@ -202,10 +202,6 @@ export function createAutopilotCommandPalette({
   }
 
   function open() {
-    if (!isAuthenticated?.()) {
-      openIdentityLoginDialog?.();
-      return;
-    }
     close();
     overlay = document.createElement("div");
     overlay.className = "wm-command-palette-overlay";
@@ -226,6 +222,10 @@ export function createAutopilotCommandPalette({
   async function execute(item) {
     if (!item) return;
     close();
+    if (!isAuthenticated?.()) {
+      openIdentityLoginDialog?.();
+      return;
+    }
     if (item.action === "new-session") {
       openDialog?.();
       return;
