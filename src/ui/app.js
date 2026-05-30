@@ -35,6 +35,7 @@ import { showDialogElement } from "./common/dialog-element.js";
 import { openConfirmDialog, openTextPromptDialog } from "./common/dialog-prompts.js";
 import { populateAgentSelect } from "./common/agent-options.js";
 import { createSessionDialogController } from "./common/session-dialog.js";
+import { createAutopilotCommandPalette } from "./core/command-palette.js";
 import { initAppDialogs } from "./apps/dialog.js";
 import { initWorkspaceTree } from "./apps/tree.js";
 import { initAppCards } from "./apps/cards.js";
@@ -193,6 +194,7 @@ let resetAppDialog = () => {};
 let createWorkspaceTreeSidebar = () => null;
 let renderAppCard = () => document.createElement("section");
 let renderWingmanCard = () => document.createElement("section");
+let commandPaletteController = null;
 let fetchConfig = async () => {};
 let fetchSessions = async () => {};
 let buildSessionFilterOptions = () => [];
@@ -592,6 +594,7 @@ const {
   getLiveRefreshSessionId: () => liveRefreshController?.getActiveSessionId?.() ?? null,
   isAlpineChatEnabled,
   scheduleLiveScroll: (...args) => scheduleLiveScroll(...args),
+  onSessionVisited: (session) => commandPaletteController?.recordSessionVisit(session),
 });
 
 const dialog = document.getElementById("session-dialog");
@@ -609,6 +612,7 @@ const menuToggle = document.getElementById("menu-toggle");
 const menuPanel = document.querySelector(".wm-menu-panel");
 const menuTabsContainer = document.getElementById("menu-tabs");
 const headerLoginButton = document.getElementById("header-login");
+const brandCommandPaletteButton = document.getElementById("brand-command-palette");
 performAuthUiSync = () => {
   const authed = Boolean(state.identity.authenticated);
   const isAdmin = Boolean(state.identity.isAdmin);
@@ -1618,6 +1622,11 @@ const appsRuntime = initAppsRuntime({
   showToast,
   fetchSessions,
   logPreviewLines: APP_LOG_PREVIEW_LINES,
+  onAppActionSuccess: ({ app, action }) => {
+    if (action === "restart") {
+      commandPaletteController?.recordAppRestart(app);
+    }
+  },
 });
 fetchApps = (...args) => appsRuntime.fetchApps(...args);
 refreshApps = (...args) => appsRuntime.refreshApps(...args);
@@ -2409,6 +2418,28 @@ const {
 });
 
 setupNavListeners();
+
+commandPaletteController = createAutopilotCommandPalette({
+  brandButton: brandCommandPaletteButton,
+  appsStore,
+  sessionsStore,
+  openDialog,
+  openIdentityLoginDialog,
+  isAuthenticated: () => state.identity.authenticated,
+  openSession(session) {
+    if (!session?.id) return;
+    currentRoute = "live";
+    setActiveSession(session.id, { updateHistory: true, forceLog: true });
+    render();
+    requestAnimationFrame(() => {
+      scrollConversationAreaToBottom(session.id, { includeWindow: true });
+    });
+  },
+  renderAppCard: (...args) => renderAppCard(...args),
+  refreshApps: (...args) => refreshApps(...args),
+  triggerAppAction: (...args) => triggerAppAction(...args),
+  showToast,
+});
 
 window.addEventListener("resize", () => {
   if (window.innerWidth > 720) {

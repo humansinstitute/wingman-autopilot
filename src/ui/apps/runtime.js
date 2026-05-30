@@ -33,6 +33,7 @@ export function initAppsRuntime({
   showToast,
   fetchSessions,
   logPreviewLines,
+  onAppActionSuccess,
 }) {
   async function fetchApps({ tail = logPreviewLines } = {}) {
     await appsStore().sync({ tail });
@@ -137,12 +138,16 @@ export function initAppsRuntime({
   }
 
   async function triggerAppAction(appId, action) {
+    const appBeforeAction = getAppById(appId);
     const result = await triggerAppActionApi(appId, action);
     if (!result.success) {
       showToast(result.error, { type: "error" });
       return false;
     }
     await refreshApps({ skipRender: getCurrentRoute() !== "apps" });
+    if (typeof onAppActionSuccess === "function") {
+      onAppActionSuccess({ app: getAppById(appId) ?? appBeforeAction ?? { id: appId }, appId, action });
+    }
     if (getCurrentRoute() !== "apps") {
       render();
     }

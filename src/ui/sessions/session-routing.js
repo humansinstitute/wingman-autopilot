@@ -23,6 +23,7 @@
  * @param {Function} deps.isAlpineChatEnabled              - returns whether Alpine chat is enabled
  * @param {Function} deps.scheduleLiveScroll               - schedules a live scroll for a session
  * @param {Function} deps.scrollConversationAreaToBottom   - scrolls the conversation area to bottom
+ * @param {Function} [deps.onSessionVisited]               - records session visits for command surfaces
  */
 export function createSessionRouting(deps) {
   const {
@@ -41,6 +42,7 @@ export function createSessionRouting(deps) {
     getLiveRefreshSessionId,
     isAlpineChatEnabled,
     scheduleLiveScroll,
+    onSessionVisited,
   } = deps;
 
   const setActiveSession = (sessionId, options = {}) => {
@@ -60,6 +62,10 @@ export function createSessionRouting(deps) {
 
       ss.activeSessionId = sessionId;
       ss.lastActiveSessionId = sessionId;
+      const visitedSession = allSessions.find((session) => session.id === sessionId) ?? null;
+      if (visitedSession && typeof onSessionVisited === "function") {
+        onSessionVisited(visitedSession);
+      }
 
       if (updateHistory && getCurrentRoute() === "live") {
         const targetPath = `${LIVE_ROUTE_PREFIX}/${sessionId}`;
