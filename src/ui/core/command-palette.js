@@ -4,6 +4,8 @@ import { getSessionDisplayName } from "./icons.js";
 import {
   escapeAttribute,
   escapeHtml,
+  createCommandItem,
+  createCommandPaletteQuickItems,
   filterCommandPaletteItems,
   rememberRecentItem,
 } from "./command-palette-utils.js";
@@ -25,20 +27,6 @@ function writeStoredArray(key, items) {
   } catch {
     // Storage can fail in private mode or when quota is exhausted.
   }
-}
-
-function createCommandItem(input) {
-  return {
-    group: input.group,
-    groupLabel: input.groupLabel,
-    id: input.id,
-    title: input.title,
-    subtitle: input.subtitle ?? "",
-    action: input.action,
-    shortcutKey: input.shortcutKey ?? "",
-    targetId: input.targetId ?? "",
-    searchText: input.searchText ?? "",
-  };
 }
 
 function normalizeStoredRecentSession(entry, sessions) {
@@ -72,6 +60,7 @@ export function createAutopilotCommandPalette({
   openDialog,
   openIdentityLoginDialog,
   isAuthenticated,
+  navigateHome,
   openSession,
   renderAppCard,
   refreshApps,
@@ -83,38 +72,7 @@ export function createAutopilotCommandPalette({
   let activeId = "";
 
   function getQuickItems() {
-    return [
-      createCommandItem({
-        group: "shortcut",
-        groupLabel: "Shortcuts",
-        id: "quick:new-session",
-        title: "New Session",
-        subtitle: "Launch an agent session",
-        action: "new-session",
-        shortcutKey: "1",
-        searchText: "agent launch start new session",
-      }),
-      createCommandItem({
-        group: "shortcut",
-        groupLabel: "Shortcuts",
-        id: "quick:running-apps",
-        title: "Running Apps",
-        subtitle: "Manage running app processes",
-        action: "running-apps",
-        shortcutKey: "2",
-        searchText: "apps processes restart",
-      }),
-      createCommandItem({
-        group: "shortcut",
-        groupLabel: "Shortcuts",
-        id: "quick:running-pipelines",
-        title: "Running Pipelines",
-        subtitle: "Inspect active pipeline runs",
-        action: "running-pipelines",
-        shortcutKey: "3",
-        searchText: "pipelines runs workflows restart",
-      }),
-    ];
+    return createCommandPaletteQuickItems();
   }
 
   function getRecentSessionItems() {
@@ -222,6 +180,10 @@ export function createAutopilotCommandPalette({
   async function execute(item) {
     if (!item) return;
     close();
+    if (item.action === "home") {
+      navigateHome?.();
+      return;
+    }
     if (!isAuthenticated?.()) {
       openIdentityLoginDialog?.();
       return;
@@ -376,7 +338,7 @@ export function createAutopilotCommandPalette({
       void execute(item);
       return;
     }
-    if (!query && /^[1-3]$/.test(key)) {
+    if (!query && /^[1-4]$/.test(key)) {
       event.preventDefault();
       void execute(getQuickItems()[Number(key) - 1]);
     }

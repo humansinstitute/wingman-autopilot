@@ -2426,6 +2426,7 @@ commandPaletteController = createAutopilotCommandPalette({
   openDialog,
   openIdentityLoginDialog,
   isAuthenticated: () => state.identity.authenticated,
+  navigateHome: () => navigateToHome({ skipMenuClose: true }),
   openSession(session) {
     if (!session?.id) return;
     currentRoute = "live";

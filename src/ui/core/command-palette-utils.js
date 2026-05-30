@@ -1,3 +1,62 @@
+export function createCommandItem(input) {
+  return {
+    group: input.group,
+    groupLabel: input.groupLabel,
+    id: input.id,
+    title: input.title,
+    subtitle: input.subtitle ?? "",
+    action: input.action,
+    shortcutKey: input.shortcutKey ?? "",
+    targetId: input.targetId ?? "",
+    searchText: input.searchText ?? "",
+  };
+}
+
+export function createCommandPaletteQuickItems() {
+  return [
+    createCommandItem({
+      group: "shortcut",
+      groupLabel: "Shortcuts",
+      id: "quick:new-session",
+      title: "New Session",
+      subtitle: "Launch an agent session",
+      action: "new-session",
+      shortcutKey: "1",
+      searchText: "agent launch start new session",
+    }),
+    createCommandItem({
+      group: "shortcut",
+      groupLabel: "Shortcuts",
+      id: "quick:running-apps",
+      title: "Running Apps",
+      subtitle: "Manage running app processes",
+      action: "running-apps",
+      shortcutKey: "2",
+      searchText: "apps processes restart",
+    }),
+    createCommandItem({
+      group: "shortcut",
+      groupLabel: "Shortcuts",
+      id: "quick:running-pipelines",
+      title: "Running Pipelines",
+      subtitle: "Inspect active pipeline runs",
+      action: "running-pipelines",
+      shortcutKey: "3",
+      searchText: "pipelines runs workflows restart",
+    }),
+    createCommandItem({
+      group: "shortcut",
+      groupLabel: "Shortcuts",
+      id: "quick:home",
+      title: "Home",
+      subtitle: "Return to the main session screen",
+      action: "home",
+      shortcutKey: "4",
+      searchText: "home dashboard sessions main",
+    }),
+  ];
+}
+
 export function rememberRecentItem(items, item, limit = 6) {
   if (!item?.id) return Array.isArray(items) ? items : [];
   const existing = Array.isArray(items) ? items : [];

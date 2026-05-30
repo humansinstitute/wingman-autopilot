@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { filterCommandPaletteItems, rememberRecentItem } from "./command-palette-utils.js";
+import {
+  createCommandPaletteQuickItems,
+  filterCommandPaletteItems,
+  rememberRecentItem,
+} from "./command-palette-utils.js";
 
 describe("autopilot command palette helpers", () => {
   test("keeps recent items newest first and unique", () => {
@@ -26,5 +30,14 @@ describe("autopilot command palette helpers", () => {
     expect(filterCommandPaletteItems(items, "agent").map((item) => item.title)).toEqual(["New Session"]);
     expect(filterCommandPaletteItems(items, "recent app").map((item) => item.title)).toEqual(["App restart"]);
     expect(filterCommandPaletteItems(items, "workflow").map((item) => item.title)).toEqual(["Pipeline"]);
+  });
+
+  test("keeps fixed shortcut keys stable and adds home", () => {
+    expect(createCommandPaletteQuickItems().map((item) => `${item.shortcutKey}:${item.title}`)).toEqual([
+      "1:New Session",
+      "2:Running Apps",
+      "3:Running Pipelines",
+      "4:Home",
+    ]);
   });
 });
