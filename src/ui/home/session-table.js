@@ -1,5 +1,3 @@
-import { resolveSessionOwnerNpub } from "../sessions/ownership.js";
-
 const SESSION_STATUS_ORDER = Object.freeze({
   starting: 0,
   running: 1,
@@ -12,19 +10,18 @@ const SESSION_STATUS_ORDER = Object.freeze({
 const SESSION_TABLE_COLUMNS = Object.freeze([
   { key: "actions", label: "Actions" },
   { key: "name", label: "Name" },
-  { key: "agent", label: "Agent" },
-  { key: "identity", label: "Identity" },
-  { key: "status", label: "Status" },
-  { key: "port", label: "Port" },
-  { key: "pid", label: "PID" },
   { key: "started", label: "Started" },
   { key: "directory", label: "Directory" },
+  { key: "agent", label: "Agent" },
+  { key: "status", label: "Status" },
 ]);
 
 export const DEFAULT_LIVE_SESSION_SORT = Object.freeze({
   key: "started",
   direction: "desc",
 });
+
+const DIRECTORY_DISPLAY_MAX_LENGTH = 44;
 
 function resolveTimestamp(value) {
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -53,20 +50,36 @@ export function formatSessionStartedAt(value) {
   return formatDateTime(new Date(timestamp));
 }
 
-export function getSessionIdentityLabel(session) {
-  const identityAlias =
-    typeof session?.identityAlias === "string" && session.identityAlias.trim().length > 0
-      ? session.identityAlias.trim()
-      : null;
-  if (identityAlias) {
-    return identityAlias;
-  }
-  const ownerNpub = resolveSessionOwnerNpub(session);
-  return ownerNpub ?? "Anonymous";
-}
-
 export function getSessionDirectoryValue(session, defaultDirectory) {
   return session?.workingDirectory ?? defaultDirectory ?? "-";
+}
+
+export function formatSessionDirectoryDisplay(directory, maxLength = DIRECTORY_DISPLAY_MAX_LENGTH) {
+  const value = typeof directory === "string" ? directory.trim() : "";
+  if (!value) {
+    return "-";
+  }
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  const normalized = value.length > 1 ? value.replace(/\/+$/, "") : value;
+  const segments = normalized.split("/").filter(Boolean);
+  const tail = segments.at(-1) ?? normalized;
+  if (tail.length + 3 >= maxLength) {
+    const tailLength = Math.max(1, maxLength - 3);
+    return `...${tail.slice(-tailLength)}`;
+  }
+
+  let display = `.../${tail}`;
+  for (let index = segments.length - 2; index >= 0; index -= 1) {
+    const candidate = `.../${segments.slice(index).join("/")}`;
+    if (candidate.length > maxLength) {
+      break;
+    }
+    display = candidate;
+  }
+  return display;
 }
 
 function getSessionStatusValue(session) {
@@ -96,14 +109,8 @@ function getSessionSortValue(session, key, deps) {
       return getSessionDisplayName(session);
     case "agent":
       return session?.agent ?? "";
-    case "identity":
-      return getSessionIdentityLabel(session);
     case "status":
       return getStatusSortValue(session);
-    case "port":
-      return Number.isFinite(session?.port) ? session.port : Number.MAX_SAFE_INTEGER;
-    case "pid":
-      return Number.isFinite(session?.pid) ? session.pid : Number.MAX_SAFE_INTEGER;
     case "started":
       return resolveTimestamp(session?.startedAt) ?? 0;
     case "directory":
@@ -261,9 +268,6 @@ export function createSessionTable(orderedSessions, deps) {
   orderedSessions.forEach((session) => {
     const row = document.createElement("tr");
     const displayName = getSessionDisplayName(session);
-    const identityLabel = getSessionIdentityLabel(session);
-    const ownerNpub = resolveSessionOwnerNpub(session);
-    const identityTooltip = ownerNpub ?? identityLabel;
 
     row.innerHTML = `
       <td class="actions-cell"></td>
@@ -271,24 +275,21 @@ export function createSessionTable(orderedSessions, deps) {
         <span class="session-name-text">${escapeHtml(displayName)}</span>
         <button type="button" class="wm-link-button session-name-edit" data-action="rename-session">Edit</button>
       </td>
+      <td title="${escapeHtml(session.startedAt ?? "")}">${escapeHtml(formatSessionStartedAt(session.startedAt))}</td>
+      <td class="directory-cell"></td>
       <td>${escapeHtml(session.agent)}</td>
-      <td class="identity-cell" title="${escapeHtml(identityTooltip)}">${escapeHtml(identityLabel)}</td>
       <td class="session-status-cell">
         <div class="wm-agent-status-indicator" data-session-id="${escapeHtml(session.id)}"></div>
         <span class="session-status-text">${escapeHtml(session.status)}</span>
       </td>
-      <td>${escapeHtml(session.port)}</td>
-      <td>${session.pid ?? "-"}</td>
-      <td title="${escapeHtml(session.startedAt ?? "")}">${escapeHtml(formatSessionStartedAt(session.startedAt))}</td>
-      <td class="directory-cell"></td>
     `;
 
     const directoryCell = row.querySelector(".directory-cell");
     if (directoryCell) {
       const directoryValue = getSessionDirectoryValue(session, state.config?.defaultDirectory);
-      directoryCell.textContent = directoryValue;
-      if (typeof session?.workingDirectory === "string") {
-        directoryCell.title = session.workingDirectory;
+      directoryCell.textContent = formatSessionDirectoryDisplay(directoryValue);
+      if (directoryValue !== "-") {
+        directoryCell.title = directoryValue;
       } else {
         directoryCell.removeAttribute("title");
       }

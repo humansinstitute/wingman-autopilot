@@ -5,6 +5,7 @@ import {
 } from "./native-session-resume.js";
 import {
   DEFAULT_LIVE_SESSION_SORT,
+  formatSessionDirectoryDisplay,
   formatSessionStartedAt,
   sortSessions,
   toggleSessionSort,
@@ -87,6 +88,17 @@ describe("live agents helpers", () => {
     expect(formatSessionStartedAt("2026-04-10T09:30:00.000Z")).not.toBe("-");
     expect(formatSessionStartedAt("")).toBe("-");
     expect(formatSessionStartedAt("not-a-date")).toBe("-");
+  });
+
+  test("formats long directories from the end of the path", () => {
+    expect(formatSessionDirectoryDisplay("/tmp/project")).toBe("/tmp/project");
+    expect(formatSessionDirectoryDisplay("/Users/mini/code/wingmanbefree/autopilot", 32)).toBe(
+      ".../code/wingmanbefree/autopilot",
+    );
+    expect(formatSessionDirectoryDisplay("/Users/mini/code/projects/really-long-project-name", 30)).toBe(
+      ".../really-long-project-name",
+    );
+    expect(formatSessionDirectoryDisplay("")).toBe("-");
   });
 
   test("detects sessions with native agent resume metadata", () => {

@@ -3823,6 +3823,14 @@ body[data-menu-open="true"] .wm-menu-panel {
   color: var(--text-secondary);
 }
 
+.session-table .session-col-started {
+  width: 12rem;
+}
+
+.session-table .session-col-directory {
+  width: 40%;
+}
+
 .session-table th,
 .session-table td {
   padding: 0.85rem 1rem;
@@ -3850,7 +3858,7 @@ body[data-menu-open="true"] .wm-menu-panel {
 .session-table td.directory-cell {
   font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
   white-space: nowrap;
-  max-width: 240px;
+  max-width: 36rem;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -4034,6 +4042,11 @@ body[data-menu-open="true"] .wm-menu-panel {
   font-size: 0.95rem;
   color: var(--text-secondary);
   word-break: break-word;
+}
+
+.session-card-detail-value[title^="/"],
+.session-card-detail-value[title^="~"] {
+  font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 .session-card-actions {

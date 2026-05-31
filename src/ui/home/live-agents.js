@@ -1,8 +1,8 @@
 import {
   createSessionTable,
+  formatSessionDirectoryDisplay,
   formatSessionStartedAt,
   getSessionDirectoryValue,
-  getSessionIdentityLabel,
   sortSessions,
 } from "./session-table.js";
 import {
@@ -162,7 +162,7 @@ function createSessionCards(orderedSessions, deps) {
     const details = document.createElement("div");
     details.className = "session-card-details";
 
-    function addDetail(label, value) {
+    function addDetail(label, value, title = value) {
       const item = document.createElement("div");
       item.className = "session-card-detail";
 
@@ -173,17 +173,18 @@ function createSessionCards(orderedSessions, deps) {
       const desc = document.createElement("span");
       desc.className = "session-card-detail-value";
       desc.textContent = value ?? "-";
+      if (title && title !== "-") {
+        desc.title = title;
+      }
 
       item.append(term, desc);
       details.append(item);
     }
 
-    addDetail("Agent", session.agent);
-    addDetail("Identity", getSessionIdentityLabel(session));
-    addDetail("Port", session.port ?? "-");
-    addDetail("PID", session.pid ?? "-");
+    const directoryValue = getSessionDirectoryValue(session, state.config?.defaultDirectory);
     addDetail("Started", formatSessionStartedAt(session.startedAt));
-    addDetail("Directory", getSessionDirectoryValue(session, state.config?.defaultDirectory));
+    addDetail("Directory", formatSessionDirectoryDisplay(directoryValue), directoryValue);
+    addDetail("Agent", session.agent);
     card.append(details);
 
     const actionRow = document.createElement("div");
