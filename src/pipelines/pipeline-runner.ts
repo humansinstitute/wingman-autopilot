@@ -634,6 +634,7 @@ async function runAgentStep(input: PipelineRunnerInput & {
       content: prompt,
       type: "user",
       pm2Name: session.pm2Name,
+      adapter: sessionCtx.manager.getAdapter(session.id),
     });
     if (!delivered.ok) {
       throw new Error(delivered.message);

@@ -1,6 +1,6 @@
 import type { SessionSnapshot } from "../agents/process-manager";
-import { waitForAgentReady } from "../agents/agent-client";
 import { deliverSessionAgentMessage } from "../server/session-agent-message";
+import { waitForSessionPromptReadiness } from "../server/session-readiness";
 import type { SessionApiContext } from "../server/session-api-routes";
 
 interface FunctionWizardInput {
@@ -31,7 +31,11 @@ export async function startPipelineFunctionWizardSession(input: FunctionWizardIn
     },
   );
   await recordLiveSession(sessionCtx, session);
-  await waitForAgentReady(sessionCtx.agentHost, session.port, session.agent, {
+  await waitForSessionPromptReadiness({
+    getSession: (sessionId) => sessionCtx.manager.getSession(sessionId) ?? null,
+    getAdapter: (sessionId) => sessionCtx.manager.getAdapter(sessionId),
+    sessionId: session.id,
+    host: sessionCtx.agentHost,
     timeoutMs: 120_000,
     pollIntervalMs: 250,
   });
@@ -44,6 +48,7 @@ export async function startPipelineFunctionWizardSession(input: FunctionWizardIn
     content: buildFunctionWizardPrompt(input),
     type: "user",
     pm2Name: session.pm2Name,
+    adapter: sessionCtx.manager.getAdapter(session.id),
   });
   if (!delivered.ok) {
     throw new Error(delivered.message);

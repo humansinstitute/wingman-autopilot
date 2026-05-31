@@ -11,16 +11,12 @@ describe("home running pipelines", () => {
       { id: "run-4", name: "Failed", status: "error", definitionSlug: "failed" },
     ]);
 
-    expect(rows.map((row) => row.id)).toEqual(["run-1", "run-3"]);
+    expect(rows.map((row) => row.id)).toEqual(["run-1"]);
     expect(rows[0]).toMatchObject({
       name: "Task Dispatch",
       status: "running",
       statusLabel: "Running",
       definitionLabel: "task-dispatch",
-    });
-    expect(rows[1]).toMatchObject({
-      statusLabel: "Needs Input",
-      definitionLabel: "do-and-review",
     });
   });
 

@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AgentAdapter } from "../agents/agent-adapter";
+import type { SessionSnapshot } from "../agents/process-manager";
+import type { SessionApiContext } from "../server/session-api-routes";
 import { builtinPipelineFunctions } from "./functions";
 import type { PipelineDefinitionRecord } from "./pipeline-loader";
 import { acceptAgentCallback, resumeDeclarativePipeline, runDeclarativePipeline } from "./pipeline-runner";
@@ -284,6 +287,132 @@ describe("runDeclarativePipeline", () => {
     const [step] = store.listSteps(run.id);
     expect(step?.status).toBe("error");
     expect(step?.wingmanSessionId).toBeNull();
+  });
+
+  test("delivers agent steps through the session adapter when the active transport is native", async () => {
+    const store = makeStore();
+    const sessionId = "native-codex-session";
+    const session = {
+      id: sessionId,
+      agent: "codex",
+      port: 49999,
+      name: "Pipeline native agent",
+      status: "running",
+      startedAt: new Date().toISOString(),
+      workingDirectory: tempDir,
+      command: [],
+      logs: [],
+      metadata: {},
+    } as SessionSnapshot;
+    let adapterSendCount = 0;
+    const adapter: AgentAdapter = {
+      async fetchStatus() {
+        return "stable";
+      },
+      async getPromptReadiness() {
+        return { state: "ready", reason: "test-native-ready", retryAfterMs: 1, observedAt: Date.now() };
+      },
+      async sendMessage(content) {
+        adapterSendCount += 1;
+        const urlMatch = content.match(/http:\/\/callback\.local\/api\/pipelines\/runs\/[^\s']+/);
+        expect(urlMatch).not.toBeNull();
+        const callbackUrl = new URL(urlMatch![0]);
+        const segments = callbackUrl.pathname.split("/");
+        const runId = decodeURIComponent(segments[4] ?? "");
+        const stepId = decodeURIComponent(segments[6] ?? "");
+        const token = callbackUrl.searchParams.get("token") ?? "";
+        await acceptAgentCallback({
+          store,
+          runId,
+          stepId,
+          token,
+          payload: {
+            runId,
+            stepId,
+            status: "ok",
+            result: { answer: "native adapter delivered" },
+          },
+        });
+      },
+      deliversPromptsDirectly() {
+        return true;
+      },
+      async fetchMessages() {
+        return [];
+      },
+      async interruptCurrentTurn() {
+        return false;
+      },
+      getEventsUrl() {
+        return null;
+      },
+      async waitForReady() {},
+      async dispose() {},
+    };
+    const sessionApiContext = {
+      manager: {
+        async createSession() {
+          return session;
+        },
+        getSession(id: string) {
+          return id === sessionId ? session : null;
+        },
+        getAdapter(id: string) {
+          return id === sessionId ? adapter : null;
+        },
+        async stopSession() {
+          return true;
+        },
+      },
+      agentHost: "localhost",
+      buildAgentUrl(host: string, port: number, path: string) {
+        return new URL(`http://${host}:${port}${path}`);
+      },
+      messageStore: {
+        recordSession() {},
+      },
+      async syncSessionMessages() {},
+      scheduleSessionArchive() {},
+      isAgentType(value: string) {
+        return value === "codex";
+      },
+    } as unknown as SessionApiContext;
+    const definition: PipelineDefinitionRecord = {
+      id: "native-agent-test",
+      slug: "native-agent-test",
+      name: "native-agent-test",
+      scope: "user",
+      ownerAlias: "alpha-beta-gamma",
+      path: join(tempDir, "native-agent-test.json"),
+      spec: {
+        name: "native-agent-test",
+        input: { topic: "transport" },
+        steps: [
+          {
+            name: "agent",
+            type: "agent",
+            prompt: "Return a transport result.",
+            assign: "$.agentRaw",
+          },
+        ],
+      },
+    };
+
+    const run = await runDeclarativePipeline({
+      store,
+      sessionApiContext,
+      definition,
+      registry: builtinPipelineFunctions,
+      input: definition.spec.input!,
+      ownerNpub: "npub-test",
+      ownerAlias: "alpha-beta-gamma",
+      callbackOrigin: "http://callback.local",
+    });
+
+    expect(run.status).toBe("ok");
+    expect(run.result?.agentRaw).toEqual({ answer: "native adapter delivered" });
+    expect(adapterSendCount).toBe(1);
+    expect(store.listSteps(run.id)[0]?.wingmanSessionId).toBe(sessionId);
   });
 
   test("runs parallel child steps and aggregates results", async () => {

@@ -7,7 +7,7 @@ import {
   statusLabel,
 } from "./view-utils.js";
 
-const ACTIVE_PIPELINE_RUN_STATUSES = new Set(["queued", "running", "needs_input"]);
+const ACTIVE_PIPELINE_RUN_STATUSES = new Set(["queued", "running"]);
 
 export function isActivePipelineRun(run) {
   return ACTIVE_PIPELINE_RUN_STATUSES.has(String(run?.status ?? ""));

@@ -1,6 +1,6 @@
 import Dexie from "/vendor/dexie/dexie.mjs";
 
-const ACTIVE_RUN_STATUSES = new Set(["queued", "running", "needs_input"]);
+const ACTIVE_RUN_STATUSES = new Set(["queued", "running"]);
 
 export const pipelinesDb = new Dexie("WingmanPipelines");
 
