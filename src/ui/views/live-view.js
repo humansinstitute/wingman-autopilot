@@ -522,6 +522,30 @@ export function initLiveView(deps) {
 
   // ── Composer ────────────────────────────────────────────────────
 
+  function resolveSessionAgentLabel(session) {
+    const agentId = typeof session?.agent === "string" ? session.agent : "";
+    const configuredAgent = Array.isArray(state.config?.agents)
+      ? state.config.agents.find((agent) => agent?.id === agentId)
+      : null;
+    return configuredAgent?.label || agentId || "Agent";
+  }
+
+  function renderComposerContext(sessionId) {
+    const session = sessionsStore().items.find((item) => item.id === sessionId) ?? null;
+    const context = document.createElement("div");
+    context.className = "wm-composer-context";
+
+    const name = document.createElement("strong");
+    name.textContent = `${getSessionDisplayName(session)}:`;
+
+    const directory = session?.workingDirectory || session?.directory || "";
+    const details = document.createElement("span");
+    details.textContent = ` ${directory || "No directory"} | ${resolveSessionAgentLabel(session)}`;
+
+    context.append(name, details);
+    return context;
+  }
+
   const renderComposer = (sessionId) => {
     const composerShell = document.createElement("div");
     composerShell.className = "wm-composer-shell";
@@ -1025,7 +1049,7 @@ export function initLiveView(deps) {
     statusIndicator.classList.add("wm-agent-status-pill-button");
     buttonGroup.prepend(statusIndicator);
 
-    composerShell.append(imagePreviewContainer, composer);
+    composerShell.append(renderComposerContext(sessionId), imagePreviewContainer, composer);
 
     resizeTextarea();
 

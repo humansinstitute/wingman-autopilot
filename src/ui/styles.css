@@ -4805,6 +4805,20 @@ body[data-theme="light"] .wm-agent-dispatch-capability-card {
   backface-visibility: hidden;
 }
 
+.wm-composer-context {
+  margin: 0 0 0.45rem;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wm-composer-context strong {
+  color: var(--text-primary);
+}
+
 body[data-keyboard-open="true"] .wm-composer-shell {
   position: relative;
   bottom: auto;

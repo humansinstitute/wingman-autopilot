@@ -38,4 +38,10 @@ describe("live-view drawer integration", () => {
     expect(source).not.toContain("wm-live-tab-groups");
     expect(source).not.toContain("filterSessionsForLiveTabGroup");
   });
+
+  test("shows session context above the composer", () => {
+    expect(source).toContain("wm-composer-context");
+    expect(source).toContain("renderComposerContext(sessionId)");
+    expect(source).toContain("resolveSessionAgentLabel(session)");
+  });
 });
