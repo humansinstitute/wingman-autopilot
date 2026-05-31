@@ -32,9 +32,11 @@ describe("live-view drawer integration", () => {
     expect(source).toContain("await resumeNativeSession(routeSessionId);");
   });
 
-  test("renders live sessions as one unfiltered tab list", () => {
+  test("renders live sessions through the task dispatch tab preference", () => {
     expect(source).toContain('tabs.setAttribute("role", "tablist")');
-    expect(source).toContain('panel.append(renderTabs({ sessions: getActiveSessions() }))');
+    expect(source).toContain("filterTaskDispatchSessionsForTabs");
+    expect(source).toContain("getTaskDispatchTabsVisible");
+    expect(source).toContain("getVisibleTabSessions(getActiveSessions())");
     expect(source).not.toContain("wm-live-tab-groups");
     expect(source).not.toContain("filterSessionsForLiveTabGroup");
   });

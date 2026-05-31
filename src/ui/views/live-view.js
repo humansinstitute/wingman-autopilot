@@ -52,6 +52,7 @@ import {
   getRenderedLiveDrawerVisible,
 } from "../live/drawer-visibility.js";
 import { canResumeNativeAgentSession } from "../home/native-session-resume.js";
+import { filterTaskDispatchSessionsForTabs } from "../sessions/session-classification.js";
 
 export function initLiveView(deps) {
   const {
@@ -60,6 +61,7 @@ export function initLiveView(deps) {
     getCurrentRoute,
     setCurrentRoute,
     getTabsVisible,
+    getTaskDispatchTabsVisible,
     appRoot,
     render,
     // Session helpers
@@ -231,8 +233,18 @@ export function initLiveView(deps) {
   function renderLiveTabsBarContent() {
     const panel = document.createElement("div");
     panel.className = "wm-live-tabs-panel";
-    panel.append(renderTabs({ sessions: getActiveSessions() }));
+    panel.append(renderTabs({ sessions: getVisibleTabSessions(getActiveSessions()) }));
     return panel;
+  }
+
+  function shouldShowTaskDispatchTabs() {
+    return typeof getTaskDispatchTabsVisible === "function"
+      ? getTaskDispatchTabsVisible()
+      : true;
+  }
+
+  function getVisibleTabSessions(sessions) {
+    return filterTaskDispatchSessionsForTabs(sessions, shouldShowTaskDispatchTabs());
   }
 
   function activateSessionTab(session, onSelect) {

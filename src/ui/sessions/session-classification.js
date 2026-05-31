@@ -8,6 +8,21 @@ export function isAgentChatSession(session) {
   return session?.metadata?.role === 'agent-chat' || session?.origin?.type === 'agent-chat';
 }
 
+export function isTaskDispatchSession(session) {
+  const role = session?.metadata?.role;
+  const originType = session?.origin?.type;
+  return role === 'agent-work'
+    || role === 'pipeline-step'
+    || originType === 'agent-work';
+}
+
+export function filterTaskDispatchSessionsForTabs(sessions, showTaskDispatchSessions) {
+  if (!Array.isArray(sessions) || showTaskDispatchSessions) {
+    return Array.isArray(sessions) ? sessions : [];
+  }
+  return sessions.filter((session) => !isTaskDispatchSession(session));
+}
+
 export function getLiveSessionTabGroup(session) {
   return isAgentChatSession(session) ? 'wingman' : 'standard';
 }

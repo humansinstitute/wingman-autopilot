@@ -68,6 +68,7 @@ import {
   formatWebAppUrl,
   THEME_STORAGE_KEY,
   TABS_VISIBILITY_STORAGE_KEY,
+  TASK_DISPATCH_TABS_VISIBILITY_STORAGE_KEY,
   APP_LOG_PREVIEW_LINES,
   TOAST_DEFAULT_DURATION_MS,
   DEFAULT_CONNECT_RELAYS,
@@ -557,6 +558,7 @@ function resolveCurrentLiveSessionId() {
 let currentRoute = getRouteFromPath(window.location.pathname);
 let currentTheme = "dark";
 let tabsVisible = true;
+let taskDispatchTabsVisible = true;
 let lastLoggedSessionId = null;
 let lastFilesMobileLayout = isMobileFilesLayout();
 
@@ -616,6 +618,7 @@ const projectsNavLink = navLinks.find((link) => link.dataset.route === "projects
 const nightwatchNavLink = navLinks.find((link) => link.dataset.route === "nightwatch");
 const themeToggle = document.getElementById("theme-toggle");
 const tabsToggle = document.getElementById("tabs-toggle");
+const taskDispatchTabsToggle = document.getElementById("task-dispatch-tabs-toggle");
 const menuToggle = document.getElementById("menu-toggle");
 const menuPanel = document.querySelector(".wm-menu-panel");
 const menuTabsContainer = document.getElementById("menu-tabs");
@@ -1149,6 +1152,55 @@ const toggleTabsVisibility = () => {
   applyTabsVisibility(nextVisible);
 };
 
+const refreshLiveTabsBar = () => {
+  if (currentRoute !== "live" || !tabsVisible) {
+    return;
+  }
+  const tabsBar = document.querySelector(".wm-tabs-bar");
+  const existingTabsPanel = tabsBar?.querySelector(".wm-live-tabs-panel");
+  if (existingTabsPanel) {
+    existingTabsPanel.replaceWith(renderLiveTabsBarContent());
+  }
+};
+
+const applyTaskDispatchTabsVisibility = (visible, persist = true) => {
+  taskDispatchTabsVisible = visible;
+  document.body.dataset.taskDispatchTabsVisible = visible ? "true" : "false";
+  if (taskDispatchTabsToggle) {
+    taskDispatchTabsToggle.setAttribute("aria-pressed", visible ? "false" : "true");
+    taskDispatchTabsToggle.title = visible ? "Hide task dispatch tabs" : "Show task dispatch tabs";
+    taskDispatchTabsToggle.setAttribute(
+      "aria-label",
+      visible ? "Hide task dispatch tabs" : "Show task dispatch tabs",
+    );
+  }
+  if (persist) {
+    try {
+      localStorage.setItem(TASK_DISPATCH_TABS_VISIBILITY_STORAGE_KEY, visible ? "true" : "false");
+    } catch (error) {
+      console.warn("Failed to persist task dispatch tabs preference", error);
+    }
+  }
+  refreshLiveTabsBar();
+};
+
+const detectPreferredTaskDispatchTabsVisibility = () => {
+  try {
+    const stored = localStorage.getItem(TASK_DISPATCH_TABS_VISIBILITY_STORAGE_KEY);
+    if (stored === "true" || stored === "false") {
+      return stored === "true";
+    }
+  } catch {
+    // ignore storage failures
+  }
+  return true;
+};
+
+const toggleTaskDispatchTabsVisibility = () => {
+  const nextVisible = !taskDispatchTabsVisible;
+  applyTaskDispatchTabsVisibility(nextVisible);
+};
+
 let menuOpenedAt = 0;
 
 const closeMenu = (options = {}) => {
@@ -1191,6 +1243,14 @@ const initTabsVisibility = () => {
   applyTabsVisibility(preferred, false);
   if (tabsToggle) {
     tabsToggle.addEventListener("click", toggleTabsVisibility);
+  }
+};
+
+const initTaskDispatchTabsVisibility = () => {
+  const preferred = detectPreferredTaskDispatchTabsVisibility();
+  applyTaskDispatchTabsVisibility(preferred, false);
+  if (taskDispatchTabsToggle) {
+    taskDispatchTabsToggle.addEventListener("click", toggleTaskDispatchTabsVisibility);
   }
 };
 
@@ -1405,14 +1465,7 @@ const pollSessions = async () => {
       syncMenuTabs();
       // - Only replace tabs bar if sessions changed (to preserve event listeners)
       if (sessionsChanged && tabsVisible) {
-        const tabsBar = document.querySelector('.wm-tabs-bar');
-        if (tabsBar) {
-          const existingTabsPanel = tabsBar.querySelector('.wm-live-tabs-panel');
-          if (existingTabsPanel) {
-            const newTabsPanel = renderLiveTabsBarContent();
-            existingTabsPanel.replaceWith(newTabsPanel);
-          }
-        }
+        refreshLiveTabsBar();
       }
       // - Incremental updates for conversation/logs are handled by fetchConversation and fetchLogs
     }
@@ -2117,6 +2170,7 @@ const liveViewModule = initLiveView({
   getCurrentRoute: () => currentRoute,
   setCurrentRoute: (r) => { currentRoute = r; },
   getTabsVisible: () => tabsVisible,
+  getTaskDispatchTabsVisible: () => taskDispatchTabsVisible,
   appRoot,
   render,
   getActiveSessions,
@@ -2629,6 +2683,7 @@ dialog.addEventListener("cancel", (event) => {
 (async () => {
   initTheme();
   initTabsVisibility();
+  initTaskDispatchTabsVisibility();
   setupConversationSelectionLock();
   initLiveMobileRuntime();
   // Initialize live module (Dexie database for SSE updates)

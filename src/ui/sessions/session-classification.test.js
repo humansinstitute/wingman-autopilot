@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   countSessionsByLiveTabGroup,
+  filterTaskDispatchSessionsForTabs,
   filterSessionsForLiveTabGroup,
   getLiveSessionTabGroup,
   isAgentChatSession,
+  isTaskDispatchSession,
   resolveLiveTabGroup,
 } from "./session-classification.js";
 
@@ -19,10 +21,32 @@ describe("session-classification", () => {
     metadata: { role: "agent-chat", agentChatAgentId: "agent_wm21" },
     origin: { type: "agent-chat" },
   };
+  const agentWorkSession = {
+    id: "agent-work-1",
+    metadata: { role: "agent-work" },
+    origin: { type: "agent-work" },
+  };
+  const pipelineStepSession = {
+    id: "pipeline-step-1",
+    metadata: { role: "pipeline-step" },
+    origin: { type: "cli" },
+  };
 
   test("identifies agent-chat sessions from metadata", () => {
     expect(isAgentChatSession(wingmanSession)).toBe(true);
     expect(isAgentChatSession(standardSession)).toBe(false);
+  });
+
+  test("identifies task dispatch sessions from metadata and origin", () => {
+    expect(isTaskDispatchSession(agentWorkSession)).toBe(true);
+    expect(isTaskDispatchSession(pipelineStepSession)).toBe(true);
+    expect(isTaskDispatchSession(standardSession)).toBe(false);
+  });
+
+  test("filters task dispatch sessions when tab visibility is disabled", () => {
+    const sessions = [standardSession, agentWorkSession, pipelineStepSession, wingmanSession];
+    expect(filterTaskDispatchSessionsForTabs(sessions, true)).toEqual(sessions);
+    expect(filterTaskDispatchSessionsForTabs(sessions, false)).toEqual([standardSession, wingmanSession]);
   });
 
   test("maps sessions into standard and wingman live groups", () => {

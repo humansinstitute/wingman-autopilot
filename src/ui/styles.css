@@ -567,7 +567,8 @@ body[data-theme="dark"] .wm-theme-toggle .moon {
   opacity: 0.95;
 }
 
-.wm-tabs-toggle {
+.wm-tabs-toggle,
+.wm-task-dispatch-tabs-toggle {
   align-self: flex-start;
   display: inline-flex;
   align-items: center;
@@ -581,18 +582,25 @@ body[data-theme="dark"] .wm-theme-toggle .moon {
   cursor: pointer;
   transition: background 200ms ease, color 200ms ease, transform 200ms ease;
 }
-.wm-tabs-toggle:hover {
+.wm-tabs-toggle:hover,
+.wm-task-dispatch-tabs-toggle:hover {
   transform: translateY(-1px);
   background: rgba(16, 185, 129, 0.22);
 }
 .wm-tabs-toggle .tabs-show,
-.wm-tabs-toggle .tabs-hide {
+.wm-tabs-toggle .tabs-hide,
+.wm-task-dispatch-tabs-toggle .dispatch-show,
+.wm-task-dispatch-tabs-toggle .dispatch-hide {
   font-size: 0.95rem;
   opacity: 0.45;
   transition: opacity 200ms ease;
 }
 body[data-tabs-visible="true"] .wm-tabs-toggle .tabs-show,
 body[data-tabs-visible="false"] .wm-tabs-toggle .tabs-hide {
+  opacity: 0.95;
+}
+body[data-task-dispatch-tabs-visible="true"] .wm-task-dispatch-tabs-toggle .dispatch-show,
+body[data-task-dispatch-tabs-visible="false"] .wm-task-dispatch-tabs-toggle .dispatch-hide {
   opacity: 0.95;
 }
 
