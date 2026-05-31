@@ -4826,9 +4826,17 @@ body[data-theme="light"] .wm-agent-dispatch-capability-card {
   color: var(--text-secondary);
   font-size: 0.9rem;
   line-height: 1.35;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
   white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.wm-composer-context::-webkit-scrollbar {
+  display: none;
 }
 
 .wm-composer-context strong {
