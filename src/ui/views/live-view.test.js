@@ -25,4 +25,10 @@ describe("live-view drawer integration", () => {
     expect(source).toContain("if (drawer.modal) {");
     expect(source).toContain("wrapper.append(drawer.modal);");
   });
+
+  test("offers native resume from archived transcripts", () => {
+    expect(source).toContain("canResumeNativeAgentSession(state.archivedSession.session)");
+    expect(source).toContain("resume-native-archived-live-session");
+    expect(source).toContain("await resumeNativeSession(routeSessionId);");
+  });
 });

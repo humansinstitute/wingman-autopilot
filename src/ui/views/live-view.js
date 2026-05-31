@@ -58,6 +58,7 @@ import {
   getLiveDrawerLayoutState,
   getRenderedLiveDrawerVisible,
 } from "../live/drawer-visibility.js";
+import { canResumeNativeAgentSession } from "../home/native-session-resume.js";
 
 export function initLiveView(deps) {
   const {
@@ -78,6 +79,7 @@ export function initLiveView(deps) {
     getSessionIdFromPath,
     ensureActiveSession,
     promptRenameSession,
+    resumeNativeSession,
     sendControlCommand,
     syncHeaderWebviewToggle,
     syncHeaderWriterToggle,
@@ -102,6 +104,7 @@ export function initLiveView(deps) {
 
   // Track active writer panel cleanup function
   let activeWriterCleanup = null;
+  let archivedNativeResumePending = false;
   const sessionStopFeedback = createSessionStopFeedback({
     getSessionById(sessionId) {
       return sessionsStore().items.find((item) => item.id === sessionId) ?? null;
@@ -1262,6 +1265,31 @@ export function initLiveView(deps) {
         sessionInfo.innerHTML = `<strong>${sessionName}</strong> <span class="wm-archived-agent">(${agentType})</span>`;
 
         header.append(statusBadge, sessionInfo);
+
+        if (
+          canResumeNativeAgentSession(state.archivedSession.session) &&
+          typeof resumeNativeSession === "function"
+        ) {
+          const resumeNativeBtn = document.createElement("button");
+          resumeNativeBtn.type = "button";
+          resumeNativeBtn.className = "wm-button wm-archived-resume-native";
+          resumeNativeBtn.textContent = archivedNativeResumePending ? "Resuming..." : "Resume Native";
+          resumeNativeBtn.disabled = archivedNativeResumePending;
+          resumeNativeBtn.setAttribute("aria-label", `Resume native agent session for ${sessionName}`);
+          resumeNativeBtn.dataset.testid = "resume-native-archived-live-session";
+          resumeNativeBtn.addEventListener("click", async () => {
+            if (archivedNativeResumePending) return;
+            archivedNativeResumePending = true;
+            render();
+            try {
+              await resumeNativeSession(routeSessionId);
+            } finally {
+              archivedNativeResumePending = false;
+            }
+          });
+          header.append(resumeNativeBtn);
+        }
+
         main.append(header);
 
         const scrollRegion = document.createElement("div");

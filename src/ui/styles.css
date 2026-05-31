@@ -4665,6 +4665,10 @@ body[data-keyboard-open="true"] .wm-composer-shell {
   background: rgba(100, 100, 100, 0.08);
 }
 
+.wm-archived-resume-native {
+  flex: 0 0 auto;
+}
+
 .wm-archived-badge {
   display: inline-block;
   padding: 0.25rem 0.75rem;
@@ -4691,6 +4695,20 @@ body[data-keyboard-open="true"] .wm-composer-shell {
 .wm-archived-agent {
   color: var(--text-tertiary);
   font-size: 0.85rem;
+}
+
+@media (max-width: 720px) {
+  .wm-archived-header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.65rem;
+  }
+
+  .wm-archived-resume-native {
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+  }
 }
 
 .wm-composer-shell-archived {

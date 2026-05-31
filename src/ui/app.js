@@ -2122,6 +2122,7 @@ const liveViewModule = initLiveView({
   getSessionIdFromPath,
   ensureActiveSession,
   promptRenameSession,
+  resumeNativeSession,
   sendControlCommand,
   syncHeaderWebviewToggle,
   syncHeaderWriterToggle,
