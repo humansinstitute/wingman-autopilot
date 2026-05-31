@@ -31,4 +31,11 @@ describe("live-view drawer integration", () => {
     expect(source).toContain("resume-native-archived-live-session");
     expect(source).toContain("await resumeNativeSession(routeSessionId);");
   });
+
+  test("renders live sessions as one unfiltered tab list", () => {
+    expect(source).toContain('tabs.setAttribute("role", "tablist")');
+    expect(source).toContain('panel.append(renderTabs({ sessions: getActiveSessions() }))');
+    expect(source).not.toContain("wm-live-tab-groups");
+    expect(source).not.toContain("filterSessionsForLiveTabGroup");
+  });
 });

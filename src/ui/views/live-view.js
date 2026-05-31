@@ -5,7 +5,7 @@
  * Depends on: state, sessions store, navigation, session actions, image attachments (via DI).
  */
 
-import { escapeHtml, getSessionDisplayName } from "../core/icons.js";
+import { getSessionDisplayName } from "../core/icons.js";
 import { openTextPromptDialog } from "../common/dialog-prompts.js";
 import { attachCopyButton, copyConversationToClipboard } from "../utils/clipboard.js";
 import { showToast } from "../utils/toast.js";
@@ -34,13 +34,6 @@ import { addNightWatchToggle } from "../nightwatch/cmd-toggle.js";
 import { openFilePicker } from "../modals/file-picker.js";
 import { npubProjectsState } from "../npub-projects/index.js";
 import { state, TERMINAL_CONTROL_ACTIONS } from "../state/index.js";
-import {
-  countSessionsByLiveTabGroup,
-  filterSessionsForLiveTabGroup,
-  getLiveSessionTabGroup,
-  LIVE_SESSION_TAB_GROUPS,
-  resolveLiveTabGroup,
-} from "../sessions/session-classification.js";
 import * as scrollPill from "../live/scroll-pill.js";
 import { resolveTerminalControlKeyAction } from "../live/terminal-controls.js";
 import {
@@ -235,155 +228,97 @@ export function initLiveView(deps) {
     existingPanel.replaceWith(renderLiveTabsBarContent());
   }
 
-  function syncLiveSessionTabGroup(session) {
-    if (state.liveSessionTabs.group === "all") {
-      return;
-    }
-    state.liveSessionTabs.group = getLiveSessionTabGroup(session);
-  }
-
-  function getSelectedLiveSessionTabGroup(activeSessions) {
-    const currentSessionId = resolveCurrentLiveSessionId();
-    const activeSession = activeSessions.find((session) => session.id === currentSessionId) ?? null;
-    return resolveLiveTabGroup(state.liveSessionTabs.group, activeSessions, activeSession);
-  }
-
-  function handleLiveSessionTabGroupChange(groupId) {
-    const activeSessions = getActiveSessions();
-    const nextSessions = filterSessionsForLiveTabGroup(activeSessions, groupId);
-    if (nextSessions.length === 0) {
-      return;
-    }
-
-    state.liveSessionTabs.group = groupId;
-    const currentSessionId = resolveCurrentLiveSessionId();
-    const currentVisible = nextSessions.some((session) => session.id === currentSessionId);
-    if (currentVisible) {
-      render();
-      return;
-    }
-
-    const targetSession = nextSessions[0];
-    setCurrentRoute("live");
-    setActiveSession(targetSession.id, { updateHistory: true, forceLog: true });
-    fetchLogs(targetSession.id);
-    fetchConversation(targetSession.id);
-    render();
-  }
-
-  function renderLiveSessionGroupTabs(activeSessions) {
-    const counts = countSessionsByLiveTabGroup(activeSessions);
-    const groupsWithSessions = LIVE_SESSION_TAB_GROUPS.filter((group) => counts[group.id] > 0);
-    if (groupsWithSessions.length <= 1) {
-      return null;
-    }
-
-    const selectedGroup = getSelectedLiveSessionTabGroup(activeSessions);
-    const groupBar = document.createElement("div");
-    groupBar.className = "wm-live-tab-groups";
-    groupBar.setAttribute("role", "group");
-    groupBar.setAttribute("aria-label", "Filter live sessions");
-
-    LIVE_SESSION_TAB_GROUPS.forEach((group) => {
-      const count = counts[group.id];
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "wm-live-tab-group";
-      button.setAttribute("aria-pressed", group.id === selectedGroup ? "true" : "false");
-      button.setAttribute("aria-label", `${group.label} (${count})`);
-      button.setAttribute("data-testid", `live-session-group-${group.id}`);
-      button.disabled = count === 0;
-
-      if (group.id === selectedGroup) {
-        button.classList.add("active");
-      }
-
-      const label = document.createElement("span");
-      label.className = "wm-live-tab-group__label";
-      label.textContent = group.label;
-
-      const badge = document.createElement("span");
-      badge.className = "wm-live-tab-group__count";
-      badge.textContent = String(count);
-
-      button.append(label, badge);
-      button.addEventListener("click", () => {
-        handleLiveSessionTabGroupChange(group.id);
-      });
-      groupBar.append(button);
-    });
-
-    return groupBar;
-  }
-
   function renderLiveTabsBarContent() {
     const panel = document.createElement("div");
     panel.className = "wm-live-tabs-panel";
+    panel.append(renderTabs({ sessions: getActiveSessions() }));
+    return panel;
+  }
 
-    const activeSessions = getActiveSessions();
-    const selectedGroup = getSelectedLiveSessionTabGroup(activeSessions);
-    const groupTabs = renderLiveSessionGroupTabs(activeSessions);
-    if (groupTabs) {
-      panel.append(groupTabs);
+  function activateSessionTab(session, onSelect) {
+    const wasLiveRoute = getCurrentRoute() === "live";
+    const activeId = resolveCurrentLiveSessionId();
+    if (activeId === session.id && wasLiveRoute) {
+      onSelect?.();
+      return;
     }
 
-    panel.append(renderTabs({ sessions: filterSessionsForLiveTabGroup(activeSessions, selectedGroup) }));
-    return panel;
+    setCurrentRoute("live");
+    setActiveSession(session.id, { updateHistory: true, forceLog: true });
+    fetchLogs(session.id);
+    fetchConversation(session.id);
+    if (wasLiveRoute) {
+      if (getTabsVisible()) {
+        replaceLiveTabsBarContent();
+      }
+      updateLivePanelsForSession(session.id);
+    } else {
+      render();
+    }
+    onSelect?.();
+  }
+
+  function createSessionTab(session, onSelect) {
+    const activeId = resolveCurrentLiveSessionId();
+    const isActive = session.id === activeId;
+    const displayName = getSessionDisplayName(session);
+    const tab = document.createElement("div");
+    tab.className = "wm-tab";
+    tab.setAttribute("role", "presentation");
+    tab.title = `${displayName} - ${session.agent}:${session.port}`;
+    if (isActive) {
+      tab.classList.add("active");
+    }
+
+    const tabButton = document.createElement("button");
+    tabButton.type = "button";
+    tabButton.className = "wm-tab__button";
+    tabButton.setAttribute("role", "tab");
+    tabButton.setAttribute("aria-selected", isActive ? "true" : "false");
+    tabButton.setAttribute("aria-label", `Open ${displayName}`);
+    tabButton.setAttribute("data-testid", `live-session-tab-${session.id}`);
+    tabButton.addEventListener("click", () => {
+      activateSessionTab(session, onSelect);
+    });
+
+    const label = document.createElement("span");
+    label.className = "wm-tab__label";
+    label.textContent = displayName;
+    tabButton.append(label);
+
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "close wm-tab__close";
+    closeButton.title = "Stop session";
+    closeButton.setAttribute("aria-label", `Stop ${displayName}`);
+    closeButton.setAttribute("data-testid", `live-session-close-${session.id}`);
+    closeButton.textContent = "\u00d7";
+    closeButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void sessionStopFeedback.requestStopSession(session.id);
+      onSelect?.();
+    });
+
+    tab.append(tabButton, closeButton);
+    return tab;
+  }
+
+  function createTabsContainer(variant) {
+    const tabs = document.createElement("div");
+    tabs.className = `wm-tabs${variant === "menu" ? " menu" : ""}`;
+    tabs.setAttribute("role", "tablist");
+    tabs.setAttribute("aria-label", "Live sessions");
+    tabs.setAttribute("aria-orientation", variant === "menu" ? "vertical" : "horizontal");
+    tabs.setAttribute("data-testid", variant === "menu" ? "menu-session-tabs" : "live-session-tabs");
+    return tabs;
   }
 
   const renderSessionTabs = (options = {}) => {
     const onSelect = typeof options.onSelect === "function" ? options.onSelect : null;
-    const tabs = document.createElement("div");
-    tabs.className = "wm-tabs menu";
+    const tabs = createTabsContainer("menu");
 
-    const activeSessions = getActiveSessions();
-    activeSessions.forEach((session) => {
-      const tab = document.createElement("div");
-      tab.className = "wm-tab";
-      const tabActiveId = resolveCurrentLiveSessionId();
-      if (session.id === tabActiveId) {
-        tab.classList.add("active");
-      }
-
-      const displayName = getSessionDisplayName(session);
-      const safeLabel = escapeHtml(displayName);
-      tab.innerHTML = `
-        <span>${safeLabel}</span>
-        <span class="close" title="Stop session">\u00d7</span>
-      `;
-      tab.title = `${displayName} - ${session.agent}:${session.port}`;
-
-      tab.addEventListener("click", () => {
-        const wasLiveRoute = getCurrentRoute() === "live";
-        const clickActiveId = resolveCurrentLiveSessionId();
-        if (clickActiveId === session.id && wasLiveRoute) {
-          onSelect?.();
-          return;
-        }
-        syncLiveSessionTabGroup(session);
-        setCurrentRoute("live");
-        setActiveSession(session.id, { updateHistory: true, forceLog: true });
-        fetchLogs(session.id);
-        fetchConversation(session.id);
-        if (wasLiveRoute) {
-          if (getTabsVisible()) {
-            replaceLiveTabsBarContent();
-          }
-          updateLivePanelsForSession(session.id);
-        } else {
-          render();
-        }
-        onSelect?.();
-      });
-
-      const closeButton = tab.querySelector(".close");
-      closeButton.addEventListener("click", (event) => {
-        event.stopPropagation();
-        void sessionStopFeedback.requestStopSession(session.id);
-        onSelect?.();
-      });
-
-      tabs.append(tab);
+    getActiveSessions().forEach((session) => {
+      tabs.append(createSessionTab(session, onSelect));
     });
 
     return tabs;
@@ -393,58 +328,20 @@ export function initLiveView(deps) {
     const variant = options.variant === "menu" ? "menu" : "default";
     const onSelect = typeof options.onSelect === "function" ? options.onSelect : null;
     const sessions = Array.isArray(options.sessions) ? options.sessions : getActiveSessions();
-    const tabs = document.createElement("div");
-    tabs.className = `wm-tabs${variant === "menu" ? " menu" : ""}`;
+    const tabs = createTabsContainer(variant);
 
     sessions.forEach((session) => {
-      const tab = document.createElement("div");
-      tab.className = "wm-tab";
-      const menuTabActiveId = resolveCurrentLiveSessionId();
-      if (session.id === menuTabActiveId) {
-        tab.classList.add("active");
-      }
-
-      const displayName = getSessionDisplayName(session);
-      const safeLabel = escapeHtml(displayName);
-      tab.innerHTML = `
-        <span>${safeLabel}</span>
-        <span class="close" title="Stop session">\u00d7</span>
-      `;
-      tab.title = `${displayName} - ${session.agent}:${session.port}`;
-
-      tab.addEventListener("click", () => {
-        const menuClickActiveId = resolveCurrentLiveSessionId();
-        if (menuClickActiveId === session.id && getCurrentRoute() === "live") {
-          onSelect?.();
-          return;
-        }
-        syncLiveSessionTabGroup(session);
-        setCurrentRoute("live");
-        setActiveSession(session.id, { updateHistory: true, forceLog: true });
-        fetchLogs(session.id);
-        fetchConversation(session.id);
-        if (getTabsVisible()) {
-          replaceLiveTabsBarContent();
-        }
-        updateLivePanelsForSession(session.id);
-        onSelect?.();
-      });
-
-      const closeButton = tab.querySelector(".close");
-      closeButton.addEventListener("click", (event) => {
-        event.stopPropagation();
-        void sessionStopFeedback.requestStopSession(session.id);
-        onSelect?.();
-      });
-
-      tabs.append(tab);
+      tabs.append(createSessionTab(session, onSelect));
     });
 
     if (state.identity.authenticated) {
-      const newTab = document.createElement("div");
-      newTab.className = "wm-tab new";
+      const newTab = document.createElement("button");
+      newTab.type = "button";
+      newTab.className = "wm-tab wm-tab-new new";
       newTab.textContent = "+";
       newTab.title = "Start new session";
+      newTab.setAttribute("aria-label", "Start new session");
+      newTab.setAttribute("data-testid", "live-session-new-tab");
       newTab.addEventListener("click", () => {
         openDialog();
         onSelect?.();
@@ -1201,14 +1098,6 @@ export function initLiveView(deps) {
   const renderLive = () => {
     const wrapper = document.createElement("div");
     wrapper.className = "wm-live";
-    const activeSessions = getActiveSessions();
-    const currentLiveSessionId = resolveCurrentLiveSessionId();
-    const currentLiveSession =
-      activeSessions.find((session) => session.id === currentLiveSessionId) ?? null;
-
-    if (currentLiveSession) {
-      syncLiveSessionTabGroup(currentLiveSession);
-    }
 
     if (getTabsVisible()) {
       const tabsBar = document.createElement("div");
