@@ -41,6 +41,7 @@ describe("live-view drawer integration", () => {
 
   test("shows session context above the composer", () => {
     expect(source).toContain("wm-composer-context");
+    expect(source).toContain("wm-composer-input-column");
     expect(source).toContain("renderComposerContext(sessionId)");
     expect(source).toContain("resolveSessionAgentLabel(session)");
   });

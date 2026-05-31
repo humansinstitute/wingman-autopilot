@@ -4521,14 +4521,21 @@ body[data-theme="light"] .wm-agent-dispatch-capability-card {
 
 .wm-composer {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: stretch;
   gap: 1rem;
   padding: 1rem 1.25rem;
   border-radius: 0.75rem;
   border: 1px solid var(--border-primary);
   background: var(--bg-secondary);
   box-shadow: var(--shadow-md);
+}
+
+.wm-composer-input-column {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 0;
 }
 
 .wm-composer textarea {
@@ -4807,7 +4814,6 @@ body[data-theme="light"] .wm-agent-dispatch-capability-card {
 }
 
 .wm-composer-context {
-  flex: 0 0 100%;
   margin: 0;
   color: var(--text-secondary);
   font-size: 0.9rem;
@@ -5398,7 +5404,7 @@ body[data-keyboard-open="true"] .wm-composer-shell {
 
   .wm-composer {
     flex-direction: row;
-    align-items: flex-end;
+    align-items: stretch;
     gap: 0.5rem;
     padding: 0.85rem 0.9rem;
   }

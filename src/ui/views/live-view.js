@@ -1043,7 +1043,11 @@ export function initLiveView(deps) {
       onResize: resizeTextarea,
     });
 
-    composer.append(renderComposerContext(sessionId), fileInput, attachmentInput, textareaWrapper, buttonGroup);
+    const inputColumn = document.createElement("div");
+    inputColumn.className = "wm-composer-input-column";
+    inputColumn.append(renderComposerContext(sessionId), textareaWrapper);
+
+    composer.append(fileInput, attachmentInput, inputColumn, buttonGroup);
 
     const statusIndicator = createAgentStatusIndicator(sessionId, { variant: "pill" });
     statusIndicator.classList.add("wm-agent-status-pill-button");
