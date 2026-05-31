@@ -151,15 +151,27 @@ export const MessageStore = {
       for (let i = 0; i < minLen; i++) {
         const old = existing[i];
         const inc = incoming[i];
-        if (old.content !== inc.content || old.role !== inc.role) {
-          updates.push(
-            db.messages.update(old.id, {
-              content: inc.content,
-              role: inc.role,
-              updatedAt: now,
-            }),
-          );
+        if (old.content === inc.content && old.role === inc.role) {
+          continue;
         }
+        // Don't let a momentarily-stale server snapshot shrink a bubble that the
+        // SSE stream has already grown further. A streamed assistant turn only
+        // ever grows, so when the incoming content is a prefix of what we already
+        // have for the same role, keep the longer local copy.
+        const isStreamingShrink =
+          old.role === inc.role &&
+          inc.content.length < (old.content || "").length &&
+          (old.content || "").startsWith(inc.content);
+        if (isStreamingShrink) {
+          continue;
+        }
+        updates.push(
+          db.messages.update(old.id, {
+            content: inc.content,
+            role: inc.role,
+            updatedAt: now,
+          }),
+        );
       }
 
       // Remove extras if server has fewer messages

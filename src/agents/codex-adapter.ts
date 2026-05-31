@@ -74,6 +74,13 @@ export class CodexAdapter implements AgentAdapter {
   private threadId: string | null = null;
   private state: AdapterState = "initializing";
   private readonly messages: CollectedMessage[] = [];
+  /**
+   * The assistant message for the turn currently streaming. It is not yet in
+   * `messages` (that only happens once the turn completes), but it must be part
+   * of fetchMessages() so polled/refreshed snapshots always reflect the latest
+   * streaming state instead of dropping the in-flight bubble.
+   */
+  private pendingAssistant: CollectedMessage | null = null;
   private readonly workingDirectory: string;
   private currentAbort: AbortController | null = null;
 
@@ -198,6 +205,9 @@ export class CodexAdapter implements AgentAdapter {
         assistantCreatedAt = new Date().toISOString();
       }
       const text = Array.from(agentTextById.values()).join("");
+      // Expose the growing bubble to fetchMessages() so polled snapshots and
+      // page refreshes mid-turn include the in-flight assistant text.
+      this.pendingAssistant = { role: "assistant", content: text, createdAt: assistantCreatedAt };
       this.emitStream({
         type: "message",
         message: { role: "assistant", content: text, createdAt: assistantCreatedAt },
@@ -302,6 +312,10 @@ export class CodexAdapter implements AgentAdapter {
       }
       throw error;
     } finally {
+      // The turn is over: the final text was committed to `messages` on success,
+      // or discarded on error/abort. Either way the in-flight bubble is no longer
+      // pending and must not linger in fetchMessages().
+      this.pendingAssistant = null;
       if (this.currentAbort === abortController) {
         this.currentAbort = null;
       }
@@ -314,7 +328,13 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async fetchMessages(): Promise<AgentMessage[]> {
-    return this.messages.map((m) => ({
+    const history = [...this.messages];
+    // Include the currently-streaming assistant turn so snapshot consumers
+    // (refresh polling, page reload) never drop the in-flight bubble.
+    if (this.pendingAssistant && this.pendingAssistant.content) {
+      history.push(this.pendingAssistant);
+    }
+    return history.map((m) => ({
       role: m.role,
       content: m.content,
       createdAt: m.createdAt,
