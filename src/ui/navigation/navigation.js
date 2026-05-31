@@ -228,6 +228,31 @@ export function createNavigation(deps) {
     render();
   }
 
+  function navigateToFiles({ skipMenuClose = false } = {}) {
+    if (!state.identity.authenticated) {
+      openIdentityLoginDialog();
+      return;
+    }
+    if (!skipMenuClose) {
+      closeMenu();
+    }
+    closeIdentityLoginDialog();
+    const activeSession = getCurrentRoute() === "live" ? getActiveSessionForIndicator() : null;
+    const sessionDir = activeSession?.workingDirectory;
+    deactivateLiveSessionRefresh();
+    setCurrentRoute("files");
+    setLastLoggedSessionId(null);
+    if (!state.files.initialized) {
+      state.files.initialized = true;
+      void loadFilesTree(sessionDir);
+    } else if (sessionDir) {
+      void loadFilesTree(sessionDir);
+    } else {
+      updateFilesUrl({ replace: true });
+    }
+    render();
+  }
+
   function navigateToSettings({ skipMenuClose = false } = {}) {
     if (!skipMenuClose) {
       closeMenu();
@@ -283,22 +308,8 @@ export function createNavigation(deps) {
           navigateToPipelines({ skipMenuClose: true });
           return;
         } else if (targetRoute === "files") {
-          // If navigating from live page with an active session, start in that session's directory
-          const activeSession = getCurrentRoute() === "live" ? getActiveSessionForIndicator() : null;
-          const sessionDir = activeSession?.workingDirectory;
-          deactivateLiveSessionRefresh();
-          setCurrentRoute("files");
-          setLastLoggedSessionId(null);
-          if (!state.files.initialized) {
-            state.files.initialized = true;
-            void loadFilesTree(sessionDir);
-          } else if (sessionDir) {
-            // Already initialized but coming from live with a session directory - navigate there
-            void loadFilesTree(sessionDir);
-          } else {
-            // Already initialized — sync URL to current state
-            updateFilesUrl({ replace: true });
-          }
+          navigateToFiles({ skipMenuClose: true });
+          return;
         } else if (targetRoute === "settings") {
           navigateToSettings({ skipMenuClose: true });
           return;
@@ -393,6 +404,7 @@ export function createNavigation(deps) {
     navigateToNightWatch,
     navigateToScheduler,
     navigateToPipelines,
+    navigateToFiles,
     navigateToSettings,
     setupNavListeners,
   };

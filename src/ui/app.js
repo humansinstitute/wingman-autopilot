@@ -2372,6 +2372,7 @@ const {
   navigateToProjects,
   navigateToNightWatch,
   navigateToScheduler,
+  navigateToFiles,
   navigateToSettings,
   setupNavListeners,
 } = createNavigation({
@@ -2431,6 +2432,7 @@ commandPaletteController = createAutopilotCommandPalette({
   npubProjectsState,
   fetchNpubProjects,
   navigateHome: () => navigateToHome({ skipMenuClose: true }),
+  navigateFiles: () => navigateToFiles({ skipMenuClose: true }),
   openSession(session) {
     if (!session?.id) return;
     currentRoute = "live";

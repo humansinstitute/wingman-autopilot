@@ -67,6 +67,7 @@ export function createAutopilotCommandPalette({
   npubProjectsState,
   fetchNpubProjects,
   navigateHome,
+  navigateFiles,
   openSession,
   renderAppCard,
   refreshApps,
@@ -271,6 +272,10 @@ export function createAutopilotCommandPalette({
       showRunningPipelinesModal({ showToast });
       return;
     }
+    if (item.action === "files") {
+      navigateFiles?.();
+      return;
+    }
     if (item.action === "open-session") {
       const session = sessionsStore?.().items?.find((entry) => entry?.id === item.targetId);
       if (session) {
@@ -423,9 +428,10 @@ export function createAutopilotCommandPalette({
       void execute(item);
       return;
     }
-    if (!query && /^[1-4]$/.test(key)) {
+    if (!query && /^[0-4]$/.test(key)) {
       event.preventDefault();
-      void execute(getQuickItems()[Number(key) - 1]);
+      const item = getQuickItems().find((entry) => entry.shortcutKey === key);
+      void execute(item);
     }
   }
 

@@ -36,10 +36,11 @@ describe("autopilot command palette helpers", () => {
 
   test("keeps fixed shortcut keys stable and adds home", () => {
     expect(createCommandPaletteQuickItems().map((item) => `${item.shortcutKey}:${item.title}`)).toEqual([
-      "1:New Session",
-      "2:Running Apps",
-      "3:Running Pipelines",
-      "4:Home",
+      "0:Home",
+      "1:Sessions",
+      "2:Apps",
+      "3:Pipelines",
+      "4:Files",
     ]);
   });
 
