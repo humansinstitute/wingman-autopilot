@@ -112,9 +112,9 @@ export function createSessionRouting(deps) {
           window.dispatchEvent(new CustomEvent("session-change", { detail: { sessionId } }));
         }
 
-        // Scroll to end when switching to a different session
+        // Scroll to end when explicitly switching to a different session.
         if (switchedSessions) {
-          scheduleLiveScroll(sessionId, { includeWindow: true });
+          scheduleLiveScroll(sessionId, { includeWindow: true, force: true });
         }
       }
 

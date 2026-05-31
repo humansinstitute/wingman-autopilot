@@ -364,6 +364,11 @@ const scrollConversationAreaToBottom = (sessionId, options = {}) =>
 
 const scheduleLiveScroll = (sessionId, options = {}) => {
   if (!sessionId || currentRoute !== "live") return;
+  if (options.force) {
+    scrollConversationAreaToBottom(sessionId, { includeWindow: options.includeWindow === true });
+    scrollPillHide();
+    return;
+  }
   // Never auto-scroll — show the pill if user is scrolled up
   if (!scrollPillIsNearBottom()) {
     scrollPillShow();
