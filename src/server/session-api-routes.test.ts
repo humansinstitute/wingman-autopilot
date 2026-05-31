@@ -75,7 +75,11 @@ const buildCtx = (overrides?: Partial<SessionApiContext>): SessionApiContext => 
     listSessions: () => [],
     listSessionMessages: () => [],
   } as any,
-  sessionArchiveStore: {} as any,
+  sessionArchiveStore: {
+    getArchivedSession: () => null,
+    listArchivedSessions: () => [],
+    getArchiveCount: () => 0,
+  } as any,
   identityUserStore: {
     ensurePortsFor: () => [],
     getByNormalized: () => null,
@@ -300,6 +304,91 @@ describe("handleSessionApi", () => {
         metadata: {
           resumedFromWingmanSessionId: "session-1",
           nativeAgentSession: { sessionId: "codex-native-1" },
+        },
+      },
+    });
+  });
+
+  test("POST /api/sessions/:id/resume-native creates a new session from archived native metadata", async () => {
+    const archivedSession = {
+      id: "archived-session-1",
+      agent: "codex",
+      name: "restartme",
+      npub: "npub1owner",
+      workingDirectory: "/tmp/project",
+      startedAt: "2026-05-31T00:00:00.000Z",
+      archivedAt: "2026-05-31T00:05:00.000Z",
+      messageCount: 2,
+      origin: null,
+      metadata: {
+        AGENT: false,
+        billingMode: "subscription",
+        nativeAgentSession: {
+          agent: "codex",
+          sessionId: "codex-archived-native-1",
+          workingDirectory: "/tmp/project",
+          capturedAt: "2026-05-31T00:00:00.000Z",
+          source: "agentapi",
+        },
+      },
+    };
+    let createInput: Record<string, unknown> | null = null;
+    const ctx = buildCtx({
+      manager: {
+        getSession: () => undefined,
+        listSessions: () => [],
+        createSession: async (
+          agent: string,
+          workingDirectory: string,
+          name?: string,
+          origin?: unknown,
+          targetFile?: string,
+          npub?: string,
+          metadata?: unknown,
+        ) => {
+          createInput = { agent, workingDirectory, name, origin, targetFile, npub, metadata };
+          return {
+            ...baseSession,
+            id: "new-archived-resume-session",
+            agent,
+            workingDirectory,
+            name: name ?? "new session",
+            origin: origin as any,
+            targetFile,
+            npub: npub ?? null,
+            metadata: metadata as any,
+          };
+        },
+      } as any,
+      sessionArchiveStore: {
+        getArchivedSession: (id: string) => (id === archivedSession.id ? archivedSession : null),
+        listArchivedSessions: () => [archivedSession],
+        getArchiveCount: () => 1,
+      } as any,
+      serializeSession: (session) => ({ id: session.id, metadata: session.metadata, origin: session.origin }),
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions/archived-session-1/resume-native");
+    const request = new Request(url.toString(), { method: "POST" });
+
+    const response = await handleSessionApi(request, url, "POST", makeAuth({ delegatedByBot: false }), ctx);
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(201);
+    expect(createInput).toMatchObject({
+      agent: "codex",
+      workingDirectory: "/tmp/project",
+      name: "restartme (resumed)",
+      npub: "npub1owner",
+    });
+    const capturedCreateInput = createInput as unknown as Record<string, any>;
+    expect(capturedCreateInput.metadata.resumedFromWingmanSessionId).toBe("archived-session-1");
+    expect(capturedCreateInput.metadata.nativeAgentSession.sessionId).toBe("codex-archived-native-1");
+    await expect(response!.json()).resolves.toMatchObject({
+      session: {
+        id: "new-archived-resume-session",
+        metadata: {
+          resumedFromWingmanSessionId: "archived-session-1",
+          nativeAgentSession: { sessionId: "codex-archived-native-1" },
         },
       },
     });

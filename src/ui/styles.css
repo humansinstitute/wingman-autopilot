@@ -9429,6 +9429,13 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   white-space: nowrap;
 }
 
+.wm-home-archive-item-actions {
+  display: flex;
+  justify-content: flex-start;
+  gap: 0.5rem;
+  padding-top: 0.25rem;
+}
+
 .wm-home-archive-load-more {
   padding-top: 1rem;
   text-align: center;

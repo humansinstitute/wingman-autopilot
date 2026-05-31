@@ -4,6 +4,7 @@
  */
 
 import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
+import { canResumeNativeAgentSession } from "./native-session-resume.js";
 
 const ARCHIVE_STORAGE_KEY = "wingman-archive-collapsed";
 
@@ -69,7 +70,13 @@ const fetchArchivedSession = async (sessionId) => {
 /**
  * Creates the archive component for the home page.
  */
-export function createArchiveComponent({ onViewSession } = {}) {
+export function createArchiveComponent({
+  onViewSession,
+  resumeNativeSession,
+  getSessionPendingAction,
+  isSessionActionPending,
+  withPendingSessionAction,
+} = {}) {
   let archiveState = {
     sessions: [],
     total: 0,
@@ -269,6 +276,42 @@ export function createArchiveComponent({ onViewSession } = {}) {
       itemMeta.append(itemDir, itemTime, itemMessages);
 
       item.append(itemMain, itemMeta);
+
+      if (canResumeNativeAgentSession(session) && typeof resumeNativeSession === "function") {
+        const actions = document.createElement("div");
+        actions.className = "wm-home-archive-item-actions";
+
+        const pendingAction =
+          typeof getSessionPendingAction === "function"
+            ? getSessionPendingAction(session.id)
+            : null;
+        const pending =
+          typeof isSessionActionPending === "function"
+            ? isSessionActionPending(session.id)
+            : false;
+
+        const nativeResumeBtn = document.createElement("button");
+        nativeResumeBtn.type = "button";
+        nativeResumeBtn.className = "wm-button";
+        nativeResumeBtn.textContent = pendingAction === "resume-native" ? "Resuming..." : "Resume Native";
+        nativeResumeBtn.disabled = pending;
+        nativeResumeBtn.setAttribute("aria-label", `Resume native agent session for ${session.name || session.id}`);
+        nativeResumeBtn.dataset.testid = "resume-native-archived-session";
+        nativeResumeBtn.addEventListener("click", (event) => {
+          event.stopPropagation();
+          const runResume = async () => {
+            await resumeNativeSession(session.id);
+          };
+          if (typeof withPendingSessionAction === "function") {
+            void withPendingSessionAction(session.id, "resume-native", runResume);
+            return;
+          }
+          void runResume();
+        });
+
+        actions.append(nativeResumeBtn);
+        item.append(actions);
+      }
 
       const handleClick = () => {
         if (typeof onViewSession === "function") {

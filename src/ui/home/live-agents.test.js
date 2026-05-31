@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   canResumeNativeAgentSession,
-} from "./live-agents.js";
+} from "./native-session-resume.js";
 import {
   DEFAULT_LIVE_SESSION_SORT,
   formatSessionStartedAt,

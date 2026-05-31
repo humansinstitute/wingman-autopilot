@@ -13,7 +13,7 @@ import { normaliseNpub, deriveNpubSegment } from "../identity/npub-utils";
 import { generateIdentityAlias } from "../identity/identity-alias";
 import { validateInput, ArchiveListOptionsSchema } from "../utils/validation";
 import type { messageStore as MessageStoreInstance, StoredMessage, StoredSessionRecord } from "../storage/message-store";
-import type { sessionArchiveStore as SessionArchiveStoreInstance } from "../storage/session-archive-store";
+import type { ArchivedSession, sessionArchiveStore as SessionArchiveStoreInstance } from "../storage/session-archive-store";
 import type { ForkToWorktreeInput } from "../sessions/fork-to-worktree";
 import { resolveSessionOwnerNpub } from "../sessions/session-ownership";
 import { deliverSessionAgentMessage } from "./session-agent-message";
@@ -330,6 +330,61 @@ const resolveOwnedStoredSession = (
     return { session: exactMatch, resolvedId: exactMatch.id, error: null };
   }
 
+  const prefixMatches = ownedSessions.filter((session) => session.id.startsWith(requestedId));
+  if (prefixMatches.length === 1) {
+    const match = prefixMatches[0]!;
+    return { session: match, resolvedId: match.id, error: null };
+  }
+
+  if (prefixMatches.length > 1) {
+    return {
+      session: null,
+      resolvedId: requestedId,
+      error: Response.json(
+        {
+          error: "Ambiguous session id",
+          matches: prefixMatches.map((session) => ({
+            id: session.id,
+            name: session.name ?? null,
+          })),
+        },
+        { status: 409 },
+      ),
+    };
+  }
+
+  return { session: null, resolvedId: requestedId, error: null };
+};
+
+const archivedSessionBelongsToViewer = (
+  archivedSession: ArchivedSession,
+  viewerNormalizedNpub: string | null,
+  viewerIsAdmin: boolean,
+  ctx: SessionApiContext,
+): boolean => {
+  return ctx.sessionBelongsToViewer(
+    archivedSession.npub,
+    archivedSession.metadata,
+    viewerNormalizedNpub,
+    viewerIsAdmin,
+  );
+};
+
+const resolveOwnedArchivedSession = (
+  requestedId: string,
+  viewerNormalizedNpub: string | null,
+  viewerIsAdmin: boolean,
+  ctx: SessionApiContext,
+) => {
+  const exactMatch = ctx.sessionArchiveStore.getArchivedSession(requestedId);
+  if (exactMatch && archivedSessionBelongsToViewer(exactMatch, viewerNormalizedNpub, viewerIsAdmin, ctx)) {
+    return { session: exactMatch, resolvedId: exactMatch.id, error: null };
+  }
+
+  const archiveCount = ctx.sessionArchiveStore.getArchiveCount();
+  const ownedSessions = ctx.sessionArchiveStore
+    .listArchivedSessions({ limit: archiveCount, offset: 0 })
+    .filter((session) => archivedSessionBelongsToViewer(session, viewerNormalizedNpub, viewerIsAdmin, ctx));
   const prefixMatches = ownedSessions.filter((session) => session.id.startsWith(requestedId));
   if (prefixMatches.length === 1) {
     const match = prefixMatches[0]!;
@@ -1505,7 +1560,12 @@ export async function handleSessionApi(
     }
 
     if (method === "POST" && parts[4] === "resume-native") {
-      const sourceSession = liveOwnedSession ?? storedOwnedSession;
+      const archivedSessionResolution =
+        liveOwnedSession || storedOwnedSession
+          ? null
+          : resolveOwnedArchivedSession(id, viewerNormalizedNpub, viewerIsAdmin, ctx);
+      if (archivedSessionResolution?.error) return archivedSessionResolution.error;
+      const sourceSession = liveOwnedSession ?? storedOwnedSession ?? archivedSessionResolution?.session;
       if (!sourceSession) return Response.json({ error: "Not found" }, { status: 404 });
       return createNativeResumeSession(sourceSession, authContext, ctx);
     }

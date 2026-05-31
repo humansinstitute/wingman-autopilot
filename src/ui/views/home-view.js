@@ -345,6 +345,10 @@ export function initHomeView(deps) {
         setCurrentRoute("live");
         render();
       },
+      resumeNativeSession,
+      getSessionPendingAction,
+      isSessionActionPending,
+      withPendingSessionAction,
     });
     wrapper.append(archiveComponent.element);
 

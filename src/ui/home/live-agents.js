@@ -11,22 +11,14 @@ import {
   HOME_SESSION_GROUPS,
 } from "./session-groups.js";
 import { createSessionGroupTabs } from "./session-group-tabs.js";
+import { canResumeNativeAgentSession } from "./native-session-resume.js";
+
+export { canResumeNativeAgentSession };
 
 function shouldRenderSessionCards() {
   return typeof window !== "undefined" &&
     typeof window.matchMedia === "function" &&
     window.matchMedia("(max-width: 720px)").matches;
-}
-
-export function canResumeNativeAgentSession(session) {
-  const nativeSession = session?.metadata?.nativeAgentSession;
-  return Boolean(
-    nativeSession &&
-    typeof nativeSession.sessionId === "string" &&
-    nativeSession.sessionId.trim().length > 0 &&
-    typeof nativeSession.workingDirectory === "string" &&
-    nativeSession.workingDirectory.trim().length > 0,
-  );
 }
 
 function renderSessionActions(target, session, deps) {
