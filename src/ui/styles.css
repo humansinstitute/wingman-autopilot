@@ -4521,6 +4521,7 @@ body[data-theme="light"] .wm-agent-dispatch-capability-card {
 
 .wm-composer {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 1rem;
   padding: 1rem 1.25rem;
@@ -4806,7 +4807,8 @@ body[data-theme="light"] .wm-agent-dispatch-capability-card {
 }
 
 .wm-composer-context {
-  margin: 0 0 0.45rem;
+  flex: 0 0 100%;
+  margin: 0;
   color: var(--text-secondary);
   font-size: 0.9rem;
   line-height: 1.35;

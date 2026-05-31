@@ -1043,13 +1043,13 @@ export function initLiveView(deps) {
       onResize: resizeTextarea,
     });
 
-    composer.append(fileInput, attachmentInput, textareaWrapper, buttonGroup);
+    composer.append(renderComposerContext(sessionId), fileInput, attachmentInput, textareaWrapper, buttonGroup);
 
     const statusIndicator = createAgentStatusIndicator(sessionId, { variant: "pill" });
     statusIndicator.classList.add("wm-agent-status-pill-button");
     buttonGroup.prepend(statusIndicator);
 
-    composerShell.append(renderComposerContext(sessionId), imagePreviewContainer, composer);
+    composerShell.append(imagePreviewContainer, composer);
 
     resizeTextarea();
 
