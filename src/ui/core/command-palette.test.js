@@ -4,6 +4,7 @@ import {
   createCommandPaletteLaunchItems,
   createCommandPaletteQuickItems,
   filterCommandPaletteItems,
+  getNextCommandPaletteActiveId,
   getRecentLaunchProjects,
   rememberRecentItem,
 } from "./command-palette-utils.js";
@@ -80,5 +81,19 @@ describe("autopilot command palette helpers", () => {
     expect(getRecentLaunchProjects(projects)).toEqual([
       { id: "valid", name: "Valid", directoryPath: "/workspace/valid" },
     ]);
+  });
+
+  test("cycles active command ids with arrow navigation semantics", () => {
+    const items = [
+      { id: "home" },
+      { id: "sessions" },
+      { id: "apps" },
+    ];
+
+    expect(getNextCommandPaletteActiveId(items, "", 1)).toBe("home");
+    expect(getNextCommandPaletteActiveId(items, "home", 1)).toBe("sessions");
+    expect(getNextCommandPaletteActiveId(items, "apps", 1)).toBe("home");
+    expect(getNextCommandPaletteActiveId(items, "", -1)).toBe("apps");
+    expect(getNextCommandPaletteActiveId(items, "home", -1)).toBe("apps");
   });
 });

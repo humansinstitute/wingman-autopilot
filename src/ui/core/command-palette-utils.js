@@ -131,6 +131,18 @@ export function filterCommandPaletteItems(items, query) {
   });
 }
 
+export function getNextCommandPaletteActiveId(items, activeId, delta) {
+  const list = Array.isArray(items) ? items.filter((item) => item?.id) : [];
+  if (list.length === 0) return "";
+  const direction = delta < 0 ? -1 : 1;
+  const currentIndex = list.findIndex((item) => item.id === activeId);
+  if (currentIndex < 0) {
+    return direction < 0 ? list[list.length - 1].id : list[0].id;
+  }
+  const nextIndex = (currentIndex + direction + list.length) % list.length;
+  return list[nextIndex].id;
+}
+
 export function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
