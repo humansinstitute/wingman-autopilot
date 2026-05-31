@@ -126,6 +126,10 @@ export class PiAdapter implements AgentAdapter {
     return { state: "ready", reason: "pi-ready", retryAfterMs: 250, observedAt };
   }
 
+  deliversPromptsDirectly(): boolean {
+    return true;
+  }
+
   async sendMessage(content: string, _type = "user"): Promise<void> {
     if (this.state === "disposed") {
       throw new Error("PiAdapter has been disposed");

@@ -32,6 +32,12 @@ export interface AdapterSessionContext {
   env?: Record<string, string>;
   /** Codex thread ID for session resume (used by CodexAdapter) */
   codexThreadId?: string;
+  /**
+   * Structured Codex `--config` overrides (MCP servers, billing auth, etc.)
+   * passed to `@openai/codex-sdk` since the native adapter spawns no CLI to
+   * receive `-c` flags.
+   */
+  codexConfig?: Record<string, unknown>;
   /** OpenCode session ID for session resume (used by OpenCodeAdapter) */
   opencodeSdkSessionId?: string;
   /** Called when an adapter discovers or creates the native agent session ID. */
@@ -55,6 +61,13 @@ export interface AgentAdapter {
 
   /** Send a message to the agent. Throws on failure after retries. */
   sendMessage(content: string, type?: string): Promise<void>;
+
+  /**
+   * Whether prompts must be delivered through this adapter's `sendMessage`
+   * rather than an agentapi HTTP `POST /message`. True for in-process native
+   * SDK adapters (Pi, native Codex) that bypass agentapi entirely.
+   */
+  deliversPromptsDirectly?(): boolean;
 
   /** Fetch conversation message history */
   fetchMessages(): Promise<AgentMessage[]>;
@@ -99,6 +112,12 @@ export type AgentAdapterFactory = (context: AdapterSessionContext) => AgentAdapt
 export const CODEX_NATIVE_SDK_FLAG = "codex-use-native-sdk";
 export const OPENCODE_NATIVE_SDK_FLAG = "opencode-use-native-sdk";
 
+/** Whether the native `@openai/codex-sdk` adapter is the active Codex transport. */
+export function isCodexNativeSdkEnabled(): boolean {
+  const flag = featureFlagStore.getFlag(CODEX_NATIVE_SDK_FLAG);
+  return Boolean(flag && resolveFeatureFlagEffectiveState(flag.state, true) === "on");
+}
+
 /**
  * Returns the appropriate adapter factory for the given agent type.
  * - codex + CODEX_USE_NATIVE_SDK flag → CodexAdapter (Phase 3)
@@ -112,14 +131,11 @@ export function resolveAdapterFactory(agent: AgentType): AgentAdapterFactory {
     };
   }
 
-  if (agent === "codex") {
-    const flag = featureFlagStore.getFlag(CODEX_NATIVE_SDK_FLAG);
-    if (flag && resolveFeatureFlagEffectiveState(flag.state, true) === "on") {
-      return (context: AdapterSessionContext) => {
-        const { CodexAdapter } = require("./codex-adapter") as typeof import("./codex-adapter");
-        return new CodexAdapter(context);
-      };
-    }
+  if (agent === "codex" && isCodexNativeSdkEnabled()) {
+    return (context: AdapterSessionContext) => {
+      const { CodexAdapter } = require("./codex-adapter") as typeof import("./codex-adapter");
+      return new CodexAdapter(context);
+    };
   }
 
   if (agent === "opencode") {

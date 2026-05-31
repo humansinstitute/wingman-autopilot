@@ -11,7 +11,7 @@ import { sanitizeLogEntry } from "../logging/log-sanitizer";
 import { trackProjectForSession } from "../projects/npub-project-tracker";
 import type { AgentRuntimeStatus } from "../types/agent-status";
 import type { AgentAdapter, AdapterSessionContext } from "./agent-adapter";
-import { resolveAdapterFactory, OPENCODE_NATIVE_SDK_FLAG } from "./agent-adapter";
+import { resolveAdapterFactory, OPENCODE_NATIVE_SDK_FLAG, isCodexNativeSdkEnabled } from "./agent-adapter";
 import { featureFlagStore, resolveFeatureFlagEffectiveState } from "../storage/feature-flag-store";
 import {
   type SessionMetadata,
@@ -136,6 +136,8 @@ export interface BillingLaunchResult {
   billingMode: "credits" | "subscription";
   env: Record<string, string>;
   commandArgs?: string[];
+  /** Structured Codex `--config` overrides for the native SDK adapter. */
+  codexConfig?: Record<string, unknown>;
   fallbackReason: string | null;
 }
 
@@ -189,6 +191,12 @@ interface AgentSession {
   metadata: SessionMetadata;
   /** Files created by MCP config injection to clean up on session stop. */
   mcpCleanupFiles?: string[];
+  /**
+   * Structured Codex `--config` overrides (MCP, billing) merged at launch and
+   * handed to the native Codex SDK adapter, which spawns no CLI to receive
+   * `-c` flags.
+   */
+  codexConfig?: Record<string, unknown>;
   /** Protocol adapter for communicating with this agent */
   adapter?: AgentAdapter;
 }
@@ -439,6 +447,9 @@ export class ProcessManager {
         agentNsec,
       });
       session.mcpCleanupFiles = mcpResult.cleanupFiles;
+      if (mcpResult.codexConfig) {
+        session.codexConfig = { ...session.codexConfig, ...mcpResult.codexConfig };
+      }
       // Merge MCP env vars into the agent definition for spawning
       session.definition = {
         ...session.definition,
@@ -538,6 +549,9 @@ export class ProcessManager {
           session.command = [...session.command, ...launchConfig.commandArgs];
           this.appendLog(session, `[manager] billing command args: ${launchConfig.commandArgs.join(" ")}`);
         }
+        if (launchConfig.codexConfig) {
+          session.codexConfig = { ...session.codexConfig, ...launchConfig.codexConfig };
+        }
         if (launchConfig.fallbackReason) {
           this.appendLog(
             session,
@@ -561,7 +575,13 @@ export class ProcessManager {
 
     try {
       const spawnStartedAt = Date.now();
-      if (this.config.agentSpawnMode === "pm2") {
+      // Native Codex SDK drives the codex process in-process via @openai/codex-sdk,
+      // so there is no agentapi server to spawn. The CodexAdapter handles the
+      // lifecycle; we just mark the session running and let the adapter take over.
+      const codexNativeSdk = agent === "codex" && isCodexNativeSdkEnabled();
+      if (codexNativeSdk) {
+        this.appendLog(session, "[manager] Codex native SDK enabled — skipping agentapi spawn");
+      } else if (this.config.agentSpawnMode === "pm2") {
         await this.spawnAgentProcessViaPM2(session);
       } else if (this.config.agentSpawnMode === "tmux") {
         await this.spawnAgentProcessViaTmux(session);
@@ -585,6 +605,7 @@ export class ProcessManager {
         codexThreadId: session.metadata.nativeAgentSession?.agent === "codex"
           ? session.metadata.nativeAgentSession.sessionId
           : undefined,
+        codexConfig: session.agent === "codex" ? session.codexConfig : undefined,
         opencodeSdkSessionId: session.metadata.nativeAgentSession?.agent === "opencode"
           ? session.metadata.nativeAgentSession.sessionId
           : undefined,

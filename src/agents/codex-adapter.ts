@@ -9,6 +9,7 @@
 
 import {
   Codex,
+  type CodexOptions,
   type ThreadOptions,
   type Thread,
   type ThreadEvent,
@@ -17,7 +18,12 @@ import {
   type Usage,
 } from "@openai/codex-sdk";
 
-import type { AgentAdapter, AdapterSessionContext, PromptReadiness } from "./agent-adapter";
+import type {
+  AgentAdapter,
+  AdapterSessionContext,
+  AdapterStreamEvent,
+  PromptReadiness,
+} from "./agent-adapter";
 import type { AgentRuntimeStatus } from "../types/agent-status";
 import type { AgentMessage, AgentReadyOptions } from "./agent-client";
 
@@ -46,8 +52,11 @@ export class CodexAdapter implements AgentAdapter {
   private readonly workingDirectory: string;
   private currentAbort: AbortController | null = null;
 
-  /** Listeners registered via onEvent() for internal SSE bridging */
+  /** Listeners registered via onEvent() for raw ThreadEvent bridging */
   private eventListeners: Array<(event: ThreadEvent) => void> = [];
+
+  /** Listeners registered via subscribeToEvents() for browser SSE bridging */
+  private streamListeners = new Set<(event: AdapterStreamEvent) => void>();
 
   constructor(private readonly context: AdapterSessionContext) {
     this.workingDirectory = context.workingDirectory ?? process.cwd();
@@ -63,14 +72,22 @@ export class CodexAdapter implements AgentAdapter {
     const baseUrl =
       env.OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || undefined;
 
-    this.codex = new Codex({
+    const codexOptions: CodexOptions = {
       apiKey: apiKey || undefined,
       baseUrl,
       env: {
         ...process.env as Record<string, string>,
         ...env,
       },
-    });
+    };
+    // `--config` overrides (Wingman MCP server, billing auth, etc.) that the
+    // agentapi path would pass as `-c` flags. Without these the native SDK
+    // session would lose MCP tools and credits billing auth.
+    if (context.codexConfig) {
+      codexOptions.config = context.codexConfig as CodexOptions["config"];
+    }
+
+    this.codex = new Codex(codexOptions);
 
     this.initialise();
   }
@@ -115,11 +132,12 @@ export class CodexAdapter implements AgentAdapter {
       throw new Error("CodexAdapter has been disposed");
     }
 
-    // Record the user message
-    this.messages.push({
-      role: "user",
-      content,
-      createdAt: new Date().toISOString(),
+    // Record the user message and surface it to the live view immediately.
+    const userCreatedAt = new Date().toISOString();
+    this.messages.push({ role: "user", content, createdAt: userCreatedAt });
+    this.emitStream({
+      type: "message",
+      message: { role: "user", content, createdAt: userCreatedAt },
     });
 
     // Ensure thread is ready
@@ -130,9 +148,26 @@ export class CodexAdapter implements AgentAdapter {
       throw new Error("Codex thread not initialised");
     }
 
-    this.state = "busy";
+    this.setState("busy");
     const abortController = new AbortController();
     this.currentAbort = abortController;
+
+    // Accumulate assistant text per agent_message item so streaming updates
+    // grow a single assistant bubble (matched in the UI by role + createdAt).
+    const agentTextById = new Map<string, string>();
+    let assistantCreatedAt: string | null = null;
+    let usage: Usage | null = null;
+
+    const emitAssistant = () => {
+      if (!assistantCreatedAt) {
+        assistantCreatedAt = new Date().toISOString();
+      }
+      const text = Array.from(agentTextById.values()).join("");
+      this.emitStream({
+        type: "message",
+        message: { role: "assistant", content: text, createdAt: assistantCreatedAt },
+      });
+    };
 
     try {
       const { events } = await this.thread.runStreamed(content, {
@@ -145,11 +180,8 @@ export class CodexAdapter implements AgentAdapter {
         this.context.onNativeSessionId?.(this.threadId);
       }
 
-      let finalText = "";
-      let usage: Usage | null = null;
-
       for await (const event of events) {
-        // Broadcast to any registered listeners (for future SSE bridging)
+        // Broadcast raw events to any registered onEvent() listeners.
         for (const listener of this.eventListeners) {
           try {
             listener(event);
@@ -162,14 +194,21 @@ export class CodexAdapter implements AgentAdapter {
         if (event.type === "thread.started") {
           this.threadId = event.thread_id;
           this.context.onNativeSessionId?.(this.threadId);
+          continue;
         }
 
-        // Collect final agent message text
-        if (event.type === "item.completed") {
+        // Stream assistant text as it is produced (started → updated → completed).
+        if (
+          event.type === "item.started" ||
+          event.type === "item.updated" ||
+          event.type === "item.completed"
+        ) {
           const item = event.item as ThreadItem;
           if (item.type === "agent_message") {
-            finalText += (item as AgentMessageItem).text;
+            agentTextById.set(item.id, (item as AgentMessageItem).text);
+            emitAssistant();
           }
+          continue;
         }
 
         // Capture usage from turn completion
@@ -190,12 +229,14 @@ export class CodexAdapter implements AgentAdapter {
         );
       }
 
-      // Record the assistant response
+      // Record the assistant response for fetchMessages() history. Use the same
+      // createdAt as the streamed events so the UI dedupes to a single bubble.
+      const finalText = Array.from(agentTextById.values()).join("");
       if (finalText) {
         this.messages.push({
           role: "assistant",
           content: finalText,
-          createdAt: new Date().toISOString(),
+          createdAt: assistantCreatedAt ?? new Date().toISOString(),
         });
       }
     } catch (error) {
@@ -212,8 +253,12 @@ export class CodexAdapter implements AgentAdapter {
       if (this.currentAbort === abortController) {
         this.currentAbort = null;
       }
-      this.state = "ready";
+      this.setState("ready");
     }
+  }
+
+  deliversPromptsDirectly(): boolean {
+    return true;
   }
 
   async fetchMessages(): Promise<AgentMessage[]> {
@@ -233,8 +278,16 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   getEventsUrl(): URL | null {
-    // The SDK handles streaming internally — no HTTP SSE endpoint to proxy
+    // The SDK handles streaming internally — no HTTP SSE endpoint to proxy.
+    // session-events.ts bridges to the browser via subscribeToEvents() instead.
     return null;
+  }
+
+  subscribeToEvents(listener: (event: AdapterStreamEvent) => void): () => void {
+    this.streamListeners.add(listener);
+    return () => {
+      this.streamListeners.delete(listener);
+    };
   }
 
   async waitForReady(options?: AgentReadyOptions): Promise<void> {
@@ -257,7 +310,7 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async dispose(): Promise<void> {
-    this.state = "disposed";
+    this.setState("disposed");
 
     // Abort any in-flight turn
     if (this.currentAbort) {
@@ -266,6 +319,7 @@ export class CodexAdapter implements AgentAdapter {
     }
 
     this.eventListeners = [];
+    this.streamListeners.clear();
     this.thread = null;
   }
 
@@ -289,6 +343,28 @@ export class CodexAdapter implements AgentAdapter {
   // -----------------------------------------------------------------------
   // Internals
   // -----------------------------------------------------------------------
+
+  /** Dispatch an adapter stream event to browser SSE subscribers. */
+  private emitStream(event: AdapterStreamEvent): void {
+    for (const listener of this.streamListeners) {
+      try {
+        listener(event);
+      } catch {
+        // Listener failures must not break the turn.
+      }
+    }
+  }
+
+  /** Transition adapter state, emitting a status event to subscribers. */
+  private setState(next: AdapterState): void {
+    if (this.state === next || this.state === "disposed") {
+      return;
+    }
+    this.state = next;
+    const status: AgentRuntimeStatus | null =
+      next === "busy" ? "running" : next === "disposed" ? null : "stable";
+    this.emitStream({ type: "status", status });
+  }
 
   private initialise(): void {
     try {

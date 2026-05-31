@@ -118,7 +118,9 @@ async function tryWithTransientRetries(input: SessionAgentMessageInput): Promise
 export async function deliverSessionAgentMessage(
   input: SessionAgentMessageInput,
 ): Promise<SessionAgentMessageResult> {
-  if (input.agent === "pi" && input.type !== "raw" && input.adapter) {
+  // In-process native SDK adapters (Pi, native Codex) bypass agentapi entirely
+  // and must receive prompts through the adapter rather than an HTTP POST.
+  if (input.type !== "raw" && input.adapter?.deliversPromptsDirectly?.()) {
     try {
       await input.adapter.waitForReady({
         timeoutMs: 8000,

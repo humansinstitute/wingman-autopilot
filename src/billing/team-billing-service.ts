@@ -24,6 +24,11 @@ export interface BillingLaunchConfig {
   billingMode: "credits" | "subscription";
   env: Record<string, string>;
   commandArgs?: string[];
+  /**
+   * Structured Codex `--config` overrides mirroring `commandArgs`, for the
+   * native Codex SDK adapter which has no spawned CLI to receive `-c` args.
+   */
+  codexConfig?: Record<string, unknown>;
   fallbackReason: string | null;
 }
 
@@ -586,6 +591,7 @@ export class TeamBillingService {
         // Codex interactive mode can prefer persisted ChatGPT auth unless we
         // force API auth for this process.
         commandArgs: ["-c", 'forced_login_method="api"'],
+        codexConfig: { forced_login_method: "api" },
         fallbackReason: null,
       };
     }

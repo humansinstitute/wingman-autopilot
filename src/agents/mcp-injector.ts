@@ -53,6 +53,12 @@ export interface McpInjectionResult {
   env: Record<string, string>;
   /** Additional CLI args to append when launching the agent process. */
   commandArgs?: string[];
+  /**
+   * Structured Codex `--config` overrides, equivalent to `commandArgs` but in
+   * the shape `@openai/codex-sdk` expects via `Codex({ config })`. Used by the
+   * native Codex SDK adapter, which has no spawned CLI to receive `-c` args.
+   */
+  codexConfig?: Record<string, unknown>;
   /** Files modified by injection — cleanup will remove our entry only. */
   cleanupFiles: string[];
 }
@@ -236,11 +242,19 @@ function injectCodex(
 ): McpInjectionResult {
   const escapeTomlString = (value: string) => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   const identityEnv = pickIdentityEnv(baseEnv);
-  const identityEntries = Object.entries(identityEnv)
+
+  // Single source of truth for the wingman MCP server's env table, reused by
+  // both the CLI `-c` overrides (agentapi path) and the structured config
+  // object (native Codex SDK path).
+  const wingmanMcpEnv: Record<string, string> = {
+    WINGMAN_URL: baseEnv.WINGMAN_URL!,
+    SESSION_ID: ctx.sessionId,
+    ...identityEnv,
+  };
+
+  const codexEnvInlineTable = `{ ${Object.entries(wingmanMcpEnv)
     .map(([k, v]) => `${k} = "${escapeTomlString(v)}"`)
-    .join(", ");
-  const codexEnvInlineTable =
-    `{ WINGMAN_URL = "${escapeTomlString(baseEnv.WINGMAN_URL!)}", SESSION_ID = "${escapeTomlString(ctx.sessionId)}"${identityEntries ? `, ${identityEntries}` : ""} }`;
+    .join(", ")} }`;
 
   const commandArgs = [
     "-c",
@@ -251,7 +265,17 @@ function injectCodex(
     `mcp_servers.wingman.env=${codexEnvInlineTable}`,
   ];
 
-  return { env: baseEnv, commandArgs, cleanupFiles: [] };
+  const codexConfig = {
+    mcp_servers: {
+      wingman: {
+        command: "bun",
+        args: ["run", mcpServerPath],
+        env: wingmanMcpEnv,
+      },
+    },
+  };
+
+  return { env: baseEnv, commandArgs, codexConfig, cleanupFiles: [] };
 }
 
 /**
