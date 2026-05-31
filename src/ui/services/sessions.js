@@ -122,6 +122,25 @@ export async function updateSessionNameApi(sessionId, name) {
 }
 
 /**
+ * Starts a new Wingman session by resuming the agent's native session id.
+ * @param {string} sessionId - Source Wingman session ID
+ * @returns {Promise<{session: Object}>}
+ * @throws {Error} If the request fails
+ */
+export async function resumeNativeSessionApi(sessionId) {
+  const response = await fetch(`/api/sessions/${sessionId}/resume-native`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const message = typeof data?.error === "string" ? data.error : response.statusText;
+    throw new Error(message || "Failed to resume native session");
+  }
+  return response.json();
+}
+
+/**
  * Updates session metadata.
  * @param {string} sessionId - The session ID
  * @param {Object} metadata - Session metadata patch

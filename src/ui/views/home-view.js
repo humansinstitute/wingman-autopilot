@@ -28,6 +28,7 @@ export function initHomeView(deps) {
     // Session helpers
     isSessionActive,
     resumeSession,
+    resumeNativeSession,
     stopSession,
     deleteSession,
     promptRenameSession,
@@ -311,6 +312,7 @@ export function initHomeView(deps) {
         isFeatureEnabledForViewer,
         isSessionActive,
         resumeSession,
+        resumeNativeSession,
         stopSession,
         deleteSession,
         promptRenameSession,

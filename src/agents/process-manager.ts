@@ -43,6 +43,12 @@ import {
   startTmuxProcess,
   stopTmuxWindow,
 } from "./tmux-wrapper";
+import {
+  buildNativeAgentCommand,
+  createNativeAgentSessionMetadata,
+  getAdapterNativeSessionId,
+  prepareNativeAgentSessionMetadata,
+} from "./native-session";
 
 const MAX_LOG_LINES = 500;
 const DEFAULT_PM2_AGENT_START_TIMEOUT_MS = 60_000;
@@ -351,7 +357,7 @@ export class ProcessManager {
       }
     }
 
-    const sessionMetadata = normaliseSessionMetadata(metadata);
+    let sessionMetadata = normaliseSessionMetadata(metadata);
     const rawWorkingDirectory =
       typeof workingDirectory === "string" && workingDirectory.length > 0
         ? workingDirectory
@@ -360,6 +366,8 @@ export class ProcessManager {
     const sessionWorkingDirectory = rawWorkingDirectory.startsWith("~/")
       ? resolve(homedir(), rawWorkingDirectory.slice(2))
       : rawWorkingDirectory;
+    sessionMetadata = prepareNativeAgentSessionMetadata(agent, sessionWorkingDirectory, sessionMetadata);
+    command = buildNativeAgentCommand(command, agent, sessionMetadata);
 
     // Resolve user info
     const npub = requestNpub;
@@ -574,6 +582,15 @@ export class ProcessManager {
         pm2Name: session.pm2Name,
         workingDirectory: session.workingDirectory,
         env: session.definition.env as Record<string, string> | undefined,
+        codexThreadId: session.metadata.nativeAgentSession?.agent === "codex"
+          ? session.metadata.nativeAgentSession.sessionId
+          : undefined,
+        opencodeSdkSessionId: session.metadata.nativeAgentSession?.agent === "opencode"
+          ? session.metadata.nativeAgentSession.sessionId
+          : undefined,
+        onNativeSessionId: (nativeSessionId) => {
+          this.setNativeAgentSessionMetadata(session, nativeSessionId, { emit: true });
+        },
         recordUsage: this.buildRecordUsageCallback(session),
       });
 
@@ -666,6 +683,15 @@ export class ProcessManager {
       pm2Name: session.pm2Name,
       workingDirectory: session.workingDirectory,
       env: session.definition.env as Record<string, string> | undefined,
+      codexThreadId: session.metadata.nativeAgentSession?.agent === "codex"
+        ? session.metadata.nativeAgentSession.sessionId
+        : undefined,
+      opencodeSdkSessionId: session.metadata.nativeAgentSession?.agent === "opencode"
+        ? session.metadata.nativeAgentSession.sessionId
+        : undefined,
+      onNativeSessionId: (nativeSessionId) => {
+        this.setNativeAgentSessionMetadata(session, nativeSessionId, { emit: this.sessions.has(session.id) });
+      },
       recordUsage: this.buildRecordUsageCallback(session),
     });
 
@@ -861,6 +887,7 @@ export class ProcessManager {
       SESSION_PORT: session.port.toString(),
       SESSION_DIRECTORY: session.workingDirectory,
       SESSION_NAME: session.name,
+      NATIVE_AGENT_SESSION_ID: session.metadata.nativeAgentSession?.sessionId,
       ...(session.definition.env ?? {}),
     };
   }
@@ -1156,6 +1183,7 @@ export class ProcessManager {
   }
 
   private toSnapshot(session: AgentSession): SessionSnapshot {
+    this.syncNativeAgentSessionMetadata(session);
     return {
       id: session.id,
       agent: session.agent,
@@ -1180,6 +1208,39 @@ export class ProcessManager {
       pinnedFile: session.pinnedFile,
       metadata: session.metadata,
     };
+  }
+
+  private syncNativeAgentSessionMetadata(session: AgentSession): void {
+    const nativeSessionId = getAdapterNativeSessionId(session.agent, session.adapter);
+    if (!nativeSessionId) return;
+    this.setNativeAgentSessionMetadata(session, nativeSessionId, { emit: false });
+  }
+
+  private setNativeAgentSessionMetadata(
+    session: AgentSession,
+    nativeSessionId: string,
+    options: { emit: boolean },
+  ): void {
+    const existing = session.metadata.nativeAgentSession;
+    if (
+      existing?.agent === session.agent &&
+      existing.sessionId === nativeSessionId &&
+      existing.workingDirectory === session.workingDirectory
+    ) {
+      return;
+    }
+    session.metadata = normaliseSessionMetadata({
+      ...session.metadata,
+      nativeAgentSession: createNativeAgentSessionMetadata(
+        session.agent,
+        nativeSessionId,
+        session.workingDirectory,
+        "adapter",
+      ),
+    });
+    if (options.emit) {
+      this.emit({ type: "session-updated", session: this.toSnapshot(session) });
+    }
   }
 
   private normaliseSessionName(name: string | undefined, agent: AgentType, port: number): string {

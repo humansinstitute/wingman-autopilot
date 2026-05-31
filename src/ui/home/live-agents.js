@@ -18,12 +18,24 @@ function shouldRenderSessionCards() {
     window.matchMedia("(max-width: 720px)").matches;
 }
 
+export function canResumeNativeAgentSession(session) {
+  const nativeSession = session?.metadata?.nativeAgentSession;
+  return Boolean(
+    nativeSession &&
+    typeof nativeSession.sessionId === "string" &&
+    nativeSession.sessionId.trim().length > 0 &&
+    typeof nativeSession.workingDirectory === "string" &&
+    nativeSession.workingDirectory.trim().length > 0,
+  );
+}
+
 function renderSessionActions(target, session, deps) {
   const {
     getSessionPendingAction,
     isSessionActionPending,
     isSessionActive,
     resumeSession,
+    resumeNativeSession,
     stopSession,
     deleteSession,
     withPendingSessionAction,
@@ -59,10 +71,29 @@ function renderSessionActions(target, session, deps) {
     return;
   }
 
+  if (canResumeNativeAgentSession(session)) {
+    const nativeResumeBtn = document.createElement("button");
+    nativeResumeBtn.className = "wm-button";
+    nativeResumeBtn.textContent = "Resume Native";
+    nativeResumeBtn.disabled = pending;
+    nativeResumeBtn.setAttribute("aria-label", `Resume native agent session for ${session.name || session.id}`);
+    nativeResumeBtn.dataset.testid = "resume-native-session";
+    nativeResumeBtn.addEventListener("click", () => {
+      void withPendingSessionAction(session.id, "resume-native", async () => {
+        await resumeNativeSession(session.id);
+      });
+    });
+    target.append(nativeResumeBtn);
+  }
+
   const deleteBtn = document.createElement("button");
   deleteBtn.className = "wm-button secondary";
   if (pendingAction) {
-    deleteBtn.textContent = pendingAction === "stop" ? "Stopping…" : "Deleting…";
+    deleteBtn.textContent = pendingAction === "stop"
+      ? "Stopping…"
+      : pendingAction === "resume-native"
+        ? "Resuming…"
+        : "Deleting…";
     deleteBtn.dataset.state = "loading";
     deleteBtn.setAttribute("aria-busy", "true");
   } else {

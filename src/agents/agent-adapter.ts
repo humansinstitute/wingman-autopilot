@@ -34,6 +34,8 @@ export interface AdapterSessionContext {
   codexThreadId?: string;
   /** OpenCode session ID for session resume (used by OpenCodeAdapter) */
   opencodeSdkSessionId?: string;
+  /** Called when an adapter discovers or creates the native agent session ID. */
+  onNativeSessionId?: (sessionId: string) => void;
   /** Optional billing callback for native SDK adapters that bypass the proxy */
   recordUsage?: (data: {
     sessionId: string;

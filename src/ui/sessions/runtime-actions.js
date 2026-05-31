@@ -49,6 +49,7 @@ export function createSessionRuntimeActions(deps) {
     stopSessionAction,
     deleteSessionAction,
     renameSessionAction,
+    resumeNativeSessionAction,
     openTextPromptDialog,
     showToast,
     postSessionMessageApi,
@@ -154,6 +155,31 @@ export function createSessionRuntimeActions(deps) {
     });
     render();
     void Promise.allSettled([fetchConversation(sessionId), fetchLogs(sessionId)]);
+  }
+
+  async function resumeNativeSession(sessionId) {
+    try {
+      const result = await resumeNativeSessionAction(sessionId);
+      const newSession = result?.session;
+      if (!newSession?.id) {
+        throw new Error("Native resume did not return a new session.");
+      }
+      await fetchSessions();
+      setCurrentRoute("live");
+      setActiveSession(newSession.id, {
+        updateHistory: true,
+        forceLog: true,
+        allowPending: true,
+      });
+      render();
+      showToast("Resumed native agent session", { type: "success" });
+      void Promise.allSettled([fetchConversation(newSession.id), fetchLogs(newSession.id)]);
+      return newSession;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to resume native session";
+      showToast(message, { type: "error" });
+      return null;
+    }
   }
 
   async function postSessionMessage(sessionId, content, type = "user") {
@@ -321,6 +347,7 @@ export function createSessionRuntimeActions(deps) {
     updateSessionName,
     promptRenameSession,
     resumeSession,
+    resumeNativeSession,
     postSessionMessage,
     sendMessage,
     sendControlCommand,

@@ -50,6 +50,7 @@ export class OpenCodeAdapter implements AgentAdapter {
     if (context.opencodeSdkSessionId) {
       this.sessionId = context.opencodeSdkSessionId;
       this.state = "ready";
+      this.context.onNativeSessionId?.(this.sessionId);
     }
   }
 
@@ -275,6 +276,7 @@ export class OpenCodeAdapter implements AgentAdapter {
 
     if (result.data && typeof result.data === "object" && "id" in result.data) {
       this.sessionId = (result.data as { id: string }).id;
+      this.context.onNativeSessionId?.(this.sessionId);
     } else {
       throw new Error("Failed to create OpenCode session");
     }

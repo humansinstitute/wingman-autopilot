@@ -142,6 +142,7 @@ export class CodexAdapter implements AgentAdapter {
       // Capture the thread ID after the first turn if not yet stored
       if (!this.threadId && this.thread.id) {
         this.threadId = this.thread.id;
+        this.context.onNativeSessionId?.(this.threadId);
       }
 
       let finalText = "";
@@ -160,6 +161,7 @@ export class CodexAdapter implements AgentAdapter {
         // Capture thread ID from thread.started event
         if (event.type === "thread.started") {
           this.threadId = event.thread_id;
+          this.context.onNativeSessionId?.(this.threadId);
         }
 
         // Collect final agent message text
@@ -304,6 +306,7 @@ export class CodexAdapter implements AgentAdapter {
           threadOptions,
         );
         this.threadId = this.context.codexThreadId;
+        this.context.onNativeSessionId?.(this.threadId);
       } else {
         this.thread = this.codex.startThread(threadOptions);
       }

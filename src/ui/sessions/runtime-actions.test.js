@@ -36,6 +36,7 @@ describe("session runtime actions", () => {
       stopSessionAction: mock(async () => ({ success: true })),
       deleteSessionAction: mock(async () => ({ success: true })),
       renameSessionAction: mock(async () => ({})),
+      resumeNativeSessionAction: mock(async () => ({ session: { id: "native-session-1" } })),
       openTextPromptDialog: mock(async () => null),
       showToast,
       postSessionMessageApi,
@@ -122,6 +123,54 @@ describe("session runtime actions", () => {
 
     releaseConversation?.();
     releaseLogs?.();
+  });
+
+  test("resumeNativeSession opens the newly created Wingman session", async () => {
+    const resumeNativeSessionAction = mock(async () => ({ session: { id: "new-session" } }));
+    const actions = createSessionRuntimeActions({
+      state,
+      sessionsStore: () => ({ items: sessions }),
+      getSessionById,
+      getSessionDisplayName: (session) => session?.name ?? session?.id ?? "session",
+      fetchSessions,
+      fetchSessionApi,
+      fetchConversation,
+      fetchLogs,
+      render,
+      setCurrentRoute,
+      setActiveSession,
+      stopSessionAction: mock(async () => ({ success: true })),
+      deleteSessionAction: mock(async () => ({ success: true })),
+      renameSessionAction: mock(async () => ({})),
+      resumeNativeSessionAction,
+      openTextPromptDialog: mock(async () => null),
+      showToast,
+      postSessionMessageApi,
+      updateIdentityState: mock(() => {}),
+      isSessionBusy,
+      addToPromptQueue,
+      updateAgentStatusIndicators,
+      renderConversationForSession: mock(async () => {}),
+      scrollPillHide: mock(() => {}),
+      scrollConversationAreaToBottom: mock(() => {}),
+      sessionMessageSendInFlight,
+      focusComposerTextarea: mock(() => {}),
+      isAlpineChatEnabled: () => false,
+      MessageStore: { syncFromServer: mock(async () => {}), syncFromServerIfChanged: mock(async () => ({ changed: false })) },
+      prepareVoiceNoteDraftForSend: mock(async (_sessionId, value) => value),
+    });
+
+    await actions.resumeNativeSession("old-session");
+
+    expect(resumeNativeSessionAction).toHaveBeenCalledWith("old-session");
+    expect(fetchSessions).toHaveBeenCalled();
+    expect(setCurrentRoute).toHaveBeenCalledWith("live");
+    expect(setActiveSession).toHaveBeenCalledWith(
+      "new-session",
+      expect.objectContaining({ updateHistory: true, forceLog: true, allowPending: true }),
+    );
+    expect(fetchConversation).toHaveBeenCalledWith("new-session");
+    expect(fetchLogs).toHaveBeenCalledWith("new-session");
   });
 
   test("sendMessage queues the prompt after a busy direct-send rejection", async () => {

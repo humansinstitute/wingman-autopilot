@@ -1,6 +1,8 @@
 export interface SessionMetadata {
   AGENT: boolean;
   billingMode: "subscription" | "credits";
+  nativeAgentSession?: NativeAgentSessionMetadata;
+  resumedFromWingmanSessionId?: string;
   role?: string;
   project?: string;
   goal?: string;
@@ -22,6 +24,14 @@ export interface SessionMetadata {
   lastManagedByNpub?: string;
   chargeToNpub?: string;
   delegateRelationshipId?: string;
+}
+
+export interface NativeAgentSessionMetadata {
+  agent: string;
+  sessionId: string;
+  workingDirectory: string;
+  capturedAt: string;
+  source: "preallocated" | "adapter" | "agentapi" | "manual";
 }
 
 export type SessionMetadataInput = Partial<SessionMetadata> | null | undefined;
@@ -53,6 +63,11 @@ export const DEFAULT_SESSION_METADATA: SessionMetadata = Object.freeze({
 export const normaliseSessionMetadata = (
   metadata: SessionMetadataInput,
 ): SessionMetadata => {
+  const nativeAgentSession = normaliseNativeAgentSession(metadata?.nativeAgentSession);
+  const resumedFromWingmanSessionId =
+    typeof metadata?.resumedFromWingmanSessionId === "string"
+      ? metadata.resumedFromWingmanSessionId.trim()
+      : "";
   const role = typeof metadata?.role === "string" ? metadata.role.trim() : "";
   const project = typeof metadata?.project === "string" ? metadata.project.trim() : "";
   const goal = typeof metadata?.goal === "string" ? metadata.goal.trim() : "";
@@ -95,6 +110,8 @@ export const normaliseSessionMetadata = (
   return {
     AGENT: Boolean(metadata?.AGENT),
     billingMode: metadata?.billingMode === "credits" ? "credits" : "subscription",
+    nativeAgentSession,
+    resumedFromWingmanSessionId: resumedFromWingmanSessionId || undefined,
     role: role || undefined,
     project: project || undefined,
     goal: goal || undefined,
@@ -118,6 +135,42 @@ export const normaliseSessionMetadata = (
     delegateRelationshipId: delegateRelationshipId || undefined,
   };
 };
+
+const NATIVE_AGENT_SESSION_SOURCES = new Set([
+  "preallocated",
+  "adapter",
+  "agentapi",
+  "manual",
+]);
+
+function normaliseNativeAgentSession(value: unknown): NativeAgentSessionMetadata | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const agent = typeof record.agent === "string" ? record.agent.trim().toLowerCase() : "";
+  const sessionId = typeof record.sessionId === "string" ? record.sessionId.trim() : "";
+  const workingDirectory =
+    typeof record.workingDirectory === "string" ? record.workingDirectory.trim() : "";
+  const capturedAtRaw = typeof record.capturedAt === "string" ? record.capturedAt.trim() : "";
+  const capturedTimestamp = Date.parse(capturedAtRaw);
+  const sourceRaw = typeof record.source === "string" ? record.source.trim() : "";
+  const source = NATIVE_AGENT_SESSION_SOURCES.has(sourceRaw)
+    ? sourceRaw as NativeAgentSessionMetadata["source"]
+    : "manual";
+  if (!agent || !sessionId || !workingDirectory) {
+    return undefined;
+  }
+  return {
+    agent,
+    sessionId,
+    workingDirectory,
+    capturedAt: Number.isFinite(capturedTimestamp)
+      ? new Date(capturedTimestamp).toISOString()
+      : new Date().toISOString(),
+    source,
+  };
+}
 
 export const isAgentManagedSession = (
   metadata: SessionMetadata | null | undefined,

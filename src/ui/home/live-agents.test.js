@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  canResumeNativeAgentSession,
+} from "./live-agents.js";
+import {
   DEFAULT_LIVE_SESSION_SORT,
   formatSessionStartedAt,
   sortSessions,
@@ -84,5 +87,18 @@ describe("live agents helpers", () => {
     expect(formatSessionStartedAt("2026-04-10T09:30:00.000Z")).not.toBe("-");
     expect(formatSessionStartedAt("")).toBe("-");
     expect(formatSessionStartedAt("not-a-date")).toBe("-");
+  });
+
+  test("detects sessions with native agent resume metadata", () => {
+    expect(canResumeNativeAgentSession({
+      metadata: {
+        nativeAgentSession: {
+          agent: "codex",
+          sessionId: "codex-session",
+          workingDirectory: "/tmp/project",
+        },
+      },
+    })).toBe(true);
+    expect(canResumeNativeAgentSession({ metadata: {} })).toBe(false);
   });
 });

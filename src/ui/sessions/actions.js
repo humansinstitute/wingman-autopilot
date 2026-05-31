@@ -12,6 +12,7 @@ import {
   stopSessionApi,
   deleteSessionApi,
   updateSessionNameApi,
+  resumeNativeSessionApi,
   forkSessionToWorktreeApi,
 } from "../services/sessions.js";
 
@@ -51,6 +52,16 @@ export async function deleteSession(sessionId) {
  */
 export async function renameSession(sessionId, name) {
   const result = await updateSessionNameApi(sessionId, name);
+  await getStore().sync();
+  return result;
+}
+
+/**
+ * Start a new Wingman session from a stored native agent session id.
+ * @returns {Promise<*>} API response with { session }
+ */
+export async function resumeNativeSession(sessionId) {
+  const result = await resumeNativeSessionApi(sessionId);
   await getStore().sync();
   return result;
 }

@@ -121,6 +121,7 @@ import {
   stopSession as stopSessionAction,
   deleteSession as deleteSessionAction,
   renameSession as renameSessionAction,
+  resumeNativeSession as resumeNativeSessionAction,
 } from "./sessions/actions.js";
 import { fetchAppLogsApi } from "./services/apps.js";
 import { isChatRoute } from "./chat/index.js";
@@ -1590,6 +1591,7 @@ const sessionRuntimeActions = createSessionRuntimeActions({
   stopSessionAction,
   deleteSessionAction,
   renameSessionAction,
+  resumeNativeSessionAction,
   openTextPromptDialog,
   showToast,
   postSessionMessageApi,
@@ -1612,6 +1614,7 @@ const deleteSession = (...args) => sessionRuntimeActions.deleteSession(...args);
 const updateSessionName = (...args) => sessionRuntimeActions.updateSessionName(...args);
 const promptRenameSession = (...args) => sessionRuntimeActions.promptRenameSession(...args);
 const resumeSession = (...args) => sessionRuntimeActions.resumeSession(...args);
+const resumeNativeSession = (...args) => sessionRuntimeActions.resumeNativeSession(...args);
 const postSessionMessage = (...args) => sessionRuntimeActions.postSessionMessage(...args);
 const sendMessage = (...args) => sessionRuntimeActions.sendMessage(...args);
 const sendControlCommand = (...args) => sessionRuntimeActions.sendControlCommand(...args);
@@ -1993,6 +1996,7 @@ const homeViewModule = initHomeView({
   isFeatureEnabledForViewer: (...args) => isFeatureEnabledForViewer(...args),
   isSessionActive,
   resumeSession,
+  resumeNativeSession,
   stopSession,
   deleteSession,
   promptRenameSession,

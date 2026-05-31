@@ -25,6 +25,7 @@ import {
   resolveSessionChargeNpub,
   type SessionMetadata,
 } from "../sessions/session-metadata";
+import { supportsNativeSessionResume } from "../agents/native-session";
 import {
   buildDelegatedWorkspaceScope,
   createOwnerScopedAuthContext,
@@ -216,6 +217,63 @@ const recordLiveSession = async (
   });
   await ctx.syncSessionMessages(session.id, true);
 };
+
+type NativeResumeSourceSession = Pick<
+  SessionSnapshot | StoredSessionRecord,
+  "id" | "agent" | "name" | "npub" | "workingDirectory" | "metadata"
+>;
+
+async function createNativeResumeSession(
+  source: NativeResumeSourceSession,
+  authContext: RequestAuthContext,
+  ctx: SessionApiContext,
+): Promise<Response> {
+  const sourceMetadata = normaliseSessionMetadata(source.metadata);
+  const nativeSession = sourceMetadata.nativeAgentSession;
+  if (!nativeSession?.sessionId) {
+    return Response.json({ error: "Session does not have a native agent session id to resume" }, { status: 409 });
+  }
+  const agent = nativeSession.agent || source.agent;
+  if (!ctx.isAgentType(agent) || !supportsNativeSessionResume(agent)) {
+    return Response.json({ error: `Native resume is not supported for ${agent || "this agent"}` }, { status: 400 });
+  }
+  const workingDirectory = nativeSession.workingDirectory || source.workingDirectory;
+  if (!workingDirectory) {
+    return Response.json({ error: "Session does not have a working directory to resume" }, { status: 409 });
+  }
+
+  const ownerNpub = resolveSessionOwnerNpub(source.npub ?? null, sourceMetadata);
+  const sourceName = typeof source.name === "string" && source.name.trim()
+    ? source.name.trim()
+    : source.id;
+  const session = await ctx.manager.createSession(
+    agent,
+    workingDirectory,
+    `${sourceName} (resumed)`,
+    { type: "native-resume", id: source.id, label: `Native resume from ${sourceName}` },
+    undefined,
+    ownerNpub ?? undefined,
+    {
+      ...sourceMetadata,
+      nativeAgentSession: {
+        ...nativeSession,
+        agent,
+        workingDirectory,
+      },
+      resumedFromWingmanSessionId: source.id,
+      ownerNpub: ownerNpub ?? undefined,
+      createdByNpub: authContext.subjectNpub ?? authContext.npub ?? sourceMetadata.createdByNpub,
+      lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
+      chargeToNpub: resolveSessionChargeNpub(sourceMetadata, source.npub ?? null) ?? undefined,
+    },
+  );
+  await recordLiveSession(ctx, session);
+  return Response.json({
+    session: ctx.serializeSession(session),
+    resumedFromWingmanSessionId: source.id,
+    nativeAgentSession: session.metadata?.nativeAgentSession ?? null,
+  }, { status: 201 });
+}
 
 const resolveOwnedLiveSession = (
   requestedId: string,
@@ -1444,6 +1502,12 @@ export async function handleSessionApi(
       if (!session) return Response.json({ error: "Not found" }, { status: 404 });
       ctx.scheduleSessionArchive(resolvedId, ctx.manager);
       return Response.json(ctx.serializeSession(session));
+    }
+
+    if (method === "POST" && parts[4] === "resume-native") {
+      const sourceSession = liveOwnedSession ?? storedOwnedSession;
+      if (!sourceSession) return Response.json({ error: "Not found" }, { status: 404 });
+      return createNativeResumeSession(sourceSession, authContext, ctx);
     }
 
     if (method === "DELETE" && parts[4] === "storage") {

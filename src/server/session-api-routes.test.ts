@@ -233,6 +233,78 @@ describe("handleSessionApi", () => {
     });
   });
 
+  test("POST /api/sessions/:id/resume-native creates a new session from native metadata", async () => {
+    const sourceSession: SessionSnapshot = {
+      ...baseSession,
+      status: "stopped",
+      metadata: {
+        AGENT: false,
+        billingMode: "subscription",
+        nativeAgentSession: {
+          agent: "codex",
+          sessionId: "codex-native-1",
+          workingDirectory: "/tmp/project",
+          capturedAt: "2026-05-31T00:00:00.000Z",
+          source: "manual",
+        },
+      },
+    };
+    let createInput: Record<string, unknown> | null = null;
+    const ctx = buildCtx({
+      manager: {
+        getSession: (id: string) => (id === sourceSession.id ? sourceSession : undefined),
+        listSessions: () => [sourceSession],
+        createSession: async (
+          agent: string,
+          workingDirectory: string,
+          name?: string,
+          origin?: unknown,
+          targetFile?: string,
+          npub?: string,
+          metadata?: unknown,
+        ) => {
+          createInput = { agent, workingDirectory, name, origin, targetFile, npub, metadata };
+          return {
+            ...baseSession,
+            id: "new-session",
+            agent,
+            workingDirectory,
+            name: name ?? "new session",
+            origin: origin as any,
+            targetFile,
+            npub: npub ?? null,
+            metadata: metadata as any,
+          };
+        },
+      } as any,
+      serializeSession: (session) => ({ id: session.id, metadata: session.metadata, origin: session.origin }),
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions/session-1/resume-native");
+    const request = new Request(url.toString(), { method: "POST" });
+
+    const response = await handleSessionApi(request, url, "POST", makeAuth({ delegatedByBot: false }), ctx);
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(201);
+    expect(createInput).toMatchObject({
+      agent: "codex",
+      workingDirectory: "/tmp/project",
+      npub: "npub1owner",
+    });
+    const capturedCreateInput = createInput as unknown as Record<string, any>;
+    expect(capturedCreateInput.metadata.resumedFromWingmanSessionId).toBe("session-1");
+    expect(capturedCreateInput.metadata.nativeAgentSession.sessionId).toBe("codex-native-1");
+    await expect(response!.json()).resolves.toMatchObject({
+      session: {
+        id: "new-session",
+        metadata: {
+          resumedFromWingmanSessionId: "session-1",
+          nativeAgentSession: { sessionId: "codex-native-1" },
+        },
+      },
+    });
+  });
+
   test("GET /api/sessions/:id returns stored session details when live session is missing", async () => {
     const storedSession: StoredSessionRecord = {
       id: "session-1",
