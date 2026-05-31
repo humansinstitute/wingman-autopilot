@@ -39,6 +39,31 @@ interface CollectedMessage {
 
 type AdapterState = "initializing" | "ready" | "busy" | "disposed";
 
+/**
+ * Codex turn/stream errors arrive as a string that is often a JSON envelope
+ * like `{"detail":"..."}`. Unwrap it to the human-readable message.
+ */
+export function extractCodexErrorMessage(raw: string | undefined | null): string {
+  const fallback = "Codex turn failed";
+  if (!raw) return fallback;
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as { detail?: unknown; message?: unknown };
+      const detail =
+        typeof parsed.detail === "string"
+          ? parsed.detail
+          : typeof parsed.message === "string"
+            ? parsed.message
+            : null;
+      if (detail) return detail;
+    } catch {
+      // Not JSON after all — fall through to the raw string.
+    }
+  }
+  return trimmed || fallback;
+}
+
 // ---------------------------------------------------------------------------
 // CodexAdapter
 // ---------------------------------------------------------------------------
@@ -72,9 +97,18 @@ export class CodexAdapter implements AgentAdapter {
     const baseUrl =
       env.OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || undefined;
 
+    // Use the same codex binary the agentapi path resolves on PATH (e.g. a
+    // pinned ~/.bun/bin/codex), not the older binary bundled inside
+    // @openai/codex-sdk — the bundled one can lag behind the models configured
+    // in ~/.codex/config.toml and fail every turn with "requires a newer
+    // version of Codex".
+    const codexCli = env.CODEX_CLI || process.env.CODEX_CLI || "codex";
+    const codexPathOverride = Bun.which(codexCli) ?? codexCli;
+
     const codexOptions: CodexOptions = {
       apiKey: apiKey || undefined,
       baseUrl,
+      codexPathOverride,
       env: {
         ...process.env as Record<string, string>,
         ...env,
@@ -157,6 +191,7 @@ export class CodexAdapter implements AgentAdapter {
     const agentTextById = new Map<string, string>();
     let assistantCreatedAt: string | null = null;
     let usage: Usage | null = null;
+    let turnError: string | null = null;
 
     const emitAssistant = () => {
       if (!assistantCreatedAt) {
@@ -215,6 +250,18 @@ export class CodexAdapter implements AgentAdapter {
         if (event.type === "turn.completed") {
           usage = event.usage;
         }
+
+        // Surface a clear turn/stream failure rather than the SDK's generic
+        // "Codex Exec exited with code 1" wrapper.
+        if (event.type === "turn.failed") {
+          turnError = extractCodexErrorMessage(event.error?.message);
+        } else if (event.type === "error") {
+          turnError = extractCodexErrorMessage(event.message);
+        }
+      }
+
+      if (turnError) {
+        throw new Error(turnError);
       }
 
       // Report usage to billing ledger
@@ -247,6 +294,11 @@ export class CodexAdapter implements AgentAdapter {
         const interrupted = new Error("Agent turn interrupted.");
         (interrupted as Error & { code?: string }).code = "agent_turn_interrupted";
         throw interrupted;
+      }
+      // Prefer the turn/stream error captured from the event stream over the
+      // SDK's generic "Codex Exec exited with code 1" wrapper.
+      if (turnError) {
+        throw new Error(turnError);
       }
       throw error;
     } finally {
