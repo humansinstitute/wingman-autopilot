@@ -127,6 +127,10 @@ body[data-admin="false"] .requires-admin {
   backface-visibility: hidden;
 }
 
+body:has(#app[data-route="live"] .wm-tabs-bar) .wm-header {
+  box-shadow: none;
+}
+
 .wm-brand {
   display: flex;
   align-items: center;
@@ -3228,7 +3232,7 @@ body[data-menu-open="true"] .wm-menu-panel {
   margin-right: calc(50% - 50vw);
   padding: 0 clamp(1rem, 2.5vw, 2.5rem);
   border-bottom: 1px solid var(--border-primary);
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.14);
+  box-shadow: var(--shadow-sm);
   backdrop-filter: blur(12px);
 }
 
@@ -4350,11 +4354,11 @@ body[data-theme="light"] .wm-agent-dispatch-capability-card {
 
 .wm-tabs {
   display: flex;
-  gap: 0;
+  gap: 0.15rem;
   margin: 0;
   flex-wrap: nowrap;
   overflow-x: auto;
-  padding: 0.45rem 0 0;
+  padding: 0.55rem 0 0;
   align-items: flex-end;
   scrollbar-width: thin;
 }
@@ -4366,27 +4370,34 @@ body[data-theme="light"] .wm-agent-dispatch-capability-card {
 }
 
 .wm-tab {
-  min-height: 2.45rem;
+  min-height: 2.65rem;
   max-width: min(18rem, 46vw);
   margin: 0 0 -1px;
   border-radius: 0.5rem 0.5rem 0 0;
-  background: var(--bg-secondary);
+  background: transparent;
   cursor: default;
   display: flex;
   align-items: center;
   color: var(--text-secondary);
-  border: 1px solid rgba(148, 163, 184, 0.24);
+  border: 1px solid transparent;
   border-bottom: 0;
   overflow: hidden;
   flex: 0 0 auto;
-  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+  font-size: 0.95rem;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+
+.wm-tab:hover {
+  background: rgba(148, 163, 184, 0.08);
+  border-color: rgba(148, 163, 184, 0.16);
 }
 
 .wm-tab.active {
   background: var(--bg-primary);
   border-color: var(--border-primary);
   color: var(--text-primary);
-  box-shadow: inset 0 2px 0 var(--accent-primary);
+  box-shadow: inset 0 3px 0 var(--accent-primary);
+  font-weight: 600;
 }
 
 .wm-tab__button {
@@ -4399,8 +4410,8 @@ body[data-theme="light"] .wm-agent-dispatch-capability-card {
   align-items: center;
   min-width: 0;
   flex: 1;
-  min-height: 2.45rem;
-  padding: 0.45rem 0.75rem;
+  min-height: 2.65rem;
+  padding: 0.5rem 0.85rem;
   font: inherit;
 }
 
@@ -4428,16 +4439,20 @@ body[data-theme="light"] .wm-agent-dispatch-capability-card {
   appearance: none;
   align-self: stretch;
   border: 0;
-  border-left: 1px solid rgba(148, 163, 184, 0.16);
+  border-left: 1px solid transparent;
   border-radius: 0 0.5rem 0 0;
   background: transparent;
-  padding: 0 0.65rem;
+  padding: 0 0.7rem;
   font: inherit;
   font-size: 1rem;
   line-height: 1;
   cursor: pointer;
   color: inherit;
   opacity: 0.68;
+}
+
+.wm-tab.active .close {
+  border-left-color: var(--border-primary);
 }
 
 .wm-tab .close:hover {
@@ -4449,10 +4464,10 @@ body[data-theme="light"] .wm-agent-dispatch-capability-card {
 .wm-tab.new {
   appearance: none;
   justify-content: center;
-  min-width: 2.75rem;
+  min-width: 2.85rem;
   padding: 0 0.85rem;
-  background: var(--bg-secondary);
-  border: 1px dashed rgba(148, 163, 184, 0.35);
+  background: transparent;
+  border: 1px dashed rgba(148, 163, 184, 0.28);
   border-bottom: 0;
   color: var(--text-tertiary);
   cursor: pointer;
