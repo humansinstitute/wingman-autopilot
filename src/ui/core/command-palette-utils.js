@@ -12,6 +12,56 @@ export function createCommandItem(input) {
   };
 }
 
+const ACTIVE_SESSION_STATUSES = new Set(["starting", "running"]);
+
+function getSessionEntrySubtitle(session, fallback = "Session") {
+  return session?.workingDirectory ?? session?.directory ?? fallback;
+}
+
+export function isCommandPaletteActiveSession(session) {
+  return ACTIVE_SESSION_STATUSES.has(session?.status) || session?.agentRuntimeStatus === "running";
+}
+
+export function getCommandPaletteSessionEntries(storedEntries, sessions, getDisplayName) {
+  const sessionList = Array.isArray(sessions) ? sessions : [];
+  const resolveDisplayName = typeof getDisplayName === "function"
+    ? getDisplayName
+    : (session) => session?.name ?? session?.id ?? "Session";
+  const sessionById = new Map(
+    sessionList
+      .filter((session) => typeof session?.id === "string" && session.id)
+      .map((session) => [session.id, session]),
+  );
+  const seen = new Set();
+  const entries = [];
+
+  (Array.isArray(storedEntries) ? storedEntries : []).forEach((entry) => {
+    const id = typeof entry?.id === "string" ? entry.id : "";
+    if (!id || seen.has(id)) return;
+    const session = sessionById.get(id);
+    if (!session) return;
+    seen.add(id);
+    entries.push({
+      id,
+      title: resolveDisplayName(session),
+      subtitle: getSessionEntrySubtitle(session),
+    });
+  });
+
+  sessionList.forEach((session) => {
+    const id = typeof session?.id === "string" ? session.id : "";
+    if (!id || seen.has(id) || !isCommandPaletteActiveSession(session)) return;
+    seen.add(id);
+    entries.push({
+      id,
+      title: resolveDisplayName(session),
+      subtitle: getSessionEntrySubtitle(session),
+    });
+  });
+
+  return entries;
+}
+
 export function getRecentLaunchProjects(projects, limit = 9) {
   if (!Array.isArray(projects)) return [];
   const boundedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 9;

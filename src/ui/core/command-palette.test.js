@@ -5,8 +5,10 @@ import {
   createCommandPaletteQuickItems,
   filterCommandPaletteItems,
   getCommandPaletteKeyboardItems,
+  getCommandPaletteSessionEntries,
   getNextCommandPaletteActiveId,
   getRecentLaunchProjects,
+  isCommandPaletteActiveSession,
   rememberRecentItem,
 } from "./command-palette-utils.js";
 
@@ -82,6 +84,37 @@ describe("autopilot command palette helpers", () => {
     expect(getRecentLaunchProjects(projects)).toEqual([
       { id: "valid", name: "Valid", directoryPath: "/workspace/valid" },
     ]);
+  });
+
+  test("recent session entries include every active session", () => {
+    const sessions = [
+      { id: "recent-running", name: "Recent Running", status: "running", workingDirectory: "/repo/recent" },
+      { id: "inactive-recent", name: "Inactive Recent", status: "stopped", workingDirectory: "/repo/inactive" },
+      { id: "active-not-recent", name: "Active Not Recent", status: "running", workingDirectory: "/repo/active" },
+      { id: "runtime-active", name: "Runtime Active", status: "stopped", agentRuntimeStatus: "running", directory: "/repo/runtime" },
+      { id: "inactive-hidden", name: "Inactive Hidden", status: "stopped", workingDirectory: "/repo/hidden" },
+    ];
+
+    const entries = getCommandPaletteSessionEntries(
+      [{ id: "recent-running" }, { id: "inactive-recent" }],
+      sessions,
+      (session) => session.name,
+    );
+
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "recent-running",
+      "inactive-recent",
+      "active-not-recent",
+      "runtime-active",
+    ]);
+    expect(entries.find((entry) => entry.id === "runtime-active")?.subtitle).toBe("/repo/runtime");
+  });
+
+  test("detects command palette active sessions", () => {
+    expect(isCommandPaletteActiveSession({ status: "starting" })).toBe(true);
+    expect(isCommandPaletteActiveSession({ status: "running" })).toBe(true);
+    expect(isCommandPaletteActiveSession({ status: "stopped", agentRuntimeStatus: "running" })).toBe(true);
+    expect(isCommandPaletteActiveSession({ status: "stopped", agentRuntimeStatus: "stable" })).toBe(false);
   });
 
   test("cycles active command ids with arrow navigation semantics", () => {

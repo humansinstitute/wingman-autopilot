@@ -11,6 +11,7 @@ import {
   createCommandPaletteQuickItems,
   filterCommandPaletteItems,
   getCommandPaletteKeyboardItems,
+  getCommandPaletteSessionEntries,
   getNextCommandPaletteActiveId,
   rememberRecentItem,
 } from "./command-palette-utils.js";
@@ -37,18 +38,6 @@ function writeStoredArray(key, items) {
   } catch {
     // Storage can fail in private mode or when quota is exhausted.
   }
-}
-
-function normalizeStoredRecentSession(entry, sessions) {
-  const id = typeof entry?.id === "string" ? entry.id : "";
-  if (!id) return null;
-  const session = sessions.find((candidate) => candidate?.id === id);
-  if (!session) return null;
-  return {
-    id,
-    title: getSessionDisplayName(session),
-    subtitle: session.workingDirectory ?? session.directory ?? "Session",
-  };
 }
 
 function normalizeStoredRecentApp(entry, apps) {
@@ -104,9 +93,11 @@ export function createAutopilotCommandPalette({
 
   function getRecentSessionItems() {
     const sessions = Array.isArray(sessionsStore?.().items) ? sessionsStore().items : [];
-    return readStoredArray(RECENT_SESSION_STORAGE_KEY)
-      .map((entry) => normalizeStoredRecentSession(entry, sessions))
-      .filter(Boolean)
+    return getCommandPaletteSessionEntries(
+      readStoredArray(RECENT_SESSION_STORAGE_KEY),
+      sessions,
+      getSessionDisplayName,
+    )
       .map((entry) => createCommandItem({
         group: "recent-session",
         groupLabel: "Recent Sessions",
