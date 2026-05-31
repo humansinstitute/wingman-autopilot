@@ -4,6 +4,7 @@ import {
   fetchFileBrowserDirectory,
   fetchFileBrowserPreview,
 } from "./file-browser-preview.js";
+import { createIconSvg, FILE_BROWSER_ICON_DEFS } from "../core/icons.js";
 
 export function buildFilesRoutePath(relativePath) {
   const cleanPath = typeof relativePath === "string" ? relativePath.replace(/^\/+/, "") : "";
@@ -21,6 +22,15 @@ export function sortFileBrowserEntries(entries) {
       sensitivity: "base",
     });
   });
+}
+
+function createFileBrowserEntryIcon(entryType) {
+  const isDirectory = entryType === "directory";
+  const icon = document.createElement("span");
+  icon.className = "wm-command-file-browser__entry-icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.append(createIconSvg(isDirectory ? FILE_BROWSER_ICON_DEFS.folder : FILE_BROWSER_ICON_DEFS.file));
+  return icon;
 }
 
 export function openCommandFileBrowserModal({
@@ -226,9 +236,7 @@ export function openCommandFileBrowserModal({
       row.setAttribute("role", "option");
       row.setAttribute("aria-label", `${entry.type === "directory" ? "Open folder" : "Preview file"} ${entry.name ?? ""}`);
 
-      const icon = document.createElement("span");
-      icon.className = "wm-command-file-browser__entry-icon";
-      icon.textContent = entry.type === "directory" ? "Dir" : "File";
+      const icon = createFileBrowserEntryIcon(entry.type);
 
       const main = document.createElement("span");
       main.className = "wm-command-file-browser__entry-main";

@@ -11206,11 +11206,17 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 .wm-command-file-browser__entry-icon {
   display: inline-flex;
   min-width: 2.4rem;
+  width: 2.4rem;
+  height: 2.4rem;
+  align-items: center;
   justify-content: center;
   color: var(--text-tertiary);
-  font-size: 0.7rem;
-  font-weight: 800;
-  text-transform: uppercase;
+}
+
+.wm-command-file-browser__entry-icon .wm-icon {
+  width: 1.35rem;
+  height: 1.35rem;
+  stroke-width: 1.9;
 }
 
 .wm-command-file-browser__entry-main {
