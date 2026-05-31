@@ -16,6 +16,11 @@ export interface PromptDispatchContext {
     getSession: (id: string) => SessionSnapshot | undefined;
     listSessions: () => SessionSnapshot[];
     getAdapter: (id: string) => import("../agents/agent-adapter").AgentAdapter | null;
+    captureAgentapiCodexSessionIdFromPrompt?: (
+      id: string,
+      prompt: string,
+      options?: { sentAtMs?: number },
+    ) => Promise<boolean>;
   };
   agentHost: string;
   messageStore: {
@@ -212,6 +217,7 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
     try {
       const initialCount = ctx.messageStore.listSessionMessages(session.id).length;
       const deliveryStartedAt = Date.now();
+      const sentAtMs = Date.now();
       const result = await deliverSessionAgentMessage({
         agentHost: ctx.agentHost,
         buildAgentUrl: ctx.buildAgentUrl,
@@ -230,6 +236,7 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
         });
       }
 
+      void ctx.manager.captureAgentapiCodexSessionIdFromPrompt?.(session.id, nextPrompt.content, { sentAtMs });
       ctx.promptQueueStore.removeNextPrompt(session.id);
       const messageSyncStartedAt = Date.now();
       const messages = await waitForMessageUpdate(session.id, initialCount);

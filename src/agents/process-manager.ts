@@ -37,6 +37,7 @@ import { buildWingmanIdentityEnv, loadWingmanInstanceIdentity } from "../identit
 import { parseAllowedHosts, pickAgentHost, normaliseHostForUrl, waitForAgentReady } from "./agent-client";
 import { buildSessionGitCredentialEnv } from "../git/credential-env";
 import { resolveGiteaCredentials } from "../gitea/gitea-user-manager";
+import { discoverCodexSessionIdForPrompt } from "./codex-session-discovery";
 import {
   buildTmuxLogFile,
   hasTmuxWindow,
@@ -54,6 +55,10 @@ const MAX_LOG_LINES = 500;
 const DEFAULT_PM2_AGENT_START_TIMEOUT_MS = 60_000;
 const TMUX_AGENT_START_TIMEOUT_MS = 60_000;
 const projectRootDirectory = normalize(new URL("../..", import.meta.url).pathname);
+const CODEX_AGENTAPI_DISCOVERY_ATTEMPTS = 8;
+const CODEX_AGENTAPI_DISCOVERY_RETRY_MS = 500;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export type SessionStatus = "starting" | "running" | "stopped" | "error";
 
@@ -891,6 +896,64 @@ export class ProcessManager {
     return snapshot;
   }
 
+  async captureAgentapiCodexSessionIdFromPrompt(
+    id: string,
+    prompt: string,
+    options: { sentAtMs?: number; attempts?: number; retryMs?: number } = {},
+  ): Promise<boolean> {
+    const session = this.sessions.get(id);
+    if (!session || session.agent !== "codex") {
+      return false;
+    }
+    if (session.adapter?.deliversPromptsDirectly?.()) {
+      return false;
+    }
+    if (session.metadata.nativeAgentSession?.agent === "codex" && session.metadata.nativeAgentSession.sessionId) {
+      return false;
+    }
+
+    const sentAtMs = Number.isFinite(options.sentAtMs) ? options.sentAtMs! : Date.now();
+    const attempts = Math.max(1, options.attempts ?? CODEX_AGENTAPI_DISCOVERY_ATTEMPTS);
+    const retryMs = Math.max(0, options.retryMs ?? CODEX_AGENTAPI_DISCOVERY_RETRY_MS);
+    const codexHome = this.resolveCodexHome(session);
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const result = await discoverCodexSessionIdForPrompt({
+        codexHome,
+        workingDirectory: session.workingDirectory,
+        prompt,
+        sessionStartedAtMs: session.startedAt.getTime(),
+        sentAtMs,
+      });
+
+      if (result.sessionId) {
+        this.setNativeAgentSessionMetadata(session, result.sessionId, {
+          emit: true,
+          source: "agentapi",
+        });
+        this.appendLog(
+          session,
+          `[manager] captured Codex native session ${result.sessionId} from agentapi transcript`,
+        );
+        return true;
+      }
+
+      if (result.reason === "ambiguous") {
+        this.appendLog(
+          session,
+          `[manager] Codex native session discovery ambiguous (${result.candidateCount} matches); waiting for a more unique prompt`,
+        );
+        return false;
+      }
+
+      if (attempt < attempts) {
+        await sleep(retryMs);
+      }
+    }
+
+    return false;
+  }
+
   private buildAgentProcessEnv(session: AgentSession): Record<string, string | undefined> {
     // Strip server-only secrets from child env. Agents receive only the
     // derived compatibility identity vars injected during session setup.
@@ -1240,13 +1303,14 @@ export class ProcessManager {
   private setNativeAgentSessionMetadata(
     session: AgentSession,
     nativeSessionId: string,
-    options: { emit: boolean },
+    options: { emit: boolean; source?: "preallocated" | "adapter" | "agentapi" | "manual" },
   ): void {
     const existing = session.metadata.nativeAgentSession;
     if (
       existing?.agent === session.agent &&
       existing.sessionId === nativeSessionId &&
-      existing.workingDirectory === session.workingDirectory
+      existing.workingDirectory === session.workingDirectory &&
+      existing.source === (options.source ?? "adapter")
     ) {
       return;
     }
@@ -1256,12 +1320,28 @@ export class ProcessManager {
         session.agent,
         nativeSessionId,
         session.workingDirectory,
-        "adapter",
+        options.source ?? "adapter",
       ),
     });
     if (options.emit) {
       this.emit({ type: "session-updated", session: this.toSnapshot(session) });
     }
+  }
+
+  private resolveCodexHome(session: AgentSession): string {
+    const rawHome =
+      typeof session.definition.env?.CODEX_HOME === "string" && session.definition.env.CODEX_HOME.trim()
+        ? session.definition.env.CODEX_HOME.trim()
+        : typeof Bun.env.CODEX_HOME === "string" && Bun.env.CODEX_HOME.trim()
+          ? Bun.env.CODEX_HOME.trim()
+          : join(homedir(), ".codex");
+    if (rawHome === "~") {
+      return homedir();
+    }
+    if (rawHome.startsWith("~/")) {
+      return resolve(homedir(), rawHome.slice(2));
+    }
+    return resolve(rawHome);
   }
 
   private normaliseSessionName(name: string | undefined, agent: AgentType, port: number): string {

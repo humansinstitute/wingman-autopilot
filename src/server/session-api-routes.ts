@@ -1709,6 +1709,7 @@ async function handlePostMessage(
 
   try {
     const initialCount = ctx.messageStore.listSessionMessages(id).length;
+    const sentAtMs = Date.now();
     const result = await deliverSessionAgentMessage({
       agentHost: ctx.agentHost,
       buildAgentUrl: ctx.buildAgentUrl,
@@ -1727,6 +1728,7 @@ async function handlePostMessage(
       );
     }
 
+    void ctx.manager.captureAgentapiCodexSessionIdFromPrompt?.(id, content, { sentAtMs });
     const messages = await ctx.waitForMessageUpdate(id, initialCount);
     return Response.json({ id, messages });
   } catch (error) {

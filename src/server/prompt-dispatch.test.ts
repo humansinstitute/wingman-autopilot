@@ -52,6 +52,9 @@ function buildEngine(overrides: Record<string, unknown> = {}) {
   const waitForSessionPromptReadiness = mock(async () => undefined);
   const syncSessionMessages = mock(async () => [{ role: "user", content: "queued prompt" }]);
   const maybeTriggerNightWatch = mock(() => undefined);
+  const captureAgentapiCodexSessionIdFromPrompt = mock(
+    async (_id: string, _prompt: string, _options?: { sentAtMs?: number }) => false,
+  );
   const getPromptReadiness = mock(async (): Promise<PromptReadiness> => ({
     state: "ready",
     reason: "test-ready",
@@ -74,6 +77,7 @@ function buildEngine(overrides: Record<string, unknown> = {}) {
       getSession: (id: string) => (id === session.id ? session : undefined),
       listSessions: () => [],
       getAdapter: () => adapter,
+      captureAgentapiCodexSessionIdFromPrompt,
     },
     agentHost: "127.0.0.1",
     messageStore: {
@@ -97,6 +101,7 @@ function buildEngine(overrides: Record<string, unknown> = {}) {
     waitForSessionPromptReadiness,
     syncSessionMessages,
     maybeTriggerNightWatch,
+    captureAgentapiCodexSessionIdFromPrompt,
   };
 }
 
@@ -174,5 +179,21 @@ describe("prompt dispatch engine", () => {
     expect(waitForSessionPromptReadiness).toHaveBeenCalledTimes(2);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(queue.getQueueCount(session.id)).toBe(0);
+  });
+
+  test("captures Codex native session id after queued prompt delivery", async () => {
+    const fetchMock = mock(async () => new Response("{}", { status: 200 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const { engine, session, captureAgentapiCodexSessionIdFromPrompt } = buildEngine();
+
+    const result = await engine.dispatchNextQueuedPromptForSession(session, "npub1owner");
+
+    expect(result.sentPrompt.content).toBe("queued prompt");
+    expect(captureAgentapiCodexSessionIdFromPrompt).toHaveBeenCalledTimes(1);
+    expect(captureAgentapiCodexSessionIdFromPrompt.mock.calls[0]?.[0]).toBe(session.id);
+    expect(captureAgentapiCodexSessionIdFromPrompt.mock.calls[0]?.[1]).toBe("queued prompt");
+    expect(captureAgentapiCodexSessionIdFromPrompt.mock.calls[0]?.[2]).toEqual({
+      sentAtMs: expect.any(Number),
+    });
   });
 });
