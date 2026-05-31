@@ -2005,6 +2005,7 @@ const homeViewModule = initHomeView({
   buildSessionFilterOptions,
   fetchSessions,
   syncMenuTabs,
+  showToast,
   isAppActionDisabled,
   triggerAppAction,
   escapeHtml,

@@ -7,6 +7,7 @@
 
 import { createArchiveComponent } from "../home/archive.js";
 import { createLiveAgentsSection } from "../home/live-agents.js";
+import { createRunningPipelinesSection } from "../home/running-pipelines.js";
 import { DEFAULT_LIVE_SESSION_SORT } from "../home/session-table.js";
 import { HOME_SESSION_GROUPS } from "../home/session-groups.js";
 
@@ -37,6 +38,7 @@ export function initHomeView(deps) {
     buildSessionFilterOptions,
     fetchSessions,
     syncMenuTabs,
+    showToast,
     // App helpers
     isAppActionDisabled,
     triggerAppAction,
@@ -337,6 +339,7 @@ export function initHomeView(deps) {
         },
       }),
     );
+    wrapper.append(createRunningPipelinesSection({ showToast }).element);
 
     archiveComponent = createArchiveComponent({
       onViewSession: (session) => {
