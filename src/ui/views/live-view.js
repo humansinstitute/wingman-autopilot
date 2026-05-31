@@ -42,6 +42,7 @@ import {
   resolveLiveTabGroup,
 } from "../sessions/session-classification.js";
 import * as scrollPill from "../live/scroll-pill.js";
+import { resolveTerminalControlKeyAction } from "../live/terminal-controls.js";
 import {
   createConversationElement,
   expandConversationWindow,
@@ -69,7 +70,6 @@ export function initLiveView(deps) {
     render,
     // Session helpers
     getActiveSessions,
-    getSessionQueue,
     setActiveSession,
     stopSession,
     fetchLogs,
@@ -82,11 +82,9 @@ export function initLiveView(deps) {
     syncHeaderWebviewToggle,
     syncHeaderWriterToggle,
     scheduleLiveScroll,
-    isConversationScrolledToBottom,
     scrollConversationAreaToBottom,
     // Stubs (late-bound)
     createAgentStatusIndicator,
-    resolveAgentRuntimeStatus,
     extractImageFiles,
     extractAttachmentFiles,
     handleImageUploads,
@@ -718,37 +716,11 @@ export function initLiveView(deps) {
       if (mentionAutocomplete?.handleKeydown(event)) {
         return;
       }
-      if (textarea.value === "") {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          const escAction = TERMINAL_CONTROL_ACTIONS.find((a) => a.id === "terminal-esc");
-          sendControlCommand(sessionId, escAction);
-          return;
-        }
-        if (event.key === "Tab" && event.shiftKey) {
-          event.preventDefault();
-          const shiftTabAction = TERMINAL_CONTROL_ACTIONS.find((a) => a.id === "terminal-shift-tab");
-          sendControlCommand(sessionId, shiftTabAction);
-          return;
-        }
-      }
-      const directControlKeys = {
-        ArrowUp: TERMINAL_CONTROL_ACTIONS.find((a) => a.id === "terminal-up"),
-        ArrowDown: TERMINAL_CONTROL_ACTIONS.find((a) => a.id === "terminal-down"),
-        Enter: TERMINAL_CONTROL_ACTIONS.find((a) => a.id === "terminal-return"),
-      };
-      const controlAction = directControlKeys[event.key];
-      if (controlAction && textarea.value === "") {
-        const agentStatus = resolveAgentRuntimeStatus(sessionId);
-        const queue = getSessionQueue(sessionId);
-        const queueCount = queue?.prompts?.length ?? 0;
-        const isStable = agentStatus === "stable" && queueCount === 0;
-        const isScrolledToBottom = isConversationScrolledToBottom(sessionId);
-        if (isStable && isScrolledToBottom) {
-          event.preventDefault();
-          sendControlCommand(sessionId, controlAction);
-          return;
-        }
+      const controlAction = resolveTerminalControlKeyAction(event, textarea.value, TERMINAL_CONTROL_ACTIONS);
+      if (controlAction) {
+        event.preventDefault();
+        sendControlCommand(sessionId, controlAction);
+        return;
       }
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
