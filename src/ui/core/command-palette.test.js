@@ -4,6 +4,7 @@ import {
   createCommandPaletteLaunchItems,
   createCommandPaletteQuickItems,
   filterCommandPaletteItems,
+  getCommandPaletteKeyboardItems,
   getNextCommandPaletteActiveId,
   getRecentLaunchProjects,
   rememberRecentItem,
@@ -95,5 +96,31 @@ describe("autopilot command palette helpers", () => {
     expect(getNextCommandPaletteActiveId(items, "apps", 1)).toBe("home");
     expect(getNextCommandPaletteActiveId(items, "", -1)).toBe("apps");
     expect(getNextCommandPaletteActiveId(items, "home", -1)).toBe("apps");
+  });
+
+  test("keyboard navigation prefers result items over shortcut hotkeys", () => {
+    const items = [
+      { id: "quick:home", group: "shortcut" },
+      { id: "quick:sessions", group: "shortcut" },
+      { id: "session:1", group: "recent-session" },
+      { id: "app:1", group: "recent-app" },
+    ];
+
+    expect(getCommandPaletteKeyboardItems(items).map((item) => item.id)).toEqual([
+      "session:1",
+      "app:1",
+    ]);
+  });
+
+  test("keyboard navigation falls back to shortcuts when no list items exist", () => {
+    const items = [
+      { id: "quick:home", group: "shortcut" },
+      { id: "quick:sessions", group: "shortcut" },
+    ];
+
+    expect(getCommandPaletteKeyboardItems(items).map((item) => item.id)).toEqual([
+      "quick:home",
+      "quick:sessions",
+    ]);
   });
 });

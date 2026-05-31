@@ -9,6 +9,7 @@ import {
   createCommandPaletteLaunchItems,
   createCommandPaletteQuickItems,
   filterCommandPaletteItems,
+  getCommandPaletteKeyboardItems,
   getNextCommandPaletteActiveId,
   rememberRecentItem,
 } from "./command-palette-utils.js";
@@ -324,7 +325,7 @@ export function createAutopilotCommandPalette({
   }
 
   function moveActive(delta) {
-    const items = getFilteredItems();
+    const items = getCommandPaletteKeyboardItems(getFilteredItems());
     if (items.length === 0) return;
     setActive(getNextCommandPaletteActiveId(items, activeId, delta));
   }
@@ -332,7 +333,10 @@ export function createAutopilotCommandPalette({
   function render() {
     if (!overlay) return;
     const items = getFilteredItems();
-    activeId = activeId && items.some((item) => item.id === activeId) ? activeId : items[0]?.id ?? "";
+    const keyboardItems = getCommandPaletteKeyboardItems(items);
+    activeId = activeId && items.some((item) => item.id === activeId)
+      ? activeId
+      : keyboardItems[0]?.id ?? "";
     const groups = getGroupedItems(items);
     const placeholder = mode === "session-launch"
       ? "Choose a recent project or open the launch modal"

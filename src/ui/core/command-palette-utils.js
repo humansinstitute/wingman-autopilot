@@ -143,6 +143,12 @@ export function getNextCommandPaletteActiveId(items, activeId, delta) {
   return list[nextIndex].id;
 }
 
+export function getCommandPaletteKeyboardItems(items) {
+  const list = Array.isArray(items) ? items.filter((item) => item?.id) : [];
+  const nonShortcutItems = list.filter((item) => item.group !== "shortcut");
+  return nonShortcutItems.length > 0 ? nonShortcutItems : list;
+}
+
 export function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
