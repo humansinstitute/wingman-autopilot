@@ -57,7 +57,7 @@ export const resolveFeatureFlagEffectiveState = (
   return "off";
 };
 
-class FeatureFlagStore {
+export class FeatureFlagStore {
   private readonly db: Database;
 
   constructor(filePath: string = defaultDbPath) {
@@ -144,6 +144,17 @@ class FeatureFlagStore {
     });
   }
 
+  ensureDefaultState(key: string, state: FeatureFlagState): FeatureFlagRecord | null {
+    const normalizedKey = normaliseFeatureFlagKey(key);
+    if (!normalizedKey) return null;
+    const existing = this.getFlag(normalizedKey);
+    if (!existing) return null;
+    if (existing.updatedBy || existing.state === state) {
+      return existing;
+    }
+    return this.updateFlag(normalizedKey, { state, updatedBy: null });
+  }
+
   createFlag(input: CreateFeatureFlagInput): FeatureFlagRecord {
     const key = normaliseFeatureFlagKey(input.key);
     if (!key) {
@@ -227,13 +238,12 @@ class FeatureFlagStore {
     fields.push(`updated_by = ?${fields.length + 1}`);
     values.push(updates.updatedBy ?? null);
 
-    this.db
-      .prepare(
-        `UPDATE feature_flags
-         SET ${fields.join(", ")}
-         WHERE key = ?${fields.length + 1}`,
-      )
-      .run(...values, normalizedKey);
+    const statement = this.db.prepare(
+      `UPDATE feature_flags
+       SET ${fields.join(", ")}
+       WHERE key = ?${fields.length + 1}`,
+    );
+    (statement.run as (...bindings: unknown[]) => unknown)(...values, normalizedKey);
 
     const updated = this.getFlag(normalizedKey);
     if (!updated) {

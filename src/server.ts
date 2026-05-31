@@ -379,7 +379,7 @@ const FEATURE_FLAG_DEFAULTS: Array<{
     key: CODEX_NATIVE_SDK_FLAG,
     label: "Codex Native SDK",
     description: "Use @openai/codex-sdk directly instead of agentapi for Codex sessions.",
-    state: "off",
+    state: "on",
   },
   {
     key: OPENCODE_NATIVE_SDK_FLAG,
@@ -390,6 +390,7 @@ const FEATURE_FLAG_DEFAULTS: Array<{
 ];
 
 featureFlagStore.ensureDefaults(FEATURE_FLAG_DEFAULTS);
+featureFlagStore.ensureDefaultState(CODEX_NATIVE_SDK_FLAG, "on");
 process.env.WINGMAN_PID = process.pid.toString();
 const projectStore = new ProjectStore();
 const todoStore = new TodoStore();
