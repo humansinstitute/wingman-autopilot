@@ -1,4 +1,5 @@
 import { showRunningAppsModal } from "../apps/running-apps-modal.js";
+import { openCommandFileBrowserModal } from "../modals/file-browser-modal.js";
 import { showRunningPipelinesModal } from "../pipelines/running-pipelines-modal.js";
 import { getSessionDisplayName } from "./icons.js";
 import { launchProjectSession } from "./project-session-launcher.js";
@@ -74,7 +75,9 @@ export function createAutopilotCommandPalette({
   npubProjectsState,
   fetchNpubProjects,
   navigateHome,
-  navigateFiles,
+  getFileBrowserInitialPath,
+  getFileBrowserSession,
+  pinFileToSession,
   openSession,
   renderAppCard,
   refreshApps,
@@ -280,7 +283,12 @@ export function createAutopilotCommandPalette({
       return;
     }
     if (item.action === "files") {
-      navigateFiles?.();
+      openCommandFileBrowserModal({
+        initialPath: getFileBrowserInitialPath?.() ?? "",
+        getSession: getFileBrowserSession,
+        onPinFile: pinFileToSession,
+        showToast,
+      });
       return;
     }
     if (item.action === "open-session") {

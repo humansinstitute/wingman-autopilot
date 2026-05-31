@@ -36,6 +36,7 @@ import { openConfirmDialog, openTextPromptDialog } from "./common/dialog-prompts
 import { populateAgentSelect } from "./common/agent-options.js";
 import { createSessionDialogController } from "./common/session-dialog.js";
 import { createAutopilotCommandPalette } from "./core/command-palette.js";
+import { createCommandPaletteFileActions } from "./core/command-palette-file-actions.js";
 import { initAppDialogs } from "./apps/dialog.js";
 import { initWorkspaceTree } from "./apps/tree.js";
 import { initAppCards } from "./apps/cards.js";
@@ -114,6 +115,7 @@ import {
 import {
   fetchSessionApi,
   postSessionMessageApi,
+  setPinnedArtifactApi,
 } from "./services/sessions.js";
 import {
   stopSession as stopSessionAction,
@@ -2372,7 +2374,6 @@ const {
   navigateToProjects,
   navigateToNightWatch,
   navigateToScheduler,
-  navigateToFiles,
   navigateToSettings,
   setupNavListeners,
 } = createNavigation({
@@ -2420,6 +2421,20 @@ const {
 
 setupNavListeners();
 
+const commandPaletteFileActions = createCommandPaletteFileActions({
+  state,
+  sessionsStore,
+  getCurrentRoute: () => currentRoute,
+  getPathname: () => window.location.pathname,
+  getSessionIdFromPath,
+  setPinnedArtifact: setPinnedArtifactApi,
+  setActiveSession,
+  setCurrentRoute(nextRoute) {
+    currentRoute = nextRoute;
+  },
+  render,
+});
+
 commandPaletteController = createAutopilotCommandPalette({
   brandButton: brandCommandPaletteButton,
   appsStore,
@@ -2432,7 +2447,9 @@ commandPaletteController = createAutopilotCommandPalette({
   npubProjectsState,
   fetchNpubProjects,
   navigateHome: () => navigateToHome({ skipMenuClose: true }),
-  navigateFiles: () => navigateToFiles({ skipMenuClose: true }),
+  getFileBrowserInitialPath: commandPaletteFileActions.getFileBrowserInitialPath,
+  getFileBrowserSession: commandPaletteFileActions.getFileBrowserSession,
+  pinFileToSession: commandPaletteFileActions.pinFileToSession,
   openSession(session) {
     if (!session?.id) return;
     currentRoute = "live";

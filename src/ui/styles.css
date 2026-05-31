@@ -10891,6 +10891,207 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   color: var(--accent-danger, #ef4444);
 }
 
+.wm-command-file-browser-modal {
+  width: min(1100px, calc(100vw - 2rem));
+  max-width: min(1100px, calc(100vw - 2rem));
+  padding: 0;
+  overflow: hidden;
+}
+
+.wm-command-file-browser {
+  display: flex;
+  max-height: min(86vh, 880px);
+  flex-direction: column;
+  background: var(--bg-secondary);
+}
+
+.wm-command-file-browser__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.wm-command-file-browser__header h2,
+.wm-command-file-browser__preview h3 {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.wm-command-file-browser__header h2 {
+  font-size: 1.1rem;
+}
+
+.wm-command-file-browser__subtitle {
+  margin: 0.25rem 0 0;
+  color: var(--text-tertiary);
+  font-size: 0.88rem;
+}
+
+.wm-command-file-browser__content {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: minmax(250px, 0.9fr) minmax(0, 1.5fr);
+}
+
+.wm-command-file-browser__browser,
+.wm-command-file-browser__preview {
+  min-width: 0;
+  min-height: 0;
+}
+
+.wm-command-file-browser__browser {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border-primary);
+}
+
+.wm-command-file-browser__pathbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.wm-command-file-browser__path {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wm-command-file-browser__list {
+  display: grid;
+  align-content: start;
+  gap: 0.2rem;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.5rem;
+}
+
+.wm-command-file-browser__entry {
+  display: grid;
+  width: 100%;
+  min-height: 3rem;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.52rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.wm-command-file-browser__entry:hover,
+.wm-command-file-browser__entry:focus-visible {
+  border-color: rgba(16, 185, 129, 0.42);
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.wm-command-file-browser__entry-icon {
+  display: inline-flex;
+  min-width: 2.4rem;
+  justify-content: center;
+  color: var(--text-tertiary);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.wm-command-file-browser__entry-main {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
+}
+
+.wm-command-file-browser__entry-name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wm-command-file-browser__entry-meta {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wm-command-file-browser__preview {
+  display: flex;
+  flex-direction: column;
+}
+
+.wm-command-file-browser__preview-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.wm-command-file-browser__preview h3 {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wm-command-file-browser__actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.wm-command-file-browser__preview-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 1rem;
+}
+
+.wm-command-file-browser__preview-body[data-empty="true"],
+.wm-command-file-browser__preview-body[data-loading="true"],
+.wm-command-file-browser__empty,
+.wm-command-file-browser__status {
+  color: var(--text-tertiary);
+  font-size: 0.88rem;
+}
+
+.wm-command-file-browser__empty {
+  margin: 0;
+  padding: 0.75rem;
+}
+
+.wm-command-file-browser__status {
+  min-height: 1.25rem;
+  margin: 0;
+  padding: 0 1.25rem 1rem;
+}
+
+.wm-command-file-browser__status[data-state="error"] {
+  color: #f87171;
+}
+
+.wm-command-file-browser__status[data-state="success"] {
+  color: var(--accent-primary);
+}
+
 @media (max-width: 720px) {
   .wm-directory-dialog {
     width: 100vw;
@@ -10987,6 +11188,45 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 
   .wm-file-picker-list {
     padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0));
+  }
+
+  .wm-command-file-browser-modal {
+    width: 100vw;
+    max-width: none;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    border-radius: 0;
+  }
+
+  .wm-command-file-browser {
+    height: 100%;
+    max-height: none;
+  }
+
+  .wm-command-file-browser__header,
+  .wm-command-file-browser__preview-header {
+    flex-direction: column;
+  }
+
+  .wm-command-file-browser__content {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+
+  .wm-command-file-browser__browser {
+    max-height: 38vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-primary);
+  }
+
+  .wm-command-file-browser__preview {
+    min-height: 42vh;
+  }
+
+  .wm-command-file-browser__actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .wm-files-browser__header {
