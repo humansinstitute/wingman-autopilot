@@ -27,6 +27,17 @@ export interface FlightDeckWappRecordPayload {
     scope_l3_id: string | null;
     scope_l4_id: string | null;
     scope_l5_id: string | null;
+    status: string;
+    schedule: {
+      timezone?: string | null;
+      starts_at?: string | null;
+      ends_at?: string | null;
+      windows?: Array<{
+        days?: number[];
+        start_time: string;
+        end_time: string;
+      }>;
+    } | null;
     record_state: string;
   };
   encrypt_to_npubs: string[];
@@ -56,6 +67,19 @@ export function buildFlightDeckWappRecordPayload(
       scope_l3_id: wapp.scopeLineage.l3Id,
       scope_l4_id: wapp.scopeLineage.l4Id,
       scope_l5_id: wapp.scopeLineage.l5Id,
+      status: wapp.status,
+      schedule: wapp.schedule
+        ? {
+          timezone: wapp.schedule.timezone ?? null,
+          starts_at: wapp.schedule.startsAt ?? null,
+          ends_at: wapp.schedule.endsAt ?? null,
+          windows: wapp.schedule.windows?.map((window) => ({
+            days: window.days,
+            start_time: window.startTime,
+            end_time: window.endTime,
+          })) ?? [],
+        }
+        : null,
       record_state: wapp.recordState,
     },
     encrypt_to_npubs: wapp.allowedNpubs,

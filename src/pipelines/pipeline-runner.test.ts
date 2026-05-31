@@ -18,6 +18,7 @@ afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true });
   delete process.env.PIPELINE_PARALLEL_POLL_MS;
   delete process.env.PIPELINE_PARALLEL_AGENT_START_RETRY_BACKOFF_MS;
+  delete process.env.PIPELINE_AGENT_INPUT_MAX_BYTES;
 });
 
 const makeStore = () => new PipelineStore(join(tempDir, "pipelines.sqlite"));
@@ -234,6 +235,55 @@ describe("runDeclarativePipeline", () => {
       "loop",
     ]);
     expect(run.result?.reviewLoop).toMatchObject({ completed: 3, done: true });
+  });
+
+  test("fails clearly before launching an agent when selected input is too large", async () => {
+    process.env.PIPELINE_AGENT_INPUT_MAX_BYTES = "120";
+    const store = makeStore();
+    const definition: PipelineDefinitionRecord = {
+      id: "agent-size-guard",
+      slug: "agent-size-guard",
+      name: "agent-size-guard",
+      scope: "user",
+      ownerAlias: "alpha-beta-gamma",
+      path: join(tempDir, "agent-size-guard.json"),
+      spec: {
+        name: "agent-size-guard",
+        input: {
+          records: Array.from({ length: 20 }, (_, index) => ({
+            name: `Company ${index}`,
+            summary: "This record should be compacted before reaching an agent step.",
+          })),
+        },
+        steps: [
+          {
+            name: "oversized-agent",
+            type: "agent",
+            prompt: "Summarise the selected records.",
+            input: { pick: { records: "$.records" } },
+            assign: "$.agentResult",
+          },
+        ],
+      },
+    };
+
+    const run = await runDeclarativePipeline({
+      store,
+      sessionApiContext: {} as never,
+      definition,
+      registry: builtinPipelineFunctions,
+      input: definition.spec.input!,
+      ownerNpub: "npub-test",
+      ownerAlias: "alpha-beta-gamma",
+      callbackOrigin: "http://localhost",
+    });
+
+    expect(run.status).toBe("error");
+    expect(run.error).toContain("Agent step input is");
+    expect(run.error).toContain("Compact step input or pass artifact references");
+    const [step] = store.listSteps(run.id);
+    expect(step?.status).toBe("error");
+    expect(step?.wingmanSessionId).toBeNull();
   });
 
   test("runs parallel child steps and aggregates results", async () => {

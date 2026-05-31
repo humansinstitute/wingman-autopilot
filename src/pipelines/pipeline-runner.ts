@@ -20,6 +20,7 @@ import { type JsonObject, PipelineStore, type PipelineStatus, type PipelineStepR
 const CALLBACK_POLL_MS = 1000;
 const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_PIPELINE_EXECUTED_STEPS = 2000;
+const DEFAULT_AGENT_INPUT_MAX_BYTES = 250_000;
 const activeRunExecutions = new Set<string>();
 
 interface PipelineRunnerInput {
@@ -580,6 +581,7 @@ async function runAgentStep(input: PipelineRunnerInput & {
   directory?: string;
   callbackTimeoutMs: number;
 }): Promise<JsonObject> {
+  assertAgentInputWithinLimit(input.selectedInput, input.definition.spec.name, input.stepName);
   const sessionCtx = input.sessionApiContext;
   const agent = resolveAgent(sessionCtx, input.agent);
   const session = await sessionCtx.manager.createSession(
@@ -659,6 +661,24 @@ async function runAgentStep(input: PipelineRunnerInput & {
     throw new PipelineHalt("needs_input", result.result ?? {}, "Agent step needs input");
   }
   return result.result ?? {};
+}
+
+function assertAgentInputWithinLimit(selectedInput: JsonObject, pipelineName: string, stepName: string): void {
+  const maxBytes = resolveAgentInputMaxBytes();
+  if (maxBytes <= 0) return;
+  const bytes = new TextEncoder().encode(JSON.stringify(selectedInput)).byteLength;
+  if (bytes <= maxBytes) return;
+  throw new Error(
+    `Agent step input is ${bytes} bytes, above ${maxBytes} byte guard for pipeline ${pipelineName}: ${stepName}. Compact step input or pass artifact references instead of full records.`,
+  );
+}
+
+function resolveAgentInputMaxBytes(): number {
+  const raw = process.env.PIPELINE_AGENT_INPUT_MAX_BYTES;
+  if (!raw) return DEFAULT_AGENT_INPUT_MAX_BYTES;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return DEFAULT_AGENT_INPUT_MAX_BYTES;
+  return Math.max(0, Math.floor(parsed));
 }
 
 async function recordLiveSession(ctx: SessionApiContext, session: SessionSnapshot): Promise<void> {

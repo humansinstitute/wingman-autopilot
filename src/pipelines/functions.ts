@@ -1,5 +1,6 @@
 import type { FunctionRegistry } from "./declarative";
 import type { JsonObject } from "./pipeline-store";
+import { signWithWingmanKey } from "../mcp/wingman-signer";
 
 interface MemoryEntity {
   name: string;
@@ -848,6 +849,56 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     };
   },
 
+  async "tower.searchGraph"(input) {
+    const entities = normaliseMemoryEntities(input.entities).slice(0, positiveInteger(input.maxEntities, 8));
+    const topKPerEntity = positiveInteger(input.topKPerEntity, 5);
+    const maxMatches = positiveInteger(input.maxMatches, 20);
+    const warnings: string[] = [];
+    if (entities.length === 0) {
+      return {
+        matches: [],
+        entities,
+        warnings: ["No memory entities were provided for Tower graph search."],
+        graphMemoryAvailable: false,
+      };
+    }
+
+    const towerBaseUrl = getTowerGraphBaseUrl(input);
+    const settled = await Promise.all(entities.map(async (entity) => {
+      const requestUrl = buildTowerGraphSearchUrl(towerBaseUrl, entity, input, topKPerEntity);
+      try {
+        const { token } = await signWithWingmanKey(requestUrl, "GET");
+        const response = await fetch(requestUrl, {
+          method: "GET",
+          headers: {
+            accept: "application/json",
+            authorization: token,
+          },
+        });
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => "");
+          throw new Error(`Tower graph search failed (HTTP ${response.status})${errorText ? `: ${truncateText(errorText, 240)}` : ""}`);
+        }
+        const payload = await response.json();
+        return normaliseTowerGraphSearchResults(payload, entity);
+      } catch (error) {
+        warnings.push(`${entity.name}: ${error instanceof Error ? error.message : String(error)}`);
+        return [];
+      }
+    }));
+
+    const matches = dedupeGraphMemoryMatches(settled.flat()).slice(0, maxMatches);
+    return {
+      matches,
+      entities,
+      warnings,
+      graphMemoryAvailable: warnings.length < entities.length,
+      searchedAt: new Date().toISOString(),
+      source: "tower-postgres-graph",
+      towerBaseUrl,
+    };
+  },
+
   async "memory.consolidateGraphContext"(input) {
     const matches = normaliseGraphMemoryMatches(input.matches);
     const entities = normaliseMemoryEntities(input.entities);
@@ -938,6 +989,111 @@ function dedupeGraphMemoryMatches(matches: GraphMemoryMatch[]): GraphMemoryMatch
     if (!byKey.has(key)) byKey.set(key, match);
   }
   return Array.from(byKey.values()).sort((a, b) => b.score - a.score);
+}
+
+function getTowerGraphBaseUrl(input: JsonObject): string {
+  const configured = typeof input.towerUrl === "string" && input.towerUrl.trim()
+    ? input.towerUrl.trim()
+    : envString("PIPELINE_TOWER_URL") || envString("TOWER_URL") || envString("WINGMAN_TOWER_URL") || "http://127.0.0.1:3100";
+  return configured.replace(/\/+$/, "");
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function addTowerGraphQueryParam(params: URLSearchParams, name: string, value: unknown): void {
+  const text = optionalString(value);
+  if (text) params.set(name, text);
+}
+
+function firstOptionalString(...values: unknown[]): string | null {
+  for (const value of values) {
+    const text = optionalString(value);
+    if (text) return text;
+  }
+  return null;
+}
+
+function buildTowerGraphSearchUrl(
+  towerBaseUrl: string,
+  entity: MemoryEntity,
+  input: JsonObject,
+  limit: number,
+): string {
+  const url = new URL("/api/v4/graph/search", towerBaseUrl);
+  url.searchParams.set("q", entity.query || entity.name);
+  url.searchParams.set("limit", String(limit));
+  addTowerGraphQueryParam(url.searchParams, "workspace_owner_npub", firstOptionalString(
+    input.workspaceOwnerNpub,
+    input.workspace_owner_npub,
+    input.ownerNpub,
+  ));
+  addTowerGraphQueryParam(url.searchParams, "owner_npub", firstOptionalString(
+    input.graphOwnerNpub,
+    input.graph_owner_npub,
+    input.memoryOwnerNpub,
+    input.memory_owner_npub,
+  ));
+  addTowerGraphQueryParam(url.searchParams, "actor_npub", firstOptionalString(input.actorNpub, input.actor_npub));
+  addTowerGraphQueryParam(url.searchParams, "visibility", input.visibility);
+  addTowerGraphQueryParam(url.searchParams, "source_app_npub", firstOptionalString(input.sourceAppNpub, input.source_app_npub));
+  addTowerGraphQueryParam(url.searchParams, "group_id", firstOptionalString(input.groupId, input.group_id));
+  addTowerGraphQueryParam(url.searchParams, "source", input.source);
+  addTowerGraphQueryParam(url.searchParams, "label", input.label);
+  addTowerGraphQueryParam(url.searchParams, "relationship_type", firstOptionalString(input.relationshipType, input.relationship_type));
+  return url.toString();
+}
+
+function normaliseTowerGraphSearchResults(payload: unknown, entity: MemoryEntity): GraphMemoryMatch[] {
+  const results = objectValue(payload).results;
+  if (!Array.isArray(results)) return [];
+  return results
+    .map((item) => objectValue(item))
+    .map((item) => {
+      const properties = objectValue(item.properties);
+      const kind = optionalString(item.kind) || "graph";
+      const relationshipType = optionalString(item.relationship_type);
+      const from = optionalString(item.from_external_id);
+      const to = optionalString(item.to_external_id);
+      const edgeSummary = relationshipType && from && to ? `${from} -[${relationshipType}]-> ${to}` : "";
+      const title = firstOptionalString(
+        item.title,
+        properties.title,
+        properties.name,
+        item.external_id,
+        relationshipType,
+        item.memory_type,
+        item.id,
+      ) || "";
+      const excerpt = firstOptionalString(
+        item.summary,
+        properties.summary,
+        properties.description,
+        properties.content,
+        properties.text,
+        edgeSummary,
+        title,
+      ) || "";
+      const labels = Array.isArray(item.labels) ? item.labels.map(String).filter(Boolean) : [];
+      const typedLabels = [
+        kind,
+        ...labels,
+        optionalString(item.memory_type),
+        relationshipType,
+      ].filter((value): value is string => Boolean(value));
+      return {
+        id: String(item.id ?? item.external_id ?? title),
+        entity: entity.name,
+        entityType: entity.type,
+        title,
+        source: firstOptionalString(item.source, properties.source, properties.path, properties.url, properties.file) || "",
+        score: Number.isFinite(Number(item.score)) ? Number(item.score) : 0,
+        excerpt,
+        labels: Array.from(new Set(typedLabels)),
+      };
+    })
+    .filter((item) => item.excerpt || item.title || item.source);
 }
 
 function truncateText(value: string, maxChars: number): string {

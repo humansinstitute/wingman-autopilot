@@ -8,7 +8,7 @@ import {
 } from "../wapps/scope-access";
 import { buildFlightDeckWappRecordPayload, type WappPublisher } from "../wapps/wapp-publisher";
 import { createWappTemplate } from "../wapps/wapp-template";
-import type { WappRecord } from "../wapps/types";
+import type { WappRecord, WappSchedule, WappScheduleWindow, WappStatus } from "../wapps/types";
 import type { WappStore } from "../wapps/wapp-store";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
@@ -38,6 +38,63 @@ export interface WappsApiContext {
 
 function text(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function status(value: unknown): WappStatus | undefined {
+  const normalized = text(value);
+  if (normalized === "archived") return "archived";
+  if (normalized === "active") return "active";
+  return undefined;
+}
+
+function isoOrNull(value: unknown): string | null {
+  const raw = text(value);
+  if (!raw) return null;
+  const timestamp = Date.parse(raw);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+}
+
+function normalizeTime(value: unknown): string | null {
+  const raw = text(value);
+  if (!raw || !/^([01]\d|2[0-3]):[0-5]\d$/.test(raw)) return null;
+  return raw;
+}
+
+function normalizeDays(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const days = Array.from(new Set(value
+    .map((entry) => Number(entry))
+    .filter((entry) => Number.isInteger(entry) && entry >= 0 && entry <= 6)))
+    .sort((left, right) => left - right);
+  return days.length > 0 ? days : undefined;
+}
+
+function normalizeScheduleWindow(value: unknown): WappScheduleWindow | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  const startTime = normalizeTime(input.startTime ?? input.start_time);
+  const endTime = normalizeTime(input.endTime ?? input.end_time);
+  if (!startTime || !endTime) return null;
+  const days = normalizeDays(input.days);
+  return days ? { days, startTime, endTime } : { startTime, endTime };
+}
+
+function normalizeSchedule(value: unknown): WappSchedule | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  const windows = Array.isArray(input.windows)
+    ? input.windows.map(normalizeScheduleWindow).filter((window): window is WappScheduleWindow => Boolean(window))
+    : [];
+  const schedule: WappSchedule = {
+    timezone: text(input.timezone),
+    startsAt: isoOrNull(input.startsAt ?? input.starts_at),
+    endsAt: isoOrNull(input.endsAt ?? input.ends_at),
+    windows,
+  };
+  if (!schedule.timezone && !schedule.startsAt && !schedule.endsAt && windows.length === 0) return null;
+  return schedule;
 }
 
 function canAccessWapp(ctx: WappsApiContext, wapp: WappRecord): boolean {
@@ -113,6 +170,8 @@ export async function handleWappsApi(
       launchUrl: ctx.buildLaunchUrl(alias, app),
       sourceWingmanUrl: ctx.sourceWingmanUrl,
       subdomainAlias: alias,
+      status: status(body.status) ?? "active",
+      schedule: normalizeSchedule(body.schedule) ?? null,
     });
     return Response.json({ wapp }, { status: 201 });
   }
@@ -166,6 +225,8 @@ export async function handleWappsApi(
       scopeId: nextScopeId,
       scopeLineage: scopeAccess ? scopeAccess.scopeLineage : undefined,
       allowedNpubs: scopeAccess ? scopeAccess.allowedNpubs : undefined,
+      status: status(body.status),
+      schedule: normalizeSchedule(body.schedule),
     });
     return Response.json({ wapp: updated });
   }
@@ -175,6 +236,7 @@ export async function handleWappsApi(
     const deletedWapp: WappRecord = {
       ...wapp,
       recordState: "deleted",
+      status: "archived",
       updatedAt: deletedAt,
       lastPublishedAt: deletedAt,
     };
@@ -188,8 +250,31 @@ export async function handleWappsApi(
         payload,
       }, { status: result.status ?? 503 });
     }
-    const deleted = ctx.wappStore.update(id, { recordState: "deleted", lastPublishedAt: deletedAt });
+    const deleted = ctx.wappStore.update(id, { status: "archived", recordState: "deleted", lastPublishedAt: deletedAt });
     return Response.json({ wapp: deleted, published: true, reference: result.reference ?? null, payload });
+  }
+
+  if (action === "archive" && method === "POST") {
+    const archivedAt = new Date().toISOString();
+    const archivedWapp: WappRecord = {
+      ...wapp,
+      status: "archived",
+      recordState: "archived",
+      updatedAt: archivedAt,
+      lastPublishedAt: archivedAt,
+    };
+    const payload = buildFlightDeckWappRecordPayload(archivedWapp, ctx.flightDeckAppNamespace);
+    const result = await ctx.publisher.publish(payload);
+    if (!result.published) {
+      return Response.json({
+        error: result.error ?? "wapp-archive-publish-unavailable",
+        published: false,
+        reference: result.reference ?? null,
+        payload,
+      }, { status: result.status ?? 503 });
+    }
+    const archived = ctx.wappStore.update(id, { status: "archived", recordState: "archived", lastPublishedAt: archivedAt });
+    return Response.json({ wapp: archived, published: true, reference: result.reference ?? null, payload });
   }
 
   if (action === "refresh-allowlist" && method === "POST") {

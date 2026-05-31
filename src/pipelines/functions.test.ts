@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { generateSecretKey, nip19 } from "nostr-tools";
 import { builtinPipelineFunctions } from "./functions";
 
 describe("memory pipeline functions", () => {
@@ -510,6 +511,69 @@ describe("memory pipeline functions", () => {
     expect(result.matches).toEqual([]);
     expect(result.graphMemoryAvailable).toBe(false);
     expect((result.warnings as string[])[0]).toContain("Neo4j graph memory is not configured");
+  });
+
+  test("tower.searchGraph signs NIP-98 requests and normalises Tower graph results", async () => {
+    const previousWingmanPriv = process.env.WINGMAN_PRIV;
+    const previousFetch = globalThis.fetch;
+    const requested: { url?: string; authorization?: string } = {};
+    process.env.WINGMAN_PRIV = nip19.nsecEncode(generateSecretKey());
+    globalThis.fetch = (async (input, init) => {
+      requested.url = String(input);
+      requested.authorization = new Headers(init?.headers).get("authorization") || undefined;
+      return Response.json({
+        query: "Redshift",
+        results: [
+          {
+            kind: "node",
+            score: 0.91,
+            id: "node-1",
+            external_id: "project:redshift",
+            source: "tower",
+            labels: ["Project"],
+            title: "Redshift",
+            summary: "Redshift stores encrypted workspace context.",
+            properties: { path: "docs/redshift.md" },
+          },
+        ],
+        total: 1,
+        limit: 4,
+      });
+    }) as typeof fetch;
+
+    let result: Record<string, unknown>;
+    try {
+      result = await builtinPipelineFunctions["tower.searchGraph"]!({
+        towerUrl: "http://tower.local",
+        ownerNpub: "npub1owner",
+        entities: [
+          { name: "Redshift", type: "system", reason: "secret management", query: "Redshift" },
+        ],
+        topKPerEntity: 4,
+      });
+    } finally {
+      globalThis.fetch = previousFetch;
+      if (previousWingmanPriv === undefined) delete process.env.WINGMAN_PRIV;
+      else process.env.WINGMAN_PRIV = previousWingmanPriv;
+    }
+
+    expect(requested.url).toContain("http://tower.local/api/v4/graph/search");
+    expect(requested.url).toContain("workspace_owner_npub=npub1owner");
+    expect(requested.authorization).toStartWith("Nostr ");
+    expect(result.graphMemoryAvailable).toBe(true);
+    expect(result.source).toBe("tower-postgres-graph");
+    expect(result.matches).toEqual([
+      {
+        id: "node-1",
+        entity: "Redshift",
+        entityType: "system",
+        title: "Redshift",
+        source: "tower",
+        score: 0.91,
+        excerpt: "Redshift stores encrypted workspace context.",
+        labels: ["node", "Project"],
+      },
+    ]);
   });
 
   test("memory.consolidateGraphContext returns graphContext and source metadata", async () => {

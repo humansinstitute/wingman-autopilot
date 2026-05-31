@@ -7,7 +7,7 @@ import type { SQLQueryBindings } from "bun:sqlite";
 
 import { databaseFile } from "../storage/message-store";
 import { normalizeWappScopeLineage } from "./scope-access";
-import type { CreateWappInput, UpdateWappInput, WappRecord, WappRecordState, WappScopeLineage } from "./types";
+import type { CreateWappInput, UpdateWappInput, WappRecord, WappRecordState, WappSchedule, WappScopeLineage, WappStatus } from "./types";
 
 const defaultWappDbPath = new URL("../../data/wapps.sqlite", import.meta.url).pathname;
 
@@ -25,6 +25,8 @@ interface WappRow {
   launch_url: string;
   source_wingman_url: string | null;
   subdomain_alias: string | null;
+  status?: WappStatus;
+  schedule_json?: string | null;
   record_state: WappRecordState;
   created_at: string;
   updated_at: string;
@@ -58,6 +60,8 @@ function rowToRecord(row: WappRow): WappRecord {
     launchUrl: row.launch_url,
     sourceWingmanUrl: row.source_wingman_url,
     subdomainAlias: row.subdomain_alias,
+    status: row.status === "archived" ? "archived" : "active",
+    schedule: parseJson<WappSchedule | null>(row.schedule_json ?? null, null),
     recordState: row.record_state,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -93,9 +97,17 @@ export class WappStore {
         last_published_at TEXT
       )
     `);
+    this.ensureColumn("wapp_records", "status", "TEXT NOT NULL DEFAULT 'active'");
+    this.ensureColumn("wapp_records", "schedule_json", "TEXT");
     this.db.run("CREATE INDEX IF NOT EXISTS idx_wapp_records_app_id ON wapp_records(app_id)");
     this.db.run("CREATE INDEX IF NOT EXISTS idx_wapp_records_owner ON wapp_records(owner_npub)");
     this.db.run("CREATE INDEX IF NOT EXISTS idx_wapp_records_scope ON wapp_records(workspace_owner_npub, scope_id)");
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const columns = this.db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (columns.some((entry) => entry.name === column)) return;
+    this.db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 
   list(): WappRecord[] {
@@ -120,8 +132,8 @@ export class WappStore {
       INSERT INTO wapp_records (
         id, app_id, title, description, owner_npub, created_by_npub, workspace_owner_npub,
         scope_id, scope_lineage_json, allowed_npubs_json, launch_url, source_wingman_url,
-        subdomain_alias, record_state, created_at, updated_at, last_published_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL)
+        subdomain_alias, status, schedule_json, record_state, created_at, updated_at, last_published_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL)
     `).run(
       id,
       input.appId,
@@ -136,6 +148,8 @@ export class WappStore {
       input.launchUrl,
       input.sourceWingmanUrl ?? null,
       input.subdomainAlias ?? null,
+      input.status ?? "active",
+      input.schedule ? JSON.stringify(input.schedule) : null,
       now,
       now,
     );
@@ -162,6 +176,8 @@ export class WappStore {
     if (input.launchUrl !== undefined) add("launch_url", input.launchUrl);
     if (input.sourceWingmanUrl !== undefined) add("source_wingman_url", input.sourceWingmanUrl);
     if (input.subdomainAlias !== undefined) add("subdomain_alias", input.subdomainAlias);
+    if (input.status !== undefined) add("status", input.status);
+    if (input.schedule !== undefined) add("schedule_json", input.schedule ? JSON.stringify(input.schedule) : null);
     if (input.recordState !== undefined) add("record_state", input.recordState);
     if (input.lastPublishedAt !== undefined) add("last_published_at", input.lastPublishedAt);
     if (sets.length === 0) return existing;
@@ -172,11 +188,11 @@ export class WappStore {
   }
 
   archive(id: string): WappRecord | null {
-    return this.update(id, { recordState: "archived" });
+    return this.update(id, { status: "archived", recordState: "archived" });
   }
 
   markDeleted(id: string): WappRecord | null {
-    return this.update(id, { recordState: "deleted" });
+    return this.update(id, { status: "archived", recordState: "deleted" });
   }
 }
 

@@ -104,12 +104,21 @@ describe("handleWappsApi", () => {
           workspaceOwnerNpub: "npub1workspace",
           scopeId: "scope-1",
           allowedNpubs: ["npub1malicious"],
+          schedule: {
+            timezone: "UTC",
+            windows: [{ days: [1, 2, 3, 4, 5], start_time: "06:00", end_time: "12:00" }],
+          },
         }),
       });
       const createResponse = await handleWappsApi(createRequest, new URL(createRequest.url), "POST", authContext, ctx);
       expect(createResponse?.status).toBe(201);
       const created = await createResponse!.json() as any;
       expect(created.wapp.allowedNpubs).toEqual(["npub1member", "npub1owner"]);
+      expect(created.wapp.status).toBe("active");
+      expect(created.wapp.schedule).toMatchObject({
+        timezone: "UTC",
+        windows: [{ days: [1, 2, 3, 4, 5], startTime: "06:00", endTime: "12:00" }],
+      });
 
       const refreshRequest = new Request(`http://localhost:3000/api/wapps/${created.wapp.id}/refresh-allowlist`, {
         method: "POST",
@@ -128,6 +137,11 @@ describe("handleWappsApi", () => {
       const publishResponse = await handleWappsApi(publishRequest, new URL(publishRequest.url), "POST", authContext, ctx);
       expect(publishResponse?.status).toBe(200);
       expect(published).toHaveLength(1);
+      expect((published[0] as any).data.schedule.windows[0]).toEqual({
+        days: [1, 2, 3, 4, 5],
+        start_time: "06:00",
+        end_time: "12:00",
+      });
     } finally {
       cleanup();
     }
@@ -374,6 +388,38 @@ describe("handleWappsApi", () => {
       expect(published).toHaveLength(1);
       expect((published[0] as any).record_id).toBe(created.wapp.id);
       expect((published[0] as any).data.record_state).toBe("deleted");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("archives WApps by publishing an archived Flight Deck record", async () => {
+    const { ctx, cleanup, published } = makeContext();
+    try {
+      const createRequest = new Request("http://localhost:3000/api/wapps", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          appId: "app-1",
+          title: "Ops Board",
+          workspaceOwnerNpub: "npub1workspace",
+          scopeId: "scope-1",
+        }),
+      });
+      const createResponse = await handleWappsApi(createRequest, new URL(createRequest.url), "POST", authContext, ctx);
+      const created = await createResponse!.json() as any;
+      published.length = 0;
+
+      const archiveRequest = new Request(`http://localhost:3000/api/wapps/${created.wapp.id}/archive`, { method: "POST" });
+      const archiveResponse = await handleWappsApi(archiveRequest, new URL(archiveRequest.url), "POST", authContext, ctx);
+      const archived = await archiveResponse!.json() as any;
+
+      expect(archiveResponse?.status).toBe(200);
+      expect(archived.wapp.status).toBe("archived");
+      expect(archived.wapp.recordState).toBe("archived");
+      expect(published).toHaveLength(1);
+      expect((published[0] as any).data.status).toBe("archived");
+      expect((published[0] as any).data.record_state).toBe("archived");
     } finally {
       cleanup();
     }

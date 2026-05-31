@@ -12,12 +12,16 @@ The MVP should let an operator create a WApp from an existing app card, assign i
 - A WApp must be backed by a registered Wingman app. Register the runtime app through the Wingman CLI/API first, for example `bun clis/appctl.ts register "Hello World WApp" --directory /path/to/wapp --web-app`, then use the returned app id as `WappRecord.appId`.
 - Do not create a WApp by hand-editing `data/apps.json`, `data/app-aliases.json`, or `data/wapps.sqlite`. Direct file edits do not update the live app registry, alias registry, runtime port registry, or process manager.
 - No Flight Deck auth handoff is required for the MVP.
-- No NIP-98 requirement is needed for the WApp login gate.
+- No NIP-98 requirement is needed for the WApp browser login gate.
 - Users authenticate in the WApp using a Nostr browser extension.
+- WApp-to-Autopilot API calls and Autopilot-to-WApp agent API calls should use NIP-98.
+- Bot read and edit access to a WApp must be explicit and separately granted.
 - Keyteleport can be added later for users without a browser extension.
 - A WApp is a Bun server with static frontend assets and a local SQLite database.
 - The SQLite database lives inside the WApp directory, by convention `{wappRoot}/data/db.sqlite`.
 - Autopilot stores WApp catalog and assignment metadata only. It does not centralize WApp operational SQLite databases.
+
+For the general Business WApp pattern, see `docs/business-wapp-autopilot-pattern.md`.
 
 ## Existing Autopilot Primitives
 

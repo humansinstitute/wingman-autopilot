@@ -8,6 +8,20 @@ export interface WappScopeLineage {
 }
 
 export type WappRecordState = "active" | "archived" | "deleted";
+export type WappStatus = "active" | "archived";
+
+export interface WappScheduleWindow {
+  days?: number[];
+  startTime: string;
+  endTime: string;
+}
+
+export interface WappSchedule {
+  timezone?: string | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  windows?: WappScheduleWindow[];
+}
 
 export interface WappRecord {
   id: string;
@@ -23,6 +37,8 @@ export interface WappRecord {
   launchUrl: string;
   sourceWingmanUrl: string | null;
   subdomainAlias: string | null;
+  status: WappStatus;
+  schedule: WappSchedule | null;
   recordState: WappRecordState;
   createdAt: string;
   updatedAt: string;
@@ -43,6 +59,8 @@ export interface CreateWappInput {
   launchUrl: string;
   sourceWingmanUrl?: string | null;
   subdomainAlias?: string | null;
+  status?: WappStatus;
+  schedule?: WappSchedule | null;
 }
 
 export interface UpdateWappInput {
@@ -55,6 +73,8 @@ export interface UpdateWappInput {
   launchUrl?: string;
   sourceWingmanUrl?: string | null;
   subdomainAlias?: string | null;
+  status?: WappStatus;
+  schedule?: WappSchedule | null;
   recordState?: WappRecordState;
   lastPublishedAt?: string | null;
 }
