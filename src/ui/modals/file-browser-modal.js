@@ -102,6 +102,7 @@ export function openCommandFileBrowserModal({
   previewHeader.append(previewTitle, actions);
 
   const previewMount = document.createElement("div");
+  previewMount.className = "wm-command-file-browser__preview-mount";
   previewCard.append(previewHeader, previewMount);
   content.append(browser, previewCard);
 
