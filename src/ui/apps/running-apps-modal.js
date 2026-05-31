@@ -1,13 +1,40 @@
 import { getAppDisplayName, getAppOpenUrl, getAppStatusValue } from "./table.js";
 
+const APP_BUSY_STATUSES = new Set(["stopping", "restarting", "building", "setting-up"]);
+
 export function isRunningApp(app) {
   return getAppStatusValue(app) === "running";
 }
 
-export function getRunningApps(apps) {
+export function getModalApps(apps) {
   return Array.isArray(apps)
-    ? apps.filter((app) => app?.id !== "wingman-core" && isRunningApp(app))
+    ? apps.filter((app) => app?.id !== "wingman-core")
     : [];
+}
+
+export function getRunningApps(apps) {
+  return getModalApps(apps).filter((app) => isRunningApp(app));
+}
+
+export function getAlphabeticalApps(apps) {
+  return getModalApps(apps).sort((left, right) => getAppDisplayName(left).localeCompare(
+    getAppDisplayName(right),
+    undefined,
+    { numeric: true, sensitivity: "base" },
+  ));
+}
+
+export function getAppListAction(app) {
+  if (isRunningApp(app) && app?.availableScripts?.restart) {
+    return "restart";
+  }
+  if (!isRunningApp(app) && app?.availableScripts?.start) {
+    return "start";
+  }
+  if (!isRunningApp(app) && app?.availableScripts?.restart) {
+    return "restart";
+  }
+  return null;
 }
 
 export function showRunningAppsModal({
@@ -78,6 +105,7 @@ export function showRunningAppsModal({
 
   let selectedAppId = null;
   let loading = false;
+  let showAllApps = false;
 
   function setStatus(message, type = "") {
     status.textContent = message ?? "";
@@ -145,44 +173,169 @@ export function showRunningAppsModal({
     }
   }
 
-  async function restartApp(app, button) {
-    if (!app?.id || button.disabled) return;
+  function isAppActionDisabled(app, action) {
+    if (!app?.id || !action || !app?.availableScripts?.[action]) return true;
+    if (app.status?.inProgressAction) return true;
+    const statusValue = getAppStatusValue(app);
+    if (APP_BUSY_STATUSES.has(statusValue)) return true;
+    if (action === "start") return statusValue === "running";
+    return false;
+  }
+
+  async function runAppAction(app, action, button) {
+    if (!app?.id || !action || button.disabled) return;
+    const actionLabel = action === "start" ? "Start" : "Restart";
+    const actionVerb = action === "start" ? "Starting" : "Restarting";
     button.disabled = true;
-    button.textContent = "Restarting...";
-    setStatus(`Restarting ${getAppDisplayName(app)}...`);
+    button.textContent = `${actionVerb}...`;
+    setStatus(`${actionVerb} ${getAppDisplayName(app)}...`);
     try {
       const success = typeof triggerAppAction === "function"
-        ? await triggerAppAction(app.id, "restart")
+        ? await triggerAppAction(app.id, action)
         : false;
       if (success) {
-        showToast?.(`Restarting ${getAppDisplayName(app)}...`, { type: "success" });
+        showToast?.(`${actionVerb} ${getAppDisplayName(app)}...`, { type: "success" });
         await refreshModalApps();
       } else if (button.isConnected) {
         button.disabled = false;
-        button.textContent = "Restart";
+        button.textContent = actionLabel;
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to restart app.";
+      const message = error instanceof Error ? error.message : `Failed to ${action} app.`;
       setStatus(message, "error");
       showToast?.(message, { type: "error" });
       if (button.isConnected) {
         button.disabled = false;
-        button.textContent = "Restart";
+        button.textContent = actionLabel;
       }
     }
   }
 
+  function renderAppActionButton(app, action) {
+    if (!action) return null;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "wm-button secondary wm-button--small";
+    button.textContent = action === "start" ? "Start" : "Restart";
+    button.disabled = isAppActionDisabled(app, action);
+    button.dataset.testid = action === "start" ? "running-app-start" : "running-app-restart";
+    button.setAttribute("aria-label", `${button.textContent} ${getAppDisplayName(app)}`);
+    button.addEventListener("click", () => void runAppAction(app, action, button));
+    return button;
+  }
+
+  function renderAppListItem(app, { allowStart = false } = {}) {
+    const item = document.createElement("article");
+    item.className = "wm-running-apps-list__item";
+    item.dataset.appId = String(app.id ?? "");
+
+    const mainButton = document.createElement("button");
+    mainButton.type = "button";
+    mainButton.className = "wm-running-apps-list__main";
+    mainButton.dataset.testid = "running-app-details";
+    mainButton.setAttribute("aria-label", `Show details for ${getAppDisplayName(app)}`);
+    mainButton.addEventListener("click", () => {
+      selectedAppId = app.id;
+      renderContent();
+    });
+
+    const name = document.createElement("span");
+    name.className = "wm-running-apps-list__name";
+    name.textContent = getAppDisplayName(app);
+
+    const root = document.createElement("code");
+    root.className = "wm-running-apps-list__root";
+    root.textContent = app.root ?? "";
+    root.title = app.root ?? "";
+
+    mainButton.append(name, root);
+
+    const actions = document.createElement("div");
+    actions.className = "wm-running-apps-list__actions";
+    actions.append(renderAppStatusBadge(app));
+
+    const openLink = renderOpenLink(app);
+    if (openLink) {
+      actions.append(openLink);
+    }
+
+    const appAction = allowStart ? getAppListAction(app) : (app.availableScripts?.restart ? "restart" : null);
+    const actionButton = renderAppActionButton(app, appAction);
+    if (actionButton) {
+      actions.append(actionButton);
+    }
+
+    item.append(mainButton, actions);
+    return item;
+  }
+
+  function renderStartAppToggle(totalApps) {
+    if (totalApps === 0) return;
+    const footer = document.createElement("div");
+    footer.className = "wm-running-apps-modal__list-footer";
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "wm-button";
+    button.textContent = showAllApps ? "Hide App List" : "Start an App";
+    button.dataset.testid = "running-apps-start-app-toggle";
+    button.setAttribute("aria-label", showAllApps ? "Hide full app list" : "Show full app list to start an app");
+    button.setAttribute("aria-expanded", showAllApps ? "true" : "false");
+    button.addEventListener("click", () => {
+      showAllApps = !showAllApps;
+      renderContent();
+    });
+
+    footer.append(button);
+    body.append(footer);
+  }
+
+  function renderAllAppsList(allApps) {
+    if (!showAllApps) return;
+
+    const section = document.createElement("section");
+    section.className = "wm-running-apps-modal__all-apps";
+    section.setAttribute("aria-labelledby", "running-apps-all-apps-title");
+    section.dataset.testid = "running-apps-all-apps";
+
+    const heading = document.createElement("h3");
+    heading.id = "running-apps-all-apps-title";
+    heading.textContent = "All Apps";
+    section.append(heading);
+
+    if (allApps.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "wm-running-apps-modal__empty";
+      empty.textContent = "No apps are registered.";
+      section.append(empty);
+      body.append(section);
+      return;
+    }
+
+    const list = document.createElement("div");
+    list.className = "wm-running-apps-list";
+    allApps.forEach((app) => {
+      list.append(renderAppListItem(app, { allowStart: true }));
+    });
+    section.append(list);
+    body.append(section);
+  }
+
   function renderListView() {
+    const allApps = getAlphabeticalApps(getStoreApps());
     const runningApps = getRunningApps(getStoreApps());
     subtitle.textContent = loading
       ? "Refreshing..."
-      : `${runningApps.length} running app${runningApps.length === 1 ? "" : "s"}`;
+      : showAllApps
+        ? `${runningApps.length} running, ${allApps.length} total`
+        : `${runningApps.length} running app${runningApps.length === 1 ? "" : "s"}`;
 
     if (loading && runningApps.length === 0) {
       const loadingEl = document.createElement("p");
       loadingEl.className = "wm-running-apps-modal__empty";
       loadingEl.textContent = "Loading apps...";
       body.append(loadingEl);
+      renderStartAppToggle(allApps.length);
       return;
     }
 
@@ -191,63 +344,18 @@ export function showRunningAppsModal({
       empty.className = "wm-running-apps-modal__empty";
       empty.textContent = "No apps are currently running.";
       body.append(empty);
-      return;
+    } else {
+      const list = document.createElement("div");
+      list.className = "wm-running-apps-list";
+      list.dataset.testid = "running-apps-list";
+      runningApps.forEach((app) => {
+        list.append(renderAppListItem(app));
+      });
+      body.append(list);
     }
 
-    const list = document.createElement("div");
-    list.className = "wm-running-apps-list";
-    list.dataset.testid = "running-apps-list";
-
-    runningApps.forEach((app) => {
-      const item = document.createElement("article");
-      item.className = "wm-running-apps-list__item";
-      item.dataset.appId = String(app.id ?? "");
-
-      const mainButton = document.createElement("button");
-      mainButton.type = "button";
-      mainButton.className = "wm-running-apps-list__main";
-      mainButton.dataset.testid = "running-app-details";
-      mainButton.setAttribute("aria-label", `Show details for ${getAppDisplayName(app)}`);
-      mainButton.addEventListener("click", () => {
-        selectedAppId = app.id;
-        renderContent();
-      });
-
-      const name = document.createElement("span");
-      name.className = "wm-running-apps-list__name";
-      name.textContent = getAppDisplayName(app);
-
-      const root = document.createElement("code");
-      root.className = "wm-running-apps-list__root";
-      root.textContent = app.root ?? "";
-      root.title = app.root ?? "";
-
-      mainButton.append(name, root);
-
-      const actions = document.createElement("div");
-      actions.className = "wm-running-apps-list__actions";
-      actions.append(renderAppStatusBadge(app));
-
-      const openLink = renderOpenLink(app);
-      if (openLink) {
-        actions.append(openLink);
-      }
-
-      if (app.availableScripts?.restart) {
-        const restartButton = document.createElement("button");
-        restartButton.type = "button";
-        restartButton.className = "wm-button secondary wm-button--small";
-        restartButton.textContent = "Restart";
-        restartButton.dataset.testid = "running-app-restart";
-        restartButton.addEventListener("click", () => void restartApp(app, restartButton));
-        actions.append(restartButton);
-      }
-
-      item.append(mainButton, actions);
-      list.append(item);
-    });
-
-    body.append(list);
+    renderStartAppToggle(allApps.length);
+    renderAllAppsList(allApps);
   }
 
   function renderDetailsView(app) {

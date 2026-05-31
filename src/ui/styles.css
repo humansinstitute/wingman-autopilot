@@ -1910,6 +1910,26 @@ body[data-menu-open="true"] .wm-menu-panel {
   margin-bottom: 0.75rem;
 }
 
+.wm-running-apps-modal__list-footer {
+  display: flex;
+  justify-content: center;
+  padding: 1rem 0 0;
+}
+
+.wm-running-apps-modal__all-apps {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-primary);
+}
+
+.wm-running-apps-modal__all-apps h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+}
+
 .wm-running-apps-list {
   display: grid;
   gap: 0.65rem;
