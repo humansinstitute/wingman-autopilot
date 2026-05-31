@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  createCommandPaletteLaunchItems,
   createCommandPaletteQuickItems,
   filterCommandPaletteItems,
+  getRecentLaunchProjects,
   rememberRecentItem,
 } from "./command-palette-utils.js";
 
@@ -38,6 +40,44 @@ describe("autopilot command palette helpers", () => {
       "2:Running Apps",
       "3:Running Pipelines",
       "4:Home",
+    ]);
+  });
+
+  test("builds launch items with modal on 0 and recent projects on 1-9", () => {
+    const projects = Array.from({ length: 11 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      directoryPath: `/workspace/project-${index + 1}`,
+    }));
+
+    const items = createCommandPaletteLaunchItems(projects);
+
+    expect(items.map((item) => `${item.shortcutKey}:${item.title}`)).toEqual([
+      "0:New Session",
+      "1:Project 1",
+      "2:Project 2",
+      "3:Project 3",
+      "4:Project 4",
+      "5:Project 5",
+      "6:Project 6",
+      "7:Project 7",
+      "8:Project 8",
+      "9:Project 9",
+    ]);
+    expect(items[0].action).toBe("open-session-modal");
+    expect(items[1].action).toBe("launch-project-session");
+    expect(items[9].targetId).toBe("project-9");
+  });
+
+  test("launch projects require an id and directory", () => {
+    const projects = [
+      { id: "missing-directory", name: "Missing Directory" },
+      { directoryPath: "/workspace/missing-id", name: "Missing Id" },
+      { id: "valid", name: "Valid", directoryPath: "/workspace/valid" },
+    ];
+
+    expect(getRecentLaunchProjects(projects)).toEqual([
+      { id: "valid", name: "Valid", directoryPath: "/workspace/valid" },
     ]);
   });
 });

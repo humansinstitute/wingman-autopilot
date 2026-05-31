@@ -2426,6 +2426,10 @@ commandPaletteController = createAutopilotCommandPalette({
   openDialog,
   openIdentityLoginDialog,
   isAuthenticated: () => state.identity.authenticated,
+  state,
+  launchSession,
+  npubProjectsState,
+  fetchNpubProjects,
   navigateHome: () => navigateToHome({ skipMenuClose: true }),
   openSession(session) {
     if (!session?.id) return;

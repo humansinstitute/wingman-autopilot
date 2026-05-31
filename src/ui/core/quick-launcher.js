@@ -4,6 +4,8 @@
  * Depends on: state.config, launchSession, showToast (via DI).
  */
 
+import { launchProjectSession } from "./project-session-launcher.js";
+
 export function initQuickLauncher(deps) {
   const { state, launchSession, showToast } = deps;
 
@@ -14,7 +16,6 @@ export function initQuickLauncher(deps) {
   const quickLauncherState = {
     projects: [],
     loading: false,
-    sessionCounters: new Map(),
   };
 
   const fetchQuickLauncherProjects = async () => {
@@ -32,13 +33,6 @@ export function initQuickLauncher(deps) {
     } finally {
       quickLauncherState.loading = false;
     }
-  };
-
-  const getNextSessionId = (projectId) => {
-    const current = quickLauncherState.sessionCounters.get(projectId) ?? 0;
-    const next = current + 1;
-    quickLauncherState.sessionCounters.set(projectId, next);
-    return next;
   };
 
   const renderQuickLauncherMenu = () => {
@@ -78,17 +72,7 @@ export function initQuickLauncher(deps) {
 
   const quickLaunchSession = async (project) => {
     closeQuickLauncherMenu();
-    const sessionId = getNextSessionId(project.id);
-    const sessionName = `${project.name}-${sessionId}`;
-    const agentId = state.config?.defaultAgent ?? "codex";
-    const directory = project.directoryPath;
-
-    try {
-      await launchSession(agentId, directory, sessionName, null, { openInNewTab: true });
-    } catch (error) {
-      console.error("Failed to quick launch session:", error);
-      showToast("Failed to launch session", { type: "error" });
-    }
+    await launchProjectSession({ project, state, launchSession, showToast });
   };
 
   const openQuickLauncherMenu = async () => {

@@ -1,10 +1,12 @@
 import { showRunningAppsModal } from "../apps/running-apps-modal.js";
 import { showRunningPipelinesModal } from "../pipelines/running-pipelines-modal.js";
 import { getSessionDisplayName } from "./icons.js";
+import { launchProjectSession } from "./project-session-launcher.js";
 import {
   escapeAttribute,
   escapeHtml,
   createCommandItem,
+  createCommandPaletteLaunchItems,
   createCommandPaletteQuickItems,
   filterCommandPaletteItems,
   rememberRecentItem,
@@ -60,6 +62,10 @@ export function createAutopilotCommandPalette({
   openDialog,
   openIdentityLoginDialog,
   isAuthenticated,
+  state,
+  launchSession,
+  npubProjectsState,
+  fetchNpubProjects,
   navigateHome,
   openSession,
   renderAppCard,
@@ -70,9 +76,19 @@ export function createAutopilotCommandPalette({
   let overlay = null;
   let query = "";
   let activeId = "";
+  let mode = "root";
+  let launchProjectsLoading = false;
 
   function getQuickItems() {
     return createCommandPaletteQuickItems();
+  }
+
+  function getLaunchProjects() {
+    return Array.isArray(npubProjectsState?.items) ? npubProjectsState.items : [];
+  }
+
+  function getLaunchItems() {
+    return createCommandPaletteLaunchItems(getLaunchProjects());
   }
 
   function getRecentSessionItems() {
@@ -110,6 +126,9 @@ export function createAutopilotCommandPalette({
   }
 
   function getItems() {
+    if (mode === "session-launch") {
+      return getLaunchItems();
+    }
     return [...getQuickItems(), ...getRecentSessionItems(), ...getRecentAppItems()];
   }
 
@@ -157,6 +176,8 @@ export function createAutopilotCommandPalette({
     overlay = null;
     query = "";
     activeId = "";
+    mode = "root";
+    launchProjectsLoading = false;
   }
 
   function open() {
@@ -177,8 +198,54 @@ export function createAutopilotCommandPalette({
     });
   }
 
+  async function enterSessionLaunchMode() {
+    if (!isAuthenticated?.()) {
+      close();
+      openIdentityLoginDialog?.();
+      return;
+    }
+
+    mode = "session-launch";
+    query = "";
+    activeId = "";
+    render();
+
+    if (typeof fetchNpubProjects !== "function") {
+      return;
+    }
+
+    launchProjectsLoading = true;
+    render();
+    try {
+      await fetchNpubProjects();
+    } catch {
+      // The project store exposes its own error state; keep the launcher usable.
+    } finally {
+      launchProjectsLoading = false;
+      render();
+    }
+  }
+
+  async function launchProjectFromItem(item) {
+    const project = getLaunchProjects().find((entry) => entry?.id === item?.targetId);
+    close();
+    const success = await launchProjectSession({
+      project,
+      state,
+      launchSession,
+      showToast,
+    });
+    if (!success && !project) {
+      showToast?.("Project is no longer available.", { type: "error" });
+    }
+  }
+
   async function execute(item) {
     if (!item) return;
+    if (item.action === "new-session") {
+      await enterSessionLaunchMode();
+      return;
+    }
     close();
     if (item.action === "home") {
       navigateHome?.();
@@ -188,8 +255,12 @@ export function createAutopilotCommandPalette({
       openIdentityLoginDialog?.();
       return;
     }
-    if (item.action === "new-session") {
+    if (item.action === "open-session-modal") {
       openDialog?.();
+      return;
+    }
+    if (item.action === "launch-project-session") {
+      await launchProjectFromItem(item);
       return;
     }
     if (item.action === "running-apps") {
@@ -242,6 +313,13 @@ export function createAutopilotCommandPalette({
     const items = getFilteredItems();
     activeId = activeId && items.some((item) => item.id === activeId) ? activeId : items[0]?.id ?? "";
     const groups = getGroupedItems(items);
+    const placeholder = mode === "session-launch"
+      ? "Choose a recent project or open the launch modal"
+      : "Search sessions, apps, and commands";
+    const shortcutLabel = mode === "session-launch" ? "0-9" : "Cmd K";
+    const emptyMessage = mode === "session-launch" && launchProjectsLoading
+      ? "Loading recent projects..."
+      : "No commands match.";
     overlay.innerHTML = `
       <section class="wm-command-palette" aria-labelledby="autopilot-command-palette-title">
         <h2 id="autopilot-command-palette-title" class="wm-sr-only">Command palette</h2>
@@ -249,15 +327,15 @@ export function createAutopilotCommandPalette({
           <input
             type="search"
             value="${escapeAttribute(query)}"
-            placeholder="Search sessions, apps, and commands"
+            placeholder="${escapeAttribute(placeholder)}"
             data-command-palette-input
             aria-label="Search commands"
             autocomplete="off"
           />
-          <kbd>Cmd K</kbd>
+          <kbd>${escapeHtml(shortcutLabel)}</kbd>
         </div>
         <div class="wm-command-palette-results" role="listbox" aria-label="Command results">
-          ${groups.length ? groups.map(renderGroup).join("") : '<p class="wm-command-palette-empty">No commands match.</p>'}
+          ${groups.length ? groups.map(renderGroup).join("") : `<p class="wm-command-palette-empty">${escapeHtml(emptyMessage)}</p>`}
         </div>
       </section>
     `;
@@ -278,8 +356,9 @@ export function createAutopilotCommandPalette({
 
   function renderGroup(group) {
     const quickClass = group.id === "shortcut" ? " wm-command-palette-group-quick" : "";
+    const launchClass = group.id === "session-launch" ? " wm-command-palette-group-launch" : "";
     return `
-      <section class="wm-command-palette-group${quickClass}">
+      <section class="wm-command-palette-group${quickClass}${launchClass}">
         <h3>${escapeHtml(group.label)}</h3>
         <div class="wm-command-palette-group-items">
           ${group.items.map(renderItem).join("")}
@@ -335,6 +414,12 @@ export function createAutopilotCommandPalette({
     if (key === "enter") {
       event.preventDefault();
       const item = getFilteredItems().find((entry) => entry.id === activeId);
+      void execute(item);
+      return;
+    }
+    if (mode === "session-launch" && !query && /^[0-9]$/.test(key)) {
+      event.preventDefault();
+      const item = getLaunchItems().find((entry) => entry.shortcutKey === key);
       void execute(item);
       return;
     }

@@ -12,6 +12,46 @@ export function createCommandItem(input) {
   };
 }
 
+export function getRecentLaunchProjects(projects, limit = 9) {
+  if (!Array.isArray(projects)) return [];
+  const boundedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 9;
+  return projects
+    .filter((project) => project?.id && project?.directoryPath)
+    .slice(0, boundedLimit);
+}
+
+export function createCommandPaletteLaunchItems(projects) {
+  const modalItem = createCommandItem({
+    group: "session-launch",
+    groupLabel: "Launch New Session",
+    id: "launch:new-session-modal",
+    title: "New Session",
+    subtitle: "Open the full launch modal",
+    action: "open-session-modal",
+    shortcutKey: "0",
+    searchText: "new session launch modal custom directory",
+  });
+
+  const projectItems = getRecentLaunchProjects(projects).map((project, index) => createCommandItem({
+    group: "session-launch",
+    groupLabel: "Launch New Session",
+    id: `launch-project:${project.id}`,
+    title: project.name || project.directoryPath,
+    subtitle: project.directoryPath,
+    action: "launch-project-session",
+    shortcutKey: String(index + 1),
+    targetId: project.id,
+    searchText: [
+      project.id,
+      project.name,
+      project.directoryPath,
+      project.worktreeName,
+    ].filter(Boolean).join(" "),
+  }));
+
+  return [modalItem, ...projectItems];
+}
+
 export function createCommandPaletteQuickItems() {
   return [
     createCommandItem({
