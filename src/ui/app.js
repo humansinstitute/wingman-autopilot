@@ -623,6 +623,7 @@ const nightwatchNavLink = navLinks.find((link) => link.dataset.route === "nightw
 const themeToggle = document.getElementById("theme-toggle");
 const tabsToggle = document.getElementById("tabs-toggle");
 const taskDispatchTabsToggle = document.getElementById("task-dispatch-tabs-toggle");
+const rawTerminalOutputToggle = document.getElementById("raw-terminal-output-toggle");
 const menuToggle = document.getElementById("menu-toggle");
 const menuPanel = document.querySelector(".wm-menu-panel");
 const menuTabsContainer = document.getElementById("menu-tabs");
@@ -1237,6 +1238,14 @@ const toggleLiveHeaderCollapsed = () => {
 const applyRawTerminalOutputVisible = (visible, persist = true) => {
   rawTerminalOutputVisible = visible;
   document.body.dataset.rawTerminalOutputVisible = visible ? "true" : "false";
+  if (rawTerminalOutputToggle) {
+    rawTerminalOutputToggle.setAttribute("aria-pressed", visible ? "true" : "false");
+    rawTerminalOutputToggle.title = visible ? "Hide raw terminal output" : "Show raw terminal output";
+    rawTerminalOutputToggle.setAttribute(
+      "aria-label",
+      visible ? "Hide raw terminal output" : "Show raw terminal output",
+    );
+  }
   if (persist) {
     try {
       localStorage.setItem(RAW_TERMINAL_OUTPUT_VISIBLE_STORAGE_KEY, visible ? "true" : "false");
@@ -1325,6 +1334,9 @@ const initLiveHeaderCollapsed = () => {
 
 const initRawTerminalOutputVisible = () => {
   applyRawTerminalOutputVisible(detectPreferredRawTerminalOutputVisible(), false);
+  if (rawTerminalOutputToggle) {
+    rawTerminalOutputToggle.addEventListener("click", toggleRawTerminalOutputVisible);
+  }
 };
 
 const setActiveNav = () => {

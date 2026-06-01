@@ -52,7 +52,6 @@ import {
   getRenderedLiveDrawerVisible,
 } from "../live/drawer-visibility.js";
 import { createLiveHeaderFullscreenToggle } from "../live/header-fullscreen-toggle.js";
-import { createRawTerminalOutputToggle } from "../live/raw-terminal-output-toggle.js";
 import { canResumeNativeAgentSession } from "../home/native-session-resume.js";
 import { filterTaskDispatchSessionsForTabs } from "../sessions/session-classification.js";
 
@@ -67,7 +66,6 @@ export function initLiveView(deps) {
     getLiveHeaderCollapsed,
     toggleLiveHeaderCollapsed,
     getRawTerminalOutputVisible,
-    toggleRawTerminalOutputVisible,
     appRoot,
     render,
     // Session helpers
@@ -242,10 +240,6 @@ export function initLiveView(deps) {
     panel.append(renderTabs({ sessions: getVisibleTabSessions(getActiveSessions()) }));
     const actions = document.createElement("div");
     actions.className = "wm-live-tabs-actions";
-    actions.append(createRawTerminalOutputToggle({
-      visible: shouldShowRawTerminalOutput(),
-      onToggle: toggleRawTerminalOutputVisible,
-    }));
     actions.append(createLiveHeaderFullscreenToggle({
       collapsed: shouldCollapseLiveHeader(),
       onToggle: toggleLiveHeaderCollapsed,

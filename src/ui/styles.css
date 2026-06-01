@@ -572,7 +572,8 @@ body[data-theme="dark"] .wm-theme-toggle .moon {
 }
 
 .wm-tabs-toggle,
-.wm-task-dispatch-tabs-toggle {
+.wm-task-dispatch-tabs-toggle,
+.wm-raw-output-toggle {
   align-self: flex-start;
   display: inline-flex;
   align-items: center;
@@ -587,14 +588,16 @@ body[data-theme="dark"] .wm-theme-toggle .moon {
   transition: background 200ms ease, color 200ms ease, transform 200ms ease;
 }
 .wm-tabs-toggle:hover,
-.wm-task-dispatch-tabs-toggle:hover {
+.wm-task-dispatch-tabs-toggle:hover,
+.wm-raw-output-toggle:hover {
   transform: translateY(-1px);
   background: rgba(16, 185, 129, 0.22);
 }
 .wm-tabs-toggle .tabs-show,
 .wm-tabs-toggle .tabs-hide,
 .wm-task-dispatch-tabs-toggle .dispatch-show,
-.wm-task-dispatch-tabs-toggle .dispatch-hide {
+.wm-task-dispatch-tabs-toggle .dispatch-hide,
+.wm-raw-output-toggle .raw-output-icon {
   font-size: 0.95rem;
   opacity: 0.45;
   transition: opacity 200ms ease;
@@ -605,6 +608,9 @@ body[data-tabs-visible="false"] .wm-tabs-toggle .tabs-hide {
 }
 body[data-task-dispatch-tabs-visible="true"] .wm-task-dispatch-tabs-toggle .dispatch-show,
 body[data-task-dispatch-tabs-visible="false"] .wm-task-dispatch-tabs-toggle .dispatch-hide {
+  opacity: 0.95;
+}
+body[data-raw-terminal-output-visible="true"] .wm-raw-output-toggle .raw-output-icon {
   opacity: 0.95;
 }
 
@@ -4414,8 +4420,7 @@ body[data-theme="light"] .wm-agent-dispatch-capability-card {
   margin-left: 0.35rem;
 }
 
-.wm-live-header-toggle,
-.wm-live-raw-output-toggle {
+.wm-live-header-toggle {
   appearance: none;
   align-self: stretch;
   flex: 0 0 auto;
@@ -4435,30 +4440,20 @@ body[data-theme="light"] .wm-agent-dispatch-capability-card {
 }
 
 .wm-live-header-toggle:hover,
-.wm-live-header-toggle:focus-visible,
-.wm-live-raw-output-toggle:hover,
-.wm-live-raw-output-toggle:focus-visible {
+.wm-live-header-toggle:focus-visible {
   background: rgba(16, 185, 129, 0.14);
   border-color: rgba(16, 185, 129, 0.24);
   color: var(--text-primary);
 }
 
-.wm-live-header-toggle:focus-visible,
-.wm-live-raw-output-toggle:focus-visible {
+.wm-live-header-toggle:focus-visible {
   outline: 2px solid var(--accent-primary);
   outline-offset: -2px;
 }
 
-.wm-live-header-toggle__icon,
-.wm-live-raw-output-toggle__icon {
+.wm-live-header-toggle__icon {
   width: 1.15rem;
   height: 1.15rem;
-}
-
-.wm-live-raw-output-toggle[aria-pressed="true"] {
-  background: rgba(16, 185, 129, 0.16);
-  border-color: rgba(16, 185, 129, 0.28);
-  color: var(--text-primary);
 }
 
 .wm-tab {
