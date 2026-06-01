@@ -128,13 +128,14 @@ export function createDispatchFlightDeckPublisher(
 
 export function createDispatchChatContextHydrator(
   context: DispatchPipelineFlightDeckPublisherContext,
+  operation: 'chat.hydrate-context' | 'chat.reload-thread' = 'chat.hydrate-context',
 ): DeclarativeFunction {
   return async (input) => {
     if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
       return {
         hydrated: false,
         status: 'failed',
-        operation: 'chat.hydrate-context',
+        operation,
         reason: context.runtime.error ?? 'Flight Deck runtime was not prepared.',
       };
     }
@@ -142,7 +143,7 @@ export function createDispatchChatContextHydrator(
       return {
         hydrated: false,
         status: 'skipped',
-        operation: 'chat.hydrate-context',
+        operation,
         reason: `Unsupported dispatch trigger kind: ${context.eventInput.triggerKind}`,
       };
     }
@@ -156,6 +157,14 @@ export function createDispatchChatContextHydrator(
     const hydratedThread = await hydrateChatThreadWithFallback(context, channelId, threadId);
     const thread = hydratedThread.thread;
     const selfAuthored = detectSelfAuthoredChatDispatch(context, input, thread);
+    const acknowledgement = !selfAuthored.selfAuthored && operation === 'chat.hydrate-context'
+      ? await acknowledgeChatDispatchMessage(context, channelId)
+      : {
+          acknowledged: false,
+          status: 'skipped',
+          operation: 'chat.acknowledge-message',
+          reason: selfAuthored.selfAuthored ? 'self_authored_dispatch' : 'not_initial_hydration',
+        };
     let scopes: unknown = [];
     let referencedRecords: Array<Record<string, unknown>> = [];
     if (!selfAuthored.selfAuthored) {
@@ -172,7 +181,7 @@ export function createDispatchChatContextHydrator(
     return {
       hydrated: hydratedThread.hydrated,
       status: selfAuthored.selfAuthored ? 'skipped' : hydratedThread.status,
-      operation: 'chat.hydrate-context',
+      operation,
       shouldProceed: !selfAuthored.selfAuthored,
       selfAuthored: selfAuthored.selfAuthored,
       suppressionReason: selfAuthored.reason,
@@ -180,12 +189,198 @@ export function createDispatchChatContextHydrator(
       channelId,
       threadId,
       thread,
+      acknowledgement,
       hydrationWarnings: hydratedThread.warnings,
       fallbackContext: hydratedThread.fallbackContext,
       scopes,
       referencedRecords,
       availablePipelines: Array.isArray(input.availablePipelines) ? input.availablePipelines : [],
     };
+  };
+}
+
+async function acknowledgeChatDispatchMessage(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  channelId: string,
+): Promise<JsonObject> {
+  try {
+    const result = await runYokeJson(context, [
+      'chat',
+      'react',
+      '--channel',
+      channelId,
+      '--message',
+      context.eventInput.recordId,
+      '--emoji',
+      'shaka',
+      '--skip-refresh',
+      '--format',
+      'json',
+    ]);
+    return {
+      acknowledged: true,
+      status: 'ok',
+      operation: 'chat.acknowledge-message',
+      emoji: 'shaka',
+      targetMessageId: context.eventInput.recordId,
+      result,
+    };
+  } catch (error) {
+    return {
+      acknowledged: false,
+      status: 'failed',
+      operation: 'chat.acknowledge-message',
+      emoji: 'shaka',
+      targetMessageId: context.eventInput.recordId,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export function createDispatchChatThreadReloader(
+  context: DispatchPipelineFlightDeckPublisherContext,
+): DeclarativeFunction {
+  return createDispatchChatContextHydrator(context, 'chat.reload-thread');
+}
+
+export function createDispatchDiscussionDocumentEnsurer(
+  context: DispatchPipelineFlightDeckPublisherContext,
+): DeclarativeFunction {
+  return async (input) => {
+    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+      return {
+        ensured: false,
+        status: 'failed',
+        operation: 'docs.ensure-discussion-document',
+        reason: context.runtime.error ?? 'Flight Deck runtime was not prepared.',
+      };
+    }
+    const existing = findDiscussionDocumentReference(input);
+    if (existing.documentId) {
+      return {
+        ensured: true,
+        status: 'reused',
+        operation: 'docs.ensure-discussion-document',
+        documentId: existing.documentId,
+        documentTitle: existing.documentTitle ?? 'Discussion document',
+        documentUrl: existing.documentUrl,
+        documentMention: mention('document', existing.documentId, existing.documentTitle ?? 'Discussion document'),
+      };
+    }
+
+    const workPlan = objectValue(input.workPlan ?? objectValue(input.decision).discussionWorkPlan);
+    const title = buildDiscussionDocumentTitle(input, workPlan);
+    const body = buildDiscussionDocumentScaffold(input, workPlan, title);
+    const scopeId = getText(workPlan.scopeId ?? objectValue(input.decision).scopeId);
+    const args = [
+      'docs',
+      'create',
+      '--title',
+      title,
+      '--body',
+      body,
+    ];
+    if (scopeId) {
+      args.push('--scope', scopeId);
+    }
+    args.push('--json');
+
+    try {
+      const result = await runYokeJson(context, args);
+      const documentId = getCreatedRecordId(result);
+      if (!documentId) {
+        return {
+          ensured: false,
+          status: 'failed',
+          operation: 'docs.ensure-discussion-document',
+          reason: 'Document creation succeeded but no document id was returned.',
+          createResult: result,
+        };
+      }
+      return {
+        ensured: true,
+        status: 'created',
+        operation: 'docs.ensure-discussion-document',
+        documentId,
+        documentTitle: title,
+        documentUrl: null,
+        documentMention: mention('document', documentId, title),
+        createResult: result,
+      };
+    } catch (error) {
+      return {
+        ensured: false,
+        status: 'failed',
+        operation: 'docs.ensure-discussion-document',
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  };
+}
+
+export function createDispatchReviewTaskCompleter(
+  context: DispatchPipelineFlightDeckPublisherContext,
+): DeclarativeFunction {
+  return async (input) => {
+    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+      return {
+        completed: false,
+        status: 'failed',
+        operation: 'tasks.complete-review-from-chat',
+        reason: context.runtime.error ?? 'Flight Deck runtime was not prepared.',
+      };
+    }
+    const reviewApproval = objectValue(input.reviewApproval);
+    const taskId = getText(reviewApproval.taskId);
+    if (!taskId) {
+      return {
+        completed: false,
+        status: 'skipped',
+        operation: 'tasks.complete-review-from-chat',
+        reason: 'missing_task_id',
+      };
+    }
+    try {
+      const updateResult = await runYokeJson(context, [
+        'tasks',
+        'update',
+        taskId,
+        '--state',
+        'done',
+        '--json',
+      ]);
+      const taskTitle = getText(reviewApproval.taskTitle) ?? 'review task';
+      const evidence = getText(reviewApproval.evidence);
+      const commentBody = [
+        `Marked "${taskTitle}" done from chat approval.`,
+        evidence ? `Approval text: ${evidence}` : '',
+      ].filter(Boolean).join('\n');
+      const commentResult = await runYokeJson(context, [
+        'tasks',
+        'comment',
+        taskId,
+        '--body',
+        commentBody,
+        '--json',
+      ]);
+      return {
+        completed: true,
+        status: 'done',
+        operation: 'tasks.complete-review-from-chat',
+        taskId,
+        taskTitle,
+        updateResult,
+        commentResult,
+      };
+    } catch (error) {
+      return {
+        completed: false,
+        status: 'failed',
+        operation: 'tasks.complete-review-from-chat',
+        taskId,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
   };
 }
 
@@ -917,9 +1112,10 @@ async function publishChatReply(
   const body = getText(response.responseDraft)
     ?? getText(response.replyDraft)
     ?? getText(response.body);
+  const normalizedBody = body ? normalisePublishedMarkdownBody(body) : null;
   const channelId = context.eventInput.channelId ?? null;
   const threadId = context.eventInput.threadId ?? null;
-  if (!body || !channelId || !threadId) {
+  if (!normalizedBody || !channelId || !threadId) {
     throw new Error('Chat publish requires responseDraft, channelId, and threadId.');
   }
 
@@ -927,7 +1123,7 @@ async function publishChatReply(
     'chat',
     'reply-current',
     '--body',
-    body,
+    normalizedBody,
     '--skip-refresh',
     '--channel',
     channelId,
@@ -943,7 +1139,10 @@ async function publishChatReply(
     channelId,
     threadId,
     result,
-    agentResponse: response,
+    agentResponse: {
+      ...response,
+      responseDraft: normalizedBody,
+    },
   };
 }
 
@@ -1078,6 +1277,7 @@ function stepNeedsFlightDeckPublisher(step: DeclarativeStep): boolean {
     && (
       step.function === 'dispatch.publishFlightDeckResponse'
       || step.function === 'dispatch.hydrateChatContext'
+      || step.function === 'dispatch.reloadChatThread'
       || step.function === 'dispatch.createChatTask'
       || step.function === 'dispatch.blockTaskIfPipelineLaunchFailed'
       || step.function === 'dispatch.publishNeedsInput'
@@ -1085,6 +1285,8 @@ function stepNeedsFlightDeckPublisher(step: DeclarativeStep): boolean {
       || step.function === 'dispatch.markTaskReadyForReview'
       || step.function === 'dispatch.ensureImplementationReviewTask'
       || step.function === 'dispatch.commentImplementationReviewProgress'
+      || step.function === 'dispatch.ensureDiscussionDocument'
+      || step.function === 'dispatch.completeReviewTaskFromChat'
     )
   ) {
     return true;
@@ -1363,6 +1565,117 @@ function buildChatCreatedTaskDescription(
     ...formatList('Acceptance criteria', getStringArray(workPlan.acceptanceCriteria)),
     ...formatList('Execution plan', getStringArray(workPlan.executionPlan)),
     ...formatList('Manager checklist', getStringArray(workPlan.managerChecklist)),
+  ].filter((line) => line !== '');
+  return lines.join('\n');
+}
+
+function normalisePublishedMarkdownBody(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (typeof parsed === 'string') {
+        return normalisePublishedMarkdownBody(parsed);
+      }
+    } catch {
+      // Fall through to escape normalization below.
+    }
+  }
+  if (!value.includes('\n') && /\\[nr]/.test(value)) {
+    return value
+      .replace(/\\r\\n/g, '\n')
+      .replace(/\\n/g, '\n')
+      .replace(/\\r/g, '\n');
+  }
+  return value;
+}
+
+function findDiscussionDocumentReference(input: JsonObject): {
+  documentId: string | null;
+  documentTitle: string | null;
+  documentUrl: string | null;
+} {
+  const documentContext = objectValue(input.documentContext);
+  const directId = getText(documentContext.documentId);
+  if (directId) {
+    return {
+      documentId: directId,
+      documentTitle: getText(documentContext.documentTitle),
+      documentUrl: getText(documentContext.documentUrl),
+    };
+  }
+
+  const contexts = [
+    objectValue(input.chatContext),
+    objectValue(input.originalChatContext),
+    objectValue(input.freshChatContext),
+  ];
+  for (const context of contexts) {
+    const referencedRecords = Array.isArray(context.referencedRecords) ? context.referencedRecords : [];
+    for (const entry of referencedRecords) {
+      const record = objectValue(entry);
+      const nested = objectValue(record.record);
+      const candidate = Object.keys(nested).length > 0 ? nested : record;
+      const type = getText(record.type ?? candidate.type ?? candidate.recordFamily ?? candidate.record_family)?.toLowerCase();
+      const id = getText(record.id ?? record.recordId ?? record.record_id ?? candidate.recordId ?? candidate.record_id);
+      if (id && (type === 'doc' || type === 'document' || type === 'documents')) {
+        return {
+          documentId: id,
+          documentTitle: getText(candidate.title ?? objectValue(candidate.payload).title),
+          documentUrl: getText(candidate.url ?? objectValue(candidate.payload).url),
+        };
+      }
+    }
+  }
+
+  const mention = extractMentionRefs([
+    input.chatDispatchInput,
+    input.chatContext,
+    input.originalChatContext,
+    input.freshChatContext,
+    input.workPlan,
+  ]).find((ref) => ref.type.toLowerCase() === 'doc' || ref.type.toLowerCase() === 'document');
+  return {
+    documentId: mention?.id ?? null,
+    documentTitle: null,
+    documentUrl: null,
+  };
+}
+
+function buildDiscussionDocumentTitle(input: JsonObject, workPlan: Record<string, unknown>): string {
+  return compactSingleLine(
+    getText(workPlan.taskSummary)
+      ?? getText(workPlan.title)
+      ?? getText(objectValue(input.documentContext).discussionGoal)
+      ?? getText(workPlan.originalPrompt),
+    80,
+  ) ?? 'Flight Deck discussion';
+}
+
+function buildDiscussionDocumentScaffold(input: JsonObject, workPlan: Record<string, unknown>, title: string): string {
+  const originalPrompt = getText(workPlan.originalPrompt)
+    ?? getText(objectValue(input.documentContext).discussionGoal)
+    ?? 'Continue the document-centred discussion from the linked Flight Deck chat thread.';
+  const origin = objectValue(workPlan.origin);
+  const originThread = Array.isArray(workPlan.originThread)
+    ? workPlan.originThread
+    : Array.isArray(objectValue(input.chatDispatchInput).latestThread)
+      ? objectValue(input.chatDispatchInput).latestThread as unknown[]
+      : [];
+  const lines = [
+    `# ${title}`,
+    '',
+    '## Discussion Goal',
+    originalPrompt,
+    '',
+    '## Working Notes',
+    '- Capture decisions, constraints, open questions, and design changes here as the discussion evolves.',
+    '',
+    '## Source Thread',
+    getText(origin.channelId) ? `- Channel: ${mention('channel', getText(origin.channelId)!, 'source chat')}` : '',
+    getText(origin.threadId) ? `- Thread: ${mention('message', getText(origin.threadId)!, 'discussion thread')}` : '',
+    getText(origin.messageId) ? `- Request: ${mention('message', getText(origin.messageId)!, 'latest request')}` : '',
+    ...formatOriginThreadContext(originThread),
   ].filter((line) => line !== '');
   return lines.join('\n');
 }

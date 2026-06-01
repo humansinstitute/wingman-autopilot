@@ -75,9 +75,14 @@ describe("pipeline definition version paths", () => {
       "prepare-intent-input",
       "analyse-intent",
       "normalise-decision",
+      "detect-review-approval",
+      "complete-review-task-from-chat",
+      "route-discussion-chat",
+      "start-discussion-pipeline",
       "create-in-progress-task",
       "start-selected-pipeline",
       "block-task-on-launch-failure",
+      "reload-chat-thread-before-reply",
       "prepare-chat-response",
       "publish-chat-response",
     ]);
@@ -157,6 +162,12 @@ describe("pipeline definition version paths", () => {
         workPlan: "$.workPlan",
       },
     });
+    expect(generic?.spec.steps.find((step) => step.name === "do-work")?.prompt).toContain(
+      "do not return callback status needs_input; return callback status ok with completed false",
+    );
+    expect(generic?.spec.steps.find((step) => step.name === "manager-review")?.prompt).toContain(
+      "handoffable partial outcome",
+    );
     expect(research?.spec.steps.find((step) => step.name === "report-writer")?.input).toEqual({
       pick: {
         commandPrefix: "$.runtime.commandPrefix",

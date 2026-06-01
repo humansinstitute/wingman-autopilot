@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, mock, test } from 'bun:test';
 
 const yokeCommandCalls: string[][] = [];
 let failChatContextCount = 0;
+let failReactionCount = 0;
 let failTaskCreateCount = 0;
 
 const runAgentWorkspaceYokeCommandMock = mock(async (input: { args: string[] }) => {
@@ -27,6 +28,18 @@ const runAgentWorkspaceYokeCommandMock = mock(async (input: { args: string[] }) 
       ],
     });
   }
+  if (input.args[0] === 'chat' && input.args[1] === 'react') {
+    if (failReactionCount > 0) {
+      failReactionCount -= 1;
+      throw new Error('reaction sync failed');
+    }
+    return JSON.stringify({
+      reacted: true,
+      status: 'ok',
+      target_record_id: input.args[input.args.indexOf('--message') + 1],
+      emoji: input.args[input.args.indexOf('--emoji') + 1],
+    });
+  }
   if (input.args[0] === 'tasks' && input.args[1] === 'create') {
     if (failTaskCreateCount > 0) {
       failTaskCreateCount -= 1;
@@ -34,6 +47,15 @@ const runAgentWorkspaceYokeCommandMock = mock(async (input: { args: string[] }) 
     }
     return JSON.stringify({
       record_id: 'task-created-1',
+      synced: 1,
+      created: 1,
+      rejected: [],
+      warnings: [],
+    });
+  }
+  if (input.args[0] === 'docs' && input.args[1] === 'create') {
+    return JSON.stringify({
+      record_id: 'doc-created-1',
       synced: 1,
       created: 1,
       rejected: [],
@@ -70,20 +92,76 @@ mock.module('../yoke-runtime', () => ({
 }));
 
 const {
+  createDispatchFlightDeckPublisher,
   createDispatchChatContextHydrator,
+  createDispatchChatThreadReloader,
+  createDispatchDiscussionDocumentEnsurer,
   createDispatchChatTaskCreator,
   createDispatchImplementationReviewProgressCommenter,
   createDispatchImplementationReviewTaskEnsurer,
   createDispatchNeedsInputPublisher,
+  createDispatchReviewTaskCompleter,
   createDispatchTaskStateUpdater,
 } = await import('./flightdeck-publisher');
 const { DispatchPipelineRuntime } = await import('./runtime');
 const { PipelineStore } = await import('../../pipelines/pipeline-store');
 
+function buildChatPublisherContext(eventInputPatch: Record<string, any> = {}) {
+  const payload = {
+    channel_id: 'channel-1',
+    thread_id: 'thread-1',
+    sender_npub: 'npub1requester',
+    ...(eventInputPatch.payload ?? {}),
+  };
+  return {
+    eventInput: {
+      subscription: {
+        subscriptionId: 'sub-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        botNpub: 'npub1bot',
+        wsKeyNpub: 'npub1wskey',
+      },
+      triggerKind: 'chat',
+      capability: 'chat_intercept',
+      recordId: 'chat-message-1',
+      record: {},
+      payload,
+      recordFamily: 'chat',
+      recordState: null,
+      recordVersion: 1,
+      updaterNpub: 'npub1requester',
+      bindingType: 'thread',
+      bindingId: 'thread-1',
+      channelId: 'channel-1',
+      threadId: 'thread-1',
+      ...eventInputPatch,
+      payload,
+    },
+    agent: {
+      agentId: 'agent-1',
+      workingDirectory: '/tmp/agent-work',
+    },
+    botIdentity: {
+      botNpub: 'npub1bot',
+      botPubkeyHex: 'ab'.repeat(32),
+      botSecret: new Uint8Array(32),
+    },
+    runtime: {
+      yokeStateDir: '/tmp/yoke-state',
+      commandPrefix: 'node yoke',
+      commands: {},
+      error: null,
+    },
+  } as never;
+}
+
 describe('dispatch pipeline Flight Deck publisher', () => {
   beforeEach(() => {
     yokeCommandCalls.length = 0;
     failChatContextCount = 0;
+    failReactionCount = 0;
     failTaskCreateCount = 0;
     runAgentWorkspaceYokeCommandMock.mockClear();
   });
@@ -145,6 +223,13 @@ describe('dispatch pipeline Flight Deck publisher', () => {
       shouldProceed: true,
       fallbackContext: true,
     });
+    expect(result.acknowledgement).toMatchObject({
+      acknowledged: true,
+      status: 'ok',
+      operation: 'chat.acknowledge-message',
+      emoji: 'shaka',
+      targetMessageId: 'chat-message-1',
+    });
     expect((result.thread as any).recent_messages[0]).toMatchObject({
       message_id: 'chat-message-1',
       body: 'Fallback body from dispatch payload.',
@@ -152,6 +237,275 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     expect(result.hydrationWarnings).toHaveLength(2);
     expect(yokeCommandCalls.filter((args) => args[0] === 'chat' && args[1] === 'context')).toHaveLength(2);
     expect(yokeCommandCalls.some((args) => args[0] === 'sync')).toBe(true);
+  });
+
+  test('chat context hydration acknowledges eligible inbound messages before scope loading', async () => {
+    const hydrate = createDispatchChatContextHydrator(buildChatPublisherContext());
+
+    const result = await hydrate({ availablePipelines: [] });
+
+    expect(result).toMatchObject({
+      hydrated: true,
+      shouldProceed: true,
+      acknowledgement: {
+        acknowledged: true,
+        status: 'ok',
+        operation: 'chat.acknowledge-message',
+        emoji: 'shaka',
+        targetMessageId: 'chat-message-1',
+      },
+    });
+    const reactionCall = yokeCommandCalls.find((args) => args[0] === 'chat' && args[1] === 'react');
+    expect(reactionCall).toContain('--channel');
+    expect(reactionCall).toContain('channel-1');
+    expect(reactionCall).toContain('--message');
+    expect(reactionCall).toContain('chat-message-1');
+    expect(reactionCall).toContain('--emoji');
+    expect(reactionCall).toContain('shaka');
+    expect(reactionCall).toContain('--skip-refresh');
+    const reactionIndex = yokeCommandCalls.findIndex((args) => args[0] === 'chat' && args[1] === 'react');
+    const scopesIndex = yokeCommandCalls.findIndex((args) => args[0] === 'scopes' && args[1] === 'list');
+    expect(reactionIndex).toBeGreaterThan(-1);
+    expect(scopesIndex).toBeGreaterThan(reactionIndex);
+  });
+
+  test('chat context hydration does not acknowledge self-authored messages', async () => {
+    const hydrate = createDispatchChatContextHydrator(buildChatPublisherContext({
+      payload: {
+        sender_npub: 'npub1bot',
+      },
+      updaterNpub: 'npub1bot',
+    }));
+
+    const result = await hydrate({ availablePipelines: [] });
+
+    expect(result).toMatchObject({
+      status: 'skipped',
+      shouldProceed: false,
+      selfAuthored: true,
+      acknowledgement: {
+        acknowledged: false,
+        status: 'skipped',
+        operation: 'chat.acknowledge-message',
+        reason: 'self_authored_dispatch',
+      },
+    });
+    expect(yokeCommandCalls.some((args) => args[0] === 'chat' && args[1] === 'react')).toBe(false);
+  });
+
+  test('chat context hydration keeps proceeding when acknowledgement fails', async () => {
+    failReactionCount = 1;
+    const hydrate = createDispatchChatContextHydrator(buildChatPublisherContext());
+
+    const result = await hydrate({ availablePipelines: [] });
+
+    expect(result).toMatchObject({
+      hydrated: true,
+      status: 'ok',
+      shouldProceed: true,
+      acknowledgement: {
+        acknowledged: false,
+        status: 'failed',
+        operation: 'chat.acknowledge-message',
+        reason: 'reaction sync failed',
+      },
+    });
+    expect(yokeCommandCalls.some((args) => args[0] === 'scopes' && args[1] === 'list')).toBe(true);
+  });
+
+  test('chat thread reload uses the reload operation label', async () => {
+    const reload = createDispatchChatThreadReloader({
+      eventInput: {
+        subscription: {
+          subscriptionId: 'sub-1',
+          workspaceOwnerNpub: 'npub1workspace',
+          sourceAppNpub: 'npub1source',
+          backendBaseUrl: 'https://tower.example.com',
+          botNpub: 'npub1bot',
+          wsKeyNpub: 'npub1wskey',
+        },
+        triggerKind: 'chat',
+        capability: 'chat_intercept',
+        recordId: 'chat-message-1',
+        record: {},
+        payload: {
+          channel_id: 'channel-1',
+          thread_id: 'thread-1',
+          sender_npub: 'npub1requester',
+        },
+        recordFamily: 'chat',
+        recordState: null,
+        recordVersion: 1,
+        updaterNpub: 'npub1requester',
+        bindingType: 'thread',
+        bindingId: 'thread-1',
+        channelId: 'channel-1',
+        threadId: 'thread-1',
+      },
+      agent: {
+        agentId: 'agent-1',
+        workingDirectory: '/tmp/agent-work',
+      },
+      botIdentity: {
+        botNpub: 'npub1bot',
+        botPubkeyHex: 'ab'.repeat(32),
+        botSecret: new Uint8Array(32),
+      },
+      runtime: {
+        yokeStateDir: '/tmp/yoke-state',
+        commandPrefix: 'node yoke',
+        commands: {},
+        error: null,
+      },
+    } as never);
+
+    const result = await reload({});
+
+    expect(result).toMatchObject({
+      hydrated: true,
+      status: 'ok',
+      operation: 'chat.reload-thread',
+    });
+  });
+
+  test('review task completer moves the linked task to done and comments with approval evidence', async () => {
+    const complete = createDispatchReviewTaskCompleter({
+      eventInput: {
+        subscription: {
+          subscriptionId: 'sub-1',
+          workspaceOwnerNpub: 'npub1workspace',
+          sourceAppNpub: 'npub1source',
+          backendBaseUrl: 'https://tower.example.com',
+          botNpub: 'npub1bot',
+          wsKeyNpub: 'npub1wskey',
+        },
+        triggerKind: 'chat',
+        capability: 'chat_intercept',
+        recordId: 'chat-message-approval',
+        record: {},
+        payload: {},
+        recordFamily: 'chat',
+        recordState: null,
+        recordVersion: 1,
+        updaterNpub: 'npub1requester',
+        bindingType: 'thread',
+        bindingId: 'thread-1',
+        channelId: 'channel-1',
+        threadId: 'thread-1',
+      },
+      agent: {
+        agentId: 'agent-1',
+        workingDirectory: '/tmp/agent-work',
+      },
+      botIdentity: {
+        botNpub: 'npub1bot',
+        botPubkeyHex: 'ab'.repeat(32),
+        botSecret: new Uint8Array(32),
+      },
+      runtime: {
+        yokeStateDir: '/tmp/yoke-state',
+        commandPrefix: 'node yoke',
+        commands: {},
+        error: null,
+      },
+    } as never);
+
+    const result = await complete({
+      reviewApproval: {
+        taskId: 'task-review-1',
+        taskTitle: 'Review chat dispatch',
+        evidence: 'Looks good.',
+      },
+    });
+
+    expect(result).toMatchObject({
+      completed: true,
+      status: 'done',
+      operation: 'tasks.complete-review-from-chat',
+      taskId: 'task-review-1',
+    });
+    expect(yokeCommandCalls).toContainEqual(['tasks', 'update', 'task-review-1', '--state', 'done', '--json']);
+    expect(yokeCommandCalls.some((args) => args[0] === 'tasks' && args[1] === 'comment' && args.some((arg) => arg.includes('Approval text: Looks good.')))).toBe(true);
+  });
+
+  test('discussion document ensurer reuses a referenced document', async () => {
+    const ensureDocument = createDispatchDiscussionDocumentEnsurer(buildChatPublisherContext());
+
+    const result = await ensureDocument({
+      documentContext: {
+        documentId: 'doc-existing-1',
+        documentTitle: 'Discussion pipeline design',
+      },
+    });
+
+    expect(result).toMatchObject({
+      ensured: true,
+      status: 'reused',
+      operation: 'docs.ensure-discussion-document',
+      documentId: 'doc-existing-1',
+      documentMention: '@[Discussion pipeline design](mention:document:doc-existing-1)',
+    });
+    expect(yokeCommandCalls.some((args) => args[0] === 'docs' && args[1] === 'create')).toBe(false);
+  });
+
+  test('discussion document ensurer creates a scaffold document when none is referenced', async () => {
+    const ensureDocument = createDispatchDiscussionDocumentEnsurer(buildChatPublisherContext());
+
+    const result = await ensureDocument({
+      workPlan: {
+        taskSummary: 'Discuss discussion pipeline',
+        originalPrompt: 'Can we discuss the discussion pipeline?',
+        origin: {
+          channelId: 'channel-1',
+          threadId: 'thread-1',
+          messageId: 'chat-message-1',
+        },
+        originThread: [
+          {
+            messageId: 'chat-message-1',
+            senderNpub: 'npub1requester',
+            body: 'Can we discuss the discussion pipeline?',
+          },
+        ],
+      },
+    });
+
+    expect(result).toMatchObject({
+      ensured: true,
+      status: 'created',
+      operation: 'docs.ensure-discussion-document',
+      documentId: 'doc-created-1',
+      documentMention: '@[Discuss discussion pipeline](mention:document:doc-created-1)',
+    });
+    const createCall = yokeCommandCalls.find((args) => args[0] === 'docs' && args[1] === 'create');
+    expect(createCall?.[createCall.indexOf('--title') + 1]).toBe('Discuss discussion pipeline');
+    const body = createCall?.[createCall.indexOf('--body') + 1] ?? '';
+    expect(body).toContain('# Discuss discussion pipeline');
+    expect(body).toContain('Can we discuss the discussion pipeline?');
+    expect(body).toContain('@[discussion thread](mention:message:thread-1)');
+  });
+
+  test('chat reply publishing preserves Markdown newlines and storage image references', async () => {
+    const publish = createDispatchFlightDeckPublisher(buildChatPublisherContext());
+    const escapedMarkdown = 'Paragraph one.\\n\\n- Bullet with `code`\\n- Image ![thread-image.png](storage://7f7a304d-690f-43b4-a12c-ea04cba59354)';
+
+    const result = await publish({
+      agentResponse: {
+        shouldRespond: true,
+        responseDraft: escapedMarkdown,
+      },
+    });
+
+    expect(result).toMatchObject({
+      published: true,
+      status: 'ok',
+      operation: 'chat.reply-current',
+    });
+    const chatCall = yokeCommandCalls.find((args) => args[0] === 'chat' && args[1] === 'reply-current');
+    const body = chatCall?.[chatCall.indexOf('--body') + 1] ?? '';
+    expect(body).toBe('Paragraph one.\n\n- Bullet with `code`\n- Image ![thread-image.png](storage://7f7a304d-690f-43b4-a12c-ea04cba59354)');
+    expect(body).not.toContain('\\n');
+    expect(body).toContain('storage://7f7a304d-690f-43b4-a12c-ea04cba59354');
   });
 
   test('chat task creation failure returns a structured failure instead of throwing', async () => {

@@ -68,7 +68,26 @@ function isDispatchPipelineIdentifier(value: string | null): boolean {
     || normalized.includes("/demo-agent-dispatch-");
 }
 
+function isDiscussionPipelineIdentifier(value: string | null): boolean {
+  if (!value) return false;
+  const normalized = value.toLowerCase();
+  return normalized === "discussion-chat-response"
+    || normalized.startsWith("discussion-chat-response.v")
+    || normalized.includes("/discussion-chat-response")
+    || isDocumentDiscussionPipelineIdentifier(value);
+}
+
+function isDocumentDiscussionPipelineIdentifier(value: string | null): boolean {
+  if (!value) return false;
+  const normalized = value.toLowerCase();
+  return normalized === "document-discussion"
+    || normalized.startsWith("document-discussion.v")
+    || normalized.includes("/document-discussion");
+}
+
 const coreChatChildPipelineSlugs = new Set([
+  "document-discussion",
+  "discussion-chat-response",
   "do-and-review",
   "software-implementation-review-loop",
   "research-and-report",
@@ -171,13 +190,42 @@ function extractScopeRecords(value: unknown): unknown[] {
 function compactThreadMessage(value: unknown): JsonObject {
   const message = objectValue(value);
   return {
-    messageId: getText(message.message_id ?? message.record_id),
-    parentMessageId: getText(message.parent_message_id),
+    messageId: getText(message.message_id ?? message.record_id ?? message.messageId),
+    parentMessageId: getText(message.parent_message_id ?? message.parentMessageId),
     senderNpub: getText(message.sender_npub ?? message.senderNpub),
     body: compactText(message.body ?? message.messageText, 3000) ?? "",
     attachments: Array.isArray(message.attachments) ? message.attachments : [],
     updatedAt: getText(message.updated_at ?? message.updatedAt),
   };
+}
+
+function compactTriggerChatMessage(record: Record<string, unknown>, chat: Record<string, unknown>): JsonObject | null {
+  const payload = objectValue(record.payload);
+  const messageId = getText(record.recordId ?? record.record_id ?? payload.record_id ?? chat.messageId);
+  const body = compactText(payload.body ?? chat.messageText ?? chat.body, 3000);
+  if (!messageId && !body) return null;
+  return {
+    messageId,
+    parentMessageId: getText(payload.parent_message_id ?? chat.parentMessageId),
+    senderNpub: getText(chat.senderNpub ?? payload.sender_npub ?? record.updaterNpub),
+    body: body ?? "",
+    attachments: Array.isArray(payload.attachments)
+      ? payload.attachments
+      : Array.isArray(chat.attachments)
+        ? chat.attachments
+        : [],
+    updatedAt: getText(payload.updated_at ?? payload.updatedAt ?? record.updatedAt),
+  };
+}
+
+function latestThreadWithTrigger(chatContext: Record<string, unknown>, record: Record<string, unknown>, chat: Record<string, unknown>): JsonObject[] {
+  const latestThread = getThreadMessages(chatContext).slice(-8).map(compactThreadMessage);
+  const trigger = compactTriggerChatMessage(record, chat);
+  const triggerId = getText(trigger?.messageId);
+  if (!trigger || (triggerId && latestThread.some((message) => getText(message.messageId) === triggerId))) {
+    return latestThread;
+  }
+  return [...latestThread.slice(-7), trigger];
 }
 
 function compactReferencedRecord(value: unknown): JsonObject {
@@ -187,12 +235,123 @@ function compactReferencedRecord(value: unknown): JsonObject {
   return {
     recordId: getText(record.record_id ?? record.recordId ?? payload.record_id),
     family: getText(record.record_family ?? record.recordFamily ?? record.family),
-    state: getText(record.record_state ?? record.recordState ?? payload.record_state),
+    state: getText(record.state ?? record.record_state ?? record.recordState ?? payload.state ?? payload.record_state),
     title: compactText(record.title ?? payload.title ?? data.title, 240),
     summary: compactText(record.summary ?? payload.summary ?? data.summary ?? payload.description ?? data.description ?? payload.body, 900),
     url: getText(record.url ?? payload.url ?? data.url),
     updatedAt: getText(record.updated_at ?? record.updatedAt ?? payload.updated_at),
   };
+}
+
+function getThreadMessages(chatContext: Record<string, unknown>): unknown[] {
+  const thread = objectValue(chatContext.thread);
+  return Array.isArray(thread.recent_messages)
+    ? thread.recent_messages
+    : Array.isArray(thread.recentMessages)
+      ? thread.recentMessages
+      : Array.isArray(thread.messages)
+        ? thread.messages
+        : [];
+}
+
+function isDiscussionIntent(rawIntent: string | null, text: string): boolean {
+  const intent = (rawIntent ?? "").toLowerCase();
+  if (
+    ["discussion", "discuss", "planning", "plan", "design_discussion", "design", "reasoning", "clarification"].includes(intent)
+    || /\b(discuss|discussion|planning|plan|design|reasoning|clarif(y|ication))\b/.test(intent)
+  ) {
+    return true;
+  }
+  return /\b(can we|could we|let'?s|i'?d like to|help me)\s+(discuss|plan|think through|reason about|talk through|design)\b/i.test(text)
+    || /\b(clarify|pin down)\s+(terms|terminology)\b/i.test(text)
+    || /\bdiscussion pipeline\b/i.test(text)
+    || /\bgraph (is getting updated|gets updated|update|memory)\b/i.test(text)
+    || /\bbefore we (build|implement|code|ship),?\s+let'?s\b/i.test(text);
+}
+
+function isDocumentDiscussionIntent(rawIntent: string | null, text: string): boolean {
+  const intent = (rawIntent ?? "").toLowerCase();
+  return [
+    "document_discussion",
+    "document-discussion",
+    "document_comment",
+    "document-comment",
+    "design_discussion",
+    "design",
+    "planning",
+    "plan",
+  ].includes(intent)
+    || /\b(document|doc|design|plan|planning|proposal|spec|brief)\b/i.test(text)
+    || /\b(comment|comments|inline comment|review note|accepted plan)\b/i.test(text);
+}
+
+function resolveDiscussionPipelineId(
+  input: Record<string, unknown>,
+  raw: Record<string, unknown>,
+  decision: Record<string, unknown>,
+  latestText = "",
+  rawIntent: string | null = null,
+): string {
+  const requested = getText(
+    raw.recommendedPipelineId
+      ?? raw.recommendedPipelineDefinitionId
+      ?? raw.pipelineDefinitionId
+      ?? raw.recommendedPipeline
+      ?? decision.discussionPipelineDefinitionId
+      ?? decision.pipelineDefinitionId,
+  );
+  const runtime = objectValue(input.runtime);
+  const chatContext = objectValue(input.chatContext);
+  const pipelines = Array.isArray(runtime.availablePipelines)
+    ? runtime.availablePipelines
+    : Array.isArray(chatContext.availablePipelines)
+      ? chatContext.availablePipelines
+      : [];
+  const wantsDocumentDiscussion = isDocumentDiscussionPipelineIdentifier(requested)
+    || isDocumentDiscussionIntent(rawIntent, latestText);
+  if (wantsDocumentDiscussion) {
+    for (const pipelineValue of pipelines) {
+      const pipeline = objectValue(pipelineValue);
+      const id = getText(pipeline.id);
+      const name = getText(pipeline.name);
+      const slug = getText(pipeline.slug);
+      if (isDocumentDiscussionPipelineIdentifier(id) || isDocumentDiscussionPipelineIdentifier(name) || isDocumentDiscussionPipelineIdentifier(slug)) {
+        return id ?? name ?? slug ?? "document-discussion";
+      }
+    }
+    return requested ?? "document-discussion";
+  }
+  for (const pipelineValue of pipelines) {
+    const pipeline = objectValue(pipelineValue);
+    const id = getText(pipeline.id);
+    const name = getText(pipeline.name);
+    const slug = getText(pipeline.slug);
+    if (
+      (isDiscussionPipelineIdentifier(id) || isDiscussionPipelineIdentifier(name) || isDiscussionPipelineIdentifier(slug))
+      && (!requested || requested === id || requested === name || requested === slug)
+    ) {
+      return id ?? name ?? slug ?? "discussion-chat-response";
+    }
+  }
+  return requested ?? "discussion-chat-response";
+}
+
+function isTaskInReview(value: unknown): boolean {
+  const record = objectValue(value);
+  const payload = objectValue(record.payload);
+  const state = getText(record.state ?? record.recordState ?? record.record_state ?? payload.state ?? payload.record_state)?.toLowerCase();
+  const family = getText(record.family ?? record.recordFamily ?? record.record_family ?? payload.family)?.toLowerCase();
+  return (family === "task" || Boolean(getText(record.recordId ?? record.record_id ?? payload.task_id))) && state === "review";
+}
+
+function isApprovalText(value: string): boolean {
+  return /\b(looks good|lgtm|approved|approve|ship it|done|complete|all good|good to go|that works|this works)\b/i.test(value);
+}
+
+function latestThreadText(chatContext: Record<string, unknown>, fallback: unknown): string {
+  const messages = getThreadMessages(chatContext).map(compactThreadMessage);
+  const latest = messages[messages.length - 1] ?? {};
+  return getText(latest.body) ?? getText(fallback) ?? "";
 }
 
 export const builtinPipelineFunctions: FunctionRegistry = {
@@ -295,6 +454,26 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     };
   },
 
+  async "dispatch.reloadChatThread"(input) {
+    return {
+      hydrated: false,
+      status: "not_configured",
+      operation: "chat.reload-thread",
+      reason: "This function only re-reads chat context when the pipeline is launched by a Wingman dispatch route.",
+      chatContext: input.chatContext ?? null,
+    };
+  },
+
+  async "dispatch.ensureDiscussionDocument"(input) {
+    return {
+      ensured: false,
+      status: "not_configured",
+      operation: "docs.ensure-discussion-document",
+      reason: "This function only creates or reuses discussion documents when the pipeline is launched by a Wingman dispatch route.",
+      documentContext: input.documentContext ?? null,
+    };
+  },
+
   async "dispatch.prepareChatIntentInput"(input) {
     const dispatch = objectValue(input.dispatch);
     const workspace = objectValue(input.workspace);
@@ -304,13 +483,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const routing = objectValue(input.routing);
     const runtime = objectValue(input.runtime);
     const chatContext = objectValue(input.chatContext);
-    const thread = objectValue(chatContext.thread);
-    const recentMessages = Array.isArray(thread.recent_messages)
-      ? thread.recent_messages
-      : Array.isArray(thread.recentMessages)
-        ? thread.recentMessages
-        : [];
-    const latestThread = recentMessages.slice(-8).map(compactThreadMessage);
+    const latestThread = latestThreadWithTrigger(chatContext, record, chat);
     const promptTokens = tokenizeForMatch(latestThread.map((message) => getText(message.body)).filter(Boolean).join(" "));
     const rawPipelines = Array.isArray(runtime.availablePipelines)
       ? runtime.availablePipelines
@@ -371,12 +544,159 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         "Use latestThread as the authoritative current conversation.",
         "Use referencedRecords only as supporting Flight Deck context.",
         "Choose only a pipeline listed in validChildPipelines.",
+        "Discussion, planning, design thinking, term clarification, and graph-memory discussion should use a no-task discussion pipeline without creating a task.",
+        "Use document-discussion without creating a task when the chat is about a plan, design document, document comments, inline review notes, or the next useful document question.",
+        "Never set dispatchTask true for discussion-chat-response or document-discussion.",
         "For generic or miscellaneous chat-created tasks, choose do-and-review.",
         "Use software-implementation-review-loop only for code, repository, build, test, deployment, or implementation work.",
         "Use research-and-report when the requested output is explicitly research with a report or document.",
         "When dispatching a task, include the concrete visible request details in taskDraft.instructions instead of telling the worker to go inspect the thread.",
         "Choose a scope from scopes when one fits; if scopes is empty or no scope fits, set scopeId to null and continue.",
       ],
+    };
+  },
+
+  async "dispatch.detectChatReviewApproval"(input) {
+    const chatContext = objectValue(input.chatContext);
+    const text = latestThreadText(chatContext, objectValue(input.chat).messageText ?? objectValue(objectValue(input.record).payload).body);
+    const candidates = Array.isArray(chatContext.referencedRecords)
+      ? chatContext.referencedRecords.filter(isTaskInReview).map(compactReferencedRecord)
+      : [];
+    if (!isApprovalText(text)) {
+      return {
+        shouldComplete: false,
+        status: "not_approval",
+        reason: "Latest chat message is not a review approval.",
+        candidateTaskCount: candidates.length,
+      };
+    }
+    if (candidates.length !== 1) {
+      return {
+        shouldComplete: false,
+        status: candidates.length === 0 ? "no_review_task" : "ambiguous_review_task",
+        reason: candidates.length === 0
+          ? "Approval text found, but no linked review task was available."
+          : "Approval text found, but multiple linked review tasks were available.",
+        candidateTaskCount: candidates.length,
+        candidates,
+        responseDraft: candidates.length > 1
+          ? "Which review task should I mark done?"
+          : null,
+      };
+    }
+    const task = candidates[0]!;
+    return {
+      shouldComplete: true,
+      status: "approval_detected",
+      reason: "Latest chat message approves the single linked review task.",
+      taskId: getText(task.recordId),
+      taskTitle: getText(task.title) ?? "review task",
+      responseDraft: `Done, I'll mark ${mention("task", getText(task.recordId) ?? "task", getText(task.title) ?? "review task")} complete.`,
+      evidence: text,
+    };
+  },
+
+  async "dispatch.completeReviewTaskFromChat"(input) {
+    return {
+      completed: false,
+      status: "not_configured",
+      operation: "tasks.complete-review-from-chat",
+      reason: "This function only completes review tasks when the pipeline is launched by a Wingman dispatch route.",
+      reviewApproval: input.reviewApproval ?? null,
+    };
+  },
+
+  async "dispatch.routeDiscussionChat"(input) {
+    const decision = objectValue(input.decision);
+    const raw = objectValue(input.agentDecision);
+    const chat = objectValue(input.chat);
+    const record = objectValue(input.record);
+    const routing = objectValue(input.routing);
+    const workspace = objectValue(input.workspace);
+    const agent = objectValue(input.agent);
+    const chatContext = objectValue(input.chatContext);
+    const chatDispatchInput = objectValue(input.chatDispatchInput);
+    const payload = objectValue(record.payload);
+    const thread = Array.isArray(chatDispatchInput.latestThread) && chatDispatchInput.latestThread.length > 0
+      ? chatDispatchInput.latestThread.slice(-12).map(compactThreadMessage)
+      : getThreadMessages(chatContext).slice(-12).map(compactThreadMessage);
+    const latest = thread[thread.length - 1] ?? {};
+    const latestText = getText(latest.body) ?? getText(chat.messageText) ?? getText(payload.body) ?? "";
+    const rawIntent = getText(raw.intent ?? raw.classification ?? raw.action);
+    const rawIntentKey = (rawIntent ?? "").toLowerCase();
+    const chatResponseBody = getText(objectValue(raw.chatResponse).body)
+      ?? getText(raw.responseDraft)
+      ?? getText(raw.replyDraft)
+      ?? getText(raw.answer);
+    const directChatResponse = Boolean(chatResponseBody)
+      && ["direct_chat_response", "direct_chat", "chat_response", "chat", "answer", "reply"].includes(rawIntentKey);
+    const selectedPipelineId = getText(
+      raw.recommendedPipelineId
+        ?? raw.recommendedPipelineDefinitionId
+        ?? raw.pipelineDefinitionId
+        ?? raw.recommendedPipeline
+        ?? decision.pipelineDefinitionId,
+    );
+    const selectedDiscussionPipeline = isDiscussionPipelineIdentifier(selectedPipelineId);
+    const documentDiscussion = isDocumentDiscussionPipelineIdentifier(selectedPipelineId)
+      || isDocumentDiscussionIntent(rawIntent, latestText);
+    const discussion = (selectedDiscussionPipeline && !directChatResponse)
+      || isDiscussionIntent(rawIntent, latestText)
+      || documentDiscussion;
+
+    if (!discussion || decision.suppressed === true || chatContext.shouldProceed === false) {
+      return decision;
+    }
+
+    const source = objectValue(chatDispatchInput.source);
+    const channelId = getText(chat.channelId ?? routing.channelId ?? source.channelId);
+    const threadId = getText(chat.threadId ?? routing.threadId ?? source.threadId);
+    const messageId = getText(record.recordId ?? source.messageId);
+    const requesterNpub = getText(chat.senderNpub ?? payload.sender_npub ?? record.updaterNpub ?? source.requesterNpub);
+    const pipelineDefinitionId = resolveDiscussionPipelineId(input, raw, decision, latestText, rawIntent);
+    const documentBoundDiscussion = isDocumentDiscussionPipelineIdentifier(pipelineDefinitionId);
+    const title = documentBoundDiscussion ? "Document discussion" : "Discussion response";
+    const taskSummary = documentBoundDiscussion ? "Document-bound discussion response" : "Discussion response";
+    const normalisedDraft = getText(decision.responseDraft);
+    const responseDraft = chatResponseBody
+      ?? (normalisedDraft && normalisedDraft !== "I can handle this directly in chat." ? normalisedDraft : null)
+      ?? "I am looking into that and will respond in this thread.";
+
+    return {
+      ...decision,
+      intent: "discussion",
+      dispatchTask: false,
+      requestedDispatchTask: false,
+      pipelineDefinitionId: null,
+      scopeId: null,
+      workdir: null,
+      dispatchDiscussion: true,
+      discussionPipelineDefinitionId: pipelineDefinitionId,
+      shouldRespond: true,
+      responseDraft,
+      reasoningSummary: `Starting ${pipelineDefinitionId} without creating a task, while preserving the immediate chat reply.`,
+      discussionWorkPlan: {
+        pipelineDefinitionId,
+        childPipelineDefinitionId: pipelineDefinitionId,
+        title,
+        taskSummary,
+        instructions: documentBoundDiscussion
+          ? "Discuss the referenced plan/design/document in chat, inspect thread/document/comment context, update the document when useful, review against the stated goal, and ask the next useful question. Do not create a Flight Deck task."
+          : "Discuss, plan, or reason in chat using the latest thread context. Do not create a Flight Deck task.",
+        originalPrompt: latestText,
+        originThread: thread,
+        origin: {
+          triggerKind: "chat",
+          channelId,
+          threadId,
+          messageId,
+          requesterNpub,
+          workspaceOwnerNpub: getText(workspace.workspaceOwnerNpub),
+          sourceAppNpub: getText(workspace.sourceAppNpub),
+        },
+        workdir: getText(agent.workingDirectory),
+      },
+      confidence: typeof raw.confidence === "number" ? raw.confidence : decision.confidence ?? 0.7,
     };
   },
 
@@ -608,14 +928,14 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const record = objectValue(input.record);
     const payload = objectValue(record.payload);
     const agent = objectValue(input.agent);
-    const dispatchTask = raw.dispatchTask === true;
-    const thread = objectValue(chatContext.thread);
-    const recentMessages = Array.isArray(thread.recent_messages)
-      ? thread.recent_messages
-      : Array.isArray(thread.recentMessages)
-        ? thread.recentMessages
-        : [];
-    const originThread = recentMessages.slice(-8).map(compactThreadMessage);
+    const requestedPipelineId = getText(
+      raw.recommendedPipelineId
+        ?? raw.recommendedPipelineDefinitionId
+        ?? raw.pipelineDefinitionId
+        ?? raw.recommendedPipeline,
+    );
+    const dispatchTask = raw.dispatchTask === true && !isDiscussionPipelineIdentifier(requestedPipelineId);
+    const originThread = getThreadMessages(chatContext).slice(-8).map(compactThreadMessage);
     const latestOriginMessage = originThread[originThread.length - 1] ?? {};
     const originalPrompt = getText(latestOriginMessage.body)
       ?? getText(chat.messageText)
@@ -623,12 +943,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const referencedRecords = Array.isArray(chatContext.referencedRecords)
       ? chatContext.referencedRecords.slice(0, 12).map(compactReferencedRecord)
       : [];
-    const pipelineDefinitionId = getText(
-      raw.recommendedPipelineId
-        ?? raw.recommendedPipelineDefinitionId
-        ?? raw.pipelineDefinitionId
-        ?? raw.recommendedPipeline,
-    );
+    const pipelineDefinitionId = requestedPipelineId;
     const taskDraft = objectValue(raw.taskDraft);
     const scopeId = getText(raw.scopeId ?? taskDraft.scopeId);
     const workdir = getText(raw.workdir ?? taskDraft.workdir ?? agent.workingDirectory);
@@ -706,6 +1021,43 @@ export const builtinPipelineFunctions: FunctionRegistry = {
   },
 
   async "dispatch.prepareChatDispatchResponse"(input) {
+    const reviewApproval = objectValue(input.reviewApproval);
+    const reviewCompletion = objectValue(input.reviewCompletion);
+    if (reviewApproval.shouldComplete === true) {
+      const taskId = getText(reviewApproval.taskId) ?? getText(reviewCompletion.taskId);
+      const taskTitle = getText(reviewApproval.taskTitle) ?? "review task";
+      if (reviewCompletion.completed === false && getText(reviewCompletion.status) && getText(reviewCompletion.status) !== "skipped") {
+        return {
+          shouldRespond: true,
+          responseDraft: `I saw the approval for ${taskId ? mention("task", taskId, taskTitle) : "the review task"}, but I could not mark it complete: ${getText(reviewCompletion.reason) ?? "unknown error"}.`,
+          reasoningSummary: "A chat approval matched one linked review task, but completion failed.",
+          actionsTaken: [],
+          confidence: 0.6,
+        };
+      }
+      return {
+        shouldRespond: true,
+        responseDraft: taskId
+          ? `Done, I've marked ${mention("task", taskId, taskTitle)} complete.`
+          : "Done, I've marked the review task complete.",
+        reasoningSummary: "A chat approval matched one linked review task, so the task was moved to done.",
+        actionsTaken: [
+          ...(taskId ? [`completed review task ${taskId}`] : []),
+        ],
+        confidence: 0.9,
+      };
+    }
+    const approvalDraft = getText(reviewApproval.responseDraft);
+    if (approvalDraft) {
+      return {
+        shouldRespond: true,
+        responseDraft: approvalDraft,
+        reasoningSummary: getText(reviewApproval.reason) ?? "Review approval text was detected but could not be resolved to one task.",
+        actionsTaken: [],
+        confidence: 0.7,
+      };
+    }
+
     const decision = objectValue(input.decision);
     if (decision.shouldRespond === false || decision.suppressed === true) {
       return {
@@ -718,6 +1070,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     }
     const createdTask = objectValue(input.createdTask);
     const childPipeline = objectValue(input.childPipeline);
+    const closeoutContext = objectValue(input.closeoutContext);
     const taskId = getText(createdTask.taskId);
     const taskCreationFailed = decision.dispatchTask === true && getText(createdTask.status) === "failed";
     const createdTaskWorkPlan = objectValue(createdTask.workPlan);
@@ -755,6 +1108,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       actionsTaken: [
         ...(taskId ? [`created task ${taskId}`] : []),
         ...(pipelineRunId ? [`started pipeline run ${pipelineRunId}`] : []),
+        ...(closeoutContext.hydrated === true ? ["re-read chat thread before replying"] : []),
         ...(taskCreationFailed ? [`task creation failed: ${getText(createdTask.reason) ?? "unknown error"}`] : []),
       ],
       confidence: clampConfidence(decision.confidence),

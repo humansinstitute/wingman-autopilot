@@ -92,7 +92,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           chatDispatchInput: "$.chatDispatchInput",
         },
       },
-      prompt: "You are stage 1 of agent-dispatch-chat: Analyse Intent. The selected input contains chatDispatchInput, a compact decision packet. Use chatDispatchInput.latestThread as the authoritative latest conversation, referencedRecords as supporting Flight Deck context, scopes for optional scope selection, defaults for workdir/assigner/reviewer defaults, and validChildPipelines as the only allowed child pipeline choices. Do not invent pipeline names and do not choose any dispatch/intake pipeline. One valid intent is ignore: if selfCheck says this is self-authored, set intent ignore, dispatchTask false, and chatResponse.body to an empty string. Decide whether this chat needs extended task-backed work. If it can be answered directly or needs clarification before work starts, set dispatchTask false. If it is generic, miscellaneous, image-based, operational, writing, planning, or otherwise not clearly code/research-report/design work, choose do-and-review. Choose software-implementation-review-loop only for code, repository, build, test, deployment, or implementation work. Choose research-and-report when the requested output is explicitly research with a report or document. If it needs research, implementation, document generation, graph-memory review, or an explicitly requested pipeline, set dispatchTask true only when you can select the pipeline, workdir, task title, instructions, and acceptance criteria. When dispatching a task, write taskDraft.instructions with the concrete request details already visible in latestThread and referencedRecords; do not merely tell the downstream worker to inspect the thread. Choose scopeId from scopes when one fits; if scopes is empty or no scope fits, set scopeId null and continue. Return JSON only with: intent string, dispatchTask boolean, recommendedPipelineId string|null, scopeId string|null, workdir string|null, taskDraft object with title string, instructions string, acceptanceCriteria array, executionPlan array, managerChecklist array, assignerNpub string|null, reviewerNpub string|null, chatResponse object with body string, clarifyingQuestion string|null, confidence number from 0 to 1. There is always a chat response; for ignore use intent ignore, an empty body, and confidence 1. Do not include responseOnly.",
+      prompt: "You are stage 1 of agent-dispatch-chat: Analyse Intent. The selected input contains chatDispatchInput, a compact decision packet. Use chatDispatchInput.latestThread as the authoritative latest conversation, referencedRecords as supporting Flight Deck context, scopes for optional scope selection, defaults for workdir/assigner/reviewer defaults, and validChildPipelines as the only allowed child pipeline choices. Do not invent pipeline names and do not choose any dispatch/intake pipeline. One valid intent is ignore: if selfCheck says this is self-authored, set intent ignore, dispatchTask false, and chatResponse.body to an empty string. Decide whether this chat needs extended task-backed work. If it can be answered directly or needs clarification before work starts, set dispatchTask false. Discussion, planning, design thinking, term clarification, document-centred planning, and document comment discussion must be no-task discussion work: set dispatchTask false and choose document-discussion when the thread is about a plan, design, document, spec, proposal, or document comments; choose discussion-chat-response for non-document discussion. If it is generic, miscellaneous, image-based, operational, writing, planning, or otherwise not clearly code/research-report/design discussion work, choose do-and-review. Choose software-implementation-review-loop only for code, repository, build, test, deployment, or implementation work. Choose research-and-report when the requested output is explicitly research with a report or document. If it needs research, implementation, document generation, graph-memory review, or an explicitly requested task-backed pipeline, set dispatchTask true only when you can select the pipeline, workdir, task title, instructions, and acceptance criteria. Never set dispatchTask true for document-discussion or discussion-chat-response. When dispatching a task, write taskDraft.instructions with the concrete request details already visible in latestThread and referencedRecords; do not merely tell the downstream worker to inspect the thread. Choose scopeId from scopes when one fits; if scopes is empty or no scope fits, set scopeId null and continue. Return JSON only with: intent string, dispatchTask boolean, recommendedPipelineId string|null, scopeId string|null, workdir string|null, taskDraft object with title string, instructions string, acceptanceCriteria array, executionPlan array, managerChecklist array, assignerNpub string|null, reviewerNpub string|null, chatResponse object with body string, clarifyingQuestion string|null, confidence number from 0 to 1. There is always a chat response; for ignore use intent ignore, an empty body, and confidence 1. Do not include responseOnly.",
       assign: "$.agentDecision",
     },
     {
@@ -114,6 +114,68 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
         },
       },
       assign: "$.decision",
+    },
+    {
+      name: "detect-review-approval",
+      type: "code",
+      function: "dispatch.detectChatReviewApproval",
+      when: { path: "$.chatContext.shouldProceed", equals: true },
+      input: {
+        pick: {
+          chat: "$.chat",
+          record: "$.record",
+          chatContext: "$.chatContext",
+        },
+      },
+      assign: "$.reviewApproval",
+    },
+    {
+      name: "complete-review-task-from-chat",
+      type: "code",
+      function: "dispatch.completeReviewTaskFromChat",
+      when: { path: "$.reviewApproval.shouldComplete", equals: true },
+      input: {
+        pick: {
+          reviewApproval: "$.reviewApproval",
+        },
+      },
+      assign: "$.reviewCompletion",
+    },
+    {
+      name: "route-discussion-chat",
+      type: "code",
+      function: "dispatch.routeDiscussionChat",
+      when: { path: "$.chatContext.shouldProceed", equals: true },
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          chat: "$.chat",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          chatContext: "$.chatContext",
+          chatDispatchInput: "$.chatDispatchInput",
+          agentDecision: "$.agentDecision",
+          decision: "$.decision",
+        },
+      },
+      assign: "$.decision",
+    },
+    {
+      name: "start-discussion-pipeline",
+      type: "code",
+      function: "dispatch.startChildPipeline",
+      when: { path: "$.decision.dispatchDiscussion", equals: true },
+      input: {
+        pick: {
+          pipelineDefinitionId: "$.decision.discussionPipelineDefinitionId",
+          workPlan: "$.decision.discussionWorkPlan",
+          childInput: "$",
+        },
+      },
+      assign: "$.childPipeline",
     },
     {
       name: "create-in-progress-task",
@@ -170,6 +232,25 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
       assign: "$.launchFailureUpdate",
     },
     {
+      name: "reload-chat-thread-before-reply",
+      type: "code",
+      function: "dispatch.reloadChatThread",
+      when: { path: "$.chatContext.shouldProceed", equals: true },
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          chat: "$.chat",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          chatContext: "$.chatContext",
+        },
+      },
+      assign: "$.closeoutContext",
+    },
+    {
       name: "prepare-chat-response",
       type: "code",
       function: "dispatch.prepareChatDispatchResponse",
@@ -180,6 +261,9 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           createdTask: "$.createdTask",
           childPipeline: "$.childPipeline",
           launchFailureUpdate: "$.launchFailureUpdate",
+          reviewApproval: "$.reviewApproval",
+          reviewCompletion: "$.reviewCompletion",
+          closeoutContext: "$.closeoutContext",
         },
       },
       assign: "$.agentResponse",
@@ -342,7 +426,7 @@ const DO_AND_REVIEW_DEFINITION = {
           workPlan: "$.workPlan",
         },
       },
-      prompt: "You are the worker in a Wingman do-and-review pipeline. Use only the selected input: createdTask and workPlan. workPlan includes the task plan, originalPrompt, originThread, referencedRecords, instructions, acceptanceCriteria, executionPlan, and managerChecklist. For current-world facts, use internet research and record sources. The task is already in_progress; the final deterministic pipeline step will move it to review and publish any Flight Deck task comment or chat handoff. If required information is missing and you cannot continue without user input, return callback status needs_input with a concrete taskUpdateComment question and blockers; do not fabricate requirements and do not return ok with completed false. Do not run Flight Deck task update, task comment, chat reply, chat reply-current, docs comment, or any command that changes task state, task comments, document comments, or chat messages. Return JSON fields: completed boolean, summary string, sources array, evidence array, result string, blockers array, taskUpdateComment string, confidence number.",
+      prompt: "You are the worker in a Wingman do-and-review pipeline. Use only the selected input: createdTask and workPlan. workPlan includes the task plan, originalPrompt, originThread, referencedRecords, instructions, acceptanceCriteria, executionPlan, and managerChecklist. For current-world facts, use internet research and record sources. The task is already in_progress; the final deterministic pipeline step will move it to review and publish any Flight Deck task comment or chat handoff. Always make the best effort possible from the available context. If required information is missing, do not return callback status needs_input; return callback status ok with completed false, state what you could and could not complete, list blockers, and write a concrete taskUpdateComment that asks for the missing information or states the limitation for the final chat/task feedback. Do not fabricate requirements. Do not run Flight Deck task update, task comment, chat reply, chat reply-current, or any command that changes task state, task comments, or chat messages. Document comment replies are allowed only when workPlan explicitly asks to answer or respond to existing document comments; in that case use the document comment thread surface, such as `bun mycode/yoke.js docs reply <comment-id> --body \"...\"`, and include evidence that child comments were created with parent_comment_id set to the original comment ids. Updating the document body does not satisfy an 'answer comments' request unless workPlan explicitly asks for a document-body response section. Return JSON fields: completed boolean, summary string, sources array, evidence array, result string, blockers array, taskUpdateComment string, confidence number.",
       assign: "$.workerResult",
     },
     {
@@ -358,7 +442,7 @@ const DO_AND_REVIEW_DEFINITION = {
           workerResult: "$.workerResult",
         },
       },
-      prompt: "You are the manager reviewer in a Wingman do-and-review pipeline. Use only the selected input: createdTask, workPlan, and workerResult. Check workerResult against workPlan.instructions, workPlan.acceptanceCriteria, workPlan.executionPlan, workPlan.managerChecklist, originalPrompt, originThread, and referencedRecords. Verify sources/evidence are sufficient and decide whether the work is complete. The final pipeline step will update the Flight Deck task to review and assign it to the requester. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, executionPlan array, managerChecklist array, requiredChanges array, risks array, confidence number.",
+      prompt: "You are the manager reviewer in a Wingman do-and-review pipeline. Use only the selected input: createdTask, workPlan, and workerResult. Check workerResult against workPlan.instructions, workPlan.acceptanceCriteria, workPlan.executionPlan, workPlan.managerChecklist, originalPrompt, originThread, and referencedRecords. Verify sources/evidence are sufficient and decide whether the work is complete. If workPlan asks to answer or respond to Flight Deck document comments, require evidence that actual comment-thread replies were created with parent_comment_id pointing at the original comment ids; a document-body section alone is not sufficient unless workPlan explicitly requested that instead. If workerResult.completed is false because information is missing, review the best-effort result as a handoffable partial outcome: set accepted according to whether the worker honestly used available context, put missing information or limitations in requiredChanges/risks, and rely on workerResult.taskUpdateComment for the final chat/task feedback. The final pipeline step will update the Flight Deck task to review and assign it to the requester. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, executionPlan array, managerChecklist array, requiredChanges array, risks array, confidence number.",
       assign: "$.agentResponse",
     },
     {
@@ -679,12 +763,14 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
     await mkdir(getUserPipelineFunctionsDirectory(ownerAlias), { recursive: true });
   }
   await ensurePipelineGitRepository();
+  const documentDiscussionDefinition = await readBundledDefaultDefinition("document-discussion.json");
   const softwareImplementationReviewLoopDefinition = await readBundledDefaultDefinition("software-implementation-review-loop.json");
   const defaultDefinitions = [
     ["agent-dispatch-chat.json", AGENT_DISPATCH_CHAT_DEFINITION],
     ["agent-dispatch-task-response.json", AGENT_DISPATCH_TASK_DEFINITION],
     ["agent-dispatch-comment-response.json", AGENT_DISPATCH_COMMENT_DEFINITION],
     ["design-review.json", DESIGN_REVIEW_DEFINITION],
+    ["document-discussion.json", documentDiscussionDefinition],
     ["do-and-review.json", DO_AND_REVIEW_DEFINITION],
     ["research-and-report.json", RESEARCH_AND_REPORT_DEFINITION],
     ["software-implementation-review-loop.json", softwareImplementationReviewLoopDefinition],

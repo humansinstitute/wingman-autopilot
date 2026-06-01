@@ -20,11 +20,14 @@ import { bootstrapAgentDefinitionWorkspace } from '../agent-workspace-bootstrap'
 import {
   createDispatchFlightDeckPublisher,
   createDispatchChatContextHydrator,
+  createDispatchChatThreadReloader,
+  createDispatchDiscussionDocumentEnsurer,
   createDispatchChatTaskCreator,
   createDispatchCreatedTaskBlocker,
   createDispatchImplementationReviewProgressCommenter,
   createDispatchImplementationReviewTaskEnsurer,
   createDispatchNeedsInputPublisher,
+  createDispatchReviewTaskCompleter,
   createDispatchTaskStateUpdater,
   pipelineNeedsFlightDeckPublisher,
   prepareDispatchPipelineFlightDeckRuntime,
@@ -350,6 +353,24 @@ export class DispatchPipelineRuntime {
         runtime: input.flightDeckRuntime,
       });
       registry['dispatch.hydrateChatContext'] = createDispatchChatContextHydrator({
+        eventInput: input.eventInput,
+        agent: input.agent,
+        botIdentity: input.eventInput.botIdentity ?? null,
+        runtime: input.flightDeckRuntime,
+      });
+      registry['dispatch.reloadChatThread'] = createDispatchChatThreadReloader({
+        eventInput: input.eventInput,
+        agent: input.agent,
+        botIdentity: input.eventInput.botIdentity ?? null,
+        runtime: input.flightDeckRuntime,
+      });
+      registry['dispatch.completeReviewTaskFromChat'] = createDispatchReviewTaskCompleter({
+        eventInput: input.eventInput,
+        agent: input.agent,
+        botIdentity: input.eventInput.botIdentity ?? null,
+        runtime: input.flightDeckRuntime,
+      });
+      registry['dispatch.ensureDiscussionDocument'] = createDispatchDiscussionDocumentEnsurer({
         eventInput: input.eventInput,
         agent: input.agent,
         botIdentity: input.eventInput.botIdentity ?? null,

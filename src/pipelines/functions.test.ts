@@ -1,6 +1,151 @@
 import { describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import { generateSecretKey, nip19 } from "nostr-tools";
+import type { DeclarativePipeline } from "./declarative";
 import { builtinPipelineFunctions } from "./functions";
+import type { PipelineDefinitionRecord } from "./pipeline-loader";
+import { runDeclarativePipeline } from "./pipeline-runner";
+import { PipelineStore, type JsonObject } from "./pipeline-store";
+
+function loadSharedPipelineSpec(fileName: string): DeclarativePipeline {
+  return JSON.parse(readFileSync(join(homedir(), ".wingmen", "pipelines", "shared", "definitions", fileName), "utf8"));
+}
+
+function executableChatDispatchSpec(agentDecision: JsonObject): DeclarativePipeline {
+  const spec = structuredClone(loadSharedPipelineSpec("agent-dispatch-chat.json")) as DeclarativePipeline;
+  spec.steps = spec.steps.map((step) => step.name === "analyse-intent"
+    ? {
+        name: step.name,
+        description: step.description,
+        type: "code",
+        function: "test.agentDecision",
+        assign: step.assign,
+        when: step.when,
+      }
+    : step);
+  return {
+    ...spec,
+    input: {
+      ...spec.input,
+      testAgentDecision: agentDecision,
+    },
+  };
+}
+
+async function runChatDispatchSpec(input: {
+  agentDecision: JsonObject;
+  latestMessage: string;
+  referencedRecords?: unknown[];
+}) {
+  const definition: PipelineDefinitionRecord = {
+    id: "shared:test-agent-dispatch-chat",
+    slug: "agent-dispatch-chat",
+    name: "agent-dispatch-chat",
+    scope: "shared",
+    ownerAlias: null,
+    path: join(homedir(), ".wingmen", "pipelines", "shared", "definitions", "agent-dispatch-chat.json"),
+    spec: executableChatDispatchSpec(input.agentDecision),
+  };
+  const store = new PipelineStore(join(tmpdir(), `wingmen-chat-dispatch-${randomUUID()}.sqlite`));
+  const registry = {
+    ...builtinPipelineFunctions,
+    "test.agentDecision": async (selected: JsonObject) => selected.testAgentDecision as JsonObject,
+    "dispatch.hydrateChatContext": async () => ({
+      hydrated: true,
+      status: "ok",
+      shouldProceed: true,
+      thread: {
+        recent_messages: [
+          {
+            message_id: "message-1",
+            sender_npub: "npub1requester",
+            body: input.latestMessage,
+          },
+        ],
+      },
+      referencedRecords: input.referencedRecords ?? [],
+      availablePipelines: [
+        { id: "document-discussion", slug: "document-discussion", name: "document-discussion", scope: "shared" },
+        { id: "discussion-chat-response", slug: "discussion-chat-response", name: "discussion-chat-response", scope: "shared" },
+        { id: "do-and-review", slug: "do-and-review", name: "do-and-review", scope: "shared" },
+      ],
+      scopes: [],
+    }),
+    "dispatch.createChatTask": async (selected: JsonObject) => ({
+      created: true,
+      status: "ok",
+      taskId: "task-created",
+      pipelineDefinitionId: "do-and-review",
+      workPlan: {
+        ...(((selected.decision as JsonObject | undefined)?.workPlan as JsonObject | undefined) ?? {}),
+        taskId: "task-created",
+        pipelineDefinitionId: "do-and-review",
+        childPipelineDefinitionId: "do-and-review",
+      },
+    }),
+    "dispatch.startChildPipeline": async (selected: JsonObject) => ({
+      started: true,
+      status: "running",
+      pipelineRunId: `run-${String(selected.pipelineDefinitionId)}`,
+      pipelineDefinitionId: selected.pipelineDefinitionId,
+      pipelineName: selected.pipelineDefinitionId,
+    }),
+    "dispatch.completeReviewTaskFromChat": async (selected: JsonObject) => ({
+      completed: true,
+      status: "done",
+      taskId: (selected.reviewApproval as JsonObject)?.taskId,
+      taskTitle: (selected.reviewApproval as JsonObject)?.taskTitle,
+    }),
+    "dispatch.reloadChatThread": async () => ({
+      hydrated: true,
+      status: "ok",
+      operation: "chat.reload-thread",
+    }),
+    "dispatch.ensureDiscussionDocument": async () => ({
+      ensured: true,
+      status: "created",
+      operation: "docs.ensure-discussion-document",
+      documentId: "doc-created",
+      documentMention: "@[Document discussion](mention:document:doc-created)",
+    }),
+    "dispatch.publishFlightDeckResponse": async (selected: JsonObject) => ({
+      ...selected,
+      published: true,
+      status: "ok",
+      agentResponse: selected.agentResponse,
+    }),
+  };
+
+  const run = await runDeclarativePipeline({
+    store,
+    definition,
+    registry,
+    input: {
+      testAgentDecision: input.agentDecision,
+      dispatch: { triggerKind: "chat" },
+      workspace: { workspaceOwnerNpub: "npub1owner", sourceAppNpub: "npub1source" },
+      agent: { workingDirectory: "/repo", defaultAgent: "codex" },
+      record: { recordId: "message-1", payload: { body: input.latestMessage, sender_npub: "npub1requester" } },
+      chat: { messageText: input.latestMessage, senderNpub: "npub1requester", channelId: "channel-1", threadId: "thread-1" },
+      routing: { channelId: "channel-1", threadId: "thread-1", bindingType: "thread" },
+    },
+    ownerNpub: "npub1owner",
+    ownerAlias: "honest-ivory-thicket",
+    callbackOrigin: "http://localhost",
+    sessionApiContext: {} as never,
+  });
+  return {
+    run,
+    steps: store.listSteps(run.id),
+  };
+}
+
+function currentAfterStep(runResult: Awaited<ReturnType<typeof runChatDispatchSpec>>, stepName: string): JsonObject {
+  return (runResult.steps.find((step) => step.name === stepName)?.result ?? {}) as JsonObject;
+}
 
 describe("memory pipeline functions", () => {
   test("dispatch.publishFlightDeckResponse is a dry-run outside dispatch routes", async () => {
@@ -209,6 +354,151 @@ describe("memory pipeline functions", () => {
     expect(JSON.stringify(result)).not.toContain("agent-dispatch-chat");
   });
 
+  test("dispatch.prepareChatIntentInput appends the triggering chat message when hydration is stale", async () => {
+    const result = await builtinPipelineFunctions["dispatch.prepareChatIntentInput"]!({
+      dispatch: { routeId: "route-1", triggerKind: "chat" },
+      workspace: { workspaceOwnerNpub: "npub1owner", sourceAppNpub: "npub1source" },
+      agent: {
+        botNpub: "npub1bot",
+        workingDirectory: "/repo",
+        defaultAgent: "codex",
+      },
+      chat: {
+        messageText: "Excellent that works consistently now",
+        senderNpub: "npub1requester",
+        channelId: "channel-1",
+        threadId: "thread-1",
+        parentMessageId: "thread-1",
+      },
+      record: {
+        recordId: "message-3",
+        updaterNpub: "npub1requester",
+        payload: {
+          record_id: "message-3",
+          parent_message_id: "thread-1",
+          body: "Excellent that works consistently now",
+          sender_npub: "npub1requester",
+          updated_at: "2026-06-01T11:58:06.893Z",
+        },
+      },
+      runtime: {
+        availablePipelines: [
+          {
+            id: "shared:12b50cd8ba58",
+            slug: "do-and-review",
+            name: "do-and-review",
+            scope: "shared",
+            description: "Generic delivery pipeline.",
+          },
+        ],
+      },
+      chatContext: {
+        shouldProceed: true,
+        thread: {
+          recent_messages: [
+            {
+              message_id: "thread-1",
+              sender_npub: "npub1requester",
+              body: "Please fix the chat scroll behavior.",
+              updated_at: "2026-06-01T09:20:26.675Z",
+            },
+            {
+              message_id: "message-2",
+              parent_message_id: "thread-1",
+              sender_npub: "npub1bot",
+              body: "Done: the pipeline work is ready for review.",
+              updated_at: "2026-06-01T09:32:06.649Z",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(result.source).toMatchObject({
+      messageId: "message-3",
+      requesterNpub: "npub1requester",
+    });
+    expect(result.latestThread).toEqual([
+      {
+        messageId: "thread-1",
+        parentMessageId: null,
+        senderNpub: "npub1requester",
+        body: "Please fix the chat scroll behavior.",
+        attachments: [],
+        updatedAt: "2026-06-01T09:20:26.675Z",
+      },
+      {
+        messageId: "message-2",
+        parentMessageId: "thread-1",
+        senderNpub: "npub1bot",
+        body: "Done: the pipeline work is ready for review.",
+        attachments: [],
+        updatedAt: "2026-06-01T09:32:06.649Z",
+      },
+      {
+        messageId: "message-3",
+        parentMessageId: "thread-1",
+        senderNpub: "npub1requester",
+        body: "Excellent that works consistently now",
+        attachments: [],
+        updatedAt: "2026-06-01T11:58:06.893Z",
+      },
+    ]);
+  });
+
+  test("shared agent-dispatch-chat definition wires review, discussion, reload, and prepare inputs", () => {
+    const spec = loadSharedPipelineSpec("agent-dispatch-chat.json");
+    const names = spec.steps.map((step) => step.name);
+    expect(names).toEqual([
+      "hydrate-chat-context",
+      "prepare-intent-input",
+      "analyse-intent",
+      "normalise-decision",
+      "detect-review-approval",
+      "complete-review-task-from-chat",
+      "route-discussion-chat",
+      "start-discussion-pipeline",
+      "create-in-progress-task",
+      "start-selected-pipeline",
+      "block-task-on-launch-failure",
+      "reload-chat-thread-before-reply",
+      "prepare-chat-response",
+      "publish-chat-response",
+    ]);
+    const functions = spec.steps.map((step) => step.type === "code" ? step.function : null).filter(Boolean);
+    expect(functions).toContain("dispatch.detectChatReviewApproval");
+    expect(functions).toContain("dispatch.completeReviewTaskFromChat");
+    expect(functions).toContain("dispatch.routeDiscussionChat");
+    expect(functions).toContain("dispatch.reloadChatThread");
+
+    const prepare = spec.steps.find((step) => step.name === "prepare-chat-response");
+    expect(prepare?.input).toEqual({
+      pick: {
+        decision: "$.decision",
+        createdTask: "$.createdTask",
+        childPipeline: "$.childPipeline",
+        launchFailureUpdate: "$.launchFailureUpdate",
+        reviewApproval: "$.reviewApproval",
+        reviewCompletion: "$.reviewCompletion",
+        closeoutContext: "$.closeoutContext",
+      },
+    });
+  });
+
+  test("shared document-discussion definition loads thread, document/comments, updates, reviews, asks, and publishes", () => {
+    const spec = loadSharedPipelineSpec("document-discussion.json");
+    expect(spec.name).toBe("document-discussion");
+    expect(spec.steps.map((step) => step.name)).toEqual([
+      "reload-thread",
+      "load-document-and-comments",
+      "ensure-discussion-document",
+      "update-document",
+      "review-document-against-goal",
+      "draft-next-question",
+      "publish-document-discussion-reply",
+    ]);
+  });
+
   test("dispatch.prepareChatDispatchResponse replies when task creation fails", async () => {
     const result = await builtinPipelineFunctions["dispatch.prepareChatDispatchResponse"]!({
       decision: {
@@ -412,6 +702,149 @@ describe("memory pipeline functions", () => {
       shouldRespond: false,
       suppressed: true,
       suppressionReason: "trigger_thread_message_sender_is_self",
+    });
+  });
+
+  test("shared chat dispatch execution starts document discussion without creating a task", async () => {
+    const execution = await runChatDispatchSpec({
+      latestMessage: "Let's discuss the accepted design document comments and decide the next question.",
+      agentDecision: {
+        intent: "design_discussion",
+        dispatchTask: false,
+        recommendedPipelineId: "document-discussion",
+        chatResponse: { body: "" },
+        confidence: 0.87,
+      },
+    });
+
+    const result = currentAfterStep(execution, "prepare-chat-response");
+    const run = execution.run;
+    expect(run.status).toBe("ok");
+    expect(result.createdTask).toBeUndefined();
+    expect(result.decision).toMatchObject({
+      dispatchTask: false,
+      dispatchDiscussion: true,
+      discussionPipelineDefinitionId: "document-discussion",
+    });
+    expect(result.childPipeline).toMatchObject({
+      started: true,
+      pipelineDefinitionId: "document-discussion",
+    });
+    expect(result.agentResponse).toMatchObject({
+      shouldRespond: true,
+      responseDraft: "I am looking into that and will respond in this thread.",
+    });
+  });
+
+  test("shared chat dispatch execution preserves direct chat replies even when a discussion pipeline is selected", async () => {
+    const execution = await runChatDispatchSpec({
+      latestMessage: "Can you actually hear me>",
+      agentDecision: {
+        intent: "direct_chat_response",
+        dispatchTask: false,
+        recommendedPipelineId: "discussion-chat-response",
+        chatResponse: { body: "Yes, I can hear you. What do you need?" },
+        confidence: 0.96,
+      },
+    });
+
+    const result = currentAfterStep(execution, "prepare-chat-response");
+    const run = execution.run;
+    expect(run.status).toBe("ok");
+    expect(result.createdTask).toBeUndefined();
+    expect(result.childPipeline).toBeUndefined();
+    expect(result.decision).not.toHaveProperty("dispatchDiscussion");
+    expect(result.agentResponse).toMatchObject({
+      shouldRespond: true,
+      responseDraft: "Yes, I can hear you. What do you need?",
+    });
+  });
+
+  test("shared chat dispatch execution keeps task-backed handoff on task path", async () => {
+    const execution = await runChatDispatchSpec({
+      latestMessage: "Please research this and produce the answer.",
+      agentDecision: {
+        intent: "work",
+        dispatchTask: true,
+        recommendedPipelineId: "do-and-review",
+        taskDraft: {
+          title: "Research the answer",
+          instructions: "Research this and produce the answer.",
+          acceptanceCriteria: ["Answer is posted back"],
+        },
+        chatResponse: { body: "Starting the work." },
+        confidence: 0.9,
+      },
+    });
+
+    const result = currentAfterStep(execution, "prepare-chat-response");
+    const run = execution.run;
+    expect(run.status).toBe("ok");
+    expect(result.createdTask).toMatchObject({ taskId: "task-created" });
+    expect(result.childPipeline).toMatchObject({ pipelineDefinitionId: "do-and-review" });
+    expect(result.decision).toMatchObject({ dispatchTask: true });
+    expect(result.decision).not.toHaveProperty("dispatchDiscussion");
+    expect(result.agentResponse).toMatchObject({ shouldRespond: true });
+  });
+
+  test("shared chat dispatch execution completes one linked review approval", async () => {
+    const execution = await runChatDispatchSpec({
+      latestMessage: "Looks good, please mark it done.",
+      referencedRecords: [
+        { recordId: "task-review", family: "task", state: "review", title: "Review natural chat dispatch" },
+      ],
+      agentDecision: {
+        intent: "chat",
+        dispatchTask: false,
+        chatResponse: { body: "" },
+        confidence: 0.7,
+      },
+    });
+
+    const result = currentAfterStep(execution, "prepare-chat-response");
+    const run = execution.run;
+    expect(run.status).toBe("ok");
+    expect(result.reviewApproval).toMatchObject({
+      shouldComplete: true,
+      taskId: "task-review",
+    });
+    expect(result.reviewCompletion).toMatchObject({
+      completed: true,
+      taskId: "task-review",
+    });
+    expect(result.agentResponse).toMatchObject({
+      shouldRespond: true,
+      actionsTaken: ["completed review task task-review"],
+    });
+  });
+
+  test("shared chat dispatch execution asks when review approval is ambiguous", async () => {
+    const execution = await runChatDispatchSpec({
+      latestMessage: "Approved, this is done.",
+      referencedRecords: [
+        { recordId: "task-one", family: "task", state: "review", title: "First task" },
+        { recordId: "task-two", family: "task", state: "review", title: "Second task" },
+      ],
+      agentDecision: {
+        intent: "chat",
+        dispatchTask: false,
+        chatResponse: { body: "" },
+        confidence: 0.7,
+      },
+    });
+
+    const result = currentAfterStep(execution, "prepare-chat-response");
+    const run = execution.run;
+    expect(run.status).toBe("ok");
+    expect(result.reviewApproval).toMatchObject({
+      shouldComplete: false,
+      status: "ambiguous_review_task",
+    });
+    expect(result.reviewCompletion).toBeUndefined();
+    expect(result.createdTask).toBeUndefined();
+    expect(result.agentResponse).toMatchObject({
+      shouldRespond: true,
+      responseDraft: "Which review task should I mark done?",
     });
   });
 
