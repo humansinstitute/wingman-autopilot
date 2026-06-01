@@ -41,6 +41,13 @@ describe("live-view drawer integration", () => {
     expect(source).not.toContain("filterSessionsForLiveTabGroup");
   });
 
+  test("pins the live header fullscreen toggle in the tabs bar", () => {
+    expect(source).toContain("createLiveHeaderFullscreenToggle");
+    expect(source).toContain("getLiveHeaderCollapsed");
+    expect(source).toContain("toggleLiveHeaderCollapsed");
+    expect(source).toContain("panel.append(renderTabs");
+  });
+
   test("shows session context above the composer", () => {
     expect(source).toContain("wm-composer-context");
     expect(source).toContain("wm-composer-input-column");

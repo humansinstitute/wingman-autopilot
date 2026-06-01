@@ -69,6 +69,7 @@ import {
   THEME_STORAGE_KEY,
   TABS_VISIBILITY_STORAGE_KEY,
   TASK_DISPATCH_TABS_VISIBILITY_STORAGE_KEY,
+  LIVE_HEADER_COLLAPSED_STORAGE_KEY,
   APP_LOG_PREVIEW_LINES,
   TOAST_DEFAULT_DURATION_MS,
   DEFAULT_CONNECT_RELAYS,
@@ -559,6 +560,7 @@ let currentRoute = getRouteFromPath(window.location.pathname);
 let currentTheme = "dark";
 let tabsVisible = true;
 let taskDispatchTabsVisible = true;
+let liveHeaderCollapsed = false;
 let lastLoggedSessionId = null;
 let lastFilesMobileLayout = isMobileFilesLayout();
 
@@ -1201,6 +1203,35 @@ const toggleTaskDispatchTabsVisibility = () => {
   applyTaskDispatchTabsVisibility(nextVisible);
 };
 
+const applyLiveHeaderCollapsed = (collapsed, persist = true) => {
+  liveHeaderCollapsed = collapsed;
+  document.body.dataset.liveHeaderCollapsed = collapsed ? "true" : "false";
+  if (persist) {
+    try {
+      localStorage.setItem(LIVE_HEADER_COLLAPSED_STORAGE_KEY, collapsed ? "true" : "false");
+    } catch (error) {
+      console.warn("Failed to persist live header fullscreen preference", error);
+    }
+  }
+  refreshLiveTabsBar();
+};
+
+const detectPreferredLiveHeaderCollapsed = () => {
+  try {
+    const stored = localStorage.getItem(LIVE_HEADER_COLLAPSED_STORAGE_KEY);
+    if (stored === "true" || stored === "false") {
+      return stored === "true";
+    }
+  } catch {
+    // ignore storage failures
+  }
+  return false;
+};
+
+const toggleLiveHeaderCollapsed = () => {
+  applyLiveHeaderCollapsed(!liveHeaderCollapsed);
+};
+
 let menuOpenedAt = 0;
 
 const closeMenu = (options = {}) => {
@@ -1252,6 +1283,10 @@ const initTaskDispatchTabsVisibility = () => {
   if (taskDispatchTabsToggle) {
     taskDispatchTabsToggle.addEventListener("click", toggleTaskDispatchTabsVisibility);
   }
+};
+
+const initLiveHeaderCollapsed = () => {
+  applyLiveHeaderCollapsed(detectPreferredLiveHeaderCollapsed(), false);
 };
 
 const setActiveNav = () => {
@@ -2171,6 +2206,8 @@ const liveViewModule = initLiveView({
   setCurrentRoute: (r) => { currentRoute = r; },
   getTabsVisible: () => tabsVisible,
   getTaskDispatchTabsVisible: () => taskDispatchTabsVisible,
+  getLiveHeaderCollapsed: () => liveHeaderCollapsed,
+  toggleLiveHeaderCollapsed,
   appRoot,
   render,
   getActiveSessions,
@@ -2684,6 +2721,7 @@ dialog.addEventListener("cancel", (event) => {
   initTheme();
   initTabsVisibility();
   initTaskDispatchTabsVisibility();
+  initLiveHeaderCollapsed();
   setupConversationSelectionLock();
   initLiveMobileRuntime();
   // Initialize live module (Dexie database for SSE updates)

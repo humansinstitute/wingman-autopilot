@@ -131,6 +131,10 @@ body:has(#app[data-route="live"] .wm-tabs-bar) .wm-header {
   box-shadow: none;
 }
 
+body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-header {
+  display: none;
+}
+
 .wm-brand {
   display: flex;
   align-items: center;
@@ -797,6 +801,10 @@ body[data-menu-open="true"] .wm-menu-panel {
   flex: 0 0 auto;
   height: calc(var(--wm-viewport-height) - var(--nav-height));
   overflow: hidden;
+}
+
+body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) #app[data-route="live"][data-webview-open="true"] {
+  height: var(--wm-viewport-height);
 }
 
 /* Lock viewport height when webview is open so each column scrolls independently */
@@ -3244,6 +3252,18 @@ body[data-menu-open="true"] .wm-menu-panel {
   backdrop-filter: blur(12px);
 }
 
+body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-tabs-bar {
+  top: 0;
+}
+
+body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live {
+  min-height: var(--wm-viewport-height);
+}
+
+body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-drawer {
+  top: calc(3rem + 0.75rem);
+}
+
 .wm-live-main {
   display: flex;
   flex-direction: column;
@@ -4373,8 +4393,50 @@ body[data-theme="light"] .wm-agent-dispatch-capability-card {
 
 .wm-live-tabs-panel {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 0;
+  align-items: stretch;
+}
+
+.wm-live-tabs-panel > .wm-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.wm-live-header-toggle {
+  appearance: none;
+  align-self: stretch;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  min-height: 3rem;
+  margin: 0 0 -1px 0.35rem;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 0.5rem 0.5rem 0 0;
+  background: rgba(16, 185, 129, 0.08);
+  color: var(--accent-primary);
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.wm-live-header-toggle:hover,
+.wm-live-header-toggle:focus-visible {
+  background: rgba(16, 185, 129, 0.14);
+  border-color: rgba(16, 185, 129, 0.24);
+  color: var(--text-primary);
+}
+
+.wm-live-header-toggle:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
+.wm-live-header-toggle__icon {
+  width: 1.15rem;
+  height: 1.15rem;
 }
 
 .wm-tab {

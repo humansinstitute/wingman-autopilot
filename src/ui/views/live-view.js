@@ -51,6 +51,7 @@ import {
   getLiveDrawerLayoutState,
   getRenderedLiveDrawerVisible,
 } from "../live/drawer-visibility.js";
+import { createLiveHeaderFullscreenToggle } from "../live/header-fullscreen-toggle.js";
 import { canResumeNativeAgentSession } from "../home/native-session-resume.js";
 import { filterTaskDispatchSessionsForTabs } from "../sessions/session-classification.js";
 
@@ -62,6 +63,8 @@ export function initLiveView(deps) {
     setCurrentRoute,
     getTabsVisible,
     getTaskDispatchTabsVisible,
+    getLiveHeaderCollapsed,
+    toggleLiveHeaderCollapsed,
     appRoot,
     render,
     // Session helpers
@@ -234,7 +237,17 @@ export function initLiveView(deps) {
     const panel = document.createElement("div");
     panel.className = "wm-live-tabs-panel";
     panel.append(renderTabs({ sessions: getVisibleTabSessions(getActiveSessions()) }));
+    panel.append(createLiveHeaderFullscreenToggle({
+      collapsed: shouldCollapseLiveHeader(),
+      onToggle: toggleLiveHeaderCollapsed,
+    }));
     return panel;
+  }
+
+  function shouldCollapseLiveHeader() {
+    return typeof getLiveHeaderCollapsed === "function"
+      ? getLiveHeaderCollapsed()
+      : false;
   }
 
   function shouldShowTaskDispatchTabs() {
