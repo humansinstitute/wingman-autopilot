@@ -70,6 +70,7 @@ import {
   TABS_VISIBILITY_STORAGE_KEY,
   TASK_DISPATCH_TABS_VISIBILITY_STORAGE_KEY,
   LIVE_HEADER_COLLAPSED_STORAGE_KEY,
+  RAW_TERMINAL_OUTPUT_VISIBLE_STORAGE_KEY,
   APP_LOG_PREVIEW_LINES,
   TOAST_DEFAULT_DURATION_MS,
   DEFAULT_CONNECT_RELAYS,
@@ -561,6 +562,7 @@ let currentTheme = "dark";
 let tabsVisible = true;
 let taskDispatchTabsVisible = true;
 let liveHeaderCollapsed = false;
+let rawTerminalOutputVisible = false;
 let lastLoggedSessionId = null;
 let lastFilesMobileLayout = isMobileFilesLayout();
 
@@ -1232,6 +1234,38 @@ const toggleLiveHeaderCollapsed = () => {
   applyLiveHeaderCollapsed(!liveHeaderCollapsed);
 };
 
+const applyRawTerminalOutputVisible = (visible, persist = true) => {
+  rawTerminalOutputVisible = visible;
+  document.body.dataset.rawTerminalOutputVisible = visible ? "true" : "false";
+  if (persist) {
+    try {
+      localStorage.setItem(RAW_TERMINAL_OUTPUT_VISIBLE_STORAGE_KEY, visible ? "true" : "false");
+    } catch (error) {
+      console.warn("Failed to persist raw terminal output preference", error);
+    }
+    refreshLiveTabsBar();
+    if (currentRoute === "live") {
+      render();
+    }
+  }
+};
+
+const detectPreferredRawTerminalOutputVisible = () => {
+  try {
+    const stored = localStorage.getItem(RAW_TERMINAL_OUTPUT_VISIBLE_STORAGE_KEY);
+    if (stored === "true" || stored === "false") {
+      return stored === "true";
+    }
+  } catch {
+    // ignore storage failures
+  }
+  return false;
+};
+
+const toggleRawTerminalOutputVisible = () => {
+  applyRawTerminalOutputVisible(!rawTerminalOutputVisible);
+};
+
 let menuOpenedAt = 0;
 
 const closeMenu = (options = {}) => {
@@ -1287,6 +1321,10 @@ const initTaskDispatchTabsVisibility = () => {
 
 const initLiveHeaderCollapsed = () => {
   applyLiveHeaderCollapsed(detectPreferredLiveHeaderCollapsed(), false);
+};
+
+const initRawTerminalOutputVisible = () => {
+  applyRawTerminalOutputVisible(detectPreferredRawTerminalOutputVisible(), false);
 };
 
 const setActiveNav = () => {
@@ -2208,6 +2246,8 @@ const liveViewModule = initLiveView({
   getTaskDispatchTabsVisible: () => taskDispatchTabsVisible,
   getLiveHeaderCollapsed: () => liveHeaderCollapsed,
   toggleLiveHeaderCollapsed,
+  getRawTerminalOutputVisible: () => rawTerminalOutputVisible,
+  toggleRawTerminalOutputVisible,
   appRoot,
   render,
   getActiveSessions,
@@ -2722,6 +2762,7 @@ dialog.addEventListener("cancel", (event) => {
   initTabsVisibility();
   initTaskDispatchTabsVisibility();
   initLiveHeaderCollapsed();
+  initRawTerminalOutputVisible();
   setupConversationSelectionLock();
   initLiveMobileRuntime();
   // Initialize live module (Dexie database for SSE updates)

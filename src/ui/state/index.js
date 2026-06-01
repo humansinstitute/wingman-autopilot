@@ -10,6 +10,7 @@ export const THEME_STORAGE_KEY = "wingman-theme";
 export const TABS_VISIBILITY_STORAGE_KEY = "wingman-tabs-visible";
 export const TASK_DISPATCH_TABS_VISIBILITY_STORAGE_KEY = "wingman-task-dispatch-tabs-visible";
 export const LIVE_HEADER_COLLAPSED_STORAGE_KEY = "wingman-live-header-collapsed";
+export const RAW_TERMINAL_OUTPUT_VISIBLE_STORAGE_KEY = "wingman-raw-terminal-output-visible";
 export const FILES_SHOW_HIDDEN_STORAGE_KEY = "wingman-files-show-hidden";
 export const FILES_BROWSER_SHELVED_STORAGE_KEY = "wingman-files-browser-shelved";
 export const FILES_FAVORITES_STORAGE_KEY = "wingman-files-favorites";

@@ -52,6 +52,7 @@ import {
   getRenderedLiveDrawerVisible,
 } from "../live/drawer-visibility.js";
 import { createLiveHeaderFullscreenToggle } from "../live/header-fullscreen-toggle.js";
+import { createRawTerminalOutputToggle } from "../live/raw-terminal-output-toggle.js";
 import { canResumeNativeAgentSession } from "../home/native-session-resume.js";
 import { filterTaskDispatchSessionsForTabs } from "../sessions/session-classification.js";
 
@@ -65,6 +66,8 @@ export function initLiveView(deps) {
     getTaskDispatchTabsVisible,
     getLiveHeaderCollapsed,
     toggleLiveHeaderCollapsed,
+    getRawTerminalOutputVisible,
+    toggleRawTerminalOutputVisible,
     appRoot,
     render,
     // Session helpers
@@ -237,10 +240,17 @@ export function initLiveView(deps) {
     const panel = document.createElement("div");
     panel.className = "wm-live-tabs-panel";
     panel.append(renderTabs({ sessions: getVisibleTabSessions(getActiveSessions()) }));
-    panel.append(createLiveHeaderFullscreenToggle({
+    const actions = document.createElement("div");
+    actions.className = "wm-live-tabs-actions";
+    actions.append(createRawTerminalOutputToggle({
+      visible: shouldShowRawTerminalOutput(),
+      onToggle: toggleRawTerminalOutputVisible,
+    }));
+    actions.append(createLiveHeaderFullscreenToggle({
       collapsed: shouldCollapseLiveHeader(),
       onToggle: toggleLiveHeaderCollapsed,
     }));
+    panel.append(actions);
     return panel;
   }
 
@@ -258,6 +268,20 @@ export function initLiveView(deps) {
 
   function getVisibleTabSessions(sessions) {
     return filterTaskDispatchSessionsForTabs(sessions, shouldShowTaskDispatchTabs());
+  }
+
+  function shouldShowRawTerminalOutput() {
+    return typeof getRawTerminalOutputVisible === "function"
+      ? getRawTerminalOutputVisible()
+      : false;
+  }
+
+  function appendRawTerminalOutput(target, sessionId) {
+    if (!shouldShowRawTerminalOutput()) {
+      state.logContainers.delete(sessionId);
+      return;
+    }
+    target.append(renderLogs(sessionId));
   }
 
   function activateSessionTab(session, onSelect) {
@@ -1105,8 +1129,7 @@ export function initLiveView(deps) {
     const scrollRegion = document.querySelector('.wm-live-scroll');
     if (scrollRegion) {
       scrollRegion.innerHTML = "";
-      const logSection = renderLogs(sessionId);
-      scrollRegion.append(logSection);
+      appendRawTerminalOutput(scrollRegion, sessionId);
       const conversationContainer = document.createElement("div");
       conversationContainer.className = "wm-live-conversation";
       if (isAlpineChatEnabled()) {
@@ -1325,8 +1348,7 @@ export function initLiveView(deps) {
 
     const scrollRegion = document.createElement("div");
     scrollRegion.className = "wm-live-scroll";
-    const logSection = renderLogs(sessionId);
-    scrollRegion.append(logSection);
+    appendRawTerminalOutput(scrollRegion, sessionId);
 
     const conversationContainer = document.createElement("div");
     conversationContainer.className = "wm-live-conversation";

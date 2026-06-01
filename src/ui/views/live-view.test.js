@@ -48,6 +48,14 @@ describe("live-view drawer integration", () => {
     expect(source).toContain("panel.append(renderTabs");
   });
 
+  test("renders raw terminal output through an explicit tab bar toggle", () => {
+    expect(source).toContain("createRawTerminalOutputToggle");
+    expect(source).toContain("getRawTerminalOutputVisible");
+    expect(source).toContain("toggleRawTerminalOutputVisible");
+    expect(source).toContain("appendRawTerminalOutput(scrollRegion, sessionId)");
+    expect(source).toContain(": false;");
+  });
+
   test("shows session context above the composer", () => {
     expect(source).toContain("wm-composer-context");
     expect(source).toContain("wm-composer-input-column");
