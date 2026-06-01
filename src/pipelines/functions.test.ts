@@ -1,17 +1,54 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateSecretKey, nip19 } from "nostr-tools";
 import type { DeclarativePipeline } from "./declarative";
 import { builtinPipelineFunctions } from "./functions";
-import type { PipelineDefinitionRecord } from "./pipeline-loader";
+import { getPipelineDefinition, type PipelineDefinitionRecord } from "./pipeline-loader";
 import { runDeclarativePipeline } from "./pipeline-runner";
 import { PipelineStore, type JsonObject } from "./pipeline-store";
 
+const seededPipelineSpecs = new Map<string, DeclarativePipeline>();
+let tempPipelineRoot: string | null = null;
+let previousPipelineRoot: string | undefined;
+
+beforeAll(async () => {
+  previousPipelineRoot = process.env.WINGMEN_PIPELINES_ROOT;
+  tempPipelineRoot = mkdtempSync(join(tmpdir(), "wingmen-functions-pipeline-root-"));
+  process.env.WINGMEN_PIPELINES_ROOT = tempPipelineRoot;
+
+  const seededDefinitions = [
+    ["agent-dispatch-chat.json", "agent-dispatch-chat"],
+    ["document-discussion.json", "document-discussion"],
+  ] as const;
+  for (const [fileName, slug] of seededDefinitions) {
+    const definition = await getPipelineDefinition(slug, "functions-test");
+    if (!definition) {
+      throw new Error(`Seeded pipeline definition missing: ${slug}`);
+    }
+    seededPipelineSpecs.set(fileName, structuredClone(definition.spec) as DeclarativePipeline);
+  }
+});
+
+afterAll(() => {
+  if (previousPipelineRoot === undefined) {
+    delete process.env.WINGMEN_PIPELINES_ROOT;
+  } else {
+    process.env.WINGMEN_PIPELINES_ROOT = previousPipelineRoot;
+  }
+  if (tempPipelineRoot) {
+    rmSync(tempPipelineRoot, { recursive: true, force: true });
+  }
+});
+
 function loadSharedPipelineSpec(fileName: string): DeclarativePipeline {
-  return JSON.parse(readFileSync(join(homedir(), ".wingmen", "pipelines", "shared", "definitions", fileName), "utf8"));
+  const spec = seededPipelineSpecs.get(fileName);
+  if (!spec) {
+    throw new Error(`Seeded pipeline definition not loaded: ${fileName}`);
+  }
+  return structuredClone(spec) as DeclarativePipeline;
 }
 
 function executableChatDispatchSpec(agentDecision: JsonObject): DeclarativePipeline {
@@ -46,7 +83,7 @@ async function runChatDispatchSpec(input: {
     name: "agent-dispatch-chat",
     scope: "shared",
     ownerAlias: null,
-    path: join(homedir(), ".wingmen", "pipelines", "shared", "definitions", "agent-dispatch-chat.json"),
+    path: join(tempPipelineRoot ?? tmpdir(), "shared", "definitions", "agent-dispatch-chat.json"),
     spec: executableChatDispatchSpec(input.agentDecision),
   };
   const store = new PipelineStore(join(tmpdir(), `wingmen-chat-dispatch-${randomUUID()}.sqlite`));
