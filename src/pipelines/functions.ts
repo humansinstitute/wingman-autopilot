@@ -719,6 +719,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const createdTask = objectValue(input.createdTask);
     const childPipeline = objectValue(input.childPipeline);
     const taskId = getText(createdTask.taskId);
+    const taskCreationFailed = decision.dispatchTask === true && getText(createdTask.status) === "failed";
     const createdTaskWorkPlan = objectValue(createdTask.workPlan);
     const taskLabel = getText(createdTaskWorkPlan.taskSummary)
       ?? getText(createdTask.title)
@@ -730,7 +731,9 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const needsInput = getText(childPipeline.status) === "needs_input";
     const needsInputUpdate = objectValue(childPipeline.needsInputUpdate);
     let responseDraft = getText(decision.responseDraft) ?? "Done.";
-    if (decision.dispatchTask === true && taskId) {
+    if (taskCreationFailed) {
+      responseDraft = `I have the request, but I could not create the Flight Deck task yet: ${getText(createdTask.reason) ?? "unknown error"}. I am not dropping the request; please retry or check the dispatch/Yoke connection.`;
+    } else if (decision.dispatchTask === true && taskId) {
       responseDraft = needsInput
         ? `I created task ${taskMention} and started ${pipelineName ?? "the selected pipeline"}${pipelineRunId ? ` (${pipelineRunId})` : ""}, but it needs input before it can continue.${getText(needsInputUpdate.question) ? `\nQuestion: ${getText(needsInputUpdate.question)}` : ""}`
         : launchFailed
@@ -742,6 +745,8 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       responseDraft,
       reasoningSummary: getText(decision.clarifyingQuestion)
         ? "Asked a clarifying question instead of dispatching work."
+        : taskCreationFailed
+          ? "Task-backed dispatch was requested, but task creation failed; reporting the issue in chat."
         : needsInput
           ? "The child pipeline needs input; a clarification question was published."
         : decision.dispatchTask === true
@@ -750,6 +755,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       actionsTaken: [
         ...(taskId ? [`created task ${taskId}`] : []),
         ...(pipelineRunId ? [`started pipeline run ${pipelineRunId}`] : []),
+        ...(taskCreationFailed ? [`task creation failed: ${getText(createdTask.reason) ?? "unknown error"}`] : []),
       ],
       confidence: clampConfidence(decision.confidence),
     };

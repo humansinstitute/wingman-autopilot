@@ -153,18 +153,8 @@ export function createDispatchChatContextHydrator(
       throw new Error('Chat hydration requires channelId and threadId.');
     }
 
-    const thread = await runYokeJson(context, [
-      'chat',
-      'context',
-      '--channel',
-      channelId,
-      '--thread',
-      threadId,
-      '--limit',
-      '20',
-      '--format',
-      'json',
-    ]);
+    const hydratedThread = await hydrateChatThreadWithFallback(context, channelId, threadId);
+    const thread = hydratedThread.thread;
     const selfAuthored = detectSelfAuthoredChatDispatch(context, input, thread);
     let scopes: unknown = [];
     let referencedRecords: Array<Record<string, unknown>> = [];
@@ -180,8 +170,8 @@ export function createDispatchChatContextHydrator(
     }
 
     return {
-      hydrated: true,
-      status: selfAuthored.selfAuthored ? 'skipped' : 'ok',
+      hydrated: hydratedThread.hydrated,
+      status: selfAuthored.selfAuthored ? 'skipped' : hydratedThread.status,
       operation: 'chat.hydrate-context',
       shouldProceed: !selfAuthored.selfAuthored,
       selfAuthored: selfAuthored.selfAuthored,
@@ -190,10 +180,111 @@ export function createDispatchChatContextHydrator(
       channelId,
       threadId,
       thread,
+      hydrationWarnings: hydratedThread.warnings,
+      fallbackContext: hydratedThread.fallbackContext,
       scopes,
       referencedRecords,
       availablePipelines: Array.isArray(input.availablePipelines) ? input.availablePipelines : [],
     };
+  };
+}
+
+async function hydrateChatThreadWithFallback(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  channelId: string,
+  threadId: string,
+): Promise<{
+  hydrated: boolean;
+  status: 'ok' | 'partial';
+  thread: unknown;
+  warnings: string[];
+  fallbackContext: boolean;
+}> {
+  const args = [
+    'chat',
+    'context',
+    '--channel',
+    channelId,
+    '--thread',
+    threadId,
+    '--limit',
+    '20',
+    '--format',
+    'json',
+  ];
+  const warnings: string[] = [];
+
+  try {
+    return {
+      hydrated: true,
+      status: 'ok',
+      thread: await runYokeJson(context, args),
+      warnings,
+      fallbackContext: false,
+    };
+  } catch (error) {
+    warnings.push(`initial chat context failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  try {
+    await runYokeJson(context, ['sync', '--json']);
+  } catch (error) {
+    warnings.push(`sync before chat context retry failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  try {
+    return {
+      hydrated: true,
+      status: 'ok',
+      thread: await runYokeJson(context, args),
+      warnings,
+      fallbackContext: false,
+    };
+  } catch (error) {
+    warnings.push(`retry chat context failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  return {
+    hydrated: true,
+    status: 'partial',
+    thread: buildFallbackChatThread(context, channelId, threadId),
+    warnings,
+    fallbackContext: true,
+  };
+}
+
+function buildFallbackChatThread(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  channelId: string,
+  threadId: string,
+): JsonObject {
+  const payload = context.eventInput.payload;
+  const messageId = context.eventInput.recordId;
+  const parentMessageId = getText(payload.parent_message_id);
+  const message = {
+    message_id: messageId,
+    record_id: messageId,
+    parent_message_id: parentMessageId,
+    sender_npub: getText(payload.sender_npub),
+    body: getText(payload.body) ?? '',
+    attachments: Array.isArray(payload.attachments) ? payload.attachments : [],
+    updated_at: getText(payload.updated_at),
+    record_state: getText(payload.record_state),
+    version: typeof payload.version === 'number' ? payload.version : null,
+  };
+  return {
+    channel_id: channelId,
+    thread_id: threadId,
+    fallback_context: true,
+    fallback_reason: 'local chat context was unavailable; using the dispatch record payload',
+    recent_messages: [message],
+    messages: [message],
+    thread: {
+      message_id: threadId,
+      record_id: threadId,
+      recent_messages: [message],
+      messages: [message],
+    },
   };
 }
 
@@ -320,16 +411,55 @@ export function createDispatchChatTaskCreator(
       args.push('--scope', scopeId);
     }
     args.push('--json');
-    const createResult = await runYokeJson(context, args);
-    const taskId = getCreatedRecordId(createResult)
-      ?? await findNewlyCreatedTaskId(context, {
-        title,
-        state: 'in_progress',
-        assignedTo,
-        previousTaskIds,
-      });
+    let createResult: unknown = null;
+    let taskId: string | null = null;
+    try {
+      createResult = await runYokeJson(context, args);
+      taskId = getCreatedRecordId(createResult)
+        ?? await findNewlyCreatedTaskId(context, {
+          title,
+          state: 'in_progress',
+          assignedTo,
+          previousTaskIds,
+        });
+    } catch (error) {
+      return {
+        created: false,
+        status: 'failed',
+        operation: 'tasks.create-from-chat',
+        reason: error instanceof Error ? error.message : String(error),
+        scopeId,
+        assignedToNpub: assignedTo,
+        pipelineDefinitionId: null,
+        workPlan: {
+          ...workPlan,
+          taskId: null,
+          scopeId,
+          assignedToNpub: assignedTo,
+          childPipelineDefinitionId: null,
+          pipelineDefinitionId: null,
+        },
+      };
+    }
     if (!taskId) {
-      throw new Error('Task creation succeeded but no created task id was returned.');
+      return {
+        created: false,
+        status: 'failed',
+        operation: 'tasks.create-from-chat',
+        reason: 'Task creation succeeded but no created task id was returned.',
+        scopeId,
+        assignedToNpub: assignedTo,
+        pipelineDefinitionId: null,
+        createResult,
+        workPlan: {
+          ...workPlan,
+          taskId: null,
+          scopeId,
+          assignedToNpub: assignedTo,
+          childPipelineDefinitionId: null,
+          pipelineDefinitionId: null,
+        },
+      };
     }
     const nextWorkPlan = {
       ...workPlan,
@@ -370,7 +500,12 @@ export function createDispatchCreatedTaskBlocker(
     }
     const taskId = resolveTaskId(context, input);
     if (!taskId) {
-      throw new Error('Cannot block task after pipeline launch failure without a task id.');
+      return {
+        updated: false,
+        status: 'skipped',
+        operation: 'tasks.block-on-pipeline-launch-failure',
+        reason: 'Cannot block task after pipeline launch failure without a task id.',
+      };
     }
     const reason = getText(childPipeline.reason) ?? getText(childPipeline.error) ?? 'Selected pipeline failed to start.';
     const updateResult = await runYokeJson(context, [

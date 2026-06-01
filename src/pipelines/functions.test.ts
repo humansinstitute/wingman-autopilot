@@ -209,6 +209,36 @@ describe("memory pipeline functions", () => {
     expect(JSON.stringify(result)).not.toContain("agent-dispatch-chat");
   });
 
+  test("dispatch.prepareChatDispatchResponse replies when task creation fails", async () => {
+    const result = await builtinPipelineFunctions["dispatch.prepareChatDispatchResponse"]!({
+      decision: {
+        dispatchTask: true,
+        responseDraft: "Starting work.",
+        confidence: 0.8,
+      },
+      createdTask: {
+        status: "failed",
+        reason: "fetch failed",
+        workPlan: {
+          taskSummary: "Fix dispatch",
+        },
+      },
+      childPipeline: {
+        started: false,
+        status: "failed",
+        reason: "No child pipeline definition id was provided.",
+      },
+    });
+
+    expect(result).toMatchObject({
+      shouldRespond: true,
+      reasoningSummary: "Task-backed dispatch was requested, but task creation failed; reporting the issue in chat.",
+    });
+    expect(result.responseDraft).toContain("could not create the Flight Deck task");
+    expect(result.responseDraft).toContain("fetch failed");
+    expect(result.actionsTaken).toContain("task creation failed: fetch failed");
+  });
+
   test("dispatch.prepareChatIntentInput accepts wrapped scope list payloads", async () => {
     const result = await builtinPipelineFunctions["dispatch.prepareChatIntentInput"]!({
       dispatch: { routeId: "route-1", triggerKind: "chat" },

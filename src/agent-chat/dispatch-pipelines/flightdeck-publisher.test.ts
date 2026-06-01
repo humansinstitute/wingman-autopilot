@@ -5,10 +5,33 @@ import { tmpdir } from 'node:os';
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 
 const yokeCommandCalls: string[][] = [];
+let failChatContextCount = 0;
+let failTaskCreateCount = 0;
 
 const runAgentWorkspaceYokeCommandMock = mock(async (input: { args: string[] }) => {
   yokeCommandCalls.push(input.args);
+  if (input.args[0] === 'chat' && input.args[1] === 'context') {
+    if (failChatContextCount > 0) {
+      failChatContextCount -= 1;
+      throw new Error(`Chat thread not found locally: ${input.args[input.args.indexOf('--thread') + 1]}`);
+    }
+    return JSON.stringify({
+      channel_id: input.args[input.args.indexOf('--channel') + 1],
+      thread_id: input.args[input.args.indexOf('--thread') + 1],
+      recent_messages: [
+        {
+          message_id: 'chat-message-1',
+          sender_npub: 'npub1requester',
+          body: 'Hydrated thread body.',
+        },
+      ],
+    });
+  }
   if (input.args[0] === 'tasks' && input.args[1] === 'create') {
+    if (failTaskCreateCount > 0) {
+      failTaskCreateCount -= 1;
+      throw new Error('fetch failed');
+    }
     return JSON.stringify({
       record_id: 'task-created-1',
       synced: 1,
@@ -47,6 +70,7 @@ mock.module('../yoke-runtime', () => ({
 }));
 
 const {
+  createDispatchChatContextHydrator,
   createDispatchChatTaskCreator,
   createDispatchImplementationReviewProgressCommenter,
   createDispatchImplementationReviewTaskEnsurer,
@@ -59,7 +83,142 @@ const { PipelineStore } = await import('../../pipelines/pipeline-store');
 describe('dispatch pipeline Flight Deck publisher', () => {
   beforeEach(() => {
     yokeCommandCalls.length = 0;
+    failChatContextCount = 0;
+    failTaskCreateCount = 0;
     runAgentWorkspaceYokeCommandMock.mockClear();
+  });
+
+  test('chat context hydration retries sync and falls back to the dispatch payload', async () => {
+    failChatContextCount = 2;
+    const hydrate = createDispatchChatContextHydrator({
+      eventInput: {
+        subscription: {
+          subscriptionId: 'sub-1',
+          workspaceOwnerNpub: 'npub1workspace',
+          sourceAppNpub: 'npub1source',
+          backendBaseUrl: 'https://tower.example.com',
+          botNpub: 'npub1bot',
+          wsKeyNpub: 'npub1wskey',
+        },
+        triggerKind: 'chat',
+        capability: 'chat_intercept',
+        recordId: 'chat-message-1',
+        record: {},
+        payload: {
+          channel_id: 'channel-1',
+          body: 'Fallback body from dispatch payload.',
+          sender_npub: 'npub1requester',
+          attachments: [],
+          updated_at: '2026-06-01T01:11:45.306Z',
+        },
+        recordFamily: 'chat',
+        recordState: null,
+        recordVersion: 1,
+        updaterNpub: 'npub1requester',
+        bindingType: 'thread',
+        bindingId: 'thread-1',
+        channelId: 'channel-1',
+        threadId: 'thread-1',
+      },
+      agent: {
+        agentId: 'agent-1',
+        workingDirectory: '/tmp/agent-work',
+      },
+      botIdentity: {
+        botNpub: 'npub1bot',
+        botPubkeyHex: 'ab'.repeat(32),
+        botSecret: new Uint8Array(32),
+      },
+      runtime: {
+        yokeStateDir: '/tmp/yoke-state',
+        commandPrefix: 'node yoke',
+        commands: {},
+        error: null,
+      },
+    } as never);
+
+    const result = await hydrate({ availablePipelines: [] });
+
+    expect(result).toMatchObject({
+      hydrated: true,
+      status: 'partial',
+      shouldProceed: true,
+      fallbackContext: true,
+    });
+    expect((result.thread as any).recent_messages[0]).toMatchObject({
+      message_id: 'chat-message-1',
+      body: 'Fallback body from dispatch payload.',
+    });
+    expect(result.hydrationWarnings).toHaveLength(2);
+    expect(yokeCommandCalls.filter((args) => args[0] === 'chat' && args[1] === 'context')).toHaveLength(2);
+    expect(yokeCommandCalls.some((args) => args[0] === 'sync')).toBe(true);
+  });
+
+  test('chat task creation failure returns a structured failure instead of throwing', async () => {
+    failTaskCreateCount = 1;
+    const createTask = createDispatchChatTaskCreator({
+      eventInput: {
+        subscription: {
+          subscriptionId: 'sub-1',
+          workspaceOwnerNpub: 'npub1workspace',
+          sourceAppNpub: 'npub1source',
+          backendBaseUrl: 'https://tower.example.com',
+          botNpub: 'npub1bot',
+          wsKeyNpub: 'npub1wskey',
+        },
+        triggerKind: 'chat',
+        capability: 'chat_intercept',
+        recordId: 'chat-message-2',
+        record: {},
+        payload: {},
+        recordFamily: 'chat',
+        recordState: null,
+        recordVersion: 1,
+        updaterNpub: 'npub1requester',
+        bindingType: 'thread',
+        bindingId: 'thread-1',
+        channelId: 'channel-1',
+        threadId: 'thread-1',
+      },
+      agent: {
+        agentId: 'agent-1',
+        workingDirectory: '/tmp/agent-work',
+      },
+      botIdentity: {
+        botNpub: 'npub1bot',
+        botPubkeyHex: 'ab'.repeat(32),
+        botSecret: new Uint8Array(32),
+      },
+      runtime: {
+        yokeStateDir: '/tmp/yoke-state',
+        commandPrefix: 'node yoke',
+        commands: {},
+        error: null,
+      },
+    } as never);
+
+    const result = await createTask({
+      dispatchTask: true,
+      pipelineDefinitionId: 'software-implementation-review-loop',
+      taskDraft: {
+        title: 'Fix chat dispatch',
+        instructions: 'Make dispatch resilient.',
+      },
+      workPlan: {
+        taskSummary: 'Fix chat dispatch',
+        instructions: 'Make dispatch resilient.',
+        pipelineDefinitionId: 'software-implementation-review-loop',
+      },
+    });
+
+    expect(result).toMatchObject({
+      created: false,
+      status: 'failed',
+      operation: 'tasks.create-from-chat',
+      reason: 'fetch failed',
+      pipelineDefinitionId: null,
+    });
+    expect((result.workPlan as any).pipelineDefinitionId).toBeNull();
   });
 
   test('review handoff comments with the report document and notifies the source chat', async () => {
