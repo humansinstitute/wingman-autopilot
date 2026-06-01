@@ -1252,6 +1252,112 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(next.recentDispatches[0]?.bindingType).toBe('task');
   });
 
+  test('starts configured comment pipeline for manager-authored task comments without an agent mention', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-comment-pipeline-task-manager-no-mention-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-comment-pipeline-task-manager-no-mention-agents'));
+    const routeStore = new DispatchRouteStore(makeTempDb('agent-comment-pipeline-task-manager-no-mention-routes'));
+    const pipelineStore = new PipelineStore(makeTempDb('agent-comment-pipeline-task-manager-no-mention-runs'));
+    const subscription = store.save(makeSubscription());
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-comment',
+      label: 'Comment Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-comment',
+      capabilities: ['comment_dispatch'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+    const route = routeStore.save({
+      managedByNpub: subscription.managedByNpub!,
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'comment',
+      capability: 'comment_dispatch',
+      pipelineDefinitionId: 'comment-pipeline',
+      enabled: true,
+    });
+    const runInputs: Record<string, unknown>[] = [];
+    const dispatchPipelineRuntime = new DispatchPipelineRuntime({
+      routeStore,
+      agentStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      loadDefinition: async () => ({
+        id: 'comment-pipeline',
+        slug: 'comment-pipeline',
+        name: 'Comment Pipeline',
+        scope: 'user',
+        ownerAlias: 'manager',
+        path: '/tmp/comment-pipeline.json',
+        spec: { name: 'Comment Pipeline', input: {}, steps: [] },
+      }),
+      loadFunctions: async () => ({ registry: {}, records: [] }),
+      runPipeline: async (input: any) => {
+        runInputs.push(input.input);
+        return makePipelineRun('comment-pipeline-run-1', input.input);
+      },
+    });
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      dispatchPipelineRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-task-comment-manager-1',
+          record_state: 'active',
+          version: 1,
+          signature_npub: subscription.managedByNpub,
+          group_npubs: ['npub1group'],
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        comment_id: 'comment-task-manager-1',
+        target_record_id: 'task-1',
+        target_record_family_hash: `${subscription.sourceAppNpub}:task`,
+        sender_npub: subscription.managedByNpub,
+        body: 'Please pick up this review note.',
+        comment_status: 'open',
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-task-comment-manager-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'comment'),
+        record_id: 'record-task-comment-manager-1',
+      }),
+    );
+
+    expect(runInputs).toHaveLength(1);
+    expect((runInputs[0]?.dispatch as any)?.routeId).toBe(route.routeId);
+    expect((runInputs[0]?.record as any)?.payload?.commentId).toBe('comment-task-manager-1');
+    expect(next.recentDispatches[0]?.action).toBe('comment_pipeline_dispatch');
+  });
+
   test('skips workspace-key-authored comments before configured comment pipelines', async () => {
     const store = new WorkspaceSubscriptionStore(makeTempDb('agent-comment-pipeline-self-subscriptions'));
     const agentStore = new AgentDefinitionStore(makeTempDb('agent-comment-pipeline-self-agents'));
@@ -1640,6 +1746,112 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(next.recentDispatches[0]?.action).toBe('document_comment_skip_no_agent_mention');
     expect(next.recentDispatches[0]?.bindingId).toBe('doc-1');
     expect(next.recentDispatches[0]?.bindingType).toBe('document');
+  });
+
+  test('starts configured comment pipeline for manager-authored document comments without an agent mention', async () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb('agent-comment-pipeline-doc-manager-no-mention-subscriptions'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-comment-pipeline-doc-manager-no-mention-agents'));
+    const routeStore = new DispatchRouteStore(makeTempDb('agent-comment-pipeline-doc-manager-no-mention-routes'));
+    const pipelineStore = new PipelineStore(makeTempDb('agent-comment-pipeline-doc-manager-no-mention-runs'));
+    const subscription = store.save(makeSubscription());
+    const now = new Date().toISOString();
+
+    agentStore.save({
+      agentId: 'agent-comment',
+      label: 'Comment Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-comment',
+      capabilities: ['comment_dispatch'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+    const route = routeStore.save({
+      managedByNpub: subscription.managedByNpub!,
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'comment',
+      capability: 'comment_dispatch',
+      pipelineDefinitionId: 'comment-pipeline',
+      enabled: true,
+    });
+    const runInputs: Record<string, unknown>[] = [];
+    const dispatchPipelineRuntime = new DispatchPipelineRuntime({
+      routeStore,
+      agentStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      loadDefinition: async () => ({
+        id: 'comment-pipeline',
+        slug: 'comment-pipeline',
+        name: 'Comment Pipeline',
+        scope: 'user',
+        ownerAlias: 'manager',
+        path: '/tmp/comment-pipeline.json',
+        spec: { name: 'Comment Pipeline', input: {}, steps: [] },
+      }),
+      loadFunctions: async () => ({ registry: {}, records: [] }),
+      runPipeline: async (input: any) => {
+        runInputs.push(input.input);
+        return makePipelineRun('comment-pipeline-run-1', input.input);
+      },
+    });
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      dispatchPipelineRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-doc-comment-manager-1',
+          record_state: 'active',
+          version: 1,
+          signature_npub: subscription.managedByNpub,
+          group_npubs: ['npub1group'],
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        comment_id: 'comment-doc-manager-1',
+        target_record_id: 'doc-1',
+        target_record_family_hash: `${subscription.sourceAppNpub}:document`,
+        sender_npub: subscription.managedByNpub,
+        body: 'This section needs a clearer answer.',
+        comment_status: 'open',
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => makeBotKeyRecord(),
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+
+    seedRuntime(manager, subscription.subscriptionId);
+
+    const next = await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(
+      subscription,
+      'evt-doc-comment-manager-1',
+      'record-changed',
+      JSON.stringify({
+        family_hash: buildRecordFamilyHash(subscription.sourceAppNpub, 'comment'),
+        record_id: 'record-doc-comment-manager-1',
+      }),
+    );
+
+    expect(runInputs).toHaveLength(1);
+    expect((runInputs[0]?.dispatch as any)?.routeId).toBe(route.routeId);
+    expect((runInputs[0]?.record as any)?.payload?.commentId).toBe('comment-doc-manager-1');
+    expect(next.recentDispatches[0]?.action).toBe('comment_pipeline_dispatch');
   });
 
   test('starts configured comment pipeline for document comments that mention the agent', async () => {

@@ -180,6 +180,18 @@ function isSelfCommentAuthor(
   return Boolean(comment.senderNpub && comment.senderNpub === agent.botNpub);
 }
 
+function isManagerAuthoredComment(
+  subscription: WorkspaceSubscriptionRecord,
+  comment: InboundCommentRecord,
+  updaterNpub: string | null,
+): boolean {
+  const managerNpub = subscription.managedByNpub;
+  if (!managerNpub) {
+    return false;
+  }
+  return updaterNpub === managerNpub || comment.senderNpub === managerNpub;
+}
+
 function parseTimestampMs(value: unknown): number | null {
   if (typeof value !== 'string') {
     return null;
@@ -2553,8 +2565,11 @@ export class WorkspaceSubscriptionManager {
       });
     }
 
-    const mentionedAgents = commentAgents.filter((agent) => commentMentionsAgent(comment, agent));
-    if (mentionedAgents.length === 0) {
+    const managerAuthored = isManagerAuthoredComment(record, comment, updaterNpub);
+    const selectedAgents = managerAuthored
+      ? commentAgents
+      : commentAgents.filter((agent) => commentMentionsAgent(comment, agent));
+    if (selectedAgents.length === 0) {
       return this.appendDispatchHistory(record, {
         at: new Date().toISOString(),
         kind: 'comment',
@@ -2570,6 +2585,7 @@ export class WorkspaceSubscriptionManager {
           sender_npub: comment.senderNpub,
           target_record_family_hash: comment.targetRecordFamilyHash,
           eligible_agent_ids: commentAgents.map((agent) => agent.agentId),
+          mention_required: true,
         },
       });
     }
@@ -2597,7 +2613,7 @@ export class WorkspaceSubscriptionManager {
       }
     }
 
-    for (const agent of mentionedAgents) {
+    for (const agent of selectedAgents) {
       if (isSelfCommentAuthor(record, agent, comment, updaterNpub)) {
         record = this.appendDispatchHistory(record, {
           at: new Date().toISOString(),
@@ -2690,8 +2706,11 @@ export class WorkspaceSubscriptionManager {
       });
     }
 
-    const mentionedAgents = agents.filter((agent) => commentMentionsAgent(comment, agent));
-    if (mentionedAgents.length === 0) {
+    const managerAuthored = isManagerAuthoredComment(record, comment, updaterNpub);
+    const selectedAgents = managerAuthored
+      ? agents
+      : agents.filter((agent) => commentMentionsAgent(comment, agent));
+    if (selectedAgents.length === 0) {
       return this.appendDispatchHistory(record, {
         at: new Date().toISOString(),
         kind: 'comment',
@@ -2706,6 +2725,7 @@ export class WorkspaceSubscriptionManager {
           target_record_id: comment.targetRecordId,
           target_record_family_hash: comment.targetRecordFamilyHash,
           eligible_agent_ids: agents.map((agent) => agent.agentId),
+          mention_required: true,
         },
       });
     }
@@ -2733,7 +2753,7 @@ export class WorkspaceSubscriptionManager {
       }
     }
 
-    for (const agent of mentionedAgents) {
+    for (const agent of selectedAgents) {
       if (isSelfCommentAuthor(record, agent, comment, updaterNpub)) {
         record = this.appendDispatchHistory(record, {
           at: new Date().toISOString(),
