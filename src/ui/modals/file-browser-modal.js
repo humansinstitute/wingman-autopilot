@@ -24,6 +24,25 @@ export function sortFileBrowserEntries(entries) {
   });
 }
 
+export function normalizeCommandFileBrowserFavourites(favourites) {
+  if (!Array.isArray(favourites)) return [];
+  const seen = new Set();
+  const normalized = [];
+
+  for (const favourite of favourites) {
+    const path = typeof favourite?.path === "string" ? favourite.path.trim() : "";
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    const fallbackName = path.replace(/\/+$/, "").split("/").filter(Boolean).pop() || path;
+    const name = typeof favourite?.name === "string" && favourite.name.trim()
+      ? favourite.name.trim()
+      : fallbackName;
+    normalized.push({ path, name });
+  }
+
+  return normalized;
+}
+
 function createFileBrowserEntryIcon(entryType) {
   const isDirectory = entryType === "directory";
   const icon = document.createElement("span");
@@ -35,6 +54,7 @@ function createFileBrowserEntryIcon(entryType) {
 
 export function openCommandFileBrowserModal({
   initialPath = "",
+  favourites = [],
   getSession,
   onPinFile,
   showToast,
@@ -66,6 +86,37 @@ export function openCommandFileBrowserModal({
   subtitle.setAttribute("aria-live", "polite");
   titleWrap.append(title, subtitle);
 
+  const favouriteEntries = normalizeCommandFileBrowserFavourites(favourites);
+  let favouritesControl = null;
+  if (favouriteEntries.length > 0) {
+    favouritesControl = document.createElement("label");
+    favouritesControl.className = "wm-command-file-browser__favourites";
+    const favouritesLabel = document.createElement("span");
+    favouritesLabel.textContent = "Favourites";
+    const favouritesSelect = document.createElement("select");
+    favouritesSelect.dataset.testid = "command-file-browser-favourites";
+    favouritesSelect.setAttribute("aria-label", "Jump to favourite folder");
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Jump to...";
+    favouritesSelect.append(placeholder);
+    favouriteEntries.forEach((favourite) => {
+      const option = document.createElement("option");
+      option.value = favourite.path;
+      option.textContent = favourite.name;
+      option.title = favourite.path;
+      favouritesSelect.append(option);
+    });
+    favouritesSelect.addEventListener("change", () => {
+      const path = favouritesSelect.value;
+      favouritesSelect.value = "";
+      if (path) {
+        void loadDirectory(path);
+      }
+    });
+    favouritesControl.append(favouritesLabel, favouritesSelect);
+  }
+
   const closeButton = document.createElement("button");
   closeButton.type = "button";
   closeButton.className = "wm-button secondary wm-button--small";
@@ -73,7 +124,11 @@ export function openCommandFileBrowserModal({
   closeButton.setAttribute("aria-label", "Close file browser");
   closeButton.dataset.testid = "command-file-browser-close";
   closeButton.addEventListener("click", () => dialog.close());
-  header.append(titleWrap, closeButton);
+  if (favouritesControl) {
+    header.append(titleWrap, favouritesControl, closeButton);
+  } else {
+    header.append(titleWrap, closeButton);
+  }
 
   const content = document.createElement("div");
   content.className = "wm-command-file-browser__content";

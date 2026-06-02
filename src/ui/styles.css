@@ -11257,6 +11257,33 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   font-size: 0.88rem;
 }
 
+.wm-command-file-browser__favourites {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.wm-command-file-browser__favourites select {
+  max-width: min(18rem, 34vw);
+  min-width: 9rem;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.4rem;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  padding: 0.35rem 0.55rem;
+  text-transform: none;
+}
+
 .wm-command-file-browser__content {
   display: grid;
   flex: 1;
@@ -11550,6 +11577,18 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   .wm-command-file-browser__header,
   .wm-command-file-browser__preview-header {
     flex-direction: column;
+  }
+
+  .wm-command-file-browser__favourites {
+    align-items: flex-start;
+    flex-direction: column;
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .wm-command-file-browser__favourites select {
+    max-width: none;
+    width: 100%;
   }
 
   .wm-command-file-browser__content {

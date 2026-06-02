@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   buildFilesRoutePath,
+  normalizeCommandFileBrowserFavourites,
   sortFileBrowserEntries,
 } from "./file-browser-modal.js";
 
@@ -25,6 +26,21 @@ describe("command file browser modal helpers", () => {
       "zeta",
       "file-2.md",
       "file-10.md",
+    ]);
+  });
+
+  test("normalises favourite folders for the command browser", () => {
+    expect(
+      normalizeCommandFileBrowserFavourites([
+        { path: " /workspace/docs ", name: " Docs " },
+        { path: "/workspace/app", name: "" },
+        { path: "/workspace/docs", name: "Duplicate" },
+        { path: "", name: "Empty" },
+        null,
+      ]),
+    ).toEqual([
+      { path: "/workspace/docs", name: "Docs" },
+      { path: "/workspace/app", name: "app" },
     ]);
   });
 });

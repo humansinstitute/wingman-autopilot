@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -11,6 +13,8 @@ import {
   isCommandPaletteActiveSession,
   rememberRecentItem,
 } from "./command-palette-utils.js";
+
+const commandPaletteSource = readFileSync(new URL("./command-palette.js", import.meta.url), "utf8");
 
 describe("autopilot command palette helpers", () => {
   test("keeps recent items newest first and unique", () => {
@@ -46,6 +50,10 @@ describe("autopilot command palette helpers", () => {
       "3:Pipelines",
       "4:Files",
     ]);
+  });
+
+  test("passes existing file favourites into the command file browser", () => {
+    expect(commandPaletteSource).toContain("favourites: state?.files?.favourites ?? []");
   });
 
   test("builds launch items with modal on 0 and recent projects on 1-9", () => {

@@ -276,6 +276,7 @@ export function createAutopilotCommandPalette({
     if (item.action === "files") {
       openCommandFileBrowserModal({
         initialPath: getFileBrowserInitialPath?.() ?? "",
+        favourites: state?.files?.favourites ?? [],
         getSession: getFileBrowserSession,
         onPinFile: pinFileToSession,
         showToast,
