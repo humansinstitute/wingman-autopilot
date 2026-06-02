@@ -10,7 +10,12 @@ import { openTextPromptDialog } from "../common/dialog-prompts.js";
 import { attachCopyButton, copyConversationToClipboard } from "../utils/clipboard.js";
 import { showToast } from "../utils/toast.js";
 import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
-import { fetchSessionHistoryApi, forkSessionToWorktreeApi, setPinnedArtifactApi } from "../services/sessions.js";
+import {
+  fetchSessionHistoryApi,
+  forkSessionToWorktreeApi,
+  removePinnedArtifactApi,
+  setPinnedArtifactApi,
+} from "../services/sessions.js";
 import { showRunningAppsModal } from "../apps/running-apps-modal.js";
 import { showRunningPipelinesModal } from "../pipelines/running-pipelines-modal.js";
 import { isAlpineChatEnabled, getChatTemplate, Alpine, MessageStore } from "../live/index.js";
@@ -31,6 +36,7 @@ import {
   isArtifactsPanelOpenForSession,
   isWriterPanelOpenForSession,
   markWriterDismissed,
+  replacePinnedFilesForSession,
   setArtifactsPanelOpenForSession,
   setPinnedFilePageForSession,
   setWriterPanelOpenForSession,
@@ -151,19 +157,36 @@ export function initLiveView(deps) {
     return pinnedFile;
   }
 
+  async function unpinPinnedArtifact(sessionId, filePath) {
+    const result = await removePinnedArtifactApi(sessionId, filePath);
+    const pinnedFile = result?.pinnedFile ?? null;
+    const pinnedFiles = Array.isArray(result?.pinnedFiles) ? result.pinnedFiles : [];
+    updateSessionPinnedFile(sessionId, pinnedFile);
+    updateSessionPinnedFiles(sessionId, pinnedFiles);
+    replacePinnedFilesForSession(state, sessionId, pinnedFiles, pinnedFile);
+    if (pinnedFiles.length === 0) {
+      setWriterPanelOpenForSession(state, sessionId, false);
+      clearWriterDismissal(state, sessionId);
+    }
+    return result;
+  }
+
   function getPinnedArtifactLabel(filePath) {
     const normalized = typeof filePath === "string" ? filePath.replace(/\\/g, "/") : "";
     return normalized.split("/").filter(Boolean).pop() || "Pinned doc";
   }
 
   function createPinnedArtifactPager(sessionId, pageState) {
-    if (!pageState || pageState.files.length <= 1) {
+    if (!pageState || pageState.files.length === 0) {
       return null;
     }
+    const container = document.createElement("div");
+    container.className = "wm-pinned-artifact-controls";
+    container.setAttribute("aria-label", "Pinned artifacts");
+    container.dataset.testid = "live-pinned-artifact-pager";
+
     const pager = document.createElement("div");
-    pager.className = "wm-webview-toolbar-actions";
-    pager.setAttribute("aria-label", "Pinned artifacts");
-    pager.dataset.testid = "live-pinned-artifact-pager";
+    pager.className = "wm-pinned-artifact-pager";
 
     const previousButton = document.createElement("button");
     previousButton.type = "button";
@@ -177,11 +200,10 @@ export function initLiveView(deps) {
       render();
     });
 
-    const label = document.createElement("span");
-    label.className = "wm-webview-toolbar-title wm-pinned-artifact-page-label";
-    label.textContent = `${pageState.activeIndex + 1} of ${pageState.files.length} · ${getPinnedArtifactLabel(pageState.activeFile)}`;
-    label.title = pageState.activeFile ?? "";
-    label.dataset.testid = "live-pinned-artifact-page-label";
+    const countLabel = document.createElement("span");
+    countLabel.className = "wm-pinned-artifact-page-count";
+    countLabel.textContent = `${pageState.activeIndex + 1} of ${pageState.files.length}`;
+    countLabel.dataset.testid = "live-pinned-artifact-page-count";
 
     const nextButton = document.createElement("button");
     nextButton.type = "button";
@@ -195,8 +217,34 @@ export function initLiveView(deps) {
       render();
     });
 
-    pager.append(previousButton, label, nextButton);
-    return pager;
+    pager.append(previousButton, countLabel, nextButton);
+
+    const fileLabel = document.createElement("span");
+    fileLabel.className = "wm-pinned-artifact-file";
+    fileLabel.textContent = getPinnedArtifactLabel(pageState.activeFile);
+    fileLabel.title = pageState.activeFile ?? "";
+    fileLabel.dataset.testid = "live-pinned-artifact-page-label";
+
+    const unpinButton = document.createElement("button");
+    unpinButton.type = "button";
+    unpinButton.className = "wm-webview-close-btn";
+    unpinButton.textContent = "x";
+    unpinButton.title = "Unpin artifact";
+    unpinButton.setAttribute("aria-label", `Unpin ${fileLabel.textContent}`);
+    unpinButton.dataset.testid = "live-pinned-artifact-unpin";
+    unpinButton.addEventListener("click", async () => {
+      if (!pageState.activeFile) return;
+      try {
+        await unpinPinnedArtifact(sessionId, pageState.activeFile);
+        showToast("Artifact unpinned", { type: "success" });
+        render();
+      } catch (error) {
+        showToast(`Failed to unpin artifact: ${error.message}`, { type: "error" });
+      }
+    });
+
+    container.append(pager, fileLabel, unpinButton);
+    return container;
   }
 
   function resolveCurrentLiveSessionId() {
@@ -1544,7 +1592,7 @@ export function initLiveView(deps) {
       );
       const pinnedPager = createPinnedArtifactPager(sessionId, pinnedFilePage);
       if (pinnedPager) {
-        toolbar.append(pinnedPager);
+        toolbar.insertBefore(pinnedPager, toolbar.lastElementChild);
       }
       writerCol.append(toolbar);
       writerCol.append(writerResult.panel);

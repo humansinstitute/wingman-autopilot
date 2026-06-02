@@ -68,6 +68,7 @@ export interface WingmanMcpApiDependencies {
   memoryStore: MemoryStore;
   getWingmanNpub: () => string | null;
   setPinnedFile: (sessionId: string, filePath: string | null) => SessionSnapshot | null | undefined;
+  removePinnedFile: (sessionId: string, filePath: string) => SessionSnapshot | null | undefined;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -1146,8 +1147,11 @@ async function handlePinArtifact(
   const denied = requireSessionId(deps, sessionId);
   if (denied) return denied;
 
+  const removeFilePath = typeof body.removeFilePath === "string" ? body.removeFilePath : null;
   const filePath = typeof body.filePath === "string" ? body.filePath : null;
-  const updatedSession = deps.setPinnedFile(sessionId!, filePath);
+  const updatedSession = removeFilePath
+    ? deps.removePinnedFile(sessionId!, removeFilePath)
+    : deps.setPinnedFile(sessionId!, filePath);
   const pinnedFiles = Array.isArray(updatedSession?.metadata?.pinnedFiles)
     ? updatedSession.metadata.pinnedFiles
     : filePath

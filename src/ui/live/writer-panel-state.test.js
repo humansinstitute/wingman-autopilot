@@ -8,6 +8,8 @@ import {
   isArtifactsPanelOpenForSession,
   isWriterPanelOpenForSession,
   markWriterDismissed,
+  removePinnedFileForSession,
+  replacePinnedFilesForSession,
   setArtifactsPanelOpenForSession,
   setPinnedFilePageForSession,
   setWriterPanelOpenForSession,
@@ -140,5 +142,19 @@ describe("writer-panel-state", () => {
     syncArtifactsLayoutOpenForSession(state, "session-2");
 
     expect(state.artifactsLayout.open).toBe(false);
+  });
+
+  test("removes one pinned file and keeps the next page active", () => {
+    const state = createState();
+
+    replacePinnedFilesForSession(state, "session-1", ["/tmp/one.md", "/tmp/two.md", "/tmp/three.md"], "/tmp/two.md");
+    const page = removePinnedFileForSession(state, "session-1", "/tmp/two.md");
+
+    expect(page).toEqual({
+      files: ["/tmp/one.md", "/tmp/three.md"],
+      activeIndex: 1,
+      activeFile: "/tmp/three.md",
+    });
+    expect(state.pinnedFiles.get("session-1")).toBe("/tmp/three.md");
   });
 });

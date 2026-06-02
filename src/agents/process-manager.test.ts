@@ -77,9 +77,10 @@ describe("ProcessManager pinned files", () => {
     });
 
     manager.setPinnedFile("session-1", "/tmp/new.md");
-    const snapshot = manager.setPinnedFile("session-1", " /tmp/old.md ");
+    manager.setPinnedFile("session-1", " /tmp/old.md ");
+    const snapshot = manager.removePinnedFile("session-1", "/tmp/old.md");
 
-    expect(snapshot?.pinnedFile).toBe("/tmp/old.md");
-    expect(snapshot?.metadata?.pinnedFiles).toEqual(["/tmp/new.md", "/tmp/old.md"]);
+    expect(snapshot?.pinnedFile).toBe("/tmp/new.md");
+    expect(snapshot?.metadata?.pinnedFiles).toEqual(["/tmp/new.md"]);
   });
 });

@@ -10610,6 +10610,11 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   flex: 1;
 }
 
+.wm-live-split--balanced > .wm-live-chat-col,
+.wm-live-split--balanced > .wm-webview-col {
+  flex: 1;
+}
+
 .wm-webview-panel {
   flex: 1;
   min-height: 0;
@@ -10658,6 +10663,47 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 .wm-webview-toolbar-actions {
   display: flex;
   gap: 0.25rem;
+}
+
+.wm-writer-view-cycle {
+  min-width: 2.6rem;
+  padding-inline: 0.45rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.wm-pinned-artifact-controls {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 0.45rem;
+  justify-content: center;
+}
+
+.wm-pinned-artifact-pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex: 0 0 auto;
+}
+
+.wm-pinned-artifact-page-count {
+  min-width: 3.2rem;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.wm-pinned-artifact-file {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .wm-webview-mode-btn,

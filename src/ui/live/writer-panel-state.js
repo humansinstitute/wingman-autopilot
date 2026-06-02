@@ -151,6 +151,45 @@ export function setPinnedFilePageForSession(state, sessionId, index) {
   return setActivePinnedFileIndex(state, sessionId, index);
 }
 
+export function replacePinnedFilesForSession(state, sessionId, filePaths = [], activeFile = null) {
+  if (!state) return null;
+  const nextFiles = normalizePinnedFileInputs(filePaths);
+  if (!state.pinnedFileLists) {
+    state.pinnedFileLists = new Map();
+  }
+  if (nextFiles.length === 0) {
+    state.pinnedFileLists.delete(sessionId);
+    state.pinnedFileIndexes?.delete(sessionId);
+    state.pinnedFiles?.delete(sessionId);
+    return null;
+  }
+  state.pinnedFileLists.set(sessionId, nextFiles);
+  const activeFilePath = normalizeFilePath(activeFile);
+  const nextIndex = activeFilePath && nextFiles.includes(activeFilePath)
+    ? nextFiles.indexOf(activeFilePath)
+    : nextFiles.length - 1;
+  return setActivePinnedFileIndex(state, sessionId, nextIndex);
+}
+
+export function removePinnedFileForSession(state, sessionId, filePath) {
+  if (!state) return null;
+  const normalizedFilePath = normalizeFilePath(filePath);
+  if (!normalizedFilePath) return getPinnedFilePageForSession(state, sessionId);
+  const list = getPinnedFileList(state, sessionId);
+  const existingIndex = list.indexOf(normalizedFilePath);
+  if (existingIndex === -1) return getPinnedFilePageForSession(state, sessionId);
+  const currentIndex = state.pinnedFileIndexes?.get(sessionId) ?? existingIndex;
+  list.splice(existingIndex, 1);
+  if (list.length === 0) {
+    state.pinnedFileIndexes?.delete(sessionId);
+    state.pinnedFiles?.delete(sessionId);
+    return null;
+  }
+  const nextIndex = existingIndex < currentIndex ? currentIndex - 1 : Math.min(currentIndex, list.length - 1);
+  setActivePinnedFileIndex(state, sessionId, nextIndex);
+  return getPinnedFilePageForSession(state, sessionId);
+}
+
 export function getPinnedFilePageForSession(state, sessionId, serverPinnedFile = null) {
   const files = getPinnedFilesForSession(state, sessionId, serverPinnedFile);
   const activeIndex = state.pinnedFileIndexes?.get(sessionId) ?? 0;

@@ -909,6 +909,35 @@ export class ProcessManager {
     return snapshot;
   }
 
+  removePinnedFile(id: string, filePath: string): SessionSnapshot | null {
+    const session = this.sessions.get(id);
+    if (!session) return null;
+    const normalizedFilePath = typeof filePath === "string" && filePath.trim().length > 0
+      ? filePath.trim()
+      : null;
+    if (!normalizedFilePath) {
+      return this.toSnapshot(session);
+    }
+    const pinnedFiles = Array.isArray(session.metadata.pinnedFiles)
+      ? session.metadata.pinnedFiles.filter((value) => (
+          typeof value === "string" &&
+          value.trim().length > 0 &&
+          value.trim() !== normalizedFilePath
+        ))
+      : [];
+    const pinnedFile = pinnedFiles.includes(session.pinnedFile ?? "")
+      ? session.pinnedFile
+      : pinnedFiles[pinnedFiles.length - 1];
+    session.pinnedFile = pinnedFile || undefined;
+    session.metadata = normaliseSessionMetadata({
+      ...session.metadata,
+      pinnedFiles,
+    });
+    const snapshot = this.toSnapshot(session);
+    this.emit({ type: "session-updated", session: snapshot });
+    return snapshot;
+  }
+
   async captureAgentapiCodexSessionIdFromPrompt(
     id: string,
     prompt: string,

@@ -217,6 +217,21 @@ export function createWriterIcon(onToggle) {
  * @param {Function} onClose - Called when close is clicked
  * @returns {HTMLElement}
  */
+const WRITER_VIEW_MODES = [
+  { mode: "app-narrow", label: "1/3", title: "Artifact one third" },
+  { mode: "balanced", label: "1/2", title: "Artifact half width" },
+  { mode: "chat-narrow", label: "2/3", title: "Artifact two thirds" },
+];
+
+function getWriterViewMode(currentMode) {
+  return WRITER_VIEW_MODES.find((entry) => entry.mode === currentMode) ?? WRITER_VIEW_MODES[2];
+}
+
+function getNextWriterViewMode(currentMode) {
+  const currentIndex = WRITER_VIEW_MODES.findIndex((entry) => entry.mode === currentMode);
+  return WRITER_VIEW_MODES[(currentIndex + 1 + WRITER_VIEW_MODES.length) % WRITER_VIEW_MODES.length];
+}
+
 export function createWriterToolbar(currentMode, onModeChange, onClose) {
   const toolbar = document.createElement("div");
   toolbar.className = "wm-webview-toolbar";
@@ -224,27 +239,26 @@ export function createWriterToolbar(currentMode, onModeChange, onClose) {
   const modeGroup = document.createElement("div");
   modeGroup.className = "wm-webview-toolbar-modes";
 
-  const chatNarrowBtn = document.createElement("button");
-  chatNarrowBtn.className = `wm-webview-mode-btn${currentMode === "chat-narrow" ? " active" : ""}`;
-  chatNarrowBtn.title = "Chat narrow, writer wide";
-  chatNarrowBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="6" height="18" rx="1"/><rect x="10" y="3" width="12" height="18" rx="1"/></svg>`;
-  chatNarrowBtn.addEventListener("click", () => onModeChange("chat-narrow"));
+  const currentViewMode = getWriterViewMode(currentMode);
+  const viewSizeBtn = document.createElement("button");
+  viewSizeBtn.className = "wm-webview-mode-btn wm-writer-view-cycle";
+  viewSizeBtn.title = `${currentViewMode.title}; click to cycle`;
+  viewSizeBtn.setAttribute("aria-label", "Cycle artifact view size");
+  viewSizeBtn.textContent = currentViewMode.label;
+  viewSizeBtn.addEventListener("click", () => {
+    onModeChange(getNextWriterViewMode(currentMode).mode);
+  });
 
-  const appNarrowBtn = document.createElement("button");
-  appNarrowBtn.className = `wm-webview-mode-btn${currentMode === "app-narrow" ? " active" : ""}`;
-  appNarrowBtn.title = "Chat wide, writer narrow";
-  appNarrowBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="12" height="18" rx="1"/><rect x="16" y="3" width="6" height="18" rx="1"/></svg>`;
-  appNarrowBtn.addEventListener("click", () => onModeChange("app-narrow"));
-
-  modeGroup.append(chatNarrowBtn, appNarrowBtn);
+  modeGroup.append(viewSizeBtn);
 
   const actionsGroup = document.createElement("div");
   actionsGroup.className = "wm-webview-toolbar-actions";
 
   const closeBtn = document.createElement("button");
   closeBtn.className = "wm-webview-close-btn";
-  closeBtn.title = "Close writer";
-  closeBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+  closeBtn.title = "Collapse artifact";
+  closeBtn.setAttribute("aria-label", "Collapse artifact");
+  closeBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l6-6-6-6"/><path d="M3 12h18"/><path d="M3 5v14"/></svg>`;
   closeBtn.addEventListener("click", onClose);
 
   actionsGroup.append(closeBtn);

@@ -184,6 +184,20 @@ export async function setPinnedArtifactApi(sessionId, filePath) {
   return response.json();
 }
 
+export async function removePinnedArtifactApi(sessionId, filePath) {
+  const response = await fetch("/api/mcp/wingman/artifact/pin", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId, removeFilePath: filePath }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const message = typeof data?.error === "string" ? data.error : response.statusText;
+    throw new Error(message || "Failed to unpin artifact");
+  }
+  return response.json();
+}
+
 /**
  * Posts a message to a session.
  * @param {string} sessionId - The session ID
