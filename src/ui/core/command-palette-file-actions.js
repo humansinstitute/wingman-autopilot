@@ -36,8 +36,8 @@ export function createCommandPaletteFileActions({
     return session?.workingDirectory || state?.files?.currentPath || state?.config?.defaultDirectory || "";
   }
 
-  async function pinFileToSession(filePath, { openArtifact = false } = {}) {
-    const session = getFileBrowserSession();
+  async function pinFileToSession(filePath, { openArtifact = false, session: targetSession = null } = {}) {
+    const session = targetSession?.id ? targetSession : getFileBrowserSession();
     if (!session?.id) {
       throw new Error("No active session is available to pin this file.");
     }

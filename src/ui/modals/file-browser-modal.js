@@ -124,6 +124,7 @@ export function openCommandFileBrowserModal({
   dialog.append(shell);
 
   const state = {
+    session: typeof getSession === "function" ? getSession() : null,
     currentPath: typeof initialPath === "string" ? initialPath : "",
     displayPath: "",
     parent: null,
@@ -140,7 +141,7 @@ export function openCommandFileBrowserModal({
   }
 
   function selectedSession() {
-    return typeof getSession === "function" ? getSession() : null;
+    return state.session;
   }
 
   function renderActions() {
@@ -332,7 +333,7 @@ export function openCommandFileBrowserModal({
     setStatus(openArtifact ? "Opening artifact..." : "Pinning file...");
     renderActions();
     try {
-      await onPinFile(filePath, { openArtifact });
+      await onPinFile(filePath, { openArtifact, session: state.session });
       setStatus(openArtifact ? "Artifact opened." : "Pinned to session.", "success");
       showToast?.(openArtifact ? "Artifact opened" : "Pinned file to session", { type: "success" });
       if (openArtifact) {

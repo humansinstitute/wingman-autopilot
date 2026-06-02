@@ -135,12 +135,17 @@ export function initLiveView(deps) {
     return pinnedFile;
   }
 
+  function getPinnedArtifactLabel(filePath) {
+    const normalized = typeof filePath === "string" ? filePath.replace(/\\/g, "/") : "";
+    return normalized.split("/").filter(Boolean).pop() || "Pinned doc";
+  }
+
   function createPinnedArtifactPager(sessionId, pageState) {
     if (!pageState || pageState.files.length <= 1) {
       return null;
     }
     const pager = document.createElement("div");
-    pager.className = "wm-webview-toolbar";
+    pager.className = "wm-webview-toolbar-actions";
     pager.setAttribute("aria-label", "Pinned artifacts");
     pager.dataset.testid = "live-pinned-artifact-pager";
 
@@ -157,8 +162,9 @@ export function initLiveView(deps) {
     });
 
     const label = document.createElement("span");
-    label.className = "wm-webview-toolbar-title";
-    label.textContent = `${pageState.activeIndex + 1} of ${pageState.files.length}`;
+    label.className = "wm-webview-toolbar-title wm-pinned-artifact-page-label";
+    label.textContent = `${pageState.activeIndex + 1} of ${pageState.files.length} · ${getPinnedArtifactLabel(pageState.activeFile)}`;
+    label.title = pageState.activeFile ?? "";
     label.dataset.testid = "live-pinned-artifact-page-label";
 
     const nextButton = document.createElement("button");
@@ -1490,11 +1496,11 @@ export function initLiveView(deps) {
           render();
         },
       );
-      writerCol.append(toolbar);
       const pinnedPager = createPinnedArtifactPager(sessionId, pinnedFilePage);
       if (pinnedPager) {
-        writerCol.append(pinnedPager);
+        toolbar.append(pinnedPager);
       }
+      writerCol.append(toolbar);
       writerCol.append(writerResult.panel);
 
       split.append(chatCol, writerCol);

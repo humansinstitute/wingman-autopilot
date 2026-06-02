@@ -101,4 +101,32 @@ describe("command palette file actions", () => {
     expect(state.pinnedFiles.get("route")).toBe("/workspace/route/spec.md");
     expect(state.pinnedFiles.has("active")).toBe(false);
   });
+
+  test("uses an explicit modal session snapshot when pinning", async () => {
+    const state = createState();
+    let pinnedSessionId = null;
+    const modalSession = { id: "modal-session", workingDirectory: "/workspace/modal" };
+    const activeSession = { id: "active", workingDirectory: "/workspace/active" };
+    const actions = createCommandPaletteFileActions({
+      state,
+      sessionsStore: () => ({
+        activeSessionId: "active",
+        items: [activeSession],
+      }),
+      getCurrentRoute: () => "live",
+      getPathname: () => "/live/active",
+      getSessionIdFromPath: () => "active",
+      setPinnedArtifact: async (sessionId, filePath) => {
+        pinnedSessionId = sessionId;
+        return { pinnedFile: filePath };
+      },
+    });
+
+    await actions.pinFileToSession("/workspace/modal/spec.md", { session: modalSession });
+
+    expect(pinnedSessionId).toBe("modal-session");
+    expect(modalSession.pinnedFile).toBe("/workspace/modal/spec.md");
+    expect(activeSession.pinnedFile).toBeUndefined();
+    expect(state.pinnedFiles.get("modal-session")).toBe("/workspace/modal/spec.md");
+  });
 });
