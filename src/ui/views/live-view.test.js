@@ -68,7 +68,10 @@ describe("live-view drawer integration", () => {
 
   test("fully rerenders tab switches while a split artifact viewer is mounted", () => {
     expect(source).toContain("function hasMountedLiveSplitPanel()");
+    expect(source).toContain("function shouldRenderLiveForSessionSwitch(sessionId)");
     expect(source).toContain('document.querySelector(".wm-live-split")');
-    expect(source).toContain("if (hasMountedLiveSplitPanel())");
+    expect(source).toContain("isWriterPanelOpenForSession(state, sessionId)");
+    expect(source).toContain("isArtifactsPanelOpenForSession(state, sessionId)");
+    expect(source).toContain("if (shouldRenderLiveForSessionSwitch(session.id))");
   });
 });

@@ -353,6 +353,14 @@ export function initLiveView(deps) {
     return Boolean(document.querySelector(".wm-live-split"));
   }
 
+  function shouldRenderLiveForSessionSwitch(sessionId) {
+    return (
+      hasMountedLiveSplitPanel() ||
+      isWriterPanelOpenForSession(state, sessionId) ||
+      isArtifactsPanelOpenForSession(state, sessionId)
+    );
+  }
+
   function activateSessionTab(session, onSelect) {
     const wasLiveRoute = getCurrentRoute() === "live";
     const activeId = resolveCurrentLiveSessionId();
@@ -369,7 +377,7 @@ export function initLiveView(deps) {
       if (getTabsVisible()) {
         replaceLiveTabsBarContent();
       }
-      if (hasMountedLiveSplitPanel()) {
+      if (shouldRenderLiveForSessionSwitch(session.id)) {
         render();
       } else {
         updateLivePanelsForSession(session.id);
