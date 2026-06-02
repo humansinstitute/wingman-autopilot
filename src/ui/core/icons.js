@@ -226,9 +226,11 @@ export const getConversationScrollElement = (sessionId, conversationContainers) 
 
 export const scrollConversationAreaToBottom = (sessionId, conversationContainers, options = {}) => {
   const { includeWindow = false } = options;
+  const fallbackConversation = document.querySelector('.wm-live-conversation');
   const target =
     getConversationScrollElement(sessionId, conversationContainers) ??
-    document.querySelector('.wm-live-conversation');
+    fallbackConversation?.closest('.wm-live-scroll') ??
+    fallbackConversation;
   if (target) {
     scrollConversationToBottom(target);
   }

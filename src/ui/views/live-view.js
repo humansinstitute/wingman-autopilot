@@ -349,6 +349,10 @@ export function initLiveView(deps) {
     target.append(renderLogs(sessionId));
   }
 
+  function hasMountedLiveSplitPanel() {
+    return Boolean(document.querySelector(".wm-live-split"));
+  }
+
   function activateSessionTab(session, onSelect) {
     const wasLiveRoute = getCurrentRoute() === "live";
     const activeId = resolveCurrentLiveSessionId();
@@ -365,7 +369,11 @@ export function initLiveView(deps) {
       if (getTabsVisible()) {
         replaceLiveTabsBarContent();
       }
-      updateLivePanelsForSession(session.id);
+      if (hasMountedLiveSplitPanel()) {
+        render();
+      } else {
+        updateLivePanelsForSession(session.id);
+      }
     } else {
       render();
     }

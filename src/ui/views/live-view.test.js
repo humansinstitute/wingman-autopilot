@@ -65,4 +65,10 @@ describe("live-view drawer integration", () => {
     expect(source).toContain("const activePinnedFile = pinnedFilePage.activeFile ?? null");
     expect(source).toContain("if (!activePinnedFile && shouldAutoOpenWriter(state, sessionId, effectiveFile))");
   });
+
+  test("fully rerenders tab switches while a split artifact viewer is mounted", () => {
+    expect(source).toContain("function hasMountedLiveSplitPanel()");
+    expect(source).toContain('document.querySelector(".wm-live-split")');
+    expect(source).toContain("if (hasMountedLiveSplitPanel())");
+  });
 });
