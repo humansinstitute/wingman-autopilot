@@ -708,11 +708,16 @@ export async function handleSessionApi(
           limit: url.searchParams.get("limit"),
           offset: url.searchParams.get("offset"),
           filter: url.searchParams.get("filter"),
+          since: url.searchParams.get("since"),
         });
         const allArchivedSessions = ctx.sessionArchiveStore.listArchivedSessions({
-          limit: ctx.sessionArchiveStore.getArchiveCount(),
+          limit: ctx.sessionArchiveStore.getArchiveCount({
+            filter: typeof validatedOptions.filter === "string" ? validatedOptions.filter : undefined,
+            since: typeof validatedOptions.since === "string" ? validatedOptions.since : undefined,
+          }),
           offset: 0,
           filter: typeof validatedOptions.filter === "string" ? validatedOptions.filter : undefined,
+          since: typeof validatedOptions.since === "string" ? validatedOptions.since : undefined,
         });
         const ownerArchivedSessions = allArchivedSessions.filter((session) =>
           archivedSessionBelongsToOwner(session, ownerArchiveRoute.ownerNpub, ctx),
@@ -751,6 +756,27 @@ export async function handleSessionApi(
       return Response.json({ ownerNpub: ownerArchiveRoute.ownerNpub, session: archivedSession, messages });
     }
 
+    if (ownerArchiveRoute.remainder[1] === "metadata" && method === "PATCH") {
+      let payload: unknown;
+      try {
+        payload = await request.json();
+      } catch {
+        return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+      }
+      const metadataPatch = parseSessionMetadataUpdateInput(payload);
+      if (!metadataPatch) {
+        return Response.json({ error: "Invalid metadata payload" }, { status: 400 });
+      }
+      const updated = ctx.sessionArchiveStore.updateArchivedSessionMetadata(archiveId, {
+        ...metadataPatch,
+        lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
+      });
+      if (!updated) return Response.json({ error: "Archived session not found" }, { status: 404 });
+      return Response.json(
+        buildSessionMetadataResponse(archiveId, updated.metadata, ownerArchiveRoute.ownerNpub),
+      );
+    }
+
     if (ownerArchiveRoute.remainder.length === 1 && method === "DELETE") {
       const deleted = ctx.sessionArchiveStore.deleteArchivedSession(archiveId);
       if (!deleted) {
@@ -773,10 +799,14 @@ export async function handleSessionApi(
         limit: url.searchParams.get("limit"),
         offset: url.searchParams.get("offset"),
         filter: url.searchParams.get("filter"),
+        since: url.searchParams.get("since"),
       });
 
-      const sessions = ctx.sessionArchiveStore.listArchivedSessions(validatedOptions as { limit?: number; offset?: number; filter?: string });
-      const total = ctx.sessionArchiveStore.getArchiveCount();
+      const sessions = ctx.sessionArchiveStore.listArchivedSessions(validatedOptions as { limit?: number; offset?: number; filter?: string; since?: string });
+      const total = ctx.sessionArchiveStore.getArchiveCount({
+        filter: typeof validatedOptions.filter === "string" ? validatedOptions.filter : undefined,
+        since: typeof validatedOptions.since === "string" ? validatedOptions.since : undefined,
+      });
       return Response.json({ sessions, total, limit: validatedOptions.limit, offset: validatedOptions.offset });
     } catch (error) {
       return Response.json({ error: "Invalid request parameters" }, { status: 400 });
@@ -806,6 +836,38 @@ export async function handleSessionApi(
     }
     const messages = ctx.sessionArchiveStore.getArchivedMessages(sessionId);
     return Response.json({ session, messages });
+  }
+
+  if (pathname.startsWith("/api/archive/") && method === "PATCH") {
+    const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, authContext);
+    if (denied) return denied;
+
+    const archiveParts = pathname.split("/").filter(Boolean);
+    const sessionId = archiveParts[2];
+    if (!sessionId) {
+      return Response.json({ error: "Session ID required" }, { status: 400 });
+    }
+    if (archiveParts[3] !== "metadata") {
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    }
+    const metadataPatch = parseSessionMetadataUpdateInput(payload);
+    if (!metadataPatch) {
+      return Response.json({ error: "Invalid metadata payload" }, { status: 400 });
+    }
+    const updated = ctx.sessionArchiveStore.updateArchivedSessionMetadata(sessionId, {
+      ...metadataPatch,
+      lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
+    });
+    if (!updated) {
+      return Response.json({ error: "Archived session not found" }, { status: 404 });
+    }
+    return Response.json(buildSessionMetadataResponse(sessionId, updated.metadata));
   }
 
   if (pathname.startsWith("/api/archive/") && method === "DELETE") {

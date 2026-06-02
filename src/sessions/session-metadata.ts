@@ -14,6 +14,7 @@ export interface SessionMetadata {
   flowId?: string;
   flowRunId?: string;
   taskIds?: string[];
+  tags?: string[];
   routerRunId?: string;
   autoStop?: boolean;
   routedBy?: string;
@@ -35,7 +36,10 @@ export interface NativeAgentSessionMetadata {
   source: "preallocated" | "adapter" | "agentapi" | "manual";
 }
 
-export type SessionMetadataInput = Partial<SessionMetadata> | null | undefined;
+export type SessionMetadataInput =
+  | (Partial<Omit<SessionMetadata, "tags">> & { tags?: unknown })
+  | null
+  | undefined;
 
 export const SESSION_METADATA_NEXT_ACTIONS = [
   "none",
@@ -60,6 +64,34 @@ export const DEFAULT_SESSION_METADATA: SessionMetadata = Object.freeze({
   AGENT: false,
   billingMode: "subscription",
 });
+
+export const normaliseSessionTags = (value: unknown): string[] | undefined => {
+  const rawValues = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[,\s]+/)
+      : [];
+  const tags: string[] = [];
+  const seen = new Set<string>();
+
+  for (const rawValue of rawValues) {
+    if (typeof rawValue !== "string") continue;
+    const tag = rawValue
+      .trim()
+      .toLowerCase()
+      .replace(/[_\s]+/g, "-")
+      .replace(/[^a-z0-9-]/g, "")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 40);
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    tags.push(tag);
+    if (tags.length >= 16) break;
+  }
+
+  return tags.length > 0 ? tags : undefined;
+};
 
 export const normaliseSessionMetadata = (
   metadata: SessionMetadataInput,
@@ -113,6 +145,7 @@ export const normaliseSessionMetadata = (
         .map((value) => (typeof value === "string" ? value.trim() : ""))
         .filter((value) => value.length > 0)
     : undefined;
+  const tags = normaliseSessionTags(metadata?.tags);
 
   return {
     AGENT: Boolean(metadata?.AGENT),
@@ -130,6 +163,7 @@ export const normaliseSessionMetadata = (
     flowId: flowId || undefined,
     flowRunId: flowRunId || undefined,
     taskIds: taskIds?.length ? taskIds : undefined,
+    tags,
     routerRunId: routerRunId || undefined,
     autoStop: Boolean(metadata?.autoStop),
     routedBy: routedBy || undefined,

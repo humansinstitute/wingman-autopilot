@@ -133,7 +133,7 @@ export function createArchiveComponent({
   const filterInput = document.createElement("input");
   filterInput.type = "text";
   filterInput.className = "wm-input";
-  filterInput.placeholder = "Filter by name or directory (use * for wildcard)";
+  filterInput.placeholder = "Filter by name, directory, or tag (use * for wildcard)";
   filterInput.setAttribute("aria-label", "Filter archived sessions");
 
   let filterDebounceTimer = null;
@@ -275,7 +275,18 @@ export function createArchiveComponent({
 
       itemMeta.append(itemDir, itemTime, itemMessages);
 
-      item.append(itemMain, itemMeta);
+      const tags = Array.isArray(session.metadata?.tags) ? session.metadata.tags : [];
+      const tagRow = document.createElement("div");
+      tagRow.className = "wm-home-archive-item-tags";
+      tagRow.hidden = tags.length === 0;
+      for (const tag of tags.slice(0, 8)) {
+        const tagChip = document.createElement("span");
+        tagChip.className = "wm-home-archive-item-tag";
+        tagChip.textContent = tag;
+        tagRow.append(tagChip);
+      }
+
+      item.append(itemMain, itemMeta, tagRow);
 
       if (canResumeNativeAgentSession(session) && typeof resumeNativeSession === "function") {
         const actions = document.createElement("div");
@@ -441,6 +452,7 @@ export function createArchiveViewDialog() {
       ["Directory", session.workingDirectory || "-"],
       ["Started", session.startedAt ? new Date(session.startedAt).toLocaleString() : "-"],
       ["Archived", session.archivedAt ? new Date(session.archivedAt).toLocaleString() : "-"],
+      ["Tags", Array.isArray(session.metadata?.tags) && session.metadata.tags.length > 0 ? session.metadata.tags.join(", ") : "-"],
     ];
 
     items.forEach(([label, value]) => {

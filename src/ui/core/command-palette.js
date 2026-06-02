@@ -200,6 +200,11 @@ export function createAutopilotCommandPalette({
     });
   }
 
+  function openSessionLaunch() {
+    open();
+    void enterSessionLaunchMode();
+  }
+
   async function enterSessionLaunchMode() {
     if (!isAuthenticated?.()) {
       close();
@@ -467,6 +472,7 @@ export function createAutopilotCommandPalette({
 
   return {
     open,
+    openSessionLaunch,
     close,
     recordSessionVisit,
     recordAppRestart,

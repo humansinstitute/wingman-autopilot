@@ -4,7 +4,14 @@
   "version": 2,
   "supersedes": "implementation-review-loop.v2",
   "default": true,
-  "tags": ["default", "software", "implementation", "review", "loop", "task-backed"],
+  "tags": [
+    "default",
+    "software",
+    "implementation",
+    "review",
+    "loop",
+    "task-backed"
+  ],
   "input": {
     "taskId": "",
     "taskTitle": "",
@@ -197,6 +204,49 @@
       "timeoutMs": "$.reporterTimeoutMs"
     },
     {
+      "id": "reload-final-thread",
+      "name": "reload-final-thread",
+      "description": "Refresh the originating thread before composing the final user-facing response.",
+      "type": "code",
+      "function": "dispatch.reloadChatThread",
+      "input": {
+        "pick": {
+          "dispatch": "$.dispatch",
+          "workspace": "$.workspace",
+          "agent": "$.agent",
+          "record": "$.record",
+          "routing": "$.routing",
+          "runtime": "$.runtime",
+          "workPlan": "$.createdTask.workPlan"
+        }
+      },
+      "assign": "$.finalThreadContext"
+    },
+    {
+      "id": "final-thread-response",
+      "name": "final-thread-response",
+      "description": "Compose the final conversational answer for the source thread.",
+      "type": "agent",
+      "agent": "$.reporterAgent",
+      "directory": "$.createdTask.workPlan.workdir",
+      "input": {
+        "pick": {
+          "createdTask": "$.createdTask",
+          "workPlan": "$.createdTask.workPlan",
+          "finalThreadContext": "$.finalThreadContext",
+          "workerResult": "$.finalReport",
+          "agentResponse": "$.managerReview",
+          "implementation": "$.implementation",
+          "implementationReviewHistory": "$.implementationReviewHistory",
+          "reviewLoop": "$.reviewLoop",
+          "reportTarget": "$.reportTarget"
+        }
+      },
+      "prompt": "You are the final response agent for a Wingman pipeline.\n\nYour job is to write the message that will be posted back into the originating Flight Deck thread. Review the original thread, any refreshed thread context, the task/work plan, new worker output, manager review, and any artifacts created by the pipeline.\n\nRules:\n- Be conversational. Write as a direct reply in the thread, not as pipeline telemetry.\n- Be complete. Answer the user's actual question/request using the work that was just completed.\n- If there is a Flight Deck document, WApp, file, or other user-accessible artifact, include the mention/link. Do not make Pete hunt through internal task records.\n- Do not make an internal task the main artifact unless it is the only durable place the result exists.\n- Do not say only that work is \"ready for review\"; summarise or present the useful output.\n- Do not prefix the body with labels like \"Summary:\", \"Task:\", \"Assigned back to:\", or \"Pipeline handoff:\".\n- If the work is incomplete or assumptions matter, say that plainly.\n- If a follow-up question would materially improve the outcome, ask one focused question. If there is an obvious next step, suggest it.\n\nReturn JSON only:\n{\n  \"body\": \"the exact chat reply to post\",\n  \"summary\": \"short internal summary\",\n  \"artifacts\": [{\"type\":\"document|wapp|file|task|other\", \"label\":\"\", \"mentionOrUrl\":\"\"}],\n  \"followUpQuestion\": \"question or null\",\n  \"confidence\": 0.0\n}",
+      "assign": "$.finalThreadResponse",
+      "timeoutMs": "$.reporterTimeoutMs"
+    },
+    {
       "id": "close-review-task",
       "name": "close-review-task",
       "description": "Move the Flight Deck task to review, post the final task comment, and notify the original chat thread or configured channel.",
@@ -211,7 +261,9 @@
           "implementation": "$.implementation",
           "implementationReviewHistory": "$.implementationReviewHistory",
           "reviewLoop": "$.reviewLoop",
-          "reportTarget": "$.reportTarget"
+          "reportTarget": "$.reportTarget",
+          "finalThreadContext": "$.finalThreadContext",
+          "finalThreadResponse": "$.finalThreadResponse"
         }
       },
       "assign": "$.closeout"

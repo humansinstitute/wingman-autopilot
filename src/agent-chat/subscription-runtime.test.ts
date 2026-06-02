@@ -220,6 +220,98 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(store.getBySubscriptionId(record.subscriptionId)?.lastSseEventId).toBeNull();
   });
 
+  test('retries failed chat advisory pulls and keeps the prior SSE cursor for replay', async () => {
+    const dbPath = makeTempDb();
+    const store = new WorkspaceSubscriptionStore(dbPath);
+    let pullAttempts = 0;
+    let reconnectRequested = false;
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      chatRecordPullMaxAttempts: 3,
+      chatRecordPullRetryDelayMs: 1,
+      chatRecordPullTimeoutMs: 50,
+      fetchRecordHistory: async () => {
+        pullAttempts += 1;
+        throw Object.assign(new Error('Tower did not return the record in time.'), {
+          detailCode: 'chat_record_pull_timeout',
+        });
+      },
+      botKeyStore: {
+        getActiveKeyForUser: () => null,
+        getActiveKeyForBotNpub: () => null,
+      },
+    });
+    const record = store.save({
+      ...store.createDefault({
+        managedByNpub: 'npub1manager',
+        workspaceOwnerNpub: 'npub1workspace',
+        backendBaseUrl: 'https://tower.example.com',
+        botNpub: 'npub1bot',
+        sourceAppNpub: 'npub1sourceapp',
+      }),
+      wsKeyStatus: 'active',
+      groupKeyStatus: 'active',
+      sseStatus: 'connected',
+      lastSseEventId: '72',
+    });
+    (manager as unknown as { runtimes: Map<string, unknown> }).runtimes.set(record.subscriptionId, {
+      abortController: null,
+      reconnectTimer: null,
+      reconnectAttempts: 0,
+      botIdentity: {
+        botNpub: 'npub1bot',
+        botPubkeyHex: 'ab'.repeat(32),
+        botSecret: new Uint8Array(32),
+      },
+      wsSession: {
+        npub: 'npub1wskey',
+        secret: new Uint8Array(32),
+      },
+      groupKeys: null,
+      wrappedKeyRows: [],
+      removed: false,
+    });
+    (manager as unknown as { reconnectForReplay: (subscriptionId: string, reason: string) => Promise<void> }).reconnectForReplay = async (
+      subscriptionId,
+      reason,
+    ) => {
+      reconnectRequested = subscriptionId === record.subscriptionId && reason === 'chat_record_pull_timeout';
+    };
+
+    await (manager as unknown as {
+      handleSseEvent: (
+        record: WorkspaceSubscriptionRecord,
+        eventId: string | null,
+        eventType: string,
+        eventData: string,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleSseEvent(record, '73', 'record-changed', JSON.stringify({
+      family_hash: 'npub1sourceapp:chat_message',
+      record_id: 'aaa47a6d-05f8-48b7-bbe0-5801e56cdb49',
+      version: 1,
+      record_state: 'active',
+    }));
+
+    const saved = store.getBySubscriptionId(record.subscriptionId)!;
+    expect(pullAttempts).toBe(3);
+    expect(saved.lastSseEventId).toBe('72');
+    expect(saved.lastRecordPullResult).toMatchObject({
+      ok: false,
+      code: 'record_pull_failed',
+      details: {
+        record_id: 'aaa47a6d-05f8-48b7-bbe0-5801e56cdb49',
+        pull_attempts: 3,
+        failed_event_id: '73',
+        replay_from_event_id: '72',
+      },
+    });
+    expect(saved.lastRoutingResult).toMatchObject({
+      ok: false,
+      message: 'Routing skipped because the chat record could not be pulled.',
+    });
+    expect(reconnectRequested).toBe(true);
+  });
+
   test('derives agent groups from refreshed wrapped group keys when none are supplied', async () => {
     const dbPath = makeTempDb();
     const store = new WorkspaceSubscriptionStore(dbPath);

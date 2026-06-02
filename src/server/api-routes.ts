@@ -334,11 +334,15 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
     if (pathname.startsWith("/api/scheduler")) {
-      const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, authContext);
+      const schedulerAuthContext = ctx.resolveNip98AuthContext(request, url, authContext);
+      const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, schedulerAuthContext);
       if (denied) {
         return denied;
       }
-      const response = await ctx.schedulerApiHandler(request, url, method);
+      const response = await runWithRequestContext(
+        schedulerAuthContext,
+        () => ctx.schedulerApiHandler(request, url, method),
+      );
       if (response) {
         return response;
       }

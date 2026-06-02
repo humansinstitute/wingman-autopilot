@@ -89,7 +89,9 @@ interface RuntimeContext {
 type RuntimeFailureState = 'blocked_auth' | 'blocked_decrypt' | null;
 const MAX_RECENT_SSE_EVENTS = 100;
 const MAX_RECENT_DISPATCHES = 10;
-const CHAT_ADVISORY_RECORD_PULL_TIMEOUT_MS = 15_000;
+const CHAT_ADVISORY_RECORD_PULL_TIMEOUT_MS = 30_000;
+const CHAT_ADVISORY_RECORD_PULL_MAX_ATTEMPTS = 3;
+const CHAT_ADVISORY_RECORD_PULL_RETRY_DELAY_MS = 1_000;
 const CHAT_ADVISORY_DECRYPT_TIMEOUT_MS = 15_000;
 const CHAT_ADVISORY_ROUTING_TIMEOUT_MS = 20_000;
 const CHAT_ADVISORY_PIPELINE_TIMEOUT_MS = 60_000;
@@ -441,6 +443,9 @@ export interface WorkspaceSubscriptionManagerDependencies {
   fetchWorkspaceKeyMappings?: typeof fetchWorkspaceKeyMappings;
   decryptRecordPayload?: typeof decryptRecordPayloadWithYoke;
   checkBackendHealth?: typeof checkBackendConnectionHealth;
+  chatRecordPullTimeoutMs?: number;
+  chatRecordPullMaxAttempts?: number;
+  chatRecordPullRetryDelayMs?: number;
   botKeyStore: {
     getActiveKeyForUser: (npub: string) => BotKeyStoreRecord | null;
     getActiveKeyForBotNpub: (botNpub: string) => BotKeyStoreRecord | null;
@@ -465,10 +470,21 @@ function getErrorDetailCode(error: unknown): string | null {
   return typeof detailCode === 'string' && detailCode.trim().length > 0 ? detailCode.trim() : null;
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, detailCode: string): Promise<T> {
+async function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  detailCode: string,
+  onTimeout?: () => void,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
+      onTimeout?.();
       reject(Object.assign(new Error(`${detailCode} after ${timeoutMs}ms`), { detailCode }));
     }, timeoutMs);
   });
@@ -540,6 +556,9 @@ export class WorkspaceSubscriptionManager {
   private readonly fetchWorkspaceKeyMappingsImpl: typeof fetchWorkspaceKeyMappings;
   private readonly decryptRecordPayloadImpl: typeof decryptRecordPayloadWithYoke;
   private readonly checkBackendHealthImpl: typeof checkBackendConnectionHealth;
+  private readonly chatRecordPullTimeoutMs: number;
+  private readonly chatRecordPullMaxAttempts: number;
+  private readonly chatRecordPullRetryDelayMs: number;
   private readonly runtimes = new Map<string, RuntimeContext>();
   private readonly workspaceKeyOwnerCache = new Map<string, { fetchedAt: number; owners: Map<string, string> }>();
 
@@ -559,6 +578,9 @@ export class WorkspaceSubscriptionManager {
     this.fetchWorkspaceKeyMappingsImpl = deps.fetchWorkspaceKeyMappings ?? fetchWorkspaceKeyMappings;
     this.decryptRecordPayloadImpl = deps.decryptRecordPayload ?? decryptRecordPayloadWithYoke;
     this.checkBackendHealthImpl = deps.checkBackendHealth ?? checkBackendConnectionHealth;
+    this.chatRecordPullTimeoutMs = Math.max(1, deps.chatRecordPullTimeoutMs ?? CHAT_ADVISORY_RECORD_PULL_TIMEOUT_MS);
+    this.chatRecordPullMaxAttempts = Math.max(1, deps.chatRecordPullMaxAttempts ?? CHAT_ADVISORY_RECORD_PULL_MAX_ATTEMPTS);
+    this.chatRecordPullRetryDelayMs = Math.max(0, deps.chatRecordPullRetryDelayMs ?? CHAT_ADVISORY_RECORD_PULL_RETRY_DELAY_MS);
   }
 
   setChatRuntime(chatRuntime: AgentChatSessionRuntime | null): void {
@@ -1527,6 +1549,60 @@ export class WorkspaceSubscriptionManager {
     void this.runSseLoop(record.subscriptionId, controller.signal, isStartupReload);
   }
 
+  private async reconnectForReplay(subscriptionId: string, reason: string): Promise<void> {
+    const runtime = this.getRuntime(subscriptionId);
+    const latest = this.store.getBySubscriptionId(subscriptionId);
+    if (!latest || runtime.removed) {
+      return;
+    }
+    latest.sseStatus = 'backoff';
+    latest.lastErrorCode = reason;
+    latest.lastErrorAt = new Date().toISOString();
+    this.saveRecord(this.recomputeHealth(latest));
+    await this.ensureConnected(latest, runtime.botIdentity, false);
+  }
+
+  private async fetchRecordHistoryWithRetry(
+    record: WorkspaceSubscriptionRecord,
+    recordId: string,
+    wsSession: YokeWorkspaceSession,
+  ): Promise<{ versions: Record<string, unknown>[]; attempts: number }> {
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= this.chatRecordPullMaxAttempts; attempt += 1) {
+      const controller = new AbortController();
+      try {
+        const versions = await withTimeout(
+          this.fetchRecordHistoryImpl(
+            record.backendBaseUrl,
+            record.workspaceOwnerNpub,
+            recordId,
+            wsSession,
+            { signal: controller.signal },
+          ),
+          this.chatRecordPullTimeoutMs,
+          'chat_record_pull_timeout',
+          () => controller.abort(),
+        );
+        return { versions, attempts: attempt };
+      } catch (error) {
+        lastError = error;
+        controller.abort();
+        if (attempt >= this.chatRecordPullMaxAttempts) {
+          break;
+        }
+        await sleep(this.chatRecordPullRetryDelayMs * attempt);
+      }
+    }
+
+    const retryError = lastError instanceof Error
+      ? lastError
+      : new Error('Record pull failed.');
+    throw Object.assign(retryError, {
+      pullAttempts: this.chatRecordPullMaxAttempts,
+      detailCode: getErrorDetailCode(retryError) ?? 'record_pull_failed',
+    });
+  }
+
   private async runSseLoop(subscriptionId: string, signal: AbortSignal, isStartupReload: boolean): Promise<void> {
     const runtime = this.getRuntime(subscriptionId);
     let record = this.store.getBySubscriptionId(subscriptionId);
@@ -1616,6 +1692,7 @@ export class WorkspaceSubscriptionManager {
     } catch {
       payload = { raw: eventData };
     }
+    const previousLastSseEventId = record.lastSseEventId;
     record.lastSseEventId = eventId ?? record.lastSseEventId;
     const nextEvent: AgentChatSseEventDiagnostic = {
       eventId,
@@ -1638,7 +1715,10 @@ export class WorkspaceSubscriptionManager {
     }
 
     if (eventType === 'record-changed' && payload?.family_hash === buildChatMessageFamilyHash(record.sourceAppNpub)) {
-      return await this.handleChatMessageRecordChanged(record, payload);
+      return await this.handleChatMessageRecordChanged(record, payload, {
+        eventId,
+        previousLastSseEventId,
+      });
     }
     if (eventType === 'record-changed' && payload?.family_hash === buildRecordFamilyHash(record.sourceAppNpub, 'task')) {
       return await this.handleTaskRecordChanged(record, payload);
@@ -1674,6 +1754,7 @@ export class WorkspaceSubscriptionManager {
   private async handleChatMessageRecordChanged(
     record: WorkspaceSubscriptionRecord,
     payload: Record<string, unknown>,
+    eventCursor: { eventId: string | null; previousLastSseEventId: string | null },
   ): Promise<WorkspaceSubscriptionRecord> {
     const recordId = typeof payload.record_id === 'string' ? payload.record_id : '';
     if (!recordId) {
@@ -1693,16 +1774,8 @@ export class WorkspaceSubscriptionManager {
         record_id: recordId,
       });
       record = this.saveRecord(record);
-      const versions = await withTimeout(
-        fetchRecordHistory(
-          record.backendBaseUrl,
-          record.workspaceOwnerNpub,
-          recordId,
-          runtime.wsSession,
-        ),
-        CHAT_ADVISORY_RECORD_PULL_TIMEOUT_MS,
-        'chat_record_pull_timeout',
-      );
+      const pullResult = await this.fetchRecordHistoryWithRetry(record, recordId, runtime.wsSession);
+      const versions = pullResult.versions;
       const latest = versions.sort((left, right) => Number(right.version ?? 0) - Number(left.version ?? 0))[0];
       if (!latest) {
         throw Object.assign(new Error(`Record ${recordId} not found.`), { detailCode: 'record_pull_not_found' });
@@ -1711,6 +1784,7 @@ export class WorkspaceSubscriptionManager {
         record_id: recordId,
         version: typeof latest.version === 'number' ? latest.version : Number(latest.version ?? 0),
         record_state: typeof latest.record_state === 'string' ? latest.record_state : null,
+        pull_attempts: pullResult.attempts,
       });
       record = this.saveRecord(record);
       const helpers = await loadYokeBotHelpers();
@@ -1958,14 +2032,22 @@ export class WorkspaceSubscriptionManager {
       const detailCode = typeof (error as { detailCode?: string })?.detailCode === 'string'
         ? (error as { detailCode: string }).detailCode
         : 'record_pull_failed';
-      record.groupKeyStatus = 'refresh_required';
-      record.lastErrorCode = 'decrypt_failed';
+      const pullAttempts = typeof (error as { pullAttempts?: unknown })?.pullAttempts === 'number'
+        ? (error as { pullAttempts: number }).pullAttempts
+        : this.chatRecordPullMaxAttempts;
+      record.lastSseEventId = eventCursor.previousLastSseEventId;
+      record.lastErrorCode = 'record_pull_failed';
       record.lastErrorAt = new Date().toISOString();
       record.lastRecordPullResult = buildFailureDiagnostic(
         'record_pull_failed',
         error instanceof Error ? error.message : 'Record pull failed.',
         detailCode,
-        { record_id: recordId },
+        {
+          record_id: recordId,
+          pull_attempts: pullAttempts,
+          replay_from_event_id: eventCursor.previousLastSseEventId,
+          failed_event_id: eventCursor.eventId,
+        },
       );
       record.lastDecryptResult = buildFailureDiagnostic(
         'decrypt_failed',
@@ -1983,6 +2065,15 @@ export class WorkspaceSubscriptionManager {
         },
       );
       this.markRuntimeFailure(record.subscriptionId, detailCode, 'record_pull_failed');
+      record = this.saveRecord(this.recomputeHealth(record));
+      void this.reconnectForReplay(record.subscriptionId, detailCode).catch((reconnectError) => {
+        console.warn(
+          `[agent-chat] failed to reconnect after chat record pull failure for ${record.subscriptionId}: ${
+            reconnectError instanceof Error ? reconnectError.message : String(reconnectError)
+          }`,
+        );
+      });
+      return record;
     }
     return this.saveRecord(this.recomputeHealth(record));
   }

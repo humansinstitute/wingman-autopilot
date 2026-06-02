@@ -52,6 +52,7 @@ export interface ArchiveListOptions {
   limit?: number;
   offset?: number;
   filter?: string;
+  since?: string;
 }
 
 const DEFAULT_DB_PATH = new URL("../../data/session-archive.db", import.meta.url).pathname;
@@ -121,7 +122,7 @@ const wildcardToSqlLike = (pattern: string): string => {
     .replace(/\?/g, "_");
 };
 
-class SessionArchiveStore {
+export class SessionArchiveStore {
   private readonly db: Database;
 
   constructor(filePath: string = DEFAULT_DB_PATH) {
@@ -220,6 +221,9 @@ class SessionArchiveStore {
     const limit = Math.min(Math.max(1, options.limit ?? 50), 200);
     const offset = Math.max(0, options.offset ?? 0);
     const filter = options.filter?.trim() ?? "";
+    const since = typeof options.since === "string" && !Number.isNaN(Date.parse(options.since))
+      ? options.since
+      : "";
 
     const baseQuery = `
       SELECT
@@ -238,40 +242,38 @@ class SessionArchiveStore {
       FROM archived_sessions s
     `;
 
+    const whereParts: string[] = [];
+    const params: unknown[] = [];
+
     if (filter) {
       const likePattern = wildcardToSqlLike(filter);
       const safeLikePattern = `%${likePattern}%`;
-      
-      const filteredQuery = this.db.prepare(`
-        ${baseQuery}
-        WHERE (s.name LIKE ?1 ESCAPE '\\' OR s.working_directory LIKE ?1 ESCAPE '\\')
-        ORDER BY s.archived_at DESC
-        LIMIT ?2 OFFSET ?3
-      `);
-      
-      const rows = filteredQuery.all(safeLikePattern, limit, offset) as Array<
-        Omit<ArchivedSession, "origin" | "metadata"> & {
-          origin: string | null;
-          agentFlag: number | null;
-          billingMode: string | null;
-          metadataJson: string | null;
-        }
-      >;
-
-      return rows.map((row) => ({
-        ...row,
-        origin: parseStoredOrigin(row.origin),
-        metadata: parseStoredMetadata(row.agentFlag, row.billingMode, row.metadataJson),
-      }));
+      params.push(safeLikePattern);
+      const index = params.length;
+      whereParts.push(
+        `(s.name LIKE ?${index} ESCAPE '\\' OR s.working_directory LIKE ?${index} ESCAPE '\\' OR s.agent LIKE ?${index} ESCAPE '\\' OR s.metadata_json LIKE ?${index} ESCAPE '\\')`,
+      );
     }
 
-    const unfilteredQuery = this.db.prepare(`
+    if (since) {
+      params.push(since);
+      const index = params.length;
+      whereParts.push(`(s.archived_at >= ?${index} OR s.started_at >= ?${index})`);
+    }
+
+    const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : "";
+    params.push(limit, offset);
+    const limitIndex = params.length - 1;
+    const offsetIndex = params.length;
+
+    const query = this.db.prepare(`
       ${baseQuery}
+      ${whereClause}
       ORDER BY s.archived_at DESC
-      LIMIT ?1 OFFSET ?2
+      LIMIT ?${limitIndex} OFFSET ?${offsetIndex}
     `);
     
-    const rows = unfilteredQuery.all(limit, offset) as Array<
+    const rows = query.all(...params) as Array<
       Omit<ArchivedSession, "origin" | "metadata"> & {
         origin: string | null;
         agentFlag: number | null;
@@ -329,6 +331,31 @@ class SessionArchiveStore {
     `).all(sessionId) as ArchivedMessage[];
   }
 
+  updateArchivedSessionMetadata(
+    sessionId: string,
+    metadataPatch: SessionMetadataInput,
+  ): ArchivedSession | null {
+    const existing = this.getArchivedSession(sessionId);
+    if (!existing) return null;
+
+    const metadata = normaliseSessionMetadata({
+      ...existing.metadata,
+      ...(metadataPatch ?? {}),
+    });
+    this.db.run(
+      `UPDATE archived_sessions
+       SET agent_flag = ?2, billing_mode = ?3, metadata_json = ?4
+       WHERE id = ?1`,
+      [
+        sessionId,
+        metadata.AGENT ? 1 : 0,
+        metadata.billingMode === "credits" ? "credits" : "subscription",
+        JSON.stringify(metadata),
+      ],
+    );
+    return this.getArchivedSession(sessionId);
+  }
+
   deleteArchivedSession(sessionId: string): boolean {
     const result = this.db.run(
       `DELETE FROM archived_sessions WHERE id = ?1`,
@@ -337,8 +364,29 @@ class SessionArchiveStore {
     return result.changes > 0;
   }
 
-  getArchiveCount(): number {
-    const row = this.db.query(`SELECT COUNT(1) as count FROM archived_sessions`).get() as { count: number };
+  getArchiveCount(options: Pick<ArchiveListOptions, "filter" | "since"> = {}): number {
+    const filter = options.filter?.trim() ?? "";
+    const since = typeof options.since === "string" && !Number.isNaN(Date.parse(options.since))
+      ? options.since
+      : "";
+    const whereParts: string[] = [];
+    const params: unknown[] = [];
+    if (filter) {
+      const likePattern = wildcardToSqlLike(filter);
+      const safeLikePattern = `%${likePattern}%`;
+      params.push(safeLikePattern);
+      const index = params.length;
+      whereParts.push(
+        `(name LIKE ?${index} ESCAPE '\\' OR working_directory LIKE ?${index} ESCAPE '\\' OR agent LIKE ?${index} ESCAPE '\\' OR metadata_json LIKE ?${index} ESCAPE '\\')`,
+      );
+    }
+    if (since) {
+      params.push(since);
+      const index = params.length;
+      whereParts.push(`(archived_at >= ?${index} OR started_at >= ?${index})`);
+    }
+    const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : "";
+    const row = this.db.query(`SELECT COUNT(1) as count FROM archived_sessions ${whereClause}`).get(...params) as { count: number };
     return row?.count ?? 0;
   }
 }

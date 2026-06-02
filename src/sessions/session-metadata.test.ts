@@ -16,6 +16,7 @@ describe("normaliseSessionMetadata", () => {
         bindingId: "  thread-123  ",
         flowId: "  flow-1  ",
         flowRunId: "  run-9  ",
+        tags: [" Flight Deck ", "NIP-98", "flight_deck", "bad<tag>"],
       }),
     ).toMatchObject({
       AGENT: true,
@@ -28,6 +29,7 @@ describe("normaliseSessionMetadata", () => {
       bindingId: "thread-123",
       flowId: "flow-1",
       flowRunId: "run-9",
+      tags: ["flight-deck", "nip-98", "badtag"],
     });
   });
 

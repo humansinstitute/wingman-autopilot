@@ -52,7 +52,11 @@ export const ArchiveListOptionsSchema = z.object({
   filter: z.preprocess(
     (val) => (val === null || val === '' ? undefined : val),
     FilterSchema.optional()
-  ).transform(val => val?.trim() || "")
+  ).transform(val => val?.trim() || ""),
+  since: z.preprocess(
+    (val) => (val === null || val === '' ? undefined : val),
+    z.string().datetime().optional(),
+  ).transform(val => val?.trim() || ""),
 });
 
 export const AuthContextSchema = z.object({

@@ -109,6 +109,7 @@ export function initLiveView(deps) {
     clearImagePreviews,
     openVoiceNoteRecorder,
     openDialog,
+    openSessionLaunchPalette,
     isFeatureEnabledForViewer,
     showToast,
     renderAppCard,
@@ -533,7 +534,11 @@ export function initLiveView(deps) {
       newTab.setAttribute("aria-label", "Start new session");
       newTab.setAttribute("data-testid", "live-session-new-tab");
       newTab.addEventListener("click", () => {
-        openDialog();
+        if (typeof openSessionLaunchPalette === "function") {
+          openSessionLaunchPalette();
+        } else {
+          openDialog();
+        }
         onSelect?.();
       });
       tabs.append(newTab);

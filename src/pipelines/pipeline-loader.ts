@@ -394,6 +394,29 @@ const AGENT_DISPATCH_TASK_DEFINITION = {
   ],
 };
 
+const FINAL_THREAD_RESPONSE_PROMPT = `You are the final response agent for a Wingman pipeline.
+
+Your job is to write the message that will be posted back into the originating Flight Deck thread. Review the original thread, any refreshed thread context, the task/work plan, new worker output, manager review, and any artifacts created by the pipeline.
+
+Rules:
+- Be conversational. Write as a direct reply in the thread, not as pipeline telemetry.
+- Be complete. Answer the user's actual question/request using the work that was just completed.
+- If there is a Flight Deck document, WApp, file, or other user-accessible artifact, include the mention/link. Do not make Pete hunt through internal task records.
+- Do not make an internal task the main artifact unless it is the only durable place the result exists.
+- Do not say only that work is "ready for review"; summarise or present the useful output.
+- Do not prefix the body with labels like "Summary:", "Task:", "Assigned back to:", or "Pipeline handoff:".
+- If the work is incomplete or assumptions matter, say that plainly.
+- If a follow-up question would materially improve the outcome, ask one focused question. If there is an obvious next step, suggest it.
+
+Return JSON only:
+{
+  "body": "the exact chat reply to post",
+  "summary": "short internal summary",
+  "artifacts": [{"type":"document|wapp|file|task|other", "label":"", "mentionOrUrl":""}],
+  "followUpQuestion": "question or null",
+  "confidence": 0.0
+}`;
+
 const DO_AND_REVIEW_DEFINITION = {
   name: "do-and-review",
   description: "Long-running task-backed generic delivery pipeline. A worker completes non-code work such as research, planning, writing, or operations, then a manager reviews evidence and the final step moves the originating task to review.",
@@ -446,6 +469,43 @@ const DO_AND_REVIEW_DEFINITION = {
       assign: "$.agentResponse",
     },
     {
+      name: "reload-final-thread",
+      description: "Refresh the originating thread before composing the final user-facing response.",
+      type: "code",
+      function: "dispatch.reloadChatThread",
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          workPlan: "$.workPlan",
+        },
+      },
+      assign: "$.finalThreadContext",
+    },
+    {
+      name: "final-thread-response",
+      description: "Compose the final conversational answer for the source thread.",
+      type: "agent",
+      agent: "$.agent.defaultAgent",
+      directory: "$.workPlan.workdir",
+      timeoutMs: 600000,
+      input: {
+        pick: {
+          createdTask: "$.createdTask",
+          workPlan: "$.workPlan",
+          finalThreadContext: "$.finalThreadContext",
+          workerResult: "$.workerResult",
+          agentResponse: "$.agentResponse",
+        },
+      },
+      prompt: FINAL_THREAD_RESPONSE_PROMPT,
+      assign: "$.finalThreadResponse",
+    },
+    {
       name: "move-task-to-review",
       description: "Move the originating Flight Deck task to Review and assign it back to the requester.",
       type: "code",
@@ -462,6 +522,8 @@ const DO_AND_REVIEW_DEFINITION = {
           workPlan: "$.workPlan",
           workerResult: "$.workerResult",
           agentResponse: "$.agentResponse",
+          finalThreadContext: "$.finalThreadContext",
+          finalThreadResponse: "$.finalThreadResponse",
         },
       },
       assign: "$.taskReviewUpdate",
@@ -539,6 +601,44 @@ const RESEARCH_AND_REPORT_DEFINITION = {
       assign: "$.agentResponse",
     },
     {
+      name: "reload-final-thread",
+      description: "Refresh the originating thread before composing the final user-facing response.",
+      type: "code",
+      function: "dispatch.reloadChatThread",
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          workPlan: "$.workPlan",
+        },
+      },
+      assign: "$.finalThreadContext",
+    },
+    {
+      name: "final-thread-response",
+      description: "Compose the final conversational answer for the source thread.",
+      type: "agent",
+      agent: "$.agent.defaultAgent",
+      directory: "$.workPlan.workdir",
+      timeoutMs: 600000,
+      input: {
+        pick: {
+          createdTask: "$.createdTask",
+          workPlan: "$.workPlan",
+          finalThreadContext: "$.finalThreadContext",
+          researchResult: "$.researchResult",
+          workerResult: "$.workerResult",
+          agentResponse: "$.agentResponse",
+        },
+      },
+      prompt: FINAL_THREAD_RESPONSE_PROMPT,
+      assign: "$.finalThreadResponse",
+    },
+    {
       name: "move-task-to-review",
       description: "Move the originating Flight Deck task to Review and assign it back to the requester.",
       type: "code",
@@ -556,6 +656,8 @@ const RESEARCH_AND_REPORT_DEFINITION = {
           researchResult: "$.researchResult",
           workerResult: "$.workerResult",
           agentResponse: "$.agentResponse",
+          finalThreadContext: "$.finalThreadContext",
+          finalThreadResponse: "$.finalThreadResponse",
         },
       },
       assign: "$.taskReviewUpdate",

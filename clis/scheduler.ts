@@ -6,7 +6,7 @@
  * Commands: list, create, update, delete, trigger, runs
  */
 
-import { parseCommonFlags, buildConfig, requestJson } from './lib/auth';
+import { parseCommonFlags, buildConfig, requestJson, requestJsonBotCrypto, resolveBaseUrl } from './lib/auth';
 
 type TriggerType = 'cron' | 'file_watcher' | 'nostr';
 
@@ -48,6 +48,7 @@ Update options:
 Common options:
   --url <url>                Wingman URL (env: WINGMAN_URL, default: http://localhost:3000)
   --key <nsec|hex>           Nostr private key (env: WINGMAN_NSEC)
+  --bot-crypto               Sign via bot-crypto API (for agent sessions)
   --json                     Print raw JSON response
   -h, --help                 Show help
 
@@ -316,7 +317,7 @@ function buildUpdatePayload(options: ParsedOptions): Record<string, unknown> {
 }
 
 async function run(): Promise<void> {
-  const { args, urlInput, keyInput, asJson, help } = parseCommonFlags(Bun.argv.slice(2));
+  const { args, urlInput, keyInput, asJson, help, botCrypto } = parseCommonFlags(Bun.argv.slice(2));
   const options = parseSchedulerOptions(args);
 
   const command = options.positional[0]?.toLowerCase() ?? 'help';
@@ -327,13 +328,19 @@ async function run(): Promise<void> {
     return;
   }
 
-  const { baseUrl, secretKey } = buildConfig(urlInput, keyInput);
+  const baseUrl = resolveBaseUrl(urlInput);
+  const config = botCrypto ? null : buildConfig(urlInput, keyInput);
+  const req = <T>(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<T> => botCrypto
+    ? requestJsonBotCrypto<T>(baseUrl, method, path, body)
+    : requestJson<T>(config!.baseUrl, config!.secretKey, method, path, body);
 
   switch (command) {
     case 'list': {
-      const payload = await requestJson<{ jobs?: SchedulerJob[] }>(
-        baseUrl,
-        secretKey,
+      const payload = await req<{ jobs?: SchedulerJob[] }>(
         'GET',
         '/api/scheduler/jobs',
       );
@@ -352,9 +359,7 @@ async function run(): Promise<void> {
     }
 
     case 'create': {
-      const payload = await requestJson<Record<string, unknown>>(
-        baseUrl,
-        secretKey,
+      const payload = await req<Record<string, unknown>>(
         'POST',
         '/api/scheduler/jobs',
         buildCreatePayload(options),
@@ -372,9 +377,7 @@ async function run(): Promise<void> {
     case 'update': {
       if (!id) throw new Error('update requires <id>');
 
-      const payload = await requestJson<Record<string, unknown>>(
-        baseUrl,
-        secretKey,
+      const payload = await req<Record<string, unknown>>(
         'PATCH',
         `/api/scheduler/jobs/${encodeURIComponent(id)}`,
         buildUpdatePayload(options),
@@ -391,16 +394,14 @@ async function run(): Promise<void> {
 
     case 'delete': {
       if (!id) throw new Error('delete requires <id>');
-      await requestJson(baseUrl, secretKey, 'DELETE', `/api/scheduler/jobs/${encodeURIComponent(id)}`);
+      await req('DELETE', `/api/scheduler/jobs/${encodeURIComponent(id)}`);
       console.log(`Deleted trigger: ${id}`);
       break;
     }
 
     case 'trigger': {
       if (!id) throw new Error('trigger requires <id>');
-      const payload = await requestJson<Record<string, unknown>>(
-        baseUrl,
-        secretKey,
+      const payload = await req<Record<string, unknown>>(
         'POST',
         `/api/scheduler/jobs/${encodeURIComponent(id)}/trigger`,
       );
@@ -415,9 +416,7 @@ async function run(): Promise<void> {
 
     case 'runs': {
       if (!id) throw new Error('runs requires <id>');
-      const payload = await requestJson<{ runs?: SchedulerRun[] }>(
-        baseUrl,
-        secretKey,
+      const payload = await req<{ runs?: SchedulerRun[] }>(
         'GET',
         `/api/scheduler/jobs/${encodeURIComponent(id)}/runs`,
       );

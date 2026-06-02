@@ -7,6 +7,7 @@ export interface SessionMetadataCliUpdateInput {
   bindingId?: string;
   flowId?: string;
   flowRunId?: string;
+  tags?: string;
 }
 
 export function buildSessionMetadataPath(
@@ -32,6 +33,7 @@ export function buildSessionMetadataUpdateBody(
   if (input.bindingId !== undefined) payload.bindingId = input.bindingId;
   if (input.flowId !== undefined) payload.flowId = input.flowId;
   if (input.flowRunId !== undefined) payload.flowRunId = input.flowRunId;
+  if (input.tags !== undefined) payload.tags = input.tags;
 
   return Object.keys(payload).length > 0 ? payload : undefined;
 }

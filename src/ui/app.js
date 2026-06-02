@@ -1449,7 +1449,11 @@ const syncMenuTabs = () => {
     addButton.textContent = "+";
     addButton.title = "Start new session";
     addButton.addEventListener("click", () => {
-      openDialog();
+      if (typeof commandPaletteController?.openSessionLaunch === "function") {
+        commandPaletteController.openSessionLaunch();
+      } else {
+        openDialog();
+      }
       closeMenu();
     });
     sessionsContainer.append(addButton);
@@ -2286,6 +2290,7 @@ const liveViewModule = initLiveView({
   clearImagePreviews,
   openVoiceNoteRecorder,
   openDialog,
+  openSessionLaunchPalette: () => commandPaletteController?.openSessionLaunch?.(),
   isFeatureEnabledForViewer: (...args) => isFeatureEnabledForViewer(...args),
   showToast,
   renderAppCard: (...args) => renderAppCard(...args),

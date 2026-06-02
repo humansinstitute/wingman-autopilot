@@ -6,7 +6,7 @@
  * Commands: list, create, stop, stop-self, info, metadata, metadata-update,
  *           logs, send, artifacts, queue, queue-add, queue-next,
  *           nightwatch-status, nightwatch-enable, nightwatch-disable,
- *           archive, archive-info, archive-logs, archive-delete
+ *           archive, archive-info, archive-logs, archive-metadata-update, archive-delete
  */
 
 import { parseCommonFlags, buildConfig, requestJson, requestJsonBotCrypto, resolveBaseUrl } from "./lib/auth";
@@ -40,6 +40,7 @@ Commands:
   archive              List archived sessions
   archive-info <id>    Show archived session details
   archive-logs <id>    Show archived session messages
+  archive-metadata-update <id> Update archived session metadata
   archive-delete <id>  Delete an archived session
 
 Options:
@@ -61,10 +62,12 @@ Options:
   --binding-id <id>    Binding identifier
   --flow-id <id>       Flow identifier
   --flow-run-id <id>   Flow run identifier
+  --tags <tags>        Comma or space separated session tags
   --owner <npub>       Use delegated owner-space routes for live session and archive commands
   --limit <n>          Pagination limit (for archive, default: 50)
   --offset <n>         Pagination offset (for archive)
   --filter <text>      Filter archived sessions
+  --since <iso>        Only list archived sessions since this ISO timestamp
   --bot-crypto         Sign via bot-crypto API (for agent sessions)
   --json               Print raw JSON response
   -h, --help           Show help
@@ -189,10 +192,12 @@ async function run() {
   let bindingId: string | undefined;
   let flowId: string | undefined;
   let flowRunId: string | undefined;
+  let tags: string | undefined;
   let owner: string | undefined;
   let limit: string | undefined;
   let offset: string | undefined;
   let filter: string | undefined;
+  let since: string | undefined;
   const positional: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
@@ -249,6 +254,9 @@ async function run() {
     } else if (flag === "--flow-run-id") {
       flowRunId = args[++i];
       if (flowRunId === undefined) throw new Error("--flow-run-id requires a value");
+    } else if (flag === "--tags") {
+      tags = args[++i];
+      if (tags === undefined) throw new Error("--tags requires a value");
     } else if (flag === "--owner") {
       owner = args[++i];
       if (!owner) throw new Error("--owner requires a value");
@@ -261,6 +269,9 @@ async function run() {
     } else if (flag === "--filter") {
       filter = args[++i];
       if (!filter) throw new Error("--filter requires a value");
+    } else if (flag === "--since") {
+      since = args[++i];
+      if (!since) throw new Error("--since requires a value");
     } else {
       positional.push(flag);
     }
@@ -296,6 +307,10 @@ async function run() {
 
   function archiveMessagesPath(id: string): string {
     return `${archivePath(id)}/messages`;
+  }
+
+  function archiveMetadataPath(id: string): string {
+    return `${archivePath(id)}/metadata`;
   }
 
   function sessionPath(id: string): string {
@@ -484,6 +499,7 @@ async function run() {
         bindingId,
         flowId,
         flowRunId,
+        tags,
       });
       if (!body) {
         throw new Error("metadata-update requires at least one metadata flag");
@@ -666,6 +682,7 @@ async function run() {
       if (limit) params.set("limit", limit);
       if (offset) params.set("offset", offset);
       if (filter) params.set("filter", filter);
+      if (since) params.set("since", since);
       const qs = params.toString();
       const path = `${archiveCollectionPath()}${qs ? `?${qs}` : ""}`;
       const payload = await req<{ sessions?: Session[]; archives?: Session[] }>("GET", path);
@@ -680,10 +697,12 @@ async function run() {
         if (archives.length === 0) {
           console.log("No archived sessions.");
         } else {
-          console.log("ID\tNAME\tAGENT\tSTATUS");
+          console.log("ID\tNAME\tAGENT\tTAGS\tSTATUS");
           for (const s of archives) {
             const id = String(s.id ?? "").slice(0, 8);
-            console.log(`${id}\t${s.name ?? "-"}\t${s.agent ?? "-"}\t${s.status ?? "archived"}`);
+            const metadata = s.metadata && typeof s.metadata === "object" ? s.metadata as Record<string, unknown> : {};
+            const tagList = Array.isArray(metadata.tags) ? metadata.tags.join(",") : "-";
+            console.log(`${id}\t${s.name ?? "-"}\t${s.agent ?? "-"}\t${tagList}\t${s.status ?? "archived"}`);
           }
         }
       }
@@ -712,6 +731,28 @@ async function run() {
       } else {
         printMessages(messages);
       }
+      break;
+    }
+
+    case "archive-metadata-update": {
+      const id = positional[1];
+      if (!id) throw new Error("archive-metadata-update requires <id>");
+      const body = buildSessionMetadataUpdateBody({
+        goal,
+        nextAction,
+        nextActionPayload,
+        nextActionTemplate,
+        bindingType,
+        bindingId,
+        flowId,
+        flowRunId,
+        tags,
+      });
+      if (!body) {
+        throw new Error("archive-metadata-update requires at least one metadata flag");
+      }
+      const payload = await req<Record<string, unknown>>("PATCH", archiveMetadataPath(id), body);
+      console.log(JSON.stringify(payload, null, 2));
       break;
     }
 

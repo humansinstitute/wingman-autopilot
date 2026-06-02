@@ -686,13 +686,149 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     );
 
     const chatCall = yokeCommandCalls.find((args) => args[0] === 'chat' && args[1] === 'reply-current');
-    expect(chatCall?.[chatCall.indexOf('--body') + 1]).toContain('Task: @[review task](mention:task:task-1)');
-    expect(chatCall?.[chatCall.indexOf('--body') + 1]).toContain(
+    const body = chatCall?.[chatCall.indexOf('--body') + 1] ?? '';
+    expect(body).not.toContain('Task: @[review task](mention:task:task-1)');
+    expect(body).not.toContain('Summary:');
+    expect(body).toContain(
       '@[Report: The Running Centre, Perth](mention:document:doc-1)',
     );
     expect(chatCall).toContain('--skip-refresh');
     expect(chatCall).toContain('channel-1');
     expect(chatCall).toContain('thread-1');
+  });
+
+  test('ready-for-review chat includes worker result when no document is produced', async () => {
+    const updateTask = createDispatchTaskStateUpdater({
+      eventInput: {
+        subscription: {
+          subscriptionId: 'sub-1',
+          workspaceOwnerNpub: 'npub1workspace',
+          sourceAppNpub: 'npub1source',
+          backendBaseUrl: 'https://tower.example.com',
+          botNpub: 'npub1bot',
+          wsKeyNpub: 'npub1wskey',
+        },
+        triggerKind: 'chat',
+        capability: 'chat_intercept',
+        recordId: 'chat-message-1',
+        record: {},
+        payload: {},
+        recordFamily: 'chat',
+        recordState: null,
+        recordVersion: 1,
+        updaterNpub: 'npub1requester',
+        receivedAt: '2026-01-01T00:00:00.000Z',
+        channelId: 'channel-1',
+        threadId: 'thread-1',
+      },
+      agent: {
+        agentId: 'agent-1',
+        workingDirectory: '/tmp/agent-work',
+      },
+      botIdentity: {
+        botNpub: 'npub1bot',
+        botPubkeyHex: 'ab'.repeat(32),
+        botSecret: new Uint8Array(32),
+      },
+      runtime: {
+        yokeStateDir: '/tmp/yoke-state',
+        commandPrefix: 'node yoke',
+        commands: {},
+        error: null,
+      },
+    } as never, 'review');
+
+    await updateTask({
+      workPlan: {
+        taskId: 'task-1',
+        reviewerNpub: 'npub1requester',
+      },
+      workerResult: {
+        summary: 'Drafted the pitch.',
+        result: 'Core pitch: Other Stuff helps commercial electricians protect margin by tightening quote follow-up, variation capture, job handover, and admin coordination.',
+        taskUpdateComment: 'Completed draft pitch for Pete.',
+      },
+      agentResponse: {
+        accepted: true,
+        reviewSummary: 'Accepted. The worker produced a clear pitch.',
+        requiredChanges: [],
+        risks: [],
+        confidence: 0.86,
+      },
+    });
+
+    const chatCall = yokeCommandCalls.find((args) => args[0] === 'chat' && args[1] === 'reply-current');
+    const body = chatCall?.[chatCall.indexOf('--body') + 1] ?? '';
+    expect(body).toContain('Drafted the pitch.');
+    expect(body).toContain('Result:');
+    expect(body).toContain('Core pitch: Other Stuff helps commercial electricians protect margin');
+    expect(body).not.toContain('Summary:');
+    expect(body).not.toContain('Accepted. The worker produced a clear pitch.');
+    expect(body).not.toContain('Task:');
+  });
+
+  test('ready-for-review chat prefers final conversational thread response', async () => {
+    const updateTask = createDispatchTaskStateUpdater({
+      eventInput: {
+        subscription: {
+          subscriptionId: 'sub-1',
+          workspaceOwnerNpub: 'npub1workspace',
+          sourceAppNpub: 'npub1source',
+          backendBaseUrl: 'https://tower.example.com',
+          botNpub: 'npub1bot',
+          wsKeyNpub: 'npub1wskey',
+        },
+        triggerKind: 'chat',
+        capability: 'chat_intercept',
+        recordId: 'chat-message-1',
+        record: {},
+        payload: {},
+        recordFamily: 'chat',
+        recordState: null,
+        recordVersion: 1,
+        updaterNpub: 'npub1requester',
+        receivedAt: '2026-01-01T00:00:00.000Z',
+        channelId: 'channel-1',
+        threadId: 'thread-1',
+      },
+      agent: {
+        agentId: 'agent-1',
+        workingDirectory: '/tmp/agent-work',
+      },
+      botIdentity: {
+        botNpub: 'npub1bot',
+        botPubkeyHex: 'ab'.repeat(32),
+        botSecret: new Uint8Array(32),
+      },
+      runtime: {
+        yokeStateDir: '/tmp/yoke-state',
+        commandPrefix: 'node yoke',
+        commands: {},
+        error: null,
+      },
+    } as never, 'review');
+
+    await updateTask({
+      workPlan: {
+        taskId: 'task-1',
+        reviewerNpub: 'npub1requester',
+      },
+      workerResult: {
+        summary: 'Drafted the pitch.',
+        result: 'Worker result should not be the chat body when the final agent wrote one.',
+      },
+      agentResponse: {
+        reviewSummary: 'Accepted.',
+      },
+      finalThreadResponse: {
+        body: 'Summary: For an SME commercial electrical company, I would lead with margin protection and fewer missed details.\nTask: @[review task](mention:task:task-1)\nAssigned back to: npub1requester',
+        summary: 'Conversational final answer.',
+      },
+    });
+
+    const chatCall = yokeCommandCalls.find((args) => args[0] === 'chat' && args[1] === 'reply-current');
+    const body = chatCall?.[chatCall.indexOf('--body') + 1] ?? '';
+    expect(body).toBe('For an SME commercial electrical company, I would lead with margin protection and fewer missed details.');
   });
 
   test('chat-created task descriptions include the compact origin thread details', async () => {
@@ -957,7 +1093,11 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     expect(progressComment?.[progressComment.indexOf('--body') + 1]).toContain('Add regression test');
 
     const chatCall = yokeCommandCalls.find((args) => args[0] === 'chat' && args[1] === 'reply-current');
-    expect(chatCall?.[chatCall.indexOf('--body') + 1]).toContain('Task: @[review task](mention:task:task-created-1)');
+    const body = chatCall?.[chatCall.indexOf('--body') + 1] ?? '';
+    expect(body).toContain('Implementation loop finished after manager review.');
+    expect(body).toContain('Final report: implementation reviewed and ready.');
+    expect(body).not.toContain('Task: @[review task](mention:task:task-created-1)');
+    expect(body).not.toContain('Summary:');
     expect(chatCall).toContain('--thread');
     expect(chatCall?.[chatCall.indexOf('--thread') + 1]).toBeTruthy();
   });

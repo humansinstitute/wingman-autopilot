@@ -2057,11 +2057,12 @@ function buildImplementationReviewProgressComment(input: JsonObject): string {
 function buildReadyForReviewComment(input: JsonObject, reviewerNpub: string | null): string {
   const response = objectValue(input.agentResponse ?? input.response ?? input);
   const workerResult = objectValue(input.workerResult);
-  const summary = getText(response.reviewSummary)
-    ?? getText(response.summary)
-    ?? getText(workerResult.reportSummary)
+  const finalThreadResponse = objectValue(input.finalThreadResponse);
+  const summary = getText(workerResult.reportSummary)
     ?? getText(workerResult.summary)
-    ?? getText(workerResult.result)
+    ?? getText(finalThreadResponse.summary)
+    ?? getText(response.summary)
+    ?? getText(response.reviewSummary)
     ?? 'Pipeline work is ready for review.';
   const taskUpdateComment = getText(workerResult.taskUpdateComment);
   const lines = [
@@ -2070,6 +2071,7 @@ function buildReadyForReviewComment(input: JsonObject, reviewerNpub: string | nu
       : 'Pipeline handoff: moved task to review.',
     `Summary: ${summary}`,
   ];
+  lines.push(...buildWorkerResultLines(input, { maxLength: 6000 }));
   if (taskUpdateComment && taskUpdateComment !== summary) {
     lines.push(taskUpdateComment);
   }
@@ -2090,29 +2092,74 @@ function buildReadyForReviewComment(input: JsonObject, reviewerNpub: string | nu
 
 function buildReadyForReviewChatReply(
   input: JsonObject,
-  taskId: string,
-  reviewerNpub: string | null,
+  _taskId: string,
+  _reviewerNpub: string | null,
 ): string {
+  const finalThreadResponse = objectValue(input.finalThreadResponse);
+  const finalBody = getText(finalThreadResponse.body);
+  if (finalBody) {
+    return ensureFinalThreadReplyLinks(finalBody, input);
+  }
   const response = objectValue(input.agentResponse ?? input.response ?? input);
   const workerResult = objectValue(input.workerResult);
   const summary = getText(workerResult.reportSummary)
-    ?? getText(response.reviewSummary)
+    ?? getText(workerResult.summary)
     ?? getText(response.summary)
-    ?? 'The pipeline work is ready for review.';
-  const lines = [
-    'Done: the pipeline work is ready for review.',
-    `Task: ${mention('task', taskId, 'review task')}`,
-    ...buildReviewDocumentLines(input),
-    `Summary: ${summary}`,
-  ];
+    ?? getText(response.reviewSummary)
+    ?? 'I have completed the work.';
+  const documentLines = buildReviewDocumentLines(input);
+  const lines = [summary];
+  if (documentLines.length > 0) {
+    lines.push(...documentLines);
+  }
+  lines.push(...buildWorkerResultLines(input, { maxLength: 2200 }));
   const taskUpdateComment = getText(workerResult.taskUpdateComment);
   if (taskUpdateComment && taskUpdateComment !== summary) {
     lines.push(taskUpdateComment);
   }
-  if (reviewerNpub) {
-    lines.push(`Assigned back to: ${reviewerNpub}`);
+  return lines.join('\n');
+}
+
+function ensureFinalThreadReplyLinks(body: string, input: JsonObject): string {
+  const lines = [normalizeFinalThreadReplyBody(body)];
+  const documentLines = buildReviewDocumentLines(input);
+  for (const line of documentLines) {
+    if (!lines.some((existing) => existing.includes(line))) {
+      lines.push(line);
+    }
   }
   return lines.join('\n');
+}
+
+function normalizeFinalThreadReplyBody(body: string): string {
+  const lines = body
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => !/^(Task|Assigned back to):\s+/i.test(line.trim()));
+  const normalized = lines
+    .join('\n')
+    .replace(/^\s*(Summary|Pipeline handoff):\s*/i, '')
+    .trim();
+  return normalized || body.trim();
+}
+
+function buildWorkerResultLines(
+  input: JsonObject,
+  options: { maxLength: number },
+): string[] {
+  if (buildReviewDocumentLines(input).length > 0) {
+    return [];
+  }
+  const workerResult = objectValue(input.workerResult);
+  const result = getText(workerResult.result);
+  if (!result) {
+    return [];
+  }
+  return [
+    'Result:',
+    truncateBlock(result, options.maxLength),
+  ];
 }
 
 function buildReviewDocumentLines(input: JsonObject): string[] {
@@ -2128,6 +2175,14 @@ function buildReviewDocumentLines(input: JsonObject): string[] {
     ?? getText(workerResult.documentTitle)
     ?? 'report document';
   return [`Document: ${mention('document', documentId, title)}`];
+}
+
+function truncateBlock(value: string, maxLength: number): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, Math.max(0, maxLength - 80)).trimEnd()}\n\n[Truncated. Open the linked task for the full result.]`;
 }
 
 function getRecordId(eventInput: DispatchPipelineEventInput): string | null {

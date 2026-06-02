@@ -74,6 +74,7 @@ export async function fetchRecordHistory(
   workspaceOwnerNpub: string,
   recordId: string,
   wsSession: YokeWorkspaceSession,
+  options: { signal?: AbortSignal } = {},
 ): Promise<Record<string, unknown>[]> {
   const helpers = await loadYokeBotHelpers();
   const path = `/api/v4/records/${encodeURIComponent(recordId)}/history?owner_npub=${encodeURIComponent(workspaceOwnerNpub)}`;
@@ -83,6 +84,7 @@ export async function fetchRecordHistory(
     headers: {
       Authorization: authorization,
     },
+    signal: options.signal,
   });
   if (!response.ok) {
     const error = await parseTowerError(response, 'record_history');
