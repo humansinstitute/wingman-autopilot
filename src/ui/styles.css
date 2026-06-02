@@ -3259,6 +3259,12 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) #app[data-r
   overflow-y: hidden;
 }
 
+[data-webview-open="true"] .wm-tabs-bar {
+  position: relative;
+  top: auto;
+  flex: 0 0 auto;
+}
+
 body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-tabs-bar {
   top: 0;
 }
