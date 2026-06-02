@@ -58,7 +58,26 @@ function makeDeps(sessions: Map<string, SessionSnapshot>): WingmanMcpApiDependen
     findProjectByDirectory: () => null,
     memoryStore: {} as any,
     getWingmanNpub: () => null,
-    setPinnedFile: () => undefined,
+    setPinnedFile: (sessionId, filePath) => {
+      const existing = sessions.get(sessionId);
+      if (!existing) return null;
+      const pinnedFile = typeof filePath === "string" && filePath.trim().length > 0
+        ? filePath.trim()
+        : null;
+      const existingPinnedFiles = Array.isArray(existing.metadata?.pinnedFiles)
+        ? existing.metadata.pinnedFiles.filter((value) => typeof value === "string" && value.trim().length > 0)
+        : [];
+      const pinnedFiles = pinnedFile
+        ? [...existingPinnedFiles.filter((value) => value !== pinnedFile), pinnedFile]
+        : [];
+      const updated = {
+        ...existing,
+        pinnedFile: pinnedFile ?? undefined,
+        metadata: { ...(existing.metadata ?? {}), pinnedFiles },
+      };
+      sessions.set(sessionId, updated);
+      return updated;
+    },
   };
 }
 
@@ -139,5 +158,38 @@ describe("wingman-api session ownership", () => {
     );
 
     expect(stopResponse?.status).toBe(200);
+  });
+});
+
+describe("wingman-api pinned artifacts", () => {
+  test("returns the session pinned file list after pinning multiple docs", async () => {
+    const sessions = new Map<string, SessionSnapshot>();
+    sessions.set("session-1", buildSession({ id: "session-1", metadata: { AGENT: true } as any }));
+    const handler = createWingmanMcpApiHandler(makeDeps(sessions));
+
+    for (const filePath of ["/tmp/one.md", "/tmp/two.md", "/tmp/one.md", "/tmp/three.md"]) {
+      const pinResponse = await handler(
+        new Request("http://localhost/api/mcp/wingman/artifact/pin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: "session-1", filePath }),
+        }),
+        new URL("http://localhost/api/mcp/wingman/artifact/pin"),
+        "POST",
+      );
+      expect(pinResponse?.status).toBe(200);
+    }
+
+    const getResponse = await handler(
+      new Request("http://localhost/api/mcp/wingman/artifact/pin?sessionId=session-1"),
+      new URL("http://localhost/api/mcp/wingman/artifact/pin?sessionId=session-1"),
+      "GET",
+    );
+
+    expect(getResponse?.status).toBe(200);
+    expect(await getResponse!.json()).toMatchObject({
+      pinnedFile: "/tmp/three.md",
+      pinnedFiles: ["/tmp/two.md", "/tmp/one.md", "/tmp/three.md"],
+    });
   });
 });

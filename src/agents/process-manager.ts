@@ -890,7 +890,20 @@ export class ProcessManager {
   setPinnedFile(id: string, filePath: string | null): SessionSnapshot | null {
     const session = this.sessions.get(id);
     if (!session) return null;
-    session.pinnedFile = filePath ?? undefined;
+    const normalizedFilePath = typeof filePath === "string" && filePath.trim().length > 0
+      ? filePath.trim()
+      : null;
+    const existingPinnedFiles = Array.isArray(session.metadata.pinnedFiles)
+      ? session.metadata.pinnedFiles.filter((value) => typeof value === "string" && value.trim().length > 0)
+      : [];
+    const pinnedFiles = normalizedFilePath
+      ? [...existingPinnedFiles.filter((value) => value !== normalizedFilePath), normalizedFilePath]
+      : [];
+    session.pinnedFile = normalizedFilePath ?? undefined;
+    session.metadata = normaliseSessionMetadata({
+      ...session.metadata,
+      pinnedFiles,
+    });
     const snapshot = this.toSnapshot(session);
     this.emit({ type: "session-updated", session: snapshot });
     return snapshot;

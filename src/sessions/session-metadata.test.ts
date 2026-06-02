@@ -51,6 +51,20 @@ describe("normaliseSessionMetadata", () => {
     });
   });
 
+  test("normalises pinned file lists", () => {
+    expect(
+      normaliseSessionMetadata({
+        AGENT: true,
+        billingMode: "subscription",
+        pinnedFiles: ["  /tmp/a.md  ", "", "/tmp/b.md", "/tmp/a.md", 123 as never],
+      }),
+    ).toMatchObject({
+      AGENT: true,
+      billingMode: "subscription",
+      pinnedFiles: ["/tmp/a.md", "/tmp/b.md"],
+    });
+  });
+
   test("drops legacy flow orchestration binding metadata", () => {
     expect(
       normaliseSessionMetadata({

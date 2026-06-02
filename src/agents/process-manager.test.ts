@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { shouldCleanupMcpFiles, pm2StopShouldMarkStopped } from "./process-manager";
+import { ProcessManager, shouldCleanupMcpFiles, pm2StopShouldMarkStopped } from "./process-manager";
+import type { WingmanConfig } from "../config";
 
 describe("pm2StopShouldMarkStopped", () => {
   test("returns true when PM2 process was successfully deleted", () => {
@@ -49,5 +50,36 @@ describe("shouldCleanupMcpFiles", () => {
     expect(
       shouldCleanupMcpFiles(sessions, "stopping-session", ["/tmp/shared/.mcp.json"]),
     ).toBe(true);
+  });
+});
+
+describe("ProcessManager pinned files", () => {
+  test("keeps a session-scoped pinned file history", () => {
+    const manager = new ProcessManager({
+      allowedHosts: "localhost,127.0.0.1",
+      agents: {
+        codex: {
+          label: "Codex",
+          command: ({ port }) => ["agentapi", "--port", String(port), "--", "codex"],
+        },
+      },
+    } as WingmanConfig);
+
+    manager.rehydrateSession({
+      id: "session-1",
+      agent: "codex",
+      port: 3700,
+      name: "Session 1",
+      startedAt: new Date("2026-06-01T00:00:00.000Z").toISOString(),
+      workingDirectory: "/tmp",
+      pinnedFile: "/tmp/old.md",
+      metadata: { AGENT: true, pinnedFiles: ["/tmp/old.md"] },
+    });
+
+    manager.setPinnedFile("session-1", "/tmp/new.md");
+    const snapshot = manager.setPinnedFile("session-1", " /tmp/old.md ");
+
+    expect(snapshot?.pinnedFile).toBe("/tmp/old.md");
+    expect(snapshot?.metadata?.pinnedFiles).toEqual(["/tmp/new.md", "/tmp/old.md"]);
   });
 });

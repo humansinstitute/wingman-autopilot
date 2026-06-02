@@ -73,6 +73,40 @@ describe("command palette file actions", () => {
     expect(state.webviewLayout.open).toBe(false);
   });
 
+  test("stores the full server pinned list on the session and local state", async () => {
+    const state = createState();
+    const session = { id: "session-1", workingDirectory: "/workspace/session" };
+    const actions = createCommandPaletteFileActions({
+      state,
+      sessionsStore: () => ({ activeSessionId: "session-1", items: [session] }),
+      getCurrentRoute: () => "live",
+      getPathname: () => "/live/session-1",
+      getSessionIdFromPath: () => "session-1",
+      setPinnedArtifact: async () => ({
+        pinnedFile: "/workspace/session/three.md",
+        pinnedFiles: [
+          "/workspace/session/one.md",
+          "/workspace/session/two.md",
+          "/workspace/session/three.md",
+        ],
+      }),
+    });
+
+    await actions.pinFileToSession("/workspace/session/three.md");
+
+    expect(session.metadata.pinnedFiles).toEqual([
+      "/workspace/session/one.md",
+      "/workspace/session/two.md",
+      "/workspace/session/three.md",
+    ]);
+    expect(state.pinnedFileLists.get("session-1")).toEqual([
+      "/workspace/session/one.md",
+      "/workspace/session/two.md",
+      "/workspace/session/three.md",
+    ]);
+    expect(state.pinnedFiles.get("session-1")).toBe("/workspace/session/three.md");
+  });
+
   test("pins to the route session instead of another active session", async () => {
     const state = createState();
     let pinnedSessionId = null;

@@ -24,6 +24,7 @@ export interface SessionMetadata {
   lastManagedByNpub?: string;
   chargeToNpub?: string;
   delegateRelationshipId?: string;
+  pinnedFiles?: string[];
 }
 
 export interface NativeAgentSessionMetadata {
@@ -101,6 +102,12 @@ export const normaliseSessionMetadata = (
   const chargeToNpub = typeof metadata?.chargeToNpub === "string" ? metadata.chargeToNpub.trim() : "";
   const delegateRelationshipId =
     typeof metadata?.delegateRelationshipId === "string" ? metadata.delegateRelationshipId.trim() : "";
+  const pinnedFiles = Array.isArray(metadata?.pinnedFiles)
+    ? metadata.pinnedFiles
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter((value, index, values) => value.length > 0 && values.indexOf(value) === index)
+        .slice(0, 20)
+    : undefined;
   const taskIds = Array.isArray(metadata?.taskIds)
     ? metadata.taskIds
         .map((value) => (typeof value === "string" ? value.trim() : ""))
@@ -133,6 +140,7 @@ export const normaliseSessionMetadata = (
     lastManagedByNpub: lastManagedByNpub || undefined,
     chargeToNpub: chargeToNpub || undefined,
     delegateRelationshipId: delegateRelationshipId || undefined,
+    pinnedFiles: pinnedFiles?.length ? pinnedFiles : undefined,
   };
 };
 

@@ -44,9 +44,14 @@ export function createCommandPaletteFileActions({
     const result = await setPinnedArtifact?.(session.id, filePath);
     const pinnedFile = result?.pinnedFile ?? null;
     session.pinnedFile = pinnedFile;
+    if (Array.isArray(result?.pinnedFiles)) {
+      session.metadata = { ...(session.metadata ?? {}), pinnedFiles: result.pinnedFiles };
+    }
     if (pinnedFile) {
       if (state) {
-        addPinnedFileForSession(state, session.id, pinnedFile);
+        for (const file of Array.isArray(result?.pinnedFiles) ? result.pinnedFiles : [pinnedFile]) {
+          addPinnedFileForSession(state, session.id, file);
+        }
       }
     } else {
       state?.pinnedFiles?.delete(session.id);

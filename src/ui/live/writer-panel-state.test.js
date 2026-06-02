@@ -87,4 +87,22 @@ describe("writer-panel-state", () => {
       activeFile: "/tmp/spec.md",
     });
   });
+
+  test("hydrates a server-provided pinned file list without leaking between sessions", () => {
+    const state = createState();
+
+    syncPinnedFileForSession(state, "session-1", ["/tmp/a.md", "/tmp/b.md"]);
+    syncPinnedFileForSession(state, "session-2", ["/tmp/c.md"]);
+
+    expect(getPinnedFilePageForSession(state, "session-1")).toEqual({
+      files: ["/tmp/a.md", "/tmp/b.md"],
+      activeIndex: 1,
+      activeFile: "/tmp/b.md",
+    });
+    expect(getPinnedFilePageForSession(state, "session-2")).toEqual({
+      files: ["/tmp/c.md"],
+      activeIndex: 0,
+      activeFile: "/tmp/c.md",
+    });
+  });
 });

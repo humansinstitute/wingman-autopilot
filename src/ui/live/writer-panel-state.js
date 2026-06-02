@@ -4,6 +4,18 @@ function normalizeFilePath(filePath) {
     : null;
 }
 
+function normalizePinnedFileInputs(value) {
+  const rawValues = Array.isArray(value) ? value : [value];
+  const pinnedFiles = [];
+  for (const rawValue of rawValues) {
+    const normalized = normalizeFilePath(rawValue);
+    if (normalized && !pinnedFiles.includes(normalized)) {
+      pinnedFiles.push(normalized);
+    }
+  }
+  return pinnedFiles;
+}
+
 function getPinnedFileList(state, sessionId) {
   if (!state) return [];
   if (!state.pinnedFileLists) {
@@ -36,10 +48,12 @@ function setActivePinnedFileIndex(state, sessionId, index) {
 }
 
 export function getPinnedFilesForSession(state, sessionId, serverPinnedFile = null) {
-  const normalizedServerPinnedFile = normalizeFilePath(serverPinnedFile);
+  const serverPinnedFiles = normalizePinnedFileInputs(serverPinnedFile);
   const list = getPinnedFileList(state, sessionId);
-  if (normalizedServerPinnedFile && !list.includes(normalizedServerPinnedFile)) {
-    list.push(normalizedServerPinnedFile);
+  for (const serverPinnedFilePath of serverPinnedFiles) {
+    if (!list.includes(serverPinnedFilePath)) {
+      list.push(serverPinnedFilePath);
+    }
   }
   if (list.length > 0) {
     const activeIndex = state.pinnedFileIndexes?.get(sessionId) ?? list.length - 1;
@@ -81,17 +95,19 @@ export function getPinnedFilePageForSession(state, sessionId, serverPinnedFile =
 
 export function syncPinnedFileForSession(state, sessionId, serverPinnedFile = null) {
   if (!state) return;
-  const normalizedServerPinnedFile = normalizeFilePath(serverPinnedFile);
-  if (normalizedServerPinnedFile) {
+  const serverPinnedFiles = normalizePinnedFileInputs(serverPinnedFile);
+  if (serverPinnedFiles.length > 0) {
     const list = getPinnedFileList(state, sessionId);
-    if (!list.includes(normalizedServerPinnedFile)) {
-      list.push(normalizedServerPinnedFile);
+    for (const serverPinnedFilePath of serverPinnedFiles) {
+      if (!list.includes(serverPinnedFilePath)) {
+        list.push(serverPinnedFilePath);
+      }
     }
     const activeIndex = state.pinnedFileIndexes?.get(sessionId);
     setActivePinnedFileIndex(
       state,
       sessionId,
-      typeof activeIndex === "number" ? activeIndex : list.indexOf(normalizedServerPinnedFile),
+      typeof activeIndex === "number" ? activeIndex : list.indexOf(serverPinnedFiles[serverPinnedFiles.length - 1]),
     );
   }
 }

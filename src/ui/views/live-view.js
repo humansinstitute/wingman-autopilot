@@ -229,9 +229,11 @@ export function initLiveView(deps) {
 
   function getLiveDrawerRenderState(sessionId) {
     const session = sessionsStore().items.find((item) => item.id === sessionId) ?? null;
-    const sessionPinnedFile = session?.pinnedFile ?? null;
+    const sessionPinnedFiles = Array.isArray(session?.metadata?.pinnedFiles) && session.metadata.pinnedFiles.length > 0
+      ? session.metadata.pinnedFiles
+      : session?.pinnedFile ?? null;
     const effectiveFile =
-      getPinnedFileForSession(state, sessionId, sessionPinnedFile) || session?.targetFile || null;
+      getPinnedFileForSession(state, sessionId, sessionPinnedFiles) || session?.targetFile || null;
     const matchingApp = findAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
     const webApp = findWebAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
     const layoutState = getLiveDrawerLayoutState({
@@ -1004,8 +1006,10 @@ export function initLiveView(deps) {
       });
     }
 
-    const sessionPinnedFile = currentSession?.pinnedFile ?? null;
-    const pinnedFile = getPinnedFileForSession(state, sessionId, sessionPinnedFile);
+    const sessionPinnedFiles = Array.isArray(currentSession?.metadata?.pinnedFiles) && currentSession.metadata.pinnedFiles.length > 0
+      ? currentSession.metadata.pinnedFiles
+      : currentSession?.pinnedFile ?? null;
+    const pinnedFile = getPinnedFileForSession(state, sessionId, sessionPinnedFiles);
     const artifactPanelOpen = Boolean(pinnedFile) && state.writerLayout.open;
     addCommand(artifactPanelOpen ? "Close Artifact" : "Open Artifact", async () => {
       if (pinnedFile) {
@@ -1427,9 +1431,11 @@ export function initLiveView(deps) {
     const activeSession = drawerRenderState.session;
     const targetFile = activeSession?.targetFile ?? null;
 
-    const sessionPinnedFile = activeSession?.pinnedFile ?? null;
-    syncPinnedFileForSession(state, sessionId, sessionPinnedFile);
-    const pinnedFilePage = getPinnedFilePageForSession(state, sessionId, sessionPinnedFile);
+    const sessionPinnedFiles = Array.isArray(activeSession?.metadata?.pinnedFiles) && activeSession.metadata.pinnedFiles.length > 0
+      ? activeSession.metadata.pinnedFiles
+      : activeSession?.pinnedFile ?? null;
+    syncPinnedFileForSession(state, sessionId, sessionPinnedFiles);
+    const pinnedFilePage = getPinnedFilePageForSession(state, sessionId, sessionPinnedFiles);
 
     // Pinned file takes priority over session targetFile
     const effectiveFile = pinnedFilePage.activeFile ?? drawerRenderState.effectiveFile ?? targetFile;

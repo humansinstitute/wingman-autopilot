@@ -67,7 +67,7 @@ export interface WingmanMcpApiDependencies {
   findProjectByDirectory: (directoryPath: string) => NpubProjectRecord | null;
   memoryStore: MemoryStore;
   getWingmanNpub: () => string | null;
-  setPinnedFile: (sessionId: string, filePath: string | null) => unknown;
+  setPinnedFile: (sessionId: string, filePath: string | null) => SessionSnapshot | null | undefined;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -1147,9 +1147,14 @@ async function handlePinArtifact(
   if (denied) return denied;
 
   const filePath = typeof body.filePath === "string" ? body.filePath : null;
-  deps.setPinnedFile(sessionId!, filePath);
+  const updatedSession = deps.setPinnedFile(sessionId!, filePath);
+  const pinnedFiles = Array.isArray(updatedSession?.metadata?.pinnedFiles)
+    ? updatedSession.metadata.pinnedFiles
+    : filePath
+      ? [filePath]
+      : [];
 
-  return jsonOk({ pinnedFile: filePath });
+  return jsonOk({ pinnedFile: updatedSession?.pinnedFile ?? filePath, pinnedFiles });
 }
 
 /**
@@ -1165,5 +1170,8 @@ function handleGetPinnedArtifact(
   if (denied) return denied;
 
   const session = deps.getSession(sessionId!);
-  return jsonOk({ pinnedFile: session?.pinnedFile ?? null });
+  return jsonOk({
+    pinnedFile: session?.pinnedFile ?? null,
+    pinnedFiles: Array.isArray(session?.metadata?.pinnedFiles) ? session.metadata.pinnedFiles : [],
+  });
 }
