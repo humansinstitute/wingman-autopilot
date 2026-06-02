@@ -25,6 +25,15 @@
  * @param {Function} deps.scrollConversationAreaToBottom   - scrolls the conversation area to bottom
  * @param {Function} [deps.onSessionVisited]               - records session visits for command surfaces
  */
+
+function afterNextPaint(callback) {
+  if (typeof requestAnimationFrame !== "function") {
+    setTimeout(callback, 0);
+    return;
+  }
+  requestAnimationFrame(() => requestAnimationFrame(callback));
+}
+
 export function createSessionRouting(deps) {
   const {
     sessionsStore,
@@ -112,9 +121,11 @@ export function createSessionRouting(deps) {
           window.dispatchEvent(new CustomEvent("session-change", { detail: { sessionId } }));
         }
 
-        // Scroll to end when explicitly switching to a different session.
+        // Scroll after the tab switch render has replaced the conversation pane.
         if (switchedSessions) {
-          scheduleLiveScroll(sessionId, { includeWindow: true, force: true });
+          afterNextPaint(() => {
+            scheduleLiveScroll(sessionId, { includeWindow: true, force: true });
+          });
         }
       }
 
