@@ -8,8 +8,10 @@ function createState() {
     files: { currentPath: "/workspace/current" },
     pinnedFiles: new Map(),
     writerLayout: { open: false, mobileTab: "conversation" },
+    writerOpenSessions: new Map(),
     appCardLayout: { open: true },
     artifactsLayout: { open: true },
+    artifactsOpenSessions: new Map(),
     webviewLayout: { open: true },
   };
 }
@@ -62,6 +64,7 @@ describe("command palette file actions", () => {
     expect(pinnedFile).toBe("/workspace/session/report.md");
     expect(session.pinnedFile).toBe("/workspace/session/report.md");
     expect(state.pinnedFiles.get("session-1")).toBe("/workspace/session/report.md");
+    expect(state.writerOpenSessions.get("session-1")).toBe(true);
     expect(route).toBe("live");
     expect(activated).toEqual({
       sessionId: "session-1",

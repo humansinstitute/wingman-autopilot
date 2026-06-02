@@ -28,10 +28,16 @@ import {
   clearWriterDismissal,
   getPinnedFilePageForSession,
   getPinnedFileForSession,
+  isArtifactsPanelOpenForSession,
+  isWriterPanelOpenForSession,
   markWriterDismissed,
+  setArtifactsPanelOpenForSession,
   setPinnedFilePageForSession,
+  setWriterPanelOpenForSession,
   shouldAutoOpenWriter,
+  syncArtifactsLayoutOpenForSession,
   syncPinnedFileForSession,
+  syncWriterLayoutOpenForSession,
 } from "../live/writer-panel-state.js";
 import { addNightWatchToggle } from "../nightwatch/cmd-toggle.js";
 import { openFilePicker } from "../modals/file-picker.js";
@@ -123,12 +129,22 @@ export function initLiveView(deps) {
     }
   }
 
+  function updateSessionPinnedFiles(sessionId, filePaths) {
+    const session = sessionsStore().items.find((item) => item.id === sessionId);
+    if (session && Array.isArray(filePaths)) {
+      session.metadata = { ...(session.metadata ?? {}), pinnedFiles: filePaths };
+    }
+  }
+
   async function persistPinnedArtifact(sessionId, filePath) {
     const result = await setPinnedArtifactApi(sessionId, filePath);
     const pinnedFile = result?.pinnedFile ?? null;
     updateSessionPinnedFile(sessionId, pinnedFile);
+    updateSessionPinnedFiles(sessionId, result?.pinnedFiles);
     if (pinnedFile) {
-      addPinnedFileForSession(state, sessionId, pinnedFile);
+      for (const file of Array.isArray(result?.pinnedFiles) ? result.pinnedFiles : [pinnedFile]) {
+        addPinnedFileForSession(state, sessionId, file);
+      }
     } else {
       state.pinnedFiles.delete(sessionId);
     }
@@ -221,6 +237,8 @@ export function initLiveView(deps) {
   }
 
   function closeSecondaryPanels() {
+    state.writerOpenSessions?.clear();
+    state.artifactsOpenSessions?.clear();
     state.writerLayout.open = false;
     state.artifactsLayout.open = false;
     state.appCardLayout.open = false;
@@ -240,8 +258,8 @@ export function initLiveView(deps) {
       effectiveFile,
       matchingApp,
       webApp,
-      writerLayout: state.writerLayout,
-      artifactsLayout: state.artifactsLayout,
+      writerLayout: { ...state.writerLayout, open: isWriterPanelOpenForSession(state, sessionId) },
+      artifactsLayout: { ...state.artifactsLayout, open: isArtifactsPanelOpenForSession(state, sessionId) },
       appCardLayout: state.appCardLayout,
       webviewLayout: state.webviewLayout,
     });
@@ -925,8 +943,8 @@ export function initLiveView(deps) {
           state.appCardLayout.open = shouldOpen;
           if (shouldOpen) {
             state.appCardLayout.mobileTab = "app";
-            state.writerLayout.open = false;
-            state.artifactsLayout.open = false;
+            setWriterPanelOpenForSession(state, sessionId, false);
+            setArtifactsPanelOpenForSession(state, sessionId, false);
             state.webviewLayout.open = false;
           }
           render();
@@ -998,8 +1016,8 @@ export function initLiveView(deps) {
         state.webviewLayout.open = shouldOpen;
         if (shouldOpen) {
           state.appCardLayout.open = false;
-          state.writerLayout.open = false;
-          state.artifactsLayout.open = false;
+          setWriterPanelOpenForSession(state, sessionId, false);
+          setArtifactsPanelOpenForSession(state, sessionId, false);
           state.webviewLayout.mobileTab = "app";
         }
         render();
@@ -1010,20 +1028,20 @@ export function initLiveView(deps) {
       ? currentSession.metadata.pinnedFiles
       : currentSession?.pinnedFile ?? null;
     const pinnedFile = getPinnedFileForSession(state, sessionId, sessionPinnedFiles);
-    const artifactPanelOpen = Boolean(pinnedFile) && state.writerLayout.open;
+    const artifactPanelOpen = Boolean(pinnedFile) && isWriterPanelOpenForSession(state, sessionId);
     addCommand(artifactPanelOpen ? "Close Artifact" : "Open Artifact", async () => {
       if (pinnedFile) {
         if (artifactPanelOpen) {
           markWriterDismissed(state, sessionId, pinnedFile);
-          state.writerLayout.open = false;
+          setWriterPanelOpenForSession(state, sessionId, false);
           render();
           return;
         }
         clearWriterDismissal(state, sessionId);
-        state.writerLayout.open = true;
+        setWriterPanelOpenForSession(state, sessionId, true);
         state.writerLayout.mobileTab = "writer";
         state.appCardLayout.open = false;
-        state.artifactsLayout.open = false;
+        setArtifactsPanelOpenForSession(state, sessionId, false);
         state.webviewLayout.open = false;
         render();
         return;
@@ -1036,10 +1054,10 @@ export function initLiveView(deps) {
         try {
           await persistPinnedArtifact(sessionId, filePath);
           clearWriterDismissal(state, sessionId);
-          state.writerLayout.open = true;
+          setWriterPanelOpenForSession(state, sessionId, true);
           state.writerLayout.mobileTab = "writer";
           state.appCardLayout.open = false;
-          state.artifactsLayout.open = false;
+          setArtifactsPanelOpenForSession(state, sessionId, false);
           state.webviewLayout.open = false;
           render();
         } catch (error) {
@@ -1439,14 +1457,18 @@ export function initLiveView(deps) {
 
     // Pinned file takes priority over session targetFile
     const effectiveFile = pinnedFilePage.activeFile ?? drawerRenderState.effectiveFile ?? targetFile;
+    let writerPanelOpen = syncWriterLayoutOpenForSession(state, sessionId);
+    let artifactsPanelOpen = syncArtifactsLayoutOpenForSession(state, sessionId);
 
     if (!effectiveFile) {
       clearWriterDismissal(state, sessionId);
+      writerPanelOpen = setWriterPanelOpenForSession(state, sessionId, false);
     }
 
     // Auto-open writer layout when session has an effective file unless the user dismissed it
     if (shouldAutoOpenWriter(state, sessionId, effectiveFile)) {
-      state.writerLayout.open = true;
+      writerPanelOpen = setWriterPanelOpenForSession(state, sessionId, true);
+      artifactsPanelOpen = setArtifactsPanelOpenForSession(state, sessionId, false);
     }
 
     const matchingApp = drawerRenderState.matchingApp;
@@ -1465,7 +1487,7 @@ export function initLiveView(deps) {
     });
 
     // Writer split takes priority, then artifacts, then webview
-    if (effectiveFile && state.writerLayout.open) {
+    if (effectiveFile && writerPanelOpen) {
       appRoot.dataset.webviewOpen = "true";
 
       const mobileTab = state.writerLayout.mobileTab || "chat";
@@ -1498,7 +1520,7 @@ export function initLiveView(deps) {
         },
         () => {
           markWriterDismissed(state, sessionId, effectiveFile);
-          state.writerLayout.open = false;
+          writerPanelOpen = setWriterPanelOpenForSession(state, sessionId, false);
           render();
         },
       );
@@ -1534,7 +1556,7 @@ export function initLiveView(deps) {
           }
         },
       });
-    } else if (state.artifactsLayout.open) {
+    } else if (artifactsPanelOpen) {
       appRoot.dataset.webviewOpen = "true";
 
       const artMobileTab = state.artifactsLayout.mobileTab || "chat";
@@ -1566,7 +1588,7 @@ export function initLiveView(deps) {
           render();
         },
         () => {
-          state.artifactsLayout.open = false;
+          artifactsPanelOpen = setArtifactsPanelOpenForSession(state, sessionId, false);
           render();
         },
       );

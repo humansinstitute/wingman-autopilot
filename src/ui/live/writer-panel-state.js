@@ -47,6 +47,74 @@ function setActivePinnedFileIndex(state, sessionId, index) {
   return list[boundedIndex];
 }
 
+function getWriterOpenSessions(state) {
+  if (!state) return null;
+  if (!state.writerOpenSessions) {
+    state.writerOpenSessions = new Map();
+  }
+  return state.writerOpenSessions;
+}
+
+function getArtifactsOpenSessions(state) {
+  if (!state) return null;
+  if (!state.artifactsOpenSessions) {
+    state.artifactsOpenSessions = new Map();
+  }
+  return state.artifactsOpenSessions;
+}
+
+export function isWriterPanelOpenForSession(state, sessionId) {
+  return getWriterOpenSessions(state)?.get(sessionId) === true;
+}
+
+export function isArtifactsPanelOpenForSession(state, sessionId) {
+  return getArtifactsOpenSessions(state)?.get(sessionId) === true;
+}
+
+export function setWriterPanelOpenForSession(state, sessionId, open) {
+  const openSessions = getWriterOpenSessions(state);
+  if (!openSessions) return false;
+  if (open) {
+    openSessions.set(sessionId, true);
+  } else {
+    openSessions.delete(sessionId);
+  }
+  if (state.writerLayout) {
+    state.writerLayout.open = Boolean(open);
+  }
+  return Boolean(open);
+}
+
+export function setArtifactsPanelOpenForSession(state, sessionId, open) {
+  const openSessions = getArtifactsOpenSessions(state);
+  if (!openSessions) return false;
+  if (open) {
+    openSessions.set(sessionId, true);
+  } else {
+    openSessions.delete(sessionId);
+  }
+  if (state.artifactsLayout) {
+    state.artifactsLayout.open = Boolean(open);
+  }
+  return Boolean(open);
+}
+
+export function syncWriterLayoutOpenForSession(state, sessionId) {
+  const open = isWriterPanelOpenForSession(state, sessionId);
+  if (state?.writerLayout) {
+    state.writerLayout.open = open;
+  }
+  return open;
+}
+
+export function syncArtifactsLayoutOpenForSession(state, sessionId) {
+  const open = isArtifactsPanelOpenForSession(state, sessionId);
+  if (state?.artifactsLayout) {
+    state.artifactsLayout.open = open;
+  }
+  return open;
+}
+
 export function getPinnedFilesForSession(state, sessionId, serverPinnedFile = null) {
   const serverPinnedFiles = normalizePinnedFileInputs(serverPinnedFile);
   const list = getPinnedFileList(state, sessionId);
@@ -131,6 +199,6 @@ export function isWriterDismissed(state, sessionId, effectiveFile = null) {
 
 export function shouldAutoOpenWriter(state, sessionId, effectiveFile = null) {
   if (!effectiveFile) return false;
-  if (state.writerLayout.open) return false;
+  if (isWriterPanelOpenForSession(state, sessionId)) return false;
   return !isWriterDismissed(state, sessionId, effectiveFile);
 }

@@ -5,18 +5,27 @@ import {
   clearWriterDismissal,
   getPinnedFilePageForSession,
   getPinnedFileForSession,
+  isArtifactsPanelOpenForSession,
+  isWriterPanelOpenForSession,
   markWriterDismissed,
+  setArtifactsPanelOpenForSession,
   setPinnedFilePageForSession,
+  setWriterPanelOpenForSession,
   shouldAutoOpenWriter,
+  syncArtifactsLayoutOpenForSession,
   syncPinnedFileForSession,
+  syncWriterLayoutOpenForSession,
 } from "./writer-panel-state.js";
 
 function createState() {
   return {
     writerLayout: { open: false },
+    artifactsLayout: { open: false },
     pinnedFiles: new Map(),
     pinnedFileLists: new Map(),
     pinnedFileIndexes: new Map(),
+    writerOpenSessions: new Map(),
+    artifactsOpenSessions: new Map(),
     writerDismissedFiles: new Map(),
   };
 }
@@ -104,5 +113,32 @@ describe("writer-panel-state", () => {
       activeIndex: 0,
       activeFile: "/tmp/c.md",
     });
+  });
+
+  test("keeps writer panel visibility scoped to the active session", () => {
+    const state = createState();
+
+    setWriterPanelOpenForSession(state, "session-1", true);
+
+    expect(isWriterPanelOpenForSession(state, "session-1")).toBe(true);
+    expect(isWriterPanelOpenForSession(state, "session-2")).toBe(false);
+
+    syncWriterLayoutOpenForSession(state, "session-2");
+
+    expect(state.writerLayout.open).toBe(false);
+    expect(shouldAutoOpenWriter(state, "session-2", "/tmp/other.md")).toBe(true);
+  });
+
+  test("keeps generated artifacts panel visibility scoped to the active session", () => {
+    const state = createState();
+
+    setArtifactsPanelOpenForSession(state, "session-1", true);
+
+    expect(isArtifactsPanelOpenForSession(state, "session-1")).toBe(true);
+    expect(isArtifactsPanelOpenForSession(state, "session-2")).toBe(false);
+
+    syncArtifactsLayoutOpenForSession(state, "session-2");
+
+    expect(state.artifactsLayout.open).toBe(false);
   });
 });

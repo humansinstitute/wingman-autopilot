@@ -1,4 +1,8 @@
-import { addPinnedFileForSession } from "../live/writer-panel-state.js";
+import {
+  addPinnedFileForSession,
+  setArtifactsPanelOpenForSession,
+  setWriterPanelOpenForSession,
+} from "../live/writer-panel-state.js";
 
 export function createCommandPaletteFileActions({
   state,
@@ -60,14 +64,14 @@ export function createCommandPaletteFileActions({
       setCurrentRoute?.("live");
       setActiveSession?.(session.id, { updateHistory: true, forceLog: true });
       if (state?.writerLayout) {
-        state.writerLayout.open = true;
+        setWriterPanelOpenForSession(state, session.id, true);
         state.writerLayout.mobileTab = "writer";
       }
       if (state?.appCardLayout) {
         state.appCardLayout.open = false;
       }
       if (state?.artifactsLayout) {
-        state.artifactsLayout.open = false;
+        setArtifactsPanelOpenForSession(state, session.id, false);
       }
       if (state?.webviewLayout) {
         state.webviewLayout.open = false;

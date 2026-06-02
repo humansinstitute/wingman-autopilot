@@ -137,6 +137,10 @@ export const state = {
   // Per-session ordered pinned artifact/doc paths and active page
   pinnedFileLists: new Map(),
   pinnedFileIndexes: new Map(),
+  // Per-session pinned artifact/doc viewer visibility
+  writerOpenSessions: new Map(),
+  // Per-session generated artifacts panel visibility
+  artifactsOpenSessions: new Map(),
   // Per-session writer files that were manually dismissed by the user
   writerDismissedFiles: new Map(),
   // Cached artifact counts per session
