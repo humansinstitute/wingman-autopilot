@@ -220,7 +220,8 @@ export const scrollConversationToBottom = (element) => {
 export const getConversationScrollElement = (sessionId, conversationContainers) => {
   const container = conversationContainers.get(sessionId);
   if (!container) return null;
-  return container.closest('.wm-live-conversation');
+  const conversation = container.closest('.wm-live-conversation');
+  return conversation?.closest('.wm-live-scroll') ?? conversation;
 };
 
 export const scrollConversationAreaToBottom = (sessionId, conversationContainers, options = {}) => {

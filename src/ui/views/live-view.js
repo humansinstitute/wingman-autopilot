@@ -1455,8 +1455,9 @@ export function initLiveView(deps) {
     syncPinnedFileForSession(state, sessionId, sessionPinnedFiles);
     const pinnedFilePage = getPinnedFilePageForSession(state, sessionId, sessionPinnedFiles);
 
+    const activePinnedFile = pinnedFilePage.activeFile ?? null;
     // Pinned file takes priority over session targetFile
-    const effectiveFile = pinnedFilePage.activeFile ?? drawerRenderState.effectiveFile ?? targetFile;
+    const effectiveFile = activePinnedFile ?? drawerRenderState.effectiveFile ?? targetFile;
     let writerPanelOpen = syncWriterLayoutOpenForSession(state, sessionId);
     let artifactsPanelOpen = syncArtifactsLayoutOpenForSession(state, sessionId);
 
@@ -1465,8 +1466,9 @@ export function initLiveView(deps) {
       writerPanelOpen = setWriterPanelOpenForSession(state, sessionId, false);
     }
 
-    // Auto-open writer layout when session has an effective file unless the user dismissed it
-    if (shouldAutoOpenWriter(state, sessionId, effectiveFile)) {
+    // Target-file writer sessions can auto-open. Pinned docs only open after
+    // an explicit user action so persisted pins do not leak across tabs.
+    if (!activePinnedFile && shouldAutoOpenWriter(state, sessionId, effectiveFile)) {
       writerPanelOpen = setWriterPanelOpenForSession(state, sessionId, true);
       artifactsPanelOpen = setArtifactsPanelOpenForSession(state, sessionId, false);
     }

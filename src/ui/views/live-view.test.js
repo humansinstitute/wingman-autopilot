@@ -60,4 +60,9 @@ describe("live-view drawer integration", () => {
     expect(source).toContain("renderComposerContext(sessionId)");
     expect(source).toContain("resolveSessionAgentLabel(session)");
   });
+
+  test("does not auto-open persisted pinned docs when switching tabs", () => {
+    expect(source).toContain("const activePinnedFile = pinnedFilePage.activeFile ?? null");
+    expect(source).toContain("if (!activePinnedFile && shouldAutoOpenWriter(state, sessionId, effectiveFile))");
+  });
 });
