@@ -1,3 +1,5 @@
+import { addPinnedFileForSession } from "../live/writer-panel-state.js";
+
 export function createCommandPaletteFileActions({
   state,
   sessionsStore,
@@ -43,7 +45,9 @@ export function createCommandPaletteFileActions({
     const pinnedFile = result?.pinnedFile ?? null;
     session.pinnedFile = pinnedFile;
     if (pinnedFile) {
-      state?.pinnedFiles?.set(session.id, pinnedFile);
+      if (state) {
+        addPinnedFileForSession(state, session.id, pinnedFile);
+      }
     } else {
       state?.pinnedFiles?.delete(session.id);
     }

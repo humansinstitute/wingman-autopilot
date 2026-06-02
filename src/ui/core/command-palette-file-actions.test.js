@@ -72,4 +72,33 @@ describe("command palette file actions", () => {
     expect(state.artifactsLayout.open).toBe(false);
     expect(state.webviewLayout.open).toBe(false);
   });
+
+  test("pins to the route session instead of another active session", async () => {
+    const state = createState();
+    let pinnedSessionId = null;
+    const routeSession = { id: "route", workingDirectory: "/workspace/route" };
+    const activeSession = { id: "active", workingDirectory: "/workspace/active" };
+    const actions = createCommandPaletteFileActions({
+      state,
+      sessionsStore: () => ({
+        activeSessionId: "active",
+        items: [routeSession, activeSession],
+      }),
+      getCurrentRoute: () => "live",
+      getPathname: () => "/live/route",
+      getSessionIdFromPath: () => "route",
+      setPinnedArtifact: async (sessionId, filePath) => {
+        pinnedSessionId = sessionId;
+        return { pinnedFile: filePath };
+      },
+    });
+
+    await actions.pinFileToSession("/workspace/route/spec.md");
+
+    expect(pinnedSessionId).toBe("route");
+    expect(routeSession.pinnedFile).toBe("/workspace/route/spec.md");
+    expect(activeSession.pinnedFile).toBeUndefined();
+    expect(state.pinnedFiles.get("route")).toBe("/workspace/route/spec.md");
+    expect(state.pinnedFiles.has("active")).toBe(false);
+  });
 });

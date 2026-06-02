@@ -24,9 +24,12 @@ import { createCommandMenuController } from "../live/command-menu-positioning.js
 import { addGitCommandSubmenus } from "../live/git-command-submenus.js";
 import { createSessionStopFeedback } from "../live/session-stop-feedback.js";
 import {
+  addPinnedFileForSession,
   clearWriterDismissal,
+  getPinnedFilePageForSession,
   getPinnedFileForSession,
   markWriterDismissed,
+  setPinnedFilePageForSession,
   shouldAutoOpenWriter,
   syncPinnedFileForSession,
 } from "../live/writer-panel-state.js";
@@ -125,11 +128,53 @@ export function initLiveView(deps) {
     const pinnedFile = result?.pinnedFile ?? null;
     updateSessionPinnedFile(sessionId, pinnedFile);
     if (pinnedFile) {
-      state.pinnedFiles.set(sessionId, pinnedFile);
+      addPinnedFileForSession(state, sessionId, pinnedFile);
     } else {
       state.pinnedFiles.delete(sessionId);
     }
     return pinnedFile;
+  }
+
+  function createPinnedArtifactPager(sessionId, pageState) {
+    if (!pageState || pageState.files.length <= 1) {
+      return null;
+    }
+    const pager = document.createElement("div");
+    pager.className = "wm-webview-toolbar";
+    pager.setAttribute("aria-label", "Pinned artifacts");
+    pager.dataset.testid = "live-pinned-artifact-pager";
+
+    const previousButton = document.createElement("button");
+    previousButton.type = "button";
+    previousButton.className = "wm-webview-mode-btn";
+    previousButton.textContent = "<";
+    previousButton.setAttribute("aria-label", "Previous pinned artifact");
+    previousButton.disabled = pageState.activeIndex <= 0;
+    previousButton.addEventListener("click", () => {
+      setPinnedFilePageForSession(state, sessionId, pageState.activeIndex - 1);
+      clearWriterDismissal(state, sessionId);
+      render();
+    });
+
+    const label = document.createElement("span");
+    label.className = "wm-webview-toolbar-title";
+    label.textContent = `${pageState.activeIndex + 1} of ${pageState.files.length}`;
+    label.dataset.testid = "live-pinned-artifact-page-label";
+
+    const nextButton = document.createElement("button");
+    nextButton.type = "button";
+    nextButton.className = "wm-webview-mode-btn";
+    nextButton.textContent = ">";
+    nextButton.setAttribute("aria-label", "Next pinned artifact");
+    nextButton.disabled = pageState.activeIndex >= pageState.files.length - 1;
+    nextButton.addEventListener("click", () => {
+      setPinnedFilePageForSession(state, sessionId, pageState.activeIndex + 1);
+      clearWriterDismissal(state, sessionId);
+      render();
+    });
+
+    pager.append(previousButton, label, nextButton);
+    return pager;
   }
 
   function resolveCurrentLiveSessionId() {
@@ -1378,9 +1423,10 @@ export function initLiveView(deps) {
 
     const sessionPinnedFile = activeSession?.pinnedFile ?? null;
     syncPinnedFileForSession(state, sessionId, sessionPinnedFile);
+    const pinnedFilePage = getPinnedFilePageForSession(state, sessionId, sessionPinnedFile);
 
     // Pinned file takes priority over session targetFile
-    const effectiveFile = drawerRenderState.effectiveFile ?? targetFile;
+    const effectiveFile = pinnedFilePage.activeFile ?? drawerRenderState.effectiveFile ?? targetFile;
 
     if (!effectiveFile) {
       clearWriterDismissal(state, sessionId);
@@ -1445,6 +1491,10 @@ export function initLiveView(deps) {
         },
       );
       writerCol.append(toolbar);
+      const pinnedPager = createPinnedArtifactPager(sessionId, pinnedFilePage);
+      if (pinnedPager) {
+        writerCol.append(pinnedPager);
+      }
       writerCol.append(writerResult.panel);
 
       split.append(chatCol, writerCol);

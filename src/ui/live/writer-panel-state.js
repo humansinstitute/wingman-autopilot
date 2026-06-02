@@ -1,17 +1,98 @@
+function normalizeFilePath(filePath) {
+  return typeof filePath === "string" && filePath.trim().length > 0
+    ? filePath.trim()
+    : null;
+}
+
+function getPinnedFileList(state, sessionId) {
+  if (!state) return [];
+  if (!state.pinnedFileLists) {
+    state.pinnedFileLists = new Map();
+  }
+  const existing = state.pinnedFileLists.get(sessionId);
+  if (Array.isArray(existing)) {
+    return existing;
+  }
+  const legacyPinnedFile = normalizeFilePath(state.pinnedFiles?.get(sessionId));
+  const list = legacyPinnedFile ? [legacyPinnedFile] : [];
+  state.pinnedFileLists.set(sessionId, list);
+  return list;
+}
+
+function setActivePinnedFileIndex(state, sessionId, index) {
+  if (!state.pinnedFileIndexes) {
+    state.pinnedFileIndexes = new Map();
+  }
+  const list = getPinnedFileList(state, sessionId);
+  if (list.length === 0) {
+    state.pinnedFileIndexes.delete(sessionId);
+    state.pinnedFiles?.delete(sessionId);
+    return null;
+  }
+  const boundedIndex = Math.min(Math.max(index, 0), list.length - 1);
+  state.pinnedFileIndexes.set(sessionId, boundedIndex);
+  state.pinnedFiles?.set(sessionId, list[boundedIndex]);
+  return list[boundedIndex];
+}
+
+export function getPinnedFilesForSession(state, sessionId, serverPinnedFile = null) {
+  const normalizedServerPinnedFile = normalizeFilePath(serverPinnedFile);
+  const list = getPinnedFileList(state, sessionId);
+  if (normalizedServerPinnedFile && !list.includes(normalizedServerPinnedFile)) {
+    list.push(normalizedServerPinnedFile);
+  }
+  if (list.length > 0) {
+    const activeIndex = state.pinnedFileIndexes?.get(sessionId) ?? list.length - 1;
+    setActivePinnedFileIndex(state, sessionId, activeIndex);
+  }
+  return [...list];
+}
+
 export function getPinnedFileForSession(state, sessionId, serverPinnedFile = null) {
-  return state.pinnedFiles.get(sessionId) ?? serverPinnedFile ?? null;
+  const files = getPinnedFilesForSession(state, sessionId, serverPinnedFile);
+  const activeIndex = state.pinnedFileIndexes?.get(sessionId) ?? 0;
+  return files[activeIndex] ?? null;
+}
+
+export function addPinnedFileForSession(state, sessionId, filePath) {
+  if (!state) return null;
+  const normalizedFilePath = normalizeFilePath(filePath);
+  if (!normalizedFilePath) return null;
+  const list = getPinnedFileList(state, sessionId);
+  const existingIndex = list.indexOf(normalizedFilePath);
+  const activeIndex = existingIndex >= 0 ? existingIndex : list.push(normalizedFilePath) - 1;
+  return setActivePinnedFileIndex(state, sessionId, activeIndex);
+}
+
+export function setPinnedFilePageForSession(state, sessionId, index) {
+  if (!state) return null;
+  return setActivePinnedFileIndex(state, sessionId, index);
+}
+
+export function getPinnedFilePageForSession(state, sessionId, serverPinnedFile = null) {
+  const files = getPinnedFilesForSession(state, sessionId, serverPinnedFile);
+  const activeIndex = state.pinnedFileIndexes?.get(sessionId) ?? 0;
+  return {
+    files,
+    activeIndex: files.length === 0 ? -1 : Math.min(Math.max(activeIndex, 0), files.length - 1),
+    activeFile: files[Math.min(Math.max(activeIndex, 0), Math.max(files.length - 1, 0))] ?? null,
+  };
 }
 
 export function syncPinnedFileForSession(state, sessionId, serverPinnedFile = null) {
-  const currentPinnedFile = state.pinnedFiles.get(sessionId) ?? null;
-  if (serverPinnedFile) {
-    if (currentPinnedFile !== serverPinnedFile) {
-      state.pinnedFiles.set(sessionId, serverPinnedFile);
+  if (!state) return;
+  const normalizedServerPinnedFile = normalizeFilePath(serverPinnedFile);
+  if (normalizedServerPinnedFile) {
+    const list = getPinnedFileList(state, sessionId);
+    if (!list.includes(normalizedServerPinnedFile)) {
+      list.push(normalizedServerPinnedFile);
     }
-    return;
-  }
-  if (currentPinnedFile) {
-    state.pinnedFiles.delete(sessionId);
+    const activeIndex = state.pinnedFileIndexes?.get(sessionId);
+    setActivePinnedFileIndex(
+      state,
+      sessionId,
+      typeof activeIndex === "number" ? activeIndex : list.indexOf(normalizedServerPinnedFile),
+    );
   }
 }
 
