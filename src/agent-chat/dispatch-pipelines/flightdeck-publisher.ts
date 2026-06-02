@@ -19,7 +19,7 @@ export interface DispatchPipelineFlightDeckRuntime {
   error: string | null;
 }
 
-interface DispatchPipelineFlightDeckPublisherContext {
+export interface DispatchPipelineFlightDeckPublisherContext {
   eventInput: DispatchPipelineEventInput;
   agent: AgentDefinitionRecord | null;
   botIdentity: RuntimeBotIdentity | null;
@@ -157,8 +157,11 @@ export function createDispatchChatContextHydrator(
     const hydratedThread = await hydrateChatThreadWithFallback(context, channelId, threadId);
     const thread = hydratedThread.thread;
     const selfAuthored = detectSelfAuthoredChatDispatch(context, input, thread);
+    const intakeAcknowledgement = objectValue(objectValue(input.runtime).acknowledgement);
     const acknowledgement = !selfAuthored.selfAuthored && operation === 'chat.hydrate-context'
-      ? await acknowledgeChatDispatchMessage(context, channelId)
+      ? isChatAcknowledgementResult(intakeAcknowledgement)
+        ? intakeAcknowledgement
+        : await acknowledgeChatDispatchMessage(context, channelId)
       : {
           acknowledged: false,
           status: 'skipped',
@@ -199,7 +202,7 @@ export function createDispatchChatContextHydrator(
   };
 }
 
-async function acknowledgeChatDispatchMessage(
+export async function acknowledgeChatDispatchMessage(
   context: DispatchPipelineFlightDeckPublisherContext,
   channelId: string,
 ): Promise<JsonObject> {
@@ -235,6 +238,12 @@ async function acknowledgeChatDispatchMessage(
       reason: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+function isChatAcknowledgementResult(value: Record<string, unknown>): value is JsonObject {
+  return value.operation === 'chat.acknowledge-message'
+    && typeof value.status === 'string'
+    && typeof value.acknowledged === 'boolean';
 }
 
 export function createDispatchChatThreadReloader(

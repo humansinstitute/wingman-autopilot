@@ -269,6 +269,37 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     expect(scopesIndex).toBeGreaterThan(reactionIndex);
   });
 
+  test('chat context hydration reuses intake acknowledgement without writing a duplicate reaction', async () => {
+    const hydrate = createDispatchChatContextHydrator(buildChatPublisherContext());
+
+    const result = await hydrate({
+      runtime: {
+        acknowledgement: {
+          acknowledged: true,
+          status: 'ok',
+          operation: 'chat.acknowledge-message',
+          emoji: 'shaka',
+          targetMessageId: 'chat-message-1',
+        },
+      },
+      availablePipelines: [],
+    });
+
+    expect(result).toMatchObject({
+      hydrated: true,
+      shouldProceed: true,
+      acknowledgement: {
+        acknowledged: true,
+        status: 'ok',
+        operation: 'chat.acknowledge-message',
+        emoji: 'shaka',
+        targetMessageId: 'chat-message-1',
+      },
+    });
+    expect(yokeCommandCalls.some((args) => args[0] === 'chat' && args[1] === 'react')).toBe(false);
+    expect(yokeCommandCalls.some((args) => args[0] === 'scopes' && args[1] === 'list')).toBe(true);
+  });
+
   test('chat context hydration does not acknowledge self-authored messages', async () => {
     const hydrate = createDispatchChatContextHydrator(buildChatPublisherContext({
       payload: {

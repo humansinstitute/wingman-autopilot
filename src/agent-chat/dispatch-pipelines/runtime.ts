@@ -29,6 +29,7 @@ import {
   createDispatchNeedsInputPublisher,
   createDispatchReviewTaskCompleter,
   createDispatchTaskStateUpdater,
+  acknowledgeChatDispatchMessage,
   pipelineNeedsFlightDeckPublisher,
   prepareDispatchPipelineFlightDeckRuntime,
   type DispatchPipelineFlightDeckRuntime,
@@ -61,6 +62,12 @@ export interface DispatchPipelineRuntimeResult {
   lastPipelineRunId: string | null;
 }
 
+export interface DispatchChatAcknowledgementInput {
+  eventInput: DispatchPipelineEventInput;
+  agent: AgentDefinitionRecord | null;
+  flightDeckRuntime: DispatchPipelineFlightDeckRuntime;
+}
+
 export interface DispatchPipelineRuntimeDependencies {
   routeStore?: DispatchRouteStore;
   agentStore?: AgentDefinitionStore;
@@ -73,6 +80,7 @@ export interface DispatchPipelineRuntimeDependencies {
   loadDefinition?: typeof getPipelineDefinition;
   listDefinitions?: typeof listLatestPipelineDefinitions;
   loadFunctions?: typeof loadPipelineFunctionRegistry;
+  acknowledgeChatMessage?: (input: DispatchChatAcknowledgementInput) => Promise<JsonObject>;
   requirePipelineRoutes?: boolean;
   defaultAgent?: string;
 }
@@ -89,6 +97,7 @@ export class DispatchPipelineRuntime {
   private readonly loadDefinition: typeof getPipelineDefinition;
   private readonly listDefinitions: typeof listLatestPipelineDefinitions;
   private readonly loadFunctions: typeof loadPipelineFunctionRegistry;
+  private readonly acknowledgeChatMessage: (input: DispatchChatAcknowledgementInput) => Promise<JsonObject>;
   private readonly requirePipelineRoutes: boolean;
   private readonly defaultAgent: string;
 
@@ -104,6 +113,7 @@ export class DispatchPipelineRuntime {
     this.loadDefinition = deps.loadDefinition ?? getPipelineDefinition;
     this.listDefinitions = deps.listDefinitions ?? listLatestPipelineDefinitions;
     this.loadFunctions = deps.loadFunctions ?? loadPipelineFunctionRegistry;
+    this.acknowledgeChatMessage = deps.acknowledgeChatMessage ?? acknowledgeChatPipelineMessage;
     this.requirePipelineRoutes = deps.requirePipelineRoutes ?? false;
     this.defaultAgent = normaliseDefaultAgent(deps.defaultAgent);
   }
@@ -209,27 +219,7 @@ export class DispatchPipelineRuntime {
         lastPipelineRunId: suppressedRun.run.id,
       };
     }
-    const ownerNpub = input.subscription.managedByNpub ?? route.managedByNpub;
-    const ownerAlias = generateIdentityAlias(ownerNpub);
-    const definition = await this.loadDefinition(route.pipelineDefinitionId, ownerAlias)
-      ?? await this.loadFallbackDefinitionForRoute(route, ownerAlias);
-    const sessionApiContext = this.getSessionApiContext();
-    if (!definition || !sessionApiContext) {
-      return {
-        handled: true,
-        historyEntries: [
-          this.buildHistoryEntry(input, route, {
-            action: `${input.triggerKind}_pipeline_failed`,
-            status: 'failed',
-            pipelineRunId: null,
-            diagnosticSummary: !definition
-              ? `Pipeline definition not found: ${route.pipelineDefinitionId}`
-              : 'Pipeline session API context is not ready.',
-          }),
-        ],
-        lastPipelineRunId: null,
-      };
-    }
+
     try {
       await ensureAgentWorkingDirectory(agent);
     } catch (error) {
@@ -247,9 +237,47 @@ export class DispatchPipelineRuntime {
       };
     }
 
-    const flightDeckRuntime = pipelineNeedsFlightDeckPublisher(definition.spec)
-      ? await prepareDispatchPipelineFlightDeckRuntime({ eventInput: input, agent })
-      : emptyFlightDeckRuntime();
+    let flightDeckRuntime = emptyFlightDeckRuntime();
+    let chatAcknowledgement: JsonObject | null = null;
+    if (input.triggerKind === 'chat') {
+      flightDeckRuntime = await prepareDispatchPipelineFlightDeckRuntime({ eventInput: input, agent });
+      try {
+        chatAcknowledgement = await this.acknowledgeChatMessage({
+          eventInput: input,
+          agent,
+          flightDeckRuntime,
+        });
+      } catch (error) {
+        chatAcknowledgement = buildFailedChatAcknowledgement(input, error);
+      }
+    }
+
+    const ownerNpub = input.subscription.managedByNpub ?? route.managedByNpub;
+    const ownerAlias = generateIdentityAlias(ownerNpub);
+    const definition = await this.loadDefinition(route.pipelineDefinitionId, ownerAlias)
+      ?? await this.loadFallbackDefinitionForRoute(route, ownerAlias);
+    const sessionApiContext = this.getSessionApiContext();
+    if (!definition || !sessionApiContext) {
+      return {
+        handled: true,
+        historyEntries: [
+          this.buildHistoryEntry(input, route, {
+            action: `${input.triggerKind}_pipeline_failed`,
+            status: 'failed',
+            pipelineRunId: null,
+            acknowledgement: chatAcknowledgement,
+            diagnosticSummary: !definition
+              ? `Pipeline definition not found: ${route.pipelineDefinitionId}`
+              : 'Pipeline session API context is not ready.',
+          }),
+        ],
+        lastPipelineRunId: null,
+      };
+    }
+
+    if (pipelineNeedsFlightDeckPublisher(definition.spec) && !flightDeckRuntime.yokeStateDir && input.triggerKind !== 'chat') {
+      flightDeckRuntime = await prepareDispatchPipelineFlightDeckRuntime({ eventInput: input, agent });
+    }
     const availablePipelines = await this.listDefinitions(ownerAlias).catch(() => []);
     const envelope = buildDispatchEnvelope({
       route,
@@ -258,6 +286,7 @@ export class DispatchPipelineRuntime {
       dedupeKey,
       concurrencyKey,
       flightDeckRuntime,
+      acknowledgement: chatAcknowledgement,
       defaultAgent: this.defaultAgent,
       availablePipelines,
     });
@@ -305,6 +334,7 @@ export class DispatchPipelineRuntime {
           pipelineRunId: run.id,
           concurrencyKey,
           dedupeKey,
+          acknowledgement: chatAcknowledgement,
           diagnosticSummary: needsInputUpdate
             ? `Started dispatch pipeline ${route.pipelineDefinitionId}; needs-input question published.`
             : `Started dispatch pipeline ${route.pipelineDefinitionId}.`,
@@ -609,9 +639,11 @@ export class DispatchPipelineRuntime {
       dedupeKey?: string | null;
       dedupeReason?: string | null;
       suppressionReason?: string | null;
+      acknowledgement?: JsonObject | null;
       diagnosticSummary: string;
     },
   ): AgentChatDispatchHistoryEntry {
+    const diagnosticSummary = appendAcknowledgementDiagnostic(outcome.diagnosticSummary, outcome.acknowledgement);
     return {
       at: new Date().toISOString(),
       kind: input.triggerKind === 'task_review' ? 'review' : input.triggerKind,
@@ -632,10 +664,53 @@ export class DispatchPipelineRuntime {
         capability: input.capability,
         trigger_kind: input.triggerKind,
         pipeline_definition_id: route.pipelineDefinitionId,
-        diagnostic_summary: outcome.diagnosticSummary,
+        diagnostic_summary: diagnosticSummary,
+        ...(outcome.acknowledgement ? { chat_acknowledgement: outcome.acknowledgement } : {}),
       },
     };
   }
+}
+
+async function acknowledgeChatPipelineMessage(input: DispatchChatAcknowledgementInput): Promise<JsonObject> {
+  const channelId = input.eventInput.channelId ?? getText(input.eventInput.payload.channel_id);
+  if (!channelId) {
+    return buildFailedChatAcknowledgement(input.eventInput, 'missing_channel_id');
+  }
+  if (!input.eventInput.botIdentity || !input.agent?.workingDirectory || !input.flightDeckRuntime.yokeStateDir) {
+    return buildFailedChatAcknowledgement(
+      input.eventInput,
+      input.flightDeckRuntime.error ?? (
+        !input.eventInput.botIdentity
+          ? 'No runtime bot identity was available.'
+          : 'Flight Deck runtime was not prepared.'
+      ),
+    );
+  }
+  return await acknowledgeChatDispatchMessage({
+    eventInput: input.eventInput,
+    agent: input.agent,
+    botIdentity: input.eventInput.botIdentity,
+    runtime: input.flightDeckRuntime,
+  }, channelId);
+}
+
+function buildFailedChatAcknowledgement(input: DispatchPipelineEventInput, error: unknown): JsonObject {
+  return {
+    acknowledged: false,
+    status: 'failed',
+    operation: 'chat.acknowledge-message',
+    emoji: 'shaka',
+    targetMessageId: input.recordId,
+    reason: error instanceof Error ? error.message : String(error),
+  };
+}
+
+function appendAcknowledgementDiagnostic(summary: string, acknowledgement: JsonObject | null | undefined): string {
+  if (!acknowledgement || acknowledgement.status !== 'failed') {
+    return summary;
+  }
+  const reason = getText(acknowledgement.reason) ?? 'unknown error';
+  return `${summary} Chat acknowledgement failed: ${reason}`;
 }
 
 async function publishNeedsInputForRun(
@@ -665,6 +740,7 @@ function buildDispatchEnvelope(input: {
   dedupeKey: string;
   concurrencyKey: string;
   flightDeckRuntime: DispatchPipelineFlightDeckRuntime;
+  acknowledgement: JsonObject | null;
   defaultAgent: string;
   availablePipelines: PipelineDefinitionRecord[];
 }): JsonObject {
@@ -723,6 +799,7 @@ function buildDispatchEnvelope(input: {
       commandPrefix: flightDeckRuntime.commandPrefix,
       commands: flightDeckRuntime.commands,
       error: flightDeckRuntime.error,
+      acknowledgement: input.acknowledgement,
       availablePipelines: input.availablePipelines.map((definition) => ({
         id: definition.id,
         slug: definition.slug,

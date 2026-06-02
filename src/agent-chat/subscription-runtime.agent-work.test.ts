@@ -182,7 +182,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(result.historyEntries[0]?.suppressionReason).toBe('pipeline_route_required');
   });
 
-  test('includes chat message convenience fields in chat pipeline input', async () => {
+  test('acknowledges eligible inbound chat messages before pipeline execution', async () => {
     const routeStore = new DispatchRouteStore(makeTempDb('agent-chat-pipeline-routes'));
     const agentStore = new AgentDefinitionStore(makeTempDb('agent-chat-pipeline-agents'));
     const pipelineStore = new PipelineStore(makeTempDb('agent-chat-pipeline-runs'));
@@ -212,6 +212,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       pipelineDefinitionId: 'chat-pipeline',
     });
     const runInputs: Record<string, unknown>[] = [];
+    const eventOrder: string[] = [];
     const runtime = new DispatchPipelineRuntime({
       routeStore,
       agentStore,
@@ -219,17 +220,33 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       getSessionApiContext: () => ({} as never),
       callbackOrigin: 'http://localhost',
       defaultAgent: 'codex',
-      loadDefinition: async () => ({
-        id: 'chat-pipeline',
-        slug: 'chat-pipeline',
-        name: 'Chat Pipeline',
-        scope: 'user',
-        ownerAlias: 'manager',
-        path: '/tmp/chat-pipeline.json',
-        spec: { name: 'Chat Pipeline', input: {}, steps: [] },
-      }),
+      acknowledgeChatMessage: async (ackInput) => {
+        eventOrder.push('acknowledge');
+        expect(ackInput.eventInput.recordId).toBe('chat-record-1');
+        expect(ackInput.eventInput.triggerKind).toBe('chat');
+        return {
+          acknowledged: true,
+          status: 'ok',
+          operation: 'chat.acknowledge-message',
+          emoji: 'shaka',
+          targetMessageId: ackInput.eventInput.recordId,
+        };
+      },
+      loadDefinition: async () => {
+        eventOrder.push('load-definition');
+        return {
+          id: 'chat-pipeline',
+          slug: 'chat-pipeline',
+          name: 'Chat Pipeline',
+          scope: 'user',
+          ownerAlias: 'manager',
+          path: '/tmp/chat-pipeline.json',
+          spec: { name: 'Chat Pipeline', input: {}, steps: [] },
+        };
+      },
       loadFunctions: async () => ({ registry: {}, records: [] }),
       runPipeline: async (input: any) => {
+        eventOrder.push('run-pipeline');
         runInputs.push(input.input);
         return makePipelineRun('chat-run-1', input.input);
       },
@@ -260,12 +277,25 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     });
 
     expect(result.handled).toBe(true);
+    expect(eventOrder).toEqual(['acknowledge', 'load-definition', 'run-pipeline']);
     expect(runInputs).toHaveLength(1);
     expect((runInputs[0]?.record as any)?.payload?.body).toBe('Can you see this message?');
     expect((runInputs[0]?.chat as any)?.messageText).toBe('Can you see this message?');
     expect((runInputs[0]?.chat as any)?.channelId).toBe('channel-1');
     expect((runInputs[0]?.chat as any)?.threadId).toBe('thread-1');
     expect((runInputs[0]?.agent as any)?.defaultAgent).toBe('codex');
+    expect((runInputs[0]?.runtime as any)?.acknowledgement).toMatchObject({
+      acknowledged: true,
+      status: 'ok',
+      operation: 'chat.acknowledge-message',
+      emoji: 'shaka',
+      targetMessageId: 'chat-record-1',
+    });
+    expect(result.historyEntries[0]?.details?.chat_acknowledgement).toMatchObject({
+      acknowledged: true,
+      status: 'ok',
+      operation: 'chat.acknowledge-message',
+    });
   });
 
   test('suppresses chat pipeline dispatch for messages authored by the workspace key', async () => {
@@ -304,6 +334,9 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       pipelineStore,
       getSessionApiContext: () => ({} as never),
       callbackOrigin: 'http://localhost',
+      acknowledgeChatMessage: async () => {
+        throw new Error('self-authored messages must not be acknowledged');
+      },
       loadDefinition: async () => ({
         id: 'chat-pipeline',
         slug: 'chat-pipeline',
@@ -355,7 +388,98 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(result.handled).toBe(true);
     expect(result.historyEntries[0]?.status).toBe('suppressed');
     expect(result.historyEntries[0]?.suppressionReason).toBe('self_authored');
+    expect(result.historyEntries[0]?.details?.chat_acknowledgement).toBeUndefined();
     expect(startedInputs).toHaveLength(0);
+  });
+
+  test('keeps chat pipeline dispatch running when intake acknowledgement fails', async () => {
+    const routeStore = new DispatchRouteStore(makeTempDb('agent-chat-ack-failure-routes'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-chat-ack-failure-agents'));
+    const pipelineStore = new PipelineStore(makeTempDb('agent-chat-ack-failure-runs'));
+    const subscription = makeSubscription();
+    const now = new Date().toISOString();
+    agentStore.save({
+      agentId: 'agent-chat',
+      label: 'Chat Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-chat',
+      capabilities: ['chat_intercept'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+    routeStore.save({
+      managedByNpub: subscription.managedByNpub!,
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'chat',
+      capability: 'chat_intercept',
+      pipelineDefinitionId: 'chat-pipeline',
+    });
+    const runInputs: Record<string, unknown>[] = [];
+    const runtime = new DispatchPipelineRuntime({
+      routeStore,
+      agentStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      acknowledgeChatMessage: async () => {
+        throw new Error('reaction sync failed');
+      },
+      loadDefinition: async () => ({
+        id: 'chat-pipeline',
+        slug: 'chat-pipeline',
+        name: 'Chat Pipeline',
+        scope: 'user',
+        ownerAlias: 'manager',
+        path: '/tmp/chat-pipeline.json',
+        spec: { name: 'Chat Pipeline', input: {}, steps: [] },
+      }),
+      loadFunctions: async () => ({ registry: {}, records: [] }),
+      runPipeline: async (input: any) => {
+        runInputs.push(input.input);
+        return makePipelineRun('chat-run-ack-failure', input.input);
+      },
+    });
+
+    const result = await runtime.dispatch({
+      subscription,
+      triggerKind: 'chat',
+      capability: 'chat_intercept',
+      recordId: 'chat-record-ack-failure',
+      record: {},
+      payload: {
+        body: 'Please handle this.',
+        sender_npub: 'npub1sender',
+        channel_id: 'channel-1',
+        parent_message_id: null,
+        attachments: [],
+      },
+      recordFamily: 'chat',
+      recordState: 'active',
+      recordVersion: 1,
+      updaterNpub: 'npub1sender',
+      bindingType: 'thread',
+      bindingId: 'thread-1',
+      channelId: 'channel-1',
+      threadId: 'thread-1',
+      groupNpubs: ['npub1group'],
+    });
+
+    expect(result.handled).toBe(true);
+    expect(runInputs).toHaveLength(1);
+    expect(result.historyEntries[0]?.action).toBe('chat_pipeline_dispatch');
+    expect(result.historyEntries[0]?.details?.chat_acknowledgement).toMatchObject({
+      acknowledged: false,
+      status: 'failed',
+      reason: 'reaction sync failed',
+    });
+    expect(result.historyEntries[0]?.details?.diagnostic_summary).toContain('Chat acknowledgement failed: reaction sync failed');
   });
 
   test('starts dispatch pipelines without awaiting full execution by default', async () => {
