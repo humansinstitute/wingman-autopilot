@@ -81,4 +81,12 @@ describe("live-view drawer integration", () => {
     expect(source).toContain("live-pinned-artifact-unpin");
     expect(source).toContain("toolbar.insertBefore(pinnedPager, toolbar.lastElementChild)");
   });
+
+  test("unpinned artifacts preserve the remaining ordered page list", () => {
+    expect(source).toContain("const remainingPinnedFiles = pinnedFilesBeforeRemoval.filter");
+    expect(source).toContain("const nextActiveFile = nextActiveIndex >= 0 ? remainingPinnedFiles[nextActiveIndex] : null");
+    expect(source).toContain("pinnedFiles: remainingPinnedFiles");
+    expect(source).toContain("activeFilePath: nextActiveFile");
+    expect(source).toContain("await unpinPinnedArtifact(sessionId, pageState)");
+  });
 });

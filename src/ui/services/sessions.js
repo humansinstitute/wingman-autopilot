@@ -184,11 +184,18 @@ export async function setPinnedArtifactApi(sessionId, filePath) {
   return response.json();
 }
 
-export async function removePinnedArtifactApi(sessionId, filePath) {
+export async function removePinnedArtifactApi(sessionId, filePath, options = {}) {
+  const pinnedFiles = Array.isArray(options.pinnedFiles) ? options.pinnedFiles : null;
+  const activeFilePath = typeof options.activeFilePath === "string" ? options.activeFilePath : null;
   const response = await fetch("/api/mcp/wingman/artifact/pin", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sessionId, removeFilePath: filePath }),
+    body: JSON.stringify({
+      sessionId,
+      removeFilePath: filePath,
+      ...(pinnedFiles ? { pinnedFiles } : {}),
+      ...(activeFilePath ? { activeFilePath } : {}),
+    }),
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));

@@ -95,6 +95,21 @@ function makeDeps(sessions: Map<string, SessionSnapshot>): WingmanMcpApiDependen
       sessions.set(sessionId, updated);
       return updated;
     },
+    setPinnedFiles: (sessionId, filePaths, activeFilePath) => {
+      const existing = sessions.get(sessionId);
+      if (!existing) return null;
+      const pinnedFiles = filePaths.filter((value, index, values) => value.length > 0 && values.indexOf(value) === index);
+      const pinnedFile = activeFilePath && pinnedFiles.includes(activeFilePath)
+        ? activeFilePath
+        : pinnedFiles[pinnedFiles.length - 1];
+      const updated = {
+        ...existing,
+        pinnedFile: pinnedFile ?? undefined,
+        metadata: { ...(existing.metadata ?? {}), pinnedFiles },
+      };
+      sessions.set(sessionId, updated);
+      return updated;
+    },
   };
 }
 
@@ -200,6 +215,37 @@ describe("wingman-api session ownership", () => {
     expect(await removeResponse!.json()).toMatchObject({
       pinnedFile: "/tmp/two.md",
       pinnedFiles: ["/tmp/one.md", "/tmp/two.md"],
+    });
+  });
+
+  test("accepts the client ordered pinned list when unpinning the visible page", async () => {
+    const sessions = new Map<string, SessionSnapshot>();
+    sessions.set("session-1", buildSession({
+      id: "session-1",
+      pinnedFile: "/tmp/three.md",
+      metadata: { AGENT: true } as any,
+    }));
+    const handler = createWingmanMcpApiHandler(makeDeps(sessions));
+
+    const removeResponse = await handler(
+      new Request("http://localhost/api/mcp/wingman/artifact/pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "session-1",
+          removeFilePath: "/tmp/two.md",
+          pinnedFiles: ["/tmp/one.md", "/tmp/three.md"],
+          activeFilePath: "/tmp/three.md",
+        }),
+      }),
+      new URL("http://localhost/api/mcp/wingman/artifact/pin"),
+      "POST",
+    );
+
+    expect(removeResponse?.status).toBe(200);
+    expect(await removeResponse!.json()).toMatchObject({
+      pinnedFile: "/tmp/three.md",
+      pinnedFiles: ["/tmp/one.md", "/tmp/three.md"],
     });
   });
 });

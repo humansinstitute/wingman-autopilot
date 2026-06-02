@@ -83,4 +83,36 @@ describe("ProcessManager pinned files", () => {
     expect(snapshot?.pinnedFile).toBe("/tmp/new.md");
     expect(snapshot?.metadata?.pinnedFiles).toEqual(["/tmp/new.md"]);
   });
+
+  test("replaces pinned file history with the client ordered list", () => {
+    const manager = new ProcessManager({
+      allowedHosts: "localhost,127.0.0.1",
+      agents: {
+        codex: {
+          label: "Codex",
+          command: ({ port }) => ["agentapi", "--port", String(port), "--", "codex"],
+        },
+      },
+    } as WingmanConfig);
+
+    manager.rehydrateSession({
+      id: "session-1",
+      agent: "codex",
+      port: 3700,
+      name: "Session 1",
+      startedAt: new Date("2026-06-01T00:00:00.000Z").toISOString(),
+      workingDirectory: "/tmp",
+      pinnedFile: "/tmp/two.md",
+      metadata: { AGENT: true, pinnedFiles: ["/tmp/one.md", "/tmp/two.md", "/tmp/three.md"] },
+    });
+
+    const snapshot = manager.setPinnedFiles(
+      "session-1",
+      ["/tmp/one.md", "/tmp/three.md", "/tmp/one.md"],
+      "/tmp/three.md",
+    );
+
+    expect(snapshot?.pinnedFile).toBe("/tmp/three.md");
+    expect(snapshot?.metadata?.pinnedFiles).toEqual(["/tmp/one.md", "/tmp/three.md"]);
+  });
 });

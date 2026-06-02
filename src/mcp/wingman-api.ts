@@ -69,6 +69,11 @@ export interface WingmanMcpApiDependencies {
   getWingmanNpub: () => string | null;
   setPinnedFile: (sessionId: string, filePath: string | null) => SessionSnapshot | null | undefined;
   removePinnedFile: (sessionId: string, filePath: string) => SessionSnapshot | null | undefined;
+  setPinnedFiles: (
+    sessionId: string,
+    filePaths: string[],
+    activeFilePath?: string | null,
+  ) => SessionSnapshot | null | undefined;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -1149,9 +1154,15 @@ async function handlePinArtifact(
 
   const removeFilePath = typeof body.removeFilePath === "string" ? body.removeFilePath : null;
   const filePath = typeof body.filePath === "string" ? body.filePath : null;
-  const updatedSession = removeFilePath
-    ? deps.removePinnedFile(sessionId!, removeFilePath)
-    : deps.setPinnedFile(sessionId!, filePath);
+  const pinnedFilePaths = Array.isArray(body.pinnedFiles)
+    ? body.pinnedFiles.filter((value): value is string => typeof value === "string")
+    : null;
+  const activeFilePath = typeof body.activeFilePath === "string" ? body.activeFilePath : null;
+  const updatedSession = pinnedFilePaths
+    ? deps.setPinnedFiles(sessionId!, pinnedFilePaths, activeFilePath)
+    : removeFilePath
+      ? deps.removePinnedFile(sessionId!, removeFilePath)
+      : deps.setPinnedFile(sessionId!, filePath);
   const pinnedFiles = Array.isArray(updatedSession?.metadata?.pinnedFiles)
     ? updatedSession.metadata.pinnedFiles
     : filePath

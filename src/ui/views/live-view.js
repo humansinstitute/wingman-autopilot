@@ -157,8 +157,20 @@ export function initLiveView(deps) {
     return pinnedFile;
   }
 
-  async function unpinPinnedArtifact(sessionId, filePath) {
-    const result = await removePinnedArtifactApi(sessionId, filePath);
+  async function unpinPinnedArtifact(sessionId, pageState) {
+    const filePath = pageState?.activeFile ?? null;
+    if (!filePath) return null;
+    const pinnedFilesBeforeRemoval = Array.isArray(pageState?.files) ? pageState.files : [];
+    const removeIndex = Math.max(0, pageState?.activeIndex ?? pinnedFilesBeforeRemoval.indexOf(filePath));
+    const remainingPinnedFiles = pinnedFilesBeforeRemoval.filter((candidate) => candidate !== filePath);
+    const nextActiveIndex = remainingPinnedFiles.length === 0
+      ? -1
+      : Math.min(removeIndex, remainingPinnedFiles.length - 1);
+    const nextActiveFile = nextActiveIndex >= 0 ? remainingPinnedFiles[nextActiveIndex] : null;
+    const result = await removePinnedArtifactApi(sessionId, filePath, {
+      pinnedFiles: remainingPinnedFiles,
+      activeFilePath: nextActiveFile,
+    });
     const pinnedFile = result?.pinnedFile ?? null;
     const pinnedFiles = Array.isArray(result?.pinnedFiles) ? result.pinnedFiles : [];
     updateSessionPinnedFile(sessionId, pinnedFile);
@@ -235,7 +247,7 @@ export function initLiveView(deps) {
     unpinButton.addEventListener("click", async () => {
       if (!pageState.activeFile) return;
       try {
-        await unpinPinnedArtifact(sessionId, pageState.activeFile);
+        await unpinPinnedArtifact(sessionId, pageState);
         showToast("Artifact unpinned", { type: "success" });
         render();
       } catch (error) {

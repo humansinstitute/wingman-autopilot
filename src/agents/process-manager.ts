@@ -938,6 +938,30 @@ export class ProcessManager {
     return snapshot;
   }
 
+  setPinnedFiles(id: string, filePaths: string[], activeFilePath: string | null = null): SessionSnapshot | null {
+    const session = this.sessions.get(id);
+    if (!session) return null;
+    const pinnedFiles = Array.isArray(filePaths)
+      ? filePaths
+          .map((value) => (typeof value === "string" ? value.trim() : ""))
+          .filter((value, index, values) => value.length > 0 && values.indexOf(value) === index)
+      : [];
+    const normalizedActiveFilePath = typeof activeFilePath === "string" && activeFilePath.trim().length > 0
+      ? activeFilePath.trim()
+      : null;
+    const pinnedFile = normalizedActiveFilePath && pinnedFiles.includes(normalizedActiveFilePath)
+      ? normalizedActiveFilePath
+      : pinnedFiles[pinnedFiles.length - 1];
+    session.pinnedFile = pinnedFile || undefined;
+    session.metadata = normaliseSessionMetadata({
+      ...session.metadata,
+      pinnedFiles,
+    });
+    const snapshot = this.toSnapshot(session);
+    this.emit({ type: "session-updated", session: snapshot });
+    return snapshot;
+  }
+
   async captureAgentapiCodexSessionIdFromPrompt(
     id: string,
     prompt: string,

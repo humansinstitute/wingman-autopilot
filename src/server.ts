@@ -753,6 +753,7 @@ const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   getWingmanNpub: () => wingmanInstanceIdentity?.npub ?? null,
   setPinnedFile: (sid, filePath) => manager.setPinnedFile(sid, filePath),
   removePinnedFile: (sid, filePath) => manager.removePinnedFile(sid, filePath),
+  setPinnedFiles: (sid, filePaths, activeFilePath) => manager.setPinnedFiles(sid, filePaths, activeFilePath),
 });
 
 // Reconcile PM2 processes with app registry
