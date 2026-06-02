@@ -12116,6 +12116,14 @@ textarea.wm-input {
   background: var(--bg-primary);
 }
 
+.wm-running-pipelines-step__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .wm-running-pipelines-detail__data {
   display: grid;
   gap: 0.75rem;
@@ -12140,6 +12148,10 @@ textarea.wm-input {
   .wm-running-pipelines-list__actions {
     justify-content: flex-start;
     flex-wrap: wrap;
+  }
+
+  .wm-running-pipelines-step__actions {
+    justify-content: flex-start;
   }
 }
 

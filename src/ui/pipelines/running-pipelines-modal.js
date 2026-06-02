@@ -1,5 +1,6 @@
 import {
   escapeHtml,
+  escapeAttribute,
   formatDateTime,
   formatDuration,
   formatRunMeta,
@@ -21,6 +22,27 @@ export function getPipelineRunDisplayName(run) {
   const name = typeof run?.name === "string" ? run.name.trim() : "";
   if (name.length > 0) return name;
   return String(run?.id ?? "Pipeline run");
+}
+
+export function getPipelineStepSessionId(step) {
+  const sessionId = typeof step?.wingmanSessionId === "string" ? step.wingmanSessionId.trim() : "";
+  return sessionId.length > 0 ? sessionId : null;
+}
+
+export function renderRunningPipelineAgentSessionLink(step) {
+  const sessionId = getPipelineStepSessionId(step);
+  if (!sessionId) return "";
+  return `
+    <a
+      class="wm-pipeline-agent-session-link"
+      href="/live/${encodeURIComponent(sessionId)}"
+      aria-label="Open agent session ${escapeAttribute(sessionId)}"
+      title="Open agent session ${escapeAttribute(sessionId)}"
+      data-testid="running-pipeline-agent-session-link"
+    >
+      Open session <code>${escapeHtml(sessionId.slice(0, 8))}</code>
+    </a>
+  `;
 }
 
 async function fetchPipelineRunDetail(runId, options) {
@@ -347,7 +369,7 @@ export function showRunningPipelinesModal({ showToast } = {}) {
   }
 
   function renderStepSummary(step) {
-    const sessionId = step.wingmanSessionId;
+    const sessionId = getPipelineStepSessionId(step);
     return `
       <div class="wm-running-pipelines-step">
         <span class="wm-pipeline-step-number">${escapeHtml(String(step.stepIndex ?? ""))}</span>
@@ -355,7 +377,10 @@ export function showRunningPipelinesModal({ showToast } = {}) {
           <strong>${escapeHtml(step.name ?? "Step")}</strong>
           <small>${escapeHtml(step.kind ?? "")}${sessionId ? ` - ${escapeHtml(String(sessionId).slice(0, 8))}` : ""}</small>
         </span>
-        <span class="wm-pipeline-status-chip" data-status="${escapeHtml(step.status)}">${escapeHtml(statusLabel(step.status))}</span>
+        <span class="wm-running-pipelines-step__actions">
+          ${renderRunningPipelineAgentSessionLink(step)}
+          <span class="wm-pipeline-status-chip" data-status="${escapeHtml(step.status)}">${escapeHtml(statusLabel(step.status))}</span>
+        </span>
       </div>
     `;
   }
