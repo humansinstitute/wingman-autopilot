@@ -1,8 +1,5 @@
 import { showToast } from "../utils/toast.js";
 
-const DEFAULT_LIVE_ROUTE_PREFIX = "/live";
-const MOBILE_SESSION_LAUNCH_MEDIA_QUERY = "(max-width: 720px)";
-
 const normalizeString = (value) => {
   if (typeof value === "string") {
     return value.trim();
@@ -12,65 +9,6 @@ const normalizeString = (value) => {
   }
   return "";
 };
-
-const shouldLaunchSessionInCurrentTab = () => {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-    return false;
-  }
-  try {
-    return window.matchMedia(MOBILE_SESSION_LAUNCH_MEDIA_QUERY).matches;
-  } catch {
-    return false;
-  }
-};
-
-function openPendingSessionWindow() {
-  try {
-    const pendingWindow = window.open("about:blank", "_blank");
-    if (!pendingWindow) {
-      return null;
-    }
-    try {
-      pendingWindow.document.title = "Launching session";
-      if (pendingWindow.document.body) {
-        pendingWindow.document.body.textContent = "Launching session...";
-      }
-    } catch {
-      // Ignore DOM access failures for the placeholder window.
-    }
-    return pendingWindow;
-  } catch {
-    return null;
-  }
-}
-
-function closePendingSessionWindow(pendingWindow) {
-  if (!pendingWindow || pendingWindow.closed) {
-    return;
-  }
-  try {
-    pendingWindow.close();
-  } catch {
-    // Ignore close failures.
-  }
-}
-
-function navigatePendingSessionWindow(pendingWindow, sessionUrl) {
-  if (!pendingWindow || pendingWindow.closed) {
-    return false;
-  }
-  try {
-    pendingWindow.opener = null;
-  } catch {
-    // Ignore opener isolation failures.
-  }
-  try {
-    pendingWindow.location.replace(sessionUrl);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export const buildSessionOrigin = ({ type, id, url, label }) => {
   const normalizedType = normalizeString(type);
@@ -90,14 +28,10 @@ export const buildSessionOrigin = ({ type, id, url, label }) => {
   return origin;
 };
 
-export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix, notify } = {}) => {
+export const createSessionLauncher = ({ handleSessionStart, notify } = {}) => {
   if (typeof handleSessionStart !== "function") {
     throw new Error("handleSessionStart callback is required to launch sessions.");
   }
-  const routePrefix =
-    typeof liveRoutePrefix === "string" && liveRoutePrefix.trim().length > 0
-      ? liveRoutePrefix
-      : DEFAULT_LIVE_ROUTE_PREFIX;
   const notifyUser =
     typeof notify === "function"
       ? notify
@@ -113,7 +47,6 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix, not
     }
 
     const {
-      openInNewTab = false,
       origin = null,
       initialPrompt = null,
       targetFile = null,
@@ -147,9 +80,6 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix, not
       payload.metadata = metadata;
     }
 
-    const canAttemptNewTab = openInNewTab && !shouldLaunchSessionInCurrentTab();
-    const pendingWindow = canAttemptNewTab ? openPendingSessionWindow() : null;
-
     const response = await fetch("/api/sessions", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -157,7 +87,6 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix, not
     });
 
     if (!response.ok) {
-      closePendingSessionWindow(pendingWindow);
       const data = await response.json().catch(() => ({}));
       const message = `Failed to start session: ${data.error ?? response.statusText}`;
       notifyUser?.(message, { type: "error" });
@@ -165,9 +94,8 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix, not
     }
 
     const session = await response.json();
-    let openedInNewTab = false;
     if (session?.id) {
-      // Keep the draft in localStorage so either tab mode can hydrate the composer.
+      // Keep the draft in localStorage so the composer can hydrate after route activation.
       if (typeof initialPrompt === "string" && initialPrompt.trim().length > 0) {
         try {
           localStorage.setItem(`session-draft-${session.id}`, initialPrompt.trim());
@@ -175,20 +103,7 @@ export const createSessionLauncher = ({ handleSessionStart, liveRoutePrefix, not
           // Ignore localStorage errors
         }
       }
-
-      if (canAttemptNewTab) {
-        const sessionUrl = `${routePrefix}/${session.id}`;
-        openedInNewTab = navigatePendingSessionWindow(pendingWindow, sessionUrl);
-        if (!openedInNewTab) {
-          closePendingSessionWindow(pendingWindow);
-        }
-      }
-    } else {
-      closePendingSessionWindow(pendingWindow);
     }
-    await handleSessionStart(session, {
-      suppressRouteChange: openedInNewTab,
-      activateSessionInOriginWindow: !openedInNewTab,
-    });
+    await handleSessionStart(session);
   };
 };

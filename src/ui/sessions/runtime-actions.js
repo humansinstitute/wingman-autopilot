@@ -72,13 +72,18 @@ export function createSessionRuntimeActions(deps) {
       const result = await stopSessionAction(sessionId);
       if (!result.success) {
         showToast(`Failed to stop session: ${result.error}`, { type: "error" });
-        return;
+        return result;
       }
       await fetchSessions();
       render();
+      return result;
     } catch (error) {
       console.error("Failed to stop session", error);
       showToast("Failed to stop session. Check console for details.", { type: "error" });
+      return {
+        success: false,
+        error: error instanceof Error && error.message ? error.message : "Failed to stop session",
+      };
     }
   }
 

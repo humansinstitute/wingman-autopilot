@@ -73,6 +73,16 @@ describe("session runtime actions", () => {
     sessionMessageSendInFlight = new Set();
   });
 
+  test("stopSession returns the stop action result after syncing the session list", async () => {
+    const actions = buildActions();
+
+    const result = await actions.stopSession("session-1");
+
+    expect(result).toEqual({ success: true });
+    expect(fetchSessions).toHaveBeenCalledTimes(1);
+    expect(render).toHaveBeenCalledTimes(1);
+  });
+
   test("resumeSession falls back to API lookup when local cache is stale", async () => {
     fetchSessionApi.mockResolvedValue({
       id: "session-1",
