@@ -35,6 +35,23 @@ describe("FeatureFlagStore", () => {
     expect(store.getFlag("codex-use-native-sdk")?.state).toBe("on");
   });
 
+  test("can move an untouched shipped flag back off", () => {
+    const store = createStore();
+    store.ensureDefaults([
+      {
+        key: "codex-use-native-sdk",
+        label: "Codex Native SDK",
+        state: "on",
+      },
+    ]);
+
+    const updated = store.ensureDefaultState("codex-use-native-sdk", "off");
+
+    expect(updated?.state).toBe("off");
+    expect(updated?.updatedBy).toBeNull();
+    expect(store.getFlag("codex-use-native-sdk")?.state).toBe("off");
+  });
+
   test("does not update user-managed feature flags", () => {
     const store = createStore();
     store.createFlag({
