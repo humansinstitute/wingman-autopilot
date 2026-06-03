@@ -52,6 +52,160 @@ function getStringArray(value: unknown): string[] {
   return [];
 }
 
+function cleanArtifactReferenceCandidate(value: unknown): string | null {
+  const text = getText(value);
+  if (!text) return null;
+  const markdownLink = text.match(/\[[^\]]+\]\(([^)\s]+)\)/);
+  const candidate = (markdownLink?.[1] ?? text)
+    .trim()
+    .replace(/^[`<]+/, "")
+    .replace(/[>`]+$/, "")
+    .replace(/[),.;]+$/, "");
+  const inlineReference = candidate.match(/(?:storage:\/\/\S+|https?:\/\/\S+|\/Users\/\S+|~\/\S+|\.\.?\/\S+)/);
+  return (inlineReference?.[0] ?? candidate).trim().replace(/[),.;]+$/, "") || null;
+}
+
+function extractArtifactReferenceFromText(value: unknown): string | null {
+  const text = getText(value);
+  if (!text) return null;
+  const linePattern = /^\s*(?:[-*]\s*)?(?:primary\s+(?:design\/ticket\s+)?artifact|primary\s+design\s+artifact|design\s+document|design|ticket|artifact|document)\s*:\s*(.+?)\s*$/gim;
+  let match: RegExpExecArray | null;
+  while ((match = linePattern.exec(text)) !== null) {
+    const reference = cleanArtifactReferenceCandidate(match[1]);
+    if (reference) return reference;
+  }
+  return null;
+}
+
+function extractStructuredArtifactReference(value: unknown, depth = 0): string | null {
+  if (depth > 3 || value === null || value === undefined) return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const reference = extractStructuredArtifactReference(item, depth + 1);
+      if (reference) return reference;
+    }
+    return null;
+  }
+  if (typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const directKeys = [
+    "designDocumentUrl",
+    "design_document_url",
+    "designUrl",
+    "design_url",
+    "documentUrl",
+    "document_url",
+    "ticketUrl",
+    "ticket_url",
+    "ticketPath",
+    "ticket_path",
+    "artifactUrl",
+    "artifact_url",
+    "artifactPath",
+    "artifact_path",
+    "primaryArtifact",
+    "primary_artifact",
+    "designArtifact",
+    "design_artifact",
+    "path",
+    "url",
+  ];
+  for (const key of directKeys) {
+    const reference = cleanArtifactReferenceCandidate(record[key]);
+    if (reference) return reference;
+  }
+  for (const [key, nested] of Object.entries(record)) {
+    if (!/(artifact|document|ticket|reference|link)/i.test(key)) continue;
+    const reference = extractStructuredArtifactReference(nested, depth + 1);
+    if (reference) return reference;
+  }
+  return null;
+}
+
+function resolveDesignDocumentReference(input: Record<string, unknown>, response: Record<string, unknown>, record: Record<string, unknown>, payload: Record<string, unknown>, payloadData: Record<string, unknown>): {
+  designDocumentUrl: string;
+  designDocumentSource: string;
+  designDocumentUnavailableReason?: string;
+} {
+  const directReference = [
+    response.designDocumentUrl,
+    response.documentUrl,
+    response.ticketUrl,
+    response.ticketPath,
+    response.artifactUrl,
+    response.artifactPath,
+    input.designDocumentUrl,
+    input.documentUrl,
+    input.ticketUrl,
+    input.ticketPath,
+    input.artifactUrl,
+    input.artifactPath,
+    payloadData.designDocumentUrl,
+    payloadData.documentUrl,
+    payloadData.ticketUrl,
+    payloadData.ticketPath,
+    payloadData.artifactUrl,
+    payloadData.artifactPath,
+    payload.designDocumentUrl,
+    payload.documentUrl,
+    payload.ticketUrl,
+    payload.ticketPath,
+    payload.artifactUrl,
+    payload.artifactPath,
+  ].map(cleanArtifactReferenceCandidate).find(Boolean);
+  if (directReference) {
+    return {
+      designDocumentUrl: directReference,
+      designDocumentSource: "explicit_field",
+    };
+  }
+
+  const structuredReference = [
+    response.references,
+    response.artifacts,
+    response.documents,
+    response.links,
+    payloadData.references,
+    payloadData.artifacts,
+    payloadData.documents,
+    payloadData.links,
+    payload.references,
+    payload.artifacts,
+    payload.documents,
+    payload.links,
+    record.references,
+    record.artifacts,
+  ].map((candidate) => extractStructuredArtifactReference(candidate)).find(Boolean);
+  if (structuredReference) {
+    return {
+      designDocumentUrl: structuredReference,
+      designDocumentSource: "structured_reference",
+    };
+  }
+
+  const textReference = [
+    payloadData.description,
+    payload.description,
+    response.description,
+    response.instructions,
+    response.taskSummary,
+  ].map(extractArtifactReferenceFromText).find(Boolean);
+  if (textReference) {
+    return {
+      designDocumentUrl: textReference,
+      designDocumentSource: "task_description",
+    };
+  }
+
+  const taskId = getText(payload.task_id ?? payloadData.task_id ?? payload.id ?? payloadData.id ?? record.recordId ?? input.taskId)
+    ?? "current-task";
+  return {
+    designDocumentUrl: `flightdeck-task://${taskId}`,
+    designDocumentSource: "task_context_fallback",
+    designDocumentUnavailableReason: "no_separate_design_or_ticket_artifact",
+  };
+}
+
 function mention(type: string, id: string, label: string): string {
   const safeLabel = label.replace(/[\[\]\n\r]+/g, " ").replace(/\s+/g, " ").trim() || type;
   return `@[${safeLabel}](mention:${type}:${id})`;
@@ -798,6 +952,9 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const executionPlan = getStringArray(response.executionPlan);
     const managerChecklist = getStringArray(response.managerChecklist);
     const taskUpdatePlan = getStringArray(response.taskUpdatePlan);
+    const designReference = childPipelineDefinitionId === "software-implementation-review-loop"
+      ? resolveDesignDocumentReference(input, response, record, payload, payloadData)
+      : null;
     return {
       accepted: response.accepted !== false,
       workStyle,
@@ -826,6 +983,11 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         "Move the task to review or done only after manager review.",
       ],
       workdir: getText(response.workdir ?? response.workingDirectory ?? agent.workingDirectory),
+      ...(designReference ? {
+        designDocumentUrl: designReference.designDocumentUrl,
+        designDocumentSource: designReference.designDocumentSource,
+        designDocumentUnavailableReason: designReference.designDocumentUnavailableReason,
+      } : {}),
       suggestedStatus: "in_progress",
       confidence: clampConfidence(response.confidence),
     };

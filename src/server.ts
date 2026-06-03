@@ -2028,6 +2028,33 @@ const isAdminContext = (authContext: RequestAuthContext): boolean => {
   return isConfiguredAdminNpub(normalized);
 };
 
+const firstForwardedHeaderValue = (value: string | null): string | null => {
+  const first = value?.split(",")[0]?.trim();
+  return first || null;
+};
+
+const forwardedRequestUrl = (request: Request, fallbackUrl: URL): URL => {
+  const host = firstForwardedHeaderValue(request.headers.get("x-forwarded-host"));
+  const proto = firstForwardedHeaderValue(request.headers.get("x-forwarded-proto"));
+  if (!host && !proto) {
+    return fallbackUrl;
+  }
+  const publicUrl = new URL(fallbackUrl.toString());
+  if (host) publicUrl.host = host;
+  if (proto === "http" || proto === "https") publicUrl.protocol = `${proto}:`;
+  return publicUrl;
+};
+
+const configuredPublicRequestUrl = (fallbackUrl: URL): URL | null => {
+  const base = config.baseUrl?.trim();
+  if (!base) return null;
+  try {
+    return new URL(`${fallbackUrl.pathname}${fallbackUrl.search}`, base.replace(/\/$/, ""));
+  } catch {
+    return null;
+  }
+};
+
 /**
  * Verify a NIP-98 Authorization header and return the signer's npub if valid.
  * Returns null if no valid NIP-98 header is present.
@@ -2053,12 +2080,15 @@ const verifyNip98AuthHeader = (request: Request, url: URL): string | null => {
 
     // Verify the URL tag matches
     const uTag = event.tags?.find((t: string[]) => t[0] === "u");
-    if (!uTag) return null;
+    if (!uTag?.[1]) return null;
     const eventUrl = new URL(uTag[1]);
-    if (
-      eventUrl.origin !== url.origin ||
-      normalizePathname(eventUrl.pathname) !== normalizePathname(url.pathname)
-    ) return null;
+    const publicUrl = forwardedRequestUrl(request, url);
+    const configuredUrl = configuredPublicRequestUrl(url);
+    const matchesUrl = [url, publicUrl, configuredUrl].filter((candidateUrl): candidateUrl is URL => Boolean(candidateUrl)).some((candidateUrl) =>
+      eventUrl.origin === candidateUrl.origin &&
+      normalizePathname(eventUrl.pathname) === normalizePathname(candidateUrl.pathname)
+    );
+    if (!matchesUrl) return null;
 
     // Verify the method tag
     const methodTag = event.tags?.find((t: string[]) => t[0] === "method");

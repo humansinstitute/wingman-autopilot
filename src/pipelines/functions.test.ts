@@ -21,6 +21,7 @@ beforeAll(async () => {
 
   const seededDefinitions = [
     ["agent-dispatch-chat.json", "agent-dispatch-chat"],
+    ["agent-dispatch-task-response.json", "agent-dispatch-task-response"],
     ["document-discussion.json", "document-discussion"],
   ] as const;
   for (const [fileName, slug] of seededDefinitions) {
@@ -180,7 +181,107 @@ async function runChatDispatchSpec(input: {
   };
 }
 
+function executableTaskDispatchSpec(agentResponse: JsonObject): DeclarativePipeline {
+  const spec = structuredClone(loadSharedPipelineSpec("agent-dispatch-task-response.json")) as DeclarativePipeline;
+  spec.steps = spec.steps.map((step) => step.name === "investigate-and-route-task"
+    ? {
+        name: step.name,
+        description: step.description,
+        type: "code",
+        function: "test.agentResponse",
+        input: {
+          pick: {
+            testAgentResponse: "$.testAgentResponse",
+          },
+        },
+        assign: step.assign,
+      }
+    : step);
+  return {
+    ...spec,
+    input: {
+      ...spec.input,
+      testAgentResponse: agentResponse,
+    },
+  };
+}
+
+async function runTaskDispatchSpec(input: {
+  agentResponse: JsonObject;
+  taskDescription: string;
+  taskId?: string;
+}) {
+  const taskId = input.taskId ?? "task-demo";
+  const definition: PipelineDefinitionRecord = {
+    id: "shared:test-agent-dispatch-task-response",
+    slug: "agent-dispatch-task-response",
+    name: "agent-dispatch-task-response",
+    scope: "shared",
+    ownerAlias: null,
+    path: join(tempPipelineRoot ?? tmpdir(), "shared", "definitions", "agent-dispatch-task-response.json"),
+    spec: executableTaskDispatchSpec(input.agentResponse),
+  };
+  const store = new PipelineStore(join(tmpdir(), `wingmen-task-dispatch-${randomUUID()}.sqlite`));
+  const registry = {
+    ...builtinPipelineFunctions,
+    "test.agentResponse": async (selected: JsonObject) => selected.testAgentResponse as JsonObject,
+    "dispatch.markTaskInProgress": async (selected: JsonObject) => ({
+      published: true,
+      status: "ok",
+      workPlan: selected.workPlan,
+    }),
+    "dispatch.startChildPipeline": async (selected: JsonObject) => ({
+      started: true,
+      status: "running",
+      pipelineDefinitionId: selected.pipelineDefinitionId,
+      workPlan: selected.workPlan,
+      childInputWorkPlan: (selected.childInput as JsonObject | undefined)?.workPlan,
+    }),
+    "dispatch.publishFlightDeckResponse": async (selected: JsonObject) => ({
+      published: true,
+      status: "ok",
+      agentResponse: selected.agentResponse,
+      childPipeline: selected.childPipeline,
+    }),
+  };
+
+  const run = await runDeclarativePipeline({
+    store,
+    definition,
+    registry,
+    input: {
+      testAgentResponse: input.agentResponse,
+      dispatch: { triggerKind: "task" },
+      workspace: { workspaceOwnerNpub: "npub1owner", sourceAppNpub: "npub1source" },
+      agent: { workingDirectory: "/repo", defaultAgent: "codex" },
+      record: {
+        recordId: taskId,
+        payload: {
+          task_id: taskId,
+          title: "Implement PH1 task",
+          description: input.taskDescription,
+          state: "ready",
+          assigned_to: "npub1bot",
+        },
+      },
+      routing: { bindingId: taskId, bindingType: "task", changedFields: ["state"] },
+    },
+    ownerNpub: "npub1owner",
+    ownerAlias: "honest-ivory-thicket",
+    callbackOrigin: "http://localhost",
+    sessionApiContext: {} as never,
+  });
+  return {
+    run,
+    steps: store.listSteps(run.id),
+  };
+}
+
 function currentAfterStep(runResult: Awaited<ReturnType<typeof runChatDispatchSpec>>, stepName: string): JsonObject {
+  return (runResult.steps.find((step) => step.name === stepName)?.result ?? {}) as JsonObject;
+}
+
+function taskAfterStep(runResult: Awaited<ReturnType<typeof runTaskDispatchSpec>>, stepName: string): JsonObject {
   return (runResult.steps.find((step) => step.name === stepName)?.result ?? {}) as JsonObject;
 }
 
@@ -270,6 +371,94 @@ describe("memory pipeline functions", () => {
 
     expect(result.workStyle).toBe("software_implementation");
     expect(result.childPipelineDefinitionId).toBe("software-implementation-review-loop");
+  });
+
+  test("dispatch.normaliseTaskWorkPlan extracts PH1 ticket paths into software work plans", async () => {
+    const ticketPath = "/Users/mini/code/wingmanbefree/flightdeck-pg/implementation/phase1/ticket_ph1_2_typed_api_contract_fixtures.md";
+    const result = await builtinPipelineFunctions["dispatch.normaliseTaskWorkPlan"]!({
+      agentResponse: {
+        accepted: true,
+        workStyle: "software_implementation",
+        taskSummary: "Implement PH1 typed API fixtures.",
+      },
+      record: {
+        recordId: "task-ph1-2",
+        payload: {
+          task_id: "task-ph1-2",
+          title: "PH1-2 typed API contract fixtures",
+          description: `Implement this task.\nTicket: ${ticketPath}\nRun focused tests.`,
+        },
+      },
+    });
+
+    expect(result.childPipelineDefinitionId).toBe("software-implementation-review-loop");
+    expect(result.designDocumentUrl).toBe(ticketPath);
+    expect(result.designDocumentSource).toBe("task_description");
+    expect(result.designDocumentUnavailableReason).toBeUndefined();
+  });
+
+  test("dispatch.normaliseTaskWorkPlan extracts primary design artifact paths", async () => {
+    const designPath = "/Users/mini/code/wingmanbefree/autopilot/docs/design/pipeline-design-document-url-propagation.md";
+    const result = await builtinPipelineFunctions["dispatch.normaliseTaskWorkPlan"]!({
+      agentResponse: {
+        accepted: true,
+        workStyle: "software_implementation",
+        taskSummary: "Fix pipeline propagation.",
+      },
+      record: {
+        recordId: "task-design",
+        payload: {
+          title: "Pipeline propagation fix",
+          description: `Primary design/ticket artifact: ${designPath}`,
+        },
+      },
+    });
+
+    expect(result.designDocumentUrl).toBe(designPath);
+    expect(result.designDocumentSource).toBe("task_description");
+  });
+
+  test("dispatch.normaliseTaskWorkPlan uses a task-context fallback when no artifact exists", async () => {
+    const result = await builtinPipelineFunctions["dispatch.normaliseTaskWorkPlan"]!({
+      agentResponse: {
+        accepted: true,
+        workStyle: "software_implementation",
+        taskSummary: "Fix the API bug.",
+      },
+      record: {
+        recordId: "task-without-design",
+        payload: {
+          title: "Fix the API bug",
+          description: "There is no separate design document for this small implementation task.",
+        },
+      },
+    });
+
+    expect(result.designDocumentUrl).toBe("flightdeck-task://task-without-design");
+    expect(result.designDocumentSource).toBe("task_context_fallback");
+    expect(result.designDocumentUnavailableReason).toBe("no_separate_design_or_ticket_artifact");
+  });
+
+  test("task intake propagates design references into child pipeline work plan input", async () => {
+    const ticketPath = "/Users/mini/code/wingmanbefree/flightdeck-pg/implementation/phase1/ticket_ph1_2_typed_api_contract_fixtures.md";
+    const result = await runTaskDispatchSpec({
+      taskDescription: `Implement PH1 work.\nTicket: ${ticketPath}`,
+      agentResponse: {
+        accepted: true,
+        workStyle: "software_implementation",
+        taskSummary: "Implement PH1 typed API fixtures.",
+        confidence: 0.9,
+      },
+      taskId: "task-ph1-2",
+    });
+    const startStep = taskAfterStep(result, "start-follow-up-pipeline");
+    const childPipeline = startStep.childPipeline as JsonObject;
+    const workPlan = childPipeline.workPlan as JsonObject;
+    const childInputWorkPlan = childPipeline.childInputWorkPlan as JsonObject;
+
+    expect(childPipeline.pipelineDefinitionId).toBe("software-implementation-review-loop");
+    expect(workPlan.designDocumentUrl).toBe(ticketPath);
+    expect(childInputWorkPlan.designDocumentUrl).toBe(ticketPath);
   });
 
   test("dispatch.prepareChatIntentInput compacts chat context for intent analysis", async () => {

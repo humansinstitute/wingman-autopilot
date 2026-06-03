@@ -151,6 +151,24 @@ describe("pipeline definition version paths", () => {
       type: "code",
       function: "dispatch.commentImplementationReviewProgress",
     });
+    expect(implementationLoop?.spec.steps.find((step) => step.name === "ensure-review-loop-task")?.input).toMatchObject({
+      pick: {
+        designDocumentUrl: "$.designDocumentUrl",
+        designDocumentUnavailableReason: "$.designDocumentUnavailableReason",
+      },
+    });
+    expect(implementationLoop?.spec.steps.find((step) => step.name === "implementation-worker")?.input).toMatchObject({
+      pick: {
+        designDocumentUrl: "$.createdTask.workPlan.designDocumentUrl",
+        designDocumentUnavailableReason: "$.createdTask.workPlan.designDocumentUnavailableReason",
+      },
+    });
+    expect(implementationLoop?.spec.steps.find((step) => step.name === "managerial-review")?.input).toMatchObject({
+      pick: {
+        designDocumentUrl: "$.createdTask.workPlan.designDocumentUrl",
+        designDocumentUnavailableReason: "$.createdTask.workPlan.designDocumentUnavailableReason",
+      },
+    });
     expect(implementationLoop?.spec.steps.at(-1)).toMatchObject({
       name: "close-review-task",
       type: "code",

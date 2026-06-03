@@ -890,6 +890,9 @@ export function createDispatchImplementationReviewTaskEnsurer(
         ?? getText(input.workingDirectory)
         ?? context.agent.workingDirectory,
       designDocumentUrl: getText(workPlan.designDocumentUrl) ?? getText(input.designDocumentUrl),
+      designDocumentSource: getText(workPlan.designDocumentSource) ?? getText(input.designDocumentSource),
+      designDocumentUnavailableReason: getText(workPlan.designDocumentUnavailableReason)
+        ?? getText(input.designDocumentUnavailableReason),
       assignedToNpub: assignedTo,
       reviewerNpub: getText(workPlan.reviewerNpub) ?? resolveRequesterNpub(context, input),
       origin: {
@@ -1995,6 +1998,9 @@ function buildImplementationReviewTaskDescription(
     getText(input.designDocumentUrl ?? workPlan.designDocumentUrl)
       ? `- Design: ${getText(input.designDocumentUrl ?? workPlan.designDocumentUrl)}`
       : '',
+    getText(input.designDocumentUnavailableReason ?? workPlan.designDocumentUnavailableReason)
+      ? `- Design note: ${getText(input.designDocumentUnavailableReason ?? workPlan.designDocumentUnavailableReason)}`
+      : '',
     getText(input.workingDirectory ?? workPlan.workdir ?? workPlan.workingDirectory)
       ? `- Working directory: ${getText(input.workingDirectory ?? workPlan.workdir ?? workPlan.workingDirectory)}`
       : '',
@@ -2014,6 +2020,14 @@ function buildImplementationReviewStartedComment(input: JsonObject, taskId: stri
     `Task: ${mention('task', taskId, 'implementation task')}`,
     `Summary: ${summary}`,
   ];
+  const designDocumentUrl = getText(workPlan.designDocumentUrl ?? input.designDocumentUrl);
+  if (designDocumentUrl) {
+    lines.push(`Design/reference: ${designDocumentUrl}`);
+  }
+  const designDocumentUnavailableReason = getText(workPlan.designDocumentUnavailableReason ?? input.designDocumentUnavailableReason);
+  if (designDocumentUnavailableReason) {
+    lines.push(`Design/reference note: ${designDocumentUnavailableReason}`);
+  }
   const maxIterations = Number(input.maxReviewIterations ?? workPlan.maxReviewIterations);
   if (Number.isFinite(maxIterations) && maxIterations > 0) {
     lines.push(`Review loop limit: ${Math.floor(maxIterations)} manager pass(es).`);
