@@ -4,6 +4,8 @@ import {
   getActivePipelineRuns,
   getPipelineRunDisplayName,
   getPipelineStepSessionId,
+  getRecentPipelineRunPage,
+  getRecentPipelineRunPageCount,
   isActivePipelineRun,
   renderRunningPipelineAgentSessionLink,
 } from "./running-pipelines-modal.js";
@@ -26,6 +28,34 @@ describe("running pipelines modal helpers", () => {
     ];
 
     expect(getActivePipelineRuns(runs).map((run) => run.id)).toEqual(["run-1"]);
+  });
+
+  test("pages recent pipeline runs five at a time", () => {
+    const runs = Array.from({ length: 12 }, (_, index) => ({ id: `run-${index + 1}` }));
+
+    expect(getRecentPipelineRunPage(runs).map((run) => run.id)).toEqual([
+      "run-1",
+      "run-2",
+      "run-3",
+      "run-4",
+      "run-5",
+    ]);
+    expect(getRecentPipelineRunPage(runs, 1).map((run) => run.id)).toEqual([
+      "run-6",
+      "run-7",
+      "run-8",
+      "run-9",
+      "run-10",
+    ]);
+    expect(getRecentPipelineRunPage(runs, 2).map((run) => run.id)).toEqual(["run-11", "run-12"]);
+    expect(getRecentPipelineRunPageCount(runs)).toBe(3);
+  });
+
+  test("keeps recent run paging safe for empty and invalid inputs", () => {
+    expect(getRecentPipelineRunPage(null)).toEqual([]);
+    expect(getRecentPipelineRunPageCount(null)).toBe(1);
+    expect(getRecentPipelineRunPage([{ id: "run-1" }], -10).map((run) => run.id)).toEqual(["run-1"]);
+    expect(getRecentPipelineRunPageCount([{ id: "run-1" }], 0)).toBe(1);
   });
 
   test("formats a stable display name", () => {

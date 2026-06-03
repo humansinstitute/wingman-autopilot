@@ -9,6 +9,7 @@ import {
 } from "./view-utils.js";
 
 const ACTIVE_PIPELINE_RUN_STATUSES = new Set(["queued", "running"]);
+const RECENT_PIPELINE_RUN_PAGE_SIZE = 5;
 
 export function isActivePipelineRun(run) {
   return ACTIVE_PIPELINE_RUN_STATUSES.has(String(run?.status ?? ""));
@@ -16,6 +17,20 @@ export function isActivePipelineRun(run) {
 
 export function getActivePipelineRuns(runs) {
   return Array.isArray(runs) ? runs.filter((run) => isActivePipelineRun(run)) : [];
+}
+
+export function getRecentPipelineRunPage(runs, page = 0, pageSize = RECENT_PIPELINE_RUN_PAGE_SIZE) {
+  const source = Array.isArray(runs) ? runs : [];
+  const safePageSize = Math.max(1, Number(pageSize) || RECENT_PIPELINE_RUN_PAGE_SIZE);
+  const safePage = Math.max(0, Number(page) || 0);
+  const start = safePage * safePageSize;
+  return source.slice(start, start + safePageSize);
+}
+
+export function getRecentPipelineRunPageCount(runs, pageSize = RECENT_PIPELINE_RUN_PAGE_SIZE) {
+  const total = Array.isArray(runs) ? runs.length : 0;
+  const safePageSize = Math.max(1, Number(pageSize) || RECENT_PIPELINE_RUN_PAGE_SIZE);
+  return Math.max(1, Math.ceil(total / safePageSize));
 }
 
 export function getPipelineRunDisplayName(run) {
@@ -125,6 +140,8 @@ export function showRunningPipelinesModal({ showToast } = {}) {
   let selectedRunDetail = null;
   let loading = false;
   let detailLoading = false;
+  let showRecentRuns = false;
+  let recentRunPage = 0;
 
   function setStatus(message, type = "") {
     status.textContent = message ?? "";
@@ -141,6 +158,10 @@ export function showRunningPipelinesModal({ showToast } = {}) {
     try {
       const payload = await fetchPipelineRunSummaries();
       runs = Array.isArray(payload?.runs) ? payload.runs : [];
+      const recentPageCount = getRecentPipelineRunPageCount(runs);
+      if (recentRunPage >= recentPageCount) {
+        recentRunPage = Math.max(0, recentPageCount - 1);
+      }
       if (selectedRunId) {
         const stillVisible = runs.some((run) => run.id === selectedRunId);
         if (!stillVisible) {
@@ -238,69 +259,177 @@ export function showRunningPipelinesModal({ showToast } = {}) {
 
   function renderListView() {
     const activeRuns = getActivePipelineRuns(runs);
+    const recentPageCount = getRecentPipelineRunPageCount(runs);
+    const recentRuns = getRecentPipelineRunPage(runs, recentRunPage);
     subtitle.textContent = loading
       ? "Refreshing..."
-      : `${activeRuns.length} active run${activeRuns.length === 1 ? "" : "s"}`;
+      : showRecentRuns
+        ? `${runs.length} recent run${runs.length === 1 ? "" : "s"} - page ${recentRunPage + 1} of ${recentPageCount}`
+        : `${activeRuns.length} active run${activeRuns.length === 1 ? "" : "s"}`;
 
     if (loading && activeRuns.length === 0) {
       const loadingEl = document.createElement("p");
       loadingEl.className = "wm-running-pipelines-modal__empty";
       loadingEl.textContent = "Loading pipelines...";
       body.append(loadingEl);
+      renderRecentRunsToggle(runs.length);
       return;
     }
 
-    if (activeRuns.length === 0) {
+    if (activeRuns.length === 0 && !showRecentRuns) {
       const empty = document.createElement("p");
       empty.className = "wm-running-pipelines-modal__empty";
       empty.textContent = "No pipeline runs are currently active.";
       body.append(empty);
+    } else if (!showRecentRuns) {
+      renderPipelineRunList(activeRuns, { testId: "running-pipelines-list" });
+    }
+
+    renderRecentRunsToggle(runs.length);
+    renderRecentRunsList(recentRuns, recentPageCount);
+  }
+
+  function renderPipelineRunList(listRuns, { testId = "" } = {}) {
+    const list = document.createElement("div");
+    list.className = "wm-running-pipelines-list";
+    if (testId) list.dataset.testid = testId;
+
+    listRuns.forEach((run) => {
+      list.append(renderPipelineRunListItem(run));
+    });
+
+    body.append(list);
+  }
+
+  function renderPipelineRunListItem(run) {
+    const item = document.createElement("article");
+    item.className = "wm-running-pipelines-list__item";
+    item.dataset.runId = String(run.id ?? "");
+
+    const mainButton = document.createElement("button");
+    mainButton.type = "button";
+    mainButton.className = "wm-running-pipelines-list__main";
+    mainButton.dataset.testid = "running-pipeline-details";
+    mainButton.setAttribute("aria-label", `Show details for ${getPipelineRunDisplayName(run)}`);
+    mainButton.addEventListener("click", () => void openRunDetails(run.id));
+
+    const name = document.createElement("span");
+    name.className = "wm-running-pipelines-list__name";
+    name.textContent = getPipelineRunDisplayName(run);
+
+    const meta = document.createElement("span");
+    meta.className = "wm-running-pipelines-list__meta";
+    meta.textContent = `${run.definitionSlug ?? run.definitionId ?? "pipeline"} - ${formatRunMeta(run)}`;
+
+    mainButton.append(name, meta);
+
+    const actions = document.createElement("div");
+    actions.className = "wm-running-pipelines-list__actions";
+    actions.append(renderStatusChip(run.status));
+
+    const restartButton = document.createElement("button");
+    restartButton.type = "button";
+    restartButton.className = "wm-button secondary wm-button--small";
+    restartButton.textContent = "Restart";
+    restartButton.dataset.testid = "running-pipeline-restart";
+    restartButton.setAttribute("aria-label", `Restart ${getPipelineRunDisplayName(run)}`);
+    restartButton.addEventListener("click", () => void restartRun(run, restartButton));
+    actions.append(restartButton);
+
+    item.append(mainButton, actions);
+    return item;
+  }
+
+  function renderRecentRunsToggle(totalRuns) {
+    if (totalRuns === 0) return;
+    const footer = document.createElement("div");
+    footer.className = "wm-running-pipelines-modal__list-footer";
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "wm-button";
+    button.textContent = showRecentRuns ? "Hide Recent" : "Show Recent";
+    button.dataset.testid = "running-pipelines-show-recent-toggle";
+    button.setAttribute("aria-label", showRecentRuns ? "Hide recent pipeline runs" : "Show recent pipeline runs");
+    button.setAttribute("aria-expanded", showRecentRuns ? "true" : "false");
+    button.addEventListener("click", () => {
+      showRecentRuns = !showRecentRuns;
+      if (!showRecentRuns) recentRunPage = 0;
+      renderContent();
+    });
+
+    footer.append(button);
+    body.append(footer);
+  }
+
+  function renderRecentRunsList(recentRuns, pageCount) {
+    if (!showRecentRuns) return;
+
+    const section = document.createElement("section");
+    section.className = "wm-running-pipelines-modal__recent";
+    section.setAttribute("aria-labelledby", "running-pipelines-recent-title");
+    section.dataset.testid = "running-pipelines-recent";
+
+    const header = document.createElement("div");
+    header.className = "wm-running-pipelines-modal__recent-header";
+
+    const heading = document.createElement("h3");
+    heading.id = "running-pipelines-recent-title";
+    heading.textContent = "Recent Runs";
+
+    const pager = document.createElement("div");
+    pager.className = "wm-running-pipelines-modal__pager";
+    pager.setAttribute("aria-label", "Recent pipeline pages");
+
+    const previousButton = document.createElement("button");
+    previousButton.type = "button";
+    previousButton.className = "wm-button secondary wm-button--small";
+    previousButton.textContent = "Previous";
+    previousButton.disabled = recentRunPage <= 0;
+    previousButton.dataset.testid = "running-pipelines-recent-previous";
+    previousButton.setAttribute("aria-label", "Show previous recent pipeline runs");
+    previousButton.addEventListener("click", () => {
+      recentRunPage = Math.max(0, recentRunPage - 1);
+      renderContent();
+    });
+
+    const pageLabel = document.createElement("span");
+    pageLabel.textContent = `Page ${recentRunPage + 1} of ${pageCount}`;
+    pageLabel.setAttribute("aria-live", "polite");
+
+    const nextButton = document.createElement("button");
+    nextButton.type = "button";
+    nextButton.className = "wm-button secondary wm-button--small";
+    nextButton.textContent = "Next";
+    nextButton.disabled = recentRunPage >= pageCount - 1;
+    nextButton.dataset.testid = "running-pipelines-recent-next";
+    nextButton.setAttribute("aria-label", "Show next recent pipeline runs");
+    nextButton.addEventListener("click", () => {
+      recentRunPage = Math.min(pageCount - 1, recentRunPage + 1);
+      renderContent();
+    });
+
+    pager.append(previousButton, pageLabel, nextButton);
+    header.append(heading, pager);
+    section.append(header);
+
+    if (recentRuns.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "wm-running-pipelines-modal__empty";
+      empty.textContent = "No pipeline runs have been recorded yet.";
+      section.append(empty);
+      body.append(section);
       return;
     }
 
     const list = document.createElement("div");
     list.className = "wm-running-pipelines-list";
-    list.dataset.testid = "running-pipelines-list";
-
-    activeRuns.forEach((run) => {
-      const item = document.createElement("article");
-      item.className = "wm-running-pipelines-list__item";
-      item.dataset.runId = String(run.id ?? "");
-
-      const mainButton = document.createElement("button");
-      mainButton.type = "button";
-      mainButton.className = "wm-running-pipelines-list__main";
-      mainButton.dataset.testid = "running-pipeline-details";
-      mainButton.setAttribute("aria-label", `Show details for ${getPipelineRunDisplayName(run)}`);
-      mainButton.addEventListener("click", () => void openRunDetails(run.id));
-
-      const name = document.createElement("span");
-      name.className = "wm-running-pipelines-list__name";
-      name.textContent = getPipelineRunDisplayName(run);
-
-      const meta = document.createElement("span");
-      meta.className = "wm-running-pipelines-list__meta";
-      meta.textContent = `${run.definitionSlug ?? run.definitionId ?? "pipeline"} - ${formatRunMeta(run)}`;
-
-      mainButton.append(name, meta);
-
-      const actions = document.createElement("div");
-      actions.className = "wm-running-pipelines-list__actions";
-      actions.append(renderStatusChip(run.status));
-
-      const restartButton = document.createElement("button");
-      restartButton.type = "button";
-      restartButton.className = "wm-button secondary wm-button--small";
-      restartButton.textContent = "Restart";
-      restartButton.dataset.testid = "running-pipeline-restart";
-      restartButton.addEventListener("click", () => void restartRun(run, restartButton));
-      actions.append(restartButton);
-
-      item.append(mainButton, actions);
-      list.append(item);
+    list.dataset.testid = "running-pipelines-recent-list";
+    recentRuns.forEach((run) => {
+      list.append(renderPipelineRunListItem(run));
     });
-
-    body.append(list);
+    section.append(list);
+    body.append(section);
   }
 
   function renderDetailsView() {

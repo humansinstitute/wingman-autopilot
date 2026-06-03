@@ -12038,6 +12038,39 @@ textarea.wm-input {
   margin-bottom: 0.75rem;
 }
 
+.wm-running-pipelines-modal__list-footer {
+  display: flex;
+  margin-top: 0.85rem;
+}
+
+.wm-running-pipelines-modal__recent {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-primary);
+}
+
+.wm-running-pipelines-modal__recent-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.wm-running-pipelines-modal__recent-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.wm-running-pipelines-modal__pager {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-tertiary);
+  font-size: 0.82rem;
+}
+
 .wm-running-pipelines-list {
   display: grid;
   gap: 0.65rem;
@@ -12148,6 +12181,12 @@ textarea.wm-input {
   .wm-running-pipelines-list__actions {
     justify-content: flex-start;
     flex-wrap: wrap;
+  }
+
+  .wm-running-pipelines-modal__recent-header,
+  .wm-running-pipelines-modal__pager {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .wm-running-pipelines-step__actions {
