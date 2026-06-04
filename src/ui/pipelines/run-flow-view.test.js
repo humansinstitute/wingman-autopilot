@@ -18,6 +18,11 @@ const steps = [
     kind: "code",
     status: "ok",
     input: { prompt: "same" },
+    metadata: {
+      input: { pick: { prompt: "$.prompt" } },
+      assign: "$.plan",
+      executor: { kind: "function", function: "plan.build" },
+    },
     output: { plan: { summary: "Do the work" } },
     result: {
       prompt: "same",
@@ -32,6 +37,11 @@ const steps = [
     kind: "agent",
     status: "ok",
     input: { plan: { summary: "Do the work" } },
+    metadata: {
+      input: "$.plan",
+      assign: "$.task",
+      executor: { kind: "agent", agent: "codex" },
+    },
     output: { task: { title: "Ready" }, confidence: 0.8 },
     result: {
       prompt: "same",
@@ -65,9 +75,10 @@ describe("pipeline run flow visualization", () => {
     const html = renderStepCardTimeline({ selectedRun: { steps }, selectedStep: null }, run, steps);
 
     expect(html).toContain('data-testid="pipeline-step-card-timeline"');
-    expect(html).toContain("$.prompt");
+    expect(html).toContain("prompt &lt;- $.prompt");
     expect(html).toContain("$.plan");
-    expect(html).toContain("$.task.title");
+    expect(html).toContain("$.task");
+    expect(html).toContain("plan.build");
   });
 
   test("renders the state ledger table", () => {

@@ -17,6 +17,42 @@ afterEach(() => {
 const makeStore = () => new PipelineStore(join(tempDir, "pipelines.sqlite"));
 
 describe("PipelineStore run summaries", () => {
+  test("persists step metadata with full step records and summaries", () => {
+    const store = makeStore();
+    const run = store.createRun({
+      definitionId: "definition-1",
+      name: "metadata run",
+      ownerNpub: "npub-owner",
+      ownerAlias: "owner-alias",
+      scope: "user",
+      input: { value: 1 },
+    });
+    const step = store.createStep({
+      runId: run.id,
+      stepIndex: 0,
+      name: "normalise",
+      kind: "code",
+      input: { text: "hello" },
+      metadata: {
+        type: "code",
+        input: { pick: { text: "$.text" } },
+        assign: "$.normalised",
+        executor: { kind: "function", function: "text.normalise" },
+      },
+    });
+
+    expect(store.getStep(step.id)?.metadata).toEqual({
+      type: "code",
+      input: { pick: { text: "$.text" } },
+      assign: "$.normalised",
+      executor: { kind: "function", function: "text.normalise" },
+    });
+    expect(store.listStepSummaries(run.id)[0]?.metadata).toMatchObject({
+      assign: "$.normalised",
+      executor: { function: "text.normalise" },
+    });
+  });
+
   test("lists run metadata and payload sizes without decoded run payloads", () => {
     const store = makeStore();
     const run = store.createRun({

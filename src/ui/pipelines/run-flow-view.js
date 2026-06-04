@@ -104,7 +104,7 @@ function renderStateRail(run, steps) {
 }
 
 function renderStepCard(state, run, step) {
-  const inputFields = topFieldLabels(step.input);
+  const inputFields = getStepReadLabels(step);
   const output = getStepOutput(step);
   const outputFields = topFieldLabels(output);
   const writeFields = getStepWriteLabels(run, state.selectedRun?.steps ?? [], step);
@@ -190,10 +190,29 @@ function renderLedgerRow(row) {
 }
 
 function getStepWriteLabels(run, steps, step) {
+  if (typeof step.metadata?.assign === "string" && step.metadata.assign.trim()) {
+    return [step.metadata.assign.trim()];
+  }
   const previous = resolveStateBeforeStep(run, steps, step);
   const next = isObjectLike(step.result) ? step.result : null;
   if (!next) return topFieldLabels(getStepOutput(step));
   return collectChangedPaths(previous, next).slice(0, FIELD_LIMIT);
+}
+
+function getStepReadLabels(step) {
+  const selector = step.metadata?.input;
+  if (typeof selector === "string" && selector.trim()) return [selector.trim()];
+  if (isObjectLike(selector)) {
+    if (isObjectLike(selector.pick)) {
+      return Object.entries(selector.pick)
+        .slice(0, FIELD_LIMIT)
+        .map(([field, path]) => `${field} <- ${String(path)}`);
+    }
+    if (isObjectLike(selector.value)) {
+      return topFieldLabels(selector.value);
+    }
+  }
+  return topFieldLabels(step.input);
 }
 
 function resolveStateBeforeStep(run, steps, targetStep) {
@@ -222,10 +241,22 @@ function getStepOutput(step) {
 }
 
 function formatStepMeta(step, dataSize) {
-  const parts = [step.kind];
+  const parts = [step.kind, getExecutorLabel(step)];
   if (step.wingmanSessionId) parts.push(step.wingmanSessionId.slice(0, 8));
   if (dataSize > 0) parts.push(formatBytes(dataSize));
   return parts.filter(Boolean).join(" - ");
+}
+
+function getExecutorLabel(step) {
+  const executor = step.metadata?.executor;
+  if (!isObjectLike(executor)) return "";
+  if (typeof executor.function === "string") return executor.function;
+  if (typeof executor.block === "string") return executor.block;
+  if (typeof executor.agent === "string") return executor.agent;
+  if (typeof executor.source === "string") return executor.source;
+  if (typeof executor.target === "string") return `target ${executor.target}`;
+  if (typeof executor.kind === "string") return executor.kind;
+  return "";
 }
 
 function topFieldLabels(value) {

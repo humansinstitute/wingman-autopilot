@@ -4,6 +4,7 @@ import {
   type DeclarativeStep,
   type FunctionRegistry,
 } from "./declarative";
+import { buildPipelineStepMetadata } from "./pipeline-step-metadata";
 import { type JsonObject, PipelineStore, type PipelineStatus, type PipelineStepRecord } from "./pipeline-store";
 
 const PARALLEL_POLL_MS = 1000;
@@ -152,6 +153,18 @@ function ensureParallelChildren(input: ParallelStepRunnerInput, items: unknown[]
       parentStepId: input.parentStepId,
       logicalKey: key,
       callbackToken: child.type === "agent" ? crypto.randomUUID() : null,
+      metadata: buildPipelineStepMetadata(child, {
+        inputSelector: input.parentStep.itemInput ?? child.input,
+        parent: {
+          stepName: input.parentStepName,
+          stepId: input.parentStepId,
+          type: input.parentStep.type,
+          source: input.parentStep.source,
+          itemKey: input.parentStep.itemKey ?? null,
+          logicalKey: key,
+          index,
+        },
+      }),
     });
   });
 }

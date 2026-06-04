@@ -63,6 +63,7 @@ export interface PipelineStepRecord {
   logicalKey: string | null;
   callbackToken: string | null;
   output: JsonObject | null;
+  metadata: JsonObject | null;
   startedAt: string;
   completedAt: string | null;
 }
@@ -79,6 +80,7 @@ export interface PipelineStepSummary {
   parentStepId: string | null;
   logicalKey: string | null;
   callbackToken: string | null;
+  metadata: JsonObject | null;
   startedAt: string;
   completedAt: string | null;
   inputBytes: number;
@@ -170,14 +172,15 @@ export class PipelineStore {
     parentStepId?: string | null;
     logicalKey?: string | null;
     callbackToken?: string | null;
+    metadata?: JsonObject | null;
   }): PipelineStepRecord {
     const id = crypto.randomUUID();
     const status = input.status ?? "running";
     this.db.run(
       `INSERT INTO pipeline_steps (
         id, run_id, step_index, name, kind, status, input_json, result_json, error,
-        wingman_session_id, parent_step_id, logical_key, callback_token, output_json, started_at, completed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, NULL, ?, NULL)`,
+        wingman_session_id, parent_step_id, logical_key, callback_token, output_json, metadata_json, started_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, NULL, ?, ?, NULL)`,
       [
         id,
         input.runId,
@@ -189,6 +192,7 @@ export class PipelineStore {
         input.parentStepId ?? null,
         input.logicalKey ?? null,
         input.callbackToken ?? null,
+        input.metadata ? encodeJson(input.metadata) : null,
         now(),
       ],
     );
@@ -335,7 +339,7 @@ export class PipelineStore {
       .query(`
         SELECT
           id, run_id, step_index, name, kind, status, error, wingman_session_id,
-          parent_step_id, logical_key, callback_token, started_at, completed_at,
+          parent_step_id, logical_key, callback_token, metadata_json, started_at, completed_at,
           length(coalesce(input_json, '')) AS input_bytes,
           length(coalesce(result_json, '')) AS result_bytes
         FROM pipeline_steps
@@ -422,6 +426,7 @@ export class PipelineStore {
         logical_key TEXT,
         callback_token TEXT,
         output_json TEXT,
+        metadata_json TEXT,
         started_at TEXT NOT NULL,
         completed_at TEXT
       )
@@ -433,6 +438,7 @@ export class PipelineStore {
     this.ensureColumn("pipeline_steps", "parent_step_id", "TEXT");
     this.ensureColumn("pipeline_steps", "logical_key", "TEXT");
     this.ensureColumn("pipeline_steps", "output_json", "TEXT");
+    this.ensureColumn("pipeline_steps", "metadata_json", "TEXT");
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_pipeline_steps_run_order ON pipeline_steps(run_id, step_index)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_pipeline_steps_parent_order ON pipeline_steps(parent_step_id, step_index)`);
     this.db.run(`
@@ -545,6 +551,7 @@ function mapStep(row: Record<string, unknown>): PipelineStepRecord {
     logicalKey: row.logical_key === null || row.logical_key === undefined ? null : String(row.logical_key),
     callbackToken: row.callback_token === null || row.callback_token === undefined ? null : String(row.callback_token),
     output: decodeNullableJsonObject(row.output_json),
+    metadata: decodeNullableJsonObject(row.metadata_json),
     startedAt: String(row.started_at),
     completedAt: row.completed_at === null || row.completed_at === undefined ? null : String(row.completed_at),
   };
@@ -565,6 +572,7 @@ function mapStepSummary(row: Record<string, unknown>): PipelineStepSummary {
     parentStepId: row.parent_step_id === null || row.parent_step_id === undefined ? null : String(row.parent_step_id),
     logicalKey: row.logical_key === null || row.logical_key === undefined ? null : String(row.logical_key),
     callbackToken: row.callback_token === null || row.callback_token === undefined ? null : String(row.callback_token),
+    metadata: decodeNullableJsonObject(row.metadata_json),
     startedAt: String(row.started_at),
     completedAt: row.completed_at === null || row.completed_at === undefined ? null : String(row.completed_at),
     inputBytes,

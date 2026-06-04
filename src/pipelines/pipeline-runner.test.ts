@@ -72,6 +72,12 @@ describe("runDeclarativePipeline", () => {
     expect(run.status).toBe("ok");
     expect(run.result?.features).toMatchObject({ mentionsJson: true, mentionsPipeline: true });
     expect(store.listSteps(run.id).map((step) => step.status)).toEqual(["ok", "ok"]);
+    expect(store.listSteps(run.id)[0]?.metadata).toMatchObject({
+      type: "code",
+      input: { pick: { text: "$.text" } },
+      assign: "$.normalised",
+      executor: { kind: "function", function: "text.normalise" },
+    });
   });
 
   test("can split paragraphs, parse a paragraph analysis, and finalise the result", async () => {

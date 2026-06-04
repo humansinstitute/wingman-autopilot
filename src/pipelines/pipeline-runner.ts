@@ -15,6 +15,7 @@ import {
 import { runParallelStep } from "./parallel-runner";
 import { expandPipelineBlock } from "./pipeline-blocks";
 import type { PipelineDefinitionRecord } from "./pipeline-loader";
+import { buildPipelineStepMetadata } from "./pipeline-step-metadata";
 import { type JsonObject, PipelineStore, type PipelineStatus, type PipelineStepRecord, type StepKind } from "./pipeline-store";
 
 const CALLBACK_POLL_MS = 1000;
@@ -158,6 +159,7 @@ async function executePipelineStep(input: PipelineRunnerInput & {
       name: stepName,
       kind: step.type,
       input: input.current,
+      metadata: buildPipelineStepMetadata(step),
     });
     store.completeStep({ id: skipped.id, status: "skipped", result: input.current });
     return { current: input.current };
@@ -177,6 +179,7 @@ async function executePipelineStep(input: PipelineRunnerInput & {
       name: stepName,
       kind: "code",
       input: selected,
+      metadata: buildPipelineStepMetadata(step),
     });
     setActiveStep(input, stepRecord.id);
     const fn = registry[step.function];
@@ -207,6 +210,7 @@ async function executePipelineStep(input: PipelineRunnerInput & {
       name: stepName,
       kind: "block",
       input: blockInput,
+      metadata: buildPipelineStepMetadata(step),
     });
     setActiveStep(input, stepRecord.id);
     let current = assignOutput(input.current, blockInput, expansion.inputPath);
@@ -248,6 +252,7 @@ async function executePipelineStep(input: PipelineRunnerInput & {
       name: stepName,
       kind: "loop",
       input: selected,
+      metadata: buildPipelineStepMetadata(step),
     });
     setActiveStep(input, stepRecord.id);
     if (Array.isArray(step.steps)) {
@@ -315,6 +320,7 @@ async function executePipelineStep(input: PipelineRunnerInput & {
       name: stepName,
       kind: "parallel",
       input: selected,
+      metadata: buildPipelineStepMetadata(step),
     });
     setActiveStep(input, stepRecord.id);
     const aggregate = await runParallelStep({
@@ -395,6 +401,7 @@ async function executePipelineStep(input: PipelineRunnerInput & {
     kind: "agent",
     input: selected,
     callbackToken: token,
+    metadata: buildPipelineStepMetadata(step),
   });
   if (!stepRecord.callbackToken) {
     store.setStepCallbackToken(stepRecord.id, token);
