@@ -5,7 +5,8 @@ import {
   statusLabel,
 } from "./view-utils.js";
 
-const FIELD_LIMIT = 8;
+const FIELD_LIMIT = 40;
+const FIELD_ROW_LIMIT = 5;
 const LEDGER_LIMIT = 120;
 const PREVIEW_LIMIT = 96;
 
@@ -85,75 +86,101 @@ export function buildStateLedgerRows(run, steps, asOfStepIndex = null) {
 }
 
 function renderStateRail(run, steps) {
-  const initialFields = topFieldLabels(run?.input);
+  const initialFields = buildObjectRows(run?.input);
   const latestState = resolveLatestState(run, steps);
-  const currentFields = topFieldLabels(latestState);
+  const currentFields = buildObjectRows(latestState);
   return `
     <div class="wm-pipeline-state-rail" aria-label="Run data state over time" data-testid="pipeline-state-rail">
       <div>
         <strong>Initial State</strong>
-        ${renderFieldPills(initialFields)}
+        ${renderFieldRows(initialFields, "initial-state")}
       </div>
       <span aria-hidden="true" class="wm-pipeline-state-rail-arrow"></span>
       <div>
         <strong>Current State</strong>
-        ${renderFieldPills(currentFields)}
+        ${renderFieldRows(currentFields, "current-state")}
       </div>
     </div>
   `;
 }
 
 function renderStepCard(state, run, step) {
-  const inputFields = getStepReadLabels(step);
+  const inputFields = getStepReadRows(step);
   const output = getStepOutput(step);
-  const outputFields = topFieldLabels(output);
-  const writeFields = getStepWriteLabels(run, state.selectedRun?.steps ?? [], step);
+  const outputFields = buildObjectRows(output);
+  const writeFields = getStepWriteRows(run, state.selectedRun?.steps ?? [], step);
   const dataSize = Number(step.inputBytes ?? 0) + Number(step.resultBytes ?? 0);
   return `
-    <button
-      type="button"
+    <article
       class="wm-pipeline-step-card"
-      data-action="select-step"
-      data-run-id="${escapeAttribute(run.id)}"
-      data-step-id="${escapeAttribute(step.id)}"
       aria-current="${state.selectedStep?.step?.id === step.id}"
-      aria-label="Inspect step ${escapeAttribute(step.stepIndex)} ${escapeAttribute(step.name)}"
       data-testid="pipeline-step-card"
     >
       <span class="wm-pipeline-step-number">${escapeHtml(String(step.stepIndex))}</span>
-      <span class="wm-pipeline-step-card-body">
-        <span class="wm-pipeline-step-card-header">
-          <span>
+      <div class="wm-pipeline-step-card-body">
+        <div class="wm-pipeline-step-card-header">
+          <div>
             <strong>${escapeHtml(step.name)}</strong>
             <small>${escapeHtml(formatStepMeta(step, dataSize))}</small>
-          </span>
-          <span class="wm-pipeline-status-chip" data-status="${escapeAttribute(step.status)}">${escapeHtml(statusLabel(step.status))}</span>
-        </span>
-        <span class="wm-pipeline-step-flow-grid">
+          </div>
+          <div class="wm-pipeline-step-card-actions">
+            <span class="wm-pipeline-status-chip" data-status="${escapeAttribute(step.status)}">${escapeHtml(statusLabel(step.status))}</span>
+            <button
+              type="button"
+              data-action="select-step"
+              data-run-id="${escapeAttribute(run.id)}"
+              data-step-id="${escapeAttribute(step.id)}"
+              aria-label="Inspect step ${escapeAttribute(step.stepIndex)} ${escapeAttribute(step.name)}"
+              data-testid="pipeline-step-inspect"
+            >
+              Inspect
+            </button>
+          </div>
+        </div>
+        <div class="wm-pipeline-step-flow-grid">
           ${renderFieldSet("Reads", inputFields)}
           ${renderFieldSet("Output", outputFields)}
           ${renderFieldSet("Writes", writeFields)}
-        </span>
-      </span>
-    </button>
+        </div>
+      </div>
+    </article>
   `;
 }
 
-function renderFieldSet(label, fields) {
+function renderFieldSet(label, rows) {
   return `
-    <span class="wm-pipeline-flow-fieldset">
+    <div class="wm-pipeline-flow-fieldset">
       <span>${escapeHtml(label)}</span>
-      ${renderFieldPills(fields)}
-    </span>
+      ${renderFieldRows(rows, label)}
+    </div>
   `;
 }
 
-function renderFieldPills(fields) {
-  if (!fields.length) return `<span class="wm-pipeline-flow-empty">No fields</span>`;
+function renderFieldRows(rows, idPrefix) {
+  if (!rows.length) return `<span class="wm-pipeline-flow-empty">No fields</span>`;
+  const visible = rows.slice(0, FIELD_ROW_LIMIT);
+  const hidden = rows.slice(FIELD_ROW_LIMIT);
+  const safeId = String(idPrefix ?? "fields").replace(/[^a-zA-Z0-9_-]+/g, "-");
   return `
-    <span class="wm-pipeline-flow-pills">
-      ${fields.map((field) => `<code>${escapeHtml(field)}</code>`).join("")}
-    </span>
+    <div class="wm-pipeline-flow-rows">
+      ${visible.map(renderFieldRow).join("")}
+      ${hidden.length ? `
+        <details class="wm-pipeline-flow-more">
+          <summary aria-label="Show ${escapeAttribute(String(hidden.length))} more ${escapeAttribute(safeId)} fields">More (${escapeHtml(String(hidden.length))})</summary>
+          <div class="wm-pipeline-flow-more-rows">
+            ${hidden.map(renderFieldRow).join("")}
+          </div>
+        </details>
+      ` : ""}
+    </div>
+  `;
+}
+
+function renderFieldRow(row) {
+  return `
+    <div class="wm-pipeline-flow-row">
+      <code>${escapeHtml(row.name)}</code><span>: &ldquo;${escapeHtml(formatPreviewValue(row.value))}&rdquo;</span>
+    </div>
   `;
 }
 
@@ -189,30 +216,34 @@ function renderLedgerRow(row) {
   `;
 }
 
-function getStepWriteLabels(run, steps, step) {
+function getStepWriteRows(run, steps, step) {
   if (typeof step.metadata?.assign === "string" && step.metadata.assign.trim()) {
-    return [step.metadata.assign.trim()];
+    return buildAssignedOutputRows(step.metadata.assign.trim(), getStepOutput(step));
   }
   const previous = resolveStateBeforeStep(run, steps, step);
   const next = isObjectLike(step.result) ? step.result : null;
-  if (!next) return topFieldLabels(getStepOutput(step));
-  return collectChangedPaths(previous, next).slice(0, FIELD_LIMIT);
+  if (!next) return buildObjectRows(getStepOutput(step));
+  return collectChangedPaths(previous, next)
+    .slice(0, FIELD_LIMIT)
+    .map((path) => ({ name: path, value: getPathValue(next, path) }));
 }
 
-function getStepReadLabels(step) {
+function getStepReadRows(step) {
   const selector = step.metadata?.input;
-  if (typeof selector === "string" && selector.trim()) return [selector.trim()];
+  if (typeof selector === "string" && selector.trim()) {
+    return [{ name: selector.trim(), value: step.input }];
+  }
   if (isObjectLike(selector)) {
     if (isObjectLike(selector.pick)) {
       return Object.entries(selector.pick)
         .slice(0, FIELD_LIMIT)
-        .map(([field, path]) => `${field} <- ${String(path)}`);
+        .map(([field]) => ({ name: field, value: isObjectLike(step.input) ? step.input[field] : undefined }));
     }
     if (isObjectLike(selector.value)) {
-      return topFieldLabels(selector.value);
+      return buildObjectRows(selector.value);
     }
   }
-  return topFieldLabels(step.input);
+  return buildObjectRows(step.input);
 }
 
 function resolveStateBeforeStep(run, steps, targetStep) {
@@ -259,14 +290,28 @@ function getExecutorLabel(step) {
   return "";
 }
 
-function topFieldLabels(value) {
+function buildObjectRows(value, prefix = "") {
   if (!isObjectLike(value)) return [];
-  const labels = Object.keys(value)
+  return Object.entries(value)
     .slice(0, FIELD_LIMIT)
-    .map((key) => `$.${key}`);
-  const total = Object.keys(value).length;
-  if (total > FIELD_LIMIT) labels.push(`+${total - FIELD_LIMIT} more`);
-  return labels;
+    .map(([key, childValue]) => ({
+      name: prefix ? `${prefix}.${key}` : key,
+      value: childValue,
+    }));
+}
+
+function buildAssignedOutputRows(assignPath, output) {
+  if (!isObjectLike(output)) return [{ name: assignPath, value: output }];
+  const entries = Object.entries(output);
+  if (!entries.length) return [{ name: assignPath, value: output }];
+  const assignLeaf = assignPath.split(".").filter(Boolean).at(-1);
+  if (entries.length === 1 && entries[0][0] === assignLeaf) {
+    return [{ name: assignPath, value: entries[0][1] }];
+  }
+  return entries.slice(0, FIELD_LIMIT).map(([key, value]) => ({
+    name: `${assignPath}.${key}`,
+    value,
+  }));
 }
 
 function collectChangedPaths(previous, next, path = "$") {

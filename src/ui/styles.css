@@ -12605,6 +12605,11 @@ textarea.wm-input {
   align-items: start;
   gap: 0.75rem;
   text-align: left;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.45rem;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  padding: 0.65rem;
 }
 
 .wm-pipeline-step-card[aria-current="true"] {
@@ -12626,10 +12631,18 @@ textarea.wm-input {
   min-width: 0;
 }
 
-.wm-pipeline-step-card-header > span:first-child {
+.wm-pipeline-step-card-header > div:first-child {
   display: grid;
   gap: 0.12rem;
   min-width: 0;
+}
+
+.wm-pipeline-step-card-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  flex-wrap: wrap;
 }
 
 .wm-pipeline-step-card-header strong {
@@ -12667,22 +12680,58 @@ textarea.wm-input {
   letter-spacing: 0;
 }
 
-.wm-pipeline-flow-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
+.wm-pipeline-flow-rows {
+  display: grid;
+  gap: 0.22rem;
   min-width: 0;
 }
 
-.wm-pipeline-flow-pills code {
-  max-width: 100%;
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 24%, var(--border-primary));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent-primary) 6%, var(--bg-secondary));
+.wm-pipeline-flow-row {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
   color: var(--text-primary);
-  padding: 0.08rem 0.38rem;
-  font-size: 0.74rem;
-  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.wm-pipeline-flow-row code {
+  flex: 0 1 auto;
+  max-width: 48%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wm-pipeline-flow-row span {
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wm-pipeline-flow-more {
+  display: grid;
+  gap: 0.22rem;
+  min-width: 0;
+}
+
+.wm-pipeline-flow-more summary {
+  width: fit-content;
+  color: var(--accent-primary);
+  cursor: pointer;
+  font-size: 0.78rem;
+  text-decoration: underline;
+  text-underline-offset: 0.14rem;
+}
+
+.wm-pipeline-flow-more-rows {
+  display: grid;
+  gap: 0.22rem;
+  min-width: 0;
+  padding-top: 0.1rem;
 }
 
 .wm-pipeline-flow-empty {

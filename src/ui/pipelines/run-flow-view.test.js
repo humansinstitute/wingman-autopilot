@@ -23,7 +23,14 @@ const steps = [
       assign: "$.plan",
       executor: { kind: "function", function: "plan.build" },
     },
-    output: { plan: { summary: "Do the work" } },
+    output: {
+      summary: "Do the work",
+      owner: "Pete",
+      status: "ready",
+      priority: "normal",
+      estimate: "short",
+      extra: "hidden after five",
+    },
     result: {
       prompt: "same",
       task: { title: "Draft" },
@@ -75,7 +82,11 @@ describe("pipeline run flow visualization", () => {
     const html = renderStepCardTimeline({ selectedRun: { steps }, selectedStep: null }, run, steps);
 
     expect(html).toContain('data-testid="pipeline-step-card-timeline"');
-    expect(html).toContain("prompt &lt;- $.prompt");
+    expect(html).toContain('data-testid="pipeline-step-inspect"');
+    expect(html).toContain("<code>prompt</code>");
+    expect(html).toContain("&ldquo;same&rdquo;");
+    expect(html).toContain("More (1)");
+    expect(html).toContain("hidden after five");
     expect(html).toContain("$.plan");
     expect(html).toContain("$.task");
     expect(html).toContain("plan.build");
