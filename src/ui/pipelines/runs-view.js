@@ -3,7 +3,6 @@ import {
   collectTags,
   escapeAttribute,
   escapeHtml,
-  formatBytes,
   formatDateTime,
   formatDuration,
   formatRunMeta,
@@ -15,6 +14,7 @@ import {
   statusLabel,
 } from "./view-utils.js";
 import { hasRunPayload } from "./state.js";
+import { renderStateLedger, renderStepCardTimeline } from "./run-flow-view.js";
 
 export function renderRunsWorkspace(state) {
   const runs = getFilteredRuns(state);
@@ -139,9 +139,9 @@ function renderRunDetail(state) {
         <div><dt>Steps</dt><dd>${steps.length}</dd></div>
       </dl>
       <div class="wm-pipeline-detail-tabs" role="tablist" aria-label="Run detail">
-        ${["overview", "input", "result"].map((tab) => `
+        ${["overview", "ledger", "input", "result"].map((tab) => `
           <button type="button" data-action="set-run-tab" data-tab="${tab}" role="tab" aria-selected="${state.selectedRunTab === tab}">
-            ${escapeHtml(tab[0].toUpperCase() + tab.slice(1))}
+            ${escapeHtml(tab === "ledger" ? "State Ledger" : tab[0].toUpperCase() + tab.slice(1))}
           </button>
         `).join("")}
       </div>
@@ -159,10 +159,11 @@ function renderSelectedRunTab(state, run, steps) {
     if (!hasRunPayload(run)) return renderRunPayloadState(state, "result");
     return renderJsonBlock("Result", run.result ?? run.error ?? {});
   }
+  if (state.selectedRunTab === "ledger") {
+    return renderStateLedger(run, steps);
+  }
   return `
-    <section class="wm-pipeline-step-timeline" aria-label="Pipeline steps">
-      ${steps.length ? steps.map((step) => renderStepRow(state, run.id, step)).join("") : `<p class="wm-muted">No steps recorded for this run.</p>`}
-    </section>
+    ${renderStepCardTimeline(state, run, steps)}
     ${state.selectedStep ? renderStepDetailModal(state) : ""}
   `;
 }
@@ -178,20 +179,6 @@ function renderRunPayloadState(state, tab) {
   `;
 }
 
-function renderStepRow(state, runId, step) {
-  const dataSize = Number(step.inputBytes ?? 0) + Number(step.resultBytes ?? 0);
-  return `
-    <button type="button" class="wm-pipeline-step-row" data-action="select-step" data-run-id="${escapeAttribute(runId)}" data-step-id="${escapeAttribute(step.id)}" aria-current="${state.selectedStep?.step?.id === step.id}">
-      <span class="wm-pipeline-step-number">${escapeHtml(String(step.stepIndex))}</span>
-      <span class="wm-pipeline-step-main">
-        <strong>${escapeHtml(step.name)}</strong>
-        <small>${escapeHtml(step.kind)}${step.wingmanSessionId ? ` - ${escapeHtml(step.wingmanSessionId.slice(0, 8))}` : ""}${dataSize ? ` - ${escapeHtml(formatBytes(dataSize))}` : ""}</small>
-      </span>
-      <span class="wm-pipeline-status-chip" data-status="${escapeAttribute(step.status)}">${escapeHtml(statusLabel(step.status))}</span>
-    </button>
-  `;
-}
-
 function renderStepDetailModal(state) {
   return `
     <div class="wm-pipeline-step-modal" role="dialog" aria-modal="true" aria-labelledby="pipeline-step-modal-title" data-testid="pipeline-step-modal">
@@ -204,6 +191,9 @@ function renderStepDetailModal(state) {
 
 function renderStepDetail(state) {
   const { step, events = [], callbacks = [], previousSteps = [] } = state.selectedStep;
+  const run = state.selectedRun?.run ?? { input: {} };
+  const runSteps = state.selectedRun?.steps ?? [];
+  const rawOutput = step.output ?? step.result ?? {};
   return `
     <section class="wm-pipeline-step-detail" data-testid="pipeline-step-detail">
       <div class="wm-pipeline-section-heading wm-pipeline-step-modal-header">
@@ -217,10 +207,16 @@ function renderStepDetail(state) {
           <button type="button" class="wm-pipeline-step-close" data-action="close-step-detail" aria-label="Close step detail" data-testid="pipeline-step-detail-close">Close</button>
         </div>
       </div>
-      ${renderJsonTransformBlock(step.input, step.result)}
+      ${renderJsonTransformBlock(step.input, rawOutput)}
       <div class="wm-pipeline-step-secondary" aria-label="Step source data and diagnostics">
         ${renderCollapsedJsonBlock("Input", step.input)}
-        ${renderCollapsedJsonBlock("Output", step.result)}
+        ${renderCollapsedJsonBlock("Raw output", rawOutput)}
+        ${renderCollapsedJsonBlock("State after step", step.result)}
+        ${renderStateLedger(run, runSteps, {
+          asOfStepIndex: Number(step.stepIndex),
+          title: "State Ledger at Step",
+          titleId: "pipeline-step-ledger-title",
+        })}
         ${renderStepDetailSection("Previous steps", previousSteps.map((entry) => ({
           stepIndex: entry.stepIndex,
           name: entry.name,

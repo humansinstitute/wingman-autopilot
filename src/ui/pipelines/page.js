@@ -221,7 +221,8 @@ export function initPipelinesPage({ showToast }) {
       (runChanged || runIsActive);
     if (shouldRefreshRun) {
       state.selectedRun = await fetchPipelineRun(route.id, {
-        includeRunPayload: runIsActive,
+        includeRunPayload: true,
+        includeStepPayload: true,
         forceFresh: runIsActive,
       });
       if (runChanged) {
