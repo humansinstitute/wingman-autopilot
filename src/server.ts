@@ -152,6 +152,11 @@ import {
 import { createStaticAssetService, compressResponse } from "./server/static-assets";
 import { maybeRefreshSessionCookie } from "./server/session-refresh";
 import { shouldUseSecureCookies } from "./server/cookie-security";
+import {
+  configuredPublicRequestUrl,
+  forwardedRequestUrl,
+  redirectInsecurePublicRequest,
+} from "./server/request-url";
 import { handleSubdomainRequest, resolveAliasToPort, proxyRequestToApp, type SubdomainProxyConfig } from "./server/subdomain-proxy";
 import { isAgentRuntimeStatus } from "./types/agent-status";
 import { scheduleCleanup } from "./uploads/cleanup";
@@ -2028,33 +2033,6 @@ const isAdminContext = (authContext: RequestAuthContext): boolean => {
   return isConfiguredAdminNpub(normalized);
 };
 
-const firstForwardedHeaderValue = (value: string | null): string | null => {
-  const first = value?.split(",")[0]?.trim();
-  return first || null;
-};
-
-const forwardedRequestUrl = (request: Request, fallbackUrl: URL): URL => {
-  const host = firstForwardedHeaderValue(request.headers.get("x-forwarded-host"));
-  const proto = firstForwardedHeaderValue(request.headers.get("x-forwarded-proto"));
-  if (!host && !proto) {
-    return fallbackUrl;
-  }
-  const publicUrl = new URL(fallbackUrl.toString());
-  if (host) publicUrl.host = host;
-  if (proto === "http" || proto === "https") publicUrl.protocol = `${proto}:`;
-  return publicUrl;
-};
-
-const configuredPublicRequestUrl = (fallbackUrl: URL): URL | null => {
-  const base = config.baseUrl?.trim();
-  if (!base) return null;
-  try {
-    return new URL(`${fallbackUrl.pathname}${fallbackUrl.search}`, base.replace(/\/$/, ""));
-  } catch {
-    return null;
-  }
-};
-
 /**
  * Verify a NIP-98 Authorization header and return the signer's npub if valid.
  * Returns null if no valid NIP-98 header is present.
@@ -2083,7 +2061,7 @@ const verifyNip98AuthHeader = (request: Request, url: URL): string | null => {
     if (!uTag?.[1]) return null;
     const eventUrl = new URL(uTag[1]);
     const publicUrl = forwardedRequestUrl(request, url);
-    const configuredUrl = configuredPublicRequestUrl(url);
+    const configuredUrl = configuredPublicRequestUrl(url, config.baseUrl);
     const matchesUrl = [url, publicUrl, configuredUrl].filter((candidateUrl): candidateUrl is URL => Boolean(candidateUrl)).some((candidateUrl) =>
       eventUrl.origin === candidateUrl.origin &&
       normalizePathname(eventUrl.pathname) === normalizePathname(candidateUrl.pathname)
@@ -2611,6 +2589,10 @@ const server = Bun.serve({
       }
 
       const pathname = url.pathname;
+      const httpsRedirect = redirectInsecurePublicRequest(request, url, config.baseUrl);
+      if (httpsRedirect) {
+        return httpsRedirect;
+      }
 
       const webhookResponse = await handleWebhookRequest(request, url, authContext);
       if (webhookResponse) {
@@ -2669,7 +2651,9 @@ const server = Bun.serve({
       }
 
       if (pathname === "/" && method === "GET") {
-        return Response.redirect(`${url.origin}/home${url.search}`, 302);
+        const homeUrl = configuredPublicRequestUrl(url, config.baseUrl) ?? forwardedRequestUrl(request, url);
+        homeUrl.pathname = "/home";
+        return Response.redirect(homeUrl.toString(), 302);
       }
 
       const isSpaRoutePath =
