@@ -19,6 +19,7 @@ const steps = [
     status: "ok",
     input: { prompt: "same" },
     metadata: {
+      description: "Build the working plan from the user prompt.",
       input: { pick: { prompt: "$.prompt" } },
       assign: "$.plan",
       executor: { kind: "function", function: "plan.build" },
@@ -45,6 +46,7 @@ const steps = [
     status: "ok",
     input: { plan: { summary: "Do the work" } },
     metadata: {
+      description: "Review the plan and produce the next task state.",
       input: "$.plan",
       assign: "$.task",
       executor: { kind: "agent", agent: "codex" },
@@ -78,18 +80,61 @@ describe("pipeline run flow visualization", () => {
     expect(rows.some((row) => row.path === "$.confidence")).toBe(false);
   });
 
-  test("renders timeline cards with read output and write paths", () => {
+  test("renders timeline cards with input fields output fields and descriptions", () => {
     const html = renderStepCardTimeline({ selectedRun: { steps }, selectedStep: null }, run, steps);
 
     expect(html).toContain('data-testid="pipeline-step-card-timeline"');
     expect(html).toContain('data-testid="pipeline-step-inspect"');
+    expect(html).toContain("Build the working plan from the user prompt.");
+    expect(html).toContain("Fields In");
+    expect(html).toContain("Fields Out");
+    expect(html).not.toContain(">Output</span>");
     expect(html).toContain("<code>prompt</code>");
     expect(html).toContain("&ldquo;same&rdquo;");
     expect(html).toContain("More (1)");
     expect(html).toContain("hidden after five");
-    expect(html).toContain("$.plan");
-    expect(html).toContain("$.task");
+    expect(html).toContain("plan.summary");
+    expect(html).toContain("task.task");
     expect(html).toContain("plan.build");
+  });
+
+  test("filters pipeline plumbing from the default field summary", () => {
+    const plumbingSteps = [{
+      id: "step-routing",
+      stepIndex: 1,
+      name: "Prepare chat",
+      kind: "code",
+      status: "ok",
+      input: {
+        dispatch: { routeId: "route-1", triggerKind: "chat", source: "router" },
+        runtime: { commandPrefix: "wm" },
+        agent: { defaultAgent: "codex" },
+        chat: { messageText: "Can you check the pipeline?", channelId: "chan-1" },
+      },
+      metadata: {
+        input: { pick: { dispatch: "$.dispatch", chat: "$.chat", runtime: "$.runtime" } },
+        assign: "$.chatDispatchInput",
+        description: "Prepare the visible chat request for classification.",
+        executor: { kind: "function", function: "dispatch.prepareChatIntentInput" },
+      },
+      output: {
+        objective: "Classify the latest chat request.",
+        latestThread: [{ body: "Can you check the pipeline?" }],
+        source: { routeId: "route-1" },
+      },
+      result: {},
+    }];
+    const html = renderStepCardTimeline({
+      selectedRun: { steps: plumbingSteps },
+      selectedStep: null,
+    }, run, plumbingSteps);
+
+    expect(html).toContain("chat.messageText");
+    expect(html).toContain("Can you check the pipeline?");
+    expect(html).toContain("chatDispatchInput.objective");
+    expect(html).not.toContain("<code>dispatch</code>");
+    expect(html).not.toContain("route-1");
+    expect(html).not.toContain("commandPrefix");
   });
 
   test("renders the state ledger table", () => {

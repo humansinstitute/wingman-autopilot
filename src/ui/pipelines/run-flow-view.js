@@ -9,6 +9,60 @@ const FIELD_LIMIT = 40;
 const FIELD_ROW_LIMIT = 5;
 const LEDGER_LIMIT = 120;
 const PREVIEW_LIMIT = 96;
+const HUMAN_CONTAINER_KEYS = [
+  "chatDispatchInput",
+  "freshChatContext",
+  "chatContext",
+  "chat",
+  "record",
+  "task",
+  "workPlan",
+  "createdTask",
+  "discussionDocument",
+  "documentContext",
+  "agentDecision",
+  "agentResponse",
+  "workerResult",
+  "managerReview",
+  "report",
+  "memory",
+  "graphContext",
+];
+const PIPELINE_PLUMBING_KEYS = new Set([
+  "dispatch",
+  "routing",
+  "runtime",
+  "agent",
+  "workerAgent",
+  "managerAgent",
+  "reporterAgent",
+  "callback",
+  "callbackUrl",
+  "callbackToken",
+  "commandPrefix",
+  "pipeline",
+  "pipelineId",
+  "pipelineDefinitionId",
+  "pipelineRunId",
+  "runId",
+  "routeId",
+  "triggerKind",
+  "source",
+  "sourceId",
+  "sourceType",
+  "channelId",
+  "threadId",
+  "messageId",
+  "botNpub",
+  "matchedSelfNpub",
+  "selfAuthored",
+  "shouldProceed",
+  "suppressionReason",
+  "availablePipelines",
+  "validChildPipelines",
+  "scopes",
+  "defaults",
+]);
 
 export function renderStepCardTimeline(state, run, steps) {
   const sortedSteps = sortSteps(steps);
@@ -86,9 +140,9 @@ export function buildStateLedgerRows(run, steps, asOfStepIndex = null) {
 }
 
 function renderStateRail(run, steps) {
-  const initialFields = buildObjectRows(run?.input);
+  const initialFields = buildHumanPayloadRows(run?.input);
   const latestState = resolveLatestState(run, steps);
-  const currentFields = buildObjectRows(latestState);
+  const currentFields = buildHumanPayloadRows(latestState);
   return `
     <div class="wm-pipeline-state-rail" aria-label="Run data state over time" data-testid="pipeline-state-rail">
       <div>
@@ -106,10 +160,9 @@ function renderStateRail(run, steps) {
 
 function renderStepCard(state, run, step) {
   const inputFields = getStepReadRows(step);
-  const output = getStepOutput(step);
-  const outputFields = buildObjectRows(output);
   const writeFields = getStepWriteRows(run, state.selectedRun?.steps ?? [], step);
   const dataSize = Number(step.inputBytes ?? 0) + Number(step.resultBytes ?? 0);
+  const description = typeof step.metadata?.description === "string" ? step.metadata.description.trim() : "";
   return `
     <article
       class="wm-pipeline-step-card"
@@ -137,10 +190,10 @@ function renderStepCard(state, run, step) {
             </button>
           </div>
         </div>
+        ${description ? `<p class="wm-pipeline-step-description">${escapeHtml(description)}</p>` : ""}
         <div class="wm-pipeline-step-flow-grid">
-          ${renderFieldSet("Reads", inputFields)}
-          ${renderFieldSet("Output", outputFields)}
-          ${renderFieldSet("Writes", writeFields)}
+          ${renderFieldSet("Fields In", inputFields)}
+          ${renderFieldSet("Fields Out", writeFields)}
         </div>
       </div>
     </article>
@@ -157,7 +210,7 @@ function renderFieldSet(label, rows) {
 }
 
 function renderFieldRows(rows, idPrefix) {
-  if (!rows.length) return `<span class="wm-pipeline-flow-empty">No fields</span>`;
+  if (!rows.length) return `<span class="wm-pipeline-flow-empty">No user-facing fields</span>`;
   const visible = rows.slice(0, FIELD_ROW_LIMIT);
   const hidden = rows.slice(FIELD_ROW_LIMIT);
   const safeId = String(idPrefix ?? "fields").replace(/[^a-zA-Z0-9_-]+/g, "-");
@@ -225,25 +278,26 @@ function getStepWriteRows(run, steps, step) {
   if (!next) return buildObjectRows(getStepOutput(step));
   return collectChangedPaths(previous, next)
     .slice(0, FIELD_LIMIT)
-    .map((path) => ({ name: path, value: getPathValue(next, path) }));
+    .map((path) => ({ name: displayPath(path), value: getPathValue(next, path) }));
 }
 
 function getStepReadRows(step) {
   const selector = step.metadata?.input;
   if (typeof selector === "string" && selector.trim()) {
-    return [{ name: selector.trim(), value: step.input }];
+    const selectorName = displayPath(selector.trim());
+    return buildHumanPayloadRows(step.input, {
+      prefix: isPipelinePlumbingKey(selectorName) ? "" : selectorName,
+    });
   }
   if (isObjectLike(selector)) {
     if (isObjectLike(selector.pick)) {
-      return Object.entries(selector.pick)
-        .slice(0, FIELD_LIMIT)
-        .map(([field]) => ({ name: field, value: isObjectLike(step.input) ? step.input[field] : undefined }));
+      return buildHumanPayloadRows(step.input);
     }
     if (isObjectLike(selector.value)) {
-      return buildObjectRows(selector.value);
+      return buildHumanPayloadRows(selector.value);
     }
   }
-  return buildObjectRows(step.input);
+  return buildHumanPayloadRows(step.input);
 }
 
 function resolveStateBeforeStep(run, steps, targetStep) {
@@ -295,23 +349,69 @@ function buildObjectRows(value, prefix = "") {
   return Object.entries(value)
     .slice(0, FIELD_LIMIT)
     .map(([key, childValue]) => ({
-      name: prefix ? `${prefix}.${key}` : key,
+      name: joinDisplayPath(prefix, key),
       value: childValue,
     }));
 }
 
 function buildAssignedOutputRows(assignPath, output) {
-  if (!isObjectLike(output)) return [{ name: assignPath, value: output }];
+  const displayAssignPath = displayPath(assignPath);
+  if (!isObjectLike(output)) return [{ name: displayAssignPath, value: output }];
   const entries = Object.entries(output);
-  if (!entries.length) return [{ name: assignPath, value: output }];
-  const assignLeaf = assignPath.split(".").filter(Boolean).at(-1);
+  if (!entries.length) return [{ name: displayAssignPath, value: output }];
+  const assignLeaf = displayAssignPath.split(".").filter(Boolean).at(-1);
   if (entries.length === 1 && entries[0][0] === assignLeaf) {
-    return [{ name: assignPath, value: entries[0][1] }];
+    return [{ name: displayAssignPath, value: entries[0][1] }];
   }
-  return entries.slice(0, FIELD_LIMIT).map(([key, value]) => ({
-    name: `${assignPath}.${key}`,
-    value,
-  }));
+  return buildHumanPayloadRows(output, { prefix: displayAssignPath });
+}
+
+function buildHumanPayloadRows(value, options = {}) {
+  if (!isObjectLike(value)) return [];
+  const prefix = options.prefix ?? "";
+  const preferredRows = [];
+  for (const key of HUMAN_CONTAINER_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+    preferredRows.push(...buildFilteredObjectRows(value[key], joinDisplayPath(prefix, key), key));
+  }
+  if (preferredRows.length) return preferredRows.slice(0, FIELD_LIMIT);
+  return buildFilteredObjectRows(value, prefix).slice(0, FIELD_LIMIT);
+}
+
+function buildFilteredObjectRows(value, prefix = "", containerKey = "") {
+  if (!isObjectLike(value)) return [];
+  const displayValue = containerKey === "record" && isObjectLike(value.payload) ? value.payload : value;
+  return Object.entries(displayValue)
+    .filter(([key, childValue]) => !isPipelinePlumbingKey(key) && isDisplayValue(childValue))
+    .slice(0, FIELD_LIMIT)
+    .map(([key, childValue]) => ({
+      name: joinDisplayPath(prefix, key),
+      value: childValue,
+    }));
+}
+
+function joinDisplayPath(prefix, key) {
+  const cleanPrefix = displayPath(prefix);
+  const cleanKey = displayPath(key);
+  if (!cleanPrefix) return cleanKey;
+  if (!cleanKey) return cleanPrefix;
+  return `${cleanPrefix}.${cleanKey}`;
+}
+
+function displayPath(path) {
+  return String(path ?? "").replace(/^\$\./, "").replace(/^\$/, "");
+}
+
+function isPipelinePlumbingKey(key) {
+  const normalized = displayPath(key).split(".").filter(Boolean).at(-1) ?? "";
+  return PIPELINE_PLUMBING_KEYS.has(normalized);
+}
+
+function isDisplayValue(value) {
+  if (value === undefined || typeof value === "function" || typeof value === "symbol") return false;
+  if (isObjectLike(value) && !Array.isArray(value) && Object.keys(value).length === 0) return false;
+  if (Array.isArray(value) && value.length === 0) return false;
+  return true;
 }
 
 function collectChangedPaths(previous, next, path = "$") {

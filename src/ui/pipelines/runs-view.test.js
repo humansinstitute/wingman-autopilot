@@ -65,11 +65,10 @@ describe("pipeline run detail rendering", () => {
 
     expect(html).toContain('data-testid="pipeline-step-card-timeline"');
     expect(html).toContain('data-testid="pipeline-step-card"');
-    expect(html).toContain("Reads");
-    expect(html).toContain("Output");
-    expect(html).toContain("Writes");
-    expect(html).toContain("$.prompt");
-    expect(html).toContain("$.summary");
+    expect(html).toContain("Fields In");
+    expect(html).toContain("Fields Out");
+    expect(html).toContain("<code>prompt</code>");
+    expect(html).toContain("<code>summary</code>");
   });
 
   test("renders state ledger tab from recorded state writes", () => {
