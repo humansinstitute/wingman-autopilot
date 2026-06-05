@@ -7,6 +7,8 @@ import {
   renderJsonBlock,
   statusLabel,
 } from "./view-utils.js";
+import { renderStepCardTimeline } from "./run-flow-view.js";
+import { renderStepDetail } from "./runs-view.js";
 
 const ACTIVE_PIPELINE_RUN_STATUSES = new Set(["queued", "running"]);
 const RECENT_PIPELINE_RUN_PAGE_SIZE = 5;
@@ -60,9 +62,32 @@ export function renderRunningPipelineAgentSessionLink(step) {
   `;
 }
 
+export function renderRunningPipelineStepTimeline(run, steps, selectedStepDetail = null) {
+  const selectedRun = { run, steps };
+  return `
+    ${renderStepCardTimeline({ selectedRun, selectedStep: selectedStepDetail }, run, steps)}
+    ${selectedStepDetail ? renderRunningPipelineStepDetailModal(selectedRun, selectedStepDetail) : ""}
+  `;
+}
+
+function renderRunningPipelineStepDetailModal(selectedRun, selectedStepDetail) {
+  return `
+    <div class="wm-pipeline-step-modal" role="dialog" aria-modal="true" aria-labelledby="pipeline-step-modal-title" data-testid="running-pipeline-step-modal">
+      <section class="wm-pipeline-step-modal-content">
+        ${renderStepDetail({ selectedRun, selectedStep: selectedStepDetail })}
+      </section>
+    </div>
+  `;
+}
+
 async function fetchPipelineRunDetail(runId, options) {
   const { fetchPipelineRun } = await import("./api.js");
   return fetchPipelineRun(runId, options);
+}
+
+async function fetchPipelineStepDetail(runId, stepId) {
+  const { fetchPipelineStep } = await import("./api.js");
+  return fetchPipelineStep(runId, stepId);
 }
 
 async function fetchPipelineRunSummaries() {
@@ -138,6 +163,7 @@ export function showRunningPipelinesModal({ showToast } = {}) {
   let runs = [];
   let selectedRunId = null;
   let selectedRunDetail = null;
+  let selectedStepDetail = null;
   let loading = false;
   let detailLoading = false;
   let showRecentRuns = false;
@@ -167,6 +193,7 @@ export function showRunningPipelinesModal({ showToast } = {}) {
         if (!stillVisible) {
           selectedRunId = null;
           selectedRunDetail = null;
+          selectedStepDetail = null;
         } else {
           await loadSelectedRun({ forceFresh: true, silent: true });
         }
@@ -194,9 +221,14 @@ export function showRunningPipelinesModal({ showToast } = {}) {
     try {
       selectedRunDetail = await fetchPipelineRunDetail(selectedRunId, {
         includeRunPayload: true,
-        includeStepPayload: false,
+        includeStepPayload: true,
         forceFresh,
       });
+      if (selectedStepDetail) {
+        const selectedStepId = selectedStepDetail?.step?.id;
+        const nextStep = selectedRunDetail?.steps?.find((step) => step.id === selectedStepId);
+        selectedStepDetail = nextStep ? { ...selectedStepDetail, step: nextStep } : null;
+      }
       if (!silent) setStatus("");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load pipeline run.";
@@ -211,7 +243,27 @@ export function showRunningPipelinesModal({ showToast } = {}) {
   async function openRunDetails(runId) {
     selectedRunId = runId;
     selectedRunDetail = null;
+    selectedStepDetail = null;
     await loadSelectedRun({ forceFresh: isActivePipelineRun(runs.find((run) => run.id === runId)) });
+  }
+
+  async function openStepDetails(runId, stepId) {
+    if (!runId || !stepId) return;
+    setStatus("Loading pipeline step...");
+    try {
+      selectedStepDetail = await fetchPipelineStepDetail(runId, stepId);
+      setStatus("");
+      renderContent();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load pipeline step.";
+      setStatus(message, "error");
+      showToast?.(message, { type: "error" });
+    }
+  }
+
+  function closeStepDetails() {
+    selectedStepDetail = null;
+    renderContent();
   }
 
   async function restartRun(run, button) {
@@ -236,6 +288,7 @@ export function showRunningPipelinesModal({ showToast } = {}) {
       if (nextRunId) {
         selectedRunId = nextRunId;
         selectedRunDetail = payload;
+        selectedStepDetail = null;
         renderContent();
       }
     } catch (error) {
@@ -444,6 +497,7 @@ export function showRunningPipelinesModal({ showToast } = {}) {
     backButton.addEventListener("click", () => {
       selectedRunId = null;
       selectedRunDetail = null;
+      selectedStepDetail = null;
       renderContent();
     });
     body.append(backButton);
@@ -487,7 +541,7 @@ export function showRunningPipelinesModal({ showToast } = {}) {
         <div><dt>Steps</dt><dd>${escapeHtml(String(steps.length))}</dd></div>
       </dl>
       <section class="wm-running-pipelines-detail__steps" aria-label="Pipeline steps">
-        ${steps.length ? steps.map((step) => renderStepSummary(step)).join("") : `<p class="wm-muted">No steps recorded for this run.</p>`}
+        ${steps.length ? renderRunningPipelineStepTimeline(run, steps, selectedStepDetail) : `<p class="wm-muted">No steps recorded for this run.</p>`}
       </section>
       <div class="wm-running-pipelines-detail__data">
         ${renderJsonBlock("Input", run.input ?? {})}
@@ -495,23 +549,6 @@ export function showRunningPipelinesModal({ showToast } = {}) {
       </div>
     `;
     return article;
-  }
-
-  function renderStepSummary(step) {
-    const sessionId = getPipelineStepSessionId(step);
-    return `
-      <div class="wm-running-pipelines-step">
-        <span class="wm-pipeline-step-number">${escapeHtml(String(step.stepIndex ?? ""))}</span>
-        <span class="wm-pipeline-step-main">
-          <strong>${escapeHtml(step.name ?? "Step")}</strong>
-          <small>${escapeHtml(step.kind ?? "")}${sessionId ? ` - ${escapeHtml(String(sessionId).slice(0, 8))}` : ""}</small>
-        </span>
-        <span class="wm-running-pipelines-step__actions">
-          ${renderRunningPipelineAgentSessionLink(step)}
-          <span class="wm-pipeline-status-chip" data-status="${escapeHtml(step.status)}">${escapeHtml(statusLabel(step.status))}</span>
-        </span>
-      </div>
-    `;
   }
 
   function renderContent() {
@@ -524,6 +561,19 @@ export function showRunningPipelinesModal({ showToast } = {}) {
   }
 
   refreshButton.addEventListener("click", () => void refreshModalRuns());
+  body.addEventListener("click", (event) => {
+    const selectStepButton = event.target?.closest?.('[data-action="select-step"]');
+    if (selectStepButton) {
+      event.preventDefault();
+      void openStepDetails(selectStepButton.dataset.runId ?? "", selectStepButton.dataset.stepId ?? "");
+      return;
+    }
+    const closeStepButton = event.target?.closest?.('[data-action="close-step-detail"]');
+    if (closeStepButton) {
+      event.preventDefault();
+      closeStepDetails();
+    }
+  });
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) {
       dialog.close();

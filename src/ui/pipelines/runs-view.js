@@ -189,7 +189,7 @@ function renderStepDetailModal(state) {
   `;
 }
 
-function renderStepDetail(state) {
+export function renderStepDetail(state) {
   const { step, events = [], callbacks = [], previousSteps = [] } = state.selectedStep;
   const run = state.selectedRun?.run ?? { input: {} };
   const runSteps = state.selectedRun?.steps ?? [];

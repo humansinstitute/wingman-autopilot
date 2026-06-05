@@ -8,6 +8,7 @@ import {
   getRecentPipelineRunPageCount,
   isActivePipelineRun,
   renderRunningPipelineAgentSessionLink,
+  renderRunningPipelineStepTimeline,
 } from "./running-pipelines-modal.js";
 
 describe("running pipelines modal helpers", () => {
@@ -77,5 +78,44 @@ describe("running pipelines modal helpers", () => {
   test("omits the agent session link when a step has no session id", () => {
     expect(getPipelineStepSessionId({ wingmanSessionId: "   " })).toBe(null);
     expect(renderRunningPipelineAgentSessionLink({ kind: "code" })).toBe("");
+  });
+
+  test("renders pipeline step cards and selected step detail for the quick modal", () => {
+    const run = {
+      id: "run-1",
+      input: { prompt: "Build cards" },
+      status: "running",
+    };
+    const steps = [{
+      id: "step-1",
+      stepIndex: 1,
+      name: "Plan",
+      kind: "agent",
+      status: "running",
+      input: { prompt: "Build cards" },
+      output: { summary: "Cards ready" },
+      result: { plan: { summary: "Cards ready" } },
+      metadata: {
+        description: "Plan the modal cards.",
+        display: {
+          in: [{ label: "Prompt", path: "$.prompt", format: "text" }],
+          out: [{ label: "Summary", path: "$.summary", format: "text" }],
+        },
+        executor: { kind: "agent", agent: "codex" },
+      },
+    }];
+    const html = renderRunningPipelineStepTimeline(run, steps, {
+      step: steps[0],
+      events: [],
+      callbacks: [],
+      previousSteps: [],
+    });
+
+    expect(html).toContain('data-testid="pipeline-step-card-timeline"');
+    expect(html).toContain('data-testid="pipeline-step-card"');
+    expect(html).toContain("<code>Prompt</code>");
+    expect(html).toContain("<code>Summary</code>");
+    expect(html).toContain('data-testid="running-pipeline-step-modal"');
+    expect(html).toContain('data-testid="pipeline-step-detail"');
   });
 });
