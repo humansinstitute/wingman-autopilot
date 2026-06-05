@@ -1,3 +1,9 @@
+import {
+  applyAuthRouteRedirect,
+  renderAuthPendingView as defaultRenderAuthPendingView,
+  shouldHoldProtectedRoute,
+} from "./auth-route-guard.js";
+
 export function shouldFullRenderOnSessionUpdate(route) {
   return route !== "files" && route !== "live";
 }
@@ -20,6 +26,7 @@ export function createAppRenderer({
   renderRouteView,
   renderFileEditorOverlay,
   renderWorktreeModal,
+  renderAuthPendingView = defaultRenderAuthPendingView,
   focusComposerTextarea,
   setActiveNav,
   syncMenuTabs,
@@ -28,6 +35,8 @@ export function createAppRenderer({
   syncHeaderWriterToggle,
   updateAgentStatusIndicators,
   updateDocumentTitle,
+  isAuthenticated = () => true,
+  isAuthResolved = () => true,
 }) {
   let renderDebounceTimer = null;
   let isRendering = false;
@@ -46,12 +55,29 @@ export function createAppRenderer({
     renderDebounceTimer = setTimeout(() => {
       isRendering = true;
       try {
-        const currentRoute = getCurrentRoute();
+        const authenticated = Boolean(isAuthenticated());
+        const authResolved = Boolean(isAuthResolved());
+        const initialRoute = getCurrentRoute();
+        const authPending = shouldHoldProtectedRoute(initialRoute, {
+          authenticated,
+          authResolved,
+        });
+        const currentRoute = authPending
+          ? initialRoute
+          : applyAuthRouteRedirect({
+              route: initialRoute,
+              authenticated,
+              authResolved,
+              setCurrentRoute,
+              fallbackRoute: "home",
+              fallbackPath: homeRoute,
+              replaceHistory: true,
+            });
         const routeChanged = previousRenderRoute !== currentRoute;
         previousRenderRoute = syncLiveRouteTransport({
           previousRoute: previousRenderRoute,
-          currentRoute,
-          activeSessionId: sessionsStore().activeSessionId,
+          currentRoute: authPending ? "home" : currentRoute,
+          activeSessionId: authPending ? null : sessionsStore().activeSessionId,
           sseManager,
           liveRefreshController: getLiveRefreshController(),
         });
@@ -72,7 +98,7 @@ export function createAppRenderer({
           }
         }
 
-        const resolvedRoute = getCurrentRoute();
+        const resolvedRoute = authPending ? currentRoute : getCurrentRoute();
         const focusSnapshot = captureFocusSnapshot();
         if (!routeChanged && stablePages.has(resolvedRoute)) {
           setActiveNav();
@@ -84,14 +110,16 @@ export function createAppRenderer({
         }
 
         appRoot.innerHTML = "";
-        const view = renderRouteView(resolvedRoute);
+        const view = authPending ? renderAuthPendingView() : renderRouteView(resolvedRoute);
         appRoot.append(view);
-        renderFileEditorOverlay();
-        renderWorktreeModal();
-        appRoot.dataset.route = resolvedRoute;
+        if (!authPending) {
+          renderFileEditorOverlay();
+          renderWorktreeModal();
+        }
+        appRoot.dataset.route = authPending ? "auth" : resolvedRoute;
         restoreFocusFromSnapshot(focusSnapshot);
 
-        if (resolvedRoute === "live" && (!document.activeElement || document.activeElement === document.body)) {
+        if (!authPending && resolvedRoute === "live" && (!document.activeElement || document.activeElement === document.body)) {
           const textarea = document.querySelector(".wm-composer textarea");
           focusComposerTextarea(textarea, "restore");
         }
@@ -99,12 +127,16 @@ export function createAppRenderer({
         setActiveNav();
         syncMenuTabs();
         syncDesktopSessionIndicator();
-        if (resolvedRoute !== "live") {
+        if (authPending || resolvedRoute !== "live") {
           syncHeaderWebviewToggle(null);
           syncHeaderWriterToggle(null);
         }
         updateAgentStatusIndicators();
-        updateDocumentTitle();
+        if (authPending) {
+          document.title = "Wingman";
+        } else {
+          updateDocumentTitle();
+        }
       } finally {
         isRendering = false;
         renderDebounceTimer = null;

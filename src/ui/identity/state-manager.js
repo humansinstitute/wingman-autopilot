@@ -12,6 +12,7 @@ import { createAdminUsersState } from "../state/index.js";
 import { showToast } from "../utils/toast.js";
 import { openConfirmDialog } from "../common/dialog-prompts.js";
 import { fetchNpubProjects } from "../npub-projects/index.js";
+import { applyAuthRouteRedirect } from "../core/auth-route-guard.js";
 import { publishDelegateRegistryForCurrentUser } from "./bot-delegate-publisher.js";
 import { normaliseNpubValue, isFiniteNumber, toFiniteTimestamp } from "./dom.js";
 import {
@@ -810,6 +811,16 @@ export function initIdentityStateManager(deps) {
     if (becameUnauthenticated) {
       stopSigningListener();
       resetWorkspaceDelegationsState();
+      applyAuthRouteRedirect({
+        route: getCurrentRoute(),
+        authenticated: false,
+        authResolved: true,
+        setCurrentRoute,
+        fallbackRoute: "home",
+        fallbackPath: HOME_ROUTE,
+        replaceHistory: true,
+      });
+      render();
     }
 
     return next;

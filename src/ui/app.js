@@ -558,6 +558,7 @@ function resolveCurrentLiveSessionId() {
 }
 
 let currentRoute = getRouteFromPath(window.location.pathname);
+let authRouteResolved = false;
 let currentTheme = "dark";
 let tabsVisible = true;
 let taskDispatchTabsVisible = true;
@@ -1883,6 +1884,8 @@ const appRenderer = createAppRenderer({
   syncHeaderWriterToggle,
   updateAgentStatusIndicators: (...args) => updateAgentStatusIndicators(...args),
   updateDocumentTitle,
+  isAuthenticated: () => Boolean(state.identity.authenticated),
+  isAuthResolved: () => authRouteResolved,
 });
 const render = (...args) => appRenderer.render(...args);
 const handleSessionsStoreItemsChanged = (...args) => appRenderer.handleSessionsStoreItemsChanged(...args);
@@ -2892,16 +2895,16 @@ dialog.addEventListener("cancel", (event) => {
     }
   }
 
+  authRouteResolved = true;
   ensureFeatureFlagsLoaded();
 
   // ── Parallel data fetches (independent of each other) ──
-  const dataFetches = [fetchSessions()];
+  const dataFetches = [];
   if (state.identity.authenticated) {
+    dataFetches.push(fetchSessions());
     dataFetches.push(fetchApps({ tail: APP_LOG_PREVIEW_LINES }));
     dataFetches.push(fetchNpubProjects().catch(() => {}));
     dataFetches.push(syncAuthenticatedStartupStores());
-  } else if (currentRoute === "apps") {
-    dataFetches.push(fetchApps({ tail: APP_LOG_PREVIEW_LINES }));
   }
   await Promise.all(dataFetches);
 
