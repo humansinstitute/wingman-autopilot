@@ -56,6 +56,11 @@ describe("autopilot command palette helpers", () => {
     expect(commandPaletteSource).toContain("favourites: state?.files?.favourites ?? []");
   });
 
+  test("keeps the command search input mounted while typing", () => {
+    expect(commandPaletteSource).toContain("render({ syncInputValue: false })");
+    expect(commandPaletteSource).not.toContain("requestAnimationFrame(() => overlay?.querySelector(\"[data-command-palette-input]\")?.focus())");
+  });
+
   test("builds launch items with modal on 0 and recent projects on 1-9", () => {
     const projects = Array.from({ length: 11 }, (_, index) => ({
       id: `project-${index + 1}`,

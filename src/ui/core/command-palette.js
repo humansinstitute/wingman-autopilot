@@ -18,6 +18,7 @@ import {
 
 const RECENT_SESSION_STORAGE_KEY = "wingman:command-palette:recent-sessions";
 const RECENT_APP_RESTART_STORAGE_KEY = "wingman:command-palette:recent-app-restarts";
+const COMMAND_PALETTE_INPUT_SELECTOR = "[data-command-palette-input]";
 
 function getItemElementId(itemId) {
   return `command-palette-item-${String(itemId ?? "").replace(/[^a-zA-Z0-9_-]/g, "-")}`;
@@ -315,7 +316,7 @@ export function createAutopilotCommandPalette({
 
   function syncActiveElement({ scroll = false } = {}) {
     const activeElementId = activeId ? getItemElementId(activeId) : "";
-    overlay?.querySelector("[data-command-palette-input]")?.setAttribute(
+    overlay?.querySelector(COMMAND_PALETTE_INPUT_SELECTOR)?.setAttribute(
       "aria-activedescendant",
       activeElementId,
     );
@@ -335,8 +336,7 @@ export function createAutopilotCommandPalette({
     setActive(getNextCommandPaletteActiveId(items, activeId, delta));
   }
 
-  function render() {
-    if (!overlay) return;
+  function getRenderModel() {
     const items = getFilteredItems();
     const keyboardItems = getCommandPaletteKeyboardItems(items);
     activeId = activeId && items.some((item) => item.id === activeId)
@@ -350,41 +350,88 @@ export function createAutopilotCommandPalette({
     const emptyMessage = mode === "session-launch" && launchProjectsLoading
       ? "Loading recent projects..."
       : "No commands match.";
-    overlay.innerHTML = `
-      <section class="wm-command-palette" aria-labelledby="autopilot-command-palette-title">
-        <h2 id="autopilot-command-palette-title" class="wm-sr-only">Command palette</h2>
-        <div class="wm-command-palette-search">
-          <input
-            type="search"
-            value="${escapeAttribute(query)}"
-            placeholder="${escapeAttribute(placeholder)}"
-            data-command-palette-input
-            aria-label="Search commands"
-            aria-controls="autopilot-command-palette-results"
-            aria-activedescendant="${escapeAttribute(activeId ? getItemElementId(activeId) : "")}"
-            autocomplete="off"
-          />
-          <kbd>${escapeHtml(shortcutLabel)}</kbd>
-        </div>
-        <div id="autopilot-command-palette-results" class="wm-command-palette-results" role="listbox" aria-label="Command results">
-          ${groups.length ? groups.map(renderGroup).join("") : `<p class="wm-command-palette-empty">${escapeHtml(emptyMessage)}</p>`}
-        </div>
-      </section>
-    `;
-    syncActiveElement();
-    overlay.querySelector("[data-command-palette-input]")?.addEventListener("input", (event) => {
-      query = event.target?.value ?? "";
-      activeId = "";
-      render();
-      requestAnimationFrame(() => overlay?.querySelector("[data-command-palette-input]")?.focus());
-    });
-    overlay.querySelectorAll("[data-command-palette-item]").forEach((button) => {
+
+    return {
+      groups,
+      placeholder,
+      shortcutLabel,
+      emptyMessage,
+    };
+  }
+
+  function updateSearchInput(input, model, { syncValue = true } = {}) {
+    if (!input) return;
+    if (syncValue && input.value !== query) {
+      input.value = query;
+    }
+    input.placeholder = model.placeholder;
+    input.setAttribute("aria-activedescendant", activeId ? getItemElementId(activeId) : "");
+  }
+
+  function bindResultEvents() {
+    overlay?.querySelectorAll("[data-command-palette-item]").forEach((button) => {
       button.addEventListener("mouseenter", () => setActive(button.dataset.itemId ?? ""));
       button.addEventListener("click", () => {
         const item = getFilteredItems().find((entry) => entry.id === button.dataset.itemId);
         void execute(item);
       });
     });
+  }
+
+  function renderResults(model) {
+    const results = overlay?.querySelector("#autopilot-command-palette-results");
+    if (!results) return;
+    results.innerHTML = model.groups.length
+      ? model.groups.map(renderGroup).join("")
+      : `<p class="wm-command-palette-empty">${escapeHtml(model.emptyMessage)}</p>`;
+    bindResultEvents();
+  }
+
+  function bindSearchInput(input) {
+    input?.addEventListener("input", (event) => {
+      query = event.target?.value ?? "";
+      activeId = "";
+      render({ syncInputValue: false });
+    });
+  }
+
+  function render({ syncInputValue = true } = {}) {
+    if (!overlay) return;
+    const model = getRenderModel();
+    let input = overlay.querySelector(COMMAND_PALETTE_INPUT_SELECTOR);
+
+    if (!input) {
+      overlay.innerHTML = `
+        <section class="wm-command-palette" aria-labelledby="autopilot-command-palette-title">
+          <h2 id="autopilot-command-palette-title" class="wm-sr-only">Command palette</h2>
+          <div class="wm-command-palette-search">
+            <input
+              type="search"
+              value="${escapeAttribute(query)}"
+              placeholder="${escapeAttribute(model.placeholder)}"
+              data-command-palette-input
+              aria-label="Search commands"
+              aria-controls="autopilot-command-palette-results"
+              aria-activedescendant="${escapeAttribute(activeId ? getItemElementId(activeId) : "")}"
+              autocomplete="off"
+            />
+            <kbd data-command-palette-shortcut>${escapeHtml(model.shortcutLabel)}</kbd>
+          </div>
+          <div id="autopilot-command-palette-results" class="wm-command-palette-results" role="listbox" aria-label="Command results"></div>
+        </section>
+      `;
+      input = overlay.querySelector(COMMAND_PALETTE_INPUT_SELECTOR);
+      bindSearchInput(input);
+    } else {
+      const shortcut = overlay.querySelector("[data-command-palette-shortcut]");
+      if (shortcut) {
+        shortcut.textContent = model.shortcutLabel;
+      }
+    }
+
+    updateSearchInput(input, model, { syncValue: syncInputValue });
+    renderResults(model);
+    syncActiveElement();
   }
 
   function renderGroup(group) {
