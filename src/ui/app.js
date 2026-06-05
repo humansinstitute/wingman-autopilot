@@ -54,6 +54,7 @@ import { initPipelinesPage } from "./pipelines/page.js";
 import { initSessionsStore } from "./sessions/store.js";
 import { initAppsStore } from "./apps/store.js";
 import { syncAuthenticatedStartupStores } from "./startup/protected-store-sync.js";
+import { restoreStartupIdentity } from "./startup/auth-startup.js";
 import { createSessionRuntimeActions } from "./sessions/runtime-actions.js";
 import { initSessionRuntimeSync } from "./sessions/runtime-sync.js";
 import { startSigningListener, stopSigningListener } from "./nip98/signing-listener.js";
@@ -2871,32 +2872,17 @@ dialog.addEventListener("cancel", (event) => {
     showToast("Failed to load app configuration", { type: "error" });
   }
 
-  // Try to restore session from device keystore first
-  if (typeof wingmanIdentity?.restoreFromDeviceKeystore === "function") {
-    try {
-      const restored = await wingmanIdentity.restoreFromDeviceKeystore(getIdentityWiringContext());
-      if (restored) {
-        console.log("[app] Session restored from device keystore");
-      }
-    } catch (err) {
-      console.warn("[app] Device keystore restore failed:", err);
-    }
+  try {
+    await restoreStartupIdentity({
+      identityApi: wingmanIdentity,
+      getIdentityWiringContext,
+      isAuthenticated: () => state.identity.authenticated,
+    });
+  } finally {
+    authRouteResolved = true;
+    ensureFeatureFlagsLoaded();
+    render();
   }
-
-  // Check for Key Teleport login parameter (if not already authenticated)
-  if (!state.identity.authenticated && typeof wingmanIdentity?.checkKeyTeleportParam === "function") {
-    try {
-      const teleportResult = await wingmanIdentity.checkKeyTeleportParam(getIdentityWiringContext());
-      if (teleportResult) {
-        console.log("[app] Key Teleport login completed");
-      }
-    } catch (err) {
-      console.warn("[app] Key Teleport check failed:", err);
-    }
-  }
-
-  authRouteResolved = true;
-  ensureFeatureFlagsLoaded();
 
   // ── Parallel data fetches (independent of each other) ──
   const dataFetches = [];

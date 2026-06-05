@@ -104,6 +104,21 @@ body[data-authenticated="false"] .guest-only {
   display: inline-flex;
 }
 
+.wm-auth-pending {
+  min-height: calc(var(--wm-viewport-height) - var(--nav-height));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  color: var(--text-primary);
+}
+
+.wm-auth-pending p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
 body[data-admin="false"] .requires-admin {
   display: none !important;
 }
