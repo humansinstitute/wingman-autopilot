@@ -77,7 +77,7 @@ describe("pipeline display fields", () => {
     expect(rows).toEqual([{ name: "Dispatch Task", value: false }]);
   });
 
-  test("fallback hides known plumbing without privileging chat fields", () => {
+  test("fallback hides known plumbing and promotes readable chat fields", () => {
     const rows = buildFallbackDisplayRows({
       dispatch: { routeId: "route-1" },
       runtime: { commandPrefix: "wm" },
@@ -86,8 +86,31 @@ describe("pipeline display fields", () => {
     });
 
     expect(rows).toEqual([
-      { name: "chat", value: { messageText: "Can you check the pipeline?", channelId: "chan-1" } },
+      { name: "Chat Message", value: "Can you check the pipeline?" },
       { name: "value", value: "visible" },
+    ]);
+  });
+
+  test("fallback promotes hydrate output thread and self-authored fields", () => {
+    const rows = buildAssignedOutputRows("$.chatContext", {
+      thread: {
+        recent_messages: [
+          { sender_npub: "npub1pete", body: "Hey Wingman can you check this?" },
+          { sender_npub: "npub1wingman", body: "I will check it." },
+        ],
+      },
+      selfAuthored: true,
+      shouldProceed: false,
+      suppressionReason: "trigger_thread_message_sender_is_self",
+    });
+
+    expect(rows).toEqual([
+      {
+        name: "Thread",
+        value: "2 messages: npub1pete: Hey Wingman can you check this? | npub1wingman: I will check it.",
+      },
+      { name: "Self Authored", value: true },
+      { name: "Suppression Reason", value: "trigger_thread_message_sender_is_self" },
     ]);
   });
 

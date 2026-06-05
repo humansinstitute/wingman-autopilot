@@ -344,6 +344,7 @@ function formatPreviewValue(value) {
   }
   if (value === undefined) return "undefined";
   if (value === null) return "null";
+  if (typeof value === "boolean") return value ? "True" : "False";
   return String(value);
 }
 

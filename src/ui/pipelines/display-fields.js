@@ -28,13 +28,17 @@ const PIPELINE_PLUMBING_KEYS = new Set([
   "messageId",
   "botNpub",
   "matchedSelfNpub",
-  "selfAuthored",
   "shouldProceed",
-  "suppressionReason",
   "availablePipelines",
   "validChildPipelines",
   "scopes",
   "defaults",
+  "hydrated",
+  "status",
+  "operation",
+  "fallbackContext",
+  "hydrationWarnings",
+  "acknowledgement",
 ]);
 
 export function buildExplicitDisplayRows(step, direction) {
@@ -49,13 +53,24 @@ export function buildExplicitDisplayRows(step, direction) {
 export function buildFallbackDisplayRows(value, options = {}) {
   if (!isObjectLike(value)) return [];
   const prefix = options.prefix ?? "";
-  return Object.entries(value)
-    .filter(([key, childValue]) => !isPipelinePlumbingKey(key) && isDisplayValue(childValue))
-    .slice(0, FIELD_LIMIT)
-    .map(([key, childValue]) => ({
-      name: joinDisplayPath(prefix, key),
-      value: childValue,
-    }));
+  const promotedRows = [];
+  const genericRows = [];
+  for (const [key, childValue] of Object.entries(value)) {
+    if (isPipelinePlumbingKey(key) || !isDisplayValue(childValue)) continue;
+    const promoted = buildPromotedFallbackRows(prefix, key, childValue);
+    if (promoted.length) {
+      promotedRows.push(...promoted);
+    } else {
+      genericRows.push({
+        name: joinDisplayPath(prefix, key),
+        value: childValue,
+      });
+    }
+  }
+  return dedupeRows([
+    ...sortPromotedRows(promotedRows),
+    ...genericRows,
+  ]).slice(0, FIELD_LIMIT);
 }
 
 export function buildAssignedOutputRows(assignPath, output) {
@@ -138,13 +153,86 @@ function summariseMessages(value, limit) {
     .slice(-limit)
     .map((message) => {
       const record = isObjectLike(message) ? message : { body: message };
-      const author = extractText(record.authorName ?? record.author ?? record.senderName ?? record.senderNpub ?? record.npub);
+      const author = extractText(record.authorName ?? record.author ?? record.senderName ?? record.senderNpub ?? record.sender_npub ?? record.npub);
       const body = extractText(record.body ?? record.message ?? record.text ?? record.content ?? record.payload);
       return [author, compactText(body, 52)].filter(Boolean).join(": ");
     })
     .filter(Boolean);
   const prefix = `${messages.length} message${messages.length === 1 ? "" : "s"}`;
   return previews.length ? `${prefix}: ${previews.join(" | ")}` : prefix;
+}
+
+function buildPromotedFallbackRows(prefix, key, value) {
+  const rows = [];
+  const lowerKey = String(key).toLowerCase();
+  if (lowerKey === "selfauthored" && typeof value === "boolean") {
+    return [{ name: "Self Authored", value }];
+  }
+  if (lowerKey === "suppressionreason" && typeof value === "string" && value.trim()) {
+    return [{ name: "Suppression Reason", value }];
+  }
+  if (!isObjectLike(value)) return rows;
+
+  const messageText = extractText(value.messageText ?? value.body ?? value.message ?? value.text ?? value.payload);
+  if (messageText && (lowerKey === "chat" || lowerKey === "message" || lowerKey === "record")) {
+    rows.push({
+      name: "Chat Message",
+      value: compactText(messageText),
+    });
+  }
+
+  const threadValue = value.thread ?? value.latestThread ?? value.messages ?? value.recent_messages ?? value.recentMessages;
+  if (threadValue !== undefined) {
+    const threadSummary = summariseMessages(threadValue, positiveInteger(value.threadDisplayLimit, 20));
+    if (threadSummary !== "0 messages") {
+      rows.push({
+        name: "Thread",
+        value: threadSummary,
+      });
+    }
+  }
+
+  if (typeof value.selfAuthored === "boolean") {
+    rows.push({
+      name: "Self Authored",
+      value: value.selfAuthored,
+    });
+  }
+
+  if (typeof value.suppressionReason === "string" && value.suppressionReason.trim()) {
+    rows.push({
+      name: "Suppression Reason",
+      value: value.suppressionReason,
+    });
+  }
+
+  return rows;
+}
+
+function sortPromotedRows(rows) {
+  const priority = new Map([
+    ["Chat Message", 0],
+    ["Thread", 1],
+    ["Self Authored", 2],
+    ["Suppression Reason", 3],
+  ]);
+  return [...rows].sort((left, right) => {
+    const leftPriority = priority.get(left.name) ?? 100;
+    const rightPriority = priority.get(right.name) ?? 100;
+    return leftPriority - rightPriority;
+  });
+}
+
+function dedupeRows(rows) {
+  const seen = new Set();
+  const deduped = [];
+  for (const row of rows) {
+    const key = `${row.name}\u0000${JSON.stringify(row.value)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(row);
+  }
+  return deduped;
 }
 
 function summariseRecords(value, limit) {

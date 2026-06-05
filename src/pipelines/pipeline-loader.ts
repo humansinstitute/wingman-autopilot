@@ -66,6 +66,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
         ],
         out: [
           { label: "Thread", path: "$.thread", format: "messages", limit: 6, empty: "No thread messages" },
+          { label: "Self Authored", path: "$.selfAuthored" },
           { label: "Referenced Records", path: "$.referencedRecords", format: "records", limit: 4, empty: "No referenced records" },
         ],
       },
@@ -1012,9 +1013,11 @@ export async function getPipelineDefinition(id: string, ownerAlias: string | nul
   const requestedId = id.trim();
   if (!requestedId) return null;
   const definitions = await listPipelineDefinitions(ownerAlias);
-  return definitions.find((definition) => definition.id === requestedId)
-    ?? definitions.find((definition) => pipelineDefinitionAliases(definition).includes(requestedId))
-    ?? null;
+  const exactDefinition = definitions.find((definition) => definition.id === requestedId);
+  if (exactDefinition) return exactDefinition;
+  const aliasMatches = definitions.filter((definition) => pipelineDefinitionAliases(definition).includes(requestedId));
+  if (!aliasMatches.length) return null;
+  return selectLatestPipelineDefinitions(aliasMatches)[0] ?? null;
 }
 
 function pipelineDefinitionAliases(definition: PipelineDefinitionRecord): string[] {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   getPipelineDefinition,
   getSharedPipelineDefinitionsDirectory,
+  getUserPipelineDefinitionsDirectory,
   listLatestPipelineDefinitions,
   makePipelineSlug,
   nextVersionedDefinitionPath,
@@ -98,9 +99,35 @@ describe("pipeline definition version paths", () => {
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
       "set scopeId null and continue",
     );
+    expect(definition?.spec.steps.find((step) => step.name === "hydrate-chat-context")?.display?.out).toContainEqual({
+      label: "Self Authored",
+      path: "$.selfAuthored",
+    });
     expect(definition?.spec.steps.find((step) => step.name === "publish-chat-response")).toMatchObject({
       when: { path: "$.chatContext.shouldProceed", equals: true },
     });
+  });
+
+  test("resolves stable user definition aliases to the latest version", async () => {
+    const userDir = getUserPipelineDefinitionsDirectory("tester");
+    mkdirSync(userDir, { recursive: true });
+    writeFileSync(join(userDir, "stable-chat.v1.json"), JSON.stringify({
+      name: "stable-chat",
+      version: 1,
+      input: {},
+      steps: [],
+    }));
+    writeFileSync(join(userDir, "stable-chat.v2.json"), JSON.stringify({
+      name: "stable-chat",
+      version: 2,
+      input: {},
+      steps: [],
+    }));
+
+    const definition = await getPipelineDefinition("stable-chat", "tester");
+
+    expect(definition?.slug).toBe("stable-chat.v2");
+    expect(definition?.spec.version).toBe(2);
   });
 
   test("skips invalid definition files instead of failing the whole definitions list", async () => {

@@ -31,6 +31,7 @@ const steps = [
       priority: "normal",
       estimate: "short",
       extra: "hidden after five",
+      notes: "also hidden",
     },
     result: {
       prompt: "same",
