@@ -12,11 +12,28 @@ export interface EqualsCondition {
   equals: unknown;
 }
 
+export type DisplayFieldFormat = "auto" | "text" | "count" | "messages" | "records" | "list" | "json";
+
+export interface DisplayFieldSpec {
+  label: string;
+  path: string;
+  source?: "input" | "output" | "state";
+  format?: DisplayFieldFormat;
+  limit?: number;
+  empty?: string;
+}
+
+export interface StepDisplaySpec {
+  in?: DisplayFieldSpec[];
+  out?: DisplayFieldSpec[];
+}
+
 export type DeclarativeStep =
   | {
       id?: string;
       name: string;
       description?: string;
+      display?: StepDisplaySpec;
       type: "block";
       block: string;
       input?: SelectorSpec;
@@ -28,6 +45,7 @@ export type DeclarativeStep =
       id?: string;
       name: string;
       description?: string;
+      display?: StepDisplaySpec;
       type: "code";
       function: string;
       input?: SelectorSpec;
@@ -38,6 +56,7 @@ export type DeclarativeStep =
       id?: string;
       name: string;
       description?: string;
+      display?: StepDisplaySpec;
       type: "agent";
       prompt: string;
       input?: SelectorSpec;
@@ -51,6 +70,7 @@ export type DeclarativeStep =
       id?: string;
       name: string;
       description?: string;
+      display?: StepDisplaySpec;
       type: "loop";
       iterations?: number | string;
       target?: string;
@@ -66,6 +86,7 @@ export type DeclarativeStep =
       id?: string;
       name: string;
       description?: string;
+      display?: StepDisplaySpec;
       type: "parallel";
       source: string;
       maxConcurrency?: number | string;

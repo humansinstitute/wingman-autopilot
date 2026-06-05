@@ -98,7 +98,7 @@ describe("pipeline run flow visualization", () => {
     expect(html).toContain("plan.build");
   });
 
-  test("filters pipeline plumbing from the default field summary", () => {
+  test("uses declarative display fields for the default field summary", () => {
     const plumbingSteps = [{
       id: "step-routing",
       stepIndex: 1,
@@ -115,6 +115,15 @@ describe("pipeline run flow visualization", () => {
         input: { pick: { dispatch: "$.dispatch", chat: "$.chat", runtime: "$.runtime" } },
         assign: "$.chatDispatchInput",
         description: "Prepare the visible chat request for classification.",
+        display: {
+          in: [
+            { label: "Message", path: "$.chat.messageText" },
+          ],
+          out: [
+            { label: "Objective", path: "$.objective" },
+            { label: "Thread", path: "$.latestThread", format: "messages" },
+          ],
+        },
         executor: { kind: "function", function: "dispatch.prepareChatIntentInput" },
       },
       output: {
@@ -129,9 +138,10 @@ describe("pipeline run flow visualization", () => {
       selectedStep: null,
     }, run, plumbingSteps);
 
-    expect(html).toContain("chat.messageText");
+    expect(html).toContain("<code>Message</code>");
     expect(html).toContain("Can you check the pipeline?");
-    expect(html).toContain("chatDispatchInput.objective");
+    expect(html).toContain("<code>Objective</code>");
+    expect(html).toContain("<code>Thread</code>");
     expect(html).not.toContain("<code>dispatch</code>");
     expect(html).not.toContain("route-1");
     expect(html).not.toContain("commandPrefix");

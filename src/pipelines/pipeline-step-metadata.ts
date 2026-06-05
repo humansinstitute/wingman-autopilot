@@ -10,6 +10,7 @@ export function buildPipelineStepMetadata(step: DeclarativeStep, options: {
     definitionStepId: step.id ?? null,
     name: step.name,
     description: step.description ?? null,
+    display: step.display ?? null,
     type: step.type,
     input: inputSelector,
     assign: "assign" in step ? step.assign ?? null : null,
@@ -71,6 +72,8 @@ function summarizeChildStep(step: DeclarativeStep): JsonObject {
   return compactObject({
     definitionStepId: step.id ?? null,
     name: step.name,
+    description: step.description ?? null,
+    display: step.display ?? null,
     type: step.type,
     input: step.input ?? null,
     assign: "assign" in step ? step.assign ?? null : null,

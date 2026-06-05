@@ -60,6 +60,15 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
         },
       },
       assign: "$.chatContext",
+      display: {
+        in: [
+          { label: "Message", path: "$.chat.messageText", format: "text" },
+        ],
+        out: [
+          { label: "Thread", path: "$.thread", format: "messages", limit: 6, empty: "No thread messages" },
+          { label: "Referenced Records", path: "$.referencedRecords", format: "records", limit: 4, empty: "No referenced records" },
+        ],
+      },
     },
     {
       name: "prepare-intent-input",
@@ -80,9 +89,20 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
         },
       },
       assign: "$.chatDispatchInput",
+      display: {
+        in: [
+          { label: "Thread", path: "$.chatContext.thread", format: "messages", limit: 6, empty: "No thread messages" },
+        ],
+        out: [
+          { label: "Objective", path: "$.objective", format: "text" },
+          { label: "Thread", path: "$.latestThread", format: "messages", limit: 6, empty: "No thread messages" },
+          { label: "Referenced Records", path: "$.referencedRecords", format: "records", limit: 4, empty: "No referenced records" },
+        ],
+      },
     },
     {
       name: "analyse-intent",
+      description: "Analyse the hydrated thread and decide whether to reply directly, ask for clarification, or launch a child pipeline.",
       type: "agent",
       when: { path: "$.chatContext.shouldProceed", equals: true },
       agent: "$.agent.defaultAgent",
@@ -94,9 +114,21 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
       },
       prompt: "You are stage 1 of agent-dispatch-chat: Analyse Intent. The selected input contains chatDispatchInput, a compact decision packet. Use chatDispatchInput.latestThread as the authoritative latest conversation, referencedRecords as supporting Flight Deck context, scopes for optional scope selection, defaults for workdir/assigner/reviewer defaults, and validChildPipelines as the only allowed child pipeline choices. Do not invent pipeline names and do not choose any dispatch/intake pipeline. One valid intent is ignore: if selfCheck says this is self-authored, set intent ignore, dispatchTask false, and chatResponse.body to an empty string. Decide whether this chat needs extended task-backed work. If it can be answered directly or needs clarification before work starts, set dispatchTask false. Discussion, planning, design thinking, term clarification, document-centred planning, and document comment discussion must be no-task discussion work: set dispatchTask false and choose document-discussion when the thread is about a plan, design, document, spec, proposal, or document comments; choose discussion-chat-response for non-document discussion. If it is generic, miscellaneous, image-based, operational, writing, planning, or otherwise not clearly code/research-report/design discussion work, choose do-and-review. Choose software-implementation-review-loop only for code, repository, build, test, deployment, or implementation work. Choose research-and-report when the requested output is explicitly research with a report or document. If it needs research, implementation, document generation, graph-memory review, or an explicitly requested task-backed pipeline, set dispatchTask true only when you can select the pipeline, workdir, task title, instructions, and acceptance criteria. Never set dispatchTask true for document-discussion or discussion-chat-response. When dispatching a task, write taskDraft.instructions with the concrete request details already visible in latestThread and referencedRecords; do not merely tell the downstream worker to inspect the thread. Choose scopeId from scopes when one fits; if scopes is empty or no scope fits, set scopeId null and continue. Return JSON only with: intent string, dispatchTask boolean, recommendedPipelineId string|null, scopeId string|null, workdir string|null, taskDraft object with title string, instructions string, acceptanceCriteria array, executionPlan array, managerChecklist array, assignerNpub string|null, reviewerNpub string|null, chatResponse object with body string, clarifyingQuestion string|null, confidence number from 0 to 1. There is always a chat response; for ignore use intent ignore, an empty body, and confidence 1. Do not include responseOnly.",
       assign: "$.agentDecision",
+      display: {
+        in: [
+          { label: "Thread", path: "$.chatDispatchInput.latestThread", format: "messages", limit: 6, empty: "No thread messages" },
+        ],
+        out: [
+          { label: "Intent", path: "$.intent", format: "text" },
+          { label: "Dispatch Task", path: "$.dispatchTask" },
+          { label: "Pipeline", path: "$.recommendedPipelineId", format: "text" },
+          { label: "Reply", path: "$.chatResponse.body", format: "text" },
+        ],
+      },
     },
     {
       name: "normalise-decision",
+      description: "Normalise the agent's intent JSON into the dispatch decision and child work plan.",
       type: "code",
       function: "dispatch.normaliseChatDispatchDecision",
       when: { path: "$.chatContext.shouldProceed", equals: true },
@@ -114,6 +146,19 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
         },
       },
       assign: "$.decision",
+      display: {
+        in: [
+          { label: "Intent", path: "$.agentDecision.intent", format: "text" },
+          { label: "Requested Pipeline", path: "$.agentDecision.recommendedPipelineId", format: "text" },
+        ],
+        out: [
+          { label: "Dispatch Task", path: "$.dispatchTask" },
+          { label: "Pipeline", path: "$.pipelineDefinitionId", format: "text" },
+          { label: "Task", path: "$.workPlan.taskSummary", format: "text" },
+          { label: "Reply", path: "$.responseDraft", format: "text" },
+          { label: "Clarifying Question", path: "$.clarifyingQuestion", format: "text" },
+        ],
+      },
     },
     {
       name: "detect-review-approval",

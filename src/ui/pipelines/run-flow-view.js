@@ -4,65 +4,17 @@ import {
   formatBytes,
   statusLabel,
 } from "./view-utils.js";
+import {
+  buildAssignedOutputRows,
+  buildExplicitDisplayRows,
+  buildFallbackDisplayRows,
+  displayPath,
+} from "./display-fields.js";
 
 const FIELD_LIMIT = 40;
 const FIELD_ROW_LIMIT = 5;
 const LEDGER_LIMIT = 120;
 const PREVIEW_LIMIT = 96;
-const HUMAN_CONTAINER_KEYS = [
-  "chatDispatchInput",
-  "freshChatContext",
-  "chatContext",
-  "chat",
-  "record",
-  "task",
-  "workPlan",
-  "createdTask",
-  "discussionDocument",
-  "documentContext",
-  "agentDecision",
-  "agentResponse",
-  "workerResult",
-  "managerReview",
-  "report",
-  "memory",
-  "graphContext",
-];
-const PIPELINE_PLUMBING_KEYS = new Set([
-  "dispatch",
-  "routing",
-  "runtime",
-  "agent",
-  "workerAgent",
-  "managerAgent",
-  "reporterAgent",
-  "callback",
-  "callbackUrl",
-  "callbackToken",
-  "commandPrefix",
-  "pipeline",
-  "pipelineId",
-  "pipelineDefinitionId",
-  "pipelineRunId",
-  "runId",
-  "routeId",
-  "triggerKind",
-  "source",
-  "sourceId",
-  "sourceType",
-  "channelId",
-  "threadId",
-  "messageId",
-  "botNpub",
-  "matchedSelfNpub",
-  "selfAuthored",
-  "shouldProceed",
-  "suppressionReason",
-  "availablePipelines",
-  "validChildPipelines",
-  "scopes",
-  "defaults",
-]);
 
 export function renderStepCardTimeline(state, run, steps) {
   const sortedSteps = sortSteps(steps);
@@ -140,9 +92,9 @@ export function buildStateLedgerRows(run, steps, asOfStepIndex = null) {
 }
 
 function renderStateRail(run, steps) {
-  const initialFields = buildHumanPayloadRows(run?.input);
+  const initialFields = buildFallbackDisplayRows(run?.input);
   const latestState = resolveLatestState(run, steps);
-  const currentFields = buildHumanPayloadRows(latestState);
+  const currentFields = buildFallbackDisplayRows(latestState);
   return `
     <div class="wm-pipeline-state-rail" aria-label="Run data state over time" data-testid="pipeline-state-rail">
       <div>
@@ -270,34 +222,36 @@ function renderLedgerRow(row) {
 }
 
 function getStepWriteRows(run, steps, step) {
+  const explicitRows = buildExplicitDisplayRows(step, "out");
+  if (explicitRows) return explicitRows;
   if (typeof step.metadata?.assign === "string" && step.metadata.assign.trim()) {
     return buildAssignedOutputRows(step.metadata.assign.trim(), getStepOutput(step));
   }
   const previous = resolveStateBeforeStep(run, steps, step);
   const next = isObjectLike(step.result) ? step.result : null;
-  if (!next) return buildObjectRows(getStepOutput(step));
+  if (!next) return buildFallbackDisplayRows(getStepOutput(step));
   return collectChangedPaths(previous, next)
     .slice(0, FIELD_LIMIT)
     .map((path) => ({ name: displayPath(path), value: getPathValue(next, path) }));
 }
 
 function getStepReadRows(step) {
+  const explicitRows = buildExplicitDisplayRows(step, "in");
+  if (explicitRows) return explicitRows;
   const selector = step.metadata?.input;
   if (typeof selector === "string" && selector.trim()) {
     const selectorName = displayPath(selector.trim());
-    return buildHumanPayloadRows(step.input, {
-      prefix: isPipelinePlumbingKey(selectorName) ? "" : selectorName,
-    });
+    return buildFallbackDisplayRows(step.input, { prefix: selectorName });
   }
   if (isObjectLike(selector)) {
     if (isObjectLike(selector.pick)) {
-      return buildHumanPayloadRows(step.input);
+      return buildFallbackDisplayRows(step.input);
     }
     if (isObjectLike(selector.value)) {
-      return buildHumanPayloadRows(selector.value);
+      return buildFallbackDisplayRows(selector.value);
     }
   }
-  return buildHumanPayloadRows(step.input);
+  return buildFallbackDisplayRows(step.input);
 }
 
 function resolveStateBeforeStep(run, steps, targetStep) {
@@ -342,76 +296,6 @@ function getExecutorLabel(step) {
   if (typeof executor.target === "string") return `target ${executor.target}`;
   if (typeof executor.kind === "string") return executor.kind;
   return "";
-}
-
-function buildObjectRows(value, prefix = "") {
-  if (!isObjectLike(value)) return [];
-  return Object.entries(value)
-    .slice(0, FIELD_LIMIT)
-    .map(([key, childValue]) => ({
-      name: joinDisplayPath(prefix, key),
-      value: childValue,
-    }));
-}
-
-function buildAssignedOutputRows(assignPath, output) {
-  const displayAssignPath = displayPath(assignPath);
-  if (!isObjectLike(output)) return [{ name: displayAssignPath, value: output }];
-  const entries = Object.entries(output);
-  if (!entries.length) return [{ name: displayAssignPath, value: output }];
-  const assignLeaf = displayAssignPath.split(".").filter(Boolean).at(-1);
-  if (entries.length === 1 && entries[0][0] === assignLeaf) {
-    return [{ name: displayAssignPath, value: entries[0][1] }];
-  }
-  return buildHumanPayloadRows(output, { prefix: displayAssignPath });
-}
-
-function buildHumanPayloadRows(value, options = {}) {
-  if (!isObjectLike(value)) return [];
-  const prefix = options.prefix ?? "";
-  const preferredRows = [];
-  for (const key of HUMAN_CONTAINER_KEYS) {
-    if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
-    preferredRows.push(...buildFilteredObjectRows(value[key], joinDisplayPath(prefix, key), key));
-  }
-  if (preferredRows.length) return preferredRows.slice(0, FIELD_LIMIT);
-  return buildFilteredObjectRows(value, prefix).slice(0, FIELD_LIMIT);
-}
-
-function buildFilteredObjectRows(value, prefix = "", containerKey = "") {
-  if (!isObjectLike(value)) return [];
-  const displayValue = containerKey === "record" && isObjectLike(value.payload) ? value.payload : value;
-  return Object.entries(displayValue)
-    .filter(([key, childValue]) => !isPipelinePlumbingKey(key) && isDisplayValue(childValue))
-    .slice(0, FIELD_LIMIT)
-    .map(([key, childValue]) => ({
-      name: joinDisplayPath(prefix, key),
-      value: childValue,
-    }));
-}
-
-function joinDisplayPath(prefix, key) {
-  const cleanPrefix = displayPath(prefix);
-  const cleanKey = displayPath(key);
-  if (!cleanPrefix) return cleanKey;
-  if (!cleanKey) return cleanPrefix;
-  return `${cleanPrefix}.${cleanKey}`;
-}
-
-function displayPath(path) {
-  return String(path ?? "").replace(/^\$\./, "").replace(/^\$/, "");
-}
-
-function isPipelinePlumbingKey(key) {
-  const normalized = displayPath(key).split(".").filter(Boolean).at(-1) ?? "";
-  return PIPELINE_PLUMBING_KEYS.has(normalized);
-}
-
-function isDisplayValue(value) {
-  if (value === undefined || typeof value === "function" || typeof value === "symbol") return false;
-  if (isObjectLike(value) && !Array.isArray(value) && Object.keys(value).length === 0) return false;
-  if (Array.isArray(value) && value.length === 0) return false;
-  return true;
 }
 
 function collectChangedPaths(previous, next, path = "$") {
