@@ -45,6 +45,10 @@ Run `bun install` after pulling dependencies. Start the orchestrator locally wit
 
 Do not restart, stop, kill, or replace the running Wingman Bun process from inside an agent session. In local Bun process-manager mode, the agent session is a child of the same Wingman host; restarting `bun start`, `bun run src/index.ts`, killing the parent PID, or running local restart scripts can terminate active sessions including your own. If code changes require a server restart, finish the change, state that a restart is required, and let the operator restart Wingman from outside the managed session. Only use `/api/system/restart`, `bun clis/status.ts restart`, or any restart script when the user explicitly asks for a restart and acknowledges active sessions may be interrupted.
 
+## Autopilot Pipeline Authoring
+
+When creating or editing declarative pipelines, add human-readable `display.in` and `display.out` metadata to every non-trivial step. Display rows should explain the business payload moving through the step, not expose routing or runtime plumbing. Prefer labels such as `Chat Message`, `Thread`, `Company`, `Summary`, `Approved`, `Sources`, and `Webhook Delivered`; point each label at the meaningful nested JSON path rather than showing parent objects as `5 fields`. Use `format: "text"`, `"messages"`, `"records"`, `"list"`, or `"count"` where useful, and keep rows compact. Skipped steps intentionally show no data rows in the Pipelines UI, so put the reason in the step `description` or `when` condition.
+
 ## Coding Style & Naming Conventions
 
 **YOU SHOULD GIT COMMIT EACH CHANGE YOU MAKE WITH A DESCRIPTIVE NAME**

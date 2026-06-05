@@ -26,6 +26,7 @@ Dispatch model:
 - For task dispatch, read the task, latest comments, linked records, and acceptance criteria before changing state.
 - For task review, verify evidence before promoting or closing work.
 - For comments, decide whether a reply or record update is needed, then act in the originating workspace.
+- When editing Autopilot declarative pipelines, include human-readable `display.in` and `display.out` metadata for non-trivial steps. Show domain payload fields, not routing/runtime plumbing. Skipped steps should explain their reason through status, description, or `when`, not displayed data rows.
 
 Flight Deck:
 - Use the FlightDeck CLI commands passed in pipeline input under `runtime.commands` when they are available.

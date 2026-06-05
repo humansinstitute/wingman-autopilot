@@ -111,8 +111,9 @@ function renderStateRail(run, steps) {
 }
 
 function renderStepCard(state, run, step) {
-  const inputFields = getStepReadRows(step);
-  const writeFields = getStepWriteRows(run, state.selectedRun?.steps ?? [], step);
+  const skipped = step.status === "skipped";
+  const inputFields = skipped ? [] : getStepReadRows(step);
+  const writeFields = skipped ? [] : getStepWriteRows(run, state.selectedRun?.steps ?? [], step);
   const dataSize = Number(step.inputBytes ?? 0) + Number(step.resultBytes ?? 0);
   const description = typeof step.metadata?.description === "string" ? step.metadata.description.trim() : "";
   return `

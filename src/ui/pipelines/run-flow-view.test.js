@@ -148,6 +148,38 @@ describe("pipeline run flow visualization", () => {
     expect(html).not.toContain("commandPrefix");
   });
 
+  test("does not display data rows for skipped steps", () => {
+    const skippedSteps = [{
+      id: "step-skipped",
+      stepIndex: 1,
+      name: "Skipped branch",
+      kind: "code",
+      status: "skipped",
+      input: { prompt: "secret input" },
+      output: { result: "secret output" },
+      metadata: {
+        description: "Only runs when the branch is active.",
+        input: { pick: { prompt: "$.prompt" } },
+        assign: "$.branch",
+        executor: { kind: "function", function: "branch.run" },
+        display: {
+          in: [{ label: "Prompt", path: "$.prompt" }],
+          out: [{ label: "Result", path: "$.result" }],
+        },
+      },
+    }];
+    const html = renderStepCardTimeline({
+      selectedRun: { steps: skippedSteps },
+      selectedStep: null,
+    }, run, skippedSteps);
+
+    expect(html).toContain("Skipped branch");
+    expect(html).toContain("Skipped");
+    expect(html).toContain("No user-facing fields");
+    expect(html).not.toContain("secret input");
+    expect(html).not.toContain("secret output");
+  });
+
   test("renders the state ledger table", () => {
     const html = renderStateLedger(run, steps);
 
