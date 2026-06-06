@@ -7,7 +7,12 @@ import type { SessionSnapshot } from "../agents/process-manager";
 import type { SessionApiContext } from "../server/session-api-routes";
 import { builtinPipelineFunctions } from "./functions";
 import type { PipelineDefinitionRecord } from "./pipeline-loader";
-import { acceptAgentCallback, resumeDeclarativePipeline, runDeclarativePipeline } from "./pipeline-runner";
+import {
+  acceptAgentCallback,
+  resumeDeclarativePipeline,
+  resumeErroredDeclarativePipeline,
+  runDeclarativePipeline,
+} from "./pipeline-runner";
 import { runParallelStep } from "./parallel-runner";
 import { PipelineStore } from "./pipeline-store";
 
@@ -22,6 +27,7 @@ afterEach(() => {
   delete process.env.PIPELINE_PARALLEL_POLL_MS;
   delete process.env.PIPELINE_PARALLEL_AGENT_START_RETRY_BACKOFF_MS;
   delete process.env.PIPELINE_AGENT_INPUT_MAX_BYTES;
+  delete process.env.PIPELINE_AGENT_CALLBACK_TIMEOUT_RETRIES;
 });
 
 const makeStore = () => new PipelineStore(join(tempDir, "pipelines.sqlite"));
@@ -78,6 +84,105 @@ describe("runDeclarativePipeline", () => {
       assign: "$.normalised",
       executor: { kind: "function", function: "text.normalise" },
     });
+  });
+
+  test("resumes an errored historical run from the failed top-level step", async () => {
+    const store = makeStore();
+    const definition: PipelineDefinitionRecord = {
+      id: "manual-resume-test",
+      slug: "manual-resume-test",
+      name: "manual-resume-test",
+      scope: "user",
+      ownerAlias: "alpha-beta-gamma",
+      path: join(tempDir, "manual-resume-test.json"),
+      spec: {
+        name: "manual-resume-test",
+        input: { value: 1 },
+        steps: [
+          {
+            name: "first",
+            type: "code",
+            function: "test.first",
+            assign: "$.first",
+          },
+          {
+            name: "flaky",
+            type: "code",
+            function: "test.flaky",
+            assign: "$.flaky",
+          },
+          {
+            name: "final",
+            type: "code",
+            function: "test.final",
+            assign: "$.final",
+          },
+        ],
+      },
+    };
+    let shouldFail = true;
+
+    const failedRun = await runDeclarativePipeline({
+      store,
+      sessionApiContext: {} as never,
+      definition,
+      registry: {
+        async "test.first"() {
+          return { value: "done" };
+        },
+        async "test.flaky"() {
+          if (shouldFail) throw new Error("temporary failure");
+          return { value: "recovered" };
+        },
+        async "test.final"() {
+          return { value: "complete" };
+        },
+      },
+      input: definition.spec.input!,
+      ownerNpub: "npub-test",
+      ownerAlias: "alpha-beta-gamma",
+      callbackOrigin: "http://localhost",
+    });
+
+    expect(failedRun.status).toBe("error");
+    expect(failedRun.cursorIndex).toBe(1);
+    expect(store.listSteps(failedRun.id).map((step) => [step.name, step.status])).toEqual([
+      ["first", "ok"],
+      ["flaky", "error"],
+    ]);
+
+    shouldFail = false;
+    const resumedRun = await resumeErroredDeclarativePipeline({
+      store,
+      sessionApiContext: {} as never,
+      definition,
+      registry: {
+        async "test.first"() {
+          throw new Error("first step should not run again");
+        },
+        async "test.flaky"() {
+          return { value: "recovered" };
+        },
+        async "test.final"() {
+          return { value: "complete" };
+        },
+      },
+      input: definition.spec.input!,
+      ownerNpub: "npub-test",
+      ownerAlias: "alpha-beta-gamma",
+      callbackOrigin: "http://localhost",
+    }, failedRun.id);
+
+    expect(resumedRun?.status).toBe("ok");
+    expect(resumedRun?.result?.first).toEqual({ value: "done" });
+    expect(resumedRun?.result?.flaky).toEqual({ value: "recovered" });
+    expect(resumedRun?.result?.final).toEqual({ value: "complete" });
+    expect(store.listSteps(failedRun.id).map((step) => [step.name, step.status])).toEqual([
+      ["first", "ok"],
+      ["flaky", "error"],
+      ["flaky", "ok"],
+      ["final", "ok"],
+    ]);
   });
 
   test("can split paragraphs, parse a paragraph analysis, and finalise the result", async () => {
@@ -419,6 +524,141 @@ describe("runDeclarativePipeline", () => {
     expect(run.result?.agentRaw).toEqual({ answer: "native adapter delivered" });
     expect(adapterSendCount).toBe(1);
     expect(store.listSteps(run.id)[0]?.wingmanSessionId).toBe(sessionId);
+  });
+
+  test("retries an agent step from the same persisted point after callback timeout", async () => {
+    process.env.PIPELINE_AGENT_CALLBACK_TIMEOUT_RETRIES = "1";
+    const store = makeStore();
+    let createCount = 0;
+    let adapterSendCount = 0;
+    const sessions = new Map<string, SessionSnapshot>();
+    const adapter: AgentAdapter = {
+      async fetchStatus() {
+        return "stable";
+      },
+      async getPromptReadiness() {
+        return { state: "ready", reason: "test-native-ready", retryAfterMs: 1, observedAt: Date.now() };
+      },
+      async sendMessage(content) {
+        adapterSendCount += 1;
+        if (adapterSendCount === 1) return;
+        const urlMatch = content.match(/http:\/\/callback\.local\/api\/pipelines\/runs\/[^\s']+/);
+        expect(urlMatch).not.toBeNull();
+        const callbackUrl = new URL(urlMatch![0]);
+        const segments = callbackUrl.pathname.split("/");
+        const runId = decodeURIComponent(segments[4] ?? "");
+        const stepId = decodeURIComponent(segments[6] ?? "");
+        const token = callbackUrl.searchParams.get("token") ?? "";
+        await acceptAgentCallback({
+          store,
+          runId,
+          stepId,
+          token,
+          payload: {
+            runId,
+            stepId,
+            status: "ok",
+            result: { answer: "retry delivered" },
+          },
+        });
+      },
+      deliversPromptsDirectly() {
+        return true;
+      },
+      async fetchMessages() {
+        return [];
+      },
+      async interruptCurrentTurn() {
+        return false;
+      },
+      getEventsUrl() {
+        return null;
+      },
+      async waitForReady() {},
+      async dispose() {},
+    };
+    const sessionApiContext = {
+      manager: {
+        async createSession() {
+          createCount += 1;
+          const session = {
+            id: `retry-codex-session-${createCount}`,
+            agent: "codex",
+            port: 49999 + createCount,
+            name: "Pipeline retry agent",
+            status: "running",
+            startedAt: new Date().toISOString(),
+            workingDirectory: tempDir,
+            command: [],
+            logs: [],
+            metadata: {},
+          } as SessionSnapshot;
+          sessions.set(session.id, session);
+          return session;
+        },
+        getSession(id: string) {
+          return sessions.get(id) ?? null;
+        },
+        getAdapter(id: string) {
+          return sessions.has(id) ? adapter : null;
+        },
+        async stopSession() {
+          return true;
+        },
+      },
+      agentHost: "localhost",
+      buildAgentUrl(host: string, port: number, path: string) {
+        return new URL(`http://${host}:${port}${path}`);
+      },
+      messageStore: {
+        recordSession() {},
+      },
+      async syncSessionMessages() {},
+      scheduleSessionArchive() {},
+      isAgentType(value: string) {
+        return value === "codex";
+      },
+    } as unknown as SessionApiContext;
+    const definition: PipelineDefinitionRecord = {
+      id: "agent-timeout-retry",
+      slug: "agent-timeout-retry",
+      name: "agent-timeout-retry",
+      scope: "user",
+      ownerAlias: "alpha-beta-gamma",
+      path: join(tempDir, "agent-timeout-retry.json"),
+      spec: {
+        name: "agent-timeout-retry",
+        input: { topic: "timeout" },
+        steps: [
+          {
+            name: "agent",
+            type: "agent",
+            prompt: "Return a timeout result.",
+            timeoutMs: 1000,
+            assign: "$.agentRaw",
+          },
+        ],
+      },
+    };
+
+    const run = await runDeclarativePipeline({
+      store,
+      sessionApiContext,
+      definition,
+      registry: builtinPipelineFunctions,
+      input: definition.spec.input!,
+      ownerNpub: "npub-test",
+      ownerAlias: "alpha-beta-gamma",
+      callbackOrigin: "http://callback.local",
+    });
+
+    expect(run.status).toBe("ok");
+    expect(run.result?.agentRaw).toEqual({ answer: "retry delivered" });
+    expect(createCount).toBe(2);
+    expect(adapterSendCount).toBe(2);
+    const [step] = store.listSteps(run.id);
+    expect(step?.status).toBe("ok");
+    expect(step?.wingmanSessionId).toBe("retry-codex-session-2");
   });
 
   test("runs parallel child steps and aggregates results", async () => {

@@ -74,6 +74,7 @@ import { CODEX_NATIVE_SDK_FLAG, OPENCODE_NATIVE_SDK_FLAG } from "./agents/agent-
 import { createNightWatchApiHandler } from "./nightwatch/nightwatch-api";
 import { nip19, verifyEvent } from "nostr-tools";
 import { startTaskListener } from "./nostr/task-listener";
+import { createAccessGrantListener, type AccessGrantListener } from "./nostr/access-grant-listener";
 import { createTaskExecutor } from "./nostr/task-executor";
 import { signWithWingmanKey } from "./mcp/wingman-signer";
 import { createBrowserLogHandler } from "./logging/browser-log-handler";
@@ -436,8 +437,10 @@ const triggerListener: TriggerListener = createTriggerListener({
     await schedulerEngine.executeJobWithMessage(job.id, message || undefined);
   },
 });
+let accessGrantListener: AccessGrantListener | null = null;
 function onBotKeyUnlockedHook(npub: string, secretKey: Uint8Array, botPubkeyHex: string): void {
   triggerListener.subscribe(npub, secretKey, botPubkeyHex);
+  accessGrantListener?.subscribe(npub, secretKey, botPubkeyHex);
 }
 
 const schedulerEngine = new SchedulerEngine({
@@ -547,6 +550,13 @@ const workspaceSubscriptionManager = new WorkspaceSubscriptionManager({
   botKeyStore,
   getInstanceIdentity: () => wingmanInstanceIdentity,
 });
+accessGrantListener = createAccessGrantListener({
+  relays: config.connectRelays,
+  subscriptionManager: workspaceSubscriptionManager,
+});
+if (wingmanInstanceIdentity && adminNpub) {
+  accessGrantListener.subscribe(adminNpub, wingmanInstanceIdentity.secretKey, wingmanInstanceIdentity.pubkeyHex);
+}
 let sessionApiContextRef: SessionApiContext | null = null;
 
 const APPROVED_WORK_ROLES = new Set(["approved", "onboard"]);
@@ -918,6 +928,7 @@ try {
 
 process.on("beforeExit", () => {
   fileWatcherRunner.stop();
+  accessGrantListener?.shutdown();
   workspaceSubscriptionManager.shutdown();
 });
 

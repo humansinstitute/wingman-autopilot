@@ -49,6 +49,21 @@ export async function runPipelineDefinition(id, input = null) {
   return res.json();
 }
 
+export async function resumePipelineRunFromFailure(id) {
+  const res = await fetch(`/api/pipelines/runs/${encodeURIComponent(id)}/resume-from-failure`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(payload.error || `Failed to resume pipeline run: ${res.status}`);
+  }
+  await clearCachedRunDetail(id);
+  return payload;
+}
+
 export async function startPipelineWizard(prompt) {
   const res = await fetch("/api/pipelines/wizard", {
     method: "POST",

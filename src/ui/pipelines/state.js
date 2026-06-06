@@ -47,6 +47,7 @@ export function createPipelinesState() {
     selectedFunctionLoading: false,
     runInputText: "",
     runningId: null,
+    resumingRunId: null,
     loading: false,
     error: null,
   };

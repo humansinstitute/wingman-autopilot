@@ -39,6 +39,11 @@ function bindRunActions(root, page, actions) {
   root.querySelectorAll('[data-action="set-run-filter"]').forEach((button) => {
     button.addEventListener("click", () => actions.setRunFilter(page, button.dataset.filter ?? "all"));
   });
+  root.querySelectorAll('[data-action="resume-run-from-failure"]').forEach((button) => {
+    button.addEventListener("click", async () => {
+      await actions.resumeRunFromFailure(page, button.dataset.id ?? "");
+    });
+  });
   root.querySelectorAll('[data-action="open-run"]').forEach((button) => {
     button.addEventListener("click", async () => {
       await actions.openRun(page, button.dataset.id ?? "");

@@ -151,3 +151,17 @@ export async function saveAgentChatDispatchRoute(input) {
   }
   return payload.dispatchRoute;
 }
+
+export async function saveAgentChatProfileWorkspace(subscriptionId, input) {
+  const response = await fetch(`/api/agent-chat/subscriptions/${encodeURIComponent(subscriptionId)}/profile-workspace`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(input),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || 'Failed to save profile workspace settings');
+  }
+  return payload.profileWorkspace ?? null;
+}

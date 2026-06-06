@@ -319,6 +319,7 @@ export function initSchedulerPage({ showToast }) {
     },
 
     startEdit(job) {
+      const resolvedPipelineDefinitionId = this.resolvePipelineDefinitionId(job.pipelineDefinitionId);
       this.editingJobId = job.id;
       this.editActionType = job.actionType || "session";
       this.editTriggerType = job.triggerType || "cron";
@@ -327,7 +328,7 @@ export function initSchedulerPage({ showToast }) {
         agent: normalizeAgentValue(job.agent || getConfiguredDefaultAgent()),
         workingDirectory: job.workingDirectory,
         initialPrompt: job.initialPrompt,
-        pipelineDefinitionId: job.pipelineDefinitionId || "",
+        pipelineDefinitionId: resolvedPipelineDefinitionId || job.pipelineDefinitionId || "",
         pipelineInput: this.formatPipelineInput(job.pipelineInputJson),
         timezone: job.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         nightwatchmanEnabled: !!job.nightwatchmanEnabled,
@@ -510,8 +511,23 @@ export function initSchedulerPage({ showToast }) {
       return String(job.agent || "").toUpperCase();
     },
 
+    resolvePipelineDefinition(id) {
+      if (!id) return null;
+      return this.pipelineDefinitions.find((entry) => (
+        entry.id === id
+        || entry.slug === id
+        || entry.name === id
+        || entry.path === id
+        || entry.supersedes === id
+      )) || null;
+    },
+
+    resolvePipelineDefinitionId(id) {
+      return this.resolvePipelineDefinition(id)?.id || "";
+    },
+
     pipelineName(id) {
-      const definition = this.pipelineDefinitions.find((entry) => entry.id === id);
+      const definition = this.resolvePipelineDefinition(id);
       return definition?.name || id || "Pipeline";
     },
 
@@ -530,7 +546,7 @@ export function initSchedulerPage({ showToast }) {
 
     setPipelineDefaultInput(edit = false) {
       const form = edit ? this.editForm : this.form;
-      const definition = this.pipelineDefinitions.find((entry) => entry.id === form.pipelineDefinitionId);
+      const definition = this.resolvePipelineDefinition(form.pipelineDefinitionId);
       form.pipelineInput = JSON.stringify(definition?.input || {}, null, 2);
     },
 

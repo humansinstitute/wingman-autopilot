@@ -2132,6 +2132,7 @@ export class WorkspaceSubscriptionManager {
             const profileDecision = this.resolveProfileRuntimeDecision({
               subscription: record,
               eventType: 'chat_mention',
+              scopeId: routingContext.scopeId,
               channelId: routingContext.channelId,
               builtInDefaultPipelineId: 'agent-dispatch-chat',
             });
@@ -2145,6 +2146,7 @@ export class WorkspaceSubscriptionManager {
                 bindingType: 'thread',
                 details: {
                   channel_id: routingContext.channelId,
+                  scope_id: routingContext.scopeId,
                   thread_id: routingContext.threadId,
                 },
               });
@@ -2153,6 +2155,7 @@ export class WorkspaceSubscriptionManager {
               subscription_id: record.subscriptionId,
               record_id: recordId,
               channel_id: routingContext.channelId,
+              scope_id: routingContext.scopeId,
               thread_id: routingContext.threadId,
               message_group_npubs: routingContext.messageGroupNpubs,
             });
@@ -2171,6 +2174,7 @@ export class WorkspaceSubscriptionManager {
                 updaterNpub: routingContext.updaterNpub,
                 bindingType: 'thread',
                 bindingId: routingContext.threadId,
+                scopeId: routingContext.scopeId,
                 channelId: routingContext.channelId,
                 threadId: routingContext.threadId,
                 changedFields: [],
@@ -2274,6 +2278,7 @@ export class WorkspaceSubscriptionManager {
             const profileDecision = this.resolveProfileRuntimeDecision({
               subscription: record,
               eventType: 'chat_mention',
+              scopeId: assignment.scopeId,
               channelId: assignment.intercept.channelId,
               builtInDefaultPipelineId: 'agent-dispatch-chat',
             });
@@ -2288,6 +2293,7 @@ export class WorkspaceSubscriptionManager {
                 agentId: assignment.agent.agentId,
                 details: {
                   channel_id: assignment.intercept.channelId,
+                  scope_id: assignment.scopeId,
                   thread_id: assignment.intercept.threadId,
                   sender_npub: senderNpub,
                   updater_npub: updaterNpub,
@@ -2306,6 +2312,7 @@ export class WorkspaceSubscriptionManager {
               bindingType: 'chat',
               details: {
                 channel_id: assignment.intercept.channelId,
+                scope_id: assignment.scopeId,
                 thread_id: assignment.intercept.threadId,
                 sender_npub: senderNpub,
                 updater_npub: updaterNpub,
@@ -2596,6 +2603,7 @@ export class WorkspaceSubscriptionManager {
           updaterNpub,
           bindingType,
           bindingId,
+          scopeId: getTaskScopeId(task),
           changedFields,
           groupNpubs: [],
           botIdentity: this.getRuntime(record.subscriptionId)?.botIdentity ?? null,

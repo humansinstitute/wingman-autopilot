@@ -55,6 +55,7 @@ export interface DispatchPipelineEventInput {
   updaterNpub: string | null;
   bindingType: AgentChatDispatchHistoryEntry['bindingType'];
   bindingId: string | null;
+  scopeId?: string | null;
   channelId?: string | null;
   threadId?: string | null;
   changedFields?: string[];
@@ -811,6 +812,7 @@ function buildDispatchEnvelope(input: {
     routing: {
       bindingId: eventInput.bindingId,
       bindingType: eventInput.bindingType,
+      scopeId: eventInput.scopeId ?? null,
       channelId: eventInput.channelId ?? null,
       threadId: eventInput.threadId ?? null,
       changedFields: eventInput.changedFields ?? [],

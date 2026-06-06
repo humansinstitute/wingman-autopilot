@@ -345,10 +345,34 @@ describe('agent-chat routes', () => {
 
   test('returns profile workspace settings for a managed subscription', async () => {
     const manager = {
+      getForManager: () => makeSubscription({
+        lastRoutingResult: {
+          ok: true,
+          code: null,
+          message: 'Routed.',
+          at: '2026-06-06T00:00:00.000Z',
+          details: {
+            scope_id: 'scope-autopilot',
+            channel_id: 'channel-design',
+          },
+        },
+      }),
       getProfileWorkspaceForManager: (subscriptionId: string, npub: string) => {
         expect(subscriptionId).toBe('sub-1');
         expect(npub).toBe('npub1manager');
-        return makeProfileWorkspaceBundle();
+        return makeProfileWorkspaceBundle({
+          appendedContexts: [
+            {
+              profileWorkspaceId: 'profile-workspace-1',
+              contextKind: 'scope',
+              targetId: 'scope-configured',
+              eventType: null,
+              contextText: 'Configured scope context',
+              createdAt: '2026-06-06T00:00:00.000Z',
+              updatedAt: '2026-06-06T00:00:00.000Z',
+            },
+          ],
+        });
       },
     } as unknown as WorkspaceSubscriptionManager;
     const request = new Request('http://localhost/api/agent-chat/subscriptions/sub-1/profile-workspace');
@@ -365,6 +389,18 @@ describe('agent-chat routes', () => {
     expect(response?.status).toBe(200);
     expect(body.profileWorkspace.workspace.profileWorkspaceId).toBe('profile-workspace-1');
     expect(body.profileWorkspace.policies[0].eventType).toBe('chat_mention');
+    expect(body.profileWorkspace.visibleContext.scopes.map((scope: { id: string }) => scope.id)).toEqual([
+      'scope-configured',
+      'scope-autopilot',
+    ]);
+    expect(body.profileWorkspace.visibleContext.channels).toEqual([
+      {
+        id: 'channel-design',
+        label: 'channel-design',
+        source: 'last_routing',
+        scopeId: 'scope-autopilot',
+      },
+    ]);
   });
 
   test('maps missing profile workspace settings to 404', async () => {

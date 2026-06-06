@@ -811,10 +811,9 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const documentBoundDiscussion = isDocumentDiscussionPipelineIdentifier(pipelineDefinitionId);
     const title = documentBoundDiscussion ? "Document discussion" : "Discussion response";
     const taskSummary = documentBoundDiscussion ? "Document-bound discussion response" : "Discussion response";
-    const normalisedDraft = getText(decision.responseDraft);
-    const responseDraft = chatResponseBody
-      ?? (normalisedDraft && normalisedDraft !== "I can handle this directly in chat." ? normalisedDraft : null)
-      ?? "I am looking into that and will respond in this thread.";
+    const responseDraft = documentBoundDiscussion
+      ? "Let's discuss that. Give me a minute and I'll pull together a doc so we can work on it together."
+      : "Let's discuss that. Give me a minute to pull the context together and I'll reply here.";
 
     return {
       ...decision,

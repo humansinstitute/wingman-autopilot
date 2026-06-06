@@ -173,11 +173,51 @@ function createTargetKindSelect(value, testId) {
   return select;
 }
 
+function getVisibleTargets(bundle, kind) {
+  const visible = bundle?.visibleContext || {};
+  const rows = kind === 'channel' ? visible.channels : visible.scopes;
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      id: String(row?.id || '').trim(),
+      label: String(row?.label || row?.id || '').trim(),
+      scopeId: String(row?.scopeId || '').trim(),
+    }))
+    .filter((row) => row.id);
+}
+
+function createTargetDatalist(id, targets) {
+  const datalist = document.createElement('datalist');
+  datalist.id = id;
+  targets.forEach((target) => {
+    const option = document.createElement('option');
+    option.value = target.id;
+    option.label = target.scopeId ? `${target.label} (${target.scopeId})` : target.label;
+    datalist.append(option);
+  });
+  return datalist;
+}
+
 function createScopeChannelRows({ bundle, definitions, controlsDisabled }) {
   const wrapper = document.createElement('div');
   wrapper.style.cssText = 'display:flex;flex-direction:column;gap:10px;margin-top:12px;';
   wrapper.setAttribute('data-testid', 'agent-chat-profile-scope-channel-manager');
   const byKey = new Map();
+  for (const target of getVisibleTargets(bundle, 'scope')) {
+    byKey.set(`scope:${target.id}`, {
+      targetKind: 'scope',
+      targetId: target.id,
+      pipelineDefinitionId: '',
+      contextText: '',
+    });
+  }
+  for (const target of getVisibleTargets(bundle, 'channel')) {
+    byKey.set(`channel:${target.id}`, {
+      targetKind: 'channel',
+      targetId: target.id,
+      pipelineDefinitionId: '',
+      contextText: '',
+    });
+  }
   (Array.isArray(bundle.pipelineOverrides) ? bundle.pipelineOverrides : []).forEach((override) => {
     if (override.targetKind !== 'scope' && override.targetKind !== 'channel') {
       return;
@@ -219,6 +259,17 @@ function createScopeChannelRows({ bundle, definitions, controlsDisabled }) {
 
     const target = createInput('Target id', 'scope-or-channel-id', `agent-chat-profile-target-id-${index}`);
     target.input.value = rowData.targetId || '';
+    const scopeListId = `agent-chat-visible-scopes-${index}`;
+    const channelListId = `agent-chat-visible-channels-${index}`;
+    target.row.append(
+      createTargetDatalist(scopeListId, getVisibleTargets(bundle, 'scope')),
+      createTargetDatalist(channelListId, getVisibleTargets(bundle, 'channel')),
+    );
+    const updateTargetList = () => {
+      target.input.setAttribute('list', kind.value === 'channel' ? channelListId : scopeListId);
+    };
+    kind.addEventListener('change', updateTargetList);
+    updateTargetList();
 
     const pipeline = createPipelineSelect({
       label: 'Pipeline override',

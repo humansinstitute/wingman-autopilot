@@ -24,7 +24,13 @@ import {
   nextVersionedFunctionPath,
   type PipelineDefinitionRecord,
 } from "./pipeline-loader";
-import { acceptAgentCallback, resumeDeclarativePipeline, runDeclarativePipeline, startDeclarativePipeline } from "./pipeline-runner";
+import {
+  acceptAgentCallback,
+  resumeDeclarativePipeline,
+  resumeErroredDeclarativePipeline,
+  runDeclarativePipeline,
+  startDeclarativePipeline,
+} from "./pipeline-runner";
 import type { FunctionRegistry } from "./declarative";
 import { type JsonObject, PipelineStore, type PipelineRunRecord, type PipelineRunSummary } from "./pipeline-store";
 import { startPipelineWizardSession } from "./pipeline-wizard";
@@ -296,6 +302,37 @@ export async function handlePipelineApi(
     return Response.json({ runs: runs.map((run) => serializeRunSummary(run, definitions)) });
   }
 
+  const runResumeMatch = pathname.match(/^\/api\/pipelines\/runs\/([^/]+)\/resume-from-failure$/);
+  if (runResumeMatch && method === "POST") {
+    const id = decodeURIComponent(runResumeMatch[1]!);
+    const run = ctx.store.getRun(id);
+    if (!run || !canAccessPipelineRun(run, ownerNpub, ctx)) {
+      return Response.json({ error: "Pipeline run not found" }, { status: 404 });
+    }
+    if (run.status !== "error") {
+      return Response.json({ error: "Only errored pipeline runs can be resumed from failure", run }, { status: 409 });
+    }
+    const reopened = ctx.store.reopenErroredRun(id);
+    if (!reopened || reopened.status !== "running") {
+      return Response.json({ error: "Pipeline run could not be reopened", run: reopened }, { status: 409 });
+    }
+    void resumeStoredPipelineRun(ctx, id, ctx.callbackOrigin ?? url.origin).catch((error) => {
+      ctx.store.addEvent({
+        runId: id,
+        level: "error",
+        type: "run_resume_failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+    const summary = ctx.store.getRunSummary(id);
+    const definitions = await listLatestPipelineDefinitions(ownerAlias);
+    return Response.json({
+      ok: true,
+      run: summary ? serializeRunSummary(summary, definitions) : reopened,
+      steps: ctx.store.listStepSummaries(id),
+    }, { status: 202 });
+  }
+
   const runStepsMatch = pathname.match(/^\/api\/pipelines\/runs\/([^/]+)\/steps$/);
   if (runStepsMatch && method === "GET") {
     const run = ctx.store.getRun(decodeURIComponent(runStepsMatch[1]!));
@@ -352,6 +389,34 @@ export async function resumeStoredPipelineRun(
   const registry = await ctx.loadRegistryForRun?.({ run, definition })
     ?? (await loadPipelineFunctionRegistry(ownerAlias, builtinPipelineFunctions)).registry;
   await resumeDeclarativePipeline({
+    store: ctx.store,
+    sessionApiContext: ctx.sessionApiContext,
+    definition,
+    registry,
+    input: run.input,
+    ownerNpub: run.ownerNpub,
+    ownerAlias,
+    callbackOrigin,
+  }, run.id);
+}
+
+export async function resumeStoredErroredPipelineRun(
+  ctx: PipelineApiContext,
+  runId: string,
+  callbackOrigin: string,
+): Promise<PipelineRunRecord | null> {
+  const run = ctx.store.getRun(runId);
+  if (!run || run.status !== "error") return run;
+  const ownerAlias = run.ownerAlias;
+  const definition = await getPipelineDefinition(run.definitionId, ownerAlias);
+  if (!definition) {
+    const reopened = ctx.store.reopenErroredRun(run.id);
+    if (!reopened || reopened.status !== "running") return reopened;
+    return ctx.store.completeRun(run.id, "error", run.current, `Pipeline definition not found: ${run.definitionId}`);
+  }
+  const registry = await ctx.loadRegistryForRun?.({ run, definition })
+    ?? (await loadPipelineFunctionRegistry(ownerAlias, builtinPipelineFunctions)).registry;
+  return await resumeErroredDeclarativePipeline({
     store: ctx.store,
     sessionApiContext: ctx.sessionApiContext,
     definition,

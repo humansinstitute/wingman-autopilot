@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { describe, expect, test } from 'bun:test';
 
 import { AgentDefinitionStore } from './agent-definition-store';
+import { AgentProfilePolicyStore } from './agent-profile-policy-store';
 import { BackendConnectionStore } from './backend-connection-store';
 import { DispatchPipelineRuntime } from './dispatch-pipelines/runtime';
 import { DispatchRouteStore } from './dispatch-pipelines/route-store';
@@ -95,10 +96,12 @@ function createTestManager(
   const store = new WorkspaceSubscriptionStore(dbPath);
   const agentStore = new AgentDefinitionStore(dbPath);
   const backendStore = new BackendConnectionStore(dbPath);
+  const profilePolicyStore = new AgentProfilePolicyStore(dbPath);
   const manager = new WorkspaceSubscriptionManager({
     store,
     agentStore,
     backendStore,
+    profilePolicyStore,
     checkBackendHealth: checkBackendHealth ?? (async (record) => ({
       healthStatus: record.healthUrl ? 'healthy' : 'degraded',
       diagnostic: {
@@ -153,7 +156,7 @@ function createTestManager(
     });
   };
 
-  return { manager, store, agentStore, backendStore };
+  return { manager, store, agentStore, backendStore, profilePolicyStore };
 }
 
 function saveAgent(agentStore: AgentDefinitionStore, input: Partial<AgentDefinitionRecord> & { agentId: string; botNpub: string; managedByNpub: string }) {
@@ -385,7 +388,7 @@ describe('WorkspaceSubscriptionManager', () => {
       ['npub1botone', makeBotKeyRecord('npub1botone')],
       ['npub1bottwo', makeBotKeyRecord('npub1bottwo')],
     ]);
-    const { manager, store, agentStore, backendStore } = createTestManager(dbPath, botKeys);
+    const { manager, store, agentStore, backendStore, profilePolicyStore } = createTestManager(dbPath, botKeys);
     saveAgent(agentStore, { agentId: 'wm-one', botNpub: 'npub1botone', managedByNpub: 'npub1manager' });
     saveAgent(agentStore, { agentId: 'wm-two', botNpub: 'npub1bottwo', managedByNpub: 'npub1manager' });
 
@@ -407,12 +410,33 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(second.subscription.botNpub).toBe('npub1bottwo');
     expect(store.listForManagerNpub('npub1manager')).toHaveLength(2);
     expect(backendStore.listForManagerNpub('npub1manager')[0]?.healthStatus).toBe('healthy');
+
+    const firstWorkspaces = profilePolicyStore.listWorkspacesForProfile('wm-one', 'npub1manager');
+    const secondWorkspaces = profilePolicyStore.listWorkspacesForProfile('wm-two', 'npub1manager');
+    expect(firstWorkspaces).toHaveLength(1);
+    expect(secondWorkspaces).toHaveLength(1);
+    expect(firstWorkspaces[0]).toMatchObject({
+      subscriptionId: first.subscription.subscriptionId,
+      profileId: 'wm-one',
+      workspaceOwnerNpub: 'npub1workspace',
+      sourceAppNpub: 'npub1sourceapp',
+      relayOnboardingStatus: 'ready',
+    });
+    expect(secondWorkspaces[0]).toMatchObject({
+      subscriptionId: second.subscription.subscriptionId,
+      profileId: 'wm-two',
+      workspaceOwnerNpub: 'npub1workspace',
+      sourceAppNpub: 'npub1sourceapp',
+      relayOnboardingStatus: 'ready',
+    });
+    expect(profilePolicyStore.listPolicies(firstWorkspaces[0]!.profileWorkspaceId)).toHaveLength(10);
+    expect(profilePolicyStore.listPolicies(secondWorkspaces[0]!.profileWorkspaceId)).toHaveLength(10);
   });
 
   test('imports wrapped Agent Connect text without a profile when WINGMAN_PRIV is configured', async () => {
     const dbPath = makeTempDb();
     const instanceIdentity = makeInstanceIdentity();
-    const { manager, store, backendStore } = createTestManager(
+    const { manager, store, backendStore, profilePolicyStore } = createTestManager(
       dbPath,
       new Map(),
       undefined,
@@ -435,6 +459,17 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(imported.subscription.sseStatus).toBe('connected');
     expect(store.listForManagerNpub('npub1manager')).toHaveLength(1);
     expect(backendStore.listForManagerNpub('npub1manager')[0]?.healthStatus).toBe('healthy');
+
+    const identityWorkspaces = profilePolicyStore.listWorkspacesForProfile(instanceIdentity.npub, 'npub1manager');
+    expect(identityWorkspaces).toHaveLength(1);
+    expect(identityWorkspaces[0]).toMatchObject({
+      subscriptionId: imported.subscription.subscriptionId,
+      profileId: instanceIdentity.npub,
+      workspaceOwnerNpub: 'npub1workspace',
+      sourceAppNpub: 'npub1sourceapp',
+      relayOnboardingStatus: 'ready',
+    });
+    expect(profilePolicyStore.listPolicies(identityWorkspaces[0]!.profileWorkspaceId)).toHaveLength(10);
   });
 
   test('seeds default dispatch routes from Agent Connect capability defaults', async () => {

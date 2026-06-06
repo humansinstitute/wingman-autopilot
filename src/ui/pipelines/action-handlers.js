@@ -13,6 +13,7 @@ export function createPipelineActionHandlers(deps) {
     navigateToPipelinePath,
     ensureSelectedRunPayload,
     showToast,
+    resumeRunFromFailure,
     startCreateWizard,
     startEditWizard,
     saveManualEdit,
@@ -62,6 +63,7 @@ export function createPipelineActionHandlers(deps) {
       updatePage(page);
     },
     closeStepDetail: (page) => updateField(page, "selectedStep", null),
+    resumeRunFromFailure,
     updateDefinitionSearch: (page, value) => updateSearch(page, "definitionSearch", value, '[data-action="definition-search"]'),
     setDefinitionFilter: (page, value) => updateField(page, "definitionFilter", value),
     setDefinitionTagFilter: (page, value) => updateField(page, "definitionTagFilter", value),

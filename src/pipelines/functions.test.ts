@@ -938,7 +938,7 @@ describe("memory pipeline functions", () => {
         intent: "design_discussion",
         dispatchTask: false,
         recommendedPipelineId: "document-discussion",
-        chatResponse: { body: "" },
+        chatResponse: { body: "This is a design discussion and should route to document-discussion." },
         confidence: 0.87,
       },
     });
@@ -958,7 +958,7 @@ describe("memory pipeline functions", () => {
     });
     expect(result.agentResponse).toMatchObject({
       shouldRespond: true,
-      responseDraft: "I am looking into that and will respond in this thread.",
+      responseDraft: "Let's discuss that. Give me a minute and I'll pull together a doc so we can work on it together.",
     });
   });
 

@@ -50,6 +50,14 @@ function makeState() {
   };
 }
 
+function makeErroredState() {
+  const state = makeState();
+  state.selectedRun.run.status = "error";
+  state.selectedRun.run.error = "temporary failure";
+  state.selectedRun.run.completedAt = "2026-05-01T01:01:00.000Z";
+  return state;
+}
+
 describe("pipeline run detail rendering", () => {
   test("renders selected step details in a full screen modal", () => {
     const html = renderRunsWorkspace(makeState());
@@ -92,8 +100,17 @@ describe("pipeline run detail rendering", () => {
     expect(html).toContain("<summary>State after step</summary>");
     expect(html).not.toContain('<details class="wm-pipeline-step-data-panel" open');
   });
-  test("formats agent transform text only when the flag is enabled", () => {
 
+  test("offers manual resume only for errored runs", () => {
+    const okHtml = renderRunsWorkspace(makeState());
+    const errorHtml = renderRunsWorkspace(makeErroredState());
+
+    expect(okHtml).not.toContain('data-action="resume-run-from-failure"');
+    expect(errorHtml).toContain('data-action="resume-run-from-failure"');
+    expect(errorHtml).toContain("Resume from Failed Step");
+  });
+
+  test("formats agent transform text only when the flag is enabled", () => {
     const state = makeState();
     state.selectedStep.step.kind = "agent";
     state.selectedStep.step.output = {

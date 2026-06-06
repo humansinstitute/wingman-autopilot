@@ -10,6 +10,7 @@ import {
   saveAgentChatAgent,
   saveAgentChatBackendConnectionAvailability,
   saveAgentChatDispatchRoute,
+  saveAgentChatProfileWorkspace,
   saveAgentChatSubscription,
 } from '../../services/agent-chat.js';
 import { fetchSessionsApi } from '../../services/sessions.js';
@@ -32,6 +33,7 @@ import {
 } from './agent-chat-shared-ui.js';
 import { createAgentDispatchSetupCards } from './agent-chat-setup-cards.js';
 import { createAgentConnectImportModal } from './agent-chat-connect-import-card.js';
+import { createProfileWorkspaceSettingsPanel } from './agent-chat-profile-workspace-card.js';
 import {
   filterDispatchRoutesForSubscription,
   getAdditionalAgents,
@@ -115,6 +117,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
   });
   const setupOverviewContainer = document.createElement('div');
   const configuredDispatchesContainer = document.createElement('div');
+  const profileWorkspaceContainer = document.createElement('div');
   const agentRegistryContainer = document.createElement('div');
   const agentConnectImportModal = createAgentConnectImportModal({
     onImport: async (input) => {
@@ -161,6 +164,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
     subscriptionEditor.card,
     agentEditor.card,
     statusLine,
+    profileWorkspaceContainer,
     configuredDispatchesContainer,
     agentRegistryContainer,
   );
@@ -380,6 +384,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
   async function refreshList() {
     setupOverviewContainer.replaceChildren();
     configuredDispatchesContainer.replaceChildren();
+    profileWorkspaceContainer.replaceChildren();
     agentRegistryContainer.replaceChildren();
     listContainer.replaceChildren();
 
@@ -522,6 +527,18 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
         onToggleCapability: permissions?.canManage === false ? null : (agent, capability, currentlyEnabled) => {
           void toggleCapability(agent, capability, currentlyEnabled);
         },
+      }));
+      profileWorkspaceContainer.append(createProfileWorkspaceSettingsPanel({
+        subscription: selectedSubscription,
+        pipelineDefinitions,
+        canManage: permissions?.canManage !== false,
+        onSave: permissions?.canManage === false || !selectedSubscription
+          ? null
+          : async (input) => {
+              await saveAgentChatProfileWorkspace(selectedSubscription.subscriptionId, input);
+              statusLine.textContent = 'Profile workspace settings saved.';
+              await refreshList();
+            },
       }));
       const additionalAgents = getAdditionalAgents(agents, selectedAgent);
       if (additionalAgents.length > 0) {

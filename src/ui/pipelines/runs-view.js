@@ -119,6 +119,8 @@ function renderRunList(state, runs) {
 function renderRunDetail(state) {
   const run = state.selectedRun.run;
   const steps = state.selectedRun.steps ?? [];
+  const isErrored = run.status === "error";
+  const isResuming = state.resumingRunId === run.id;
   return `
     <article class="wm-pipeline-run-detail" data-testid="pipeline-run-detail">
       <header class="wm-pipeline-detail-header">
@@ -127,7 +129,20 @@ function renderRunDetail(state) {
           <p><code>${escapeHtml(run.id)}</code></p>
           ${renderTagPills(run.tags)}
         </div>
-        <span class="wm-pipeline-status-chip" data-status="${escapeAttribute(run.status)}">${escapeHtml(statusLabel(run.status))}</span>
+        <div class="wm-pipeline-run-actions">
+          ${isErrored ? `
+            <button
+              type="button"
+              data-action="resume-run-from-failure"
+              data-id="${escapeAttribute(run.id)}"
+              data-testid="pipeline-resume-run-action"
+              ${isResuming ? "disabled" : ""}
+            >
+              ${isResuming ? "Resuming..." : "Resume from Failed Step"}
+            </button>
+          ` : ""}
+          <span class="wm-pipeline-status-chip" data-status="${escapeAttribute(run.status)}">${escapeHtml(statusLabel(run.status))}</span>
+        </div>
       </header>
       <dl class="wm-pipeline-facts">
         <div><dt>Started</dt><dd>${escapeHtml(formatDateTime(run.startedAt ?? run.started_at))}</dd></div>

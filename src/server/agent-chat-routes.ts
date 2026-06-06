@@ -133,7 +133,74 @@ function getProfileWorkspaceForSubscription(
   return withProfileWorkspace.getProfileWorkspaceForManager?.(subscriptionId, managerNpub) ?? null;
 }
 
-function serialiseProfileWorkspace(bundle: AgentProfileWorkspaceBundle | null) {
+function getSubscriptionForManager(
+  manager: WorkspaceSubscriptionManager,
+  subscriptionId: string,
+  managerNpub: string,
+): WorkspaceSubscriptionRecord | null {
+  const withSubscription = manager as WorkspaceSubscriptionManager & {
+    getForManager?: (subscriptionId: string, npub: string) => WorkspaceSubscriptionRecord | null;
+  };
+  return withSubscription.getForManager?.(subscriptionId, managerNpub) ?? null;
+}
+
+function getDiagnosticDetailString(
+  details: Record<string, unknown> | null | undefined,
+  key: string,
+): string | null {
+  const value = details?.[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function serialiseVisibleProfileWorkspaceContext(
+  bundle: AgentProfileWorkspaceBundle,
+  subscription?: WorkspaceSubscriptionRecord | null,
+) {
+  const scopes = new Map<string, { id: string; label: string; source: string }>();
+  const channels = new Map<string, { id: string; label: string; source: string; scopeId: string | null }>();
+  const addScope = (id: string | null, source: string) => {
+    if (!id || scopes.has(id)) return;
+    scopes.set(id, { id, label: id, source });
+  };
+  const addChannel = (id: string | null, source: string, scopeId: string | null = null) => {
+    if (!id || channels.has(id)) return;
+    channels.set(id, { id, label: id, source, scopeId });
+  };
+
+  for (const override of bundle.pipelineOverrides) {
+    if (override.targetKind === 'scope') {
+      addScope(override.targetId, 'configured_override');
+    } else if (override.targetKind === 'channel') {
+      addChannel(override.targetId, 'configured_override');
+    }
+  }
+  for (const context of bundle.appendedContexts) {
+    if (context.contextKind === 'scope') {
+      addScope(context.targetId, 'configured_context');
+    } else if (context.contextKind === 'channel') {
+      addChannel(context.targetId, 'configured_context');
+    }
+  }
+
+  const routingScopeId = getDiagnosticDetailString(subscription?.lastRoutingResult?.details, 'scope_id');
+  const routingChannelId = getDiagnosticDetailString(subscription?.lastRoutingResult?.details, 'channel_id');
+  addScope(routingScopeId, 'last_routing');
+  addChannel(routingChannelId, 'last_routing', routingScopeId);
+
+  for (const dispatch of subscription?.recentDispatches ?? []) {
+    const scopeId = getDiagnosticDetailString(dispatch.details, 'scope_id');
+    const channelId = getDiagnosticDetailString(dispatch.details, 'channel_id');
+    addScope(scopeId, 'recent_dispatch');
+    addChannel(channelId, 'recent_dispatch', scopeId);
+  }
+
+  return {
+    scopes: [...scopes.values()],
+    channels: [...channels.values()],
+  };
+}
+
+function serialiseProfileWorkspace(bundle: AgentProfileWorkspaceBundle | null, subscription?: WorkspaceSubscriptionRecord | null) {
   if (!bundle) {
     return null;
   }
@@ -143,6 +210,7 @@ function serialiseProfileWorkspace(bundle: AgentProfileWorkspaceBundle | null) {
     policies: bundle.policies,
     pipelineOverrides: bundle.pipelineOverrides,
     appendedContexts: bundle.appendedContexts,
+    visibleContext: serialiseVisibleProfileWorkspaceContext(bundle, subscription),
   };
 }
 
@@ -167,7 +235,7 @@ function serialiseSubscription(
   return {
     ...record,
     workspaceName: getBackendWorkspaceName(backendConnection),
-    profileWorkspace: serialiseProfileWorkspace(profileWorkspace ?? null),
+    profileWorkspace: serialiseProfileWorkspace(profileWorkspace ?? null, record),
     backend: backendConnection
       ? {
           backendConnectionId: backendConnection.backendConnectionId,
@@ -828,11 +896,12 @@ export async function handleAgentChatApi(
   const actionMatch = url.pathname.match(/^\/api\/agent-chat\/subscriptions\/([^/]+)\/actions\/([^/]+)$/);
   if (profileWorkspaceMatch && method === 'GET') {
     const subscriptionId = decodeURIComponent(profileWorkspaceMatch[1]!);
+    const subscription = getSubscriptionForManager(ctx.manager, subscriptionId, scope.managerNpub);
     const bundle = getProfileWorkspaceForSubscription(ctx.manager, subscriptionId, scope.managerNpub);
     if (!bundle) {
       return Response.json({ error: 'Subscription not found' }, { status: 404 });
     }
-    return Response.json({ profileWorkspace: serialiseProfileWorkspace(bundle) });
+    return Response.json({ profileWorkspace: serialiseProfileWorkspace(bundle, subscription) });
   }
   if (profileWorkspaceMatch && (method === 'POST' || method === 'PATCH')) {
     const denied = requireAgentChatManagement(scope);
@@ -886,7 +955,8 @@ export async function handleAgentChatApi(
         saveInput.workspaceTitle = typeof value === 'string' ? value : null;
       }
       const bundle = ctx.manager.saveProfileWorkspaceForManager(saveInput);
-      return Response.json({ profileWorkspace: serialiseProfileWorkspace(bundle) });
+      const subscription = getSubscriptionForManager(ctx.manager, subscriptionId, scope.managerNpub);
+      return Response.json({ profileWorkspace: serialiseProfileWorkspace(bundle, subscription) });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to save profile workspace settings.';
       return Response.json({ error: message }, { status: getAgentChatErrorStatus(error, 400) });

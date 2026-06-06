@@ -18,6 +18,7 @@ import { decryptRecordPayloadWithYoke } from './yoke-record-payload';
 interface RoutingContext {
   recordId: string;
   channelId: string;
+  scopeId?: string | null;
   threadId: string;
   participantNpubs: string[];
 }
@@ -31,6 +32,7 @@ export interface ChatDispatchRoutingContext extends RoutingContext {
 export interface RoutedChatAssignment {
   agent: AgentDefinitionRecord;
   intercept: ChatInterceptStateRecord;
+  scopeId: string | null;
 }
 
 export interface RoutingEvaluationDependencies {
@@ -167,7 +169,11 @@ export class AgentChatRoutingEvaluator {
         duplicateSuppressedAgentIds.push(agent.agentId);
         continue;
       }
-      assignments.push({ agent, intercept: upsertResult.record });
+      assignments.push({
+        agent,
+        intercept: upsertResult.record,
+        scopeId: routingContext.scopeId ?? null,
+      });
     }
 
     return {
@@ -175,6 +181,7 @@ export class AgentChatRoutingEvaluator {
         subscription_id: input.subscription.subscriptionId,
         record_id: input.chatRecordId,
         channel_id: routingContext.channelId,
+        scope_id: routingContext.scopeId ?? null,
         thread_id: routingContext.threadId,
         participant_npubs: routingContext.participantNpubs,
         message_group_npubs: messageGroupNpubs,
@@ -222,6 +229,7 @@ export class AgentChatRoutingEvaluator {
     return {
       recordId: this.getRequiredString(routingContext.record_id, 'record_id'),
       channelId: this.getRequiredString(routingContext.channel_id, 'channel_id'),
+      scopeId: getScopeId(channelPayload),
       threadId: this.getRequiredString(routingContext.thread_id, 'thread_id'),
       participantNpubs: normaliseNpubList(routingContext.participant_npubs),
     };
@@ -332,6 +340,15 @@ function normaliseNpubList(values: unknown): string[] {
     set.add(value);
   }
   return [...set].sort();
+}
+
+function getScopeId(record: Record<string, unknown>): string | null {
+  return getOptionalString(record.scope_id)
+    ?? getOptionalString(record.scope_l5_id)
+    ?? getOptionalString(record.scope_l4_id)
+    ?? getOptionalString(record.scope_l3_id)
+    ?? getOptionalString(record.scope_l2_id)
+    ?? getOptionalString(record.scope_l1_id);
 }
 
 function intersectsSorted(left: string[], right: string[]): boolean {

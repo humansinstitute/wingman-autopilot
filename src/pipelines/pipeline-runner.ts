@@ -22,6 +22,7 @@ const CALLBACK_POLL_MS = 1000;
 const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_PIPELINE_EXECUTED_STEPS = 2000;
 const DEFAULT_AGENT_INPUT_MAX_BYTES = 250_000;
+const DEFAULT_AGENT_CALLBACK_TIMEOUT_RETRIES = 1;
 const activeRunExecutions = new Set<string>();
 
 interface PipelineRunnerInput {
@@ -45,6 +46,12 @@ export class PipelineHalt extends Error {
   }
 }
 
+class PipelineCallbackTimeout extends Error {
+  constructor(timeoutMs: number) {
+    super(`Timed out waiting for pipeline agent callback after ${Math.round(timeoutMs / 1000)}s`);
+  }
+}
+
 export async function runDeclarativePipeline(input: PipelineRunnerInput) {
   const run = createPipelineRun(input);
   return await executeDeclarativePipeline(input, run.id);
@@ -58,6 +65,12 @@ export function startDeclarativePipeline(input: PipelineRunnerInput) {
 
 export async function resumeDeclarativePipeline(input: PipelineRunnerInput, runId: string) {
   const run = input.store.getRun(runId);
+  if (!run || run.status !== "running") return run;
+  return await executeDeclarativePipeline(input, runId);
+}
+
+export async function resumeErroredDeclarativePipeline(input: PipelineRunnerInput, runId: string) {
+  const run = input.store.reopenErroredRun(runId);
   if (!run || run.status !== "running") return run;
   return await executeDeclarativePipeline(input, runId);
 }
@@ -591,37 +604,6 @@ async function runAgentStep(input: PipelineRunnerInput & {
   assertAgentInputWithinLimit(input.selectedInput, input.definition.spec.name, input.stepName);
   const sessionCtx = input.sessionApiContext;
   const agent = resolveAgent(sessionCtx, input.agent);
-  const session = await sessionCtx.manager.createSession(
-    agent,
-    input.directory,
-    `Pipeline ${input.stepName}`,
-    null,
-    undefined,
-    input.ownerNpub ?? undefined,
-    {
-      AGENT: true,
-      role: "pipeline-step",
-      goal: `Pipeline ${input.definition.spec.name}: ${input.stepName}`,
-      nextAction: "stop",
-      bindingType: "flow_run",
-      bindingId: input.runId,
-      flowRunId: input.runId,
-    },
-  );
-  input.store.setStepSession(input.stepId, session.id);
-  await recordLiveSession(sessionCtx, session);
-
-  await waitForSessionPromptReadiness({
-    getSession: (sessionId) => sessionCtx.manager.getSession(sessionId) ?? null,
-    getAdapter: (sessionId) => sessionCtx.manager.getAdapter(sessionId),
-    sessionId: session.id,
-    host: sessionCtx.agentHost,
-    timeoutMs: session.agent === "codex" ? 120_000 : 60_000,
-    pollIntervalMs: 250,
-    requiredStablePolls: session.agent === "codex" ? 3 : 2,
-    requestTimeoutMs: 750,
-  });
-
   const callbackUrl = buildCallbackUrl(input.callbackOrigin, input.runId, input.stepId, input.callbackToken);
   const prompt = buildAgentPrompt({
     prompt: input.prompt,
@@ -631,36 +613,93 @@ async function runAgentStep(input: PipelineRunnerInput & {
     runId: input.runId,
     stepId: input.stepId,
   });
-  let result: { status: PipelineStatus; result: JsonObject | null; error: string | null };
-  try {
-    const delivered = await deliverSessionAgentMessage({
-      agentHost: sessionCtx.agentHost,
-      buildAgentUrl: sessionCtx.buildAgentUrl,
-      agent: session.agent,
-      port: session.port,
-      content: prompt,
-      type: "user",
-      pm2Name: session.pm2Name,
-      adapter: sessionCtx.manager.getAdapter(session.id),
-    });
-    if (!delivered.ok) {
-      throw new Error(delivered.message);
+  let result: { status: PipelineStatus; result: JsonObject | null; error: string | null } | null = null;
+  let lastError: unknown = null;
+  const maxAttempts = resolveAgentCallbackTimeoutRetries() + 1;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const latest = input.store.getStep(input.stepId);
+    if (latest?.status === "ok") {
+      result = { status: "ok", result: latest.output ?? latest.result ?? {}, error: latest.error };
+      break;
+    }
+    if (latest?.status === "needs_input") {
+      result = { status: "needs_input", result: latest.output ?? latest.result ?? {}, error: latest.error };
+      break;
+    }
+    if (latest?.status === "error") {
+      throw new Error(latest.error ?? "Agent step failed");
     }
 
-    result = await waitForCallbackResult(input.store, input.stepId, input.callbackTimeoutMs);
-  } catch (error) {
-    const latest = input.store.getStep(input.stepId);
-    if (latest?.status === "running") {
-      input.store.completeStep({
-        id: input.stepId,
-        status: "error",
-        result: null,
-        error: error instanceof Error ? error.message : String(error),
+    const session = await sessionCtx.manager.createSession(
+      agent,
+      input.directory,
+      `Pipeline ${input.stepName}${attempt > 1 ? ` retry ${attempt}` : ""}`,
+      null,
+      undefined,
+      input.ownerNpub ?? undefined,
+      {
+        AGENT: true,
+        role: "pipeline-step",
+        goal: `Pipeline ${input.definition.spec.name}: ${input.stepName}`,
+        nextAction: "stop",
+        bindingType: "flow_run",
+        bindingId: input.runId,
+        flowRunId: input.runId,
+        retryAttempt: attempt,
+      },
+    );
+    input.store.setStepSession(input.stepId, session.id);
+    await recordLiveSession(sessionCtx, session);
+
+    try {
+      await waitForSessionPromptReadiness({
+        getSession: (sessionId) => sessionCtx.manager.getSession(sessionId) ?? null,
+        getAdapter: (sessionId) => sessionCtx.manager.getAdapter(sessionId),
+        sessionId: session.id,
+        host: sessionCtx.agentHost,
+        timeoutMs: session.agent === "codex" ? 120_000 : 60_000,
+        pollIntervalMs: 250,
+        requiredStablePolls: session.agent === "codex" ? 3 : 2,
+        requestTimeoutMs: 750,
       });
+
+      const delivered = await deliverSessionAgentMessage({
+        agentHost: sessionCtx.agentHost,
+        buildAgentUrl: sessionCtx.buildAgentUrl,
+        agent: session.agent,
+        port: session.port,
+        content: prompt,
+        type: "user",
+        pm2Name: session.pm2Name,
+        adapter: sessionCtx.manager.getAdapter(session.id),
+      });
+      if (!delivered.ok) {
+        throw new Error(delivered.message);
+      }
+
+      result = await waitForCallbackResult(input.store, input.stepId, input.callbackTimeoutMs);
+      break;
+    } catch (error) {
+      lastError = error;
+      const canRetry = error instanceof PipelineCallbackTimeout && attempt < maxAttempts;
+      if (!canRetry) {
+        const latest = input.store.getStep(input.stepId);
+        if (latest?.status === "running") {
+          input.store.completeStep({
+            id: input.stepId,
+            status: "error",
+            result: null,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        throw error;
+      }
+    } finally {
+      await stopPipelineSession(sessionCtx, session.id).catch(() => undefined);
     }
-    throw error;
-  } finally {
-    await stopPipelineSession(sessionCtx, session.id).catch(() => undefined);
+  }
+  if (!result) {
+    throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "Agent step failed"));
   }
   if (result.status === "error") {
     throw new Error(result.error ?? "Agent step failed");
@@ -687,6 +726,14 @@ function resolveAgentInputMaxBytes(): number {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) return DEFAULT_AGENT_INPUT_MAX_BYTES;
   return Math.max(0, Math.floor(parsed));
+}
+
+function resolveAgentCallbackTimeoutRetries(): number {
+  const raw = process.env.PIPELINE_AGENT_CALLBACK_TIMEOUT_RETRIES;
+  if (!raw) return DEFAULT_AGENT_CALLBACK_TIMEOUT_RETRIES;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return DEFAULT_AGENT_CALLBACK_TIMEOUT_RETRIES;
+  return Math.max(0, Math.min(5, Math.floor(parsed)));
 }
 
 async function recordLiveSession(ctx: SessionApiContext, session: SessionSnapshot): Promise<void> {
@@ -785,7 +832,7 @@ async function waitForCallbackResult(
     }
     await new Promise((resolve) => setTimeout(resolve, CALLBACK_POLL_MS));
   }
-  throw new Error(`Timed out waiting for pipeline agent callback after ${Math.round(timeoutMs / 1000)}s`);
+  throw new PipelineCallbackTimeout(timeoutMs);
 }
 
 function parseAgentCallbackPayload(

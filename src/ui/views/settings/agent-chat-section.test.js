@@ -7,6 +7,7 @@ import {
   resolveSelectedSubscriptionId,
 } from "./agent-chat-section-state.js";
 import { createAgentDispatchSetupCards } from "./agent-chat-setup-cards.js";
+import { createProfileWorkspaceSettingsCard } from "./agent-chat-profile-workspace-card.js";
 
 class FakeElement {
   constructor(tagName) {
@@ -176,6 +177,47 @@ describe("agent chat settings subscription selection", () => {
 
       queryByTestId(panel, "agent-chat-use-backend-backend-secondary").click();
       expect(selectedBackendConnection?.backendConnectionId).toBe("backend-secondary");
+    });
+  });
+
+  test("renders visible profile workspace scopes and channels as editable targets", () => {
+    withFakeDocument(() => {
+      const panel = createProfileWorkspaceSettingsCard({
+        canManage: true,
+        pipelineDefinitions: [{ id: "chat-pipeline", name: "Chat Pipeline" }],
+        subscription: {
+          profileWorkspace: {
+            profile: {
+              profileId: "agent-profile-1",
+              defaultPipelineDefinitionId: "",
+              promptContext: "",
+            },
+            workspace: {
+              profileWorkspaceId: "profile-workspace-1",
+              workspaceOwnerNpub: "npub1workspace",
+              sourceAppNpub: "npub1source",
+              backendBaseUrl: "https://tower.example",
+              towerUrl: "https://tower.example",
+              connectionHealth: "healthy",
+              yokeSyncStatus: "synced",
+              relayOnboardingStatus: "ready",
+              defaultPipelineDefinitionId: "",
+              workspaceContext: "",
+            },
+            policies: [],
+            pipelineOverrides: [],
+            appendedContexts: [],
+            visibleContext: {
+              scopes: [{ id: "scope-autopilot", label: "Autopilot", source: "last_routing" }],
+              channels: [{ id: "channel-design", label: "Design", source: "last_routing", scopeId: "scope-autopilot" }],
+            },
+          },
+        },
+        onSave: () => {},
+      });
+
+      expect(queryByTestId(panel, "agent-chat-profile-target-id-0")?.value).toBe("scope-autopilot");
+      expect(queryByTestId(panel, "agent-chat-profile-target-id-1")?.value).toBe("channel-design");
     });
   });
 });

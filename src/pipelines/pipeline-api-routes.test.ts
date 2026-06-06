@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AccessActions } from "../auth/access-control";
@@ -63,6 +63,27 @@ async function handleGet(path: string, ctx: PipelineApiContext, viewerNpub = "np
     makeAuth(viewerNpub),
     ctx,
   ) ?? new Response(null, { status: 404 });
+}
+
+async function handlePost(path: string, ctx: PipelineApiContext, viewerNpub = "npub1viewer"): Promise<Response> {
+  const url = new URL(`http://localhost${path}`);
+  return await handlePipelineApi(
+    new Request(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }),
+    url,
+    "POST",
+    makeAuth(viewerNpub),
+    ctx,
+  ) ?? new Response(null, { status: 404 });
+}
+
+function writeSharedPipelineDefinition(slug: string, spec: Record<string, unknown>): void {
+  const definitionsDir = join(process.env.WINGMEN_PIPELINES_ROOT!, "shared", "definitions");
+  mkdirSync(definitionsDir, { recursive: true });
+  writeFileSync(join(definitionsDir, `${slug}.json`), JSON.stringify(spec, null, 2));
 }
 
 describe("pipeline run API visibility", () => {
@@ -162,5 +183,64 @@ describe("pipeline run API visibility", () => {
     const response = await handleGet(`/api/pipelines/runs/${encodeURIComponent(run.id)}`, makeContext(store, true));
 
     expect(response.status).toBe(404);
+  });
+
+  test("reopens an accessible errored run for async resume", async () => {
+    writeSharedPipelineDefinition("recoverable", {
+      name: "recoverable",
+      input: { value: 1 },
+      steps: [
+        {
+          name: "resume-step",
+          type: "code",
+          function: "test.resume",
+          assign: "$.resumed",
+        },
+      ],
+    });
+    const store = makeStore();
+    const run = store.createRun({
+      definitionId: "recoverable",
+      name: "recoverable",
+      ownerNpub: "npub1viewer",
+      ownerAlias: "viewer-alias",
+      scope: "shared",
+      input: { value: 1 },
+    });
+    store.completeRun(run.id, "error", run.current, "temporary failure");
+    const ctx = {
+      ...makeContext(store, true),
+      loadRegistryForRun: async () => ({
+        async "test.resume"() {
+          return { value: "ok" };
+        },
+      }),
+    } satisfies PipelineApiContext;
+
+    const response = await handlePost(`/api/pipelines/runs/${encodeURIComponent(run.id)}/resume-from-failure`, ctx);
+    const body = await response.json() as { ok?: boolean; run?: { status?: string } };
+
+    expect(response.status).toBe(202);
+    expect(body.ok).toBe(true);
+    expect(["running", "ok"]).toContain(body.run?.status);
+    expect(["running", "ok"]).toContain(store.getRun(run.id)?.status);
+  });
+
+  test("rejects manual resume for non-errored runs", async () => {
+    const store = makeStore();
+    const run = store.createRun({
+      definitionId: "running-definition",
+      name: "running run",
+      ownerNpub: "npub1viewer",
+      ownerAlias: "viewer-alias",
+      scope: "user",
+      input: {},
+    });
+
+    const response = await handlePost(`/api/pipelines/runs/${encodeURIComponent(run.id)}/resume-from-failure`, makeContext(store, true));
+    const body = await response.json() as { error?: string };
+
+    expect(response.status).toBe(409);
+    expect(body.error).toContain("Only errored");
   });
 });

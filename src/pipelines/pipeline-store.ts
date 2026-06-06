@@ -162,6 +162,28 @@ export class PipelineStore {
     return this.getRun(id)!;
   }
 
+  reopenErroredRun(id: string): PipelineRunRecord | null {
+    const run = this.getRun(id);
+    if (!run || run.status !== "error") return run;
+    this.db.run(
+      `UPDATE pipeline_runs
+       SET status = 'running', result_json = NULL, error = NULL, active_step_id = NULL, completed_at = NULL
+       WHERE id = ? AND status = 'error'`,
+      [id],
+    );
+    this.addEvent({
+      runId: id,
+      level: "warn",
+      type: "run_reopened",
+      message: "Manual resume from failed step",
+      data: {
+        cursorIndex: run.cursorIndex,
+        previousError: run.error,
+      },
+    });
+    return this.getRun(id);
+  }
+
   createStep(input: {
     runId: string;
     stepIndex: number;

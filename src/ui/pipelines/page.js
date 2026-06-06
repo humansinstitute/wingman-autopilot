@@ -9,6 +9,7 @@ import {
   fetchPipelineRuns,
   fetchPipelineRun,
   editPipelineWithWizard,
+  resumePipelineRunFromFailure,
   runPipelineDefinition,
   saveManualPipelineEdit,
   startPipelineFunctionWizard,
@@ -296,6 +297,7 @@ export function initPipelinesPage({ showToast, isFeatureEnabledForViewer = () =>
       navigateToPipelinePath,
       ensureSelectedRunPayload,
       showToast,
+      resumeRunFromFailure,
       startCreateWizard,
       startEditWizard,
       saveManualEdit,
@@ -322,6 +324,28 @@ export function initPipelinesPage({ showToast, isFeatureEnabledForViewer = () =>
       showToast(state.error, { type: "error" });
     } finally {
       state.wizardBusy = false;
+      updatePage(page);
+    }
+  }
+
+  async function resumeRunFromFailure(page, id) {
+    if (!id) return;
+    state.resumingRunId = id;
+    state.error = null;
+    updatePage(page);
+    try {
+      const payload = await resumePipelineRunFromFailure(id);
+      state.selectedRun = payload;
+      state.selectedStep = null;
+      state.selectedRunTab = "overview";
+      const runs = await fetchPipelineRuns();
+      state.runs = runs.runs ?? [];
+      showToast("Pipeline run resumed", { type: "success" });
+    } catch (error) {
+      state.error = error instanceof Error ? error.message : String(error);
+      showToast(state.error, { type: "error" });
+    } finally {
+      state.resumingRunId = null;
       updatePage(page);
     }
   }

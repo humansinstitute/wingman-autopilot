@@ -678,6 +678,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       updaterNpub: 'npub1human',
       bindingType: 'thread',
       bindingId: 'thread-profile',
+      scopeId: 'scope-profile',
       channelId: 'channel-profile',
       threadId: 'thread-profile',
       groupNpubs: ['npub1group'],
@@ -703,6 +704,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(result.handled).toBe(true);
     expect(runInputs).toHaveLength(1);
     expect((runInputs[0]?.dispatch as any)?.routeId).toContain('profile-policy');
+    expect((runInputs[0]?.routing as any)?.scopeId).toBe('scope-profile');
     expect((runInputs[0]?.chat as any)?.threadId).toBe('thread-profile');
     expect((runInputs[0]?.profileRuntime as any)?.eventType).toBe('chat_mention');
     expect((runInputs[0]?.profileRuntime as any)?.appendedContext[0].contextText).toBe('Workspace chat context');
