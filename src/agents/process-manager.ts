@@ -19,15 +19,13 @@ import {
   normaliseSessionMetadata,
 } from "../sessions/session-metadata";
 import {
-  addAppToEcosystem,
-  getEcosystemPath,
+  createAgentPm2StartOptions,
   getLogsDirectory,
   removeAppFromEcosystem,
   type SessionConfig,
-  withEcosystemConfigLock,
 } from "./ecosystem-generator";
 import {
-  startProcessFromConfig,
+  startProcess,
   stopProcess,
   deleteProcess,
   getProcessByName,
@@ -1132,32 +1130,21 @@ export class ProcessManager {
       envOverride: session.definition.env ?? {},
     };
 
-    const ecosystemPath = getEcosystemPath(session.workingDirectory, session.isAdmin ?? false);
-    let processName = "";
-    let logsDir = getLogsDirectory(session.workingDirectory, session.isAdmin ?? false);
+    const startOptions = createAgentPm2StartOptions(sessionConfig);
+    const processName = startOptions.name;
+    const logsDir = getLogsDirectory(session.workingDirectory, session.isAdmin ?? false);
     let proc = null;
+    session.pm2Name = processName;
 
     try {
-      proc = await withEcosystemConfigLock(ecosystemPath, async () => {
-        const added = await addAppToEcosystem(sessionConfig, { lock: false });
-        processName = added.processName;
-        logsDir = added.logsDir;
-        session.pm2Name = processName;
+      this.appendLog(session, `[manager] starting via PM2 as ${processName}`);
 
-        this.appendLog(session, `[manager] starting via PM2 as ${processName}`);
-
-        // PM2 parses the shared ecosystem file during start. Keep same-file
-        // session launches serialized so concurrent scheduled jobs cannot
-        // rewrite the config while PM2 is reading it.
-        await startProcessFromConfig(ecosystemPath, processName);
-        return waitForStatus(processName, "online", resolvePm2AgentStartTimeoutMs());
-      });
+      await startProcess(startOptions);
+      proc = await waitForStatus(processName, "online", resolvePm2AgentStartTimeoutMs());
 
       const pm2Status = proc?.pm2_env?.status;
       if (!proc || pm2Status !== "online") {
-        const startupDetail = processName
-          ? await this.readPm2StartupFailure(logsDir, processName)
-          : null;
+        const startupDetail = await this.readPm2StartupFailure(logsDir, processName);
         if (pm2Status && pm2Status !== "online") {
           throw new Error(
             startupDetail
@@ -1168,25 +1155,23 @@ export class ProcessManager {
         throw new Error(
           startupDetail
             ? `PM2 process ${processName} failed to start within timeout: ${startupDetail}`
-            : `PM2 process ${processName || "agent session"} failed to start within timeout`,
+            : `PM2 process ${processName} failed to start within timeout`,
         );
       }
     } catch (error) {
-      if (processName) {
-        try {
-          await deleteProcess(processName);
-        } catch {
-          // best-effort cleanup
-        }
-        try {
-          await removeAppFromEcosystem(
-            session.workingDirectory,
-            session.isAdmin ?? false,
-            processName,
-          );
-        } catch {
-          // best-effort cleanup
-        }
+      try {
+        await deleteProcess(processName);
+      } catch {
+        // best-effort cleanup
+      }
+      try {
+        await removeAppFromEcosystem(
+          session.workingDirectory,
+          session.isAdmin ?? false,
+          processName,
+        );
+      } catch {
+        // best-effort cleanup for legacy ecosystem-backed sessions
       }
       session.pm2Name = undefined;
       throw error;

@@ -39,6 +39,22 @@ export interface EcosystemConfig {
   apps: EcosystemApp[];
 }
 
+export interface AgentPm2StartOptions {
+  name: string;
+  namespace?: string;
+  script: string;
+  args: string[];
+  cwd: string;
+  env?: Record<string, string>;
+  output: string;
+  error: string;
+  logDateFormat: string;
+  mergeLogs: boolean;
+  autorestart: boolean;
+  maxRestarts: number;
+  minUptime: string;
+}
+
 export interface SessionConfig {
   sessionId: string;
   sessionName: string;
@@ -300,6 +316,25 @@ export function createAppConfig(sessionConfig: SessionConfig): EcosystemApp {
     autorestart: false,
     max_restarts: 0,
     min_uptime: "5s",
+  };
+}
+
+export function createAgentPm2StartOptions(sessionConfig: SessionConfig): AgentPm2StartOptions {
+  const appConfig = createAppConfig(sessionConfig);
+  return {
+    name: appConfig.name,
+    namespace: appConfig.namespace,
+    script: appConfig.script,
+    args: appConfig.args,
+    cwd: appConfig.cwd,
+    env: appConfig.env,
+    output: appConfig.out_file,
+    error: appConfig.error_file,
+    logDateFormat: appConfig.log_date_format,
+    mergeLogs: appConfig.merge_logs,
+    autorestart: appConfig.autorestart,
+    maxRestarts: appConfig.max_restarts,
+    minUptime: appConfig.min_uptime,
   };
 }
 

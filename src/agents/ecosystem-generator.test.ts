@@ -8,6 +8,7 @@ import type { WingmanConfig } from "../config";
 import { WappStore } from "../wapps/wapp-store";
 import {
   addAppToEcosystem,
+  createAgentPm2StartOptions,
   createUserAppEcosystemConfig,
   getEcosystemPath,
   readEcosystemConfig,
@@ -103,6 +104,28 @@ describe("createUserAppEcosystemConfig WApp env injection", () => {
 });
 
 describe("agent ecosystem config concurrency", () => {
+  test("builds inline PM2 options for agent sessions", () => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-pm2-options-"));
+    try {
+      const options = createAgentPm2StartOptions(makeSessionConfig(dir, 3));
+
+      expect(options.name).toBe("tester-sched-concurrent-3-session3");
+      expect(options.namespace).toBe("wingman-agents");
+      expect(options.script).toBe("bash");
+      expect(options.args[0]).toBe("-lc");
+      expect(options.args[1]).toContain("agentapi");
+      expect(options.args[1]).toContain("--port");
+      expect(options.args[1]).toContain("4703");
+      expect(options.cwd).toBe(dir);
+      expect(options.env?.SESSION_ID).toBe("session-3");
+      expect(options.output).toContain("tester-sched-concurrent-3-session3-out.log");
+      expect(options.error).toContain("tester-sched-concurrent-3-session3-error.log");
+      expect(options.autorestart).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("serializes operations for the same ecosystem path", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ecosystem-lock-"));
     try {
