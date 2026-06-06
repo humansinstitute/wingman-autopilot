@@ -153,6 +153,7 @@ export interface AgentDocumentCommentDispatchInput {
   recordId: string;
   comment: InboundCommentRecord;
   botIdentity: RuntimeBotIdentity;
+  runtimeContext?: string | null;
 }
 
 export class AgentCommentSessionRuntime {
@@ -229,6 +230,7 @@ export class AgentCommentSessionRuntime {
         documentId,
         input.comment.commentId,
       ),
+      runtimeContext: input.runtimeContext,
     });
 
     if (!this.hasQueuedPrompt?.(liveSession.id, prompt)) {

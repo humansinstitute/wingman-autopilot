@@ -12,6 +12,11 @@ function truncateText(value: string, maxLength = 400): string {
   return compact.length > maxLength ? `${compact.slice(0, maxLength - 3)}...` : compact;
 }
 
+function formatRuntimeContextBlock(value: string | null | undefined): string {
+  const trimmed = compactText(value);
+  return trimmed ? `\n\nProfile workspace runtime context:\n${trimmed}` : '';
+}
+
 export function buildDocumentCommentRoute(docId: string, commentId: string): string {
   const params = new URLSearchParams();
   params.set('docid', docId);
@@ -29,13 +34,14 @@ export function buildDocumentCommentDispatchPrompt(params: {
     show: string;
     reply: string;
   };
+  runtimeContext?: string | null;
 }): string {
   const body = truncateText(params.comment.body);
   const anchorLine = Number.isFinite(params.comment.anchorLineNumber ?? NaN)
     ? String(params.comment.anchorLineNumber)
     : '-';
 
-  return [
+  const prompt = [
     'Agent comment dispatch.',
     'Dispatch reason: document comment added.',
     `Agent id: ${params.agent.agentId}`,
@@ -61,4 +67,5 @@ export function buildDocumentCommentDispatchPrompt(params: {
     '- If the comment implies new work, state that clearly in the reply and continue the session.',
     '- If no further work is needed after replying, set nextAction to stop.',
   ].join('\n');
+  return `${prompt}${formatRuntimeContextBlock(params.runtimeContext)}`;
 }

@@ -35,6 +35,7 @@ export interface AgentChatSessionRuntimeInput {
   intercept: ChatInterceptStateRecord;
   botIdentity: RuntimeBotIdentity;
   chatMessage: Record<string, unknown>;
+  runtimeContext?: string | null;
 }
 
 export class AgentChatSessionRuntime {
@@ -222,6 +223,7 @@ export class AgentChatSessionRuntime {
               contextError: yokeRuntime.contextError,
               turns: cycleTurns,
               followUpMode: promptMode,
+              runtimeContext: latestInput.runtimeContext,
             })
           : buildBootstrapPrompt({
               agent: latestInput.agent,
@@ -233,6 +235,7 @@ export class AgentChatSessionRuntime {
               context: yokeRuntime.context,
               contextError: yokeRuntime.contextError,
               latestTurn: cycleTurns[cycleTurns.length - 1]!,
+              runtimeContext: latestInput.runtimeContext,
             });
 
         try {

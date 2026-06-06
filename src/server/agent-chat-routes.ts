@@ -20,6 +20,13 @@ import type {
   DispatchTriggerKind,
   WorkspaceSubscriptionRecord,
 } from '../agent-chat/types';
+import type {
+  AgentProfileWorkspaceBundle,
+  AgentWorkspaceContextKind,
+  AgentWorkspaceEventType,
+  AgentWorkspacePipelineOverrideTarget,
+  AgentWorkspacePolicyAction,
+} from '../agent-chat/agent-profile-policy-store';
 
 type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
@@ -115,6 +122,30 @@ function serialiseDispatchRoute(record: DispatchRouteRecord) {
   return { ...record };
 }
 
+function getProfileWorkspaceForSubscription(
+  manager: WorkspaceSubscriptionManager,
+  subscriptionId: string,
+  managerNpub: string,
+): AgentProfileWorkspaceBundle | null {
+  const withProfileWorkspace = manager as WorkspaceSubscriptionManager & {
+    getProfileWorkspaceForManager?: (subscriptionId: string, npub: string) => AgentProfileWorkspaceBundle | null;
+  };
+  return withProfileWorkspace.getProfileWorkspaceForManager?.(subscriptionId, managerNpub) ?? null;
+}
+
+function serialiseProfileWorkspace(bundle: AgentProfileWorkspaceBundle | null) {
+  if (!bundle) {
+    return null;
+  }
+  return {
+    profile: bundle.profile,
+    workspace: bundle.workspace,
+    policies: bundle.policies,
+    pipelineOverrides: bundle.pipelineOverrides,
+    appendedContexts: bundle.appendedContexts,
+  };
+}
+
 function getBackendWorkspaceName(record: BackendConnectionRecord | null | undefined): string | null {
   const response = record?.lastHealthResult?.details?.response;
   if (!response || typeof response !== 'object' || Array.isArray(response)) {
@@ -129,12 +160,14 @@ function serialiseSubscription(
   intercepts: ChatInterceptStateRecord[],
   candidateAgents: AgentDefinitionRecord[],
   backendConnection?: BackendConnectionRecord | null,
+  profileWorkspace?: AgentProfileWorkspaceBundle | null,
   options: { canManage?: boolean; shared?: boolean } = {},
 ) {
   const recommendations = buildOperatorRecommendations(record, intercepts);
   return {
     ...record,
     workspaceName: getBackendWorkspaceName(backendConnection),
+    profileWorkspace: serialiseProfileWorkspace(profileWorkspace ?? null),
     backend: backendConnection
       ? {
           backendConnectionId: backendConnection.backendConnectionId,
@@ -283,6 +316,127 @@ function parseActivePolicy(value: unknown): DispatchActivePolicy | undefined {
   return value === 'skip' || value === 'queue' || value === 'start_new' ? value : undefined;
 }
 
+function parseWorkspacePolicyEventType(value: unknown): AgentWorkspaceEventType | null {
+  return value === 'direct_message'
+    || value === 'chat_mention'
+    || value === 'chat_observe'
+    || value === 'document_created'
+    || value === 'document_comment_tagged'
+    || value === 'document_comment_observe'
+    || value === 'task_assigned'
+    || value === 'task_comment'
+    || value === 'approval_assigned'
+    || value === 'flow_step_assigned'
+    ? value
+    : null;
+}
+
+function parseWorkspacePolicyAction(value: unknown): AgentWorkspacePolicyAction | undefined {
+  return value === 'respond'
+    || value === 'ignore'
+    || value === 'observe'
+    || value === 'index'
+    || value === 'work'
+    || value === 'acknowledge'
+    || value === 'notify'
+    || value === 'process'
+    || value === 'run_flow_handler'
+    ? value
+    : undefined;
+}
+
+function parsePipelineOverrideTarget(value: unknown): AgentWorkspacePipelineOverrideTarget | null {
+  return value === 'scope' || value === 'channel' ? value : null;
+}
+
+function parseAppendedContextKind(value: unknown): AgentWorkspaceContextKind | null {
+  return value === 'workspace' || value === 'scope' || value === 'channel' || value === 'event_policy' ? value : null;
+}
+
+function parseProfileWorkspacePolicies(value: unknown) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    const eventType = parseWorkspacePolicyEventType(record.eventType);
+    const hasPipelineDefinitionId = Object.prototype.hasOwnProperty.call(record, 'pipelineDefinitionId');
+    const hasPromptContext = Object.prototype.hasOwnProperty.call(record, 'promptContext');
+    if (!eventType) {
+      return [];
+    }
+    return [{
+      eventType,
+      enabled: typeof record.enabled === 'boolean' ? record.enabled : undefined,
+      defaultAction: parseWorkspacePolicyAction(record.defaultAction),
+      pipelineDefinitionId: hasPipelineDefinitionId
+        ? typeof record.pipelineDefinitionId === 'string' ? record.pipelineDefinitionId : null
+        : undefined,
+      promptContext: hasPromptContext
+        ? typeof record.promptContext === 'string' ? record.promptContext : null
+        : undefined,
+      quietMode: typeof record.quietMode === 'boolean' ? record.quietMode : undefined,
+    }];
+  });
+}
+
+function parseProfileWorkspacePipelineOverrides(value: unknown) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    const targetKind = parsePipelineOverrideTarget(record.targetKind);
+    const targetId = typeof record.targetId === 'string' ? record.targetId.trim() : '';
+    const pipelineDefinitionId = typeof record.pipelineDefinitionId === 'string' ? record.pipelineDefinitionId.trim() : '';
+    return targetKind && targetId && pipelineDefinitionId
+      ? [{ targetKind, targetId, pipelineDefinitionId }]
+      : [];
+  });
+}
+
+function parseProfileWorkspaceAppendedContexts(value: unknown) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    const contextKind = parseAppendedContextKind(record.contextKind);
+    if (!contextKind) {
+      return [];
+    }
+    return [{
+      contextKind,
+      targetId: typeof record.targetId === 'string' ? record.targetId.trim() : null,
+      eventType: parseWorkspacePolicyEventType(record.eventType),
+      contextText: typeof record.contextText === 'string' ? record.contextText : '',
+    }];
+  });
+}
+
+function getObjectField(value: unknown, key: string): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const field = (value as Record<string, unknown>)[key];
+  return field && typeof field === 'object' && !Array.isArray(field)
+    ? field as Record<string, unknown>
+    : null;
+}
+
+function hasField(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
 export async function handleAgentChatApi(
   request: Request,
   url: URL,
@@ -319,6 +473,7 @@ export async function handleAgentChatApi(
           ctx.manager.listInterceptsForSubscription(record.subscriptionId, scope.managerNpub),
           ctx.manager.listAgentsForWorkspaceBot(record.workspaceOwnerNpub, record.botNpub, scope.managerNpub),
           backendConnection,
+          getProfileWorkspaceForSubscription(ctx.manager, record.subscriptionId, scope.managerNpub),
           { canManage: scope.canManage, shared: scope.shared },
         );
       }),
@@ -506,6 +661,7 @@ export async function handleAgentChatApi(
           ctx.manager.listInterceptsForSubscription(imported.subscription.subscriptionId, scope.managerNpub),
           ctx.manager.listAgentsForWorkspaceBot(imported.subscription.workspaceOwnerNpub, imported.subscription.botNpub, scope.managerNpub),
           null,
+          getProfileWorkspaceForSubscription(ctx.manager, imported.subscription.subscriptionId, scope.managerNpub),
           { canManage: scope.canManage, shared: scope.shared },
         ),
       });
@@ -571,6 +727,7 @@ export async function handleAgentChatApi(
           ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, scope.managerNpub),
           ctx.manager.listAgentsForWorkspaceBot(subscription.workspaceOwnerNpub, subscription.botNpub, scope.managerNpub),
           null,
+          getProfileWorkspaceForSubscription(ctx.manager, subscription.subscriptionId, scope.managerNpub),
           { canManage: scope.canManage, shared: scope.shared },
         ),
       });
@@ -665,9 +822,76 @@ export async function handleAgentChatApi(
   }
 
   const match = url.pathname.match(/^\/api\/agent-chat\/subscriptions\/([^/]+)$/);
+  const profileWorkspaceMatch = url.pathname.match(/^\/api\/agent-chat\/subscriptions\/([^/]+)\/profile-workspace$/);
   const agentMatch = url.pathname.match(/^\/api\/agent-chat\/agents\/([^/]+)$/);
   const dispatchRouteMatch = url.pathname.match(/^\/api\/agent-chat\/dispatch-routes\/([^/]+)$/);
   const actionMatch = url.pathname.match(/^\/api\/agent-chat\/subscriptions\/([^/]+)\/actions\/([^/]+)$/);
+  if (profileWorkspaceMatch && method === 'GET') {
+    const subscriptionId = decodeURIComponent(profileWorkspaceMatch[1]!);
+    const bundle = getProfileWorkspaceForSubscription(ctx.manager, subscriptionId, scope.managerNpub);
+    if (!bundle) {
+      return Response.json({ error: 'Subscription not found' }, { status: 404 });
+    }
+    return Response.json({ profileWorkspace: serialiseProfileWorkspace(bundle) });
+  }
+  if (profileWorkspaceMatch && (method === 'POST' || method === 'PATCH')) {
+    const denied = requireAgentChatManagement(scope);
+    if (denied) {
+      return denied;
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = await request.json() as Record<string, unknown>;
+    } catch {
+      return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+    }
+    const subscriptionId = decodeURIComponent(profileWorkspaceMatch[1]!);
+    try {
+      const source = getObjectField(body, 'profileWorkspace') ?? body;
+      const profileSource = getObjectField(source, 'profile');
+      const workspaceSource = getObjectField(source, 'workspace');
+      const saveInput: Parameters<typeof ctx.manager.saveProfileWorkspaceForManager>[0] = {
+        subscriptionId,
+        managedByNpub: scope.managerNpub,
+        policies: parseProfileWorkspacePolicies(source.policies),
+        pipelineOverrides: parseProfileWorkspacePipelineOverrides(source.pipelineOverrides),
+        appendedContexts: parseProfileWorkspaceAppendedContexts(source.appendedContexts),
+      };
+      if (hasField(source, 'profileDefaultPipelineDefinitionId') || (profileSource && hasField(profileSource, 'defaultPipelineDefinitionId'))) {
+        const value = hasField(source, 'profileDefaultPipelineDefinitionId')
+          ? source.profileDefaultPipelineDefinitionId
+          : profileSource?.defaultPipelineDefinitionId;
+        saveInput.profileDefaultPipelineDefinitionId = typeof value === 'string'
+          ? value
+          : null;
+      }
+      if (hasField(source, 'profilePromptContext') || (profileSource && hasField(profileSource, 'promptContext'))) {
+        const value = hasField(source, 'profilePromptContext') ? source.profilePromptContext : profileSource?.promptContext;
+        saveInput.profilePromptContext = typeof value === 'string' ? value : null;
+      }
+      if (hasField(source, 'workspaceDefaultPipelineDefinitionId') || (workspaceSource && hasField(workspaceSource, 'defaultPipelineDefinitionId'))) {
+        const value = hasField(source, 'workspaceDefaultPipelineDefinitionId')
+          ? source.workspaceDefaultPipelineDefinitionId
+          : workspaceSource?.defaultPipelineDefinitionId;
+        saveInput.workspaceDefaultPipelineDefinitionId = typeof value === 'string'
+          ? value
+          : null;
+      }
+      if (hasField(source, 'workspaceContext') || (workspaceSource && hasField(workspaceSource, 'workspaceContext'))) {
+        const value = hasField(source, 'workspaceContext') ? source.workspaceContext : workspaceSource?.workspaceContext;
+        saveInput.workspaceContext = typeof value === 'string' ? value : null;
+      }
+      if (hasField(source, 'workspaceTitle') || (workspaceSource && hasField(workspaceSource, 'workspaceTitle'))) {
+        const value = hasField(source, 'workspaceTitle') ? source.workspaceTitle : workspaceSource?.workspaceTitle;
+        saveInput.workspaceTitle = typeof value === 'string' ? value : null;
+      }
+      const bundle = ctx.manager.saveProfileWorkspaceForManager(saveInput);
+      return Response.json({ profileWorkspace: serialiseProfileWorkspace(bundle) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save profile workspace settings.';
+      return Response.json({ error: message }, { status: getAgentChatErrorStatus(error, 400) });
+    }
+  }
   if (dispatchRouteMatch && method === 'DELETE') {
     const denied = requireAgentChatManagement(scope);
     if (denied) {
@@ -711,6 +935,7 @@ export async function handleAgentChatApi(
           ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, scope.managerNpub),
           ctx.manager.listAgentsForWorkspaceBot(subscription.workspaceOwnerNpub, subscription.botNpub, scope.managerNpub),
           null,
+          getProfileWorkspaceForSubscription(ctx.manager, subscription.subscriptionId, scope.managerNpub),
           { canManage: scope.canManage, shared: scope.shared },
         ),
       });
@@ -745,6 +970,7 @@ export async function handleAgentChatApi(
         ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, scope.managerNpub),
         ctx.manager.listAgentsForWorkspaceBot(subscription.workspaceOwnerNpub, subscription.botNpub, scope.managerNpub),
         null,
+        getProfileWorkspaceForSubscription(ctx.manager, subscription.subscriptionId, scope.managerNpub),
         { canManage: scope.canManage, shared: scope.shared },
       ),
     });

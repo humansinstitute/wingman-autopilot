@@ -12,6 +12,11 @@ function compactText(value: string | null | undefined): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function formatRuntimeContextBlock(value: string | null | undefined): string {
+  const trimmed = compactText(value);
+  return trimmed ? `\n\nProfile workspace runtime context:\n${trimmed}` : '';
+}
+
 export function buildAgentWorkGoal(task: InboundTaskRecord): string {
   const title = compactText(task.title) || `Task ${task.taskId}`;
   const description = compactText(task.description) || '(no description provided)';
@@ -43,6 +48,7 @@ export function buildTaskDispatchPrompt(params: {
   agent: AgentDefinitionRecord;
   task: InboundTaskRecord;
   dispatchReason: 'new task' | 'task updated';
+  runtimeContext?: string | null;
 }): string {
   const { task, dispatchReason, agent } = params;
   const flowId = compactText(task.flowId) || '-';
@@ -52,7 +58,7 @@ export function buildTaskDispatchPrompt(params: {
   const scopeLineage = buildScopeLineage(task);
   const title = compactText(task.title) || `Task ${task.taskId}`;
   const description = compactText(task.description) || '(no description provided)';
-  return renderPromptTemplate(agent.taskPromptTemplate || DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE, {
+  const prompt = renderPromptTemplate(agent.taskPromptTemplate || DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE, {
     dispatch_reason: dispatchReason,
     task_id: task.taskId,
     flow_id: flowId,
@@ -63,6 +69,7 @@ export function buildTaskDispatchPrompt(params: {
     title,
     description,
   });
+  return `${prompt}${formatRuntimeContextBlock(params.runtimeContext)}`;
 }
 
 export function buildTaskCommentDispatchPrompt(params: {
@@ -74,9 +81,10 @@ export function buildTaskCommentDispatchPrompt(params: {
     show: string;
     reply: string;
   };
+  runtimeContext?: string | null;
 }): string {
   const body = compactText(params.comment.body) || '[empty]';
-  return [
+  const prompt = [
     'Agent work comment advisory.',
     'Dispatch reason: task comment added.',
     `Agent id: ${params.agent.agentId}`,
@@ -100,4 +108,5 @@ export function buildTaskCommentDispatchPrompt(params: {
     '- Confirm whether this comment changes the required next actions on the task.',
     '- If no further work is needed after replying, set nextAction to stop.',
   ].join('\n');
+  return `${prompt}${formatRuntimeContextBlock(params.runtimeContext)}`;
 }

@@ -69,6 +69,7 @@ export interface AgentWorkTaskDispatchInput {
   recordId: string;
   recordState: string | null;
   task: InboundTaskRecord;
+  runtimeContext?: string | null;
 }
 
 export interface AgentWorkTaskCommentDispatchInput {
@@ -77,6 +78,7 @@ export interface AgentWorkTaskCommentDispatchInput {
   recordId: string;
   comment: InboundCommentRecord;
   botIdentity: RuntimeBotIdentity;
+  runtimeContext?: string | null;
 }
 
 const TERMINAL_TASK_STATES = new Set([
@@ -522,6 +524,7 @@ export class AgentWorkSessionRuntime {
         agent: input.agent,
         task: input.task,
         dispatchReason: resolveTaskDispatchReason(taskBinding),
+        runtimeContext: input.runtimeContext,
       }),
     );
     await this.maybeAutoDispatchQueuedPrompt(this.getSession(liveSession.id) ?? liveSession);
@@ -576,6 +579,7 @@ export class AgentWorkSessionRuntime {
         taskId,
         comment: input.comment,
         commands,
+        runtimeContext: input.runtimeContext,
       }),
     );
     this.saveBinding({

@@ -26,6 +26,19 @@ import {
 } from './agent-connect-import';
 import { backendConnectionStore, type BackendConnectionStore } from './backend-connection-store';
 import { AgentChatRoutingEvaluator } from './routing-evaluator';
+import {
+  type AgentProfileWorkspaceBundle,
+  type AgentWorkspaceAppendedContextRecord,
+  type AgentWorkspaceContextKind,
+  type AgentWorkspaceEventPolicyRecord,
+  type AgentWorkspaceEventType,
+  type AgentWorkspacePipelineOverrideRecord,
+  type AgentWorkspacePipelineOverrideTarget,
+  type ResolvedAgentWorkspaceRuntimeSettings,
+  type ResolvedAppendedContext,
+  agentProfilePolicyStore,
+  type AgentProfilePolicyStore,
+} from './agent-profile-policy-store';
 import { bootstrapAgentWorkspace } from './agent-workspace-bootstrap';
 import type { DispatchPipelineRuntime, DispatchPipelineRuntimeResult } from './dispatch-pipelines/runtime';
 import type { AgentChatSessionRuntime } from './session-runtime';
@@ -144,6 +157,62 @@ function getOptionalTextArray(value: unknown): string[] {
   return value
     .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
     .filter((entry) => entry.length > 0);
+}
+
+function defaultActionForEventType(eventType: AgentWorkspaceEventType) {
+  if (eventType === 'task_assigned') return 'work';
+  if (eventType === 'task_comment' || eventType === 'document_comment_tagged') return 'respond';
+  if (eventType === 'approval_assigned') return 'notify';
+  if (eventType === 'flow_step_assigned') return 'run_flow_handler';
+  if (eventType === 'document_created') return 'index';
+  if (eventType === 'chat_observe' || eventType === 'document_comment_observe') return 'observe';
+  return eventType === 'direct_message' || eventType === 'chat_mention' ? 'respond' : 'ignore';
+}
+
+function profilePolicyAllowsDispatch(decision: AgentProfileRuntimeDecision | null): boolean {
+  if (!decision) {
+    return true;
+  }
+  const policy = decision.settings.policy;
+  if (policy?.enabled === false || policy?.quietMode === true) {
+    return false;
+  }
+  const action = policy?.defaultAction ?? defaultActionForEventType(decision.eventType);
+  return action !== 'ignore' && action !== 'observe' && action !== 'index';
+}
+
+function profilePolicyAllowsLegacyPrompt(decision: AgentProfileRuntimeDecision | null): boolean {
+  if (!profilePolicyAllowsDispatch(decision)) {
+    return false;
+  }
+  const action = decision?.settings.policy?.defaultAction ?? (decision ? defaultActionForEventType(decision.eventType) : 'respond');
+  return action === 'respond' || action === 'work' || action === 'process' || action === 'run_flow_handler';
+}
+
+function formatResolvedProfileRuntimeContext(contexts: ResolvedAppendedContext[]): string | null {
+  const rows = contexts
+    .map((context) => {
+      const text = getOptionalText(context.contextText);
+      if (!text) {
+        return null;
+      }
+      const target = context.targetId ? ` ${context.targetId}` : '';
+      const event = context.eventType ? ` ${context.eventType}` : '';
+      return `[${context.kind}${target}${event}]\n${text}`;
+    })
+    .filter((row): row is string => Boolean(row));
+  return rows.length > 0 ? rows.join('\n\n') : null;
+}
+
+function getTaskScopeId(task: InboundTaskRecord): string | null {
+  return task.scopeId ?? task.scopeL5Id ?? task.scopeL4Id ?? task.scopeL3Id ?? task.scopeL2Id ?? task.scopeL1Id;
+}
+
+function eventTypeForTaskDispatchMode(mode: TaskDispatchMode): AgentWorkspaceEventType {
+  if (mode === 'flow_dispatch') {
+    return 'flow_step_assigned';
+  }
+  return 'task_assigned';
 }
 
 function getRecordUpdaterNpub(record: Record<string, unknown>): string | null {
@@ -294,6 +363,13 @@ type TaskDispatchEligibility =
   | 'skip_not_kickoff'
   | 'skip_not_review';
 
+interface AgentProfileRuntimeDecision {
+  profileWorkspaceId: string;
+  eventType: AgentWorkspaceEventType;
+  settings: ResolvedAgentWorkspaceRuntimeSettings;
+  contextText: string | null;
+}
+
 const TERMINAL_TASK_STATES = new Set([
   'done',
   'complete',
@@ -433,6 +509,7 @@ export interface WorkspaceSubscriptionManagerDependencies {
   store?: WorkspaceSubscriptionStore;
   agentStore?: AgentDefinitionStore;
   backendStore?: BackendConnectionStore;
+  profilePolicyStore?: AgentProfilePolicyStore;
   routingEvaluator?: AgentChatRoutingEvaluator;
   chatRuntime?: AgentChatSessionRuntime | null;
   agentWorkRuntime?: AgentWorkSessionRuntime | null;
@@ -544,6 +621,7 @@ export class WorkspaceSubscriptionManager {
   private readonly store: WorkspaceSubscriptionStore;
   private readonly agentStore: AgentDefinitionStore;
   private readonly backendStore: BackendConnectionStore;
+  private readonly profilePolicyStore: AgentProfilePolicyStore;
   private readonly routingEvaluator: AgentChatRoutingEvaluator;
   private readonly botKeyStore: WorkspaceSubscriptionManagerDependencies['botKeyStore'];
   private readonly getInstanceIdentity: () => WingmanInstanceIdentity | null;
@@ -566,6 +644,7 @@ export class WorkspaceSubscriptionManager {
     this.store = deps.store ?? workspaceSubscriptionStore;
     this.agentStore = deps.agentStore ?? agentDefinitionStore;
     this.backendStore = deps.backendStore ?? backendConnectionStore;
+    this.profilePolicyStore = deps.profilePolicyStore ?? agentProfilePolicyStore;
     this.routingEvaluator = deps.routingEvaluator ?? new AgentChatRoutingEvaluator({ agentStore: this.agentStore });
     this.botKeyStore = deps.botKeyStore;
     this.getInstanceIdentity = deps.getInstanceIdentity ?? (() => null);
@@ -694,6 +773,197 @@ export class WorkspaceSubscriptionManager {
     return this.agentStore
       .listByWorkspaceAndBot(workspaceOwnerNpub, botNpub)
       .filter((record) => record.managedByNpub === npub);
+  }
+
+  getProfileWorkspaceForManager(subscriptionId: string, npub: string): AgentProfileWorkspaceBundle | null {
+    const subscription = this.getForManager(subscriptionId, npub);
+    if (!subscription || !subscription.managedByNpub) {
+      return null;
+    }
+    const agentProfile = subscription.agentProfileId
+      ? this.agentStore.getByAgentId(subscription.agentProfileId)
+      : null;
+    const backendConnection = subscription.backendConnectionId
+      ? this.backendStore.getById(subscription.backendConnectionId)
+      : null;
+    return this.profilePolicyStore.ensureProfileWorkspaceForSubscription({
+      managedByNpub: subscription.managedByNpub,
+      agentProfileId: agentProfile?.agentId ?? subscription.agentProfileId ?? subscription.botNpub,
+      agentLabel: agentProfile?.label ?? null,
+      agentNpub: subscription.botNpub,
+      subscription,
+      backendConnection,
+    });
+  }
+
+  saveProfileWorkspaceForManager(input: {
+    subscriptionId: string;
+    managedByNpub: string;
+    profileDefaultPipelineDefinitionId?: string | null;
+    profilePromptContext?: string | null;
+    workspaceDefaultPipelineDefinitionId?: string | null;
+    workspaceContext?: string | null;
+    workspaceTitle?: string | null;
+    policies?: Array<Partial<AgentWorkspaceEventPolicyRecord> & { eventType: AgentWorkspaceEventType }>;
+    pipelineOverrides?: Array<{
+      targetKind: AgentWorkspacePipelineOverrideTarget;
+      targetId: string;
+      pipelineDefinitionId: string;
+    }>;
+    appendedContexts?: Array<{
+      contextKind: AgentWorkspaceContextKind;
+      targetId?: string | null;
+      eventType?: AgentWorkspaceEventType | null;
+      contextText: string;
+    }>;
+  }): AgentProfileWorkspaceBundle {
+    const bundle = this.getProfileWorkspaceForManager(input.subscriptionId, input.managedByNpub);
+    if (!bundle) {
+      throw Object.assign(new Error('Subscription not found'), { statusCode: 404 });
+    }
+
+    const profile = this.profilePolicyStore.updateProfileDefaults({
+      profileId: bundle.profile.profileId,
+      managedByNpub: input.managedByNpub,
+      defaultPipelineDefinitionId: input.profileDefaultPipelineDefinitionId,
+      promptContext: input.profilePromptContext,
+    });
+    const workspace = this.profilePolicyStore.updateWorkspaceDefaults({
+      profileWorkspaceId: bundle.workspace.profileWorkspaceId,
+      defaultPipelineDefinitionId: input.workspaceDefaultPipelineDefinitionId,
+      workspaceContext: input.workspaceContext,
+      workspaceTitle: input.workspaceTitle,
+    });
+    const existingPolicies = new Map(bundle.policies.map((policy) => [policy.eventType, policy]));
+    const now = new Date().toISOString();
+    const policies = Array.isArray(input.policies)
+      ? input.policies.map((policy) => {
+          const existing = existingPolicies.get(policy.eventType);
+          if (!existing) {
+            return null;
+          }
+          return this.profilePolicyStore.saveEventPolicy({
+            ...existing,
+            enabled: typeof policy.enabled === 'boolean' ? policy.enabled : existing.enabled,
+            defaultAction: policy.defaultAction ?? existing.defaultAction,
+            pipelineDefinitionId: policy.pipelineDefinitionId === undefined
+              ? existing.pipelineDefinitionId
+              : typeof policy.pipelineDefinitionId === 'string' && policy.pipelineDefinitionId.trim()
+                ? policy.pipelineDefinitionId.trim()
+                : null,
+            promptContext: policy.promptContext === undefined
+              ? existing.promptContext
+              : typeof policy.promptContext === 'string' && policy.promptContext.trim()
+                ? policy.promptContext
+                : null,
+            quietMode: typeof policy.quietMode === 'boolean' ? policy.quietMode : existing.quietMode,
+            updatedAt: now,
+          });
+        }).filter((policy): policy is AgentWorkspaceEventPolicyRecord => Boolean(policy))
+      : this.profilePolicyStore.listPolicies(bundle.workspace.profileWorkspaceId);
+    const pipelineOverrides: AgentWorkspacePipelineOverrideRecord[] = Array.isArray(input.pipelineOverrides)
+      ? this.profilePolicyStore.replacePipelineOverrides(bundle.workspace.profileWorkspaceId, input.pipelineOverrides)
+      : this.profilePolicyStore.listPipelineOverrides(bundle.workspace.profileWorkspaceId);
+    const appendedContexts: AgentWorkspaceAppendedContextRecord[] = Array.isArray(input.appendedContexts)
+      ? this.profilePolicyStore.replaceAppendedContexts(bundle.workspace.profileWorkspaceId, input.appendedContexts)
+      : this.profilePolicyStore.listAppendedContexts(bundle.workspace.profileWorkspaceId);
+
+    return {
+      profile,
+      workspace,
+      policies,
+      pipelineOverrides,
+      appendedContexts,
+    };
+  }
+
+  private resolveProfileRuntimeDecision(input: {
+    subscription: WorkspaceSubscriptionRecord;
+    eventType: AgentWorkspaceEventType;
+    scopeId?: string | null;
+    channelId?: string | null;
+    builtInDefaultPipelineId?: string | null;
+  }): AgentProfileRuntimeDecision | null {
+    const managedByNpub = input.subscription.managedByNpub;
+    if (!managedByNpub) {
+      return null;
+    }
+    const bundle = this.getProfileWorkspaceForManager(input.subscription.subscriptionId, managedByNpub);
+    if (!bundle) {
+      return null;
+    }
+    const settings = this.profilePolicyStore.resolveRuntimeSettingsForEvent({
+      profileId: bundle.profile.profileId,
+      managedByNpub,
+      profileWorkspaceId: bundle.workspace.profileWorkspaceId,
+      eventType: input.eventType,
+      scopeId: input.scopeId,
+      channelId: input.channelId,
+      builtInDefaultPipelineId: input.builtInDefaultPipelineId,
+    });
+    return {
+      profileWorkspaceId: bundle.workspace.profileWorkspaceId,
+      eventType: input.eventType,
+      settings,
+      contextText: formatResolvedProfileRuntimeContext(settings.appendedContext),
+    };
+  }
+
+  private buildProfileRuntimeContext(decision: AgentProfileRuntimeDecision | null) {
+    if (!decision) {
+      return null;
+    }
+    const policy = decision.settings.policy;
+    return {
+      profileWorkspaceId: decision.profileWorkspaceId,
+      eventType: decision.eventType,
+      enabled: policy?.enabled ?? true,
+      defaultAction: policy?.defaultAction ?? defaultActionForEventType(decision.eventType),
+      quietMode: policy?.quietMode ?? false,
+      pipeline: decision.settings.pipeline,
+      appendedContext: decision.settings.appendedContext,
+    };
+  }
+
+  private appendProfilePolicySuppression(input: {
+    record: WorkspaceSubscriptionRecord;
+    decision: AgentProfileRuntimeDecision;
+    kind: AgentChatDispatchHistoryEntry['kind'];
+    recordId: string | null;
+    bindingId: string | null;
+    bindingType: AgentChatDispatchHistoryEntry['bindingType'];
+    agentId?: string | null;
+    details?: Record<string, unknown>;
+  }): WorkspaceSubscriptionRecord {
+    const policy = input.decision.settings.policy;
+    const reason = !policy?.enabled
+      ? 'disabled'
+      : policy?.quietMode
+        ? 'quiet'
+        : `action_${policy?.defaultAction ?? defaultActionForEventType(input.decision.eventType)}`;
+    return this.appendDispatchHistory(input.record, {
+      at: new Date().toISOString(),
+      kind: input.kind,
+      action: `${input.decision.eventType}_profile_policy_suppressed`,
+      agentId: input.agentId ?? 'profile-policy',
+      sessionId: null,
+      recordId: input.recordId,
+      bindingId: input.bindingId,
+      bindingType: input.bindingType,
+      status: 'suppressed',
+      suppressionReason: reason,
+      details: {
+        profile_workspace_id: input.decision.profileWorkspaceId,
+        event_type: input.decision.eventType,
+        enabled: policy?.enabled ?? true,
+        quiet_mode: policy?.quietMode ?? false,
+        default_action: policy?.defaultAction ?? defaultActionForEventType(input.decision.eventType),
+        pipeline_definition_id: input.decision.settings.pipeline.pipelineDefinitionId,
+        pipeline_source: input.decision.settings.pipeline.source,
+        context_count: input.decision.settings.appendedContext.length,
+        ...input.details,
+      },
+    });
   }
 
   listInterceptsForSubscription(subscriptionId: string, npub: string) {
@@ -919,7 +1189,7 @@ export class WorkspaceSubscriptionManager {
       managedByNpub: input.managedByNpub,
       packageJson: input.packageJson,
     });
-    this.resolveCreateBotIdentity(input.managedByNpub, agentProfile);
+    const botIdentity = this.resolveCreateBotIdentity(input.managedByNpub, agentProfile);
     let backendConnection = await this.createOrReuseBackendConnection({
       managedByNpub: input.managedByNpub,
       backendBaseUrl: validation.service.directHttpsUrl,
@@ -947,6 +1217,15 @@ export class WorkspaceSubscriptionManager {
     const subscription = await this.createOrUpdate({
       ...importResult.subscriptionInput,
       agentProfileId,
+    });
+    this.profilePolicyStore.ensureProfileWorkspaceForSubscription({
+      managedByNpub: input.managedByNpub,
+      agentProfileId: agentProfile?.agentId ?? agentProfileId,
+      agentLabel: agentProfile?.label ?? null,
+      agentNpub: botIdentity.botNpub,
+      subscription,
+      backendConnection,
+      relayOnboardingStatus: subscription.wsKeyStatus === 'active' ? 'ready' : 'verified',
     });
     return { backendConnection, subscription };
   }
@@ -1850,6 +2129,26 @@ export class WorkspaceSubscriptionManager {
               CHAT_ADVISORY_ROUTING_TIMEOUT_MS,
               'chat_routing_context_timeout',
             );
+            const profileDecision = this.resolveProfileRuntimeDecision({
+              subscription: record,
+              eventType: 'chat_mention',
+              channelId: routingContext.channelId,
+              builtInDefaultPipelineId: 'agent-dispatch-chat',
+            });
+            if (!profilePolicyAllowsDispatch(profileDecision)) {
+              return this.appendProfilePolicySuppression({
+                record,
+                decision: profileDecision!,
+                kind: 'chat',
+                recordId,
+                bindingId: routingContext.threadId,
+                bindingType: 'thread',
+                details: {
+                  channel_id: routingContext.channelId,
+                  thread_id: routingContext.threadId,
+                },
+              });
+            }
             record.lastRoutingResult = buildSuccessDiagnostic('Chat dispatch pipeline start requested.', {
               subscription_id: record.subscriptionId,
               record_id: recordId,
@@ -1877,6 +2176,7 @@ export class WorkspaceSubscriptionManager {
                 changedFields: [],
                 groupNpubs: routingContext.messageGroupNpubs,
                 botIdentity: runtime.botIdentity,
+                profileRuntime: this.buildProfileRuntimeContext(profileDecision),
               }),
               CHAT_ADVISORY_PIPELINE_TIMEOUT_MS,
               'chat_pipeline_dispatch_timeout',
@@ -1971,6 +2271,30 @@ export class WorkspaceSubscriptionManager {
         }
         if (routingResult.assignments.length > 0 && this.chatRuntime) {
           for (const assignment of routingResult.assignments) {
+            const profileDecision = this.resolveProfileRuntimeDecision({
+              subscription: record,
+              eventType: 'chat_mention',
+              channelId: assignment.intercept.channelId,
+              builtInDefaultPipelineId: 'agent-dispatch-chat',
+            });
+            if (!profilePolicyAllowsLegacyPrompt(profileDecision)) {
+              record = this.appendProfilePolicySuppression({
+                record,
+                decision: profileDecision!,
+                kind: 'chat',
+                recordId,
+                bindingId: assignment.intercept.threadId,
+                bindingType: 'thread',
+                agentId: assignment.agent.agentId,
+                details: {
+                  channel_id: assignment.intercept.channelId,
+                  thread_id: assignment.intercept.threadId,
+                  sender_npub: senderNpub,
+                  updater_npub: updaterNpub,
+                },
+              });
+              continue;
+            }
             record = this.appendDispatchHistory(record, {
               at: new Date().toISOString(),
               kind: 'chat',
@@ -1993,6 +2317,7 @@ export class WorkspaceSubscriptionManager {
               intercept: assignment.intercept,
               botIdentity: runtime.botIdentity,
               chatMessage,
+              runtimeContext: profileDecision?.contextText,
             }).catch((runtimeError) => {
               console.warn(
                 `[agent-chat] runtime dispatch failed for ${assignment.intercept.routingKey}: ${
@@ -2192,6 +2517,31 @@ export class WorkspaceSubscriptionManager {
       const historyKind = dispatchModeToHistoryKind(dispatchMode);
       const bindingId = dispatchModeToBindingId(dispatchMode, task);
       const bindingType = dispatchModeToBindingType(dispatchMode, task);
+      const profileDecision = this.resolveProfileRuntimeDecision({
+        subscription: record,
+        eventType: eventTypeForTaskDispatchMode(dispatchMode),
+        scopeId: getTaskScopeId(task),
+        builtInDefaultPipelineId: dispatchMode === 'task_dispatch'
+          ? 'agent-dispatch-task-response'
+          : undefined,
+      });
+      if (!profilePolicyAllowsDispatch(profileDecision)) {
+        return this.appendProfilePolicySuppression({
+          record,
+          decision: profileDecision!,
+          kind: historyKind,
+          recordId,
+          bindingId,
+          bindingType,
+          details: {
+            task_id: task.taskId,
+            dispatch_mode: dispatchMode,
+            scope_id: getTaskScopeId(task),
+            updater_npub: updaterNpub,
+            changed_fields: changedFields,
+          },
+        });
+      }
       if (this.dispatchPipelineRuntime) {
         const routeAgent = {
           agentId: 'dispatch-pipeline',
@@ -2249,6 +2599,7 @@ export class WorkspaceSubscriptionManager {
           changedFields,
           groupNpubs: [],
           botIdentity: this.getRuntime(record.subscriptionId)?.botIdentity ?? null,
+          profileRuntime: this.buildProfileRuntimeContext(profileDecision),
         });
         if (pipelineResult.handled) {
           return this.applyDispatchPipelineResult(record, pipelineResult);
@@ -2263,6 +2614,24 @@ export class WorkspaceSubscriptionManager {
       }
 
       for (const agent of taskAgents) {
+        if (!profilePolicyAllowsLegacyPrompt(profileDecision)) {
+          record = this.appendProfilePolicySuppression({
+            record,
+            decision: profileDecision!,
+            kind: historyKind,
+            recordId,
+            bindingId,
+            bindingType,
+            agentId: agent.agentId,
+            details: {
+              task_id: task.taskId,
+              dispatch_mode: dispatchMode,
+              updater_npub: updaterNpub,
+              changed_fields: changedFields,
+            },
+          });
+          continue;
+        }
         const skipSelfAction = dispatchModeToSelfSkipAction(dispatchMode);
         if (isSelfUpdater(record, agent, updaterNpub) && !changedFields.includes('new_task') && changedFields.length === 0) {
           record = this.appendDispatchHistory(record, {
@@ -2317,6 +2686,7 @@ export class WorkspaceSubscriptionManager {
           recordId,
           recordState: typeof latest.record_state === 'string' ? latest.record_state : null,
           task,
+          runtimeContext: profileDecision?.contextText,
         });
         if (session) {
           record = this.appendDispatchHistory(record, {
@@ -2399,6 +2769,27 @@ export class WorkspaceSubscriptionManager {
           },
         });
       }
+      const profileDecision = this.resolveProfileRuntimeDecision({
+        subscription: record,
+        eventType: 'approval_assigned',
+      });
+      if (!profilePolicyAllowsDispatch(profileDecision)) {
+        return this.appendProfilePolicySuppression({
+          record,
+          decision: profileDecision!,
+          kind: 'approval',
+          recordId,
+          bindingId: approval.flowRunId,
+          bindingType: 'flow_run',
+          details: {
+            approval_id: approval.approvalId,
+            flow_run_id: approval.flowRunId,
+            flow_id: approval.flowId,
+            approval_state: approval.state,
+            updater_npub: updaterNpub,
+          },
+        });
+      }
       let previousApproval: InboundApprovalRecord | null = null;
       if (previous) {
         try {
@@ -2464,6 +2855,7 @@ export class WorkspaceSubscriptionManager {
         changedFields: [],
         groupNpubs: [],
         botIdentity: this.getRuntime(record.subscriptionId)?.botIdentity ?? null,
+        profileRuntime: this.buildProfileRuntimeContext(profileDecision),
       });
       if (pipelineResult.handled) {
         return this.applyDispatchPipelineResult(record, pipelineResult);
@@ -2681,6 +3073,28 @@ export class WorkspaceSubscriptionManager {
       });
     }
 
+    const profileDecision = this.resolveProfileRuntimeDecision({
+      subscription: record,
+      eventType: 'task_comment',
+      builtInDefaultPipelineId: 'agent-dispatch-comment-response',
+    });
+    if (!profilePolicyAllowsDispatch(profileDecision)) {
+      return this.appendProfilePolicySuppression({
+        record,
+        decision: profileDecision!,
+        kind: 'comment',
+        recordId,
+        bindingId: comment.targetRecordId,
+        bindingType: 'task',
+        details: {
+          comment_id: comment.commentId,
+          updater_npub: updaterNpub,
+          sender_npub: comment.senderNpub,
+          target_record_family_hash: comment.targetRecordFamilyHash,
+        },
+      });
+    }
+
     if (this.dispatchPipelineRuntime) {
       const pipelineResult = await this.dispatchPipelineRuntime.dispatch({
         subscription: record,
@@ -2698,6 +3112,7 @@ export class WorkspaceSubscriptionManager {
         changedFields: [],
         groupNpubs: extractCommentGroupNpubs(latest),
         botIdentity: this.getRuntime(record.subscriptionId)?.botIdentity ?? null,
+        profileRuntime: this.buildProfileRuntimeContext(profileDecision),
       });
       if (pipelineResult.handled) {
         return this.applyDispatchPipelineResult(record, pipelineResult);
@@ -2705,6 +3120,24 @@ export class WorkspaceSubscriptionManager {
     }
 
     for (const agent of selectedAgents) {
+      if (!profilePolicyAllowsLegacyPrompt(profileDecision)) {
+        record = this.appendProfilePolicySuppression({
+          record,
+          decision: profileDecision!,
+          kind: 'comment',
+          recordId,
+          bindingId: comment.targetRecordId,
+          bindingType: 'task',
+          agentId: agent.agentId,
+          details: {
+            comment_id: comment.commentId,
+            updater_npub: updaterNpub,
+            sender_npub: comment.senderNpub,
+            target_record_family_hash: comment.targetRecordFamilyHash,
+          },
+        });
+        continue;
+      }
       if (isSelfCommentAuthor(record, agent, comment, updaterNpub)) {
         record = this.appendDispatchHistory(record, {
           at: new Date().toISOString(),
@@ -2821,6 +3254,28 @@ export class WorkspaceSubscriptionManager {
       });
     }
 
+    const profileDecision = this.resolveProfileRuntimeDecision({
+      subscription: record,
+      eventType: 'document_comment_tagged',
+      builtInDefaultPipelineId: 'agent-dispatch-comment-response',
+    });
+    if (!profilePolicyAllowsDispatch(profileDecision)) {
+      return this.appendProfilePolicySuppression({
+        record,
+        decision: profileDecision!,
+        kind: 'comment',
+        recordId,
+        bindingId: comment.targetRecordId,
+        bindingType: 'document',
+        details: {
+          comment_id: comment.commentId,
+          target_record_id: comment.targetRecordId,
+          target_record_family_hash: comment.targetRecordFamilyHash,
+          updater_npub: updaterNpub,
+        },
+      });
+    }
+
     if (this.dispatchPipelineRuntime) {
       const pipelineResult = await this.dispatchPipelineRuntime.dispatch({
         subscription: record,
@@ -2838,6 +3293,7 @@ export class WorkspaceSubscriptionManager {
         changedFields: [],
         groupNpubs: extractCommentGroupNpubs(latest),
         botIdentity: this.getRuntime(record.subscriptionId)?.botIdentity ?? null,
+        profileRuntime: this.buildProfileRuntimeContext(profileDecision),
       });
       if (pipelineResult.handled) {
         return this.applyDispatchPipelineResult(record, pipelineResult);
@@ -2845,6 +3301,24 @@ export class WorkspaceSubscriptionManager {
     }
 
     for (const agent of selectedAgents) {
+      if (!profilePolicyAllowsLegacyPrompt(profileDecision)) {
+        record = this.appendProfilePolicySuppression({
+          record,
+          decision: profileDecision!,
+          kind: 'comment',
+          recordId,
+          bindingId: comment.targetRecordId,
+          bindingType: 'document',
+          agentId: agent.agentId,
+          details: {
+            comment_id: comment.commentId,
+            updater_npub: updaterNpub,
+            target_record_id: comment.targetRecordId,
+            target_record_family_hash: comment.targetRecordFamilyHash,
+          },
+        });
+        continue;
+      }
       if (isSelfCommentAuthor(record, agent, comment, updaterNpub)) {
         record = this.appendDispatchHistory(record, {
           at: new Date().toISOString(),

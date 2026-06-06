@@ -89,6 +89,11 @@ function buildChatDispatchInstructions(): string {
   ].join('\n');
 }
 
+function formatRuntimeContextBlock(value: string | null | undefined): string {
+  const trimmed = value?.trim();
+  return trimmed ? `\n\nProfile workspace runtime context:\n${trimmed}` : '';
+}
+
 export function buildChatCompletionGoal(latestTurn: QueuedChatTurn): string {
   const message = truncateGoalMessage(latestTurn.content);
   return [
@@ -109,6 +114,7 @@ export function buildBootstrapPrompt(params: {
   context: AgentChatYokeContext | null;
   contextError: string | null;
   latestTurn: QueuedChatTurn;
+  runtimeContext?: string | null;
 }): string {
   const fallbackParticipants = [params.subscription.botNpub, params.latestTurn.senderNpub ?? ''].filter(
     (value) => value.length > 0,
@@ -121,7 +127,7 @@ export function buildBootstrapPrompt(params: {
   const recentTurns = formatRecentTurns(params.context, params.latestTurn);
   const participants = formatParticipants(params.context, fallbackParticipants);
   const bootstrapMode = params.isNewSession ? 'new_session' : 'reused_session';
-  return renderPromptTemplate(params.agent.chatPromptTemplate || DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE, {
+  const prompt = renderPromptTemplate(params.agent.chatPromptTemplate || DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE, {
     chat_runtime_event: bootstrapMode,
     agent_id: params.agent.agentId,
     agent_label: params.agent.label,
@@ -145,6 +151,7 @@ export function buildBootstrapPrompt(params: {
       : 'Yoke context is ready in the session state dir shown above.',
     chat_dispatch_instructions: buildChatDispatchInstructions(),
   });
+  return `${prompt}${formatRuntimeContextBlock(params.runtimeContext)}`;
 }
 
 export function buildMergedTurnPrompt(params: {
@@ -154,6 +161,7 @@ export function buildMergedTurnPrompt(params: {
   contextError: string | null;
   turns: QueuedChatTurn[];
   followUpMode: 'interrupt_resumed' | 'interrupt_failed_follow_up';
+  runtimeContext?: string | null;
 }): string {
   const commands = buildAgentChatYokeCommands(
     params.yokeStateDir,
@@ -161,7 +169,7 @@ export function buildMergedTurnPrompt(params: {
     params.intercept.threadId,
   );
   const mergePackage = buildMergePackage(params.intercept, params.turns);
-  return renderPromptTemplate(params.agent.chatPromptTemplate || DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE, {
+  const prompt = renderPromptTemplate(params.agent.chatPromptTemplate || DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE, {
     chat_runtime_event: params.followUpMode,
     agent_id: params.intercept.agentId,
     agent_label: params.agent.label,
@@ -199,4 +207,5 @@ export function buildMergedTurnPrompt(params: {
       '- Do not include the JSON package verbatim in the final answer.',
     ].join('\n'),
   });
+  return `${prompt}${formatRuntimeContextBlock(params.runtimeContext)}`;
 }

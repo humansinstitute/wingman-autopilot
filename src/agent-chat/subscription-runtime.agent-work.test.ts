@@ -11,6 +11,7 @@ import type { BotKeyStoreRecord, WorkspaceSubscriptionRecord } from './types';
 import { DispatchPipelineRuntime } from './dispatch-pipelines/runtime';
 import { DispatchRouteStore } from './dispatch-pipelines/route-store';
 import { AgentDefinitionStore } from './agent-definition-store';
+import { AgentProfilePolicyStore } from './agent-profile-policy-store';
 import { WorkspaceSubscriptionManager } from './subscription-runtime';
 import { buildRecordFamilyHash } from './tower-client';
 import { WorkspaceSubscriptionStore } from './workspace-subscription-store';
@@ -625,6 +626,268 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(second.historyEntries[0]?.dedupeReason).toBe('recent_duplicate');
     expect(second.historyEntries[0]?.pipelineRunId).toBe(first.lastPipelineRunId);
     expect(pipelineStore.listRuns().filter((run) => run.definitionId === route.pipelineDefinitionId)).toHaveLength(1);
+  });
+
+  test('starts a chat mention pipeline from profile runtime selection without a route row', async () => {
+    const routeStore = new DispatchRouteStore(makeTempDb('agent-profile-policy-chat-routes'));
+    const pipelineStore = new PipelineStore(makeTempDb('agent-profile-policy-chat-runs'));
+    const subscription = makeSubscription();
+    const runInputs: Record<string, unknown>[] = [];
+    const runtime = new DispatchPipelineRuntime({
+      routeStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      acknowledgeChatMessage: async () => ({
+        acknowledged: true,
+        status: 'ok',
+        operation: 'chat.acknowledge-message',
+      }),
+      loadDefinition: async (definitionId) => ({
+        id: definitionId,
+        slug: definitionId,
+        name: 'Profile Chat Pipeline',
+        scope: 'user',
+        ownerAlias: 'manager',
+        path: `/tmp/${definitionId}.json`,
+        spec: { name: 'Profile Chat Pipeline', input: {}, steps: [] },
+      }),
+      loadFunctions: async () => ({ registry: {}, records: [] }),
+      runPipeline: async (input: any) => {
+        runInputs.push(input.input);
+        return makePipelineRun('profile-chat-run-1', input.input);
+      },
+    });
+
+    const result = await runtime.dispatch({
+      subscription,
+      triggerKind: 'chat',
+      capability: 'chat_intercept',
+      recordId: 'chat-profile-1',
+      record: {},
+      payload: {
+        record_id: 'chat-profile-1',
+        body: '@agent can you inspect this?',
+        channel_id: 'channel-profile',
+        thread_id: 'thread-profile',
+        sender_npub: 'npub1human',
+      },
+      recordFamily: 'chat',
+      recordState: 'active',
+      recordVersion: 1,
+      updaterNpub: 'npub1human',
+      bindingType: 'thread',
+      bindingId: 'thread-profile',
+      channelId: 'channel-profile',
+      threadId: 'thread-profile',
+      groupNpubs: ['npub1group'],
+      profileRuntime: {
+        profileWorkspaceId: 'profile-workspace-1',
+        eventType: 'chat_mention',
+        enabled: true,
+        defaultAction: 'respond',
+        quietMode: false,
+        pipeline: { pipelineDefinitionId: 'profile-chat-pipeline', source: 'event_policy' },
+        appendedContext: [
+          {
+            kind: 'workspace',
+            targetId: null,
+            eventType: null,
+            contextText: 'Workspace chat context',
+          },
+        ],
+      },
+    });
+
+    expect(routeStore.listForSubscription(subscription.subscriptionId)).toHaveLength(0);
+    expect(result.handled).toBe(true);
+    expect(runInputs).toHaveLength(1);
+    expect((runInputs[0]?.dispatch as any)?.routeId).toContain('profile-policy');
+    expect((runInputs[0]?.chat as any)?.threadId).toBe('thread-profile');
+    expect((runInputs[0]?.profileRuntime as any)?.eventType).toBe('chat_mention');
+    expect((runInputs[0]?.profileRuntime as any)?.appendedContext[0].contextText).toBe('Workspace chat context');
+  });
+
+  test('starts profile policy task pipeline with saved runtime context and no route row', async () => {
+    const dbPath = makeTempDb('agent-profile-policy-task-runtime');
+    const store = new WorkspaceSubscriptionStore(dbPath);
+    const agentStore = new AgentDefinitionStore(dbPath);
+    const profilePolicyStore = new AgentProfilePolicyStore(dbPath);
+    const routeStore = new DispatchRouteStore(makeTempDb('agent-profile-policy-task-routes'));
+    const pipelineStore = new PipelineStore(makeTempDb('agent-profile-policy-task-runs'));
+    const subscription = store.save(makeSubscription());
+    const now = new Date().toISOString();
+    agentStore.save({
+      agentId: 'agent-task-profile',
+      label: 'Task Profile Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-task-profile',
+      capabilities: ['task_dispatch'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+    const runInputs: Record<string, unknown>[] = [];
+    const dispatchPipelineRuntime = new DispatchPipelineRuntime({
+      routeStore,
+      agentStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      loadDefinition: async (definitionId) => ({
+        id: definitionId,
+        slug: definitionId,
+        name: 'Profile Policy Task Pipeline',
+        scope: 'user',
+        ownerAlias: 'manager',
+        path: `/tmp/${definitionId}.json`,
+        spec: { name: 'Profile Policy Task Pipeline', input: {}, steps: [] },
+      }),
+      loadFunctions: async () => ({ registry: {}, records: [] }),
+      runPipeline: async (input: any) => {
+        runInputs.push(input.input);
+        return makePipelineRun('profile-policy-task-run-1', input.input);
+      },
+    });
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      profilePolicyStore,
+      dispatchPipelineRuntime,
+      fetchRecordHistory: async () => [
+        {
+          record_id: 'record-task-profile-1',
+          record_state: 'active',
+          version: 1,
+        },
+      ],
+      decryptRecordPayload: async () => ({
+        task_id: 'task-profile-1',
+        title: 'Use profile policy',
+        state: 'ready',
+        assigned_to: subscription.botNpub,
+        scope_id: 'scope-autopilot',
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => null,
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+    seedRuntime(manager, subscription.subscriptionId);
+    manager.saveProfileWorkspaceForManager({
+      subscriptionId: subscription.subscriptionId,
+      managedByNpub: subscription.managedByNpub!,
+      profilePromptContext: 'Profile runtime context',
+      workspaceDefaultPipelineDefinitionId: 'profile-task-pipeline',
+      workspaceContext: 'Workspace runtime context',
+      policies: [
+        {
+          eventType: 'task_assigned',
+          enabled: true,
+          defaultAction: 'work',
+          pipelineDefinitionId: 'policy-task-pipeline',
+          promptContext: 'Policy prompt context',
+          quietMode: false,
+        },
+      ],
+      appendedContexts: [
+        {
+          contextKind: 'scope',
+          targetId: 'scope-autopilot',
+          contextText: 'Scope runtime context',
+        },
+      ],
+    });
+
+    const result = await (manager as unknown as {
+      handleTaskRecordChanged: (
+        record: WorkspaceSubscriptionRecord,
+        payload: Record<string, unknown>,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleTaskRecordChanged(subscription, { record_id: 'record-task-profile-1' });
+
+    expect(routeStore.listForSubscription(subscription.subscriptionId)).toHaveLength(0);
+    expect(runInputs).toHaveLength(1);
+    expect((runInputs[0]?.dispatch as any)?.routeId).toContain('profile-policy');
+    expect((runInputs[0]?.profileRuntime as any)?.eventType).toBe('task_assigned');
+    expect((runInputs[0]?.profileRuntime as any)?.pipeline).toEqual({
+      pipelineDefinitionId: 'policy-task-pipeline',
+      source: 'event_policy',
+    });
+    expect((runInputs[0]?.profileRuntime as any)?.appendedContext.map((entry: any) => entry.contextText)).toEqual([
+      'Profile runtime context',
+      'Workspace runtime context',
+      'Scope runtime context',
+      'Policy prompt context',
+    ]);
+    expect(result.recentDispatches[0]?.action).toBe('task_pipeline_dispatch');
+  });
+
+  test('suppresses profile policy task dispatch when the policy is quiet observe', async () => {
+    const dbPath = makeTempDb('agent-profile-policy-task-suppress');
+    const store = new WorkspaceSubscriptionStore(dbPath);
+    const agentStore = new AgentDefinitionStore(dbPath);
+    const profilePolicyStore = new AgentProfilePolicyStore(dbPath);
+    const dispatchPipelineRuntime = new DispatchPipelineRuntime({
+      routeStore: new DispatchRouteStore(makeTempDb('agent-profile-policy-task-suppress-routes')),
+      agentStore,
+      pipelineStore: new PipelineStore(makeTempDb('agent-profile-policy-task-suppress-runs')),
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      runPipeline: async () => {
+        throw new Error('quiet policy should not start a pipeline');
+      },
+    });
+    const subscription = store.save(makeSubscription());
+    const manager = new WorkspaceSubscriptionManager({
+      store,
+      agentStore,
+      profilePolicyStore,
+      dispatchPipelineRuntime,
+      fetchRecordHistory: async () => [{ record_id: 'record-task-quiet-1', record_state: 'active', version: 1 }],
+      decryptRecordPayload: async () => ({
+        task_id: 'task-quiet-1',
+        title: 'Quiet task',
+        state: 'ready',
+        assigned_to: subscription.botNpub,
+      }),
+      botKeyStore: {
+        getActiveKeyForUser: () => null,
+        getActiveKeyForBotNpub: () => makeBotKeyRecord(),
+      },
+    });
+    seedRuntime(manager, subscription.subscriptionId);
+    manager.saveProfileWorkspaceForManager({
+      subscriptionId: subscription.subscriptionId,
+      managedByNpub: subscription.managedByNpub!,
+      policies: [
+        {
+          eventType: 'task_assigned',
+          enabled: true,
+          defaultAction: 'observe',
+          quietMode: true,
+        },
+      ],
+    });
+
+    const result = await (manager as unknown as {
+      handleTaskRecordChanged: (
+        record: WorkspaceSubscriptionRecord,
+        payload: Record<string, unknown>,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleTaskRecordChanged(subscription, { record_id: 'record-task-quiet-1' });
+
+    expect(result.recentDispatches[0]).toMatchObject({
+      action: 'task_assigned_profile_policy_suppressed',
+      suppressionReason: 'quiet',
+    });
+    expect(result.recentDispatches[0]?.details).toMatchObject({
+      default_action: 'observe',
+      quiet_mode: true,
+    });
   });
 
   test('suppresses duplicate route dispatches after a pipeline definition rename', async () => {

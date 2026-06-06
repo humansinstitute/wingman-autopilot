@@ -16,6 +16,12 @@ import type {
   RuntimeBotIdentity,
   WorkspaceSubscriptionRecord,
 } from '../types';
+import type {
+  AgentWorkspacePolicyAction,
+  AgentWorkspaceEventType,
+  ResolvedAppendedContext,
+  ResolvedPipelineSelection,
+} from '../agent-profile-policy-store';
 import { bootstrapAgentDefinitionWorkspace } from '../agent-workspace-bootstrap';
 import {
   createDispatchFlightDeckPublisher,
@@ -54,6 +60,17 @@ export interface DispatchPipelineEventInput {
   changedFields?: string[];
   groupNpubs?: string[];
   botIdentity?: RuntimeBotIdentity | null;
+  profileRuntime?: DispatchProfileRuntimeContext | null;
+}
+
+export interface DispatchProfileRuntimeContext {
+  profileWorkspaceId: string;
+  eventType: AgentWorkspaceEventType;
+  enabled: boolean;
+  defaultAction: AgentWorkspacePolicyAction;
+  quietMode: boolean;
+  pipeline: ResolvedPipelineSelection;
+  appendedContext: ResolvedAppendedContext[];
 }
 
 export interface DispatchPipelineRuntimeResult {
@@ -135,11 +152,15 @@ export class DispatchPipelineRuntime {
   }
 
   async dispatch(input: DispatchPipelineEventInput): Promise<DispatchPipelineRuntimeResult> {
-    const configuredRoutes = this.routeStore.listForSubscriptionTrigger({
+    const storedRoutes = this.routeStore.listForSubscriptionTrigger({
       subscriptionId: input.subscription.subscriptionId,
       triggerKind: input.triggerKind,
       capability: input.capability,
     });
+    const configuredRoutes = [
+      ...buildProfilePolicyRoutes(input, storedRoutes.length),
+      ...storedRoutes,
+    ];
     if (configuredRoutes.length === 0) {
       if (this.requirePipelineRoutes) {
         return {
@@ -808,7 +829,57 @@ function buildDispatchEnvelope(input: {
         description: definition.spec.description ?? null,
       })),
     },
+    profileRuntime: eventInput.profileRuntime
+      ? {
+          profileWorkspaceId: eventInput.profileRuntime.profileWorkspaceId,
+          eventType: eventInput.profileRuntime.eventType,
+          enabled: eventInput.profileRuntime.enabled,
+          defaultAction: eventInput.profileRuntime.defaultAction,
+          quietMode: eventInput.profileRuntime.quietMode,
+          pipeline: eventInput.profileRuntime.pipeline,
+          appendedContext: eventInput.profileRuntime.appendedContext,
+        }
+      : null,
   };
+}
+
+function buildProfilePolicyRoutes(input: DispatchPipelineEventInput, configuredRouteCount: number): DispatchRouteRecord[] {
+  const profileRuntime = input.profileRuntime;
+  const pipelineDefinitionId = getText(profileRuntime?.pipeline.pipelineDefinitionId);
+  const managedByNpub = input.subscription.managedByNpub;
+  if (!profileRuntime || !pipelineDefinitionId || !managedByNpub) {
+    return [];
+  }
+  if (configuredRouteCount > 0 && profileRuntime.pipeline.source === 'built_in_default') {
+    return [];
+  }
+  const now = new Date().toISOString();
+  return [{
+    routeId: [
+      'profile-policy',
+      input.subscription.subscriptionId,
+      profileRuntime.eventType,
+      profileRuntime.pipeline.source,
+      pipelineDefinitionId,
+    ].join(':'),
+    managedByNpub,
+    subscriptionId: input.subscription.subscriptionId,
+    workspaceOwnerNpub: input.subscription.workspaceOwnerNpub,
+    botNpub: input.subscription.botNpub,
+    sourceAppNpub: input.subscription.sourceAppNpub,
+    triggerKind: input.triggerKind,
+    capability: input.capability,
+    pipelineDefinitionId,
+    enabled: profileRuntime.enabled && !profileRuntime.quietMode,
+    priority: 0,
+    matchJson: {},
+    inputTemplateJson: {},
+    concurrencyKeyTemplate: '${workspace.subscriptionId}:${record.bindingId}:${route.routeId}',
+    activePolicy: 'skip',
+    dedupeWindowSeconds: 300,
+    createdAt: now,
+    updatedAt: now,
+  }];
 }
 
 async function ensureAgentWorkingDirectory(agent: AgentDefinitionRecord | null): Promise<void> {

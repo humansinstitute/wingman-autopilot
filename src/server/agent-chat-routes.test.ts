@@ -7,6 +7,7 @@ import {
   type WorkspaceSubscriptionManager,
 } from '../agent-chat/subscription-runtime';
 import type { BackendConnectionRecord, WorkspaceSubscriptionRecord } from '../agent-chat/types';
+import type { AgentProfileWorkspaceBundle } from '../agent-chat/agent-profile-policy-store';
 import { handleAgentChatApi } from './agent-chat-routes';
 
 const authContext: RequestAuthContext = {
@@ -89,6 +90,59 @@ function makeBackendConnection(overrides: Partial<BackendConnectionRecord> = {})
     updatedAt: now,
     ...overrides,
   };
+}
+
+function makeProfileWorkspaceBundle(overrides: Partial<AgentProfileWorkspaceBundle> = {}): AgentProfileWorkspaceBundle {
+  const now = new Date().toISOString();
+  const bundle: AgentProfileWorkspaceBundle = {
+    profile: {
+      profileId: 'agent-profile-1',
+      managedByNpub: 'npub1manager',
+      agentNpub: 'npub1bot',
+      label: 'Agent Profile',
+      defaultPipelineDefinitionId: 'profile-pipeline',
+      promptContext: 'Profile context',
+      createdAt: now,
+      updatedAt: now,
+    },
+    workspace: {
+      profileWorkspaceId: 'profile-workspace-1',
+      profileId: 'agent-profile-1',
+      managedByNpub: 'npub1manager',
+      subscriptionId: 'sub-1',
+      backendConnectionId: 'backend-owned',
+      workspaceOwnerNpub: 'npub1workspace',
+      sourceAppNpub: 'npub1sourceapp',
+      backendBaseUrl: 'https://tower.example.com',
+      workspaceTitle: 'Workspace',
+      appPubkey: 'app-pub',
+      towerUrl: 'https://tower.example.com',
+      connectionHealth: 'healthy',
+      yokeSyncStatus: 'synced',
+      relayOnboardingStatus: 'ready',
+      defaultPipelineDefinitionId: 'workspace-pipeline',
+      workspaceContext: 'Workspace context',
+      createdAt: now,
+      updatedAt: now,
+    },
+    policies: [
+      {
+        profileWorkspaceId: 'profile-workspace-1',
+        eventType: 'chat_mention',
+        enabled: true,
+        defaultAction: 'respond',
+        pipelineDefinitionId: null,
+        promptContext: null,
+        quietMode: false,
+        lastDiagnostic: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+    pipelineOverrides: [],
+    appendedContexts: [],
+  };
+  return { ...bundle, ...overrides };
 }
 
 async function postSubscription(manager: WorkspaceSubscriptionManager, backendConnectionId: string) {
@@ -287,6 +341,222 @@ describe('agent-chat routes', () => {
 
     expect(response?.status).toBe(403);
     expect(body.error).toContain('Only the backend connection owner');
+  });
+
+  test('returns profile workspace settings for a managed subscription', async () => {
+    const manager = {
+      getProfileWorkspaceForManager: (subscriptionId: string, npub: string) => {
+        expect(subscriptionId).toBe('sub-1');
+        expect(npub).toBe('npub1manager');
+        return makeProfileWorkspaceBundle();
+      },
+    } as unknown as WorkspaceSubscriptionManager;
+    const request = new Request('http://localhost/api/agent-chat/subscriptions/sub-1/profile-workspace');
+
+    const response = await handleAgentChatApi(
+      request,
+      new URL(request.url),
+      'GET',
+      authContext,
+      { manager },
+    );
+    const body = await response!.json();
+
+    expect(response?.status).toBe(200);
+    expect(body.profileWorkspace.workspace.profileWorkspaceId).toBe('profile-workspace-1');
+    expect(body.profileWorkspace.policies[0].eventType).toBe('chat_mention');
+  });
+
+  test('maps missing profile workspace settings to 404', async () => {
+    const manager = {
+      getProfileWorkspaceForManager: () => null,
+    } as unknown as WorkspaceSubscriptionManager;
+    const request = new Request('http://localhost/api/agent-chat/subscriptions/missing/profile-workspace');
+
+    const response = await handleAgentChatApi(
+      request,
+      new URL(request.url),
+      'GET',
+      authContext,
+      { manager },
+    );
+    const body = await response!.json();
+
+    expect(response?.status).toBe(404);
+    expect(body.error).toContain('Subscription not found');
+  });
+
+  test('saves profile workspace flat payloads with clears and scope rows', async () => {
+    let captured: Parameters<WorkspaceSubscriptionManager['saveProfileWorkspaceForManager']>[0] | null = null;
+    const manager = {
+      saveProfileWorkspaceForManager: (input: Parameters<WorkspaceSubscriptionManager['saveProfileWorkspaceForManager']>[0]) => {
+        captured = input;
+        return makeProfileWorkspaceBundle({
+          workspace: {
+            ...makeProfileWorkspaceBundle().workspace,
+            defaultPipelineDefinitionId: 'workspace-pipeline-2',
+            workspaceContext: null,
+          },
+          pipelineOverrides: [
+            {
+              profileWorkspaceId: 'profile-workspace-1',
+              targetKind: 'scope',
+              targetId: 'scope-autopilot',
+              pipelineDefinitionId: 'scope-pipeline',
+              createdAt: '2026-06-06T00:00:00.000Z',
+              updatedAt: '2026-06-06T00:00:00.000Z',
+            },
+          ],
+          appendedContexts: [
+            {
+              profileWorkspaceId: 'profile-workspace-1',
+              contextKind: 'channel',
+              targetId: 'channel-design',
+              eventType: null,
+              contextText: 'Channel context',
+              createdAt: '2026-06-06T00:00:00.000Z',
+              updatedAt: '2026-06-06T00:00:00.000Z',
+            },
+          ],
+        });
+      },
+    } as unknown as WorkspaceSubscriptionManager;
+    const request = new Request('http://localhost/api/agent-chat/subscriptions/sub-1/profile-workspace', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        profileDefaultPipelineDefinitionId: null,
+        profilePromptContext: null,
+        workspaceDefaultPipelineDefinitionId: 'workspace-pipeline-2',
+        workspaceContext: null,
+        policies: [
+          {
+            eventType: 'chat_mention',
+            enabled: false,
+            defaultAction: 'ignore',
+            pipelineDefinitionId: null,
+            promptContext: null,
+            quietMode: true,
+          },
+        ],
+        pipelineOverrides: [
+          { targetKind: 'scope', targetId: 'scope-autopilot', pipelineDefinitionId: 'scope-pipeline' },
+          { targetKind: 'channel', targetId: '', pipelineDefinitionId: 'ignored' },
+        ],
+        appendedContexts: [
+          { contextKind: 'channel', targetId: 'channel-design', contextText: 'Channel context' },
+          { contextKind: 'scope', targetId: 'scope-empty', contextText: '' },
+        ],
+      }),
+    });
+
+    const response = await handleAgentChatApi(
+      request,
+      new URL(request.url),
+      'PATCH',
+      authContext,
+      { manager },
+    );
+    const body = await response!.json();
+
+    expect(response?.status).toBe(200);
+    expect(captured).toMatchObject({
+      subscriptionId: 'sub-1',
+      managedByNpub: 'npub1manager',
+      profileDefaultPipelineDefinitionId: null,
+      profilePromptContext: null,
+      workspaceDefaultPipelineDefinitionId: 'workspace-pipeline-2',
+      workspaceContext: null,
+    });
+    expect(captured?.policies).toEqual([
+      {
+        eventType: 'chat_mention',
+        enabled: false,
+        defaultAction: 'ignore',
+        pipelineDefinitionId: null,
+        promptContext: null,
+        quietMode: true,
+      },
+    ]);
+    expect(captured?.pipelineOverrides).toEqual([
+      { targetKind: 'scope', targetId: 'scope-autopilot', pipelineDefinitionId: 'scope-pipeline' },
+    ]);
+    expect(captured?.appendedContexts).toEqual([
+      { contextKind: 'channel', targetId: 'channel-design', eventType: null, contextText: 'Channel context' },
+      { contextKind: 'scope', targetId: 'scope-empty', eventType: null, contextText: '' },
+    ]);
+    expect(body.profileWorkspace.workspace.defaultPipelineDefinitionId).toBe('workspace-pipeline-2');
+    expect(body.profileWorkspace.pipelineOverrides[0].targetId).toBe('scope-autopilot');
+  });
+
+  test('saves nested profile workspace payloads sparsely and supports explicit replacement clears', async () => {
+    let captured: Parameters<WorkspaceSubscriptionManager['saveProfileWorkspaceForManager']>[0] | null = null;
+    const manager = {
+      saveProfileWorkspaceForManager: (input: Parameters<WorkspaceSubscriptionManager['saveProfileWorkspaceForManager']>[0]) => {
+        captured = input;
+        return makeProfileWorkspaceBundle({ pipelineOverrides: [], appendedContexts: [] });
+      },
+    } as unknown as WorkspaceSubscriptionManager;
+    const request = new Request('http://localhost/api/agent-chat/subscriptions/sub-1/profile-workspace', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        profileWorkspace: {
+          profile: { promptContext: 'Nested profile context' },
+          workspace: { workspaceContext: 'Nested workspace context' },
+          policies: [{ eventType: 'task_assigned', enabled: true }],
+          pipelineOverrides: [],
+          appendedContexts: [],
+        },
+      }),
+    });
+
+    const response = await handleAgentChatApi(
+      request,
+      new URL(request.url),
+      'PATCH',
+      authContext,
+      { manager },
+    );
+
+    expect(response?.status).toBe(200);
+    expect(captured?.profilePromptContext).toBe('Nested profile context');
+    expect(captured?.workspaceContext).toBe('Nested workspace context');
+    expect('profileDefaultPipelineDefinitionId' in (captured ?? {})).toBe(false);
+    expect('workspaceDefaultPipelineDefinitionId' in (captured ?? {})).toBe(false);
+    expect(captured?.policies).toEqual([{ eventType: 'task_assigned', enabled: true }]);
+    expect(captured?.pipelineOverrides).toEqual([]);
+    expect(captured?.appendedContexts).toEqual([]);
+  });
+
+  test('denies non-admin profile workspace saves in shared dispatch mode', async () => {
+    const manager = {
+      saveProfileWorkspaceForManager: () => {
+        throw new Error('save should not be called');
+      },
+    } as unknown as WorkspaceSubscriptionManager;
+    const request = new Request('http://localhost/api/agent-chat/subscriptions/sub-1/profile-workspace', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspaceContext: 'blocked' }),
+    });
+
+    const response = await handleAgentChatApi(
+      request,
+      new URL(request.url),
+      'PATCH',
+      authContext,
+      {
+        manager,
+        adminNpub: 'npub1admin',
+        sharedAgentDispatch: true,
+        isAdminContext: () => false,
+      },
+    );
+    const body = await response!.json();
+
+    expect(response?.status).toBe(403);
+    expect(body.error).toContain('Ask an administrator');
   });
 
   test('shared agent dispatch lists admin-managed subscriptions for non-admin viewers', async () => {
