@@ -9,6 +9,7 @@ import { sseManager } from "./sse-manager.js";
 import { MessageStore, SessionStore } from "./db.js";
 import { show as scrollPillShow, isNearBottom as scrollPillIsNearBottom } from "./scroll-pill.js";
 import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
+import { AGENT_OUTPUT_FORMATTING_FLAG_KEY } from "../rendering/agent-output-format.js";
 import { normalizeRuntimeStatus } from "./session-status-cache.js";
 import {
   LIVE_MESSAGE_WINDOW_DEFAULT,
@@ -19,6 +20,21 @@ import {
   capturePrependedScrollState,
   schedulePrependedScrollRestore,
 } from "./conversation-window.js";
+
+let featureEnabledResolver = () => false;
+
+export function configureLiveChatFeatures({ isFeatureEnabled } = {}) {
+  featureEnabledResolver = typeof isFeatureEnabled === "function" ? isFeatureEnabled : () => false;
+}
+
+function isAgentOutputFormattingEnabled() {
+  return Boolean(featureEnabledResolver(AGENT_OUTPUT_FORMATTING_FLAG_KEY));
+}
+
+function shouldFormatAgentMessage(message) {
+  const role = String(message?.role ?? message?.type ?? "").toLowerCase();
+  return role === "assistant" || role === "agent";
+}
 
 /**
  * Check if Alpine chat is enabled via feature flag.
@@ -245,7 +261,9 @@ export function registerChatComponent() {
     },
 
     renderMessageContent(message) {
-      return renderChatMessageHtml(message?.content ?? "");
+      return renderChatMessageHtml(message?.content ?? "", {
+        cleanAgentText: Boolean(isAgentOutputFormattingEnabled() && shouldFormatAgentMessage(message)),
+      });
     },
 
     /**

@@ -383,8 +383,8 @@ const FEATURE_FLAG_DEFAULTS: Array<{
   },
   {
     key: PIPELINE_AGENT_OUTPUT_FORMATTING_FLAG_KEY,
-    label: "Pipeline agent output formatting",
-    description: "Formats agent-step output in pipeline run views to reduce terminal capture wrapping artifacts.",
+    label: "Agent output formatting",
+    description: "Formats agent output in session and pipeline views to reduce terminal capture wrapping artifacts.",
     state: "off",
   },
   {

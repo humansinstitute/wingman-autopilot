@@ -1,5 +1,6 @@
 import { escapeHtml, escapeAttribute } from "../core/icons.js";
 import { collapseNewlines } from "../utils/text.js";
+import { cleanAgentOutputText } from "./agent-output-format.js";
 
 const IMAGE_MARKDOWN_LINE_RE = /^\s*\\?!\[([^\]]*)\]\\?\(([^)\s]+)\)\s*$/;
 const IMAGE_EXTENSION_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)(?:[?#].*)?$/i;
@@ -55,8 +56,10 @@ function buildImageHtml(alt, url) {
   return `<a class="wm-inline-image-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer"><img class="wm-inline-image" src="${safeUrl}" alt="${safeAlt}" loading="lazy" /></a>`;
 }
 
-export function renderChatMessageHtml(content) {
-  const text = String(content ?? "").replace(/\r\n?/g, "\n");
+export function renderChatMessageHtml(content, options = {}) {
+  const text = options.cleanAgentText
+    ? cleanAgentOutputText(content)
+    : String(content ?? "").replace(/\r\n?/g, "\n");
   const lines = text.split("\n");
   const parts = [];
   const textBuffer = [];

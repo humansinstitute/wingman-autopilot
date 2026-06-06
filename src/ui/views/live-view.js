@@ -9,6 +9,7 @@ import { getSessionDisplayName } from "../core/icons.js";
 import { openTextPromptDialog } from "../common/dialog-prompts.js";
 import { attachCopyButton, copyConversationToClipboard } from "../utils/clipboard.js";
 import { showToast } from "../utils/toast.js";
+import { AGENT_OUTPUT_FORMATTING_FLAG_KEY } from "../rendering/agent-output-format.js";
 import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
 import {
   fetchSessionHistoryApi,
@@ -18,7 +19,13 @@ import {
 } from "../services/sessions.js";
 import { showRunningAppsModal } from "../apps/running-apps-modal.js";
 import { showRunningPipelinesModal } from "../pipelines/running-pipelines-modal.js";
-import { isAlpineChatEnabled, getChatTemplate, Alpine, MessageStore } from "../live/index.js";
+import {
+  isAlpineChatEnabled,
+  getChatTemplate,
+  Alpine,
+  MessageStore,
+  configureLiveChatFeatures,
+} from "../live/index.js";
 import { attachPathMentionAutocomplete } from "../live/path-mention-autocomplete.js";
 import { findAppForSession, findWebAppForSession, createWebviewPanel, createLayoutToolbar } from "../live/webview-panel.js";
 import { createWriterPanel, createWriterToolbar } from "../writer/writer-panel.js";
@@ -129,6 +136,16 @@ export function initLiveView(deps) {
     stopSession,
     showToast,
   });
+  configureLiveChatFeatures({ isFeatureEnabled: isFeatureEnabledForViewer });
+
+  const agentOutputFormattingEnabled = () => Boolean(
+    isFeatureEnabledForViewer(AGENT_OUTPUT_FORMATTING_FLAG_KEY),
+  );
+
+  const shouldFormatAgentMessage = (message) => {
+    const role = String(message?.role ?? message?.type ?? "").toLowerCase();
+    return role === "assistant" || role === "agent";
+  };
 
   function updateSessionPinnedFile(sessionId, filePath) {
     const session = sessionsStore().items.find((item) => item.id === sessionId);
@@ -644,7 +661,9 @@ export function initLiveView(deps) {
         bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
         const body = document.createElement("div");
         body.className = "wm-message-body";
-        body.innerHTML = renderChatMessageHtml(message.content ?? message.message ?? "");
+        body.innerHTML = renderChatMessageHtml(message.content ?? message.message ?? "", {
+          cleanAgentText: Boolean(agentOutputFormattingEnabled() && shouldFormatAgentMessage(message)),
+        });
         bubble.append(body);
         attachCopyButton(bubble);
         wrapper.append(bubble);
@@ -681,6 +700,7 @@ export function initLiveView(deps) {
       sessionId,
       conversation,
       windowStore: state.liveMessageWindows,
+      agentOutputFormattingEnabled: agentOutputFormattingEnabled(),
       onRevealOlder: (scrollElement) => {
         const snapshot = capturePrependedScrollState(scrollElement);
         expandConversationWindow(state.liveMessageWindows, sessionId, conversation.length);

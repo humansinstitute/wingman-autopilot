@@ -13,6 +13,7 @@ export {
   initAlpineChat,
   getChatTemplate,
   registerChatComponent,
+  configureLiveChatFeatures,
   Alpine,
 } from "./chat-component.js";
 

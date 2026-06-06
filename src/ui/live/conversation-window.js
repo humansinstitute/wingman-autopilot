@@ -115,12 +115,19 @@ function buildWindowSummary(hiddenCount, totalCount, visibleCount) {
   return `Showing the latest ${visibleCount} of ${totalCount} messages to keep long sessions responsive on mobile.`;
 }
 
-function createMessageBubble(message) {
+function shouldFormatAgentMessage(message) {
+  const role = String(message?.role ?? message?.type ?? "").toLowerCase();
+  return role === "assistant" || role === "agent";
+}
+
+function createMessageBubble(message, options = {}) {
   const bubble = document.createElement("article");
   bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
   const body = document.createElement("div");
   body.className = "wm-message-body";
-  body.innerHTML = renderChatMessageHtml(message.content ?? message.message ?? "");
+  body.innerHTML = renderChatMessageHtml(message.content ?? message.message ?? "", {
+    cleanAgentText: Boolean(options.agentOutputFormattingEnabled && shouldFormatAgentMessage(message)),
+  });
   bubble.append(body);
   attachCopyButton(bubble);
   return bubble;
@@ -155,6 +162,7 @@ export function createConversationElement(options) {
     conversation,
     windowStore,
     onRevealOlder,
+    agentOutputFormattingEnabled = false,
   } = options;
   const snapshot = getConversationWindowSnapshot(windowStore, sessionId, conversation);
 
@@ -176,7 +184,7 @@ export function createConversationElement(options) {
   }
 
   snapshot.visibleMessages.forEach((message) => {
-    wrapper.append(createMessageBubble(message));
+    wrapper.append(createMessageBubble(message, { agentOutputFormattingEnabled }));
   });
 
   return wrapper;
