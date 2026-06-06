@@ -8,6 +8,7 @@ import type { WingmanConfig } from "../config";
 import { WappStore } from "../wapps/wapp-store";
 import {
   addAppToEcosystem,
+  addUserAppToEcosystem,
   createAgentPm2StartOptions,
   createUserAppEcosystemConfig,
   getEcosystemPath,
@@ -160,6 +161,31 @@ describe("agent ecosystem config concurrency", () => {
       const config = await readEcosystemConfig(getEcosystemPath(dir, false));
       const sessionIds = config.apps.map((app) => app.env?.SESSION_ID).sort();
       expect(sessionIds).toEqual(sessions.map((session) => session.sessionId).sort());
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("user app ecosystem config concurrency", () => {
+  test("preserves all app entries across concurrent user app additions", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ecosystem-user-apps-"));
+    try {
+      const apps = Array.from({ length: 6 }, (_, index) => ({
+        ...makeApp(`plain-app-${index}`, join(dir, `app-${index}`)),
+        label: `Plain App ${index}`,
+      }));
+
+      await Promise.all(apps.map((app) => addUserAppToEcosystem({
+        app,
+        userAlias: "tester",
+        userRootDir: dir,
+        isAdmin: false,
+      })));
+
+      const config = await readEcosystemConfig(getEcosystemPath(dir, false));
+      const processNames = config.apps.map((app) => app.name).sort();
+      expect(processNames).toEqual(apps.map((app) => `tester-app-${app.label.toLowerCase().replaceAll(" ", "-")}`).sort());
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

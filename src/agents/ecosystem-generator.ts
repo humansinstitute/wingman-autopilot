@@ -548,6 +548,13 @@ export async function addUserAppToEcosystem(
   config: UserAppConfig,
 ): Promise<{ ecosystemPath: string; processName: string; logsDir: string }> {
   const ecosystemPath = getEcosystemPath(config.userRootDir, config.isAdmin);
+  return withEcosystemConfigLock(ecosystemPath, () => addUserAppToEcosystemUnlocked(config, ecosystemPath));
+}
+
+async function addUserAppToEcosystemUnlocked(
+  config: UserAppConfig,
+  ecosystemPath: string,
+): Promise<{ ecosystemPath: string; processName: string; logsDir: string }> {
   const logsDir = getLogsDirectory(config.userRootDir, config.isAdmin);
 
   // Ensure logs directory exists
