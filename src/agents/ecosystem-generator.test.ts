@@ -4,8 +4,16 @@ import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
 
 import type { AppRecord } from "../apps/app-registry";
+import type { WingmanConfig } from "../config";
 import { WappStore } from "../wapps/wapp-store";
-import { createUserAppEcosystemConfig } from "./ecosystem-generator";
+import {
+  addAppToEcosystem,
+  createUserAppEcosystemConfig,
+  getEcosystemPath,
+  readEcosystemConfig,
+  withEcosystemConfigLock,
+  type SessionConfig,
+} from "./ecosystem-generator";
 
 function makeApp(id: string, root: string): AppRecord {
   return {
@@ -21,6 +29,29 @@ function makeApp(id: string, root: string): AppRecord {
     webAppPort: id === "wapp-app" ? 4010 : 4011,
   };
 }
+
+function makeSessionConfig(root: string, index: number): SessionConfig {
+  const port = 4700 + index;
+  return {
+    sessionId: `session-${index}`,
+    sessionName: `[sched] Concurrent ${index}`,
+    agent: "codex",
+    port,
+    workingDirectory: root,
+    userAlias: "tester",
+    isAdmin: false,
+    config: {
+      agents: {
+        codex: {
+          label: "Codex",
+          command: () => ["agentapi", "server", "--port", String(port), "--", "codex"],
+        },
+      },
+    } as unknown as WingmanConfig,
+  };
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe("createUserAppEcosystemConfig WApp env injection", () => {
   test("injects WAPP vars only for active WApp assignments", async () => {
@@ -65,6 +96,47 @@ describe("createUserAppEcosystemConfig WApp env injection", () => {
       const plainCommand = plainConfig.args[1] ?? "";
       expect(plainCommand).not.toContain("WAPP_ID=");
       expect(plainCommand).not.toContain("WAPP_DB_PATH=");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("agent ecosystem config concurrency", () => {
+  test("serializes operations for the same ecosystem path", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ecosystem-lock-"));
+    try {
+      const ecosystemPath = getEcosystemPath(dir, false);
+      const events: string[] = [];
+
+      await Promise.all([
+        withEcosystemConfigLock(ecosystemPath, async () => {
+          events.push("first:start");
+          await sleep(20);
+          events.push("first:end");
+        }),
+        withEcosystemConfigLock(ecosystemPath, async () => {
+          events.push("second:start");
+          events.push("second:end");
+        }),
+      ]);
+
+      expect(events).toEqual(["first:start", "first:end", "second:start", "second:end"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves all app entries across concurrent session additions", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ecosystem-concurrent-"));
+    try {
+      const sessions = Array.from({ length: 8 }, (_, index) => makeSessionConfig(dir, index));
+
+      await Promise.all(sessions.map((sessionConfig) => addAppToEcosystem(sessionConfig)));
+
+      const config = await readEcosystemConfig(getEcosystemPath(dir, false));
+      const sessionIds = config.apps.map((app) => app.env?.SESSION_ID).sort();
+      expect(sessionIds).toEqual(sessions.map((session) => session.sessionId).sort());
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

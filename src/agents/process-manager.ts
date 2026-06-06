@@ -20,9 +20,11 @@ import {
 } from "../sessions/session-metadata";
 import {
   addAppToEcosystem,
+  getEcosystemPath,
   getLogsDirectory,
   removeAppFromEcosystem,
   type SessionConfig,
+  withEcosystemConfigLock,
 } from "./ecosystem-generator";
 import {
   startProcessFromConfig,
@@ -1130,48 +1132,64 @@ export class ProcessManager {
       envOverride: session.definition.env ?? {},
     };
 
-    // Add to ecosystem config and get process name
-    const { ecosystemPath, processName, logsDir } = await addAppToEcosystem(sessionConfig);
-    session.pm2Name = processName;
+    const ecosystemPath = getEcosystemPath(session.workingDirectory, session.isAdmin ?? false);
+    let processName = "";
+    let logsDir = getLogsDirectory(session.workingDirectory, session.isAdmin ?? false);
+    let proc = null;
 
-    this.appendLog(session, `[manager] starting via PM2 as ${processName}`);
+    try {
+      proc = await withEcosystemConfigLock(ecosystemPath, async () => {
+        const added = await addAppToEcosystem(sessionConfig, { lock: false });
+        processName = added.processName;
+        logsDir = added.logsDir;
+        session.pm2Name = processName;
 
-    // Start the process via PM2
-    await startProcessFromConfig(ecosystemPath, processName);
+        this.appendLog(session, `[manager] starting via PM2 as ${processName}`);
 
-    // Wait for process to come online
-    const proc = await waitForStatus(processName, "online", resolvePm2AgentStartTimeoutMs());
-    const pm2Status = proc?.pm2_env?.status;
-    if (!proc || pm2Status !== "online") {
-      const startupDetail = await this.readPm2StartupFailure(logsDir, processName);
-      // Clean up the orphaned PM2 entry so it doesn't accumulate
-      try {
-        await deleteProcess(processName);
-      } catch {
-        // best-effort cleanup
-      }
-      try {
-        await removeAppFromEcosystem(
-          session.workingDirectory,
-          session.isAdmin ?? false,
-          processName,
-        );
-      } catch {
-        // best-effort cleanup
-      }
-      session.pm2Name = undefined;
-      if (pm2Status && pm2Status !== "online") {
+        // PM2 parses the shared ecosystem file during start. Keep same-file
+        // session launches serialized so concurrent scheduled jobs cannot
+        // rewrite the config while PM2 is reading it.
+        await startProcessFromConfig(ecosystemPath, processName);
+        return waitForStatus(processName, "online", resolvePm2AgentStartTimeoutMs());
+      });
+
+      const pm2Status = proc?.pm2_env?.status;
+      if (!proc || pm2Status !== "online") {
+        const startupDetail = processName
+          ? await this.readPm2StartupFailure(logsDir, processName)
+          : null;
+        if (pm2Status && pm2Status !== "online") {
+          throw new Error(
+            startupDetail
+              ? `PM2 process ${processName} failed during startup (${pm2Status}): ${startupDetail}`
+              : `PM2 process ${processName} failed during startup (${pm2Status})`,
+          );
+        }
         throw new Error(
           startupDetail
-            ? `PM2 process ${processName} failed during startup (${pm2Status}): ${startupDetail}`
-            : `PM2 process ${processName} failed during startup (${pm2Status})`,
+            ? `PM2 process ${processName} failed to start within timeout: ${startupDetail}`
+            : `PM2 process ${processName || "agent session"} failed to start within timeout`,
         );
       }
-      throw new Error(
-        startupDetail
-          ? `PM2 process ${processName} failed to start within timeout: ${startupDetail}`
-          : `PM2 process ${processName} failed to start within timeout`,
-      );
+    } catch (error) {
+      if (processName) {
+        try {
+          await deleteProcess(processName);
+        } catch {
+          // best-effort cleanup
+        }
+        try {
+          await removeAppFromEcosystem(
+            session.workingDirectory,
+            session.isAdmin ?? false,
+            processName,
+          );
+        } catch {
+          // best-effort cleanup
+        }
+      }
+      session.pm2Name = undefined;
+      throw error;
     }
 
     // Store the PID for rehydration
