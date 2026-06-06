@@ -2624,6 +2624,7 @@ commandPaletteController = createAutopilotCommandPalette({
   renderAppCard: (...args) => renderAppCard(...args),
   refreshApps: (...args) => refreshApps(...args),
   triggerAppAction: (...args) => triggerAppAction(...args),
+  resumeNativeSession,
   showToast,
 });
 

@@ -70,6 +70,21 @@ export function getRecentLaunchProjects(projects, limit = 9) {
     .slice(0, boundedLimit);
 }
 
+export function createCommandPaletteArchiveItem({
+  group = "recent-session",
+  groupLabel = "Recent Sessions",
+} = {}) {
+  return createCommandItem({
+    group,
+    groupLabel,
+    id: `${group}:archive`,
+    title: "Archive",
+    subtitle: "Filter archived sessions and resume from disk",
+    action: "archive-sessions",
+    searchText: "archive archived sessions resume disk history",
+  });
+}
+
 export function createCommandPaletteLaunchItems(projects) {
   const modalItem = createCommandItem({
     group: "session-launch",
@@ -99,7 +114,14 @@ export function createCommandPaletteLaunchItems(projects) {
     ].filter(Boolean).join(" "),
   }));
 
-  return [modalItem, ...projectItems];
+  return [
+    modalItem,
+    ...projectItems,
+    createCommandPaletteArchiveItem({
+      group: "session-archive",
+      groupLabel: "Archived Sessions",
+    }),
+  ];
 }
 
 export function createCommandPaletteQuickItems() {

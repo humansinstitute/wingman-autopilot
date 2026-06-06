@@ -1,4 +1,5 @@
 import { showRunningAppsModal } from "../apps/running-apps-modal.js";
+import { showArchiveSessionsModal } from "../home/archive-modal.js";
 import { openCommandFileBrowserModal } from "../modals/file-browser-modal.js";
 import { showRunningPipelinesModal } from "../pipelines/running-pipelines-modal.js";
 import { getSessionDisplayName } from "./icons.js";
@@ -6,6 +7,7 @@ import { launchProjectSession } from "./project-session-launcher.js";
 import {
   escapeAttribute,
   escapeHtml,
+  createCommandPaletteArchiveItem,
   createCommandItem,
   createCommandPaletteLaunchItems,
   createCommandPaletteQuickItems,
@@ -73,6 +75,7 @@ export function createAutopilotCommandPalette({
   renderAppCard,
   refreshApps,
   triggerAppAction,
+  resumeNativeSession,
   showToast,
 }) {
   let overlay = null;
@@ -95,7 +98,7 @@ export function createAutopilotCommandPalette({
 
   function getRecentSessionItems() {
     const sessions = Array.isArray(sessionsStore?.().items) ? sessionsStore().items : [];
-    return getCommandPaletteSessionEntries(
+    const recentItems = getCommandPaletteSessionEntries(
       readStoredArray(RECENT_SESSION_STORAGE_KEY),
       sessions,
       getSessionDisplayName,
@@ -110,6 +113,7 @@ export function createAutopilotCommandPalette({
         targetId: entry.id,
         searchText: entry.id,
       }));
+    return [...recentItems, createCommandPaletteArchiveItem()];
   }
 
   function getRecentAppItems() {
@@ -270,6 +274,13 @@ export function createAutopilotCommandPalette({
     }
     if (item.action === "launch-project-session") {
       await launchProjectFromItem(item);
+      return;
+    }
+    if (item.action === "archive-sessions") {
+      showArchiveSessionsModal({
+        resumeNativeSession,
+        showToast,
+      });
       return;
     }
     if (item.action === "running-apps") {

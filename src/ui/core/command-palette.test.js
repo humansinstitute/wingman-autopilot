@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 
 import {
+  createCommandPaletteArchiveItem,
   createCommandPaletteLaunchItems,
   createCommandPaletteQuickItems,
   filterCommandPaletteItems,
@@ -81,10 +82,29 @@ describe("autopilot command palette helpers", () => {
       "7:Project 7",
       "8:Project 8",
       "9:Project 9",
+      ":Archive",
     ]);
     expect(items[0].action).toBe("open-session-modal");
     expect(items[1].action).toBe("launch-project-session");
     expect(items[9].targetId).toBe("project-9");
+    expect(items[10].action).toBe("archive-sessions");
+    expect(items[10].groupLabel).toBe("Archived Sessions");
+  });
+
+  test("builds an archive command for session lists", () => {
+    expect(createCommandPaletteArchiveItem()).toEqual({
+      group: "recent-session",
+      groupLabel: "Recent Sessions",
+      id: "recent-session:archive",
+      title: "Archive",
+      subtitle: "Filter archived sessions and resume from disk",
+      action: "archive-sessions",
+      shortcutKey: "",
+      targetId: "",
+      searchText: "archive archived sessions resume disk history",
+    });
+    expect(commandPaletteSource).toContain("showArchiveSessionsModal");
+    expect(commandPaletteSource).toContain("resumeNativeSession");
   });
 
   test("launch projects require an id and directory", () => {
