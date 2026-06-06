@@ -12,6 +12,7 @@ import {
 } from "./session-groups.js";
 import { createSessionGroupTabs } from "./session-group-tabs.js";
 import { canResumeNativeAgentSession } from "./native-session-resume.js";
+import { showArchiveSessionsModal } from "./archive-modal.js";
 
 export { canResumeNativeAgentSession };
 
@@ -207,6 +208,7 @@ export function createLiveAgentsSection(deps) {
     navigateToChat,
     openDialog,
     isFeatureEnabledForViewer,
+    showToast,
     buildSessionFilterOptions,
     fetchSessions,
     syncMenuTabs,
@@ -360,6 +362,27 @@ export function createLiveAgentsSection(deps) {
     );
     liveContent.append(tableContainer);
   }
+  const archiveActions = document.createElement("div");
+  archiveActions.className = "wm-home-live-footer-actions";
+
+  const archiveButton = document.createElement("button");
+  archiveButton.type = "button";
+  archiveButton.className = "wm-button secondary";
+  archiveButton.textContent = "Archive";
+  archiveButton.dataset.testid = "live-agents-archive";
+  archiveButton.setAttribute("aria-label", "Open archived sessions");
+  archiveButton.addEventListener("click", () => {
+    showArchiveSessionsModal({
+      resumeNativeSession: deps.resumeNativeSession,
+      getSessionPendingAction: deps.getSessionPendingAction,
+      isSessionActionPending: deps.isSessionActionPending,
+      withPendingSessionAction: deps.withPendingSessionAction,
+      showToast,
+    });
+  });
+
+  archiveActions.append(archiveButton);
+  liveContent.append(archiveActions);
   liveCard.append(liveContent);
 
   setCollapsed(false);

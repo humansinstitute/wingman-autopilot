@@ -76,6 +76,10 @@ export function createArchiveComponent({
   getSessionPendingAction,
   isSessionActionPending,
   withPendingSessionAction,
+  titleText = "Archive",
+  storageKey = ARCHIVE_STORAGE_KEY,
+  defaultCollapsed = true,
+  collapsible = true,
 } = {}) {
   let archiveState = {
     sessions: [],
@@ -88,15 +92,17 @@ export function createArchiveComponent({
   };
 
   const card = document.createElement("section");
-  card.className = "wm-card wm-home-archive";
+  card.className = `wm-card wm-home-archive${collapsible ? "" : " wm-home-archive--fixed"}`;
 
   const header = document.createElement("div");
   header.className = "wm-home-section-header";
-  header.setAttribute("role", "button");
-  header.setAttribute("tabindex", "0");
+  if (collapsible) {
+    header.setAttribute("role", "button");
+    header.setAttribute("tabindex", "0");
+  }
 
   const title = document.createElement("h2");
-  title.textContent = "Archive";
+  title.textContent = titleText;
 
   const badge = document.createElement("span");
   badge.className = "wm-home-archive-badge";
@@ -111,7 +117,8 @@ export function createArchiveComponent({
   refreshBtn.className = "wm-button secondary wm-home-archive-refresh";
   refreshBtn.textContent = "Refresh";
   refreshBtn.title = "Refresh archive";
-  refreshBtn.addEventListener("click", () => {
+  refreshBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
     archiveState.offset = 0;
     void loadArchive();
   });
@@ -171,13 +178,18 @@ export function createArchiveComponent({
   card.append(header, content);
 
   // Collapse state
-  const savedCollapsed = localStorage.getItem(ARCHIVE_STORAGE_KEY);
-  let isCollapsed = savedCollapsed !== "false"; // Default to collapsed
+  const savedCollapsed = collapsible ? localStorage.getItem(storageKey) : "false";
+  let isCollapsed = collapsible ? savedCollapsed !== "false" : false;
+  if (savedCollapsed == null) {
+    isCollapsed = Boolean(defaultCollapsed);
+  }
 
   const setCollapsed = (collapsed) => {
-    isCollapsed = collapsed;
-    localStorage.setItem(ARCHIVE_STORAGE_KEY, String(collapsed));
-    if (collapsed) {
+    isCollapsed = collapsible ? collapsed : false;
+    if (collapsible) {
+      localStorage.setItem(storageKey, String(isCollapsed));
+    }
+    if (isCollapsed) {
       card.dataset.collapsed = "true";
       content.hidden = true;
       collapseIcon.textContent = "▶";
@@ -194,16 +206,18 @@ export function createArchiveComponent({
     }
   };
 
-  header.addEventListener("click", () => {
-    setCollapsed(!isCollapsed);
-  });
-
-  header.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
+  if (collapsible) {
+    header.addEventListener("click", () => {
       setCollapsed(!isCollapsed);
-    }
-  });
+    });
+
+    header.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        setCollapsed(!isCollapsed);
+      }
+    });
+  }
 
   const renderList = () => {
     listContainer.innerHTML = "";

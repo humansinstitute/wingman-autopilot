@@ -9,6 +9,7 @@ import {
 } from "./view-utils.js";
 import { renderStepCardTimeline } from "./run-flow-view.js";
 import { renderStepDetail } from "./runs-view.js";
+import { getDefinitionFlowRows } from "./definitions-view.js";
 
 const ACTIVE_PIPELINE_RUN_STATUSES = new Set(["queued", "running"]);
 const RECENT_PIPELINE_RUN_PAGE_SIZE = 5;
@@ -95,6 +96,11 @@ async function fetchPipelineRunSummaries() {
   return fetchPipelineRuns();
 }
 
+async function fetchPipelineDefinitionSummaries() {
+  const { fetchPipelineDefinitions } = await import("./api.js");
+  return fetchPipelineDefinitions();
+}
+
 async function startPipelineRun(definitionId, input) {
   const { runPipelineDefinition } = await import("./api.js");
   return runPipelineDefinition(definitionId, input);
@@ -139,6 +145,13 @@ export function showRunningPipelinesModal({ showToast } = {}) {
   refreshButton.textContent = "Refresh";
   refreshButton.dataset.testid = "running-pipelines-modal-refresh";
 
+  const definitionsButton = document.createElement("button");
+  definitionsButton.type = "button";
+  definitionsButton.className = "wm-button secondary wm-button--small";
+  definitionsButton.textContent = "Definitions";
+  definitionsButton.dataset.testid = "running-pipelines-modal-definitions";
+  definitionsButton.setAttribute("aria-label", "Show pipeline definitions");
+
   const closeButton = document.createElement("button");
   closeButton.type = "button";
   closeButton.className = "wm-button secondary wm-button--small";
@@ -147,7 +160,7 @@ export function showRunningPipelinesModal({ showToast } = {}) {
   closeButton.dataset.testid = "running-pipelines-modal-close";
   closeButton.addEventListener("click", () => dialog.close());
 
-  headerActions.append(refreshButton, closeButton);
+  headerActions.append(definitionsButton, refreshButton, closeButton);
   header.append(titleWrap, headerActions);
 
   const body = document.createElement("div");
@@ -162,10 +175,14 @@ export function showRunningPipelinesModal({ showToast } = {}) {
 
   let runs = [];
   let selectedRunId = null;
+  let definitions = [];
+  let selectedDefinitionId = null;
   let selectedRunDetail = null;
   let selectedStepDetail = null;
+  let viewMode = "runs";
   let loading = false;
   let detailLoading = false;
+  let definitionsLoading = false;
   let showRecentRuns = false;
   let recentRunPage = 0;
 
@@ -208,6 +225,37 @@ export function showRunningPipelinesModal({ showToast } = {}) {
       refreshButton.disabled = false;
       refreshButton.textContent = "Refresh";
       renderContent();
+    }
+  }
+
+  async function refreshModalDefinitions({ silent = false } = {}) {
+    if (definitionsLoading) return;
+    definitionsLoading = true;
+    refreshButton.disabled = true;
+    refreshButton.textContent = "Refreshing...";
+    if (!silent) {
+      setStatus("Refreshing definitions...");
+      renderContent();
+    }
+    try {
+      const payload = await fetchPipelineDefinitionSummaries();
+      definitions = Array.isArray(payload?.definitions) ? payload.definitions : [];
+      if (selectedDefinitionId && !definitions.some((definition) => definition.id === selectedDefinitionId)) {
+        selectedDefinitionId = null;
+      }
+      if (!selectedDefinitionId && definitions.length) {
+        selectedDefinitionId = definitions.find((definition) => definition.default)?.id ?? definitions[0].id;
+      }
+      setStatus("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to refresh definitions.";
+      setStatus(message, "error");
+      showToast?.(message, { type: "error" });
+    } finally {
+      definitionsLoading = false;
+      refreshButton.disabled = false;
+      refreshButton.textContent = "Refresh";
+      if (!silent) renderContent();
     }
   }
 
@@ -264,6 +312,36 @@ export function showRunningPipelinesModal({ showToast } = {}) {
   function closeStepDetails() {
     selectedStepDetail = null;
     renderContent();
+  }
+
+  async function runDefinition(definition, button) {
+    if (!definition?.id || button.disabled) return;
+    button.disabled = true;
+    button.textContent = "Running...";
+    setStatus(`Starting ${definition.name ?? definition.id}...`);
+    try {
+      const input = definition.input && typeof definition.input === "object" && !Array.isArray(definition.input)
+        ? definition.input
+        : {};
+      const payload = await startPipelineRun(definition.id, input);
+      const nextRunId = payload?.run?.id;
+      showToast?.("Pipeline run started", { type: "success" });
+      viewMode = "runs";
+      selectedRunId = nextRunId ?? null;
+      selectedRunDetail = nextRunId ? payload : null;
+      selectedStepDetail = null;
+      showRecentRuns = true;
+      await refreshModalRuns();
+      renderContent();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to start pipeline.";
+      setStatus(message, "error");
+      showToast?.(message, { type: "error" });
+      if (button.isConnected) {
+        button.disabled = false;
+        button.textContent = "Run";
+      }
+    }
   }
 
   async function restartRun(run, button) {
@@ -340,6 +418,159 @@ export function showRunningPipelinesModal({ showToast } = {}) {
 
     renderRecentRunsToggle(runs.length);
     renderRecentRunsList(recentRuns, recentPageCount);
+  }
+
+  function renderDefinitionListView() {
+    title.textContent = "Pipeline Definitions";
+    definitionsButton.textContent = "Runs";
+    definitionsButton.setAttribute("aria-label", "Show pipeline runs");
+    subtitle.textContent = definitionsLoading
+      ? "Refreshing..."
+      : `${definitions.length} definition${definitions.length === 1 ? "" : "s"} available`;
+
+    if (definitionsLoading && definitions.length === 0) {
+      const loadingEl = document.createElement("p");
+      loadingEl.className = "wm-running-pipelines-modal__empty";
+      loadingEl.textContent = "Loading definitions...";
+      body.append(loadingEl);
+      return;
+    }
+
+    if (definitions.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "wm-running-pipelines-modal__empty";
+      empty.textContent = "No pipeline definitions found.";
+      body.append(empty);
+      return;
+    }
+
+    const layout = document.createElement("div");
+    layout.className = "wm-running-pipelines-definitions";
+    layout.dataset.testid = "running-pipelines-definitions";
+
+    const list = document.createElement("div");
+    list.className = "wm-running-pipelines-list";
+    definitions.forEach((definition) => {
+      list.append(renderDefinitionListItem(definition));
+    });
+
+    const selected = definitions.find((definition) => definition.id === selectedDefinitionId) ?? definitions[0];
+    const preview = document.createElement("article");
+    preview.className = "wm-running-pipelines-definition-detail";
+    preview.dataset.testid = "running-pipeline-definition-detail";
+    preview.innerHTML = renderDefinitionPreview(selected);
+
+    layout.append(list, preview);
+    body.append(layout);
+  }
+
+  function renderDefinitionListItem(definition) {
+    const item = document.createElement("article");
+    item.className = "wm-running-pipelines-list__item";
+    item.dataset.definitionId = String(definition.id ?? "");
+
+    const mainButton = document.createElement("button");
+    mainButton.type = "button";
+    mainButton.className = "wm-running-pipelines-list__main";
+    mainButton.dataset.testid = "running-pipeline-definition";
+    mainButton.setAttribute("aria-current", selectedDefinitionId === definition.id ? "true" : "false");
+    mainButton.setAttribute("aria-label", `Show definition ${definition.name ?? definition.id}`);
+    mainButton.addEventListener("click", () => {
+      selectedDefinitionId = definition.id;
+      renderContent();
+    });
+
+    const name = document.createElement("span");
+    name.className = "wm-running-pipelines-list__name";
+    name.textContent = definition.name ?? definition.id ?? "Pipeline";
+
+    const meta = document.createElement("span");
+    meta.className = "wm-running-pipelines-list__meta";
+    const stepCount = Array.isArray(definition.steps) ? definition.steps.length : 0;
+    meta.textContent = `${definition.scope ?? "definition"} - ${stepCount} step${stepCount === 1 ? "" : "s"}`;
+    mainButton.append(name, meta);
+
+    const actions = document.createElement("div");
+    actions.className = "wm-running-pipelines-list__actions";
+    if (definition.default) {
+      const defaultChip = document.createElement("span");
+      defaultChip.className = "wm-pipeline-status-chip";
+      defaultChip.dataset.status = "default";
+      defaultChip.textContent = "Default";
+      actions.append(defaultChip);
+    }
+    const runButton = document.createElement("button");
+    runButton.type = "button";
+    runButton.className = "wm-button secondary wm-button--small";
+    runButton.textContent = "Run";
+    runButton.dataset.testid = "running-pipeline-definition-run";
+    runButton.setAttribute("aria-label", `Run ${definition.name ?? definition.id}`);
+    runButton.addEventListener("click", () => void runDefinition(definition, runButton));
+    actions.append(runButton);
+
+    item.append(mainButton, actions);
+    return item;
+  }
+
+  function renderDefinitionPreview(definition) {
+    if (!definition) {
+      return `<p class="wm-running-pipelines-modal__empty">Select a definition.</p>`;
+    }
+    const steps = Array.isArray(definition.steps) ? definition.steps : [];
+    return `
+      <header class="wm-pipeline-detail-header">
+        <div>
+          <h2>${escapeHtml(definition.name ?? definition.id ?? "Pipeline")}</h2>
+          ${definition.description ? `<p>${escapeHtml(definition.description)}</p>` : `<p class="wm-muted">No description.</p>`}
+          <p><code>${escapeHtml(definition.id ?? "")}</code></p>
+        </div>
+        <span class="wm-pipeline-status-chip" data-status="${escapeAttribute(definition.default ? "default" : definition.scope)}">${escapeHtml(definition.default ? "Default" : definition.scope ?? "Definition")}</span>
+      </header>
+      <section class="wm-running-pipelines-definition-steps" aria-label="Pipeline definition steps">
+        ${steps.length ? steps.map((step, index) => renderDefinitionStepPreview(step, index)).join("") : `<p class="wm-muted">No steps defined.</p>`}
+      </section>
+    `;
+  }
+
+  function renderDefinitionStepPreview(step, index) {
+    const inputRows = getDefinitionFlowRows(step, "in");
+    const outputRows = getDefinitionFlowRows(step, "out");
+    return `
+      <article class="wm-pipeline-definition-step">
+        <div>
+          <span class="wm-pipeline-step-number">${escapeHtml(String(index + 1))}</span>
+          <strong>${escapeHtml(step.name ?? `Step ${index + 1}`)}</strong>
+          <small>${escapeHtml(step.type ?? "step")}</small>
+        </div>
+        ${step.description ? `<p>${escapeHtml(step.description)}</p>` : ""}
+        <div class="wm-pipeline-step-flow-grid">
+          ${renderDefinitionFieldSet("Definitions In", inputRows)}
+          ${renderDefinitionFieldSet("Activity Out", outputRows)}
+        </div>
+      </article>
+    `;
+  }
+
+  function renderDefinitionFieldSet(label, rows) {
+    return `
+      <div class="wm-pipeline-flow-fieldset">
+        <span>${escapeHtml(label)}</span>
+        ${renderDefinitionFieldRows(rows)}
+      </div>
+    `;
+  }
+
+  function renderDefinitionFieldRows(rows) {
+    if (!rows.length) return `<span class="wm-pipeline-flow-empty">No user-facing fields</span>`;
+    return `
+      <div class="wm-pipeline-flow-rows">
+        ${rows.slice(0, 5).map((row) => `
+          <div class="wm-pipeline-flow-row">
+            <code>${escapeHtml(row.name)}</code><span>${escapeHtml(row.value || "--")}</span>
+          </div>
+        `).join("")}
+      </div>
+    `;
   }
 
   function renderPipelineRunList(listRuns, { testId = "" } = {}) {
@@ -486,6 +717,9 @@ export function showRunningPipelinesModal({ showToast } = {}) {
   }
 
   function renderDetailsView() {
+    title.textContent = "Running Pipelines";
+    definitionsButton.textContent = "Definitions";
+    definitionsButton.setAttribute("aria-label", "Show pipeline definitions");
     const run = selectedRunDetail?.run ?? runs.find((entry) => entry.id === selectedRunId) ?? null;
     subtitle.textContent = run ? getPipelineRunDisplayName(run) : "Pipeline run";
 
@@ -553,6 +787,13 @@ export function showRunningPipelinesModal({ showToast } = {}) {
 
   function renderContent() {
     body.innerHTML = "";
+    if (viewMode === "definitions") {
+      renderDefinitionListView();
+      return;
+    }
+    title.textContent = "Running Pipelines";
+    definitionsButton.textContent = "Definitions";
+    definitionsButton.setAttribute("aria-label", "Show pipeline definitions");
     if (selectedRunId) {
       renderDetailsView();
       return;
@@ -560,7 +801,28 @@ export function showRunningPipelinesModal({ showToast } = {}) {
     renderListView();
   }
 
-  refreshButton.addEventListener("click", () => void refreshModalRuns());
+  refreshButton.addEventListener("click", () => {
+    if (viewMode === "definitions") {
+      void refreshModalDefinitions();
+      return;
+    }
+    void refreshModalRuns();
+  });
+  definitionsButton.addEventListener("click", () => {
+    if (viewMode === "definitions") {
+      viewMode = "runs";
+      renderContent();
+      return;
+    }
+    viewMode = "definitions";
+    selectedRunId = null;
+    selectedRunDetail = null;
+    selectedStepDetail = null;
+    renderContent();
+    if (definitions.length === 0) {
+      void refreshModalDefinitions();
+    }
+  });
   body.addEventListener("click", (event) => {
     const selectStepButton = event.target?.closest?.('[data-action="select-step"]');
     if (selectStepButton) {

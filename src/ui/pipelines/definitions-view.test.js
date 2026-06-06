@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { renderDefinitionsListPage } from "./definitions-view.js";
+import { getDefinitionFlowRows, renderDefinitionDetailPage, renderDefinitionsListPage } from "./definitions-view.js";
 
 function makeState(overrides = {}) {
   return {
@@ -43,5 +43,39 @@ describe("pipeline definition list rendering", () => {
     expect(html.indexOf('data-testid="pipeline-creator"')).toBeLessThan(
       html.indexOf('data-testid="pipeline-definition-list"'),
     );
+  });
+
+  test("renders definition steps as definitions in and activity out", () => {
+    const definition = {
+      id: "semantic",
+      name: "Semantic",
+      description: "Shows display rows",
+      scope: "user",
+      default: false,
+      tags: [],
+      steps: [{
+        name: "Hydrate",
+        type: "code",
+        input: { pick: { chat: "$.chat.messageText" } },
+        assign: "$.chatContext",
+        display: {
+          in: [{ label: "Message", path: "$.chat.messageText" }],
+          out: [{ label: "Thread", path: "$.thread", source: "output" }],
+        },
+      }],
+    };
+
+    expect(getDefinitionFlowRows(definition.steps[0], "in")).toEqual([
+      { name: "Message", value: "chat.messageText" },
+    ]);
+    expect(getDefinitionFlowRows(definition.steps[0], "out")).toEqual([
+      { name: "Thread", value: "output: thread" },
+    ]);
+
+    const html = renderDefinitionDetailPage(makeState({ definitions: [definition] }), definition);
+    expect(html).toContain("Definitions In");
+    expect(html).toContain("Activity Out");
+    expect(html).toContain("<code>Message</code>");
+    expect(html).toContain("<code>Thread</code>");
   });
 });

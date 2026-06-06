@@ -12,6 +12,128 @@ import {
   statusLabel,
 } from "./view-utils.js";
 
+const DEFINITION_FIELD_ROW_LIMIT = 5;
+
+export function getDefinitionFlowRows(step, direction) {
+  const explicitRows = getDefinitionDisplayRows(step, direction);
+  if (explicitRows.length) return explicitRows;
+  return direction === "in"
+    ? getDefinitionInputRows(step)
+    : getDefinitionOutputRows(step);
+}
+
+function getDefinitionDisplayRows(step, direction) {
+  const specs = step?.display?.[direction] ?? step?.metadata?.display?.[direction];
+  if (!Array.isArray(specs)) return [];
+  return specs
+    .map((spec) => {
+      if (!spec || typeof spec !== "object" || typeof spec.label !== "string") return null;
+      const path = typeof spec.path === "string" && spec.path.trim()
+        ? spec.path.trim()
+        : "$";
+      const source = typeof spec.source === "string" && spec.source.trim()
+        ? `${spec.source.trim()}: `
+        : "";
+      return {
+        name: spec.label,
+        value: `${source}${displayPath(path) || "$"}`,
+      };
+    })
+    .filter(Boolean);
+}
+
+function getDefinitionInputRows(step) {
+  const input = step?.input;
+  if (typeof input === "string" && input.trim()) {
+    return [{ name: "Input", value: displayPath(input.trim()) }];
+  }
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    if (input.pick && typeof input.pick === "object" && !Array.isArray(input.pick)) {
+      return Object.entries(input.pick).map(([label, path]) => ({
+        name: toTitleLabel(label),
+        value: displayPath(path),
+      }));
+    }
+    if (input.value && typeof input.value === "object" && !Array.isArray(input.value)) {
+      return Object.keys(input.value).map((key) => ({
+        name: toTitleLabel(key),
+        value: "literal",
+      }));
+    }
+  }
+  return [];
+}
+
+function getDefinitionOutputRows(step) {
+  const rows = [];
+  if (typeof step?.assign === "string" && step.assign.trim()) {
+    rows.push({ name: "State", value: displayPath(step.assign.trim()) });
+  }
+  if (typeof step?.target === "string" && step.target.trim()) {
+    rows.push({ name: "Loop Target", value: step.target.trim() });
+  }
+  if (typeof step?.function === "string" && step.function.trim()) {
+    rows.push({ name: "Function", value: step.function.trim() });
+  }
+  if (typeof step?.block === "string" && step.block.trim()) {
+    rows.push({ name: "Block", value: step.block.trim() });
+  }
+  if (typeof step?.agent === "string" && step.agent.trim()) {
+    rows.push({ name: "Agent", value: step.agent.trim() });
+  }
+  return rows;
+}
+
+function displayPath(path) {
+  return String(path ?? "").replace(/^\$\./, "").replace(/^\$/, "");
+}
+
+function toTitleLabel(value) {
+  const words = String(value ?? "")
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .trim();
+  if (!words) return "Field";
+  return words.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function renderDefinitionFieldSet(label, rows) {
+  return `
+    <div class="wm-pipeline-flow-fieldset">
+      <span>${escapeHtml(label)}</span>
+      ${renderDefinitionFieldRows(rows, label)}
+    </div>
+  `;
+}
+
+function renderDefinitionFieldRows(rows, idPrefix) {
+  if (!rows.length) return `<span class="wm-pipeline-flow-empty">No user-facing fields</span>`;
+  const visible = rows.slice(0, DEFINITION_FIELD_ROW_LIMIT);
+  const hidden = rows.slice(DEFINITION_FIELD_ROW_LIMIT);
+  const safeId = String(idPrefix ?? "fields").replace(/[^a-zA-Z0-9_-]+/g, "-");
+  return `
+    <div class="wm-pipeline-flow-rows">
+      ${visible.map(renderDefinitionFieldRow).join("")}
+      ${hidden.length ? `
+        <details class="wm-pipeline-flow-more">
+          <summary aria-label="Show ${escapeAttribute(String(hidden.length))} more ${escapeAttribute(safeId)} fields">More (${escapeHtml(String(hidden.length))})</summary>
+          <div class="wm-pipeline-flow-more-rows">
+            ${hidden.map(renderDefinitionFieldRow).join("")}
+          </div>
+        </details>
+      ` : ""}
+    </div>
+  `;
+}
+
+function renderDefinitionFieldRow(row) {
+  return `
+    <div class="wm-pipeline-flow-row">
+      <code>${escapeHtml(row.name)}</code><span>${escapeHtml(row.value || "--")}</span>
+    </div>
+  `;
+}
+
 export function renderDefinitionsWorkspace(state, selected) {
   const definitions = getFilteredDefinitions(state);
   return `
@@ -228,6 +350,8 @@ function renderDefinitionFlow(definition) {
 }
 
 function renderDefinitionStep(step, index) {
+  const inputRows = getDefinitionFlowRows(step, "in");
+  const outputRows = getDefinitionFlowRows(step, "out");
   return `
     <article class="wm-pipeline-definition-step ${step.previewExpandedFrom ? "wm-pipeline-definition-step-expanded" : ""}">
       <div>
@@ -239,6 +363,10 @@ function renderDefinitionStep(step, index) {
       ${step.description ? `<p>${escapeHtml(step.description)}</p>` : ""}
       ${step.target ? `<p class="wm-muted">Loops to <code>${escapeHtml(step.target)}</code>${step.iterations ? ` until <code>${escapeHtml(String(step.iterations))}</code> passes complete` : ""}</p>` : ""}
       ${step.assign ? `<p class="wm-muted">Assigns to <code>${escapeHtml(step.assign)}</code></p>` : ""}
+      <div class="wm-pipeline-step-flow-grid">
+        ${renderDefinitionFieldSet("Definitions In", inputRows)}
+        ${renderDefinitionFieldSet("Activity Out", outputRows)}
+      </div>
     </article>
   `;
 }

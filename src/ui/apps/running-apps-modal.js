@@ -42,6 +42,7 @@ export function showRunningAppsModal({
   renderAppCard,
   refreshApps,
   triggerAppAction,
+  openNewApp,
   showToast,
 }) {
   const existing = document.getElementById("running-apps-modal");
@@ -82,6 +83,19 @@ export function showRunningAppsModal({
   refreshButton.textContent = "Refresh";
   refreshButton.dataset.testid = "running-apps-modal-refresh";
 
+  const newAppButton = document.createElement("button");
+  newAppButton.type = "button";
+  newAppButton.className = "wm-button wm-button--small";
+  newAppButton.textContent = "New App";
+  newAppButton.dataset.testid = "running-apps-modal-new-app";
+  newAppButton.setAttribute("aria-label", "Create a new app");
+  newAppButton.addEventListener("click", () => {
+    dialog.close();
+    if (typeof openNewApp === "function") {
+      openNewApp();
+    }
+  });
+
   const closeButton = document.createElement("button");
   closeButton.type = "button";
   closeButton.className = "wm-button secondary wm-button--small";
@@ -90,7 +104,7 @@ export function showRunningAppsModal({
   closeButton.dataset.testid = "running-apps-modal-close";
   closeButton.addEventListener("click", () => dialog.close());
 
-  headerActions.append(refreshButton, closeButton);
+  headerActions.append(newAppButton, refreshButton, closeButton);
   header.append(titleWrap, headerActions);
 
   const body = document.createElement("div");

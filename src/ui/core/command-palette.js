@@ -65,6 +65,7 @@ export function createAutopilotCommandPalette({
   npubProjectsState,
   fetchNpubProjects,
   navigateHome,
+  navigateToApps,
   getFileBrowserInitialPath,
   getFileBrowserSession,
   pinFileToSession,
@@ -272,7 +273,14 @@ export function createAutopilotCommandPalette({
       return;
     }
     if (item.action === "running-apps") {
-      showRunningAppsModal({ appsStore, renderAppCard, refreshApps, triggerAppAction, showToast });
+      showRunningAppsModal({
+        appsStore,
+        renderAppCard,
+        refreshApps,
+        triggerAppAction,
+        openNewApp: () => navigateToApps?.({ openNewAppDialog: true }),
+        showToast,
+      });
       return;
     }
     if (item.action === "running-pipelines") {

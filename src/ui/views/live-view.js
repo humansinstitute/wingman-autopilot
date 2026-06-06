@@ -110,6 +110,7 @@ export function initLiveView(deps) {
     openVoiceNoteRecorder,
     openDialog,
     openSessionLaunchPalette,
+    navigateToApps,
     isFeatureEnabledForViewer,
     showToast,
     renderAppCard,
@@ -996,6 +997,7 @@ export function initLiveView(deps) {
         renderAppCard,
         refreshApps,
         triggerAppAction,
+        openNewApp: () => navigateToApps?.({ openNewAppDialog: true }),
         showToast,
       });
     });

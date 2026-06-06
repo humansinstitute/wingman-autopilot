@@ -323,6 +323,7 @@ export function initHomeView(deps) {
         buildSessionFilterOptions,
         fetchSessions,
         syncMenuTabs,
+        showToast,
         escapeHtml,
         getSessionPendingAction,
         isSessionActionPending,
