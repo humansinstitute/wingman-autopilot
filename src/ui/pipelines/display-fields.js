@@ -1,3 +1,5 @@
+import { cleanAgentOutputText } from "./agent-output-format.js";
+
 const FIELD_LIMIT = 40;
 const PREVIEW_TEXT_LIMIT = 72;
 const PIPELINE_PLUMBING_KEYS = new Set([
@@ -41,11 +43,11 @@ const PIPELINE_PLUMBING_KEYS = new Set([
   "acknowledgement",
 ]);
 
-export function buildExplicitDisplayRows(step, direction) {
+export function buildExplicitDisplayRows(step, direction, options = {}) {
   const specs = step?.metadata?.display?.[direction];
   if (!Array.isArray(specs) || specs.length === 0) return null;
   const rows = specs
-    .map((spec) => buildDisplayRow(step, direction, spec))
+    .map((spec) => buildDisplayRow(step, direction, spec, options))
     .filter(Boolean);
   return rows.slice(0, FIELD_LIMIT);
 }
@@ -89,7 +91,7 @@ export function displayPath(path) {
   return String(path ?? "").replace(/^\$\./, "").replace(/^\$/, "");
 }
 
-function buildDisplayRow(step, direction, spec) {
+function buildDisplayRow(step, direction, spec, options) {
   if (!isObjectLike(spec) || typeof spec.label !== "string" || typeof spec.path !== "string") return null;
   const value = resolveDisplayValue(step, direction, spec);
   if (value === undefined || value === null || value === "") {
@@ -98,7 +100,7 @@ function buildDisplayRow(step, direction, spec) {
   }
   return {
     name: spec.label,
-    value: formatDisplayValue(value, spec),
+    value: formatDisplayValue(value, spec, options),
   };
 }
 
@@ -136,13 +138,15 @@ function resolvePath(value, path) {
   return cursor;
 }
 
-function formatDisplayValue(value, spec) {
+function formatDisplayValue(value, spec, options = {}) {
   const format = typeof spec.format === "string" ? spec.format : "auto";
   if (format === "messages") return summariseMessages(value, positiveInteger(spec.limit, 5));
   if (format === "records") return summariseRecords(value, positiveInteger(spec.limit, 4));
   if (format === "list") return summariseList(value, positiveInteger(spec.limit, 5));
   if (format === "count") return countValue(value);
+  if (format === "agentText") return cleanAgentOutputText(extractText(value) ?? String(value));
   if (format === "text") return compactText(extractText(value) ?? String(value));
+  if (options.cleanAgentText && typeof value === "string") return cleanAgentOutputText(value);
   return value;
 }
 

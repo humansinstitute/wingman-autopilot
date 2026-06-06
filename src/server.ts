@@ -350,6 +350,7 @@ const handlePathBasedAppRequest = async (
   return proxyRequestToApp(rewrittenRequest, resolved.port);
 };
 const PROJECTS_FLAG_KEY = "projects_visibility";
+const PIPELINE_AGENT_OUTPUT_FORMATTING_FLAG_KEY = "pipeline_agent_output_formatting";
 const FEATURE_FLAG_DEFAULTS: Array<{
   key: string;
   label: string;
@@ -379,6 +380,12 @@ const FEATURE_FLAG_DEFAULTS: Array<{
     label: "Private Chats",
     description: "Controls whether the Private Chats button is visible on the home screen.",
     state: "on",
+  },
+  {
+    key: PIPELINE_AGENT_OUTPUT_FORMATTING_FLAG_KEY,
+    label: "Pipeline agent output formatting",
+    description: "Formats agent-step output in pipeline run views to reduce terminal capture wrapping artifacts.",
+    state: "off",
   },
   {
     key: CODEX_NATIVE_SDK_FLAG,

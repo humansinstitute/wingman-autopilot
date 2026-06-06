@@ -2462,7 +2462,10 @@ const schedulerPageUI = initSchedulerPage({ showToast });
 renderSchedulerPage = schedulerPageUI.renderPage;
 ensureSchedulerPageLoaded = schedulerPageUI.ensureLoaded;
 
-const pipelinesPageUI = initPipelinesPage({ showToast });
+const pipelinesPageUI = initPipelinesPage({
+  showToast,
+  isFeatureEnabledForViewer: (...args) => isFeatureEnabledForViewer(...args),
+});
 renderPipelinesPage = pipelinesPageUI.renderPage;
 ensurePipelinesPageLoaded = pipelinesPageUI.ensureLoaded;
 

@@ -340,7 +340,10 @@ export function initHomeView(deps) {
         },
       }),
     );
-    wrapper.append(createRunningPipelinesSection({ showToast }).element);
+    wrapper.append(createRunningPipelinesSection({
+      showToast,
+      isFeatureEnabledForViewer,
+    }).element);
 
     archiveComponent = createArchiveComponent({
       onViewSession: (session) => {

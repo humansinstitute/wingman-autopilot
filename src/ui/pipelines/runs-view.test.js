@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { renderRunsWorkspace } from "./runs-view.js";
+import { renderRunsWorkspace, renderStepDetail } from "./runs-view.js";
 
 function makeState() {
   return {
@@ -91,5 +91,27 @@ describe("pipeline run detail rendering", () => {
     expect(html).toContain("<summary>Raw output</summary>");
     expect(html).toContain("<summary>State after step</summary>");
     expect(html).not.toContain('<details class="wm-pipeline-step-data-panel" open');
+  });
+  test("formats agent transform text only when the flag is enabled", () => {
+
+    const state = makeState();
+    state.selectedStep.step.kind = "agent";
+    state.selectedStep.step.output = {
+      summary: "Cleartext should be\n  only relay-safe classification.",
+    };
+    state.selectedStep.step.result = {
+      prompt: "same",
+      summary: "Cleartext should be\n  only relay-safe classification.",
+    };
+
+    const rawHtml = renderStepDetail(state);
+    const formattedHtml = renderStepDetail({
+      ...state,
+      agentOutputFormattingEnabled: true,
+    });
+
+    expect(rawHtml).not.toContain("Cleartext should be only relay-safe classification.");
+    expect(formattedHtml).toContain("Cleartext should be only relay-safe classification.");
+    expect(formattedHtml).toContain("<summary>Raw output</summary>");
   });
 });

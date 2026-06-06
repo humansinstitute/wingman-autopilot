@@ -8,6 +8,7 @@ export function createPipelinesState() {
     selectedRun: null,
     selectedStep: null,
     selectedRunTab: "overview",
+    agentOutputFormattingEnabled: false,
     selectedRunPayloadLoading: false,
     selectedRunPayloadError: null,
     selectedDefinitionId: "",

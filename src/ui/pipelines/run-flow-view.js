@@ -16,14 +16,14 @@ const FIELD_ROW_LIMIT = 5;
 const LEDGER_LIMIT = 120;
 const PREVIEW_LIMIT = 96;
 
-export function renderStepCardTimeline(state, run, steps) {
+export function renderStepCardTimeline(state, run, steps, options = {}) {
   const sortedSteps = sortSteps(steps);
   return `
     <section class="wm-pipeline-flow-view" aria-label="Pipeline visual timeline" data-testid="pipeline-step-card-timeline">
       ${renderStateRail(run, sortedSteps)}
       <div class="wm-pipeline-step-card-list">
         ${sortedSteps.length
-          ? sortedSteps.map((step) => renderStepCard(state, run, step)).join("")
+          ? sortedSteps.map((step) => renderStepCard(state, run, step, options)).join("")
           : `<p class="wm-muted">No steps recorded for this run.</p>`}
       </div>
     </section>
@@ -110,10 +110,11 @@ function renderStateRail(run, steps) {
   `;
 }
 
-function renderStepCard(state, run, step) {
+function renderStepCard(state, run, step, options) {
   const skipped = step.status === "skipped";
-  const inputFields = skipped ? [] : getStepReadRows(step);
-  const writeFields = skipped ? [] : getStepWriteRows(run, state.selectedRun?.steps ?? [], step);
+  const cleanAgentText = Boolean(options?.agentOutputFormattingEnabled && step.kind === "agent");
+  const inputFields = skipped ? [] : getStepReadRows(step, { cleanAgentText });
+  const writeFields = skipped ? [] : getStepWriteRows(run, state.selectedRun?.steps ?? [], step, { cleanAgentText });
   const dataSize = Number(step.inputBytes ?? 0) + Number(step.resultBytes ?? 0);
   const description = typeof step.metadata?.description === "string" ? step.metadata.description.trim() : "";
   return `
@@ -222,8 +223,8 @@ function renderLedgerRow(row) {
   `;
 }
 
-function getStepWriteRows(run, steps, step) {
-  const explicitRows = buildExplicitDisplayRows(step, "out");
+function getStepWriteRows(run, steps, step, options = {}) {
+  const explicitRows = buildExplicitDisplayRows(step, "out", options);
   if (explicitRows) return explicitRows;
   if (typeof step.metadata?.assign === "string" && step.metadata.assign.trim()) {
     return buildAssignedOutputRows(step.metadata.assign.trim(), getStepOutput(step));
@@ -236,8 +237,8 @@ function getStepWriteRows(run, steps, step) {
     .map((path) => ({ name: displayPath(path), value: getPathValue(next, path) }));
 }
 
-function getStepReadRows(step) {
-  const explicitRows = buildExplicitDisplayRows(step, "in");
+function getStepReadRows(step, options = {}) {
+  const explicitRows = buildExplicitDisplayRows(step, "in", options);
   if (explicitRows) return explicitRows;
   const selector = step.metadata?.input;
   if (typeof selector === "string" && selector.trim()) {

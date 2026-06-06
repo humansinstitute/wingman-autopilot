@@ -63,19 +63,30 @@ export function renderRunningPipelineAgentSessionLink(step) {
   `;
 }
 
-export function renderRunningPipelineStepTimeline(run, steps, selectedStepDetail = null) {
+export function renderRunningPipelineStepTimeline(run, steps, selectedStepDetail = null, options = {}) {
   const selectedRun = { run, steps };
+  const renderState = {
+    selectedRun,
+    selectedStep: selectedStepDetail,
+    agentOutputFormattingEnabled: Boolean(options.agentOutputFormattingEnabled),
+  };
   return `
-    ${renderStepCardTimeline({ selectedRun, selectedStep: selectedStepDetail }, run, steps)}
-    ${selectedStepDetail ? renderRunningPipelineStepDetailModal(selectedRun, selectedStepDetail) : ""}
+    ${renderStepCardTimeline(renderState, run, steps, {
+      agentOutputFormattingEnabled: renderState.agentOutputFormattingEnabled,
+    })}
+    ${selectedStepDetail ? renderRunningPipelineStepDetailModal(selectedRun, selectedStepDetail, renderState) : ""}
   `;
 }
 
-function renderRunningPipelineStepDetailModal(selectedRun, selectedStepDetail) {
+function renderRunningPipelineStepDetailModal(selectedRun, selectedStepDetail, renderState = {}) {
   return `
     <div class="wm-pipeline-step-modal" role="dialog" aria-modal="true" aria-labelledby="pipeline-step-modal-title" data-testid="running-pipeline-step-modal">
       <section class="wm-pipeline-step-modal-content">
-        ${renderStepDetail({ selectedRun, selectedStep: selectedStepDetail })}
+        ${renderStepDetail({
+          selectedRun,
+          selectedStep: selectedStepDetail,
+          agentOutputFormattingEnabled: Boolean(renderState.agentOutputFormattingEnabled),
+        })}
       </section>
     </div>
   `;
@@ -106,7 +117,7 @@ async function startPipelineRun(definitionId, input) {
   return runPipelineDefinition(definitionId, input);
 }
 
-export function showRunningPipelinesModal({ showToast } = {}) {
+export function showRunningPipelinesModal({ showToast, agentOutputFormattingEnabled = false } = {}) {
   const existing = document.getElementById("running-pipelines-modal");
   if (typeof HTMLDialogElement === "function" && existing instanceof HTMLDialogElement && existing.open) {
     existing.close();
@@ -775,7 +786,9 @@ export function showRunningPipelinesModal({ showToast } = {}) {
         <div><dt>Steps</dt><dd>${escapeHtml(String(steps.length))}</dd></div>
       </dl>
       <section class="wm-running-pipelines-detail__steps" aria-label="Pipeline steps">
-        ${steps.length ? renderRunningPipelineStepTimeline(run, steps, selectedStepDetail) : `<p class="wm-muted">No steps recorded for this run.</p>`}
+        ${steps.length ? renderRunningPipelineStepTimeline(run, steps, selectedStepDetail, {
+          agentOutputFormattingEnabled: Boolean(agentOutputFormattingEnabled),
+        }) : `<p class="wm-muted">No steps recorded for this run.</p>`}
       </section>
       <div class="wm-running-pipelines-detail__data">
         ${renderJsonBlock("Input", run.input ?? {})}

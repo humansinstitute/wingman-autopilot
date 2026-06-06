@@ -1,3 +1,5 @@
+import { cleanAgentOutputText } from "./agent-output-format.js";
+
 export const RUN_FILTERS = ["all", "default", "running", "ok", "needs_input", "error"];
 export const DEFINITION_FILTERS = ["all", "default", "user", "shared"];
 
@@ -110,9 +112,12 @@ export function renderJsonBlock(title, value) {
   `;
 }
 
-export function renderJsonTransformBlock(inputValue, outputValue) {
+export function renderJsonTransformBlock(inputValue, outputValue, options = {}) {
   const diff = buildOutputDiff(inputValue, outputValue);
   const changeCount = diff.changed ? countDiffLeaves(diff.value) : 0;
+  const renderOptions = {
+    cleanAgentText: Boolean(options.cleanAgentText),
+  };
   return `
     <section class="wm-pipeline-transform-block" data-testid="pipeline-transform-block">
       <div class="wm-pipeline-transform-header">
@@ -124,7 +129,7 @@ export function renderJsonTransformBlock(inputValue, outputValue) {
       </div>
       ${diff.changed
         ? `<div class="wm-pipeline-json-tree wm-pipeline-json-tree-transform" data-testid="pipeline-transform-tree">
-            ${renderJsonTreeEntries(diff.value)}
+            ${renderJsonTreeEntries(diff.value, renderOptions)}
           </div>`
         : `<div class="wm-pipeline-transform-empty">Output matches input for this step.</div>`}
     </section>
@@ -154,23 +159,23 @@ export function buildOutputDiff(inputValue, outputValue) {
   return { changed: true, value: outputValue };
 }
 
-function renderJsonTreeNode(label, value, depth) {
+function renderJsonTreeNode(label, value, depth, options = {}) {
   if (value !== null && typeof value === "object") {
-    return renderJsonBranch(label, value, depth);
+    return renderJsonBranch(label, value, depth, options);
   }
-  return renderJsonScalar(label, value);
+  return renderJsonScalar(label, value, options);
 }
 
-function renderJsonTreeEntries(value) {
+function renderJsonTreeEntries(value, options = {}) {
   if (value !== null && typeof value === "object") {
     const entries = getJsonEntries(value);
     if (!entries.length) return `<span class="wm-pipeline-json-empty">No fields</span>`;
-    return entries.map(([label, childValue]) => renderJsonTreeNode(label, childValue, 0)).join("");
+    return entries.map(([label, childValue]) => renderJsonTreeNode(label, childValue, 0, options)).join("");
   }
-  return renderJsonTreeNode("value", value, 0);
+  return renderJsonTreeNode("value", value, 0, options);
 }
 
-function renderJsonBranch(label, value, depth) {
+function renderJsonBranch(label, value, depth, options = {}) {
   const entries = getJsonEntries(value);
   const openAttribute = depth < 2 ? " open" : "";
   return `
@@ -181,28 +186,29 @@ function renderJsonBranch(label, value, depth) {
       </summary>
       <div class="wm-pipeline-json-children">
         ${entries.length
-          ? entries.map(([childLabel, childValue]) => renderJsonTreeNode(childLabel, childValue, depth + 1)).join("")
+          ? entries.map(([childLabel, childValue]) => renderJsonTreeNode(childLabel, childValue, depth + 1, options)).join("")
           : `<span class="wm-pipeline-json-empty">Empty ${Array.isArray(value) ? "array" : "object"}</span>`}
       </div>
     </details>
   `;
 }
 
-function renderJsonScalar(label, value) {
+function renderJsonScalar(label, value, options = {}) {
   return `
     <div class="wm-pipeline-json-row">
       <span class="wm-pipeline-json-key">${escapeHtml(label)}</span>
-      ${renderJsonScalarValue(value)}
+      ${renderJsonScalarValue(value, options)}
     </div>
   `;
 }
 
-function renderJsonScalarValue(value) {
+function renderJsonScalarValue(value, options = {}) {
+  const displayValue = options.cleanAgentText && typeof value === "string" ? cleanAgentOutputText(value) : value;
   const type = getJsonValueType(value);
-  if (typeof value === "string" && shouldRenderTextLines(value)) {
-    return renderJsonTextValue(value);
+  if (typeof displayValue === "string" && shouldRenderTextLines(displayValue)) {
+    return renderJsonTextValue(displayValue);
   }
-  return `<code class="wm-pipeline-json-value wm-pipeline-json-value-${escapeAttribute(type)}">${escapeHtml(formatScalarValue(value))}</code>`;
+  return `<code class="wm-pipeline-json-value wm-pipeline-json-value-${escapeAttribute(type)}">${escapeHtml(formatScalarValue(displayValue))}</code>`;
 }
 
 function renderJsonTextValue(value) {

@@ -3,6 +3,7 @@ import {
   getPipelineRunDisplayName,
   showRunningPipelinesModal,
 } from "../pipelines/running-pipelines-modal.js";
+import { PIPELINE_AGENT_OUTPUT_FORMATTING_FLAG_KEY } from "../pipelines/agent-output-format.js";
 import { formatRunMeta, statusLabel } from "../pipelines/view-utils.js";
 
 function getPipelineDefinitionLabel(run) {
@@ -28,7 +29,7 @@ export function getHomeRunningPipelineRows(runs) {
     }));
 }
 
-export function createRunningPipelinesSection({ showToast } = {}) {
+export function createRunningPipelinesSection({ showToast, isFeatureEnabledForViewer = () => false } = {}) {
   const state = {
     rows: [],
     loading: false,
@@ -70,7 +71,12 @@ export function createRunningPipelinesSection({ showToast } = {}) {
   openListButton.dataset.testid = "home-running-pipelines-details";
   openListButton.setAttribute("aria-label", "Open running pipelines details");
   openListButton.addEventListener("click", () => {
-    showRunningPipelinesModal({ showToast });
+    showRunningPipelinesModal({
+      showToast,
+      agentOutputFormattingEnabled: Boolean(
+        isFeatureEnabledForViewer(PIPELINE_AGENT_OUTPUT_FORMATTING_FLAG_KEY),
+      ),
+    });
   });
 
   const pipelinesLink = document.createElement("a");

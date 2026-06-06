@@ -1,4 +1,7 @@
 import {
+  PIPELINE_AGENT_OUTPUT_FORMATTING_FLAG_KEY,
+} from "./agent-output-format.js";
+import {
   fetchPipelineDefinitions,
   fetchPipelineFunction,
   fetchPipelineFunctions,
@@ -32,7 +35,7 @@ import {
 import { escapeHtml } from "./view-utils.js";
 import { isActivePipelineRunStatus } from "./db.js";
 
-export function initPipelinesPage({ showToast }) {
+export function initPipelinesPage({ showToast, isFeatureEnabledForViewer = () => false }) {
   const state = createPipelinesState();
   const loaded = {
     root: false,
@@ -116,6 +119,7 @@ export function initPipelinesPage({ showToast }) {
 
   function renderShell(page) {
     const route = getCurrentRoute();
+    syncFeatureFlagState();
     applyRoute(route);
     const wrap = document.createElement("main");
     wrap.className = "wm-pipelines-shell";
@@ -132,6 +136,12 @@ export function initPipelinesPage({ showToast }) {
     `;
     bindActions(wrap, page);
     return wrap;
+  }
+
+  function syncFeatureFlagState() {
+    state.agentOutputFormattingEnabled = Boolean(
+      isFeatureEnabledForViewer(PIPELINE_AGENT_OUTPUT_FORMATTING_FLAG_KEY),
+    );
   }
 
   function renderHeader(route) {

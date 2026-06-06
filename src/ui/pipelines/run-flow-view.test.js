@@ -180,6 +180,34 @@ describe("pipeline run flow visualization", () => {
     expect(html).not.toContain("secret output");
   });
 
+  test("supports explicit agentText display rows", () => {
+    const agentSteps = [{
+      id: "step-agent-text",
+      stepIndex: 1,
+      name: "Agent summary",
+      kind: "agent",
+      status: "ok",
+      input: { prompt: "Summarise" },
+      output: {
+        summary: "Meaning: this npub adv\nertises the inbox.",
+      },
+      result: {},
+      metadata: {
+        display: {
+          out: [{ label: "Summary", path: "$.summary", format: "agentText" }],
+        },
+        executor: { kind: "agent", agent: "codex" },
+      },
+    }];
+
+    const html = renderStepCardTimeline({
+      selectedRun: { steps: agentSteps },
+      selectedStep: null,
+    }, run, agentSteps);
+
+    expect(html).toContain("Meaning: this npub advertises the inbox.");
+  });
+
   test("renders the state ledger table", () => {
     const html = renderStateLedger(run, steps);
 

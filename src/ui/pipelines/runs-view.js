@@ -163,7 +163,9 @@ function renderSelectedRunTab(state, run, steps) {
     return renderStateLedger(run, steps);
   }
   return `
-    ${renderStepCardTimeline(state, run, steps)}
+    ${renderStepCardTimeline(state, run, steps, {
+      agentOutputFormattingEnabled: Boolean(state.agentOutputFormattingEnabled),
+    })}
     ${state.selectedStep ? renderStepDetailModal(state) : ""}
   `;
 }
@@ -207,7 +209,9 @@ export function renderStepDetail(state) {
           <button type="button" class="wm-pipeline-step-close" data-action="close-step-detail" aria-label="Close step detail" data-testid="pipeline-step-detail-close">Close</button>
         </div>
       </div>
-      ${renderJsonTransformBlock(step.input, rawOutput)}
+      ${renderJsonTransformBlock(step.input, rawOutput, {
+        cleanAgentText: Boolean(state.agentOutputFormattingEnabled && step.kind === "agent"),
+      })}
       <div class="wm-pipeline-step-secondary" aria-label="Step source data and diagnostics">
         ${renderCollapsedJsonBlock("Input", step.input)}
         ${renderCollapsedJsonBlock("Raw output", rawOutput)}
