@@ -14,6 +14,7 @@ import {
 import { createDefaultAgentSection } from './settings/profile-sections.js';
 import { createTeamBillingSection } from './settings/admin-billing-section.js';
 import { createAgentChatSection } from './settings/agent-chat-section.js';
+import { createFlightDeckSection } from './settings/flight-deck-section.js';
 
 export function initSettingsView(deps) {
   const {
@@ -152,6 +153,26 @@ export function initSettingsView(deps) {
     return fragment;
   }
 
+  function renderFlightDeckTab() {
+    const fragment = document.createDocumentFragment();
+    if (state.identity.authenticated) {
+      fragment.append(createFlightDeckSection({
+        onManageDispatch: () => {
+          if (!state.ui) state.ui = {};
+          state.ui.settingsActiveTabId = 'agents';
+          render();
+        },
+      }));
+      return fragment;
+    }
+
+    const note = document.createElement('section');
+    note.className = 'wm-card';
+    note.innerHTML = '<h2>Flight Deck</h2><p>Sign in to view Flight Deck workspace connections.</p>';
+    fragment.append(note);
+    return fragment;
+  }
+
   function renderProjectsTab() {
     const fragment = document.createDocumentFragment();
     if (state.identity.authenticated) {
@@ -227,6 +248,7 @@ export function initSettingsView(deps) {
     const tabDefs = [
       { id: 'profile', label: 'Profile', render: renderProfileTab },
       { id: 'workspace', label: 'Workspace', render: renderWorkspaceTab },
+      { id: 'flight-deck', label: 'Flight Deck', render: renderFlightDeckTab },
       { id: 'agents', label: 'Agents', render: renderAgentsTab },
       { id: 'users', label: 'Users', render: renderUsersTab },
       { id: 'projects', label: 'Projects', render: renderProjectsTab },
@@ -239,6 +261,8 @@ export function initSettingsView(deps) {
     const path = typeof window !== 'undefined' ? window.location.pathname : '/settings';
     const activeTabId = path.startsWith('/settings/agents')
       ? 'agents'
+      : path.startsWith('/settings/flight-deck')
+        ? 'flight-deck'
       : state.ui?.settingsActiveTabId ?? tabDefs[0]?.id;
 
     wrapper.append(createSettingsTabs({
@@ -247,7 +271,10 @@ export function initSettingsView(deps) {
       onTabChange: (tabId) => {
         if (!state.ui) state.ui = {};
         state.ui.settingsActiveTabId = tabId;
-        if (path.startsWith('/settings/agents') && tabId !== 'agents') {
+        if (
+          (path.startsWith('/settings/agents') && tabId !== 'agents')
+          || (path.startsWith('/settings/flight-deck') && tabId !== 'flight-deck')
+        ) {
           window.history.replaceState({ route: 'settings' }, '', '/settings');
         }
       },
