@@ -388,6 +388,16 @@ class SchedulerStore {
     return id;
   }
 
+  linkPipelineRun(runId: string, pipelineRunId: string): void {
+    this.db
+      .query(
+        `UPDATE scheduled_job_runs
+         SET pipeline_run_id = ?2
+         WHERE id = ?1`,
+      )
+      .run(runId, pipelineRunId);
+  }
+
   completeRun(
     runId: string,
     status: "success" | "error",
@@ -398,7 +408,7 @@ class SchedulerStore {
     this.db
       .query(
         `UPDATE scheduled_job_runs
-         SET status = ?2, session_id = ?3, error_message = ?4, pipeline_run_id = ?5
+         SET status = ?2, session_id = ?3, error_message = ?4, pipeline_run_id = COALESCE(?5, pipeline_run_id)
          WHERE id = ?1`,
       )
       .run(runId, status, sessionId ?? null, errorMessage ?? null, pipelineRunId ?? null);

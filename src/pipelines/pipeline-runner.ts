@@ -34,6 +34,7 @@ interface PipelineRunnerInput {
   ownerNpub: string | null;
   ownerAlias: string | null;
   callbackOrigin: string;
+  onRunCreated?: (run: ReturnType<PipelineStore["createRun"]>) => void;
 }
 
 export class PipelineHalt extends Error {
@@ -77,7 +78,7 @@ export async function resumeErroredDeclarativePipeline(input: PipelineRunnerInpu
 
 function createPipelineRun(input: PipelineRunnerInput) {
   const { store, definition } = input;
-  return store.createRun({
+  const run = store.createRun({
     definitionId: definition.id,
     definitionPath: definition.path,
     name: definition.spec.name,
@@ -86,6 +87,8 @@ function createPipelineRun(input: PipelineRunnerInput) {
     scope: definition.scope,
     input: input.input,
   });
+  input.onRunCreated?.(run);
+  return run;
 }
 
 async function executeDeclarativePipeline(input: PipelineRunnerInput, runId: string) {

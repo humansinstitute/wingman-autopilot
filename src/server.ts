@@ -466,7 +466,7 @@ const schedulerEngine = new SchedulerEngine({
     });
     markPromptStartupReady(session.id);
   },
-  runPipeline: async (job, input: JsonObject) => {
+  runPipeline: async (job, input: JsonObject, onRunCreated) => {
     if (!job.pipelineDefinitionId) {
       throw new Error("Pipeline trigger has no pipeline definition selected");
     }
@@ -485,6 +485,7 @@ const schedulerEngine = new SchedulerEngine({
       ownerNpub: job.userNpub,
       ownerAlias,
       callbackOrigin: `http://127.0.0.1:${config.port}`,
+      onRunCreated: (run) => onRunCreated?.(run.id),
     });
     return run.id;
   },

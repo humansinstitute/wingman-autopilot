@@ -41,7 +41,7 @@ export interface SchedulerEngineDeps {
   addPrompt: (sessionId: string, content: string) => void;
   dispatchPrompt: (session: SessionSnapshot) => void;
   awaitSessionReadyForPrompt?: (session: SessionSnapshot, agent: AgentType) => Promise<void>;
-  runPipeline?: (job: ScheduledJob, input: JsonObject) => Promise<string>;
+  runPipeline?: (job: ScheduledJob, input: JsonObject, onRunCreated?: (pipelineRunId: string) => void) => Promise<string>;
   onBotKeyUnlocked?: (npub: string, secretKey: Uint8Array, botPubkeyHex: string) => void;
   getInstanceIdentity?: () => WingmanInstanceIdentity | null;
 }
@@ -317,6 +317,7 @@ class SchedulerEngine {
     }
 
     const runId = this.deps.store.recordRun(jobId);
+    let linkedPipelineRunId: string | undefined;
 
     try {
       const instanceIdentity = this.deps.getInstanceIdentity?.() ?? null;
@@ -325,7 +326,11 @@ class SchedulerEngine {
       }
 
       if (job.actionType === "pipeline") {
-        const pipelineRunId = await this.runPipelineAction(job, promptOverride);
+        const pipelineRunId = await this.runPipelineAction(job, promptOverride, (createdPipelineRunId) => {
+          linkedPipelineRunId = createdPipelineRunId;
+          this.deps.store.linkPipelineRun(runId, createdPipelineRunId);
+        });
+        linkedPipelineRunId = pipelineRunId;
         this.updateJobAfterSuccess(jobId);
         this.deps.store.completeRun(runId, "success", undefined, undefined, pipelineRunId);
         console.log(`[scheduler] Job "${job.name}" triggered — pipeline run ${pipelineRunId}`);
@@ -379,13 +384,17 @@ class SchedulerEngine {
       return { sessionId: session.id };
     } catch (err) {
       const message = (err as Error).message ?? String(err);
-      this.deps.store.completeRun(runId, "error", undefined, message);
+      this.deps.store.completeRun(runId, "error", undefined, message, linkedPipelineRunId);
       console.error(`[scheduler] Job "${job.name}" failed: ${message}`);
       throw err;
     }
   }
 
-  private async runPipelineAction(job: ScheduledJob, triggerMessage?: string): Promise<string> {
+  private async runPipelineAction(
+    job: ScheduledJob,
+    triggerMessage?: string,
+    onRunCreated?: (pipelineRunId: string) => void,
+  ): Promise<string> {
     if (!this.deps.runPipeline) {
       throw new Error("Scheduler pipeline execution is not configured");
     }
@@ -400,7 +409,7 @@ class SchedulerEngine {
     if (triggerMessage) {
       input.triggerMessage = triggerMessage;
     }
-    return this.deps.runPipeline(job, input);
+    return this.deps.runPipeline(job, input, onRunCreated);
   }
 
   private updateJobAfterSuccess(jobId: string): void {

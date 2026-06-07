@@ -1,0 +1,110 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import type { WingmanInstanceIdentity } from "../identity/wingman-instance-identity";
+import type { NightWatchStore } from "../nightwatch/nightwatch-store";
+import { SchedulerEngine, type SchedulerEngineDeps } from "./scheduler-engine";
+import { SchedulerStore, type ScheduledJob } from "./scheduler-store";
+
+let tempDir: string;
+
+beforeEach(() => {
+  tempDir = mkdtempSync(join(tmpdir(), "wingmen-scheduler-test-"));
+});
+
+afterEach(() => {
+  rmSync(tempDir, { recursive: true, force: true });
+});
+
+const identity: WingmanInstanceIdentity = {
+  nsec: "nsec-test",
+  nsecHex: "0".repeat(64),
+  secretKey: new Uint8Array(32),
+  pubkeyHex: "pubkey-test",
+  npub: "npub-test",
+  displayName: "test",
+  source: "env",
+};
+
+function createPipelineJob(store: SchedulerStore): ScheduledJob {
+  return store.createJob({
+    name: "pipeline job",
+    userNpub: "npub-user",
+    botNpub: "npub-bot",
+    wrappedKeyCiphertext: "ciphertext",
+    wrappedKeyNonce: "nonce",
+    agent: "codex",
+    workingDirectory: tempDir,
+    initialPrompt: "run it",
+    nightwatchmanEnabled: false,
+    triggerType: "cron",
+    cronExpression: "* * * * *",
+    actionType: "pipeline",
+    pipelineDefinitionId: "test-pipeline",
+    pipelineInputJson: JSON.stringify({ value: 1 }),
+  });
+}
+
+function createEngine(
+  store: SchedulerStore,
+  runPipeline: NonNullable<SchedulerEngineDeps["runPipeline"]>,
+): SchedulerEngine {
+  return new SchedulerEngine({
+    store,
+    nightWatchStore: {} as NightWatchStore,
+    createSession: async () => {
+      throw new Error("pipeline jobs should not create sessions");
+    },
+    addPrompt: () => {},
+    dispatchPrompt: () => {},
+    getInstanceIdentity: () => identity,
+    runPipeline,
+  });
+}
+
+describe("SchedulerEngine pipeline job bookkeeping", () => {
+  test("links the scheduled run to the pipeline run before completion and finalizes success", async () => {
+    const store = new SchedulerStore(join(tempDir, "wingman.db"));
+    const job = createPipelineJob(store);
+    const engine = createEngine(store, async (_job, _input, onRunCreated) => {
+      onRunCreated?.("pipeline-ok");
+      const linkedRun = store.getJobRuns(job.id, 1)[0];
+      expect(linkedRun).toMatchObject({
+        status: "started",
+        pipelineRunId: "pipeline-ok",
+      });
+      return "pipeline-ok";
+    });
+
+    await expect(engine.executeJob(job.id)).resolves.toEqual({ pipelineRunId: "pipeline-ok" });
+
+    const completedRun = store.getJobRuns(job.id, 1)[0];
+    expect(completedRun).toMatchObject({
+      status: "success",
+      pipelineRunId: "pipeline-ok",
+      sessionId: null,
+      errorMessage: null,
+    });
+  });
+
+  test("preserves the linked pipeline run when pipeline execution fails", async () => {
+    const store = new SchedulerStore(join(tempDir, "wingman.db"));
+    const job = createPipelineJob(store);
+    const engine = createEngine(store, async (_job, _input, onRunCreated) => {
+      onRunCreated?.("pipeline-error");
+      throw new Error("pipeline failed");
+    });
+
+    await expect(engine.executeJob(job.id)).rejects.toThrow("pipeline failed");
+
+    const failedRun = store.getJobRuns(job.id, 1)[0];
+    expect(failedRun).toMatchObject({
+      status: "error",
+      pipelineRunId: "pipeline-error",
+      sessionId: null,
+      errorMessage: "pipeline failed",
+    });
+  });
+});
