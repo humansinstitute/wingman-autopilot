@@ -4,8 +4,8 @@ import { Buffer } from 'node:buffer';
 import { finalizeEvent, nip19, nip44, verifyEvent } from 'nostr-tools';
 
 export const SBIP0009_ACCESS_GRANT_KIND = 33357;
-export const SBIP0009_ONBOARDING_PROTOCOL = 'onboarding';
-export const SBIP0009_PAYLOAD_TYPE = 'flightdeck_onboarding';
+export const SBIP0009_APP_NAMESPACE = 'wingman-flight-deck';
+export const SBIP0009_PAYLOAD_KIND = 'wingman_flightdeck_access_grant';
 
 export type AccessGrantStatus = 'active' | 'revoked' | 'superseded';
 
@@ -20,32 +20,34 @@ export interface NostrAccessGrantEvent {
 }
 
 export interface AccessGrantPayload {
-  type: typeof SBIP0009_PAYLOAD_TYPE;
+  kind: typeof SBIP0009_PAYLOAD_KIND;
   version: 1;
-  protocol: typeof SBIP0009_ONBOARDING_PROTOCOL;
-  status?: AccessGrantStatus;
-  recipient_npub: string;
+  status: AccessGrantStatus;
+  grant_id: string;
+  dedupe_key: string;
   issued_at: string;
   expires_at: string | null;
-  issuer?: { npub: string; display_name?: string | null };
+  issuer: { npub: string; display_name?: string | null };
+  recipient: { npub: string };
   service: {
     direct_https_url: string;
-    service_npub?: string | null;
+    service_npub: string;
     relay_urls?: string[];
     name?: string | null;
     description?: string | null;
   };
   workspace: {
     owner_npub: string;
+    workspace_service_npub: string;
     workspace_id?: string | null;
     name?: string | null;
     description?: string | null;
   };
   app: {
     app_npub: string;
-    app_pubkey: string;
+    namespace: typeof SBIP0009_APP_NAMESPACE;
   };
-  agent_connect: Record<string, unknown>;
+  agent_connect_package: Record<string, unknown>;
   verification?: {
     required?: boolean;
     method?: string;
@@ -59,9 +61,9 @@ export interface DecodedAccessGrant {
   recipientPubkeyHex: string;
   issuerNpub: string | null;
   serviceNpub: string | null;
+  workspaceServiceNpub: string;
   workspaceOwnerNpub: string;
   appNpub: string;
-  appPubkey: string;
   grantId: string;
   dedupeKey: string;
   canonicalConnectionKey: string;
@@ -109,13 +111,40 @@ function getMarkedPTag(tags: string[][], marker: string): string | null {
   return tags.find((tag) => tag[0] === 'p' && tag[3] === marker)?.[1]?.trim() ?? null;
 }
 
-function getOptionalTag(tags: string[][], name: string): string | null {
-  return tags.find((tag) => tag[0] === name)?.[1]?.trim() || null;
-}
-
 function assertEqual(label: string, left: string | null | undefined, right: string | null | undefined): void {
   if (!left || !right || left !== right) {
     throw Object.assign(new Error(`${label} mismatch`), { code: 'tag_payload_mismatch' });
+  }
+}
+
+function assertAgentConnectEqual(label: string, left: string | null | undefined, right: string | null | undefined, options: { url?: boolean } = {}): void {
+  const normalisedLeft = options.url ? normaliseUrl(left) : left;
+  const normalisedRight = options.url ? normaliseUrl(right) : right;
+  if (!normalisedLeft || !normalisedRight || normalisedLeft !== normalisedRight) {
+    throw Object.assign(new Error(`Agent Connect ${label} mismatch`), { code: 'agent_connect_mismatch' });
+  }
+}
+
+function getObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function getString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function normaliseUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    url.pathname = url.pathname.replace(/\/+$/, '') || '/';
+    url.search = '';
+    url.hash = '';
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return value.replace(/\/+$/, '');
   }
 }
 
@@ -138,34 +167,39 @@ function parsePayload(value: string): AccessGrantPayload {
     throw Object.assign(new Error('decrypted payload must be an object'), { code: 'payload_invalid' });
   }
   const payload = parsed as AccessGrantPayload;
-  if (payload.type !== SBIP0009_PAYLOAD_TYPE || payload.version !== 1 || payload.protocol !== SBIP0009_ONBOARDING_PROTOCOL) {
-    throw Object.assign(new Error('unsupported Flight Deck onboarding payload'), { code: 'payload_invalid' });
+  if (payload.kind !== SBIP0009_PAYLOAD_KIND || payload.version !== 1) {
+    throw Object.assign(new Error('unsupported SBIP-0009 access grant payload'), { code: 'payload_invalid' });
   }
-  if (payload.status && !['active', 'revoked', 'superseded'].includes(payload.status)) {
+  if (!['active', 'revoked', 'superseded'].includes(payload.status)) {
     throw Object.assign(new Error('invalid grant status'), { code: 'payload_invalid' });
   }
-  if (!payload.recipient_npub || !payload.issued_at || Number.isNaN(Date.parse(payload.issued_at))) {
-    throw Object.assign(new Error('payload missing recipient or issued_at'), { code: 'payload_invalid' });
-  }
   if (
-    !payload.service?.direct_https_url
+    !payload.grant_id
+    || !payload.dedupe_key
+    || !payload.recipient?.npub
+    || !payload.issuer?.npub
+    || !payload.issued_at
+    || Number.isNaN(Date.parse(payload.issued_at))
+    || !payload.service?.direct_https_url
     || !payload.service?.service_npub
     || !payload.workspace?.owner_npub
+    || !payload.workspace?.workspace_service_npub
     || !payload.app?.app_npub
-    || !payload.app?.app_pubkey
-    || !payload.agent_connect
+    || payload.app?.namespace !== SBIP0009_APP_NAMESPACE
+    || !payload.agent_connect_package
   ) {
-    throw Object.assign(new Error('payload missing service, workspace, app, or Agent Connect package'), { code: 'payload_invalid' });
+    throw Object.assign(new Error('payload missing required SBIP-0009 fields'), { code: 'payload_invalid' });
   }
   return payload;
 }
 
 export function buildAccessGrantDedupeKey(input: {
   serviceNpub: string;
+  workspaceServiceNpub: string;
   appNpub: string;
   recipientNpub: string;
 }): string {
-  return `flightdeck-onboarding:v1:${input.serviceNpub}:${input.appNpub}:${input.recipientNpub}`;
+  return `wingman-access-grant:v1:${input.serviceNpub}:${input.workspaceServiceNpub}:${input.appNpub}:${input.recipientNpub}`;
 }
 
 export function buildAccessGrantId(dedupeKey: string): string {
@@ -192,12 +226,6 @@ export function decodeAccessGrantEvent(input: {
   if (taggedRecipientHex.toLowerCase() !== recipientPubkeyHex) {
     throw Object.assign(new Error('recipient p tag mismatch'), { code: 'wrong_recipient' });
   }
-  const protocol = getRequiredTag(event.tags, 'protocol');
-  if (protocol !== SBIP0009_ONBOARDING_PROTOCOL) {
-    throw Object.assign(new Error('protocol tag must be onboarding'), { code: 'wrong_protocol' });
-  }
-  const appPubkey = getRequiredTag(event.tags, 'app_pub').toLowerCase();
-
   let plaintext: string;
   try {
     const conversationKey = nip44.v2.utils.getConversationKey(recipientSecretKey, event.pubkey);
@@ -207,19 +235,32 @@ export function decodeAccessGrantEvent(input: {
   }
 
   const payload = parsePayload(plaintext);
-  const issuerTag = getOptionalTag(event.tags, 'issuer');
+  const d = getRequiredTag(event.tags, 'd');
+  const app = getRequiredTag(event.tags, 'app');
+  const appNpub = getRequiredTag(event.tags, 'app_npub');
+  const taggedServiceNpub = getRequiredTag(event.tags, 'service_npub');
+  const workspaceServiceNpub = getRequiredTag(event.tags, 'workspace_service_npub');
+  const workspaceOwnerNpub = getRequiredTag(event.tags, 'workspace_owner_npub');
+  const recipientTag = getRequiredTag(event.tags, 'recipient');
+  const issuerTag = getRequiredTag(event.tags, 'issuer');
+  const grantTag = getRequiredTag(event.tags, 'grant');
+
+  assertEqual('app namespace', app, SBIP0009_APP_NAMESPACE);
+  assertEqual('d tag', d, payload.dedupe_key);
+  assertEqual('grant id', grantTag, payload.grant_id);
+  assertEqual('recipient npub', recipientTag, payload.recipient.npub);
+  assertEqual('issuer npub', issuerTag, payload.issuer.npub);
+  assertEqual('service npub', taggedServiceNpub, payload.service.service_npub);
+  assertEqual('workspace service npub', workspaceServiceNpub, payload.workspace.workspace_service_npub);
+  assertEqual('workspace owner npub', workspaceOwnerNpub, payload.workspace.owner_npub);
+  assertEqual('app npub', appNpub, payload.app.app_npub);
+  assertEqual('recipient target', recipientNpub, payload.recipient.npub);
+
   const serviceNpub = payload.service.service_npub;
-  const workspaceOwnerNpub = payload.workspace.owner_npub;
-  const appNpub = payload.app.app_npub;
-  const payloadAppPubkey = payload.app.app_pubkey.toLowerCase();
-
-  assertEqual('recipient target', recipientNpub, payload.recipient_npub);
-  assertEqual('app pubkey', appPubkey, payloadAppPubkey);
-  if (issuerTag && payload.issuer?.npub) assertEqual('issuer npub', issuerTag, payload.issuer.npub);
-  if (appNpub) assertEqual('app pubkey from app npub', decodeNpubToHex(appNpub), appPubkey);
-
-  const expectedDedupeKey = buildAccessGrantDedupeKey({ serviceNpub, appNpub, recipientNpub });
+  const expectedDedupeKey = buildAccessGrantDedupeKey({ serviceNpub, workspaceServiceNpub, appNpub, recipientNpub });
   const grantId = buildAccessGrantId(expectedDedupeKey);
+  assertEqual('dedupe key', expectedDedupeKey, d);
+  assertEqual('grant id', grantId, grantTag);
 
   const expiresAt = payload.expires_at ? Date.parse(payload.expires_at) : null;
   if (expiresAt != null && Number.isFinite(expiresAt) && expiresAt <= (input.now ?? new Date()).getTime()) {
@@ -231,15 +272,50 @@ export function decodeAccessGrantEvent(input: {
     payload,
     recipientNpub,
     recipientPubkeyHex,
-    issuerNpub: payload.issuer?.npub ?? issuerTag ?? null,
+    issuerNpub: issuerTag,
     serviceNpub,
+    workspaceServiceNpub,
     workspaceOwnerNpub,
     appNpub,
-    appPubkey,
     grantId,
     dedupeKey: expectedDedupeKey,
     canonicalConnectionKey: `${serviceNpub}:${workspaceOwnerNpub}:${appNpub}:${recipientNpub}`,
   };
+}
+
+function decodeConnectionToken(token: string): Record<string, unknown> {
+  const normalised = token.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalised.padEnd(Math.ceil(normalised.length / 4) * 4, '=');
+  try {
+    const parsed = JSON.parse(Buffer.from(padded, 'base64').toString('utf8')) as unknown;
+    const object = getObject(parsed);
+    if (!object) throw new Error('connection_token must decode to a JSON object.');
+    return object;
+  } catch (error) {
+    throw Object.assign(error instanceof Error ? error : new Error('connection_token does not decode to valid JSON.'), {
+      code: 'agent_connect_mismatch',
+    });
+  }
+}
+
+function assertAgentConnectMatchesGrant(grant: DecodedAccessGrant): void {
+  const pkg = getObject(grant.payload.agent_connect_package);
+  const service = getObject(pkg?.service);
+  const workspace = getObject(pkg?.workspace);
+  const app = getObject(pkg?.app);
+  assertAgentConnectEqual('backend URL', getString(service?.direct_https_url), grant.payload.service.direct_https_url, { url: true });
+  assertAgentConnectEqual('service npub', getString(service?.service_npub), grant.serviceNpub);
+  assertAgentConnectEqual('workspace owner', getString(workspace?.owner_npub), grant.workspaceOwnerNpub);
+  assertAgentConnectEqual('app npub', getString(app?.app_npub), grant.appNpub);
+  const packageNamespace = getString(app?.namespace) ?? getString(app?.schema_namespace);
+  if (packageNamespace) {
+    assertAgentConnectEqual('app namespace', packageNamespace, grant.payload.app.namespace);
+  }
+  const token = decodeConnectionToken(getString(pkg?.connection_token) ?? '');
+  assertAgentConnectEqual('token backend URL', getString(token.direct_https_url), grant.payload.service.direct_https_url, { url: true });
+  assertAgentConnectEqual('token service npub', getString(token.service_npub) ?? getString(token.server_npub), grant.serviceNpub);
+  assertAgentConnectEqual('token workspace owner', getString(token.workspace_owner_npub), grant.workspaceOwnerNpub);
+  assertAgentConnectEqual('token app npub', getString(token.app_npub), grant.appNpub);
 }
 
 function createNip98AuthHeader(url: string, method: string, body: unknown, secretKey: Uint8Array): string {
@@ -263,6 +339,7 @@ function responseAllowsAccess(payload: unknown, grant: DecodedAccessGrant): bool
   if (!payload || typeof payload !== 'object') return false;
   const body = payload as Record<string, unknown>;
   if (grant.serviceNpub && body.service_npub && body.service_npub !== grant.serviceNpub) return false;
+  if (body.workspace_service_npub && body.workspace_service_npub !== grant.workspaceServiceNpub) return false;
   if (body.workspace_owner_npub && body.workspace_owner_npub !== grant.workspaceOwnerNpub) return false;
   return body.allowed === true || body.active === true || body.verified === true || body.current_member === true;
 }
@@ -280,6 +357,7 @@ function fallbackPayloadAllowsAccess(payload: unknown, grant: DecodedAccessGrant
     const row = entry as Record<string, unknown>;
     return row.workspace_owner_npub === grant.workspaceOwnerNpub
       || row.owner_npub === grant.workspaceOwnerNpub
+      || row.workspace_service_npub === grant.workspaceServiceNpub
       || (grant.serviceNpub ? row.service_npub === grant.serviceNpub : false);
   });
 }
@@ -296,9 +374,9 @@ export async function verifyAccessGrantWithTower(input: {
     dedupe_key: input.grant.dedupeKey,
     recipient_npub: input.grant.recipientNpub,
     service_npub: input.grant.serviceNpub,
+    workspace_service_npub: input.grant.workspaceServiceNpub,
     workspace_owner_npub: input.grant.workspaceOwnerNpub,
     app_npub: input.grant.appNpub,
-    app_pubkey: input.grant.appPubkey,
     event_id: input.grant.event.id,
   };
   const verifyUrl = `${baseUrl}/api/v4/access-grants/verify`;
@@ -372,10 +450,17 @@ export async function processAccessGrantEvent(input: ProcessAccessGrantInput): P
   }
 
   try {
+    assertAgentConnectMatchesGrant(grant);
+  } catch (error) {
+    const code = typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : 'agent_connect_mismatch';
+    return { ok: false, code, message: (error as Error).message, grant, verified };
+  }
+
+  try {
     const imported = await input.subscriptionManager.importAgentConnectPackage({
       managedByNpub: input.managedByNpub,
       agentProfileId: input.agentProfileId ?? null,
-      packageJson: grant.payload.agent_connect,
+      packageJson: grant.payload.agent_connect_package,
     });
     await input.onPostConnectSync?.(grant, imported);
     input.processedKeys?.add(importKey);

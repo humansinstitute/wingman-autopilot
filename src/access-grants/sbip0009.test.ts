@@ -4,13 +4,13 @@ import { describe, expect, test } from 'bun:test';
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19, nip44 } from 'nostr-tools';
 
 import {
+  SBIP0009_APP_NAMESPACE,
   buildAccessGrantDedupeKey,
   buildAccessGrantId,
   decodeAccessGrantEvent,
   processAccessGrantEvent,
   SBIP0009_ACCESS_GRANT_KIND,
-  SBIP0009_ONBOARDING_PROTOCOL,
-  SBIP0009_PAYLOAD_TYPE,
+  SBIP0009_PAYLOAD_KIND,
 } from './sbip0009';
 
 function makeIdentity() {
@@ -33,10 +33,12 @@ function makeGrantEvent(overrides: {
   const publisher = overrides.publisher ?? makeIdentity();
   const issuer = makeIdentity();
   const service = makeIdentity();
+  const workspaceService = makeIdentity();
   const workspaceOwner = makeIdentity();
   const app = makeIdentity();
   const dedupeKey = buildAccessGrantDedupeKey({
     serviceNpub: service.npub,
+    workspaceServiceNpub: workspaceService.npub,
     appNpub: app.npub,
     recipientNpub: recipient.npub,
   });
@@ -63,15 +65,16 @@ function makeGrantEvent(overrides: {
     capabilities: ['task_dispatch'],
   };
   const payload = {
-    type: SBIP0009_PAYLOAD_TYPE,
+    kind: SBIP0009_PAYLOAD_KIND,
     version: 1,
-    protocol: SBIP0009_ONBOARDING_PROTOCOL,
     status: 'active',
-    recipient_npub: recipient.npub,
+    grant_id: grantId,
+    dedupe_key: dedupeKey,
     issued_at: '2026-06-06T00:00:00.000Z',
     expires_at: null,
     reason: 'workspace_member_added',
     issuer: { npub: issuer.npub, display_name: null },
+    recipient: { npub: recipient.npub },
     service: {
       direct_https_url: 'https://tower.example.com',
       service_npub: service.npub,
@@ -79,21 +82,28 @@ function makeGrantEvent(overrides: {
     },
     workspace: {
       owner_npub: workspaceOwner.npub,
+      workspace_service_npub: workspaceService.npub,
       workspace_id: null,
     },
-    app: { app_npub: app.npub, app_pubkey: app.pubkey },
-    agent_connect: agentConnectPackage,
+    app: { app_npub: app.npub, namespace: SBIP0009_APP_NAMESPACE },
+    agent_connect_package: agentConnectPackage,
     verification: { required: true, method: 'tower_nip98_current_membership' },
     ...overrides.payload,
   };
   const conversationKey = nip44.v2.utils.getConversationKey(publisher.secret, recipient.pubkey);
   const content = nip44.v2.encrypt(JSON.stringify(payload), conversationKey);
   const tags = overrides.tags ?? [
-    ['p', recipient.pubkey],
-    ['app_pub', app.pubkey],
-    ['protocol', SBIP0009_ONBOARDING_PROTOCOL],
+    ['d', dedupeKey],
+    ['p', recipient.pubkey, '', 'recipient'],
+    ['app', SBIP0009_APP_NAMESPACE],
+    ['app_npub', app.npub],
+    ['service_npub', service.npub],
+    ['workspace_service_npub', workspaceService.npub],
+    ['workspace_owner_npub', workspaceOwner.npub],
+    ['recipient', recipient.npub],
     ['issuer', issuer.npub],
-    ['alt', 'Wingman Flight Deck onboarding announcement'],
+    ['grant', grantId],
+    ['alt', 'Wingman Flight Deck access grant announcement'],
   ];
   const event = finalizeEvent({
     kind: SBIP0009_ACCESS_GRANT_KIND,
@@ -101,7 +111,7 @@ function makeGrantEvent(overrides: {
     tags,
     content,
   }, publisher.secret);
-  return { event, recipient, publisher, payload, service, workspaceOwner, app, grantId };
+  return { event, recipient, publisher, payload, service, workspaceService, workspaceOwner, app, grantId };
 }
 
 describe('Flight Deck 33357 onboarding validation', () => {
@@ -114,22 +124,22 @@ describe('Flight Deck 33357 onboarding validation', () => {
       now: new Date('2026-06-06T00:00:01.000Z'),
     });
     expect(grant.grantId).toBe(fixture.grantId);
-    expect(grant.payload.agent_connect.kind).toBe('coworker_agent_connect');
+    expect(grant.payload.agent_connect_package.kind).toBe('coworker_agent_connect');
     expect(grant.workspaceOwnerNpub).toBe(fixture.workspaceOwner.npub);
-    expect(grant.appPubkey).toBe(fixture.app.pubkey);
+    expect(grant.workspaceServiceNpub).toBe(fixture.workspaceService.npub);
   });
 
-  test('rejects public app_pub and decrypted payload mismatches', () => {
+  test('rejects public tags and decrypted payload mismatches', () => {
     const fixture = makeGrantEvent({
       payload: {
-        app: { app_npub: makeIdentity().npub, app_pubkey: makeIdentity().pubkey },
+        app: { app_npub: makeIdentity().npub, namespace: SBIP0009_APP_NAMESPACE },
       },
     });
     expect(() => decodeAccessGrantEvent({
       event: fixture.event,
       recipientSecretKey: fixture.recipient.secret,
       recipientNpub: fixture.recipient.npub,
-    })).toThrow(/app pubkey mismatch|app pubkey from app npub mismatch/);
+    })).toThrow(/app npub mismatch|dedupe key mismatch/);
   });
 
   test('reports decrypt failure before import', async () => {
@@ -202,5 +212,94 @@ describe('Flight Deck 33357 onboarding validation', () => {
     expect(second.code).toBe('duplicate_skipped');
     expect(imports).toBe(1);
     expect(syncs).toBe(1);
+  });
+
+  test('rejects mismatched Agent Connect packages after Tower verification and before import', async () => {
+    const otherWorkspace = makeIdentity();
+    const fixture = makeGrantEvent({
+      payload: {
+        agent_connect_package: {
+          kind: 'coworker_agent_connect',
+          version: 5,
+          generated_at: '2026-06-06T00:00:00.000Z',
+          service: { direct_https_url: 'https://tower.example.com', service_npub: null },
+          workspace: { owner_npub: otherWorkspace.npub },
+          app: { app_npub: makeIdentity().npub, namespace: SBIP0009_APP_NAMESPACE },
+          connection_token: encodeToken({
+            type: 'superbased_connection',
+            direct_https_url: 'https://tower.example.com',
+            service_npub: makeIdentity().npub,
+            workspace_owner_npub: otherWorkspace.npub,
+            app_npub: makeIdentity().npub,
+          }),
+        },
+      },
+    });
+    let imports = 0;
+    let syncs = 0;
+    const result = await processAccessGrantEvent({
+      event: fixture.event,
+      recipientSecretKey: fixture.recipient.secret,
+      recipientNpub: fixture.recipient.npub,
+      managedByNpub: fixture.recipient.npub,
+      subscriptionManager: {
+        importAgentConnectPackage: async () => {
+          imports += 1;
+          return {};
+        },
+      },
+      fetchImpl: async () => new Response(JSON.stringify({
+        allowed: true,
+        service_npub: fixture.service.npub,
+        workspace_service_npub: fixture.workspaceService.npub,
+        workspace_owner_npub: fixture.workspaceOwner.npub,
+      }), { status: 200 }),
+      onPostConnectSync: async () => {
+        syncs += 1;
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('agent_connect_mismatch');
+    expect(imports).toBe(0);
+    expect(syncs).toBe(0);
+  });
+
+  test('returns stable stale and inactive diagnostics without import or sync', async () => {
+    const cases = [
+      { name: 'expired', overrides: { expires_at: '2026-06-05T00:00:00.000Z' }, code: 'stale_event' },
+      { name: 'revoked', overrides: { status: 'revoked' }, code: 'grant_revoked' },
+      { name: 'superseded', overrides: { status: 'superseded' }, code: 'grant_superseded' },
+    ];
+    for (const entry of cases) {
+      const fixture = makeGrantEvent({ payload: entry.overrides });
+      let imports = 0;
+      let syncs = 0;
+      let verifies = 0;
+      const result = await processAccessGrantEvent({
+        event: fixture.event,
+        recipientSecretKey: fixture.recipient.secret,
+        recipientNpub: fixture.recipient.npub,
+        managedByNpub: fixture.recipient.npub,
+        subscriptionManager: {
+          importAgentConnectPackage: async () => {
+            imports += 1;
+            return {};
+          },
+        },
+        fetchImpl: async () => {
+          verifies += 1;
+          return new Response(JSON.stringify({ allowed: true }), { status: 200 });
+        },
+        now: new Date('2026-06-06T00:00:01.000Z'),
+        onPostConnectSync: async () => {
+          syncs += 1;
+        },
+      });
+      expect(result.code).toBe(entry.code);
+      expect(result.ok).toBe(false);
+      expect(imports).toBe(0);
+      expect(syncs).toBe(0);
+      expect(verifies).toBe(0);
+    }
   });
 });

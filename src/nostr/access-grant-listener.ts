@@ -2,8 +2,8 @@ import { SimplePool, nip19 } from 'nostr-tools';
 
 import {
   SBIP0009_ACCESS_GRANT_KIND,
-  SBIP0009_ONBOARDING_PROTOCOL,
   type AccessGrantSubscriptionManager,
+  type NostrAccessGrantEvent,
   processAccessGrantEvent,
 } from '../access-grants/sbip0009';
 
@@ -16,10 +16,29 @@ export interface AccessGrantListener {
 export interface AccessGrantListenerDeps {
   relays: string[];
   subscriptionManager: AccessGrantSubscriptionManager;
+  pool?: AccessGrantRelayPool;
+  replayTimeoutMs?: number;
+}
+
+interface AccessGrantRelayPool {
+  querySync(
+    relays: string[],
+    filter: Record<string, unknown>,
+    params?: { maxWait?: number },
+  ): Promise<NostrAccessGrantEvent[]>;
+  subscribe(
+    relays: string[],
+    filter: Record<string, unknown>,
+    params: {
+      onevent(event: NostrAccessGrantEvent): void;
+      oneose?(): void;
+    },
+  ): { close(): void };
+  close(relays: string[]): void;
 }
 
 export function createAccessGrantListener(deps: AccessGrantListenerDeps): AccessGrantListener {
-  const pool = new SimplePool();
+  const pool = deps.pool ?? new SimplePool() as AccessGrantRelayPool;
   const subscriptions = new Map<string, { close: () => void }>();
   const processedKeys = new Set<string>();
 
@@ -35,42 +54,57 @@ export function createAccessGrantListener(deps: AccessGrantListenerDeps): Access
         console.warn('[onboarding-33357] No relays configured, skipping onboarding subscription');
         return;
       }
-      const since = Math.floor(Date.now() / 1000) - 300;
       const recipientNpub = recipientNpubFromHex(normalizedHex);
-      const sub = pool.subscribe(
-        deps.relays,
-        {
-          kinds: [SBIP0009_ACCESS_GRANT_KIND],
-          '#p': [normalizedHex],
-          '#protocol': [SBIP0009_ONBOARDING_PROTOCOL],
-          since,
+      const filter = {
+        kinds: [SBIP0009_ACCESS_GRANT_KIND],
+        '#p': [normalizedHex],
+      };
+      let closed = false;
+      let liveSub: { close(): void } | null = null;
+      const state = {
+        close: () => {
+          closed = true;
+          liveSub?.close();
         },
-        {
-          onevent(event) {
-            processAccessGrantEvent({
-              event,
-              recipientSecretKey,
-              recipientNpub,
-              managedByNpub,
-              subscriptionManager: deps.subscriptionManager,
-              processedKeys,
-            }).then((result) => {
-              const id = event.id?.slice(0, 12) ?? 'unknown';
-              if (result.ok) {
-                console.log(`[onboarding-33357] ${result.code} for event ${id}`);
-              } else {
-                console.warn(`[onboarding-33357] ${result.code} for event ${id}: ${result.message}`);
-              }
-            }).catch((error) => {
-              console.error('[onboarding-33357] Failed to process onboarding event:', error);
-            });
-          },
-          oneose() {
-            console.log(`[onboarding-33357] Listening for onboarding events for ${normalizedHex.slice(0, 12)}...`);
-          },
-        },
-      );
-      subscriptions.set(normalizedHex, { close: () => sub.close() });
+      };
+      subscriptions.set(normalizedHex, state);
+
+      const handleEvent = (event: NostrAccessGrantEvent) => {
+        processAccessGrantEvent({
+          event,
+          recipientSecretKey,
+          recipientNpub,
+          managedByNpub,
+          subscriptionManager: deps.subscriptionManager,
+          processedKeys,
+        }).then((result) => {
+          const id = event.id?.slice(0, 12) ?? 'unknown';
+          if (result.ok) {
+            console.log(`[onboarding-33357] ${result.code} for event ${id}`);
+          } else {
+            console.warn(`[onboarding-33357] ${result.code} for event ${id}: ${result.message}`);
+          }
+        }).catch((error) => {
+          console.error('[onboarding-33357] Failed to process onboarding event:', error);
+        });
+      };
+
+      void pool.querySync(deps.relays, filter, { maxWait: deps.replayTimeoutMs ?? 5000 })
+        .then((events) => {
+          for (const event of events) handleEvent(event);
+        })
+        .catch((error) => {
+          console.warn('[onboarding-33357] Initial access-grant replay failed:', error);
+        })
+        .finally(() => {
+          if (closed) return;
+          liveSub = pool.subscribe(deps.relays, filter, {
+            onevent: handleEvent,
+            oneose() {
+              console.log(`[onboarding-33357] Listening for onboarding events for ${normalizedHex.slice(0, 12)}...`);
+            },
+          });
+        });
     },
     unsubscribe(recipientPubkeyHex) {
       const normalizedHex = recipientPubkeyHex.toLowerCase();
