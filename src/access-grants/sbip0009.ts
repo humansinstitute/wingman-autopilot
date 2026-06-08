@@ -83,6 +83,7 @@ export interface AccessGrantSubscriptionManager {
     managedByNpub: string;
     packageJson: string | Record<string, unknown>;
     agentProfileId?: string | null;
+    onboardingSource?: 'manual' | 'agent_connect_import' | 'nostr_33357';
   }): Promise<unknown>;
 }
 
@@ -461,6 +462,7 @@ export async function processAccessGrantEvent(input: ProcessAccessGrantInput): P
       managedByNpub: input.managedByNpub,
       agentProfileId: input.agentProfileId ?? null,
       packageJson: grant.payload.agent_connect_package,
+      onboardingSource: 'nostr_33357',
     });
     await input.onPostConnectSync?.(grant, imported);
     input.processedKeys?.add(importKey);

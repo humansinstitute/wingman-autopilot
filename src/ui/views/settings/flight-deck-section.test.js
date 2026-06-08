@@ -100,6 +100,7 @@ describe("flight deck settings panel", () => {
             workspaceOwnerNpub: "npub1workspaceowner",
             sourceAppNpub: "npub1flightdeckapp",
             botNpub: "npub1agentbot",
+            onboardingSource: "nostr_33357",
             healthStatus: "healthy",
             sseStatus: "connected",
             groupKeyStatus: "synced",
@@ -140,14 +141,52 @@ describe("flight deck settings panel", () => {
       expect(text).toContain("Swipeback");
       expect(text).toContain("Onboarding Ready");
       expect(text).toContain("Yoke Synced");
-      expect(text).toContain("Agent Bound");
+      expect(text).toContain("Default Dispatch Ready");
       expect(text).toContain("1/2 enabled");
+      expect(text).toContain("Tower service");
+      expect(text).toContain("Connection source");
+      expect(text).toContain("kind 33357");
       expect(text).toContain("Visible scopes");
       expect(text).toContain("Visible channels");
       expect(text).toContain("Appended context");
 
       queryByTestId(panel, "flight-deck-manage-sub-flightdeck").click();
       expect(managedSubscriptionId).toBe("sub-flightdeck");
+    });
+  });
+
+  test("hides manual and Agent Connect-only Tower subscriptions", () => {
+    withFakeDocument(() => {
+      const panel = createFlightDeckConnectionsPanel({
+        subscriptions: [
+          {
+            subscriptionId: "sub-manual",
+            backendBaseUrl: "https://manual.example",
+            workspaceOwnerNpub: "npub1manualworkspace",
+            sourceAppNpub: "npub1app",
+            botNpub: "npub1bot",
+            onboardingSource: "manual",
+            healthStatus: "healthy",
+            sseStatus: "connected",
+          },
+          {
+            subscriptionId: "sub-agent-connect",
+            backendBaseUrl: "https://agent-connect.example",
+            workspaceOwnerNpub: "npub1agentconnectworkspace",
+            sourceAppNpub: "npub1app",
+            botNpub: "npub1bot",
+            onboardingSource: "agent_connect_import",
+            healthStatus: "healthy",
+            sseStatus: "connected",
+          },
+        ],
+      });
+
+      const text = collectText(panel);
+      expect(text).toContain("No Onboarded Workspaces");
+      expect(text).toContain("No kind 33357 workspace onboarding events");
+      expect(text).not.toContain("manual.example");
+      expect(text).not.toContain("agent-connect.example");
     });
   });
 });

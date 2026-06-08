@@ -1177,6 +1177,7 @@ export class WorkspaceSubscriptionManager {
     agentProfileId?: string | null;
     allowedManagerNpubs?: string[];
     grantSharedService?: boolean;
+    onboardingSource?: CreateWorkspaceSubscriptionInput['onboardingSource'];
   }): Promise<{
     backendConnection: BackendConnectionRecord;
     subscription: WorkspaceSubscriptionRecord;
@@ -1217,6 +1218,7 @@ export class WorkspaceSubscriptionManager {
     const subscription = await this.createOrUpdate({
       ...importResult.subscriptionInput,
       agentProfileId,
+      onboardingSource: input.onboardingSource ?? 'agent_connect_import',
     });
     this.profilePolicyStore.ensureProfileWorkspaceForSubscription({
       managedByNpub: input.managedByNpub,
@@ -1325,6 +1327,7 @@ export class WorkspaceSubscriptionManager {
         botNpub: botIdentity.botNpub,
         sourceAppNpub,
         backendConnectionId: backendConnection?.backendConnectionId ?? null,
+        onboardingSource: input.onboardingSource ?? 'manual',
         connectionTokenRef,
         agentProfileId: agentProfile?.agentId ?? input.agentProfileId ?? null,
         sourceAppSchemaNamespace,
@@ -1337,6 +1340,7 @@ export class WorkspaceSubscriptionManager {
     record.backendBaseUrl = subscriptionBackendBaseUrl;
     record.workspaceOwnerNpub = workspaceOwnerNpub;
     record.sourceAppNpub = sourceAppNpub;
+    record.onboardingSource = input.onboardingSource ?? record.onboardingSource ?? 'manual';
     record.connectionTokenRef = connectionTokenRef ?? record.connectionTokenRef ?? null;
     record.agentProfileId = agentProfile?.agentId ?? input.agentProfileId ?? record.agentProfileId ?? null;
     record.sourceAppSchemaNamespace = sourceAppSchemaNamespace ?? record.sourceAppSchemaNamespace ?? null;

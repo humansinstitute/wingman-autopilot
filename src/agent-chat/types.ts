@@ -4,6 +4,7 @@ export type SseStatus = 'disconnected' | 'connecting' | 'connected' | 'backoff' 
 export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy';
 export type BackendConnectionSharePolicy = 'private' | 'selected_users' | 'shared_service';
 export type BackendConnectionGrantKind = 'manager_npub' | 'shared_service';
+export type WorkspaceOnboardingSource = 'manual' | 'agent_connect_import' | 'nostr_33357';
 export type AgentCapability =
   | 'chat_intercept'
   | 'task_dispatch'
@@ -134,6 +135,7 @@ export interface WorkspaceSubscriptionRecord {
   backendBaseUrl: string;
   botNpub: string;
   sourceAppNpub: string;
+  onboardingSource: WorkspaceOnboardingSource;
   connectionTokenRef?: string | null;
   agentProfileId?: string | null;
   sourceAppSchemaNamespace?: string | null;
@@ -213,6 +215,7 @@ export interface CreateWorkspaceSubscriptionInput {
   workspaceOwnerNpub: string;
   backendBaseUrl: string;
   sourceAppNpub: string;
+  onboardingSource?: WorkspaceOnboardingSource;
   backendConnectionId?: string | null;
   backendConnectionGrantKind?: BackendConnectionGrantKind | null;
   connectionTokenRef?: string | null;

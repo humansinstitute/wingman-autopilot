@@ -158,6 +158,10 @@ function countAppendedContext(subscription) {
   return Array.isArray(contexts) ? contexts.length : 0;
 }
 
+function isExplicitOnboardedWorkspace(subscription) {
+  return subscription?.onboardingSource === 'nostr_33357';
+}
+
 export function createFlightDeckConnectionsPanel({
   subscriptions,
   backendConnections = [],
@@ -167,7 +171,7 @@ export function createFlightDeckConnectionsPanel({
   onManageDispatch,
   onRefresh,
 } = {}) {
-  const list = Array.isArray(subscriptions) ? subscriptions : [];
+  const list = Array.isArray(subscriptions) ? subscriptions.filter(isExplicitOnboardedWorkspace) : [];
   const panel = document.createElement('div');
   panel.className = 'wm-settings__flight-deck';
   panel.setAttribute('data-testid', 'flight-deck-settings-panel');
@@ -181,10 +185,13 @@ export function createFlightDeckConnectionsPanel({
   summaryCard.append(heading);
 
   summaryCard.append(createMetricGrid([
-    { label: 'Workspaces', value: list.length },
+    { label: 'Onboarded Workspaces', value: list.length },
     { label: 'Healthy', value: list.filter((subscription) => subscription?.healthStatus === 'healthy').length },
     { label: 'SSE Connected', value: list.filter((subscription) => subscription?.sseStatus === 'connected').length },
-    { label: 'Agent Bindings', value: list.filter((subscription) => getAgentForSubscription(subscription, agents)).length },
+    { label: 'Default Dispatch', value: list.filter((subscription) => {
+      const agent = getAgentForSubscription(subscription, agents);
+      return Boolean(agent && countEnabledRoutes(getRoutesForSubscription(subscription, dispatchRoutes)) > 0);
+    }).length },
     { label: 'Active Sessions', value: Array.isArray(chatSessions) ? chatSessions.length : 0 },
   ]));
 
@@ -209,10 +216,10 @@ export function createFlightDeckConnectionsPanel({
     empty.className = 'wm-card';
     empty.style.cssText = 'padding:14px;margin-top:12px;';
     const emptyHeading = document.createElement('h3');
-    emptyHeading.textContent = 'No Flight Deck Workspaces';
+    emptyHeading.textContent = 'No Onboarded Workspaces';
     const emptyNote = document.createElement('p');
     emptyNote.className = 'wm-settings__port-note';
-    emptyNote.textContent = 'No workspace connections are configured for this agent.';
+    emptyNote.textContent = 'No kind 33357 workspace onboarding events have been imported for this agent.';
     empty.append(emptyHeading, emptyNote);
     panel.append(empty);
     return panel;
@@ -223,6 +230,7 @@ export function createFlightDeckConnectionsPanel({
     const agent = getAgentForSubscription(subscription, agents);
     const routes = getRoutesForSubscription(subscription, dispatchRoutes);
     const enabledRoutes = countEnabledRoutes(routes);
+    const dispatchReady = Boolean(agent && enabledRoutes > 0);
     const targets = countVisibleTargets(subscription);
     const appendedContextCount = countAppendedContext(subscription);
     const profileWorkspace = subscription?.profileWorkspace?.workspace;
@@ -241,7 +249,7 @@ export function createFlightDeckConnectionsPanel({
 
     const identity = document.createElement('p');
     identity.className = 'wm-settings__port-note';
-    identity.textContent = `tower ${subscription?.backendBaseUrl || profileWorkspace?.towerUrl || 'unknown'} · bot ${shortenIdentifier(subscription?.botNpub)} · app ${shortenIdentifier(subscription?.sourceAppNpub)}`;
+    identity.textContent = `tower service ${subscription?.backendBaseUrl || profileWorkspace?.towerUrl || 'unknown'} · app ${shortenIdentifier(subscription?.sourceAppNpub)} · bot ${shortenIdentifier(subscription?.botNpub)}`;
     identity.title = [
       subscription?.backendBaseUrl || profileWorkspace?.towerUrl || '',
       subscription?.workspaceOwnerNpub || '',
@@ -255,13 +263,14 @@ export function createFlightDeckConnectionsPanel({
       createTonePill(subscription?.sseStatus === 'connected' ? 'SSE Connected' : `SSE ${titleCaseStatus(subscription?.sseStatus)}`, toneForStatus(subscription?.sseStatus, ['connected'])),
       createTonePill(`Onboarding ${titleCaseStatus(onboardingStatus)}`, toneForStatus(onboardingStatus)),
       createTonePill(`Yoke ${titleCaseStatus(yokeStatus)}`, toneForStatus(yokeStatus)),
-      createTonePill(agent ? 'Agent Bound' : 'No Agent Binding', agent ? 'success' : 'warning'),
+      createTonePill(dispatchReady ? 'Default Dispatch Ready' : 'Dispatch Setup Pending', dispatchReady ? 'success' : 'warning'),
     ]));
 
     card.append(createDefinitionGrid([
+      ['Tower service', subscription?.backendBaseUrl || profileWorkspace?.towerUrl || 'unknown'],
       ['Workspace owner', shortenIdentifier(subscription?.workspaceOwnerNpub, { head: 20, tail: 10 })],
-      ['Backend connection', subscription?.backendConnectionId || 'Manual'],
-      ['Routes', `${enabledRoutes}/${routes.length} enabled`],
+      ['Connection source', 'kind 33357'],
+      ['Default dispatch routes', `${enabledRoutes}/${routes.length} enabled`],
       ['Visible scopes', String(targets.scopes)],
       ['Visible channels', String(targets.channels)],
       ['Appended context', String(appendedContextCount)],
@@ -305,7 +314,8 @@ export function createFlightDeckSection({ onManageDispatch } = {}) {
         onRefresh: refresh,
       });
       container.replaceChildren(panel, statusLine);
-      statusLine.textContent = `Flight Deck connections refreshed: ${Array.isArray(subscriptions) ? subscriptions.length : 0} workspace${Array.isArray(subscriptions) && subscriptions.length === 1 ? '' : 's'}.`;
+      const onboardedCount = Array.isArray(subscriptions) ? subscriptions.filter(isExplicitOnboardedWorkspace).length : 0;
+      statusLine.textContent = `Flight Deck onboarded workspaces refreshed: ${onboardedCount} workspace${onboardedCount === 1 ? '' : 's'}.`;
     } catch (error) {
       const failed = document.createElement('section');
       failed.className = 'wm-card';

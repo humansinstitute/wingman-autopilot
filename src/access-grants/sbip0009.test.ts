@@ -183,6 +183,7 @@ describe('Flight Deck 33357 onboarding validation', () => {
     const processedKeys = new Set<string>();
     let imports = 0;
     let syncs = 0;
+    let importSource = '';
     const input = {
       event: fixture.event,
       recipientSecretKey: fixture.recipient.secret,
@@ -190,8 +191,9 @@ describe('Flight Deck 33357 onboarding validation', () => {
       managedByNpub: fixture.recipient.npub,
       processedKeys,
       subscriptionManager: {
-        importAgentConnectPackage: async () => {
+        importAgentConnectPackage: async (input) => {
           imports += 1;
+          importSource = input.onboardingSource ?? '';
           return { subscription: { subscriptionId: 'sub-1' } };
         },
       },
@@ -211,6 +213,7 @@ describe('Flight Deck 33357 onboarding validation', () => {
     expect(second.ok).toBe(true);
     expect(second.code).toBe('duplicate_skipped');
     expect(imports).toBe(1);
+    expect(importSource).toBe('nostr_33357');
     expect(syncs).toBe(1);
   });
 

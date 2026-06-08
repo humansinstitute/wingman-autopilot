@@ -42,6 +42,7 @@ describe('WorkspaceSubscriptionStore', () => {
       sourceAppNpub: 'npub1app',
       botNpub: 'npub1botshared',
     })?.subscriptionId).toBe(first.subscriptionId);
+    expect(first.onboardingSource).toBe('manual');
     expect(store.getBySubscriptionScope({
       managedByNpub: 'npub1managerb',
       backendConnectionId: 'backend-1',
@@ -49,6 +50,22 @@ describe('WorkspaceSubscriptionStore', () => {
       sourceAppNpub: 'npub1app',
       botNpub: 'npub1botshared',
     })?.subscriptionId).toBe(second.subscriptionId);
+  });
+
+  test('persists explicit Nostr onboarding source for Flight Deck workspace views', () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb());
+    const record = store.save(store.createDefault({
+      managedByNpub: 'npub1manager',
+      backendConnectionId: 'backend-1',
+      workspaceOwnerNpub: 'npub1workspace',
+      backendBaseUrl: 'https://tower.example.com',
+      botNpub: 'npub1bot',
+      sourceAppNpub: 'npub1app',
+      onboardingSource: 'nostr_33357',
+    }));
+
+    expect(record.onboardingSource).toBe('nostr_33357');
+    expect(store.getBySubscriptionId(record.subscriptionId)?.onboardingSource).toBe('nostr_33357');
   });
 
   test('allows one manager to subscribe to the same workspace app on separate towers', () => {

@@ -406,6 +406,8 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(first.subscription.subscriptionId).not.toBe(second.subscription.subscriptionId);
     expect(first.subscription.agentProfileId).toBe('wm-one');
     expect(second.subscription.agentProfileId).toBe('wm-two');
+    expect(first.subscription.onboardingSource).toBe('agent_connect_import');
+    expect(second.subscription.onboardingSource).toBe('agent_connect_import');
     expect(first.subscription.botNpub).toBe('npub1botone');
     expect(second.subscription.botNpub).toBe('npub1bottwo');
     expect(store.listForManagerNpub('npub1manager')).toHaveLength(2);
@@ -456,6 +458,7 @@ describe('WorkspaceSubscriptionManager', () => {
 
     expect(imported.subscription.botNpub).toBe(instanceIdentity.npub);
     expect(imported.subscription.agentProfileId).toBeNull();
+    expect(imported.subscription.onboardingSource).toBe('agent_connect_import');
     expect(imported.subscription.sseStatus).toBe('connected');
     expect(store.listForManagerNpub('npub1manager')).toHaveLength(1);
     expect(backendStore.listForManagerNpub('npub1manager')[0]?.healthStatus).toBe('healthy');
@@ -493,8 +496,10 @@ describe('WorkspaceSubscriptionManager', () => {
     const imported = await manager.importAgentConnectPackage({
       managedByNpub: 'npub1manager',
       packageJson: makeConnectPackage({ capabilities: ['chat_intercept', 'task_dispatch'] }),
+      onboardingSource: 'nostr_33357',
     });
 
+    expect(imported.subscription.onboardingSource).toBe('nostr_33357');
     const routes = routeStore.listForSubscription(imported.subscription.subscriptionId);
     expect(routes.map((route) => `${route.triggerKind}:${route.capability}`).sort()).toEqual([
       'chat:chat_intercept',

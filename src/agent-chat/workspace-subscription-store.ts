@@ -111,6 +111,7 @@ class WorkspaceSubscriptionStore {
       record.backendBaseUrl,
       record.botNpub,
       record.sourceAppNpub,
+      record.onboardingSource ?? 'manual',
       record.connectionTokenRef ?? null,
       record.agentProfileId ?? null,
       record.sourceAppSchemaNamespace ?? null,
@@ -148,7 +149,7 @@ class WorkspaceSubscriptionStore {
     this.db.query(
       `INSERT INTO workspace_subscriptions (
          subscription_id, backend_connection_id, workspace_owner_npub, backend_base_url, bot_npub, source_app_npub,
-         connection_token_ref, agent_profile_id, source_app_schema_namespace, capability_defaults_json,
+         onboarding_source, connection_token_ref, agent_profile_id, source_app_schema_namespace, capability_defaults_json,
          dispatch_route_ids_json, last_sync_cursor, last_pipeline_run_id,
          ws_key_npub, ws_key_status, group_key_status, sse_status, health_status,
          trigger_config_record_id, last_sse_event_id, last_auth_ok_at, last_group_refresh_at,
@@ -158,14 +159,14 @@ class WorkspaceSubscriptionStore {
          last_sse_event_json, recent_sse_events_json, recent_dispatches_json, last_successful_startup_reload_at
        ) VALUES (
          ?1, ?2, ?3, ?4, ?5, ?6,
-         ?7, ?8, ?9, ?10,
-         ?11, ?12, ?13,
-         ?14, ?15, ?16, ?17, ?18,
-         ?19, ?20, ?21, ?22,
-         ?23, ?24, ?25, ?26, ?27,
-         ?28, ?29, ?30,
-         ?31, ?32, ?33, ?34,
-         ?35, ?36, ?37, ?38
+         ?7, ?8, ?9, ?10, ?11,
+         ?12, ?13, ?14,
+         ?15, ?16, ?17, ?18, ?19,
+         ?20, ?21, ?22, ?23,
+         ?24, ?25, ?26, ?27, ?28,
+         ?29, ?30, ?31,
+         ?32, ?33, ?34, ?35,
+         ?36, ?37, ?38, ?39
        )
        ON CONFLICT(subscription_id) DO UPDATE SET
          backend_connection_id = excluded.backend_connection_id,
@@ -173,6 +174,7 @@ class WorkspaceSubscriptionStore {
          backend_base_url = excluded.backend_base_url,
          bot_npub = excluded.bot_npub,
          source_app_npub = excluded.source_app_npub,
+         onboarding_source = excluded.onboarding_source,
          connection_token_ref = excluded.connection_token_ref,
          agent_profile_id = excluded.agent_profile_id,
          source_app_schema_namespace = excluded.source_app_schema_namespace,
@@ -216,6 +218,7 @@ class WorkspaceSubscriptionStore {
     botNpub: string;
     sourceAppNpub: string;
     backendConnectionId?: string | null;
+    onboardingSource?: WorkspaceSubscriptionRecord['onboardingSource'];
     connectionTokenRef?: string | null;
     agentProfileId?: string | null;
     sourceAppSchemaNamespace?: string | null;
@@ -231,6 +234,7 @@ class WorkspaceSubscriptionStore {
       backendBaseUrl: input.backendBaseUrl,
       botNpub: input.botNpub,
       sourceAppNpub: input.sourceAppNpub,
+      onboardingSource: input.onboardingSource ?? 'manual',
       connectionTokenRef: input.connectionTokenRef ?? null,
       agentProfileId: input.agentProfileId ?? null,
       sourceAppSchemaNamespace: input.sourceAppSchemaNamespace ?? null,
@@ -283,6 +287,7 @@ class WorkspaceSubscriptionStore {
            backend_base_url,
            bot_npub,
            source_app_npub,
+           onboarding_source,
            connection_token_ref,
            agent_profile_id,
            source_app_schema_namespace,
@@ -333,6 +338,7 @@ class WorkspaceSubscriptionStore {
            backend_base_url,
            bot_npub,
            source_app_npub,
+           onboarding_source,
            connection_token_ref,
            agent_profile_id,
            source_app_schema_namespace,
@@ -381,6 +387,7 @@ class WorkspaceSubscriptionStore {
       backendBaseUrl: row.backend_base_url!,
       botNpub: row.bot_npub!,
       sourceAppNpub: row.source_app_npub!,
+      onboardingSource: row.onboarding_source as WorkspaceSubscriptionRecord['onboardingSource'] || 'manual',
       connectionTokenRef: row.connection_token_ref ?? null,
       agentProfileId: row.agent_profile_id ?? null,
       sourceAppSchemaNamespace: row.source_app_schema_namespace ?? null,
@@ -425,6 +432,7 @@ class WorkspaceSubscriptionStore {
         backend_base_url TEXT NOT NULL,
         bot_npub TEXT NOT NULL,
         source_app_npub TEXT NOT NULL,
+        onboarding_source TEXT NOT NULL DEFAULT 'manual',
         connection_token_ref TEXT,
         agent_profile_id TEXT,
         source_app_schema_namespace TEXT,
@@ -495,6 +503,9 @@ class WorkspaceSubscriptionStore {
     }
     if (!hasColumn(this.db, 'workspace_subscriptions', 'connection_token_ref')) {
       this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN connection_token_ref TEXT');
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'onboarding_source')) {
+      this.db.exec("ALTER TABLE workspace_subscriptions ADD COLUMN onboarding_source TEXT NOT NULL DEFAULT 'manual'");
     }
     if (!hasColumn(this.db, 'workspace_subscriptions', 'agent_profile_id')) {
       this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN agent_profile_id TEXT');
