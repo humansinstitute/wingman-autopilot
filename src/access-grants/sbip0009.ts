@@ -6,8 +6,10 @@ import { finalizeEvent, nip19, nip44, verifyEvent } from 'nostr-tools';
 export const SBIP0009_ACCESS_GRANT_KIND = 33357;
 export const SBIP0009_APP_NAMESPACE = 'wingman-flight-deck';
 export const SBIP0009_PAYLOAD_KIND = 'wingman_flightdeck_access_grant';
+export const FLIGHTDECK_ONBOARDING_PAYLOAD_TYPE = 'flightdeck_onboarding';
 
-export type AccessGrantStatus = 'active' | 'revoked' | 'superseded';
+export type AccessGrantAction = 'grant' | 'revoked' | 'deleted';
+export type AccessGrantStatus = 'active' | 'revoked' | 'deleted' | 'superseded';
 
 export interface NostrAccessGrantEvent {
   id: string;
@@ -20,15 +22,20 @@ export interface NostrAccessGrantEvent {
 }
 
 export interface AccessGrantPayload {
-  kind: typeof SBIP0009_PAYLOAD_KIND;
+  kind?: typeof SBIP0009_PAYLOAD_KIND;
+  type?: typeof FLIGHTDECK_ONBOARDING_PAYLOAD_TYPE;
   version: 1;
+  protocol?: 'onboarding';
+  action: AccessGrantAction;
   status: AccessGrantStatus;
-  grant_id: string;
-  dedupe_key: string;
+  grant_id?: string;
+  dedupe_key?: string;
   issued_at: string;
-  expires_at: string | null;
-  issuer: { npub: string; display_name?: string | null };
-  recipient: { npub: string };
+  issued_by_npub?: string;
+  recipient_npub?: string;
+  expires_at?: string | null;
+  issuer?: { npub: string; display_name?: string | null };
+  recipient?: { npub: string };
   service: {
     direct_https_url: string;
     service_npub: string;
@@ -44,10 +51,21 @@ export interface AccessGrantPayload {
     description?: string | null;
   };
   app: {
-    app_npub: string;
-    namespace: typeof SBIP0009_APP_NAMESPACE;
+    app_npub?: string;
+    app_pubkey?: string;
+    namespace?: typeof SBIP0009_APP_NAMESPACE | 'flightdeck_pg';
   };
-  agent_connect_package: Record<string, unknown>;
+  revocation?: {
+    reason?: string | null;
+    revoked_at?: string | null;
+    source?: string | null;
+  };
+  grant?: {
+    grant_id?: string | null;
+    reason?: string | null;
+  };
+  agent_connect_package?: Record<string, unknown>;
+  agent_connect?: Record<string, unknown>;
   verification?: {
     required?: boolean;
     method?: string;
@@ -85,6 +103,12 @@ export interface AccessGrantSubscriptionManager {
     agentProfileId?: string | null;
     onboardingSource?: 'manual' | 'agent_connect_import' | 'nostr_33357';
   }): Promise<unknown>;
+  handleAccessGrantRevocation?(input: {
+    managedByNpub: string;
+    agentProfileId?: string | null;
+    grant: DecodedAccessGrant;
+    verification: TowerRevocationVerificationResult;
+  }): Promise<unknown>;
 }
 
 export interface ProcessAccessGrantInput {
@@ -98,6 +122,19 @@ export interface ProcessAccessGrantInput {
   now?: Date;
   processedKeys?: Set<string>;
   onPostConnectSync?: (grant: DecodedAccessGrant, imported: unknown) => Promise<unknown>;
+  onPostRevocationSync?: (
+    grant: DecodedAccessGrant,
+    handled: unknown,
+    verification: TowerRevocationVerificationResult,
+  ) => Promise<unknown>;
+}
+
+export interface TowerRevocationVerificationResult {
+  confirmed: boolean;
+  towerResult: 'access_active' | 'workspace_deleted' | 'workspace_not_found' | 'membership_revoked' | 'access_denied' | 'unconfirmed';
+  checkedAt: string;
+  message: string;
+  payload?: unknown;
 }
 
 function getRequiredTag(tags: string[][], name: string): string {
@@ -108,12 +145,22 @@ function getRequiredTag(tags: string[][], name: string): string {
   return value;
 }
 
+function getOptionalTag(tags: string[][], name: string): string | null {
+  return tags.find((tag) => tag[0] === name)?.[1]?.trim() || null;
+}
+
 function getMarkedPTag(tags: string[][], marker: string): string | null {
   return tags.find((tag) => tag[0] === 'p' && tag[3] === marker)?.[1]?.trim() ?? null;
 }
 
 function assertEqual(label: string, left: string | null | undefined, right: string | null | undefined): void {
   if (!left || !right || left !== right) {
+    throw Object.assign(new Error(`${label} mismatch`), { code: 'tag_payload_mismatch' });
+  }
+}
+
+function assertEqualWhenPresent(label: string, left: string | null | undefined, right: string | null | undefined): void {
+  if (left && right && left !== right) {
     throw Object.assign(new Error(`${label} mismatch`), { code: 'tag_payload_mismatch' });
   }
 }
@@ -157,6 +204,34 @@ function decodeNpubToHex(npub: string): string {
   return decoded.data.toLowerCase();
 }
 
+function encodeHexToNpub(pubkeyHex: string | null | undefined): string | null {
+  const normalized = pubkeyHex?.trim().toLowerCase();
+  if (!normalized || !/^[0-9a-f]{64}$/.test(normalized)) {
+    return null;
+  }
+  return nip19.npubEncode(normalized);
+}
+
+function normalizePayloadAction(parsed: Record<string, unknown>): AccessGrantAction {
+  const action = getString(parsed.action);
+  if (action === 'grant' || action === 'revoked' || action === 'deleted') {
+    return action;
+  }
+  const status = getString(parsed.status);
+  if (status === 'revoked') return 'revoked';
+  if (status === 'deleted') return 'deleted';
+  return 'grant';
+}
+
+function normalizePayloadStatus(parsed: Record<string, unknown>, action: AccessGrantAction): AccessGrantStatus {
+  const status = getString(parsed.status);
+  if (status === 'active' || status === 'revoked' || status === 'deleted' || status === 'superseded') {
+    return status;
+  }
+  if (action === 'grant') return 'active';
+  return action;
+}
+
 function parsePayload(value: string): AccessGrantPayload {
   let parsed: unknown;
   try {
@@ -167,30 +242,50 @@ function parsePayload(value: string): AccessGrantPayload {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw Object.assign(new Error('decrypted payload must be an object'), { code: 'payload_invalid' });
   }
-  const payload = parsed as AccessGrantPayload;
-  if (payload.kind !== SBIP0009_PAYLOAD_KIND || payload.version !== 1) {
+  const object = parsed as Record<string, unknown>;
+  const payloadKind = getString(object.kind);
+  const payloadType = getString(object.type);
+  if (payloadKind !== SBIP0009_PAYLOAD_KIND && payloadType !== FLIGHTDECK_ONBOARDING_PAYLOAD_TYPE) {
     throw Object.assign(new Error('unsupported SBIP-0009 access grant payload'), { code: 'payload_invalid' });
   }
-  if (!['active', 'revoked', 'superseded'].includes(payload.status)) {
+  const payload = object as AccessGrantPayload;
+  payload.action = normalizePayloadAction(object);
+  payload.status = normalizePayloadStatus(object, payload.action);
+  if (!['active', 'revoked', 'deleted', 'superseded'].includes(payload.status)) {
     throw Object.assign(new Error('invalid grant status'), { code: 'payload_invalid' });
   }
+  if (payload.protocol && payload.protocol !== 'onboarding') {
+    throw Object.assign(new Error('invalid onboarding protocol'), { code: 'payload_invalid' });
+  }
+  const recipientNpub = payload.recipient?.npub ?? payload.recipient_npub;
+  const issuerNpub = payload.issuer?.npub ?? payload.issued_by_npub;
+  const appNpub = payload.app?.app_npub ?? encodeHexToNpub(payload.app?.app_pubkey);
+  const agentConnectPackage = getObject(payload.agent_connect_package) ?? getObject(payload.agent_connect);
+  if (agentConnectPackage) {
+    payload.agent_connect_package = agentConnectPackage;
+  }
   if (
-    !payload.grant_id
-    || !payload.dedupe_key
-    || !payload.recipient?.npub
-    || !payload.issuer?.npub
+    !recipientNpub
+    || !issuerNpub
     || !payload.issued_at
     || Number.isNaN(Date.parse(payload.issued_at))
     || !payload.service?.direct_https_url
     || !payload.service?.service_npub
     || !payload.workspace?.owner_npub
     || !payload.workspace?.workspace_service_npub
-    || !payload.app?.app_npub
-    || payload.app?.namespace !== SBIP0009_APP_NAMESPACE
-    || !payload.agent_connect_package
+    || !appNpub
   ) {
     throw Object.assign(new Error('payload missing required SBIP-0009 fields'), { code: 'payload_invalid' });
   }
+  if (payload.action === 'grant' && (!payload.grant_id || !payload.dedupe_key || !payload.agent_connect_package)) {
+    throw Object.assign(new Error('active grant payload missing required import fields'), { code: 'payload_invalid' });
+  }
+  if (payload.app?.namespace && ![SBIP0009_APP_NAMESPACE, 'flightdeck_pg'].includes(payload.app.namespace)) {
+    throw Object.assign(new Error('unsupported onboarding app namespace'), { code: 'payload_invalid' });
+  }
+  payload.recipient = payload.recipient ?? { npub: recipientNpub };
+  payload.issuer = payload.issuer ?? { npub: issuerNpub };
+  payload.app.app_npub = appNpub;
   return payload;
 }
 
@@ -236,35 +331,44 @@ export function decodeAccessGrantEvent(input: {
   }
 
   const payload = parsePayload(plaintext);
-  const d = getRequiredTag(event.tags, 'd');
-  const app = getRequiredTag(event.tags, 'app');
-  const appNpub = getRequiredTag(event.tags, 'app_npub');
-  const taggedServiceNpub = getRequiredTag(event.tags, 'service_npub');
-  const workspaceServiceNpub = getRequiredTag(event.tags, 'workspace_service_npub');
-  const workspaceOwnerNpub = getRequiredTag(event.tags, 'workspace_owner_npub');
-  const recipientTag = getRequiredTag(event.tags, 'recipient');
-  const issuerTag = getRequiredTag(event.tags, 'issuer');
-  const grantTag = getRequiredTag(event.tags, 'grant');
+  const d = getOptionalTag(event.tags, 'd');
+  const app = getOptionalTag(event.tags, 'app');
+  const appPubkey = getOptionalTag(event.tags, 'app_pub') ?? payload.app.app_pubkey ?? null;
+  const appNpub = getOptionalTag(event.tags, 'app_npub') ?? payload.app.app_npub ?? encodeHexToNpub(appPubkey);
+  const taggedServiceNpub = getOptionalTag(event.tags, 'service_npub') ?? payload.service.service_npub;
+  const workspaceServiceNpub = getOptionalTag(event.tags, 'workspace_service_npub') ?? payload.workspace.workspace_service_npub;
+  const workspaceOwnerNpub = getOptionalTag(event.tags, 'workspace_owner_npub') ?? payload.workspace.owner_npub;
+  const recipientTag = getOptionalTag(event.tags, 'recipient') ?? payload.recipient?.npub ?? payload.recipient_npub ?? null;
+  const issuerTag = getOptionalTag(event.tags, 'issuer') ?? payload.issuer?.npub ?? payload.issued_by_npub ?? null;
+  const grantTag = getOptionalTag(event.tags, 'grant') ?? payload.grant_id ?? payload.grant?.grant_id ?? null;
 
-  assertEqual('app namespace', app, SBIP0009_APP_NAMESPACE);
-  assertEqual('d tag', d, payload.dedupe_key);
-  assertEqual('grant id', grantTag, payload.grant_id);
-  assertEqual('recipient npub', recipientTag, payload.recipient.npub);
-  assertEqual('issuer npub', issuerTag, payload.issuer.npub);
-  assertEqual('service npub', taggedServiceNpub, payload.service.service_npub);
-  assertEqual('workspace service npub', workspaceServiceNpub, payload.workspace.workspace_service_npub);
-  assertEqual('workspace owner npub', workspaceOwnerNpub, payload.workspace.owner_npub);
-  assertEqual('app npub', appNpub, payload.app.app_npub);
+  assertEqualWhenPresent('app namespace', app, SBIP0009_APP_NAMESPACE);
+  assertEqualWhenPresent('d tag', d, payload.dedupe_key);
+  assertEqualWhenPresent('grant id', grantTag, payload.grant_id ?? payload.grant?.grant_id ?? null);
+  assertEqualWhenPresent('recipient npub', recipientTag, payload.recipient?.npub ?? payload.recipient_npub);
+  assertEqualWhenPresent('issuer npub', issuerTag, payload.issuer?.npub ?? payload.issued_by_npub);
+  assertEqualWhenPresent('service npub', taggedServiceNpub, payload.service.service_npub);
+  assertEqualWhenPresent('workspace service npub', workspaceServiceNpub, payload.workspace.workspace_service_npub);
+  assertEqualWhenPresent('workspace owner npub', workspaceOwnerNpub, payload.workspace.owner_npub);
+  assertEqualWhenPresent('app npub', appNpub, payload.app.app_npub ?? encodeHexToNpub(payload.app.app_pubkey));
   assertEqual('recipient target', recipientNpub, payload.recipient.npub);
 
-  const serviceNpub = payload.service.service_npub;
+  if (!appNpub || !taggedServiceNpub || !workspaceServiceNpub || !workspaceOwnerNpub || !issuerTag) {
+    throw Object.assign(new Error('payload missing required workspace identity fields'), { code: 'payload_invalid' });
+  }
+
+  const serviceNpub = taggedServiceNpub;
   const expectedDedupeKey = buildAccessGrantDedupeKey({ serviceNpub, workspaceServiceNpub, appNpub, recipientNpub });
-  const grantId = buildAccessGrantId(expectedDedupeKey);
-  assertEqual('dedupe key', expectedDedupeKey, d);
-  assertEqual('grant id', grantId, grantTag);
+  const dedupeKey = payload.dedupe_key ?? d ?? expectedDedupeKey;
+  const grantId = payload.grant_id ?? grantTag ?? buildAccessGrantId(expectedDedupeKey);
+  assertEqualWhenPresent('dedupe key', expectedDedupeKey, dedupeKey);
+  if (payload.action === 'grant') {
+    assertEqual('dedupe key', expectedDedupeKey, d);
+    assertEqual('grant id', buildAccessGrantId(expectedDedupeKey), grantTag);
+  }
 
   const expiresAt = payload.expires_at ? Date.parse(payload.expires_at) : null;
-  if (expiresAt != null && Number.isFinite(expiresAt) && expiresAt <= (input.now ?? new Date()).getTime()) {
+  if (payload.action === 'grant' && expiresAt != null && Number.isFinite(expiresAt) && expiresAt <= (input.now ?? new Date()).getTime()) {
     throw Object.assign(new Error('onboarding announcement is expired'), { code: 'stale_event' });
   }
 
@@ -279,7 +383,7 @@ export function decodeAccessGrantEvent(input: {
     workspaceOwnerNpub,
     appNpub,
     grantId,
-    dedupeKey: expectedDedupeKey,
+    dedupeKey,
     canonicalConnectionKey: `${serviceNpub}:${workspaceOwnerNpub}:${appNpub}:${recipientNpub}`,
   };
 }
@@ -363,6 +467,53 @@ function fallbackPayloadAllowsAccess(payload: unknown, grant: DecodedAccessGrant
   });
 }
 
+function payloadConfirmsRevocation(payload: unknown): TowerRevocationVerificationResult['towerResult'] | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const body = payload as Record<string, unknown>;
+  const status = getString(body.status) ?? getString(body.state);
+  const reason = getString(body.reason) ?? getString(body.detail_code) ?? getString(body.code);
+  if (
+    body.deleted === true
+    || body.tombstoned === true
+    || status === 'deleted'
+    || status === 'tombstoned'
+    || reason === 'workspace_deleted'
+    || reason === 'workspace_tombstoned'
+  ) {
+    return 'workspace_deleted';
+  }
+  if (
+    body.allowed === false
+    || body.active === false
+    || body.verified === false
+    || body.current_member === false
+    || body.member === false
+    || status === 'revoked'
+    || status === 'inactive'
+    || reason === 'workspace_access_revoked'
+    || reason === 'workspace_membership_revoked'
+    || reason === 'not_workspace_member'
+  ) {
+    return 'membership_revoked';
+  }
+  return null;
+}
+
+function buildRevocationVerification(input: {
+  confirmed: boolean;
+  towerResult: TowerRevocationVerificationResult['towerResult'];
+  message: string;
+  payload?: unknown;
+}): TowerRevocationVerificationResult {
+  return {
+    confirmed: input.confirmed,
+    towerResult: input.towerResult,
+    checkedAt: new Date().toISOString(),
+    message: input.message,
+    payload: input.payload,
+  };
+}
+
 export async function verifyAccessGrantWithTower(input: {
   grant: DecodedAccessGrant;
   recipientSecretKey: Uint8Array;
@@ -416,6 +567,185 @@ export async function verifyAccessGrantWithTower(input: {
   throw Object.assign(new Error('Tower fallback verification did not confirm current access'), { code: 'tower_verify_failed' });
 }
 
+export async function verifyAccessGrantRevocationWithTower(input: {
+  grant: DecodedAccessGrant;
+  recipientSecretKey: Uint8Array;
+  fetchImpl?: typeof fetch;
+}): Promise<TowerRevocationVerificationResult> {
+  const fetchImpl = input.fetchImpl ?? fetch;
+  const baseUrl = input.grant.payload.service.direct_https_url.replace(/\/+$/, '');
+  const body = {
+    grant_id: input.grant.grantId,
+    dedupe_key: input.grant.dedupeKey,
+    recipient_npub: input.grant.recipientNpub,
+    service_npub: input.grant.serviceNpub,
+    workspace_id: input.grant.payload.workspace.workspace_id ?? null,
+    workspace_service_npub: input.grant.workspaceServiceNpub,
+    workspace_owner_npub: input.grant.workspaceOwnerNpub,
+    app_npub: input.grant.appNpub,
+    event_id: input.grant.event.id,
+    action: input.grant.payload.action,
+  };
+  const verifyUrl = `${baseUrl}/api/v4/access-grants/verify`;
+  const verifyResponse = await fetchImpl(verifyUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: createNip98AuthHeader(verifyUrl, 'POST', body, input.recipientSecretKey),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (verifyResponse.ok) {
+    const payload = await verifyResponse.json().catch(() => null);
+    if (responseAllowsAccess(payload, input.grant)) {
+      return buildRevocationVerification({
+        confirmed: false,
+        towerResult: 'access_active',
+        message: 'Tower still confirms current workspace access.',
+        payload,
+      });
+    }
+    const confirmedResult = payloadConfirmsRevocation(payload);
+    if (confirmedResult) {
+      return buildRevocationVerification({
+        confirmed: true,
+        towerResult: confirmedResult,
+        message: 'Tower confirmed revoked or deleted workspace access.',
+        payload,
+      });
+    }
+    return buildRevocationVerification({
+      confirmed: false,
+      towerResult: 'unconfirmed',
+      message: 'Tower verification response did not confirm active access or revoked access.',
+      payload,
+    });
+  }
+
+  if (verifyResponse.status === 404) {
+    return buildRevocationVerification({
+      confirmed: true,
+      towerResult: 'workspace_not_found',
+      message: 'Tower access-grant verification reported the workspace was not found.',
+    });
+  }
+  if (verifyResponse.status === 410) {
+    return buildRevocationVerification({
+      confirmed: true,
+      towerResult: 'workspace_deleted',
+      message: 'Tower access-grant verification reported the workspace was deleted.',
+    });
+  }
+  if (verifyResponse.status === 403) {
+    return buildRevocationVerification({
+      confirmed: true,
+      towerResult: 'access_denied',
+      message: 'Tower access-grant verification denied current workspace access.',
+    });
+  }
+  if (!['405', '501'].includes(String(verifyResponse.status))) {
+    return buildRevocationVerification({
+      confirmed: false,
+      towerResult: 'unconfirmed',
+      message: `Tower revocation verification failed with HTTP ${verifyResponse.status}.`,
+    });
+  }
+
+  const checkedPayloads: unknown[] = [];
+  const workspaceId = getString(input.grant.payload.workspace.workspace_id);
+  if (workspaceId) {
+    const meUrl = `${baseUrl}/api/v4/workspaces/${encodeURIComponent(workspaceId)}/me`;
+    const meResponse = await fetchImpl(meUrl, {
+      method: 'GET',
+      headers: {
+        Authorization: createNip98AuthHeader(meUrl, 'GET', null, input.recipientSecretKey),
+      },
+    });
+    if (meResponse.ok) {
+      const payload = await meResponse.json().catch(() => null);
+      checkedPayloads.push(payload);
+      if (responseAllowsAccess(payload, input.grant)) {
+        return buildRevocationVerification({
+          confirmed: false,
+          towerResult: 'access_active',
+          message: 'Tower /me still confirms current workspace access.',
+          payload,
+        });
+      }
+      const confirmedResult = payloadConfirmsRevocation(payload);
+      if (confirmedResult) {
+        return buildRevocationVerification({
+          confirmed: true,
+          towerResult: confirmedResult,
+          message: 'Tower /me confirmed revoked or deleted workspace access.',
+          payload,
+        });
+      }
+    } else if (meResponse.status === 404) {
+      return buildRevocationVerification({
+        confirmed: true,
+        towerResult: 'workspace_not_found',
+        message: 'Tower /me reported the workspace was not found.',
+      });
+    } else if (meResponse.status === 410) {
+      return buildRevocationVerification({
+        confirmed: true,
+        towerResult: 'workspace_deleted',
+        message: 'Tower /me reported the workspace was deleted.',
+      });
+    } else if (meResponse.status === 403) {
+      return buildRevocationVerification({
+        confirmed: true,
+        towerResult: 'access_denied',
+        message: 'Tower /me denied current workspace access.',
+      });
+    }
+  }
+
+  let sawWorkspaceList = false;
+  for (const path of [
+    `/api/v4/workspaces?npub=${encodeURIComponent(input.grant.recipientNpub)}`,
+    `/api/v4/groups?npub=${encodeURIComponent(input.grant.recipientNpub)}`,
+  ]) {
+    const url = `${baseUrl}${path}`;
+    const response = await fetchImpl(url, {
+      method: 'GET',
+      headers: {
+        Authorization: createNip98AuthHeader(url, 'GET', null, input.recipientSecretKey),
+      },
+    });
+    if (!response.ok) continue;
+    sawWorkspaceList = true;
+    const payload = await response.json().catch(() => null);
+    checkedPayloads.push(payload);
+    if (fallbackPayloadAllowsAccess(payload, input.grant)) {
+      return buildRevocationVerification({
+        confirmed: false,
+        towerResult: 'access_active',
+        message: 'Tower fallback listing still includes the workspace.',
+        payload,
+      });
+    }
+  }
+
+  if (sawWorkspaceList) {
+    return buildRevocationVerification({
+      confirmed: true,
+      towerResult: 'workspace_not_found',
+      message: 'Tower fallback listings no longer include this workspace.',
+      payload: checkedPayloads,
+    });
+  }
+
+  return buildRevocationVerification({
+    confirmed: false,
+    towerResult: 'unconfirmed',
+    message: 'Tower revocation verification could not confirm current access state.',
+    payload: checkedPayloads,
+  });
+}
+
 export async function processAccessGrantEvent(input: ProcessAccessGrantInput): Promise<AccessGrantProcessResult> {
   let grant: DecodedAccessGrant;
   try {
@@ -428,6 +758,55 @@ export async function processAccessGrantEvent(input: ProcessAccessGrantInput): P
   } catch (error) {
     const code = typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : 'grant_invalid';
     return { ok: false, code, message: (error as Error).message };
+  }
+
+  if (grant.payload.action !== 'grant') {
+    const revocationKey = `${grant.event.id}:${grant.canonicalConnectionKey}:revocation:${grant.payload.action}`;
+    if (input.processedKeys?.has(revocationKey)) {
+      return { ok: true, code: 'duplicate_skipped', message: 'Revocation event already processed in this runtime.', grant };
+    }
+    let verification: TowerRevocationVerificationResult;
+    try {
+      verification = await verifyAccessGrantRevocationWithTower({
+        grant,
+        recipientSecretKey: input.recipientSecretKey,
+        fetchImpl: input.fetchImpl,
+      });
+    } catch (error) {
+      return { ok: false, code: 'tower_revocation_verify_failed', message: (error as Error).message, grant };
+    }
+    let handled: unknown = null;
+    try {
+      handled = await input.subscriptionManager.handleAccessGrantRevocation?.({
+        managedByNpub: input.managedByNpub,
+        agentProfileId: input.agentProfileId ?? null,
+        grant,
+        verification,
+      });
+    } catch (error) {
+      const code = typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : 'revocation_handle_failed';
+      return { ok: false, code, message: (error as Error).message, grant, verified: verification };
+    }
+    if (!verification.confirmed) {
+      return {
+        ok: false,
+        code: verification.towerResult === 'access_active' ? 'revocation_unconfirmed_access_active' : 'revocation_unconfirmed',
+        message: verification.message,
+        grant,
+        imported: handled,
+        verified: verification,
+      };
+    }
+    await input.onPostRevocationSync?.(grant, handled, verification);
+    input.processedKeys?.add(revocationKey);
+    return {
+      ok: true,
+      code: 'revocation_confirmed',
+      message: 'Tower confirmed revocation and local connection state was refreshed.',
+      grant,
+      imported: handled,
+      verified: verification,
+    };
   }
 
   if (grant.payload.status !== 'active') {

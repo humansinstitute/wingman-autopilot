@@ -43,6 +43,7 @@ import { bootstrapAgentWorkspace } from './agent-workspace-bootstrap';
 import type { DispatchPipelineRuntime, DispatchPipelineRuntimeResult } from './dispatch-pipelines/runtime';
 import type { AgentChatSessionRuntime } from './session-runtime';
 import { workspaceSubscriptionStore, type WorkspaceSubscriptionStore } from './workspace-subscription-store';
+import type { DecodedAccessGrant, TowerRevocationVerificationResult } from '../access-grants/sbip0009';
 import { parseSseEvents } from './sse-events';
 import { chatInterceptStateStore } from './chat-intercept-state-store';
 import type { WingmanInstanceIdentity } from '../identity/wingman-instance-identity';
@@ -179,6 +180,12 @@ function profilePolicyAllowsDispatch(decision: AgentProfileRuntimeDecision | nul
   }
   const action = policy?.defaultAction ?? defaultActionForEventType(decision.eventType);
   return action !== 'ignore' && action !== 'observe' && action !== 'index';
+}
+
+function isRevokedWorkspaceSubscription(record: WorkspaceSubscriptionRecord): boolean {
+  return record.wsKeyStatus === 'revoked'
+    || record.groupKeyStatus === 'revoked'
+    || record.lastErrorCode === 'workspace_access_revoked';
 }
 
 function profilePolicyAllowsLegacyPrompt(decision: AgentProfileRuntimeDecision | null): boolean {
@@ -1448,10 +1455,130 @@ export class WorkspaceSubscriptionManager {
     return this.store.delete(subscriptionId);
   }
 
+  async handleAccessGrantRevocation(input: {
+    managedByNpub: string;
+    agentProfileId?: string | null;
+    grant: DecodedAccessGrant;
+    verification: TowerRevocationVerificationResult;
+  }): Promise<{
+    matchedSubscriptions: number;
+    updatedSubscriptions: WorkspaceSubscriptionRecord[];
+    selfIndexRefresh: Record<string, unknown> | null;
+  }> {
+    const expectedBackendUrl = normaliseBackendBaseUrl(input.grant.payload.service.direct_https_url);
+    const candidates = this.store.listForManagerNpub(input.managedByNpub).filter((record) => {
+      const sameBackend = normaliseBackendBaseUrl(record.backendBaseUrl) === expectedBackendUrl;
+      const sameWorkspace = record.workspaceOwnerNpub === input.grant.workspaceOwnerNpub;
+      const sameApp = record.sourceAppNpub === input.grant.appNpub;
+      const sameProfile = input.agentProfileId ? record.agentProfileId === input.agentProfileId : true;
+      return sameBackend && sameWorkspace && sameApp && sameProfile;
+    });
+
+    const updatedSubscriptions: WorkspaceSubscriptionRecord[] = [];
+    const selfIndexRefresh = input.verification.confirmed
+      ? this.buildAccessGrantRevocationSelfIndex(input.grant, input.verification)
+      : null;
+
+    for (const record of candidates) {
+      if (!input.verification.confirmed) {
+        updatedSubscriptions.push(this.saveRecord({
+          ...record,
+          lastErrorCode: 'workspace_revocation_unconfirmed',
+          lastErrorAt: new Date().toISOString(),
+          lastAuthResult: buildFailureDiagnostic(
+            'workspace_revocation_unconfirmed',
+            input.verification.message,
+            input.verification.towerResult,
+            {
+              source_33357_event_id: input.grant.event.id,
+              tower_result: input.verification.towerResult,
+              workspace_owner_npub: input.grant.workspaceOwnerNpub,
+              workspace_service_npub: input.grant.workspaceServiceNpub,
+              app_npub: input.grant.appNpub,
+            },
+          ),
+        }));
+        continue;
+      }
+
+      this.stopRuntime(record.subscriptionId, true);
+      const lifecycleStatus = input.verification.towerResult === 'workspace_deleted'
+        || input.verification.towerResult === 'workspace_not_found'
+        || input.grant.payload.action === 'deleted'
+        ? 'deleted'
+        : 'revoked';
+      const now = new Date().toISOString();
+      const revocationEvent = {
+        eventId: input.grant.event.id,
+        eventType: `workspace-${lifecycleStatus}`,
+        at: now,
+        payload: {
+          tower_result: input.verification.towerResult,
+          action: input.grant.payload.action,
+          reason: input.grant.payload.revocation?.reason ?? input.grant.payload.grant?.reason ?? null,
+        },
+      };
+      const saved = this.saveRecord(this.recomputeHealth({
+        ...record,
+        wsKeyStatus: 'revoked',
+        groupKeyStatus: 'revoked',
+        sseStatus: 'disabled',
+        lastErrorCode: 'workspace_access_revoked',
+        lastErrorAt: now,
+        lastAuthResult: buildFailureDiagnostic(
+          'workspace_access_revoked',
+          input.verification.message,
+          input.verification.towerResult,
+          {
+            source_33357_event_id: input.grant.event.id,
+            tower_result: input.verification.towerResult,
+            workspace_owner_npub: input.grant.workspaceOwnerNpub,
+            workspace_service_npub: input.grant.workspaceServiceNpub,
+            app_npub: input.grant.appNpub,
+          },
+        ),
+        lastRecordPullResult: buildSuccessDiagnostic(
+          'Workspace self-index tombstone refreshed after confirmed revocation.',
+          selfIndexRefresh,
+        ),
+        lastSseEvent: revocationEvent,
+        recentSseEvents: trimRecentEntries(
+          [...(Array.isArray(record.recentSseEvents) ? record.recentSseEvents : []), revocationEvent],
+          MAX_RECENT_SSE_EVENTS,
+        ),
+      }));
+      this.markRuntimeFailure(saved.subscriptionId, 'workspace_access_denied', 'access_grant_revoked');
+      if (saved.managedByNpub) {
+        const backendConnection = saved.backendConnectionId
+          ? this.backendStore.getById(saved.backendConnectionId)
+          : null;
+        this.profilePolicyStore.ensureProfileWorkspaceForSubscription({
+          managedByNpub: saved.managedByNpub,
+          agentProfileId: saved.agentProfileId ?? saved.botNpub,
+          agentLabel: null,
+          agentNpub: saved.botNpub,
+          subscription: saved,
+          backendConnection,
+          relayOnboardingStatus: lifecycleStatus,
+        });
+      }
+      updatedSubscriptions.push(saved);
+    }
+
+    return {
+      matchedSubscriptions: candidates.length,
+      updatedSubscriptions,
+      selfIndexRefresh,
+    };
+  }
+
   async reconnectForManager(subscriptionId: string, npub: string): Promise<WorkspaceSubscriptionRecord | null> {
     const record = this.getForManager(subscriptionId, npub);
     if (!record) {
       return null;
+    }
+    if (isRevokedWorkspaceSubscription(record)) {
+      throw new Error('Subscription access was revoked by Tower verification and cannot be reconnected.');
     }
     if (record.sseStatus === 'disabled') {
       throw new Error('Subscription is disabled. Re-enable it before reconnecting.');
@@ -1469,6 +1596,9 @@ export class WorkspaceSubscriptionManager {
     if (!record) {
       return null;
     }
+    if (isRevokedWorkspaceSubscription(record)) {
+      throw new Error('Subscription access was revoked by Tower verification and cannot refresh keys.');
+    }
     return await this.repairSubscription(record, {
       refreshWorkspaceKey: true,
       reconnect: record.sseStatus !== 'disabled',
@@ -1485,6 +1615,9 @@ export class WorkspaceSubscriptionManager {
     const record = this.getForManager(subscriptionId, npub);
     if (!record) {
       return null;
+    }
+    if (enabled && isRevokedWorkspaceSubscription(record)) {
+      throw new Error('Subscription access was revoked by Tower verification and cannot be re-enabled.');
     }
     if (!enabled) {
       this.stopRuntime(subscriptionId, false);
@@ -1511,6 +1644,47 @@ export class WorkspaceSubscriptionManager {
     for (const subscriptionId of this.runtimes.keys()) {
       this.stopRuntime(subscriptionId, true);
     }
+  }
+
+  private buildAccessGrantRevocationSelfIndex(
+    grant: DecodedAccessGrant,
+    verification: TowerRevocationVerificationResult,
+  ): Record<string, unknown> {
+    const deleted = verification.towerResult === 'workspace_deleted'
+      || verification.towerResult === 'workspace_not_found'
+      || grant.payload.action === 'deleted';
+    const now = new Date().toISOString();
+    return {
+      type: 'flightdeck_workspace_self_index',
+      version: 1,
+      updated_at: now,
+      user_npub: grant.recipientNpub,
+      app: {
+        app_npub: grant.appNpub,
+        namespace: grant.payload.app.namespace ?? 'flightdeck_pg',
+      },
+      workspace: {
+        tower_base_url: grant.payload.service.direct_https_url,
+        tower_service_npub: grant.serviceNpub,
+        workspace_id: grant.payload.workspace.workspace_id ?? null,
+        workspace_service_npub: grant.workspaceServiceNpub,
+        workspace_owner_npub: grant.workspaceOwnerNpub,
+        app_npub: grant.appNpub,
+      },
+      verification: {
+        last_checked_at: verification.checkedAt,
+        verified_by: 'autopilot',
+        tower_result: verification.towerResult,
+      },
+      state: {
+        deleted,
+        status: deleted ? 'deleted' : 'revoked',
+        deleted_at: deleted ? now : null,
+        revoked_at: deleted ? null : now,
+        reason: grant.payload.revocation?.reason ?? grant.payload.grant?.reason ?? verification.towerResult,
+        source_33357_event_id: grant.event.id,
+      },
+    };
   }
 
   private resolveOwnedAgentProfile(agentProfileId: string, managedByNpub: string): AgentDefinitionRecord {
@@ -1815,6 +1989,15 @@ export class WorkspaceSubscriptionManager {
     botIdentity: RuntimeBotIdentity,
     isStartupReload: boolean,
   ): Promise<void> {
+    if (isRevokedWorkspaceSubscription(record)) {
+      this.stopRuntime(record.subscriptionId, true);
+      this.saveRecord(this.recomputeHealth({
+        ...record,
+        sseStatus: 'disabled',
+        lastErrorCode: record.lastErrorCode ?? 'workspace_access_revoked',
+      }));
+      return;
+    }
     const runtime = this.getRuntime(record.subscriptionId);
     runtime.botIdentity = botIdentity;
     runtime.removed = false;
@@ -1890,6 +2073,15 @@ export class WorkspaceSubscriptionManager {
     const runtime = this.getRuntime(subscriptionId);
     let record = this.store.getBySubscriptionId(subscriptionId);
     if (!record) {
+      return;
+    }
+    if (isRevokedWorkspaceSubscription(record)) {
+      this.stopRuntime(subscriptionId, true);
+      this.saveRecord(this.recomputeHealth({
+        ...record,
+        sseStatus: 'disabled',
+        lastErrorCode: record.lastErrorCode ?? 'workspace_access_revoked',
+      }));
       return;
     }
     try {
@@ -1970,6 +2162,18 @@ export class WorkspaceSubscriptionManager {
     eventData: string,
   ): Promise<WorkspaceSubscriptionRecord> {
     let payload: Record<string, unknown> | null = null;
+    if (isRevokedWorkspaceSubscription(record)) {
+      return this.saveRecord(this.recomputeHealth({
+        ...record,
+        sseStatus: 'disabled',
+        lastRoutingResult: buildFailureDiagnostic(
+          'workspace_event_suppressed_revoked',
+          'SSE event ignored because Tower-confirmed workspace access is revoked.',
+          'workspace_access_revoked',
+          { event_id: eventId, event_type: eventType },
+        ),
+      }));
+    }
     try {
       payload = eventData ? JSON.parse(eventData) as Record<string, unknown> : null;
     } catch {

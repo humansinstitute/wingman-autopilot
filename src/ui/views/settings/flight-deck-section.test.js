@@ -189,4 +189,48 @@ describe("flight deck settings panel", () => {
       expect(text).not.toContain("agent-connect.example");
     });
   });
+
+  test("keeps revoked onboarding out of the active list and shows diagnostics", () => {
+    withFakeDocument(() => {
+      const panel = createFlightDeckConnectionsPanel({
+        subscriptions: [
+          {
+            subscriptionId: "sub-revoked",
+            backendBaseUrl: "https://tower.example",
+            workspaceOwnerNpub: "npub1workspaceowner",
+            sourceAppNpub: "npub1flightdeckapp",
+            botNpub: "npub1agentbot",
+            onboardingSource: "nostr_33357",
+            healthStatus: "unhealthy",
+            sseStatus: "disabled",
+            wsKeyStatus: "revoked",
+            groupKeyStatus: "revoked",
+            lastErrorCode: "workspace_access_revoked",
+            lastAuthResult: {
+              message: "Tower confirmed revoked workspace access.",
+              details: {
+                source_33357_event_id: "event-revoked-1234567890",
+                tower_result: "workspace_deleted",
+              },
+            },
+            profileWorkspace: {
+              workspace: {
+                workspaceTitle: "Old Workspace",
+                relayOnboardingStatus: "deleted",
+              },
+            },
+          },
+        ],
+      });
+
+      const text = collectText(panel);
+      expect(text).toContain("No Onboarded Workspaces");
+      expect(text).toContain("Diagnostics");
+      expect(text).toContain("Old Workspace");
+      expect(text).toContain("Onboarding Deleted");
+      expect(text).toContain("Tower confirmed revoked workspace access.");
+      expect(queryByTestId(panel, "flight-deck-connection-sub-revoked")).toBeNull();
+      expect(queryByTestId(panel, "flight-deck-diagnostic-sub-revoked")).not.toBeNull();
+    });
+  });
 });

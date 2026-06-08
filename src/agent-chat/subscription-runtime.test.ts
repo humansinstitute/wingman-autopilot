@@ -511,6 +511,70 @@ describe('WorkspaceSubscriptionManager', () => {
     ]);
   });
 
+  test('marks confirmed 33357 revocation as local tombstone and disables SSE', async () => {
+    const dbPath = makeTempDb();
+    const instanceIdentity = makeInstanceIdentity();
+    const { manager, store, profilePolicyStore } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      instanceIdentity,
+    );
+    const imported = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackage(),
+      onboardingSource: 'nostr_33357',
+    });
+
+    const result = await manager.handleAccessGrantRevocation({
+      managedByNpub: 'npub1manager',
+      grant: {
+        event: { id: 'event-revoked-1' },
+        recipientNpub: instanceIdentity.npub,
+        payload: {
+          action: 'deleted',
+          app: { app_npub: 'npub1sourceapp', namespace: 'flightdeck_pg' },
+          service: {
+            direct_https_url: 'https://tower.example.com',
+            service_npub: 'npub1service',
+          },
+          workspace: {
+            owner_npub: 'npub1workspace',
+            workspace_service_npub: 'npub1workspaceservice',
+            workspace_id: 'workspace-1',
+          },
+          revocation: { reason: 'workspace_deleted' },
+        },
+        serviceNpub: 'npub1service',
+        workspaceServiceNpub: 'npub1workspaceservice',
+        workspaceOwnerNpub: 'npub1workspace',
+        appNpub: 'npub1sourceapp',
+      } as never,
+      verification: {
+        confirmed: true,
+        towerResult: 'workspace_deleted',
+        checkedAt: '2026-06-08T00:00:00.000Z',
+        message: 'Tower confirmed deletion.',
+      },
+    });
+
+    const saved = store.getBySubscriptionId(imported.subscription.subscriptionId);
+    expect(result.matchedSubscriptions).toBe(1);
+    expect(saved?.wsKeyStatus).toBe('revoked');
+    expect(saved?.groupKeyStatus).toBe('revoked');
+    expect(saved?.sseStatus).toBe('disabled');
+    expect(saved?.lastErrorCode).toBe('workspace_access_revoked');
+    expect(saved?.lastRecordPullResult?.message).toContain('self-index tombstone');
+    expect(saved?.lastRecordPullResult?.details?.state).toMatchObject({
+      deleted: true,
+      status: 'deleted',
+      source_33357_event_id: 'event-revoked-1',
+    });
+
+    const workspaces = profilePolicyStore.listWorkspacesForProfile(instanceIdentity.npub, 'npub1manager');
+    expect(workspaces[0]?.relayOnboardingStatus).toBe('deleted');
+  });
+
   test('rejects missing or foreign Agent Profile ids before importing Agent Connect packages', async () => {
     const dbPath = makeTempDb();
     const botKeys = new Map([['npub1botone', makeBotKeyRecord('npub1botone')]]);

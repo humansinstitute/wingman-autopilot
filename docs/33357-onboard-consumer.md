@@ -1,7 +1,7 @@
 # Autopilot 33357 Onboarding Consumer
 
 Status: design draft
-Last updated: 2026-06-06
+Last updated: 2026-06-08
 
 ## Purpose
 
@@ -15,12 +15,12 @@ The shared contract lives in:
 ```
 
 Autopilot's role is to notice onboarding events addressed to an agent npub,
-decrypt them, import the enclosed Agent Connect package, verify access with
-Tower, and then hydrate the workspace context through Yoke/Tower.
+decrypt them, verify the current workspace state with Tower, import active
+Agent Connect grants, and then hydrate the workspace context through Yoke/Tower.
 
 ## Semantic Model
 
-Kind `33357` means:
+Kind `33357` active grants mean:
 
 > This agent npub has been onboarded to a Flight Deck-compatible app. Decrypt
 > the payload, verify with Tower, then sync current workspace context.
@@ -34,6 +34,11 @@ It does not mean:
 
 Tower remains the source of truth for access. Nostr is only the announcement
 transport.
+
+Kind `33357` revoked or deleted lifecycle messages are also advisory. Autopilot
+must verify the current workspace state with Tower before changing local
+connection state, suppressing workspace events, or refreshing its local
+kind `33356` self-index equivalent.
 
 ## Event Filter
 
@@ -49,7 +54,8 @@ kind: 33357
 The event content is encrypted to the agent pubkey from the `p` tag.
 
 Events that fail tag validation, decrypt, JSON parse, payload validation, or
-Tower verification should be recorded as diagnostics and ignored for import.
+Tower verification should be recorded as diagnostics and ignored for import or
+revocation.
 
 ## Payload Handling
 
@@ -71,6 +77,17 @@ After decrypting, Autopilot expects:
 Autopilot should reuse the current Agent Connect import validation rather than
 creating a second workspace credential model.
 
+The lifecycle `action` may be:
+
+- `grant`: active onboarding. A missing action is treated as `grant` for
+  compatibility with existing onboarding events.
+- `revoked`: recipient workspace access was removed.
+- `deleted`: workspace deletion. Autopilot normalizes this to a verified deleted
+  local state after Tower confirmation.
+
+Revoked or deleted lifecycle payloads do not need an Agent Connect package
+because they must not create or update workspace credentials.
+
 ## Import Flow
 
 Recommended flow:
@@ -79,8 +96,8 @@ Recommended flow:
 2. Validate cleartext tags.
 3. Decrypt content with the agent key.
 4. Validate payload and expiration.
-5. Run Agent Connect import using the encrypted `agent_connect` package.
-6. Verify Tower access with NIP-98.
+5. Verify Tower access with NIP-98.
+6. Run Agent Connect import using the encrypted `agent_connect` package.
 7. Create or update the backend connection/workspace subscription.
 8. Create or update an Autopilot agent profile for this connection.
 9. Sync the workspace through Yoke or the subscription runtime.
@@ -89,6 +106,26 @@ Recommended flow:
 
 The import must be idempotent. A repeated relay event should update or confirm
 the same backend connection/subscription, not create duplicate workspaces.
+
+## Revocation Flow
+
+Recommended flow for `action: revoked` or `action: deleted`:
+
+1. Receive or poll `33357`.
+2. Validate cleartext tags and decrypt content with the agent key.
+3. Validate the lifecycle payload and workspace identity.
+4. Verify with Tower using the recipient's current NIP-98 identity.
+5. Confirm revocation only when Tower reports deleted, not found, no membership,
+   or denied access for that workspace.
+6. If Tower still confirms access, keep the subscription active and record an
+   unconfirmed revocation diagnostic.
+7. If Tower confirms revocation, mark the local subscription/profile workspace
+   `revoked` or `deleted`, disable SSE for that subscription, and ignore any
+   stale events already in flight.
+8. Refresh Autopilot's local kind `33356` self-index equivalent as a tombstone
+   diagnostic with the source `33357` event id and Tower verification result.
+
+A relay revocation by itself must not disconnect a workspace.
 
 ## Agent Profile Creation
 
@@ -284,6 +321,9 @@ relay traffic manually:
 - Yoke sync status;
 - `llms_url` fetch status;
 - idempotency key for handled grants.
+- unconfirmed revocation events where Tower still reports access;
+- confirmed revoked/deleted workspaces hidden from the normal connection list;
+- local self-index tombstone refresh state after confirmed removal.
 
 Do not log decrypted connection tokens.
 

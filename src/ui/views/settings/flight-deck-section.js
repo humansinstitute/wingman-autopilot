@@ -162,6 +162,58 @@ function isExplicitOnboardedWorkspace(subscription) {
   return subscription?.onboardingSource === 'nostr_33357';
 }
 
+function isRevokedOrDeletedWorkspace(subscription) {
+  const onboardingStatus = subscription?.profileWorkspace?.workspace?.relayOnboardingStatus;
+  return onboardingStatus === 'revoked'
+    || onboardingStatus === 'deleted'
+    || subscription?.wsKeyStatus === 'revoked'
+    || subscription?.groupKeyStatus === 'revoked'
+    || subscription?.lastErrorCode === 'workspace_access_revoked';
+}
+
+function isExplicitActiveOnboardedWorkspace(subscription) {
+  return isExplicitOnboardedWorkspace(subscription) && !isRevokedOrDeletedWorkspace(subscription);
+}
+
+function createDiagnosticHistorySection(subscriptions) {
+  const diagnostics = document.createElement('section');
+  diagnostics.className = 'wm-card';
+  diagnostics.style.cssText = 'padding:14px;margin-top:12px;';
+  diagnostics.setAttribute('data-testid', 'flight-deck-diagnostics-history');
+
+  const heading = document.createElement('h3');
+  heading.textContent = 'Diagnostics';
+  diagnostics.append(heading);
+
+  subscriptions.forEach((subscription) => {
+    const status = subscription?.profileWorkspace?.workspace?.relayOnboardingStatus
+      || subscription?.lastAuthResult?.details?.tower_result
+      || 'revoked';
+    const row = document.createElement('div');
+    row.style.cssText = 'padding:10px 0;border-top:1px solid rgba(255,255,255,0.08);';
+    row.setAttribute('data-testid', `flight-deck-diagnostic-${subscription?.subscriptionId || 'unknown'}`);
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-weight:700;word-break:break-word;';
+    title.textContent = resolveWorkspaceTitle(subscription);
+
+    const detail = document.createElement('p');
+    detail.className = 'wm-settings__port-note';
+    detail.textContent = [
+      `Onboarding ${titleCaseStatus(status)}`,
+      subscription?.lastAuthResult?.message || subscription?.lastRecordPullResult?.message || '',
+      subscription?.lastAuthResult?.details?.source_33357_event_id
+        ? `event ${shortenIdentifier(subscription.lastAuthResult.details.source_33357_event_id)}`
+        : '',
+    ].filter(Boolean).join(' · ');
+
+    row.append(title, detail);
+    diagnostics.append(row);
+  });
+
+  return diagnostics;
+}
+
 export function createFlightDeckConnectionsPanel({
   subscriptions,
   backendConnections = [],
@@ -171,7 +223,9 @@ export function createFlightDeckConnectionsPanel({
   onManageDispatch,
   onRefresh,
 } = {}) {
-  const list = Array.isArray(subscriptions) ? subscriptions.filter(isExplicitOnboardedWorkspace) : [];
+  const explicitList = Array.isArray(subscriptions) ? subscriptions.filter(isExplicitOnboardedWorkspace) : [];
+  const list = explicitList.filter(isExplicitActiveOnboardedWorkspace);
+  const diagnosticList = explicitList.filter(isRevokedOrDeletedWorkspace);
   const panel = document.createElement('div');
   panel.className = 'wm-settings__flight-deck';
   panel.setAttribute('data-testid', 'flight-deck-settings-panel');
@@ -188,6 +242,7 @@ export function createFlightDeckConnectionsPanel({
     { label: 'Onboarded Workspaces', value: list.length },
     { label: 'Healthy', value: list.filter((subscription) => subscription?.healthStatus === 'healthy').length },
     { label: 'SSE Connected', value: list.filter((subscription) => subscription?.sseStatus === 'connected').length },
+    { label: 'Diagnostics', value: diagnosticList.length },
     { label: 'Default Dispatch', value: list.filter((subscription) => {
       const agent = getAgentForSubscription(subscription, agents);
       return Boolean(agent && countEnabledRoutes(getRoutesForSubscription(subscription, dispatchRoutes)) > 0);
@@ -222,6 +277,9 @@ export function createFlightDeckConnectionsPanel({
     emptyNote.textContent = 'No kind 33357 workspace onboarding events have been imported for this agent.';
     empty.append(emptyHeading, emptyNote);
     panel.append(empty);
+    if (diagnosticList.length > 0) {
+      panel.append(createDiagnosticHistorySection(diagnosticList));
+    }
     return panel;
   }
 
@@ -285,6 +343,10 @@ export function createFlightDeckConnectionsPanel({
     panel.append(card);
   });
 
+  if (diagnosticList.length > 0) {
+    panel.append(createDiagnosticHistorySection(diagnosticList));
+  }
+
   return panel;
 }
 
@@ -314,7 +376,7 @@ export function createFlightDeckSection({ onManageDispatch } = {}) {
         onRefresh: refresh,
       });
       container.replaceChildren(panel, statusLine);
-      const onboardedCount = Array.isArray(subscriptions) ? subscriptions.filter(isExplicitOnboardedWorkspace).length : 0;
+      const onboardedCount = Array.isArray(subscriptions) ? subscriptions.filter(isExplicitActiveOnboardedWorkspace).length : 0;
       statusLine.textContent = `Flight Deck onboarded workspaces refreshed: ${onboardedCount} workspace${onboardedCount === 1 ? '' : 's'}.`;
     } catch (error) {
       const failed = document.createElement('section');

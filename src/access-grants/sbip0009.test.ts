@@ -217,6 +217,93 @@ describe('Flight Deck 33357 onboarding validation', () => {
     expect(syncs).toBe(1);
   });
 
+  test('confirms revoked onboarding with Tower before handling local removal', async () => {
+    const fixture = makeGrantEvent({
+      payload: {
+        action: 'deleted',
+        status: 'deleted',
+        agent_connect_package: undefined,
+        revocation: {
+          reason: 'workspace_deleted',
+          revoked_at: '2026-06-06T00:00:00.000Z',
+          source: 'tower',
+        },
+      },
+    });
+    let imports = 0;
+    let handledVerification = '';
+    let revocationSyncs = 0;
+    const result = await processAccessGrantEvent({
+      event: fixture.event,
+      recipientSecretKey: fixture.recipient.secret,
+      recipientNpub: fixture.recipient.npub,
+      managedByNpub: fixture.recipient.npub,
+      subscriptionManager: {
+        importAgentConnectPackage: async () => {
+          imports += 1;
+          return {};
+        },
+        handleAccessGrantRevocation: async (input) => {
+          handledVerification = input.verification.towerResult;
+          return { updatedSubscriptions: ['sub-1'] };
+        },
+      },
+      fetchImpl: async () => new Response('', { status: 410 }),
+      onPostRevocationSync: async () => {
+        revocationSyncs += 1;
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.code).toBe('revocation_confirmed');
+    expect(handledVerification).toBe('workspace_deleted');
+    expect(imports).toBe(0);
+    expect(revocationSyncs).toBe(1);
+  });
+
+  test('keeps revoked onboarding active when Tower still confirms access', async () => {
+    const fixture = makeGrantEvent({
+      payload: {
+        action: 'revoked',
+        status: 'revoked',
+        agent_connect_package: undefined,
+      },
+    });
+    let imports = 0;
+    let handledConfirmed = true;
+    let revocationSyncs = 0;
+    const result = await processAccessGrantEvent({
+      event: fixture.event,
+      recipientSecretKey: fixture.recipient.secret,
+      recipientNpub: fixture.recipient.npub,
+      managedByNpub: fixture.recipient.npub,
+      subscriptionManager: {
+        importAgentConnectPackage: async () => {
+          imports += 1;
+          return {};
+        },
+        handleAccessGrantRevocation: async (input) => {
+          handledConfirmed = input.verification.confirmed;
+          return { diagnostic: 'recorded' };
+        },
+      },
+      fetchImpl: async () => new Response(JSON.stringify({
+        allowed: true,
+        service_npub: fixture.service.npub,
+        workspace_owner_npub: fixture.workspaceOwner.npub,
+      }), { status: 200 }),
+      onPostRevocationSync: async () => {
+        revocationSyncs += 1;
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('revocation_unconfirmed_access_active');
+    expect(handledConfirmed).toBe(false);
+    expect(imports).toBe(0);
+    expect(revocationSyncs).toBe(0);
+  });
+
   test('rejects mismatched Agent Connect packages after Tower verification and before import', async () => {
     const otherWorkspace = makeIdentity();
     const fixture = makeGrantEvent({
@@ -270,7 +357,6 @@ describe('Flight Deck 33357 onboarding validation', () => {
   test('returns stable stale and inactive diagnostics without import or sync', async () => {
     const cases = [
       { name: 'expired', overrides: { expires_at: '2026-06-05T00:00:00.000Z' }, code: 'stale_event' },
-      { name: 'revoked', overrides: { status: 'revoked' }, code: 'grant_revoked' },
       { name: 'superseded', overrides: { status: 'superseded' }, code: 'grant_superseded' },
     ];
     for (const entry of cases) {

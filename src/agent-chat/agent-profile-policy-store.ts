@@ -40,6 +40,8 @@ export type AgentWorkspaceOnboardingStatus =
   | 'found'
   | 'verified'
   | 'ready'
+  | 'revoked'
+  | 'deleted'
   | 'stale'
   | 'failed';
 
