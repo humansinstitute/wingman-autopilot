@@ -4,7 +4,6 @@ import { normaliseNpub } from "../identity/npub-utils";
 import { identityUserStore } from "../storage/identity-user-store";
 
 const DEFAULT_PROFILE_RELAYS = [
-  "wss://wotr.relatr.xyz",
   "wss://relay.damus.io",
   "wss://relay.primal.net",
   "wss://proxy.nostr-relay.app/8c5723f2601334234e1922d2e842d6bbf209283b07120b3f1d38660915f13793",

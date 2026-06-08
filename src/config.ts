@@ -83,7 +83,6 @@ const DEFAULT_AGENT_MAX = 10;
 const DEFAULT_DIRECTORY = "~/code";
 const DEFAULT_HOST_URL_BASE = "https://host.otherstuff.ai/<port>";
 const DEFAULT_CONNECT_RELAYS = [
-  "wss://wotr.relatr.xyz",
   "wss://relay.damus.io",
   "wss://relay.primal.net",
   "wss://proxy.nostr-relay.app/8c5723f2601334234e1922d2e842d6bbf209283b07120b3f1d38660915f13793",
