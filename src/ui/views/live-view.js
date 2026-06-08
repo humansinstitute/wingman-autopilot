@@ -53,7 +53,7 @@ import {
   syncWriterLayoutOpenForSession,
 } from "../live/writer-panel-state.js";
 import { addNightWatchToggle } from "../nightwatch/cmd-toggle.js";
-import { buildDocsFileDownloadUrl } from "../files/download-url.js";
+import { buildFilesPreviewRoutePath } from "../files/route-url.js";
 import { openFilePicker } from "../modals/file-picker.js";
 import { npubProjectsState } from "../npub-projects/index.js";
 import { state, TERMINAL_CONTROL_ACTIONS } from "../state/index.js";
@@ -210,7 +210,7 @@ export function initLiveView(deps) {
 
   function openPinnedArtifactInNewWindow(filePath) {
     if (!filePath) return;
-    window.open(buildDocsFileDownloadUrl(filePath, { inline: true }), "_blank", "noopener,noreferrer");
+    window.open(buildFilesPreviewRoutePath(filePath), "_blank", "noopener,noreferrer");
   }
 
   function createPinnedArtifactPager(sessionId, pageState) {

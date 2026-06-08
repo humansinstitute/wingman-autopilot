@@ -77,7 +77,7 @@ describe("live-view drawer integration", () => {
 
   test("renders pinned artifact paging with filename, open, and unpin controls", () => {
     expect(source).toContain("removePinnedArtifactApi");
-    expect(source).toContain("buildDocsFileDownloadUrl");
+    expect(source).toContain("buildFilesPreviewRoutePath");
     expect(source).toContain("live-pinned-artifact-page-count");
     expect(source).toContain("live-pinned-artifact-open");
     expect(source).toContain("live-pinned-artifact-unpin");
