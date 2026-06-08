@@ -20,6 +20,8 @@ function makePackage(overrides: Record<string, unknown> = {}) {
     direct_https_url: 'https://tower.example.com/',
     service_npub: 'npub1service',
     workspace_owner_npub: 'npub1workspace',
+    workspace_id: 'workspace-1',
+    workspace_service_npub: 'npub1workspaceservice',
     app_npub: 'npub1app',
   });
   return {
@@ -34,7 +36,11 @@ function makePackage(overrides: Record<string, unknown> = {}) {
       docs_url: 'https://tower.example.com/docs',
       health_url: 'https://tower.example.com/health',
     },
-    workspace: { owner_npub: 'npub1workspace' },
+    workspace: {
+      owner_npub: 'npub1workspace',
+      workspace_id: 'workspace-1',
+      workspace_service_npub: 'npub1workspaceservice',
+    },
     app: { app_npub: 'npub1app', schema_namespace: 'cowork' },
     connection_token: connectionToken,
     capabilities: ['chat_intercept', 'task_dispatch'],
@@ -99,6 +105,9 @@ describe('Agent Connect import validation', () => {
     expect(validation.service.directHttpsUrl).toBe('https://tower.example.com');
     expect(validation.capabilityDefaults).toEqual(['chat_intercept', 'task_dispatch']);
     expect(result.subscriptionInput.backendConnectionId).toBe('backend-1');
+    expect(result.subscriptionInput.towerServiceNpub).toBe('npub1service');
+    expect(result.subscriptionInput.workspaceId).toBe('workspace-1');
+    expect(result.subscriptionInput.workspaceServiceNpub).toBe('npub1workspaceservice');
     expect(result.subscriptionInput.workspaceOwnerNpub).toBe('npub1workspace');
     expect(result.subscriptionInput.sourceAppNpub).toBe('npub1app');
     expect(result.subscriptionInput.connectionTokenRef).toStartWith('agent-connect:npub1workspace:npub1app:');
@@ -109,6 +118,8 @@ describe('Agent Connect import validation', () => {
       direct_https_url: 'https://tower.example.com',
       service_npub: 'npub1other',
       workspace_owner_npub: 'npub1workspace',
+      workspace_id: 'workspace-1',
+      workspace_service_npub: 'npub1workspaceservice',
       app_npub: 'npub1app',
     });
 
@@ -116,6 +127,22 @@ describe('Agent Connect import validation', () => {
       managedByNpub: 'npub1manager',
       packageJson: makePackage({ connection_token: badToken }),
     })).toThrow('service npub');
+  });
+
+  test('rejects optional workspace identity mismatches when Agent Connect provides them', () => {
+    const badToken = encodeToken({
+      direct_https_url: 'https://tower.example.com',
+      service_npub: 'npub1service',
+      workspace_owner_npub: 'npub1workspace',
+      workspace_id: 'workspace-1',
+      workspace_service_npub: 'npub1otherworkspace',
+      app_npub: 'npub1app',
+    });
+
+    expect(() => validateAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makePackage({ connection_token: badToken }),
+    })).toThrow('workspace service npub');
   });
 
   test('checks backend health successfully when health URL is available', async () => {

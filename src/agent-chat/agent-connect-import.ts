@@ -18,6 +18,8 @@ export interface AgentConnectValidationResult {
   managedByNpub: string;
   service: AgentConnectServiceInput;
   workspaceOwnerNpub: string;
+  workspaceId: string | null;
+  workspaceServiceNpub: string | null;
   sourceAppNpub: string;
   sourceAppSchemaNamespace: string | null;
   supportedVersion: string;
@@ -163,6 +165,8 @@ export function validateAgentConnectPackage(input: {
   assertEqualWhenPresent('backend URL', directHttpsUrl, getString(token.direct_https_url), { url: true });
   assertEqualWhenPresent('service npub', getString(service?.service_npub), getString(token.service_npub) ?? getString(token.server_npub));
   assertEqualWhenPresent('workspace owner', workspaceOwnerNpub, getString(token.workspace_owner_npub));
+  assertEqualWhenPresent('workspace id', getString(workspace?.workspace_id), getString(token.workspace_id));
+  assertEqualWhenPresent('workspace service npub', getString(workspace?.workspace_service_npub), getString(token.workspace_service_npub));
   assertEqualWhenPresent('app npub', sourceAppNpub, getString(token.app_npub));
 
   return {
@@ -176,6 +180,8 @@ export function validateAgentConnectPackage(input: {
       healthUrl: getString(service?.health_url),
     },
     workspaceOwnerNpub,
+    workspaceId: getString(workspace?.workspace_id),
+    workspaceServiceNpub: getString(workspace?.workspace_service_npub),
     sourceAppNpub,
     sourceAppSchemaNamespace: getString(app?.schema_namespace),
     supportedVersion: String(version),
@@ -195,6 +201,9 @@ export function buildAgentConnectImportResult(
       managedByNpub: validation.managedByNpub,
       backendConnectionId: backendConnection.backendConnectionId,
       workspaceOwnerNpub: validation.workspaceOwnerNpub,
+      towerServiceNpub: validation.service.serviceNpub,
+      workspaceId: validation.workspaceId,
+      workspaceServiceNpub: validation.workspaceServiceNpub,
       backendBaseUrl: validation.service.directHttpsUrl,
       sourceAppNpub: validation.sourceAppNpub,
       connectionTokenRef: validation.connectionTokenRef,

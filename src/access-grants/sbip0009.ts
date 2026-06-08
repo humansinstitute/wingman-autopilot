@@ -173,6 +173,13 @@ function assertAgentConnectEqual(label: string, left: string | null | undefined,
   }
 }
 
+function assertAgentConnectEqualWhenPresent(label: string, left: string | null | undefined, right: string | null | undefined, options: { url?: boolean } = {}): void {
+  if (!left) {
+    return;
+  }
+  assertAgentConnectEqual(label, left, right, options);
+}
+
 function getObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -411,6 +418,8 @@ function assertAgentConnectMatchesGrant(grant: DecodedAccessGrant): void {
   assertAgentConnectEqual('backend URL', getString(service?.direct_https_url), grant.payload.service.direct_https_url, { url: true });
   assertAgentConnectEqual('service npub', getString(service?.service_npub), grant.serviceNpub);
   assertAgentConnectEqual('workspace owner', getString(workspace?.owner_npub), grant.workspaceOwnerNpub);
+  assertAgentConnectEqualWhenPresent('workspace id', getString(workspace?.workspace_id), getString(grant.payload.workspace.workspace_id));
+  assertAgentConnectEqualWhenPresent('workspace service npub', getString(workspace?.workspace_service_npub), grant.workspaceServiceNpub);
   assertAgentConnectEqual('app npub', getString(app?.app_npub), grant.appNpub);
   const packageNamespace = getString(app?.namespace) ?? getString(app?.schema_namespace);
   if (packageNamespace) {
@@ -420,6 +429,8 @@ function assertAgentConnectMatchesGrant(grant: DecodedAccessGrant): void {
   assertAgentConnectEqual('token backend URL', getString(token.direct_https_url), grant.payload.service.direct_https_url, { url: true });
   assertAgentConnectEqual('token service npub', getString(token.service_npub) ?? getString(token.server_npub), grant.serviceNpub);
   assertAgentConnectEqual('token workspace owner', getString(token.workspace_owner_npub), grant.workspaceOwnerNpub);
+  assertAgentConnectEqualWhenPresent('token workspace id', getString(token.workspace_id), getString(grant.payload.workspace.workspace_id));
+  assertAgentConnectEqualWhenPresent('token workspace service npub', getString(token.workspace_service_npub), grant.workspaceServiceNpub);
   assertAgentConnectEqual('token app npub', getString(token.app_npub), grant.appNpub);
 }
 

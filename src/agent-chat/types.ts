@@ -133,6 +133,9 @@ export interface WorkspaceSubscriptionRecord {
   backendConnectionId?: string | null;
   workspaceOwnerNpub: string;
   backendBaseUrl: string;
+  towerServiceNpub?: string | null;
+  workspaceId?: string | null;
+  workspaceServiceNpub?: string | null;
   botNpub: string;
   sourceAppNpub: string;
   onboardingSource: WorkspaceOnboardingSource;
@@ -214,6 +217,9 @@ export interface CreateWorkspaceSubscriptionInput {
   managedByNpub: string;
   workspaceOwnerNpub: string;
   backendBaseUrl: string;
+  towerServiceNpub?: string | null;
+  workspaceId?: string | null;
+  workspaceServiceNpub?: string | null;
   sourceAppNpub: string;
   onboardingSource?: WorkspaceOnboardingSource;
   backendConnectionId?: string | null;

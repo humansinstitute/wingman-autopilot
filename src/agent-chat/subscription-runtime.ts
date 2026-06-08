@@ -1270,6 +1270,11 @@ export class WorkspaceSubscriptionManager {
     const sourceAppNpub = getOptionalText(input.sourceAppNpub)
       ?? requestedBackendConnection?.setupSourceAppNpub
       ?? '';
+    const towerServiceNpub = getOptionalText(input.towerServiceNpub)
+      ?? requestedBackendConnection?.serviceNpub
+      ?? null;
+    const workspaceId = getOptionalText(input.workspaceId);
+    const workspaceServiceNpub = getOptionalText(input.workspaceServiceNpub);
     const sourceAppSchemaNamespace = getOptionalText(input.sourceAppSchemaNamespace)
       ?? requestedBackendConnection?.setupSourceAppSchemaNamespace
       ?? null;
@@ -1296,6 +1301,7 @@ export class WorkspaceSubscriptionManager {
       ?? await this.createOrReuseBackendConnection({
           managedByNpub: input.managedByNpub,
           backendBaseUrl,
+          serviceNpub: towerServiceNpub,
           setupWorkspaceOwnerNpub: workspaceOwnerNpub,
           setupSourceAppNpub: sourceAppNpub,
           setupSourceAppSchemaNamespace: sourceAppSchemaNamespace,
@@ -1311,10 +1317,20 @@ export class WorkspaceSubscriptionManager {
       sourceAppNpub,
       botNpub: botIdentity.botNpub,
       agentProfileId: agentProfile?.agentId ?? input.agentProfileId ?? null,
+      towerServiceNpub,
+      workspaceId,
+      workspaceServiceNpub,
     });
     const legacyRecord = this.store.getByWorkspaceAndBot(workspaceOwnerNpub, botIdentity.botNpub);
+    const legacyIdentityCompatible = Boolean(
+      legacyRecord
+      && (!towerServiceNpub || !legacyRecord.towerServiceNpub || legacyRecord.towerServiceNpub === towerServiceNpub)
+      && (!workspaceId || !legacyRecord.workspaceId || legacyRecord.workspaceId === workspaceId)
+      && (!workspaceServiceNpub || !legacyRecord.workspaceServiceNpub || legacyRecord.workspaceServiceNpub === workspaceServiceNpub)
+    );
     const canReuseLegacyRecord = Boolean(
       legacyRecord
+      && legacyIdentityCompatible
       && (!legacyRecord.managedByNpub || legacyRecord.managedByNpub === input.managedByNpub)
       && legacyRecord.sourceAppNpub === sourceAppNpub
       && (
@@ -1331,6 +1347,9 @@ export class WorkspaceSubscriptionManager {
         managedByNpub: input.managedByNpub,
         workspaceOwnerNpub,
         backendBaseUrl: subscriptionBackendBaseUrl,
+        towerServiceNpub,
+        workspaceId,
+        workspaceServiceNpub,
         botNpub: botIdentity.botNpub,
         sourceAppNpub,
         backendConnectionId: backendConnection?.backendConnectionId ?? null,
@@ -1345,6 +1364,9 @@ export class WorkspaceSubscriptionManager {
 
     record.backendConnectionId = backendConnection?.backendConnectionId ?? record.backendConnectionId ?? null;
     record.backendBaseUrl = subscriptionBackendBaseUrl;
+    record.towerServiceNpub = towerServiceNpub ?? record.towerServiceNpub ?? backendConnection?.serviceNpub ?? null;
+    record.workspaceId = workspaceId ?? record.workspaceId ?? null;
+    record.workspaceServiceNpub = workspaceServiceNpub ?? record.workspaceServiceNpub ?? null;
     record.workspaceOwnerNpub = workspaceOwnerNpub;
     record.sourceAppNpub = sourceAppNpub;
     record.onboardingSource = input.onboardingSource ?? record.onboardingSource ?? 'manual';
@@ -1466,12 +1488,32 @@ export class WorkspaceSubscriptionManager {
     selfIndexRefresh: Record<string, unknown> | null;
   }> {
     const expectedBackendUrl = normaliseBackendBaseUrl(input.grant.payload.service.direct_https_url);
+    const expectedTowerServiceNpub = input.grant.serviceNpub;
+    const expectedWorkspaceId = getOptionalText(input.grant.payload.workspace.workspace_id);
+    const expectedWorkspaceServiceNpub = input.grant.workspaceServiceNpub;
     const candidates = this.store.listForManagerNpub(input.managedByNpub).filter((record) => {
       const sameBackend = normaliseBackendBaseUrl(record.backendBaseUrl) === expectedBackendUrl;
+      const backendConnection = record.backendConnectionId
+        ? this.backendStore.getById(record.backendConnectionId)
+        : null;
+      const recordTowerServiceNpub = record.towerServiceNpub ?? backendConnection?.serviceNpub ?? null;
+      const sameTowerService = expectedTowerServiceNpub
+        ? recordTowerServiceNpub === expectedTowerServiceNpub
+        : true;
+      const sameWorkspaceId = expectedWorkspaceId
+        ? record.workspaceId === expectedWorkspaceId
+        : true;
+      const sameWorkspaceService = record.workspaceServiceNpub === expectedWorkspaceServiceNpub;
       const sameWorkspace = record.workspaceOwnerNpub === input.grant.workspaceOwnerNpub;
       const sameApp = record.sourceAppNpub === input.grant.appNpub;
       const sameProfile = input.agentProfileId ? record.agentProfileId === input.agentProfileId : true;
-      return sameBackend && sameWorkspace && sameApp && sameProfile;
+      return sameBackend
+        && sameTowerService
+        && sameWorkspaceId
+        && sameWorkspaceService
+        && sameWorkspace
+        && sameApp
+        && sameProfile;
     });
 
     const updatedSubscriptions: WorkspaceSubscriptionRecord[] = [];

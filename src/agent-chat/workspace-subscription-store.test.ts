@@ -68,6 +68,58 @@ describe('WorkspaceSubscriptionStore', () => {
     expect(store.getBySubscriptionId(record.subscriptionId)?.onboardingSource).toBe('nostr_33357');
   });
 
+  test('scopes same owner and app by explicit workspace identity', () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb());
+    const first = store.save(store.createDefault({
+      managedByNpub: 'npub1manager',
+      backendConnectionId: 'backend-1',
+      workspaceOwnerNpub: 'npub1workspace',
+      backendBaseUrl: 'https://tower.example.com',
+      towerServiceNpub: 'npub1service',
+      workspaceId: 'workspace-one',
+      workspaceServiceNpub: 'npub1workspaceone',
+      botNpub: 'npub1bot',
+      sourceAppNpub: 'npub1app',
+      agentProfileId: 'wm-one',
+    }));
+    const second = store.save(store.createDefault({
+      managedByNpub: 'npub1manager',
+      backendConnectionId: 'backend-1',
+      workspaceOwnerNpub: 'npub1workspace',
+      backendBaseUrl: 'https://tower.example.com',
+      towerServiceNpub: 'npub1service',
+      workspaceId: 'workspace-two',
+      workspaceServiceNpub: 'npub1workspacetwo',
+      botNpub: 'npub1bot',
+      sourceAppNpub: 'npub1app',
+      agentProfileId: 'wm-one',
+    }));
+
+    expect(first.subscriptionId).not.toBe(second.subscriptionId);
+    expect(store.getBySubscriptionScope({
+      managedByNpub: 'npub1manager',
+      backendConnectionId: 'backend-1',
+      workspaceOwnerNpub: 'npub1workspace',
+      sourceAppNpub: 'npub1app',
+      botNpub: 'npub1bot',
+      agentProfileId: 'wm-one',
+      towerServiceNpub: 'npub1service',
+      workspaceId: 'workspace-one',
+      workspaceServiceNpub: 'npub1workspaceone',
+    })?.subscriptionId).toBe(first.subscriptionId);
+    expect(store.getBySubscriptionScope({
+      managedByNpub: 'npub1manager',
+      backendConnectionId: 'backend-1',
+      workspaceOwnerNpub: 'npub1workspace',
+      sourceAppNpub: 'npub1app',
+      botNpub: 'npub1bot',
+      agentProfileId: 'wm-one',
+      towerServiceNpub: 'npub1service',
+      workspaceId: 'workspace-two',
+      workspaceServiceNpub: 'npub1workspacetwo',
+    })?.subscriptionId).toBe(second.subscriptionId);
+  });
+
   test('allows one manager to subscribe to the same workspace app on separate towers', () => {
     const store = new WorkspaceSubscriptionStore(makeTempDb());
     const first = store.save(store.createDefault({

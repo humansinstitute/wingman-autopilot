@@ -48,6 +48,7 @@ function makeGrantEvent(overrides: {
     direct_https_url: 'https://tower.example.com',
     service_npub: service.npub,
     workspace_owner_npub: workspaceOwner.npub,
+    workspace_service_npub: workspaceService.npub,
     app_npub: app.npub,
   });
   const agentConnectPackage = {
@@ -59,7 +60,11 @@ function makeGrantEvent(overrides: {
       service_npub: service.npub,
       relay_urls: ['wss://relay.example'],
     },
-    workspace: { owner_npub: workspaceOwner.npub },
+    workspace: {
+      owner_npub: workspaceOwner.npub,
+      workspace_service_npub: workspaceService.npub,
+      workspace_id: null,
+    },
     app: { app_npub: app.npub, app_pubkey: app.pubkey },
     connection_token: connectionToken,
     capabilities: ['task_dispatch'],

@@ -119,9 +119,12 @@ Recommended flow for `action: revoked` or `action: deleted`:
    or denied access for that workspace.
 6. If Tower still confirms access, keep the subscription active and record an
    unconfirmed revocation diagnostic.
-7. If Tower confirms revocation, mark the local subscription/profile workspace
-   `revoked` or `deleted`, disable SSE for that subscription, and ignore any
-   stale events already in flight.
+7. If Tower confirms revocation, match the local subscription/profile workspace
+   by normalized Tower base URL, Tower service npub, workspace owner, Flight
+   Deck app npub, agent profile, workspace service npub, and workspace id when
+   the event provides one. Then mark only that exact workspace `revoked` or
+   `deleted`, disable SSE for that subscription, and ignore any stale events
+   already in flight.
 8. Refresh Autopilot's local kind `33356` self-index equivalent as a tombstone
    diagnostic with the source `33357` event id and Tower verification result.
 

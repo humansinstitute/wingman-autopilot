@@ -26,6 +26,9 @@ function makeSubscription(overrides: Partial<WorkspaceSubscriptionRecord> = {}):
     backendConnectionId: 'backend-1',
     workspaceOwnerNpub: 'npub1workspace',
     backendBaseUrl: 'https://tower.example.com',
+    towerServiceNpub: 'npub1service',
+    workspaceId: 'workspace-1',
+    workspaceServiceNpub: 'npub1workspaceservice',
     botNpub: 'npub1botone',
     sourceAppNpub: 'npub1app',
     connectionTokenRef: 'agent-connect:one',
@@ -116,6 +119,9 @@ describe('AgentProfilePolicyStore', () => {
     expect(second.workspace.profileWorkspaceId).toBe(first.workspace.profileWorkspaceId);
     expect(second.workspace.connectionHealth).toBe('degraded');
     expect(second.workspace.relayOnboardingStatus).toBe('verified');
+    expect(second.workspace.towerServiceNpub).toBe('npub1service');
+    expect(second.workspace.workspaceId).toBe('workspace-1');
+    expect(second.workspace.workspaceServiceNpub).toBe('npub1workspaceservice');
     expect(second.policies).toHaveLength(10);
     expect(second.policies.find((policy) => policy.eventType === 'chat_mention')).toMatchObject({
       enabled: true,

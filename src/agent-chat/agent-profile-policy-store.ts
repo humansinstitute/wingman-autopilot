@@ -68,6 +68,9 @@ export interface AgentProfileWorkspaceRecord {
   workspaceOwnerNpub: string;
   sourceAppNpub: string;
   backendBaseUrl: string;
+  towerServiceNpub: string | null;
+  workspaceId: string | null;
+  workspaceServiceNpub: string | null;
   workspaceTitle: string | null;
   appPubkey: string | null;
   towerUrl: string;
@@ -167,6 +170,11 @@ function jsonString(value: unknown): string | null {
 function textOrNull(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function hasColumn(db: Database, tableName: string, columnName: string): boolean {
+  const rows = db.query(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: string }>;
+  return rows.some((row) => row.name === columnName);
 }
 
 function stableWorkspaceId(input: {
@@ -321,6 +329,9 @@ class AgentProfilePolicyStore {
       workspaceOwnerNpub: input.subscription.workspaceOwnerNpub,
       sourceAppNpub: input.subscription.sourceAppNpub,
       backendBaseUrl: input.subscription.backendBaseUrl,
+      towerServiceNpub: input.subscription.towerServiceNpub ?? input.backendConnection?.serviceNpub ?? null,
+      workspaceId: input.subscription.workspaceId ?? null,
+      workspaceServiceNpub: input.subscription.workspaceServiceNpub ?? null,
       workspaceTitle: existingWorkspace?.workspaceTitle ?? null,
       appPubkey: input.subscription.sourceAppNpub,
       towerUrl: input.backendConnection?.backendBaseUrl ?? input.subscription.backendBaseUrl,
@@ -359,6 +370,7 @@ class AgentProfilePolicyStore {
     const row = this.db.query(
       `SELECT profile_workspace_id, profile_id, managed_by_npub, subscription_id,
               backend_connection_id, workspace_owner_npub, source_app_npub, backend_base_url,
+              tower_service_npub, workspace_id, workspace_service_npub,
               workspace_title, app_pubkey, tower_url, connection_health, yoke_sync_status,
               relay_onboarding_status, default_pipeline_definition_id, workspace_context,
               created_at, updated_at
@@ -373,6 +385,7 @@ class AgentProfilePolicyStore {
     return this.db.query(
       `SELECT profile_workspace_id, profile_id, managed_by_npub, subscription_id,
               backend_connection_id, workspace_owner_npub, source_app_npub, backend_base_url,
+              tower_service_npub, workspace_id, workspace_service_npub,
               workspace_title, app_pubkey, tower_url, connection_health, yoke_sync_status,
               relay_onboarding_status, default_pipeline_definition_id, workspace_context,
               created_at, updated_at
@@ -828,14 +841,18 @@ class AgentProfilePolicyStore {
       `INSERT INTO agent_profile_workspaces (
          profile_workspace_id, profile_id, managed_by_npub, subscription_id,
          backend_connection_id, workspace_owner_npub, source_app_npub, backend_base_url,
+         tower_service_npub, workspace_id, workspace_service_npub,
          workspace_title, app_pubkey, tower_url, connection_health, yoke_sync_status,
          relay_onboarding_status, default_pipeline_definition_id, workspace_context,
          created_at, updated_at
-       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
        ON CONFLICT(profile_workspace_id) DO UPDATE SET
          subscription_id = excluded.subscription_id,
          backend_connection_id = excluded.backend_connection_id,
          backend_base_url = excluded.backend_base_url,
+         tower_service_npub = excluded.tower_service_npub,
+         workspace_id = excluded.workspace_id,
+         workspace_service_npub = excluded.workspace_service_npub,
          workspace_title = excluded.workspace_title,
          tower_url = excluded.tower_url,
          connection_health = excluded.connection_health,
@@ -853,6 +870,9 @@ class AgentProfilePolicyStore {
       record.workspaceOwnerNpub,
       record.sourceAppNpub,
       record.backendBaseUrl,
+      record.towerServiceNpub,
+      record.workspaceId,
+      record.workspaceServiceNpub,
       record.workspaceTitle,
       record.appPubkey,
       record.towerUrl,
@@ -910,6 +930,9 @@ class AgentProfilePolicyStore {
       workspaceOwnerNpub: row.workspace_owner_npub!,
       sourceAppNpub: row.source_app_npub!,
       backendBaseUrl: row.backend_base_url!,
+      towerServiceNpub: row.tower_service_npub ?? null,
+      workspaceId: row.workspace_id ?? null,
+      workspaceServiceNpub: row.workspace_service_npub ?? null,
       workspaceTitle: row.workspace_title ?? null,
       appPubkey: row.app_pubkey ?? null,
       towerUrl: row.tower_url!,
@@ -963,6 +986,9 @@ class AgentProfilePolicyStore {
         workspace_owner_npub TEXT NOT NULL,
         source_app_npub TEXT NOT NULL,
         backend_base_url TEXT NOT NULL,
+        tower_service_npub TEXT,
+        workspace_id TEXT,
+        workspace_service_npub TEXT,
         workspace_title TEXT,
         app_pubkey TEXT,
         tower_url TEXT NOT NULL,
@@ -1025,6 +1051,16 @@ class AgentProfilePolicyStore {
           ON DELETE CASCADE
       );
     `);
+
+    if (!hasColumn(this.db, 'agent_profile_workspaces', 'tower_service_npub')) {
+      this.db.exec('ALTER TABLE agent_profile_workspaces ADD COLUMN tower_service_npub TEXT');
+    }
+    if (!hasColumn(this.db, 'agent_profile_workspaces', 'workspace_id')) {
+      this.db.exec('ALTER TABLE agent_profile_workspaces ADD COLUMN workspace_id TEXT');
+    }
+    if (!hasColumn(this.db, 'agent_profile_workspaces', 'workspace_service_npub')) {
+      this.db.exec('ALTER TABLE agent_profile_workspaces ADD COLUMN workspace_service_npub TEXT');
+    }
   }
 }
 

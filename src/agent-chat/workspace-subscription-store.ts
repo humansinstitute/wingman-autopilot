@@ -84,6 +84,9 @@ class WorkspaceSubscriptionStore {
     sourceAppNpub: string;
     botNpub: string;
     agentProfileId?: string | null;
+    towerServiceNpub?: string | null;
+    workspaceId?: string | null;
+    workspaceServiceNpub?: string | null;
   }): WorkspaceSubscriptionRecord | null {
     return this.getWhere(
       `(backend_connection_id = ?1 OR (?1 IS NULL AND backend_connection_id IS NULL))
@@ -91,7 +94,10 @@ class WorkspaceSubscriptionStore {
         AND workspace_owner_npub = ?3
         AND source_app_npub = ?4
         AND bot_npub = ?5
-        AND (agent_profile_id = ?6 OR (?6 IS NULL AND agent_profile_id IS NULL))`,
+        AND (agent_profile_id = ?6 OR (?6 IS NULL AND agent_profile_id IS NULL))
+        AND (?7 IS NULL OR tower_service_npub = ?7 OR tower_service_npub IS NULL)
+        AND (?8 IS NULL OR workspace_id = ?8 OR workspace_id IS NULL)
+        AND (?9 IS NULL OR workspace_service_npub = ?9 OR workspace_service_npub IS NULL)`,
       [
         input.backendConnectionId ?? null,
         input.managedByNpub,
@@ -99,6 +105,9 @@ class WorkspaceSubscriptionStore {
         input.sourceAppNpub,
         input.botNpub,
         input.agentProfileId ?? null,
+        input.towerServiceNpub ?? null,
+        input.workspaceId ?? null,
+        input.workspaceServiceNpub ?? null,
       ],
     );
   }
@@ -109,6 +118,9 @@ class WorkspaceSubscriptionStore {
       record.backendConnectionId ?? null,
       record.workspaceOwnerNpub,
       record.backendBaseUrl,
+      record.towerServiceNpub ?? null,
+      record.workspaceId ?? null,
+      record.workspaceServiceNpub ?? null,
       record.botNpub,
       record.sourceAppNpub,
       record.onboardingSource ?? 'manual',
@@ -148,7 +160,8 @@ class WorkspaceSubscriptionStore {
 
     this.db.query(
       `INSERT INTO workspace_subscriptions (
-         subscription_id, backend_connection_id, workspace_owner_npub, backend_base_url, bot_npub, source_app_npub,
+         subscription_id, backend_connection_id, workspace_owner_npub, backend_base_url,
+         tower_service_npub, workspace_id, workspace_service_npub, bot_npub, source_app_npub,
          onboarding_source, connection_token_ref, agent_profile_id, source_app_schema_namespace, capability_defaults_json,
          dispatch_route_ids_json, last_sync_cursor, last_pipeline_run_id,
          ws_key_npub, ws_key_status, group_key_status, sse_status, health_status,
@@ -159,19 +172,23 @@ class WorkspaceSubscriptionStore {
          last_sse_event_json, recent_sse_events_json, recent_dispatches_json, last_successful_startup_reload_at
        ) VALUES (
          ?1, ?2, ?3, ?4, ?5, ?6,
-         ?7, ?8, ?9, ?10, ?11,
-         ?12, ?13, ?14,
-         ?15, ?16, ?17, ?18, ?19,
-         ?20, ?21, ?22, ?23,
-         ?24, ?25, ?26, ?27, ?28,
-         ?29, ?30, ?31,
-         ?32, ?33, ?34, ?35,
-         ?36, ?37, ?38, ?39
+         ?7, ?8, ?9,
+         ?10, ?11, ?12, ?13, ?14,
+         ?15, ?16, ?17,
+         ?18, ?19, ?20, ?21, ?22,
+         ?23, ?24, ?25, ?26,
+         ?27, ?28, ?29, ?30, ?31,
+         ?32, ?33, ?34,
+         ?35, ?36, ?37, ?38,
+         ?39, ?40, ?41, ?42
        )
        ON CONFLICT(subscription_id) DO UPDATE SET
          backend_connection_id = excluded.backend_connection_id,
          workspace_owner_npub = excluded.workspace_owner_npub,
          backend_base_url = excluded.backend_base_url,
+         tower_service_npub = excluded.tower_service_npub,
+         workspace_id = excluded.workspace_id,
+         workspace_service_npub = excluded.workspace_service_npub,
          bot_npub = excluded.bot_npub,
          source_app_npub = excluded.source_app_npub,
          onboarding_source = excluded.onboarding_source,
@@ -215,6 +232,9 @@ class WorkspaceSubscriptionStore {
     managedByNpub: string;
     workspaceOwnerNpub: string;
     backendBaseUrl: string;
+    towerServiceNpub?: string | null;
+    workspaceId?: string | null;
+    workspaceServiceNpub?: string | null;
     botNpub: string;
     sourceAppNpub: string;
     backendConnectionId?: string | null;
@@ -232,6 +252,9 @@ class WorkspaceSubscriptionStore {
       backendConnectionId: input.backendConnectionId ?? null,
       workspaceOwnerNpub: input.workspaceOwnerNpub,
       backendBaseUrl: input.backendBaseUrl,
+      towerServiceNpub: input.towerServiceNpub ?? null,
+      workspaceId: input.workspaceId ?? null,
+      workspaceServiceNpub: input.workspaceServiceNpub ?? null,
       botNpub: input.botNpub,
       sourceAppNpub: input.sourceAppNpub,
       onboardingSource: input.onboardingSource ?? 'manual',
@@ -285,6 +308,9 @@ class WorkspaceSubscriptionStore {
            backend_connection_id,
            workspace_owner_npub,
            backend_base_url,
+           tower_service_npub,
+           workspace_id,
+           workspace_service_npub,
            bot_npub,
            source_app_npub,
            onboarding_source,
@@ -336,6 +362,9 @@ class WorkspaceSubscriptionStore {
            backend_connection_id,
            workspace_owner_npub,
            backend_base_url,
+           tower_service_npub,
+           workspace_id,
+           workspace_service_npub,
            bot_npub,
            source_app_npub,
            onboarding_source,
@@ -385,6 +414,9 @@ class WorkspaceSubscriptionStore {
       backendConnectionId: row.backend_connection_id ?? null,
       workspaceOwnerNpub: row.workspace_owner_npub!,
       backendBaseUrl: row.backend_base_url!,
+      towerServiceNpub: row.tower_service_npub ?? null,
+      workspaceId: row.workspace_id ?? null,
+      workspaceServiceNpub: row.workspace_service_npub ?? null,
       botNpub: row.bot_npub!,
       sourceAppNpub: row.source_app_npub!,
       onboardingSource: row.onboarding_source as WorkspaceSubscriptionRecord['onboardingSource'] || 'manual',
@@ -430,6 +462,9 @@ class WorkspaceSubscriptionStore {
         backend_connection_id TEXT,
         workspace_owner_npub TEXT NOT NULL,
         backend_base_url TEXT NOT NULL,
+        tower_service_npub TEXT,
+        workspace_id TEXT,
+        workspace_service_npub TEXT,
         bot_npub TEXT NOT NULL,
         source_app_npub TEXT NOT NULL,
         onboarding_source TEXT NOT NULL DEFAULT 'manual',
@@ -525,8 +560,18 @@ class WorkspaceSubscriptionStore {
     if (!hasColumn(this.db, 'workspace_subscriptions', 'last_pipeline_run_id')) {
       this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN last_pipeline_run_id TEXT');
     }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'tower_service_npub')) {
+      this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN tower_service_npub TEXT');
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'workspace_id')) {
+      this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN workspace_id TEXT');
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'workspace_service_npub')) {
+      this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN workspace_service_npub TEXT');
+    }
     this.db.exec(`
       DROP INDEX IF EXISTS idx_workspace_subscriptions_workspace_bot;
+      DROP INDEX IF EXISTS idx_workspace_subscriptions_scope;
 
       CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_subscriptions_scope
         ON workspace_subscriptions(
@@ -534,6 +579,9 @@ class WorkspaceSubscriptionStore {
           managed_by_npub,
           agent_profile_id,
           workspace_owner_npub,
+          tower_service_npub,
+          workspace_id,
+          workspace_service_npub,
           source_app_npub,
           bot_npub
         );

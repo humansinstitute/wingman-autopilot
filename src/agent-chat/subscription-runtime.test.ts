@@ -54,6 +54,47 @@ function makeConnectPackage(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeConnectPackageForWorkspace(workspaceId: string, workspaceServiceNpub: string) {
+  return makeConnectPackage({
+    workspace: {
+      owner_npub: 'npub1workspace',
+      workspace_id: workspaceId,
+      workspace_service_npub: workspaceServiceNpub,
+    },
+  });
+}
+
+function makeRevokedAccessGrant(input: {
+  eventId: string;
+  workspaceId: string;
+  workspaceServiceNpub: string;
+  action?: 'revoked' | 'deleted';
+  reason?: string;
+}) {
+  return {
+    event: { id: input.eventId },
+    recipientNpub: 'npub1wingmanbot',
+    payload: {
+      action: input.action ?? 'deleted',
+      app: { app_npub: 'npub1sourceapp', namespace: 'flightdeck_pg' },
+      service: {
+        direct_https_url: 'https://tower.example.com',
+        service_npub: 'npub1service',
+      },
+      workspace: {
+        owner_npub: 'npub1workspace',
+        workspace_service_npub: input.workspaceServiceNpub,
+        workspace_id: input.workspaceId,
+      },
+      revocation: { reason: input.reason ?? 'workspace_deleted' },
+    },
+    serviceNpub: 'npub1service',
+    workspaceServiceNpub: input.workspaceServiceNpub,
+    workspaceOwnerNpub: 'npub1workspace',
+    appNpub: 'npub1sourceapp',
+  };
+}
+
 function makeBotKeyRecord(botNpub: string): BotKeyStoreRecord {
   const now = new Date().toISOString();
   return {
@@ -522,33 +563,19 @@ describe('WorkspaceSubscriptionManager', () => {
     );
     const imported = await manager.importAgentConnectPackage({
       managedByNpub: 'npub1manager',
-      packageJson: makeConnectPackage(),
+      packageJson: makeConnectPackageForWorkspace('workspace-1', 'npub1workspaceservice'),
       onboardingSource: 'nostr_33357',
     });
 
     const result = await manager.handleAccessGrantRevocation({
       managedByNpub: 'npub1manager',
       grant: {
-        event: { id: 'event-revoked-1' },
+        ...makeRevokedAccessGrant({
+          eventId: 'event-revoked-1',
+          workspaceId: 'workspace-1',
+          workspaceServiceNpub: 'npub1workspaceservice',
+        }),
         recipientNpub: instanceIdentity.npub,
-        payload: {
-          action: 'deleted',
-          app: { app_npub: 'npub1sourceapp', namespace: 'flightdeck_pg' },
-          service: {
-            direct_https_url: 'https://tower.example.com',
-            service_npub: 'npub1service',
-          },
-          workspace: {
-            owner_npub: 'npub1workspace',
-            workspace_service_npub: 'npub1workspaceservice',
-            workspace_id: 'workspace-1',
-          },
-          revocation: { reason: 'workspace_deleted' },
-        },
-        serviceNpub: 'npub1service',
-        workspaceServiceNpub: 'npub1workspaceservice',
-        workspaceOwnerNpub: 'npub1workspace',
-        appNpub: 'npub1sourceapp',
       } as never,
       verification: {
         confirmed: true,
@@ -573,6 +600,111 @@ describe('WorkspaceSubscriptionManager', () => {
 
     const workspaces = profilePolicyStore.listWorkspacesForProfile(instanceIdentity.npub, 'npub1manager');
     expect(workspaces[0]?.relayOnboardingStatus).toBe('deleted');
+  });
+
+  test('records unconfirmed 33357 revocation without disabling SSE or hiding active workspace', async () => {
+    const dbPath = makeTempDb();
+    const instanceIdentity = makeInstanceIdentity();
+    const { manager, store, profilePolicyStore } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      instanceIdentity,
+    );
+    const imported = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackageForWorkspace('workspace-1', 'npub1workspaceservice'),
+      onboardingSource: 'nostr_33357',
+    });
+    store.save({
+      ...imported.subscription,
+      sseStatus: 'connected',
+      healthStatus: 'healthy',
+    });
+
+    const result = await manager.handleAccessGrantRevocation({
+      managedByNpub: 'npub1manager',
+      grant: {
+        ...makeRevokedAccessGrant({
+          eventId: 'event-revoked-unconfirmed',
+          workspaceId: 'workspace-1',
+          workspaceServiceNpub: 'npub1workspaceservice',
+          action: 'revoked',
+          reason: 'workspace_access_revoked',
+        }),
+        recipientNpub: instanceIdentity.npub,
+      } as never,
+      verification: {
+        confirmed: false,
+        towerResult: 'access_active',
+        checkedAt: '2026-06-08T00:00:00.000Z',
+        message: 'Tower still confirms active access.',
+      },
+    });
+
+    const saved = store.getBySubscriptionId(imported.subscription.subscriptionId);
+    const workspaces = profilePolicyStore.listWorkspacesForProfile(instanceIdentity.npub, 'npub1manager');
+    expect(result.matchedSubscriptions).toBe(1);
+    expect(result.selfIndexRefresh).toBeNull();
+    expect(saved?.sseStatus).toBe('connected');
+    expect(saved?.wsKeyStatus).not.toBe('revoked');
+    expect(saved?.lastErrorCode).toBe('workspace_revocation_unconfirmed');
+    expect(saved?.lastAuthResult?.details?.source_33357_event_id).toBe('event-revoked-unconfirmed');
+    expect(workspaces[0]?.relayOnboardingStatus).toBe('ready');
+  });
+
+  test('matches confirmed 33357 revocation to the exact workspace identity only', async () => {
+    const dbPath = makeTempDb();
+    const botKeys = new Map([['npub1botone', makeBotKeyRecord('npub1botone')]]);
+    const { manager, agentStore, store, profilePolicyStore } = createTestManager(dbPath, botKeys);
+    saveAgent(agentStore, { agentId: 'wm-one', botNpub: 'npub1botone', managedByNpub: 'npub1manager' });
+
+    const first = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      agentProfileId: 'wm-one',
+      packageJson: makeConnectPackageForWorkspace('workspace-one', 'npub1workspaceone'),
+      onboardingSource: 'nostr_33357',
+    });
+    const second = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      agentProfileId: 'wm-one',
+      packageJson: makeConnectPackageForWorkspace('workspace-two', 'npub1workspacetwo'),
+      onboardingSource: 'nostr_33357',
+    });
+
+    expect(first.subscription.subscriptionId).not.toBe(second.subscription.subscriptionId);
+
+    const result = await manager.handleAccessGrantRevocation({
+      managedByNpub: 'npub1manager',
+      agentProfileId: 'wm-one',
+      grant: makeRevokedAccessGrant({
+        eventId: 'event-revoked-workspace-two',
+        workspaceId: 'workspace-two',
+        workspaceServiceNpub: 'npub1workspacetwo',
+      }) as never,
+      verification: {
+        confirmed: true,
+        towerResult: 'workspace_deleted',
+        checkedAt: '2026-06-08T00:00:00.000Z',
+        message: 'Tower confirmed deletion.',
+      },
+    });
+
+    const active = store.getBySubscriptionId(first.subscription.subscriptionId);
+    const revoked = store.getBySubscriptionId(second.subscription.subscriptionId);
+    const workspaces = profilePolicyStore.listWorkspacesForProfile('wm-one', 'npub1manager');
+    const workspaceBySubscription = new Map(workspaces.map((workspace) => [workspace.subscriptionId, workspace]));
+
+    expect(result.matchedSubscriptions).toBe(1);
+    expect(result.updatedSubscriptions.map((subscription) => subscription.subscriptionId)).toEqual([
+      second.subscription.subscriptionId,
+    ]);
+    expect(active?.sseStatus).not.toBe('disabled');
+    expect(active?.wsKeyStatus).not.toBe('revoked');
+    expect(revoked?.sseStatus).toBe('disabled');
+    expect(revoked?.wsKeyStatus).toBe('revoked');
+    expect(workspaceBySubscription.get(first.subscription.subscriptionId)?.relayOnboardingStatus).toBe('ready');
+    expect(workspaceBySubscription.get(second.subscription.subscriptionId)?.relayOnboardingStatus).toBe('deleted');
   });
 
   test('rejects missing or foreign Agent Profile ids before importing Agent Connect packages', async () => {
