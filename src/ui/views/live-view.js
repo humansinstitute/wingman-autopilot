@@ -5,7 +5,7 @@
  * Depends on: state, sessions store, navigation, session actions, image attachments (via DI).
  */
 
-import { getSessionDisplayName } from "../core/icons.js";
+import { getSessionDisplayName, setIconButton } from "../core/icons.js";
 import { openTextPromptDialog } from "../common/dialog-prompts.js";
 import { attachCopyButton, copyConversationToClipboard } from "../utils/clipboard.js";
 import { showToast } from "../utils/toast.js";
@@ -53,6 +53,7 @@ import {
   syncWriterLayoutOpenForSession,
 } from "../live/writer-panel-state.js";
 import { addNightWatchToggle } from "../nightwatch/cmd-toggle.js";
+import { buildDocsFileDownloadUrl } from "../files/download-url.js";
 import { openFilePicker } from "../modals/file-picker.js";
 import { npubProjectsState } from "../npub-projects/index.js";
 import { state, TERMINAL_CONTROL_ACTIONS } from "../state/index.js";
@@ -207,6 +208,11 @@ export function initLiveView(deps) {
     return normalized.split("/").filter(Boolean).pop() || "Pinned doc";
   }
 
+  function openPinnedArtifactInNewWindow(filePath) {
+    if (!filePath) return;
+    window.open(buildDocsFileDownloadUrl(filePath, { inline: true }), "_blank", "noopener,noreferrer");
+  }
+
   function createPinnedArtifactPager(sessionId, pageState) {
     if (!pageState || pageState.files.length === 0) {
       return null;
@@ -256,6 +262,15 @@ export function initLiveView(deps) {
     fileLabel.title = pageState.activeFile ?? "";
     fileLabel.dataset.testid = "live-pinned-artifact-page-label";
 
+    const openButton = document.createElement("button");
+    openButton.type = "button";
+    openButton.className = "wm-webview-close-btn wm-pinned-artifact-open";
+    setIconButton(openButton, "externalLink", `Open ${fileLabel.textContent} in a new window`);
+    openButton.dataset.testid = "live-pinned-artifact-open";
+    openButton.addEventListener("click", () => {
+      openPinnedArtifactInNewWindow(pageState.activeFile);
+    });
+
     const unpinButton = document.createElement("button");
     unpinButton.type = "button";
     unpinButton.className = "wm-webview-close-btn";
@@ -274,7 +289,7 @@ export function initLiveView(deps) {
       }
     });
 
-    container.append(pager, fileLabel, unpinButton);
+    container.append(pager, fileLabel, openButton, unpinButton);
     return container;
   }
 

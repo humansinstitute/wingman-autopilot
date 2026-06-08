@@ -10808,6 +10808,10 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   white-space: nowrap;
 }
 
+.wm-pinned-artifact-open {
+  flex: 0 0 auto;
+}
+
 .wm-webview-mode-btn,
 .wm-webview-refresh-btn,
 .wm-webview-close-btn {

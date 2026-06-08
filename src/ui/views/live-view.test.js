@@ -75,9 +75,11 @@ describe("live-view drawer integration", () => {
     expect(source).toContain("if (shouldRenderLiveForSessionSwitch(session.id))");
   });
 
-  test("renders pinned artifact paging with filename and unpin control", () => {
+  test("renders pinned artifact paging with filename, open, and unpin controls", () => {
     expect(source).toContain("removePinnedArtifactApi");
+    expect(source).toContain("buildDocsFileDownloadUrl");
     expect(source).toContain("live-pinned-artifact-page-count");
+    expect(source).toContain("live-pinned-artifact-open");
     expect(source).toContain("live-pinned-artifact-unpin");
     expect(source).toContain("toolbar.insertBefore(pinnedPager, toolbar.lastElementChild)");
   });

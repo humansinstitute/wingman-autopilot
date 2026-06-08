@@ -17,6 +17,7 @@ import {
   createJsonPreview,
   createPdfPreview,
 } from "../files/preview-renderers.js";
+import { buildDocsFileDownloadUrl } from "../files/download-url.js";
 import { createWriterPanel } from "../writer/writer-panel.js";
 
 /**
@@ -62,15 +63,6 @@ function showQuickAgentPicker(anchor, agents, onSelect) {
   requestAnimationFrame(() => {
     document.addEventListener("click", closeHandler, true);
   });
-}
-
-function buildDocsFileDownloadUrl(path, options = {}) {
-  const url = new URL("/api/docs/file/download", window.location.origin);
-  url.searchParams.set("path", path);
-  if (options.inline) {
-    url.searchParams.set("inline", "1");
-  }
-  return `${url.pathname}${url.search}`;
 }
 
 function buildDocsRawUrl(path) {
