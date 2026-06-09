@@ -516,6 +516,37 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(profilePolicyStore.listPolicies(identityWorkspaces[0]!.profileWorkspaceId)).toHaveLength(10);
   });
 
+  test('promotes an existing manual subscription when 33357 onboarding imports it', async () => {
+    const dbPath = makeTempDb();
+    const instanceIdentity = makeInstanceIdentity();
+    const { manager, store } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      instanceIdentity,
+    );
+
+    const manual = await manager.createOrUpdate({
+      managedByNpub: 'npub1manager',
+      workspaceOwnerNpub: 'npub1workspace',
+      backendBaseUrl: 'https://tower.example.com',
+      towerServiceNpub: 'npub1service',
+      sourceAppNpub: 'npub1sourceapp',
+    });
+
+    expect(manual.onboardingSource).toBe('manual');
+
+    const imported = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackage(),
+      onboardingSource: 'nostr_33357',
+    });
+
+    expect(imported.subscription.subscriptionId).toBe(manual.subscriptionId);
+    expect(imported.subscription.onboardingSource).toBe('nostr_33357');
+    expect(store.getBySubscriptionId(manual.subscriptionId)?.onboardingSource).toBe('nostr_33357');
+  });
+
   test('seeds default dispatch routes from Agent Connect capability defaults', async () => {
     const dbPath = makeTempDb();
     const routeStore = new DispatchRouteStore(dbPath);
