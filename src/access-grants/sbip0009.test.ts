@@ -252,6 +252,58 @@ describe('Flight Deck 33357 onboarding validation', () => {
     expect((importedPackage as Record<string, unknown>)?.kind).toBe('coworker_agent_connect');
   });
 
+  test('verifies current Flight Deck grants through encrypted workspace me_url when generic Tower verify is unavailable', async () => {
+    const fixture = makeCurrentFlightDeckGrantEvent();
+    const requestedUrls: string[] = [];
+    let imports = 0;
+    const result = await processAccessGrantEvent({
+      event: fixture.event,
+      recipientSecretKey: fixture.recipient.secret,
+      recipientNpub: fixture.recipient.npub,
+      managedByNpub: fixture.recipient.npub,
+      subscriptionManager: {
+        importAgentConnectPackage: async () => {
+          imports += 1;
+          return { subscription: { subscriptionId: 'sub-current' } };
+        },
+      },
+      fetchImpl: async (input) => {
+        const url = String(input);
+        requestedUrls.push(url);
+        if (url.endsWith('/api/v4/access-grants/verify')) {
+          return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
+        }
+        if (url.endsWith('/api/v4/flightdeck-pg/workspaces/workspace-1/me')) {
+          return new Response(JSON.stringify({
+            identity: {
+              tower_service_npub: fixture.service.npub,
+              workspace_service_npub: fixture.workspaceService.npub,
+              workspace_owner_npub: fixture.workspaceOwner.npub,
+              workspace_id: 'workspace-1',
+              app_npub: fixture.app.npub,
+            },
+            actor: {
+              npub: fixture.recipient.npub,
+            },
+            membership: {
+              role: 'member',
+            },
+            permissions: ['workspace.read'],
+          }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ workspaces: [] }), { status: 200 });
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.code).toBe('imported');
+    expect(imports).toBe(1);
+    expect(requestedUrls).toEqual([
+      'https://tower.example.com/api/v4/access-grants/verify',
+      'https://tower.example.com/api/v4/flightdeck-pg/workspaces/workspace-1/me',
+    ]);
+  });
+
   test('uses the derived dedupe key for current Flight Deck duplicate delivery', async () => {
     const firstFixture = makeCurrentFlightDeckGrantEvent();
     const secondFixture = makeCurrentFlightDeckGrantEvent({
@@ -528,6 +580,59 @@ describe('Flight Deck 33357 onboarding validation', () => {
     expect(handledConfirmed).toBe(false);
     expect(imports).toBe(0);
     expect(revocationSyncs).toBe(0);
+  });
+
+  test('keeps revoked current Flight Deck onboarding active when PG me_url still confirms access', async () => {
+    const fixture = makeCurrentFlightDeckGrantEvent({
+      payload: {
+        action: 'revoked',
+        status: 'revoked',
+        agent_connect: undefined,
+        agent_connect_package: undefined,
+      },
+    });
+    let handledConfirmed = true;
+    const result = await processAccessGrantEvent({
+      event: fixture.event,
+      recipientSecretKey: fixture.recipient.secret,
+      recipientNpub: fixture.recipient.npub,
+      managedByNpub: fixture.recipient.npub,
+      subscriptionManager: {
+        importAgentConnectPackage: async () => ({}),
+        handleAccessGrantRevocation: async (input) => {
+          handledConfirmed = input.verification.confirmed;
+          return { diagnostic: 'recorded' };
+        },
+      },
+      fetchImpl: async (input) => {
+        const url = String(input);
+        if (url.endsWith('/api/v4/access-grants/verify')) {
+          return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
+        }
+        if (url.endsWith('/api/v4/flightdeck-pg/workspaces/workspace-1/me')) {
+          return new Response(JSON.stringify({
+            identity: {
+              tower_service_npub: fixture.service.npub,
+              workspace_service_npub: fixture.workspaceService.npub,
+              workspace_owner_npub: fixture.workspaceOwner.npub,
+              workspace_id: 'workspace-1',
+              app_npub: fixture.app.npub,
+            },
+            actor: {
+              npub: fixture.recipient.npub,
+            },
+            membership: {
+              role: 'member',
+            },
+          }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ workspaces: [] }), { status: 200 });
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('revocation_unconfirmed_access_active');
+    expect(handledConfirmed).toBe(false);
   });
 
   test('rejects mismatched Agent Connect packages after Tower verification and before import', async () => {

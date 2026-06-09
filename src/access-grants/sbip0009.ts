@@ -465,11 +465,61 @@ function createNip98AuthHeader(url: string, method: string, body: unknown, secre
   return `Nostr ${Buffer.from(JSON.stringify(event)).toString('base64')}`;
 }
 
+function resolveGrantPayloadUrl(baseUrl: string, value: unknown): string | null {
+  const text = getString(value);
+  if (!text) return null;
+  try {
+    const serviceOrigin = new URL(`${baseUrl}/`).origin;
+    const resolved = new URL(text, `${baseUrl}/`);
+    if (resolved.origin !== serviceOrigin) return null;
+    return resolved.toString();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchGrantPayloadJson(input: {
+  fetchImpl: typeof fetch;
+  url: string;
+  recipientSecretKey: Uint8Array;
+}): Promise<{ status: number; ok: boolean; payload: unknown }> {
+  const response = await input.fetchImpl(input.url, {
+    method: 'GET',
+    headers: {
+      Authorization: createNip98AuthHeader(input.url, 'GET', null, input.recipientSecretKey),
+    },
+  });
+  return {
+    status: response.status,
+    ok: response.ok,
+    payload: await response.json().catch(() => null),
+  };
+}
+
+async function fetchFlightDeckPgMe(input: {
+  grant: DecodedAccessGrant;
+  baseUrl: string;
+  recipientSecretKey: Uint8Array;
+  fetchImpl: typeof fetch;
+}): Promise<{ status: number; ok: boolean; payload: unknown } | null> {
+  const meUrl = resolveGrantPayloadUrl(input.baseUrl, input.grant.payload.workspace.me_url);
+  if (!meUrl) return null;
+  return fetchGrantPayloadJson({
+    fetchImpl: input.fetchImpl,
+    url: meUrl,
+    recipientSecretKey: input.recipientSecretKey,
+  });
+}
+
 function responseAllowsAccess(payload: unknown, grant: DecodedAccessGrant): boolean {
   if (!payload || typeof payload !== 'object') return false;
   const body = payload as Record<string, unknown>;
   if (!towerIdentityMatchesGrant(body, grant)) return false;
-  return body.allowed === true || body.active === true || body.verified === true || body.current_member === true;
+  return body.allowed === true
+    || body.active === true
+    || body.verified === true
+    || body.current_member === true
+    || (body.membership != null && typeof body.membership === 'object');
 }
 
 function fallbackPayloadAllowsAccess(payload: unknown, grant: DecodedAccessGrant): boolean {
@@ -560,6 +610,7 @@ function towerIdentityMatchesGrant(payload: Record<string, unknown>, grant: Deco
       ['viewer'],
       ['viewer_npub'],
       ['member_npub'],
+      ['actor', 'npub'],
     ], [grant.recipientNpub]);
 }
 
@@ -647,6 +698,20 @@ export async function verifyAccessGrantWithTower(input: {
     throw Object.assign(new Error(`Tower verification failed with HTTP ${verifyResponse.status}`), { code: 'tower_verify_failed' });
   }
 
+  const pgMeResult = await fetchFlightDeckPgMe({
+    grant: input.grant,
+    baseUrl,
+    recipientSecretKey: input.recipientSecretKey,
+    fetchImpl,
+  });
+  if (pgMeResult?.ok) {
+    if (responseAllowsAccess(pgMeResult.payload, input.grant)) return pgMeResult.payload;
+    throw Object.assign(new Error('Tower Flight Deck /me did not confirm current access'), { code: 'tower_verify_failed' });
+  }
+  if (pgMeResult && ['403', '404', '410'].includes(String(pgMeResult.status))) {
+    throw Object.assign(new Error(`Tower Flight Deck /me denied current access with HTTP ${pgMeResult.status}`), { code: 'tower_verify_failed' });
+  }
+
   for (const path of [
     `/api/v4/workspaces?npub=${encodeURIComponent(input.grant.recipientNpub)}`,
     `/api/v4/groups?npub=${encodeURIComponent(input.grant.recipientNpub)}`,
@@ -723,13 +788,6 @@ export async function verifyAccessGrantRevocationWithTower(input: {
     });
   }
 
-  if (verifyResponse.status === 404) {
-    return buildRevocationVerification({
-      confirmed: true,
-      towerResult: 'workspace_not_found',
-      message: 'Tower access-grant verification reported the workspace was not found.',
-    });
-  }
   if (verifyResponse.status === 410) {
     return buildRevocationVerification({
       confirmed: true,
@@ -744,7 +802,7 @@ export async function verifyAccessGrantRevocationWithTower(input: {
       message: 'Tower access-grant verification denied current workspace access.',
     });
   }
-  if (!['405', '501'].includes(String(verifyResponse.status))) {
+  if (!['404', '405', '501'].includes(String(verifyResponse.status))) {
     return buildRevocationVerification({
       confirmed: false,
       towerResult: 'unconfirmed',
@@ -753,6 +811,51 @@ export async function verifyAccessGrantRevocationWithTower(input: {
   }
 
   const checkedPayloads: unknown[] = [];
+  const pgMeResult = await fetchFlightDeckPgMe({
+    grant: input.grant,
+    baseUrl,
+    recipientSecretKey: input.recipientSecretKey,
+    fetchImpl,
+  });
+  if (pgMeResult?.ok) {
+    checkedPayloads.push(pgMeResult.payload);
+    if (responseAllowsAccess(pgMeResult.payload, input.grant)) {
+      return buildRevocationVerification({
+        confirmed: false,
+        towerResult: 'access_active',
+        message: 'Tower Flight Deck /me still confirms current workspace access.',
+        payload: pgMeResult.payload,
+      });
+    }
+    const confirmedResult = payloadConfirmsRevocation(pgMeResult.payload);
+    if (confirmedResult) {
+      return buildRevocationVerification({
+        confirmed: true,
+        towerResult: confirmedResult,
+        message: 'Tower Flight Deck /me confirmed revoked or deleted workspace access.',
+        payload: pgMeResult.payload,
+      });
+    }
+  } else if (pgMeResult?.status === 404) {
+    return buildRevocationVerification({
+      confirmed: true,
+      towerResult: 'workspace_not_found',
+      message: 'Tower Flight Deck /me reported the workspace was not found.',
+    });
+  } else if (pgMeResult?.status === 410) {
+    return buildRevocationVerification({
+      confirmed: true,
+      towerResult: 'workspace_deleted',
+      message: 'Tower Flight Deck /me reported the workspace was deleted.',
+    });
+  } else if (pgMeResult?.status === 403) {
+    return buildRevocationVerification({
+      confirmed: true,
+      towerResult: 'access_denied',
+      message: 'Tower Flight Deck /me denied current workspace access.',
+    });
+  }
+
   const workspaceId = getString(input.grant.payload.workspace.workspace_id);
   if (workspaceId) {
     const meUrl = `${baseUrl}/api/v4/workspaces/${encodeURIComponent(workspaceId)}/me`;
