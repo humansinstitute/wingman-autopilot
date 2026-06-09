@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { renderCodeToHtml } from "./markdown.js";
+import { renderCodeToHtml, renderMarkdownToHtml, sanitizeImageSrc } from "./markdown.js";
 
 describe("renderCodeToHtml", () => {
   test("highlights TypeScript code tokens", () => {
@@ -28,5 +28,29 @@ describe("renderCodeToHtml", () => {
 
     expect(html).toContain('class="language-plaintext"');
     expect(html).toContain("&lt;unsafe&gt;");
+  });
+});
+
+describe("renderMarkdownToHtml", () => {
+  test("renders Mermaid code fences as diagram placeholders", () => {
+    const html = renderMarkdownToHtml("```mermaid\ngraph TD\n  A-->B\n```");
+
+    expect(html).toContain('class="wm-mermaid"');
+    expect(html).toContain('data-testid="markdown-mermaid-diagram"');
+    expect(html).toContain("graph TD");
+    expect(html).not.toContain('class="language-mermaid"');
+  });
+
+  test("rewrites scoped uploaded file image URLs for browser preview", () => {
+    const url = "file:///Users/mini/code/wingmanbefree/autopilot/tmp/uploads/images/npub1abc/codex/example.png";
+
+    expect(sanitizeImageSrc(url)).toBe("/uploads/images/npub1abc/codex/example.png");
+  });
+
+  test("renders escaped uploaded image markdown", () => {
+    const html = renderMarkdownToHtml("\\![uploaded image]\\(file:///tmp/uploads/images/npub1abc/codex/example.png\\)");
+
+    expect(html).toContain('<img src="/uploads/images/npub1abc/codex/example.png"');
+    expect(html).toContain('alt="uploaded image"');
   });
 });

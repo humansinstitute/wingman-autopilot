@@ -5,6 +5,7 @@ import {
 } from "../files/preview-renderers.js";
 import { buildDocsFileDownloadUrl } from "../files/download-url.js";
 import { renderCodeToHtml, renderMarkdownToHtml } from "../rendering/markdown.js";
+import { renderMermaidDiagrams } from "../rendering/mermaid.js";
 
 export async function fetchFileBrowserDirectory(path, showHidden = false) {
   const url = new URL("/api/docs/tree", window.location.origin);
@@ -108,6 +109,9 @@ export function createFileBrowserPreviewContent(preview) {
     const article = document.createElement("article");
     article.className = "wm-files-preview-content";
     article.innerHTML = renderMarkdownToHtml(preview.content);
+    requestAnimationFrame(() => {
+      void renderMermaidDiagrams(article);
+    });
     body.append(article);
     return body;
   }

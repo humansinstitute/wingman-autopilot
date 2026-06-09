@@ -6,9 +6,25 @@
 
 import { escapeHtml, escapeAttribute, sanitizeLanguageClass } from "../core/icons.js";
 
-const sanitizeImageSrc = (value) => {
-  if (value === null || value === undefined) return "#";
+export function rewriteUploadedAssetUrl(value) {
+  if (value === null || value === undefined) return "";
   const trimmed = String(value).trim();
+  if (!trimmed || !/^file:\/\//i.test(trimmed)) return trimmed;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "file:") return trimmed;
+    const decodedPath = decodeURIComponent(parsed.pathname);
+    const uploadMatch = decodedPath.match(/(?:^|\/)tmp\/uploads\/(images|files)\/(.+)$/);
+    if (!uploadMatch) return trimmed;
+    return `/uploads/${uploadMatch[1]}/${encodeURI(uploadMatch[2])}`;
+  } catch {
+    return trimmed;
+  }
+}
+
+export const sanitizeImageSrc = (value) => {
+  if (value === null || value === undefined) return "#";
+  const trimmed = rewriteUploadedAssetUrl(value);
   if (!trimmed || /\s/.test(trimmed)) return "#";
   const explicitlyAllowed = /^(https?:\/\/|\/|\.{1,2}\/|#)/i.test(trimmed);
   if (explicitlyAllowed) {
@@ -18,6 +34,10 @@ const sanitizeImageSrc = (value) => {
   if (trimmed.includes(":")) return "#";
   return escapeHtml(trimmed).replace(/"/g, "&quot;");
 };
+
+function renderMermaidBlock(source) {
+  return `<div class="wm-mermaid" data-testid="markdown-mermaid-diagram"><pre class="wm-mermaid__source"><code>${escapeHtml(source)}</code></pre></div>`;
+}
 
 export const renderInlineMarkdown = (text) => {
   if (!text) return "";
@@ -33,13 +53,13 @@ export const renderInlineMarkdown = (text) => {
     createPlaceholder(`<code>${escapeHtml(code)}</code>`),
   );
 
-  working = working.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_, alt, url) => {
+  working = working.replace(/\\?!\[([^\]]*)\]\\?\(([^)\\\s]+)\\?\)/g, (_, alt, url) => {
     const safeUrl = sanitizeImageSrc(url);
     const safeAlt = escapeHtml(alt).replace(/"/g, "&quot;");
     return createPlaceholder(`<img src="${safeUrl}" alt="${safeAlt}" loading="lazy" />`);
   });
 
-  working = working.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, url) => {
+  working = working.replace(/\[([^\]]+)\]\\?\(([^)\\\s]+)\\?\)/g, (_, label, url) => {
     const safeUrl = escapeAttribute(url);
     const safeLabel = escapeHtml(label);
     return createPlaceholder(
@@ -201,8 +221,13 @@ export const renderMarkdownToHtml = (markdown) => {
     if (line.startsWith("```")) {
       if (inCodeBlock) {
         const languageClass = sanitizeLanguageClass(codeLanguage);
-        const classAttr = languageClass ? ` class="language-${languageClass}"` : "";
-        html += `<pre><code${classAttr}>${escapeHtml(codeBuffer.join("\n"))}\n</code></pre>`;
+        const code = codeBuffer.join("\n");
+        if (languageClass === "mermaid") {
+          html += renderMermaidBlock(code);
+        } else {
+          const classAttr = languageClass ? ` class="language-${languageClass}"` : "";
+          html += `<pre><code${classAttr}>${escapeHtml(code)}\n</code></pre>`;
+        }
         inCodeBlock = false;
         codeLanguage = "";
         codeBuffer = [];
@@ -332,8 +357,13 @@ export const renderMarkdownToHtml = (markdown) => {
 
   if (inCodeBlock) {
     const languageClass = sanitizeLanguageClass(codeLanguage);
-    const classAttr = languageClass ? ` class="language-${languageClass}"` : "";
-    html += `<pre><code${classAttr}>${escapeHtml(codeBuffer.join("\n"))}\n</code></pre>`;
+    const code = codeBuffer.join("\n");
+    if (languageClass === "mermaid") {
+      html += renderMermaidBlock(code);
+    } else {
+      const classAttr = languageClass ? ` class="language-${languageClass}"` : "";
+      html += `<pre><code${classAttr}>${escapeHtml(code)}\n</code></pre>`;
+    }
   }
   closeParagraph();
   closeList();

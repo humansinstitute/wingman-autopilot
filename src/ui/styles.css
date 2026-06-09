@@ -8961,6 +8961,38 @@ dialog button[value="cancel"] {
   font-style: italic;
 }
 
+.wm-mermaid {
+  display: block;
+  max-width: 100%;
+  min-height: 5rem;
+  margin: 1rem 0;
+  padding: 1rem;
+  overflow-x: auto;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.45rem;
+  background: var(--bg-primary);
+}
+
+.wm-mermaid svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.wm-mermaid__source {
+  margin: 0;
+  color: var(--text-secondary);
+  white-space: pre;
+}
+
+.wm-mermaid__error {
+  margin-top: 0.75rem;
+  color: #ef4444;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}
+
 .wm-files-preview-content a {
   color: var(--accent-primary);
   text-decoration: underline;

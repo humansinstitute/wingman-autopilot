@@ -668,6 +668,7 @@ registerVendorPackage("@noble/hashes", "esm");
 registerVendorPackage("@noble/ciphers", "esm");
 registerVendorPackage("@scure/base", join("lib", "esm"));
 registerVendorPackage("@noble/curves", "esm");
+registerVendorPackage("mermaid", "dist", "mermaid.esm.min.mjs");
 registerVendorPackage("nostr-tools", join("lib", "esm"));
 registerVendorPackage("dexie", "dist", "dexie.mjs");
 registerVendorPackage("alpinejs", "dist", "module.esm.js");

@@ -15,7 +15,7 @@ const COMPRESSIBLE_TYPES = new Set([
 
 function isCompressible(contentType: string | null): boolean {
   if (!contentType) return false;
-  const base = contentType.split(";")[0].trim();
+  const base = (contentType.split(";")[0] ?? "").trim();
   return COMPRESSIBLE_TYPES.has(base);
 }
 
@@ -108,6 +108,7 @@ export const createStaticAssetService = (options: StaticAssetServiceOptions) => 
   const deriveUiAssetType = (extension: string, fallback?: string) => {
     switch (extension) {
       case ".js":
+      case ".mjs":
         return "application/javascript; charset=utf-8";
       case ".css":
         return "text/css; charset=utf-8";
@@ -191,7 +192,7 @@ export const createStaticAssetService = (options: StaticAssetServiceOptions) => 
     if (!file.size) return undefined;
     const ext = extname(candidate).toLowerCase();
     const type =
-      ext === ".js"
+      ext === ".js" || ext === ".mjs"
         ? "application/javascript; charset=utf-8"
         : ext === ".css"
           ? "text/css; charset=utf-8"
@@ -215,12 +216,16 @@ export const createStaticAssetService = (options: StaticAssetServiceOptions) => 
 
     let packageName: string;
     let relativeSegments: string[];
-    if (segments[0].startsWith("@")) {
+    const firstSegment = segments[0];
+    if (!firstSegment) return undefined;
+    if (firstSegment.startsWith("@")) {
       if (segments.length < 2) return undefined;
-      packageName = `${segments[0]}/${segments[1]}`;
+      const scopePackage = segments[1];
+      if (!scopePackage) return undefined;
+      packageName = `${firstSegment}/${scopePackage}`;
       relativeSegments = segments.slice(2);
     } else {
-      packageName = segments[0];
+      packageName = firstSegment;
       relativeSegments = segments.slice(1);
     }
     if (relativeSegments.some((segment) => segment === "." || segment === "..")) return undefined;
@@ -261,7 +266,7 @@ export const createStaticAssetService = (options: StaticAssetServiceOptions) => 
     const { file, path: resolvedPath } = resolved;
     const extension = extname(resolvedPath).toLowerCase();
     const type =
-      extension === ".js"
+      extension === ".js" || extension === ".mjs"
         ? "application/javascript; charset=utf-8"
         : extension === ".json" || extension === ".map"
           ? "application/json; charset=utf-8"
@@ -272,7 +277,7 @@ export const createStaticAssetService = (options: StaticAssetServiceOptions) => 
       "cache-control": "public, max-age=86400",
     };
 
-    if (extension === ".js") {
+    if (extension === ".js" || extension === ".mjs") {
       // Cache rewritten + gzipped vendor JS to avoid repeated work
       const cached = vendorGzipCache.get(pathname);
       if (cached) {
@@ -280,7 +285,7 @@ export const createStaticAssetService = (options: StaticAssetServiceOptions) => 
       }
       const source = await file.text();
       const rewritten = rewriteVendorModuleSpecifiers(source);
-      const compressed = gzipSync(new TextEncoder().encode(rewritten));
+      const compressed = gzipSync(new TextEncoder().encode(rewritten) as Uint8Array<ArrayBuffer>);
       const gzHeaders: Record<string, string> = {
         ...headers,
         "content-encoding": "gzip",

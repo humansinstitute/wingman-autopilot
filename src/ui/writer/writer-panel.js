@@ -10,6 +10,7 @@
 
 import { parseMarkdownBlocks, assembleBlocks } from "./block-parser.js";
 import { renderMarkdownToHtml, renderCodeToHtml } from "../rendering/markdown.js";
+import { renderMermaidDiagrams } from "../rendering/mermaid.js";
 import { escapeHtml } from "../core/icons.js";
 import {
   decodeBase64ToUint8Array,
@@ -568,6 +569,9 @@ export function createWriterPanel(sessionId, targetFile, deps) {
     } else {
       const previewMarkdown = rewriteMarkdownImagePathsForPreview(block.raw, fileDirectory);
       rendered.innerHTML = renderMarkdownToHtml(previewMarkdown);
+      requestAnimationFrame(() => {
+        void renderMermaidDiagrams(rendered);
+      });
     }
 
     rendered.addEventListener("click", () => {
