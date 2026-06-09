@@ -9,7 +9,7 @@ export function getLiveDrawerLayoutState({
   appCardLayout = {},
   webviewLayout = {},
 } = {}) {
-  const writerVisible = Boolean(effectiveFile) && Boolean(writerLayout?.open);
+  const writerVisible = Boolean(writerLayout?.open);
   const artifactsVisible = Boolean(artifactsLayout?.open);
   const appCardVisible = Boolean(matchingApp) && Boolean(appCardLayout?.open);
   const webviewVisible = Boolean(webApp) && Boolean(webviewLayout?.open);

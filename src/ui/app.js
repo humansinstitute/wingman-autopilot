@@ -189,6 +189,7 @@ let renderSessionTabs = () => document.createElement("div");
 let renderTabs = () => document.createElement("div");
 let renderLiveTabsBarContent = () => document.createElement("div");
 let updateLivePanelsForSession = () => {};
+let openArtifactPane = () => false;
 let captureFocusSnapshot = () => null;
 let restoreFocusFromSnapshot = () => {};
 let openAppDialog = () => {};
@@ -2307,6 +2308,7 @@ renderSessionTabs = liveViewModule.renderSessionTabs;
 renderTabs = liveViewModule.renderTabs;
 renderLiveTabsBarContent = liveViewModule.renderLiveTabsBarContent;
 updateLivePanelsForSession = liveViewModule.updateLivePanelsForSession;
+openArtifactPane = liveViewModule.openArtifactPane;
 captureFocusSnapshot = liveViewModule.captureFocusSnapshot;
 restoreFocusFromSnapshot = liveViewModule.restoreFocusFromSnapshot;
 
@@ -2911,8 +2913,12 @@ dialog.addEventListener("cancel", (event) => {
       onConnect: () => {
         void fetchSessions();
       },
-      onEvent: () => {
-        void fetchSessions();
+      onEvent: (event) => {
+        void fetchSessions().then(() => {
+          if (event?.artifactIntent?.action === "open" && event.sessionId) {
+            openArtifactPane(event.sessionId);
+          }
+        });
       },
     });
     window.addEventListener("wingman:identity-logout", () => stopSessionSubscriber(), { once: true });

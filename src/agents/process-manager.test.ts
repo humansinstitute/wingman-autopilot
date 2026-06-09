@@ -115,4 +115,43 @@ describe("ProcessManager pinned files", () => {
     expect(snapshot?.pinnedFile).toBe("/tmp/three.md");
     expect(snapshot?.metadata?.pinnedFiles).toEqual(["/tmp/one.md", "/tmp/three.md"]);
   });
+
+  test("emits an artifact open intent when a file is pinned", () => {
+    const manager = new ProcessManager({
+      allowedHosts: "localhost,127.0.0.1",
+      agents: {
+        codex: {
+          label: "Codex",
+          command: ({ port }) => ["agentapi", "--port", String(port), "--", "codex"],
+        },
+      },
+    } as WingmanConfig);
+
+    manager.rehydrateSession({
+      id: "session-1",
+      agent: "codex",
+      port: 3700,
+      name: "Session 1",
+      startedAt: new Date("2026-06-01T00:00:00.000Z").toISOString(),
+      workingDirectory: "/tmp",
+      pinnedFile: "/tmp/old.md",
+      metadata: { AGENT: true, pinnedFiles: ["/tmp/old.md"] },
+    });
+
+    const events: unknown[] = [];
+    manager.on((event) => {
+      events.push(event);
+    });
+
+    manager.setPinnedFile("session-1", "/tmp/new.md");
+
+    expect(events.at(-1)).toMatchObject({
+      type: "session-updated",
+      artifactIntent: {
+        action: "open",
+        filePath: "/tmp/new.md",
+        pinnedFiles: ["/tmp/old.md", "/tmp/new.md"],
+      },
+    });
+  });
 });

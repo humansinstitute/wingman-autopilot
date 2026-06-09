@@ -101,7 +101,15 @@ export interface SessionSnapshot {
 
 type SessionEvent =
   | { type: "session-started"; session: SessionSnapshot }
-  | { type: "session-updated"; session: SessionSnapshot }
+  | {
+      type: "session-updated";
+      session: SessionSnapshot;
+      artifactIntent?: {
+        action: "open";
+        filePath: string;
+        pinnedFiles: string[];
+      };
+    }
   | { type: "session-stopped"; session: SessionSnapshot }
   | { type: "session-deleted"; session: SessionSnapshot };
 
@@ -905,7 +913,19 @@ export class ProcessManager {
       pinnedFiles,
     });
     const snapshot = this.toSnapshot(session);
-    this.emit({ type: "session-updated", session: snapshot });
+    this.emit({
+      type: "session-updated",
+      session: snapshot,
+      ...(normalizedFilePath
+        ? {
+            artifactIntent: {
+              action: "open",
+              filePath: normalizedFilePath,
+              pinnedFiles,
+            },
+          }
+        : {}),
+    });
     return snapshot;
   }
 

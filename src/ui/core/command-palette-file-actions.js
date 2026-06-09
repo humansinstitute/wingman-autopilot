@@ -1,8 +1,7 @@
 import {
   addPinnedFileForSession,
-  setArtifactsPanelOpenForSession,
-  setWriterPanelOpenForSession,
 } from "../live/writer-panel-state.js";
+import { openArtifactPaneForSession } from "../live/artifact-pane-state.js";
 
 export function createCommandPaletteFileActions({
   state,
@@ -40,7 +39,7 @@ export function createCommandPaletteFileActions({
     return session?.workingDirectory || state?.files?.currentPath || state?.config?.defaultDirectory || "";
   }
 
-  async function pinFileToSession(filePath, { openArtifact = false, session: targetSession = null } = {}) {
+  async function pinFileToSession(filePath, { session: targetSession = null } = {}) {
     const session = targetSession?.id ? targetSession : getFileBrowserSession();
     if (!session?.id) {
       throw new Error("No active session is available to pin this file.");
@@ -60,22 +59,10 @@ export function createCommandPaletteFileActions({
     } else {
       state?.pinnedFiles?.delete(session.id);
     }
-    if (openArtifact && pinnedFile) {
+    if (pinnedFile) {
       setCurrentRoute?.("live");
       setActiveSession?.(session.id, { updateHistory: true, forceLog: true });
-      if (state?.writerLayout) {
-        setWriterPanelOpenForSession(state, session.id, true);
-        state.writerLayout.mobileTab = "writer";
-      }
-      if (state?.appCardLayout) {
-        state.appCardLayout.open = false;
-      }
-      if (state?.artifactsLayout) {
-        setArtifactsPanelOpenForSession(state, session.id, false);
-      }
-      if (state?.webviewLayout) {
-        state.webviewLayout.open = false;
-      }
+      openArtifactPaneForSession(state, session.id);
     }
     render?.();
     return pinnedFile;

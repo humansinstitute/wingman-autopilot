@@ -12,7 +12,7 @@ export const pinArtifactSchema = {
 
 export const pinArtifactDescription =
   "Pin a file as the active artifact in the Wingman UI right-hand panel. " +
-  "The file will be displayed using the writer/editor view. " +
+  "The session UI will open the artifact pane and display the file using the writer/editor view. " +
   "Use this to show design docs, code files, or any text file to the user.";
 
 interface PinArtifactParams {
@@ -49,13 +49,14 @@ export async function handlePinArtifact(
       };
     }
 
-    const { pinnedFile } = await response.json();
+    const body = await response.json() as { pinnedFile?: string | null };
+    const pinnedFile = body.pinnedFile ?? file_path;
 
     return {
       content: [
         {
           type: "text" as const,
-          text: `Pinned artifact: ${pinnedFile}`,
+          text: `Pinned artifact and requested artifact pane open: ${pinnedFile}`,
         },
       ],
     };

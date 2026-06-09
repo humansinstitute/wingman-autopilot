@@ -1227,6 +1227,7 @@ manager.on((event) => {
         agent: event.session.agent,
         name: event.session.name ?? undefined,
         status: event.session.agentRuntimeStatus ?? undefined,
+        artifactIntent: event.type === "session-updated" ? event.artifactIntent : undefined,
       });
     }
   }

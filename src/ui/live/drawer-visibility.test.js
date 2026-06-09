@@ -13,6 +13,10 @@ describe('drawer-visibility', () => {
     }).splitPanelOpen).toBe(true);
 
     expect(getLiveDrawerLayoutState({
+      writerLayout: { open: true },
+    }).splitPanelOpen).toBe(true);
+
+    expect(getLiveDrawerLayoutState({
       artifactsLayout: { open: true },
     }).splitPanelOpen).toBe(true);
 

@@ -29,6 +29,7 @@ import {
 import { attachPathMentionAutocomplete } from "../live/path-mention-autocomplete.js";
 import { findAppForSession, findWebAppForSession, createWebviewPanel, createLayoutToolbar } from "../live/webview-panel.js";
 import { createWriterPanel, createWriterToolbar } from "../writer/writer-panel.js";
+import { createArtifactFileSelector } from "../writer/artifact-file-selector.js";
 import { createMobileTabBar, attachSwipeGesture } from "../writer/mobile-tabs.js";
 import { fetchSessionArtifacts, createArtifactsPanel, createArtifactsToolbar } from "../live/artifacts-panel.js";
 import { createAppControlsPanel, createAppControlsToolbar } from "../live/app-controls-panel.js";
@@ -42,7 +43,6 @@ import {
   getPinnedFileForSession,
   isArtifactsPanelOpenForSession,
   isWriterPanelOpenForSession,
-  markWriterDismissed,
   replacePinnedFilesForSession,
   setArtifactsPanelOpenForSession,
   setPinnedFilePageForSession,
@@ -54,7 +54,6 @@ import {
 } from "../live/writer-panel-state.js";
 import { addNightWatchToggle } from "../nightwatch/cmd-toggle.js";
 import { buildFilesPreviewRoutePath } from "../files/route-url.js";
-import { openFilePicker } from "../modals/file-picker.js";
 import { npubProjectsState } from "../npub-projects/index.js";
 import { state, TERMINAL_CONTROL_ACTIONS } from "../state/index.js";
 import * as scrollPill from "../live/scroll-pill.js";
@@ -70,6 +69,10 @@ import {
   createLiveSessionDrawer,
   isLiveDrawerVisible,
 } from "../live/session-drawer.js";
+import {
+  closeArtifactPaneForSession,
+  openArtifactPaneForSession,
+} from "../live/artifact-pane-state.js";
 import {
   getLiveDrawerLayoutState,
   getRenderedLiveDrawerVisible,
@@ -320,6 +323,19 @@ export function initLiveView(deps) {
   function closeLiveDrawerModal() {
     state.liveDrawer.reportModalOpen = false;
     state.liveDrawer.selectedReportId = "";
+  }
+
+  function openArtifactPane(sessionId, options = {}) {
+    const session = sessionsStore().items.find((item) => item.id === sessionId) ?? null;
+    if (!session) return false;
+    const navigate = options.navigate !== false;
+    if (navigate) {
+      setCurrentRoute("live");
+      setActiveSession(sessionId, { updateHistory: true, forceLog: true });
+    }
+    openArtifactPaneForSession(state, sessionId);
+    render();
+    return true;
   }
 
   function setLiveDrawerOpen(nextOpen) {
@@ -1146,42 +1162,15 @@ export function initLiveView(deps) {
       ? currentSession.metadata.pinnedFiles
       : currentSession?.pinnedFile ?? null;
     const pinnedFile = getPinnedFileForSession(state, sessionId, sessionPinnedFiles);
-    const artifactPanelOpen = Boolean(pinnedFile) && isWriterPanelOpenForSession(state, sessionId);
+    const artifactPanelOpen = isWriterPanelOpenForSession(state, sessionId);
     addCommand(artifactPanelOpen ? "Close Artifact" : "Open Artifact", async () => {
-      if (pinnedFile) {
-        if (artifactPanelOpen) {
-          markWriterDismissed(state, sessionId, pinnedFile);
-          setWriterPanelOpenForSession(state, sessionId, false);
-          render();
-          return;
-        }
-        clearWriterDismissal(state, sessionId);
-        setWriterPanelOpenForSession(state, sessionId, true);
-        state.writerLayout.mobileTab = "writer";
-        state.appCardLayout.open = false;
-        setArtifactsPanelOpenForSession(state, sessionId, false);
-        state.webviewLayout.open = false;
+      if (artifactPanelOpen) {
+        closeArtifactPaneForSession(state, sessionId, pinnedFile);
         render();
         return;
       }
-
-      const session = sessionsStore().items.find((s) => s.id === sessionId);
-      const startPath = session?.workingDirectory || "";
-      const filePath = await openFilePicker({ initialPath: startPath });
-      if (filePath) {
-        try {
-          await persistPinnedArtifact(sessionId, filePath);
-          clearWriterDismissal(state, sessionId);
-          setWriterPanelOpenForSession(state, sessionId, true);
-          state.writerLayout.mobileTab = "writer";
-          state.appCardLayout.open = false;
-          setArtifactsPanelOpenForSession(state, sessionId, false);
-          state.webviewLayout.open = false;
-          render();
-        } catch (error) {
-          showToast(`Failed to pin artifact: ${error.message}`, { type: "error" });
-        }
-      }
+      openArtifactPaneForSession(state, sessionId);
+      render();
     });
 
     addCommandDivider();
@@ -1579,7 +1568,7 @@ export function initLiveView(deps) {
     let writerPanelOpen = syncWriterLayoutOpenForSession(state, sessionId);
     let artifactsPanelOpen = syncArtifactsLayoutOpenForSession(state, sessionId);
 
-    if (!effectiveFile) {
+    if (!effectiveFile && !writerPanelOpen) {
       clearWriterDismissal(state, sessionId);
       writerPanelOpen = setWriterPanelOpenForSession(state, sessionId, false);
     }
@@ -1607,7 +1596,7 @@ export function initLiveView(deps) {
     });
 
     // Writer split takes priority, then artifacts, then webview
-    if (effectiveFile && writerPanelOpen) {
+    if (writerPanelOpen && (effectiveFile || activeSession)) {
       appRoot.dataset.webviewOpen = "true";
 
       const mobileTab = state.writerLayout.mobileTab || "chat";
@@ -1629,7 +1618,17 @@ export function initLiveView(deps) {
       const writerCol = document.createElement("div");
       writerCol.className = "wm-webview-col";
 
-      const writerResult = createWriterPanel(sessionId, effectiveFile, { showToast });
+      const writerResult = effectiveFile
+        ? createWriterPanel(sessionId, effectiveFile, { showToast })
+        : createArtifactFileSelector({
+            initialPath: activeSession?.workingDirectory || "",
+            showToast,
+            onSelect: async (filePath) => {
+              await persistPinnedArtifact(sessionId, filePath);
+              openArtifactPaneForSession(state, sessionId);
+              render();
+            },
+          });
       activeWriterCleanup = writerResult.cleanup;
 
       const toolbar = createWriterToolbar(
@@ -1639,8 +1638,8 @@ export function initLiveView(deps) {
           render();
         },
         () => {
-          markWriterDismissed(state, sessionId, effectiveFile);
-          writerPanelOpen = setWriterPanelOpenForSession(state, sessionId, false);
+          closeArtifactPaneForSession(state, sessionId, effectiveFile);
+          writerPanelOpen = false;
           render();
         },
       );
@@ -1976,6 +1975,7 @@ export function initLiveView(deps) {
     renderLiveTabsBarContent,
     renderLive,
     updateLivePanelsForSession,
+    openArtifactPane,
     captureFocusSnapshot,
     restoreFocusFromSnapshot,
   };

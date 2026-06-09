@@ -18,6 +18,11 @@ export interface SessionEvent {
   agent?: string;
   name?: string;
   status?: string;
+  artifactIntent?: {
+    action: "open";
+    filePath: string;
+    pinnedFiles: string[];
+  };
 }
 
 const encoder = new TextEncoder();

@@ -110,6 +110,27 @@ describe("command palette file actions", () => {
     expect(state.pinnedFiles.get("session-1")).toBe("/workspace/session/three.md");
   });
 
+  test("opens the artifact split for pin-only callers", async () => {
+    const state = createState();
+    const session = { id: "session-1", workingDirectory: "/workspace/session" };
+    const actions = createCommandPaletteFileActions({
+      state,
+      sessionsStore: () => ({ activeSessionId: "session-1", items: [session] }),
+      getCurrentRoute: () => "live",
+      getPathname: () => "/live/session-1",
+      getSessionIdFromPath: () => "session-1",
+      setPinnedArtifact: async () => ({ pinnedFile: "/workspace/session/spec.md" }),
+    });
+
+    await actions.pinFileToSession("/workspace/session/spec.md", { openArtifact: false });
+
+    expect(state.writerOpenSessions.get("session-1")).toBe(true);
+    expect(state.writerLayout.mobileTab).toBe("writer");
+    expect(state.appCardLayout.open).toBe(false);
+    expect(state.artifactsLayout.open).toBe(false);
+    expect(state.webviewLayout.open).toBe(false);
+  });
+
   test("pins to the route session instead of another active session", async () => {
     const state = createState();
     let pinnedSessionId = null;
