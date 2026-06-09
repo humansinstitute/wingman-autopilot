@@ -35,11 +35,20 @@ const EXT_LANGUAGE_MAP = {
   ".toml": "toml",
   ".ini": "ini", ".conf": "ini", ".env": "ini",
   ".py": "python",
+  ".rb": "ruby",
+  ".php": "php",
   ".go": "go",
   ".rs": "rust",
+  ".java": "java",
+  ".c": "c", ".h": "c",
+  ".cc": "cpp", ".cpp": "cpp", ".cxx": "cpp", ".hpp": "cpp", ".hh": "cpp",
+  ".cs": "csharp",
+  ".swift": "swift",
+  ".kt": "kotlin", ".kts": "kotlin",
   ".sh": "shell", ".bash": "shell", ".zsh": "shell",
+  ".sql": "sql",
   ".css": "css",
-  ".html": "html",
+  ".html": "html", ".htm": "html", ".xml": "html", ".svg": "html", ".vue": "html", ".svelte": "html",
 };
 
 function getFileExtension(filePath) {
@@ -514,7 +523,8 @@ export function createWriterPanel(sessionId, targetFile, deps) {
 
     // Read-only rendered code view
     const rendered = document.createElement("div");
-    rendered.className = "wm-writer-block__rendered";
+    rendered.className = "wm-writer-block__rendered wm-writer-code-file";
+    rendered.dataset.language = codeLang;
     if (rawContent.trim().length === 0) {
       rendered.textContent = "Empty file";
     } else {

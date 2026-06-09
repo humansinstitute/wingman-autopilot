@@ -376,6 +376,64 @@ const CODE_KEYWORDS = {
   shell: [
     "if", "then", "else", "elif", "fi", "for", "while", "in", "do", "done", "case", "esac", "function", "select",
   ],
+  ruby: [
+    "BEGIN", "END", "alias", "and", "begin", "break", "case", "class", "def", "defined?", "do", "else", "elsif",
+    "end", "ensure", "false", "for", "if", "in", "module", "next", "nil", "not", "or", "redo", "rescue", "retry",
+    "return", "self", "super", "then", "true", "undef", "unless", "until", "when", "while", "yield",
+  ],
+  php: [
+    "abstract", "and", "array", "as", "break", "callable", "case", "catch", "class", "clone", "const", "continue",
+    "declare", "default", "die", "do", "echo", "else", "elseif", "empty", "enddeclare", "endfor", "endforeach",
+    "endif", "endswitch", "endwhile", "eval", "exit", "extends", "final", "finally", "fn", "for", "foreach", "function",
+    "global", "goto", "if", "implements", "include", "include_once", "instanceof", "interface", "isset", "list",
+    "namespace", "new", "or", "print", "private", "protected", "public", "require", "require_once", "return", "static",
+    "switch", "throw", "trait", "try", "unset", "use", "var", "while", "xor", "yield",
+  ],
+  java: [
+    "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char", "class", "const", "continue", "default",
+    "do", "double", "else", "enum", "extends", "final", "finally", "float", "for", "if", "implements", "import",
+    "instanceof", "int", "interface", "long", "native", "new", "package", "private", "protected", "public", "return",
+    "short", "static", "strictfp", "super", "switch", "synchronized", "this", "throw", "throws", "transient", "try",
+    "void", "volatile", "while",
+  ],
+  c: [
+    "auto", "break", "case", "char", "const", "continue", "default", "do", "double", "else", "enum", "extern", "float",
+    "for", "goto", "if", "inline", "int", "long", "register", "restrict", "return", "short", "signed", "sizeof",
+    "static", "struct", "switch", "typedef", "union", "unsigned", "void", "volatile", "while",
+  ],
+  cpp: [
+    "alignas", "alignof", "and", "asm", "auto", "bool", "break", "case", "catch", "char", "class", "concept", "const",
+    "constexpr", "continue", "decltype", "default", "delete", "do", "double", "else", "enum", "explicit", "export",
+    "extern", "false", "float", "for", "friend", "if", "inline", "int", "long", "mutable", "namespace", "new", "noexcept",
+    "nullptr", "operator", "private", "protected", "public", "return", "short", "signed", "sizeof", "static", "struct",
+    "switch", "template", "this", "throw", "true", "try", "typedef", "typename", "union", "unsigned", "using", "virtual",
+    "void", "volatile", "while",
+  ],
+  csharp: [
+    "abstract", "as", "base", "bool", "break", "case", "catch", "class", "const", "continue", "decimal", "default",
+    "delegate", "do", "double", "else", "enum", "event", "explicit", "extern", "false", "finally", "fixed", "float",
+    "for", "foreach", "if", "implicit", "in", "int", "interface", "internal", "is", "lock", "long", "namespace", "new",
+    "null", "object", "operator", "out", "override", "params", "private", "protected", "public", "readonly", "ref",
+    "return", "sealed", "short", "sizeof", "stackalloc", "static", "string", "struct", "switch", "this", "throw", "true",
+    "try", "typeof", "uint", "ulong", "unchecked", "unsafe", "ushort", "using", "virtual", "void", "volatile", "while",
+  ],
+  swift: [
+    "Any", "as", "associatedtype", "break", "case", "catch", "class", "continue", "defer", "deinit", "do", "else", "enum",
+    "extension", "fallthrough", "false", "fileprivate", "for", "func", "guard", "if", "import", "in", "init", "inout",
+    "internal", "is", "let", "nil", "open", "operator", "private", "protocol", "public", "repeat", "return", "self",
+    "static", "struct", "subscript", "super", "switch", "throw", "throws", "true", "try", "typealias", "var", "where",
+    "while",
+  ],
+  kotlin: [
+    "as", "break", "class", "continue", "do", "else", "false", "for", "fun", "if", "in", "interface", "is", "null",
+    "object", "package", "return", "super", "this", "throw", "true", "try", "typealias", "typeof", "val", "var", "when",
+    "while",
+  ],
+  sql: [
+    "alter", "and", "as", "between", "by", "case", "create", "delete", "desc", "distinct", "drop", "else", "end", "exists",
+    "false", "from", "group", "having", "in", "insert", "into", "is", "join", "left", "like", "limit", "not", "null", "on",
+    "or", "order", "outer", "right", "select", "set", "table", "then", "true", "union", "update", "values", "when", "where",
+  ],
   css: ["@import", "@media", "@supports", "@keyframes", "from", "to"],
   html: ["doctype", "html", "head", "body", "div", "span", "script", "style", "link", "meta", "title"],
   plaintext: [],
@@ -384,7 +442,7 @@ const CODE_KEYWORDS = {
 export const buildKeywordPattern = (keywords) => {
   if (!keywords || keywords.length === 0) return null;
   const escaped = keywords.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  return new RegExp(`\\b(${escaped.join("|")})\\b`, "g");
+  return new RegExp(`(?<![A-Za-z0-9_$@-])(${escaped.join("|")})(?![A-Za-z0-9_$-])`, "gi");
 };
 
 const CODE_KEYWORD_PATTERNS = Object.fromEntries(
@@ -417,7 +475,15 @@ export const renderCodeToHtml = (content, language = "plaintext") => {
     normalizedLanguage === "javascript" ||
     normalizedLanguage === "typescript" ||
     normalizedLanguage === "go" ||
-    normalizedLanguage === "rust"
+    normalizedLanguage === "rust" ||
+    normalizedLanguage === "java" ||
+    normalizedLanguage === "c" ||
+    normalizedLanguage === "cpp" ||
+    normalizedLanguage === "csharp" ||
+    normalizedLanguage === "php" ||
+    normalizedLanguage === "swift" ||
+    normalizedLanguage === "kotlin" ||
+    normalizedLanguage === "css"
   ) {
     working = working.replace(/(\/\/[^\n]*)/g, (match) => createToken(`<span class="token comment">${match}</span>`));
     working = working.replace(/(\/\*[\s\S]*?\*\/)/g, (match) =>
@@ -430,18 +496,34 @@ export const renderCodeToHtml = (content, language = "plaintext") => {
     normalizedLanguage === "shell" ||
     normalizedLanguage === "yaml" ||
     normalizedLanguage === "toml" ||
-    normalizedLanguage === "ini"
+    normalizedLanguage === "ini" ||
+    normalizedLanguage === "ruby"
   ) {
     working = working.replace(/(^|\s)(#[^\n]*)/gm, (full, prefix, comment) => {
       return `${prefix}${createToken(`<span class="token comment">${comment}</span>`)}`;
     });
   }
 
+  if (normalizedLanguage === "sql") {
+    working = working.replace(/(--[^\n]*)/g, (match) => createToken(`<span class="token comment">${match}</span>`));
+    working = working.replace(/(\/\*[\s\S]*?\*\/)/g, (match) =>
+      createToken(`<span class="token comment">${match}</span>`),
+    );
+  }
+
+  if (normalizedLanguage === "html") {
+    working = working.replace(/(&lt;!--[\s\S]*?--&gt;)/g, (match) =>
+      createToken(`<span class="token comment">${match}</span>`),
+    );
+  }
+
   working = working.replace(/(&quot;.*?&quot;)/g, (match) => createToken(`<span class="token string">${match}</span>`));
   working = working.replace(/(&#39;.*?&#39;)/g, (match) => createToken(`<span class="token string">${match}</span>`));
   working = working.replace(/`[^`]*`/g, (match) => createToken(`<span class="token string">${match}</span>`));
 
-  working = working.replace(/\b(0x[a-fA-F0-9]+|\d+\.\d+|\d+)\b/g, '<span class="token number">$1</span>');
+  working = working.replace(/\b(0x[a-fA-F0-9]+|\d+\.\d+|\d+)\b/g, (match) =>
+    createToken(`<span class="token number">${match}</span>`),
+  );
 
   const keywordPattern = CODE_KEYWORD_PATTERNS[normalizedLanguage];
   if (keywordPattern) {
