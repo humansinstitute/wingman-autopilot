@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+
 import { nip19 } from 'nostr-tools';
 import { generateBotKey, unlockViaEscrow } from '../identity/bot-key-manager';
 import {
@@ -73,6 +75,7 @@ import {
 import type {
   AgentChatDispatchHistoryEntry,
   AgentChatSseEventDiagnostic,
+  AgentCapability,
   AgentDefinitionRecord,
   BackendConnectionRecord,
   BotKeyStoreRecord,
@@ -110,6 +113,12 @@ const CHAT_ADVISORY_DECRYPT_TIMEOUT_MS = 15_000;
 const CHAT_ADVISORY_ROUTING_TIMEOUT_MS = 20_000;
 const CHAT_ADVISORY_PIPELINE_TIMEOUT_MS = 60_000;
 const WORKSPACE_KEY_MAPPING_CACHE_MS = 30_000;
+const DEFAULT_AUTO_AGENT_WORKSPACE_ROOT = new URL('../../data/agent-chat-workspaces', import.meta.url).pathname;
+const DEFAULT_33357_AGENT_CAPABILITIES: AgentCapability[] = [
+  'chat_intercept',
+  'task_dispatch',
+  'comment_dispatch',
+];
 
 const DEFAULT_DISPATCH_PIPELINE_ROUTES: Array<{
   triggerKind: CreateDispatchRouteInput['triggerKind'];
@@ -530,6 +539,7 @@ export interface WorkspaceSubscriptionManagerDependencies {
   chatRecordPullTimeoutMs?: number;
   chatRecordPullMaxAttempts?: number;
   chatRecordPullRetryDelayMs?: number;
+  autoAgentWorkspaceRoot?: string;
   botKeyStore: {
     getActiveKeyForUser: (npub: string) => BotKeyStoreRecord | null;
     getActiveKeyForBotNpub: (botNpub: string) => BotKeyStoreRecord | null;
@@ -644,6 +654,7 @@ export class WorkspaceSubscriptionManager {
   private readonly chatRecordPullTimeoutMs: number;
   private readonly chatRecordPullMaxAttempts: number;
   private readonly chatRecordPullRetryDelayMs: number;
+  private readonly autoAgentWorkspaceRoot: string;
   private readonly runtimes = new Map<string, RuntimeContext>();
   private readonly workspaceKeyOwnerCache = new Map<string, { fetchedAt: number; owners: Map<string, string> }>();
 
@@ -667,6 +678,8 @@ export class WorkspaceSubscriptionManager {
     this.chatRecordPullTimeoutMs = Math.max(1, deps.chatRecordPullTimeoutMs ?? CHAT_ADVISORY_RECORD_PULL_TIMEOUT_MS);
     this.chatRecordPullMaxAttempts = Math.max(1, deps.chatRecordPullMaxAttempts ?? CHAT_ADVISORY_RECORD_PULL_MAX_ATTEMPTS);
     this.chatRecordPullRetryDelayMs = Math.max(0, deps.chatRecordPullRetryDelayMs ?? CHAT_ADVISORY_RECORD_PULL_RETRY_DELAY_MS);
+    this.autoAgentWorkspaceRoot = (deps.autoAgentWorkspaceRoot ?? Bun.env.AGENT_CHAT_WORKSPACE_ROOT ?? DEFAULT_AUTO_AGENT_WORKSPACE_ROOT).trim()
+      || DEFAULT_AUTO_AGENT_WORKSPACE_ROOT;
   }
 
   setChatRuntime(chatRuntime: AgentChatSessionRuntime | null): void {
@@ -1098,6 +1111,132 @@ export class WorkspaceSubscriptionManager {
     return set.size > 0 ? [...set] : ['chat_intercept'];
   }
 
+  private normaliseAgentIdPart(value: string | null | undefined): string {
+    const normalized = String(value ?? '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '');
+    if (!normalized) {
+      return 'workspace';
+    }
+    return normalized.length <= 24
+      ? normalized
+      : `${normalized.slice(0, 10)}${normalized.slice(-14)}`;
+  }
+
+  private buildOnboardedAgentId(subscription: WorkspaceSubscriptionRecord): string {
+    const workspacePart = this.normaliseAgentIdPart(
+      subscription.workspaceServiceNpub ?? subscription.workspaceId ?? subscription.workspaceOwnerNpub,
+    );
+    const appPart = this.normaliseAgentIdPart(subscription.sourceAppNpub);
+    const botPart = this.normaliseAgentIdPart(subscription.botNpub);
+    return `fd-${botPart}-${workspacePart}-${appPart}`;
+  }
+
+  private buildOnboardedAgentWorkingDirectory(agentId: string): string {
+    return join(this.autoAgentWorkspaceRoot, agentId);
+  }
+
+  private deriveGroupNpubsFromSubscription(subscription: WorkspaceSubscriptionRecord): string[] {
+    if (!subscription.wrappedGroupKeysJson) {
+      return [];
+    }
+    try {
+      const rows = JSON.parse(subscription.wrappedGroupKeysJson) as unknown;
+      if (!Array.isArray(rows)) {
+        return [];
+      }
+      return [...new Set(rows
+        .map((row) => (row && typeof row === 'object' ? (row as { group_npub?: unknown }).group_npub : null))
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .map((value) => value.trim()))].sort();
+    } catch {
+      return [];
+    }
+  }
+
+  private onboardedAgentCapabilities(subscription: WorkspaceSubscriptionRecord): AgentCapability[] {
+    return this.normaliseAgentCapabilities([
+      ...DEFAULT_33357_AGENT_CAPABILITIES,
+      ...(subscription.capabilityDefaults ?? []),
+    ]);
+  }
+
+  private async ensureOnboardedAgentForSubscription(input: {
+    subscription: WorkspaceSubscriptionRecord;
+    agentProfile: AgentDefinitionRecord | null;
+    botIdentity: RuntimeBotIdentity;
+  }): Promise<AgentDefinitionRecord | null> {
+    const subscription = input.subscription;
+    if (subscription.onboardingSource !== 'nostr_33357' || !subscription.managedByNpub) {
+      return null;
+    }
+
+    const existing = this.agentStore
+      .listByWorkspaceAndBot(subscription.workspaceOwnerNpub, subscription.botNpub)
+      .find((agent) => agent.managedByNpub === subscription.managedByNpub);
+    if (existing) {
+      const capabilities = this.onboardedAgentCapabilities(subscription);
+      const updated = this.agentStore.save({
+        ...existing,
+        capabilities: [...new Set([...existing.capabilities, ...capabilities])] as AgentCapability[],
+        groupNpubs: existing.groupNpubs.length > 0
+          ? existing.groupNpubs
+          : this.deriveGroupNpubsFromSubscription(subscription),
+        updatedAt: new Date().toISOString(),
+      });
+      this.ensureDefaultDispatchRoutesForSubscription(subscription, updated.capabilities);
+      return updated;
+    }
+
+    const groupNpubs = this.deriveGroupNpubsFromSubscription(subscription);
+    if (groupNpubs.length === 0) {
+      return null;
+    }
+
+    const agentId = this.buildOnboardedAgentId(subscription);
+    const existingById = this.agentStore.getByAgentId(agentId);
+    if (existingById && existingById.managedByNpub && existingById.managedByNpub !== subscription.managedByNpub) {
+      throw new Error(`Auto Agent Dispatch binding ${agentId} is owned by another manager.`);
+    }
+
+    const now = new Date().toISOString();
+    const label = input.agentProfile?.label
+      || (input.botIdentity.botNpub === subscription.botNpub ? 'Flight Deck Agent' : 'Agent Dispatch');
+    const workingDirectory = existingById?.workingDirectory?.trim()
+      || this.buildOnboardedAgentWorkingDirectory(agentId);
+    const capabilities = this.onboardedAgentCapabilities(subscription);
+
+    await bootstrapAgentWorkspace({
+      agentId,
+      label,
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      workingDirectory,
+      createdAt: existingById?.createdAt ?? now,
+    });
+
+    const saved = this.agentStore.save({
+      agentId,
+      label,
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs,
+      workingDirectory,
+      capabilities,
+      chatPromptTemplate: existingById?.chatPromptTemplate ?? DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE,
+      taskPromptTemplate: existingById?.taskPromptTemplate ?? DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE,
+      flowDispatchPromptTemplate: existingById?.flowDispatchPromptTemplate ?? DEFAULT_FLOW_DISPATCH_PROMPT_TEMPLATE,
+      taskReviewPromptTemplate: existingById?.taskReviewPromptTemplate ?? DEFAULT_TASK_REVIEW_PROMPT_TEMPLATE,
+      approvalDispatchPromptTemplate: existingById?.approvalDispatchPromptTemplate ?? DEFAULT_APPROVAL_DISPATCH_PROMPT_TEMPLATE,
+      enabled: existingById?.enabled ?? true,
+      createdAt: existingById?.createdAt ?? now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+    this.ensureDefaultDispatchRoutesForSubscription(subscription, saved.capabilities);
+    return saved;
+  }
+
   async saveAgentForManager(input: CreateAgentDefinitionInput): Promise<AgentDefinitionRecord> {
     const agentId = input.agentId.trim();
     const label = input.label.trim() || agentId;
@@ -1235,6 +1374,11 @@ export class WorkspaceSubscriptionManager {
       subscription,
       backendConnection,
       relayOnboardingStatus: subscription.wsKeyStatus === 'active' ? 'ready' : 'verified',
+    });
+    await this.ensureOnboardedAgentForSubscription({
+      subscription,
+      agentProfile,
+      botIdentity,
     });
     return { backendConnection, subscription };
   }

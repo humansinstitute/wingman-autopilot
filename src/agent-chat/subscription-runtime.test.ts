@@ -159,6 +159,7 @@ function createTestManager(
     },
     getInstanceIdentity: () => instanceIdentity,
     dispatchPipelineRuntime,
+    autoAgentWorkspaceRoot: makeTempDb(),
   });
 
   const managerInternals = manager as unknown as {
@@ -479,7 +480,7 @@ describe('WorkspaceSubscriptionManager', () => {
   test('imports wrapped Agent Connect text without a profile when WINGMAN_PRIV is configured', async () => {
     const dbPath = makeTempDb();
     const instanceIdentity = makeInstanceIdentity();
-    const { manager, store, backendStore, profilePolicyStore } = createTestManager(
+    const { manager, store, backendStore, profilePolicyStore, agentStore } = createTestManager(
       dbPath,
       new Map(),
       undefined,
@@ -514,12 +515,13 @@ describe('WorkspaceSubscriptionManager', () => {
       relayOnboardingStatus: 'ready',
     });
     expect(profilePolicyStore.listPolicies(identityWorkspaces[0]!.profileWorkspaceId)).toHaveLength(10);
+    expect(agentStore.listByWorkspaceAndBot('npub1workspace', instanceIdentity.npub)).toHaveLength(0);
   });
 
   test('promotes an existing manual subscription when 33357 onboarding imports it', async () => {
     const dbPath = makeTempDb();
     const instanceIdentity = makeInstanceIdentity();
-    const { manager, store } = createTestManager(
+    const { manager, store, agentStore } = createTestManager(
       dbPath,
       new Map(),
       undefined,
@@ -545,6 +547,10 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(imported.subscription.subscriptionId).toBe(manual.subscriptionId);
     expect(imported.subscription.onboardingSource).toBe('nostr_33357');
     expect(store.getBySubscriptionId(manual.subscriptionId)?.onboardingSource).toBe('nostr_33357');
+    const agents = agentStore.listByWorkspaceAndBot('npub1workspace', instanceIdentity.npub);
+    expect(agents).toHaveLength(1);
+    expect(agents[0]?.groupNpubs).toEqual([`group-${instanceIdentity.npub}`]);
+    expect(agents[0]?.capabilities.toSorted()).toEqual(['chat_intercept', 'comment_dispatch', 'task_dispatch']);
   });
 
   test('seeds default dispatch routes from Agent Connect capability defaults', async () => {
@@ -557,7 +563,7 @@ describe('WorkspaceSubscriptionManager', () => {
       callbackOrigin: 'http://localhost:3600',
       requirePipelineRoutes: true,
     });
-    const { manager } = createTestManager(
+    const { manager, agentStore } = createTestManager(
       dbPath,
       new Map(),
       undefined,
@@ -572,13 +578,16 @@ describe('WorkspaceSubscriptionManager', () => {
     });
 
     expect(imported.subscription.onboardingSource).toBe('nostr_33357');
+    expect(agentStore.listByWorkspaceAndBot('npub1workspace', imported.subscription.botNpub)).toHaveLength(1);
     const routes = routeStore.listForSubscription(imported.subscription.subscriptionId);
     expect(routes.map((route) => `${route.triggerKind}:${route.capability}`).sort()).toEqual([
       'chat:chat_intercept',
+      'comment:comment_dispatch',
       'task:task_dispatch',
     ]);
     expect(routes.map((route) => route.pipelineDefinitionId).sort()).toEqual([
       'agent-dispatch-chat',
+      'agent-dispatch-comment-response',
       'agent-dispatch-task-response',
     ]);
   });

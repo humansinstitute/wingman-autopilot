@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 
 import {
   filterDispatchRoutesForSubscription,
@@ -8,6 +8,10 @@ import {
 } from "./agent-chat-section-state.js";
 import { createAgentDispatchSetupCards } from "./agent-chat-setup-cards.js";
 import { createProfileWorkspaceSettingsCard } from "./agent-chat-profile-workspace-card.js";
+
+mock.module("../../pipelines/api.js", () => ({
+  fetchPipelineRun: async () => null,
+}));
 
 class FakeElement {
   constructor(tagName) {
@@ -218,6 +222,38 @@ describe("agent chat settings subscription selection", () => {
 
       expect(queryByTestId(panel, "agent-chat-profile-target-id-0")?.value).toBe("scope-autopilot");
       expect(queryByTestId(panel, "agent-chat-profile-target-id-1")?.value).toBe("channel-design");
+    });
+  });
+
+  test("hides manual connection controls for Flight Deck onboarded subscriptions", async () => {
+    const { createSubscriptionCard } = await import("./agent-chat-operator-cards.js");
+    withFakeDocument(() => {
+      const card = createSubscriptionCard({
+        subscriptionId: "sub-flight-deck",
+        workspaceOwnerNpub: "npub1workspace",
+        botNpub: "npub1bot",
+        sourceAppNpub: "npub1source",
+        onboardingSource: "nostr_33357",
+        sseStatus: "connected",
+        healthStatus: "healthy",
+        operator: {
+          canManage: true,
+          enabled: true,
+          candidateAgentCount: 1,
+        },
+      }, [], {
+        allowConnectionManagement: false,
+        dispatchRoutes: [],
+        getDispatchRoutes: () => [],
+        pipelineDefinitions: [],
+        runAction: () => {},
+        select: () => {},
+        selectedSubscriptionId: "sub-flight-deck",
+      });
+
+      expect(queryByTestId(card, "agent-chat-edit-sub-flight-deck")).toBeNull();
+      expect(queryByTestId(card, "agent-chat-remove-sub-flight-deck")).toBeNull();
+      expect(queryByTestId(card, "agent-chat-reconnect-sub-flight-deck")).not.toBeNull();
     });
   });
 });

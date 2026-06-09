@@ -903,18 +903,12 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
   if (subscription.operator?.canManage !== false) {
     const actions = document.createElement('div');
     actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;';
-    actions.append(
+    const actionButtons = [
       createActionButton(
         isSelected ? 'Selected' : 'Select',
         `Select Agent Dispatch subscription for ${subscription.workspaceOwnerNpub}`,
         `agent-chat-select-${subscription.subscriptionId}`,
         () => handlers.select?.(subscription),
-      ),
-      createActionButton(
-        'Edit Connection',
-        `Edit Agent Dispatch subscription for ${subscription.workspaceOwnerNpub}`,
-        `agent-chat-edit-${subscription.subscriptionId}`,
-        () => handlers.edit?.(subscription),
       ),
       createActionButton(
         'Reconnect',
@@ -934,13 +928,22 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
         `agent-chat-toggle-enabled-${subscription.subscriptionId}`,
         () => handlers.runAction(subscription, subscription.operator?.enabled ? 'disable' : 'enable'),
       ),
-      createActionButton(
+    ];
+    if (handlers.allowConnectionManagement !== false) {
+      actionButtons.splice(1, 0, createActionButton(
+        'Edit Connection',
+        `Edit Agent Dispatch subscription for ${subscription.workspaceOwnerNpub}`,
+        `agent-chat-edit-${subscription.subscriptionId}`,
+        () => handlers.edit?.(subscription),
+      ));
+      actionButtons.push(createActionButton(
         'Remove',
         `Remove Agent Chat subscription for ${subscription.workspaceOwnerNpub}`,
         `agent-chat-remove-${subscription.subscriptionId}`,
-        () => handlers.remove(subscription),
-      ),
-    );
+        () => handlers.remove?.(subscription),
+      ));
+    }
+    actions.append(...actionButtons);
     card.append(actions);
   }
 
