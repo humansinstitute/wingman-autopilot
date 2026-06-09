@@ -40,6 +40,9 @@ export interface AccessGrantPayload {
     direct_https_url: string;
     service_npub: string;
     relay_urls?: string[];
+    openapi_url?: string | null;
+    docs_url?: string | null;
+    health_url?: string | null;
     name?: string | null;
     description?: string | null;
   };
@@ -47,6 +50,10 @@ export interface AccessGrantPayload {
     owner_npub: string;
     workspace_service_npub: string;
     workspace_id?: string | null;
+    app_npub?: string | null;
+    label?: string | null;
+    descriptor_url?: string | null;
+    me_url?: string | null;
     name?: string | null;
     description?: string | null;
   };
@@ -284,7 +291,10 @@ function parsePayload(value: string): AccessGrantPayload {
   ) {
     throw Object.assign(new Error('payload missing required SBIP-0009 fields'), { code: 'payload_invalid' });
   }
-  if (payload.action === 'grant' && (!payload.grant_id || !payload.dedupe_key || !payload.agent_connect_package)) {
+  if (payload.grant?.grant_id && !payload.grant_id) {
+    payload.grant_id = payload.grant.grant_id;
+  }
+  if (payload.action === 'grant' && !payload.agent_connect_package) {
     throw Object.assign(new Error('active grant payload missing required import fields'), { code: 'payload_invalid' });
   }
   if (payload.app?.namespace && ![SBIP0009_APP_NAMESPACE, 'flightdeck_pg'].includes(payload.app.namespace)) {
@@ -340,6 +350,8 @@ export function decodeAccessGrantEvent(input: {
   const payload = parsePayload(plaintext);
   const d = getOptionalTag(event.tags, 'd');
   const app = getOptionalTag(event.tags, 'app');
+  const protocol = getOptionalTag(event.tags, 'protocol');
+  const taggedAppPubkey = getOptionalTag(event.tags, 'app_pub');
   const appPubkey = getOptionalTag(event.tags, 'app_pub') ?? payload.app.app_pubkey ?? null;
   const appNpub = getOptionalTag(event.tags, 'app_npub') ?? payload.app.app_npub ?? encodeHexToNpub(appPubkey);
   const taggedServiceNpub = getOptionalTag(event.tags, 'service_npub') ?? payload.service.service_npub;
@@ -350,6 +362,8 @@ export function decodeAccessGrantEvent(input: {
   const grantTag = getOptionalTag(event.tags, 'grant') ?? payload.grant_id ?? payload.grant?.grant_id ?? null;
 
   assertEqualWhenPresent('app namespace', app, SBIP0009_APP_NAMESPACE);
+  assertEqualWhenPresent('protocol', protocol, 'onboarding');
+  assertEqualWhenPresent('app pubkey', taggedAppPubkey, payload.app.app_pubkey);
   assertEqualWhenPresent('d tag', d, payload.dedupe_key);
   assertEqualWhenPresent('grant id', grantTag, payload.grant_id ?? payload.grant?.grant_id ?? null);
   assertEqualWhenPresent('recipient npub', recipientTag, payload.recipient?.npub ?? payload.recipient_npub);
@@ -366,13 +380,13 @@ export function decodeAccessGrantEvent(input: {
 
   const serviceNpub = taggedServiceNpub;
   const expectedDedupeKey = buildAccessGrantDedupeKey({ serviceNpub, workspaceServiceNpub, appNpub, recipientNpub });
-  const dedupeKey = payload.dedupe_key ?? d ?? expectedDedupeKey;
-  const grantId = payload.grant_id ?? grantTag ?? buildAccessGrantId(expectedDedupeKey);
+  const legacyDedupeKey = payload.dedupe_key ?? d ?? null;
+  assertEqualWhenPresent('dedupe key', expectedDedupeKey, legacyDedupeKey);
+  const dedupeKey = expectedDedupeKey;
+  const grantId = payload.grant_id ?? payload.grant?.grant_id ?? grantTag ?? buildAccessGrantId(expectedDedupeKey);
   assertEqualWhenPresent('dedupe key', expectedDedupeKey, dedupeKey);
-  if (payload.action === 'grant') {
-    assertEqual('dedupe key', expectedDedupeKey, d);
-    assertEqual('grant id', buildAccessGrantId(expectedDedupeKey), grantTag);
-  }
+  payload.dedupe_key = dedupeKey;
+  payload.grant_id = grantId;
 
   const expiresAt = payload.expires_at ? Date.parse(payload.expires_at) : null;
   if (payload.action === 'grant' && expiresAt != null && Number.isFinite(expiresAt) && expiresAt <= (input.now ?? new Date()).getTime()) {
@@ -391,7 +405,7 @@ export function decodeAccessGrantEvent(input: {
     appNpub,
     grantId,
     dedupeKey,
-    canonicalConnectionKey: `${serviceNpub}:${workspaceOwnerNpub}:${appNpub}:${recipientNpub}`,
+    canonicalConnectionKey: `${serviceNpub}:${workspaceServiceNpub}:${appNpub}:${recipientNpub}`,
   };
 }
 
@@ -454,9 +468,7 @@ function createNip98AuthHeader(url: string, method: string, body: unknown, secre
 function responseAllowsAccess(payload: unknown, grant: DecodedAccessGrant): boolean {
   if (!payload || typeof payload !== 'object') return false;
   const body = payload as Record<string, unknown>;
-  if (grant.serviceNpub && body.service_npub && body.service_npub !== grant.serviceNpub) return false;
-  if (body.workspace_service_npub && body.workspace_service_npub !== grant.workspaceServiceNpub) return false;
-  if (body.workspace_owner_npub && body.workspace_owner_npub !== grant.workspaceOwnerNpub) return false;
+  if (!towerIdentityMatchesGrant(body, grant)) return false;
   return body.allowed === true || body.active === true || body.verified === true || body.current_member === true;
 }
 
@@ -471,11 +483,84 @@ function fallbackPayloadAllowsAccess(payload: unknown, grant: DecodedAccessGrant
   return rows.some((entry) => {
     if (!entry || typeof entry !== 'object') return false;
     const row = entry as Record<string, unknown>;
+    if (!towerIdentityMatchesGrant(row, grant)) return false;
     return row.workspace_owner_npub === grant.workspaceOwnerNpub
       || row.owner_npub === grant.workspaceOwnerNpub
       || row.workspace_service_npub === grant.workspaceServiceNpub
       || (grant.serviceNpub ? row.service_npub === grant.serviceNpub : false);
   });
+}
+
+function getPathStringValues(value: unknown, path: string[]): string[] {
+  if (!value || typeof value !== 'object') return [];
+  let cursor: unknown = value;
+  for (const segment of path) {
+    if (!cursor || typeof cursor !== 'object' || Array.isArray(cursor)) return [];
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+  const text = getString(cursor);
+  return text ? [text] : [];
+}
+
+function getIdentityValues(payload: Record<string, unknown>, paths: string[][]): string[] {
+  return [...new Set(paths.flatMap((path) => getPathStringValues(payload, path)))];
+}
+
+function exposedValuesMatch(
+  payload: Record<string, unknown>,
+  paths: string[][],
+  expectedValues: Array<string | null | undefined>,
+): boolean {
+  const allowed = new Set(expectedValues.filter((value): value is string => Boolean(value)));
+  if (allowed.size === 0) return true;
+  const values = getIdentityValues(payload, paths);
+  return values.length === 0 || values.every((value) => allowed.has(value));
+}
+
+function towerIdentityMatchesGrant(payload: Record<string, unknown>, grant: DecodedAccessGrant): boolean {
+  const workspaceAppNpub = getString(grant.payload.workspace.app_npub) ?? grant.appNpub;
+  return exposedValuesMatch(payload, [
+    ['service_npub'],
+    ['tower_service_npub'],
+    ['service', 'service_npub'],
+    ['workspace', 'tower_service_npub'],
+    ['identity', 'tower_service_npub'],
+    ['descriptor', 'identity', 'tower_service_npub'],
+  ], [grant.serviceNpub])
+    && exposedValuesMatch(payload, [
+      ['workspace_service_npub'],
+      ['workspace', 'workspace_service_npub'],
+      ['identity', 'workspace_service_npub'],
+      ['descriptor', 'identity', 'workspace_service_npub'],
+    ], [grant.workspaceServiceNpub])
+    && exposedValuesMatch(payload, [
+      ['workspace_owner_npub'],
+      ['owner_npub'],
+      ['workspace', 'owner_npub'],
+      ['workspace', 'workspace_owner_npub'],
+      ['identity', 'workspace_owner_npub'],
+      ['descriptor', 'identity', 'workspace_owner_npub'],
+    ], [grant.workspaceOwnerNpub])
+    && exposedValuesMatch(payload, [
+      ['workspace_id'],
+      ['v4_workspace_id'],
+      ['workspace', 'workspace_id'],
+      ['workspace', 'v4_workspace_id'],
+      ['identity', 'workspace_id'],
+      ['descriptor', 'identity', 'workspace_id'],
+    ], [getString(grant.payload.workspace.workspace_id)])
+    && exposedValuesMatch(payload, [
+      ['app_npub'],
+      ['workspace', 'app_npub'],
+      ['identity', 'app_npub'],
+      ['descriptor', 'identity', 'app_npub'],
+    ], [workspaceAppNpub, grant.appNpub])
+    && exposedValuesMatch(payload, [
+      ['recipient_npub'],
+      ['viewer'],
+      ['viewer_npub'],
+      ['member_npub'],
+    ], [grant.recipientNpub]);
 }
 
 function payloadConfirmsRevocation(payload: unknown): TowerRevocationVerificationResult['towerResult'] | null {
@@ -540,6 +625,8 @@ export async function verifyAccessGrantWithTower(input: {
     workspace_service_npub: input.grant.workspaceServiceNpub,
     workspace_owner_npub: input.grant.workspaceOwnerNpub,
     app_npub: input.grant.appNpub,
+    workspace_app_npub: input.grant.payload.workspace.app_npub ?? null,
+    routing_app_npub: input.grant.appNpub,
     event_id: input.grant.event.id,
   };
   const verifyUrl = `${baseUrl}/api/v4/access-grants/verify`;
@@ -594,6 +681,8 @@ export async function verifyAccessGrantRevocationWithTower(input: {
     workspace_service_npub: input.grant.workspaceServiceNpub,
     workspace_owner_npub: input.grant.workspaceOwnerNpub,
     app_npub: input.grant.appNpub,
+    workspace_app_npub: input.grant.payload.workspace.app_npub ?? null,
+    routing_app_npub: input.grant.appNpub,
     event_id: input.grant.event.id,
     action: input.grant.payload.action,
   };
@@ -824,7 +913,7 @@ export async function processAccessGrantEvent(input: ProcessAccessGrantInput): P
     return { ok: false, code: `grant_${grant.payload.status}`, message: `Grant status is ${grant.payload.status}.`, grant };
   }
 
-  const importKey = `${grant.grantId}:${grant.canonicalConnectionKey}`;
+  const importKey = grant.dedupeKey;
   if (input.processedKeys?.has(importKey)) {
     return { ok: true, code: 'duplicate_skipped', message: 'Onboarding event already processed in this runtime.', grant };
   }

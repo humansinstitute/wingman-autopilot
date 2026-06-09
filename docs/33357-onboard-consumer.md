@@ -1,7 +1,7 @@
 # Autopilot 33357 Onboarding Consumer
 
-Status: design draft
-Last updated: 2026-06-08
+Status: implemented
+Last updated: 2026-06-09
 
 ## Purpose
 
@@ -17,6 +17,9 @@ The shared contract lives in:
 Autopilot's role is to notice onboarding events addressed to an agent npub,
 decrypt them, verify the current workspace state with Tower, import active
 Agent Connect grants, and then hydrate the workspace context through Yoke/Tower.
+The current Flight Deck producer keeps only routing information in cleartext;
+all workspace, service, grant, and Agent Connect details are treated as
+encrypted payload data.
 
 ## Semantic Model
 
@@ -47,11 +50,21 @@ Autopilot should watch or poll configured relays for events matching:
 ```text
 kind: 33357
 #p: <agent pubkey>
-#app_pub: <Flight Deck app pubkey>
-#protocol: onboarding
 ```
 
-The event content is encrypted to the agent pubkey from the `p` tag.
+The event content is encrypted to the agent pubkey from the `p` tag. Current
+Flight Deck events include only these cleartext routing tags:
+
+```text
+p: <agent pubkey>
+app_pub: <Flight Deck routing app pubkey>
+protocol: onboarding
+```
+
+Autopilot subscribes by recipient `#p` because some relays do not index custom
+tags consistently. If `app_pub` or `protocol` is present, Autopilot validates it
+after decrypting the payload. It does not require cleartext `d`, `grant`,
+service, workspace, or owner tags.
 
 Events that fail tag validation, decrypt, JSON parse, payload validation, or
 Tower verification should be recorded as diagnostics and ignored for import or
@@ -66,13 +79,36 @@ After decrypting, Autopilot expects:
 - `protocol: "onboarding"`
 - `recipient_npub` matching the agent identity;
 - `app.app_pubkey` matching the cleartext `app_pub` tag;
+- `app.app_npub`;
+- `issued_by_npub`;
 - `agent_connect.kind: "coworker_agent_connect"`;
 - `agent_connect.version` supported by the existing import path;
 - `agent_connect.connection_token`;
-- `agent_connect.llms_url`;
 - `service.direct_https_url`;
+- `service.service_npub`;
 - `workspace.owner_npub`;
-- `app.app_npub`.
+- `workspace.workspace_service_npub`;
+- optional `workspace.workspace_id`;
+- optional `workspace.app_npub`, `workspace.label`, `workspace.descriptor_url`,
+  and `workspace.me_url`;
+
+Autopilot normalizes `agent_connect` to the existing internal
+`agent_connect_package` field. It also accepts `grant.grant_id` and normalizes
+it to the internal `grant_id` field. The grant id is opaque; both
+`fd-onboard:<hash>` and older `sha256:<hash>` values are accepted.
+
+Autopilot derives its internal idempotency key from:
+
+```text
+service.service_npub
+workspace.workspace_service_npub
+app.app_npub
+recipient_npub
+```
+
+Flight Deck does not need to publish `dedupe_key`, a cleartext `d` tag, or a
+cleartext `grant` tag. Older events may still include those fields; when
+present, Autopilot checks that they match the derived identity.
 
 Autopilot should reuse the current Agent Connect import validation rather than
 creating a second workspace credential model.
@@ -93,10 +129,11 @@ because they must not create or update workspace credentials.
 Recommended flow:
 
 1. Receive or poll `33357`.
-2. Validate cleartext tags.
+2. Validate the recipient `p` tag and any present `app_pub`/`protocol` tags.
 3. Decrypt content with the agent key.
 4. Validate payload and expiration.
-5. Verify Tower access with NIP-98.
+5. Verify Tower access with NIP-98, including any service, workspace,
+   descriptor, app, and recipient identity fields Tower exposes.
 6. Run Agent Connect import using the encrypted `agent_connect` package.
 7. Create or update the backend connection/workspace subscription.
 8. Create or update an Autopilot agent profile for this connection.
@@ -106,13 +143,16 @@ Recommended flow:
 
 The import must be idempotent. A repeated relay event should update or confirm
 the same backend connection/subscription, not create duplicate workspaces.
+Autopilot uses the derived idempotency key for this, not the event id or
+producer-supplied grant id.
 
 ## Revocation Flow
 
 Recommended flow for `action: revoked` or `action: deleted`:
 
 1. Receive or poll `33357`.
-2. Validate cleartext tags and decrypt content with the agent key.
+2. Validate the recipient `p` tag and any present `app_pub`/`protocol` tags,
+   then decrypt content with the agent key.
 3. Validate the lifecycle payload and workspace identity.
 4. Verify with Tower using the recipient's current NIP-98 identity.
 5. Confirm revocation only when Tower reports deleted, not found, no membership,

@@ -28,14 +28,19 @@ function makeGrantEvent(overrides: {
   tags?: string[][];
   recipient?: ReturnType<typeof makeIdentity>;
   publisher?: ReturnType<typeof makeIdentity>;
+  issuer?: ReturnType<typeof makeIdentity>;
+  service?: ReturnType<typeof makeIdentity>;
+  workspaceService?: ReturnType<typeof makeIdentity>;
+  workspaceOwner?: ReturnType<typeof makeIdentity>;
+  app?: ReturnType<typeof makeIdentity>;
 } = {}) {
   const recipient = overrides.recipient ?? makeIdentity();
   const publisher = overrides.publisher ?? makeIdentity();
-  const issuer = makeIdentity();
-  const service = makeIdentity();
-  const workspaceService = makeIdentity();
-  const workspaceOwner = makeIdentity();
-  const app = makeIdentity();
+  const issuer = overrides.issuer ?? makeIdentity();
+  const service = overrides.service ?? makeIdentity();
+  const workspaceService = overrides.workspaceService ?? makeIdentity();
+  const workspaceOwner = overrides.workspaceOwner ?? makeIdentity();
+  const app = overrides.app ?? makeIdentity();
   const dedupeKey = buildAccessGrantDedupeKey({
     serviceNpub: service.npub,
     workspaceServiceNpub: workspaceService.npub,
@@ -119,6 +124,62 @@ function makeGrantEvent(overrides: {
   return { event, recipient, publisher, payload, service, workspaceService, workspaceOwner, app, grantId };
 }
 
+function makeCurrentFlightDeckGrantEvent(overrides: Parameters<typeof makeGrantEvent>[0] = {}) {
+  const issuer = overrides.issuer ?? makeIdentity();
+  const base = makeGrantEvent({
+    ...overrides,
+    issuer,
+  });
+  const payload = {
+    ...base.payload,
+    kind: undefined,
+    type: 'flightdeck_onboarding',
+    protocol: 'onboarding',
+    grant_id: undefined,
+    dedupe_key: undefined,
+    recipient: undefined,
+    issuer: undefined,
+    recipient_npub: base.recipient.npub,
+    issued_by_npub: issuer.npub,
+    workspace: {
+      ...base.payload.workspace,
+      app_npub: base.app.npub,
+      label: 'Wingers',
+      descriptor_url: 'https://tower.example.com/api/v4/flightdeck-pg/workspaces/workspace-1/descriptor',
+      me_url: 'https://tower.example.com/api/v4/flightdeck-pg/workspaces/workspace-1/me',
+    },
+    app: {
+      app_npub: base.app.npub,
+      app_pubkey: base.app.pubkey,
+    },
+    agent_connect: base.payload.agent_connect_package,
+    agent_connect_package: undefined,
+    grant: {
+      grant_id: overrides.payload?.grant && typeof overrides.payload.grant === 'object'
+        ? (overrides.payload.grant as { grant_id?: string }).grant_id
+        : 'fd-onboard:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      reason: 'added_to_workspace_or_group',
+    },
+    ...overrides.payload,
+  };
+  return makeGrantEvent({
+    ...overrides,
+    recipient: base.recipient,
+    publisher: base.publisher,
+    issuer,
+    service: base.service,
+    workspaceService: base.workspaceService,
+    workspaceOwner: base.workspaceOwner,
+    app: base.app,
+    payload,
+    tags: overrides.tags ?? [
+      ['p', base.recipient.pubkey],
+      ['app_pub', base.app.pubkey],
+      ['protocol', 'onboarding'],
+    ],
+  });
+}
+
 describe('Flight Deck 33357 onboarding validation', () => {
   test('validates and decrypts a canonical signed onboarding event', () => {
     const fixture = makeGrantEvent();
@@ -134,6 +195,109 @@ describe('Flight Deck 33357 onboarding validation', () => {
     expect(grant.workspaceServiceNpub).toBe(fixture.workspaceService.npub);
   });
 
+  test('accepts current Flight Deck grants with only p/app_pub/protocol cleartext tags', async () => {
+    const fixture = makeCurrentFlightDeckGrantEvent();
+    const grant = decodeAccessGrantEvent({
+      event: fixture.event,
+      recipientSecretKey: fixture.recipient.secret,
+      recipientNpub: fixture.recipient.npub,
+      now: new Date('2026-06-07T00:00:01.000Z'),
+    });
+
+    expect(fixture.event.tags).toEqual([
+      ['p', fixture.recipient.pubkey],
+      ['app_pub', fixture.app.pubkey],
+      ['protocol', 'onboarding'],
+    ]);
+    expect(grant.grantId).toMatch(/^fd-onboard:/);
+    expect(grant.dedupeKey).toBe(buildAccessGrantDedupeKey({
+      serviceNpub: fixture.service.npub,
+      workspaceServiceNpub: fixture.workspaceService.npub,
+      appNpub: fixture.app.npub,
+      recipientNpub: fixture.recipient.npub,
+    }));
+    expect(grant.payload.agent_connect_package?.kind).toBe('coworker_agent_connect');
+    expect(grant.payload.grant_id).toBe(grant.grantId);
+
+    let importedPackage: Record<string, unknown> | string | null = null;
+    const result = await processAccessGrantEvent({
+      event: fixture.event,
+      recipientSecretKey: fixture.recipient.secret,
+      recipientNpub: fixture.recipient.npub,
+      managedByNpub: fixture.recipient.npub,
+      subscriptionManager: {
+        importAgentConnectPackage: async (input) => {
+          importedPackage = input.packageJson;
+          return { subscription: { subscriptionId: 'sub-current' } };
+        },
+      },
+      fetchImpl: async () => new Response(JSON.stringify({
+        allowed: true,
+        service_npub: fixture.service.npub,
+        workspace_service_npub: fixture.workspaceService.npub,
+        workspace_owner_npub: fixture.workspaceOwner.npub,
+        descriptor: {
+          identity: {
+            tower_service_npub: fixture.service.npub,
+            workspace_service_npub: fixture.workspaceService.npub,
+            workspace_owner_npub: fixture.workspaceOwner.npub,
+            app_npub: fixture.app.npub,
+          },
+        },
+      }), { status: 200 }),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.code).toBe('imported');
+    expect((importedPackage as Record<string, unknown>)?.kind).toBe('coworker_agent_connect');
+  });
+
+  test('uses the derived dedupe key for current Flight Deck duplicate delivery', async () => {
+    const firstFixture = makeCurrentFlightDeckGrantEvent();
+    const secondFixture = makeCurrentFlightDeckGrantEvent({
+      recipient: firstFixture.recipient,
+      publisher: firstFixture.publisher,
+      service: firstFixture.service,
+      workspaceService: firstFixture.workspaceService,
+      workspaceOwner: firstFixture.workspaceOwner,
+      app: firstFixture.app,
+      payload: {
+        grant: {
+          grant_id: 'fd-onboard:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+        },
+      },
+    });
+    const processedKeys = new Set<string>();
+    let imports = 0;
+    const baseInput = {
+      recipientSecretKey: firstFixture.recipient.secret,
+      recipientNpub: firstFixture.recipient.npub,
+      managedByNpub: firstFixture.recipient.npub,
+      processedKeys,
+      subscriptionManager: {
+        importAgentConnectPackage: async () => {
+          imports += 1;
+          return { subscription: { subscriptionId: 'sub-current' } };
+        },
+      },
+      fetchImpl: async () => new Response(JSON.stringify({
+        allowed: true,
+        service_npub: firstFixture.service.npub,
+        workspace_service_npub: firstFixture.workspaceService.npub,
+        workspace_owner_npub: firstFixture.workspaceOwner.npub,
+      }), { status: 200 }),
+    };
+
+    const first = await processAccessGrantEvent({ ...baseInput, event: firstFixture.event });
+    const second = await processAccessGrantEvent({ ...baseInput, event: secondFixture.event });
+
+    expect(first.ok).toBe(true);
+    expect(first.code).toBe('imported');
+    expect(second.ok).toBe(true);
+    expect(second.code).toBe('duplicate_skipped');
+    expect(imports).toBe(1);
+  });
+
   test('rejects public tags and decrypted payload mismatches', () => {
     const fixture = makeGrantEvent({
       payload: {
@@ -145,6 +309,61 @@ describe('Flight Deck 33357 onboarding validation', () => {
       recipientSecretKey: fixture.recipient.secret,
       recipientNpub: fixture.recipient.npub,
     })).toThrow(/app npub mismatch|dedupe key mismatch/);
+  });
+
+  test('rejects current Flight Deck app, recipient, and Tower identity mismatches', async () => {
+    const appMismatch = makeCurrentFlightDeckGrantEvent({
+      tags: undefined,
+    });
+    appMismatch.event.tags = [
+      ['p', appMismatch.recipient.pubkey],
+      ['app_pub', makeIdentity().pubkey],
+      ['protocol', 'onboarding'],
+    ];
+    expect(() => decodeAccessGrantEvent({
+      event: appMismatch.event,
+      recipientSecretKey: appMismatch.recipient.secret,
+      recipientNpub: appMismatch.recipient.npub,
+      verifySignature: false,
+    })).toThrow(/app pubkey mismatch/);
+
+    const recipientMismatch = makeCurrentFlightDeckGrantEvent();
+    const wrongRecipient = makeIdentity();
+    expect(() => decodeAccessGrantEvent({
+      event: recipientMismatch.event,
+      recipientSecretKey: recipientMismatch.recipient.secret,
+      recipientNpub: wrongRecipient.npub,
+      verifySignature: false,
+    })).toThrow(/recipient p tag mismatch/);
+
+    const towerMismatch = makeCurrentFlightDeckGrantEvent();
+    let imports = 0;
+    const result = await processAccessGrantEvent({
+      event: towerMismatch.event,
+      recipientSecretKey: towerMismatch.recipient.secret,
+      recipientNpub: towerMismatch.recipient.npub,
+      managedByNpub: towerMismatch.recipient.npub,
+      subscriptionManager: {
+        importAgentConnectPackage: async () => {
+          imports += 1;
+          return {};
+        },
+      },
+      fetchImpl: async () => new Response(JSON.stringify({
+        allowed: true,
+        service_npub: towerMismatch.service.npub,
+        descriptor: {
+          identity: {
+            workspace_service_npub: makeIdentity().npub,
+            workspace_owner_npub: towerMismatch.workspaceOwner.npub,
+            app_npub: towerMismatch.app.npub,
+          },
+        },
+      }), { status: 200 }),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('tower_verify_failed');
+    expect(imports).toBe(0);
   });
 
   test('reports decrypt failure before import', async () => {
@@ -223,10 +442,11 @@ describe('Flight Deck 33357 onboarding validation', () => {
   });
 
   test('confirms revoked onboarding with Tower before handling local removal', async () => {
-    const fixture = makeGrantEvent({
+    const fixture = makeCurrentFlightDeckGrantEvent({
       payload: {
         action: 'deleted',
         status: 'deleted',
+        agent_connect: undefined,
         agent_connect_package: undefined,
         revocation: {
           reason: 'workspace_deleted',
@@ -267,10 +487,11 @@ describe('Flight Deck 33357 onboarding validation', () => {
   });
 
   test('keeps revoked onboarding active when Tower still confirms access', async () => {
-    const fixture = makeGrantEvent({
+    const fixture = makeCurrentFlightDeckGrantEvent({
       payload: {
         action: 'revoked',
         status: 'revoked',
+        agent_connect: undefined,
         agent_connect_package: undefined,
       },
     });
