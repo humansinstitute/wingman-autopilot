@@ -144,6 +144,10 @@ function getSubscriptionForManager(
   return withSubscription.getForManager?.(subscriptionId, managerNpub) ?? null;
 }
 
+function getEffectiveWorkspaceNpub(record: Pick<WorkspaceSubscriptionRecord, 'workspaceOwnerNpub' | 'workspaceServiceNpub'>): string {
+  return record.workspaceServiceNpub?.trim() || record.workspaceOwnerNpub;
+}
+
 function getDiagnosticDetailString(
   details: Record<string, unknown> | null | undefined,
   key: string,
@@ -539,7 +543,7 @@ export async function handleAgentChatApi(
         return serialiseSubscription(
           record,
           ctx.manager.listInterceptsForSubscription(record.subscriptionId, scope.managerNpub),
-          ctx.manager.listAgentsForWorkspaceBot(record.workspaceOwnerNpub, record.botNpub, scope.managerNpub),
+          ctx.manager.listAgentsForWorkspaceBot(getEffectiveWorkspaceNpub(record), record.botNpub, scope.managerNpub),
           backendConnection,
           getProfileWorkspaceForSubscription(ctx.manager, record.subscriptionId, scope.managerNpub),
           { canManage: scope.canManage, shared: scope.shared },
@@ -727,7 +731,7 @@ export async function handleAgentChatApi(
         subscription: serialiseSubscription(
           imported.subscription,
           ctx.manager.listInterceptsForSubscription(imported.subscription.subscriptionId, scope.managerNpub),
-          ctx.manager.listAgentsForWorkspaceBot(imported.subscription.workspaceOwnerNpub, imported.subscription.botNpub, scope.managerNpub),
+          ctx.manager.listAgentsForWorkspaceBot(getEffectiveWorkspaceNpub(imported.subscription), imported.subscription.botNpub, scope.managerNpub),
           null,
           getProfileWorkspaceForSubscription(ctx.manager, imported.subscription.subscriptionId, scope.managerNpub),
           { canManage: scope.canManage, shared: scope.shared },
@@ -793,7 +797,7 @@ export async function handleAgentChatApi(
         subscription: serialiseSubscription(
           subscription,
           ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, scope.managerNpub),
-          ctx.manager.listAgentsForWorkspaceBot(subscription.workspaceOwnerNpub, subscription.botNpub, scope.managerNpub),
+          ctx.manager.listAgentsForWorkspaceBot(getEffectiveWorkspaceNpub(subscription), subscription.botNpub, scope.managerNpub),
           null,
           getProfileWorkspaceForSubscription(ctx.manager, subscription.subscriptionId, scope.managerNpub),
           { canManage: scope.canManage, shared: scope.shared },
@@ -1003,7 +1007,7 @@ export async function handleAgentChatApi(
         subscription: serialiseSubscription(
           subscription,
           ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, scope.managerNpub),
-          ctx.manager.listAgentsForWorkspaceBot(subscription.workspaceOwnerNpub, subscription.botNpub, scope.managerNpub),
+          ctx.manager.listAgentsForWorkspaceBot(getEffectiveWorkspaceNpub(subscription), subscription.botNpub, scope.managerNpub),
           null,
           getProfileWorkspaceForSubscription(ctx.manager, subscription.subscriptionId, scope.managerNpub),
           { canManage: scope.canManage, shared: scope.shared },
@@ -1038,7 +1042,7 @@ export async function handleAgentChatApi(
       subscription: serialiseSubscription(
         subscription,
         ctx.manager.listInterceptsForSubscription(subscription.subscriptionId, scope.managerNpub),
-        ctx.manager.listAgentsForWorkspaceBot(subscription.workspaceOwnerNpub, subscription.botNpub, scope.managerNpub),
+        ctx.manager.listAgentsForWorkspaceBot(getEffectiveWorkspaceNpub(subscription), subscription.botNpub, scope.managerNpub),
         null,
         getProfileWorkspaceForSubscription(ctx.manager, subscription.subscriptionId, scope.managerNpub),
         { canManage: scope.canManage, shared: scope.shared },

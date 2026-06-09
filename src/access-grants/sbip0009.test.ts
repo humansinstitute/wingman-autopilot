@@ -190,7 +190,7 @@ describe('Flight Deck 33357 onboarding validation', () => {
       now: new Date('2026-06-06T00:00:01.000Z'),
     });
     expect(grant.grantId).toBe(fixture.grantId);
-    expect(grant.payload.agent_connect_package.kind).toBe('coworker_agent_connect');
+    expect(grant.payload.agent_connect_package?.kind).toBe('coworker_agent_connect');
     expect(grant.workspaceOwnerNpub).toBe(fixture.workspaceOwner.npub);
     expect(grant.workspaceServiceNpub).toBe(fixture.workspaceService.npub);
   });
@@ -249,7 +249,15 @@ describe('Flight Deck 33357 onboarding validation', () => {
 
     expect(result.ok).toBe(true);
     expect(result.code).toBe('imported');
-    expect((importedPackage as Record<string, unknown>)?.kind).toBe('coworker_agent_connect');
+    expect(importedPackage).not.toBeNull();
+    expect(typeof importedPackage).toBe('object');
+    const imported = importedPackage as unknown as { kind?: unknown; workspace?: Record<string, unknown> };
+    expect(imported.kind).toBe('coworker_agent_connect');
+    expect(imported.workspace).toMatchObject({
+      owner_npub: fixture.workspaceOwner.npub,
+      workspace_service_npub: fixture.workspaceService.npub,
+      label: 'Wingers',
+    });
   });
 
   test('verifies current Flight Deck grants through encrypted workspace me_url when generic Tower verify is unavailable', async () => {

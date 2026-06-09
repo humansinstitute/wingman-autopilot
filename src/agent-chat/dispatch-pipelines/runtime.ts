@@ -621,7 +621,7 @@ export class DispatchPipelineRuntime {
 
   private selectAgent(input: DispatchPipelineEventInput): AgentDefinitionRecord | null {
     const agents = this.agentStore
-      .listByWorkspaceAndBot(input.subscription.workspaceOwnerNpub, input.subscription.botNpub)
+      .listByWorkspaceAndBot(getEffectiveWorkspaceNpub(input.subscription), input.subscription.botNpub)
       .filter((agent) => agent.managedByNpub === input.subscription.managedByNpub)
       .filter((agent) => agent.enabled)
       .sort((left, right) => left.agentId.localeCompare(right.agentId));
@@ -777,7 +777,10 @@ function buildDispatchEnvelope(input: {
       concurrencyKey: input.concurrencyKey,
     },
     workspace: {
-      workspaceOwnerNpub: eventInput.subscription.workspaceOwnerNpub,
+      workspaceOwnerNpub: getEffectiveWorkspaceNpub(eventInput.subscription),
+      humanWorkspaceOwnerNpub: eventInput.subscription.workspaceOwnerNpub,
+      workspaceServiceNpub: eventInput.subscription.workspaceServiceNpub ?? null,
+      workspaceId: eventInput.subscription.workspaceId ?? null,
       sourceAppNpub: eventInput.subscription.sourceAppNpub,
       backendBaseUrl: eventInput.subscription.backendBaseUrl,
       subscriptionId: eventInput.subscription.subscriptionId,
@@ -866,7 +869,7 @@ function buildProfilePolicyRoutes(input: DispatchPipelineEventInput, configuredR
     ].join(':'),
     managedByNpub,
     subscriptionId: input.subscription.subscriptionId,
-    workspaceOwnerNpub: input.subscription.workspaceOwnerNpub,
+    workspaceOwnerNpub: getEffectiveWorkspaceNpub(input.subscription),
     botNpub: input.subscription.botNpub,
     sourceAppNpub: input.subscription.sourceAppNpub,
     triggerKind: input.triggerKind,
@@ -1126,13 +1129,17 @@ function getStringArray(value: unknown): string[] {
 function buildDedupeKey(input: DispatchPipelineEventInput, route: DispatchRouteRecord): string {
   return [
     input.subscription.subscriptionId,
-    input.subscription.workspaceOwnerNpub,
+    getEffectiveWorkspaceNpub(input.subscription),
     input.subscription.sourceAppNpub,
     input.recordId,
     input.recordVersion ?? 'unknown',
     input.bindingId ?? 'none',
     route.routeId,
   ].join(':');
+}
+
+function getEffectiveWorkspaceNpub(subscription: Pick<WorkspaceSubscriptionRecord, 'workspaceOwnerNpub' | 'workspaceServiceNpub'>): string {
+  return subscription.workspaceServiceNpub?.trim() || subscription.workspaceOwnerNpub;
 }
 
 function renderTemplate(template: string, values: Record<string, unknown>): string {

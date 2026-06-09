@@ -50,12 +50,12 @@ export async function parseTowerError(response: Response, stage: string): Promis
 
 export async function buildStreamUrl(
   backendBaseUrl: string,
-  workspaceOwnerNpub: string,
+  workspaceNpub: string,
   wsSession: YokeWorkspaceSession,
   lastEventId?: string | null,
 ): Promise<string> {
   const helpers = await loadYokeBotHelpers();
-  const baseUrl = new URL(`/api/v4/workspaces/${encodeURIComponent(workspaceOwnerNpub)}/stream`, backendBaseUrl).toString();
+  const baseUrl = new URL(`/api/v4/workspaces/${encodeURIComponent(workspaceNpub)}/stream`, backendBaseUrl).toString();
   const signed = helpers.signWorkspaceRequest({
     wsSession,
     url: baseUrl,
@@ -71,13 +71,13 @@ export async function buildStreamUrl(
 
 export async function fetchRecordHistory(
   backendBaseUrl: string,
-  workspaceOwnerNpub: string,
+  workspaceNpub: string,
   recordId: string,
   wsSession: YokeWorkspaceSession,
   options: { signal?: AbortSignal } = {},
 ): Promise<Record<string, unknown>[]> {
   const helpers = await loadYokeBotHelpers();
-  const path = `/api/v4/records/${encodeURIComponent(recordId)}/history?owner_npub=${encodeURIComponent(workspaceOwnerNpub)}`;
+  const path = `/api/v4/records/${encodeURIComponent(recordId)}/history?owner_npub=${encodeURIComponent(workspaceNpub)}`;
   const url = new URL(path, backendBaseUrl).toString();
   const authorization = helpers.signWorkspaceRequest({ wsSession, url, method: 'GET' });
   const response = await fetch(url, {
@@ -126,11 +126,11 @@ export interface WorkspaceKeyMapping {
 
 export async function fetchWorkspaceKeyMappings(
   backendBaseUrl: string,
-  workspaceOwnerNpub: string,
+  workspaceNpub: string,
   wsSession: YokeWorkspaceSession,
 ): Promise<WorkspaceKeyMapping[]> {
   const helpers = await loadYokeBotHelpers();
-  const path = `/api/v4/user/workspace-key-mappings?workspace_owner_npub=${encodeURIComponent(workspaceOwnerNpub)}`;
+  const path = `/api/v4/user/workspace-key-mappings?workspace_service_npub=${encodeURIComponent(workspaceNpub)}`;
   const url = new URL(path, backendBaseUrl).toString();
   const authorization = helpers.signWorkspaceRequest({ wsSession, url, method: 'GET' });
   const response = await fetch(url, {
@@ -148,14 +148,18 @@ export async function fetchWorkspaceKeyMappings(
 
 export async function registerWorkspaceKeyWithTower(params: {
   backendBaseUrl: string;
-  workspaceOwnerNpub: string;
+  workspaceNpub: string;
+  workspaceOwnerNpub?: string | null;
   wsKeyNpub: string;
   authorization: string;
 }): Promise<Record<string, unknown>> {
   const url = new URL('/api/v4/user/workspace-keys', params.backendBaseUrl).toString();
   const body = {
-    workspace_owner_npub: params.workspaceOwnerNpub,
+    workspace_owner_npub: params.workspaceNpub,
+    workspace_service_npub: params.workspaceNpub,
+    human_workspace_owner_npub: params.workspaceOwnerNpub ?? null,
     ws_key_npub: params.wsKeyNpub,
+    workspace_user_key_npub: params.wsKeyNpub,
   };
   const response = await fetch(url, {
     method: 'POST',

@@ -41,12 +41,17 @@ function titleCaseStatus(value) {
 
 function resolveWorkspaceTitle(subscription, backendConnection = null) {
   return subscription?.profileWorkspace?.workspace?.workspaceTitle
+    || subscription?.profileWorkspace?.workspace?.workspaceId
+    || subscription?.workspaceId
     || subscription?.workspaceName
     || subscription?.backend?.workspaceName
     || backendConnection?.workspaceName
-    || backendConnection?.lastHealthResult?.details?.response?.tower_name
     || subscription?.workspaceOwnerNpub
     || 'Flight Deck Workspace';
+}
+
+function resolveWorkspaceNpub(subscription) {
+  return subscription?.workspaceServiceNpub || subscription?.workspaceOwnerNpub || '';
 }
 
 function toneForStatus(value, successValues = ['healthy', 'connected', 'ready', 'verified', 'synced']) {
@@ -129,8 +134,9 @@ function getAgentForSubscription(subscription, agents) {
   if (!subscription || !Array.isArray(agents)) {
     return null;
   }
+  const workspaceNpub = subscription.workspaceServiceNpub || subscription.workspaceOwnerNpub;
   return agents.find((agent) => (
-    agent?.workspaceOwnerNpub === subscription.workspaceOwnerNpub
+    agent?.workspaceOwnerNpub === workspaceNpub
     && agent?.botNpub === subscription.botNpub
   )) ?? null;
 }
@@ -307,9 +313,10 @@ export function createFlightDeckConnectionsPanel({
 
     const identity = document.createElement('p');
     identity.className = 'wm-settings__port-note';
-    identity.textContent = `tower service ${subscription?.backendBaseUrl || profileWorkspace?.towerUrl || 'unknown'} · app ${shortenIdentifier(subscription?.sourceAppNpub)} · bot ${shortenIdentifier(subscription?.botNpub)}`;
+    identity.textContent = `workspace ${shortenIdentifier(resolveWorkspaceNpub(subscription), { head: 18, tail: 10 })} · tower ${subscription?.backendBaseUrl || profileWorkspace?.towerUrl || 'unknown'} · app ${shortenIdentifier(subscription?.sourceAppNpub)} · bot ${shortenIdentifier(subscription?.botNpub)}`;
     identity.title = [
       subscription?.backendBaseUrl || profileWorkspace?.towerUrl || '',
+      resolveWorkspaceNpub(subscription),
       subscription?.workspaceOwnerNpub || '',
       subscription?.botNpub || '',
       subscription?.sourceAppNpub || '',
@@ -325,8 +332,10 @@ export function createFlightDeckConnectionsPanel({
     ]));
 
     card.append(createDefinitionGrid([
+      ['Workspace id', subscription?.workspaceId || profileWorkspace?.workspaceId || 'unknown'],
+      ['Workspace service', shortenIdentifier(resolveWorkspaceNpub(subscription), { head: 20, tail: 10 })],
+      ['Workspace member owner', shortenIdentifier(subscription?.workspaceOwnerNpub, { head: 20, tail: 10 })],
       ['Tower service', subscription?.backendBaseUrl || profileWorkspace?.towerUrl || 'unknown'],
-      ['Workspace owner', shortenIdentifier(subscription?.workspaceOwnerNpub, { head: 20, tail: 10 })],
       ['Connection source', 'kind 33357'],
       ['Default dispatch routes', `${enabledRoutes}/${routes.length} enabled`],
       ['Visible scopes', String(targets.scopes)],

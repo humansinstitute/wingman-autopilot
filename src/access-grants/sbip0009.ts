@@ -448,6 +448,39 @@ function assertAgentConnectMatchesGrant(grant: DecodedAccessGrant): void {
   assertAgentConnectEqual('token app npub', getString(token.app_npub), grant.appNpub);
 }
 
+function buildGrantScopedAgentConnectPackage(grant: DecodedAccessGrant): Record<string, unknown> {
+  const pkg = getObject(grant.payload.agent_connect_package) ?? {};
+  const service = getObject(pkg.service) ?? {};
+  const workspace = getObject(pkg.workspace) ?? {};
+  const app = getObject(pkg.app) ?? {};
+  return {
+    ...pkg,
+    service: {
+      ...service,
+      direct_https_url: grant.payload.service.direct_https_url,
+      service_npub: grant.serviceNpub,
+      relay_urls: grant.payload.service.relay_urls ?? service.relay_urls,
+      openapi_url: grant.payload.service.openapi_url ?? service.openapi_url,
+      docs_url: grant.payload.service.docs_url ?? service.docs_url,
+      health_url: grant.payload.service.health_url ?? service.health_url,
+    },
+    workspace: {
+      ...workspace,
+      owner_npub: grant.workspaceOwnerNpub,
+      workspace_service_npub: grant.workspaceServiceNpub,
+      workspace_id: grant.payload.workspace.workspace_id ?? workspace.workspace_id ?? null,
+      label: grant.payload.workspace.label ?? workspace.label ?? null,
+      name: grant.payload.workspace.name ?? workspace.name ?? null,
+    },
+    app: {
+      ...app,
+      app_npub: grant.appNpub,
+      app_pubkey: grant.payload.app.app_pubkey ?? app.app_pubkey,
+      namespace: grant.payload.app.namespace ?? app.namespace,
+    },
+  };
+}
+
 function createNip98AuthHeader(url: string, method: string, body: unknown, secretKey: Uint8Array): string {
   const tags = [
     ['u', url],
@@ -1043,7 +1076,7 @@ export async function processAccessGrantEvent(input: ProcessAccessGrantInput): P
     const imported = await input.subscriptionManager.importAgentConnectPackage({
       managedByNpub: input.managedByNpub,
       agentProfileId: input.agentProfileId ?? null,
-      packageJson: grant.payload.agent_connect_package,
+      packageJson: buildGrantScopedAgentConnectPackage(grant),
       onboardingSource: 'nostr_33357',
     });
     await input.onPostConnectSync?.(grant, imported);

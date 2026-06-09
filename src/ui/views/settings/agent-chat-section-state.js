@@ -25,8 +25,9 @@ export function getAgentForSubscription(agents, subscription) {
   if (!subscription) {
     return null;
   }
+  const workspaceNpub = subscription.workspaceServiceNpub || subscription.workspaceOwnerNpub;
   return agents.find((agent) => (
-    agent?.workspaceOwnerNpub === subscription.workspaceOwnerNpub
+    agent?.workspaceOwnerNpub === workspaceNpub
     && agent?.botNpub === subscription.botNpub
   )) ?? null;
 }

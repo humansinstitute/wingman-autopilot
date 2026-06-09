@@ -114,7 +114,7 @@ export class AgentChatRoutingEvaluator {
     }
 
     const configuredAgents = this.agentStore
-      .listByWorkspaceAndBot(input.subscription.workspaceOwnerNpub, input.subscription.botNpub)
+      .listByWorkspaceAndBot(getEffectiveWorkspaceNpub(input.subscription), input.subscription.botNpub)
       .sort((left, right) => left.agentId.localeCompare(right.agentId));
     const enabledAgents = configuredAgents.filter((agent) => agent.enabled);
     const candidateAgents = enabledAgents.filter((agent) => agent.capabilities.includes('chat_intercept'));
@@ -140,14 +140,14 @@ export class AgentChatRoutingEvaluator {
 
       const routingKey = buildCanonicalRoutingKey({
         subscriptionId: input.subscription.subscriptionId,
-        workspaceOwnerNpub: input.subscription.workspaceOwnerNpub,
+        workspaceOwnerNpub: getEffectiveWorkspaceNpub(input.subscription),
         sourceAppNpub: input.subscription.sourceAppNpub,
         channelId: routingContext.channelId,
         threadId: routingContext.threadId,
         agentId: agent.agentId,
       });
       const legacyRoutingKey = buildLegacyRoutingKey({
-        workspaceOwnerNpub: input.subscription.workspaceOwnerNpub,
+        workspaceOwnerNpub: getEffectiveWorkspaceNpub(input.subscription),
         sourceAppNpub: input.subscription.sourceAppNpub,
         channelId: routingContext.channelId,
         threadId: routingContext.threadId,
@@ -158,7 +158,7 @@ export class AgentChatRoutingEvaluator {
         legacyRoutingKey,
         subscriptionId: input.subscription.subscriptionId,
         agentId: agent.agentId,
-        workspaceOwnerNpub: input.subscription.workspaceOwnerNpub,
+        workspaceOwnerNpub: getEffectiveWorkspaceNpub(input.subscription),
         sourceAppNpub: input.subscription.sourceAppNpub,
         channelId: routingContext.channelId,
         threadId: routingContext.threadId,
@@ -204,7 +204,7 @@ export class AgentChatRoutingEvaluator {
     const helpers = await loadYokeBotHelpers();
     const channelRecord = await this.fetchLatestRecordVersion(
       input.subscription.backendBaseUrl,
-      input.subscription.workspaceOwnerNpub,
+      getEffectiveWorkspaceNpub(input.subscription),
       this.getRequiredString(input.chatMessage.channel_id, 'channel_id'),
       input.wsSession,
     );
@@ -258,7 +258,7 @@ export class AgentChatRoutingEvaluator {
       try {
         const parentRecord = await this.fetchLatestRecordVersion(
           input.subscription.backendBaseUrl,
-          input.subscription.workspaceOwnerNpub,
+          getEffectiveWorkspaceNpub(input.subscription),
           nextParentId,
           input.wsSession,
         );
@@ -323,6 +323,10 @@ export class AgentChatRoutingEvaluator {
 
 function getOptionalString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function getEffectiveWorkspaceNpub(subscription: WorkspaceSubscriptionRecord): string {
+  return subscription.workspaceServiceNpub?.trim() || subscription.workspaceOwnerNpub;
 }
 
 function getStringArray(value: unknown): string[] {

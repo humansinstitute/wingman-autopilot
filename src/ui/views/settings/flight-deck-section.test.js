@@ -98,6 +98,8 @@ describe("flight deck settings panel", () => {
             backendConnectionId: "backend-flightdeck",
             backendBaseUrl: "https://tower.example",
             workspaceOwnerNpub: "npub1workspaceowner",
+            workspaceServiceNpub: "npub1workspaceservice",
+            workspaceId: "workspace-swipeback",
             sourceAppNpub: "npub1flightdeckapp",
             botNpub: "npub1agentbot",
             onboardingSource: "nostr_33357",
@@ -122,7 +124,7 @@ describe("flight deck settings panel", () => {
         agents: [
           {
             agentId: "wm21",
-            workspaceOwnerNpub: "npub1workspaceowner",
+            workspaceOwnerNpub: "npub1workspaceservice",
             botNpub: "npub1agentbot",
           },
         ],
@@ -143,6 +145,10 @@ describe("flight deck settings panel", () => {
       expect(text).toContain("Yoke Synced");
       expect(text).toContain("Default Dispatch Ready");
       expect(text).toContain("1/2 enabled");
+      expect(text).toContain("Workspace id");
+      expect(text).toContain("workspace-swipeback");
+      expect(text).toContain("Workspace service");
+      expect(text).toContain("Workspace member owner");
       expect(text).toContain("Tower service");
       expect(text).toContain("Connection source");
       expect(text).toContain("kind 33357");

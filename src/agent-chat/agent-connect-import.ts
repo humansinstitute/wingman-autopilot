@@ -20,6 +20,7 @@ export interface AgentConnectValidationResult {
   workspaceOwnerNpub: string;
   workspaceId: string | null;
   workspaceServiceNpub: string | null;
+  workspaceTitle: string | null;
   sourceAppNpub: string;
   sourceAppSchemaNamespace: string | null;
   supportedVersion: string;
@@ -182,6 +183,7 @@ export function validateAgentConnectPackage(input: {
     workspaceOwnerNpub,
     workspaceId: getString(workspace?.workspace_id),
     workspaceServiceNpub: getString(workspace?.workspace_service_npub),
+    workspaceTitle: getString(workspace?.label) ?? getString(workspace?.name),
     sourceAppNpub,
     sourceAppSchemaNamespace: getString(app?.schema_namespace),
     supportedVersion: String(version),

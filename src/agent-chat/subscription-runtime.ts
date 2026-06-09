@@ -1025,7 +1025,7 @@ export class WorkspaceSubscriptionManager {
     return this.dispatchPipelineRuntime.saveRoute({
       ...input,
       managedByNpub: input.managedByNpub,
-      workspaceOwnerNpub: record.workspaceOwnerNpub,
+      workspaceOwnerNpub: this.getEffectiveWorkspaceNpub(record),
       botNpub: record.botNpub,
       sourceAppNpub: record.sourceAppNpub,
     });
@@ -1055,7 +1055,7 @@ export class WorkspaceSubscriptionManager {
       const route = this.dispatchPipelineRuntime.saveRoute({
         managedByNpub: subscription.managedByNpub,
         subscriptionId: subscription.subscriptionId,
-        workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+        workspaceOwnerNpub: this.getEffectiveWorkspaceNpub(subscription),
         botNpub: subscription.botNpub,
         sourceAppNpub: subscription.sourceAppNpub,
         triggerKind: routeConfig.triggerKind,
@@ -1076,7 +1076,7 @@ export class WorkspaceSubscriptionManager {
     }
     for (const subscription of this.store.listForManagerNpub(agent.managedByNpub)) {
       if (
-        subscription.workspaceOwnerNpub !== agent.workspaceOwnerNpub
+        this.getEffectiveWorkspaceNpub(subscription) !== agent.workspaceOwnerNpub
         || subscription.botNpub !== agent.botNpub
       ) {
         continue;
@@ -1111,6 +1111,10 @@ export class WorkspaceSubscriptionManager {
     return set.size > 0 ? [...set] : ['chat_intercept'];
   }
 
+  private getEffectiveWorkspaceNpub(record: Pick<WorkspaceSubscriptionRecord, 'workspaceOwnerNpub' | 'workspaceServiceNpub'>): string {
+    return record.workspaceServiceNpub?.trim() || record.workspaceOwnerNpub;
+  }
+
   private normaliseAgentIdPart(value: string | null | undefined): string {
     const normalized = String(value ?? '')
       .toLowerCase()
@@ -1125,7 +1129,7 @@ export class WorkspaceSubscriptionManager {
 
   private buildOnboardedAgentId(subscription: WorkspaceSubscriptionRecord): string {
     const workspacePart = this.normaliseAgentIdPart(
-      subscription.workspaceServiceNpub ?? subscription.workspaceId ?? subscription.workspaceOwnerNpub,
+      subscription.workspaceId ?? this.getEffectiveWorkspaceNpub(subscription),
     );
     const appPart = this.normaliseAgentIdPart(subscription.sourceAppNpub);
     const botPart = this.normaliseAgentIdPart(subscription.botNpub);
@@ -1172,7 +1176,7 @@ export class WorkspaceSubscriptionManager {
     }
 
     const existing = this.agentStore
-      .listByWorkspaceAndBot(subscription.workspaceOwnerNpub, subscription.botNpub)
+      .listByWorkspaceAndBot(this.getEffectiveWorkspaceNpub(subscription), subscription.botNpub)
       .find((agent) => agent.managedByNpub === subscription.managedByNpub);
     if (existing) {
       const capabilities = this.onboardedAgentCapabilities(subscription);
@@ -1210,7 +1214,7 @@ export class WorkspaceSubscriptionManager {
       agentId,
       label,
       botNpub: subscription.botNpub,
-      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      workspaceOwnerNpub: this.getEffectiveWorkspaceNpub(subscription),
       workingDirectory,
       createdAt: existingById?.createdAt ?? now,
     });
@@ -1219,7 +1223,7 @@ export class WorkspaceSubscriptionManager {
       agentId,
       label,
       botNpub: subscription.botNpub,
-      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      workspaceOwnerNpub: this.getEffectiveWorkspaceNpub(subscription),
       groupNpubs,
       workingDirectory,
       capabilities,
@@ -1374,6 +1378,7 @@ export class WorkspaceSubscriptionManager {
       subscription,
       backendConnection,
       relayOnboardingStatus: subscription.wsKeyStatus === 'active' ? 'ready' : 'verified',
+      workspaceTitle: validation.workspaceTitle,
     });
     await this.ensureOnboardedAgentForSubscription({
       subscription,
@@ -1550,7 +1555,7 @@ export class WorkspaceSubscriptionManager {
     await this.ensureConnected(record, botIdentity, false);
     const saved = this.store.getBySubscriptionId(record.subscriptionId) ?? record;
     const subscriptionAgents = this.agentStore
-      .listByWorkspaceAndBot(saved.workspaceOwnerNpub, saved.botNpub)
+      .listByWorkspaceAndBot(this.getEffectiveWorkspaceNpub(saved), saved.botNpub)
       .filter((agent) => agent.managedByNpub === saved.managedByNpub)
       .filter((agent) => agent.enabled);
     const routeCapabilities = subscriptionAgents.length > 0
@@ -2030,7 +2035,7 @@ export class WorkspaceSubscriptionManager {
       : helpers.createBotWorkspaceKey({
         botSecret: botIdentity.botSecret,
         botNpub: botIdentity.botNpub,
-        workspaceOwnerNpub: record.workspaceOwnerNpub,
+        workspaceOwnerNpub: this.getEffectiveWorkspaceNpub(record),
       });
 
     const nextRecord = { ...record };
@@ -2060,18 +2065,23 @@ export class WorkspaceSubscriptionManager {
   ): Promise<WorkspaceSubscriptionRecord> {
     const helpers = await loadYokeBotHelpers();
     const attempt = async (current: WorkspaceSubscriptionRecord) => {
+      const effectiveWorkspaceNpub = this.getEffectiveWorkspaceNpub(current);
       const authorization = helpers.signBotRequest({
         botSecret: botIdentity.botSecret,
         botNpub: botIdentity.botNpub,
         url: new URL('/api/v4/user/workspace-keys', current.backendBaseUrl).toString(),
         method: 'POST',
         body: {
-          workspace_owner_npub: current.workspaceOwnerNpub,
+          workspace_owner_npub: effectiveWorkspaceNpub,
+          workspace_service_npub: effectiveWorkspaceNpub,
+          human_workspace_owner_npub: current.workspaceOwnerNpub,
           ws_key_npub: current.wsKeyNpub,
+          workspace_user_key_npub: current.wsKeyNpub,
         },
       });
       await registerWorkspaceKeyWithTower({
         backendBaseUrl: current.backendBaseUrl,
+        workspaceNpub: effectiveWorkspaceNpub,
         workspaceOwnerNpub: current.workspaceOwnerNpub,
         wsKeyNpub: current.wsKeyNpub!,
         authorization,
@@ -2080,6 +2090,7 @@ export class WorkspaceSubscriptionManager {
       current.lastAuthOkAt = new Date().toISOString();
       current.lastAuthResult = buildSuccessDiagnostic('Workspace key registered.', {
         workspace_owner_npub: current.workspaceOwnerNpub,
+        workspace_service_npub: effectiveWorkspaceNpub,
         ws_key_npub: current.wsKeyNpub,
       });
       current.lastErrorCode = null;
@@ -2101,6 +2112,7 @@ export class WorkspaceSubscriptionManager {
       const retried = await attempt(refreshed);
       retried.lastAuthResult = buildSuccessDiagnostic('Workspace key registered.', {
         workspace_owner_npub: retried.workspaceOwnerNpub,
+        workspace_service_npub: this.getEffectiveWorkspaceNpub(retried),
         ws_key_npub: retried.wsKeyNpub,
         regenerated_after_conflict: true,
       });
@@ -2226,7 +2238,7 @@ export class WorkspaceSubscriptionManager {
         const versions = await withTimeout(
           this.fetchRecordHistoryImpl(
             record.backendBaseUrl,
-            record.workspaceOwnerNpub,
+            this.getEffectiveWorkspaceNpub(record),
             recordId,
             wsSession,
             { signal: controller.signal },
@@ -2273,7 +2285,7 @@ export class WorkspaceSubscriptionManager {
     try {
       const streamUrl = await buildStreamUrl(
         record.backendBaseUrl,
-        record.workspaceOwnerNpub,
+        this.getEffectiveWorkspaceNpub(record),
         runtime.wsSession,
         record.lastSseEventId,
       );
@@ -2809,14 +2821,14 @@ export class WorkspaceSubscriptionManager {
     capability: 'task_dispatch' | 'flow_dispatch' | 'task_review' | 'approval_dispatch' = 'task_dispatch',
   ): AgentDefinitionRecord[] {
     return this.agentStore
-      .listByWorkspaceAndBot(subscription.workspaceOwnerNpub, subscription.botNpub)
+      .listByWorkspaceAndBot(this.getEffectiveWorkspaceNpub(subscription), subscription.botNpub)
       .filter((agent) => agent.enabled && agent.capabilities.includes(capability))
       .sort((left, right) => left.agentId.localeCompare(right.agentId));
   }
 
   private listCommentDispatchAgents(subscription: WorkspaceSubscriptionRecord): AgentDefinitionRecord[] {
     return this.agentStore
-      .listByWorkspaceAndBot(subscription.workspaceOwnerNpub, subscription.botNpub)
+      .listByWorkspaceAndBot(this.getEffectiveWorkspaceNpub(subscription), subscription.botNpub)
       .filter((agent) => agent.enabled && agent.capabilities.includes('comment_dispatch'))
       .sort((left, right) => left.agentId.localeCompare(right.agentId));
   }
@@ -2828,7 +2840,7 @@ export class WorkspaceSubscriptionManager {
     return selectDocumentCommentAgents({
       subscription,
       commentRecord,
-      agents: this.agentStore.listByWorkspaceAndBot(subscription.workspaceOwnerNpub, subscription.botNpub),
+      agents: this.agentStore.listByWorkspaceAndBot(this.getEffectiveWorkspaceNpub(subscription), subscription.botNpub),
     });
   }
 
@@ -2839,7 +2851,7 @@ export class WorkspaceSubscriptionManager {
     const runtime = this.getRuntime(subscription.subscriptionId);
     return await this.fetchRecordHistoryImpl(
       subscription.backendBaseUrl,
-      subscription.workspaceOwnerNpub,
+      this.getEffectiveWorkspaceNpub(subscription),
       recordId,
       runtime.wsSession,
     );
@@ -2948,7 +2960,7 @@ export class WorkspaceSubscriptionManager {
           agentId: 'dispatch-pipeline',
           label: 'Dispatch Pipeline',
           botNpub: record.botNpub,
-          workspaceOwnerNpub: record.workspaceOwnerNpub,
+          workspaceOwnerNpub: this.getEffectiveWorkspaceNpub(record),
           managedByNpub: record.managedByNpub,
           workingDirectory: '',
           capabilities: [],
@@ -3864,7 +3876,7 @@ export class WorkspaceSubscriptionManager {
       try {
         const versions = await fetchRecordHistory(
           record.backendBaseUrl,
-          record.workspaceOwnerNpub,
+          this.getEffectiveWorkspaceNpub(record),
           messageId,
           runtime.wsSession,
         );
@@ -3947,7 +3959,7 @@ export class WorkspaceSubscriptionManager {
     record: WorkspaceSubscriptionRecord,
     workspaceKeyNpub: string,
   ): Promise<string | null> {
-    const cacheKey = `${record.subscriptionId}:${record.workspaceOwnerNpub}`;
+    const cacheKey = `${record.subscriptionId}:${this.getEffectiveWorkspaceNpub(record)}`;
     const now = Date.now();
     const cached = this.workspaceKeyOwnerCache.get(cacheKey);
     if (cached && now - cached.fetchedAt < WORKSPACE_KEY_MAPPING_CACHE_MS) {
@@ -3962,7 +3974,7 @@ export class WorkspaceSubscriptionManager {
     try {
       const mappings = await this.fetchWorkspaceKeyMappingsImpl(
         record.backendBaseUrl,
-        record.workspaceOwnerNpub,
+        this.getEffectiveWorkspaceNpub(record),
         runtime.wsSession,
       );
       const owners = new Map<string, string>();
@@ -4059,27 +4071,6 @@ export class WorkspaceSubscriptionManager {
     return record;
   }
 
-  private deriveAgentGroupNpubs(workspaceOwnerNpub: string, botNpub: string): string[] {
-    const subscription = this.store.getByWorkspaceAndBot(workspaceOwnerNpub, botNpub);
-    if (!subscription?.wrappedGroupKeysJson) {
-      return [];
-    }
-
-    try {
-      const rows = JSON.parse(subscription.wrappedGroupKeysJson) as unknown;
-      if (!Array.isArray(rows)) {
-        return [];
-      }
-      const groupNpubs = rows
-        .map((row) => (row && typeof row === 'object' ? (row as { group_npub?: unknown }).group_npub : null))
-        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-        .map((value) => value.trim());
-      return [...new Set(groupNpubs)].sort();
-    } catch {
-      return [];
-    }
-  }
-
   private async resolveAgentGroupNpubs(input: {
     requestedGroupNpubs: string[];
     workspaceOwnerNpub: string;
@@ -4090,17 +4081,17 @@ export class WorkspaceSubscriptionManager {
       return input.requestedGroupNpubs;
     }
 
-    const cachedGroupNpubs = this.deriveAgentGroupNpubs(input.workspaceOwnerNpub, input.botNpub);
+    const subscription = this.store
+      .listForManagerNpub(input.managedByNpub)
+      .find((record) => (
+        this.getEffectiveWorkspaceNpub(record) === input.workspaceOwnerNpub
+        && record.botNpub === input.botNpub
+      ));
+    const cachedGroupNpubs = subscription ? this.deriveGroupNpubsFromSubscription(subscription) : [];
     if (cachedGroupNpubs.length > 0) {
       return cachedGroupNpubs;
     }
 
-    const subscription = this.store
-      .listForManagerNpub(input.managedByNpub)
-      .find((record) => (
-        record.workspaceOwnerNpub === input.workspaceOwnerNpub
-        && record.botNpub === input.botNpub
-      ));
     if (!subscription) {
       return [];
     }
@@ -4111,6 +4102,7 @@ export class WorkspaceSubscriptionManager {
       allowRegisterWhenInactive: true,
       reason: 'agent_create_refresh_groups',
     });
-    return this.deriveAgentGroupNpubs(input.workspaceOwnerNpub, input.botNpub);
+    const refreshed = this.store.getBySubscriptionId(subscription.subscriptionId) ?? subscription;
+    return this.deriveGroupNpubsFromSubscription(refreshed);
   }
 }

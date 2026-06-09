@@ -573,13 +573,25 @@ describe('WorkspaceSubscriptionManager', () => {
 
     const imported = await manager.importAgentConnectPackage({
       managedByNpub: 'npub1manager',
-      packageJson: makeConnectPackage({ capabilities: ['chat_intercept', 'task_dispatch'] }),
+      packageJson: makeConnectPackage({
+        capabilities: ['chat_intercept', 'task_dispatch'],
+        workspace: {
+          owner_npub: 'npub1workspace',
+          workspace_id: 'workspace-1',
+          workspace_service_npub: 'npub1workspaceservice',
+          label: 'Wingmen',
+        },
+      }),
       onboardingSource: 'nostr_33357',
     });
 
     expect(imported.subscription.onboardingSource).toBe('nostr_33357');
-    expect(agentStore.listByWorkspaceAndBot('npub1workspace', imported.subscription.botNpub)).toHaveLength(1);
+    expect(imported.subscription.workspaceId).toBe('workspace-1');
+    expect(imported.subscription.workspaceServiceNpub).toBe('npub1workspaceservice');
+    expect(agentStore.listByWorkspaceAndBot('npub1workspace', imported.subscription.botNpub)).toHaveLength(0);
+    expect(agentStore.listByWorkspaceAndBot('npub1workspaceservice', imported.subscription.botNpub)).toHaveLength(1);
     const routes = routeStore.listForSubscription(imported.subscription.subscriptionId);
+    expect([...new Set(routes.map((route) => route.workspaceOwnerNpub))]).toEqual(['npub1workspaceservice']);
     expect(routes.map((route) => `${route.triggerKind}:${route.capability}`).sort()).toEqual([
       'chat:chat_intercept',
       'comment:comment_dispatch',

@@ -297,6 +297,7 @@ class AgentProfilePolicyStore {
     subscription: WorkspaceSubscriptionRecord;
     backendConnection?: BackendConnectionRecord | null;
     relayOnboardingStatus?: AgentWorkspaceOnboardingStatus;
+    workspaceTitle?: string | null;
   }): AgentProfileWorkspaceBundle {
     const now = new Date().toISOString();
     const profileId = textOrNull(input.agentProfileId) ?? input.agentNpub;
@@ -332,7 +333,7 @@ class AgentProfilePolicyStore {
       towerServiceNpub: input.subscription.towerServiceNpub ?? input.backendConnection?.serviceNpub ?? null,
       workspaceId: input.subscription.workspaceId ?? null,
       workspaceServiceNpub: input.subscription.workspaceServiceNpub ?? null,
-      workspaceTitle: existingWorkspace?.workspaceTitle ?? null,
+      workspaceTitle: existingWorkspace?.workspaceTitle ?? textOrNull(input.workspaceTitle),
       appPubkey: input.subscription.sourceAppNpub,
       towerUrl: input.backendConnection?.backendBaseUrl ?? input.subscription.backendBaseUrl,
       connectionHealth: input.backendConnection?.healthStatus ?? input.subscription.healthStatus,
