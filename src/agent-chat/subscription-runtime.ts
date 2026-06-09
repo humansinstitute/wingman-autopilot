@@ -1193,7 +1193,8 @@ export class WorkspaceSubscriptionManager {
     }
 
     const groupNpubs = this.deriveGroupNpubsFromSubscription(subscription);
-    if (groupNpubs.length === 0) {
+    const isFlightDeckPgWorkspace = Boolean(subscription.workspaceId && subscription.workspaceServiceNpub);
+    if (groupNpubs.length === 0 && !isFlightDeckPgWorkspace) {
       return null;
     }
 

@@ -198,7 +198,7 @@ function createTestManager(
     });
   };
 
-  return { manager, store, agentStore, backendStore, profilePolicyStore };
+  return { manager, store, agentStore, backendStore, profilePolicyStore, managerInternals };
 }
 
 function saveAgent(agentStore: AgentDefinitionStore, input: Partial<AgentDefinitionRecord> & { agentId: string; botNpub: string; managedByNpub: string }) {
@@ -602,6 +602,53 @@ describe('WorkspaceSubscriptionManager', () => {
       'agent-dispatch-comment-response',
       'agent-dispatch-task-response',
     ]);
+  });
+
+  test('creates a 33357 Flight Deck workspace agent even when v4 workspace key registration fails', async () => {
+    const dbPath = makeTempDb();
+    const routeStore = new DispatchRouteStore(dbPath);
+    const dispatchPipelineRuntime = new DispatchPipelineRuntime({
+      routeStore,
+      pipelineStore: new PipelineStore(makeTempDb()),
+      getSessionApiContext: () => null,
+      callbackOrigin: 'http://localhost:3600',
+      requirePipelineRoutes: true,
+    });
+    const instanceIdentity = makeInstanceIdentity();
+    const { manager, agentStore, managerInternals } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      instanceIdentity,
+      dispatchPipelineRuntime,
+    );
+    managerInternals.registerWorkspaceKey = async () => {
+      throw Object.assign(new Error('user does not have access to this workspace'), {
+        status: 403,
+        detailCode: 'workspace_access_denied',
+      });
+    };
+
+    const imported = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackage({
+        capabilities: ['chat_intercept', 'task_dispatch'],
+        workspace: {
+          owner_npub: 'npub1workspace',
+          workspace_id: 'workspace-1',
+          workspace_service_npub: 'npub1workspaceservice',
+          label: 'Wingmen',
+        },
+      }),
+      onboardingSource: 'nostr_33357',
+    });
+
+    expect(imported.subscription.wsKeyStatus).toBe('failed');
+    expect(imported.subscription.workspaceServiceNpub).toBe('npub1workspaceservice');
+    const agents = agentStore.listByWorkspaceAndBot('npub1workspaceservice', instanceIdentity.npub);
+    expect(agents).toHaveLength(1);
+    expect(agents[0]?.groupNpubs).toEqual([]);
+    expect(routeStore.listForSubscription(imported.subscription.subscriptionId)).toHaveLength(3);
   });
 
   test('marks confirmed 33357 revocation as local tombstone and disables SSE', async () => {
