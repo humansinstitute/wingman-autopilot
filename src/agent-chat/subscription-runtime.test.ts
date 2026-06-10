@@ -664,6 +664,51 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(routeStore.listForSubscription(imported.subscription.subscriptionId)).toHaveLength(3);
   });
 
+  test('createOrUpdate creates the auto agent for 33357 Flight Deck PG workspaces', async () => {
+    const dbPath = makeTempDb();
+    const routeStore = new DispatchRouteStore(dbPath);
+    const dispatchPipelineRuntime = new DispatchPipelineRuntime({
+      routeStore,
+      pipelineStore: new PipelineStore(makeTempDb()),
+      getSessionApiContext: () => null,
+      callbackOrigin: 'http://localhost:3600',
+      requirePipelineRoutes: true,
+    });
+    const instanceIdentity = makeInstanceIdentity();
+    const { manager, agentStore, managerInternals } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      instanceIdentity,
+      dispatchPipelineRuntime,
+    );
+    let registerCalled = false;
+    managerInternals.registerWorkspaceKey = async () => {
+      registerCalled = true;
+      throw new Error('legacy registration should not run for PG workspaces');
+    };
+
+    const subscription = await manager.createOrUpdate({
+      managedByNpub: 'npub1manager',
+      workspaceOwnerNpub: 'npub1workspaceowner',
+      towerServiceNpub: 'npub1tower',
+      workspaceId: 'workspace-1',
+      workspaceServiceNpub: 'npub1workspaceservice',
+      backendBaseUrl: 'https://tower.example.com',
+      sourceAppNpub: 'npub1sourceapp',
+      onboardingSource: 'nostr_33357',
+      capabilityDefaults: ['chat_intercept', 'task_dispatch', 'comment_dispatch'],
+    });
+
+    expect(registerCalled).toBe(false);
+    expect(subscription.healthStatus).toBe('healthy');
+    expect(subscription.sseStatus).toBe('connected');
+    const agents = agentStore.listByWorkspaceAndBot('npub1workspaceservice', instanceIdentity.npub);
+    expect(agents).toHaveLength(1);
+    expect(agents[0]?.workingDirectory).toContain(agents[0]?.agentId ?? '');
+    expect(routeStore.listForSubscription(subscription.subscriptionId)).toHaveLength(3);
+  });
+
   test('dispatches a Flight Deck PG message event to the chat pipeline route', async () => {
     const dbPath = makeTempDb();
     const routeStore = new DispatchRouteStore(dbPath);

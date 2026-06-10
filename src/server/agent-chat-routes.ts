@@ -384,6 +384,12 @@ function parseDispatchCapability(value: unknown) {
     : null;
 }
 
+function parseDispatchCapabilities(value: unknown) {
+  return getOptionalStringArray(value)
+    .map(parseDispatchCapability)
+    .filter((capability): capability is NonNullable<ReturnType<typeof parseDispatchCapability>> => Boolean(capability));
+}
+
 function parseActivePolicy(value: unknown): DispatchActivePolicy | undefined {
   return value === 'skip' || value === 'queue' || value === 'start_new' ? value : undefined;
 }
@@ -758,6 +764,21 @@ export async function handleAgentChatApi(
     const workspaceOwnerNpub = typeof body.workspaceOwnerNpub === 'string' ? body.workspaceOwnerNpub.trim() : '';
     const backendBaseUrl = typeof body.backendBaseUrl === 'string' ? body.backendBaseUrl.trim() : '';
     const sourceAppNpub = typeof body.sourceAppNpub === 'string' ? body.sourceAppNpub.trim() : '';
+    const towerServiceNpub = typeof body.towerServiceNpub === 'string' && body.towerServiceNpub.trim().length > 0
+      ? body.towerServiceNpub.trim()
+      : null;
+    const workspaceId = typeof body.workspaceId === 'string' && body.workspaceId.trim().length > 0
+      ? body.workspaceId.trim()
+      : null;
+    const workspaceServiceNpub = typeof body.workspaceServiceNpub === 'string' && body.workspaceServiceNpub.trim().length > 0
+      ? body.workspaceServiceNpub.trim()
+      : null;
+    const onboardingSource = body.onboardingSource === 'nostr_33357'
+      ? 'nostr_33357'
+      : body.onboardingSource === 'agent_connect_import'
+        ? 'agent_connect_import'
+        : undefined;
+    const capabilityDefaults = parseDispatchCapabilities(body.capabilityDefaults);
     const backendConnectionId = typeof body.backendConnectionId === 'string' && body.backendConnectionId.trim().length > 0
       ? body.backendConnectionId.trim()
       : null;
@@ -785,12 +806,17 @@ export async function handleAgentChatApi(
       const subscription = await ctx.manager.createOrUpdate({
         managedByNpub: scope.managerNpub,
         workspaceOwnerNpub,
+        towerServiceNpub,
+        workspaceId,
+        workspaceServiceNpub,
         backendBaseUrl,
         sourceAppNpub,
+        onboardingSource,
         backendConnectionId,
         backendConnectionGrantKind,
         agentProfileId,
         sourceAppSchemaNamespace,
+        capabilityDefaults,
         triggerConfigRecordId,
       });
       return Response.json({

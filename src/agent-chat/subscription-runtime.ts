@@ -1629,6 +1629,11 @@ export class WorkspaceSubscriptionManager {
         ? [...new Set(subscriptionAgents.flatMap((agent) => agent.capabilities))]
         : saved.capabilityDefaults ?? [];
       this.ensureDefaultDispatchRoutesForSubscription(saved, routeCapabilities);
+      await this.ensureOnboardedAgentForSubscription({
+        subscription: saved,
+        agentProfile,
+        botIdentity,
+      });
       return saved;
     }
     record = await this.prepareWorkspaceSession(record, botIdentity);
@@ -1667,6 +1672,11 @@ export class WorkspaceSubscriptionManager {
       ? [...new Set(subscriptionAgents.flatMap((agent) => agent.capabilities))]
       : saved.capabilityDefaults ?? [];
     this.ensureDefaultDispatchRoutesForSubscription(saved, routeCapabilities);
+    await this.ensureOnboardedAgentForSubscription({
+      subscription: saved,
+      agentProfile,
+      botIdentity,
+    });
     return saved;
   }
 

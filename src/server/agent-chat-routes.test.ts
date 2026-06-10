@@ -229,6 +229,64 @@ describe('agent-chat routes', () => {
     expect(body.subscription.backend.backendConnectionId).toBe('backend-owned');
   });
 
+  test('passes Flight Deck PG workspace fields when creating a subscription', async () => {
+    let captured: Parameters<WorkspaceSubscriptionManager['createOrUpdate']>[0] | null = null;
+    const manager = buildManager(async (input) => {
+      captured = input;
+      return makeSubscription({
+        subscriptionId: 'sub-flightdeck-pg',
+        workspaceOwnerNpub: input.workspaceOwnerNpub,
+        towerServiceNpub: input.towerServiceNpub ?? null,
+        workspaceId: input.workspaceId ?? null,
+        workspaceServiceNpub: input.workspaceServiceNpub ?? null,
+        sourceAppNpub: input.sourceAppNpub,
+        onboardingSource: input.onboardingSource ?? 'manual',
+        capabilityDefaults: input.capabilityDefaults ?? [],
+      });
+    });
+    const request = new Request('http://localhost/api/agent-chat/subscriptions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        backendConnectionId: 'backend-owned',
+        workspaceOwnerNpub: 'npub1workspaceowner',
+        towerServiceNpub: 'npub1tower',
+        workspaceId: 'workspace-pg-1',
+        workspaceServiceNpub: 'npub1workspaceservice',
+        backendBaseUrl: 'https://tower.example.com',
+        sourceAppNpub: 'npub1sourceapp',
+        onboardingSource: 'nostr_33357',
+        capabilityDefaults: ['chat_intercept', 'task_dispatch', 'not-real'],
+      }),
+    });
+
+    const response = await handleAgentChatApi(
+      request,
+      new URL(request.url),
+      'POST',
+      authContext,
+      { manager },
+    );
+    const body = await response!.json();
+
+    expect(response?.status).toBe(200);
+    expect(captured).toMatchObject({
+      managedByNpub: 'npub1manager',
+      backendConnectionId: 'backend-owned',
+      workspaceOwnerNpub: 'npub1workspaceowner',
+      towerServiceNpub: 'npub1tower',
+      workspaceId: 'workspace-pg-1',
+      workspaceServiceNpub: 'npub1workspaceservice',
+      backendBaseUrl: 'https://tower.example.com',
+      sourceAppNpub: 'npub1sourceapp',
+      onboardingSource: 'nostr_33357',
+      capabilityDefaults: ['chat_intercept', 'task_dispatch'],
+    });
+    expect(body.subscription.workspaceId).toBe('workspace-pg-1');
+    expect(body.subscription.workspaceServiceNpub).toBe('npub1workspaceservice');
+    expect(body.subscription.onboardingSource).toBe('nostr_33357');
+  });
+
   test('returns safe setup hints for available backend connections', async () => {
     const manager = {
       listBackendConnectionsForManager: () => [makeBackendConnection()],
