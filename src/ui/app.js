@@ -24,12 +24,6 @@ import {
   isMobileKeyboardOpen,
   focusComposerTextarea,
 } from "./live/mobile-runtime.js";
-import {
-  createWebviewIcon,
-} from "./live/webview-panel.js";
-import {
-  createWriterIcon,
-} from "./writer/writer-panel.js";
 import { createUnauthorizedGuard } from "./common/unauthorized-guard.js";
 import { showDialogElement } from "./common/dialog-element.js";
 import { openConfirmDialog, openTextPromptDialog } from "./common/dialog-prompts.js";
@@ -84,7 +78,6 @@ import {
   FILE_BROWSER_ICON_DEFS,
   setIconButton,
   getSessionDisplayName,
-  truncateText,
   scrollConversationToBottom,
   getConversationScrollElement as _getConversationScrollElement,
   scrollConversationAreaToBottom as _scrollConversationAreaToBottom,
@@ -103,7 +96,6 @@ import {
 import { initFileEditor } from "./modals/file-editor.js";
 import { initQueueModule } from "./sessions/queue-modal.js";
 import { createAppRenderer } from "./core/app-renderer.js";
-import { initQuickLauncher } from "./core/quick-launcher.js";
 import { initImageAttachments } from "./core/image-attachments.js";
 import { initVoiceNotes } from "./core/voice-notes.js";
 import { initAgentIndicators } from "./status/agent-indicators.js";
@@ -588,7 +580,7 @@ if (currentRoute === "files" && window.location.pathname.startsWith("/docs")) {
 
 // Session routing module — extracted from app.js.
 // setActiveSession, ensureActiveSession, and applyRouteSessionFromPath live in sessions/session-routing.js.
-// syncDesktopSessionIndicator and updateDocumentTitle are defined later in this file; they are
+// updateDocumentTitle is defined later in this file; it is
 // referenced via closures inside the module so forward-declaration is fine (the functions are only
 // called at runtime, never at module initialisation time).
 const {
@@ -604,7 +596,6 @@ const {
   getSessionById: (...args) => getSessionById(...args),
   getActiveSessions: (...args) => getActiveSessions(...args),
   getSessionIdFromPath,
-  syncDesktopSessionIndicator: (...args) => syncDesktopSessionIndicator(...args),
   updateDocumentTitle: (...args) => updateDocumentTitle(...args),
   activateLiveSessionRefresh: (...args) => liveRefreshController?.activateSession(...args),
   deactivateLiveSessionRefresh: (...args) => liveRefreshController?.deactivateSession(...args),
@@ -661,17 +652,9 @@ performAuthUiSync = () => {
 performAuthUiSync();
 const pullRefreshIndicator = document.getElementById("pull-refresh");
 const pullRefreshLabel = pullRefreshIndicator?.querySelector(".label");
-const desktopSessionIndicator = document.getElementById("desktop-session-indicator");
-const desktopSessionIndicatorButton = document.getElementById("desktop-session-indicator-button");
 const identityLoginDialog = document.getElementById("identity-login-dialog");
 const identityLoginDialogContent = identityLoginDialog?.querySelector(".wm-identity-dialog__content");
 const identityLoginDialogCloseButton = identityLoginDialog?.querySelector('[data-action="identity-dialog-close"]');
-const desktopSessionIndicatorName =
-  desktopSessionIndicator?.querySelector('[data-part="name"]') ?? null;
-const desktopSessionIndicatorDirectory =
-  desktopSessionIndicator?.querySelector('[data-part="directory"]') ?? null;
-const headerWebviewToggle = document.getElementById("header-webview-toggle");
-const headerWriterToggle = document.getElementById("header-writer-toggle");
 const sessionNameInput = document.getElementById("session-name");
 const sessionAdvancedToggle = document.getElementById("session-advanced-toggle");
 const sessionAdvancedPanel = document.getElementById("session-advanced-panel");
@@ -1027,87 +1010,6 @@ const getActiveSessionForIndicator = () => {
   if (!sessionId) return null;
   return sessionsStore().items.find((session) => session.id === sessionId) ?? null;
 };
-
-const shouldShowDesktopIndicator = () => currentRoute === "live" && window.innerWidth >= 900;
-
-const syncDesktopSessionIndicator = () => {
-  if (!desktopSessionIndicator) return;
-  const session = getActiveSessionForIndicator();
-  const canShow = Boolean(session) && shouldShowDesktopIndicator();
-  if (!canShow) {
-    desktopSessionIndicator.hidden = true;
-    return;
-  }
-
-  const displayName = getSessionDisplayName(session);
-  if (desktopSessionIndicatorName) {
-    desktopSessionIndicatorName.textContent = displayName;
-    desktopSessionIndicatorName.title = displayName;
-  }
-
-  const directoryValue =
-    typeof session.workingDirectory === "string" && session.workingDirectory.trim().length > 0
-      ? session.workingDirectory
-      : state.config?.defaultDirectory ?? "";
-
-  if (desktopSessionIndicatorDirectory) {
-    if (directoryValue) {
-      desktopSessionIndicatorDirectory.textContent = truncateText(directoryValue, 31);
-      desktopSessionIndicatorDirectory.title = directoryValue;
-    } else {
-      desktopSessionIndicatorDirectory.textContent = "—";
-      desktopSessionIndicatorDirectory.title = "";
-    }
-  }
-
-  desktopSessionIndicator.hidden = false;
-};
-
-/**
- * Sync the header webview toggle button.
- * Shows a globe icon when the active session has an associated web app.
- */
-function syncHeaderWebviewToggle(webApp) {
-  if (!headerWebviewToggle) return;
-  if (!webApp) {
-    headerWebviewToggle.hidden = true;
-    headerWebviewToggle.innerHTML = "";
-    return;
-  }
-  headerWebviewToggle.hidden = false;
-  headerWebviewToggle.innerHTML = "";
-  const btn = createWebviewIcon(webApp, () => {
-    state.webviewLayout.open = !state.webviewLayout.open;
-    render();
-  });
-  if (state.webviewLayout.open) {
-    btn.classList.add("active");
-  }
-  headerWebviewToggle.append(btn);
-}
-
-/**
- * Sync the header writer toggle button.
- * Shows a pencil icon when the active session has a targetFile.
- */
-function syncHeaderWriterToggle(targetFile) {
-  if (!headerWriterToggle) return;
-  if (!targetFile) {
-    headerWriterToggle.hidden = true;
-    headerWriterToggle.innerHTML = "";
-    return;
-  }
-  headerWriterToggle.hidden = false;
-  headerWriterToggle.innerHTML = "";
-  const btn = createWriterIcon(() => {
-    state.writerLayout.open = !state.writerLayout.open;
-    render();
-  });
-  if (state.writerLayout.open) {
-    btn.classList.add("active");
-  }
-  headerWriterToggle.append(btn);
-}
 
 const getStoredThemePreference = () => {
   try {
@@ -1527,7 +1429,6 @@ const pollSessions = async () => {
 
     await fetchSessions();
     syncMenuTabs();
-    syncDesktopSessionIndicator();
 
     const updatedSessions = sessionsStore().items;
     const currentSessionCount = updatedSessions.length;
@@ -1714,7 +1615,6 @@ const sessionRuntimeSync = initSessionRuntimeSync({
   fetchSessionQueue: (...args) => fetchSessionQueue(...args),
   applyRouteSessionFromPath: (...args) => applyRouteSessionFromPath(...args),
   ensureActiveSession: (...args) => ensureActiveSession(...args),
-  syncDesktopSessionIndicator: (...args) => syncDesktopSessionIndicator(...args),
 });
 fetchConfig = (...args) => sessionRuntimeSync.fetchConfig(...args);
 fetchSessions = (...args) => sessionRuntimeSync.fetchSessions(...args);
@@ -1881,9 +1781,6 @@ const appRenderer = createAppRenderer({
   focusComposerTextarea,
   setActiveNav,
   syncMenuTabs,
-  syncDesktopSessionIndicator,
-  syncHeaderWebviewToggle,
-  syncHeaderWriterToggle,
   updateAgentStatusIndicators: (...args) => updateAgentStatusIndicators(...args),
   updateDocumentTitle,
   isAuthenticated: () => Boolean(state.identity.authenticated),
@@ -1973,8 +1870,6 @@ liveRefreshController = createLiveRefreshController({
   isComposerInteractionActive,
   isMobileKeyboardOpen,
 });
-
-initQuickLauncher({ state, launchSession, showToast });
 
 const imageAttachmentsModule = initImageAttachments({ state, getSessionById, showToast });
 insertTextAtCursor = imageAttachmentsModule.insertTextAtCursor;
@@ -2282,8 +2177,6 @@ const liveViewModule = initLiveView({
   promptRenameSession,
   resumeNativeSession,
   sendControlCommand,
-  syncHeaderWebviewToggle,
-  syncHeaderWriterToggle,
   scheduleLiveScroll,
   scrollConversationAreaToBottom,
   createAgentStatusIndicator,
@@ -2565,7 +2458,6 @@ const {
   loadFilesTree: (...args) => loadFilesTree(...args),
   updateFilesUrl: (...args) => updateFilesUrl(...args),
   getActiveSessionForIndicator,
-  scrollConversationAreaToBottom,
   HOME_ROUTE,
   APPS_ROUTE,
   PROJECTS_ROUTE,
@@ -2578,7 +2470,6 @@ const {
   navLinks,
   menuToggle,
   menuPanel,
-  desktopSessionIndicatorButton,
   toggleMenu,
   getHandleIdentityLogout: () => handleIdentityLogout,
   getHandleIdentityCopy: () => handleIdentityCopy,
@@ -2637,7 +2528,6 @@ window.addEventListener("resize", () => {
   if (window.innerWidth > 720) {
     closeMenu();
   }
-  syncDesktopSessionIndicator();
   const mobileLayout = isMobileFilesLayout();
   if (currentRoute === "files" && mobileLayout !== lastFilesMobileLayout) {
     lastFilesMobileLayout = mobileLayout;

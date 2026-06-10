@@ -106,8 +106,6 @@ export function initLiveView(deps) {
     promptRenameSession,
     resumeNativeSession,
     sendControlCommand,
-    syncHeaderWebviewToggle,
-    syncHeaderWriterToggle,
     scheduleLiveScroll,
     scrollConversationAreaToBottom,
     // Stubs (late-bound)
@@ -1584,11 +1582,7 @@ export function initLiveView(deps) {
     if (!matchingApp && state.appCardLayout.open) {
       state.appCardLayout.open = false;
     }
-    const webApp = drawerRenderState.webApp;
-    syncHeaderWebviewToggle(webApp);
-    syncHeaderWriterToggle(effectiveFile);
-
-    // Fetch artifacts count for header icon (non-blocking)
+    // Fetch artifact metadata for the split panel and command surfaces (non-blocking)
     fetchSessionArtifacts(sessionId).then((items) => {
       state.artifactCounts.set(sessionId, items.length);
       // Store artifacts for panel rendering

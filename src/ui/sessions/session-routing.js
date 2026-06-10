@@ -15,7 +15,6 @@
  * @param {Function} deps.getSessionById                   - returns a session object by id
  * @param {Function} deps.getActiveSessions                - returns array of active sessions
  * @param {Function} deps.getSessionIdFromPath             - extracts session id from a URL pathname
- * @param {Function} deps.syncDesktopSessionIndicator      - syncs the desktop session indicator UI
  * @param {Function} deps.updateDocumentTitle              - updates the document title
  * @param {Function} deps.activateLiveSessionRefresh       - boots live refresh for a session
  * @param {Function} deps.deactivateLiveSessionRefresh     - tears down live refresh for a session
@@ -44,7 +43,6 @@ export function createSessionRouting(deps) {
     getSessionById,
     getActiveSessions,
     getSessionIdFromPath,
-    syncDesktopSessionIndicator,
     updateDocumentTitle,
     activateLiveSessionRefresh,
     deactivateLiveSessionRefresh,
@@ -65,7 +63,6 @@ export function createSessionRouting(deps) {
       if (!sessionExists && !allowPending) {
         ss.activeSessionId = null;
         setLastLoggedSessionId(null);
-        syncDesktopSessionIndicator();
         return false;
       }
 
@@ -96,7 +93,6 @@ export function createSessionRouting(deps) {
         }
       }
 
-      syncDesktopSessionIndicator();
       updateDocumentTitle();
 
       // Manage live refresh for the active live session.
@@ -139,7 +135,6 @@ export function createSessionRouting(deps) {
     if (updateHistory && getCurrentRoute() === "live" && window.location.pathname !== LIVE_ROUTE_PREFIX) {
       window.history.pushState({ route: "live" }, "", LIVE_ROUTE_PREFIX);
     }
-    syncDesktopSessionIndicator();
     updateDocumentTitle();
     return true;
   };

@@ -30,9 +30,6 @@ export function createAppRenderer({
   focusComposerTextarea,
   setActiveNav,
   syncMenuTabs,
-  syncDesktopSessionIndicator,
-  syncHeaderWebviewToggle,
-  syncHeaderWriterToggle,
   updateAgentStatusIndicators,
   updateDocumentTitle,
   isAuthenticated = () => true,
@@ -103,7 +100,6 @@ export function createAppRenderer({
         if (!routeChanged && stablePages.has(resolvedRoute)) {
           setActiveNav();
           syncMenuTabs();
-          syncDesktopSessionIndicator();
           updateAgentStatusIndicators();
           updateDocumentTitle();
           return;
@@ -126,11 +122,6 @@ export function createAppRenderer({
 
         setActiveNav();
         syncMenuTabs();
-        syncDesktopSessionIndicator();
-        if (authPending || resolvedRoute !== "live") {
-          syncHeaderWebviewToggle(null);
-          syncHeaderWriterToggle(null);
-        }
         updateAgentStatusIndicators();
         if (authPending) {
           document.title = "Wingman";
@@ -146,7 +137,6 @@ export function createAppRenderer({
 
   function handleSessionsStoreItemsChanged() {
     syncMenuTabs();
-    syncDesktopSessionIndicator();
     if (shouldFullRenderOnSessionUpdate(getCurrentRoute())) {
       render();
     } else {

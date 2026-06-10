@@ -62,7 +62,6 @@ export function initSessionRuntimeSync({
   fetchSessionQueue,
   applyRouteSessionFromPath,
   ensureActiveSession,
-  syncDesktopSessionIndicator,
 }) {
   const conversationSelectionState = {
     pointerDownInConversation: false,
@@ -142,7 +141,6 @@ export function initSessionRuntimeSync({
     ensureActiveSession();
 
     const activeId = sessionState.activeSessionId;
-    syncDesktopSessionIndicator();
 
     if (getCurrentRoute() === "live" && activeId) {
       await Promise.all([

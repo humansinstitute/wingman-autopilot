@@ -46,7 +46,6 @@ describe("createSessionRouting", () => {
       getSessionById: (id) => sessionsState.items.find((session) => session.id === id) ?? null,
       getActiveSessions: () => sessionsState.items,
       getSessionIdFromPath: () => null,
-      syncDesktopSessionIndicator: mock(() => {}),
       updateDocumentTitle: mock(() => {}),
       activateLiveSessionRefresh: mock(() => {}),
       deactivateLiveSessionRefresh: mock(() => {}),

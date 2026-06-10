@@ -316,191 +316,6 @@ body[data-theme="light"] .wm-logo.light {
   white-space: nowrap;
 }
 
-/* Quick Launcher */
-.wm-quick-launcher {
-  position: relative;
-  display: flex;
-  align-items: center;
-  margin-left: auto;
-  margin-right: 0.75rem;
-}
-
-.wm-quick-launcher-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  border-radius: 50%;
-  border: 2px solid var(--accent-primary);
-  background: transparent;
-  cursor: pointer;
-  transition: background 180ms ease, transform 180ms ease, box-shadow 180ms ease;
-}
-
-.wm-quick-launcher-button:hover {
-  background: rgba(16, 185, 129, 0.15);
-  transform: scale(1.05);
-  box-shadow: 0 0 12px rgba(16, 185, 129, 0.4);
-}
-
-.wm-quick-launcher-button:active {
-  transform: scale(0.95);
-}
-
-.wm-quick-launcher-button[aria-expanded="true"] {
-  background: rgba(16, 185, 129, 0.25);
-  box-shadow: 0 0 16px rgba(16, 185, 129, 0.5);
-}
-
-.wm-quick-launcher-icon {
-  display: block;
-  width: 0.75rem;
-  height: 0.75rem;
-  border-radius: 50%;
-  background: var(--accent-primary);
-  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
-}
-
-.wm-quick-launcher-menu {
-  position: absolute;
-  top: calc(100% + 0.5rem);
-  right: 0;
-  min-width: 240px;
-  max-width: 320px;
-  max-height: 400px;
-  overflow-y: auto;
-  border-radius: 0.75rem;
-  background: var(--bg-secondary);
-  border: 1px solid rgba(16, 185, 129, 0.25);
-  box-shadow: 0 14px 30px rgba(15, 118, 110, 0.25);
-  z-index: 100;
-}
-
-.wm-quick-launcher-menu[hidden] {
-  display: none;
-}
-
-.wm-quick-launcher-header {
-  padding: 0.75rem 1rem;
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-tertiary);
-  border-bottom: 1px solid var(--border-primary);
-}
-
-.wm-quick-launcher-list {
-  padding: 0.5rem;
-}
-
-.wm-quick-launcher-item {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  width: 100%;
-  padding: 0.6rem 0.75rem;
-  border: none;
-  border-radius: 0.5rem;
-  background: transparent;
-  color: var(--text-primary);
-  text-align: left;
-  cursor: pointer;
-  transition: background 150ms ease;
-}
-
-.wm-quick-launcher-item:hover {
-  background: rgba(16, 185, 129, 0.15);
-}
-
-.wm-quick-launcher-item-name {
-  font-weight: 600;
-  font-size: 0.95rem;
-  color: var(--text-primary);
-}
-
-.wm-quick-launcher-item-path {
-  font-size: 0.8rem;
-  color: var(--text-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.wm-quick-launcher-empty {
-  padding: 1rem;
-  text-align: center;
-  color: var(--text-tertiary);
-  font-size: 0.9rem;
-}
-
-.wm-session-indicator {
-  display: flex;
-  align-items: center;
-  margin-right: 1rem;
-  flex-shrink: 0;
-}
-
-.wm-session-indicator[hidden] {
-  display: none !important;
-}
-
-.wm-session-indicator-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.65rem;
-  padding: 0.65rem 1.1rem;
-  border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  background: rgba(148, 163, 184, 0.16);
-  color: var(--text-primary);
-  min-height: 2.75rem;
-  cursor: pointer;
-  box-shadow: none;
-  transition: background 180ms ease;
-}
-
-.wm-session-indicator-button:hover {
-  background: rgba(148, 163, 184, 0.22);
-}
-
-.wm-session-indicator-button:active {
-  background: rgba(148, 163, 184, 0.28);
-}
-
-.wm-session-indicator-button:focus-visible {
-  outline: 2px solid rgba(148, 163, 184, 0.6);
-  outline-offset: 2px;
-}
-
-.wm-session-indicator-text {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  min-width: 0;
-  color: var(--text-primary);
-}
-
-.wm-session-indicator-name {
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  max-width: 34rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.wm-session-indicator-directory {
-  font-size: 0.8rem;
-  color: var(--text-tertiary);
-  max-width: 34rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .wm-menu-nav {
   display: flex;
   flex-direction: column;
@@ -5127,9 +4942,6 @@ body[data-keyboard-open="true"] .wm-composer-shell {
     padding: 1.5rem;
   }
 
-  .wm-session-indicator {
-    display: none !important;
-  }
 }
 
 .wm-worktree-modal {
@@ -10647,11 +10459,6 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 
 /* ── Webview split panel ────────────────────────────── */
 
-.wm-header-webview-toggle {
-  display: flex;
-  align-items: center;
-}
-
 .wm-webview-icon {
   display: flex;
   align-items: center;
@@ -11376,12 +11183,6 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
 
 .wm-writer-agent-picker__item:hover {
   background: var(--bg-tertiary);
-}
-
-/* Header writer toggle — same position pattern as webview toggle */
-.wm-header-writer-toggle {
-  display: flex;
-  align-items: center;
 }
 
 /* ============================================================

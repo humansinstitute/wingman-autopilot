@@ -30,7 +30,6 @@
  * @param {Function} deps.loadFilesTree                   - loads the files tree
  * @param {Function} deps.updateFilesUrl                  - updates the URL for the files view
  * @param {Function} deps.getActiveSessionForIndicator    - returns the active session for the indicator
- * @param {Function} deps.scrollConversationAreaToBottom  - scrolls conversation area to bottom
  * @param {string} deps.HOME_ROUTE                        - route path constant
  * @param {string} deps.APPS_ROUTE                        - route path constant
  * @param {string} deps.PROJECTS_ROUTE                    - route path constant
@@ -43,7 +42,6 @@
  * @param {Element[]} deps.navLinks                       - nav anchor elements with data-route
  * @param {Element|null} deps.menuToggle                  - hamburger menu toggle button
  * @param {Element|null} deps.menuPanel                   - hamburger menu panel element
- * @param {Element|null} deps.desktopSessionIndicatorButton - desktop session indicator button
  * @param {Function} deps.toggleMenu                      - toggles the hamburger menu open/closed
  * @param {() => Function} deps.getHandleIdentityLogout   - getter for the identity logout handler
  *   (resolved lazily so the factory can be called before identity modules are initialised)
@@ -74,7 +72,6 @@ export function createNavigation(deps) {
     loadFilesTree,
     updateFilesUrl,
     getActiveSessionForIndicator,
-    scrollConversationAreaToBottom,
     HOME_ROUTE,
     APPS_ROUTE,
     PROJECTS_ROUTE,
@@ -87,7 +84,6 @@ export function createNavigation(deps) {
     navLinks,
     menuToggle,
     menuPanel,
-    desktopSessionIndicatorButton,
     toggleMenu,
     getHandleIdentityLogout,
     getHandleIdentityCopy,
@@ -350,25 +346,6 @@ export function createNavigation(deps) {
         return;
       }
       toggleMenu();
-    });
-
-    desktopSessionIndicatorButton?.addEventListener("click", (event) => {
-      event.preventDefault();
-      if (!state.identity.authenticated) {
-        openIdentityLoginDialog();
-        return;
-      }
-      const session = getActiveSessionForIndicator();
-      if (!session) return;
-      closeMenu();
-      if (getCurrentRoute() !== "live") {
-        setCurrentRoute("live");
-      }
-      setActiveSession(session.id, { updateHistory: true, forceLog: true });
-      render();
-      requestAnimationFrame(() => {
-        scrollConversationAreaToBottom(session.id, { includeWindow: true });
-      });
     });
 
     document.addEventListener("click", (event) => {
