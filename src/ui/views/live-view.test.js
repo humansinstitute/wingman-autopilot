@@ -84,6 +84,12 @@ describe("live-view drawer integration", () => {
     expect(source).toContain("toolbar.insertBefore(pinnedPager, toolbar.lastElementChild)");
   });
 
+  test("keeps web app split state local after removing header toggles", () => {
+    expect(source).toContain("const webApp = drawerRenderState.webApp");
+    expect(source).toContain("} else if (webApp && state.webviewLayout.open) {");
+    expect(source).not.toContain("syncHeaderWebviewToggle");
+  });
+
   test("unpinned artifacts preserve the remaining ordered page list", () => {
     expect(source).toContain("const remainingPinnedFiles = pinnedFilesBeforeRemoval.filter");
     expect(source).toContain("const nextActiveFile = nextActiveIndex >= 0 ? remainingPinnedFiles[nextActiveIndex] : null");

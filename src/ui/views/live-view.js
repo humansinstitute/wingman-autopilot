@@ -1582,6 +1582,7 @@ export function initLiveView(deps) {
     if (!matchingApp && state.appCardLayout.open) {
       state.appCardLayout.open = false;
     }
+    const webApp = drawerRenderState.webApp;
     // Fetch artifact metadata for the split panel and command surfaces (non-blocking)
     fetchSessionArtifacts(sessionId).then((items) => {
       state.artifactCounts.set(sessionId, items.length);
