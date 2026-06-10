@@ -212,22 +212,45 @@ body[data-theme="light"] .wm-logo.light {
   justify-content: center;
   width: 2.75rem;
   height: 2.75rem;
-  border-radius: 14px;
-  border: 1px solid rgba(16, 185, 129, 0.45);
-  background: rgba(16, 185, 129, 0.16);
-  color: var(--accent-primary);
-  font-size: 1.1rem;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   cursor: pointer;
-  transition: background 200ms ease, transform 200ms ease;
+  transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
 }
 
 .wm-menu-toggle:hover {
   transform: translateY(-1px);
-  background: rgba(16, 185, 129, 0.24);
+  border-color: rgba(16, 185, 129, 0.55);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.12);
 }
 
 .wm-menu-toggle[aria-expanded="true"] {
-  background: rgba(16, 185, 129, 0.28);
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16);
+}
+
+.wm-menu-toggle-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.25), rgba(59, 130, 246, 0.25));
+  background-position: center;
+  background-size: cover;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.wm-menu-toggle-avatar[data-has-image="true"] {
+  background-color: #0ea5e9;
+  color: transparent;
 }
 
 .wm-menu-panel {
@@ -5254,7 +5277,12 @@ body[data-keyboard-open="true"] .wm-composer-shell {
     flex-shrink: 0;
     width: 36px;
     height: 36px;
-    font-size: 1rem;
+  }
+
+  .wm-menu-toggle-avatar {
+    width: 30px;
+    height: 30px;
+    font-size: 0.72rem;
   }
 
   .wm-menu-panel {

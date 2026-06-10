@@ -123,6 +123,7 @@ import { fetchAppLogsApi } from "./services/apps.js";
 import { isChatRoute } from "./chat/index.js";
 import { initPrivateChat } from "./chat/private-chat.js";
 import { initIdentityPanels } from "./identity/panels.js";
+import { initHeaderAvatarMenu } from "./identity/header-avatar-menu.js";
 import { initAdminUsersPanels } from "./api/admin-users-panels.js";
 import { initPrivacyPolicy } from "./views/privacy-policy.js";
 import { initSettingsView } from "./views/settings-view.js";
@@ -2231,6 +2232,12 @@ getAceEditorInstance = fileEditorModule.getAceEditorInstance;
 const identityDomModule = initIdentityDom({ state, requestAuthUiSync });
 identityDomEntryByNode = identityDomModule.identityDomEntryByNode;
 IDENTITY_EVENT_NAMES = identityDomModule.IDENTITY_EVENT_NAMES;
+
+initHeaderAvatarMenu({
+  button: menuToggle,
+  state,
+  identityEventNames: IDENTITY_EVENT_NAMES,
+});
 
 // Identity state manager (handlers, event bridges, persistence)
 const identityStateModule = initIdentityStateManager({
