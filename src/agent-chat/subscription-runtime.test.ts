@@ -133,6 +133,7 @@ function createTestManager(
   checkBackendHealth?: ConstructorParameters<typeof WorkspaceSubscriptionManager>[0]['checkBackendHealth'],
   instanceIdentity: WingmanInstanceIdentity | null = null,
   dispatchPipelineRuntime?: ConstructorParameters<typeof WorkspaceSubscriptionManager>[0]['dispatchPipelineRuntime'],
+  overrides: Partial<ConstructorParameters<typeof WorkspaceSubscriptionManager>[0]> = {},
 ) {
   const store = new WorkspaceSubscriptionStore(dbPath);
   const agentStore = new AgentDefinitionStore(dbPath);
@@ -159,6 +160,7 @@ function createTestManager(
       permissions: ['workspace.read'],
     }),
     fetchFlightDeckPgEvents: async () => ({ events: [], next_cursor: null }),
+    fetchFlightDeckPgChannelMessages: async () => ({ messages: [], next_cursor: null }),
     botKeyStore: {
       getActiveKeyForUser: () => null,
       getActiveKeyForBotNpub: (botNpub) => botKeys.get(botNpub) ?? null,
@@ -166,6 +168,7 @@ function createTestManager(
     getInstanceIdentity: () => instanceIdentity,
     dispatchPipelineRuntime,
     autoAgentWorkspaceRoot: makeTempDb(),
+    ...overrides,
   });
 
   const managerInternals = manager as unknown as {
@@ -659,6 +662,170 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(agents).toHaveLength(1);
     expect(agents[0]?.groupNpubs).toEqual([]);
     expect(routeStore.listForSubscription(imported.subscription.subscriptionId)).toHaveLength(3);
+  });
+
+  test('dispatches a Flight Deck PG message event to the chat pipeline route', async () => {
+    const dbPath = makeTempDb();
+    const routeStore = new DispatchRouteStore(dbPath);
+    const dispatches: unknown[] = [];
+    const dispatchPipelineRuntime = {
+      listRoutesForSubscription: (subscriptionId: string) => routeStore.listForSubscription(subscriptionId),
+      saveRoute: (input: Parameters<DispatchRouteStore['save']>[0]) => routeStore.save(input),
+      dispatch: async (input: unknown) => {
+        dispatches.push(input);
+        return {
+          handled: true,
+          lastPipelineRunId: 'run-pg-chat-1',
+          historyEntries: [{
+            at: new Date().toISOString(),
+            kind: 'chat',
+            action: 'chat_pipeline_dispatch',
+            agentId: 'dispatch-pipeline',
+            sessionId: null,
+            recordId: (input as { recordId?: string }).recordId ?? null,
+            bindingId: (input as { bindingId?: string }).bindingId ?? null,
+            bindingType: 'thread',
+            routeId: 'route-chat',
+            pipelineRunId: 'run-pg-chat-1',
+            status: 'ok',
+          }],
+        };
+      },
+    } as unknown as DispatchPipelineRuntime;
+    const instanceIdentity = makeInstanceIdentity();
+    const { manager, store } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      instanceIdentity,
+      dispatchPipelineRuntime,
+      {
+        fetchFlightDeckPgChannelMessages: async () => ({
+          messages: [{
+            id: 'message-1',
+            workspace_id: 'workspace-1',
+            scope_id: 'scope-1',
+            channel_id: 'channel-1',
+            thread_id: 'thread-1',
+            body: 'Hello autopilot',
+            row_version: 42,
+            created_by_actor_id: 'actor-user',
+            updated_by_actor_id: 'actor-user',
+            created_at: '2026-06-10T00:00:00.000Z',
+            updated_at: '2026-06-10T00:00:00.000Z',
+          }],
+          next_cursor: null,
+        }),
+      },
+    );
+    const imported = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackageForWorkspace('workspace-1', 'npub1workspaceservice'),
+      onboardingSource: 'nostr_33357',
+    });
+
+    const next = await (manager as unknown as {
+      handleFlightDeckPgEvent: (record: WorkspaceSubscriptionRecord, event: Record<string, unknown>) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleFlightDeckPgEvent(imported.subscription, {
+      id: 'event-1',
+      event_id: 'event-1',
+      cursor: 'cursor-1',
+      workspace_id: 'workspace-1',
+      scope_id: 'scope-1',
+      channel_id: 'channel-1',
+      actor_id: 'actor-user',
+      event_type: 'message.created',
+      entity_type: 'message',
+      entity_id: 'message-1',
+      operation: 'created',
+      entity_row_version: 42,
+      row_version: 100,
+      created_at: '2026-06-10T00:00:00.000Z',
+      payload: {},
+    });
+
+    expect(dispatches).toHaveLength(1);
+    expect(dispatches[0]).toMatchObject({
+      triggerKind: 'chat',
+      capability: 'chat_intercept',
+      recordId: 'message-1',
+      bindingId: 'thread-1',
+      scopeId: 'scope-1',
+      channelId: 'channel-1',
+      threadId: 'thread-1',
+      payload: {
+        body: 'Hello autopilot',
+        channel_id: 'channel-1',
+        thread_id: 'thread-1',
+      },
+    });
+    expect(next.lastPipelineRunId).toBe('run-pg-chat-1');
+    expect(store.getBySubscriptionId(imported.subscription.subscriptionId)?.recentDispatches.at(-1)?.pipelineRunId).toBe('run-pg-chat-1');
+  });
+
+  test('suppresses self-authored Flight Deck PG message events by actor id', async () => {
+    const dbPath = makeTempDb();
+    const routeStore = new DispatchRouteStore(dbPath);
+    let dispatchCalled = false;
+    const dispatchPipelineRuntime = {
+      listRoutesForSubscription: (subscriptionId: string) => routeStore.listForSubscription(subscriptionId),
+      saveRoute: (input: Parameters<DispatchRouteStore['save']>[0]) => routeStore.save(input),
+      dispatch: async () => {
+        dispatchCalled = true;
+        return { handled: false, lastPipelineRunId: null, historyEntries: [] };
+      },
+    } as unknown as DispatchPipelineRuntime;
+    const instanceIdentity = makeInstanceIdentity();
+    const { manager, store } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      instanceIdentity,
+      dispatchPipelineRuntime,
+    );
+    const imported = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackageForWorkspace('workspace-1', 'npub1workspaceservice'),
+      onboardingSource: 'nostr_33357',
+    });
+    const verified = await (manager as unknown as {
+      verifyFlightDeckPgWorkspaceAccess: (
+        record: WorkspaceSubscriptionRecord,
+        botIdentity: RuntimeBotIdentity,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).verifyFlightDeckPgWorkspaceAccess(imported.subscription, {
+      botNpub: instanceIdentity.npub,
+      botPubkeyHex: instanceIdentity.pubkeyHex,
+      botSecret: instanceIdentity.secretKey,
+    });
+
+    await (manager as unknown as {
+      handleFlightDeckPgEvent: (record: WorkspaceSubscriptionRecord, event: Record<string, unknown>) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleFlightDeckPgEvent(verified, {
+      id: 'event-self',
+      event_id: 'event-self',
+      workspace_id: 'workspace-1',
+      scope_id: 'scope-1',
+      channel_id: 'channel-1',
+      actor_id: 'actor-bot',
+      event_type: 'message.created',
+      entity_type: 'message',
+      entity_id: 'message-self',
+      operation: 'created',
+      row_version: 100,
+      payload: {},
+    });
+
+    const saved = store.getBySubscriptionId(imported.subscription.subscriptionId);
+    expect(dispatchCalled).toBe(false);
+    expect(saved?.recentDispatches.at(-1)).toMatchObject({
+      action: 'chat_pipeline_suppressed',
+      details: {
+        suppression_reason: 'self_authored',
+        event_actor_id: 'actor-bot',
+        bot_actor_id: 'actor-bot',
+      },
+    });
   });
 
   test('removes dispatch routes when deleting a manual subscription', async () => {

@@ -57,6 +57,7 @@ import {
   buildStreamUrl,
   buildSuccessDiagnostic,
   checkBackendConnectionHealth,
+  fetchFlightDeckPgChannelMessages,
   fetchFlightDeckPgEvents,
   fetchFlightDeckPgWorkspaceMe,
   fetchWorkspaceKeyMappings,
@@ -65,6 +66,7 @@ import {
   parseTowerError,
   registerWorkspaceKeyWithTower,
   type FlightDeckPgEvent,
+  type FlightDeckPgMessage,
 } from './tower-client';
 import { loadYokeBotHelpers } from './yoke-bot-helpers';
 import { decryptRecordPayloadWithYoke } from './yoke-record-payload';
@@ -104,6 +106,7 @@ interface RuntimeContext {
   wsSession: YokeWorkspaceSession | null;
   groupKeys: unknown | null;
   wrappedKeyRows: unknown[];
+  flightDeckPgActorId: string | null;
   removed: boolean;
 }
 
@@ -204,6 +207,63 @@ function isRevokedWorkspaceSubscription(record: WorkspaceSubscriptionRecord): bo
 
 function isFlightDeckPgSubscription(record: WorkspaceSubscriptionRecord): boolean {
   return record.onboardingSource === 'nostr_33357' && Boolean(record.workspaceId);
+}
+
+function findFlightDeckPgDispatchMessage(
+  messages: FlightDeckPgMessage[],
+  event: FlightDeckPgEvent,
+): FlightDeckPgMessage | null {
+  const entityId = getOptionalText(event.entity_id);
+  if (!entityId) {
+    return null;
+  }
+  if (event.entity_type === 'message') {
+    return messages.find((message) => message.id === entityId) ?? null;
+  }
+  if (event.entity_type === 'thread') {
+    const threadMessages = messages.filter((message) => message.thread_id === entityId || message.thread_source_message_id === entityId);
+    return threadMessages.at(-1) ?? null;
+  }
+  return null;
+}
+
+function normaliseFlightDeckPgChatPayload(
+  message: FlightDeckPgMessage,
+  event: FlightDeckPgEvent,
+): Record<string, unknown> {
+  const metadata = message.metadata && typeof message.metadata === 'object' && !Array.isArray(message.metadata)
+    ? message.metadata
+    : {};
+  const eventPayload = event.payload && typeof event.payload === 'object' && !Array.isArray(event.payload)
+    ? event.payload
+    : {};
+  const senderNpub = getOptionalText(metadata.sender_npub)
+    ?? getOptionalText(eventPayload.sender_npub)
+    ?? getOptionalText(eventPayload.actor_npub);
+  return {
+    id: message.id,
+    record_id: message.id,
+    body: message.body ?? '',
+    sender_npub: senderNpub,
+    sender_actor_id: message.created_by_actor_id ?? event.actor_id ?? null,
+    actor_id: event.actor_id ?? message.created_by_actor_id ?? null,
+    channel_id: message.channel_id ?? event.channel_id ?? null,
+    scope_id: message.scope_id ?? event.scope_id ?? null,
+    thread_id: message.thread_id ?? message.thread_source_message_id ?? message.id,
+    parent_message_id: message.thread_id ?? null,
+    row_version: message.row_version ?? event.entity_row_version ?? event.row_version ?? null,
+    version: message.row_version ?? event.entity_row_version ?? event.row_version ?? null,
+    created_at: message.created_at ?? event.created_at ?? event.timestamp ?? null,
+    updated_at: message.updated_at ?? event.created_at ?? event.timestamp ?? null,
+    metadata,
+    flightdeck_pg_event: {
+      id: event.event_id ?? event.id ?? null,
+      event_type: event.event_type ?? null,
+      entity_type: event.entity_type ?? null,
+      operation: event.operation ?? null,
+      cursor: event.cursor ?? null,
+    },
+  };
 }
 
 function profilePolicyAllowsLegacyPrompt(decision: AgentProfileRuntimeDecision | null): boolean {
@@ -545,6 +605,7 @@ export interface WorkspaceSubscriptionManagerDependencies {
   fetchWorkspaceKeyMappings?: typeof fetchWorkspaceKeyMappings;
   fetchFlightDeckPgWorkspaceMe?: typeof fetchFlightDeckPgWorkspaceMe;
   fetchFlightDeckPgEvents?: typeof fetchFlightDeckPgEvents;
+  fetchFlightDeckPgChannelMessages?: typeof fetchFlightDeckPgChannelMessages;
   decryptRecordPayload?: typeof decryptRecordPayloadWithYoke;
   checkBackendHealth?: typeof checkBackendConnectionHealth;
   chatRecordPullTimeoutMs?: number;
@@ -673,6 +734,7 @@ export class WorkspaceSubscriptionManager {
   private readonly fetchWorkspaceKeyMappingsImpl: typeof fetchWorkspaceKeyMappings;
   private readonly fetchFlightDeckPgWorkspaceMeImpl: typeof fetchFlightDeckPgWorkspaceMe;
   private readonly fetchFlightDeckPgEventsImpl: typeof fetchFlightDeckPgEvents;
+  private readonly fetchFlightDeckPgChannelMessagesImpl: typeof fetchFlightDeckPgChannelMessages;
   private readonly decryptRecordPayloadImpl: typeof decryptRecordPayloadWithYoke;
   private readonly checkBackendHealthImpl: typeof checkBackendConnectionHealth;
   private readonly chatRecordPullTimeoutMs: number;
@@ -699,6 +761,7 @@ export class WorkspaceSubscriptionManager {
     this.fetchWorkspaceKeyMappingsImpl = deps.fetchWorkspaceKeyMappings ?? fetchWorkspaceKeyMappings;
     this.fetchFlightDeckPgWorkspaceMeImpl = deps.fetchFlightDeckPgWorkspaceMe ?? fetchFlightDeckPgWorkspaceMe;
     this.fetchFlightDeckPgEventsImpl = deps.fetchFlightDeckPgEvents ?? fetchFlightDeckPgEvents;
+    this.fetchFlightDeckPgChannelMessagesImpl = deps.fetchFlightDeckPgChannelMessages ?? fetchFlightDeckPgChannelMessages;
     this.decryptRecordPayloadImpl = deps.decryptRecordPayload ?? decryptRecordPayloadWithYoke;
     this.checkBackendHealthImpl = deps.checkBackendHealth ?? checkBackendConnectionHealth;
     this.chatRecordPullTimeoutMs = Math.max(1, deps.chatRecordPullTimeoutMs ?? CHAT_ADVISORY_RECORD_PULL_TIMEOUT_MS);
@@ -2108,6 +2171,7 @@ export class WorkspaceSubscriptionManager {
       wsSession: loaded.wsSession,
       groupKeys: existingRuntime?.groupKeys ?? null,
       wrappedKeyRows: existingRuntime?.wrappedKeyRows ?? (record.wrappedGroupKeysJson ? JSON.parse(record.wrappedGroupKeysJson) as unknown[] : []),
+      flightDeckPgActorId: existingRuntime?.flightDeckPgActorId ?? null,
       removed: false,
     });
     return this.saveRecord(nextRecord);
@@ -2129,6 +2193,7 @@ export class WorkspaceSubscriptionManager {
       wsSession: null,
       groupKeys: null,
       wrappedKeyRows: [],
+      flightDeckPgActorId: existingRuntime?.flightDeckPgActorId ?? null,
       removed: false,
     });
 
@@ -2168,6 +2233,8 @@ export class WorkspaceSubscriptionManager {
         botIdentity,
         signal: options.signal,
       });
+      const actorId = typeof result.actor?.actor_id === 'string' ? result.actor.actor_id : null;
+      this.getRuntime(record.subscriptionId).flightDeckPgActorId = actorId;
       record.wsKeyStatus = 'active';
       record.groupKeyStatus = 'active';
       record.lastAuthOkAt = new Date().toISOString();
@@ -2176,7 +2243,7 @@ export class WorkspaceSubscriptionManager {
         workspace_id: record.workspaceId,
         workspace_service_npub: record.workspaceServiceNpub,
         bot_npub: botIdentity.botNpub,
-        actor_id: result.actor?.actor_id ?? null,
+        actor_id: actorId,
         role: result.membership?.role ?? null,
         permissions: result.permissions ?? [],
       });
@@ -2515,7 +2582,212 @@ export class WorkspaceSubscriptionManager {
     });
     record.lastErrorCode = null;
     record.lastErrorAt = null;
-    return this.saveRecord(this.recomputeHealth(record));
+    record = this.saveRecord(this.recomputeHealth(record));
+
+    if (
+      (event.entity_type === 'message' || event.entity_type === 'thread')
+      && event.operation !== 'deleted'
+    ) {
+      return await this.handleFlightDeckPgChatEvent(record, event);
+    }
+
+    return record;
+  }
+
+  private async handleFlightDeckPgChatEvent(
+    record: WorkspaceSubscriptionRecord,
+    event: FlightDeckPgEvent,
+  ): Promise<WorkspaceSubscriptionRecord> {
+    const runtime = this.getRuntime(record.subscriptionId);
+    const workspaceId = record.workspaceId;
+    const channelId = typeof event.channel_id === 'string' ? event.channel_id : null;
+    const eventEntityId = typeof event.entity_id === 'string' ? event.entity_id : null;
+    if (!workspaceId || !channelId || !eventEntityId) {
+      record.lastRoutingResult = buildFailureDiagnostic(
+        'flightdeck_pg_chat_event_missing_identity',
+        'Flight Deck PG chat event did not include workspace, channel, or entity id.',
+        'flightdeck_pg_chat_event_missing_identity',
+        {
+          workspace_id: workspaceId,
+          channel_id: channelId,
+          entity_id: eventEntityId,
+          entity_type: event.entity_type ?? null,
+        },
+      );
+      return this.saveRecord(this.recomputeHealth(record));
+    }
+
+    const eventActorId = typeof event.actor_id === 'string' ? event.actor_id : null;
+    if (eventActorId && runtime.flightDeckPgActorId && eventActorId === runtime.flightDeckPgActorId) {
+      return this.appendDispatchHistory(record, {
+        at: new Date().toISOString(),
+        kind: 'chat',
+        action: 'chat_pipeline_suppressed',
+        agentId: 'dispatch-pipeline',
+        sessionId: null,
+        recordId: eventEntityId,
+        bindingId: eventEntityId,
+        bindingType: 'thread',
+        details: {
+          suppression_reason: 'self_authored',
+          event_actor_id: eventActorId,
+          bot_actor_id: runtime.flightDeckPgActorId,
+          source: 'flightdeck_pg',
+        },
+      });
+    }
+
+    if (!this.dispatchPipelineRuntime) {
+      record.lastRoutingResult = buildFailureDiagnostic(
+        'flightdeck_pg_chat_pipeline_unavailable',
+        'No dispatch pipeline runtime is configured for Flight Deck PG chat events.',
+        'flightdeck_pg_chat_pipeline_unavailable',
+        { subscription_id: record.subscriptionId, event_id: event.event_id ?? event.id ?? null },
+      );
+      return this.saveRecord(this.recomputeHealth(record));
+    }
+
+    try {
+      const messagesResult = await this.fetchFlightDeckPgChannelMessagesImpl({
+        backendBaseUrl: record.backendBaseUrl,
+        workspaceId,
+        channelId,
+        appNpub: record.sourceAppNpub,
+        botIdentity: runtime.botIdentity,
+        threadId: event.entity_type === 'thread' ? eventEntityId : null,
+        limit: 200,
+      });
+      const messages = messagesResult.messages;
+      const message = findFlightDeckPgDispatchMessage(messages, event) ?? messages.at(-1) ?? null;
+      if (!message) {
+        record.lastRoutingResult = buildFailureDiagnostic(
+          'flightdeck_pg_chat_message_missing',
+          'Flight Deck PG chat event was visible, but no readable message was returned for the channel.',
+          'flightdeck_pg_chat_message_missing',
+          {
+            channel_id: channelId,
+            entity_id: eventEntityId,
+            entity_type: event.entity_type ?? null,
+          },
+        );
+        return this.saveRecord(this.recomputeHealth(record));
+      }
+
+      const recordId = message.id;
+      const threadId = message.thread_id ?? message.thread_source_message_id ?? message.id;
+      const scopeId = message.scope_id ?? event.scope_id ?? null;
+      const payload = normaliseFlightDeckPgChatPayload(message, event);
+      const profileDecision = this.resolveProfileRuntimeDecision({
+        subscription: record,
+        eventType: 'chat_mention',
+        scopeId,
+        channelId,
+        builtInDefaultPipelineId: 'agent-dispatch-chat',
+      });
+      if (!profilePolicyAllowsDispatch(profileDecision)) {
+        return this.appendProfilePolicySuppression({
+          record,
+          decision: profileDecision!,
+          kind: 'chat',
+          recordId,
+          bindingId: threadId,
+          bindingType: 'thread',
+          details: {
+            channel_id: channelId,
+            scope_id: scopeId,
+            thread_id: threadId,
+            source: 'flightdeck_pg',
+          },
+        });
+      }
+
+      record.lastRoutingResult = buildSuccessDiagnostic('Flight Deck PG chat dispatch pipeline start requested.', {
+        subscription_id: record.subscriptionId,
+        event_id: event.event_id ?? event.id ?? null,
+        record_id: recordId,
+        channel_id: channelId,
+        scope_id: scopeId,
+        thread_id: threadId,
+      });
+      record = this.saveRecord(this.recomputeHealth(record));
+      const pipelineResult = await withTimeout(
+        this.dispatchPipelineRuntime.dispatch({
+          subscription: record,
+          triggerKind: 'chat',
+          capability: 'chat_intercept',
+          recordId,
+          record: {
+            id: recordId,
+            record_id: recordId,
+            record_state: event.operation === 'deleted' ? 'deleted' : 'active',
+            version: message.row_version ?? event.entity_row_version ?? event.row_version ?? null,
+            row_version: message.row_version ?? event.entity_row_version ?? event.row_version ?? null,
+            payload,
+            flightdeck_pg_event: event,
+          },
+          payload,
+          recordFamily: 'chat',
+          recordState: event.operation === 'deleted' ? 'deleted' : 'active',
+          recordVersion: message.row_version ?? event.entity_row_version ?? event.row_version ?? null,
+          updaterNpub: null,
+          bindingType: 'thread',
+          bindingId: threadId,
+          scopeId,
+          channelId,
+          threadId,
+          changedFields: [],
+          groupNpubs: [],
+          botIdentity: runtime.botIdentity,
+          profileRuntime: this.buildProfileRuntimeContext(profileDecision),
+        }),
+        CHAT_ADVISORY_PIPELINE_TIMEOUT_MS,
+        'flightdeck_pg_chat_pipeline_dispatch_timeout',
+      );
+      if (pipelineResult.handled) {
+        record.lastRoutingResult = buildSuccessDiagnostic('Flight Deck PG chat dispatch pipeline route evaluated.', {
+          subscription_id: record.subscriptionId,
+          event_id: event.event_id ?? event.id ?? null,
+          record_id: recordId,
+          route_ids: pipelineResult.historyEntries.map((entry) => entry.routeId).filter(Boolean),
+          pipeline_run_ids: pipelineResult.historyEntries.map((entry) => entry.pipelineRunId).filter(Boolean),
+        });
+        record.lastErrorCode = null;
+        record.lastErrorAt = null;
+        this.clearRuntimeFailure(record.subscriptionId, 'flightdeck_pg_chat_pipeline_dispatched');
+        return this.applyDispatchPipelineResult(this.saveRecord(this.recomputeHealth(record)), pipelineResult);
+      }
+
+      record.lastRoutingResult = buildFailureDiagnostic(
+        'flightdeck_pg_chat_pipeline_not_handled',
+        'No chat dispatch pipeline route handled this Flight Deck PG event.',
+        'flightdeck_pg_chat_pipeline_not_handled',
+        {
+          subscription_id: record.subscriptionId,
+          event_id: event.event_id ?? event.id ?? null,
+          record_id: recordId,
+          channel_id: channelId,
+          thread_id: threadId,
+        },
+      );
+      return this.saveRecord(this.recomputeHealth(record));
+    } catch (error) {
+      const detailCode = getErrorDetailCode(error) ?? 'flightdeck_pg_chat_dispatch_failed';
+      record.lastRoutingResult = buildFailureDiagnostic(
+        'flightdeck_pg_chat_dispatch_failed',
+        error instanceof Error ? error.message : String(error),
+        detailCode,
+        {
+          subscription_id: record.subscriptionId,
+          event_id: event.event_id ?? event.id ?? null,
+          channel_id: channelId,
+          entity_id: eventEntityId,
+        },
+      );
+      record.lastErrorCode = 'flightdeck_pg_chat_dispatch_failed';
+      record.lastErrorAt = new Date().toISOString();
+      this.markRuntimeFailure(record.subscriptionId, detailCode, 'flightdeck_pg_chat_dispatch_failed');
+      return this.saveRecord(this.recomputeHealth(record));
+    }
   }
 
   private async reconnectForReplay(subscriptionId: string, reason: string): Promise<void> {

@@ -43,6 +43,30 @@ export interface FlightDeckPgEvent {
   refetch?: Record<string, unknown>;
 }
 
+export interface FlightDeckPgMessage {
+  id: string;
+  workspace_id?: string;
+  scope_id?: string | null;
+  channel_id?: string | null;
+  thread_id?: string | null;
+  thread_source_message_id?: string | null;
+  body?: string | null;
+  metadata?: Record<string, unknown> | null;
+  row_version?: number | null;
+  created_by_actor_id?: string | null;
+  updated_by_actor_id?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface FlightDeckPgMessagesResult {
+  identity?: Record<string, unknown>;
+  channel_id?: string;
+  thread_id?: string | null;
+  messages: FlightDeckPgMessage[];
+  next_cursor: string | null;
+}
+
 export interface FlightDeckPgEventsResult {
   identity?: Record<string, unknown>;
   events: FlightDeckPgEvent[];
@@ -233,6 +257,46 @@ export async function fetchFlightDeckPgEvents(params: {
   return {
     ...payload,
     events: Array.isArray(payload.events) ? payload.events : [],
+    next_cursor: typeof payload.next_cursor === 'string' ? payload.next_cursor : null,
+  };
+}
+
+export async function fetchFlightDeckPgChannelMessages(params: {
+  backendBaseUrl: string;
+  workspaceId: string;
+  channelId: string;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+  threadId?: string | null;
+  limit?: number;
+  signal?: AbortSignal;
+}): Promise<FlightDeckPgMessagesResult> {
+  const path = `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(params.workspaceId)}/channels/${encodeURIComponent(params.channelId)}/messages`;
+  const url = buildFlightDeckPgUrl(params.backendBaseUrl, path, {
+    thread_id: params.threadId ?? null,
+    limit: params.limit ?? 200,
+  });
+  const authorization = await signFlightDeckPgBotRequest({
+    botIdentity: params.botIdentity,
+    url,
+    method: 'GET',
+  });
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: authorization,
+      'x-flightdeck-pg-app-npub': params.appNpub,
+    },
+    signal: params.signal,
+  });
+  if (!response.ok) {
+    const error = await parseTowerError(response, 'flightdeck_pg_channel_messages');
+    throw Object.assign(new Error(error.message), error);
+  }
+  const payload = await response.json() as Partial<FlightDeckPgMessagesResult>;
+  return {
+    ...payload,
+    messages: Array.isArray(payload.messages) ? payload.messages : [],
     next_cursor: typeof payload.next_cursor === 'string' ? payload.next_cursor : null,
   };
 }
