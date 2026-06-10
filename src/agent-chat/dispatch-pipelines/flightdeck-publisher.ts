@@ -146,7 +146,7 @@ async function createFlightDeckPgTaskCommentFromContext(
 async function updateFlightDeckPgTaskStateWithLease(
   context: DispatchPipelineFlightDeckPublisherContext,
   taskId: string,
-  state: 'in_progress' | 'review' | 'done' | 'blocked',
+  state: string,
 ): Promise<JsonObject> {
   const pg = getFlightDeckPgPublishContext(context);
   const taskResult = await fetchFlightDeckPgTask({
@@ -1647,6 +1647,44 @@ async function publishTaskUpdate(
   const state = mode === 'task_review'
     ? normaliseReviewState(response)
     : normaliseTaskState(response);
+  if (isFlightDeckPgPublisherContext(context)) {
+    let updateResult: unknown = null;
+    let updateError: string | null = null;
+    try {
+      updateResult = await updateFlightDeckPgTaskStateWithLease(context, taskId, state);
+    } catch (error) {
+      updateError = error instanceof Error ? error.message : String(error);
+    }
+    const publishSummary = {
+      ...response,
+      childPipeline: objectValue(input.childPipeline ?? input.launchResult ?? response.childPipeline),
+      updateError,
+    };
+    const commentBody = buildTaskCommentBody(mode, state, publishSummary);
+    let commentResult: unknown = null;
+    let commentError: string | null = null;
+    try {
+      commentResult = await createFlightDeckPgTaskCommentFromContext(context, taskId, commentBody, {
+        autopilot_dispatch: true,
+        operation: mode === 'task_review' ? 'tasks.update-review' : 'tasks.update',
+        task_state: state,
+      });
+    } catch (error) {
+      commentError = error instanceof Error ? error.message : String(error);
+    }
+    return {
+      published: commentError === null,
+      status: commentError !== null ? 'failed' : updateError !== null ? 'partial' : 'ok',
+      operation: mode === 'task_review' ? 'tasks.update-review' : 'tasks.update',
+      taskId,
+      state,
+      updateResult,
+      updateError,
+      commentResult,
+      commentError,
+      agentResponse: publishSummary,
+    };
+  }
   let updateResult: unknown = null;
   let updateError: string | null = null;
   try {
@@ -1720,6 +1758,42 @@ async function publishCommentReply(
   const target = context.eventInput.bindingType === 'task' || family.toLowerCase().includes('task')
     ? 'tasks'
     : 'docs';
+  if (isFlightDeckPgPublisherContext(context)) {
+    if (target !== 'tasks') {
+      return {
+        published: false,
+        status: 'failed',
+        operation: 'docs.reply',
+        commentId,
+        reason: 'Flight Deck PG document comment replies are not available yet.',
+        agentResponse: response,
+      };
+    }
+    const taskId = getText(context.eventInput.payload.targetRecordId)
+      ?? getText(context.eventInput.payload.target_record_id)
+      ?? context.eventInput.bindingId;
+    if (!taskId) {
+      throw new Error('Task comment publish requires a target task id.');
+    }
+    const normalizedBody = normalisePublishedMarkdownBody(body);
+    const result = await createFlightDeckPgTaskCommentFromContext(context, taskId, normalizedBody, {
+      autopilot_dispatch: true,
+      operation: 'tasks.reply',
+      parent_comment_id: commentId,
+    });
+    return {
+      published: true,
+      status: 'ok',
+      operation: 'tasks.reply',
+      commentId,
+      taskId,
+      result,
+      agentResponse: {
+        ...response,
+        replyDraft: normalizedBody,
+      },
+    };
+  }
   const result = await runYokeJson(context, [
     target,
     'reply',

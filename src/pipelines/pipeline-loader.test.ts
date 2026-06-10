@@ -109,13 +109,19 @@ describe("pipeline definition version paths", () => {
   });
 
   test("resolves Flight Deck PG dispatch definition aliases", async () => {
-    const definition = await getPipelineDefinition("fd-agent-dispatch-chat", "tester");
+    const chatDefinition = await getPipelineDefinition("fd-agent-dispatch-chat", "tester");
+    const taskDefinition = await getPipelineDefinition("fd-agent-dispatch-task-response", "tester");
+    const commentDefinition = await getPipelineDefinition("fd-agent-dispatch-comment-response", "tester");
 
-    expect(definition?.id.startsWith("shared:")).toBe(true);
-    expect(definition?.slug).toBe("fd-agent-dispatch-chat");
-    expect(definition?.name).toBe("fd-agent-dispatch-chat");
-    expect(definition?.spec.supersedes).toBe("agent-dispatch-chat");
-    expect(definition?.spec.steps.map((step) => step.name)).toContain("publish-chat-response");
+    expect(chatDefinition?.id.startsWith("shared:")).toBe(true);
+    expect(chatDefinition?.slug).toBe("fd-agent-dispatch-chat");
+    expect(chatDefinition?.name).toBe("fd-agent-dispatch-chat");
+    expect(chatDefinition?.spec.supersedes).toBe("agent-dispatch-chat");
+    expect(chatDefinition?.spec.steps.map((step) => step.name)).toContain("publish-chat-response");
+    expect(taskDefinition?.slug).toBe("fd-agent-dispatch-task-response");
+    expect(taskDefinition?.spec.supersedes).toBe("agent-dispatch-task-response");
+    expect(commentDefinition?.slug).toBe("fd-agent-dispatch-comment-response");
+    expect(commentDefinition?.spec.supersedes).toBe("agent-dispatch-comment-response");
   });
 
   test("resolves stable user definition aliases to the latest version", async () => {

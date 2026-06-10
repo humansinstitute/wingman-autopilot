@@ -144,11 +144,13 @@ const DEFAULT_DISPATCH_PIPELINE_ROUTES: Array<{
     triggerKind: 'task',
     capability: 'task_dispatch',
     pipelineDefinitionId: 'agent-dispatch-task-response',
+    flightDeckPgPipelineDefinitionId: 'fd-agent-dispatch-task-response',
   },
   {
     triggerKind: 'comment',
     capability: 'comment_dispatch',
     pipelineDefinitionId: 'agent-dispatch-comment-response',
+    flightDeckPgPipelineDefinitionId: 'fd-agent-dispatch-comment-response',
   },
 ];
 

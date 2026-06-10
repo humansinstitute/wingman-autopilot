@@ -753,6 +753,127 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     });
   });
 
+  test('task response publishing uses Flight Deck PG task state and comments without Yoke', async () => {
+    const publish = createDispatchFlightDeckPublisher(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      recordId: 'pg-task-1',
+      recordFamily: 'task',
+      bindingType: 'task',
+      bindingId: 'pg-task-1',
+      payload: {
+        task_id: 'pg-task-1',
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+    }));
+
+    const result = await publish({
+      agentResponse: {
+        accepted: true,
+        taskSummary: 'Started task work.',
+        confidence: 0.72,
+      },
+    });
+
+    expect(yokeCommandCalls).toHaveLength(0);
+    expect(pgTaskFetchCalls).toHaveLength(1);
+    expect(pgLeaseAcquireCalls).toHaveLength(1);
+    expect(pgTaskStateUpdateCalls).toHaveLength(1);
+    expect(pgTaskStateUpdateCalls[0]).toMatchObject({
+      workspaceId: 'workspace-pg-1',
+      taskId: 'pg-task-1',
+      state: 'in_progress',
+      rowVersion: 2,
+      leaseToken: 'lease-token-1',
+    });
+    expect(pgTaskCommentCreateCalls).toHaveLength(1);
+    expect(pgTaskCommentCreateCalls[0]).toMatchObject({
+      workspaceId: 'workspace-pg-1',
+      taskId: 'pg-task-1',
+    });
+    expect(String(pgTaskCommentCreateCalls[0]?.body ?? '')).toContain('Started task work.');
+    expect(result).toMatchObject({
+      published: true,
+      status: 'ok',
+      operation: 'tasks.update',
+      taskId: 'pg-task-1',
+      state: 'in_progress',
+    });
+  });
+
+  test('task comment response publishing uses Flight Deck PG task comments without Yoke', async () => {
+    const publish = createDispatchFlightDeckPublisher(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      triggerKind: 'comment',
+      capability: 'comment_dispatch',
+      recordId: 'pg-comment-1',
+      recordFamily: 'comment',
+      bindingType: 'task',
+      bindingId: 'pg-task-1',
+      payload: {
+        comment_id: 'pg-comment-1',
+        target_record_id: 'pg-task-1',
+        target_record_family_hash: 'npub1source:task',
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+    }));
+
+    const result = await publish({
+      agentResponse: {
+        replyDraft: 'Reply one.\\n\\nReply two.',
+      },
+    });
+
+    expect(yokeCommandCalls).toHaveLength(0);
+    expect(pgTaskCommentCreateCalls).toHaveLength(1);
+    expect(pgTaskCommentCreateCalls[0]).toMatchObject({
+      workspaceId: 'workspace-pg-1',
+      taskId: 'pg-task-1',
+      body: 'Reply one.\n\nReply two.',
+    });
+    expect(pgTaskCommentCreateCalls[0]?.metadata).toMatchObject({
+      autopilot_dispatch: true,
+      operation: 'tasks.reply',
+      parent_comment_id: 'pg-comment-1',
+    });
+    expect(result).toMatchObject({
+      published: true,
+      status: 'ok',
+      operation: 'tasks.reply',
+      commentId: 'pg-comment-1',
+      taskId: 'pg-task-1',
+    });
+  });
+
   test('chat task creation failure returns a structured failure instead of throwing', async () => {
     failTaskCreateCount = 1;
     const createTask = createDispatchChatTaskCreator({
