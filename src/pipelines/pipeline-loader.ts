@@ -915,6 +915,7 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
   const softwareImplementationReviewLoopDefinition = await readBundledDefaultDefinition("software-implementation-review-loop.json");
   const defaultDefinitions = [
     ["agent-dispatch-chat.json", AGENT_DISPATCH_CHAT_DEFINITION],
+    ["fd-agent-dispatch-chat.json", buildFlightDeckPgDefaultDefinition(AGENT_DISPATCH_CHAT_DEFINITION as unknown as DeclarativePipeline, "fd-agent-dispatch-chat")],
     ["agent-dispatch-task-response.json", AGENT_DISPATCH_TASK_DEFINITION],
     ["agent-dispatch-comment-response.json", AGENT_DISPATCH_COMMENT_DEFINITION],
     ["design-review.json", DESIGN_REVIEW_DEFINITION],
@@ -948,6 +949,21 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
       await writeFile(demoPath, nextJson);
     }
   }
+}
+
+function buildFlightDeckPgDefaultDefinition(
+  definition: DeclarativePipeline,
+  name: string,
+): DeclarativePipeline {
+  const next = structuredClone(definition) as DeclarativePipeline & {
+    supersedes?: string;
+    tags?: string[];
+  };
+  next.name = name;
+  next.description = `Flight Deck PG workspace-first variant of ${definition.name}. ${definition.description ?? ""}`.trim();
+  next.tags = Array.from(new Set([...(Array.isArray(definition.tags) ? definition.tags : []), "flight-deck-pg"]));
+  next.supersedes = definition.name;
+  return next;
 }
 
 async function readBundledDefaultDefinition(fileName: string): Promise<DeclarativePipeline> {

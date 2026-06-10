@@ -702,7 +702,9 @@ async function acknowledgeChatPipelineMessage(input: DispatchChatAcknowledgement
   if (!channelId) {
     return buildFailedChatAcknowledgement(input.eventInput, 'missing_channel_id');
   }
-  if (!input.eventInput.botIdentity || !input.agent?.workingDirectory || !input.flightDeckRuntime.yokeStateDir) {
+  const runtimePrepared = input.flightDeckRuntime.mode === 'flightdeck_pg'
+    || Boolean(input.agent?.workingDirectory && input.flightDeckRuntime.yokeStateDir);
+  if (!input.eventInput.botIdentity || !runtimePrepared) {
     return buildFailedChatAcknowledgement(
       input.eventInput,
       input.flightDeckRuntime.error ?? (
@@ -825,6 +827,7 @@ function buildDispatchEnvelope(input: {
       changedFields: eventInput.changedFields ?? [],
     },
     runtime: {
+      mode: flightDeckRuntime.mode,
       yokeStateDir: flightDeckRuntime.yokeStateDir,
       commandPrefix: flightDeckRuntime.commandPrefix,
       commands: flightDeckRuntime.commands,
@@ -902,6 +905,7 @@ function normaliseDefaultAgent(value: string | undefined): string {
 
 function emptyFlightDeckRuntime(): DispatchPipelineFlightDeckRuntime {
   return {
+    mode: 'unavailable',
     yokeStateDir: null,
     commandPrefix: null,
     commands: {},
@@ -933,7 +937,8 @@ function buildStoredRunDispatchContext(
   const botIdentity = getBotIdentityForSubscription(subscriptionId);
   const botNpub = getText(agentInput.botNpub) ?? botIdentity?.botNpub ?? '';
   const triggerKind = normaliseStoredTriggerKind(getText(dispatch.triggerKind));
-  const flightDeckRuntime = {
+  const flightDeckRuntime: DispatchPipelineFlightDeckRuntime = {
+    mode: normaliseFlightDeckRuntimeMode(getText(runtime.mode), getText(workspace.workspaceId)),
     yokeStateDir: getText(runtime.yokeStateDir),
     commandPrefix: getText(runtime.commandPrefix),
     commands: objectValue(runtime.commands) as Record<string, string>,
@@ -960,6 +965,8 @@ function buildStoredRunDispatchContext(
         workspaceOwnerNpub: getText(workspace.workspaceOwnerNpub) ?? '',
         sourceAppNpub: getText(workspace.sourceAppNpub) ?? '',
         backendBaseUrl: getText(workspace.backendBaseUrl) ?? '',
+        workspaceId: getText(workspace.workspaceId),
+        workspaceServiceNpub: getText(workspace.workspaceServiceNpub),
         botNpub,
         wsKeyNpub: '',
         managedByNpub: run.ownerNpub,
@@ -1070,6 +1077,16 @@ function normaliseStoredTriggerKind(value: string | null): DispatchTriggerKind {
     return value;
   }
   return 'task';
+}
+
+function normaliseFlightDeckRuntimeMode(
+  value: string | null,
+  workspaceId: string | null,
+): DispatchPipelineFlightDeckRuntime['mode'] {
+  if (value === 'flightdeck_pg' || value === 'yoke' || value === 'unavailable') {
+    return value;
+  }
+  return workspaceId ? 'flightdeck_pg' : 'yoke';
 }
 
 function capabilityForStoredTrigger(triggerKind: DispatchTriggerKind): AgentCapability {

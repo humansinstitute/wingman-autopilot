@@ -67,6 +67,14 @@ export interface FlightDeckPgMessagesResult {
   next_cursor: string | null;
 }
 
+export interface FlightDeckPgWriteResult {
+  identity?: Record<string, unknown>;
+  message?: FlightDeckPgMessage;
+  reaction?: Record<string, unknown>;
+  event?: FlightDeckPgEvent;
+  [key: string]: unknown;
+}
+
 export interface FlightDeckPgEventsResult {
   identity?: Record<string, unknown>;
   events: FlightDeckPgEvent[];
@@ -299,6 +307,93 @@ export async function fetchFlightDeckPgChannelMessages(params: {
     messages: Array.isArray(payload.messages) ? payload.messages : [],
     next_cursor: typeof payload.next_cursor === 'string' ? payload.next_cursor : null,
   };
+}
+
+export async function createFlightDeckPgChannelMessage(params: {
+  backendBaseUrl: string;
+  workspaceId: string;
+  channelId: string;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+  body: string;
+  threadId?: string | null;
+  createThread?: boolean;
+  metadata?: Record<string, unknown> | null;
+  signal?: AbortSignal;
+}): Promise<FlightDeckPgWriteResult> {
+  const path = `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(params.workspaceId)}/channels/${encodeURIComponent(params.channelId)}/messages`;
+  const url = buildFlightDeckPgUrl(params.backendBaseUrl, path);
+  const body = {
+    body: params.body,
+    ...(params.threadId ? { thread_id: params.threadId } : {}),
+    ...(params.createThread !== undefined ? { create_thread: params.createThread } : {}),
+    ...(params.metadata ? { metadata: params.metadata } : {}),
+  };
+  const authorization = await signFlightDeckPgBotRequest({
+    botIdentity: params.botIdentity,
+    url,
+    method: 'POST',
+    body,
+  });
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      Authorization: authorization,
+      'Content-Type': 'application/json',
+      'x-flightdeck-pg-app-npub': params.appNpub,
+    },
+    body: JSON.stringify(body),
+    signal: params.signal,
+  });
+  if (!response.ok) {
+    const error = await parseTowerError(response, 'flightdeck_pg_channel_message_create');
+    throw Object.assign(new Error(error.message), error);
+  }
+  return await response.json() as FlightDeckPgWriteResult;
+}
+
+export async function createFlightDeckPgReaction(params: {
+  backendBaseUrl: string;
+  workspaceId: string;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+  targetType: string;
+  targetId: string;
+  emoji: string;
+  metadata?: Record<string, unknown> | null;
+  signal?: AbortSignal;
+}): Promise<FlightDeckPgWriteResult> {
+  const path = `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(params.workspaceId)}/reactions`;
+  const url = buildFlightDeckPgUrl(params.backendBaseUrl, path);
+  const body = {
+    target_type: params.targetType,
+    target_id: params.targetId,
+    emoji: params.emoji,
+    ...(params.metadata ? { metadata: params.metadata } : {}),
+  };
+  const authorization = await signFlightDeckPgBotRequest({
+    botIdentity: params.botIdentity,
+    url,
+    method: 'POST',
+    body,
+  });
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      Authorization: authorization,
+      'Content-Type': 'application/json',
+      'x-flightdeck-pg-app-npub': params.appNpub,
+    },
+    body: JSON.stringify(body),
+    signal: params.signal,
+  });
+  if (!response.ok) {
+    const error = await parseTowerError(response, 'flightdeck_pg_reaction_create');
+    throw Object.assign(new Error(error.message), error);
+  }
+  return await response.json() as FlightDeckPgWriteResult;
 }
 
 export async function fetchGroupsForViewer(

@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 
 const yokeCommandCalls: string[][] = [];
+const pgMessageFetchCalls: Array<Record<string, unknown>> = [];
+const pgMessageCreateCalls: Array<Record<string, unknown>> = [];
+const pgReactionCreateCalls: Array<Record<string, unknown>> = [];
 let failChatContextCount = 0;
 let failReactionCount = 0;
 let failTaskCreateCount = 0;
@@ -91,6 +94,48 @@ mock.module('../yoke-runtime', () => ({
   runAgentWorkspaceYokeCommand: runAgentWorkspaceYokeCommandMock,
 }));
 
+mock.module('../tower-client', () => ({
+  fetchFlightDeckPgChannelMessages: mock(async (input: Record<string, unknown>) => {
+    pgMessageFetchCalls.push(input);
+    return {
+      messages: [
+        {
+          id: 'pg-message-1',
+          channel_id: input.channelId,
+          thread_id: input.threadId,
+          body: 'Hydrated PG thread body.',
+          created_by_actor_id: 'actor-requester',
+          created_at: '2026-06-10T01:00:00.000Z',
+          row_version: 12,
+          metadata: {},
+        },
+      ],
+      next_cursor: null,
+    };
+  }),
+  createFlightDeckPgChannelMessage: mock(async (input: Record<string, unknown>) => {
+    pgMessageCreateCalls.push(input);
+    return {
+      message: {
+        id: 'pg-reply-1',
+        channel_id: input.channelId,
+        thread_id: input.threadId,
+        body: input.body,
+      },
+    };
+  }),
+  createFlightDeckPgReaction: mock(async (input: Record<string, unknown>) => {
+    pgReactionCreateCalls.push(input);
+    return {
+      reaction: {
+        target_type: input.targetType,
+        target_id: input.targetId,
+        emoji: input.emoji,
+      },
+    };
+  }),
+}));
+
 const {
   createDispatchFlightDeckPublisher,
   createDispatchChatContextHydrator,
@@ -127,7 +172,6 @@ function buildChatPublisherContext(eventInputPatch: Record<string, any> = {}) {
       capability: 'chat_intercept',
       recordId: 'chat-message-1',
       record: {},
-      payload,
       recordFamily: 'chat',
       recordState: null,
       recordVersion: 1,
@@ -137,7 +181,10 @@ function buildChatPublisherContext(eventInputPatch: Record<string, any> = {}) {
       channelId: 'channel-1',
       threadId: 'thread-1',
       ...eventInputPatch,
-      payload,
+      payload: {
+        ...payload,
+        ...(eventInputPatch.payload ?? {}),
+      },
     },
     agent: {
       agentId: 'agent-1',
@@ -149,10 +196,12 @@ function buildChatPublisherContext(eventInputPatch: Record<string, any> = {}) {
       botSecret: new Uint8Array(32),
     },
     runtime: {
+      mode: eventInputPatch.runtime?.mode ?? 'yoke',
       yokeStateDir: '/tmp/yoke-state',
       commandPrefix: 'node yoke',
       commands: {},
       error: null,
+      ...(eventInputPatch.runtime ?? {}),
     },
   } as never;
 }
@@ -160,6 +209,9 @@ function buildChatPublisherContext(eventInputPatch: Record<string, any> = {}) {
 describe('dispatch pipeline Flight Deck publisher', () => {
   beforeEach(() => {
     yokeCommandCalls.length = 0;
+    pgMessageFetchCalls.length = 0;
+    pgMessageCreateCalls.length = 0;
+    pgReactionCreateCalls.length = 0;
     failChatContextCount = 0;
     failReactionCount = 0;
     failTaskCreateCount = 0;
@@ -267,6 +319,63 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     const scopesIndex = yokeCommandCalls.findIndex((args) => args[0] === 'scopes' && args[1] === 'list');
     expect(reactionIndex).toBeGreaterThan(-1);
     expect(scopesIndex).toBeGreaterThan(reactionIndex);
+  });
+
+  test('chat context hydration reads and acknowledges through Flight Deck PG when workspace id is present', async () => {
+    const hydrate = createDispatchChatContextHydrator(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+    }));
+
+    const result = await hydrate({ availablePipelines: [] });
+
+    expect(yokeCommandCalls).toHaveLength(0);
+    expect(pgMessageFetchCalls).toHaveLength(1);
+    expect(pgMessageFetchCalls[0]).toMatchObject({
+      workspaceId: 'workspace-pg-1',
+      channelId: 'channel-1',
+      threadId: 'thread-1',
+    });
+    expect(pgReactionCreateCalls).toHaveLength(1);
+    expect(pgReactionCreateCalls[0]).toMatchObject({
+      targetType: 'message',
+      targetId: 'chat-message-1',
+      emoji: 'thumbs_up',
+    });
+    expect(result).toMatchObject({
+      hydrated: true,
+      status: 'ok',
+      shouldProceed: true,
+      fallbackContext: false,
+      acknowledgement: {
+        acknowledged: true,
+        status: 'ok',
+        emoji: 'thumbs_up',
+      },
+      thread: {
+        recent_messages: [
+          {
+            message_id: 'pg-message-1',
+            body: 'Hydrated PG thread body.',
+            sender_actor_id: 'actor-requester',
+          },
+        ],
+      },
+    });
   });
 
   test('chat context hydration reuses intake acknowledgement without writing a duplicate reaction', async () => {
@@ -537,6 +646,48 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     expect(body).toBe('Paragraph one.\n\n- Bullet with `code`\n- Image ![thread-image.png](storage://7f7a304d-690f-43b4-a12c-ea04cba59354)');
     expect(body).not.toContain('\\n');
     expect(body).toContain('storage://7f7a304d-690f-43b4-a12c-ea04cba59354');
+  });
+
+  test('chat reply publishing sends Flight Deck PG messages without Yoke', async () => {
+    const publish = createDispatchFlightDeckPublisher(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+    }));
+
+    const result = await publish({
+      agentResponse: {
+        shouldRespond: true,
+        responseDraft: 'PG reply body',
+      },
+    });
+
+    expect(yokeCommandCalls).toHaveLength(0);
+    expect(pgMessageCreateCalls).toHaveLength(1);
+    expect(pgMessageCreateCalls[0]).toMatchObject({
+      workspaceId: 'workspace-pg-1',
+      channelId: 'channel-1',
+      threadId: 'thread-1',
+      body: 'PG reply body',
+    });
+    expect(result).toMatchObject({
+      published: true,
+      status: 'ok',
+      operation: 'chat.reply-current',
+    });
   });
 
   test('chat task creation failure returns a structured failure instead of throwing', async () => {

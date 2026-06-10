@@ -108,6 +108,16 @@ describe("pipeline definition version paths", () => {
     });
   });
 
+  test("resolves Flight Deck PG dispatch definition aliases", async () => {
+    const definition = await getPipelineDefinition("fd-agent-dispatch-chat", "tester");
+
+    expect(definition?.id.startsWith("shared:")).toBe(true);
+    expect(definition?.slug).toBe("fd-agent-dispatch-chat");
+    expect(definition?.name).toBe("fd-agent-dispatch-chat");
+    expect(definition?.spec.supersedes).toBe("agent-dispatch-chat");
+    expect(definition?.spec.steps.map((step) => step.name)).toContain("publish-chat-response");
+  });
+
   test("resolves stable user definition aliases to the latest version", async () => {
     const userDir = getUserPipelineDefinitionsDirectory("tester");
     mkdirSync(userDir, { recursive: true });

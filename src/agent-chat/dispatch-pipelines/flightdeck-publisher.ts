@@ -4,6 +4,12 @@ import type { DeclarativeFunction, DeclarativePipeline, DeclarativeStep } from '
 import type { JsonObject } from '../../pipelines/pipeline-store';
 import type { AgentDefinitionRecord, RuntimeBotIdentity } from '../types';
 import {
+  createFlightDeckPgChannelMessage,
+  createFlightDeckPgReaction,
+  fetchFlightDeckPgChannelMessages,
+  type FlightDeckPgMessage,
+} from '../tower-client';
+import {
   buildAgentChatYokeCommands,
   buildAgentDocumentCommentYokeCommands,
   buildAgentTaskCommentYokeCommands,
@@ -13,6 +19,7 @@ import {
 import type { DispatchPipelineEventInput } from './runtime';
 
 export interface DispatchPipelineFlightDeckRuntime {
+  mode: 'yoke' | 'flightdeck_pg' | 'unavailable';
   yokeStateDir: string | null;
   commandPrefix: string | null;
   commands: Record<string, string>;
@@ -40,14 +47,63 @@ export function pipelineNeedsFlightDeckPublisher(pipeline: DeclarativePipeline):
   return pipeline.steps.some(stepNeedsFlightDeckPublisher);
 }
 
+function isFlightDeckPgDispatch(input: DispatchPipelineEventInput): boolean {
+  return Boolean(input.subscription.workspaceId);
+}
+
+function isFlightDeckPgPublisherContext(context: DispatchPipelineFlightDeckPublisherContext): boolean {
+  return context.runtime.mode === 'flightdeck_pg' && isFlightDeckPgDispatch(context.eventInput);
+}
+
+function canUseFlightDeckRuntime(context: DispatchPipelineFlightDeckPublisherContext): boolean {
+  if (!context.botIdentity) {
+    return false;
+  }
+  if (isFlightDeckPgPublisherContext(context)) {
+    return true;
+  }
+  return Boolean(context.agent?.workingDirectory && context.runtime.yokeStateDir);
+}
+
+function getFlightDeckPgPublishContext(context: DispatchPipelineFlightDeckPublisherContext): {
+  backendBaseUrl: string;
+  workspaceId: string;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+} {
+  if (!context.botIdentity) {
+    throw new Error('No runtime bot identity was available.');
+  }
+  const workspaceId = getText(context.eventInput.subscription.workspaceId);
+  if (!workspaceId) {
+    throw new Error('Flight Deck PG publish requires a workspace id.');
+  }
+  return {
+    backendBaseUrl: context.eventInput.subscription.backendBaseUrl,
+    workspaceId,
+    appNpub: context.eventInput.subscription.sourceAppNpub,
+    botIdentity: context.botIdentity,
+  };
+}
+
 export async function prepareDispatchPipelineFlightDeckRuntime(input: {
   eventInput: DispatchPipelineEventInput;
   agent: AgentDefinitionRecord | null;
 }): Promise<DispatchPipelineFlightDeckRuntime> {
   const botIdentity = input.eventInput.botIdentity ?? null;
+  if (isFlightDeckPgDispatch(input.eventInput)) {
+    return {
+      mode: botIdentity ? 'flightdeck_pg' : 'unavailable',
+      yokeStateDir: null,
+      commandPrefix: null,
+      commands: {},
+      error: botIdentity ? null : 'No runtime bot identity was available.',
+    };
+  }
   const workingDirectory = input.agent?.workingDirectory ?? null;
   if (!botIdentity || !workingDirectory) {
     return {
+      mode: 'unavailable',
       yokeStateDir: null,
       commandPrefix: null,
       commands: {},
@@ -67,6 +123,7 @@ export async function prepareDispatchPipelineFlightDeckRuntime(input: {
       },
     });
     return {
+      mode: 'yoke',
       yokeStateDir: workspace.stateDir,
       commandPrefix: workspace.commandPrefix,
       commands: buildRuntimeCommands(input.eventInput, workspace.stateDir, workspace.commandPrefix),
@@ -74,6 +131,7 @@ export async function prepareDispatchPipelineFlightDeckRuntime(input: {
     };
   } catch (error) {
     return {
+      mode: 'unavailable',
       yokeStateDir: null,
       commandPrefix: null,
       commands: {},
@@ -86,7 +144,7 @@ export function createDispatchFlightDeckPublisher(
   context: DispatchPipelineFlightDeckPublisherContext,
 ): DeclarativeFunction {
   return async (input) => {
-    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+    if (!canUseFlightDeckRuntime(context)) {
       return {
         published: false,
         status: 'failed',
@@ -131,7 +189,7 @@ export function createDispatchChatContextHydrator(
   operation: 'chat.hydrate-context' | 'chat.reload-thread' = 'chat.hydrate-context',
 ): DeclarativeFunction {
   return async (input) => {
-    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+    if (!canUseFlightDeckRuntime(context)) {
       return {
         hydrated: false,
         status: 'failed',
@@ -171,14 +229,19 @@ export function createDispatchChatContextHydrator(
     let scopes: unknown = [];
     let referencedRecords: Array<Record<string, unknown>> = [];
     if (!selfAuthored.selfAuthored) {
-      try {
-        scopes = await runYokeJson(context, ['scopes', 'list', '--json']);
-      } catch (error) {
-        scopes = {
-          error: error instanceof Error ? error.message : String(error),
-        };
+      if (isFlightDeckPgPublisherContext(context)) {
+        scopes = [];
+        referencedRecords = [];
+      } else {
+        try {
+          scopes = await runYokeJson(context, ['scopes', 'list', '--json']);
+        } catch (error) {
+          scopes = {
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+        referencedRecords = await loadMentionedFlightDeckRecords(context, thread);
       }
-      referencedRecords = await loadMentionedFlightDeckRecords(context, thread);
     }
 
     return {
@@ -207,6 +270,31 @@ export async function acknowledgeChatDispatchMessage(
   channelId: string,
 ): Promise<JsonObject> {
   try {
+    if (isFlightDeckPgPublisherContext(context)) {
+      const pg = getFlightDeckPgPublishContext(context);
+      const result = await createFlightDeckPgReaction({
+        backendBaseUrl: pg.backendBaseUrl,
+        workspaceId: pg.workspaceId,
+        appNpub: pg.appNpub,
+        botIdentity: pg.botIdentity,
+        targetType: 'message',
+        targetId: context.eventInput.recordId,
+        emoji: 'thumbs_up',
+        metadata: {
+          autopilot_dispatch: true,
+          channel_id: channelId,
+          subscription_id: context.eventInput.subscription.subscriptionId,
+        },
+      });
+      return {
+        acknowledged: true,
+        status: 'ok',
+        operation: 'chat.acknowledge-message',
+        emoji: 'thumbs_up',
+        targetMessageId: context.eventInput.recordId,
+        result,
+      };
+    }
     const result = await runYokeJson(context, [
       'chat',
       'react',
@@ -233,7 +321,7 @@ export async function acknowledgeChatDispatchMessage(
       acknowledged: false,
       status: 'failed',
       operation: 'chat.acknowledge-message',
-      emoji: 'shaka',
+      emoji: isFlightDeckPgPublisherContext(context) ? 'thumbs_up' : 'shaka',
       targetMessageId: context.eventInput.recordId,
       reason: error instanceof Error ? error.message : String(error),
     };
@@ -404,6 +492,38 @@ async function hydrateChatThreadWithFallback(
   warnings: string[];
   fallbackContext: boolean;
 }> {
+  if (isFlightDeckPgPublisherContext(context)) {
+    const warnings: string[] = [];
+    try {
+      const pg = getFlightDeckPgPublishContext(context);
+      const result = await fetchFlightDeckPgChannelMessages({
+        backendBaseUrl: pg.backendBaseUrl,
+        workspaceId: pg.workspaceId,
+        channelId,
+        appNpub: pg.appNpub,
+        botIdentity: pg.botIdentity,
+        threadId,
+        limit: 20,
+      });
+      return {
+        hydrated: true,
+        status: 'ok',
+        thread: buildFlightDeckPgChatThread(channelId, threadId, result.messages),
+        warnings,
+        fallbackContext: false,
+      };
+    } catch (error) {
+      warnings.push(`flightdeck pg chat context failed: ${error instanceof Error ? error.message : String(error)}`);
+      return {
+        hydrated: true,
+        status: 'partial',
+        thread: buildFallbackChatThread(context, channelId, threadId),
+        warnings,
+        fallbackContext: true,
+      };
+    }
+  }
+
   const args = [
     'chat',
     'context',
@@ -454,6 +574,44 @@ async function hydrateChatThreadWithFallback(
     thread: buildFallbackChatThread(context, channelId, threadId),
     warnings,
     fallbackContext: true,
+  };
+}
+
+function buildFlightDeckPgChatThread(
+  channelId: string,
+  threadId: string,
+  messages: FlightDeckPgMessage[],
+): JsonObject {
+  const recentMessages = messages.map((message) => ({
+    message_id: message.id,
+    record_id: message.id,
+    parent_message_id: null,
+    sender_npub: null,
+    sender_actor_id: message.created_by_actor_id ?? null,
+    actor_id: message.created_by_actor_id ?? null,
+    body: message.body ?? '',
+    attachments: Array.isArray(message.metadata?.attachments) ? message.metadata.attachments : [],
+    metadata: message.metadata ?? {},
+    scope_id: message.scope_id ?? null,
+    channel_id: message.channel_id ?? channelId,
+    thread_id: message.thread_id ?? threadId,
+    updated_at: message.updated_at ?? message.created_at ?? null,
+    created_at: message.created_at ?? null,
+    record_state: 'current',
+    version: message.row_version ?? null,
+  }));
+  return {
+    channel_id: channelId,
+    thread_id: threadId,
+    fallback_context: false,
+    recent_messages: recentMessages,
+    messages: recentMessages,
+    thread: {
+      message_id: threadId,
+      record_id: threadId,
+      recent_messages: recentMessages,
+      messages: recentMessages,
+    },
   };
 }
 
@@ -1129,6 +1287,36 @@ async function publishChatReply(
   const threadId = context.eventInput.threadId ?? null;
   if (!normalizedBody || !channelId || !threadId) {
     throw new Error('Chat publish requires responseDraft, channelId, and threadId.');
+  }
+
+  if (isFlightDeckPgPublisherContext(context)) {
+    const pg = getFlightDeckPgPublishContext(context);
+    const result = await createFlightDeckPgChannelMessage({
+      backendBaseUrl: pg.backendBaseUrl,
+      workspaceId: pg.workspaceId,
+      channelId,
+      appNpub: pg.appNpub,
+      botIdentity: pg.botIdentity,
+      body: normalizedBody,
+      threadId,
+      metadata: {
+        autopilot_dispatch: true,
+        source_message_id: context.eventInput.recordId,
+        subscription_id: context.eventInput.subscription.subscriptionId,
+      },
+    });
+    return {
+      published: true,
+      status: 'ok',
+      operation: 'chat.reply-current',
+      channelId,
+      threadId,
+      result,
+      agentResponse: {
+        ...response,
+        responseDraft: normalizedBody,
+      },
+    };
   }
 
   const result = await runYokeJson(context, [
@@ -1892,6 +2080,30 @@ async function publishNeedsInputChatNotification(
   }
 
   try {
+    if (isFlightDeckPgPublisherContext(context)) {
+      const pg = getFlightDeckPgPublishContext(context);
+      const result = await createFlightDeckPgChannelMessage({
+        backendBaseUrl: pg.backendBaseUrl,
+        workspaceId: pg.workspaceId,
+        channelId,
+        appNpub: pg.appNpub,
+        botIdentity: pg.botIdentity,
+        body: buildNeedsInputChatReply(input, taskId, question),
+        threadId,
+        metadata: {
+          autopilot_dispatch: true,
+          source_message_id: context.eventInput.recordId,
+          subscription_id: context.eventInput.subscription.subscriptionId,
+          notification_kind: 'needs_input',
+        },
+      });
+      return {
+        notified: true,
+        result,
+        error: null,
+        skippedReason: null,
+      };
+    }
     const result = await runYokeJson(context, [
       'chat',
       'reply-current',

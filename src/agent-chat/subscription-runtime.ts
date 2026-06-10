@@ -132,11 +132,13 @@ const DEFAULT_DISPATCH_PIPELINE_ROUTES: Array<{
   triggerKind: CreateDispatchRouteInput['triggerKind'];
   capability: CreateDispatchRouteInput['capability'];
   pipelineDefinitionId: string;
+  flightDeckPgPipelineDefinitionId?: string;
 }> = [
   {
     triggerKind: 'chat',
     capability: 'chat_intercept',
     pipelineDefinitionId: 'agent-dispatch-chat',
+    flightDeckPgPipelineDefinitionId: 'fd-agent-dispatch-chat',
   },
   {
     triggerKind: 'task',
@@ -149,6 +151,15 @@ const DEFAULT_DISPATCH_PIPELINE_ROUTES: Array<{
     pipelineDefinitionId: 'agent-dispatch-comment-response',
   },
 ];
+
+function getDefaultDispatchPipelineDefinitionId(
+  subscription: WorkspaceSubscriptionRecord,
+  routeConfig: (typeof DEFAULT_DISPATCH_PIPELINE_ROUTES)[number],
+): string {
+  return isFlightDeckPgSubscription(subscription) && routeConfig.flightDeckPgPipelineDefinitionId
+    ? routeConfig.flightDeckPgPipelineDefinitionId
+    : routeConfig.pipelineDefinitionId;
+}
 
 export class WorkspaceSubscriptionAccessError extends Error {
   readonly statusCode = 403;
@@ -1134,11 +1145,41 @@ export class WorkspaceSubscriptionManager {
       if (!enabledCapabilities.has(routeConfig.capability)) {
         continue;
       }
-      const hasRoute = existingRoutes.some((route) => (
+      const pipelineDefinitionId = getDefaultDispatchPipelineDefinitionId(subscription, routeConfig);
+      const existingRoute = existingRoutes.find((route) => (
         route.triggerKind === routeConfig.triggerKind
         && route.capability === routeConfig.capability
       ));
-      if (hasRoute) {
+      if (existingRoute) {
+        if (
+          existingRoute.pipelineDefinitionId === routeConfig.pipelineDefinitionId
+          && pipelineDefinitionId !== routeConfig.pipelineDefinitionId
+        ) {
+          const updatedRoute = this.dispatchPipelineRuntime.saveRoute({
+            routeId: existingRoute.routeId,
+            createdAt: existingRoute.createdAt,
+            managedByNpub: existingRoute.managedByNpub,
+            subscriptionId: existingRoute.subscriptionId,
+            workspaceOwnerNpub: existingRoute.workspaceOwnerNpub,
+            botNpub: existingRoute.botNpub,
+            sourceAppNpub: existingRoute.sourceAppNpub,
+            triggerKind: existingRoute.triggerKind,
+            capability: existingRoute.capability,
+            pipelineDefinitionId,
+            enabled: existingRoute.enabled,
+            priority: existingRoute.priority,
+            matchJson: existingRoute.matchJson,
+            inputTemplateJson: existingRoute.inputTemplateJson,
+            concurrencyKeyTemplate: existingRoute.concurrencyKeyTemplate,
+            activePolicy: existingRoute.activePolicy,
+            dedupeWindowSeconds: existingRoute.dedupeWindowSeconds,
+          });
+          const routeIndex = existingRoutes.findIndex((route) => route.routeId === updatedRoute.routeId);
+          if (routeIndex >= 0) {
+            existingRoutes[routeIndex] = updatedRoute;
+          }
+          created.push(updatedRoute);
+        }
         continue;
       }
       const route = this.dispatchPipelineRuntime.saveRoute({
@@ -1149,7 +1190,7 @@ export class WorkspaceSubscriptionManager {
         sourceAppNpub: subscription.sourceAppNpub,
         triggerKind: routeConfig.triggerKind,
         capability: routeConfig.capability,
-        pipelineDefinitionId: routeConfig.pipelineDefinitionId,
+        pipelineDefinitionId,
         enabled: true,
         priority: 100,
       });
@@ -1717,6 +1758,14 @@ export class WorkspaceSubscriptionManager {
         this.saveRecord(refreshed);
         this.clearRuntimeFailure(refreshed.subscriptionId, 'startup_reload_recovered');
         await this.ensureConnected(refreshed, botIdentity, true);
+        const subscriptionAgents = this.agentStore
+          .listByWorkspaceAndBot(this.getEffectiveWorkspaceNpub(refreshed), refreshed.botNpub)
+          .filter((agent) => agent.managedByNpub === refreshed.managedByNpub)
+          .filter((agent) => agent.enabled);
+        const routeCapabilities = subscriptionAgents.length > 0
+          ? [...new Set(subscriptionAgents.flatMap((agent) => agent.capabilities))]
+          : refreshed.capabilityDefaults ?? [];
+        this.ensureDefaultDispatchRoutesForSubscription(refreshed, routeCapabilities);
         await this.replayPendingIntercepts(refreshed, botIdentity);
       } catch (error) {
         const failed = {
