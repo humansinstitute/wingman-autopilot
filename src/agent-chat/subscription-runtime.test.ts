@@ -153,6 +153,12 @@ function createTestManager(
         details: { health_url: record.healthUrl },
       },
     })),
+    fetchFlightDeckPgWorkspaceMe: async () => ({
+      actor: { actor_id: 'actor-bot' },
+      membership: { role: 'member' },
+      permissions: ['workspace.read'],
+    }),
+    fetchFlightDeckPgEvents: async () => ({ events: [], next_cursor: null }),
     botKeyStore: {
       getActiveKeyForUser: () => null,
       getActiveKeyForBotNpub: (botNpub) => botKeys.get(botNpub) ?? null,
@@ -604,7 +610,7 @@ describe('WorkspaceSubscriptionManager', () => {
     ]);
   });
 
-  test('creates a 33357 Flight Deck workspace agent even when v4 workspace key registration fails', async () => {
+  test('creates a 33357 Flight Deck workspace agent without v4 workspace key registration', async () => {
     const dbPath = makeTempDb();
     const routeStore = new DispatchRouteStore(dbPath);
     const dispatchPipelineRuntime = new DispatchPipelineRuntime({
@@ -622,7 +628,9 @@ describe('WorkspaceSubscriptionManager', () => {
       instanceIdentity,
       dispatchPipelineRuntime,
     );
+    let registerCalled = false;
     managerInternals.registerWorkspaceKey = async () => {
+      registerCalled = true;
       throw Object.assign(new Error('user does not have access to this workspace'), {
         status: 403,
         detailCode: 'workspace_access_denied',
@@ -643,7 +651,9 @@ describe('WorkspaceSubscriptionManager', () => {
       onboardingSource: 'nostr_33357',
     });
 
-    expect(imported.subscription.wsKeyStatus).toBe('failed');
+    expect(registerCalled).toBe(false);
+    expect(imported.subscription.wsKeyStatus).toBe('active');
+    expect(imported.subscription.healthStatus).toBe('healthy');
     expect(imported.subscription.workspaceServiceNpub).toBe('npub1workspaceservice');
     const agents = agentStore.listByWorkspaceAndBot('npub1workspaceservice', instanceIdentity.npub);
     expect(agents).toHaveLength(1);

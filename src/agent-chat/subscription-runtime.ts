@@ -52,15 +52,19 @@ import type { WingmanInstanceIdentity } from '../identity/wingman-instance-ident
 import {
   buildChatMessageFamilyHash,
   buildRecordFamilyHash,
+  encodeFlightDeckPgEventCursor,
   buildFailureDiagnostic,
   buildStreamUrl,
   buildSuccessDiagnostic,
   checkBackendConnectionHealth,
+  fetchFlightDeckPgEvents,
+  fetchFlightDeckPgWorkspaceMe,
   fetchWorkspaceKeyMappings,
   fetchRecordHistory,
   normaliseBackendBaseUrl,
   parseTowerError,
   registerWorkspaceKeyWithTower,
+  type FlightDeckPgEvent,
 } from './tower-client';
 import { loadYokeBotHelpers } from './yoke-bot-helpers';
 import { decryptRecordPayloadWithYoke } from './yoke-record-payload';
@@ -97,7 +101,7 @@ interface RuntimeContext {
   reconnectTimer: ReturnType<typeof setTimeout> | null;
   reconnectAttempts: number;
   botIdentity: RuntimeBotIdentity;
-  wsSession: YokeWorkspaceSession;
+  wsSession: YokeWorkspaceSession | null;
   groupKeys: unknown | null;
   wrappedKeyRows: unknown[];
   removed: boolean;
@@ -113,6 +117,7 @@ const CHAT_ADVISORY_DECRYPT_TIMEOUT_MS = 15_000;
 const CHAT_ADVISORY_ROUTING_TIMEOUT_MS = 20_000;
 const CHAT_ADVISORY_PIPELINE_TIMEOUT_MS = 60_000;
 const WORKSPACE_KEY_MAPPING_CACHE_MS = 30_000;
+const FLIGHT_DECK_PG_EVENT_POLL_INTERVAL_MS = 5_000;
 const DEFAULT_AUTO_AGENT_WORKSPACE_ROOT = new URL('../../data/agent-chat-workspaces', import.meta.url).pathname;
 const DEFAULT_33357_AGENT_CAPABILITIES: AgentCapability[] = [
   'chat_intercept',
@@ -195,6 +200,10 @@ function isRevokedWorkspaceSubscription(record: WorkspaceSubscriptionRecord): bo
   return record.wsKeyStatus === 'revoked'
     || record.groupKeyStatus === 'revoked'
     || record.lastErrorCode === 'workspace_access_revoked';
+}
+
+function isFlightDeckPgSubscription(record: WorkspaceSubscriptionRecord): boolean {
+  return record.onboardingSource === 'nostr_33357' && Boolean(record.workspaceId);
 }
 
 function profilePolicyAllowsLegacyPrompt(decision: AgentProfileRuntimeDecision | null): boolean {
@@ -534,6 +543,8 @@ export interface WorkspaceSubscriptionManagerDependencies {
   dispatchPipelineRuntime?: DispatchPipelineRuntime | null;
   fetchRecordHistory?: typeof fetchRecordHistory;
   fetchWorkspaceKeyMappings?: typeof fetchWorkspaceKeyMappings;
+  fetchFlightDeckPgWorkspaceMe?: typeof fetchFlightDeckPgWorkspaceMe;
+  fetchFlightDeckPgEvents?: typeof fetchFlightDeckPgEvents;
   decryptRecordPayload?: typeof decryptRecordPayloadWithYoke;
   checkBackendHealth?: typeof checkBackendConnectionHealth;
   chatRecordPullTimeoutMs?: number;
@@ -567,6 +578,17 @@ function getErrorDetailCode(error: unknown): string | null {
 async function sleep(ms: number): Promise<void> {
   if (ms <= 0) return;
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function sleepWithAbort(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      resolve();
+    }, { once: true });
+  });
 }
 
 async function withTimeout<T>(
@@ -649,6 +671,8 @@ export class WorkspaceSubscriptionManager {
   private dispatchPipelineRuntime: DispatchPipelineRuntime | null;
   private readonly fetchRecordHistoryImpl: typeof fetchRecordHistory;
   private readonly fetchWorkspaceKeyMappingsImpl: typeof fetchWorkspaceKeyMappings;
+  private readonly fetchFlightDeckPgWorkspaceMeImpl: typeof fetchFlightDeckPgWorkspaceMe;
+  private readonly fetchFlightDeckPgEventsImpl: typeof fetchFlightDeckPgEvents;
   private readonly decryptRecordPayloadImpl: typeof decryptRecordPayloadWithYoke;
   private readonly checkBackendHealthImpl: typeof checkBackendConnectionHealth;
   private readonly chatRecordPullTimeoutMs: number;
@@ -673,6 +697,8 @@ export class WorkspaceSubscriptionManager {
     this.dispatchPipelineRuntime = deps.dispatchPipelineRuntime ?? null;
     this.fetchRecordHistoryImpl = deps.fetchRecordHistory ?? fetchRecordHistory;
     this.fetchWorkspaceKeyMappingsImpl = deps.fetchWorkspaceKeyMappings ?? fetchWorkspaceKeyMappings;
+    this.fetchFlightDeckPgWorkspaceMeImpl = deps.fetchFlightDeckPgWorkspaceMe ?? fetchFlightDeckPgWorkspaceMe;
+    this.fetchFlightDeckPgEventsImpl = deps.fetchFlightDeckPgEvents ?? fetchFlightDeckPgEvents;
     this.decryptRecordPayloadImpl = deps.decryptRecordPayload ?? decryptRecordPayloadWithYoke;
     this.checkBackendHealthImpl = deps.checkBackendHealth ?? checkBackendConnectionHealth;
     this.chatRecordPullTimeoutMs = Math.max(1, deps.chatRecordPullTimeoutMs ?? CHAT_ADVISORY_RECORD_PULL_TIMEOUT_MS);
@@ -1527,6 +1553,21 @@ export class WorkspaceSubscriptionManager {
     record.dispatchRouteIds = input.dispatchRouteIds ?? record.dispatchRouteIds ?? [];
     record.triggerConfigRecordId = input.triggerConfigRecordId ?? null;
     record.managedByNpub = input.managedByNpub;
+    if (isFlightDeckPgSubscription(record)) {
+      record = await this.prepareFlightDeckPgSubscription(record, botIdentity);
+      record = await this.verifyFlightDeckPgWorkspaceAccess(record, botIdentity);
+      await this.ensureConnected(record, botIdentity, false);
+      const saved = this.store.getBySubscriptionId(record.subscriptionId) ?? record;
+      const subscriptionAgents = this.agentStore
+        .listByWorkspaceAndBot(this.getEffectiveWorkspaceNpub(saved), saved.botNpub)
+        .filter((agent) => agent.managedByNpub === saved.managedByNpub)
+        .filter((agent) => agent.enabled);
+      const routeCapabilities = subscriptionAgents.length > 0
+        ? [...new Set(subscriptionAgents.flatMap((agent) => agent.capabilities))]
+        : saved.capabilityDefaults ?? [];
+      this.ensureDefaultDispatchRoutesForSubscription(saved, routeCapabilities);
+      return saved;
+    }
     record = await this.prepareWorkspaceSession(record, botIdentity);
 
     try {
@@ -1589,8 +1630,16 @@ export class WorkspaceSubscriptionManager {
           continue;
         }
 
-        const prepared = await this.prepareWorkspaceSession(record, botIdentity);
-        const refreshed = await this.refreshGroupKeys(prepared, botIdentity, false);
+        const refreshed = isFlightDeckPgSubscription(record)
+          ? await this.verifyFlightDeckPgWorkspaceAccess(
+            await this.prepareFlightDeckPgSubscription(record, botIdentity),
+            botIdentity,
+          )
+          : await this.refreshGroupKeys(
+            await this.prepareWorkspaceSession(record, botIdentity),
+            botIdentity,
+            false,
+          );
         refreshed.lastSuccessfulStartupReloadAt = new Date().toISOString();
         this.saveRecord(refreshed);
         this.clearRuntimeFailure(refreshed.subscriptionId, 'startup_reload_recovered');
@@ -2064,6 +2113,104 @@ export class WorkspaceSubscriptionManager {
     return this.saveRecord(nextRecord);
   }
 
+  private async prepareFlightDeckPgSubscription(
+    record: WorkspaceSubscriptionRecord,
+    botIdentity: RuntimeBotIdentity,
+  ): Promise<WorkspaceSubscriptionRecord> {
+    const existingRuntime = this.runtimes.get(record.subscriptionId);
+    if (existingRuntime?.botIdentity?.botSecret && existingRuntime.botIdentity.botSecret !== botIdentity.botSecret) {
+      existingRuntime.botIdentity.botSecret.fill(0);
+    }
+    this.runtimes.set(record.subscriptionId, {
+      abortController: existingRuntime?.abortController ?? null,
+      reconnectTimer: existingRuntime?.reconnectTimer ?? null,
+      reconnectAttempts: existingRuntime?.reconnectAttempts ?? 0,
+      botIdentity,
+      wsSession: null,
+      groupKeys: null,
+      wrappedKeyRows: [],
+      removed: false,
+    });
+
+    return this.saveRecord({
+      ...record,
+      wsKeyNpub: botIdentity.botNpub,
+      wsKeyBlobJson: null,
+      wrappedGroupKeysJson: null,
+      wsKeyStatus: 'active',
+      groupKeyStatus: 'active',
+      lastAuthOkAt: record.lastAuthOkAt ?? new Date().toISOString(),
+      lastGroupRefreshAt: record.lastGroupRefreshAt ?? new Date().toISOString(),
+      lastAuthResult: record.lastAuthResult ?? buildSuccessDiagnostic('Flight Deck PG bot auth prepared.', {
+        workspace_id: record.workspaceId,
+        workspace_service_npub: record.workspaceServiceNpub,
+        bot_npub: botIdentity.botNpub,
+      }),
+      lastGroupRefreshResult: record.lastGroupRefreshResult ?? buildSuccessDiagnostic('Flight Deck PG uses Tower permissions instead of wrapped group keys.', {
+        workspace_id: record.workspaceId,
+      }),
+    });
+  }
+
+  private async verifyFlightDeckPgWorkspaceAccess(
+    record: WorkspaceSubscriptionRecord,
+    botIdentity: RuntimeBotIdentity,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<WorkspaceSubscriptionRecord> {
+    if (!record.workspaceId) {
+      throw Object.assign(new Error('Flight Deck PG workspace id is required.'), { detailCode: 'workspace_id_missing' });
+    }
+    try {
+      const result = await this.fetchFlightDeckPgWorkspaceMeImpl({
+        backendBaseUrl: record.backendBaseUrl,
+        workspaceId: record.workspaceId,
+        appNpub: record.sourceAppNpub,
+        botIdentity,
+        signal: options.signal,
+      });
+      record.wsKeyStatus = 'active';
+      record.groupKeyStatus = 'active';
+      record.lastAuthOkAt = new Date().toISOString();
+      record.lastGroupRefreshAt = record.lastAuthOkAt;
+      record.lastAuthResult = buildSuccessDiagnostic('Flight Deck PG workspace access verified.', {
+        workspace_id: record.workspaceId,
+        workspace_service_npub: record.workspaceServiceNpub,
+        bot_npub: botIdentity.botNpub,
+        actor_id: result.actor?.actor_id ?? null,
+        role: result.membership?.role ?? null,
+        permissions: result.permissions ?? [],
+      });
+      record.lastGroupRefreshResult = buildSuccessDiagnostic('Flight Deck PG permissions loaded from Tower.', {
+        workspace_id: record.workspaceId,
+        permission_count: Array.isArray(result.permissions) ? result.permissions.length : 0,
+      });
+      record.lastErrorCode = null;
+      record.lastErrorAt = null;
+      const saved = this.saveRecord(this.recomputeHealth(record));
+      this.clearRuntimeFailure(saved.subscriptionId, 'flightdeck_pg_access_verified');
+      return saved;
+    } catch (error) {
+      record.wsKeyStatus = 'failed';
+      record.healthStatus = 'unhealthy';
+      record.sseStatus = 'disconnected';
+      record.lastErrorCode = 'flightdeck_pg_access_failed';
+      record.lastErrorAt = new Date().toISOString();
+      record.lastAuthResult = buildFailureDiagnostic(
+        'flightdeck_pg_access_failed',
+        error instanceof Error ? error.message : 'Flight Deck PG workspace access check failed.',
+        getErrorDetailCode(error) ?? 'flightdeck_pg_access_failed',
+        {
+          workspace_id: record.workspaceId,
+          workspace_service_npub: record.workspaceServiceNpub,
+          bot_npub: botIdentity.botNpub,
+        },
+      );
+      const saved = this.saveRecord(record);
+      this.markRuntimeFailure(saved.subscriptionId, getErrorDetailCode(error) ?? 'flightdeck_pg_access_failed', 'flightdeck_pg_access_failed');
+      return saved;
+    }
+  }
+
   private async registerWorkspaceKey(
     record: WorkspaceSubscriptionRecord,
     botIdentity: RuntimeBotIdentity,
@@ -2134,12 +2281,12 @@ export class WorkspaceSubscriptionManager {
     const helpers = await loadYokeBotHelpers();
     try {
       const keyRows = await helpers.fetchBotGroupKeys({
-        wsSession: runtime.wsSession,
+        wsSession: runtime.wsSession!,
         backendBaseUrl: record.backendBaseUrl,
       });
       runtime.wrappedKeyRows = keyRows;
       runtime.groupKeys = helpers.loadBotGroupKeys({
-        wsSession: runtime.wsSession,
+        wsSession: runtime.wsSession!,
         botSecret: botIdentity.botSecret,
         botNpub: botIdentity.botNpub,
         keyRows,
@@ -2166,7 +2313,7 @@ export class WorkspaceSubscriptionManager {
       if (runtime.wrappedKeyRows.length > 0) {
         try {
           runtime.groupKeys = helpers.loadBotGroupKeys({
-            wsSession: runtime.wsSession,
+            wsSession: runtime.wsSession!,
             botSecret: botIdentity.botSecret,
             botNpub: botIdentity.botNpub,
             keyRows: runtime.wrappedKeyRows,
@@ -2201,6 +2348,10 @@ export class WorkspaceSubscriptionManager {
       }));
       return;
     }
+    if (isFlightDeckPgSubscription(record)) {
+      await this.ensureFlightDeckPgConnected(record, botIdentity, isStartupReload);
+      return;
+    }
     const runtime = this.getRuntime(record.subscriptionId);
     runtime.botIdentity = botIdentity;
     runtime.removed = false;
@@ -2216,6 +2367,155 @@ export class WorkspaceSubscriptionManager {
     record.sseStatus = 'connecting';
     this.saveRecord(this.recomputeHealth(record));
     void this.runSseLoop(record.subscriptionId, controller.signal, isStartupReload);
+  }
+
+  private async ensureFlightDeckPgConnected(
+    record: WorkspaceSubscriptionRecord,
+    botIdentity: RuntimeBotIdentity,
+    isStartupReload: boolean,
+  ): Promise<void> {
+    if (record.wsKeyStatus === 'failed') {
+      this.saveRecord(this.recomputeHealth({
+        ...record,
+        sseStatus: 'disconnected',
+      }));
+      return;
+    }
+    const runtime = this.getRuntime(record.subscriptionId);
+    runtime.botIdentity = botIdentity;
+    runtime.removed = false;
+    if (runtime.reconnectTimer) {
+      clearTimeout(runtime.reconnectTimer);
+      runtime.reconnectTimer = null;
+    }
+    if (runtime.abortController) {
+      runtime.abortController.abort();
+    }
+    const controller = new AbortController();
+    runtime.abortController = controller;
+    record.sseStatus = 'connecting';
+    this.saveRecord(this.recomputeHealth(record));
+    void this.runFlightDeckPgEventLoop(record.subscriptionId, controller.signal, isStartupReload);
+  }
+
+  private async runFlightDeckPgEventLoop(
+    subscriptionId: string,
+    signal: AbortSignal,
+    isStartupReload: boolean,
+  ): Promise<void> {
+    const runtime = this.getRuntime(subscriptionId);
+    let record = this.store.getBySubscriptionId(subscriptionId);
+    if (!record?.workspaceId) {
+      return;
+    }
+    const workspaceId = record.workspaceId;
+    try {
+      record = await this.verifyFlightDeckPgWorkspaceAccess(record, runtime.botIdentity, { signal });
+      if (record.wsKeyStatus === 'failed') {
+        return;
+      }
+      runtime.reconnectAttempts = 0;
+      record.sseStatus = 'connected';
+      if (isStartupReload) {
+        record.lastSuccessfulStartupReloadAt = new Date().toISOString();
+      }
+      record = this.saveRecord(this.recomputeHealth(record));
+      this.clearRuntimeFailure(record.subscriptionId, 'flightdeck_pg_events_connected');
+
+      while (!signal.aborted && !runtime.removed) {
+        const cursor = record.lastSyncCursor ?? encodeFlightDeckPgEventCursor(0);
+        const result = await this.fetchFlightDeckPgEventsImpl({
+          backendBaseUrl: record.backendBaseUrl,
+          workspaceId,
+          appNpub: record.sourceAppNpub,
+          botIdentity: runtime.botIdentity,
+          cursor,
+          limit: 100,
+          signal,
+        });
+        const events = result.events;
+        for (const event of events) {
+          if (signal.aborted || runtime.removed) {
+            return;
+          }
+          record = await this.handleFlightDeckPgEvent(record, event);
+        }
+        const nextCursor = events.at(-1)?.cursor ?? result.next_cursor ?? record.lastSyncCursor;
+        if (nextCursor && nextCursor !== record.lastSyncCursor) {
+          record.lastSyncCursor = nextCursor;
+          record = this.saveRecord(this.recomputeHealth(record));
+        }
+        await sleepWithAbort(FLIGHT_DECK_PG_EVENT_POLL_INTERVAL_MS, signal);
+      }
+    } catch (error) {
+      if (signal.aborted || runtime.removed) {
+        return;
+      }
+      record = this.store.getBySubscriptionId(subscriptionId);
+      if (!record) {
+        return;
+      }
+      record.sseStatus = 'backoff';
+      record.lastErrorCode = 'flightdeck_pg_events_failed';
+      record.lastErrorAt = new Date().toISOString();
+      record.lastSseEvent = {
+        eventId: record.lastSseEventId,
+        eventType: 'flightdeck_pg.error',
+        at: new Date().toISOString(),
+        payload: {
+          message: error instanceof Error ? error.message : String(error),
+          detailCode: getErrorDetailCode(error),
+        },
+      };
+      this.saveRecord(this.recomputeHealth(record));
+      this.markRuntimeFailure(subscriptionId, getErrorDetailCode(error), 'flightdeck_pg_events_failed');
+
+      const delay = Math.min(1_000 * Math.pow(2, runtime.reconnectAttempts), 60_000);
+      runtime.reconnectAttempts += 1;
+      runtime.reconnectTimer = setTimeout(() => {
+        runtime.reconnectTimer = null;
+        const latest = this.store.getBySubscriptionId(subscriptionId);
+        if (!latest || runtime.removed) {
+          return;
+        }
+        void this.ensureFlightDeckPgConnected(latest, runtime.botIdentity, false);
+      }, delay);
+    }
+  }
+
+  private async handleFlightDeckPgEvent(
+    record: WorkspaceSubscriptionRecord,
+    event: FlightDeckPgEvent,
+  ): Promise<WorkspaceSubscriptionRecord> {
+    const eventId = typeof event.event_id === 'string' ? event.event_id : typeof event.id === 'string' ? event.id : null;
+    const eventType = typeof event.event_type === 'string' ? event.event_type : 'flightdeck_pg.event';
+    record.lastSseEventId = eventId ?? record.lastSseEventId;
+    record.lastSyncCursor = event.cursor ?? record.lastSyncCursor;
+    const payload = event as Record<string, unknown>;
+    const nextEvent: AgentChatSseEventDiagnostic = {
+      eventId,
+      eventType,
+      at: new Date().toISOString(),
+      payload,
+    };
+    record.lastSseEvent = nextEvent;
+    record.recentSseEvents = trimRecentEntries(
+      [...(Array.isArray(record.recentSseEvents) ? record.recentSseEvents : []), nextEvent],
+      MAX_RECENT_SSE_EVENTS,
+    );
+    record.lastRoutingResult = buildSuccessDiagnostic('Flight Deck PG workspace event received.', {
+      workspace_id: record.workspaceId,
+      event_id: eventId,
+      event_type: eventType,
+      entity_type: event.entity_type ?? null,
+      entity_id: event.entity_id ?? null,
+      channel_id: event.channel_id ?? null,
+      scope_id: event.scope_id ?? null,
+      operation: event.operation ?? null,
+    });
+    record.lastErrorCode = null;
+    record.lastErrorAt = null;
+    return this.saveRecord(this.recomputeHealth(record));
   }
 
   private async reconnectForReplay(subscriptionId: string, reason: string): Promise<void> {
@@ -2291,7 +2591,7 @@ export class WorkspaceSubscriptionManager {
       const streamUrl = await buildStreamUrl(
         record.backendBaseUrl,
         this.getEffectiveWorkspaceNpub(record),
-        runtime.wsSession,
+        runtime.wsSession!,
         record.lastSseEventId,
       );
       const response = await fetch(streamUrl, {
@@ -2464,7 +2764,7 @@ export class WorkspaceSubscriptionManager {
         record_id: recordId,
       });
       record = this.saveRecord(record);
-      const pullResult = await this.fetchRecordHistoryWithRetry(record, recordId, runtime.wsSession);
+      const pullResult = await this.fetchRecordHistoryWithRetry(record, recordId, runtime.wsSession!);
       const versions = pullResult.versions;
       const latest = versions.sort((left, right) => Number(right.version ?? 0) - Number(left.version ?? 0))[0];
       if (!latest) {
@@ -2480,7 +2780,7 @@ export class WorkspaceSubscriptionManager {
       const helpers = await loadYokeBotHelpers();
       if (!runtime.groupKeys && runtime.wrappedKeyRows.length > 0) {
         runtime.groupKeys = helpers.loadBotGroupKeys({
-          wsSession: runtime.wsSession,
+          wsSession: runtime.wsSession!,
           botSecret: runtime.botIdentity.botSecret,
           botNpub: runtime.botIdentity.botNpub,
           keyRows: runtime.wrappedKeyRows,
@@ -2489,7 +2789,7 @@ export class WorkspaceSubscriptionManager {
       try {
         const decryptChatMessage = () => helpers.decryptChatRecord({
           record: latest,
-          wsSession: runtime.wsSession,
+          wsSession: runtime.wsSession!,
           groupKeys: runtime.groupKeys,
         });
         let chatMessage: Record<string, unknown>;
@@ -2531,7 +2831,7 @@ export class WorkspaceSubscriptionManager {
             const routingContext = await withTimeout(
               this.routingEvaluator.buildDispatchContext({
                 subscription: record,
-                wsSession: runtime.wsSession,
+                wsSession: runtime.wsSession!,
                 groupKeys: runtime.groupKeys,
                 chatRecordId: recordId,
                 chatRecord: latest,
@@ -2652,7 +2952,7 @@ export class WorkspaceSubscriptionManager {
         const routingResult = await withTimeout(
           this.routingEvaluator.evaluate({
             subscription: record,
-            wsSession: runtime.wsSession,
+            wsSession: runtime.wsSession!,
             groupKeys: runtime.groupKeys,
             chatRecordId: recordId,
             chatRecord: latest,
@@ -2858,7 +3158,7 @@ export class WorkspaceSubscriptionManager {
       subscription.backendBaseUrl,
       this.getEffectiveWorkspaceNpub(subscription),
       recordId,
-      runtime.wsSession,
+      runtime.wsSession!,
     );
   }
 
@@ -2870,7 +3170,7 @@ export class WorkspaceSubscriptionManager {
     if (!runtime.groupKeys && runtime.wrappedKeyRows.length > 0) {
       const helpers = await loadYokeBotHelpers();
       runtime.groupKeys = helpers.loadBotGroupKeys({
-        wsSession: runtime.wsSession,
+        wsSession: runtime.wsSession!,
         botSecret: runtime.botIdentity.botSecret,
         botNpub: runtime.botIdentity.botNpub,
         keyRows: runtime.wrappedKeyRows,
@@ -2878,7 +3178,7 @@ export class WorkspaceSubscriptionManager {
     }
     return await this.decryptRecordPayloadImpl({
       record: latest,
-      wsSession: runtime.wsSession,
+      wsSession: runtime.wsSession!,
       groupKeys: runtime.groupKeys,
     });
   }
@@ -3861,7 +4161,7 @@ export class WorkspaceSubscriptionManager {
     const helpers = await loadYokeBotHelpers();
     if (!runtime.groupKeys && runtime.wrappedKeyRows.length > 0) {
       runtime.groupKeys = helpers.loadBotGroupKeys({
-        wsSession: runtime.wsSession,
+        wsSession: runtime.wsSession!,
         botSecret: botIdentity.botSecret,
         botNpub: botIdentity.botNpub,
         keyRows: runtime.wrappedKeyRows,
@@ -3883,7 +4183,7 @@ export class WorkspaceSubscriptionManager {
           record.backendBaseUrl,
           this.getEffectiveWorkspaceNpub(record),
           messageId,
-          runtime.wsSession,
+          runtime.wsSession!,
         );
         const latest = versions.sort((left, right) => Number(right.version ?? 0) - Number(left.version ?? 0))[0];
         if (!latest) {
@@ -3891,7 +4191,7 @@ export class WorkspaceSubscriptionManager {
         }
         const chatMessage = helpers.decryptChatRecord({
           record: latest,
-          wsSession: runtime.wsSession,
+          wsSession: runtime.wsSession!,
           groupKeys: runtime.groupKeys,
         });
         if (chatMessage?.sender_npub === agent.botNpub) {
@@ -3980,7 +4280,7 @@ export class WorkspaceSubscriptionManager {
       const mappings = await this.fetchWorkspaceKeyMappingsImpl(
         record.backendBaseUrl,
         this.getEffectiveWorkspaceNpub(record),
-        runtime.wsSession,
+        runtime.wsSession!,
       );
       const owners = new Map<string, string>();
       for (const mapping of mappings) {

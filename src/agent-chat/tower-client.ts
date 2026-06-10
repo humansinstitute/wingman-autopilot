@@ -1,4 +1,10 @@
-import type { AgentChatDiagnostic, BackendConnectionRecord, HealthStatus, YokeWorkspaceSession } from './types';
+import type {
+  AgentChatDiagnostic,
+  BackendConnectionRecord,
+  HealthStatus,
+  RuntimeBotIdentity,
+  YokeWorkspaceSession,
+} from './types';
 import { loadYokeBotHelpers } from './yoke-bot-helpers';
 
 export interface TowerErrorDetails {
@@ -8,6 +14,41 @@ export interface TowerErrorDetails {
 }
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
+export interface FlightDeckPgWorkspaceMeResult {
+  identity?: Record<string, unknown>;
+  actor?: Record<string, unknown>;
+  membership?: Record<string, unknown>;
+  permissions?: string[];
+  visible?: Record<string, unknown>;
+}
+
+export interface FlightDeckPgEvent {
+  id?: string;
+  event_id?: string;
+  cursor?: string | null;
+  workspace_id?: string;
+  scope_id?: string | null;
+  channel_id?: string | null;
+  actor_id?: string | null;
+  event_type?: string;
+  entity_type?: string;
+  entity_id?: string | null;
+  operation?: string;
+  entity_row_version?: number | null;
+  row_version?: number;
+  timestamp?: string;
+  created_at?: string;
+  payload?: Record<string, unknown>;
+  refetch?: Record<string, unknown>;
+}
+
+export interface FlightDeckPgEventsResult {
+  identity?: Record<string, unknown>;
+  events: FlightDeckPgEvent[];
+  next_cursor: string | null;
+  cursor_semantics?: Record<string, unknown>;
+}
 
 export function normaliseBackendBaseUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim();
@@ -28,6 +69,40 @@ export function buildRecordFamilyHash(appNpub: string, collectionSpace: string):
 
 export function stripNostrAuthPrefix(value: string): string {
   return value.replace(/^Nostr\s+/i, '').trim();
+}
+
+export function encodeFlightDeckPgEventCursor(rowVersion: number): string {
+  return Buffer.from(JSON.stringify({ version: 1, rowVersion }), 'utf8').toString('base64url');
+}
+
+function buildFlightDeckPgUrl(
+  backendBaseUrl: string,
+  path: string,
+  params: Record<string, string | number | null | undefined> = {},
+): string {
+  const url = new URL(path, backendBaseUrl);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== null && value !== undefined && String(value).trim().length > 0) {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return url.toString();
+}
+
+async function signFlightDeckPgBotRequest(params: {
+  botIdentity: RuntimeBotIdentity;
+  url: string;
+  method: string;
+  body?: unknown;
+}): Promise<string> {
+  const helpers = await loadYokeBotHelpers();
+  return helpers.signBotRequest({
+    botSecret: params.botIdentity.botSecret,
+    botNpub: params.botIdentity.botNpub,
+    url: params.url,
+    method: params.method,
+    body: params.body ?? null,
+  });
 }
 
 export async function parseTowerError(response: Response, stage: string): Promise<TowerErrorDetails> {
@@ -92,6 +167,74 @@ export async function fetchRecordHistory(
   }
   const payload = await response.json() as { versions?: Record<string, unknown>[] };
   return Array.isArray(payload?.versions) ? payload.versions : [];
+}
+
+export async function fetchFlightDeckPgWorkspaceMe(params: {
+  backendBaseUrl: string;
+  workspaceId: string;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+  signal?: AbortSignal;
+}): Promise<FlightDeckPgWorkspaceMeResult> {
+  const path = `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(params.workspaceId)}/me`;
+  const url = buildFlightDeckPgUrl(params.backendBaseUrl, path);
+  const authorization = await signFlightDeckPgBotRequest({
+    botIdentity: params.botIdentity,
+    url,
+    method: 'GET',
+  });
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: authorization,
+      'x-flightdeck-pg-app-npub': params.appNpub,
+    },
+    signal: params.signal,
+  });
+  if (!response.ok) {
+    const error = await parseTowerError(response, 'flightdeck_pg_workspace_me');
+    throw Object.assign(new Error(error.message), error);
+  }
+  return await response.json() as FlightDeckPgWorkspaceMeResult;
+}
+
+export async function fetchFlightDeckPgEvents(params: {
+  backendBaseUrl: string;
+  workspaceId: string;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+  cursor?: string | null;
+  limit?: number;
+  signal?: AbortSignal;
+}): Promise<FlightDeckPgEventsResult> {
+  const path = `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(params.workspaceId)}/events`;
+  const url = buildFlightDeckPgUrl(params.backendBaseUrl, path, {
+    cursor: params.cursor ?? encodeFlightDeckPgEventCursor(0),
+    limit: params.limit ?? 100,
+  });
+  const authorization = await signFlightDeckPgBotRequest({
+    botIdentity: params.botIdentity,
+    url,
+    method: 'GET',
+  });
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: authorization,
+      'x-flightdeck-pg-app-npub': params.appNpub,
+    },
+    signal: params.signal,
+  });
+  if (!response.ok) {
+    const error = await parseTowerError(response, 'flightdeck_pg_events');
+    throw Object.assign(new Error(error.message), error);
+  }
+  const payload = await response.json() as Partial<FlightDeckPgEventsResult>;
+  return {
+    ...payload,
+    events: Array.isArray(payload.events) ? payload.events : [],
+    next_cursor: typeof payload.next_cursor === 'string' ? payload.next_cursor : null,
+  };
 }
 
 export async function fetchGroupsForViewer(

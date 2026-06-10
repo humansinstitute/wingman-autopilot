@@ -141,6 +141,8 @@ describe("flight deck settings panel", () => {
       const text = collectText(panel);
       expect(text).toContain("Flight Deck");
       expect(text).toContain("Swipeback");
+      expect(text).toContain("Events Connected");
+      expect(text).not.toContain("SSE Connected");
       expect(text).toContain("Onboarding Ready");
       expect(text).toContain("Yoke Synced");
       expect(text).toContain("Default Dispatch Ready");

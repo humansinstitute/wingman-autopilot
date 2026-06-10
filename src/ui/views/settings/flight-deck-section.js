@@ -247,7 +247,7 @@ export function createFlightDeckConnectionsPanel({
   summaryCard.append(createMetricGrid([
     { label: 'Onboarded Workspaces', value: list.length },
     { label: 'Healthy', value: list.filter((subscription) => subscription?.healthStatus === 'healthy').length },
-    { label: 'SSE Connected', value: list.filter((subscription) => subscription?.sseStatus === 'connected').length },
+    { label: 'Events Connected', value: list.filter((subscription) => subscription?.sseStatus === 'connected').length },
     { label: 'Diagnostics', value: diagnosticList.length },
     { label: 'Default Dispatch', value: list.filter((subscription) => {
       const agent = getAgentForSubscription(subscription, agents);
@@ -325,7 +325,7 @@ export function createFlightDeckConnectionsPanel({
 
     card.append(createPillRow([
       createTonePill(titleCaseStatus(subscription?.healthStatus), toneForStatus(subscription?.healthStatus, ['healthy'])),
-      createTonePill(subscription?.sseStatus === 'connected' ? 'SSE Connected' : `SSE ${titleCaseStatus(subscription?.sseStatus)}`, toneForStatus(subscription?.sseStatus, ['connected'])),
+      createTonePill(subscription?.sseStatus === 'connected' ? 'Events Connected' : `Events ${titleCaseStatus(subscription?.sseStatus)}`, toneForStatus(subscription?.sseStatus, ['connected'])),
       createTonePill(`Onboarding ${titleCaseStatus(onboardingStatus)}`, toneForStatus(onboardingStatus)),
       createTonePill(`Yoke ${titleCaseStatus(yokeStatus)}`, toneForStatus(yokeStatus)),
       createTonePill(dispatchReady ? 'Default Dispatch Ready' : 'Dispatch Setup Pending', dispatchReady ? 'success' : 'warning'),
