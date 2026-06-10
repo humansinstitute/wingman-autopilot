@@ -8,6 +8,11 @@ const yokeCommandCalls: string[][] = [];
 const pgMessageFetchCalls: Array<Record<string, unknown>> = [];
 const pgMessageCreateCalls: Array<Record<string, unknown>> = [];
 const pgReactionCreateCalls: Array<Record<string, unknown>> = [];
+const pgTaskCreateCalls: Array<Record<string, unknown>> = [];
+const pgTaskFetchCalls: Array<Record<string, unknown>> = [];
+const pgTaskStateUpdateCalls: Array<Record<string, unknown>> = [];
+const pgTaskCommentCreateCalls: Array<Record<string, unknown>> = [];
+const pgLeaseAcquireCalls: Array<Record<string, unknown>> = [];
 let failChatContextCount = 0;
 let failReactionCount = 0;
 let failTaskCreateCount = 0;
@@ -134,6 +139,59 @@ mock.module('../tower-client', () => ({
       },
     };
   }),
+  createFlightDeckPgChannelTask: mock(async (input: Record<string, unknown>) => {
+    pgTaskCreateCalls.push(input);
+    return {
+      task: {
+        id: 'pg-task-1',
+        channel_id: input.channelId,
+        thread_id: input.threadId,
+        title: input.title,
+        description: input.description,
+        state: input.state,
+        row_version: 1,
+      },
+    };
+  }),
+  fetchFlightDeckPgTask: mock(async (input: Record<string, unknown>) => {
+    pgTaskFetchCalls.push(input);
+    return {
+      task: {
+        id: input.taskId,
+        state: 'in_progress',
+        row_version: 2,
+      },
+    };
+  }),
+  acquireFlightDeckPgEditLease: mock(async (input: Record<string, unknown>) => {
+    pgLeaseAcquireCalls.push(input);
+    return {
+      lease: {
+        id: 'lease-1',
+        lease_token: 'lease-token-1',
+      },
+    };
+  }),
+  updateFlightDeckPgTaskState: mock(async (input: Record<string, unknown>) => {
+    pgTaskStateUpdateCalls.push(input);
+    return {
+      task: {
+        id: input.taskId,
+        state: input.state,
+        row_version: 3,
+      },
+    };
+  }),
+  createFlightDeckPgTaskComment: mock(async (input: Record<string, unknown>) => {
+    pgTaskCommentCreateCalls.push(input);
+    return {
+      comment: {
+        id: 'pg-comment-1',
+        task_id: input.taskId,
+        body: input.body,
+      },
+    };
+  }),
 }));
 
 const {
@@ -212,6 +270,11 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     pgMessageFetchCalls.length = 0;
     pgMessageCreateCalls.length = 0;
     pgReactionCreateCalls.length = 0;
+    pgTaskCreateCalls.length = 0;
+    pgTaskFetchCalls.length = 0;
+    pgTaskStateUpdateCalls.length = 0;
+    pgTaskCommentCreateCalls.length = 0;
+    pgLeaseAcquireCalls.length = 0;
     failChatContextCount = 0;
     failReactionCount = 0;
     failTaskCreateCount = 0;
@@ -757,6 +820,61 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     expect((result.workPlan as any).pipelineDefinitionId).toBeNull();
   });
 
+  test('chat task creation uses Flight Deck PG task APIs without Yoke', async () => {
+    const createTask = createDispatchChatTaskCreator(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+    }));
+
+    const result = await createTask({
+      dispatchTask: true,
+      pipelineDefinitionId: 'do-and-review',
+      taskDraft: {
+        title: 'Write a poem about a sausage',
+        instructions: 'Write the poem.',
+      },
+      workPlan: {
+        taskSummary: 'Write a poem about a sausage',
+        instructions: 'Write the poem.',
+        pipelineDefinitionId: 'do-and-review',
+      },
+    });
+
+    expect(yokeCommandCalls).toHaveLength(0);
+    expect(pgTaskCreateCalls).toHaveLength(1);
+    expect(pgTaskCreateCalls[0]).toMatchObject({
+      workspaceId: 'workspace-pg-1',
+      channelId: 'channel-1',
+      threadId: 'thread-1',
+      title: 'Write a poem about a sausage',
+      state: 'in_progress',
+    });
+    expect(result).toMatchObject({
+      created: true,
+      status: 'ok',
+      operation: 'tasks.create-from-chat',
+      taskId: 'pg-task-1',
+      workPlan: {
+        taskId: 'pg-task-1',
+        pipelineDefinitionId: 'do-and-review',
+      },
+    });
+  });
+
   test('review handoff comments with the report document and notifies the source chat', async () => {
     const updateTask = createDispatchTaskStateUpdater({
       eventInput: {
@@ -846,6 +964,71 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     expect(chatCall).toContain('--skip-refresh');
     expect(chatCall).toContain('channel-1');
     expect(chatCall).toContain('thread-1');
+  });
+
+  test('review handoff uses Flight Deck PG task state, comments, and chat reply without Yoke', async () => {
+    const updateTask = createDispatchTaskStateUpdater(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+    }), 'review');
+
+    const result = await updateTask({
+      workPlan: {
+        taskId: 'pg-task-1',
+        reviewerNpub: 'npub1requester',
+      },
+      workerResult: {
+        reportTitle: 'Sausage Poem',
+        reportSummary: 'The poem is complete.',
+      },
+      agentResponse: {
+        accepted: true,
+        reviewSummary: 'Accepted.',
+        requiredChanges: [],
+        risks: [],
+        confidence: 0.86,
+      },
+    });
+
+    expect(yokeCommandCalls).toHaveLength(0);
+    expect(pgTaskFetchCalls).toHaveLength(1);
+    expect(pgLeaseAcquireCalls).toHaveLength(1);
+    expect(pgTaskStateUpdateCalls).toHaveLength(1);
+    expect(pgTaskStateUpdateCalls[0]).toMatchObject({
+      taskId: 'pg-task-1',
+      state: 'review',
+      rowVersion: 2,
+      leaseToken: 'lease-token-1',
+    });
+    expect(pgTaskCommentCreateCalls).toHaveLength(1);
+    expect(pgMessageCreateCalls).toHaveLength(1);
+    expect(pgMessageCreateCalls[0]).toMatchObject({
+      workspaceId: 'workspace-pg-1',
+      channelId: 'channel-1',
+      threadId: 'thread-1',
+    });
+    expect(result).toMatchObject({
+      published: true,
+      status: 'ok',
+      operation: 'tasks.move-to-review',
+      taskId: 'pg-task-1',
+      chatNotified: true,
+      chatError: null,
+    });
   });
 
   test('ready-for-review chat includes worker result when no document is produced', async () => {

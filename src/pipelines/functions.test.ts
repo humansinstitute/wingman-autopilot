@@ -812,7 +812,8 @@ describe("memory pipeline functions", () => {
         description: "Generic delivery pipeline.",
       },
     ]);
-    expect(result.notes).toContain("For generic or miscellaneous chat-created tasks, choose do-and-review.");
+    expect(result.notes).toContain("Simple conversational answers, poems, short creative writing, summaries, rewrites, copy snippets, and small one-shot drafting requests should be handled directly in chat.");
+    expect(result.notes).toContain("For generic or miscellaneous chat-created tasks that need extended work beyond a direct reply, choose do-and-review.");
   });
 
   test("dispatch.normaliseChatDispatchDecision uses dispatchTask as the single routing switch", async () => {

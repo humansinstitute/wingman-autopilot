@@ -4,9 +4,14 @@ import type { DeclarativeFunction, DeclarativePipeline, DeclarativeStep } from '
 import type { JsonObject } from '../../pipelines/pipeline-store';
 import type { AgentDefinitionRecord, RuntimeBotIdentity } from '../types';
 import {
+  acquireFlightDeckPgEditLease,
   createFlightDeckPgChannelMessage,
+  createFlightDeckPgChannelTask,
   createFlightDeckPgReaction,
+  createFlightDeckPgTaskComment,
   fetchFlightDeckPgChannelMessages,
+  fetchFlightDeckPgTask,
+  updateFlightDeckPgTaskState,
   type FlightDeckPgMessage,
 } from '../tower-client';
 import {
@@ -84,6 +89,100 @@ function getFlightDeckPgPublishContext(context: DispatchPipelineFlightDeckPublis
     appNpub: context.eventInput.subscription.sourceAppNpub,
     botIdentity: context.botIdentity,
   };
+}
+
+async function createFlightDeckPgTaskFromContext(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  input: {
+    title: string;
+    description?: string | null;
+    state: 'new' | 'in_progress' | 'review' | 'done' | 'blocked' | 'cancelled';
+    metadata?: Record<string, unknown> | null;
+  },
+): Promise<JsonObject> {
+  const pg = getFlightDeckPgPublishContext(context);
+  const channelId = context.eventInput.channelId ?? getText(context.eventInput.payload.channel_id);
+  if (!channelId) {
+    throw new Error('Flight Deck PG task creation requires a channel id.');
+  }
+  return await createFlightDeckPgChannelTask({
+    backendBaseUrl: pg.backendBaseUrl,
+    workspaceId: pg.workspaceId,
+    channelId,
+    appNpub: pg.appNpub,
+    botIdentity: pg.botIdentity,
+    title: input.title,
+    description: input.description ?? null,
+    state: input.state,
+    priority: 'sand',
+    threadId: context.eventInput.threadId ?? getText(context.eventInput.payload.thread_id),
+    metadata: input.metadata ?? null,
+  }) as JsonObject;
+}
+
+async function createFlightDeckPgTaskCommentFromContext(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  taskId: string,
+  body: string,
+  metadata?: Record<string, unknown> | null,
+): Promise<JsonObject> {
+  const pg = getFlightDeckPgPublishContext(context);
+  return await createFlightDeckPgTaskComment({
+    backendBaseUrl: pg.backendBaseUrl,
+    workspaceId: pg.workspaceId,
+    taskId,
+    appNpub: pg.appNpub,
+    botIdentity: pg.botIdentity,
+    body,
+    threadId: context.eventInput.threadId ?? getText(context.eventInput.payload.thread_id),
+    metadata: {
+      ...(metadata ?? {}),
+      source_message_id: context.eventInput.recordId,
+      subscription_id: context.eventInput.subscription.subscriptionId,
+    },
+  }) as JsonObject;
+}
+
+async function updateFlightDeckPgTaskStateWithLease(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  taskId: string,
+  state: 'in_progress' | 'review' | 'done' | 'blocked',
+): Promise<JsonObject> {
+  const pg = getFlightDeckPgPublishContext(context);
+  const taskResult = await fetchFlightDeckPgTask({
+    backendBaseUrl: pg.backendBaseUrl,
+    workspaceId: pg.workspaceId,
+    taskId,
+    appNpub: pg.appNpub,
+    botIdentity: pg.botIdentity,
+  });
+  const rowVersion = Number(taskResult.task?.row_version);
+  if (!Number.isFinite(rowVersion) || rowVersion <= 0) {
+    throw new Error(`Flight Deck PG task ${taskId} did not include a valid row_version.`);
+  }
+  const leaseResult = await acquireFlightDeckPgEditLease({
+    backendBaseUrl: pg.backendBaseUrl,
+    workspaceId: pg.workspaceId,
+    appNpub: pg.appNpub,
+    botIdentity: pg.botIdentity,
+    entityType: 'task',
+    entityId: taskId,
+    ttlSeconds: 120,
+  });
+  const leaseToken = getText(leaseResult.lease?.lease_token);
+  if (!leaseToken) {
+    throw new Error(`Flight Deck PG task ${taskId} edit lease did not include a token.`);
+  }
+  return await updateFlightDeckPgTaskState({
+    backendBaseUrl: pg.backendBaseUrl,
+    workspaceId: pg.workspaceId,
+    taskId,
+    appNpub: pg.appNpub,
+    botIdentity: pg.botIdentity,
+    state,
+    rowVersion,
+    leaseToken,
+  }) as JsonObject;
 }
 
 export async function prepareDispatchPipelineFlightDeckRuntime(input: {
@@ -419,7 +518,7 @@ export function createDispatchReviewTaskCompleter(
   context: DispatchPipelineFlightDeckPublisherContext,
 ): DeclarativeFunction {
   return async (input) => {
-    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+    if (!canUseFlightDeckRuntime(context)) {
       return {
         completed: false,
         status: 'failed',
@@ -438,28 +537,40 @@ export function createDispatchReviewTaskCompleter(
       };
     }
     try {
-      const updateResult = await runYokeJson(context, [
-        'tasks',
-        'update',
-        taskId,
-        '--state',
-        'done',
-        '--json',
-      ]);
+      const updateResult = isFlightDeckPgPublisherContext(context)
+        ? await updateFlightDeckPgTaskStateWithLease(context, taskId, 'done')
+        : await runYokeJson(context, [
+          'tasks',
+          'update',
+          taskId,
+          '--state',
+          'done',
+          '--json',
+        ]);
       const taskTitle = getText(reviewApproval.taskTitle) ?? 'review task';
       const evidence = getText(reviewApproval.evidence);
       const commentBody = [
         `Marked "${taskTitle}" done from chat approval.`,
         evidence ? `Approval text: ${evidence}` : '',
       ].filter(Boolean).join('\n');
-      const commentResult = await runYokeJson(context, [
-        'tasks',
-        'comment',
-        taskId,
-        '--body',
-        commentBody,
-        '--json',
-      ]);
+      const commentResult = isFlightDeckPgPublisherContext(context)
+        ? await createFlightDeckPgTaskCommentFromContext(
+          context,
+          taskId,
+          commentBody,
+          {
+            autopilot_dispatch: true,
+            notification_kind: 'review_approval',
+          },
+        )
+        : await runYokeJson(context, [
+          'tasks',
+          'comment',
+          taskId,
+          '--body',
+          commentBody,
+          '--json',
+        ]);
       return {
         completed: true,
         status: 'done',
@@ -733,7 +844,7 @@ export function createDispatchChatTaskCreator(
   context: DispatchPipelineFlightDeckPublisherContext,
 ): DeclarativeFunction {
   return async (input) => {
-    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+    if (!canUseFlightDeckRuntime(context)) {
       throw new Error(context.runtime.error ?? 'Flight Deck runtime was not prepared.');
     }
     const decision = objectValue(input.decision ?? input.agentResponse ?? input);
@@ -752,6 +863,57 @@ export function createDispatchChatTaskCreator(
     const description = buildChatCreatedTaskDescription(context, decision);
     const scopeId = getText(decision.scopeId ?? workPlan.scopeId);
     const assignedTo = context.eventInput.subscription.botNpub;
+    if (isFlightDeckPgPublisherContext(context)) {
+      const createResult = await createFlightDeckPgTaskFromContext(context, {
+        title,
+        description,
+        state: 'in_progress',
+        metadata: {
+          autopilot_dispatch: true,
+          source_message_id: context.eventInput.recordId,
+          assigned_to_npub: assignedTo,
+          scope_id: scopeId,
+        },
+      });
+      const taskId = getText(objectValue(createResult.task).id);
+      if (!taskId) {
+        return {
+          created: false,
+          status: 'failed',
+          operation: 'tasks.create-from-chat',
+          reason: 'Task creation succeeded but no created task id was returned.',
+          scopeId,
+          assignedToNpub: assignedTo,
+          pipelineDefinitionId: null,
+          createResult,
+          workPlan: {
+            ...workPlan,
+            taskId: null,
+            scopeId,
+            assignedToNpub: assignedTo,
+            childPipelineDefinitionId: null,
+            pipelineDefinitionId: null,
+          },
+        };
+      }
+      const nextWorkPlan = buildCreatedTaskWorkPlan(workPlan, decision, {
+        taskId,
+        scopeId,
+        assignedTo,
+      });
+      return {
+        created: true,
+        status: 'ok',
+        operation: 'tasks.create-from-chat',
+        taskId,
+        scopeId,
+        assignedToNpub: assignedTo,
+        pipelineDefinitionId: nextWorkPlan.pipelineDefinitionId,
+        workPlan: nextWorkPlan,
+        createResult,
+      };
+    }
+
     const previousTaskIds = await listMatchingTaskIds(context, {
       title,
       state: 'in_progress',
@@ -824,12 +986,7 @@ export function createDispatchChatTaskCreator(
       };
     }
     const nextWorkPlan = {
-      ...workPlan,
-      taskId,
-      scopeId,
-      assignedToNpub: assignedTo,
-      childPipelineDefinitionId: getText(workPlan.childPipelineDefinitionId ?? decision.pipelineDefinitionId),
-      pipelineDefinitionId: getText(workPlan.pipelineDefinitionId ?? decision.pipelineDefinitionId),
+      ...buildCreatedTaskWorkPlan(workPlan, decision, { taskId, scopeId, assignedTo }),
     };
     return {
       created: true,
@@ -849,7 +1006,7 @@ export function createDispatchCreatedTaskBlocker(
   context: DispatchPipelineFlightDeckPublisherContext,
 ): DeclarativeFunction {
   return async (input) => {
-    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+    if (!canUseFlightDeckRuntime(context)) {
       throw new Error(context.runtime.error ?? 'Flight Deck runtime was not prepared.');
     }
     const childPipeline = objectValue(input.childPipeline);
@@ -870,6 +1027,26 @@ export function createDispatchCreatedTaskBlocker(
       };
     }
     const reason = getText(childPipeline.reason) ?? getText(childPipeline.error) ?? 'Selected pipeline failed to start.';
+    if (isFlightDeckPgPublisherContext(context)) {
+      const updateResult = await updateFlightDeckPgTaskStateWithLease(context, taskId, 'blocked');
+      const commentResult = await createFlightDeckPgTaskCommentFromContext(
+        context,
+        taskId,
+        `Pipeline launch failed: ${reason}`,
+        {
+          autopilot_dispatch: true,
+          notification_kind: 'pipeline_launch_failed',
+        },
+      );
+      return {
+        updated: true,
+        status: 'ok',
+        operation: 'tasks.block-on-pipeline-launch-failure',
+        taskId,
+        updateResult,
+        commentResult,
+      };
+    }
     const updateResult = await runYokeJson(context, [
       'tasks',
       'update',
@@ -897,11 +1074,30 @@ export function createDispatchCreatedTaskBlocker(
   };
 }
 
+function buildCreatedTaskWorkPlan(
+  workPlan: Record<string, unknown>,
+  decision: Record<string, unknown>,
+  input: {
+    taskId: string;
+    scopeId: string | null;
+    assignedTo: string;
+  },
+): JsonObject {
+  return {
+    ...workPlan,
+    taskId: input.taskId,
+    scopeId: input.scopeId,
+    assignedToNpub: input.assignedTo,
+    childPipelineDefinitionId: getText(workPlan.childPipelineDefinitionId ?? decision.pipelineDefinitionId),
+    pipelineDefinitionId: getText(workPlan.pipelineDefinitionId ?? decision.pipelineDefinitionId),
+  };
+}
+
 export function createDispatchNeedsInputPublisher(
   context: DispatchPipelineFlightDeckPublisherContext,
 ): DeclarativeFunction {
   return async (input) => {
-    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+    if (!canUseFlightDeckRuntime(context)) {
       return {
         published: false,
         status: 'failed',
@@ -916,14 +1112,24 @@ export function createDispatchNeedsInputPublisher(
     let commentError: string | null = null;
     if (taskId) {
       try {
-        commentResult = await runYokeJson(context, [
-          'tasks',
-          'comment',
-          taskId,
-          '--body',
-          buildNeedsInputTaskComment(input, question),
-          '--json',
-        ]);
+        commentResult = isFlightDeckPgPublisherContext(context)
+          ? await createFlightDeckPgTaskCommentFromContext(
+            context,
+            taskId,
+            buildNeedsInputTaskComment(input, question),
+            {
+              autopilot_dispatch: true,
+              notification_kind: 'needs_input',
+            },
+          )
+          : await runYokeJson(context, [
+            'tasks',
+            'comment',
+            taskId,
+            '--body',
+            buildNeedsInputTaskComment(input, question),
+            '--json',
+          ]);
       } catch (error) {
         commentError = error instanceof Error ? error.message : String(error);
       }
@@ -951,7 +1157,7 @@ export function createDispatchImplementationReviewTaskEnsurer(
   context: DispatchPipelineFlightDeckPublisherContext,
 ): DeclarativeFunction {
   return async (input) => {
-    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+    if (!canUseFlightDeckRuntime(context)) {
       throw new Error(context.runtime.error ?? 'Flight Deck runtime was not prepared.');
     }
 
@@ -962,40 +1168,58 @@ export function createDispatchImplementationReviewTaskEnsurer(
     let taskId = existingTaskId;
     let createResult: unknown = null;
 
-    await syncFlightDeckRuntime(context);
+    if (!isFlightDeckPgPublisherContext(context)) {
+      await syncFlightDeckRuntime(context);
+    }
 
     if (!taskId) {
       const title = buildImplementationReviewTaskTitle(input, workPlan);
       const description = buildImplementationReviewTaskDescription(context, input, workPlan);
-      const previousTaskIds = await listMatchingTaskIds(context, {
-        title,
-        state: 'in_progress',
-        assignedTo,
-      });
-      const args = [
-        'tasks',
-        'create',
-        '--title',
-        title,
-        '--description',
-        description,
-        '--state',
-        'in_progress',
-        '--assign',
-        assignedTo,
-      ];
-      if (scopeId) {
-        args.push('--scope', scopeId);
-      }
-      args.push('--json');
-      createResult = await runYokeJson(context, args);
-      taskId = getCreatedRecordId(createResult)
-        ?? await findNewlyCreatedTaskId(context, {
+      if (isFlightDeckPgPublisherContext(context)) {
+        createResult = await createFlightDeckPgTaskFromContext(context, {
+          title,
+          description,
+          state: 'in_progress',
+          metadata: {
+            autopilot_dispatch: true,
+            source_message_id: context.eventInput.recordId,
+            assigned_to_npub: assignedTo,
+            scope_id: scopeId,
+            task_kind: 'implementation_review',
+          },
+        });
+        taskId = getText(objectValue(createResult).taskId) ?? getText(objectValue(objectValue(createResult).task).id);
+      } else {
+        const previousTaskIds = await listMatchingTaskIds(context, {
           title,
           state: 'in_progress',
           assignedTo,
-          previousTaskIds,
         });
+        const args = [
+          'tasks',
+          'create',
+          '--title',
+          title,
+          '--description',
+          description,
+          '--state',
+          'in_progress',
+          '--assign',
+          assignedTo,
+        ];
+        if (scopeId) {
+          args.push('--scope', scopeId);
+        }
+        args.push('--json');
+        createResult = await runYokeJson(context, args);
+        taskId = getCreatedRecordId(createResult)
+          ?? await findNewlyCreatedTaskId(context, {
+            title,
+            state: 'in_progress',
+            assignedTo,
+            previousTaskIds,
+          });
+      }
       if (!taskId) {
         throw new Error('Implementation review task creation succeeded but no task id was returned.');
       }
@@ -1004,16 +1228,18 @@ export function createDispatchImplementationReviewTaskEnsurer(
     let updateResult: unknown = null;
     let updateError: string | null = null;
     try {
-      updateResult = await runYokeJson(context, [
-        'tasks',
-        'update',
-        taskId,
-        '--state',
-        'in_progress',
-        '--assign',
-        assignedTo,
-        '--json',
-      ]);
+      updateResult = isFlightDeckPgPublisherContext(context)
+        ? await updateFlightDeckPgTaskStateWithLease(context, taskId, 'in_progress')
+        : await runYokeJson(context, [
+          'tasks',
+          'update',
+          taskId,
+          '--state',
+          'in_progress',
+          '--assign',
+          assignedTo,
+          '--json',
+        ]);
     } catch (error) {
       updateError = error instanceof Error ? error.message : String(error);
     }
@@ -1021,14 +1247,24 @@ export function createDispatchImplementationReviewTaskEnsurer(
     let commentResult: unknown = null;
     let commentError: string | null = null;
     try {
-      commentResult = await runYokeJson(context, [
-        'tasks',
-        'comment',
-        taskId,
-        '--body',
-        buildImplementationReviewStartedComment(input, taskId),
-        '--json',
-      ]);
+      commentResult = isFlightDeckPgPublisherContext(context)
+        ? await createFlightDeckPgTaskCommentFromContext(
+          context,
+          taskId,
+          buildImplementationReviewStartedComment(input, taskId),
+          {
+            autopilot_dispatch: true,
+            notification_kind: 'implementation_review_started',
+          },
+        )
+        : await runYokeJson(context, [
+          'tasks',
+          'comment',
+          taskId,
+          '--body',
+          buildImplementationReviewStartedComment(input, taskId),
+          '--json',
+        ]);
     } catch (error) {
       commentError = error instanceof Error ? error.message : String(error);
     }
@@ -1046,7 +1282,8 @@ export function createDispatchImplementationReviewTaskEnsurer(
         ?? 'Run the implementation review loop.',
       workdir: getText(workPlan.workdir ?? workPlan.workingDirectory)
         ?? getText(input.workingDirectory)
-        ?? context.agent.workingDirectory,
+        ?? context.agent?.workingDirectory
+        ?? process.cwd(),
       designDocumentUrl: getText(workPlan.designDocumentUrl) ?? getText(input.designDocumentUrl),
       designDocumentSource: getText(workPlan.designDocumentSource) ?? getText(input.designDocumentSource),
       designDocumentUnavailableReason: getText(workPlan.designDocumentUnavailableReason)
@@ -1089,7 +1326,7 @@ export function createDispatchImplementationReviewProgressCommenter(
   context: DispatchPipelineFlightDeckPublisherContext,
 ): DeclarativeFunction {
   return async (input) => {
-    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+    if (!canUseFlightDeckRuntime(context)) {
       throw new Error(context.runtime.error ?? 'Flight Deck runtime was not prepared.');
     }
     const taskId = resolveTaskId(context, input);
@@ -1097,14 +1334,24 @@ export function createDispatchImplementationReviewProgressCommenter(
       throw new Error('Implementation review progress comment requires a task id.');
     }
     const body = buildImplementationReviewProgressComment(input);
-    const commentResult = await runYokeJson(context, [
-      'tasks',
-      'comment',
-      taskId,
-      '--body',
-      body,
-      '--json',
-    ]);
+    const commentResult = isFlightDeckPgPublisherContext(context)
+      ? await createFlightDeckPgTaskCommentFromContext(
+        context,
+        taskId,
+        body,
+        {
+          autopilot_dispatch: true,
+          notification_kind: 'implementation_review_progress',
+        },
+      )
+      : await runYokeJson(context, [
+        'tasks',
+        'comment',
+        taskId,
+        '--body',
+        body,
+        '--json',
+      ]);
     return {
       published: true,
       status: 'ok',
@@ -1120,7 +1367,7 @@ export function createDispatchTaskStateUpdater(
   targetState: 'in_progress' | 'review',
 ): DeclarativeFunction {
   return async (input) => {
-    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+    if (!canUseFlightDeckRuntime(context)) {
       throw new Error(context.runtime.error ?? 'Flight Deck runtime was not prepared.');
     }
     const taskId = resolveTaskId(context, input);
@@ -1134,11 +1381,15 @@ export function createDispatchTaskStateUpdater(
     }
     updateArgs.push('--json');
 
-    await syncFlightDeckRuntime(context);
-    let updateResult = await runYokeJson(context, updateArgs);
+    if (!isFlightDeckPgPublisherContext(context)) {
+      await syncFlightDeckRuntime(context);
+    }
+    let updateResult = isFlightDeckPgPublisherContext(context)
+      ? await updateFlightDeckPgTaskStateWithLease(context, taskId, targetState)
+      : await runYokeJson(context, updateArgs);
     let updateFallback: unknown = null;
     let updateStatus: 'ok' | 'fallback' | 'idempotent' = 'ok';
-    if (syncResultRejected(updateResult)) {
+    if (!isFlightDeckPgPublisherContext(context) && syncResultRejected(updateResult)) {
       const currentTask = await loadFlightDeckTask(context, taskId);
       const currentState = getText(currentTask.state)?.toLowerCase() ?? null;
       if (currentState === targetState) {
@@ -1166,14 +1417,24 @@ export function createDispatchTaskStateUpdater(
     let commentResult: unknown = null;
     let commentError: string | null = null;
     try {
-      commentResult = await runYokeJson(context, [
-        'tasks',
-        'comment',
-        taskId,
-        '--body',
-        commentBody,
-        '--json',
-      ]);
+      commentResult = isFlightDeckPgPublisherContext(context)
+        ? await createFlightDeckPgTaskCommentFromContext(
+          context,
+          taskId,
+          commentBody,
+          {
+            autopilot_dispatch: true,
+            notification_kind: targetState === 'review' ? 'ready_for_review' : 'in_progress',
+          },
+        )
+        : await runYokeJson(context, [
+          'tasks',
+          'comment',
+          taskId,
+          '--body',
+          commentBody,
+          '--json',
+        ]);
     } catch (error) {
       commentError = error instanceof Error ? error.message : String(error);
     }
@@ -1233,6 +1494,33 @@ async function publishReadyForReviewChatNotification(
   const threadId = existingThreadId ?? randomUUID();
 
   try {
+    if (isFlightDeckPgPublisherContext(context)) {
+      const pg = getFlightDeckPgPublishContext(context);
+      const result = await createFlightDeckPgChannelMessage({
+        backendBaseUrl: pg.backendBaseUrl,
+        workspaceId: pg.workspaceId,
+        channelId,
+        appNpub: pg.appNpub,
+        botIdentity: pg.botIdentity,
+        body: buildReadyForReviewChatReply(input, taskId, reviewerNpub),
+        threadId,
+        metadata: {
+          autopilot_dispatch: true,
+          source_message_id: context.eventInput.recordId,
+          subscription_id: context.eventInput.subscription.subscriptionId,
+          notification_kind: 'ready_for_review',
+        },
+      });
+      return {
+        notified: true,
+        result: {
+          ...objectValue(result),
+          createdNewThread: !existingThreadId,
+        },
+        error: null,
+        skippedReason: null,
+      };
+    }
     const result = await runYokeJson(context, [
       'chat',
       'reply-current',
