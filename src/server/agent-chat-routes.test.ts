@@ -830,4 +830,31 @@ describe('agent-chat routes', () => {
     expect(body.subscription.operator.canManage).toBe(true);
     expect(body.subscription.operator.shared).toBe(true);
   });
+
+  test('blocks manual deletion of Flight Deck onboarded subscriptions', async () => {
+    let removed = false;
+    const manager = {
+      getForManager: () => makeSubscription({ onboardingSource: 'nostr_33357' }),
+      removeForManager: () => {
+        removed = true;
+        return true;
+      },
+    } as unknown as WorkspaceSubscriptionManager;
+    const request = new Request('http://localhost/api/agent-chat/subscriptions/sub-flightdeck', {
+      method: 'DELETE',
+    });
+
+    const response = await handleAgentChatApi(
+      request,
+      new URL(request.url),
+      'DELETE',
+      authContext,
+      { manager },
+    );
+    const body = await response!.json();
+
+    expect(response?.status).toBe(409);
+    expect(body.error).toContain('Flight Deck');
+    expect(removed).toBe(false);
+  });
 });

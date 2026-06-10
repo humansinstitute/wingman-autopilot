@@ -1025,6 +1025,16 @@ export async function handleAgentChatApi(
       return denied;
     }
     const subscriptionId = decodeURIComponent(match[1]!);
+    const subscription = ctx.manager.getForManager(subscriptionId, scope.managerNpub);
+    if (!subscription) {
+      return Response.json({ error: 'Subscription not found' }, { status: 404 });
+    }
+    if (subscription.onboardingSource === 'nostr_33357') {
+      return Response.json(
+        { error: 'Flight Deck onboarded workspace connections are managed by Flight Deck membership events.' },
+        { status: 409 },
+      );
+    }
     const removed = ctx.manager.removeForManager(subscriptionId, scope.managerNpub);
     if (!removed) {
       return Response.json({ error: 'Subscription not found' }, { status: 404 });

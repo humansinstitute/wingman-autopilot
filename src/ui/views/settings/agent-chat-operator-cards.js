@@ -6,6 +6,10 @@ function isAgentDispatchSession(session) {
   return isAgentChatSession(session) || session?.metadata?.role === 'agent-work' || session?.origin?.type === 'agent-work';
 }
 
+function isFlightDeckOnboardedSubscription(subscription) {
+  return subscription?.onboardingSource === 'nostr_33357';
+}
+
 function createSection(title, description = '') {
   const wrapper = document.createElement('section');
   wrapper.style.cssText = 'margin-top:18px;';
@@ -936,12 +940,14 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
         `agent-chat-edit-${subscription.subscriptionId}`,
         () => handlers.edit?.(subscription),
       ));
-      actionButtons.push(createActionButton(
-        'Remove',
-        `Remove Agent Chat subscription for ${subscription.workspaceOwnerNpub}`,
-        `agent-chat-remove-${subscription.subscriptionId}`,
-        () => handlers.remove?.(subscription),
-      ));
+      if (!isFlightDeckOnboardedSubscription(subscription)) {
+        actionButtons.push(createActionButton(
+          'Remove',
+          `Remove Agent Chat subscription for ${subscription.workspaceOwnerNpub}`,
+          `agent-chat-remove-${subscription.subscriptionId}`,
+          () => handlers.remove?.(subscription),
+        ));
+      }
     }
     actions.append(...actionButtons);
     card.append(actions);
