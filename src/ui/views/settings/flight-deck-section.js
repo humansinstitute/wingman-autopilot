@@ -123,6 +123,129 @@ function createDefinitionGrid(rows) {
   return grid;
 }
 
+function formatDiagnosticTime(value) {
+  if (typeof value !== 'string' || !value) return 'None';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
+}
+
+function summarizeObject(value) {
+  if (!value || typeof value !== 'object') return '';
+  const entries = Object.entries(value)
+    .filter(([, entryValue]) => entryValue !== null && entryValue !== undefined && entryValue !== '')
+    .slice(0, 5);
+  return entries.map(([key, entryValue]) => `${key}: ${String(entryValue)}`).join(' · ');
+}
+
+function createDiagnosticTable({ title, rows, columns, emptyText, testId }) {
+  const section = document.createElement('section');
+  section.style.cssText = 'margin-top:14px;';
+  section.setAttribute('data-testid', testId);
+
+  const heading = document.createElement('h4');
+  heading.textContent = title;
+  heading.style.cssText = 'margin:0 0 8px;font-size:0.95rem;';
+  section.append(heading);
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'wm-settings__port-note';
+    empty.textContent = emptyText;
+    section.append(empty);
+    return section;
+  }
+
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'overflow:auto;border:1px solid rgba(255,255,255,0.08);border-radius:8px;';
+  const table = document.createElement('table');
+  table.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.86rem;min-width:680px;';
+
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  columns.forEach((column) => {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    th.textContent = column.label;
+    th.style.cssText = 'text-align:left;padding:8px;border-bottom:1px solid rgba(255,255,255,0.08);color:var(--muted);font-weight:600;';
+    headerRow.append(th);
+  });
+  thead.append(headerRow);
+
+  const tbody = document.createElement('tbody');
+  rows.forEach((row, rowIndex) => {
+    const tr = document.createElement('tr');
+    tr.setAttribute('data-testid', `${testId}-row-${rowIndex}`);
+    columns.forEach((column) => {
+      const td = document.createElement('td');
+      td.style.cssText = 'padding:8px;border-top:1px solid rgba(255,255,255,0.05);vertical-align:top;word-break:break-word;';
+      const value = column.render(row);
+      td.textContent = value || 'None';
+      td.title = value || '';
+      tr.append(td);
+    });
+    tbody.append(tr);
+  });
+
+  table.append(thead, tbody);
+  wrapper.append(table);
+  section.append(wrapper);
+  return section;
+}
+
+function createConnectionDiagnosticsTables(subscription) {
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'margin-top:12px;';
+  wrapper.setAttribute('data-testid', `flight-deck-event-diagnostics-${subscription?.subscriptionId || 'unknown'}`);
+
+  const recentSseEvents = Array.isArray(subscription?.recentSseEvents) ? subscription.recentSseEvents : [];
+  const recentDispatches = Array.isArray(subscription?.recentDispatches) ? subscription.recentDispatches : [];
+  const routing = subscription?.lastRoutingResult;
+
+  wrapper.append(createDiagnosticTable({
+    title: 'SSE Events',
+    rows: recentSseEvents.slice().reverse().slice(0, 12),
+    emptyText: 'No SSE events have been recorded for this workspace connection.',
+    testId: `flight-deck-sse-events-${subscription?.subscriptionId || 'unknown'}`,
+    columns: [
+      { label: 'Seen', render: (event) => formatDiagnosticTime(event?.at) },
+      { label: 'Type', render: (event) => event?.eventType || event?.type || '' },
+      { label: 'Event id', render: (event) => shortenIdentifier(String(event?.eventId || event?.event_id || ''), { head: 14, tail: 8 }) },
+      { label: 'Payload', render: (event) => summarizeObject(event?.payload) },
+    ],
+  }));
+
+  wrapper.append(createDiagnosticTable({
+    title: 'Dispatches',
+    rows: recentDispatches.slice().reverse().slice(0, 12),
+    emptyText: 'No dispatches have been recorded for this workspace connection.',
+    testId: `flight-deck-dispatch-events-${subscription?.subscriptionId || 'unknown'}`,
+    columns: [
+      { label: 'At', render: (dispatch) => formatDiagnosticTime(dispatch?.at) },
+      { label: 'Kind', render: (dispatch) => dispatch?.kind || '' },
+      { label: 'Action', render: (dispatch) => dispatch?.action || '' },
+      { label: 'Session', render: (dispatch) => shortenIdentifier(String(dispatch?.sessionId || ''), { head: 10, tail: 6 }) },
+      { label: 'Details', render: (dispatch) => summarizeObject(dispatch?.details) },
+    ],
+  }));
+
+  wrapper.append(createDiagnosticTable({
+    title: 'Last Routing Result',
+    rows: routing ? [routing] : [],
+    emptyText: 'No routing result has been recorded for this workspace connection.',
+    testId: `flight-deck-routing-result-${subscription?.subscriptionId || 'unknown'}`,
+    columns: [
+      { label: 'At', render: (result) => formatDiagnosticTime(result?.at) },
+      { label: 'OK', render: (result) => String(result?.ok ?? '') },
+      { label: 'Code', render: (result) => result?.code || '' },
+      { label: 'Message', render: (result) => result?.message || '' },
+      { label: 'Details', render: (result) => summarizeObject(result?.details) },
+    ],
+  }));
+
+  return wrapper;
+}
+
 function getBackendConnectionForSubscription(subscription, backendConnections) {
   if (!subscription?.backendConnectionId || !Array.isArray(backendConnections)) {
     return null;
@@ -342,6 +465,8 @@ export function createFlightDeckConnectionsPanel({
       ['Visible channels', String(targets.channels)],
       ['Appended context', String(appendedContextCount)],
     ]));
+
+    card.append(createConnectionDiagnosticsTables(subscription));
 
     if (typeof onManageDispatch === 'function') {
       const manageButton = createButton('Manage Dispatch', `flight-deck-manage-${subscription?.subscriptionId || 'unknown'}`, `Open Agent Dispatch settings for ${workspaceTitle}`);

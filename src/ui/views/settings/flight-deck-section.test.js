@@ -106,6 +106,38 @@ describe("flight deck settings panel", () => {
             healthStatus: "healthy",
             sseStatus: "connected",
             groupKeyStatus: "synced",
+            recentSseEvents: [
+              {
+                at: "2026-06-10T06:00:00.000Z",
+                eventType: "flightdeck_pg.message.created",
+                eventId: "event-message-1234567890",
+                payload: {
+                  entity_type: "message",
+                  channel_id: "channel-bugs",
+                },
+              },
+            ],
+            recentDispatches: [
+              {
+                at: "2026-06-10T06:00:01.000Z",
+                kind: "chat",
+                action: "chat_pipeline_dispatch",
+                sessionId: "session-dispatch-123456",
+                details: {
+                  channel_id: "channel-bugs",
+                  pipeline_run_id: "run-1",
+                },
+              },
+            ],
+            lastRoutingResult: {
+              ok: true,
+              code: "chat_pipeline_dispatched",
+              message: "Chat event dispatched.",
+              at: "2026-06-10T06:00:02.000Z",
+              details: {
+                message_id: "message-1",
+              },
+            },
             profileWorkspace: {
               workspace: {
                 workspaceTitle: "Swipeback",
@@ -157,6 +189,16 @@ describe("flight deck settings panel", () => {
       expect(text).toContain("Visible scopes");
       expect(text).toContain("Visible channels");
       expect(text).toContain("Appended context");
+      expect(text).toContain("SSE Events");
+      expect(text).toContain("flightdeck_pg.message.created");
+      expect(text).toContain("channel_id: channel-bugs");
+      expect(text).toContain("Dispatches");
+      expect(text).toContain("chat_pipeline_dispatch");
+      expect(text).toContain("Last Routing Result");
+      expect(text).toContain("chat_pipeline_dispatched");
+      expect(queryByTestId(panel, "flight-deck-sse-events-sub-flightdeck-row-0")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-events-sub-flightdeck-row-0")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-routing-result-sub-flightdeck-row-0")).not.toBeNull();
 
       queryByTestId(panel, "flight-deck-manage-sub-flightdeck").click();
       expect(managedSubscriptionId).toBe("sub-flightdeck");
